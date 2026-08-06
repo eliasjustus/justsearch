@@ -43,10 +43,44 @@ A release **candidate** is qualified before its number is finalized:
    pollution. Every qualifying round is launched with a **charter** (`sandbox-launch.py
    --charter`): the round's purpose and each open blocker's needs-round / needs-dig
    classification, staged for the verifier and read against the round's debrief at finalize
-   (tempdoc 750 Part B). Round modes cover the supported **arrival states**, not only the empty
+   (tempdoc 750 Part B).
+   **Every charter watch item must state what the signal looks like when the build is HEALTHY,
+   not only what it looks like when broken.** A watch item that names only the broken signature
+   hands the round a symptom, and symptoms are shared by working code; what distinguishes a
+   defect is a *discriminator*. Worked example (round 8, 2026-07-31): the charter said the log
+   line `Combined backfill: docs=N (embed=0,splade=0,chunks=0)` "repeating at high frequency …
+   is the livelock; it must not appear." It appeared **143 times, six of them within 142 ms —
+   and was not the livelock**: the lines carried real progress, the run terminated on its own,
+   enrichment completed, and a 60-second idle window afterwards produced zero new lines. A round
+   following that charter literally would have filed a false HIGH against a working build. The
+   discriminator was never the signature but **non-termination** — the signature still firing
+   while every coverage counter is static and ingest jobs are starved. So write each watch item
+   as a pair: *healthy looks like X (bounded, terminating, counters advancing); the defect is Y
+   (X's signature persisting with no progress)*, and give the round the observation that
+   separates them.
+   **A BROKEN criterion must name the defect *class*, not one instance of it.** Round 11
+   (tempdoc 734 round-11 section): the charter's BROKEN criterion was scoped to search ("any
+   bare HTTP 401 on search"). Search passed cleanly, so read literally the criterion was
+   satisfied -- but the actual class it existed to catch (round-10's F7: *any shipped-UI control
+   whose mutating call 401s*) had resurfaced on a different control (chat-encryption
+   unlock/lock), and a round following the charter's letter rather than its intent could have
+   reported the item a clean pass and moved on. Name the class the criterion is really standing
+   in for ("any shipped-UI control whose mutating call 401s", not "401 on search") so a round
+   generalizes past the one instance that happened to be tested last time.
+   Round modes cover the supported **arrival states**, not only the empty
    machine: first and final qualifying rounds run `fresh-install`, and the qualifying set must
    include at least one `upgrade-from-release` round (previous public release installed first,
-   candidate installed over it — tempdoc 750 Part C). *What* to cover is not remembered — it is
+   candidate installed over it — tempdoc 750 Part C).
+   **The qualifying set also includes one owner/human gestalt-tier manual pass per release
+   candidate, performed WITHOUT API access.** The reviewer must experience the surface, not
+   compensate for it: an agent with the API, the tempdocs and the source conventions resolves an
+   unclear surface by reading `/api/…` and correctly files nothing, which is exactly the
+   competence that disqualifies it as the observer for this class. Findings are recorded and then
+   agent-verified against the running build, each claim tagged with its provenance. Origin: the
+   0.2.0 round-14 manual pass (2026-08-05/06) — run immediately after a round that passed
+   coverage 26/26, golden parity, token health and a full screenshot reader pass with no blocking
+   defect — produced **15 findings**, the whole-screen and design-debt classes no per-item
+   existence gate can see (tempdocs 809 verbatim, 810 triage). *What* to cover is not remembered — it is
    **derived from what the candidate ships:**
    `scripts/sandbox/sandbox-launch.py` generates a per-candidate `coverage-brief.md` from the
    committed surface artifacts against `governance/sandbox-coverage.v1.json` and **fails closed**
@@ -57,7 +91,18 @@ A release **candidate** is qualified before its number is finalized:
    finalize, on the **host** (the sandbox has no Python), against the persisted evidence dir:
    `python scripts/sandbox/check_coverage.py --manifest <share>/coverage-manifest.json --traces
    <share>/evidence/traces.ndjson --evidence-dir <share>/evidence` — a non-zero exit means a
-   required surface was not exercised. The round also captures golden-query search responses
+   required surface was not exercised.
+   **A qualifying round must also leave five process artifacts in the evidence dir**, each
+   separately fail-closed by that same check: `retrospective.md` (the round-vs-charter debrief,
+   with its time-accounting section), `evidence-review.v1.json` (a reader examined every
+   credit-eligible screenshot), and — added 2026-08-05, tempdoc 808 — `mustwatch-verdicts.v1.json`
+   (a verdict for every must-watch id in the round's brief; `unobservable` needs a reason,
+   `observed-fail` prints loudly but routes through findings rather than flipping the exit),
+   `session-analysis.md` (what the harness/charter made hard, what was off-charter and why, what
+   the next round should change — round 12's unprompted version of this yielded ~11 adopted harness
+   fixes), and `mutating-probe.v1.json` (written by `collect-evidence.ps1`; a `fail` means every GET
+   rung read green while the product's whole mutating surface was dead — the round-10 false-green,
+   which until now reached no exit code). The round also captures golden-query search responses
    (`evidence/golden/<queryId>.json`), checked at finalize by `check_golden_parity.py` against
    the per-candidate baseline generated from the dev stack on the same build — parity-with-dev,
    not absolute quality, since the Sandbox has no `jseval`. That check fails closed (exit 1, not a
@@ -79,6 +124,12 @@ A release **candidate** is qualified before its number is finalized:
    charter). A needs-dig classification carries an owner and a timebox so the gate cannot
    stall a release indefinitely; by-catch from past confirmatory rounds is real but is
    measured in the debrief (on-opportunity share), not used to justify the next one.
+   **Campaign hygiene: audit the charter's do-not-refile list once per campaign** for entries
+   that have drifted from *known residual* into *accepted behaviour*. The list is necessary — it
+   is what stops a round re-filing a known-correct signature as a false HIGH — but every entry
+   permanently converts an observation into a non-observation, and nothing expires it. Re-read
+   each entry and ask whether it is still a residual someone intends to fix, or has quietly
+   become the product's behaviour by default.
 4. **Finalize on zero findings.** Only when a Sandbox round finds no blocking issues is the
    number finalized and the release published.
 
@@ -117,8 +168,16 @@ One build produces a complete, hash-consistent asset set in `dist/installer/`:
 | Asset | Source | Notes |
 |---|---|---|
 | `JustSearch_<version>_x64-setup.exe` | NSIS build (Tauri) | The installer. |
+| `JustSearch_<version>_x64-setup.exe.sig` | Tauri updater signing | Minisign signature verified by both Tauri and the authenticated descriptor builder. |
+| `release.v1.json` | `scripts/release/app-release-assets.mjs` | Canonical, metadata-signed descriptor containing the sequence, artifact digest/signature, and durable-store compatibility register. |
+| `release.v1.json.sig` | `scripts/release/app-release-assets.mjs` | Ed25519 signature over the exact canonical descriptor bytes. |
+| `latest.json` | `scripts/release/app-release-assets.mjs` | Tauri updater metadata; its URL and signature must match `release.v1.json`. |
 | `justsearch-mcp.mcpb` | built from source by `scripts/ci/pack-mcpb.mjs` | The one-click MCP bundle; a deterministic STORED zip of `manifest.json` + `server/**` (not committed). |
-| `SHA256SUMS` | generated by `build-release-assets.ps1` | `sha256sum -c`-compatible manifest over both assets. |
+| `SHA256SUMS` | generated by `build-release-assets.ps1` | `sha256sum -c`-compatible manifest over the complete release asset set. |
+
+For a tag build, the workflow first creates or reuses a **draft** GitHub Release, uploads the
+complete set, downloads it again, verifies every checksum and the authenticated updater closed
+set, and only then publishes. A verification failure leaves the Release in draft state.
 
 **Consistency invariant (fail-closed).** The MCPB's SHA-256 is a *published contract*: it lives
 in `packaging/mcpb/server.json` (`fileSha256`, read by the Official MCP Registry publish), in the
@@ -150,13 +209,29 @@ In-repo steps (an agent can prepare these; the branch must be pushed and green):
 
 Owner-only steps (require repo permissions):
 
-3. Push, tag `v<version>` (a bare `vX.Y.Z` auto-resolves to **non-prerelease** → becomes
+3. Configure the updater trust inputs:
+   - secret `JUSTSEARCH_TAURI_UPDATER_PRIVATE_KEY` (and
+     `JUSTSEARCH_TAURI_UPDATER_PRIVATE_KEY_PASSWORD` when applicable);
+   - secret `JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PEM`;
+   - variables `JUSTSEARCH_UPDATE_ARTIFACT_PUBLIC_KEY`,
+     `JUSTSEARCH_UPDATE_ARTIFACT_KEY_ID`,
+     `JUSTSEARCH_RELEASE_METADATA_PUBLIC_KEY_PEM`,
+     `JUSTSEARCH_RELEASE_METADATA_ROOT_PUBLIC_KEY`,
+     `JUSTSEARCH_RELEASE_METADATA_ROOT_KEY_ID`, and
+     `JUSTSEARCH_RELEASE_DESCRIPTOR_URL`.
+
+   The artifact key may rotate between releases because its public key is authenticated inside
+   `release.v1.json`. The v1 metadata root is deliberately a long-lived offline root; replacing it
+   safely requires a separately designed bridge/dual-root release and must not be attempted as an
+   ordinary variable change.
+4. Push, tag `v<version>` (a bare `vX.Y.Z` auto-resolves to **non-prerelease** → becomes
    `/releases/latest`; `-alpha/-beta/-rc` tags are prereleases).
-4. Dispatch `build-installer.yml` against the tag ref. It builds, runs
-   `build-release-assets.ps1`, and attaches the whole asset set to the GitHub Release.
-5. Set the repo homepage, enable Discussions if desired, and take/replace hero screenshots
+5. Dispatch `build-installer.yml` against the tag ref. It builds, runs
+   `build-release-assets.ps1`, round-trip verifies the draft asset set, and publishes the Release
+   only after verification succeeds.
+6. Set the repo homepage, enable Discussions if desired, and take/replace hero screenshots
    (see `docs/m1-operator-checklist.md`).
-6. **Post-cut — update the README to the published asset.** `README.md`'s installer size + SHA-256
+7. **Post-cut — update the README to the published asset.** `README.md`'s installer size + SHA-256
    line and the `v<version>` download link describe the *published* release asset, which is why
    they deliberately still read the previous release's figures (853 MB, the v0.1.0 SHA) until a cut
    lands. After the Release exists, bump the size, the `SHA256SUMS` value, and the
@@ -285,6 +360,17 @@ speed). When bumping the ORT version, all of the following must move together:
 
 - [ ] The **onnxruntime jar** version (Gradle dependency).
 - [ ] The re-built **`ort-native-cuda12-v<ver>.zip`** pack asset (uploaded to `justsearch-releases`).
+      **Before pinning its sha, assert its contents:**
+      ```bash
+      node scripts/release/check-ort-native-asset.mjs <path-to>/ort-native-cuda12-v<ver>.zip
+      ```
+      It fails (exit 1) listing any of `OrtCudaHelper.ORT_NATIVE_DLL_SET` the archive lacks —
+      `onnxruntime.dll`, `onnxruntime4j_jni.dll`, `onnxruntime_providers_shared.dll`,
+      `onnxruntime_providers_cuda.dll` — read from the Java authority, not a second list. A pack
+      missing one does **not** fail loudly at runtime: ORT falls back to CPU and every ONNX encoder
+      runs at CPU speed while the status surfaces still report a GPU variant (tempdoc 734 R11-F3).
+      The registry pin then makes the verified bytes the only accepted bytes, so this is the one
+      moment the contents can be wrong.
 - [ ] The **registry entry** — `filename` / `sha256` / `sizeBytes` for that asset — in **BOTH**
       copies of `model-registry.v2.json` (`modules/ui/src/main/resources/ai/` and
       `modules/configuration/src/test/resources/ai/`).
@@ -302,7 +388,7 @@ each release's convergence tempdoc + its GitHub Release):
 | Version | Date | Sandbox verdict | Notes | Links |
 |---|---|---|---|---|
 | v0.1.0 | 2026-06-25 | (pre-pipeline) | Prerelease/alpha. **No MCP endpoint.** Installer built locally, not via CI. | [release](https://github.com/eliasjustus/justsearch/releases/tag/v0.1.0) |
-| v0.2.x | pending | rounds 1-6: dense-retrieval + capability-gate fixes confirmed working; `core.workflow-run` fixed 2026-07-16 (tempdoc 744); round 6 (fresh-install, pre-registered) is **DO-NOT-QUALIFY** — the golden-query parity regression reproduces with the CPU/GPU-precision hypothesis now ruled out, root cause still unidentified; a new HIGH-severity RAG chunk-retrieval bug was also found (tempdoc 749) | First cut with the MCP endpoint + the hash-consistent asset pipeline. | tempdoc 734, tempdoc 749 |
+| v0.2.x | pending | rounds 1-13 run. Rounds 1-6 confirmed the dense-retrieval + capability-gate fixes and `core.workflow-run` (tempdoc 744), but round 6 was **DO-NOT-QUALIFY** (golden-query parity regression, plus a HIGH-severity RAG chunk-retrieval bug, tempdoc 749). Rounds 7-13 converged those and later findings. **Round 13 (2026-08-04) found no blocking product defect** — it failed on harness state only: the coverage gate at 25/26 (an unreachable `core.extract` route pointer) and finding R13-F2, both fixed in tempdoc 807 / PR #366. Next step: **one fresh-install confirmation round** against the fixed build to qualify. | First cut with the MCP endpoint + the hash-consistent asset pipeline. | tempdoc 734, tempdoc 749, tempdoc 807 |
 
 ## See also
 

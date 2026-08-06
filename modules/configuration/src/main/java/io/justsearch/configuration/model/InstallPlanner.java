@@ -14,7 +14,50 @@ import java.util.List;
  */
 public final class InstallPlanner {
 
+  /**
+   * Staging suffix an in-flight download occupies until it verifies and is renamed onto its final
+   * target. Declared here — the lowest module that resolves install target paths — so the download
+   * loop that writes the file and the planner that must account for it name the same convention
+   * once instead of both hardcoding the literal.
+   */
+  public static final String PARTIAL_SUFFIX = ".partial";
+
   private InstallPlanner() {}
+
+  /** The staging path a partially-downloaded {@code finalTarget} occupies. */
+  public static Path partialPathFor(Path finalTarget) {
+    return finalTarget.resolveSibling(finalTarget.getFileName() + PARTIAL_SUFFIX);
+  }
+
+  /**
+   * Bytes already on disk for {@code finalTarget} in its sibling {@code .partial} staging file — the
+   * progress a cancelled install kept, which a resumed download will not re-transfer.
+   *
+   * <p>This is the counterpart {@link #isAlreadyInstalled} cannot answer: that test asks about the
+   * FINAL path (present, and exactly the expected size). A cancelled multi-GB download leaves the
+   * final path absent and its bytes in the sibling staging path, so the pure size question ("how much
+   * of this file is still to fetch?") needs both probes, not one.
+   *
+   * <p>Returns 0 for an absent partial, an empty one, or one longer than the expected total — the
+   * same impossible-state guard {@code DownloadResume.decide} applies before it will resume, so the
+   * planner never promises bytes the fetch would discard. Conservative by construction: over-counting
+   * would understate the download the user is about to consent to.
+   */
+  public static long partialBytesFor(Path finalTarget, long expectedSize) {
+    Path partial = partialPathFor(finalTarget);
+    if (!Files.isRegularFile(partial)) {
+      return 0L;
+    }
+    try {
+      long staged = Files.size(partial);
+      if (staged <= 0 || (expectedSize > 0 && staged > expectedSize)) {
+        return 0L;
+      }
+      return staged;
+    } catch (java.io.IOException e) {
+      return 0L;
+    }
+  }
 
   /**
    * Computes the install plan.
@@ -78,6 +121,7 @@ public final class InstallPlanner {
     List<InstallPlan.SkippedPackage> skipped = new ArrayList<>();
     List<String> alreadyInstalled = new ArrayList<>();
     long totalBytes = 0;
+    long resumableBytes = 0;
 
     for (ModelPackage pkg : registry.packages()) {
       // Intent gate (tempdoc 657): skip packages whose capability tier this intent
@@ -164,6 +208,7 @@ public final class InstallPlanner {
                   pkg.id(), variant.downloadUrl(), targetPath, variant.sha256(),
                   variant.sizeBytes(), true));
           totalBytes += variant.sizeBytes();
+          resumableBytes += partialBytesFor(targetFile, variant.sizeBytes());
           packageFullyInstalled = false;
         }
       }
@@ -187,6 +232,7 @@ public final class InstallPlanner {
                 false,
                 sf.extract()));
         totalBytes += sf.sizeBytes();
+        resumableBytes += partialBytesFor(targetFile, sf.sizeBytes());
         packageFullyInstalled = false;
       }
 
@@ -195,7 +241,8 @@ public final class InstallPlanner {
       }
     }
 
-    return new InstallPlan(profile, downloads, skipped, totalBytes, alreadyInstalled);
+    return new InstallPlan(
+        profile, downloads, skipped, totalBytes, alreadyInstalled, resumableBytes);
   }
 
   /**

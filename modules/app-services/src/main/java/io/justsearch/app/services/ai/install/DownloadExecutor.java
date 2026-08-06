@@ -29,8 +29,19 @@ import tools.jackson.databind.json.JsonMapper;
  * platform-specific download mechanics. The download infrastructure is correct and battle-tested —
  * this class is a direct extraction, not a rewrite.
  */
-public final class DownloadExecutor {
+public final class DownloadExecutor implements ResumableFetch.Transfer {
   private static final Logger log = LoggerFactory.getLogger(DownloadExecutor.class);
+
+  /** curl's CURLE_RANGE_ERROR — the server would not honour the resume Range request. */
+  private static final int CURL_RANGE_ERROR = 33;
+
+  /** Poll result sentinels for {@link #runCurl}. */
+  private static final int CURL_CANCELLED = -1;
+
+  private static final int CURL_LAUNCH_FAILED = -2;
+
+  /** Max consecutive polls a resumed BITS job may stay {@code Suspended} before we give up. */
+  private static final int MAX_SUSPENDED_POLLS = 20;
 
   private static final JsonMapper JSON =
       JsonMapper.builder().disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).build();
@@ -44,6 +55,7 @@ public final class DownloadExecutor {
   private final AtomicBoolean cancelRequested;
   private volatile Process curlProcess;
   private volatile String bitsJobId;
+  private volatile String suspendedBitsJobId;
 
   public DownloadExecutor(AtomicBoolean cancelRequested) {
     this.cancelRequested = Objects.requireNonNull(cancelRequested);
@@ -65,10 +77,69 @@ public final class DownloadExecutor {
     return downloadWithCurl(url, destPartial, callback);
   }
 
-  /** Request cancellation of any active download. */
+  /**
+   * Resume-aware transfer. BITS cannot adopt a {@code .partial} it did not create, so a byte-offset
+   * resume goes down the curl path where {@code --continue-at -} issues a real HTTP {@code Range}
+   * request; BITS is used only for a suspended job it already owns, or a from-zero start.
+   */
+  @Override
+  public boolean transfer(
+      String url, Path destPartial, DownloadResume.Decision decision, ProgressCallback callback) {
+    DownloadResume.Action action =
+        decision == null ? DownloadResume.Action.FRESH : decision.action();
+    if (action == DownloadResume.Action.RESUME_BITS) {
+      try {
+        if (resumeBitsJob(decision.bitsJobId(), callback)) return true;
+      } catch (Exception e) {
+        log.info(
+            "BITS resume of job {} failed; restarting from zero: {}",
+            decision.bitsJobId(),
+            e.getMessage());
+      }
+      if (cancelRequested.get()) return false;
+      // The job held the bytes, not our .partial — a dead job means there is nothing to keep.
+      removeBitsJobBestEffort(decision.bitsJobId());
+      deleteBestEffort(destPartial);
+      return download(url, destPartial, callback);
+    }
+    if (action == DownloadResume.Action.RESUME_RANGE) {
+      int code = runCurl(url, destPartial, callback);
+      if (code == 0) return true;
+      if (code == CURL_CANCELLED || cancelRequested.get()) return false;
+      // Range refused (CURLE_RANGE_ERROR) or the remaining range is otherwise unfetchable — the
+      // partial is worthless, so give up the bytes rather than the download.
+      log.info(
+          "Resume from byte {} failed (curl exit {}); restarting {} from zero",
+          decision.resumeFromBytes(),
+          code,
+          destPartial.getFileName());
+      deleteBestEffort(destPartial);
+      return download(url, destPartial, callback);
+    }
+    return download(url, destPartial, callback);
+  }
+
+  /**
+   * Request cancellation of any active download. A BITS transfer is SUSPENDED rather than removed —
+   * {@code Remove-BitsTransfer} deletes the job's bytes, which is what made cancelling a 10 GB
+   * install destroy every byte of progress. The suspended job id is exposed via {@link
+   * #suspendedBitsJobId()} so the caller can record it for the next run.
+   */
   public void cancel() {
-    cancelBitsBestEffort();
+    suspendBitsBestEffort();
     cancelCurlBestEffort();
+  }
+
+  /** Id of the BITS job suspended by the last {@link #cancel()}, or null. */
+  @Override
+  public String suspendedBitsJobId() {
+    return suspendedBitsJobId;
+  }
+
+  /** Removes a recorded BITS job that is no longer usable, so it doesn't linger in the queue. */
+  @Override
+  public void abandonResumeHandle(String jobId) {
+    removeBitsJobBestEffort(jobId);
   }
 
   /**
@@ -118,10 +189,36 @@ public final class DownloadExecutor {
       throws Exception {
     String jobId = startBitsJob(url, destPartial);
     bitsJobId = jobId;
+    suspendedBitsJobId = null;
+    return awaitBitsJob(jobId, callback);
+  }
 
+  /**
+   * Resumes a BITS job suspended by an earlier {@link #cancel()} — including one from a previous
+   * process, since BITS jobs live in the system service, not in this JVM. Throws when the job is
+   * gone or unusable; the caller then restarts from zero.
+   */
+  private boolean resumeBitsJob(String jobId, ProgressCallback callback) throws Exception {
+    if (jobId == null || jobId.isBlank()) return false;
+    if (!isWindows()) return false;
+    String script =
+        "$ErrorActionPreference='Stop'; "
+            + "Get-BitsTransfer -JobId '"
+            + psEscape(jobId)
+            + "' | Resume-BitsTransfer -Asynchronous | Out-Null";
+    runPowerShell(script, Duration.ofSeconds(30));
+    bitsJobId = jobId;
+    suspendedBitsJobId = null;
+    log.info("Resumed suspended BITS job {}", jobId);
+    return awaitBitsJob(jobId, callback);
+  }
+
+  /** Polls a running BITS job to completion, reporting progress. */
+  private boolean awaitBitsJob(String jobId, ProgressCallback callback) throws Exception {
+    int suspendedPolls = 0;
     while (true) {
       if (cancelRequested.get()) {
-        cancelBitsBestEffort();
+        suspendBitsBestEffort();
         return false;
       }
       BitsSnapshot snap = getBitsSnapshot(jobId);
@@ -138,11 +235,23 @@ public final class DownloadExecutor {
           return true;
         }
         case "Error", "TransientError", "Cancelled" -> {
-          cancelBitsBestEffort();
+          removeBitsJobBestEffort(jobId);
+          bitsJobId = null;
           throw new IllegalStateException(
               "BITS failed (" + snap.jobState() + "): " + snap.errorDescription());
         }
-        default -> Thread.sleep(750);
+        case "Suspended" -> {
+          // A job we just resumed should leave Suspended promptly; if it never does, the resume
+          // did not take and looping forever would hang the install.
+          if (++suspendedPolls > MAX_SUSPENDED_POLLS) {
+            throw new IllegalStateException("BITS job stayed suspended after resume");
+          }
+          Thread.sleep(750);
+        }
+        default -> {
+          suspendedPolls = 0;
+          Thread.sleep(750);
+        }
       }
     }
   }
@@ -150,6 +259,19 @@ public final class DownloadExecutor {
   // -- Curl download ----------------------------------------------------------
 
   private boolean downloadWithCurl(String url, Path destPartial, ProgressCallback callback) {
+    return runCurl(url, destPartial, callback) == 0;
+  }
+
+  /**
+   * Runs curl.exe, returning its exit code — 0 on success, {@link #CURL_CANCELLED} when stopped by
+   * cancellation, {@link #CURL_LAUNCH_FAILED} when it could not be run, otherwise curl's own code
+   * ({@link #CURL_RANGE_ERROR} means the server refused the resume Range request).
+   *
+   * <p>{@code --continue-at -} is what makes resume work: curl reads the existing size of
+   * {@code destPartial} and asks for {@code Range: bytes=<size>-}. On a missing/empty file it starts
+   * at zero, so the same invocation serves both the fresh and the resumed case.
+   */
+  private int runCurl(String url, Path destPartial, ProgressCallback callback) {
     try {
       List<String> cmd =
           List.of(
@@ -182,7 +304,7 @@ public final class DownloadExecutor {
       while (curlProcess.isAlive()) {
         if (cancelRequested.get()) {
           cancelCurlBestEffort();
-          return false;
+          return CURL_CANCELLED;
         }
         long sz = sizeBestEffort(destPartial);
         if (callback != null) {
@@ -194,19 +316,43 @@ public final class DownloadExecutor {
       curlProcess = null;
       if (code != 0) {
         log.warn("curl.exe failed with exit code {}", code);
-        return false;
       }
-      return true;
+      return code;
     } catch (Exception e) {
       log.warn("Download failed: {}", e.getMessage());
-      return false;
+      return CURL_LAUNCH_FAILED;
     }
   }
 
   // -- Cancellation -----------------------------------------------------------
 
-  private void cancelBitsBestEffort() {
+  /**
+   * Suspends the active BITS job, keeping its transferred bytes so the next run can resume it. If
+   * the suspend itself fails there is nothing resumable, so the job is removed instead of being left
+   * stuck in the queue.
+   */
+  private void suspendBitsBestEffort() {
     String jobId = bitsJobId;
+    if (jobId == null || jobId.isBlank()) return;
+    try {
+      String script =
+          "$ErrorActionPreference='Stop'; "
+              + "Get-BitsTransfer -JobId '"
+              + psEscape(jobId)
+              + "' | Suspend-BitsTransfer -Confirm:$false | Out-Null";
+      runPowerShell(script, Duration.ofSeconds(10));
+      suspendedBitsJobId = jobId;
+      log.info("Suspended BITS job {} (progress preserved for resume)", jobId);
+    } catch (Exception e) {
+      log.debug("BITS suspend failed; removing the job instead (best-effort)", e);
+      removeBitsJobBestEffort(jobId);
+      suspendedBitsJobId = null;
+    }
+    bitsJobId = null;
+  }
+
+  /** Destroys a BITS job and its bytes. Only for jobs that are unusable or already terminal. */
+  private void removeBitsJobBestEffort(String jobId) {
     if (jobId == null || jobId.isBlank()) return;
     try {
       String script =
@@ -216,9 +362,10 @@ public final class DownloadExecutor {
               + "' | Remove-BitsTransfer -Confirm:$false | Out-Null";
       runPowerShell(script, Duration.ofSeconds(10));
     } catch (Exception e) {
-      log.debug("BITS cancel failed (best-effort)", e);
+      log.debug("BITS remove failed (best-effort)", e);
     }
-    bitsJobId = null;
+    if (jobId.equals(bitsJobId)) bitsJobId = null;
+    if (jobId.equals(suspendedBitsJobId)) suspendedBitsJobId = null;
   }
 
   private void cancelCurlBestEffort() {
@@ -346,6 +493,14 @@ public final class DownloadExecutor {
   private static String psEscape(String raw) {
     if (raw == null) return "";
     return raw.replace("'", "''");
+  }
+
+  private static void deleteBestEffort(Path p) {
+    try {
+      Files.deleteIfExists(p);
+    } catch (IOException e) {
+      log.debug("Failed to delete {} (best-effort)", p, e);
+    }
   }
 
   private static long sizeBestEffort(Path p) {

@@ -23,8 +23,9 @@ export const MUST_NEVER_ALWAYS_PATTERN =
  * scope. The exclude list is explicit so a future addition under
  * `.claude/rules/` automatically extends scope unless added here.
  *
- * `tier-register.md` is the register itself — excluded so the scanner doesn't
- * detect its own rule-row text as candidate "must/never/always" sentences.
+ * The register itself lives at `docs/reference/contributing/tier-register.md`
+ * (relocated out of always-loaded context — tempdoc 799 K.2), which is outside
+ * this scope by construction, so it needs no exclude entry.
  *
  * `compaction-state.md` is auto-generated, gitignored, ephemeral session state
  * (compact-restore.mjs writes it on compaction and deletes it at session end —
@@ -34,7 +35,6 @@ export const MUST_NEVER_ALWAYS_PATTERN =
  * untagged-sentence scan (tempdoc 620 Part VI closure).
  */
 export const EXCLUDED_RULE_FILES = new Set([
-  '.claude/rules/tier-register.md',
   '.claude/rules/context-efficiency.md',
   '.claude/rules/hooks-reference.md',
   '.claude/rules/compaction-state.md',

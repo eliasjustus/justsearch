@@ -20,6 +20,7 @@ import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
 import { surfaceScrollLayoutStyles } from '../primitives/surfaceLayout.js';
 import '../components/StatusDot.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 
 interface GateRow {
   id: string;
@@ -93,7 +94,7 @@ export class GovernanceView extends JfElement {
     this.load = { kind: 'loading' };
     this.requestUpdate();
     try {
-      const res = await fetch(`${this.apiBase}/api/governance/state`, {
+      const res = await authorizedFetch(`${this.apiBase}/api/governance/state`, {
         headers: { accept: 'application/json' },
       });
       if (res.status === 404) {

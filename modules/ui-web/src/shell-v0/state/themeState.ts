@@ -27,6 +27,7 @@
  * `applyTheme` injection wraps automatically.
  */
 
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import {
   getDocument,
   subscribeProjection,
@@ -155,7 +156,7 @@ export function syncCustomThemesToCatalog(): void {
  * tokens.
  */
 export async function restoreActiveThemeIfPersisted(
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = authorizedFetch,
 ): Promise<void> {
   const id = getActiveThemeId();
   if (!id) return;
@@ -241,7 +242,7 @@ export interface Appearance {
 
 export async function applyAppearance(
   appearance: Appearance,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = authorizedFetch,
 ): Promise<void> {
   // Attribute/class layer (synchronous — applies even if the caller doesn't await).
   if (typeof document !== 'undefined') {
@@ -299,7 +300,7 @@ export async function applyAppearance(
  * default appearance; the palette restore is independent.
  */
 export async function restoreAppearanceOnBoot(
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = authorizedFetch,
 ): Promise<void> {
   // (1) light/dark + high-contrast from persisted settings.
   try {
@@ -383,7 +384,7 @@ export function clearActiveTheme(): void {
  */
 export async function loadAndApplyTheme(
   themeId: string,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = authorizedFetch,
 ): Promise<void> {
   // Tempdoc 567 — a CUSTOM theme in the catalog carries its DesignTokenTree
   // directly; compile + apply it through the one writer, no file fetch.

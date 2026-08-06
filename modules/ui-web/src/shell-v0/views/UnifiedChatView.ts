@@ -16,6 +16,7 @@
 
 import { html, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 // Tempdoc 621 Phase 1 — the chat window's body styles, extracted to keep this file readable.
 import { unifiedChatBodyStyles } from './unifiedChatStyles.js';
 import {
@@ -31,7 +32,8 @@ import { composeGridStyles } from '../primitives/compositionLayout.js';
 import { friendlyStreamError } from '../utils/streamError.js';
 import { composerStyles } from '../components/Composer.js';
 import '../components/Composer.js';
-import { takePendingSelection, takePendingForceShape, resolveShape, takePendingAutoRun, compose } from '../utils/compose.js';
+import { takePendingSelection, takePendingForceShape, resolveDispatchShape, wireSelectionKind, takePendingAutoRun, compose } from '../utils/compose.js';
+import { selectionItemToWirePayload } from '../utils/selectionWire.js';
 // Search Thread S1 — the ONE results card (side-effect import registers <jf-results-card>).
 import '../components/searchResults/ResultsCard.js';
 import type {
@@ -50,7 +52,6 @@ import {
   setOpen as setInspectorOpen,
 } from '../state/inspectorState.js';
 import type { SearchTrace } from '../../api/generated/index.js';
-import type { SelectionPayload } from '../../api/types/selection.js';
 import {
   getSelection as getCurrentSelection,
   subscribeSelection,
@@ -59,7 +60,7 @@ import {
   type SelectionItem,
 } from '../state/selectionState.js';
 import { setAiActivity, subscribeAiState, getAiState, type AiState } from '../state/aiStateStore.js';
-import { subscribeWide } from '../state/responsiveState.js';
+import { reportLayoutWidth, subscribeWide } from '../state/responsiveState.js';
 import { copyToClipboard } from '../utils/clipboardCopy.js';
 import { orElse } from '../state/known.js';
 import { readinessNotice, reasonFor, isReindexCause, type ReadinessNoticeView } from '../state/readinessNotice.js';
@@ -342,6 +343,18 @@ function dedupDegradationCauses(
     return [];
   }
   return notice.causes;
+}
+
+/**
+ * Round-13 review (P3) — the docked rungs' ACTIVE tier was `?data-pressed` only: a CSS hook, invisible
+ * to assistive tech, because `jf-control` has no `aria-pressed` passthrough. This project already has
+ * the convention for exactly that gap — {@link UnifiedChatView.renderPinToggle} carries the toggle
+ * state in the accessible LABEL ("Pin this search" / "Unpin this search"). Same convention here: the
+ * label states which rung you are ON, so a screen-reader user can tell the current tier without seeing
+ * the highlight. One helper, so the four rungs cannot word it four different ways.
+ */
+function rungLabel(base: string, active: boolean): string {
+  return active ? `${base} (current mode)` : base;
 }
 
 export class UnifiedChatView extends JfElement {
@@ -641,22 +654,26 @@ export class UnifiedChatView extends JfElement {
   // [n] mark or a rail card was focused), so chip ↔ inline ↔ rail stay in sync.
   private selectedSourceUnsub: (() => void) | null = null;
   // Tempdoc 565 §12.3.E fix F — track the wide breakpoint so the docked evidence rail mounts ONLY when
-  // wide (the narrow fallback is the toggle drawer); one SourcesPane instance per viewport, not two.
-  // 574 F1 — the wide breakpoint comes from the one responsiveState authority (a single shared
-  // matchMedia, not a per-instance MediaQueryList — the viewport is globally singular).
-  private wideViewport = true;
+  // wide (the narrow fallback is the toggle drawer); one SourcesPane instance per surface, not two.
+  // 574 F1 — the breakpoint comes from the one responsiveState authority, not a per-instance mql.
+  // 798 round 8 — it is the SURFACE box's width, reported below, that the authority decides on: the
+  // same box the `@container chat-surface` queries use, so a mount gate and the grid can never
+  // disagree about whether the wide layout is in effect.
+  private wideZone = true;
   private unsubWide: (() => void) | null = null;
+  private zoneResizeObserver: ResizeObserver | null = null;
+  private observedBox: HTMLElement | null = null;
   // Tempdoc 565 §21 — the chat-first Navigation authority. The run-spine's "where am I / how do I move"
   // (POSITION dots · WINDOW box · FOCUS ring · the jump/pin CONTROL) is owned by ONE reading-position
   // model in the NavigationController (`primitives/navigation.ts`), not hand-wired here. renderRunSpine is
   // a pure projection of `this.nav.{fractions,trackPx,viewport,activeId}`; the controller self-manages its
   // observers + scroll listener + lifecycle (hostUpdated/hostDisconnected), mirroring the Adaptivity
   // controllers (OverflowController/DensityController). It is active only in agent mode at the wide
-  // breakpoint — 574 F1: the breakpoint is the shared `wideViewport` (responsiveState), not a per-instance mql.
+  // breakpoint — 574 F1: the breakpoint is the shared `wideZone` (responsiveState), not a per-instance mql.
   private readonly nav = new NavigationController(this, {
     scrollEl: () => (this.shadowRoot?.querySelector('.conversation') as HTMLElement | null) ?? null,
     spineEl: () => (this.shadowRoot?.querySelector('.run-spine') as HTMLElement | null) ?? null,
-    active: () => this.affordance === 'agent' && this.wideViewport,
+    active: () => this.affordance === 'agent' && this.wideZone,
   });
   // 548 §4.5: set when an `answer` verb activated this surface; drives a
   // one-shot auto-send once the prompt is present and the AI is chat-capable.
@@ -759,9 +776,10 @@ export class UnifiedChatView extends JfElement {
     // Tempdoc 565 fix F / 574 F1 — re-render the rail mount when the wide breakpoint is crossed,
     // via the shared responsiveState authority (fires once immediately with the current value).
     this.unsubWide = subscribeWide((wide) => {
-      this.wideViewport = wide;
+      this.wideZone = wide;
       this.requestUpdate();
     });
+    this.observeSurfaceWidth();
     // Tempdoc 561 surface tier: when this one window is mounted for a specific shape (a deeplink /
     // resume via <jf-chat-shape-mount>), preset the affordance from the shape-id — so every entry
     // point lands HERE in the right mode, not in a separate per-shape view.
@@ -813,6 +831,10 @@ export class UnifiedChatView extends JfElement {
     this.selectionUnsubscribe = subscribeSelection(() => {
       if (this.isStreaming) return;
       refreshDocsFromSelection();
+      // The mode chip's shape is computed from the LIVE selection (the same computation send()
+      // dispatches on), and the selection store is not a Lit reactive property — so a selection
+      // change has to ask for the re-render itself or the chip goes stale.
+      this.requestUpdate();
     });
     this.storeUnsubscribe = subscribeUnifiedChat((s) => {
       if (this.isStreaming) return;
@@ -1049,6 +1071,10 @@ export class UnifiedChatView extends JfElement {
     this.selectedSourceUnsub = null;
     this.unsubWide?.();
     this.unsubWide = null;
+    this.zoneResizeObserver?.disconnect();
+    this.zoneResizeObserver = null;
+    this.observedBox = null;
+    reportLayoutWidth(this, null);
     this.searchUnsub?.();
     this.searchUnsub = null;
     this.facetUnsub?.();
@@ -1079,6 +1105,42 @@ export class UnifiedChatView extends JfElement {
     window.removeEventListener('keydown', this.boundWindowKeydown);
     window.removeEventListener('jf-focus-composer', this.boundFocusComposer);
     this.hoverCard?.remove();
+  }
+
+  /**
+   * 798 round 8 — report the measured CONTENT-box inline size of the `chat-surface` query container to
+   * the one breakpoint authority, so every wide-layout mount gate decides on the width the conversation
+   * zone actually gets rather than on the viewport (which still contains the Shell rail and this
+   * surface's padding). Measuring the very element the `@container chat-surface` rules resolve against
+   * — `.answer-plane` — is what keeps CSS and TS from disagreeing; the host is the fallback for the
+   * pre-first-render call, and is the same width while the plane carries no padding of its own.
+   *
+   * The `ResizeObserver` guard mirrors the Adaptivity controllers (`adaptiveDensity.ts`): where it is
+   * absent (happy-dom / SSR) nothing is reported and the authority stays on its viewport fallback.
+   * Reporting from the observer callback (which runs after layout, before paint) rather than from a
+   * rAF means the corrected decision is rendered in the same frame — no first-paint flash.
+   */
+  private observeSurfaceWidth(): void {
+    if (typeof ResizeObserver === 'undefined') return;
+    this.zoneResizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const inline = entry.contentBoxSize?.[0]?.inlineSize;
+      reportLayoutWidth(this, inline ?? entry.contentRect.width);
+    });
+    this.observeQueryContainer();
+  }
+
+  /** Point the observer at the `.answer-plane` query container once it exists; the host until then. */
+  private observeQueryContainer(): void {
+    const ro = this.zoneResizeObserver;
+    if (!ro) return;
+    const plane = this.shadowRoot?.querySelector('.answer-plane');
+    const target = plane instanceof HTMLElement ? plane : this;
+    if (target === this.observedBox) return;
+    ro.disconnect();
+    ro.observe(target, { box: 'content-box' });
+    this.observedBox = target;
   }
 
   private startRenderTick(): void {
@@ -1599,6 +1661,9 @@ export class UnifiedChatView extends JfElement {
     if (isContextInspectorOpen()) {
       setContextInspectorView(this.buildInspectorView());
     }
+    // 798 — the `.answer-plane` query container only exists after the first render; re-point the
+    // width observer at it (a no-op once it is already the observed box).
+    this.observeQueryContainer();
     // (Search Thread S2 note: the landing→docked transition is CSS-only — the composer never
     // re-parents, so no focus restoration is needed; see the stable-slot rule in renderAnswerPlane.)
   }
@@ -2076,17 +2141,32 @@ export class UnifiedChatView extends JfElement {
     // grid-template-columns + per-zone placements removed above; faithful per de-risk Probe S2).
     composeGridStyles(CONVERSATION_ZONES, {
       container: '.conversation-zone',
+      // 798 round 8 — the query container is the surface host (`container-type: inline-size` in
+      // unifiedChatBodyStyles), i.e. the box the zone is actually laid out in, not the viewport.
+      containerName: 'chat-surface',
       breakpoint: '64rem',
       gap: '1.5rem',
     }),
   ];
 
+  /**
+   * The shape this window would dispatch RIGHT NOW — the one computation the mode chip, the
+   * streaming header, and {@link send} all read.
+   *
+   * Tempdoc 526 §16 F13 (single dispatch resolver) / §561 P-B3 (the agent affordance is the
+   * action plane, so it is excluded from answer-plane shape resolution). The chip used to call
+   * the resolver with the selection kind hardcoded to `'none'` while `send()` passed the live
+   * kind, so the label could name a shape that was never dispatched.
+   */
+  private dispatchShape(): ShapeId {
+    return resolveDispatchShape(
+      this.affordance,
+      wireSelectionKind(getCurrentSelection().items[0]?.kind),
+    ) as ShapeId;
+  }
+
   override render(): TemplateResult {
-    // Tempdoc 526 §16 F13 — single dispatch resolver (no wrapper helper).
-    // Tempdoc 561 P-B3: the answer plane resolves a per-message shape; the agent affordance is the
-    // action plane — a MODE, not a per-message shape — so it is excluded from shape resolution.
-    const answerAffordance = this.affordance === 'agent' ? 'none' : this.affordance;
-    const currentShape = resolveShape('core.ask', 'none', answerAffordance) as ShapeId;
+    const currentShape = this.dispatchShape();
     const agentMode = this.affordance === 'agent';
     // Tempdoc 561 P-B3 (Tier-1 correctness fix): both planes are rendered on every pass and the
     // inactive one is hidden (visibility toggle), NOT swapped via a ?: branch. A branch destroyed
@@ -2354,9 +2434,22 @@ export class UnifiedChatView extends JfElement {
     // thumb), so the reading column hides its native scrollbar (`scrollbar-gutter: stable` reserves the
     // gutter so hiding it causes no reflow). Documents/narrow (no spine) keeps the thin native bar.
     const spineShown =
-      this.affordance === 'agent' && this.wideViewport;
+      this.affordance === 'agent' && this.wideZone;
+    // 798 round 8 — `landing-collapsed` swaps the zone's `flex: 1; min-height: 0` for content-sizing so
+    // the composer can centre in the freed space (687 R5a). That premise is "the landing zone is empty",
+    // and clearing the query does not empty it: nothing unmounts a reading pane on a query clear, so the
+    // zone content-sized around a `height: 100%` pane whose basis had just become indefinite — the pane
+    // laid out at full document height and pushed the composer and the escalation ladder below the fold
+    // (reproduced twice at 1040x709, recoverable only by navigating away and back).
+    //
+    // Of the two repairs — suppress the collapse while a pane is mounted, or unmount the pane on a
+    // return to landing — this takes the first. A preview is opened by a deliberate act and the pane
+    // carries its own close control, so closing it is the user's call; clearing the search box is a
+    // query-scoped action and should not destroy the reading surface (and its scroll position) as a
+    // side effect. The composer's decorative centring is the thing that can afford to yield.
+    const landingCollapsed = this.isLanding() && !this.documentPaneMounted();
     return html`
-      <div class="conversation-zone ${this.isLanding() ? 'landing-collapsed' : ''}">
+      <div class="conversation-zone ${landingCollapsed ? 'landing-collapsed' : ''}">
         ${this.renderRunSpine()}
         <div
           id="run-conversation"
@@ -2423,28 +2516,106 @@ export class UnifiedChatView extends JfElement {
               re-parents — the stable-slot invariant holds; only static text moved). */ ''}
         ${this.isLanding() ? this.renderLanding() : nothing}
         ${this.renderComposerBlock()}
+        ${/* Tempdoc 807 B.2 — the rungs used to render ONLY while isLanding(): once a search had run
+              every escalation control left the DOM, so Delegate (round 11) and Structured (round 13,
+              which cost that round its `shape:core.extract` coverage) were reachable only from an
+              empty landing / a fresh session. The rungs THEMSELVES were already correct; only this
+              condition was wrong. Landing keeps its exact strip (687 R5a's stable slot is untouched —
+              both branches render in the SAME position inside the SAME composer container, and the
+              composer element itself still never re-parents); the docked branch adds the two rungs the
+              landing reaches through the route row (Search floor / + Schema), which is gone whenever
+              the tier is not `retrieve`. */ ''}
         ${this.isLanding()
           ? html`<div class="escalation-strip">
               <div>Search instantly · no AI</div>
-              <div>Ask — answers with citations</div>
-              ${/* S8 live finding — the tab row's death orphaned agent-mode entry (the palette
-                    only carries diagnostics); until delegation folds into ask-turns entirely, the
-                    strip's Delegate line IS the entry (explicit pin, availability-gated). */ ''}
+              ${this.renderEscalationRungs()}
+            </div>`
+          : html`<div
+              class="escalation-strip escalation-strip-docked"
+              data-testid="escalation-strip-docked"
+            >
+              ${/* The way BACK to the always-available floor. It clears the sticky pin AND any held
+                    schema attachment: with the attachment held, clearing only the pin would re-derive
+                    'extract' (deriveAffordance precedence) and the click would be a silent no-op. */ ''}
               <jf-control
-                class="escalation-delegate"
-                data-testid="escalation-delegate"
-                label="Delegate a multi-step task to the agent"
+                class="escalation-search"
+                data-testid="escalation-search"
+                ?data-pressed=${this.affordance === 'retrieve'}
+                label=${rungLabel('Back to instant search — no AI needed', this.affordance === 'retrieve')}
+                .onActivate=${() => {
+                  this.explicitAffordance = null;
+                  this.schemaAttached = false;
+                  this.routeOverride = null;
+                }}
+                >Search — instant, no AI</jf-control
+              >
+              ${this.renderEscalationRungs()}
+              ${/* Structured is an ATTACHMENT, not a place (S5a decision 6) — so this rung sets the
+                    attachment and lets the ONE derivation authority resolve the tier, which also keeps
+                    "Detach schema" honest. Clearing the sticky pin is required: `explicit` outranks the
+                    attachment, so attaching from a pinned Ask/Delegate would otherwise change nothing. */ ''}
+              <jf-control
+                class="escalation-structured"
+                data-testid="escalation-structured"
+                ?data-pressed=${this.affordance === 'extract'}
+                label=${rungLabel('Extract structured fields against a JSON schema', this.affordance === 'extract')}
                 .availability=${this.aiState?.capabilities?.chat
                   ? undefined
                   : unavailableBecause('The local AI model is offline')}
                 .onActivate=${() => {
-                  this.affordance = 'agent';
+                  this.explicitAffordance = null;
+                  this.schemaAttached = true;
                 }}
-                >Delegate — the agent works multi-step</jf-control
+                >Structured — fields as JSON</jf-control
               >
-            </div>`
-          : nothing}
+            </div>`}
       </div>
+    `;
+  }
+
+  /**
+   * Tempdoc 807 B.2 — the two AI escalation rungs, rendered by BOTH the landing strip and the docked
+   * one so the pair cannot drift (one definition of label, availability gate and test id). The
+   * `data-pressed` bindings and the {@link rungLabel} active-suffix are inert on landing (isLanding()
+   * implies the `retrieve` tier), so the landing renders the same elements, attributes, names and
+   * order it did before.
+   */
+  private renderEscalationRungs(): TemplateResult {
+    return html`
+      ${/* Tempdoc 804 §B9 (round-10 F14) — Ask was the ONE escalation rung that failed
+            silently offline: a plain <div>, so clicking it changed nothing and said nothing
+            while its siblings (Delegate, Extract) both named the reason. It is the same kind
+            of affordance as Delegate, so it is the same kind of control: availability-gated
+            by the one operability authority, with the sibling wording. */ ''}
+      <jf-control
+        class="escalation-ask"
+        data-testid="escalation-ask"
+        ?data-pressed=${this.affordance === 'documents'}
+        label=${rungLabel('Ask a question and get an answer with citations', this.affordance === 'documents')}
+        .availability=${this.aiState?.capabilities?.chat
+          ? undefined
+          : unavailableBecause('The local AI model is offline')}
+        .onActivate=${() => {
+          this.affordance = 'documents';
+        }}
+        >Ask — answers with citations</jf-control
+      >
+      ${/* S8 live finding — the tab row's death orphaned agent-mode entry (the palette
+            only carries diagnostics); until delegation folds into ask-turns entirely, the
+            strip's Delegate line IS the entry (explicit pin, availability-gated). */ ''}
+      <jf-control
+        class="escalation-delegate"
+        data-testid="escalation-delegate"
+        ?data-pressed=${this.affordance === 'agent'}
+        label=${rungLabel('Delegate a multi-step task to the agent', this.affordance === 'agent')}
+        .availability=${this.aiState?.capabilities?.chat
+          ? undefined
+          : unavailableBecause('The local AI model is offline')}
+        .onActivate=${() => {
+          this.affordance = 'agent';
+        }}
+        >Delegate — the agent works multi-step</jf-control
+      >
     `;
   }
 
@@ -2743,7 +2914,7 @@ export class UnifiedChatView extends JfElement {
     // Fix F — mount the docked rail ONLY at the wide breakpoint (where it is visible); narrow viewports
     // fall back to the "Sources · N" chip + the toggle drawer. So exactly one SourcesPane subscribes per
     // viewport, not a dormant duplicate. Default to mounting when matchMedia is unavailable (tests/SSR).
-    const wide = this.wideViewport;
+    const wide = this.wideZone;
     if (!hasSources || !wide) return html`${nothing}`;
     return html`<jf-sources-pane
       docked
@@ -2754,18 +2925,24 @@ export class UnifiedChatView extends JfElement {
   }
 
   /**
+   * Is the reading pane mounted INSIDE the conversation grid? 687 R5b — the grid mount is wide-only;
+   * below the breakpoint the SAME component presents through Shell's OverlayHost right-drawer slot (the
+   * one sanctioned overlay seam) instead of auto-placing into an implicit stacked row (the
+   * audit-measured composer collision). The ONE predicate {@link renderDocumentPane} and the
+   * landing-collapse gate in {@link renderAnswerPlane} share, so the class and the mount agree.
+   */
+  private documentPaneMounted(): boolean {
+    return this.readingDocPath !== null && this.wideZone;
+  }
+
+  /**
    * Search Thread S6 (the Reading Stage) — the reading pane (`<jf-document-pane>`, `.document-pane`
    * zone col 5), mounted only while `readingDocPath` is set (empty-collapse: an unmounted zone's
-   * `fit-content` track collapses to 0, same mechanism as {@link renderEvidenceRail}). Unlike the
-   * evidence rail, this renders at EVERY viewport width — narrow gets the "stacks" layout
-   * (unifiedChatStyles.ts's `.document-pane` rule), not a viewport gate, because reading a cited/opened
-   * document is a primary action here, not supplementary evidence with a drawer fallback.
+   * `fit-content` track collapses to 0, same mechanism as {@link renderEvidenceRail}) and the surface
+   * is wide enough for the grid to give it a column ({@link documentPaneMounted}).
    */
   private renderDocumentPane(): TemplateResult | typeof nothing {
-    // 687 R5b — the GRID mount is wide-only; below the breakpoint the SAME component presents
-    // through Shell's OverlayHost right-drawer slot (the one sanctioned overlay seam) instead of
-    // an implicit stacked row (the audit-measured composer collision).
-    if (this.readingDocPath === null || !this.wideViewport) return nothing;
+    if (!this.documentPaneMounted()) return nothing;
     return html`<jf-document-pane
       class="document-pane"
       api-base=${this.apiBase}
@@ -2797,7 +2974,7 @@ export class UnifiedChatView extends JfElement {
    */
   private renderRunSpine(): TemplateResult {
     if (this.affordance !== 'agent') return html`${nothing}`;
-    const wide = this.wideViewport;
+    const wide = this.wideZone;
     if (!wide) return html`${nothing}`;
     // Tempdoc 565 §13/§19.4 — the WHOLE merged timeline as a POSITION-PROPORTIONAL minimap: primary
     // turns (user/assistant) are landmark nodes placed at their conversation scroll fraction, the
@@ -3670,7 +3847,14 @@ export class UnifiedChatView extends JfElement {
     const s = this.searchSnapshot;
     const query = (s?.query ?? '').trim();
     if (!s || !query || s.results.length === 0) return;
-    const mode = (s.searchTrace as SearchTrace | null | undefined)?.effectiveMode ?? 'TEXT';
+    // Tempdoc 805 §G.2/U5 — the frozen card's retrieval-mode identity may only come from the REFINED
+    // pass of this query. The quick pass genuinely runs `mode: 'text'` (searchState.buildSearchIntent
+    // pins it), so a commit landing inside the quick window used to freeze "Keyword" as the search's
+    // identity — round 11 saw exactly that on a hybrid search — and the removed `?? 'TEXT'` default
+    // asserted the same thing from a MISSING trace. Unknown now renders as nothing (ResultsCard's
+    // mode labels return null), never as a positive claim.
+    const trace = s.searchTrace as SearchTrace | null | undefined;
+    const mode = s.passStage === 'refined' && trace?.effectiveMode ? trace.effectiveMode : 'UNKNOWN';
     const committed: CommittedSearch = {
       id: makeCommittedSearchId(),
       query,
@@ -3703,7 +3887,7 @@ export class UnifiedChatView extends JfElement {
    *  snapshot already rendered and stays correct either way). */
   private async postSearchEvent(committed: CommittedSearch): Promise<void> {
     try {
-      const res = await fetch(
+      const res = await authorizedFetch(
         `${this.apiBase || ''}/api/thread/${encodeURIComponent(this.sessionId)}/events`,
         {
           method: 'POST',
@@ -4119,7 +4303,7 @@ export class UnifiedChatView extends JfElement {
   private renderSourceChips(sources: readonly AgentSource[], key: string): TemplateResult {
     if (!sources || sources.length === 0) return html`${nothing}`;
     // Structural default: collapsed when the wide rail shows the detail; expanded at narrow (no rail).
-    const railShown = this.wideViewport;
+    const railShown = this.wideZone;
     const open = this.sourceChipsToggles.get(key) ?? !railShown;
     const selected = getSelectedSource();
     const bodyId = `source-chips-${key}`;
@@ -4238,7 +4422,7 @@ export class UnifiedChatView extends JfElement {
    * only — no arrow keys, so scroll/caret movement is untouched.
    */
   private onConversationKeydown(e: KeyboardEvent): void {
-    if (this.affordance !== 'agent' || !this.wideViewport) return;
+    if (this.affordance !== 'agent' || !this.wideZone) return;
     const dir = e.key === 'j' ? 1 : e.key === 'k' ? -1 : 0;
     if (dir === 0) return;
     // §33 — never hijack typing: descend through nested shadow roots (jf-unified-chat-view →
@@ -5026,8 +5210,7 @@ export class UnifiedChatView extends JfElement {
 
   private renderStreamingBlock(): TemplateResult | typeof nothing {
     if (!this.streamingText && !this.isStreaming && !this.reasoning.isThinking) return nothing;
-    // Tempdoc 526 §16 F13 — single dispatch resolver (no wrapper helper).
-    const currentShape = resolveShape('core.ask', 'none', this.affordance) as ShapeId;
+    const currentShape = this.dispatchShape();
     const isExtract = currentShape === 'core.extract';
     return html`
       <div class="message assistant">
@@ -5207,24 +5390,16 @@ export class UnifiedChatView extends JfElement {
     // fallback; SEND-button flows now share the (operation, kind, affordance)
     // → shapeId table with compose()-driven flows.
     const forced = takePendingForceShape();
-    const currentSelection = getCurrentSelection().items[0];
-    // Tempdoc 526 §16 — only kinds with wire variants are forwarded to the
-    // resolver; FE-only item kinds (search-hit / browse-node / plugin-item)
-    // are summarized as 'item' for shape resolution.
-    const k = currentSelection?.kind;
-    const currentKind: SelectionPayload['kind'] | 'none' =
-      k === 'text-range' || k === 'citation' || k === 'result-set'
-        ? k
-        : k === 'search-hit' || k === 'browse-node' || k === 'plugin-item'
-          ? 'item'
-          : 'none';
-    const shapeId: ShapeId =
-      (forced as ShapeId | null) ??
-      (resolveShape('core.ask', currentKind, this.affordance) as ShapeId);
+    const shapeId: ShapeId = (forced as ShapeId | null) ?? this.dispatchShape();
     // Tempdoc 526 §12.4 — drain the pending selection set by compose() on the
-    // navigation event. One-shot: subsequent sends without a fresh compose()
-    // call carry no body.selection.
-    const selection = takePendingSelection();
+    // navigation event. It is a ONE-SHOT register that only compose()-driven
+    // flows write, so an ordinary Send used to carry no body.selection at all:
+    // every document-bearing injector (SelectionContextInjector) then saw an
+    // empty selection and the shape ran with no document behind it. Fall back
+    // to what the user actually has selected — the live selection IS the
+    // document they mean.
+    const selection =
+      takePendingSelection() ?? selectionItemToWirePayload(getCurrentSelection().items[0]);
     const body = buildRequestBody(
       shapeId,
       text,

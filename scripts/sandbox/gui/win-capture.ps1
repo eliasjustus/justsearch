@@ -9,6 +9,10 @@ param(
   [string]$Keys = "",
   [int]$DelayMs = 1200
 )
+# Exits NON-ZERO when the capture fails (sandbox round-10 finding H1) -- the
+# capture primitives throw instead of printing a "saved:" line for a file that
+# was never written.
+$ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot "JustSearchGui.psm1") -Force
 
 $conn = Connect-App -ProcName $ProcName -FocusDelayMs 700
@@ -32,4 +36,10 @@ if ($w -le 0 -or $ht -le 0) {
   exit 1
 }
 
-[void](Save-AppShot -Handle $conn.Handle -Out $Out)
+try {
+  [void](Save-AppShot -Handle $conn.Handle -Out $Out)
+}
+catch {
+  Write-Output "CAPTURE FAILED: $($_.Exception.Message)"
+  exit 1
+}

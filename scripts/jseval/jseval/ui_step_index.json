@@ -42,6 +42,9 @@
     "search-results-light", "search-results-compact", "search-results-rich",
     "search-simple-mode", "search-advanced-mode"
   ],
+  "shell-v0/components/AppUpdateBanner.ts": [
+    "settings", "settings-light"
+  ],
   "shell-v0/views/HelpSurface.ts": ["help", "help-light"],
 
   "shell-v0/shell/Shell.ts": ["shell-v0-demo"],

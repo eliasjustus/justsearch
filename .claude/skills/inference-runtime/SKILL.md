@@ -281,6 +281,33 @@ Design choices in the current inference runtime, with rationale.
   the lease interface admits sizes but only binary logic ships; or when the
   deprecated wire aliases (`phase`, `starting`) retire per §12d.
 
+### D-009: Observed execution provider on runtime status — SHIPPED (tempdoc 805 W3)
+
+- **Choice:** `/api/ai/runtime/status.onnxFeatures[]` carries additive OBSERVED fields
+  (`executionProvider`, `gpuFallback`, `fallbackReason`) beside the intent/discovery fields,
+  projected from `EncoderRuntimeExplainer` — now the single authority for "what EP is this
+  encoder actually on", consumed by BOTH `/api/inference/encoders` (tempdoc 422) and the
+  runtime status. New Head-side seam: `EncoderRuntimeCache` / `WorkerEncoderRuntimeCache`
+  (2 s TTL, last-known-good) over the Worker's `getSessionPolicies` +
+  `getEncoderOrtCudaViews` RPCs. No proto change: per-encoder `OrtCudaStatus` already crossed
+  as `StatusResponse.gpu.*OrtCuda` → `OrtCudaView`.
+- **Rationale:** round 11 (tempdoc 734 R11-F3): an upgraded machine ran ALL ONNX inference on
+  CPU (retained runtime pack missing the four ORT natives PR #276 moved to
+  `ort-native-cuda12-v1.24.3.zip`) while the status reported `cuda12`/`active`/`gpuLayers:99`
+  — `sessionActive`/`modelActive` is TRUE for a CPU-fallback session and is explicitly NOT an
+  EP claim; the honest reading is the observed triple. A status field is an intent or an
+  observation, never an intent presented as an outcome (805 Part D principle 3).
+- **Companion guarantees:** the ORT native pack is content-checked at publish
+  (`scripts/release/check-ort-native-asset.mjs`, DLL set parsed from
+  `OrtCudaHelper.ORT_NATIVE_DLL_SET` — no second hardcoded list), per the ORT-bump coupling
+  checklist in `cut-a-release.md`. Install truth split into two axes:
+  `installedFully` (install history, contract-measured per FILE, entry-kind aware) vs
+  `repairNeeded` (disk reality vs current registry, contract-independent) —
+  `InstallCompleteness` in app-services, registered as a logic seam.
+- **Evidence:** tempdoc 805 Parts G.3/H/I; round-11 mechanism in tempdoc 734.
+- **Revisit when:** the sandbox `onnx-ep-fallback-vs-status` must-watch converts to an API
+  assertion (its note names the condition), after which the watch entry retires.
+
 ---
 
 ## Open Questions

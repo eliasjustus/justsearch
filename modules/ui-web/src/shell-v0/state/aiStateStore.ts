@@ -222,6 +222,14 @@ export interface AiState {
    */
   verdict: SystemHealthVerdict;
   /**
+   * Tempdoc 807 A.3 — is the retained snapshot still a LIVE observation, or only a past
+   * measurement? Projected ONCE from contact reachability by {@link isSnapshotLive}; every surface that
+   * renders raw snapshot fields (progress, coverage, queue counts, capability counts, the CONN dot)
+   * consults this instead of inventing its own staleness heuristic. `false` ⟹ degrade rather than
+   * assert: stop animating, say "last known", make live-backend-preconditioned controls unavailable.
+   */
+  snapshotLive: boolean;
+  /**
    * The last-known raw poll snapshots (B7). Consumers that need fields beyond
    * the projection above (GPU, memory ceiling, uptime, index state, inference
    * queues) read these instead of running a SECOND status/inference poll — the
@@ -446,6 +454,62 @@ function computeRuntime(): AiRuntime {
   };
 }
 
+/**
+ * Tempdoc 806 B.2 (round-12 finding) — the ONE predicate for "does the system verdict own the status
+ * readout, or does the AI-engine verdict?". `computeStatusLabel` and `computeStatusTone` MUST agree
+ * here, because they are rendered as a SINGLE indicator: the liveness dot and the words beside it
+ * (`LivenessReadout`, `core.retrieval` on the Health Connection card) and the status-bar pill.
+ *
+ * Round 12 photographed them disagreeing — a danger-red dot beside the word "Online" — because
+ * `degraded` was listed in the tone branch (tempdoc 649) and never added to the label branch, so the
+ * dot reported the system verdict while the text beside it reported the AI engine. The label was the
+ * wrong half: `computeStatusLabel`'s own doc comment already claims "the bar can no longer say
+ * 'Online' while Health says 'Service degraded'" — the Health badge projects `verdictHeadline` for
+ * every kind, including `degraded`, and the bar did not.
+ */
+function verdictOwnsStatus(verdict: SystemHealthVerdict): boolean {
+  return (
+    verdict.kind === 'connecting' ||
+    verdict.kind === 'unreachable' ||
+    verdict.kind === 'transitioning' ||
+    verdict.kind === 'degraded'
+  );
+}
+
+/**
+ * Tempdoc 807 A.3 (round-13 R13-F2) — the ONE liveness predicate: "is what we last observed still a
+ * LIVE observation, or only a past measurement?". Sibling of {@link verdictOwnsStatus}: both are pure
+ * projections of the SAME verdict authority, so a surface can never invent a second detection
+ * mechanism (that divergence is how the status label and the CONN dot drifted apart, 806 W2).
+ *
+ * `verdictOwnsStatus` governs the status line's own WORDING and TONE. This governs everything the
+ * status line does not: the surfaces that render fields off the retained snapshot. Round 13
+ * photographed an animating "Building semantic search 2.0% · 5,084 pending", "4/4 active" and a green
+ * CONN dot with BOTH java processes dead — the values were right, their TENSE was not.
+ *
+ * THE RULE: liveness is a CONTACT fact, never a verdict-kind classification. The snapshot is live
+ * exactly while the origin is reachable — `computeReachability()`, the same `reachableViaContact`
+ * `computeVerdict` itself consumes. The first cut of this predicate read the verdict KIND instead
+ * and claimed the two non-live kinds were "exactly the two `computeVerdict` mints when
+ * `reachableViaContact` is false". That was false at source (round-13 review): `computeStability`
+ * returns from SIX higher-precedence branches before it can reach the `phase === 'stale'` one, and
+ * every one of them reads a RETAINED snapshot field — `indexState: UNAVAILABLE` (worker-restart),
+ * `migrationState` SWITCHING/MIGRATING, a building≠active generation, serving-search≠serving-ingest,
+ * `catchingUp`. `statusSig` is retained on a failed poll, so with the Worker dying first (the
+ * ordinary case: the backend writes `indexState: UNAVAILABLE`, then the Head dies) the verdict
+ * stayed `transitioning`/`worker-restart` FOREVER, never `channel-stale`, and the whole fix was
+ * silently disabled. Contact cannot be retained: it is a stamp of when we last heard anything.
+ *
+ * AGE is already accounted for and needs no new threshold or second authority: reachability is
+ * earned by positive contact within `STREAM_WATCHDOG_STALE_MS` (`originContact.isOriginReachable`,
+ * the generated 40s stream-watchdog window = >2× the 15s heartbeat), and before the first contact
+ * the boot grace window applies (`computeReachability`, mirroring `neverConnected`) so startup is
+ * live, not a false alarm.
+ */
+export function isSnapshotLive(connection: Pick<AiConnection, 'reachable'>): boolean {
+  return connection.reachable;
+}
+
 function computeStatusLabel(
   verdict: SystemHealthVerdict,
   runtime: AiRuntime,
@@ -472,11 +536,9 @@ function computeStatusLabel(
   // while connecting/reconnecting/transitioning). Backend-connectivity problems
   // outrank AI-install state — nothing AI-related is actionable if the backend
   // itself is unreachable, so this check stays first, unchanged (Design pass 3 §V).
-  if (
-    verdict.kind === 'connecting' ||
-    verdict.kind === 'unreachable' ||
-    verdict.kind === 'transitioning'
-  ) {
+  // Tempdoc 806 B.2: `degraded` joined this set via `verdictOwnsStatus` — the tone branch already had
+  // it, so the pair rendered a warning/danger dot next to the AI engine's "Online".
+  if (verdictOwnsStatus(verdict)) {
     return verdictHeadline(verdict);
   }
   // Design pass 3 — the AI-specific label now comes from the ONE AI-engine presentation
@@ -593,12 +655,7 @@ function computeStatusTone(
 ): NoticeTone {
   // Verdict-driven kinds (mirror computeStatusLabel's verdictHeadline branch): tone from the ONE
   // verdict-tone authority — calm `busy` → info, `warn` → warning, `unreachable` (error) → error.
-  if (
-    verdict.kind === 'connecting' ||
-    verdict.kind === 'unreachable' ||
-    verdict.kind === 'transitioning' ||
-    verdict.kind === 'degraded'
-  ) {
+  if (verdictOwnsStatus(verdict)) {
     return verdictTone(verdict.severity);
   }
   // Design pass 3 — the AI-specific tone now comes from the ONE AI-engine presentation projection
@@ -674,6 +731,11 @@ function buildSnapshot(): AiState {
   });
   const installStatus = installStatusSig.get();
   const runtimeStatus = runtimeStatusSig.get();
+  // Tempdoc 807 — the ONE liveness answer, computed here from the SAME contact reachability the
+  // verdict above consumes, and threaded BOTH into the engine verdict (so it cannot claim a live
+  // engine off a dead snapshot) and onto the state (so snapshot-rendering surfaces re-tense the same
+  // way, at the same moment).
+  const snapshotLive = isSnapshotLive(connection);
   // Tempdoc 663 Design pass 2 - the AI-engine rollup, computed the same way stability/verdict are
   // (purely observed signals; no surface-local UI intent). Computed BEFORE statusLabel/statusTone
   // (Design pass 3) since those now project their AI-specific wording/tone from this value.
@@ -682,6 +744,9 @@ function buildSnapshot(): AiState {
     runtimeStatus,
     runtime,
     reachable: connection.reachable,
+    // Tempdoc 807 Part A (round-13 R13-F2) — W1's predicate, threaded in rather than re-derived inside
+    // the verdict function: a retained `engineState: 'Healthy'` must not mint a settled green "Online".
+    snapshotLive,
     // Tempdoc 737 §12b/§12c — the runtime-authority engine axis (preferred over runtime.mode when present).
     engineState: status?.inference?.engineState,
     chatEnabledSpec: status?.inference?.chatEnabledSpec,
@@ -705,6 +770,8 @@ function buildSnapshot(): AiState {
     statusTone,
     stability,
     verdict,
+    // Tempdoc 807 A.3 — projected once, here, from the verdict just computed above.
+    snapshotLive,
     status,
     inference: inferenceSig.get(),
     lastSettledIndex: lastSettledIndexSig.get(),

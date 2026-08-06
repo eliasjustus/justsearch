@@ -13,6 +13,7 @@ import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.function.BooleanSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,6 +55,13 @@ public final class MmfWorkerSignalBus implements WorkerSignalBus {
    * (tempdoc 630). When unknown, {@link #shouldDie()} falls back to heartbeat-only (pre-630) behavior.
    */
   private final long headPid;
+  /**
+   * Intra-process pending-ingest probe (tempdoc 798). Not backed by the mapped segment — the
+   * indexing loop and the backfill scheduler that reads it live in the same JVM; the Head has no
+   * stake in it. Volatile because the loop thread registers it and background threads read it.
+   */
+  private volatile BooleanSupplier pendingIngestProbe;
+
   private RandomAccessFile raf;
   private FileChannel channel;
   private Arena arena;
@@ -231,6 +239,17 @@ public final class MmfWorkerSignalBus implements WorkerSignalBus {
   public boolean isEnergyReduced() {
     ensureOpen();
     return segment.get(ValueLayout.JAVA_BYTE, MmfWorkerSignalLayoutV1.OFFSET_ENERGY_REDUCED) == 1;
+  }
+
+  @Override
+  public boolean hasPendingIngest() {
+    BooleanSupplier probe = pendingIngestProbe;
+    return probe != null && probe.getAsBoolean();
+  }
+
+  @Override
+  public void setPendingIngestProbe(BooleanSupplier probe) {
+    this.pendingIngestProbe = probe;
   }
 
   @Override

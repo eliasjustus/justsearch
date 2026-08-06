@@ -20,7 +20,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { LitElement } from 'lit';
 import './UnifiedChatView.js';
 import type { UnifiedChatView } from './UnifiedChatView.js';
-import { setPendingAutoRun, setPendingForceShape, takePendingAutoRun, takePendingForceShape } from '../utils/compose.js';
+import { setPendingAutoRun, setPendingForceShape, takePendingAutoRun, takePendingForceShape, takePendingSelection } from '../utils/compose.js';
+import { SHAPE_LABELS, type ShapeId } from './unifiedChatRequest.js';
+import { unifiedChatBodyStyles } from './unifiedChatStyles.js';
 // Search Thread Round-2 R2 — namespace import so `compose` can be spied on directly (the shift-held
 // Ask AI staging test asserts the view calls the SAME compose() seam the pre-round-2 behavior used).
 import * as composeModule from '../utils/compose.js';
@@ -40,7 +42,11 @@ import {
   getAgentSessionController,
   __resetAgentSessionStore,
 } from '../state/agentSessionStore.js';
-import { getSelection, __resetSelectionForTest } from '../state/selectionState.js';
+import {
+  getSelection,
+  setSingleSelection,
+  __resetSelectionForTest,
+} from '../state/selectionState.js';
 // Search Thread S6 — the reading-pane wiring tests exercise the REAL (unmocked) inspectorState store
 // (the "open a document for reading" signal every card-open/citation-click flow funnels through) and a
 // mock PluginHostApi (the internal openRetrieveHit/handleCommittedCardOpen call sites route through
@@ -58,6 +64,10 @@ import { setUiMode, __resetUiModeForTest } from '../state/uiModeState.js';
 const AI_STATE_READY = {
   capabilities: { chat: true, rag: true, extract: false, embedding: false },
   activity: { state: 'idle', shapeId: null, startedAtMs: null, canCancel: false, cancel: null },
+  // Tempdoc 807 A.3 — "READY" means the backend is answering, so the snapshot is a LIVE observation.
+  // `projectAvailability` now gates on this first (a dead backend leaves `capabilities.chat` true off
+  // the retained snapshot), so a fixture that omits it would describe a disconnected backend.
+  snapshotLive: true,
 };
 vi.mock('../state/aiStateStore.js', () => ({
   startAiStateStore: vi.fn(),
@@ -1215,8 +1225,8 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     await view.updateComplete;
     view.affordance = 'agent';
     // 574 F1 — the wide breakpoint now comes from the shared responsiveState authority; simulate
-    // narrow (< 64rem) by setting the projected field directly.
-    (view as unknown as { wideViewport: boolean }).wideViewport = false;
+    // narrow (< 64rem of SURFACE width, 798) by setting the projected field directly.
+    (view as unknown as { wideZone: boolean }).wideZone = false;
     const ctrl = getAgentSessionController('http://localhost:5173');
     (ctrl as unknown as { answerSources: unknown[] }).answerSources = [
       { parentDocId: 'd1', chunkIndex: 0, path: 'docs/a.md', title: 'Doc A', excerpt: 'x', startLine: 5, endLine: 9, headingText: '' },
@@ -2301,6 +2311,43 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
       expect(chip).not.toBeNull();
       expect(chip!.pinned).toBe(true);
       expect(chip!.route).toBe('search');
+      view.remove();
+    });
+
+    // Tempdoc 807 A.3 (round-13 R13-F2) — a DEAD backend leaves `capabilities.chat` true (it is read
+    // off the retained inference snapshot), so before the liveness gate the chip happily offered Ask
+    // against a process that no longer existed. Liveness now pins it exactly as a chat gap does.
+    it('807: pins to search when the snapshot is no longer live, even though chat still reads capable', async () => {
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      view.aiState = {
+        ...AI_STATE_READY,
+        capabilities: { ...AI_STATE_READY.capabilities, chat: true },
+        snapshotLive: false,
+      } as unknown as UnifiedChatView['aiState'];
+      view.inputDraft = 'how do I configure ocr?';
+      await view.updateComplete;
+      const chip = view.shadowRoot?.querySelector('jf-route-chip') as
+        | (HTMLElement & { route: string; pinned: boolean })
+        | null;
+      expect(chip!.pinned).toBe(true);
+      expect(chip!.route).toBe('search');
+      view.remove();
+    });
+
+    it('807 ANTI-REGRESSION: the SAME state with a live snapshot is not pinned', async () => {
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      view.aiState = { ...AI_STATE_READY } as unknown as UnifiedChatView['aiState'];
+      view.inputDraft = 'how do I configure ocr?';
+      await view.updateComplete;
+      const chip = view.shadowRoot?.querySelector('jf-route-chip') as
+        | (HTMLElement & { route: string; pinned: boolean })
+        | null;
+      expect(chip!.pinned).toBe(false);
+      expect(chip!.route).toBe('ask');
       view.remove();
     });
 
@@ -3452,10 +3499,22 @@ describe('Search Thread S4-final — commit-on-consequence + query trail', () =>
     globalThis.fetch = originalFetch;
   });
 
-  /** Push a fabricated refined-pass snapshot with 2 results through the mocked search store. */
-  function pushSearch(view: UnifiedChatView, query: string): void {
+  /**
+   * Push a fabricated refined-pass snapshot with 2 results through the mocked search store.
+   *
+   * Tempdoc 805 §G.2 — `passStage` is now part of what makes this a REFINED-pass fixture (it was
+   * omitted before, when the frozen card took any trace it found, or defaulted to 'TEXT'). Pass
+   * `'quick'` to fabricate the quick window instead: that pass genuinely runs `mode: 'text'`
+   * (searchState.buildSearchIntent), so its identity must never be frozen as the search's own.
+   */
+  function pushSearch(
+    view: UnifiedChatView,
+    query: string,
+    opts: { passStage?: 'quick' | 'refined'; effectiveMode?: string | null } = {},
+  ): void {
     view.affordance = 'retrieve';
     expect(searchListener).not.toBeNull();
+    const mode = opts.effectiveMode === undefined ? 'HYBRID' : opts.effectiveMode;
     searchListener!({
       query,
       results: [
@@ -3467,7 +3526,8 @@ describe('Search Thread S4-final — commit-on-consequence + query trail', () =>
       isSearching: false,
       processingTimeMs: 12,
       error: null,
-      searchTrace: { effectiveMode: 'HYBRID' },
+      passStage: opts.passStage ?? 'refined',
+      searchTrace: mode === null ? null : { effectiveMode: mode },
     });
   }
 
@@ -3524,6 +3584,90 @@ describe('Search Thread S4-final — commit-on-consequence + query trail', () =>
       resultCount: 2,
       docIds: ['/docs/q1.md', '/src/helper.ts'],
     });
+    view.remove();
+  });
+
+  // ===== Tempdoc 805 §G.2 / derisk U5 — the frozen card's retrieval-mode IDENTITY. The quick pass
+  // genuinely runs `mode: 'text'` (searchState.buildSearchIntent:330-332), so a commit landing inside
+  // the quick window froze "Keyword" as the search's identity — round 11 saw that on a hybrid search —
+  // and the removed `?? 'TEXT'` default asserted the same from a MISSING trace. =====
+
+  it("805 §G.2: a commit during the QUICK window freezes mode 'UNKNOWN' and renders NO mode label", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'evt-q' }) });
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { sessionId: string }).sessionId = 'uc-commit-quick';
+    // The quick pass' own honest trace: it really did run TEXT — but it is not the search's identity.
+    pushSearch(view, 'invoice audit', { passStage: 'quick', effectiveMode: 'TEXT' });
+    await view.updateComplete;
+
+    view.shadowRoot
+      ?.querySelector('jf-results-card:not([variant])')!
+      .dispatchEvent(new CustomEvent('card-open', { detail: { id: 'h1' }, bubbles: true, composed: true }));
+    await view.updateComplete;
+
+    const committed = (view as unknown as { committedSearches: Array<Record<string, unknown>> })
+      .committedSearches;
+    expect(committed.length).toBe(1);
+    expect(committed[0]!.mode).toBe('UNKNOWN');
+    expect(committed[0]!.mode).not.toBe('TEXT');
+
+    // The frozen card renders the provenance header WITHOUT a mode segment — and without a dangling
+    // separator where the label used to be.
+    const snapshotCard = view.shadowRoot?.querySelector('jf-results-card[variant="snapshot"]');
+    await (snapshotCard as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    const header = snapshotCard!.shadowRoot?.querySelector('[data-testid="card-provenance"]');
+    const text = header?.textContent ?? '';
+    expect(text).toContain('invoice audit');
+    expect(text).not.toContain('Keyword');
+    expect(text).not.toContain('exact-word search');
+    expect(text).not.toContain('UNKNOWN');
+    expect(text.replace(/\s+/g, ' ')).not.toContain('· ·');
+    view.remove();
+  });
+
+  it("805 §G.2: a MISSING trace on the refined pass also freezes 'UNKNOWN' (no `?? 'TEXT'` default)", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'evt-n' }) });
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { sessionId: string }).sessionId = 'uc-commit-notrace';
+    pushSearch(view, 'invoice audit', { passStage: 'refined', effectiveMode: null });
+    await view.updateComplete;
+
+    view.shadowRoot
+      ?.querySelector('jf-results-card:not([variant])')!
+      .dispatchEvent(new CustomEvent('card-open', { detail: { id: 'h1' }, bubbles: true, composed: true }));
+    await view.updateComplete;
+
+    const committed = (view as unknown as { committedSearches: Array<Record<string, unknown>> })
+      .committedSearches;
+    expect(committed[0]!.mode).toBe('UNKNOWN');
+    view.remove();
+  });
+
+  it('805 §G.2: a commit AFTER the refined pass keeps the real mode + renders its label', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'evt-r' }) });
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { sessionId: string }).sessionId = 'uc-commit-refined';
+    pushSearch(view, 'invoice audit', { passStage: 'refined', effectiveMode: 'HYBRID' });
+    await view.updateComplete;
+
+    view.shadowRoot
+      ?.querySelector('jf-results-card:not([variant])')!
+      .dispatchEvent(new CustomEvent('card-open', { detail: { id: 'h1' }, bubbles: true, composed: true }));
+    await view.updateComplete;
+
+    const committed = (view as unknown as { committedSearches: Array<Record<string, unknown>> })
+      .committedSearches;
+    expect(committed[0]!.mode).toBe('HYBRID');
+
+    const snapshotCard = view.shadowRoot?.querySelector('jf-results-card[variant="snapshot"]');
+    await (snapshotCard as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    const text =
+      snapshotCard!.shadowRoot?.querySelector('[data-testid="card-provenance"]')?.textContent ?? '';
+    // Simple mode is the default (tempdoc 738 C2) → the plain label.
+    expect(text).toContain('meaning + words');
     view.remove();
   });
 
@@ -3880,6 +4024,216 @@ describe('Search Thread Round-2 R4 — bar re-skin (jf-control compositions)', (
     await view.updateComplete;
     expect(view.affordance).toBe('agent');
   });
+
+  // Tempdoc 804 §B9 (round-10 F14): Ask was the ONE escalation rung that failed SILENTLY with AI
+  // offline — a plain <div>, so a click produced no mode change, no reason, and no disabled styling,
+  // while Delegate showed tooltip+toast and Extract greyed to "AI Offline". Same affordance class →
+  // same availability gate, same wording.
+  it('escalation-ask (jf-control) is availability-gated with the sibling reason: blocked offline, operable when AI is up', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { aiState: unknown }).aiState = {
+      ...AI_STATE_READY,
+      capabilities: { ...AI_STATE_READY.capabilities, chat: false },
+    };
+    view.requestUpdate();
+    await view.updateComplete;
+
+    const ask = view.shadowRoot?.querySelector('[data-testid="escalation-ask"]') as HTMLElement & {
+      availability?: { kind: string; reason?: string };
+    };
+    expect(ask).not.toBeNull();
+    expect(ask.tagName.toLowerCase()).toBe('jf-control');
+    // The reason is REACHABLE, not just absent-behaviour — and worded like its siblings.
+    expect(ask.availability?.kind).toBe('unavailable');
+    expect(ask.availability?.reason).toBe('The local AI model is offline');
+    await clickJfControl(ask);
+    await view.updateComplete;
+    expect(view.affordance).not.toBe('documents'); // blocked — offline, and it SAYS so
+
+    (view as unknown as { aiState: unknown }).aiState = AI_STATE_READY; // chat: true
+    view.requestUpdate();
+    await view.updateComplete;
+    await clickJfControl(view.shadowRoot?.querySelector('[data-testid="escalation-ask"]'));
+    await view.updateComplete;
+    expect(view.affordance).toBe('documents');
+  });
+});
+
+// Tempdoc 807 B.2 — the rung-reachability class, root-caused: the escalation strip rendered ONLY
+// while `isLanding()`, so after ANY search every rung control left the DOM. Round 11 lost ~8 minutes
+// to a Delegate reachable only from the empty landing; round 13 found no route back to Structured
+// after a search and forfeited its `shape:core.extract` coverage gate. These tests assert the rungs
+// are PRESENT AND ACTIVATABLE in the post-search state — the assertion both rounds would have failed.
+describe('Tempdoc 807 B.2 — escalation rungs survive the landing → post-search transition', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    searchListener = null;
+  });
+
+  async function clickRung(view: UnifiedChatView, testid: string): Promise<void> {
+    const el = view.shadowRoot?.querySelector(`[data-testid="${testid}"]`);
+    expect(el, `${testid} must be in the DOM to be clickable`).toBeTruthy();
+    expect(el!.tagName.toLowerCase()).toBe('jf-control');
+    await (el as unknown as { updateComplete: Promise<boolean> }).updateComplete;
+    (el!.shadowRoot!.querySelector('button') as HTMLButtonElement).click();
+  }
+
+  function shapeOf(view: UnifiedChatView): string {
+    return (view as unknown as { currentShapeId(): string }).currentShapeId();
+  }
+
+  /** A POST-SEARCH state: a live query + hits, so `isLanding()` is false and the bar is docked. */
+  async function mountPostSearch(): Promise<UnifiedChatView> {
+    const view = mountView();
+    await view.updateComplete;
+    searchListener!({
+      ...SEARCH_EMPTY,
+      query: 'quarterly report',
+      results: [{ id: 'h1', title: 'T', path: '/t.md', snippet: '', kind: 'markdown' }],
+      matchCount: 1,
+      totalHits: 1,
+    });
+    await view.updateComplete;
+    expect(
+      view.shadowRoot?.querySelector('[data-testid="escalation-strip-docked"]'),
+      'the docked strip must exist once a search has run',
+    ).not.toBeNull();
+    return view;
+  }
+
+  it('every rung is reachable AFTER a search has run — Delegate (round 11), Structured (round 13), Ask, and back to the floor', async () => {
+    const view = await mountPostSearch();
+    expect(view.affordance).toBe('retrieve');
+
+    // Round 11: Delegate existed only on the empty landing; a cold restart was the only route.
+    await clickRung(view, 'escalation-delegate');
+    await view.updateComplete;
+    expect(view.affordance).toBe('agent');
+
+    // Round 13: no route back to Structured after a search — and from a non-retrieve tier the route
+    // row (with its "+ Schema") is not rendered at all, so the strip is the ONLY way in.
+    await clickRung(view, 'escalation-structured');
+    await view.updateComplete;
+    expect(view.affordance).toBe('extract');
+    expect(shapeOf(view)).toBe('core.extract');
+
+    await clickRung(view, 'escalation-ask');
+    await view.updateComplete;
+    expect(view.affordance).toBe('documents');
+    expect(shapeOf(view)).toBe('core.rag-ask');
+
+    await clickRung(view, 'escalation-search');
+    await view.updateComplete;
+    expect(view.affordance).toBe('retrieve');
+  });
+
+  it('the Structured rung ATTACHES (it does not pin the tier), so "Detach schema" still returns to the floor', async () => {
+    const view = await mountPostSearch();
+    // Pin a tier first: `explicit` outranks the attachment in deriveAffordance, so a rung that only
+    // set `schemaAttached` from here would change nothing at all.
+    await clickRung(view, 'escalation-ask');
+    await view.updateComplete;
+    expect(view.affordance).toBe('documents');
+
+    await clickRung(view, 'escalation-structured');
+    await view.updateComplete;
+    expect((view as unknown as { schemaAttached: boolean }).schemaAttached).toBe(true);
+    expect((view as unknown as { explicitAffordance: unknown }).explicitAffordance).toBeNull();
+    expect(view.affordance).toBe('extract');
+
+    await clickRung(view, 'schema-detach');
+    await view.updateComplete;
+    expect(view.affordance).toBe('retrieve');
+  });
+
+  it('post-search, an AI-requiring rung still NAMES its reason offline instead of dying silently (804 §B9 semantics survive)', async () => {
+    const view = await mountPostSearch();
+    (view as unknown as { aiState: unknown }).aiState = {
+      ...AI_STATE_READY,
+      capabilities: { ...AI_STATE_READY.capabilities, chat: false },
+    };
+    view.requestUpdate();
+    await view.updateComplete;
+
+    for (const id of ['escalation-ask', 'escalation-delegate', 'escalation-structured']) {
+      const el = view.shadowRoot?.querySelector(`[data-testid="${id}"]`) as HTMLElement & {
+        availability?: { kind: string; reason?: string };
+      };
+      expect(el, id).not.toBeNull();
+      expect(el.availability?.kind, id).toBe('unavailable');
+      expect(el.availability?.reason, id).toBe('The local AI model is offline');
+    }
+
+    await clickRung(view, 'escalation-structured');
+    await view.updateComplete;
+    expect(view.affordance).toBe('retrieve'); // blocked — and it says why
+
+    // The search floor is never AI-gated: its rung stays operable with the model down.
+    const floor = view.shadowRoot?.querySelector('[data-testid="escalation-search"]') as HTMLElement & {
+      availability?: { kind: string };
+    };
+    expect(floor.availability).toBeUndefined();
+  });
+
+  it('the landing strip is UNCHANGED: one strip, landing copy, no docked-only rungs, no pressed state', async () => {
+    const view = mountView();
+    await view.updateComplete;
+
+    const strips = view.shadowRoot!.querySelectorAll('.escalation-strip');
+    expect(strips.length).toBe(1);
+    const strip = strips[0] as HTMLElement;
+    expect(strip.className).toBe('escalation-strip');
+    expect(view.shadowRoot?.querySelector('[data-testid="escalation-strip-docked"]')).toBeNull();
+    expect(strip.textContent).toContain('Search instantly');
+    expect(strip.querySelector('[data-testid="escalation-ask"]')).not.toBeNull();
+    expect(strip.querySelector('[data-testid="escalation-delegate"]')).not.toBeNull();
+    // The docked-only rungs stay off the landing — there, Structured is still the route row's
+    // "+ Schema" attachment and the floor is where you already are.
+    expect(view.shadowRoot?.querySelector('[data-testid="escalation-structured"]')).toBeNull();
+    expect(view.shadowRoot?.querySelector('[data-testid="escalation-search"]')).toBeNull();
+    expect(strip.querySelector('[data-pressed]')).toBeNull();
+    expect(view.shadowRoot?.querySelector('[data-testid="schema-attach"]')).not.toBeNull();
+  });
+
+  it('the docked strip marks the tier you are ON, so no rung offers a click that would change nothing', async () => {
+    const view = await mountPostSearch();
+    const pressed = (id: string): boolean =>
+      view.shadowRoot!.querySelector(`[data-testid="${id}"]`)!.hasAttribute('data-pressed');
+    // Round-13 review (P3): `data-pressed` is a CSS hook and NOTHING else — `jf-control` has no
+    // `aria-pressed` passthrough, so asserting it alone passes for the wrong reason (a sighted-only
+    // signal). The state a screen reader gets is the accessible NAME (the `renderPinToggle`
+    // convention, 200 lines up), so assert that too — read off the rendered button, not the property.
+    const accName = async (id: string): Promise<string> => {
+      const el = view.shadowRoot!.querySelector(`[data-testid="${id}"]`)!;
+      await (el as unknown as { updateComplete: Promise<boolean> }).updateComplete;
+      return el.shadowRoot!.querySelector('button')!.getAttribute('aria-label') ?? '';
+    };
+
+    expect(pressed('escalation-search')).toBe(true);
+    expect(pressed('escalation-delegate')).toBe(false);
+    expect(await accName('escalation-search')).toContain('(current mode)');
+    for (const id of ['escalation-delegate', 'escalation-ask', 'escalation-structured']) {
+      expect(await accName(id), id).not.toContain('(current mode)');
+    }
+
+    await clickRung(view, 'escalation-delegate');
+    await view.updateComplete;
+    expect(pressed('escalation-delegate')).toBe(true);
+    expect(pressed('escalation-search')).toBe(false);
+    expect(await accName('escalation-delegate')).toBe(
+      'Delegate a multi-step task to the agent (current mode)',
+    );
+    expect(await accName('escalation-search')).toBe('Back to instant search — no AI needed');
+
+    await clickRung(view, 'escalation-structured');
+    await view.updateComplete;
+    expect(await accName('escalation-structured')).toBe(
+      'Extract structured fields against a JSON schema (current mode)',
+    );
+    expect(await accName('escalation-delegate')).not.toContain('(current mode)');
+  });
 });
 
 // Search Thread S6 (the Reading Stage) — the reading pane (`<jf-document-pane>`), mounted as the
@@ -4111,6 +4465,198 @@ describe('Search Thread S6 — the reading pane (DocumentPane mount + open flows
     const lastCall = streamMock.mock.calls[streamMock.mock.calls.length - 1]!;
     const body = lastCall[1] as { docIds?: string[] };
     expect(body.docIds).toContain('/docs/q1.md');
+    view.remove();
+  });
+});
+
+describe('Extraction dispatches the chosen mode, WITH the selected document', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    __resetSelectionForTest();
+    takePendingForceShape();
+    takePendingSelection();
+    vi.mocked(consumeShapeStream).mockImplementation(() => Promise.resolve());
+  });
+
+  afterEach(() => __resetSelectionForTest());
+
+  function selectDocument(): void {
+    setSingleSelection(
+      {
+        kind: 'search-hit',
+        hitId: '/docs/invoice.md',
+        title: 'invoice.md',
+        path: '/docs/invoice.md',
+        capabilities: new Set(['open']),
+      },
+      'core.search-surface',
+    );
+  }
+
+  async function sendInExtractMode(view: UnifiedChatView): Promise<Record<string, unknown>> {
+    view.affordance = 'extract';
+    view.inputDraft = 'pull the totals';
+    await view.updateComplete;
+    const composer = view.shadowRoot?.querySelector('jf-composer');
+    expect(composer).not.toBeNull();
+    composer!.dispatchEvent(new CustomEvent('composer-submit'));
+    await view.updateComplete;
+    const streamMock = vi.mocked(consumeShapeStream);
+    expect(streamMock).toHaveBeenCalledTimes(1);
+    return streamMock.mock.calls[0]![1] as Record<string, unknown>;
+  }
+
+  it('sends core.extract even though a document is selected (selection no longer overrides the mode)', async () => {
+    selectDocument();
+    const view = mountView();
+    await view.updateComplete;
+    const body = await sendInExtractMode(view);
+    expect(body.shapeId).toBe('core.extract');
+    expect(body.schema).toBe(view.schemaDraft);
+    view.remove();
+  });
+
+  it('forwards the LIVE selection as body.selection, so the extraction has a document behind it', async () => {
+    selectDocument();
+    const view = mountView();
+    await view.updateComplete;
+    const body = await sendInExtractMode(view);
+    expect(body.selection).toEqual({
+      kind: 'item',
+      itemKind: 'search-hit',
+      itemId: '/docs/invoice.md',
+      label: 'invoice.md',
+    });
+    view.remove();
+  });
+
+  it('the mode chip names the shape that is actually dispatched', async () => {
+    selectDocument();
+    const view = mountView();
+    view.affordance = 'extract';
+    await view.updateComplete;
+    const chipLabel = view.shadowRoot?.querySelector('.shape-indicator')?.textContent?.trim();
+    const body = await sendInExtractMode(view);
+    // The chip used to read "Extraction" while `core.rag-ask` ("Document Q&A") was dispatched.
+    expect(chipLabel).toBe('Extraction');
+    expect(SHAPE_LABELS[body.shapeId as ShapeId]).toBe(chipLabel);
+    view.remove();
+  });
+
+  it('with NO explicit mode, a selected document still resolves the shape — and the chip follows it', async () => {
+    const view = mountView();
+    view.affordance = 'none';
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('.shape-indicator')?.textContent?.trim()).toBe('Chat');
+
+    // Selecting a document changes the shape the next Send will dispatch, so the chip must move
+    // with it. The chip used to resolve with the selection kind hardcoded to 'none' and kept
+    // reading "Chat" while Send dispatched core.rag-ask.
+    selectDocument();
+    await view.updateComplete;
+    const chipLabel = view.shadowRoot?.querySelector('.shape-indicator')?.textContent?.trim();
+
+    view.inputDraft = 'what does this say?';
+    await view.updateComplete;
+    const composer = view.shadowRoot?.querySelector('jf-composer');
+    composer!.dispatchEvent(new CustomEvent('composer-submit'));
+    await view.updateComplete;
+    const body = vi.mocked(consumeShapeStream).mock.calls[0]![1] as Record<string, unknown>;
+    expect(body.shapeId).toBe('core.rag-ask');
+    expect(chipLabel).toBe('Document Q&A');
+    expect(SHAPE_LABELS[body.shapeId as ShapeId]).toBe(chipLabel);
+    view.remove();
+  });
+});
+
+// 798 round 8 — clearing the query with a document preview open pushed the composer and the escalation
+// ladder below the viewport (reproduced twice at 1040x709; recoverable only by navigating away and
+// back). `.landing-collapsed` swaps the conversation zone's `flex: 1; min-height: 0` for `flex: 0 0
+// auto`, which is sound only while the zone is EMPTY — with a `<jf-document-pane>` mounted, its
+// `height: 100%` loses its definite basis, its scroll region stops being bounded, and the document lays
+// out at full height inside a content-sized zone. happy-dom does no layout, so these assert the
+// mechanism: the class that content-sizes the zone, and the declaration it resolves to.
+describe('798 — the landing collapse yields to a mounted reading pane', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    resetInspectorState();
+    searchListener = null;
+  });
+  afterEach(() => resetInspectorState());
+
+  /** The zone element whose flex sizing the collapse class changes. */
+  const zone = (view: UnifiedChatView) =>
+    view.shadowRoot!.querySelector('.conversation-zone') as HTMLElement;
+
+  it('.landing-collapsed is the declaration that content-sizes the zone (the class is load-bearing)', () => {
+    // Precondition for the two tests below: if this rule ever stops removing the zone's flex bound,
+    // asserting on the class name would be asserting on nothing.
+    const rule = /\.conversation-zone\.landing-collapsed\s*\{([^}]*)\}/.exec(
+      unifiedChatBodyStyles.cssText,
+    );
+    expect(rule).not.toBeNull();
+    expect(rule![1]!.replace(/\s+/g, ' ').trim()).toBe('flex: 0 0 auto;');
+  });
+
+  it('keeps the zone bounded when the query is cleared while the reading pane is mounted', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'retrieve';
+    expect(searchListener).not.toBeNull();
+    searchListener!({ ...SEARCH_EMPTY, query: 'invoice', totalHits: 1 });
+    (view as unknown as { readingDocPath: string | null }).readingDocPath = '/docs/q1.md';
+    await view.updateComplete;
+    expect(view.shadowRoot!.querySelector('jf-document-pane')).not.toBeNull();
+
+    // The reported defect: clear the query (results + query go away, the surface returns to landing).
+    searchListener!({ ...SEARCH_EMPTY });
+    await view.updateComplete;
+
+    // The preview a user opened deliberately survives a query-scoped action...
+    expect(view.shadowRoot!.querySelector('jf-document-pane')).not.toBeNull();
+    // ...and the zone keeps its flex bound, so the pane's `height: 100%` keeps a definite basis and
+    // the composer below it stays on screen.
+    expect(zone(view).classList.contains('landing-collapsed')).toBe(false);
+    expect(view.shadowRoot!.querySelector('jf-composer')).not.toBeNull();
+    view.remove();
+  });
+
+  it('still collapses on a cleared query when no reading pane is mounted (the gate is the pane, not the clear)', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'retrieve';
+    searchListener!({ ...SEARCH_EMPTY, query: 'invoice', totalHits: 1 });
+    await view.updateComplete;
+    expect(zone(view).classList.contains('landing-collapsed')).toBe(false);
+
+    searchListener!({ ...SEARCH_EMPTY });
+    await view.updateComplete;
+    // No pane ⇒ the zone really is empty ⇒ 687 R5a's composer centring is still correct.
+    expect(view.shadowRoot!.querySelector('jf-document-pane')).toBeNull();
+    expect(zone(view).classList.contains('landing-collapsed')).toBe(true);
+    view.remove();
+  });
+});
+
+// 798 round 8 — the `@container chat-surface` query container must actually WRAP the zones that query
+// it. A container declared on an element outside the grid's ancestor chain makes every wide-layout
+// rule inert: the surface would silently stick to the narrow single-column stack at every width.
+describe('798 — the wide-layout query container wraps the zones that query it', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+  });
+
+  it('.conversation-zone and the composer both descend from .answer-plane', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    const plane = view.shadowRoot!.querySelector('.answer-plane');
+    expect(plane).not.toBeNull();
+    expect(plane!.querySelector('.conversation-zone')).not.toBeNull();
+    // `.sources-affordance` is conditional on grounded agent sources; the composer that hosts it is not.
+    expect(plane!.querySelector('.composer')).not.toBeNull();
     view.remove();
   });
 });

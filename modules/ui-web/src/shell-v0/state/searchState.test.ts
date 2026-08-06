@@ -54,7 +54,7 @@ describe('searchState (slice 463)', () => {
     unsub();
   });
 
-  it('debounce: setQuery does not fire fetch immediately', () => {
+  it('debounce: setQuery does not fire fetch immediately', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ results: [], totalHits: 0 }),
@@ -62,22 +62,24 @@ describe('searchState (slice 463)', () => {
     vi.stubGlobal('fetch', fetchMock);
     setQuery('test');
     expect(fetchMock).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(250);
-    // fetch fires after debounce; we don't wait for the promise here.
+    // 804 B3: the search POST now goes through `authorizedFetch`, which awaits session-token
+    // resolution BEFORE issuing the request — so the network call lands one microtask after the
+    // debounce timer, not in the same tick. Async timer advance flushes that tick.
+    await vi.advanceTimersByTimeAsync(250);
     expect(fetchMock).toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 
   // Slice 486 G36-widening (filter-snapshot) — filter plumbing in the request body.
 
-  it('omits filters key when no active filter (quick pass carries the cheap pipeline)', () => {
+  it('omits filters key when no active filter (quick pass carries the cheap pipeline)', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ results: [], totalHits: 0 }),
     });
     vi.stubGlobal('fetch', fetchMock);
     setQuery('test');
-    vi.advanceTimersByTime(250);
+    await vi.advanceTimersByTimeAsync(250);
     const body = JSON.parse(fetchMock.mock.calls[0]![1].body);
     // 577 Phase 5: the keystroke path issues the QUICK pass first.
     expect(body).toEqual({ query: 'test', limit: 50, mode: 'text', pipeline: QUICK_PIPELINE });
@@ -85,7 +87,7 @@ describe('searchState (slice 463)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('includes filters.modifiedAt when both bounds set', () => {
+  it('includes filters.modifiedAt when both bounds set', async () => {
     setFilterRange(1000, 2000);
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -93,13 +95,13 @@ describe('searchState (slice 463)', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     setQuery('test');
-    vi.advanceTimersByTime(250);
+    await vi.advanceTimersByTimeAsync(250);
     const body = JSON.parse(fetchMock.mock.calls[0]![1].body);
     expect(body.filters).toEqual({ modifiedAt: { fromMs: 1000, toMs: 2000 } });
     vi.unstubAllGlobals();
   });
 
-  it('includes only the set bound when one is undefined', () => {
+  it('includes only the set bound when one is undefined', async () => {
     setFilterRange(1000, undefined);
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -107,13 +109,13 @@ describe('searchState (slice 463)', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     setQuery('test');
-    vi.advanceTimersByTime(250);
+    await vi.advanceTimersByTimeAsync(250);
     const body = JSON.parse(fetchMock.mock.calls[0]![1].body);
     expect(body.filters).toEqual({ modifiedAt: { fromMs: 1000 } });
     vi.unstubAllGlobals();
   });
 
-  it('clearing filters omits the field on subsequent search', () => {
+  it('clearing filters omits the field on subsequent search', async () => {
     setFilterRange(1000, 2000);
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -121,10 +123,10 @@ describe('searchState (slice 463)', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     setQuery('test');
-    vi.advanceTimersByTime(250);
+    await vi.advanceTimersByTimeAsync(250);
     setFilterRange(undefined, undefined);
     setQuery('test2');
-    vi.advanceTimersByTime(250);
+    await vi.advanceTimersByTimeAsync(250);
     const body = JSON.parse(fetchMock.mock.calls[1]![1].body);
     expect(body.filters).toBeUndefined();
     vi.unstubAllGlobals();

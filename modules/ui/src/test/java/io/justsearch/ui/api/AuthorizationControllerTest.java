@@ -321,6 +321,26 @@ class AuthorizationControllerTest {
   }
 
   @Test
+  void peekPending_exposesExpiresAt_soAClientCanSayHowLongTheRequestIsValid() throws Exception {
+    // Tempdoc 807 item 3 / sandbox round 13 F3: pendings DO expire (the store's 5-minute TTL) and
+    // PendingAuthorization has always carried expiresAt — but no surface put it on the wire. With
+    // nothing to read, no client could tell the user how long an approval request is valid, and no
+    // round could deterministically induce or verify expiry.
+    var controller = new AuthorizationController(capsuleService, pendingStore, null);
+    String pendingId = createPending("core.ingest-files");
+
+    Context ctx = mock(Context.class);
+    when(ctx.pathParam("id")).thenReturn(pendingId);
+    when(ctx.contentType(anyString())).thenReturn(ctx);
+    when(ctx.status(anyInt())).thenReturn(ctx);
+    controller.handlePeekPending(ctx);
+
+    Map<String, Object> body = capturedJson(ctx);
+    // FIXED_CLOCK + the store's 5-minute TTL, serialized ISO-8601 UTC.
+    assertEquals("2026-07-02T12:05:00Z", body.get("expiresAt"));
+  }
+
+  @Test
   void peekPending_withRequestedBy_includesItInResponse() throws Exception {
     var controller = new AuthorizationController(capsuleService, pendingStore, null);
     String pendingId =

@@ -169,12 +169,27 @@ export const unifiedChatBodyStyles = css`
     [hidden] {
       display: none !important;
     }
+    /* 798 round 8 — the SURFACE box every wide-layout decision in this shadow root is evaluated
+       against (\`@container chat-surface\` below and in the generated grid frame). The conversation grid
+       cannot query itself, so the container is its nearest wrapping ancestor; this plane's CONTENT
+       width — the viewport minus the Shell rail minus the host's 1rem padding — is exactly the width
+       .conversation-zone is laid out in, which is the width the declared track minimums are a budget
+       on. responsiveState.reportLayoutWidth reports that same box, so the TS mount gates and these
+       queries decide on one number.
+
+       Deliberately NOT on :host. \`container-type\` implies LAYOUT containment, which makes the element
+       a containing block for fixed-position descendants — and <jf-citation-hover-card> is appended
+       straight to this shadow root and positioned with viewport coordinates from getBoundingClientRect.
+       On :host it would have been re-anchored to the surface and mispositioned by the rail's width.
+       This plane wraps the zone and the composer (both query it) but not that card. */
     .answer-plane {
       flex: 1;
       min-height: 0;
       display: flex;
       flex-direction: column;
       gap: 0.75rem;
+      container-type: inline-size;
+      container-name: chat-surface;
     }
     /* Tempdoc 565 §12.3.D — the three-zone composition. Single column by default (narrow / non-agent);
        at a wide viewport it becomes [conversation | evidence-rail], the group centred so the answer
@@ -195,7 +210,7 @@ export const unifiedChatBodyStyles = css`
     .run-spine {
       display: none;
     }
-    @media (min-width: 64rem) {
+    @container chat-surface (min-width: 64rem) {
       .run-spine {
         /* Tempdoc 565 §19.4 — a POSITION-PROPORTIONAL minimap: a full-height relative track within the
            generated grid zone. Each node is absolutely placed at its conversation item's scroll
@@ -290,7 +305,7 @@ export const unifiedChatBodyStyles = css`
     .run-spine-node.active {
       box-shadow: 0 0 0 3px var(--accent-tint);
     }
-    @media (min-width: 64rem) {
+    @container chat-surface (min-width: 64rem) {
       .conversation-zone {
         /* §13 Pillar B — the wide grid-template-columns + the per-zone placements (.run-spine col 2,
            .conversation col 3, .evidence-rail col 4) are GENERATED from CONVERSATION_ZONES by
@@ -335,7 +350,7 @@ export const unifiedChatBodyStyles = css`
       scrollbar-width: thin;
       scrollbar-color: var(--border-subtle) transparent;
     }
-    @media (min-width: 64rem) {
+    @container chat-surface (min-width: 64rem) {
       .evidence-rail {
         /* grid-column:4 is GENERATED (composeGridStyles over CONVERSATION_ZONES). §13.9 — the rail's
            track is fit-content(20rem), which sizes to the element's content and COLLAPSES to 0 when the
@@ -346,22 +361,20 @@ export const unifiedChatBodyStyles = css`
         max-width: 20rem;
       }
     }
-    /* Search Thread S6 — the reading pane (\`<jf-document-pane>\`, \`.document-pane\` zone col 5). Narrow:
-       no \`grid-column\` override, so default grid auto-placement (one explicit column, \`.conversation\`)
-       drops it into its own implicit row BELOW the conversation — a stacked narrow layout, mirroring
-       the evidence rail's "hide below the wide breakpoint" precedent in spirit (the zone doesn't claim
-       its own column outside \`wideOnly\`'s wide media query) without losing narrow readability (unlike
-       the rail, which has a toggle-drawer fallback the reading pane does not). A fixed-position overlay
-       was considered and rejected: \`position: fixed\` outside the OverlayHost trips the layout-purity gate. */
+    /* Search Thread S6 — the reading pane (\`<jf-document-pane>\`, \`.document-pane\` zone col 5). The pane
+       is mounted in this grid ONLY while the surface container is wide (687 R5b: below that the SAME
+       component presents through Shell's OverlayHost right-drawer slot, the one sanctioned overlay seam,
+       rather than auto-placing into an implicit stacked row that collided with the composer). So the
+       base rule below is the shared floor, not a narrow layout. A free-floating \`position: fixed\` pane
+       was considered and rejected: outside the OverlayHost it trips the layout-purity gate. */
     .document-pane {
       min-width: 0;
       min-height: 24rem;
       overflow: hidden;
     }
-    @media (min-width: 64rem) {
+    @container chat-surface (min-width: 64rem) {
       .document-pane {
-        /* grid-column:5 is GENERATED (composeGridStyles over CONVERSATION_ZONES), overriding the narrow
-           stacked placement above at this breakpoint. */
+        /* grid-column:5 is GENERATED (composeGridStyles over CONVERSATION_ZONES). */
         min-width: 24rem;
         max-width: 28rem;
         min-height: 0;
@@ -883,7 +896,7 @@ export const unifiedChatBodyStyles = css`
     }
     /* Tempdoc 565 §12.3.E — at the wide breakpoint the persistent evidence rail replaces the toggle
        drawer, so the "Sources · N" affordance (which opens that drawer) is redundant and hidden. */
-    @media (min-width: 64rem) {
+    @container chat-surface (min-width: 64rem) {
       .sources-affordance {
         display: none;
       }
@@ -1174,13 +1187,19 @@ export const unifiedChatBodyStyles = css`
     .composer.landing-dock {
       align-self: center;
       width: min(42rem, 100%);
-      /* 687 R5a — real flex centering in the freed space (the conversation zone collapses to its
-         natural height in landing), replacing the vh-margin approximation whose bands interleaved
-         with the intro at short viewports (the audit-measured overlap). */
+      /* 687 R5a — real flex centering in the freed space, replacing the vh-margin approximation whose
+         bands interleaved with the intro at short viewports (the audit-measured overlap). The space is
+         freed by \`.landing-collapsed\` below, which the host applies only when the zone is EMPTY. */
       margin-top: auto;
       margin-bottom: auto;
       border-top: none;
     }
+    /* 687 R5a — trade the zone's \`flex: 1; min-height: 0\` for content-sizing so the composer can centre
+       in what is left. 798 round 8: this is sound ONLY while the landing zone is empty. The host gates
+       the class on that (UnifiedChatView.renderAnswerPlane) because clearing the query does NOT unmount
+       a reading pane the user opened — and content-sizing the zone around a \`height: 100%\` pane leaves
+       that height with no definite basis, so the pane's scroll region stops being bounded, the whole
+       document lays out at full height, and the composer + escalation strip are pushed past the fold. */
     .conversation-zone.landing-collapsed {
       flex: 0 0 auto;
     }
@@ -1213,6 +1232,14 @@ export const unifiedChatBodyStyles = css`
       gap: 1rem;
       font-size: var(--font-size-xs);
       color: var(--text-tertiary);
+    }
+    /* 807 B.2 — the DOCKED variant of the strip (rendered once a search has run, where the rungs used
+       to disappear entirely). It rides under the bar with the row's own left alignment and the quiet
+       gap of the other bar-secondary rows; the landing rules above are untouched. */
+    .escalation-strip-docked {
+      justify-content: flex-start;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
     }
     /* Schema input textarea: not migrated to jf-composer (no submit). */
     .composer textarea.mono {
@@ -1267,7 +1294,8 @@ export const unifiedChatBodyStyles = css`
     jf-control.pin-toggle::part(control),
     jf-control.schema-attach::part(control),
     jf-control.schema-detach::part(control),
-    jf-control.escalation-delegate::part(control) {
+    jf-control.escalation-delegate::part(control),
+    .escalation-strip-docked jf-control::part(control) {
       display: inline-flex;
       align-items: center;
       gap: 0.3rem;
@@ -1283,9 +1311,18 @@ export const unifiedChatBodyStyles = css`
     jf-control.pin-toggle::part(control):hover,
     jf-control.schema-attach::part(control):hover,
     jf-control.schema-detach::part(control):hover,
-    jf-control.escalation-delegate::part(control):hover {
+    jf-control.escalation-delegate::part(control):hover,
+    .escalation-strip-docked jf-control::part(control):hover {
       color: var(--text-primary);
       border-color: var(--border-strong);
+    }
+    /* 807 B.2 — the rung you are ON. Without it the docked strip would offer the current tier as an
+       escalation target and the click would look like a no-op. Deliberately NOT the pin-toggle's
+       accent departure (an active tier is the normal state, not an exception worth an accent). */
+    .escalation-strip-docked jf-control[data-pressed]::part(control) {
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+      background: var(--surface-hover);
     }
     /* The pinned state is the one deliberate departure from the shared quiet look (the accent
        marks the exception being pinned, not a fourth bespoke class). */

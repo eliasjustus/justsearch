@@ -375,13 +375,29 @@ export class StatusDeck extends JfElement {
     );
   }
 
-  private connDotClass(): string {
-    if (!this.status) return 'muted';
+  /**
+   * The CONN dot: tone + its accessible name, together (they are one indicator, so they cannot
+   * be derived in two places — 806 W2's lesson).
+   *
+   * Tempdoc 807 A.3 — REACHABILITY comes first. `components.head/worker.state` are fields off the
+   * RETAINED snapshot: they said READY/READY forever after both java processes died, so the dot stayed
+   * green beside a "Backend disconnected." banner (round 13, R13-F2). The lifecycle fields answer "what
+   * were the components doing when we last heard", never "are we still hearing" — so the one liveness
+   * predicate gates them rather than a second, dot-local staleness heuristic.
+   */
+  private connDot(): { cls: string; name: string } {
+    // No snapshot at all (pre-first-poll) ⇒ nothing to re-tense and nothing to claim: the honest dot
+    // is the muted "unknown", not a red "disconnected" (round-13 review — liveness is now a CONTACT
+    // fact, and before the shell has looked even once there is no contact either).
+    if (!this.status) return { cls: 'muted', name: 'unknown' };
+    if (this.aiState && !this.aiState.snapshotLive) return { cls: 'error', name: 'disconnected' };
     const head = this.status.components?.head?.state;
     const worker = this.status.components?.worker?.state;
-    if (head === LIFECYCLE.READY && worker === LIFECYCLE.READY) return 'healthy';
-    if (head === LIFECYCLE.STARTING || worker === LIFECYCLE.STARTING) return 'warn';
-    return 'error';
+    if (head === LIFECYCLE.READY && worker === LIFECYCLE.READY)
+      return { cls: 'healthy', name: 'connected' };
+    if (head === LIFECYCLE.STARTING || worker === LIFECYCLE.STARTING)
+      return { cls: 'warn', name: 'starting' };
+    return { cls: 'error', name: 'error' };
   }
 
   private memoryDotClass(): string {
@@ -448,12 +464,6 @@ export class StatusDeck extends JfElement {
     // — `${name}: ${liveValue}` — so the English is declared once on the registry
     // entry, not hand-stamped here (the declaration-deepening, 559 Authority V).
     const name = present({ kind: 'metric', id }).label;
-    const connName: Record<string, string> = {
-      healthy: 'connected',
-      warn: 'starting',
-      error: 'error',
-      muted: 'unknown',
-    };
     switch (id) {
       case 'core.running-job': {
         // Tempdoc 609 §R (T1.3) — the running-job chip: hidden when idle; when work runs it shows the
@@ -476,15 +486,13 @@ export class StatusDeck extends JfElement {
           <span aria-hidden="true">⟳</span><span class="val">${count}</span>
         </jf-control>`;
       }
-      case 'core.conn':
-        return html`<span
-          class="group"
-          role="img"
-          aria-label="${name}: ${connName[this.connDotClass()] ?? 'unknown'}"
-        >
-          <span class="dot ${this.connDotClass()}"></span>
+      case 'core.conn': {
+        const conn = this.connDot();
+        return html`<span class="group" role="img" aria-label="${name}: ${conn.name}">
+          <span class="dot ${conn.cls}"></span>
           <span class="key">conn</span>
         </span>`;
+      }
       case 'core.files':
         return html`<span
           class="group"
@@ -519,7 +527,12 @@ export class StatusDeck extends JfElement {
         // Health cannot act on), route to the AI Brain surface instead — the ONE state where Health
         // is not the right destination for this pill.
         const aiEngineKind = this.aiState?.aiEngine.kind;
-        const needsBrain = aiEngineKind === 'not_installed' || aiEngineKind === 'install_failed';
+        const needsBrain =
+          aiEngineKind === 'not_installed' ||
+          aiEngineKind === 'install_failed' ||
+          // `paused` is the same shape of state: the actionable next step is "resume the download",
+          // which lives on the Brain surface, not on Health.
+          aiEngineKind === 'paused';
         const actionLabel = needsBrain ? 'Open AI Brain.' : 'Open Health.';
         return html`<jf-control
           class="status-pill group"

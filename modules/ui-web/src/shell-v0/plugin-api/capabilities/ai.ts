@@ -7,6 +7,7 @@
  * extraction behind the unchanged PluginHostApi facade; no behavior change.
  */
 
+import { authorizedFetch } from '../../api/authorizedFetch.js';
 import type {
   PluginAI,
   PluginTrustTier,
@@ -36,7 +37,10 @@ export function createPluginAI(tier: PluginTrustTier, apiBase: string): PluginAI
     // ChatController.dynamicHandler and dispatches to the correct
     // ConversationShape (free, ask, summarize, extract, navigate,
     // batch-summarize, hierarchical-summarize, agent, …).
-    return fetch(`${apiBase}/api/chat/dispatch`, {
+    // 804 B3: authorizedFetch, not bare fetch — this POST is token-enforced in
+    // the packaged app. It keeps its own reader loop (streamShape needs the raw
+    // Response plus the audience header, which consumeShapeStream cannot carry).
+    return authorizedFetch(`${apiBase}/api/chat/dispatch`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -181,7 +185,7 @@ export function createPluginAI(tier: PluginTrustTier, apiBase: string): PluginAI
   // and the metadata fields the backend has been emitting since
   // tempdoc 491 §5.
   async function getSessionTranscript(sessionId: string): Promise<AITranscriptSnapshot> {
-    const res = await fetch(
+    const res = await authorizedFetch(
       `${apiBase}/api/chat/sessions/${encodeURIComponent(sessionId)}/transcript`,
     );
     if (!res.ok) {
@@ -214,7 +218,7 @@ export function createPluginAI(tier: PluginTrustTier, apiBase: string): PluginAI
   }
 
   async function getSessionMetadata(sessionId: string): Promise<AISessionMetadata> {
-    const res = await fetch(
+    const res = await authorizedFetch(
       `${apiBase}/api/chat/sessions/${encodeURIComponent(sessionId)}`,
     );
     if (!res.ok) {

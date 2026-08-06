@@ -101,21 +101,23 @@ export async function resolvePathLazy(
     return null;
   }
 
+  // Tempdoc 804 §B9 (round-10 F8): only a DEFINITIVE answer is cached. A failed invocation (the
+  // round's 401 on the mutating operations route, or any transport hiccup) used to be memoized as a
+  // permanent `null`, so every folder row rendered its hash for the rest of the session even after
+  // the cause cleared — a transient failure became a sticky one. An error now leaves the cache
+  // empty so the next caller retries; a resolver that answers `found: false` still caches null.
   const promise: Promise<string | null> = client
     .invoke(resolverId, { args: { [argName]: primaryKey } })
     .then((success: OperationInvocationSuccess) => {
       const data = success.structuredData;
-      if (!data || data['found'] !== true) return null;
-      const path = data['path'];
-      return typeof path === 'string' ? path : null;
+      const path = data && data['found'] === true ? data['path'] : null;
+      const resolved = typeof path === 'string' ? path : null;
+      cache.set(cacheKey, resolved); // definitive: the resolver answered
+      return resolved;
     })
-    .catch(() => null)
+    .catch(() => null) // NOT cached — retryable
     .finally(() => {
       inflight.delete(cacheKey);
-    })
-    .then((result: string | null) => {
-      cache.set(cacheKey, result);
-      return result;
     });
 
   inflight.set(cacheKey, promise);

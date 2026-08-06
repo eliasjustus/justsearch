@@ -36,8 +36,30 @@ public final class McpProtocolHandler {
   // initialize response report identical versions by construction (projection, not fork).
   private static final String MCP_PROTOCOL_VERSION = McpContractVersions.PROTOCOL_VERSION;
   private static final String SERVER_NAME = "JustSearch";
-  private static final String SERVER_VERSION = McpContractVersions.TOOL_SURFACE_VERSION;
+  /**
+   * Version reported when the build version is unknown — a browser/dev run started outside the
+   * packaged shell, which is the only launcher that passes {@code -Djustsearch.app.version}. Never
+   * a real release number, so a host that logs or gates on it cannot mistake a dev run for a build.
+   */
+  static final String UNKNOWN_BUILD_VERSION = "0.0.0-dev";
   private static final Duration SESSION_TTL = Duration.ofMinutes(30);
+
+  /**
+   * MCP {@code serverInfo.version} — the version of the SERVER IMPLEMENTATION, i.e. this build
+   * (tempdoc 804 §B9 / round-10 F12: it reported the curated tool-surface version {@code 0.5.0} on a
+   * {@code 0.2.0} build, so an MCP host that logs or gates on server version saw a version this
+   * release does not have). Read from the one build-version source the packaged shell already sets
+   * ({@code EnvRegistry.APP_VERSION}, passed as {@code -Djustsearch.app.version} from the Tauri
+   * package version), never a literal. The tool-surface version keeps its own, separately-named slot
+   * ({@code serverInfo._meta}, plus the runtime manifest's {@code mcpToolSurfaceVersion}) — two
+   * different claims, two fields.
+   */
+  static String buildVersion() {
+    return io.justsearch.configuration.EnvRegistry.APP_VERSION
+        .get()
+        .filter(v -> !v.isBlank())
+        .orElse(UNKNOWN_BUILD_VERSION);
+  }
 
   private final McpToolSurface surface;
   private final List<ResourceCatalog> resourceCatalogs;
@@ -178,7 +200,14 @@ public final class McpProtocolHandler {
             "tools", Map.of("listChanged", false),
             "resources", Map.of("subscribe", true, "listChanged", false),
             "prompts", Map.of("listChanged", false)),
-        "serverInfo", Map.of("name", SERVER_NAME, "version", SERVER_VERSION),
+        // Tempdoc 804 §B9 (F12): `version` is THIS BUILD (the claim MCP's serverInfo makes); the
+        // curated tool-surface version rides `_meta` under a namespaced key, so both stay reachable
+        // and neither is reported as the other.
+        "serverInfo", Map.of(
+            "name", SERVER_NAME,
+            "version", buildVersion(),
+            "_meta", Map.of(
+                "io.justsearch/toolSurfaceVersion", McpContractVersions.TOOL_SURFACE_VERSION)),
         // Tempdoc 655 (agent-legibility layer): the MCP spec's optional connect-time steering slot.
         // Clients (confirmed: Claude Code) inject it into the model's system context, so it is the
         // one server-level surface that reaches an autonomous agent at tool-selection time. Content

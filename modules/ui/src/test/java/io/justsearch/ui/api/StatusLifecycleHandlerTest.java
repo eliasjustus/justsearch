@@ -4,9 +4,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
 
 import io.justsearch.app.api.lifecycle.LifecycleSnapshotV1;
+import io.justsearch.app.api.status.ChunkCoverageView;
 import io.justsearch.app.api.status.CompatibilityStatusView;
 import io.justsearch.app.api.status.CoreIndexView;
 import io.justsearch.app.api.status.EnrichmentProgressView;
+import io.justsearch.app.api.status.EnrichmentProgressViewBuilder;
 import io.justsearch.app.api.status.FailureTrackingView;
 import io.justsearch.app.api.status.GpuDiagnosticsView;
 import io.justsearch.app.api.status.MigrationGenerationView;
@@ -212,6 +214,60 @@ final class StatusLifecycleHandlerTest {
     assertEquals("DEGRADED", env.composites().get("retrieval").state());
   }
 
+  // ===== Tempdoc 804 §D1: an EMPTY corpus is not a chunk-embedding degradation =====
+
+  @Test
+  @DisplayName("804 §D1: an empty corpus (no chunks, no documents) does NOT emit chunk_embedding.not_ready")
+  void emptyCorpusDoesNotClaimChunkEmbeddingNotReady() {
+    StatusLifecycleHandler handler = newHandler();
+    // A fresh install: worker serving, nothing indexed, no chunk passages, no chunk vectors.
+    WorkerOperationalView view =
+        withChunkCoverage(
+            compatWorkerView(CompatibilityStatusView.empty()),
+            /* indexedDocuments= */ 0,
+            ChunkCoverageView.empty());
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
+
+    assertEquals("READY", env.components().get("chunkEmbedding").state());
+    assertNull(env.components().get("chunkEmbedding").reasonCode());
+    assertFalse(
+        env.composites().get("retrieval").reasonCodes().contains("chunk_embedding.not_ready"),
+        "a fresh empty install must not present as a retrieval degradation");
+  }
+
+  @Test
+  @DisplayName("804 §D1: a NON-empty corpus with 0% chunk coverage still emits chunk_embedding.not_ready")
+  void nonEmptyCorpusStillClaimsChunkEmbeddingNotReady() {
+    StatusLifecycleHandler handler = newHandler();
+    // Documents are indexed but no chunk vectors exist yet — genuinely pending work.
+    WorkerOperationalView view =
+        withChunkCoverage(
+            compatWorkerView(CompatibilityStatusView.empty()),
+            /* indexedDocuments= */ 42,
+            new ChunkCoverageView(0, 0, 0, 0, 0.0, false));
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
+
+    assertEquals("DEGRADED", env.components().get("chunkEmbedding").state());
+    assertEquals("chunk_embedding.not_ready", env.components().get("chunkEmbedding").reasonCode());
+    assertTrue(
+        env.composites().get("retrieval").reasonCodes().contains("chunk_embedding.not_ready"));
+  }
+
+  @Test
+  @DisplayName("804 §D1: chunk passages exist but no documents counted → still not_ready (inconsistency is not hidden)")
+  void chunksWithoutParentDocumentsStillClaimNotReady() {
+    StatusLifecycleHandler handler = newHandler();
+    WorkerOperationalView view =
+        withChunkCoverage(
+            compatWorkerView(CompatibilityStatusView.empty()),
+            /* indexedDocuments= */ 0,
+            new ChunkCoverageView(7, 0, 7, 0, 0.0, false));
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
+
+    assertEquals("DEGRADED", env.components().get("chunkEmbedding").state());
+    assertEquals("chunk_embedding.not_ready", env.components().get("chunkEmbedding").reasonCode());
+  }
+
   @Test
   @DisplayName("OCR blocker degrades retrieval only when visual text extraction is needed")
   void ocrBlockerDegradesRetrievalWhenVisualTextNeeded() {
@@ -320,6 +376,36 @@ final class StatusLifecycleHandlerTest {
         .telemetry(new TelemetryMetricsView(0.0, 0, 0, 0.25, "OK"))
         .searchConfig(SearchConfigView.empty())
         .embeddingReady(embeddingReady)
+        .build();
+  }
+
+  /** Tempdoc 804 §D1: overrides the two counts the CHUNK_EMBEDDING dimension reads. */
+  private static WorkerOperationalView withChunkCoverage(
+      WorkerOperationalView view, long indexedDocuments, ChunkCoverageView chunk) {
+    CoreIndexView core = view.core();
+    return WorkerOperationalViewBuilder.builder()
+        .core(
+            new CoreIndexView(
+                core.indexHealthy(),
+                indexedDocuments,
+                core.pendingJobs(),
+                core.indexState(),
+                core.indexSizeBytes(),
+                core.pendingVduCount()))
+        .failure(view.failure())
+        .migration(view.migration())
+        .compatibility(view.compatibility())
+        .queueDb(view.queueDb())
+        .enrichment(
+            EnrichmentProgressViewBuilder.builder(view.enrichment()).chunk(chunk).build())
+        .gpu(view.gpu())
+        .vectorFormat(view.vectorFormat())
+        .telemetry(view.telemetry())
+        .searchConfig(view.searchConfig())
+        .visualExtraction(view.visualExtraction())
+        .buildStamp(view.buildStamp())
+        .aiReady(view.aiReady())
+        .embeddingReady(view.embeddingReady())
         .build();
   }
 

@@ -6,6 +6,7 @@
  */
 import { z } from 'zod';
 import type { ThreadEvent } from './unifiedThreadProjection.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 
 /**
  * Tempdoc S4a (risk-review finding #1) — the closed vocabulary of backend event kinds THIS build
@@ -216,7 +217,7 @@ export async function fetchUnifiedThread(
   onFailure?: (reason: ThreadFetchFailureReason, detail?: string) => void,
 ): Promise<ThreadResponse> {
   try {
-    const res = await fetch(`${apiBase}/api/thread/${encodeURIComponent(conversationId)}`, {
+    const res = await authorizedFetch(`${apiBase}/api/thread/${encodeURIComponent(conversationId)}`, {
       signal,
     });
     if (!res.ok) {

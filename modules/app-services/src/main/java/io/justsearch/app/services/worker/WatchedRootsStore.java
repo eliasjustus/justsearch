@@ -2,12 +2,17 @@
 package io.justsearch.app.services.worker;
 
 import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import io.justsearch.configuration.PlatformPaths;
+import io.justsearch.configuration.persistence.AtomicFileWrites;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.StoreFormatVersions;
+import io.justsearch.configuration.persistence.UnsupportedStoreVersionException;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -22,6 +27,7 @@ import org.slf4j.Logger;
  * transport/retry behavior.
  */
 final class WatchedRootsStore {
+  private static final int CURRENT_SCHEMA_VERSION = 1;
   private static final ObjectMapper JSON = new ObjectMapper();
   /**
    * Sentinel value used when a root is tracked but has never completed an indexing submission.
@@ -60,11 +66,7 @@ final class WatchedRootsStore {
         return;
       }
 
-      Path parent = rootsFile.getParent();
-      if (parent != null) {
-        Files.createDirectories(parent);
-      }
-      Files.copy(legacy, rootsFile, StandardCopyOption.COPY_ATTRIBUTES);
+      AtomicFileWrites.replace(rootsFile, Files.readAllBytes(legacy));
       if (log != null) {
         log.info("Migrated watched roots from legacy path {} to {}", legacy, rootsFile);
       }
@@ -116,6 +118,7 @@ final class WatchedRootsStore {
       String content = Files.readString(rootsFile);
       if (content.trim().startsWith("{")) {
         var node = JSON.readTree(content);
+        requireReadableObject(node);
         var rootsArray = node.get("roots");
         if (rootsArray != null && rootsArray.isArray()) {
           for (var entry : rootsArray) {
@@ -148,10 +151,10 @@ final class WatchedRootsStore {
           roots.put(e.getKey(), e.getValue());
         }
       }
+    } catch (CorruptDurableStoreException | UnsupportedStoreVersionException e) {
+      throw e;
     } catch (Exception e) {
-      if (log != null) {
-        log.warn("Failed to load persisted roots from {} (will start fresh): {}", rootsFile, e.getMessage());
-      }
+      throw new CorruptDurableStoreException("watched-roots", "cannot parse " + rootsFile, e);
     }
     return new LoadResult(
         java.util.Collections.unmodifiableMap(roots),
@@ -181,6 +184,7 @@ final class WatchedRootsStore {
       // Try new format first: {"roots": [{"path": "...", "lastIndexed": "..."}]}
       if (content.trim().startsWith("{")) {
         var node = JSON.readTree(content);
+        requireReadableObject(node);
         var rootsArray = node.get("roots");
         if (rootsArray != null && rootsArray.isArray()) {
           for (var entry : rootsArray) {
@@ -220,12 +224,10 @@ final class WatchedRootsStore {
       }
       // Values may be null for old-format roots (no timestamps), so avoid Map.copyOf().
       return java.util.Collections.unmodifiableMap(out);
+    } catch (CorruptDurableStoreException | UnsupportedStoreVersionException e) {
+      throw e;
     } catch (Exception e) {
-      if (log != null) {
-        log.warn("Failed to load persisted roots from {} (will start fresh): {}", rootsFile, e.getMessage());
-        log.debug("Failed to load persisted roots (stack trace)", e);
-      }
-      return Map.of();
+      throw new CorruptDurableStoreException("watched-roots", "cannot parse " + rootsFile, e);
     }
   }
 
@@ -242,11 +244,8 @@ final class WatchedRootsStore {
     if (rootsFile == null) {
       return;
     }
-    Path tmp = rootsFile.resolveSibling(rootsFile.getFileName().toString() + ".tmp");
     try {
-      Files.createDirectories(rootsFile.getParent());
-
-      // Build new format: {"roots": [{"path": "...", "lastIndexed": "...", "walkCompleted": true}]}
+      // Build v1 format: {"schemaVersion": 1, "roots": [...]}
       List<Map<String, Object>> rootEntries = new ArrayList<>();
       for (var entry : watchedRoots.entrySet()) {
         Map<String, Object> rootEntry = new LinkedHashMap<>();
@@ -269,18 +268,31 @@ final class WatchedRootsStore {
         }
         rootEntries.add(rootEntry);
       }
-      Map<String, Object> data = Map.of("roots", rootEntries);
-      JSON.writeValue(tmp.toFile(), data);
-      Files.move(tmp, rootsFile, StandardCopyOption.REPLACE_EXISTING);
+      Map<String, Object> data = new LinkedHashMap<>();
+      data.put("schemaVersion", CURRENT_SCHEMA_VERSION);
+      data.put("roots", rootEntries);
+      AtomicFileWrites.replace(
+          rootsFile, JSON.writerWithDefaultPrettyPrinter().writeValueAsBytes(data));
       if (log != null) {
         log.debug("Persisted {} roots to {}", rootEntries.size(), rootsFile);
       }
     } catch (IOException e) {
-      try { Files.deleteIfExists(tmp); } catch (IOException ignored) { /* best-effort cleanup */ }
-      if (log != null) {
-        log.warn("Failed to persist roots to {}: {}", rootsFile, e.getMessage());
-        log.debug("Failed to persist roots (stack trace)", e);
-      }
+      throw new UncheckedIOException("Failed to persist watched roots to " + rootsFile, e);
     }
+  }
+
+  private static void requireReadableObject(JsonNode root) {
+    if (root == null || !root.isObject()) {
+      throw new CorruptDurableStoreException(
+          "watched-roots", "expected a legacy array or versioned object");
+    }
+    JsonNode versionNode = root.get("schemaVersion");
+    if (versionNode != null && !versionNode.isInt()) {
+      throw new CorruptDurableStoreException(
+          "watched-roots", "schemaVersion must be an integer");
+    }
+    Integer observedVersion = versionNode == null ? null : versionNode.asInt();
+    StoreFormatVersions.requireReadable(
+        "watched-roots", observedVersion, CURRENT_SCHEMA_VERSION, 0, 0);
   }
 }

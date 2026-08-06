@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 2,
+  "installedAtEpochMs": 1735689600000,
+  "hardwareProfile": {
+    "gpuDetected": true,
+    "cudaFunctional": true,
+    "vramBytes": 8589934592
+  },
+  "downloadProfile": "GPU_FULL",
+  "models": {
+    "embedding": {
+      "packageId": "embedding",
+      "variantFilename": "model_fp16.onnx",
+      "precision": "FP16",
+      "targetEP": "CUDA",
+      "targetDir": "onnx/gte-multilingual-base",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000AA",
+      "installedFiles": [
+        "model_fp16.onnx",
+        "tokenizer.json",
+        "pooling_config.json",
+        "model_manifest.json"
+      ],
+      "skipped": false,
+      "skipReason": null
+    },
+    "splade": {
+      "packageId": "splade",
+      "variantFilename": "model_fp16.onnx",
+      "precision": "FP16",
+      "targetEP": "CUDA",
+      "targetDir": "splade/naver-splade-v3",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000BB",
+      "installedFiles": [
+        "model_fp16.onnx",
+        "tokenizer.json",
+        "vocab.txt",
+        "idf.json",
+        "config.json"
+      ],
+      "skipped": false,
+      "skipReason": null
+    },
+    "reranker": {
+      "packageId": "reranker",
+      "variantFilename": "model_fp16.onnx",
+      "precision": "FP16",
+      "targetEP": "CUDA",
+      "targetDir": "onnx/reranker",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000CC",
+      "installedFiles": [
+        "model_fp16.onnx",
+        "tokenizer.json",
+        "config.json"
+      ],
+      "skipped": false,
+      "skipReason": null
+    },
+    "ner": {
+      "packageId": "ner",
+      "variantFilename": "model_fp16.onnx",
+      "precision": "FP16",
+      "targetEP": "CUDA",
+      "targetDir": "onnx/ner",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000DD",
+      "installedFiles": [
+        "model_fp16.onnx",
+        "tokenizer.json",
+        "config.json"
+      ],
+      "skipped": false,
+      "skipReason": null
+    },
+    "chat": {
+      "packageId": "chat",
+      "variantFilename": "Qwen_Qwen3.5-9B-Q4_K_M.gguf",
+      "precision": "GGUF",
+      "targetEP": "LLAMA_SERVER",
+      "targetDir": "",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000EE",
+      "installedFiles": [
+        "Qwen_Qwen3.5-9B-Q4_K_M.gguf",
+        "mmproj-F16.gguf"
+      ],
+      "skipped": false,
+      "skipReason": null
+    },
+    "cuda-runtime": {
+      "packageId": "cuda-runtime",
+      "variantFilename": null,
+      "precision": null,
+      "targetEP": null,
+      "targetDir": null,
+      "sha256": null,
+      "installedFiles": [],
+      "skipped": true,
+      "skipReason": "No variant"
+    }
+  }
+}

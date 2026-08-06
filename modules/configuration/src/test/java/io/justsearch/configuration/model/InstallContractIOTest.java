@@ -2,6 +2,9 @@ package io.justsearch.configuration.model;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.UnsupportedStoreVersionException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -47,6 +50,39 @@ class InstallContractIOTest {
   @Test
   void readMissingContract_returnsNull() {
     assertNull(InstallContractIO.read(tempDir));
+  }
+
+  @Test
+  void futureContractIsRefusedWithoutOverwrite() throws Exception {
+    Path file = tempDir.resolve(InstallContract.CONTRACT_FILENAME);
+    String future =
+        """
+        {"schemaVersion":99,"installedAtEpochMs":0,"models":{}}
+        """;
+    Files.writeString(file, future);
+    assertThrows(UnsupportedStoreVersionException.class, () -> InstallContractIO.read(tempDir));
+    assertEquals(future, Files.readString(file));
+  }
+
+  @Test
+  void malformedContractIsRefusedWithoutOverwrite() throws Exception {
+    Path file = tempDir.resolve(InstallContract.CONTRACT_FILENAME);
+    String malformed = "{not-json";
+    Files.writeString(file, malformed);
+    assertThrows(CorruptDurableStoreException.class, () -> InstallContractIO.read(tempDir));
+    assertEquals(malformed, Files.readString(file));
+  }
+
+  @Test
+  void writeRejectsNonCurrentSchema() {
+    InstallContract wrongVersion =
+        new InstallContract(
+            3,
+            System.currentTimeMillis(),
+            HardwareProfile.cpuOnly(),
+            DownloadProfile.CPU,
+            Map.of());
+    assertThrows(IllegalArgumentException.class, () -> InstallContractIO.write(wrongVersion, tempDir));
   }
 
   @Test

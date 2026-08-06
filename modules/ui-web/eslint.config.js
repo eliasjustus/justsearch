@@ -22,6 +22,20 @@ const WIRE_TYPE_DECL_SELECTORS = WIRE_CONTRACT_TARGETS.flatMap((t) => {
   ]
 })
 
+// Tempdoc 804 B3/D3 — the companion to `no-restricted-globals: fetch`, which only ever sees the
+// BARE identifier. `globalThis.fetch` / `window.fetch` is a member expression and was invisible to
+// it — which is how the `fetchImpl ?? globalThis.fetch` family kept shipping token-less writes that
+// 401 under the packaged (prod=true) backend. Declared once and spread into EVERY config object
+// that sets `no-restricted-syntax` for `src/**`: eslint flat-config REPLACES an array-typed rule
+// when a later object matches the same file, so a selector living in only one object is silently
+// dropped for every file the other object also matches.
+const FETCH_MEMBER_ACCESS_SELECTOR = {
+  selector: "MemberExpression[object.name=/^(globalThis|window|self)$/][property.name='fetch']",
+  message:
+    '`globalThis.fetch` / `window.fetch` bypasses session-token attachment (tempdoc 804 B3). Use ' +
+    '`authorizedFetch` from shell-v0/api/authorizedFetch.ts, or `request()` from @/api/http.',
+}
+
 /**
  * Feature-Sliced Design (FSD) layer hierarchy (strict top-to-bottom):
  *   app → pages → widgets → features → entities → shared
@@ -161,18 +175,29 @@ export default defineConfig([
 
   // app layer: can import everything (no restrictions)
 
-  // ==================== Authorized Writes Enforcement (D2) ====================
+  // ==================== Authorized Writes Enforcement (D2 / 804 B3) ====================
   // Restrict raw `fetch()` usage outside the API layer to enforce token correctness.
-  // All non-GET fetch calls should go through the canonical `request()` helper in http.ts.
-  // This is set to 'warn' initially; tighten to 'error' once migration is complete.
+  // Backend calls go through `request()` (@/api/http) or, in shell-v0, the
+  // `authorizedFetch` seam (shell-v0/api/authorizedFetch.ts) — both attach the
+  // session token the packaged (prod=true) backend requires on POST/PUT/DELETE.
+  //
+  // 804 D3: `no-restricted-globals` only sees the BARE identifier — every
+  // `globalThis.fetch` / `window.fetch` member access was invisible to it (that is
+  // how the `fetchImpl ?? globalThis.fetch` family stayed unflagged while shipping
+  // 401s). The companion `no-restricted-syntax` rule below closes that hole.
   {
     files: ['src/**/*.{ts,tsx}'],
-    ignores: ['src/api/**/*.{ts,tsx}', 'src/**/*.test.{ts,tsx}'],
+    ignores: [
+      'src/api/**/*.{ts,tsx}',
+      'src/shell-v0/api/authorizedFetch.ts',
+      'src/**/*.test.{ts,tsx}',
+    ],
     rules: {
-      'no-restricted-globals': ['warn', {
+      'no-restricted-globals': ['error', {
         name: 'fetch',
-        message: 'Use the `request()` helper from @/api/http for API calls to ensure proper token handling.',
+        message: 'Use the `request()` helper from @/api/http, or `authorizedFetch` from shell-v0/api/authorizedFetch.ts, so the session token is attached.',
       }],
+      'no-restricted-syntax': ['error', FETCH_MEMBER_ACCESS_SELECTOR],
     },
   },
 
@@ -277,6 +302,9 @@ export default defineConfig([
         },
         // Tempdoc 564 facet 4d — forbid hand-declaring a migrated wire type outside the generated set.
         ...WIRE_TYPE_DECL_SELECTORS,
+        // Tempdoc 804 B3 — repeated here because this object REPLACES (not merges) the
+        // authorized-writes object's `no-restricted-syntax` for every file both match.
+        FETCH_MEMBER_ACCESS_SELECTOR,
       ],
     },
   },

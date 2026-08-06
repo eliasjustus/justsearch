@@ -1,17 +1,16 @@
 {
   "version": 1,
   "unit": "bytes",
-  "$comment": "Always-loaded agent-doc budget RATCHET (tempdoc 620 Move 3). Every session loads CLAUDE.md + .claude/rules/*.md unconditionally; this caps that context. Each file's size must stay <= its ceiling, and the ceiling only ratchets DOWN: run `node scripts/ci/check-always-loaded-budget.mjs --rebalance` after content migrates out (Moves 1/2: generation, the consult-register, skill/doc relocation) to shrink the ceiling to the new size. A net-new always-loaded addition that regrows a file past its ceiling fails the check — UNLESS the growth is justified and declared via `node scripts/ci/check-always-loaded-budget.mjs --bump <file> --reason \"<why>\"`, which raises that ceiling to current size and records the reason in `bumps` (tempdoc 618 §13: an explicit, auditable raise, not silent ceiling surgery). ~tokens = bytes/4. Wiring: run pre-merge (manual now); fold into the prose-tier-register gate or verifyGovernanceGates once the doc set stabilizes (582 R3: extend the proven meta-gate, do NOT author a new kernel gate).",
+  "$comment": "Always-loaded agent-doc budget RATCHET (tempdoc 620 Move 3). Every session loads CLAUDE.md + .claude/rules/*.md unconditionally; this caps that context. Each file's size must stay <= its ceiling, and the ceiling only ratchets DOWN: run `node scripts/ci/check-always-loaded-budget.mjs --rebalance` after content migrates out (Moves 1/2: generation, the consult-register, skill/doc relocation) to shrink the ceiling to the new size. A net-new always-loaded addition that regrows a file past its ceiling fails the check — UNLESS the growth is justified and declared via `node scripts/ci/check-always-loaded-budget.mjs --bump <file> --reason \"<why>\"`, which raises that ceiling to current size and records the reason in `bumps` (tempdoc 618 §13: an explicit, auditable raise, not silent ceiling surgery). ~tokens = bytes/4. Wiring: WIRED into .github/workflows/ci.yml (public-claims job) as of tempdoc 799 — before that it ran nowhere and the set drifted 18.5% past ceiling across four sessions that each logged it red. Kept as a CI lint rather than a kernel gate per 582 R3 (extend the proven meta-gate, do NOT author a new kernel gate).",
   "ceilings": {
     "CLAUDE.md": 22850,
     ".claude/rules/agent-lessons.md": 9680,
-    ".claude/rules/branch-safety.md": 10581,
+    ".claude/rules/branch-safety.md": 13193,
     ".claude/rules/context-efficiency.md": 1955,
-    ".claude/rules/hooks-reference.md": 2740,
-    ".claude/rules/slice-execution.md": 4667,
-    ".claude/rules/tier-register.md": 15725
+    ".claude/rules/hooks-reference.md": 2942,
+    ".claude/rules/slice-execution.md": 4667
   },
-  "totalCeiling": 68198,
+  "totalCeiling": 55287,
   "bumps": [
     {
       "file": "CLAUDE.md",
@@ -110,6 +109,20 @@
       "to": 22850,
       "reason": "tempdoc 729: correct the false 'Build fails on PMD/Spotless violations' claim — google-java-format has never run (enableGjf unset + JDK 25), so agents were told every session to run a spotlessApply that only trims whitespace, and a green spotlessCheck was read as 'formatted' (tempdoc 591:105 did exactly that). +80 B is this correction. NOTE: 114 B of this ceiling raise is PRE-EXISTING overage that predates this change (CLAUDE.md was 22770 vs ceiling 22656 at HEAD) — not introduced here; logged separately. hooks-reference.md is also pre-existing OVER by 99 B and is deliberately NOT bumped.",
       "ts": "2026-07-15T13:00:06.842Z"
+    },
+    {
+      "file": ".claude/rules/branch-safety.md",
+      "from": 10581,
+      "to": 13193,
+      "reason": "799 K.2/L.2: worktree+branch safety is plan-shaping — it must be known BEFORE the first tool call (620 residence rule), so the content is in the correct tier and the ceiling was the wrong constraint. Declared growth, not migration.",
+      "ts": "2026-07-30T19:34:32.410Z"
+    },
+    {
+      "file": ".claude/rules/hooks-reference.md",
+      "from": 2740,
+      "to": 2942,
+      "reason": "799 L.2: 202 B over — migration overhead exceeds the saving, and the file is already the minimal fire-time-delivery pointer (681 removed its per-hook catalog). Declared growth.",
+      "ts": "2026-07-30T19:34:36.935Z"
     }
   ]
 }

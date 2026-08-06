@@ -2,6 +2,24 @@ name: Build Installer
 
 on:
   workflow_dispatch:  # Manual trigger
+    inputs:
+      sandboxTestMode:
+        description: >-
+          Build a Sandbox QUALIFICATION candidate: compiles the shell with
+          JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE=1, which permits loopback HTTP feeds and
+          runtime trust-root overrides (updater.rs pinned_release_value / ensure_https).
+          Required for the in-app N->N+1 lane, because a production binary rejects those
+          overrides by design (tempdoc 617 §7.7). NEVER for a published release - the
+          guard step below refuses it on a v* tag ref.
+        type: boolean
+        default: false
+      candidateVersion:
+        description: >-
+          Override the built version (e.g. 0.2.1-qual.1) so two candidates can be produced
+          for the N->N+1 lane. Only honoured together with sandboxTestMode; a release cut
+          takes its version from gradle.properties as before.
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -23,6 +41,31 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      # A qualification candidate trusts loopback feeds and lets runtime env replace the pinned
+      # metadata root. Shipping that to users would hand the update channel to anything able to
+      # set an environment variable, so the two must never coincide. Fail before the build, not
+      # after an artifact exists.
+      - name: Refuse a qualification build on a release tag
+        if: inputs.sandboxTestMode
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            throw "sandboxTestMode was requested on $env:GITHUB_REF. A Sandbox qualification build accepts loopback feeds and runtime trust-root overrides and must never be published. Dispatch it against a branch ref."
+          }
+          Write-Host "Qualification build (loopback + runtime trust overrides enabled). Not publishable."
+
+      - name: Apply candidate version
+        if: inputs.sandboxTestMode && inputs.candidateVersion != ''
+        shell: pwsh
+        run: |
+          $v = '${{ inputs.candidateVersion }}'
+          $path = 'gradle.properties'
+          $raw = Get-Content -Raw -LiteralPath $path
+          if ($raw -notmatch '(?m)^version=') { throw "No version= line in $path" }
+          ($raw -replace '(?m)^version=.*$', "version=$v") |
+            Set-Content -LiteralPath $path -Encoding utf8 -NoNewline
+          Write-Host "Candidate version set to $v"
 
       - name: Setup Rust (MSVC)
         uses: dtolnay/rust-toolchain@stable
@@ -143,6 +186,27 @@ jobs:
           npm ci --prefix modules/shell
           npm ci --prefix modules/ui-web
 
+      - name: Stage authenticated-updater metadata keys
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
+        shell: pwsh
+        env:
+          METADATA_PRIVATE_KEY_PEM: ${{ secrets.JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PEM }}
+          METADATA_PUBLIC_KEY_PEM: ${{ vars.JUSTSEARCH_RELEASE_METADATA_PUBLIC_KEY_PEM }}
+        run: |
+          if (-not $env:METADATA_PRIVATE_KEY_PEM) {
+            throw "JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PEM is required for a tag release."
+          }
+          if (-not $env:METADATA_PUBLIC_KEY_PEM) {
+            throw "JUSTSEARCH_RELEASE_METADATA_PUBLIC_KEY_PEM is required for a tag release."
+          }
+          $utf8 = New-Object System.Text.UTF8Encoding($false)
+          $privatePath = Join-Path $env:RUNNER_TEMP "justsearch-release-metadata-private.pem"
+          $publicPath = Join-Path $env:RUNNER_TEMP "justsearch-release-metadata-public.pem"
+          [System.IO.File]::WriteAllText($privatePath, $env:METADATA_PRIVATE_KEY_PEM, $utf8)
+          [System.IO.File]::WriteAllText($publicPath, $env:METADATA_PUBLIC_KEY_PEM, $utf8)
+          "JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PATH=$privatePath" >> $env:GITHUB_ENV
+          "JUSTSEARCH_RELEASE_METADATA_PUBLIC_KEY_PATH=$publicPath" >> $env:GITHUB_ENV
+
       # eSigner CodeSignTool bootstrap (tempdoc 760 command-mode signing). Only when the
       # command-mode secret is set AND its template references CodeSignTool: download SSL.com's
       # CodeSignTool (ships its own JRE and PRODUCTION endpoint config — no properties edit
@@ -182,11 +246,8 @@ jobs:
         # Models and GPU variants land on user machines via the "Install AI"
         # flow, not the base installer.
         #
-        # -SkipVerify: installer_verify runs verify-installer-nsis-win.ps1,
-        # which requires capture-evidence-bundle.mjs + determinism-budget
-        # tooling + a running backend — machinery designed for a more mature
-        # CI context. For manually dispatched alpha releases, "the installer
-        # built" is signal enough; verify can run separately.
+        # -SkipVerify: verification runs as its own job (installer_verify, below) against the
+        # uploaded artifact, not inline here.
         #
         # -AssembleReleaseAssets: stage the full release asset set into
         # dist/installer — installer + SHA256SUMS + the committed
@@ -207,6 +268,16 @@ jobs:
           JUSTSEARCH_CODESIGN_TIMESTAMP_URL: ${{ secrets.JUSTSEARCH_CODESIGN_TIMESTAMP_URL }}
           JUSTSEARCH_CODESIGN_THUMBPRINT: ${{ secrets.JUSTSEARCH_CODESIGN_THUMBPRINT }}
           JUSTSEARCH_CODESIGN_COMMAND: ${{ secrets.JUSTSEARCH_CODESIGN_COMMAND }}
+          # Compile-time gate read by updater.rs `sandbox_test_mode()` (option_env!). Empty on a
+          # normal build, so the production trust pins stay non-overridable.
+          JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE: ${{ inputs.sandboxTestMode && '1' || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.JUSTSEARCH_TAURI_UPDATER_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.JUSTSEARCH_TAURI_UPDATER_PRIVATE_KEY_PASSWORD }}
+          JUSTSEARCH_RELEASE_DESCRIPTOR_URL: ${{ vars.JUSTSEARCH_RELEASE_DESCRIPTOR_URL }}
+          JUSTSEARCH_RELEASE_METADATA_ROOT_PUBLIC_KEY: ${{ vars.JUSTSEARCH_RELEASE_METADATA_ROOT_PUBLIC_KEY }}
+          JUSTSEARCH_RELEASE_METADATA_ROOT_KEY_ID: ${{ vars.JUSTSEARCH_RELEASE_METADATA_ROOT_KEY_ID }}
+          JUSTSEARCH_UPDATE_ARTIFACT_PUBLIC_KEY: ${{ vars.JUSTSEARCH_UPDATE_ARTIFACT_PUBLIC_KEY }}
+          JUSTSEARCH_UPDATE_ARTIFACT_KEY_ID: ${{ vars.JUSTSEARCH_UPDATE_ARTIFACT_KEY_ID }}
           # Rehearsal-only relaxation (repo VARIABLE, not a secret — it must be visibly on/off):
           # with a self-signed rehearsal cert, sign-windows.ps1 and verify-windows-signature.ps1
           # accept a present-but-chain-untrusted signature instead of hard-failing after all the
@@ -221,7 +292,22 @@ jobs:
           # array-splatted -VerifyReleaseVersion had the same latent bug, never exercised because
           # no tag dispatch has run since it was added).
           $extra = @{}
-          if ($env:GITHUB_REF -like 'refs/tags/v*') { $extra['VerifyReleaseVersion'] = $true }
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $tag = $env:GITHUB_REF.Substring('refs/tags/'.Length)
+            $extra['VerifyReleaseVersion'] = $true
+            if ($tag -match '^v\d+\.\d+\.\d+$') {
+              $extra['AssembleUpdaterAssets'] = $true
+              # GitHub's per-workflow run number is monotonic across new runs and unchanged on a
+              # rerun, giving release metadata rollback protection without making retries diverge.
+              $extra['ReleaseSequence'] = [long]$env:GITHUB_RUN_NUMBER
+              $extra['InstallerUrl'] = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/{filename}"
+              $extra['ArtifactKeyId'] = $env:JUSTSEARCH_UPDATE_ARTIFACT_KEY_ID
+              $extra['ArtifactPublicKey'] = $env:JUSTSEARCH_UPDATE_ARTIFACT_PUBLIC_KEY
+              $extra['MetadataKeyId'] = $env:JUSTSEARCH_RELEASE_METADATA_ROOT_KEY_ID
+              $extra['MetadataPrivateKeyPath'] = $env:JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PATH
+              $extra['MetadataPublicKeyPath'] = $env:JUSTSEARCH_RELEASE_METADATA_PUBLIC_KEY_PATH
+            }
+          }
           # Engage signing only when a credential for the configured mode is present (pfx b64 /
           # store thumbprint / command template). Secrets absent => no -Sign => unsigned build,
           # identical to today. (Tempdoc 760 Phase 2 item 4.)
@@ -312,24 +398,115 @@ jobs:
           # Curbs the artifact-storage entropy that blocked an earlier build. (tempdoc 562 item 4.)
           retention-days: 7
 
-      # Manual dispatches against v* tag refs attach the release asset set
-      # (installer + SHA256SUMS + justsearch-mcp.mcpb) to a GitHub Release.
-      # The release becomes the permanent download URL (closes G3 alongside G2).
-      # prerelease is auto-detected from SemVer pre-release identifiers —
-      # alpha / beta / rc tags are marked prerelease, bare vX.Y.Z tags are GA.
-      - name: Attach release asset set to GitHub Release
+      # Transactional updater publication: any failure leaves the release in draft state.
+      - name: Draft, round-trip verify, and publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v3
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF.Substring('refs/tags/'.Length)
+          $notes = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          @"
+          ### Verify your download
+          Before running the installer, verify its integrity with the accompanying ``SHA256SUMS``.
+          Full instructions are in
+          [verify-your-download](https://github.com/eliasjustus/justsearch/blob/main/docs/how-to/verify-your-download.md).
+          "@ | Set-Content -LiteralPath $notes -Encoding UTF8
+
+          $existingJson = gh release view $tag --json isDraft 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --verify-tag --draft --title $tag --generate-notes --notes-file $notes
+            if ($LASTEXITCODE -ne 0) { throw "Failed to create draft release $tag." }
+          } else {
+            $existing = $existingJson | ConvertFrom-Json
+            if (-not $existing.isDraft) {
+              throw "Release $tag is already published; refusing to mutate it during a transactional retry."
+            }
+          }
+
+          $releaseAssets = @(Get-ChildItem -LiteralPath "dist/installer" -File | ForEach-Object FullName)
+          if ($releaseAssets.Count -eq 0) { throw "No release assets were assembled." }
+          gh release upload $tag @releaseAssets --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Failed to upload the draft release asset set." }
+
+          $verifyDir = Join-Path $env:RUNNER_TEMP "justsearch-release-roundtrip"
+          New-Item -ItemType Directory -Force -Path $verifyDir | Out-Null
+          gh release download $tag --dir $verifyDir
+          if ($LASTEXITCODE -ne 0) { throw "Failed to download draft release assets for verification." }
+
+          $sums = Join-Path $verifyDir "SHA256SUMS"
+          if (-not (Test-Path -LiteralPath $sums -PathType Leaf)) { throw "Downloaded SHA256SUMS is missing." }
+          foreach ($line in Get-Content -LiteralPath $sums) {
+            if (-not $line -or $line.StartsWith("#")) { continue }
+            if ($line -notmatch '^([0-9a-f]{64})  (.+)$') { throw "Malformed SHA256SUMS line: $line" }
+            $asset = Join-Path $verifyDir $Matches[2]
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) { throw "Checksum asset missing: $($Matches[2])" }
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLowerInvariant()
+            if ($actual -ne $Matches[1]) { throw "Checksum mismatch after release round-trip: $($Matches[2])" }
+          }
+
+          $installers = @(Get-ChildItem -LiteralPath $verifyDir -Filter "*-setup.exe" -File)
+          if ($installers.Count -ne 1) { throw "Downloaded release has no unique NSIS installer." }
+          $installer = $installers[0]
+          if (Test-Path -LiteralPath (Join-Path $verifyDir "release.v1.json")) {
+            & node scripts/release/app-release-assets.mjs verify `
+              --installer $installer.FullName `
+              --artifact-signature "$($installer.FullName).sig" `
+              --metadata-public-key $env:JUSTSEARCH_RELEASE_METADATA_PUBLIC_KEY_PATH `
+              --metadata-key-id $env:JUSTSEARCH_RELEASE_METADATA_ROOT_KEY_ID `
+              --metadata-root-public-key $env:JUSTSEARCH_RELEASE_METADATA_ROOT_PUBLIC_KEY `
+              --release-dir $verifyDir
+            if ($LASTEXITCODE -ne 0) { throw "Downloaded authenticated updater set failed verification." }
+          }
+
+          $publishArgs = @("release", "edit", $tag, "--draft=false")
+          if ($tag -match '-(alpha|beta|rc)\.') {
+            $publishArgs += "--prerelease"
+          } else {
+            $publishArgs += "--prerelease=false"
+          }
+          gh @publishArgs
+          if ($LASTEXITCODE -ne 0) { throw "Verified release could not be published; it remains draft." }
+
+  installer_verify:
+    name: Verify installer (packaged)
+    needs: build-windows-installer
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # The verify script auto-enables EvidenceBundle capture whenever $env:CI is set (which
+      # GitHub Actions always sets) -- its validator (scripts/evidence/validate-evidencebundle-v1.mjs)
+      # imports ajv/ajv-formats from the ROOT package.json, so this job needs a root `npm ci`
+      # even though it never touches modules/ui-web or modules/shell directly.
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
         with:
-          files: dist/installer/*
-          prerelease: ${{ contains(github.ref, '-alpha.') || contains(github.ref, '-beta.') || contains(github.ref, '-rc.') }}
-          # Trust blurb prepended to the release body; generate_release_notes appends the
-          # auto-generated notes after it. Points users at the checksum-verification how-to.
-          body: |
-            ### Verify your download
-            Before running the installer, verify its integrity: download `SHA256SUMS` alongside the
-            `.exe` and check it (`certutil -hashfile <file> SHA256`, compare against `SHA256SUMS`).
-            Full instructions — and why Windows SmartScreen may warn on an unsigned build — are in
-            [verify-your-download](https://github.com/eliasjustus/justsearch/blob/main/docs/how-to/verify-your-download.md).
-          generate_release_notes: true
-          fail_on_unmatched_files: true
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Download installer artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: windows-installer
+          path: dist/installer
+
+      # tempdoc 805 Part G.4 -- the packaged verify lane. BLOCKING since 2026-08-04: the
+      # report-only baseline ran green twice (runs 30916527477 product legs / 30918470316 fully,
+      # incl. EvidenceBundle after PR #363), and all THREE legs -- fresh, restart, and
+      # upgrade-arrival -- passed locally against the run-30918470316 artifact. The
+      # upgrade-arrival leg's repairNeeded assertions target fields that shipped with the 805
+      # campaign (PR #362), so the leg runs here permanently.
+      - name: Run packaged verify lane
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem -Path dist/installer -Filter "*-setup.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $setup) { throw "No *-setup.exe found in dist/installer after artifact download." }
+          ./scripts/ci/verify-installer-nsis-win.ps1 -SetupExePath $setup.FullName -IncludeUpgradeArrival

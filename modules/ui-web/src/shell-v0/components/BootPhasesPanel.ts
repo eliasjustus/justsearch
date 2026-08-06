@@ -37,6 +37,7 @@
 
 import { html, css, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import './StatusBadge.js';
 
 interface PhaseRow {
@@ -99,7 +100,7 @@ export class BootPhasesPanel extends JfElement {
 
   private async load(): Promise<void> {
     try {
-      const res = await fetch('/api/boot/phases');
+      const res = await authorizedFetch('/api/boot/phases');
       if (!res.ok) {
         this.error = `HTTP ${res.status}`;
         this.requestUpdate();

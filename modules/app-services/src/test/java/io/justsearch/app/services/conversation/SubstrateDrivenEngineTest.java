@@ -509,6 +509,41 @@ final class SubstrateDrivenEngineTest {
   }
 
   @Test
+  @DisplayName("The running shape's id reaches SPIs via ConversationContext.shapeId()")
+  void contextCarriesShapeId() {
+    var seen = new java.util.concurrent.atomic.AtomicReference<String>("<never-invoked>");
+    var probe =
+        new ContextInjector() {
+          @Override
+          public String id() {
+            return "core.shape-id-probe";
+          }
+
+          @Override
+          public io.justsearch.agent.api.conversation.InjectorResult inject(
+              ConversationContext ctx) {
+            seen.set(ctx.shapeId());
+            return io.justsearch.agent.api.conversation.InjectorResult.empty();
+          }
+        };
+    var llm = new ScriptedAi(List.of("ok"));
+    var engine =
+        newEngine(
+            oneShotShape(List.of(), List.of(probe.id()), List.of()),
+            List.of(),
+            List.of(probe),
+            List.of(),
+            List.of(SingleHopController.INSTANCE),
+            llm);
+
+    engine.run(SHAPE_ID, Map.of(), Audience.USER, ev -> {});
+
+    // A shared SPI serving several shapes (SelectionContextInjector) needs to know which one is
+    // asking; the request body is not a reliable source (the per-shape routes carry no shapeId).
+    assertEquals(SHAPE_ID.value(), seen.get());
+  }
+
+  @Test
   @DisplayName(
       "Engine enforces hard cap of 20 iterations; runaway controller terminates with iterationsUsed=20 done")
   void iterationCapEnforced() {

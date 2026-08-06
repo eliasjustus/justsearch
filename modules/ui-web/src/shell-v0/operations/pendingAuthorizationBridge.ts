@@ -145,9 +145,16 @@ async function presentAndExecute(
   };
   const decision = await requestAuthorization(prompt);
   if (!decision.approved) {
-    // Fail-closed default (no host mounted) or an explicit deny — either way, nothing more to
-    // do. The pending record itself expires server-side (5-minute TTL) if never approved; there
-    // is no separate "reject" round trip to make for an MCP-originated pending.
+    // Tempdoc 807 item 4: an explicit human deny is a decision and needs no message — but a
+    // FAIL-CLOSED outcome (no host mounted, or a mounted host torn down with this ceremony still
+    // open) is a failure wearing a deny's clothes. Round 13 saw exactly that shape: the modal
+    // dismissed, nothing dispatched, and nothing told the user why. Same channel as every other
+    // outcome this function reports.
+    if (decision.failedClosed) {
+      reportExecutionFailure(prompt, 'the approval ceremony closed before the decision was sent');
+    }
+    // The pending record itself expires server-side (5-minute TTL) if never approved; there is no
+    // separate "reject" round trip to make for an MCP-originated pending.
     return;
   }
 

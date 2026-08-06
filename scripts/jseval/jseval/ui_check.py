@@ -659,6 +659,79 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
             state="visible", timeout=10_000
         )
 
+    async def setup_chat_occlusion(page):
+        # The ONE capture where both Sandbox round-7 layout defects are on screen together:
+        #   (1) the RAG answer column starved by the document pane beside it, and
+        #   (2) the advisory toast stack growing down over the chat header's control row.
+        # Both are RELATIONS between elements, so they need a deterministic state where the
+        # crowding surfaces are actually mounted — hence a dedicated isolated step rather
+        # than an assertion bolted onto `chat-proportion` (whose own screenshot/a11y
+        # baseline must stay undisturbed, same reasoning that step records).
+        #
+        # 1250x800: just OVER the 64rem (1024px) wide breakpoint AS THE CHAT SURFACE SEES IT.
+        # Round 8 corrected the measurement this width was originally derived from: the
+        # breakpoint is a `@container` query on the surface box, not a `@media` query on the
+        # viewport, and the surface box is the viewport minus the Shell rail (11rem expanded)
+        # minus the surface's own 1rem padding. At the old 1050 the surface got ~842px and the
+        # wide grid no longer commits at all (the pane moves to the OverlayHost drawer, so
+        # `.document-pane` would drop out of this capture entirely). 1250 puts the surface at
+        # ~1042px — still the worst case the gate wants (every zone mounted, least room to fit
+        # them), now computed against the box the tracks are actually laid out in.
+        await page.set_viewport_size({"width": 1250, "height": 800})
+        # Same rail-click + composer path `setup_chat_proportion` uses, and for the same
+        # reason: `_type_and_search` / `S.SEARCH_INPUT` target a searchbox role + testid
+        # that tempdoc 687 retired (see the ui_selectors.py note).
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        try:
+            await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "() => { location.hash = 'justsearch://surface/core.unified-chat-surface'; }"
+            )
+        ta = page.locator(S.CSS_COMPOSER_TEXTAREA)
+        await ta.wait_for(state="visible", timeout=10_000)
+        await ta.click()
+        await ta.type("justsearch", delay=20)
+        await page.locator(S.CSS_SEARCH_RESULT_ROW).first.wait_for(state="visible", timeout=30_000)
+        # A row click emits `card-open`, which funnels through the shared inspectorState
+        # store; UnifiedChatView's ONE subscription derives `readingDocPath` from it and
+        # mounts `<jf-document-pane class="document-pane">` in grid column 5.
+        await page.locator(S.CSS_SEARCH_RESULT_ROW).first.click(force=True)
+        await page.locator(S.CSS_DOCUMENT_PANE).first.wait_for(state="visible", timeout=15_000)
+        # A toast burst through the one client-originated message channel (the
+        # `jf-advisory-ephemeral` document event AdvisoryStore consumes — emitEphemeralToast's
+        # transport). severity 'error' makes each toast sticky (messageClasses
+        # presentationForSeverity), and supersede:false opts out of same-class single-occupancy,
+        # so the stack is deterministic at capture time instead of racing a 5s auto-dismiss.
+        #
+        # EXACTLY the cap (MAX_VISIBLE_TOASTS), deliberately: at the cap there is no
+        # `+N earlier` summary row, so the toast column sits at its HIGHEST possible
+        # position — the worst case for occluding the header band. Over the cap the
+        # summary row displaces the column ~31px downward, which would let a re-broken
+        # dock offset pass this assertion for an incidental reason (verified: with the
+        # dock reverted and an 8-toast burst the residual intersection was 1px, inside
+        # tolerance, so the gate reported clean). Stack BOUNDING is asserted at the unit
+        # level (AdvisoryToastHost.test.ts); this capture asserts the OCCLUSION relation.
+        await page.evaluate(
+            """(n) => {
+                for (let i = 0; i < n; i += 1) {
+                    document.dispatchEvent(new CustomEvent('jf-advisory-ephemeral', {
+                        detail: {
+                            message: `Occlusion probe toast ${i + 1}`,
+                            severity: 'error',
+                            supersede: false,
+                        },
+                        bubbles: true,
+                    }));
+                }
+            }""",
+            3,
+        )
+        await page.locator(S.CSS_TOAST).first.wait_for(state="visible", timeout=10_000)
+        await asyncio.sleep(0.3)  # let the toast enter-animation settle before measuring
+
     async def setup_responsive(page):
         await page.goto(demo, wait_until="domcontentloaded", timeout=timeout_ms)
         await _type_and_search(page)
@@ -886,6 +959,12 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # serves the DEGRADED status fixture (see ui_fixtures._status_body).
         Step("chat-proportion", setup=setup_chat_proportion, isolated=True,
              fixtures_variant="degraded"),
+
+        # --- Sandbox round 7: the two measured layout-occlusion assertions ---
+        # Registered in governance/ui-proportion-baseline.v1.json with a `minWidthPx` floor
+        # on the reading column and a `mustNotOverlapSelector` between the toast stack and
+        # the chat header row. Isolated + fixtures: structural, no backend.
+        Step("chat-occlusion", setup=setup_chat_occlusion, isolated=True),
 
         # --- Slice 3a.1 Phase 6: Lit shell-v0 visual verification ---
         # Mounts the standalone shell demo (Lumino DockPanel + Lit panes)

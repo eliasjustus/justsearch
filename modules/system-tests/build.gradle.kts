@@ -164,6 +164,10 @@ dependencies {
   add("integrationTestImplementation", project(":modules:app-agent"))
   add("integrationTestImplementation", project(":modules:app-agent-api"))
   add("integrationTestImplementation", project(":modules:app-api"))
+  // IsolatedBackendFixture spawns io.justsearch.ui.HeadlessApp in a child JVM using the test
+  // JVM's own java.class.path, so the Head must be ON that classpath. Without this the whole
+  // fixture-based tier dies at @BeforeAll with ClassNotFoundException: HeadlessApp.
+  add("integrationTestRuntimeOnly", project(":modules:ui"))
   add("integrationTestImplementation", "org.junit.jupiter:junit-jupiter-params:5.14.3")
   add("systemTestImplementation", project(":modules:indexing"))
   add("systemTestImplementation", project(":modules:gpu-bridge"))

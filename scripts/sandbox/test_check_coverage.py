@@ -16,22 +16,32 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Iterable
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from check_coverage import (  # noqa: E402
+    BULK_FRAMES_DIRNAME,
     EVIDENCE_REVIEW_FILENAME,
     MIN_SCREENSHOT_BYTES,
+    MUSTWATCH_VERDICTS_FILENAME,
+    MUTATING_PROBE_FILENAME,
     RETROSPECTIVE_FILENAME,
     RETROSPECTIVE_MIN_BYTES,
+    SESSION_ANALYSIS_FILENAME,
+    SESSION_ANALYSIS_MIN_BYTES,
     TIME_ACCOUNTING_REQUIRED_GROUPS,
     MustTouchItem,
     _time_accounting_section,
     check_evidence_review,
+    check_mustwatch_verdicts,
+    check_mutating_probe,
     check_retrospective,
+    check_session_analysis,
     emit_evidence_timeline,
     find_duplicate_token_collisions,
+    is_bulk_frame,
     main,
     required_evidence_tokens,
 )
@@ -74,6 +84,61 @@ def _empty_evidence_review_json() -> str:
     """A valid, empty evidence-review.v1.json -- for fixtures with zero
     credit-eligible screenshots that only need the file to be PRESENT."""
     return json.dumps({"version": 1, "examined": [], "mismatches": [], "uncertain": []})
+
+
+SUBSTANTIAL_SESSION_ANALYSIS = """\
+## What the harness/charter made hard
+
+The charter's must-watch list named the items but not where to reach them, so
+each one cost a fresh round of discovery through the shell before it could be
+observed at all. The coverage brief's reach pointers helped where they existed.
+
+## What we did off-charter, and why
+
+We chased an unrelated status-card staleness we noticed while waiting on the
+model download, because it looked like the same class as a prior round's
+finding. It was not, but it cost about twenty minutes and is written up.
+
+## What the next round should do differently
+
+Run the collector once before touching the UI, so there is a baseline snapshot
+to diff the post-install ladder against instead of reasoning from one capture.
+""" + ("padding " * 20)
+
+
+def _mustwatch_verdicts_json(ids: Iterable[str] = ()) -> str:
+    """A valid mustwatch-verdicts.v1.json covering exactly `ids`."""
+    return json.dumps(
+        {
+            "schema": "mustwatch-verdicts.v1",
+            "items": [
+                {"id": item_id, "verdict": "observed-pass", "note": "seen"} for item_id in ids
+            ],
+        }
+    )
+
+
+def _mutating_probe_json(status: str = "pass") -> str:
+    return json.dumps({"schema": "mutating-probe.v1", "status": status, "detail": "POST 200"})
+
+
+def _write_round_process_artifacts(evidence: Path, mustwatch_ids: Iterable[str] = ()) -> None:
+    """Plant the three artifacts tempdoc 808 made mandatory (mustWatch
+    verdicts, mutating-probe verdict, session self-analysis).
+
+    Every pre-808 green-path main() fixture predates these files, so each one
+    needs them planted to keep testing what it was written to test. Kept as
+    one helper so a future required artifact lands in exactly one place --
+    and so the 808 bite tests below can omit exactly ONE of them and prove the
+    failure comes from that omission, not from a generally lenient fixture.
+    """
+    (evidence / MUSTWATCH_VERDICTS_FILENAME).write_text(
+        _mustwatch_verdicts_json(mustwatch_ids), encoding="utf-8"
+    )
+    (evidence / MUTATING_PROBE_FILENAME).write_text(_mutating_probe_json(), encoding="utf-8")
+    (evidence / SESSION_ANALYSIS_FILENAME).write_text(
+        SUBSTANTIAL_SESSION_ANALYSIS, encoding="utf-8"
+    )
 
 
 class CheckRetrospectiveTests(unittest.TestCase):
@@ -292,6 +357,7 @@ class EvidenceTimelineTests(unittest.TestCase):
             (evidence_dir / EVIDENCE_REVIEW_FILENAME).write_text(
                 _empty_evidence_review_json(), encoding="utf-8"
             )
+            _write_round_process_artifacts(evidence_dir)
             rc = main(["--manifest", str(manifest_path), "--evidence-dir", str(evidence_dir)])
             self.assertEqual(rc, 0)
 
@@ -327,6 +393,7 @@ class MainWiringTests(unittest.TestCase):
             (evidence_dir / EVIDENCE_REVIEW_FILENAME).write_text(
                 _empty_evidence_review_json(), encoding="utf-8"
             )
+            _write_round_process_artifacts(evidence_dir)
             rc = main(["--manifest", str(manifest_path), "--evidence-dir", str(evidence_dir)])
             self.assertEqual(rc, 0)
 
@@ -455,6 +522,7 @@ class DuplicateContentMainWiringTests(unittest.TestCase):
             "uncertain": [],
         }
         (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
+        _write_round_process_artifacts(evidence)
         return evidence
 
     def test_fully_covered_round_still_fails_on_cross_token_duplicate(self):
@@ -658,6 +726,7 @@ class EvidenceReviewMainWiringTests(unittest.TestCase):
         body = b"\x00" * MIN_SCREENSHOT_BYTES
         (evidence / "01-security-panel.png").write_bytes(b"\x89PNG-security" + body)
         (evidence / "02-memory-surface.png").write_bytes(b"\x89PNG-memory" + body)
+        _write_round_process_artifacts(evidence)
         return evidence
 
     def test_truncated_review_fails_closed_despite_clean_coverage_and_retrospective(self):
@@ -735,6 +804,7 @@ class SizeFloorBiteTests(unittest.TestCase):
             "uncertain": [],
         }
         (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
+        _write_round_process_artifacts(evidence)
         return evidence
 
     def test_undersized_screenshot_does_not_credit_coverage(self):
@@ -763,6 +833,570 @@ class SizeFloorBiteTests(unittest.TestCase):
                 "--evidence-dir", str(evidence),
             ])
             self.assertEqual(rc, 0)
+
+
+class BulkFrameExclusionTests(unittest.TestCase):
+    """A5 / tempdoc 806 W3 item 1: a periodic capture driver's bulk frames
+    (round 12: ~947 near-identical images from a ~1.5s-interval installer
+    watcher) must not (a) require individual reader review in
+    evidence-review.v1.json's 'examined' list, or (b) silently satisfy a
+    mustTouch surface/shape token by filename alone. Proves both directions
+    via main() end-to-end, isolating BULK_FRAMES_DIRNAME as the cause with a
+    same-filename top-level control (SizeFloorBiteTests' pairing pattern) --
+    without the bulk-dir convention the exact same fixture must fail closed.
+    """
+
+    def _manifest_path(self, tmp: Path) -> Path:
+        manifest = {
+            "version": 1,
+            "mustTouch": [
+                {
+                    "kind": "surface", "id": "core.security-surface", "tier": "sandbox",
+                    "validateHow": "security", "evidenceToken": "security",
+                },
+            ],
+            "coveredElsewhere": [],
+            "exempt": [],
+        }
+        path = tmp / "coverage-manifest.json"
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        return path
+
+    def _image_bytes(self) -> bytes:
+        return b"\x89PNG-real-capture" + b"\x00" * MIN_SCREENSHOT_BYTES
+
+    def _base_evidence_dir(self, tmp: Path) -> Path:
+        evidence = tmp / "evidence"
+        evidence.mkdir()
+        (evidence / RETROSPECTIVE_FILENAME).write_text(SUBSTANTIAL_RETROSPECTIVE, encoding="utf-8")
+        _write_round_process_artifacts(evidence)
+        return evidence
+
+    def test_bulk_frames_excluded_from_required_examined_list(self):
+        """Bulk frames need not be opened/listed by the reader -- only the
+        genuine top-level capture does -- and the round still passes."""
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._base_evidence_dir(tmp)
+            bulk_dir = evidence / BULK_FRAMES_DIRNAME
+            bulk_dir.mkdir()
+            (bulk_dir / "seq-0001.png").write_bytes(self._image_bytes())
+            (bulk_dir / "seq-0002.png").write_bytes(self._image_bytes())
+            (evidence / "01-security-panel.png").write_bytes(self._image_bytes())
+            review = {
+                "version": 1,
+                "examined": ["01-security-panel.png"],  # bulk frames deliberately absent
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
+            rc = main([
+                "--manifest", str(self._manifest_path(tmp)),
+                "--evidence-dir", str(evidence),
+            ])
+            self.assertEqual(rc, 0)
+
+    def test_control_same_frames_at_top_level_must_be_examined(self):
+        """Precision guard: WITHOUT the bulk-dir convention (identical files,
+        same names, top level), omitting them from 'examined' fails closed --
+        proving the pass above is because of the bulk-dir exclusion, not
+        merely because the fixture is otherwise lenient."""
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._base_evidence_dir(tmp)
+            (evidence / "seq-0001.png").write_bytes(self._image_bytes())
+            (evidence / "01-security-panel.png").write_bytes(self._image_bytes())
+            review = {
+                "version": 1,
+                "examined": ["01-security-panel.png"],  # seq-0001.png NOT listed
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
+            rc = main([
+                "--manifest", str(self._manifest_path(tmp)),
+                "--evidence-dir", str(evidence),
+            ])
+            self.assertEqual(rc, 1)
+
+    def test_bulk_frame_cannot_satisfy_mustTouch_token(self):
+        """A mustTouch token whose ONLY matching filename lives under the
+        bulk-frames directory must remain UNCOVERED -- a bulk driver cannot
+        accidentally (or deliberately) manufacture coverage credit.
+
+        Isolation: the bulk file's relpath is listed in 'examined' anyway
+        (harmless whether or not it's required) so a failure here can only
+        come from the coverage gate, not incidentally from the evidence-
+        review gate also failing for the same underlying reason -- otherwise
+        a broken exclusion could still yield rc=1 for the WRONG reason and
+        this test would not actually bite.
+        """
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._base_evidence_dir(tmp)
+            bulk_dir = evidence / BULK_FRAMES_DIRNAME
+            bulk_dir.mkdir()
+            (bulk_dir / "01-security-panel.png").write_bytes(self._image_bytes())
+            review = {
+                "version": 1,
+                "examined": [f"{BULK_FRAMES_DIRNAME}/01-security-panel.png"],
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
+            rc = main([
+                "--manifest", str(self._manifest_path(tmp)),
+                "--evidence-dir", str(evidence),
+            ])
+            self.assertEqual(rc, 1)
+
+    def test_control_same_filename_at_top_level_satisfies_the_token(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._base_evidence_dir(tmp)
+            (evidence / "01-security-panel.png").write_bytes(self._image_bytes())
+            review = {
+                "version": 1,
+                "examined": ["01-security-panel.png"],
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
+            rc = main([
+                "--manifest", str(self._manifest_path(tmp)),
+                "--evidence-dir", str(evidence),
+            ])
+            self.assertEqual(rc, 0)
+
+    def test_is_bulk_frame_helper(self):
+        self.assertTrue(is_bulk_frame(f"{BULK_FRAMES_DIRNAME}/seq-0001.png"))
+        self.assertFalse(is_bulk_frame("seq-0001.png"))
+        self.assertFalse(is_bulk_frame("findings/f1.md"))
+        # Only a DIRECT child of the evidence dir counts -- a nested
+        # coincidental name deeper in the tree is not the convention.
+        self.assertFalse(is_bulk_frame(f"other/{BULK_FRAMES_DIRNAME}/seq-0001.png"))
+
+
+# --------------------------------------------------------------------------
+# tempdoc 808 bite proof. Wiring alone is not evidence (798 D2d): every new
+# check ships with tests proving it catches its known-bad inputs, plus a
+# green-path control on the SAME fixture so a failure is attributable to the
+# one thing that was made bad.
+# --------------------------------------------------------------------------
+
+
+class CheckMustWatchVerdictsTests(unittest.TestCase):
+    """I1a unit-level: presence, coverage of the manifest's mode-included ids,
+    the verdict enum, the unobservable-needs-a-note rule, and the deliberate
+    NON-failure of observed-fail."""
+
+    MANIFEST = {
+        "version": 1,
+        "mustTouch": [],
+        "coveredElsewhere": [],
+        "exempt": [],
+        "mustWatch": [
+            {"id": "ui-api-truthfulness-under-load", "reason": "r", "observability": "sandbox"},
+            {"id": "install-trust-prompts", "reason": "r", "observability": "blocked-by-posture"},
+        ],
+    }
+
+    def _write(self, tmp: str, payload) -> None:
+        (Path(tmp) / MUSTWATCH_VERDICTS_FILENAME).write_text(
+            payload if isinstance(payload, str) else json.dumps(payload), encoding="utf-8"
+        )
+
+    def test_no_evidence_dir_blocks(self):
+        ok, reason, fails = check_mustwatch_verdicts(None, self.MANIFEST)
+        self.assertFalse(ok)
+        self.assertIn("no --evidence-dir", reason)
+        self.assertEqual(fails, [])
+
+    def test_absent_file_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ok, reason, _ = check_mustwatch_verdicts(tmp, self.MANIFEST)
+            self.assertFalse(ok)
+            self.assertIn("not found", reason)
+
+    def test_malformed_json_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "{not valid json")
+            ok, reason, _ = check_mustwatch_verdicts(tmp, self.MANIFEST)
+            self.assertFalse(ok)
+            self.assertIn("not valid JSON", reason)
+
+    def test_items_wrong_type_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, {"schema": "mustwatch-verdicts.v1", "items": "nope"})
+            ok, reason, _ = check_mustwatch_verdicts(tmp, self.MANIFEST)
+            self.assertFalse(ok)
+            self.assertIn("'items' must be a list", reason)
+
+    def test_missing_one_mode_included_id_blocks(self):
+        # THE load-bearing assertion: a verdict set that silently drops one of
+        # the round's must-watch items must fail closed, exactly like the
+        # evidence review's missing-examined rule.
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, {
+                "schema": "mustwatch-verdicts.v1",
+                "items": [{"id": "ui-api-truthfulness-under-load", "verdict": "observed-pass"}],
+            })
+            ok, reason, _ = check_mustwatch_verdicts(tmp, self.MANIFEST)
+            self.assertFalse(ok)
+            self.assertIn("install-trust-prompts", reason)
+
+    def test_bad_verdict_enum_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, {
+                "schema": "mustwatch-verdicts.v1",
+                "items": [
+                    {"id": "ui-api-truthfulness-under-load", "verdict": "ok"},
+                    {"id": "install-trust-prompts", "verdict": "observed-pass"},
+                ],
+            })
+            ok, reason, _ = check_mustwatch_verdicts(tmp, self.MANIFEST)
+            self.assertFalse(ok)
+            self.assertIn("verdict='ok'", reason.replace('"', "'"))
+
+    def test_unobservable_with_empty_note_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, {
+                "schema": "mustwatch-verdicts.v1",
+                "items": [
+                    {"id": "ui-api-truthfulness-under-load", "verdict": "observed-pass"},
+                    {"id": "install-trust-prompts", "verdict": "unobservable", "note": "   "},
+                ],
+            })
+            ok, reason, _ = check_mustwatch_verdicts(tmp, self.MANIFEST)
+            self.assertFalse(ok)
+            self.assertIn("install-trust-prompts", reason)
+            self.assertIn("note", reason)
+
+    def test_unobservable_with_a_real_note_passes(self):
+        # Precision guard for the test above: only the note changes.
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, {
+                "schema": "mustwatch-verdicts.v1",
+                "items": [
+                    {"id": "ui-api-truthfulness-under-load", "verdict": "observed-pass"},
+                    {
+                        "id": "install-trust-prompts",
+                        "verdict": "unobservable",
+                        "note": "SAC force-disabled at boot and the installer arrives by folder mount, so no MOTW.",
+                    },
+                ],
+            })
+            ok, reason, fails = check_mustwatch_verdicts(tmp, self.MANIFEST)
+            self.assertTrue(ok, reason)
+            self.assertEqual(fails, [])
+
+    def test_observed_fail_passes_the_gate_but_is_reported(self):
+        # The deliberate design point (808 I1a): recording is graded, the
+        # OUTCOME is judgment. An observed-fail must be surfaced, not swallowed
+        # -- and must not flip ok, or severity would be decided by a checker.
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, {
+                "schema": "mustwatch-verdicts.v1",
+                "items": [
+                    {"id": "ui-api-truthfulness-under-load", "verdict": "observed-fail",
+                     "note": "shell showed Reconnecting while /api/health was READY"},
+                    {"id": "install-trust-prompts", "verdict": "observed-pass"},
+                ],
+            })
+            ok, reason, fails = check_mustwatch_verdicts(tmp, self.MANIFEST)
+            self.assertTrue(ok, reason)
+            self.assertEqual(fails, ["ui-api-truthfulness-under-load"])
+
+    def test_manifest_without_mustwatch_key_requires_the_file_but_no_ids(self):
+        # A pre-750 manifest has no 'mustWatch' key at all. The file is still
+        # required (that is the point of the gate), but nothing is missing.
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, {"schema": "mustwatch-verdicts.v1", "items": []})
+            ok, reason, _ = check_mustwatch_verdicts(tmp, {"version": 1, "mustTouch": []})
+            self.assertTrue(ok, reason)
+
+
+class CheckMutatingProbeTests(unittest.TestCase):
+    """I1b unit-level: fail-closed on missing/malformed/`fail`; `skipped`
+    passes but is flagged for the loud warning."""
+
+    def _write(self, tmp: str, payload) -> None:
+        (Path(tmp) / MUTATING_PROBE_FILENAME).write_text(
+            payload if isinstance(payload, str) else json.dumps(payload), encoding="utf-8"
+        )
+
+    def test_no_evidence_dir_blocks(self):
+        ok, reason, skipped = check_mutating_probe(None)
+        self.assertFalse(ok)
+        self.assertIn("no --evidence-dir", reason)
+        self.assertFalse(skipped)
+
+    def test_absent_file_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ok, reason, _ = check_mutating_probe(tmp)
+            self.assertFalse(ok)
+            self.assertIn("not found", reason)
+
+    def test_malformed_json_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "{nope")
+            ok, reason, _ = check_mutating_probe(tmp)
+            self.assertFalse(ok)
+            self.assertIn("not valid JSON", reason)
+
+    def test_bad_status_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, {"schema": "mutating-probe.v1", "status": "green", "detail": "d"})
+            ok, reason, _ = check_mutating_probe(tmp)
+            self.assertFalse(ok)
+            self.assertIn("status='green'", reason.replace('"', "'"))
+
+    def test_status_fail_blocks_and_quotes_the_detail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, {
+                "schema": "mutating-probe.v1",
+                "status": "fail",
+                "detail": "FAIL: POST /api/knowledge/search returned 401 UNAUTHORIZED",
+            })
+            ok, reason, skipped = check_mutating_probe(tmp)
+            self.assertFalse(ok)
+            self.assertIn("401", reason)
+            self.assertFalse(skipped)
+
+    def test_status_skipped_passes_but_flags(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, {
+                "schema": "mutating-probe.v1",
+                "status": "skipped",
+                "detail": "Backend API port could not be determined.",
+            })
+            ok, reason, skipped = check_mutating_probe(tmp)
+            self.assertTrue(ok, reason)
+            self.assertTrue(skipped)
+
+    def test_status_pass_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, _mutating_probe_json("pass"))
+            ok, reason, skipped = check_mutating_probe(tmp)
+            self.assertTrue(ok, reason)
+            self.assertFalse(skipped)
+
+
+class CheckSessionAnalysisTests(unittest.TestCase):
+    """I2 unit-level: presence + byte floor only. Content is UNGRADED, so the
+    'substantial' case here deliberately proves no keyword/topic requirement
+    sneaked in -- a check that quietly grew a topic list would stop being the
+    trivially-satisfiable gate the design argued for."""
+
+    def test_no_evidence_dir_blocks(self):
+        ok, reason = check_session_analysis(None)
+        self.assertFalse(ok)
+        self.assertIn("no --evidence-dir", reason)
+
+    def test_absent_file_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ok, reason = check_session_analysis(tmp)
+            self.assertFalse(ok)
+            self.assertIn("not found", reason)
+
+    def test_undersized_stub_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / SESSION_ANALYSIS_FILENAME).write_text(
+                "Nothing to report.\n", encoding="utf-8"
+            )
+            ok, reason = check_session_analysis(tmp)
+            self.assertFalse(ok)
+            self.assertIn("non-whitespace-trimmed", reason)
+
+    def test_just_under_the_floor_blocks(self):
+        # Boundary bite: the floor is the whole gate, so prove it at the edge.
+        with tempfile.TemporaryDirectory() as tmp:
+            body = "x" * (SESSION_ANALYSIS_MIN_BYTES - 1)
+            (Path(tmp) / SESSION_ANALYSIS_FILENAME).write_text(body, encoding="utf-8")
+            ok, reason = check_session_analysis(tmp)
+            self.assertFalse(ok)
+            self.assertIn(str(SESSION_ANALYSIS_MIN_BYTES - 1), reason)
+
+    def test_at_the_floor_passes_with_no_content_requirement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            body = "x" * SESSION_ANALYSIS_MIN_BYTES
+            (Path(tmp) / SESSION_ANALYSIS_FILENAME).write_text(body, encoding="utf-8")
+            ok, reason = check_session_analysis(tmp)
+            self.assertTrue(ok, reason)
+
+    def test_substantial_analysis_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / SESSION_ANALYSIS_FILENAME).write_text(
+                SUBSTANTIAL_SESSION_ANALYSIS, encoding="utf-8"
+            )
+            ok, reason = check_session_analysis(tmp)
+            self.assertTrue(ok, reason)
+
+    def test_bom_prefixed_file_still_reads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = b"\xef\xbb\xbf" + SUBSTANTIAL_SESSION_ANALYSIS.encode("utf-8")
+            (Path(tmp) / SESSION_ANALYSIS_FILENAME).write_bytes(data)
+            ok, reason = check_session_analysis(tmp)
+            self.assertTrue(ok, reason)
+
+
+class NewGatesMainWiringTests(unittest.TestCase):
+    """End-to-end (via main()) proof that each 808 gate is actually joined to
+    the exit composition -- the wrong-gate failure mode: a check can exist,
+    print, and be entirely absent from the return expression.
+
+    Every case starts from ONE fully-green fixture and breaks exactly one
+    artifact, so an rc=1 is attributable to that artifact and not to
+    incidental unsatisfied coverage/retrospective/review state (the pairing
+    pattern used by DuplicateContentMainWiringTests / SizeFloorBiteTests).
+    """
+
+    MUSTWATCH_IDS = ("ui-api-truthfulness-under-load", "install-trust-prompts")
+
+    def _manifest_path(self, tmp: Path) -> Path:
+        manifest = {
+            "version": 1,
+            "mustTouch": [],
+            "coveredElsewhere": [],
+            "exempt": [],
+            "mustWatch": [
+                {"id": item_id, "reason": "r", "observability": "sandbox"}
+                for item_id in self.MUSTWATCH_IDS
+            ],
+        }
+        path = tmp / "coverage-manifest.json"
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        return path
+
+    def _green_evidence(self, tmp: Path) -> Path:
+        evidence = tmp / "evidence"
+        evidence.mkdir()
+        (evidence / RETROSPECTIVE_FILENAME).write_text(SUBSTANTIAL_RETROSPECTIVE, encoding="utf-8")
+        (evidence / EVIDENCE_REVIEW_FILENAME).write_text(
+            _empty_evidence_review_json(), encoding="utf-8"
+        )
+        _write_round_process_artifacts(evidence, self.MUSTWATCH_IDS)
+        return evidence
+
+    def _run(self, tmp: Path, evidence: Path) -> int:
+        return main(["--manifest", str(self._manifest_path(tmp)), "--evidence-dir", str(evidence)])
+
+    def test_full_green_path_passes(self):
+        # The control every case below is measured against.
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            self.assertEqual(self._run(tmp, self._green_evidence(tmp)), 0)
+
+    def test_missing_mustwatch_verdicts_fails(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._green_evidence(tmp)
+            (evidence / MUSTWATCH_VERDICTS_FILENAME).unlink()
+            self.assertEqual(self._run(tmp, evidence), 1)
+
+    def test_mustwatch_verdicts_missing_one_mode_included_id_fails(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._green_evidence(tmp)
+            (evidence / MUSTWATCH_VERDICTS_FILENAME).write_text(
+                _mustwatch_verdicts_json(self.MUSTWATCH_IDS[:1]), encoding="utf-8"
+            )
+            self.assertEqual(self._run(tmp, evidence), 1)
+
+    def test_mustwatch_verdicts_bad_enum_fails(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._green_evidence(tmp)
+            (evidence / MUSTWATCH_VERDICTS_FILENAME).write_text(
+                json.dumps({
+                    "schema": "mustwatch-verdicts.v1",
+                    "items": [
+                        {"id": self.MUSTWATCH_IDS[0], "verdict": "PASS"},
+                        {"id": self.MUSTWATCH_IDS[1], "verdict": "observed-pass"},
+                    ],
+                }),
+                encoding="utf-8",
+            )
+            self.assertEqual(self._run(tmp, evidence), 1)
+
+    def test_mustwatch_unobservable_without_note_fails(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._green_evidence(tmp)
+            (evidence / MUSTWATCH_VERDICTS_FILENAME).write_text(
+                json.dumps({
+                    "schema": "mustwatch-verdicts.v1",
+                    "items": [
+                        {"id": self.MUSTWATCH_IDS[0], "verdict": "observed-pass"},
+                        {"id": self.MUSTWATCH_IDS[1], "verdict": "unobservable", "note": ""},
+                    ],
+                }),
+                encoding="utf-8",
+            )
+            self.assertEqual(self._run(tmp, evidence), 1)
+
+    def test_mustwatch_observed_fail_does_not_flip_the_exit_code(self):
+        # The design point, proven end-to-end: an observed-fail is reported,
+        # not enforced. If this ever starts returning 1, the gate has quietly
+        # taken over a judgment call it was explicitly not given.
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._green_evidence(tmp)
+            (evidence / MUSTWATCH_VERDICTS_FILENAME).write_text(
+                json.dumps({
+                    "schema": "mustwatch-verdicts.v1",
+                    "items": [
+                        {"id": self.MUSTWATCH_IDS[0], "verdict": "observed-fail",
+                         "note": "stale cards while every status endpoint read READY"},
+                        {"id": self.MUSTWATCH_IDS[1], "verdict": "observed-pass"},
+                    ],
+                }),
+                encoding="utf-8",
+            )
+            self.assertEqual(self._run(tmp, evidence), 0)
+
+    def test_missing_mutating_probe_fails(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._green_evidence(tmp)
+            (evidence / MUTATING_PROBE_FILENAME).unlink()
+            self.assertEqual(self._run(tmp, evidence), 1)
+
+    def test_mutating_probe_status_fail_fails(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._green_evidence(tmp)
+            (evidence / MUTATING_PROBE_FILENAME).write_text(
+                _mutating_probe_json("fail"), encoding="utf-8"
+            )
+            self.assertEqual(self._run(tmp, evidence), 1)
+
+    def test_mutating_probe_status_skipped_passes(self):
+        # 'skipped' warns loudly but does not fail: an unreachable backend
+        # already fails coverage elsewhere, and a second failure for the same
+        # cause is noise. Same fixture as the 'fail' case above -- only the
+        # status differs -- so this isolates the status as the cause.
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._green_evidence(tmp)
+            (evidence / MUTATING_PROBE_FILENAME).write_text(
+                _mutating_probe_json("skipped"), encoding="utf-8"
+            )
+            self.assertEqual(self._run(tmp, evidence), 0)
+
+    def test_missing_session_analysis_fails(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._green_evidence(tmp)
+            (evidence / SESSION_ANALYSIS_FILENAME).unlink()
+            self.assertEqual(self._run(tmp, evidence), 1)
+
+    def test_undersized_session_analysis_fails(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._green_evidence(tmp)
+            (evidence / SESSION_ANALYSIS_FILENAME).write_text("too short", encoding="utf-8")
+            self.assertEqual(self._run(tmp, evidence), 1)
 
 
 if __name__ == "__main__":

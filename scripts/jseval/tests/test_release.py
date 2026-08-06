@@ -7,6 +7,7 @@ Pure-function tests over summary.json-shaped dicts (mirrors the
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -516,3 +517,91 @@ def test_cmd_release_refuses_union_recall_relaxation_without_changeset(tmp_path)
     assert r2.exit_code == 1
     assert "release refused" in r2.output
     assert json.loads(out.read_text())["union_recall"]["beir/scifact"]["leg_union_recall"] == 0.98
+
+
+# --- tempdoc 802: artifact provenance (`sources`) -------------------------------------
+# A release recorded its CONFIG provenance but never pointed at the ARTIFACTS it projected
+# from, so once the run dirs were cleaned up the published numbers could not be re-scored.
+# `715-rebaseline-2026-07-16` is the case: its runs exist nowhere on disk.
+
+def test_compose_records_run_sources():
+    s = _summary(dataset="scifact")
+    r = release.compose(
+        [s], default_mode="hybrid", composed_at=_AT,
+        run_sources=[{"run_dir": "tmp/eval/run1", "summary_sha256": "abc123"}],
+    )
+    assert r["sources"] == [
+        # dataset is the CANONICAL slug even though the summary said "scifact" — compose
+        # supplies it so the CLI and the composer cannot disagree about naming.
+        {"dataset": "beir/scifact", "run_dir": "tmp/eval/run1", "summary_sha256": "abc123"},
+    ]
+
+
+def test_compose_omits_sources_when_not_supplied():
+    """Older callers (and every release composed before 802) stay valid: no empty section."""
+    r = release.compose([_summary()], default_mode="hybrid", composed_at=_AT)
+    assert "sources" not in r
+
+
+def test_compose_refuses_misaligned_run_sources():
+    """Fail CLOSED: a pointer to the wrong run is worse than none, because it looks authoritative."""
+    with pytest.raises(release.ComposeError) as e:
+        release.compose(
+            [_summary(dataset="scifact"), _summary(dataset="mixed/enron-qa")],
+            default_mode="hybrid", composed_at=_AT,
+            run_sources=[{"run_dir": "tmp/only-one", "summary_sha256": "abc"}],
+        )
+    assert "parallel" in str(e.value)
+
+
+def test_cmd_release_records_artifact_provenance(tmp_path):
+    """End-to-end through the CLI: the recorded sha256 must be over the real summary.json bytes.
+
+    This is the assertion that would have caught the original gap — it fails if `sources` is
+    absent, and it fails for the right reason if the digest is of anything but the file.
+    """
+    import hashlib
+
+    out = tmp_path / "release.v1.json"
+    run1 = _write_run(tmp_path / "run1", _summary(dataset="scifact"))
+    runner = CliRunner()
+    res = runner.invoke(cmd_release, ["--run", str(run1), "--out", str(out),
+                                      "--release-id", "prov-test-2026-01-01"])
+    assert res.exit_code == 0, res.output
+
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert len(doc["sources"]) == 1
+    entry = doc["sources"][0]
+    assert entry["dataset"] == "beir/scifact"
+
+    expected = hashlib.sha256((run1 / "summary.json").read_bytes()).hexdigest()
+    assert entry["summary_sha256"] == expected
+
+    # The pointer must name this run — and must not be an empty/None placeholder that would
+    # satisfy a laxer assertion while carrying no information.
+    assert entry["run_dir"] and "run1" in entry["run_dir"].replace("\\", "/")
+
+
+def test_repo_relative_renders_in_repo_paths_relative_and_posix():
+    """The repo-relative branch of `_repo_relative`, which the CLI test does NOT reach.
+
+    `tmp_path` lives outside the repo, so `test_cmd_release_records_artifact_provenance`
+    only ever exercises the absolute-path fallback. This covers the branch that actually
+    fires in production, where run dirs sit under the repo's tmp/.
+    """
+    from jseval._paths import REPO_ROOT
+    from jseval.commands.release import _repo_relative
+
+    inside = REPO_ROOT / "tmp" / "eval-results" / "run-abc"
+    rendered = _repo_relative(inside)
+    assert rendered == "tmp/eval-results/run-abc"
+    assert "\\" not in rendered           # posix separators, so the value is portable
+    assert not Path(rendered).is_absolute()
+
+
+def test_repo_relative_falls_back_to_absolute_outside_repo(tmp_path):
+    """Outside the repo there is no honest relative form — keep the absolute path."""
+    from jseval.commands.release import _repo_relative
+
+    outside = tmp_path / "somewhere" / "run1"
+    assert _repo_relative(outside) == str(outside)

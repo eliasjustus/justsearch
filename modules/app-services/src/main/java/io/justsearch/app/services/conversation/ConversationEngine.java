@@ -258,7 +258,8 @@ public final class ConversationEngine {
     // semantics are untouched: threadId only writes, it never seeds initialMessages.
     String threadId = threadRecordId(shape, sessionId, body);
     EngineConversationContext ctx =
-        new EngineConversationContext(initialMessages, audience, sessionId, body);
+        new EngineConversationContext(
+            initialMessages, audience, sessionId, shape.id().value(), body);
 
     // Tempdoc 610 §J.3 — seed the conversation's hidden retrieved-source ids (the store is the source
     // of truth, mirroring per-message exclude) so RAGContext can drop them from this turn's retrieval.

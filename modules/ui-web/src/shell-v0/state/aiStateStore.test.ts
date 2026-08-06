@@ -24,6 +24,7 @@ import {
 import type { StatusSnapshot } from '../utils/statusPoll.js';
 import type { InferenceSnapshot } from '../utils/inferencePoll.js';
 import { known } from './known.js';
+import { verdictHeadline, verdictTone } from './verdict.js';
 
 const microtask = () => new Promise<void>((r) => queueMicrotask(() => r()));
 
@@ -370,6 +371,32 @@ describe('aiStateStore — system-health verdict (595)', () => {
     expect(s.verdict.kind).toBe('operational');
     expect(s.verdict.severity).toBe('ok');
     expect(s.stability).toEqual({ kind: 'settled' });
+  });
+
+  /**
+   * Tempdoc 806 B.2 (round-12: "a dark-red dot beside 'Online' on Health", reproduced with no skin).
+   * The dot (`statusTone`) and the words beside it (`statusLabel`) are ONE indicator — `LivenessReadout`
+   * renders them together on the Health Connection card. Pre-fix the tone branch listed `degraded` and
+   * the label branch did not, so the dot reported the system verdict while the text reported the AI
+   * engine. This pins the derivation parity, not one wording.
+   */
+  it('806: for a degraded verdict the dot tone and the label beside it come from the SAME verdict', () => {
+    for (const codes of [
+      ['worker.health.embedding_not_ready'], // impairing -> warning dot
+      ['lambdamart.not_configured'], // cosmetic -> calm info dot
+    ]) {
+      __resetAiStateForTest();
+      feed(statusWith('DEGRADED', codes));
+      // An ONLINE AI engine is what made the label say "Online" over a degraded system.
+      __feedForTest({
+        inference: { mode: 'online', starting: false, available: true } as unknown as InferenceSnapshot,
+      });
+      const s = getAiState();
+      expect(s.verdict.kind).toBe('degraded');
+      expect(s.statusTone).toBe(verdictTone(s.verdict.severity));
+      expect(s.statusLabel).toBe(verdictHeadline(s.verdict));
+      expect(s.statusLabel.startsWith('Online')).toBe(false);
+    }
   });
 
   // 649 scope guard — the tone fix is CONNECTION-only; non-connection states keep their pre-649 tone.

@@ -16,10 +16,24 @@
  * `null`) and simply tries again on the next tick — "stuck forever" becomes structurally impossible.
  */
 
+import { authorizedFetch } from '../api/authorizedFetch.js';
+
 export interface InstallStatus {
   state: string;
   phase: string;
   installedFully?: boolean;
+  /**
+   * Tempdoc 804 §B8 — package ids the CURRENT registry declares that the contract which recorded
+   * this installation never covered (a newer version's added artifact). A distinct state from
+   * "not installed": `installedFully` stays true and these are the extras on offer.
+   */
+  pendingRegistryAdditions?: string[];
+  /**
+   * Tempdoc 805 G.3 — ANY file the current registry requires for this profile is missing from disk,
+   * whether or not the install contract claimed it. Distinct from `installedFully` (a claim about
+   * install history): round 11's machine had `installedFully` true and an unusable GPU at once.
+   */
+  repairNeeded?: boolean;
   message?: string;
   errorCode?: string;
   lastError?: string;
@@ -34,9 +48,19 @@ export interface InstallStatus {
     skipReason?: string;
     bytesDownloaded?: number;
     bytesTotal?: number;
+    /** True when this package continued an earlier (e.g. cancelled) run's bytes instead of
+     *  restarting from zero — `AiInstallStatus.PackageStatus.resumed`. */
+    resumed?: boolean;
   }>;
   downloadedBytes?: number;
   totalBytes?: number;
+  /**
+   * Bytes an interrupted earlier run left staged in `.partial` files, which a resume keeps
+   * (`AiInstallStatus.resumableBytes`). Backend-derived from DISK via the planner, not from
+   * `state: 'cancelled'` — that state is session-ephemeral and reads `idle` again after a restart,
+   * so keying the paused UI on it would tell a returning user their GBs were discarded.
+   */
+  resumableBytes?: number;
   startedAtEpochMs?: number;
   updatedAtEpochMs?: number;
   cancelRequested?: boolean;
@@ -49,7 +73,10 @@ export interface InstallStatus {
 export interface InstallPlanPreview {
   intent?: string;
   downloadProfile?: string;
+  /** Bytes the download will actually transfer — complete files AND staged `.partial` bytes excluded. */
   totalDownloadBytes?: number;
+  /** Of the planned downloads, bytes already staged on disk that a resume keeps. */
+  resumableBytes?: number;
   tiers?: Array<{
     tier?: string;
     label?: string;
@@ -74,10 +101,30 @@ export interface AiRuntimeStatus {
     available?: boolean;
     reason?: string;
   }>;
+  /**
+   * Per-ONNX-feature status from `AiRuntimeStatusResponse.OnnxFeatureStatus`.
+   *
+   * The first fields are the INTENT axis (what the Head configured, what the Worker discovered);
+   * `executionProvider`/`gpuFallback`/`fallbackReason` are the OBSERVED axis added by tempdoc 805
+   * G.3 — round 11 shipped `status:'active'`, `modelActive:true` for sessions that had silently
+   * fallen back from CUDA to CPU, and no field could say so.
+   *
+   * Field names were `feature`/`modelDescription` here before 805; neither has ever existed on the
+   * wire (the record emits `id`/`label`), so the Advanced feature rows rendered a blank name.
+   */
   onnxFeatures?: Array<{
-    feature: string;
+    id?: string;
+    label?: string;
+    status?: string;
+    reason?: string;
+    modelPath?: string | null;
     modelActive?: boolean;
-    modelDescription?: string;
+    /** Observed: `'cuda' | 'cpu' | 'none' | 'unknown'` — what the ORT session actually runs on. */
+    executionProvider?: string;
+    /** Observed: GPU was configured but the session runs on CPU. */
+    gpuFallback?: boolean;
+    /** Observed: concrete reason for the fallback (probe failure, missing CUDA natives). */
+    fallbackReason?: string | null;
   }>;
 }
 
@@ -109,7 +156,7 @@ const INTERVAL_MS = 1000;
 
 async function fetchJson<T>(path: string): Promise<T | null> {
   try {
-    const res = await fetch((apiBase || '') + path);
+    const res = await authorizedFetch((apiBase || '') + path);
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {

@@ -222,6 +222,10 @@ public final class IndexingCoordinator {
         log.warn("Validation warn: missing_uid_field");
       }
     }
+    // Write-time status/artifact contract (tempdoc 798): a full-document write claiming
+    // <stage>_status=COMPLETED must carry the witnessing artifact. The RMW lane enforces the same
+    // contract over its merged map — this call covers only indexSingle/indexBatch.
+    StatusArtifactContract.enforce(session, fields, "index-document");
     // Vector dimension check: ensure provided vector matches catalog dimension if present
     FieldMapper.FieldDef vecDef = session.fieldMapper.fieldDef("vector");
     if (vecDef != null && fields.containsKey("vector") && vecDef.vectorDim != null) {

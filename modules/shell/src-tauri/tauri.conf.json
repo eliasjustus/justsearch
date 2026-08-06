@@ -13,6 +13,7 @@
   },
   "bundle": {
     "active": true,
+    "copyright": "JustSearch 0.2.0 - Copyright (c) JustSearch",
     "targets": [
       "nsis"
     ],
@@ -41,6 +42,13 @@
       "desktop": {
         "schemes": ["justsearch"]
       }
+    },
+    "updater": {
+      "pubkey": "",
+      "endpoints": [],
+      "windows": {
+        "installMode": "basicUi"
+      }
     }
   },
   "app": {
@@ -66,5 +74,3 @@
     }
   }
 }
-
-

@@ -14,17 +14,28 @@ import io.justsearch.gpu.GpuCapabilitiesService;
 import io.justsearch.gpu.VramFlagsUtil;
 import io.justsearch.app.api.OnlineAiRuntimeControl;
 import io.justsearch.app.api.OnlineAiService;
+import io.justsearch.app.api.OpCriticality;
+import io.justsearch.app.api.OpLeaseOutcome;
+import io.justsearch.app.api.OperationLeaseHandle;
+import io.justsearch.app.api.OperationLeaseService;
+import io.justsearch.app.api.inference.EncoderRuntimeView;
 import io.justsearch.app.api.lifecycle.CapabilityHealth;
 import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
 import io.justsearch.app.services.lifecycle.InferenceCapability;
+import io.justsearch.app.services.observability.EncoderRuntimeCache;
+import io.justsearch.app.services.observability.EncoderRuntimeExplainer;
+import io.justsearch.ort.EncoderRole;
 import io.justsearch.app.services.runtimestate.RuntimeReconciler;
 import io.justsearch.app.services.runtimestate.RuntimeSpecStore;
 import io.justsearch.app.services.runtimestate.RuntimeStatus;
 import io.justsearch.app.services.worker.OnnxModelStatus;
 import io.justsearch.app.services.worker.WorkerFeatureCache;
 import io.justsearch.configuration.EnvRegistry;
+import io.justsearch.configuration.model.InstallContract;
+import io.justsearch.configuration.model.InstallContractIO;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.configuration.PlatformPaths;
+import io.justsearch.configuration.persistence.AtomicFileWrites;
 import io.justsearch.app.services.config.ConfigStoreRebuilder;
 import io.justsearch.configuration.RepoRootLocator;
 import io.justsearch.app.api.EnterprisePolicyService;
@@ -72,6 +83,13 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
 
   private static final String STATUS_FILE = "runtime-activation-state.json";
+
+  /**
+   * Model-registry package id of the chat (GGUF) model — the key {@code AiInstallService} writes
+   * into the install contract's {@code models} map and the same id its {@code applySettings} looks
+   * up ({@code registry.findPackage("chat")}).
+   */
+  private static final String CHAT_PACKAGE_ID = "chat";
 
   // Mirror SettingsController behavior for server exe sysprop ownership.
   private static final String SERVER_EXE_SYS_PROP = "justsearch.server.exe";
@@ -126,6 +144,70 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
 
   private final Object lock = new Object();
   private final AtomicBoolean running = new AtomicBoolean(false);
+
+  /**
+   * Op-lease SPI (tempdoc 617). Activation/deactivation rewrite the GPU runtime under
+   * {@code native-bin/**} and the activation status projection on background threads that outlive
+   * their HTTP request, so the request-scoped mutation lease is already released while the write
+   * runs. Without a lease of its own, upgrade prepare sees no blocker and the installer can launch
+   * mid-swap. Defaults to no-op so existing constructors and tests are unaffected.
+   */
+  private volatile OperationLeaseService operationLeases = OperationLeaseService.noOp();
+
+  /**
+   * Observed per-encoder runtime state (tempdoc 805 G.3). Late-bound like {@link #operationLeases}
+   * because it reads through the Worker RPC client, which is null at bootstrap. Null = "no observed
+   * data", which reports as {@code executionProvider: "unknown"} — never as a positive claim.
+   */
+  private volatile EncoderRuntimeCache encoderRuntimeCache;
+
+  /** Late-binds the observed per-encoder runtime view used by {@link #getStatus()}. */
+  public void setEncoderRuntimeCache(EncoderRuntimeCache cache) {
+    this.encoderRuntimeCache = cache;
+  }
+
+  /**
+   * Late-binds the op-lease SPI. Set by {@code ServicePhase}, which creates the lease service after
+   * this service is constructed.
+   */
+  public void setOperationLeaseService(OperationLeaseService leases) {
+    this.operationLeases = leases == null ? OperationLeaseService.noOp() : leases;
+  }
+
+  /**
+   * Starts a daemon thread that holds an op-lease for its entire lifetime.
+   *
+   * <p>The lease is registered on the CALLING thread, before {@code start()}: registering inside
+   * the thread leaves a window in which upgrade prepare observes no blocker while the work is about
+   * to write. Same race-window closure as {@code BulkReindexHandler}.
+   */
+  private void startLeasedThread(String opClass, String threadName, Runnable body) {
+    OperationLeaseHandle lease =
+        operationLeases.register(
+            opClass, OpCriticality.INTERRUPTIBLE_WITH_LOSS, 600L, Map.of("source", opClass));
+    Thread t =
+        new Thread(
+            () -> {
+              boolean ok = false;
+              try {
+                body.run();
+                ok = true;
+              } finally {
+                running.set(false);
+                lease.release(ok ? OpLeaseOutcome.SUCCESS : OpLeaseOutcome.FAILURE);
+              }
+            },
+            threadName);
+    t.setDaemon(true);
+    try {
+      t.start();
+    } catch (RuntimeException e) {
+      // The thread never ran, so its finally block will not release the lease.
+      running.set(false);
+      lease.release(OpLeaseOutcome.FAILURE);
+      throw e;
+    }
+  }
   private final AiRuntimeActivationStatus status = new AiRuntimeActivationStatus();
 
   // Tempdoc 727 F-3: dedup for the "leftover variant directory" WARN below — listInstalledVariants()
@@ -300,7 +382,7 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
             EnvRegistry.RERANK_ENABLED.sysProp(),
             EnvRegistry.RERANK_MODEL_PATH.envVar(),
             EnvRegistry.RERANK_MODEL_PATH.sysProp(),
-            "reranker"),
+            EncoderRole.RERANKER),
         resolveOneOnnxFeature(
             "citation_scorer",
             "Citation scoring",
@@ -308,7 +390,39 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
             EnvRegistry.CITATION_SCORER_ENABLED.sysProp(),
             EnvRegistry.CITATION_SCORER_MODEL_PATH.envVar(),
             EnvRegistry.CITATION_SCORER_MODEL_PATH.sysProp(),
-            "citation-scorer"));
+            EncoderRole.CITATION),
+        resolveWorkerEncoderFeature("embed", "Semantic embedding", EncoderRole.EMBEDDING),
+        resolveWorkerEncoderFeature("splade", "Sparse expansion (SPLADE)", EncoderRole.SPLADE));
+  }
+
+  /**
+   * Tempdoc 806 B.2: the observed-EP row for a Worker-owned always-on encoder (embedding, SPLADE).
+   *
+   * <p>These two fell back to CPU in round 11 exactly like the reranker did, but they could not be
+   * reported: {@link #resolveOneOnnxFeature} derives its INTENT axis from two sources neither of
+   * them has. There is no Head-side enabled/path env pair for them (the SPLADE levers in {@code
+   * EnvRegistry} are resolved in the Worker process, not here), and {@code
+   * WorkerModelDiscovery.discoverAll()} enumerates only {@code reranker} and {@code
+   * citation-scorer}, so {@code workerFeatureCache} is structurally blind to them — a
+   * discovery-derived row would report a permanent {@code not_found}.
+   *
+   * <p>So intent and observation come from the SAME authority here: the Worker's policy snapshot as
+   * derived by {@link EncoderRuntimeExplainer}. A role the snapshot names is active in the running
+   * configuration; a role it names as {@code unavailable} is not; no snapshot at all is {@code
+   * unknown} — never a positive claim in either direction.
+   */
+  private AiRuntimeStatusResponse.OnnxFeatureStatus resolveWorkerEncoderFeature(
+      String id, String label, EncoderRole role) {
+    EncoderRuntimeView view = lookupEncoderRuntime(role);
+    EncoderRuntimeExplainer.ObservedExecutionProvider observed =
+        EncoderRuntimeExplainer.observed(view);
+    if (view == null) {
+      return onnxFeature(id, label, "unknown", "worker_not_answered", null, false, observed);
+    }
+    if (EncoderRuntimeExplainer.ACCEL_UNAVAILABLE.equals(view.currentAccelerator())) {
+      return onnxFeature(id, label, "inactive", "not_configured", null, false, observed);
+    }
+    return onnxFeature(id, label, "active", "worker_policy_snapshot", null, true, observed);
   }
 
   private AiRuntimeStatusResponse.OnnxFeatureStatus resolveOneOnnxFeature(
@@ -318,38 +432,85 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       String enabledProp,
       String pathEnv,
       String pathProp,
-      String modelName) {
+      EncoderRole role) {
+    // The Worker's model name for this feature IS the registry package id carried by the role —
+    // one identity, not a second hardcoded pair (EncoderRole.packageId).
+    String modelName = role.packageId();
     // Look up runtime session state from Worker's health check cache (368 RC3).
     // This is the canonical source of truth for "is this model actually working."
     boolean sessionActive = resolveSessionActive(modelName);
+    // Tempdoc 805 G.3: what the ORT session actually runs on. `sessionActive` is TRUE for a
+    // CPU-fallback session, so it cannot express the round-11 outcome by itself.
+    EncoderRuntimeExplainer.ObservedExecutionProvider observed = resolveObservedEp(role);
 
     // 1. Check if explicitly disabled (Head-owned: uses Head-side env vars)
     String enabledStr = resolveEnvOrProp(enabledEnv, enabledProp);
     if ("false".equalsIgnoreCase(enabledStr)) {
-      return new AiRuntimeStatusResponse.OnnxFeatureStatus(
-          id, label, "inactive", "disabled", null, sessionActive);
+      return onnxFeature(id, label, "inactive", "disabled", null, sessionActive, observed);
     }
 
     // 2. Explicit model path (Head-owned: uses Head-side env vars)
     String explicitPath = resolveEnvOrProp(pathEnv, pathProp);
     if (explicitPath != null && !explicitPath.isBlank()) {
-      return new AiRuntimeStatusResponse.OnnxFeatureStatus(
-          id, label, "active", "explicit_path", explicitPath, sessionActive);
+      return onnxFeature(id, label, "active", "explicit_path", explicitPath, sessionActive, observed);
     }
 
     // 3. Worker-reported discovery (includes both auto-discovery and explicit-path results)
     if (workerFeatureCache != null) {
       for (OnnxModelStatus status : workerFeatureCache.getOnnxModels()) {
         if (modelName.equals(status.modelName()) && status.found()) {
-          return new AiRuntimeStatusResponse.OnnxFeatureStatus(
-              id, label, "active", "auto_discovered", status.path(), sessionActive);
+          return onnxFeature(
+              id, label, "active", "auto_discovered", status.path(), sessionActive, observed);
         }
       }
     }
 
     // 4. Not found
+    return onnxFeature(id, label, "inactive", "not_found", null, sessionActive, observed);
+  }
+
+  private static AiRuntimeStatusResponse.OnnxFeatureStatus onnxFeature(
+      String id,
+      String label,
+      String status,
+      String reason,
+      String modelPath,
+      boolean sessionActive,
+      EncoderRuntimeExplainer.ObservedExecutionProvider observed) {
     return new AiRuntimeStatusResponse.OnnxFeatureStatus(
-        id, label, "inactive", "not_found", null, sessionActive);
+        id,
+        label,
+        status,
+        reason,
+        modelPath,
+        sessionActive,
+        observed.executionProvider(),
+        observed.gpuFallback(),
+        observed.fallbackReason());
+  }
+
+  /**
+   * The observed execution provider for one encoder role, projected from {@link
+   * EncoderRuntimeExplainer} — the same policy-snapshot × OrtCuda-probe derivation that backs {@code
+   * GET /api/inference/encoders}. Degrades to {@code unknown} (never to a positive claim) when the
+   * Worker has not answered yet.
+   */
+  private EncoderRuntimeExplainer.ObservedExecutionProvider resolveObservedEp(EncoderRole role) {
+    return EncoderRuntimeExplainer.observed(lookupEncoderRuntime(role));
+  }
+
+  /** Last-known runtime view for one role; {@code null} when the Worker has not answered. */
+  private EncoderRuntimeView lookupEncoderRuntime(EncoderRole role) {
+    EncoderRuntimeCache cache = this.encoderRuntimeCache;
+    if (cache == null) {
+      return null;
+    }
+    try {
+      return cache.encoderRuntime().get(role);
+    } catch (RuntimeException e) {
+      log.debug("Observed EP resolve failed for {} (best-effort): {}", role, e.toString());
+      return null;
+    }
   }
 
   /** Returns true if the Worker reports an active ORT session for this model. */
@@ -398,18 +559,7 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       status.selfTestPort = null;
       touch();
     }
-    Thread t =
-        new Thread(
-            () -> {
-              try {
-                runActivate(v);
-              } finally {
-                running.set(false);
-              }
-            },
-            "ai-runtime-activate");
-    t.setDaemon(true);
-    t.start();
+    startLeasedThread("ai.runtime-activate", "ai-runtime-activate", () -> runActivate(v));
   }
 
   public void startDeactivate() {
@@ -424,18 +574,7 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       status.result = "";
       touch();
     }
-    Thread t =
-        new Thread(
-            () -> {
-              try {
-                runDeactivate();
-              } finally {
-                running.set(false);
-              }
-            },
-            "ai-runtime-deactivate");
-    t.setDaemon(true);
-    t.start();
+    startLeasedThread("ai.runtime-deactivate", "ai-runtime-deactivate", this::runDeactivate);
   }
 
   // -------------------- Implementation --------------------
@@ -501,8 +640,16 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
 
     UiSettings current = settingsStore.load();
     String modelPath = current.getLlmModelPath();
+    boolean modelPathFromContract = false;
     if (modelPath == null || modelPath.isBlank()) {
-      fail("MODEL_PATH_REQUIRED", "No chat model configured. Import a models pack first.", null);
+      modelPath = resolveChatModelFromInstallContract();
+      modelPathFromContract = modelPath != null && !modelPath.isBlank();
+    }
+    if (modelPath == null || modelPath.isBlank()) {
+      fail(
+          "MODEL_PATH_REQUIRED",
+          "No chat model configured. Run Install AI to download one, or import a models pack.",
+          null);
       return;
     }
     Path model = Path.of(modelPath.trim());
@@ -550,6 +697,12 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       next.setServerExecutablePath(exe.toAbsolutePath().toString());
       if (next.getGpuLayers() <= 0) {
         next.setGpuLayers(99);
+      }
+      // The engine is started from settings (applyRuntimeOverridesBestEffort reads
+      // next.getLlmModelPath()), so a model path recovered from the install contract has to land in
+      // settings or the activation would bring the engine up with no model.
+      if (modelPathFromContract) {
+        next.setLlmModelPath(model.toAbsolutePath().toString());
       }
       settingsStore.save(next);
 
@@ -1029,8 +1182,7 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
 
   private void saveStatusBestEffort() {
     try {
-      Files.createDirectories(statusPath.getParent());
-      MAPPER.writeValue(statusPath.toFile(), status);
+      AtomicFileWrites.replace(statusPath, MAPPER.writeValueAsBytes(status));
     } catch (Exception ignored) {
       // best-effort
     }
@@ -1058,10 +1210,15 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
         // After a JVM restart, terminal activation states are stale — the self-test
         // server (ephemeral port) is dead and the apply-config was for the previous
         // lifecycle. Reset to idle so the next activate() re-runs the full flow.
-        if ("completed".equals(status.state) || "failed".equals(status.state)) {
+        if (!status.state.isBlank() && !"idle".equalsIgnoreCase(status.state)) {
           status.state = "idle";
           status.phase = "";
           status.message = "";
+          status.errorCode = "";
+          status.selfTestPort = 0L;
+          status.startedAtEpochMs = 0;
+          status.updatedAtEpochMs = System.currentTimeMillis();
+          saveStatusBestEffort();
         }
       }
     } catch (Exception ignored) {
@@ -1210,6 +1367,56 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
 
   private static Path resolveAiHome() {
     return PlatformPaths.resolveAiHome();
+  }
+
+  /**
+   * Tempdoc 804 §B2: second link of the chat-model resolution chain — the install contract, the
+   * durable record of what Install AI actually placed on disk. User settings stay first (an
+   * explicit choice wins); this is the fallback for a settings file that was never written, was
+   * reset, or was discarded by a session-only persistence mode.
+   *
+   * <p>Mirrors the Worker's contract-first resolution ({@code KnowledgeServer#initDeferredModels} /
+   * {@code resolveModelsDir}) rather than inventing a second resolution rule — which is exactly why
+   * the Worker's ONNX features survived an upgrade that left chat dead.
+   *
+   * @return the absolute chat-model path recorded by install, or null when no contract exists, the
+   *     contract has no (non-skipped) chat entry, or the contract cannot be read. Existence of the
+   *     file is NOT checked here — {@code MODEL_NOT_FOUND} on the resolved path is the more useful
+   *     failure than a generic "not configured", and it stays the one existence check.
+   */
+  private String resolveChatModelFromInstallContract() {
+    try {
+      InstallContract contract = InstallContractIO.read(aiHome);
+      if (contract == null) {
+        return null;
+      }
+      Path models = resolveContractModelsDir(contract);
+      if (models == null) {
+        return null;
+      }
+      Path chat = contract.resolveModelPath(CHAT_PACKAGE_ID, models);
+      if (chat == null) {
+        return null;
+      }
+      log.info("No chat model in settings; resolved {} from the install contract", chat);
+      return chat.toAbsolutePath().toString();
+    } catch (Exception e) {
+      log.warn("Failed to read the install contract for chat-model fallback", e);
+      return null;
+    }
+  }
+
+  /** Contract-recorded models dir → resolved config → {@code aiHome/models} (Worker precedence). */
+  private Path resolveContractModelsDir(InstallContract contract) {
+    if (contract != null && contract.modelsDir() != null) {
+      return contract.modelsDir();
+    }
+    ConfigStore cs = ConfigStore.globalOrNull();
+    Path configured = cs != null ? cs.get().paths().modelsDir() : null;
+    if (configured != null) {
+      return configured;
+    }
+    return aiHome == null ? null : aiHome.resolve("models");
   }
 
   /**

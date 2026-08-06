@@ -100,6 +100,97 @@ class InstallPlannerTest {
     assertEquals("onnx/embed/model.onnx", plan.downloads().get(0).targetPath());
   }
 
+  /**
+   * Sandbox round 8. A cancelled multi-GB download leaves its bytes in {@code <target>.partial} and
+   * the final target absent, so {@code isAlreadyInstalled} (which probes the FINAL path) answers
+   * false and the file is correctly still planned — but the plan used to charge the user its FULL
+   * size, contradicting the cancel dialog's promise that the bytes were kept. The download stays in
+   * the plan at its full {@code sizeBytes} (the fetch needs that for its Range request and
+   * verification); what changes is that the staged bytes are now counted and excluded from what the
+   * network still owes.
+   */
+  @Test
+  void partialOnDisk_countsAsResumable_andIsExcludedFromRemainingBytes() throws Exception {
+    ModelRegistry registry = registryWithEmbeddingOnly();
+    HardwareProfile hw = HardwareProfile.cpuOnly();
+
+    // 400_000 of the FP32 model's 1_000_000 bytes downloaded before the user cancelled.
+    Path partial = tempDir.resolve("onnx/embed/model.onnx.partial");
+    Files.createDirectories(partial.getParent());
+    Files.write(partial, new byte[400_000]);
+
+    InstallPlan plan = InstallPlanner.plan(registry, hw, tempDir);
+
+    // Still planned, still at its full size — resuming does not shrink the file.
+    assertEquals(2, plan.downloads().size());
+    assertEquals(1_010_000, plan.totalBytes());
+    assertEquals(400_000, plan.resumableBytes());
+    assertEquals(610_000, plan.remainingBytes());
+  }
+
+  @Test
+  void noPartialOnDisk_reportsNothingResumable() {
+    InstallPlan plan =
+        InstallPlanner.plan(registryWithEmbeddingOnly(), HardwareProfile.cpuOnly(), tempDir);
+
+    assertEquals(0, plan.resumableBytes());
+    assertEquals(plan.totalBytes(), plan.remainingBytes());
+  }
+
+  /**
+   * A partial longer than the expected total is the impossible state {@code DownloadResume.decide}
+   * refuses to resume from. Counting it would promise bytes the fetch is about to throw away, so the
+   * planner discounts it — under-promising is the only safe direction for a consent number.
+   */
+  @Test
+  void partialLargerThanExpected_isNotCountedAsResumable() throws Exception {
+    Path partial = tempDir.resolve("onnx/embed/model.onnx.partial");
+    Files.createDirectories(partial.getParent());
+    Files.write(partial, new byte[1_500_000]); // declared size is 1_000_000
+
+    InstallPlan plan =
+        InstallPlanner.plan(registryWithEmbeddingOnly(), HardwareProfile.cpuOnly(), tempDir);
+
+    assertEquals(0, plan.resumableBytes());
+    assertEquals(plan.totalBytes(), plan.remainingBytes());
+  }
+
+  /** A partial staged for a SUPPORTING file counts too — the planner probes both download kinds. */
+  @Test
+  void partialForSupportingFile_countsAsResumable() throws Exception {
+    Path partial = tempDir.resolve("onnx/embed/tokenizer.json.partial");
+    Files.createDirectories(partial.getParent());
+    Files.write(partial, new byte[4_000]);
+
+    InstallPlan plan =
+        InstallPlanner.plan(registryWithEmbeddingOnly(), HardwareProfile.cpuOnly(), tempDir);
+
+    assertEquals(4_000, plan.resumableBytes());
+    assertEquals(plan.totalBytes() - 4_000, plan.remainingBytes());
+  }
+
+  /**
+   * The completed-file path and the partial path are different questions about different paths: a
+   * COMPLETE file leaves the plan entirely, a partial stays in it with its bytes discounted. Pinning
+   * both in one plan proves the planner is not conflating them.
+   */
+  @Test
+  void completedFileLeavesThePlan_whilePartialStaysWithItsBytesDiscounted() throws Exception {
+    Path tokenizer = tempDir.resolve("onnx/embed/tokenizer.json");
+    Files.createDirectories(tokenizer.getParent());
+    Files.write(tokenizer, new byte[10_000]); // complete, at its declared size
+    Files.write(tempDir.resolve("onnx/embed/model.onnx.partial"), new byte[250_000]);
+
+    InstallPlan plan =
+        InstallPlanner.plan(registryWithEmbeddingOnly(), HardwareProfile.cpuOnly(), tempDir);
+
+    assertEquals(1, plan.downloads().size());
+    assertEquals("onnx/embed/model.onnx", plan.downloads().get(0).targetPath());
+    assertEquals(1_000_000, plan.totalBytes());
+    assertEquals(250_000, plan.resumableBytes());
+    assertEquals(750_000, plan.remainingBytes());
+  }
+
   @Test
   void mcpLiteIntent_skipsLlmTier_evenOnCapableHardware() {
     ModelRegistry registry = registryWithTiers();

@@ -4,6 +4,9 @@ package io.justsearch.app.services.observability;
 import io.justsearch.app.api.inference.EncoderRuntimeView;
 import io.justsearch.app.api.status.OrtCudaView;
 import io.justsearch.ort.EncoderRole;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -25,11 +28,124 @@ import java.util.Map;
  */
 public final class EncoderRuntimeExplainer {
 
-  static final String ACCEL_CUDA = "cuda";
-  static final String ACCEL_CPU = "cpu";
-  static final String ACCEL_UNAVAILABLE = "unavailable";
+  public static final String ACCEL_CUDA = "cuda";
+  public static final String ACCEL_CPU = "cpu";
+  public static final String ACCEL_UNAVAILABLE = "unavailable";
+
+  /** Observed execution provider when no runtime view is available at all. */
+  public static final String EP_UNKNOWN = "unknown";
+
+  /** Observed execution provider when the encoder is not part of the active configuration. */
+  public static final String EP_NONE = "none";
 
   private EncoderRuntimeExplainer() {}
+
+  /**
+   * Derives a runtime view for every encoder named by the Worker's policy snapshot (tempdoc 805
+   * G.3). Extracted from {@code EncoderRuntimeController} so the correlation of policy snapshot ×
+   * OrtCuda probe lives in ONE place: {@code GET /api/inference/encoders} and {@code GET
+   * /api/ai/runtime/status}'s observed-EP fields are two projections of this derivation, not two
+   * derivations.
+   *
+   * @param sessionPolicies the {@code {configStatus, runtime, models}} map from {@code
+   *     RemoteKnowledgeClient.getSessionPolicies()}
+   * @param views per-role OrtCuda probe views from {@code
+   *     RemoteKnowledgeClient.getEncoderOrtCudaViews()}
+   * @return one view per role the policy snapshot names; empty when the snapshot carries no models
+   *     (worker unreachable / policy unavailable — the caller decides how to report that)
+   */
+  public static Map<EncoderRole, EncoderRuntimeView> explainAll(
+      Map<String, Object> sessionPolicies, Map<EncoderRole, OrtCudaView> views) {
+    Map<EncoderRole, EncoderRuntimeView> out = new EnumMap<>(EncoderRole.class);
+    if (sessionPolicies == null) return out;
+    Object modelsNode = sessionPolicies.get("models");
+    if (!(modelsNode instanceof Map<?, ?> modelsMap) || modelsMap.isEmpty()) return out;
+    Map<EncoderRole, OrtCudaView> probes = views == null ? Map.of() : views;
+    for (Map.Entry<?, ?> entry : modelsMap.entrySet()) {
+      Object roleKey = entry.getKey();
+      if (roleKey == null) continue;
+      EncoderRole role = parseRole(roleKey.toString());
+      if (role == null) continue;
+      Map<String, Object> policySubMap = coercePolicy(entry.getValue());
+      OrtCudaView view = probes.getOrDefault(role, OrtCudaView.notConfigured());
+      out.put(role, explain(role, view, policySubMap));
+    }
+    return out;
+  }
+
+  /**
+   * Maps the JSON policy key (uppercase enum-name shape per {@code
+   * GrpcIngestService.getSessionPolicies}) to its {@link EncoderRole}; returns {@code null} if the
+   * key isn't a known role (defensive — shouldn't happen given Worker's serialiser).
+   */
+  public static EncoderRole parseRole(String key) {
+    if (key == null) return null;
+    try {
+      return EncoderRole.valueOf(key.toUpperCase(Locale.ROOT));
+    } catch (IllegalArgumentException e) {
+      return null;
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> coercePolicy(Object node) {
+    if (node instanceof Map<?, ?>) {
+      return (Map<String, Object>) node;
+    }
+    return Map.of();
+  }
+
+  /**
+   * The OBSERVED execution-provider projection of an already-derived {@link EncoderRuntimeView}
+   * (tempdoc 805 G.3 W-TRUTH). Round 11's defect was {@code /api/ai/runtime/status} reporting a
+   * feature "active" from model-file discovery while its ORT session had silently fallen back to
+   * CPU; this projection carries what actually happened beside that intent, without re-deriving it.
+   *
+   * @param executionProvider {@code "cuda"} | {@code "cpu"} | {@code "none"} | {@code "unknown"}
+   * @param gpuFallback true when GPU was the configured intent but the session runs on CPU
+   * @param fallbackReason concrete reason when {@code gpuFallback} — the probe's failure reason plus
+   *     any missing DLL names; {@code null} otherwise
+   */
+  public record ObservedExecutionProvider(
+      String executionProvider, boolean gpuFallback, String fallbackReason) {
+
+    /** The state before any Worker runtime view is available (never a positive claim). */
+    public static ObservedExecutionProvider unknown() {
+      return new ObservedExecutionProvider(EP_UNKNOWN, false, null);
+    }
+  }
+
+  /** Projects one derived view onto the observed-EP triple. */
+  public static ObservedExecutionProvider observed(EncoderRuntimeView view) {
+    if (view == null) return ObservedExecutionProvider.unknown();
+    String current = view.currentAccelerator();
+    String ep;
+    if (ACCEL_CUDA.equals(current)) {
+      ep = ACCEL_CUDA;
+    } else if (ACCEL_CPU.equals(current)) {
+      ep = ACCEL_CPU;
+    } else if (ACCEL_UNAVAILABLE.equals(current)) {
+      ep = EP_NONE;
+    } else {
+      ep = EP_UNKNOWN;
+    }
+    // "GPU was intended" reads the policy's own executionProvider, so a role that is CPU by design
+    // (citation-scorer, EncoderRole.isCpuOnly) is never reported as a fallback.
+    String configured = view.configuredAccelerator();
+    boolean gpuIntended = !isBlank(configured) && !ACCEL_CPU.equalsIgnoreCase(configured);
+    boolean fallback = ACCEL_CPU.equals(ep) && gpuIntended;
+    return new ObservedExecutionProvider(ep, fallback, fallback ? summarizeReason(view) : null);
+  }
+
+  private static String summarizeReason(EncoderRuntimeView view) {
+    OrtCudaView details = view.details();
+    String base = isBlank(details.failureReason()) ? view.explanation() : details.failureReason();
+    List<String> missing = details.missingDlls();
+    if (missing != null && !missing.isEmpty()) {
+      return base + " (missing: " + String.join(", ", missing) + ")";
+    }
+    return base;
+  }
 
   /**
    * Derives a runtime view for one encoder.

@@ -8,6 +8,7 @@ import io.justsearch.adapters.lucene.runtime.RunningRuntime;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
 import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.configuration.JustSearchConfigurationLoader;
+import io.justsearch.configuration.resolved.ResolvedConfig;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
 import io.justsearch.reranker.CrossEncoderReranker;
@@ -388,10 +389,31 @@ class GoldenCorpusIntegrationTest {
   void rerankerNoRegressionOnTextQueries() throws Exception {
     // Guard: skip if reranker model is not discoverable at any standard location.
     // In CI without a model present this test is skipped, not failed.
-    RerankerConfig config = RerankerConfig.fromEnv();
+    //
+    // RerankerConfig.fromEnv() reads ConfigStore.global(), which only HeadlessApp/IndexerWorker
+    // publish at startup — this tier runs in a plain test JVM, so fromEnv() threw
+    // IllegalStateException before the assumeTrue guard below could ever be reached. Resolve the
+    // config locally instead, via the documented-preferred RerankerConfig.from(ResolvedConfig.Ai).
+    // Building the snapshot here (rather than ConfigStore.setGlobal) keeps the env/sysprop
+    // contributions the reranker guard depends on while leaving the JVM-wide global untouched for
+    // the other tests sharing this fork.
+    RerankerConfig config =
+        RerankerConfig.from(ResolvedConfig.builder().contributeEnvRegistry().build().ai());
     assumeTrue(
         config.enabled() && config.modelPath() != null,
         "Reranker model not found at any standard location — skipping reranker regression test");
+
+    // The directory alone is not enough: this repo TRACKS models/onnx/reranker/ metadata
+    // (config.json, tokenizer.json, …) while gitignoring the .onnx weights, so a fresh checkout
+    // resolves a modelPath that holds no loadable model. Probing for the actual weights with the
+    // same predicate InferenceCompositionRootTestHelper uses is what makes the documented
+    // "skipped, not failed" contract above true — otherwise cpuSessionFor below throws.
+    assumeTrue(
+        io.justsearch.ort.DevModeVariantProbe.probe(config.modelPath(), /* gpuEnabled= */ false)
+            != null,
+        "No loadable reranker ONNX weights under "
+            + config.modelPath()
+            + " (metadata-only checkout) — skipping reranker regression test");
 
     List<QueryInfo> textQueries =
         corpus.queries().stream().filter(q -> q.mode().equals("TEXT")).toList();

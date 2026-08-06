@@ -4,8 +4,12 @@ import io.justsearch.app.api.UiSettings;
 import static io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode.IN_MEMORY;
 import static io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode.READ_WRITE;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.UnsupportedStoreVersionException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
@@ -93,9 +97,9 @@ class UiSettingsStorePersistenceModeTest {
     @Test
     @DisplayName("Invalid mode value falls through to next check")
     void parseModeInvalid_fallsThrough() {
-      // Invalid mode should fall through; with prod=true, resolves to IN_MEMORY
+      // Invalid mode should fall through; with readOnly=true, resolves to IN_MEMORY
       try (var ignored =
-          new SysProps().clearAll().set(MODE_PROP, "invalid").set(PROD_PROP, "true")) {
+          new SysProps().clearAll().set(MODE_PROP, "invalid").set(READONLY_PROP, "true")) {
         assertEquals(IN_MEMORY, PersistenceMode.resolveMode());
       }
     }
@@ -103,8 +107,9 @@ class UiSettingsStorePersistenceModeTest {
     @Test
     @DisplayName("Blank mode value falls through to next check")
     void parseModeBlank_fallsThrough() {
-      // Blank mode should fall through; with prod=true, resolves to IN_MEMORY
-      try (var ignored = new SysProps().clearAll().set(MODE_PROP, "   ").set(PROD_PROP, "true")) {
+      // Blank mode should fall through; with readOnly=true, resolves to IN_MEMORY
+      try (var ignored =
+          new SysProps().clearAll().set(MODE_PROP, "   ").set(READONLY_PROP, "true")) {
         assertEquals(IN_MEMORY, PersistenceMode.resolveMode());
       }
     }
@@ -149,12 +154,11 @@ class UiSettingsStorePersistenceModeTest {
     }
 
     @Test
-    @DisplayName("justsearch.ui.settings.readOnly=false falls through to next check")
+    @DisplayName("justsearch.ui.settings.readOnly=false falls through to the default, even in prod")
     void readOnlyFalse_fallsThrough() {
-      // readOnly=false should fall through; with prod=true, resolves to IN_MEMORY
       try (var ignored =
           new SysProps().clearAll().set(READONLY_PROP, "false").set(PROD_PROP, "true")) {
-        assertEquals(IN_MEMORY, PersistenceMode.resolveMode());
+        assertEquals(READ_WRITE, PersistenceMode.resolveMode());
       }
     }
 
@@ -168,14 +172,15 @@ class UiSettingsStorePersistenceModeTest {
   }
 
   @Nested
-  @DisplayName("Prod mode (third priority)")
+  @DisplayName("Prod mode is not a persistence axis (tempdoc 804 §B1)")
   class ProdMode {
 
     @Test
-    @DisplayName("justsearch.prod=true defaults to IN_MEMORY")
-    void prodMode_defaultsToInMemory() {
+    @DisplayName("justsearch.prod=true with no explicit mode returns READ_WRITE")
+    void prodMode_doesNotImplyInMemory() {
+      // The shipped desktop app boots with justsearch.prod=true; settings must still persist.
       try (var ignored = new SysProps().clearAll().set(PROD_PROP, "true")) {
-        assertEquals(IN_MEMORY, PersistenceMode.resolveMode());
+        assertEquals(READ_WRITE, PersistenceMode.resolveMode());
       }
     }
 
@@ -228,10 +233,8 @@ class UiSettingsStorePersistenceModeTest {
     }
 
     @Test
-    @DisplayName("readOnly flag beats prod mode (both yield IN_MEMORY, confirms order)")
-    void priorityOrder_readOnlyBeatsProd() {
-      // Both result in IN_MEMORY, but this tests the priority by having prod=false
-      // would yield READ_WRITE if readOnly wasn't checked first
+    @DisplayName("readOnly flag beats the default regardless of prod mode")
+    void priorityOrder_readOnlyBeatsDefault() {
       try (var ignored =
           new SysProps().clearAll().set(READONLY_PROP, "true").set(PROD_PROP, "false")) {
         assertEquals(IN_MEMORY, PersistenceMode.resolveMode());
@@ -239,10 +242,10 @@ class UiSettingsStorePersistenceModeTest {
     }
 
     @Test
-    @DisplayName("Prod mode beats default")
-    void priorityOrder_prodBeatsDefault() {
+    @DisplayName("Prod mode does not beat the default")
+    void priorityOrder_prodDoesNotBeatDefault() {
       try (var ignored = new SysProps().clearAll().set(PROD_PROP, "true")) {
-        assertEquals(IN_MEMORY, PersistenceMode.resolveMode());
+        assertEquals(READ_WRITE, PersistenceMode.resolveMode());
       }
     }
   }
@@ -303,6 +306,45 @@ class UiSettingsStorePersistenceModeTest {
       UiSettings loaded = store.load();
 
       assertEquals(new UiSettings().getMaxTokens(), loaded.getMaxTokens());
+    }
+
+    @Test
+    @DisplayName("READ_WRITE save emits the v1 envelope and reloads it")
+    void readWrite_saveWritesVersionedEnvelope() throws Exception {
+      Path settingsFile = tempDir.resolve("settings.json");
+      UiSettings settings = new UiSettings();
+      settings.setMaxTokens(777);
+
+      new UiSettingsStore(READ_WRITE, settingsFile).save(settings);
+
+      String persisted = Files.readString(settingsFile);
+      assertTrue(persisted.contains("\"schemaVersion\" : 1"));
+      assertTrue(persisted.contains("\"settings\""));
+      assertEquals(777, new UiSettingsStore(READ_WRITE, settingsFile).load().getMaxTokens());
+    }
+
+    @Test
+    @DisplayName("future envelope is refused without changing its bytes")
+    void readWrite_futureVersionIsRefusedWithoutOverwrite() throws Exception {
+      Path settingsFile = tempDir.resolve("settings.json");
+      String future = "{\"schemaVersion\":99,\"settings\":{\"maxTokens\":321}}";
+      Files.writeString(settingsFile, future);
+
+      UiSettingsStore store = new UiSettingsStore(READ_WRITE, settingsFile);
+      assertThrows(UnsupportedStoreVersionException.class, store::load);
+      assertEquals(future, Files.readString(settingsFile));
+    }
+
+    @Test
+    @DisplayName("malformed state is fail-loud and retained")
+    void readWrite_malformedStateIsRetained() throws Exception {
+      Path settingsFile = tempDir.resolve("settings.json");
+      String malformed = "{not-json";
+      Files.writeString(settingsFile, malformed);
+
+      UiSettingsStore store = new UiSettingsStore(READ_WRITE, settingsFile);
+      assertThrows(CorruptDurableStoreException.class, store::load);
+      assertEquals(malformed, Files.readString(settingsFile));
     }
   }
 

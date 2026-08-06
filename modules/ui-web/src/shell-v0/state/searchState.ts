@@ -21,6 +21,7 @@
  *    generation) is dropped, never rendered.
  */
 
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import type { SelectedItem } from './inspectorState.js';
 // Tempdoc 549 (Slice 1) — query-level search trace (SearchIntrospection) is
 // captured into search state so the SearchSurface can mount the explain panel
@@ -162,7 +163,7 @@ function emit(): void {
 
 /** Tempdoc 580 §17 P3 — POST a result disposition to the canonical stream (fire-and-forget). */
 function postDisposition(interactionId: string, docId: string, kind: string): void {
-  void fetch((apiBase || '') + '/api/knowledge/disposition', {
+  void authorizedFetch((apiBase || '') + '/api/knowledge/disposition', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ interactionId, docId, kind }),
@@ -561,7 +562,7 @@ async function runSearch(q: string, stage: SearchPassStage, gen: number): Promis
       _searchScope,
       scopeChips,
     );
-    const res = await fetch((apiBase || '') + '/api/knowledge/search', {
+    const res = await authorizedFetch((apiBase || '') + '/api/knowledge/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

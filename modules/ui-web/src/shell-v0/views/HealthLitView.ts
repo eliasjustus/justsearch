@@ -46,6 +46,7 @@ import type { NoticeTone } from '../utils/statusTone.js';
 // Slice 447 §X.11.5 Phase 6: plugin recovery-overlay client. Overlays take precedence
 // over the backend-declared core recovery for the matched (conditionId, subject) pair.
 import { getOverlayRecovery } from '../../api/registry/RecoveryOverlayClient.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import type {
   TimeseriesSnapshot,
   MetricRef,
@@ -289,7 +290,7 @@ export class HealthLitView extends JfElement {
    * indicators.
    */
   private fetchRecoveryIndex(): void {
-    fetch('/api/condition-recovery-index')
+    authorizedFetch('/api/condition-recovery-index')
       .then((r) => (r.ok ? r.json() : null))
       .then((index) => {
         if (!index || typeof index !== 'object') return;
@@ -609,7 +610,7 @@ export class HealthLitView extends JfElement {
     try {
       const path = mapResourceIdToSnapshotPath(resourceId);
       if (!path) return;
-      const resp = await fetch(path);
+      const resp = await authorizedFetch(path);
       if (!resp.ok) return;
       const json = (await resp.json()) as { snapshot?: TimeseriesSnapshot };
       if (!json.snapshot) return;

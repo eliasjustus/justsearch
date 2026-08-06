@@ -3,7 +3,11 @@ package io.justsearch.app.services.conversation;
 
 import io.justsearch.agent.api.conversation.BranchesPreventDeletionException;
 import io.justsearch.agent.api.conversation.ConversationStore;
+import io.justsearch.configuration.persistence.AtomicFileWrites;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.StoreFormatVersions;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -40,6 +44,7 @@ import tools.jackson.databind.json.JsonMapper;
  */
 public final class FileConversationStore implements ConversationStore {
 
+  private static final int CURRENT_SCHEMA_VERSION = 1;
   private static final Logger LOG = LoggerFactory.getLogger(FileConversationStore.class);
   private static final ObjectMapper MAPPER = JsonMapper.builder().build();
 
@@ -166,9 +171,9 @@ public final class FileConversationStore implements ConversationStore {
         index++;
       }
       return history;
-    } catch (IOException e) {
-      LOG.warn("Failed to load conversation history for session {}", sessionId, e);
-      return List.of();
+    } catch (Exception e) {
+      throw new CorruptDurableStoreException(
+          "conversations", "cannot read messages for session " + sessionId, e);
     }
   }
 
@@ -190,7 +195,7 @@ public final class FileConversationStore implements ConversationStore {
           StandardOpenOption.APPEND);
       updateMeta(sessionDir, shapeId, enriched);
     } catch (IOException e) {
-      LOG.warn("Failed to append message for session {}", sessionId, e);
+      throw new UncheckedIOException("Failed to append message for session " + sessionId, e);
     }
   }
 
@@ -236,10 +241,8 @@ public final class FileConversationStore implements ConversationStore {
         if (!Files.isDirectory(sessionDir)) continue;
         Path metaFile = sessionDir.resolve("meta.json");
         if (!Files.exists(metaFile)) continue;
-        try {
-          @SuppressWarnings("unchecked")
-          Map<String, Object> meta = MAPPER.readValue(
-              Files.readString(metaFile, StandardCharsets.UTF_8), Map.class);
+        {
+          Map<String, Object> meta = readRawMeta(metaFile);
           String metaShape = (String) meta.getOrDefault("shapeId", "");
           if (shapeId != null && !shapeId.isBlank() && !shapeId.equals(metaShape)) continue;
           Object parent = meta.get("parentSessionId");
@@ -268,12 +271,10 @@ public final class FileConversationStore implements ConversationStore {
               branchPoint instanceof String bp ? bp : null,
               floor instanceof String f ? f : null,
               floorSummary));
-        } catch (IOException e) {
-          LOG.debug("Skipping corrupt meta.json in {}", sessionDir, e);
         }
       }
     } catch (IOException e) {
-      LOG.warn("Failed to list sessions in {}", rootDir, e);
+      throw new UncheckedIOException("Failed to list conversations in " + rootDir, e);
     }
     summaries.sort(Comparator.comparingLong(SessionSummary::lastActiveAtMs).reversed());
     return summaries.size() <= limit ? summaries : summaries.subList(0, limit);
@@ -312,26 +313,17 @@ public final class FileConversationStore implements ConversationStore {
       }
     }
     Path newSessionDir = resolveSessionDir(newSessionId);
-    try {
-      Files.createDirectories(newSessionDir);
-      Map<String, Object> meta = new LinkedHashMap<>();
-      long now = System.currentTimeMillis();
-      meta.put("createdAtMs", now);
-      meta.put("lastActiveAtMs", now);
-      meta.put("shapeId", parentMeta.getOrDefault("shapeId", ""));
-      meta.put("messageCount", 0);
-      Object preview = parentMeta.get("firstUserMessage");
-      if (preview instanceof String s && !s.isEmpty()) meta.put("firstUserMessage", s);
-      meta.put("parentSessionId", parentSessionId);
-      meta.put("branchPointMessageId", branchPointMessageId);
-      Path metaFile = newSessionDir.resolve("meta.json");
-      Files.writeString(metaFile, MAPPER.writeValueAsString(withSealedMeta(meta)),
-          StandardCharsets.UTF_8,
-          StandardOpenOption.CREATE,
-          StandardOpenOption.TRUNCATE_EXISTING);
-    } catch (IOException e) {
-      LOG.warn("Failed to create branch session {} from {}", newSessionId, parentSessionId, e);
-    }
+    Map<String, Object> meta = new LinkedHashMap<>();
+    long now = System.currentTimeMillis();
+    meta.put("createdAtMs", now);
+    meta.put("lastActiveAtMs", now);
+    meta.put("shapeId", parentMeta.getOrDefault("shapeId", ""));
+    meta.put("messageCount", 0);
+    Object preview = parentMeta.get("firstUserMessage");
+    if (preview instanceof String s && !s.isEmpty()) meta.put("firstUserMessage", s);
+    meta.put("parentSessionId", parentSessionId);
+    meta.put("branchPointMessageId", branchPointMessageId);
+    writeMetaAtomic(newSessionDir, meta, newSessionId);
   }
 
   @Override
@@ -471,13 +463,11 @@ public final class FileConversationStore implements ConversationStore {
 
   private void writeMetaAtomic(Path sessionDir, Map<String, Object> meta, String sessionId) {
     try {
-      Files.createDirectories(sessionDir);
-      Files.writeString(sessionDir.resolve("meta.json"), MAPPER.writeValueAsString(withSealedMeta(meta)),
-          StandardCharsets.UTF_8,
-          StandardOpenOption.CREATE,
-          StandardOpenOption.TRUNCATE_EXISTING);
+      AtomicFileWrites.replace(
+          sessionDir.resolve("meta.json"),
+          MAPPER.writeValueAsBytes(withSealedMeta(versionedMeta(meta))));
     } catch (IOException e) {
-      LOG.warn("Failed to write meta for {}", sessionId, e);
+      throw new UncheckedIOException("Failed to write conversation metadata for " + sessionId, e);
     }
   }
 
@@ -540,7 +530,8 @@ public final class FileConversationStore implements ConversationStore {
         }
       }
     } catch (IOException e) {
-      LOG.warn("Failed to scan for child branches of {}", parentSessionId, e);
+      throw new UncheckedIOException(
+          "Failed to scan for child branches of " + parentSessionId, e);
     }
     return children;
   }
@@ -578,17 +569,44 @@ public final class FileConversationStore implements ConversationStore {
     Path metaFile = resolveSessionDir(sessionId).resolve("meta.json");
     if (!Files.exists(metaFile)) return null;
     try {
-      @SuppressWarnings("unchecked")
-      Map<String, Object> meta = MAPPER.readValue(
-          Files.readString(metaFile, StandardCharsets.UTF_8), Map.class);
+      Map<String, Object> meta = readRawMeta(metaFile);
       // Tempdoc 629 (LAYER): decrypt the content fields. KeyLockedException propagates (the conversation
       // is locked) — consistent with loadOwnMessages, so the history endpoint surfaces 423 not empty.
       openMetaContent(meta);
       return meta;
-    } catch (IOException e) {
-      LOG.debug("Failed to read meta for {}", sessionId, e);
-      return null;
+    } catch (CorruptDurableStoreException
+        | io.justsearch.configuration.persistence.UnsupportedStoreVersionException e) {
+      throw e;
     }
+  }
+
+  private static Map<String, Object> readRawMeta(Path metaFile) {
+    try {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> meta =
+          MAPPER.readValue(Files.readString(metaFile, StandardCharsets.UTF_8), Map.class);
+      Object rawVersion = meta.get("schemaVersion");
+      if (rawVersion != null && !(rawVersion instanceof Integer)) {
+        throw new CorruptDurableStoreException(
+            "conversations", "schemaVersion must be an integer in " + metaFile);
+      }
+      Integer observedVersion = rawVersion instanceof Integer version ? version : null;
+      StoreFormatVersions.requireReadable(
+          "conversations", observedVersion, CURRENT_SCHEMA_VERSION, 0, 0);
+      return meta;
+    } catch (CorruptDurableStoreException
+        | io.justsearch.configuration.persistence.UnsupportedStoreVersionException e) {
+      throw e;
+    } catch (Exception e) {
+      throw new CorruptDurableStoreException(
+          "conversations", "cannot parse metadata " + metaFile, e);
+    }
+  }
+
+  private static Map<String, Object> versionedMeta(Map<String, Object> meta) {
+    Map<String, Object> versioned = new LinkedHashMap<>(meta);
+    versioned.put("schemaVersion", CURRENT_SCHEMA_VERSION);
+    return versioned;
   }
 
   @Override
@@ -638,9 +656,7 @@ public final class FileConversationStore implements ConversationStore {
     try {
       Map<String, Object> meta;
       if (Files.exists(metaFile)) {
-        @SuppressWarnings("unchecked")
-        Map<String, Object> existing = MAPPER.readValue(
-            Files.readString(metaFile, StandardCharsets.UTF_8), Map.class);
+        Map<String, Object> existing = readRawMeta(metaFile);
         meta = new LinkedHashMap<>(existing);
       } else {
         meta = new LinkedHashMap<>();
@@ -657,12 +673,10 @@ public final class FileConversationStore implements ConversationStore {
         meta.put("firstUserMessage",
             content.length() > 200 ? content.substring(0, 200) : content);
       }
-      Files.writeString(metaFile, MAPPER.writeValueAsString(withSealedMeta(meta)),
-          StandardCharsets.UTF_8,
-          StandardOpenOption.CREATE,
-          StandardOpenOption.TRUNCATE_EXISTING);
+      AtomicFileWrites.replace(
+          metaFile, MAPPER.writeValueAsBytes(withSealedMeta(versionedMeta(meta))));
     } catch (IOException e) {
-      LOG.debug("Failed to update meta for {}", sessionDir, e);
+      throw new UncheckedIOException("Failed to update conversation metadata in " + sessionDir, e);
     }
   }
 }

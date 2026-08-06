@@ -333,6 +333,12 @@ export class IndexingOverlayHost extends JfElement {
   override render(): TemplateResult | typeof nothing {
     const ai = this.aiState;
     if (!ai) return nothing;
+    // Tempdoc 807 A.3 — this overlay asserts "indexing is happening right now, here is the queue",
+    // entirely from the retained snapshot. With the backend gone that is a past measurement in the
+    // present tense, and its "Go online" button would POST into the void. There is no honest
+    // last-known form of a live-work overlay, so it withdraws; the "Backend disconnected." banner
+    // and the CONN dot carry the real state.
+    if (!ai.snapshotLive) return nothing;
     if (ai.runtime.mode !== 'indexing') return nothing;
     const queueTotal = orElse(ai.index.embeddingQueueSize, 0) + orElse(ai.index.vduQueueSize, 0);
     if (queueTotal === 0) return nothing;
