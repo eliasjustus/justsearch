@@ -774,9 +774,36 @@ Cover, at minimum, four things:
   end that cost real time.
 - **What you would change** — the concrete fix, not just the complaint.
 
+**Every friction item gets an explicit disposition before it becomes a harness
+note: harness defect OR candidate product finding.** Write the disposition next to
+the item, in one clause. The two are not alternatives you pick by where the pain
+landed — the same event is routinely both, and a friction item filed only as
+process cost silently discards the product half.
+
+The discriminator: **friction you resolved by consulting ground truth a real user
+does not have is a discoverability finding, not just process cost.** Reading a
+head log, an API field, a tempdoc or the source of a staged helper are all things
+you can do and a first-time user cannot. If that is what unstuck you, the surface
+did not tell the user what it told you.
+
+Worked example, round 14 (2026-08-05). Chat is OFF by default after a successful
+Install AI: with `installedFully: true` on all seven packages and a fully enriched
+index, inference sat at `mode=offline, available=false`, `/api/chat/ask` returned
+`AI_OFFLINE` without attempting startup, and a cold restart did not change it. The
+round was ~2 minutes from a false HIGH; what saved it was **reading the Head log**,
+where one INFO line explains everything ("AI auto-start not configured; engine
+follows the persisted runtime spec"). It cost ~20 minutes and was routed entirely
+to harness docs — "put this in CLAUDE.md and the do-not-refile list" — which is
+correct and insufficient. A user who installs 10 GB and finds chat dead has no head
+log; the product's own answer (Brain → "AI Offline → Start AI") was one surface away
+and nothing pointed there. That is a **product discoverability finding** as well as
+a harness gap, and only the harness half was recorded.
+
 `evidence/retrospective.md` is checked at finalize (see *Coverage & evidence*
 above) and the round **fails closed** if it is missing or too thin to be a real
-retrospective — a stub file does not satisfy this.
+retrospective — a stub file does not satisfy this. The dispositions are not
+mechanically graded; like the rest of this artifact, they are graded by being
+written down at all.
 
 ### Session self-analysis (required — separate from the retrospective, on purpose)
 
