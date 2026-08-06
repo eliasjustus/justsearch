@@ -717,6 +717,44 @@ final class GrpcIngestServiceTest {
   }
 
   @Test
+  void countJobsByPathPrefixDegradesCoverageWhenIndexRuntimeAbsent() throws Exception {
+    // Tempdoc 813 Slice A: the queue counts come from SQLite (always available), the coverage
+    // counts from Lucene. This fixture constructs the service with a null ingestLifecycle, so the
+    // coverage leg must degrade to all-zero WITHOUT costing the caller its job counts — the
+    // Library row still needs its truthful "N remaining".
+    Path root = Files.createDirectories(tempDir.resolve("degraded"));
+    Path f1 = root.resolve("f1.txt");
+    Files.writeString(f1, "f1");
+    assertEquals(
+        1,
+        observeSingle(
+                (StreamObserver<BatchResponse> obs) ->
+                    service.submitBatch(
+                        BatchRequest.newBuilder()
+                            .addFilePaths(f1.toAbsolutePath().toString())
+                            .build(),
+                        obs))
+            .getAcceptedCount());
+
+    CapturingObserver<CountJobsByPathPrefixResponse> observer = new CapturingObserver<>();
+    service.countJobsByPathPrefix(
+        CountJobsByPathPrefixRequest.newBuilder()
+            .setPathPrefix(root.toAbsolutePath().toString())
+            .build(),
+        observer);
+
+    CountJobsByPathPrefixResponse response = observer.single();
+    assertEquals(1, response.getCounts().getPendingCount(), "queue counts must survive");
+    assertEquals(0, response.getCoverage().getParentDocsTotal());
+    assertEquals(0, response.getCoverage().getParentDocsSettledEmbedding());
+    assertEquals(0, response.getCoverage().getParentDocsSettledSplade());
+    assertEquals(0, response.getCoverage().getParentDocsSettledNer());
+    assertEquals(0, response.getCoverage().getChunkDocsTotal());
+    assertEquals(0, response.getCoverage().getChunkDocsSettled());
+    assertTrue(observer.completed);
+  }
+
+  @Test
   void countJobsByPathPrefixDoesNotTreatUnderscoreAsWildcard() throws Exception {
     // Tempdoc 599 Fix 2: the prefix "a_b" must NOT match the sibling "aXb" (a LIKE '_' wildcard
     // would). The range-query implementation matches only true path-prefix descendants.

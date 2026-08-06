@@ -308,11 +308,51 @@ public interface IndexingService {
    *
    * @param inFlight PENDING + PROCESSING jobs under the prefix (in-flight; reaper-bounded)
    * @param failed permanently FAILED jobs under the prefix
+   * @param coverage per-root enrichment coverage from the index (tempdoc 813 §1c)
    */
-  record JobCounts(long inFlight, long failed) {
+  record JobCounts(long inFlight, long failed, RootCoverage coverage) {
+    public JobCounts {
+      coverage = coverage == null ? RootCoverage.zero() : coverage;
+    }
+
     /** All-zero sentinel for the unavailable / empty-prefix path. */
     public static JobCounts zero() {
-      return new JobCounts(0L, 0L);
+      return new JobCounts(0L, 0L, RootCoverage.zero());
+    }
+  }
+
+  /**
+   * Per-watched-root enrichment coverage counted from the index (tempdoc 813 §1c/§13). Lets a
+   * Library folder row say "keyword-ready · enriching N%" instead of only reporting the index-wide
+   * number. Queue drain ({@link JobCounts#inFlight()}) covers the FIRST phase (a file becomes
+   * keyword-searchable); these counts cover the SECOND (enrichment backfill), which carries no
+   * per-root job rows at all — the backfill selects index-wide by status.
+   *
+   * <p>Denominator discipline: parent-stage totals exclude chunk documents; the chunk tier has its
+   * own denominator and must never be presented as "N of M files". Numerator discipline: "settled"
+   * = terminal state (COMPLETED + COMPLETED_EMPTY where defined + FAILED), not success — otherwise
+   * a permanently failed document pins the folder below 100% forever.
+   *
+   * @param parentDocsTotal live non-chunk documents under the prefix
+   * @param parentDocsSettledEmbedding parent docs whose embedding stage is terminal
+   * @param parentDocsSettledSplade parent docs whose SPLADE stage is terminal
+   * @param parentDocsSettledNer parent docs whose NER stage is terminal
+   * @param chunkDocsTotal live chunk documents under the prefix
+   * @param chunkDocsSettled chunk docs whose chunk-embedding stage is terminal
+   */
+  record RootCoverage(
+      long parentDocsTotal,
+      long parentDocsSettledEmbedding,
+      long parentDocsSettledSplade,
+      long parentDocsSettledNer,
+      long chunkDocsTotal,
+      long chunkDocsSettled) {
+
+    private static final RootCoverage ZERO = new RootCoverage(0L, 0L, 0L, 0L, 0L, 0L);
+
+    /** All-zero sentinel for the unavailable / empty-prefix path. */
+    public static RootCoverage zero() {
+      return ZERO;
     }
   }
 

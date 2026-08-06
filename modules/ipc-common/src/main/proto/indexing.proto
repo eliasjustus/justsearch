@@ -1275,8 +1275,24 @@ message IndexingJobCounts {
   int64 failed_count = 3;      // permanently FAILED
 }
 
+// Per-root enrichment coverage (tempdoc 813 §1c/§13). Counted from the Lucene index under the
+// same path prefix, alongside the queue counts above. Parent-stage denominators EXCLUDE chunk
+// documents; the chunk tier is its own denominator and must never be folded into an "N of M
+// files" ratio. "settled" = the stage reached a TERMINAL state (COMPLETED + COMPLETED_EMPTY
+// where the stage defines it + FAILED), not specifically success — a permanently failed doc
+// never leaves PENDING, so a COMPLETED-only numerator would pin a folder below 100% forever.
+message RootCoverageCounts {
+  int64 parent_docs_total = 1;              // live non-chunk docs under the prefix
+  int64 parent_docs_settled_embedding = 2;  // embedding_status terminal (COMPLETED|FAILED)
+  int64 parent_docs_settled_splade = 3;     // splade_status terminal (+COMPLETED_EMPTY)
+  int64 parent_docs_settled_ner = 4;        // ner_status terminal (+COMPLETED_EMPTY)
+  int64 chunk_docs_total = 5;               // live chunk docs under the prefix
+  int64 chunk_docs_settled = 6;             // chunk_embedding_status terminal (COMPLETED|FAILED)
+}
+
 message CountJobsByPathPrefixResponse {
   IndexingJobCounts counts = 1;
+  RootCoverageCounts coverage = 2;  // all-zero when the index runtime is unavailable
 }
 
 // --- Session policies diagnostic (tempdoc 397 §14.28 U4) ---

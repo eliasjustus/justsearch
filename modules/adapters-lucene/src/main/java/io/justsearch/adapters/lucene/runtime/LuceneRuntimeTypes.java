@@ -325,6 +325,39 @@ public final class LuceneRuntimeTypes {
     }
   }
 
+  /**
+   * Per-watched-root enrichment coverage (tempdoc 813 §1c/§13) — the same numerator/denominator
+   * shapes the index-wide {@link EmbeddingCounts} / {@link SpladeFeatureCounts} report, restricted
+   * to documents under one root's path prefix so a Library folder row can say "N% enriched".
+   *
+   * <p>Denominator discipline: the parent-stage totals count only NON-chunk documents; the chunk
+   * tier is counted separately over chunk documents, never mixed into a "N of M files" ratio.
+   *
+   * <p>Numerator discipline: "settled" means the stage reached a TERMINAL state, not specifically
+   * success — {@code COMPLETED} + {@code COMPLETED_EMPTY} (where the stage defines it) + {@code
+   * FAILED}. A stage that failed permanently will never leave PENDING, so counting only COMPLETED
+   * would pin a folder below 100% forever. Mirrors the COMPLETED_EMPTY reasoning already applied to
+   * the index-wide SPLADE coverage count.
+   *
+   * @param parentDocsTotal live non-chunk documents under the prefix
+   * @param parentDocsSettledEmbedding parent docs whose {@code embedding_status} is terminal
+   * @param parentDocsSettledSplade parent docs whose {@code splade_status} is terminal
+   * @param parentDocsSettledNer parent docs whose {@code ner_status} is terminal
+   * @param chunkDocsTotal live chunk documents under the prefix
+   * @param chunkDocsSettled chunk docs whose {@code chunk_embedding_status} is terminal
+   */
+  public record RootCoverageCounts(
+      int parentDocsTotal,
+      int parentDocsSettledEmbedding,
+      int parentDocsSettledSplade,
+      int parentDocsSettledNer,
+      int chunkDocsTotal,
+      int chunkDocsSettled) {
+
+    /** All-zero sentinel for the unavailable / blank-prefix path. */
+    public static final RootCoverageCounts EMPTY = new RootCoverageCounts(0, 0, 0, 0, 0, 0);
+  }
+
   // ==========================================================================
   // Runtime Telemetry Hooks
   // ==========================================================================

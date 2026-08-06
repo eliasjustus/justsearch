@@ -34,6 +34,24 @@
     },
     "lastVerifiedIsoTime" : {
       "type" : "string"
+    },
+    "parentDocsTotal" : {
+      "type" : "integer"
+    },
+    "parentDocsSettledEmbedding" : {
+      "type" : "integer"
+    },
+    "parentDocsSettledSplade" : {
+      "type" : "integer"
+    },
+    "parentDocsSettledNer" : {
+      "type" : "integer"
+    },
+    "chunkDocsTotal" : {
+      "type" : "integer"
+    },
+    "chunkDocsSettled" : {
+      "type" : "integer"
     }
   }
 }

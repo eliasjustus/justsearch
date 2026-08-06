@@ -789,6 +789,18 @@ public class IndexingController {
                     m.put(
                         "lastVerifiedIsoTime",
                         root.lastVerifiedAt() == null ? "" : root.lastVerifiedAt().toString());
+                    // Tempdoc 813 §1c — per-root ENRICHMENT coverage. inFlightCount above covers
+                    // only the first phase (keyword-searchable); enrichment backfill selects
+                    // index-wide by status and carries no per-root job rows, so without these a
+                    // 5%-embedded folder and a 100%-embedded one are indistinguishable. Parent
+                    // totals exclude chunk docs; the chunk tier is its own denominator.
+                    IndexingService.RootCoverage coverage = jobCounts.coverage();
+                    m.put("parentDocsTotal", coverage.parentDocsTotal());
+                    m.put("parentDocsSettledEmbedding", coverage.parentDocsSettledEmbedding());
+                    m.put("parentDocsSettledSplade", coverage.parentDocsSettledSplade());
+                    m.put("parentDocsSettledNer", coverage.parentDocsSettledNer());
+                    m.put("chunkDocsTotal", coverage.chunkDocsTotal());
+                    m.put("chunkDocsSettled", coverage.chunkDocsSettled());
                     return m;
                   })
               .toList();

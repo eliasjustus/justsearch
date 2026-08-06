@@ -22,6 +22,12 @@ export interface IndexedRootView {
   walkCompleted?: boolean;
   deleteDetectionUnverified?: boolean;
   lastVerifiedIsoTime?: string;
+  parentDocsTotal?: number;
+  parentDocsSettledEmbedding?: number;
+  parentDocsSettledSplade?: number;
+  parentDocsSettledNer?: number;
+  chunkDocsTotal?: number;
+  chunkDocsSettled?: number;
 }
 export const indexedRootViewSchema = z.strictObject({
   "pathHash": z.string().optional(),
@@ -35,4 +41,10 @@ export const indexedRootViewSchema = z.strictObject({
   "walkCompleted": z.boolean().optional(),
   "deleteDetectionUnverified": z.boolean().optional(),
   "lastVerifiedIsoTime": z.string().optional(),
+  "parentDocsTotal": z.number().int().optional(),
+  "parentDocsSettledEmbedding": z.number().int().optional(),
+  "parentDocsSettledSplade": z.number().int().optional(),
+  "parentDocsSettledNer": z.number().int().optional(),
+  "chunkDocsTotal": z.number().int().optional(),
+  "chunkDocsSettled": z.number().int().optional(),
 });

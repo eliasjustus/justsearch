@@ -285,9 +285,15 @@ public final class QueryFilterBuilder {
    * Builds a filter query for chunk search from structured filters.
    *
    * <p>Only applies filters that are stored on chunk documents: mime, fileKind, mimeBase, language.
-   * Skips: IS_CHUNK exclusion (chunks are the target), pathPrefix (PATH on chunks stores
-   * parentDocId, not the file path), modifiedAt range (not stored on chunks), and entity filters
-   * (not stored on chunks).
+   * Skips: IS_CHUNK exclusion (chunks are the target), pathPrefix (the chunk leg is scoped by its
+   * parents in this search path), modifiedAt range (not stored on chunks), and entity filters (not
+   * stored on chunks).
+   *
+   * <p>Note (tempdoc 813): skipping pathPrefix here is a scoping choice, NOT a data limitation.
+   * PATH on a chunk IS the parent's normalized absolute file path — {@code ChunkDocumentWriter}
+   * writes {@code SchemaFields.PATH = parentDocId}, and {@code parentDocId} is {@code
+   * PathNormalizer.normalizePath(filePath.toAbsolutePath())}. Prefix filtering on chunk PATH is
+   * therefore valid, and {@code IndexCountOps#queryRootCoverageCounts} relies on it.
    *
    * @param filters optional structured filters (may be null)
    * @return filter query for chunk search, or null if no applicable filters exist

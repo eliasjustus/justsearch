@@ -1485,8 +1485,40 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
               .setFailedCount(counts.failedCount())
               .build();
       responseObserver.onNext(
-          io.justsearch.ipc.CountJobsByPathPrefixResponse.newBuilder().setCounts(wire).build());
+          io.justsearch.ipc.CountJobsByPathPrefixResponse.newBuilder()
+              .setCounts(wire)
+              .setCoverage(rootCoverage(request.getPathPrefix()))
+              .build());
       responseObserver.onCompleted();
+    }
+  }
+
+  /**
+   * Per-root enrichment coverage for {@link #countJobsByPathPrefix} (tempdoc 813 §1c). The queue
+   * counts above come from SQLite and are always available; these come from the Lucene index, so
+   * an absent index runtime degrades this leg to all-zero rather than failing the whole response —
+   * the Library row still gets its truthful in-flight/failed numbers.
+   */
+  private io.justsearch.ipc.RootCoverageCounts rootCoverage(String pathPrefix) {
+    io.justsearch.adapters.lucene.runtime.IndexCountOps countOps =
+        ingestLifecycle == null ? null : ingestLifecycle.indexCountOps();
+    if (countOps == null) {
+      return io.justsearch.ipc.RootCoverageCounts.getDefaultInstance();
+    }
+    try {
+      io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.RootCoverageCounts c =
+          countOps.queryRootCoverageCounts(pathPrefix);
+      return io.justsearch.ipc.RootCoverageCounts.newBuilder()
+          .setParentDocsTotal(c.parentDocsTotal())
+          .setParentDocsSettledEmbedding(c.parentDocsSettledEmbedding())
+          .setParentDocsSettledSplade(c.parentDocsSettledSplade())
+          .setParentDocsSettledNer(c.parentDocsSettledNer())
+          .setChunkDocsTotal(c.chunkDocsTotal())
+          .setChunkDocsSettled(c.chunkDocsSettled())
+          .build();
+    } catch (RuntimeException e) {
+      log.warn("countJobsByPathPrefix: root coverage unavailable: {}", e.getMessage());
+      return io.justsearch.ipc.RootCoverageCounts.getDefaultInstance();
     }
   }
 
