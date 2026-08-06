@@ -1,22 +1,15 @@
 {
-  "$comment": "Tempdoc 814 D5 — One authority, one pointer. A status fact (capability degradation, budget state, source count) has exactly one persistent-chrome authority surface at the pinned viewport; every other appearance is a pointer to the authority or absent. This register names the phrase-level surface of that rule: each entry is a literal phrase the measurement probe (scripts/jseval/jseval/ui_measure.py capture_measure -> statusFacts) counts across the shadow-piercing deep DOM text of a capture. `maxPersistentRenders` is the ceiling `jseval ui-proportion-gate` enforces on any step that opts in via `statusFactsSingleton: true` (governance/ui-proportion-baseline.v1.json) — a count above the ceiling is the copy-lint the D5 charter asked for, not eyeballed. See docs/tempdocs/814-chat-surface-chrome-allocation.md §D5 / §D7.3.",
+  "$comment": "Tempdoc 814 D5 — One authority, one pointer. A status fact (capability degradation, budget state, source count) has exactly one persistent-chrome authority surface at the pinned viewport; every other appearance is a pointer to the authority or absent. This register names the PHRASE-level surface of that rule: each entry is a literal phrase the measurement probe (scripts/jseval/jseval/ui_measure.py capture_measure -> statusFacts) counts across the VISIBLE, shadow-piercing deep DOM text of a capture (a node the user cannot see is not a render: display:none, visibility:hidden and effectively-zero render boxes such as the 1x1 visually-hidden aria-live announcer are skipped). `maxPersistentRenders` is the ceiling `jseval ui-proportion-gate` enforces on any step that opts in via `statusFactsSingleton: true` (governance/ui-proportion-baseline.v1.json) — a count above the ceiling is the copy-lint the D5 charter asked for, not eyeballed. SCOPE, honestly (review pass 2026-08-06): a phrase counter witnesses SAME-STRING duplication only — one literal rendered twice. It structurally CANNOT witness the fact-level duplication where two surfaces word the same fact differently: the chat banner says 'Semantic search degraded.' (state/readinessNotice.ts) while the status chip says 'Service degraded' (state/verdict.ts verdictHeadline), so counting either string measures 1 whether the D5 chip-yield works or not. That cross-wording class is guarded where it is decidable — StatusDeck.test.ts's chip-yield unit tests are its regression home, and the capture-level witness is the step-scoped `forbiddenVisibleText` assertion in the proportion register (the chat surface must not VISIBLY read 'Service degraded' while its banner owns the fact). The rows here are therefore only the same-string class, which is what finding 12 measured. See docs/tempdocs/814-chat-surface-chrome-allocation.md §D5 / §D7.3 / §V.",
   "schema": "status-facts.v1",
   "version": 1,
   "facts": [
     {
-      "phrase": "Reduced capability",
-      "maxPersistentRenders": 1
-    },
-    {
-      "$comment": "The warn-tier verdict headline (state/verdict.ts verdictHeadline). The info-tier 'Reduced capability' is bannerless post-finding-9, so this phrase is the one the chat-bands degraded-warn fixture can actually witness duplicated (banner + status chip) — W3 §B.14 finding.",
-      "phrase": "Service degraded",
-      "maxPersistentRenders": 1
-    },
-    {
+      "$comment": "Finding 12's 'Over budget +N' — the SAME literal twice within ~40px (the activity rail's summary line and the expanded body's escalation row).",
       "phrase": "Over budget",
       "maxPersistentRenders": 1
     },
     {
+      "$comment": "Finding 12's source count — the SAME literal 'Sources · N' disclosure rendered near the evidence-rail header and the answer footer within ~250px.",
       "phrase": "Sources ·",
       "maxPersistentRenders": 1
     }

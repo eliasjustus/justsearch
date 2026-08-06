@@ -8,7 +8,9 @@ set out to fix. These pin the buckets so that can't regress.
 
 from __future__ import annotations
 
-from jseval.ui_measure import _classify_console, _find_a11y_baseline
+import pytest
+
+from jseval.ui_measure import _classify_console, _find_a11y_baseline, _JS_STATUS_FACTS
 
 
 class TestClassifyConsole:
@@ -104,3 +106,96 @@ class TestA11yBaseline:
         # 'all-known' claim), not present-with-empty.
         base = _find_a11y_baseline()
         assert "inspector-open" not in base
+
+
+def _count_phrases(html: str, phrases: list[str]) -> dict[str, int]:
+    """Run the REAL `_JS_STATUS_FACTS` probe against a page — the only honest way to test
+    a browser-side probe (a Python re-implementation would test the copy, not the probe).
+
+    Skips (never fails) where the ui-shot harness's own browser stack is absent, so a
+    checkout without `pip install jseval[ui]` / `playwright install chromium` still runs
+    the rest of the suite."""
+    sync_playwright = pytest.importorskip(
+        "playwright.sync_api", reason="playwright (the ui-shot harness dependency) not installed",
+    ).sync_playwright
+
+    with sync_playwright() as p:
+        try:
+            browser = p.chromium.launch()
+        except Exception as e:  # noqa: BLE001 — no browser binary is a SKIP, not a failure
+            pytest.skip(f"chromium unavailable for the probe test: {str(e)[:120]}")
+        try:
+            page = browser.new_page()
+            page.set_content(html)
+            rows = page.evaluate(_JS_STATUS_FACTS, phrases)
+        finally:
+            browser.close()
+    return {r["phrase"]: r["count"] for r in rows}
+
+
+class TestStatusFactsVisibility:
+    """Tempdoc 814 §D5/§D7.3 review pass — the status-fact probe counts PERSISTENT RENDERS,
+    so a node the user cannot see is not one.
+
+    The defect this pins: the probe concatenated every leaf's text with no visibility
+    filter, so StatusDeck's 1x1 `.visually-hidden` aria-live announcer
+    (`data-testid="verdict-announcer"`) — which mirrors the verdict headline BY DESIGN —
+    counted as a render. That made the register's "positive case" a measurement of an
+    invisible node, and would have FALSE-FAILED any surface that legitimately showed the
+    headline once (count 2 against a ceiling of 1)."""
+
+    def test_visible_leaf_is_counted(self):
+        counts = _count_phrases(
+            "<div><span>Service degraded</span></div>", ["Service degraded"],
+        )
+        assert counts["Service degraded"] == 1
+
+    def test_visually_hidden_announcer_is_not_a_render(self):
+        # The exact `.visually-hidden` recipe from primitives/ambientStyles.ts.
+        html = """
+        <style>.visually-hidden{position:absolute;width:1px;height:1px;padding:0;
+          margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);
+          white-space:nowrap;border:0;}</style>
+        <div class="visually-hidden" data-testid="verdict-announcer">Service degraded</div>
+        """
+        assert _count_phrases(html, ["Service degraded"])["Service degraded"] == 0
+
+    def test_a_visible_render_beside_the_announcer_counts_once(self):
+        # The false-positive hazard, stated as a test: banner + announcer must read 1, not 2.
+        html = """
+        <style>.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;
+          clip:rect(0 0 0 0);clip-path:inset(50%);}</style>
+        <div class="visually-hidden">Service degraded</div>
+        <div><span>Service degraded</span></div>
+        """
+        assert _count_phrases(html, ["Service degraded"])["Service degraded"] == 1
+
+    def test_display_none_is_not_a_render(self):
+        html = "<div style='display:none'><span>Over budget +3</span></div>"
+        assert _count_phrases(html, ["Over budget"])["Over budget"] == 0
+
+    def test_visibility_hidden_is_not_a_render(self):
+        # Inherited `visibility` is why the check reads the LEAF's computed style.
+        html = "<div style='visibility:hidden'><span>Over budget +3</span></div>"
+        assert _count_phrases(html, ["Over budget"])["Over budget"] == 0
+
+    def test_display_contents_leaf_is_still_counted(self):
+        # A `display:contents` leaf has no box of its own; measuring its text (Range)
+        # instead keeps it from being mistaken for hidden.
+        html = "<div><span style='display:contents'>Sources · 4</span></div>"
+        assert _count_phrases(html, ["Sources ·"])["Sources ·"] == 1
+
+    def test_shadow_dom_is_still_pierced(self):
+        html = """
+        <div id="host"></div>
+        <script>
+          const r = document.getElementById('host').attachShadow({mode:'open'});
+          r.innerHTML = '<span>Sources · 4</span>';
+        </script>
+        """
+        assert _count_phrases(html, ["Sources ·"])["Sources ·"] == 1
+
+    def test_parent_text_is_not_double_counted(self):
+        # The pre-existing leaf-only guarantee must survive the visibility filter.
+        html = "<div><p><span>Over budget +3</span></p></div>"
+        assert _count_phrases(html, ["Over budget"])["Over budget"] == 1

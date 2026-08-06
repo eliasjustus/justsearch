@@ -98,6 +98,9 @@ def _find_proportion_baseline() -> dict[str, list[str]]:
                     for sel in s.get("absentSelectors") or []:
                         if sel and sel not in sels:
                             sels.append(sel)
+                    for sel in s.get("requiredSelectors") or []:
+                        if sel and sel not in sels:
+                            sels.append(sel)
                     out[step] = sels
                 return out
             except Exception:
@@ -105,7 +108,34 @@ def _find_proportion_baseline() -> dict[str, list[str]]:
     return {}
 
 
+def _find_proportion_forbidden_text() -> dict[str, list[str]]:
+    """Per-step ``forbiddenVisibleText`` phrases from the SAME proportion register
+    (tempdoc 814 review pass): literal phrases that must not render VISIBLY in a given
+    step's capture. Counted by the same visibility-filtered probe the status-facts
+    register feeds, so there is one probe and one output shape (``statusFacts``); only the
+    phrase's provenance and its ceiling differ (register-wide `maxPersistentRenders`
+    vs. step-scoped 0). Best-effort, mirroring `_find_proportion_baseline`'s fail-open
+    contract."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        cand = parent / "governance" / "ui-proportion-baseline.v1.json"
+        if cand.exists():
+            try:
+                reg = json.loads(cand.read_text(encoding="utf-8"))
+                out: dict[str, list[str]] = {}
+                for s in reg.get("steps", []):
+                    step = s.get("uiShotStep")
+                    if not step:
+                        continue
+                    out[step] = [p for p in (s.get("forbiddenVisibleText") or []) if p]
+                return out
+            except Exception:
+                return {}
+    return {}
+
+
 _PROPORTION_BASELINE_SELECTORS = _find_proportion_baseline()
+_PROPORTION_FORBIDDEN_TEXT = _find_proportion_forbidden_text()
 
 
 def _find_status_facts() -> list[str]:
@@ -346,19 +376,46 @@ _JS_GEOMETRY = """(extraSels) => {
 }"""
 
 # Tempdoc 814 §D5/§D7.3 — the status-fact SINGLETON probe: given a phrase list (loaded
-# from governance/status-facts.v1.json), count how many times each phrase appears across
-# the shadow-pierced deep DOM text. Counts LEAF elements only (elements with zero element
-# children) so a phrase is not double-counted through a parent's aggregated textContent —
-# a `<slot>` with nothing directly assigned to it as a DOM child is a leaf too (its own
-# textContent is empty unless it carries fallback content), so slotted light-DOM text is
-# counted once, at its own leaf, not a second time through the slot.
+# from governance/status-facts.v1.json, plus any step-scoped `forbiddenVisibleText`),
+# count how many times each phrase appears across the shadow-pierced deep DOM text.
+# Counts LEAF elements only (elements with zero element children) so a phrase is not
+# double-counted through a parent's aggregated textContent — a `<slot>` with nothing
+# directly assigned to it as a DOM child is a leaf too (its own textContent is empty
+# unless it carries fallback content), so slotted light-DOM text is counted once, at its
+# own leaf, not a second time through the slot.
+#
+# VISIBILITY FILTER (814 review pass, 2026-08-06): the count must mean "renders in
+# PERSISTENT CHROME the user can see", so a node the user cannot see is not a render.
+# Without this the probe counted the 1x1 `.visually-hidden` aria-live announcer
+# (`data-testid="verdict-announcer"`, StatusDeck.ts) — which mirrors the verdict headline
+# BY DESIGN — as one of its own "persistent renders". Two consequences, both bad: the
+# register's positive case was witnessing an invisible node (vacuity), and any surface
+# that visibly showed the same headline would count 2 and FALSE-FAIL a rule it does not
+# break. Skipped: `display:none` / `visibility:hidden` (both computed, so an inherited
+# `visibility:hidden` is caught at the leaf), and an effectively-zero render box (width or
+# height <= 1px — the visually-hidden clip pattern is exactly `width:1px;height:1px`,
+# `ambientStyles.ts`). A `display:contents` leaf has no box of its own, so its own text is
+# measured with a Range instead of being mistaken for hidden.
 _JS_STATUS_FACTS = """(phrases) => {
 """ + _JS_DEEP + """
+    const isVisible = (el) => {
+        const cs = getComputedStyle(el);
+        if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+        let r = el.getBoundingClientRect();
+        if ((r.width <= 1 || r.height <= 1) && cs.display === 'contents') {
+            try {
+                const rng = document.createRange();
+                rng.selectNodeContents(el);
+                r = rng.getBoundingClientRect();
+            } catch (e) { /* fall through to the box test below */ }
+        }
+        return r.width > 1 && r.height > 1;
+    };
     let text = '';
     for (const el of deepAll()) {
         if (el.children && el.children.length === 0) {
             const t = (el.textContent || '').trim();
-            if (t) text += ' ' + t;
+            if (t && isVisible(el)) text += ' ' + t;
         }
     }
     return (phrases || []).map((p) => ({ phrase: p, count: text.split(p).length - 1 }));
@@ -441,11 +498,18 @@ async def capture_measure(
             axe = {"error": str(e)[:200]}
 
     # Tempdoc 814 §D5/§D7.3 — the status-fact singleton probe (best-effort, empty register
-    # or a failed evaluate both degrade to an empty list, never fail the capture).
+    # or a failed evaluate both degrade to an empty list, never fail the capture). The
+    # phrase set is the register-wide status facts UNIONED with this step's own
+    # `forbiddenVisibleText` (review pass) — one probe, one output list; the ceiling each
+    # phrase is judged against lives in `ui_proportion_gate.py`.
+    phrases = list(_STATUS_FACT_PHRASES)
+    for p in _PROPORTION_FORBIDDEN_TEXT.get(name, []):
+        if p not in phrases:
+            phrases.append(p)
     status_facts: list[dict[str, Any]] = []
-    if _STATUS_FACT_PHRASES:
+    if phrases:
         try:
-            status_facts = await page.evaluate(_JS_STATUS_FACTS, _STATUS_FACT_PHRASES) or []
+            status_facts = await page.evaluate(_JS_STATUS_FACTS, phrases) or []
         except Exception:
             pass
 

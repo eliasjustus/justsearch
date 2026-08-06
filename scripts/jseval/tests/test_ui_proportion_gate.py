@@ -319,6 +319,159 @@ class TestScrollableRegionBounds:
         assert report["rows"][0]["status"] == "ERROR"
 
 
+class TestMinHeightFloor:
+    """The 814 review pass's ceiling companion. `chat-bands-detailed` registers the
+    EXPANDED degradation banner at maxHeightPx 176 — but the collapsed pill is 34px, so the
+    ceiling alone reports a comfortable "ok" precisely when Detailed expansion has regressed
+    to the pill and the row is measuring the wrong element. The floor is what notices."""
+
+    def test_clean_when_expanded(self, monkeypatch, tmp_path):
+        _register(monkeypatch, [{"selector": ".degradation-banner",
+                                 "maxHeightPx": 176, "minHeightPx": 64}])
+        mf = _measure_file(tmp_path, {".degradation-banner": 110})  # the measured expanded height
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+        statuses = {row["constraint"]: row["status"] for row in report["rows"]}
+        assert statuses == {"maxHeightPx": "ok", "minHeightPx": "ok"}
+
+    def test_collapsed_to_the_pill_fails_the_floor_while_the_ceiling_reads_ok(
+        self, monkeypatch, tmp_path,
+    ):
+        # The vacuity this constraint exists for, stated as a test: 34px is the collapsed
+        # pill's measured height (`chat-bands`' `.degradation-banner-collapsed` row, 42px
+        # ceiling). The ceiling passes; only the floor is red.
+        _register(monkeypatch, [{"selector": ".degradation-banner",
+                                 "maxHeightPx": 176, "minHeightPx": 64}])
+        mf = _measure_file(tmp_path, {".degradation-banner": 34})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 1
+        statuses = {row["constraint"]: row["status"] for row in report["rows"]}
+        assert statuses["maxHeightPx"] == "ok"
+        assert statuses["minHeightPx"] == "UNDER_MIN_HEIGHT"
+
+    def test_clean_within_tolerance_below_floor(self, monkeypatch, tmp_path):
+        _register(monkeypatch, [{"selector": ".degradation-banner", "minHeightPx": 64}],
+                  tolerance_px=2)
+        mf = _measure_file(tmp_path, {".degradation-banner": 62})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+
+    def test_growing_taller_is_not_a_floor_violation(self, monkeypatch, tmp_path):
+        # The floor is one-directional; growth is the CEILING's business.
+        _register(monkeypatch, [{"selector": ".degradation-banner", "minHeightPx": 64}])
+        mf = _measure_file(tmp_path, {".degradation-banner": 400})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+
+    def test_min_height_alone_is_a_valid_constraint(self, monkeypatch, tmp_path):
+        # An element declaring ONLY the floor must not report "declares no constraint".
+        _register(monkeypatch, [{"selector": ".degradation-banner", "minHeightPx": 64}])
+        mf = _measure_file(tmp_path, {".degradation-banner": 20})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 1
+        assert report["rows"][0]["status"] == "UNDER_MIN_HEIGHT"
+
+    def test_missing_height_is_exit_2(self, monkeypatch, tmp_path):
+        _register(monkeypatch, [{"selector": ".degradation-banner", "minHeightPx": 64}])
+        mf = _rect_measure_file(tmp_path, {".degradation-banner": {"x": 0, "y": 0, "w": 100}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 2
+        assert report["rows"][0]["status"] == "ERROR"
+
+
+class TestRequiredSelectors:
+    """`absentSelectors`' positive twin (814 §D7.2's spine PAIR). `chat-spine-single`
+    asserts the spine is absent on a one-turn conversation; the multi-turn sibling has to
+    assert it is PRESENT, and a step-level presence assertion cannot be an element row (an
+    element row with no size constraint is an ERROR by design)."""
+
+    def _step(self, monkeypatch, **step_keys):
+        monkeypatch.setattr(
+            ui_proportion_gate, "load_register_steps",
+            lambda: [{"uiShotStep": "home", "tolerancePx": 2, "elements": [], **step_keys}],
+        )
+
+    def test_present_is_clean(self, monkeypatch, tmp_path):
+        self._step(monkeypatch, requiredSelectors=[".run-spine"])
+        mf = _measure_file(tmp_path, {".run-spine": 300})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+        assert report["rows"][0]["constraint"] == "requiredSelectors"
+        assert report["rows"][0]["status"] == "ok"
+
+    def test_absent_is_a_violation(self, monkeypatch, tmp_path):
+        self._step(monkeypatch, requiredSelectors=[".run-spine"])
+        mf = _measure_file(tmp_path, {".conversation": 300})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 1
+        assert report["rows"][0]["status"] == "MISSING_REQUIRED"
+
+    def test_required_alone_runs_on_a_step_with_no_elements(self, monkeypatch, tmp_path):
+        # Same escape-hatch bug `absentSelectors` / `minScrollableRegions` had to avoid.
+        self._step(monkeypatch, requiredSelectors=[".run-spine"])
+        mf = _measure_file(tmp_path, {})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 1
+        assert report["rows"][0]["status"] == "MISSING_REQUIRED"
+
+
+class TestForbiddenVisibleText:
+    """The 814 §D5 chip-yield witness. The duplication D5 arbitrates is CROSS-WORDED — the
+    chat banner says "Semantic search degraded." and the status chip says "Service
+    degraded" — so the register-wide phrase counter measures 1 whether the yield works or
+    not. What a capture CAN decide is that the banner-owning surface never shows the
+    chip's wording."""
+
+    def _facts_measure_file(self, tmp_path, facts: dict[str, int]):
+        p = tmp_path / "facts.measure.json"
+        p.write_text(json.dumps({
+            "geometry": {"elements": {}},
+            "statusFacts": [{"phrase": k, "count": v} for k, v in facts.items()],
+        }), encoding="utf-8")
+        return str(p)
+
+    def _step(self, monkeypatch, **step_keys):
+        monkeypatch.setattr(
+            ui_proportion_gate, "load_register_steps",
+            lambda: [{"uiShotStep": "home", "tolerancePx": 2, "elements": [], **step_keys}],
+        )
+
+    def test_absent_wording_is_clean(self, monkeypatch, tmp_path):
+        self._step(monkeypatch, forbiddenVisibleText=["Service degraded"])
+        mf = self._facts_measure_file(tmp_path, {"Service degraded": 0})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+        assert report["rows"][0]["status"] == "ok"
+
+    def test_one_visible_render_is_a_violation(self, monkeypatch, tmp_path):
+        # The yield regressing = the chip renders the verdict headline again = count 1.
+        self._step(monkeypatch, forbiddenVisibleText=["Service degraded"])
+        mf = self._facts_measure_file(tmp_path, {"Service degraded": 1})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 1
+        assert report["rows"][0]["status"] == "FORBIDDEN_TEXT_VISIBLE"
+        assert report["rows"][0]["count"] == 1
+
+    def test_phrase_missing_from_the_capture_is_exit_2(self, monkeypatch, tmp_path):
+        # A probe that never counted the phrase must not read as "absent, therefore clean".
+        self._step(monkeypatch, forbiddenVisibleText=["Service degraded"])
+        mf = self._facts_measure_file(tmp_path, {"Over budget": 0})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 2
+        assert report["rows"][0]["status"] == "ERROR"
+
+    def test_capture_unions_step_scoped_phrases_into_the_probe(self):
+        # The register→probe half of the same contract `TestRegisterAndCaptureAgreeOnSelectors`
+        # pins for selectors: a step-scoped phrase the capture never counts is exit 2 above.
+        from jseval import ui_measure
+
+        registered = ui_measure._find_proportion_forbidden_text()
+        for step, phrases in registered.items():
+            assert isinstance(phrases, list)
+            for p in phrases:
+                assert p, f"{step} registers an empty forbiddenVisibleText phrase"
+
+
 class TestRegisterAndCaptureAgreeOnSelectors:
     """The capture unions the register's selectors into its geometry probe. An overlap
     counterpart is only ever NAMED (never its own row), so it must be collected too —

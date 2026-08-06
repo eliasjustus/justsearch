@@ -295,6 +295,32 @@ async def _navigate_and_search(page, url: str, query: str = "justsearch", *, tim
     await _type_and_search(page, query)
 
 
+async def _await_turn_count(page, expected: int, *, timeout_ms: int = 15_000) -> None:
+    """Wait until the conversation has rendered exactly ``expected`` user bubbles.
+
+    Tempdoc 814 review pass — the condition-poll that makes the multi-turn spine step honest:
+    the turn count is what `spineItems()` gates on, so photographing a half-loaded timeline
+    would register a ceiling/presence assertion against the wrong state. An observed count,
+    not a sleep. Shadow-piercing because the bubbles live inside the surface's shadow root.
+    """
+    await page.wait_for_function(
+        """(args) => {
+            const deepAll = (root, acc, depth) => {
+                root = root || document; acc = acc || []; depth = depth || 0;
+                if (depth > 40) return acc;
+                for (const el of root.querySelectorAll('*')) {
+                    acc.push(el);
+                    if (el.shadowRoot) deepAll(el.shadowRoot, acc, depth + 1);
+                }
+                return acc;
+            };
+            return deepAll().filter((el) => el.matches(args.sel)).length === args.n;
+        }""",
+        arg={"sel": S.CSS_MESSAGE_USER, "n": expected},
+        timeout=timeout_ms,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Step registry — all screenshots declared here
 # ---------------------------------------------------------------------------
@@ -1003,6 +1029,87 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         await page.locator(S.CSS_SEARCH_RESULT_ROW).first.wait_for(state="hidden", timeout=10_000)
         await asyncio.sleep(0.3)
 
+    async def setup_chat_chip_yield(page):
+        # Tempdoc 814 §D5 (review pass 2026-08-06) — the CAPTURE-level witness for the chip
+        # yield. `chat-bands` cannot be it: it submits an ask, and under `--fixtures` the
+        # stubbed SSE never drains, so `aiState.activity` stays 'thinking' and the status
+        # chip reads "Thinking…" whether the yield works or not (measured: "Thinking" 1,
+        # "Service degraded" 0 — a green for the WRONG reason). This step reaches the same
+        # degraded chat surface with NO activity overlay by simply not submitting: the
+        # banner is chrome, not a function of the thread, so navigating to the surface is
+        # the whole recipe. With activity idle the chip's label IS the verdict projection —
+        # so the register's `forbiddenVisibleText: ["Service degraded"]` discriminates:
+        # yield working -> the neutral AI-mode readout (0 renders); yield regressed ->
+        # `verdictHeadline(degraded)` back in the bar (1 render, gate red).
+        #
+        # NON-VACUITY: the assertion is only meaningful while the BANNER owns the fact, so
+        # the step also registers `requiredSelectors: [".degradation-banner-collapsed"]` —
+        # otherwise a capture that failed to render the surface at all would show neither
+        # string and read as a pass.
+        await page.set_viewport_size({"width": 1366, "height": 768})
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        try:
+            await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "() => { location.hash = 'justsearch://surface/core.unified-chat-surface'; }"
+            )
+        await page.locator(S.CSS_DEGRADATION_BANNER_COLLAPSED).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        await asyncio.sleep(0.3)
+
+    async def setup_chat_spine_multi(page):
+        # Tempdoc 814 §D7.2 — the POSITIVE half of the spine pair, deferred by W4 and landed
+        # in the review pass. `spineItems()` (UnifiedChatView.ts ~3151) mounts the spine on
+        # `affordance === 'agent'` AND `wideZone` AND (>= 2 user turns OR >= 2 distinct
+        # workflow nodeIds). Node boundaries need a real agent SSE run (unreachable under
+        # `--fixtures`, see `setup_chat_bands`), so this step takes the TURNS branch.
+        #
+        # WHY IT IS A RECORD FIXTURE, not two submits (measured, not assumed — the prior
+        # attempt's dead end): `spineItems()` reads `mergedTimeline()`, which merges the
+        # canonical RECORD (`projectUnifiedThread(this.unifiedEvents)`, fetched from
+        # `/api/thread/{id}`) with the live agent overlay — it never reads `this.thread`, the
+        # array plain ask-submits push into. A two-submit capture therefore measured
+        # `users: 2, affordance: 'agent', wideZone: true, spine: 0`: the turns were on screen
+        # and the spine's own input was still empty. (`send()` also early-returns while
+        # `isStreaming`, which the stubbed SSE never clears — a second, independent reason
+        # submits are the wrong lever here.) The `degraded-thread` fixtures variant supplies
+        # the record instead: two user turns + their answers, auto-loaded on connect via the
+        # seeded per-tab `lastViewedConversation` pointer (ui_fixtures._thread_body).
+        #
+        # DIVISION OF LABOUR (recorded so the step is not read as asserting more than it
+        # does): the CAPTURE witnesses spine PRESENCE on a multi-turn conversation — the
+        # regression the pair exists for, against `chat-spine-single`'s absence assertion.
+        # "Marker count == segment count" stays UNIT-tier (adaptiveSpacing / UnifiedChatView
+        # tests): it needs the segmented nodeIds only a real agent SSE run produces.
+        await page.set_viewport_size({"width": 1366, "height": 768})
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        try:
+            await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "() => { location.hash = 'justsearch://surface/core.unified-chat-surface'; }"
+            )
+        # `affordance = 'agent'` FIRST, and not only because it is the spine's first gate: the
+        # base `retrieve` tier renders the ephemeral hit-list in the conversation column and
+        # owns no thread history (renderAnswerPlane ~2590), so the record's turns are not on
+        # screen at all until the affordance is promoted. The Delegate rung is the only
+        # fixture-reachable way to flip it (the same finding `chat-bands` records).
+        await page.locator(S.CSS_ESCALATION_DELEGATE).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        await page.locator(S.CSS_ESCALATION_DELEGATE).first.click(force=True)
+        # The record's two turns must be ON SCREEN before the capture — an observed condition,
+        # not a sleep, so a half-loaded timeline cannot be photographed as a full one.
+        await _await_turn_count(page, 2)
+        await page.locator(S.CSS_RUN_SPINE).first.wait_for(state="visible", timeout=10_000)
+        await asyncio.sleep(0.3)
+
     async def setup_chat_spine_single(page):
         # Tempdoc 814 §D7.2 (Lane 2's home, kept alongside the deferred segmented-spine
         # sibling so the pair travels together; also Round-14 finding 15's regression
@@ -1312,6 +1419,17 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # `chat-spine-single`: single-turn conversation asserts NO run-spine. Needs
         # `degraded` for the same Delegate-availability reason as `chat-bands`.
         Step("chat-spine-single", setup=setup_chat_spine_single, isolated=True,
+             fixtures_variant="degraded"),
+        # `chat-spine-multi`: the PAIR's positive half (§D7.2, landed in the review pass) —
+        # two user turns + agent affordance must MOUNT `.run-spine` (`requiredSelectors`).
+        # `degraded-thread` = `degraded` + the two-turn `/api/thread` record the spine's
+        # `mergedTimeline()` actually reads (submitted turns never reach it — see the setup).
+        Step("chat-spine-multi", setup=setup_chat_spine_multi, isolated=True,
+             fixtures_variant="degraded-thread"),
+        # `chat-chip-yield`: the D5 chip-yield capture witness — the degraded chat surface
+        # with NO activity overlay (no submit), so the status chip's label is the verdict
+        # projection and `forbiddenVisibleText` can discriminate yield-on from yield-off.
+        Step("chat-chip-yield", setup=setup_chat_chip_yield, isolated=True,
              fixtures_variant="degraded"),
 
         # --- Slice 3a.1 Phase 6: Lit shell-v0 visual verification ---
