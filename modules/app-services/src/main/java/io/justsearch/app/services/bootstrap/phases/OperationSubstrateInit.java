@@ -160,8 +160,18 @@ public final class OperationSubstrateInit {
     // Tempdoc 550 G3/G4/G5: the unified live change-stream. The three federated sources
     // (operation history, navigation, gate firings) fan in here; the controller's /stream
     // endpoint subscribes once so the receipt/timeline/undo/trust-audit are live read-views.
+    // Tempdoc 812 D1: the durable audit journal for the actor kinds (grant / gate / operation),
+    // written synchronously beside the ring at this one fan-in point. Mode-aware exactly like
+    // DurableGrantStore above — READ_WRITE persists under <dataDir>/audit, IN_MEMORY (prod/CI
+    // isolation, tests) creates no files at all. The ledger's READ path then serves ring ∪
+    // journal-tail, so Activity is not empty after a restart.
+    io.justsearch.app.observability.ledger.ActionEventJournal actionEventJournal =
+        io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode.resolveMode()
+                .isWritable()
+            ? io.justsearch.app.observability.ledger.ActionEventJournal.persistent()
+            : io.justsearch.app.observability.ledger.ActionEventJournal.disabled();
     io.justsearch.app.observability.ledger.ActionLedgerChangeRegistry actionLedgerChangeRegistry =
-        new io.justsearch.app.observability.ledger.ActionLedgerChangeRegistry();
+        new io.justsearch.app.observability.ledger.ActionLedgerChangeRegistry(actionEventJournal);
     // Tempdoc 550 E2: process-wide emergency stop the lattice consults (default released).
     io.justsearch.app.services.registry.executor.GlobalHardStop globalHardStop =
         new io.justsearch.app.services.registry.executor.GlobalHardStop();

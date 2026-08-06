@@ -197,6 +197,103 @@ public final class ActionLedgerProjection {
   }
 
   /**
+   * The inverse of {@link #toWireRow} — tempdoc 812 D1. The durable audit journal stores one wire
+   * row per line, so reading the journal back is exactly this parse; keeping the inverse HERE,
+   * beside the forward projection, is what stops the journal from becoming a second schema that
+   * drifts from the endpoint's. Returns empty for a row whose {@code kind} is unknown (a file
+   * written by a newer build) or whose required fields are missing/malformed — the caller skips the
+   * line rather than failing the whole read.
+   */
+  public static Optional<ActionEvent> fromWireRow(Map<String, Object> row) {
+    if (row == null) {
+      return Optional.empty();
+    }
+    try {
+      String id = str(row, "id");
+      String kind = str(row, "kind");
+      String originator = str(row, "originator");
+      String transport = str(row, "transport");
+      if (id.isEmpty() || kind.isEmpty()) {
+        return Optional.empty();
+      }
+      Instant occurredAt = Instant.parse(str(row, "occurredAt"));
+      Optional<String> correlationId = optional(row, "correlationId");
+      return Optional.ofNullable(
+          switch (kind) {
+            case "operation" ->
+                new ActionEvent.Operation(
+                    id,
+                    occurredAt,
+                    originator,
+                    transport,
+                    str(row, "operationId"),
+                    str(row, "outcome"),
+                    optional(row, "executionId"),
+                    correlationId);
+            case "navigation" ->
+                new ActionEvent.Navigation(
+                    id,
+                    occurredAt,
+                    originator,
+                    transport,
+                    str(row, "targetSurface"),
+                    str(row, "sourceId"));
+            case "gate" ->
+                new ActionEvent.Gate(
+                    id,
+                    occurredAt,
+                    originator,
+                    transport,
+                    str(row, "operationId"),
+                    str(row, "disposition"),
+                    str(row, "gateBehavior"),
+                    str(row, "sourceTier"));
+            case "grant" ->
+                new ActionEvent.Grant(
+                    id,
+                    occurredAt,
+                    originator,
+                    transport,
+                    str(row, "grantId"),
+                    str(row, "action"),
+                    str(row, "subject"));
+            case "effect" ->
+                new ActionEvent.Effect(
+                    id,
+                    occurredAt,
+                    originator,
+                    transport,
+                    str(row, "effectKind"),
+                    str(row, "subject"));
+            case "index" ->
+                new ActionEvent.Index(
+                    id,
+                    occurredAt,
+                    originator,
+                    transport,
+                    str(row, "pathHash"),
+                    str(row, "collection"),
+                    str(row, "state"),
+                    row.get("attempts") instanceof Number n ? n.intValue() : 0,
+                    str(row, "errorMessage"));
+            default -> null;
+          });
+    } catch (RuntimeException malformed) {
+      return Optional.empty();
+    }
+  }
+
+  private static String str(Map<String, Object> row, String key) {
+    Object v = row.get(key);
+    return v == null ? "" : v.toString();
+  }
+
+  private static Optional<String> optional(Map<String, Object> row, String key) {
+    Object v = row.get(key);
+    return v == null || v.toString().isEmpty() ? Optional.empty() : Optional.of(v.toString());
+  }
+
+  /**
    * Deterministic, stable id for an event: {@code kind:occurredAt:disc0:disc1:…}. Stable across
    * snapshot re-projection and stream broadcast (the stores hold no id), so the FE can dedup a row
    * that appears in both the snapshot and a later UPDATE, and use it as a stable render key.

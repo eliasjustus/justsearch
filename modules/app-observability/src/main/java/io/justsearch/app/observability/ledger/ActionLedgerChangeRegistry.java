@@ -35,14 +35,27 @@ public final class ActionLedgerChangeRegistry {
   // Tempdoc 550 thesis I — the ONE action-event log. Every broadcast event is appended here, so the
   // snapshot endpoint and the live stream read one store rather than re-projecting per-kind stores.
   private final ActionEventStore store = new ActionEventStore();
+  // Tempdoc 812 D1 — the durable write-behind copy of the actor kinds. Every producer already fans
+  // in through publish(), so this is one sink addition rather than a change at four emit sites.
+  private final ActionEventJournal journal;
 
   public ActionLedgerChangeRegistry() {
+    this(ActionEventJournal.disabled());
+  }
+
+  public ActionLedgerChangeRegistry(ActionEventJournal journal) {
     this.channel = new SseStreamChannel(STREAM_ID);
+    this.journal = Objects.requireNonNull(journal, "journal");
   }
 
   /** The one action-event log this registry fans every broadcast into (tempdoc 550 thesis I). */
   public ActionEventStore store() {
     return store;
+  }
+
+  /** The durable audit journal the actor kinds are also written to (tempdoc 812 D1). */
+  public ActionEventJournal journal() {
+    return journal;
   }
 
   /** The current monotonic seq cursor (for snapshot-then-resume). */
@@ -89,7 +102,13 @@ public final class ActionLedgerChangeRegistry {
   private void publish(ActionEvent event) {
     // Append to the one log FIRST (so the snapshot a new subscriber reads already includes it),
     // then broadcast the live UPDATE.
-    store.append(event);
+    boolean added = store.append(event);
+    if (added) {
+      // Tempdoc 812 D1: the durable copy, written synchronously and gated on the ring having
+      // accepted the id — so a re-delivered event does not duplicate on disk either. Only the
+      // actor kinds are durable; the journal itself decides, so there is one place that knows.
+      journal.append(event);
+    }
     channel.publish(SseFrameKind.UPDATE, ActionLedgerProjection.toWireRow(event));
   }
 }

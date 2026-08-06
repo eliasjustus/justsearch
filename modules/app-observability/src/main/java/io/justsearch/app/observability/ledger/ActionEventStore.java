@@ -5,6 +5,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Tempdoc 550 thesis I — the ONE action-event log.
@@ -33,6 +35,7 @@ import java.util.Map;
  */
 public final class ActionEventStore {
 
+  private static final Logger log = LoggerFactory.getLogger(ActionEventStore.class);
   private static final int DEFAULT_CAPACITY = 500;
 
   private final int capacity;
@@ -40,6 +43,9 @@ public final class ActionEventStore {
   // via removeEldestEntry, so a flood of index events cannot drop older actor events. Guarded by
   // `this` (LinkedHashMap is not thread-safe; append/recent may race across broadcast threads).
   private final LinkedHashMap<String, ActionEvent> byId;
+  // Tempdoc 812 D1 — actor-cliff observability. Guarded by `this`, like byId.
+  private boolean actorEvictionEpisodeOpen;
+  private long actorEvictions;
 
   public ActionEventStore() {
     this(DEFAULT_CAPACITY);
@@ -58,21 +64,32 @@ public final class ActionEventStore {
    * kept (preserving its position + value); a later duplicate id is ignored. Bounded — when over
    * capacity, the oldest {@code INDEX} event is evicted first (see class javadoc), falling back to
    * the eldest overall only when no index event remains.
+   *
+   * @return {@code true} when this call actually added the event; {@code false} for a null/id-less
+   *     event or a duplicate id. Tempdoc 812 D1: the durable journal writes only on {@code true},
+   *     so the log's id-idempotency extends to disk for free instead of being re-implemented there.
    */
-  public synchronized void append(ActionEvent event) {
+  public synchronized boolean append(ActionEvent event) {
     if (event == null || event.id() == null || byId.containsKey(event.id())) {
-      return;
+      return false;
     }
     byId.put(event.id(), event);
     if (byId.size() > capacity) {
       evictOne();
     }
+    return true;
   }
 
   /**
    * Evict one entry to return to capacity: the oldest {@code INDEX} event if any exists (so an
    * indexing burst sacrifices its own oldest rows, never actor history), else the eldest overall.
    * Insertion-order iteration means the first match is the oldest of its kind.
+   *
+   * <p>Tempdoc 812 D1: evicting an ACTOR row is the ring's audit cliff — the point past which the
+   * hot feed silently stops being the whole record. It is no longer silent: the first eviction of
+   * an episode WARNs (once per episode, not per event — a session that stays over capacity would
+   * otherwise emit one line per action), and the durable journal holds the grant/gate/operation
+   * rows regardless. An index eviction closes the episode, so a later actor cliff WARNs again.
    */
   private void evictOne() {
     String victim = null;
@@ -84,8 +101,25 @@ public final class ActionEventStore {
     }
     if (victim == null) {
       victim = byId.keySet().iterator().next();
+      actorEvictions++;
+      if (!actorEvictionEpisodeOpen) {
+        actorEvictionEpisodeOpen = true;
+        log.warn(
+            "Action-event ring at capacity {} with no index rows left to sacrifice — evicting actor"
+                + " history (first of this episode; {} total so far). Durable grant/gate/operation"
+                + " rows remain in the audit journal.",
+            capacity,
+            actorEvictions);
+      }
+    } else {
+      actorEvictionEpisodeOpen = false;
     }
     byId.remove(victim);
+  }
+
+  /** Total actor rows this ring has evicted (test/diagnostic view of the cliff). */
+  public synchronized long actorEvictions() {
+    return actorEvictions;
   }
 
   /** A snapshot of the current log, oldest-first. */

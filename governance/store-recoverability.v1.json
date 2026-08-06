@@ -41,6 +41,34 @@
       "fixtures": []
     },
     {
+      "id": "action-ledger-audit-journal",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "ownedPaths": [
+        "audit/action-ledger.jsonl",
+        "audit/action-ledger.*.jsonl"
+      ],
+      "recoverability": "AUTHORED",
+      "upgradeHandling": "READ_IN_PLACE",
+      "format": "append-only JSONL of ActionLedgerProjection wire rows, size-rotated (4 MB x 8 generations)",
+      "currentVersion": 1,
+      "readableLegacyVersions": [],
+      "versionAuthority": "modules/app-observability/src/main/java/io/justsearch/app/observability/ledger/ActionEventJournal.java",
+      "futureVersionRefusalTest": "modules/app-observability/src/test/java/io/justsearch/app/observability/ledger/ActionEventJournalTest.java",
+      "writeMode": "APPEND_ONLY",
+      "atomicity": "SINGLE_APPEND",
+      "corruptionPolicy": "SKIP_UNREADABLE_LINE_AND_WARN",
+      "reconciliation": "PRESERVE_OLD_LINES_AND_APPEND_NEW",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-observability/src/main/java/io/justsearch/app/observability/ledger/ActionEventJournal.java"
+      ],
+      "tests": [
+        "modules/app-observability/src/test/java/io/justsearch/app/observability/ledger/ActionEventJournalTest.java"
+      ],
+      "fixtures": []
+    },
+    {
       "id": "durable-grants",
       "owner": "HEAD",
       "root": "DATA_DIR",
