@@ -281,7 +281,7 @@ final class IndexStatusOps {
 
     // --- Build sub-messages ---
     return StatusResponse.newBuilder()
-        .setCore(buildCore(queueDepth, docCount, healthy, state))
+        .setCore(buildCore(queueDepth, docCount, healthy, state, jobQueue.pendingBytes()))
         .setFailure(buildFailure(failures))
         .setMigration(
             buildMigration(
@@ -331,7 +331,12 @@ final class IndexStatusOps {
     }
   }
 
-  private CoreStatus buildCore(long queueDepth, long docCount, boolean healthy, String state) {
+  private CoreStatus buildCore(
+      long queueDepth,
+      long docCount,
+      boolean healthy,
+      String state,
+      JobQueue.PendingBytes pendingBytes) {
     Supplier<LuceneRuntimeTypes.RuntimeGaugesSnapshot> rgs = runtimeGaugesSupplier;
     LuceneRuntimeTypes.RuntimeGaugesSnapshot gauges =
         rgs != null ? rgs.get() : LuceneRuntimeTypes.RuntimeGaugesSnapshot.EMPTY;
@@ -355,7 +360,9 @@ final class IndexStatusOps {
             .setWriterQueueDepth(gauges.writerQueueDepth())
             .setWriterPendingDocs(gauges.writerPendingDocs())
             .setCommitCount(gauges.commitCount())
-            .setRefreshLagMs(gauges.refreshLagMs());
+            .setRefreshLagMs(gauges.refreshLagMs())
+            .setPendingBytes(pendingBytes == null ? 0L : pendingBytes.knownBytes())
+            .setPendingUnknownSizeJobs(pendingBytes == null ? 0L : pendingBytes.unknownSizeJobs());
     for (long v : recentJobQueueDepthTrend()) {
       b.addRecentJobQueueDepth(v);
     }

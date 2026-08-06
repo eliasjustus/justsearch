@@ -387,6 +387,42 @@ final class WorkerScanOpsTest {
    * This pin confirms the back-compat shim doesn't accidentally start emitting null scan_id
    * values, which would break the proto contract (proto strings are never null).
    */
+  /**
+   * Tempdoc 813 Slice B — the scan walk already holds {@code BasicFileAttributes}, so every
+   * enqueued entry must carry that file's real byte size. A regression here (dropping back to the
+   * path-only enqueue) is invisible to the path assertions above, which is why the size is pinned
+   * against the actual file length rather than merely asserted non-negative.
+   */
+  @Test
+  void scanEnqueuesCarryEachFilesByteSize() throws Exception {
+    Path root = tempDir.resolve("sized");
+    Files.createDirectories(root);
+    Path small = Files.writeString(root.resolve("small.txt"), "abc");
+    Path large = Files.writeString(root.resolve("large.txt"), "0123456789");
+    RecordingQueue queue = new RecordingQueue();
+    WorkerScanOps ops = new WorkerScanOps(queue);
+
+    ops.scan(
+        new WorkerScanOps.ScanRequest(root, "docs", WorkerScanOps.ScanMode.INITIAL, List.of()),
+        p -> {});
+
+    assertEquals(2, queue.enqueuedEntries.size(), "Both files enqueued as sized entries");
+    for (JobQueue.EnqueueEntry entry : queue.enqueuedEntries) {
+      assertEquals(
+          Files.size(entry.path()),
+          entry.sizeBytes(),
+          "Entry for " + entry.path() + " must carry the file's real size");
+    }
+    long smallSize = Files.size(small);
+    long largeSize = Files.size(large);
+    assertTrue(
+        queue.enqueuedEntries.stream().anyMatch(e -> e.sizeBytes() == smallSize),
+        "The 3-byte file's size must be recorded");
+    assertTrue(
+        queue.enqueuedEntries.stream().anyMatch(e -> e.sizeBytes() == largeSize),
+        "The 10-byte file's size must be recorded");
+  }
+
   @Test
   void scanRequestBackCompatConstructorDefaultsScanIdToEmptyString() {
     WorkerScanOps.ScanRequest legacy =
@@ -397,6 +433,7 @@ final class WorkerScanOpsTest {
 
   private static final class RecordingQueue implements JobQueue {
     final List<Path> enqueuedPaths = new ArrayList<>();
+    final List<EnqueueEntry> enqueuedEntries = new ArrayList<>();
     String lastCollection;
 
     @Override
@@ -407,6 +444,12 @@ final class WorkerScanOpsTest {
       enqueuedPaths.addAll(paths);
       lastCollection = collection;
       return paths.size();
+    }
+
+    @Override
+    public int enqueueEntries(List<EnqueueEntry> entries, String collection) {
+      enqueuedEntries.addAll(entries);
+      return enqueue(EnqueueEntry.paths(entries), collection);
     }
 
     @Override

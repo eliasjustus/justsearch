@@ -153,6 +153,11 @@ message CoreIndexView {
   // Tempdoc 419 C3 V1: 30-min RRD trends (sparkline data).
   repeated int64 recent_job_queue_depth = 11 [json_name = "recentJobQueueDepth"];
   repeated double recent_docs_per_sec = 12 [json_name = "recentDocsPerSec"];
+  // Tempdoc 813 Slice B: byte weight of remaining indexing work (PENDING+PROCESSING), summed
+  // from the size recorded at enqueue. pendingUnknownSizeJobs counts remaining jobs with no
+  // recorded size — an unknown weight must not read as zero bytes.
+  int64 pending_bytes = 13 [json_name = "pendingBytes"];
+  int64 pending_unknown_size_jobs = 14 [json_name = "pendingUnknownSizeJobs"];
 }
 
 message FailureTrackingView {

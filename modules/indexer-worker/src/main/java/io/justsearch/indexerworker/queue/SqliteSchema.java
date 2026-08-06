@@ -16,6 +16,7 @@ package io.justsearch.indexerworker.queue;
  *   <li>V5: Added latest typed ingestion outcome columns</li>
  *   <li>V6: Added privacy-safe ingestion outcome ledger table</li>
  *   <li>V7: Added scoped path-resolution table (ADR-0028, tempdoc 419 T5.1)</li>
+ *   <li>V8: Added nullable size_bytes column to jobs (tempdoc 813 Slice B)</li>
  * </ul>
  */
 public final class SqliteSchema {
@@ -28,7 +29,7 @@ public final class SqliteSchema {
    * Target schema version. The migrate() method will upgrade the database
    * to this version using the migration ladder.
    */
-  public static final int TARGET_VERSION = 7;
+  public static final int TARGET_VERSION = 8;
 
   // ==================== Table: jobs ====================
 
@@ -235,6 +236,18 @@ public final class SqliteSchema {
       CREATE_PATH_RESOLUTION_PATH_INDEX,
       CREATE_PATH_RESOLUTION_REMOVED_INDEX
   };
+
+  /**
+   * V7 to V8 migration: add nullable {@code size_bytes} to jobs (tempdoc 813 Slice B).
+   *
+   * <p>NULL means "size unknown at enqueue time" — rows migrated from V7 keep NULL until their
+   * next enqueue, and pending-byte aggregation excludes them (counting them separately) rather
+   * than treating unknown as zero. The column is only ever written by the enqueue statement, which
+   * is {@code INSERT OR REPLACE}: a re-enqueue restates the size from the caller's entry.
+   */
+  public static final String MIGRATE_V7_TO_V8_ADD_SIZE_BYTES = """
+      ALTER TABLE jobs ADD COLUMN size_bytes INTEGER DEFAULT NULL
+      """;
 
   // ==================== Utility Methods ====================
 

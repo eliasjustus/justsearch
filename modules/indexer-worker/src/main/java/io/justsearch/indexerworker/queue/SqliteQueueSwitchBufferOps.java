@@ -106,6 +106,42 @@ final class SqliteQueueSwitchBufferOps {
   }
 
   /**
+   * Returns the byte weight of remaining (PENDING + PROCESSING) work (tempdoc 813 Slice B).
+   *
+   * <p>Rows enqueued before the size column existed — or by a caller that could not stat the file —
+   * hold NULL; they are excluded from the sum and counted separately so a consumer never reads an
+   * unknown size as zero bytes.
+   */
+  JobQueue.PendingBytes pendingBytes() {
+    lock.lock();
+    try {
+      Connection conn = connSupplier.get();
+      String sql =
+          """
+          SELECT
+            COALESCE(SUM(CASE WHEN size_bytes IS NOT NULL THEN size_bytes ELSE 0 END), 0) AS known_bytes,
+            COALESCE(SUM(CASE WHEN size_bytes IS NULL THEN 1 ELSE 0 END), 0) AS unknown_size_jobs
+          FROM jobs
+          WHERE state IN ('PENDING', 'PROCESSING')
+          """;
+      try (PreparedStatement stmt = conn.prepareStatement(sql);
+          ResultSet rs = stmt.executeQuery()) {
+        if (rs.next()) {
+          return new JobQueue.PendingBytes(
+              rs.getLong("known_bytes"), rs.getLong("unknown_size_jobs"));
+        }
+        return JobQueue.PendingBytes.EMPTY;
+      }
+    } catch (Exception e) {
+      errorRecorder.run();
+      log.debug("Failed to get pending job bytes (best-effort): {}", e.getMessage());
+      return JobQueue.PendingBytes.EMPTY;
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  /**
    * Inserts or replaces an operation in the durable switch buffer.
    *
    * <p><b>IMPORTANT:</b> This method is fail-closed. If the write fails, it returns {@code false}

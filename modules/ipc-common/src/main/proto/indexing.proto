@@ -629,7 +629,13 @@ message CoreStatus {
   // (curated RRD metric) — complementary to recent_job_queue_depth, rendered as a
   // second sparkline next to firing throughput events.
   repeated double recent_docs_per_sec = 17;
-  // Next available field number: 18
+  // Tempdoc 813 Slice B: byte weight of remaining (PENDING+PROCESSING) indexing work, recorded
+  // at enqueue time. pending_unknown_size_jobs counts remaining jobs with NO recorded size so a
+  // consumer can distinguish "nothing left" from "left, weight unknown" instead of reading an
+  // unknown as zero bytes.
+  int64 pending_bytes = 18;
+  int64 pending_unknown_size_jobs = 19;
+  // Next available field number: 20
 }
 
 // Failure tracking and search quality signals.

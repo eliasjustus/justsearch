@@ -242,6 +242,10 @@ final class SqliteQueueMigrationOps {
           log.info("V6 to V7: Ensured path_resolution table and indexes (ADR-0028)");
         }
       }
+      case 8 -> {
+        addColumnIfMissing(conn, "size_bytes", SqliteSchema.MIGRATE_V7_TO_V8_ADD_SIZE_BYTES);
+        log.info("V7 to V8: Ensured size_bytes column on jobs table (tempdoc 813)");
+      }
       default -> throw new SQLException("Unknown migration version: " + version);
     }
   }
