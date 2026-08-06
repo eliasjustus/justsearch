@@ -2,6 +2,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
   trackTemplate,
+  alignToZoneStyles,
   composeGridStyles,
   isShortViewport,
   subscribeShortViewport,
@@ -59,6 +60,55 @@ describe('compositionLayout — §13 Pillar B generator', () => {
     expect(cssText).toContain('grid-column: 4');
     expect(cssText).not.toContain('grid-column: 1');
     expect(cssText).not.toContain('grid-column: 5');
+  });
+
+  // Tempdoc 816 §5 — a SECOND container on the same frame. The docked composer cannot become a child
+  // of the conversation zone (the stable-slot / keystroke-drop invariant), so it is aligned by sharing
+  // the generated frame instead of by a copied max-width.
+  it('alignToZoneStyles lays a second container on the SAME tracks and places its children in the named zone column', () => {
+    const opts = {
+      containerName: 'chat-surface',
+      breakpoint: '64rem',
+      gap: '1.5rem',
+    } as const;
+    const zoneCss = composeGridStyles(ZONES, { container: '.conversation-zone', ...opts }).cssText;
+    const alignedCss = alignToZoneStyles(ZONES, {
+      container: '.composer',
+      alignTo: '.conversation',
+      alignedChildren: '.composer > *',
+      ...opts,
+    }).cssText;
+    // Same track lists, same breakpoint, same centring — the properties that decide WHERE the column
+    // falls. If these could differ, "aligned" would be a coincidence maintained by hand.
+    for (const shared of [
+      'grid-template-columns: minmax(0, 1fr);',
+      'grid-template-columns: minmax(0, 8rem) auto minmax(0, 50rem) fit-content(20rem) minmax(0, 8rem)',
+      '@container chat-surface (min-width: 64rem)',
+      'justify-content: center',
+    ]) {
+      expect(zoneCss).toContain(shared);
+      expect(alignedCss).toContain(shared);
+    }
+    // The children adopt the ZONE's declared column (3), read from the zone-set — not passed in.
+    expect(alignedCss).toContain('.composer > * {');
+    expect(/\.composer > \* \{\s*grid-column: 3;/.test(alignedCss)).toBe(true);
+    // …and the aligned frame does NOT re-emit the zone placements (one authority per selector).
+    expect(alignedCss).not.toContain('.conversation {');
+  });
+
+  it('alignToZoneStyles refuses to align to a zone that has no declared column', () => {
+    const opts = {
+      container: '.composer',
+      containerName: 'chat-surface',
+      breakpoint: '64rem',
+      gap: '1.5rem',
+      alignedChildren: '.composer > *',
+    };
+    // A silently unplaced child would fall into column 1 and look "nearly right" — the exact failure
+    // the generator exists to make unrepresentable.
+    expect(() => alignToZoneStyles(ZONES, { ...opts, alignTo: '.nonexistent' })).toThrow(
+      /no zone '\.nonexistent'/,
+    );
   });
 
   it('narrow drops every wide-only zone (the reading column alone)', () => {

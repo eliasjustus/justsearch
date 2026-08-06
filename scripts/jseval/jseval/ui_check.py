@@ -1029,6 +1029,50 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         await page.locator(S.CSS_SEARCH_RESULT_ROW).first.wait_for(state="hidden", timeout=10_000)
         await asyncio.sleep(0.3)
 
+    async def setup_chat_wide_docked(page):
+        # Tempdoc 816 §5 — the INLINE-axis camera: the docked chat surface at a WIDE viewport.
+        #
+        # WHY 1920x900, and why a NEW step. Every existing chat camera is pinned at 1250-1366
+        # (814's design basis), and full-bleed stretching is least visible exactly there: the
+        # defect this step registers GROWS with monitor width, so the instrument set had a
+        # structural blind spot rather than a missing assertion. Measured here before the fix,
+        # at 1920: the docked `.composer` and `.escalation-strip-docked` spanned the whole
+        # 1836px surface and the composer's textarea ran 1760px = 251 characters per line,
+        # while `.conversation` beside them was already bound and centred at 800px. 1920 stays
+        # under the 2000px screenshot cap at 1x DPI (the ui-check DPI limitation), so no
+        # capture-side compromise is needed.
+        #
+        # The state is reached the way `chat-proportion` reaches it — rail click, a real search,
+        # then a "?"-bearing draft submitted with plain Enter, which routes through
+        # `escalateAsk()` -> `send()` and pushes the turn synchronously. `degraded` is the
+        # fixtures variant for the same reasons that step records: the collapsed pill needs a
+        # degraded verdict AND `ui.mode: simple`, and `capabilities.chat` has to be true for the
+        # ask to escalate at all. Both waits below are the observed conditions that say the
+        # DOCKED state was actually reached: a rendered user turn (the composer only docks once
+        # the landing is gone) and the banner whose content box this step bounds.
+        await page.set_viewport_size({"width": 1920, "height": 900})
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        try:
+            await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "() => { location.hash = 'justsearch://surface/core.unified-chat-surface'; }"
+            )
+        ta = page.locator(S.CSS_COMPOSER_TEXTAREA)
+        await ta.wait_for(state="visible", timeout=10_000)
+        await ta.click()
+        await ta.type("justsearch", delay=20)
+        await page.locator(S.CSS_SEARCH_RESULT_ROW).first.wait_for(state="visible", timeout=30_000)
+        await ta.fill("?? What is this file about")
+        await ta.press("Enter")
+        await page.locator(S.CSS_MESSAGE_USER).first.wait_for(state="visible", timeout=15_000)
+        await page.locator(S.CSS_DEGRADATION_BANNER_COLLAPSED).first.wait_for(
+            state="visible", timeout=10_000
+        )
+        await asyncio.sleep(0.3)
+
     async def setup_chat_chip_yield(page):
         # Tempdoc 814 §D5 (review pass 2026-08-06) — the CAPTURE-level witness for the chip
         # yield. `chat-bands` cannot be it: it submits an ask, and under `--fixtures` the
@@ -1512,6 +1556,13 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # with NO activity overlay (no submit), so the status chip's label is the verdict
         # projection and `forbiddenVisibleText` can discriminate yield-on from yield-off.
         Step("chat-chip-yield", setup=setup_chat_chip_yield, isolated=True,
+             fixtures_variant="degraded"),
+        # `chat-wide-docked`: tempdoc 816 §5's INLINE-axis camera — the docked composer, its
+        # escalation strip and the banner's content box at 1920x900, the width class where an
+        # unbounded element is actually offensive and where no other step looks. Registers the
+        # first role-bound rows (`inlineSizeRole`) alongside physical presence floors. `degraded`
+        # for the same pill/capability reasons as `chat-proportion`.
+        Step("chat-wide-docked", setup=setup_chat_wide_docked, isolated=True,
              fixtures_variant="degraded"),
         # `chat-evidence-rail` / `chat-activity-rail-open`: tempdoc 814 §D8's two residual-closure
         # captures, both on the `agent-run` variant — `degraded-thread` plus record grounding +
