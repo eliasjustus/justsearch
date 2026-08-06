@@ -1,6 +1,6 @@
 ---
 title: "Indexing progress & queue UX — end-to-end design (hv campaign thread T-A)"
-status: "open — design settled 2026-08-06; implementation not yet licensed; depends on Lane-1 fixes (809 findings 1, 3) which are unstarted"
+status: "open — design settled + researched + derisked 2026-08-06; implementation licensed (owner, same day) and in progress; Lane-1 fixes (809 findings 1, 3) still unstarted — dependencies stated in §7"
 created: 2026-08-06
 updated: 2026-08-06
 related: [809, 810, 798, 807, 801, 727, 717, 600, 599, 598, 593, 565]
@@ -284,9 +284,12 @@ asserted; this design defines what every surface says on each side of that gate.
 6. `IndexingOverlay`'s independent two-row queue readout (`IndexingOverlay.ts:224-246`) —
    re-derived from the §3b projection (the overlay itself and its interrupt CTA remain;
    only its private derivation is orphaned).
-7. Dead field noted in passing: worker-side `CoreStatus.pendingEmbeddingCount` is set
-   (`IndexStatusOps.java:350`) but never mapped by the Head — delete or map it while in
-   the file (small, in-scope cleanup; it is precisely a second authority nobody reads).
+7. ~~Dead field~~ **CORRECTED (derisk pass, 2026-08-06):** worker-side
+   `CoreStatus.pendingEmbeddingCount` (`IndexStatusOps.java:350`) is NOT dead — it is
+   read Head-side via `VduOps.java:38` → `RemoteKnowledgeClient.countPendingEmbeddings()`
+   and gates `OfflineCoordinator`'s embedding pass (tested in `OfflineCoordinatorTest`).
+   The narrower truth: it is not mapped onto `/api/status`'s `CoreIndexView` wire
+   projection. Nothing to delete; no action in this design.
 
 Nothing in the 593/600 vocabulary machinery, the scan SSE channel, the per-root substrate
 endpoint, or the backfill scheduler is displaced — the design extends all four.
@@ -318,3 +321,151 @@ endpoint, or the backfill scheduler is displaced — the design extends all four
   already does it; toast occlusion B6-8 remains unfixed and is Lane-2/T-B's), but
   building slot-generic reservation machinery now would be structure for cases this
   problem doesn't include. Record: if a third slot exhibits occlusion, generalize then.
+
+---
+
+## 12. Research pass record (2026-08-06)
+
+A bounded external pass ran on two questions (two-tier readiness vocabulary; ETA
+honesty). Findings that calibrate — none that reshape — the design:
+
+- **ETA suppression without a faithful denominator is the prevailing shipped pattern**,
+  not a novel restriction: Elasticsearch and Meilisearch expose progress numbers only
+  from real finished/total counts; Spotlight, Dropbox Dash, Typesense, Notion expose no
+  number at all. Meilisearch 1.12's `/batches` progress (named steps + finished/total +
+  an explicit display-only caveat) is the closest shipped precedent for §3a's phase
+  vocabulary.
+- **No mainstream product exposes a two-tier "keyword-ready vs fully-searchable"
+  readiness state.** Nearest analogs: Windows Copilot+ labels *results* "semantic +
+  lexical" (a quality label, not readiness); Obsidian Smart Connections shows an
+  embedding-coverage % (a metric, not a named phase). The two-tier vocabulary is filling
+  a gap, not re-treading — and a user-facing rate-derived ETA for enrichment would be
+  ahead of the field, so it ships coarse and suppressible, never precise.
+- **Calibrations adopted:** any time estimate uses coarse phrasing ("about N minutes" —
+  NN/g guidance); per-item progress inside a list is avoided in favor of one aggregate
+  indicator (Fluent guidance — independently matches §5's card-over-feed shape);
+  sub-10-second phases (typical Scanning) get an activity indicator, not a progress card
+  fraction (NN/g 10-second pivot).
+
+External sources are advisory; no external text was copied into product copy or docs.
+
+## 13. Derisk record (2026-08-06)
+
+Four probes ran (backend feasibility, FE blast radius, PrefixQuery microbench, external
+research). Verdicts, all with file:line evidence in the probe reports:
+
+- **Per-root coverage cost: CHEAP** (measured). Real FSDirectory index, 200k docs,
+  5 roots, the exact numerator/denominator query shapes: warm medians < 0.3 ms, worst
+  realistic cold ~5 ms. A 10–30 s cadence for ~10 roots is negligible. Dev-machine
+  measurement; the reader-version cache pattern (`IndexCountOps.java:194-203`) is
+  adopted as insurance anyway since the Library live tick refreshes at 4 s.
+- **Per-root coverage plumbing: SMALL.** No new RPC — extend `CountJobsByPathPrefix`
+  (`indexing.proto`; handler `GrpcIngestService.java:1476-1491`, which already calls
+  `indexCountOps` in-process at `:1176`), add fields through `RemoteKnowledgeClient` →
+  `IndexedRootView` → the substrate map in `IndexingController.java:768-792`, regen
+  schemas. Chunk prefix-match is valid (chunk PATH = parent path); a **factually wrong
+  comment** at `QueryFilterBuilder.java:288-289` claims otherwise and is corrected in
+  the same slice. The SQLite and Lucene prefix-normalizers are two implementations —
+  a parity test pins their agreement.
+- **Chunk denominator: SOUND.** One production chunk writer, unconditional status seed
+  (`ChunkDocumentWriter.java:175`). Ratio rules: parent-stage denominators exclude
+  `is_chunk` docs; chunk coverage is over *chunked* docs (never "N of M files");
+  completion gates on terminal states (COMPLETED + COMPLETED_EMPTY + FAILED), not 100%
+  COMPLETED.
+- **Size-at-enqueue: CHEAP.** The two bulk enqueue paths already hold
+  `BasicFileAttributes` (size is free); nullable column via V7→V8 migration (the design's
+  earlier "V5" reference was stale). Trap designed around: the queue's
+  `INSERT OR REPLACE` resets unlisted columns, so size rides the enqueue *signature*
+  (entry object) at all 6 call sites, not a side channel.
+- **Transport (closes §3b's open choice): poll-derived selector.** Every number the
+  design needs is already on `/api/status` (verified against the generated contract);
+  the FE reads none of the enrichment/chunk numbers today. The projection is a FE
+  selector module over the one poll snapshot — internally consistent by construction.
+  The SSE `core.indexing-jobs` stream keeps exactly one job: the opt-in per-file row
+  list (with its existing stall honesty). A new SSE resource was evaluated and
+  rejected: four governance registers of cost, un-capturable in ui-shot fixtures, and
+  it would be a third representation of the jobs table — the §1a class again.
+  Staleness reuses the FE-side precedent `AiState.snapshotLive` /
+  `lastSettledIndex` (`aiStateStore.ts:509`, `:249`) — NOT `statusStale`, which lives
+  on `/api/knowledge/status` and has zero FE consumers; and
+  `chunkCoverage.observedAtMs` is a Head serialization timestamp, not a freshness
+  signal — neither may be used as one.
+- **Lane-1 status re-checked: not landed** (all post-design commits on main are
+  docs-only). §7 dependencies unchanged.
+- **Blast radius mapped** (FE probe): the copy-pinning tests that will be deliberately
+  updated (`HealthSurface.render.test.ts`, `folderStatus.test.ts`,
+  `readinessNotice.test.ts` untouched-unless-rows-change, `TaskList.test.ts`,
+  `SystemSelfView.test.ts` — its `:113` case is the 727 F-2 pin and is re-expressed,
+  not deleted), the `AiIndex` literal fan-out (new fields optional-with-defaults), and
+  the ui-shot needs: a new deterministic `_status_body` enrichment fixture variant, a
+  new occlusion step whose `mustNotOverlapSelector` row carries a **min-size companion
+  row** (a hidden element yields a 0-rect and passes vacuously — verified in
+  `ui_proportion_gate.py:64-90`; the pre-existing `.toast` row shares this latent
+  vacuity, noted for Lane-2/T-B).
+- **Pre-existing governance gap now in scope:** `check-folder-status-derivation.mjs`
+  and its register exist but are wired into neither `ci.yml` nor the `ui-web-gates`
+  recipe (tempdoc 599:585 claims otherwise). Since this work modifies exactly the seam
+  that gate governs, wiring it into the recipe joins the scope.
+
+**Confidence: 9/10** for the scoped implementation (all feasibility verdicts
+CHEAP/SMALL/SOUND; residual risk is mechanical test fan-out, which the blast-radius
+table bounds). Recommended worker tier: opus for all slices.
+
+## 14. §8 decisions — resolved (autonomous, under the owner's 2026-08-06 delegation)
+
+1. **Size-at-enqueue: YES** (Slice B). CHEAP verdict; durable estimate quality;
+   signature-carried to defeat the `INSERT OR REPLACE` reset trap.
+2. **Per-root coverage: ACCEPTED** — measured CHEAP; ships with bounded cadence + the
+   reader-version cache; index-wide-only fallback not needed.
+3. **Terminal notification: STATE-ONLY for this tempdoc.** A completion toast would
+   ride on the known-defective toast stack (798 B6-8, still unfixed); states are
+   truthful either way; revisit after T-B/Lane-2 fixes overlays.
+
+## 15. Implementation plan (waves; each slice is a bounded delegation)
+
+**Wave 1 (parallel):**
+- **Slice A — backend per-root coverage.** New per-prefix count ops (numerator/
+  denominator per stage + chunk tier, terminal-state semantics per §13), reader-version
+  cache, extend `CountJobsByPathPrefix` RPC + proto, `RemoteKnowledgeClient` →
+  `IndexingService.JobCounts` → `IndexingController` substrate map →
+  `IndexedRootView` fields, `updateSchemas` regen, `--gate wire`. Fix the
+  `QueryFilterBuilder.java:288-289` comment; add the prefix-normalizer parity test.
+  Acceptance: worker-services + adapters-lucene tests green; substrate emits coverage
+  fields; wire gate green.
+- **Slice C — FE progress projection + index-wide consumers.** New selector module
+  (phase + numbers + staleness from the poll snapshot; no local response-shape
+  interfaces; explicit `operation-surfaces` declaration alongside `count-projection`),
+  consumed by: StatusDeck chip, SystemSelfView (narrow the F-2 suppression —
+  `backfillMode` active ⇒ "Enriching (N%)", idle residue still suppressed; collapse its
+  in-file dual derivation), HealthSurface `queueSubLabel` two-tier wording (both render
+  paths), IndexingOverlay re-derivation (preserving `snapshotLive` withdrawal).
+  Blast-radius test updates per §13. Acceptance: `npm run typecheck` +
+  `test:unit:run` green; projection unit suite covers phase/denominator/staleness arms.
+
+**Wave 2 (parallel, after their dependencies):**
+- **Slice B — size-at-enqueue** (backend; after A to avoid same-file conflicts).
+  V7→V8 nullable `size_bytes`, enqueue-entry signature at all 6 sites (default overload
+  keeps test impls compiling), aggregate pending-bytes exposed on the status wire.
+  Acceptance: indexer-worker tests green incl. a REPLACE-preserves-size regression.
+- **Slice D — TaskList aggregate card + placement** (after C). Aggregate card (phase,
+  faithful-denominator bar, coarse "~" ETA only in Indexing phase with walk complete and
+  stable rate — suppressed during Enriching per §1e), opt-in "Show files" disclosure
+  (natively operable control), terminal-state-then-dismiss; OverlayHost bottom-left
+  reserved band; proportion-baseline row **plus min-size companion**; new deterministic
+  ui-shot step + `_status_body` enrichment fixture variant + a11y baseline row.
+  Acceptance: FE tests green; new ui-shot step passes; occlusion row non-vacuous.
+
+**Wave 3 — Slice E: per-root two-tier + naming + docs** (after A + C). `folderStatus`
+two-tier states ("keyword-ready · enriching N%" → "fully searchable") consuming the new
+`IndexedRootView` fields; add the projection/consumers to the `folder-status-derivation`
+register's `allowed` (or route through the seam) and **wire that gate into the
+`ui-web-gates` recipe**; rename `ops.trigger-offline-processing.label` (one registry
+string covers both render sites), sweep "offline processing" from
+`docs/explanation/10-ui-ux-design.md` / `02-process-coordination.md`; add the
+single-sense "offline" copy-lint (finding 11's regression home); satisfy
+`maintain-doc-hint` (kernel doc note for the projection seam).
+
+**Wave 4 — Slice F: verification + review.** Full gradle build + full unit suite, full
+ui-web gate set, ui-shot steps, critical-analysis pass, independent refute-first review
+(reviewer ≠ implementer), live-stack spot verification if the shared dev stack is free,
+813 updated with evidence.
