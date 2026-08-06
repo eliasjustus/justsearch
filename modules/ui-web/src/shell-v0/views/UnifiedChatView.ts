@@ -298,9 +298,21 @@ import { ReasoningController } from '../controllers/ReasoningController.js';
 import { stepPresentation } from './runStepPresentation.js';
 // Tempdoc 621 Phase 5 — the run-spine's pure presentation helpers.
 import { computeSpinePositions, spineNodeLabel } from './runSpinePresentation.js';
-import { computeSpacedPositions } from '../primitives/adaptiveSpacing.js';
+import { computeSpacedPositions, clusterAdjacent, type PlacedGroup } from '../primitives/adaptiveSpacing.js';
 import { NavigationController } from '../primitives/navigation.js';
 import '../components/chat/RunNode.js';
+
+/**
+ * Tempdoc 814 §D4 (settled parameter) — the spine's aggregation threshold: non-landmark markers whose
+ * de-overlapped positions still sit closer than this collapse into one counted cluster badge.
+ */
+const SPINE_CLUSTER_MIN_GAP_PX = 14;
+
+/**
+ * Tempdoc 814 §D3 (settled parameter) — the docked evidence rail is a BOUNDED INDEX, not a scroller:
+ * it renders at most this many source cards plus an "Open all · N" row into the sanctioned drawer.
+ */
+const EVIDENCE_RAIL_MAX_VISIBLE = 3;
 
 /**
  * Search Thread S4-final — a live search FROZEN at the moment of consequence (open/ask/pin). A
@@ -2962,17 +2974,29 @@ export class UnifiedChatView extends JfElement {
    * the "Sources · N" affordance + the toggle drawer remain the fallback. Cross-highlights the inline
    * [n] marks via the shared selectedSource store.
    */
+  /**
+   * Tempdoc 814 §D5 — is the docked evidence rail mounted? THE predicate: {@link renderEvidenceRail}
+   * mounts on it and the in-answer source-count renders suppress on it, so "the rail's head is the
+   * one persistent authority for the source count" cannot drift into two disagreeing conditions.
+   *
+   * Fix F — the docked rail mounts ONLY at the wide breakpoint (where it is visible); narrow viewports
+   * fall back to the "Sources · N" chip + the toggle drawer. So exactly one SourcesPane subscribes per
+   * viewport, not a dormant duplicate. Default to mounted when matchMedia is unavailable (tests/SSR).
+   */
+  private evidenceRailMounted(): boolean {
+    return (
+      this.affordance === 'agent' &&
+      (this.agentCtrl?.answerSources.length ?? 0) > 0 &&
+      this.wideZone
+    );
+  }
+
   private renderEvidenceRail(): TemplateResult {
-    const hasSources =
-      this.affordance === 'agent' && (this.agentCtrl?.answerSources.length ?? 0) > 0;
-    // Fix F — mount the docked rail ONLY at the wide breakpoint (where it is visible); narrow viewports
-    // fall back to the "Sources · N" chip + the toggle drawer. So exactly one SourcesPane subscribes per
-    // viewport, not a dormant duplicate. Default to mounting when matchMedia is unavailable (tests/SSR).
-    const wide = this.wideZone;
-    if (!hasSources || !wide) return html`${nothing}`;
+    if (!this.evidenceRailMounted()) return html`${nothing}`;
     return html`<jf-sources-pane
       docked
       class="evidence-rail"
+      .maxVisible=${EVIDENCE_RAIL_MAX_VISIBLE}
       api-base=${this.apiBase}
       .host_=${this.host_ ?? undefined}
     ></jf-sources-pane>`;
@@ -3106,15 +3130,38 @@ export class UnifiedChatView extends JfElement {
     // %-based ideal placement (graceful, like the sibling adaptive primitives).
     const PX_PER_REM = 16;
     const trackPx = this.nav.trackPx;
-    const tops: string[] =
+    const spacedPx: number[] | null =
       trackPx > 0
         ? computeSpacedPositions(
             fractions.map((f) => f * trackPx),
             weights.map((w) => w.sizeRem * PX_PER_REM),
             trackPx,
             2,
-          ).map((px) => `${px.toFixed(2)}px`)
-        : fractions.map((f) => `${(f * 100).toFixed(2)}%`);
+          )
+        : null;
+    // Tempdoc 814 §D4 — a LANDMARK is a structural index entry (a turn, a workflow-node boundary, a
+    // human steering directive). It renders as its own marker always: never merged into a cluster, and
+    // it breaks a cluster run, so the spine's density floor is the run's STRUCTURE.
+    const isLandmark = items.map(
+      (it) =>
+        it.kind === 'user' ||
+        it.kind === 'assistant' ||
+        segmentStartIds.has(it.id) ||
+        it.attributes?.steer === true,
+    );
+    // §D4's declared aggregation rule: everything else that still sits within SPINE_CLUSTER_MIN_GAP_PX
+    // after the de-overlap pass collapses into ONE counted badge, so marker count is bounded by the
+    // track (≈ trackPx / gap), not by event count. Unmeasured (first paint / jsdom) → %-placement, one
+    // marker per item (no clustering without a measured track).
+    const groups: PlacedGroup[] = spacedPx
+      ? clusterAdjacent(
+          spacedPx,
+          isLandmark.map((l) => !l),
+          SPINE_CLUSTER_MIN_GAP_PX,
+        )
+      : fractions.map((f, i) => ({ positionPx: f * 100, indices: [i] }));
+    const topOf = (g: PlacedGroup): string =>
+      spacedPx ? `${g.positionPx.toFixed(2)}px` : `${g.positionPx.toFixed(2)}%`;
     // §13 Pillar A binding — the spine is an operable nav (keyboard-operable buttons with accessible
     // names → controls-a11y-clean); click/Enter jumps the reading column to that timeline item, and the
     // scroll-spy marks the in-view node `.active`.
@@ -3144,7 +3191,38 @@ export class UnifiedChatView extends JfElement {
           >
           </div>`
         : nothing}
-      ${items.map((it, idx) => {
+      ${groups.map((g) => {
+        // Tempdoc 814 §D4 — an aggregated group renders as ONE counted badge: a real <button> (the
+        // same jump control the single markers are, so it is keyboard-operable by construction) whose
+        // accessible name states what it stands for ("5 steps, 2 errors"), jumping to the first member.
+        if (g.indices.length > 1) {
+          const first = items[g.indices[0] as number]!;
+          let errors = 0;
+          let warnings = 0;
+          for (const i of g.indices) {
+            const tone = pres[i]!.tone;
+            if (tone === 'error') errors++;
+            else if (tone === 'warning') warnings++;
+          }
+          const parts = [`${g.indices.length} steps`];
+          if (errors > 0) parts.push(`${errors} error${errors === 1 ? '' : 's'}`);
+          if (warnings > 0) parts.push(`${warnings} warning${warnings === 1 ? '' : 's'}`);
+          const clusterLabel = `${parts.join(', ')} — jump to the first`;
+          const isActive = g.indices.some((i) => items[i]!.id === activeId);
+          return html`<button
+            type="button"
+            class="run-spine-cluster ${isActive ? 'active' : ''} ${errors > 0 ? 'has-error' : ''}"
+            style=${`top:${topOf(g)}`}
+            data-cluster-size=${g.indices.length}
+            title=${clusterLabel}
+            aria-label=${clusterLabel}
+            @click=${() => this.nav.jumpTo(first.id)}
+          >
+            <span aria-hidden="true">${g.indices.length}</span>
+          </button>`;
+        }
+        const idx = g.indices[0] as number;
+        const it = items[idx]!;
         // The button owns placement/size/active/jump; <jf-run-node> owns the glyph+tone visual
         // (density `minimal` → a clean tone-dot at this scale, §19.2).
         const p = pres[idx]!;
@@ -3158,7 +3236,7 @@ export class UnifiedChatView extends JfElement {
           : it.kind === 'assistant' && !terminalIds.has(it.id)
             ? 'Working step'
             : p.label || spineNodeLabel(it);
-        const style = `top:${tops[idx]};--node-size:${w.sizeRem}rem;opacity:${w.opacity}`;
+        const style = `top:${topOf(g)};--node-size:${w.sizeRem}rem;opacity:${w.opacity}`;
         // Tempdoc 565 §30 — a human STEERING directive (the DIRECTION authority's interject) is a
         // human-origin POINT landmark on the spine, marked so it reads distinctly from agent steps.
         const isSteer = it.attributes?.steer === true;
@@ -3182,7 +3260,11 @@ export class UnifiedChatView extends JfElement {
           aria-label=${spineLabel}
           @click=${() => this.nav.jumpTo(it.id)}
         >
-          <jf-run-node density="minimal" .presentation=${p}></jf-run-node>
+          <jf-run-node
+            density="minimal"
+            ?outline=${!isLandmark[idx]}
+            .presentation=${p}
+          ></jf-run-node>
         </button>`;
       })}
     </nav>`;
@@ -4321,6 +4403,14 @@ export class UnifiedChatView extends JfElement {
     settled: boolean,
   ): TemplateResult | typeof nothing {
     if (sources.length === 0) return nothing;
+    // Tempdoc 814 §D5 (one authority, one pointer) — the SOURCE-COUNT fact has exactly one persistent
+    // render: the evidence rail's head ("Sources · N") while the rail is mounted. The two provenance
+    // branches below are count lines ("Based on N documents/sources"), so they stand down for that
+    // state — the honest grounding disclaimer is NOT theirs to carry: it is the answer-frame line
+    // ("Based on your documents — per-sentence grounding not verified", `answerFrameLabel`), which
+    // renders next to this badge in every state and is untouched. The coverage branch below
+    // ("Grounded · X of Y sentences") states VERIFICATION, not a source count, and always renders.
+    const countIsOwnedByTheRail = this.evidenceRailMounted();
     const citations = Array.isArray(rawCitations) ? (rawCitations as AgentSentenceCite[]) : [];
     const cov = groundingCoverage(citations, answerText);
     const chunkPrecise = sourcesAreChunkPrecise(sources);
@@ -4329,6 +4419,7 @@ export class UnifiedChatView extends JfElement {
     // "N of M sentences" verdict to give. Show provenance honestly — NEVER "Grounded · 0 of N" (the
     // over-confidence) — derived from the same authority predicate the frame uses, so badge + frame agree.
     if (cov.cited === 0 && !chunkPrecise) {
+      if (countIsOwnedByTheRail) return nothing;
       const n = sources.length;
       return html`<details class="grounding-badge grounding-badge-sourced">
         <summary class="grounding-badge-summary" role="status">
@@ -4348,6 +4439,7 @@ export class UnifiedChatView extends JfElement {
     // (the C1 over-confidence reproduced in the settled render path). Mid-stream (settled=false) keeps the
     // coverage readout below, since marks may still arrive.
     if (cov.cited === 0 && chunkPrecise && settled) {
+      if (countIsOwnedByTheRail) return nothing;
       const n = sources.length;
       return html`<details class="grounding-badge grounding-badge-sourced">
         <summary class="grounding-badge-summary" role="status">
@@ -4398,6 +4490,11 @@ export class UnifiedChatView extends JfElement {
    */
   private renderSourceChips(sources: readonly AgentSource[], key: string): TemplateResult {
     if (!sources || sources.length === 0) return html`${nothing}`;
+    // Tempdoc 814 §D5 — the in-answer "Sources · N" disclosure exists only where the rail is NOT. With
+    // the rail mounted it was the third persistent render of the source count within ~250px; the rail's
+    // head is the authority, and the rail carries the same per-source cards (selection, hide/restore),
+    // so this is a duplicate to delete for that state, not a capability to preserve.
+    if (this.evidenceRailMounted()) return html`${nothing}`;
     // Structural default: collapsed when the wide rail shows the detail; expanded at narrow (no rail).
     const railShown = this.wideZone;
     const open = this.sourceChipsToggles.get(key) ?? !railShown;

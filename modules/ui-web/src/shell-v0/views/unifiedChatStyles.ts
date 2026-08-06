@@ -322,6 +322,49 @@ export const unifiedChatBodyStyles = css`
     .run-spine-node.active {
       box-shadow: 0 0 0 3px var(--accent-tint);
     }
+    /* Tempdoc 814 §D4 — the CLUSTER badge: the aggregated form of markers too close to draw apart, so
+       spine density stays bounded by the run's structure rather than its event count. A counted disc,
+       operable like every other marker (it jumps to the group's first step). */
+    .run-spine-cluster {
+      position: absolute;
+      left: 50%;
+      top: 0;
+      z-index: 1;
+      transform: translate(-50%, -50%);
+      min-width: 1.05rem;
+      height: 1.05rem;
+      padding: 0 0.15rem;
+      border-radius: 0.55rem;
+      box-sizing: border-box;
+      background: var(--surface-1);
+      border: 1px solid var(--border-default);
+      color: var(--text-secondary);
+      font-size: var(--font-size-xs);
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      appearance: none;
+      margin: 0;
+      cursor: pointer;
+    }
+    .run-spine-cluster:hover {
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+    .run-spine-cluster:focus-visible {
+      outline: 2px solid var(--accent-tint);
+      outline-offset: 2px;
+    }
+    .run-spine-cluster.active {
+      box-shadow: 0 0 0 3px var(--accent-tint);
+    }
+    /* A cluster carrying a failed step keeps the run-health cue the single markers have. */
+    .run-spine-cluster.has-error {
+      border-color: var(--accent-danger);
+      color: var(--text-danger);
+    }
     @container chat-surface (min-width: 64rem) {
       .conversation-zone {
         /* §13 Pillar B — the wide grid-template-columns + the per-zone placements (.run-spine col 2,
@@ -358,14 +401,15 @@ export const unifiedChatBodyStyles = css`
     /* The webkit/Chromium half of "hide the native bar" is the ambient \`.jf-scrollbar-none\` utility
        (574 §16 — ::-webkit-scrollbar is a Class-B shadow-scoped pseudo, owned by ambientStyles); the
        template adds that class alongside \`spine-scrolled\`. */
+    /* Tempdoc 814 §D3 — ONE scroll region per surface: \`.conversation\` is it. The rail was a second,
+       independent \`overflow-y: auto\` region in the same grid row (finding 13's nested-scroller stack);
+       it is now a BOUNDED INDEX — top-N cards + an "Open all · N" row into the sanctioned drawer — so
+       it has nothing to scroll. \`hidden\` (not \`auto\`) makes that structural, not a hope. */
     .evidence-rail {
       display: none;
       min-width: 0;
       min-height: 0;
-      overflow-y: auto;
-      overflow-x: hidden;
-      scrollbar-width: thin;
-      scrollbar-color: var(--border-subtle) transparent;
+      overflow: hidden;
     }
     @container chat-surface (min-width: 64rem) {
       .evidence-rail {
@@ -565,13 +609,18 @@ export const unifiedChatBodyStyles = css`
       background: var(--text-tertiary);
       transform: translateY(-50%);
     }
-    /* Tempdoc 565 §30 — a human STEERING directive is a distinct human-origin spine landmark (accent ring). */
+    /* Tempdoc 565 §30 — a human STEERING directive is a distinct human-origin spine landmark.
+       814 §D4 / 809 finding 15 — the ring was drawn in \`--accent-command\`, the same purple family as
+       the user bubble ~a column away, so two different meanings shared one colour. The cue is now
+       SHAPE, not hue: a rotated square (diamond) in the neutral text token. Same token system, one
+       less colour collision. */
     .run-spine-node.steer-landmark::before {
       content: '';
       position: absolute;
-      inset: -0.18rem;
-      border-radius: 50%;
-      border: 1px solid var(--accent-command);
+      inset: -0.22rem;
+      border-radius: 0.1rem;
+      border: 1px solid var(--text-primary);
+      transform: rotate(45deg);
     }
     /* Tempdoc 565 §30 — the "Your direction" body chip for an acknowledged steer (human-origin, accent). */
     .steer-directive {

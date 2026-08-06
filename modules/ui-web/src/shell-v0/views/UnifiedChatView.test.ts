@@ -1481,6 +1481,158 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     __resetAgentSessionStore();
   });
 
+  it('814 §D5 — with the evidence rail MOUNTED the rail head is the ONE source-count render', async () => {
+    // Three renders of the same count within ~250px (finding 12's measured duplication): the rail head,
+    // the in-answer "Based on N sources" line, and the in-answer "Sources · N" disclosure. The rail is
+    // the authority when it is mounted; the other two stand down.
+    __resetAgentSessionStore();
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    (view as unknown as { wideZone: boolean }).wideZone = true;
+    const sources = [
+      { parentDocId: 'docs/a.md', chunkIndex: 0, path: 'docs/a.md', title: 'a.md', excerpt: 'x', startLine: 1, endLine: 5, headingText: '' },
+      { parentDocId: 'docs/b.md', chunkIndex: 1, path: 'docs/b.md', title: 'b.md', excerpt: 'y', startLine: 1, endLine: 5, headingText: '' },
+    ];
+    const ctrl = getAgentSessionController('http://localhost:5173');
+    (ctrl as unknown as { answerSources: unknown[] }).answerSources = sources;
+    (view as unknown as { agentCtrl: unknown }).agentCtrl = ctrl;
+    (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
+      { id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q', attributes: {} },
+      {
+        id: 'a1', occurredAt: '2026-01-01T00:00:03Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent',
+        content: 'The Head process hosts the UI. The Worker owns the index.',
+        attributes: { sources, citations: [] },
+      },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const sr = view.shadowRoot!;
+
+    expect(sr.querySelector('jf-sources-pane.evidence-rail')).not.toBeNull(); // the authority is mounted
+    const text = (sr.textContent ?? '').replace(/\s+/g, ' ');
+    expect(text).not.toContain('Based on 2 sources'); // the in-answer count line stands down…
+    expect(sr.querySelector('.source-disclosure')).toBeNull(); // …and so does the chip disclosure.
+    // The owner-credited grounding disclaimer is NOT a count and is untouched in this state.
+    expect(text).toContain('per-sentence grounding not verified');
+    __resetAgentSessionStore();
+  });
+
+  it('814 §D5 — with NO rail mounted (narrow) the in-answer count + disclosure return', async () => {
+    __resetAgentSessionStore();
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    (view as unknown as { wideZone: boolean }).wideZone = false; // no rail → the fallback surfaces own it
+    const sources = [
+      { parentDocId: 'docs/a.md', chunkIndex: 0, path: 'docs/a.md', title: 'a.md', excerpt: 'x', startLine: 1, endLine: 5, headingText: '' },
+      { parentDocId: 'docs/b.md', chunkIndex: 1, path: 'docs/b.md', title: 'b.md', excerpt: 'y', startLine: 1, endLine: 5, headingText: '' },
+    ];
+    const ctrl = getAgentSessionController('http://localhost:5173');
+    (ctrl as unknown as { answerSources: unknown[] }).answerSources = sources;
+    (view as unknown as { agentCtrl: unknown }).agentCtrl = ctrl;
+    (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
+      { id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q', attributes: {} },
+      {
+        id: 'a1', occurredAt: '2026-01-01T00:00:03Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent',
+        content: 'The Head process hosts the UI. The Worker owns the index.',
+        attributes: { sources, citations: [] },
+      },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const sr = view.shadowRoot!;
+    expect(sr.querySelector('jf-sources-pane.evidence-rail')).toBeNull();
+    expect((sr.textContent ?? '').replace(/\s+/g, ' ')).toContain('Based on 2 sources');
+    expect(sr.querySelector('.source-disclosure')).not.toBeNull();
+    __resetAgentSessionStore();
+  });
+
+  it('814 §D4 — dense intra-run steps AGGREGATE into one counted, keyboard-operable cluster badge', async () => {
+    // Density must be bounded by STRUCTURE, not event count: with a measured track, six tool steps
+    // between two turn landmarks sit closer than the 14px aggregation threshold after de-overlap, so
+    // they render as ONE badge that states what it stands for — not six dots piled into a smudge.
+    __resetAgentSessionStore();
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    (view as unknown as { wideZone: boolean }).wideZone = true;
+    const steps = [1, 2, 3, 4, 5, 6].map((n) => ({
+      id: `t${n}`,
+      occurredAt: `2026-01-01T00:00:0${n}Z`,
+      kind: 'TOOL_ACTIVITY',
+      originator: 'agent',
+      content: '',
+      attributes: { callId: `c${n}`, toolName: 'core_search_index', status: 'completed' },
+    }));
+    (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
+      { id: 'u1', occurredAt: '2026-01-01T00:00:00Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q', attributes: {} },
+      ...steps,
+      { id: 'a1', occurredAt: '2026-01-01T00:00:07Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer', attributes: {} },
+      { id: 'u2', occurredAt: '2026-01-01T00:00:08Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q2', attributes: {} },
+      { id: 'a2', occurredAt: '2026-01-01T00:00:09Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer2', attributes: {} },
+    ];
+    // A MEASURED track (jsdom lays nothing out, so the real controller measures 0 → %-placement and no
+    // clustering). Stand in for the measured reading-position model with the same shape the render reads.
+    let jumped: string | null = null;
+    (view as unknown as { nav: unknown }).nav = {
+      activeId: '',
+      landmarks: [],
+      trackPx: 120,
+      viewport: null,
+      fractions: new Map([['u1', 0], ['a1', 0.5], ['u2', 0.55], ['a2', 1]]),
+      jumpTo(id: string) {
+        jumped = id;
+      },
+    };
+    view.requestUpdate();
+    await view.updateComplete;
+    const sr = view.shadowRoot!;
+
+    const cluster = sr.querySelector('.run-spine-cluster') as HTMLButtonElement | null;
+    expect(cluster).not.toBeNull();
+    expect(cluster!.tagName).toBe('BUTTON'); // keyboard-operable by construction (Enter/Space)
+    expect(cluster!.getAttribute('data-cluster-size')).toBe('6');
+    expect(cluster!.textContent?.trim()).toBe('6');
+    // The badge NAMES what it aggregates (decodable without a legend), on both the a11y name + tooltip.
+    expect(cluster!.getAttribute('aria-label')).toContain('6 steps');
+    expect(cluster!.getAttribute('title')).toBe(cluster!.getAttribute('aria-label'));
+    // The four turn LANDMARKS are never merged: they still render as their own markers.
+    const nodeIds = [...sr.querySelectorAll('.run-spine-node')].map((n) => n.getAttribute('data-item-id'));
+    expect(nodeIds).toEqual(['u1', 'a1', 'u2', 'a2']);
+    // Operating it navigates to the group's first member.
+    cluster!.click();
+    expect(jumped).toBe('t1');
+    __resetAgentSessionStore();
+  });
+
+  it('814 §D4 — spine texture markers draw as OUTLINE nodes; landmarks stay filled (no colour added)', async () => {
+    // 809 finding 15's colour collision: a filled spine dot reads as the grounded-status dot. Fill is
+    // reserved for LANDMARKS; texture is the same tone drawn as a ring — a non-colour cue, so the
+    // statusTone vocabulary is untouched.
+    __resetAgentSessionStore();
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    (view as unknown as { wideZone: boolean }).wideZone = true;
+    (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
+      { id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q', attributes: {} },
+      { id: 't1', occurredAt: '2026-01-01T00:00:02Z', kind: 'TOOL_ACTIVITY', originator: 'agent', content: '', attributes: { callId: 'c1', toolName: 'core_search_index', status: 'completed' } },
+      { id: 'a1', occurredAt: '2026-01-01T00:00:03Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer', attributes: {} },
+      { id: 'u2', occurredAt: '2026-01-01T00:00:04Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q2', attributes: {} },
+      { id: 'a2', occurredAt: '2026-01-01T00:00:05Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer2', attributes: {} },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const sr = view.shadowRoot!;
+    const glyphOf = (id: string): Element | null =>
+      sr.querySelector(`.run-spine-node[data-item-id="${id}"] jf-run-node`);
+    expect(glyphOf('t1')?.hasAttribute('outline')).toBe(true); // texture → ring
+    expect(glyphOf('u1')?.hasAttribute('outline')).toBe(false); // landmark → filled
+    expect(glyphOf('a1')?.hasAttribute('outline')).toBe(false);
+    __resetAgentSessionStore();
+  });
+
   it('603 D-4: a DOCUMENT-LEVEL agent answer shows the SOURCED provenance verdict, NOT "Grounded · 0 of N"', async () => {
     __resetAgentSessionStore();
     const view = mountView();

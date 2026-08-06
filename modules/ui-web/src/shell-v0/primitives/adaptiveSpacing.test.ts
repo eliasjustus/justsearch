@@ -4,7 +4,7 @@
  * feeds on is pure and pinned here, the same split as adaptiveBar/adaptiveDensity tests.)
  */
 import { describe, it, expect } from 'vitest';
-import { computeSpacedPositions, requiredSeparation } from './adaptiveSpacing.js';
+import { clusterAdjacent, computeSpacedPositions, requiredSeparation } from './adaptiveSpacing.js';
 
 const EPS = 1e-6;
 
@@ -88,5 +88,58 @@ describe('computeSpacedPositions — non-overlapping placement', () => {
     expect(computeSpacedPositions([42], [10], 500)).toEqual([42]);
     expect(computeSpacedPositions([100, 101], [10, 10], 0)).toEqual([100, 101]); // unmeasured track
     expect(computeSpacedPositions([100, 101], [10, 10], -1)).toEqual([100, 101]);
+  });
+});
+
+/**
+ * Tempdoc 814 §D4 — the AGGREGATION facet: the extension `computeSpacedPositions` deferred. Markers
+ * still closer than the min gap after spacing collapse into ONE counted group, so spine density is
+ * bounded by the track (and by the run's landmark structure), never by event count.
+ */
+describe('clusterAdjacent — bounded marker density', () => {
+  const MERGEABLE = (n: number): boolean[] => new Array<boolean>(n).fill(true);
+
+  it('merges a run of markers closer than the min gap into ONE counted group', () => {
+    const groups = clusterAdjacent([100, 104, 108, 112], MERGEABLE(4), 14);
+    expect(groups.length).toBe(1);
+    expect(groups[0]!.indices).toEqual([0, 1, 2, 3]);
+    expect(groups[0]!.positionPx).toBeCloseTo(106, 6); // the members' mean
+  });
+
+  it('does NOT merge markers at or beyond the min gap (each stays its own marker)', () => {
+    const groups = clusterAdjacent([0, 14, 28], MERGEABLE(3), 14);
+    expect(groups.map((g) => g.indices)).toEqual([[0], [1], [2]]);
+    expect(groups.map((g) => g.positionPx)).toEqual([0, 14, 28]);
+  });
+
+  it('splits a run at the first gap ≥ the threshold (two clusters, not one)', () => {
+    const groups = clusterAdjacent([0, 5, 10, 40, 45], MERGEABLE(5), 14);
+    expect(groups.map((g) => g.indices)).toEqual([
+      [0, 1, 2],
+      [3, 4],
+    ]);
+  });
+
+  it('LANDMARK immunity: a landmark is always its own marker AND breaks the run around it', () => {
+    // Five markers within 4px of each other; index 2 is a landmark (a turn / node boundary / steer).
+    const mergeable = [true, true, false, true, true];
+    const groups = clusterAdjacent([100, 104, 108, 112, 116], mergeable, 14);
+    expect(groups.map((g) => g.indices)).toEqual([[0, 1], [2], [3, 4]]);
+    // The landmark keeps its exact measured position (never averaged into a cluster).
+    expect(groups[1]!.positionPx).toBe(108);
+  });
+
+  it('keeps every input represented exactly once, in order (a count is never lost)', () => {
+    const positions = [0, 2, 4, 6, 30, 31, 32, 90];
+    const mergeable = [true, true, true, true, true, false, true, true];
+    const groups = clusterAdjacent(positions, mergeable, 14);
+    expect(groups.flatMap((g) => g.indices)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    // Density is bounded by structure: 8 events → 5 markers here, and the count rides on the badge.
+    expect(groups.map((g) => g.indices)).toEqual([[0, 1, 2, 3], [4], [5], [6], [7]]);
+    expect(groups[0]!.indices.length).toBe(4);
+  });
+
+  it('degrades gracefully on an empty input', () => {
+    expect(clusterAdjacent([], [], 14)).toEqual([]);
   });
 });
