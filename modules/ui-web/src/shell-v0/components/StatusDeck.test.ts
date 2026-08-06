@@ -241,6 +241,32 @@ describe('StatusDeck (slice 461)', () => {
     expect(queueText(el)).not.toContain('embed:');
   });
 
+  // 813 review objection 2 — the count fallback under the "embed" label is the EMBEDDING stage's
+  // own pending number, never the multi-stage rawPending sum (which counts a document once per
+  // pending stage plus its chunks — ~10x embedding on a chunked corpus, under an embedding label).
+  it('813: the embed-count fallback shows the embedding number, not the multi-stage sum', async () => {
+    const el = make();
+    el.aiState = makeAiState({
+      index: { documentCount: known(100), searchableDocumentCount: known(100), pendingJobs: known(0), embeddingPending: known(40), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      status: {
+        worker: {
+          core: { indexState: 'IDLE', pendingJobs: 0 },
+          enrichment: {
+            backfillMode: 'combined',
+            embeddingEnabled: true,
+            // No doc counts anywhere ⇒ no faithful denominator ⇒ percent arm suppressed, the
+            // count fallback renders. rawPending here is 40 + 400 = 440; the label says "embed".
+            embeddingPendingCount: 40,
+            chunk: { chunkEmbeddingPendingCount: 400 },
+          },
+        },
+      } as unknown as AiState['status'],
+    });
+    await el.updateComplete;
+    expect(queueText(el)).toContain('embed: 40');
+    expect(queueText(el)).not.toContain('440');
+  });
+
   it('813: a blocked embedding stage claims no enrichment progress', async () => {
     const el = make();
     el.aiState = makeAiState({

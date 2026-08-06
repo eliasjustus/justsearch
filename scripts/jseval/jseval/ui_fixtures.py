@@ -20,6 +20,7 @@ Two traps the experiment found, encoded here so they can't recur:
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -71,9 +72,100 @@ def _empty_catalog(primitive: str) -> str:
 _BODY_INDEXED_ROOTS = json.dumps({"items": [], "count": 0})
 
 
+def _minutes_ago_iso(minutes: int) -> str:
+    """An ISO instant ``minutes`` in the past, computed AT REQUEST TIME.
+
+    Deliberately not a hard-coded literal: the row's meta line renders this through the host's
+    relative formatter (`relativeTime.formatRelative` — 'just now' / 'Nm ago' / 'Nh ago' / 'Nd ago'),
+    so a frozen timestamp would render a DIFFERENT string every day the capture is re-taken ('3d
+    ago' → '47d ago'). Deriving it from `now` is what keeps the rendered text byte-stable; the
+    minute bucket only moves if a capture takes >1 min between fixture-serve and paint."""
+    stamp = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    return stamp.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _indexed_roots_body(variant: str) -> str:
+    """The Library substrate list for a variant (tempdoc 813 §4 — the ENRICHING folder tier).
+
+    The `enriching` variant serves TWO rows that differ ONLY in enrichment coverage, so one capture
+    renders both drained arms of `folderStatus` (folderStatus.ts:289-319) side by side:
+      - `docs` — coverage KNOWN and incomplete ⟹ state `enriching`: the shared
+        `ENRICHMENT_CATCHING_UP_CAVEAT` wording plus THIS root's own percent.
+      - `notes` — every applicable stage settled ⟹ state `ready` ("fully searchable"), which is the
+        per-root truth OUTRANKING the still-active index-wide backfill (813 §17's four-arm merge).
+
+    Every non-coverage field is pinned to the drained-and-clean shape the tier requires
+    (`inFlightCount`/`failedCount` 0, `status` "indexed", `walkCompleted` true, both timestamps set,
+    `deleteDetectionUnverified` false) — any one of them off would divert the row to an EARLIER
+    branch (indexing / failed / unverified) and the capture would silently stop being about
+    enrichment at all.
+
+    The coverage denominators follow the wire's own discipline: each parent stage counts only the
+    documents carrying ITS status field, and the chunk tier is counted over CHUNKED documents. The
+    applicability flags come from the index-wide `/api/status` snapshot (`_status_body`'s matching
+    `enriching` arm), never from the row — the wire row carries counts only.
+
+    Every other variant keeps `_BODY_INDEXED_ROOTS` (the empty list), unchanged."""
+    if variant != "enriching":
+        return _BODY_INDEXED_ROOTS
+    return json.dumps({
+        "items": [
+            {
+                "pathHash": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+                "collection": "docs",
+                "status": "indexed",
+                "fileCount": 300,
+                "inFlightCount": 0,
+                "failedCount": 0,
+                "walkCompleted": True,
+                "deleteDetectionUnverified": False,
+                "lastIndexedIsoTime": _minutes_ago_iso(6),
+                "lastVerifiedIsoTime": _minutes_ago_iso(4),
+                # 1,080 settled of 1,800 applicable ⟹ 60%: embedding mid-flight (120/300), SPLADE and
+                # NER settled (300/300 each), chunk embeddings mid-flight (360/900).
+                "parentDocsTotalEmbedding": 300,
+                "parentDocsSettledEmbedding": 120,
+                "parentDocsTotalSplade": 300,
+                "parentDocsSettledSplade": 300,
+                "parentDocsTotalNer": 300,
+                "parentDocsSettledNer": 300,
+                "chunkDocsTotal": 900,
+                "chunkDocsSettled": 360,
+            },
+            {
+                "pathHash": "0f9e8d7c6b5a49382716253443526170",
+                "collection": "notes",
+                "status": "indexed",
+                "fileCount": 100,
+                "inFlightCount": 0,
+                "failedCount": 0,
+                "walkCompleted": True,
+                "deleteDetectionUnverified": False,
+                "lastIndexedIsoTime": _minutes_ago_iso(9),
+                "lastVerifiedIsoTime": _minutes_ago_iso(4),
+                # Settled on every applicable stage ⟹ `complete` is EXACT (settled >= total), the only
+                # basis on which the row may claim "fully searchable".
+                "parentDocsTotalEmbedding": 100,
+                "parentDocsSettledEmbedding": 100,
+                "parentDocsTotalSplade": 100,
+                "parentDocsSettledSplade": 100,
+                "parentDocsTotalNer": 100,
+                "parentDocsSettledNer": 100,
+                "chunkDocsTotal": 300,
+                "chunkDocsSettled": 300,
+            },
+        ],
+        "count": 2,
+    })
+
+
 # Path substring -> fixture body. First match wins. `/api/status`, `/api/knowledge/search`,
 # `/api/inference/status`, and `/api/settings` are NOT here — all four have a per-variant
 # transform and are dispatched explicitly in `fixture_body()` before this table is consulted.
+# `/api/indexing-roots/substrate` DOES have a per-variant transform (`_indexed_roots_body`) and is
+# likewise dispatched first, but it STAYS in this table: `_ROUTES` is the authority the
+# `check-ui-step-coverage` fixture-coverage clause reads (615 §37.1), and this row is the body every
+# non-`enriching` variant still serves.
 _ROUTES: tuple[tuple[str, str], ...] = (
     ("/api/indexing-roots/substrate", _BODY_INDEXED_ROOTS),
     ("/api/registry/operations", _empty_catalog("Operation")),
@@ -112,7 +204,8 @@ def is_api_path(url: str) -> bool:
 # reachable only via an explicit `install_fixtures(ctx, variant="degraded")` call, made by
 # the isolated `chat-proportion` ui-shot step alone (`ui_check.py`'s `Step.fixtures_variant`).
 # The same reasoning holds for `indexing` (tempdoc 813 Slice D), reachable only from the
-# isolated `tasks-occlusion` step.
+# isolated `tasks-occlusion` step, and for `enriching` (tempdoc 813 §4/§5), reachable only from the
+# isolated `library-enriching` step.
 VARIANTS = ("default", "empty")
 
 # The two variants that turn the degraded-readiness knobs. `degraded` (tempdoc 697) also flips
@@ -227,8 +320,45 @@ def _status_body(variant: str) -> str:
     (see `_handler` below), so a panel gated on SSE tasks would capture as hidden and the
     occlusion assertion would pass vacuously. NOT a fuzzer axis — see the `VARIANTS` note above.
 
+    'enriching' (tempdoc 813 §4/§5) is the ENRICHING phase the `indexing` variant deliberately does
+    NOT reach: the job queue is DRAINED (`pendingJobs` 0) while the enrichment backfill still owes
+    work, which is the only input combination `selectIndexingProgress` reads as
+    `phase === 'enriching'` (indexingProgress.ts:333-334 — `jobsPending > 0` would win the ternary,
+    so a variant with any backlog can never render this phase). `indexState` stays "IDLE" because the
+    projection only reads WORKER-reported states, and IDLE is the honest one for a drained queue.
+    The counters are internally consistent (completed + pending == doc count per stage) and give the
+    aggregate card its faithful denominator: 640 pending of 2,400 applicable ⟹ 73%, with SPLADE and
+    NER already settled so the number comes from the two stages that are genuinely behind. This is
+    the ONLY variant that also transforms the Library substrate list (`_indexed_roots_body`), because
+    the per-root tier needs BOTH halves — coverage counts from the row, stage applicability from
+    here.
+
     `degraded-detailed` needs the identical readiness state — the banner it expands is the same
     one this transform gives something to render."""
+    if variant == "enriching":
+        d = json.loads(_BODY_STATUS)
+        core = d["worker"]["core"]
+        core["indexState"] = "IDLE"
+        core["indexHealthy"] = True
+        core["indexedDocuments"] = 400
+        core["pendingJobs"] = 0
+        enrichment = d["worker"]["enrichment"]
+        enrichment["backfillMode"] = "combined"
+        enrichment["embeddingEnabled"] = True
+        enrichment["spladeEnabled"] = True
+        enrichment["nerEnabled"] = True
+        enrichment["embeddingDocCount"] = 400
+        enrichment["embeddingPendingCount"] = 160
+        enrichment["embeddingCompletedCount"] = 240
+        enrichment["spladeDocCount"] = 400
+        enrichment["spladePendingCount"] = 0
+        enrichment["spladeCompletedCount"] = 400
+        enrichment["pendingNerCount"] = 0
+        enrichment["completedNerCount"] = 400
+        enrichment["chunk"]["chunkDocCount"] = 1200
+        enrichment["chunk"]["chunkEmbeddingPendingCount"] = 480
+        enrichment["chunk"]["chunkEmbeddingCompletedCount"] = 720
+        return json.dumps(d)
     if variant == "indexing":
         d = json.loads(_BODY_STATUS)
         core = d["worker"]["core"]
@@ -320,6 +450,8 @@ def fixture_body(url: str, variant: str = "default") -> str:
         return _settings_body(variant)
     if "/api/knowledge/search" in url:
         return _search_body(variant)
+    if "/api/indexing-roots/substrate" in url:
+        return _indexed_roots_body(variant)
     if "/api/thread/" in url and variant == "degraded-thread":
         return _thread_body()
     for needle, body in _ROUTES:
