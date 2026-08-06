@@ -47,6 +47,7 @@ Notes:
 | Round | Date | Theme | Notes |
 |-------|------|-------|-------|
 | `2026-04-26-concept-exploration` | 2026-04-26 | First open-ended concept exploration. Four distinct UI directions. | First round. |
+| `2026-08-06-brand-identity` | 2026-08-06 | First brand/visual-identity round. Four directions + a fifth mark; HTML cards instead of PNGs. | Outcome: Mark E "The Slot" adopted as working logo — see `docs/business/visual-identity.md`. |
 
 ## Adding a new round
 

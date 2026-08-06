@@ -1,0 +1,12 @@
+<!--
+  JustSearch mark - dedicated <= 24px cut, light-ground colorway. 16-unit grid.
+
+  Not a scaled master: the footnote is dropped, the slot is deepened and the corner radii are
+  removed so every edge lands on a pixel boundary at 16px and 32px. Do not add the footnote back
+  here - at these sizes it reads as dirt.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16"
+     shape-rendering="crispEdges" role="img" aria-label="JustSearch">
+  <path id="mass" fill="#16181c" d="M1,2 H10 V6 H5 V10 H10 V14 H1 Z"/>
+  <rect id="answer-line" x="11" y="6" width="4" height="4" fill="#00655B"/>
+</svg>
