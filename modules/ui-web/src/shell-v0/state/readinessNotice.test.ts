@@ -406,7 +406,7 @@ describe('warrantsSearchDegradationBanner (round-14 finding 9)', () => {
   });
 
   it('an operational verdict warrants nothing (no notice to show)', () => {
-    expect(warrantsSearchDegradationBanner({ kind: 'ok', severity: 'ok', reasons: [] })).toBe(false);
+    expect(warrantsSearchDegradationBanner({ kind: 'operational', severity: 'ok', reasons: [] })).toBe(false);
   });
 });
 
