@@ -423,6 +423,9 @@ export class UnifiedChatView extends JfElement {
     // Search Thread Round-2 R1a — the degradation banner's expand/collapse disclosure. A transient
     // UI panel (closes in settleTransients), mirroring showAbilities/queryTrailOpen.
     degradationBannerExpanded: { state: true },
+    // Round-14 finding 12(a) — the run-telemetry band's disclosure, bound so "collapsed by default"
+    // is a stated property rather than whatever the `<details>` element was last left in.
+    activityRailExpanded: { state: true },
     // Slice 515 FIX-1: docIds carried from askAi navigation, forwarded to
     // RAG dispatch so scoped retrieval actually works. Captured in
     // connectedCallback before unifiedChatState is reset.
@@ -585,6 +588,12 @@ export class UnifiedChatView extends JfElement {
    * renderDegradationBanner). Tempdoc 687's per-cause-set seen-hash default machinery is removed.
    */
   declare degradationBannerExpanded: boolean;
+  /**
+   * Round-14 finding 12(a) — the run-telemetry band's disclosure. Developer instrumentation with a
+   * disclosure triangle should start closed; this makes that the declared default (and keeps a user's
+   * own toggle across re-renders).
+   */
+  declare activityRailExpanded: boolean;
   /** Tempdoc 738 — re-render the disclosure-gated banner when the Simple/Detailed mode changes. */
   private uiModeUnsubscribe: (() => void) | null = null;
   declare pinnedDocIds: string[];
@@ -711,6 +720,7 @@ export class UnifiedChatView extends JfElement {
     super();
     this.apiBase = '';
     this.degradationBannerExpanded = false;
+    this.activityRailExpanded = false;
     this.inputDraft = '';
     this.steerDraft = '';
     this.forkEditing = false;
@@ -1044,6 +1054,9 @@ export class UnifiedChatView extends JfElement {
     // Tempdoc 738 — the banner's local "See details" toggle resets on hide; the effective expand
     // state is re-derived from disclosure + severity on the next render.
     this.degradationBannerExpanded = false;
+    // Round-14 finding 12(a) — the run-telemetry band is a transient panel too: it returns to its
+    // collapsed default rather than reopening on the next visit.
+    this.activityRailExpanded = false;
     this.forkEditing = false;
     this.forkDraft = '';
     this.steerDraft = '';
@@ -2203,7 +2216,15 @@ export class UnifiedChatView extends JfElement {
           >
             Activity
           </button>
-          ${this.thread.length > 0 && !agentMode
+          ${/* Round-14 finding 14 — the header control set is RUNG-INVARIANT. New chat + Export used
+                to carry `&& !agentMode`, so crossing to Delegate removed both with ~1000px of empty
+                header space beside them (ruled out as overflow: three captures one click apart at an
+                identical 1462x800). Nothing in the code or the design history justified the gate, and
+                it stranded a finished, unresumable run with neither a reset nor a save affordance —
+                Export worst of all, since a Delegate run is the costliest artifact the product makes.
+                The remaining gate (`thread.length > 0`) is state, not rung: it holds identically on
+                every rung, so it cannot make the set differ between them. */ ''}
+          ${this.thread.length > 0
             ? html`<button class="new-chat-btn" @click=${() => this.newConversation()}>New chat</button>
                    <button class="new-chat-btn" @click=${() => this.exportMarkdown()}>Export</button>`
             : nothing}
@@ -2443,8 +2464,10 @@ export class UnifiedChatView extends JfElement {
     // §21 AFFORDANCE — when the run-spine is mounted it IS the scroll control (the draggable minimap
     // thumb), so the reading column hides its native scrollbar (`scrollbar-gutter: stable` reserves the
     // gutter so hiding it causes no reflow). Documents/narrow (no spine) keeps the thin native bar.
-    const spineShown =
-      this.affordance === 'agent' && this.wideZone;
+    // Round-14 finding 15 — read the SAME predicate the spine mounts on: agent+wide is no longer
+    // sufficient (an unsegmented single-turn run has no spine), and hiding the native bar behind an
+    // absent minimap would leave the column with no scroll control at all.
+    const spineShown = this.spineItems() !== null;
     // 798 round 8 — `landing-collapsed` swaps the zone's `flex: 1; min-height: 0` for content-sizing so
     // the composer can centre in the freed space (687 R5a). That premise is "the landing zone is empty",
     // and clearing the query does not empty it: nothing unmounts a reading pane on a query clear, so the
@@ -2975,23 +2998,27 @@ export class UnifiedChatView extends JfElement {
   }
 
   /**
-   * Tempdoc 565 §12.3.D/F — the left run-spine: "one ordered run made visual." The LATEST run's steps
-   * render as a persistent vertical status spine (a minimap) in the conversation's left margin — one
-   * node per step (status-tinted via the §3.B `statusAccent`), the answer the terminal node — so the
-   * run's status is scannable at a glance even when the inline trace is collapsed. Positioned in the
-   * margin (no grid disruption); wide viewports only; `aria-hidden` because the real, operable content
-   * is the conversation — this is a decorative projection of the SAME merged timeline.
+   * The timeline items the run-spine projects, or `null` when the spine must NOT mount.
+   *
+   * Tempdoc 565 §13/§19.4 — the WHOLE merged timeline as a POSITION-PROPORTIONAL minimap: primary
+   * turns (user/assistant) are landmark nodes placed at their conversation scroll fraction, the
+   * secondary/ambient steps are smaller texture interpolated between them (`computeSpinePositions`).
+   *
+   * Round-14 finding 15 — the spine is the `RunSegmentRef` / `assignRunSegments` node-boundary
+   * visualization ("the spine marks node boundaries", 565 §26), and it was rendering UNCONDITIONALLY
+   * in ordinary chat, where there are no boundaries worth marking: measured live against four content
+   * blocks of a SINGLE turn it drew ~10 markers in three glyph types with no legend, at ~2.5x content
+   * density, colliding in colour with both the grounded-status dot and the user bubble. The defect is
+   * the unconditional render, not the component — so it mounts only when the run HAS structure to
+   * index: more than one turn, or real workflow-node boundaries.
+   *
+   * This is ONE predicate on purpose: `renderAnswerPlane` hides the reading column's native scrollbar
+   * when the spine is mounted (the minimap IS the scroll control), so a spine gated separately from
+   * that would leave a surface with neither.
    */
-  private renderRunSpine(): TemplateResult {
-    if (this.affordance !== 'agent') return html`${nothing}`;
-    const wide = this.wideZone;
-    if (!wide) return html`${nothing}`;
-    // Tempdoc 565 §13/§19.4 — the WHOLE merged timeline as a POSITION-PROPORTIONAL minimap: primary
-    // turns (user/assistant) are landmark nodes placed at their conversation scroll fraction, the
-    // secondary/ambient steps are smaller texture interpolated between them (`computeSpinePositions`).
-    // A faithful projection of the ONE ordered timeline; `data-item-id` anchors it to the reading
-    // position (scroll-spy + click-jump, §13.1). §19.3 — the node size+opacity are the DECLARED
-    // PROMINENCE_SCALE (set inline), not hand-CSS classes; the status colour stays inline (gate-clean).
+  private spineItems(): UnifiedTurnItem[] | null {
+    if (this.affordance !== 'agent') return null;
+    if (!this.wideZone) return null;
     const items = this.mergedTimeline().filter(
       (it) =>
         it.kind === 'user' ||
@@ -3000,7 +3027,26 @@ export class UnifiedChatView extends JfElement {
         it.kind === 'progress' ||
         it.kind === 'error',
     );
-    if (items.length === 0) return html`${nothing}`;
+    if (items.length === 0) return null;
+    const turns = items.filter((it) => it.kind === 'user').length;
+    // A run whose steps all sit in one node (or in none) has no boundary to mark — one distinct
+    // `nodeId` is not a boundary, it is the whole run.
+    const nodeIds = new Set(items.map((it) => it.segment?.nodeId).filter((id) => id !== undefined));
+    if (turns < 2 && nodeIds.size < 2) return null;
+    return items;
+  }
+
+  /**
+   * Tempdoc 565 §12.3.D/F — the left run-spine: "one ordered run made visual." The LATEST run's steps
+   * render as a persistent vertical status spine (a minimap) in the conversation's left margin — one
+   * node per step (status-tinted via the §3.B `statusAccent`), the answer the terminal node — so the
+   * run's status is scannable at a glance even when the inline trace is collapsed. Positioned in the
+   * margin (no grid disruption); wide viewports only; `aria-hidden` because the real, operable content
+   * is the conversation — this is a decorative projection of the SAME merged timeline.
+   */
+  private renderRunSpine(): TemplateResult {
+    const items = this.spineItems();
+    if (!items) return html`${nothing}`;
     const activeId = this.nav.activeId;
     // Tempdoc 565 §17 — the ONE run-step presentation descriptor per item; §19.3 — its declared
     // prominence weight.
@@ -3334,12 +3380,29 @@ export class UnifiedChatView extends JfElement {
     const approvalPosture = postureChrome(
       agencyPosture(this.affordance, getAutonomyLevel()),
     ).approvalPosture;
+    // Round-14 finding 12(b) — a run that reported DONE is a FACT, not an alarm. The measured case:
+    // state DONE with a real answer over 57 sources, while the band rendered "Over budget" twice in
+    // alarm styling. The code already knows this asymmetry — the over-budget remedies below render
+    // only while `runInFlight` — so the presentation follows the same line: the collapsed summary
+    // drops the chip entirely, and the body row states the fact in neutral text.
+    const runCompleted = lc?.state === 'DONE';
     // Tempdoc 577 Ext III — the live run's accountability record, not "Activity" (that name belongs
     // to the retrospective; two records, two names). The summary separates live STATUS from posture
     // POLICY grammatically ("Policy: …"); the budget states its unit (tokens) and ceiling; an
     // over-budget state escalates WITH its remedies (halt / raise) through the one control seam.
+    // Round-14 finding 12(a) — the band DEFAULTS TO COLLAPSED. `<details>` without a bound `open`
+    // inherits whatever DOM state it was last left in, so "collapsed by default" was an accident of
+    // first paint rather than a property anything could assert. Bind it to view state (and record the
+    // user's own toggle) so the default is explicit, testable, and survives a re-render.
     return html`
-      <details class="activity-rail">
+      <details
+        class="activity-rail"
+        data-testid="activity-rail"
+        ?open=${this.activityRailExpanded}
+        @toggle=${(e: Event) => {
+          this.activityRailExpanded = (e.target as HTMLDetailsElement).open;
+        }}
+      >
         <summary>
           This run${agentMode && approvalPosture
             ? html` · <span class="posture-policy">Policy: ${approvalPosture}</span>`
@@ -3349,7 +3412,7 @@ export class UnifiedChatView extends JfElement {
                   ? 'Paused — awaiting budget'
                   : 'Paused — waiting to continue'}</span
               >`
-            : budget?.overBudget
+            : budget?.overBudget && !runCompleted
               ? html` · <span class="over-budget"
                   >${isAdvancedMode()
                     ? html`Over budget +${budget.overBy} tokens`
@@ -3417,7 +3480,9 @@ export class UnifiedChatView extends JfElement {
         ${budget
           ? html`<div class="activity-budget">
               ${budget.overBudget
-                ? html`<span class="over-budget"
+                ? html`<span
+                      class=${runCompleted ? 'budget-settled' : 'over-budget'}
+                      data-testid="activity-over-budget"
                       >Over budget by ${budget.overBy} tokens (granted ${budget.ceiling})</span
                     >
                     ${/* Tempdoc 577 Ext III — control chrome attaches to the LIVE run: the backend
