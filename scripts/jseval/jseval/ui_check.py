@@ -732,6 +732,51 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         await page.locator(S.CSS_TOAST).first.wait_for(state="visible", timeout=10_000)
         await asyncio.sleep(0.3)  # let the toast enter-animation settle before measuring
 
+    async def setup_tasks_occlusion(page):
+        # Tempdoc 813 Slice D — the capture that proves the redesigned Tasks panel cannot cover the
+        # rail's bottom controls. Registered in governance/ui-proportion-baseline.v1.json with TWO
+        # mustNotOverlapSelector rows (Settings + the Help affordance) AND a `minWidthPx` floor on
+        # `jf-task-list` itself: a hidden panel yields a 0x0 rect that satisfies any overlap check
+        # vacuously (ui_proportion_gate._rects_overlap), so the non-vacuity companion is what makes
+        # the two occlusion rows mean anything.
+        #
+        # `fixtures_variant="indexing"` is the whole reason this is a dedicated isolated step. Under
+        # the default fixture the worker reports indexState "SERVING" — a fallback state the progress
+        # projection deliberately refuses to read (indexingProgress.WORKER_REPORTED_INDEX_STATES) —
+        # so the panel is correctly invisible on every other step. The `indexing` variant supplies a
+        # live INDEXING worker with a real backlog (ui_fixtures._status_body), which is what puts the
+        # aggregate card on screen.
+        #
+        # Note the panel is driven by the POLL projection, NOT the jobs SSE: install_fixtures serves
+        # every `/stream` as an empty event stream, so a task-list-gated panel would never render
+        # here. That is exactly the §1d defect Slice D removed (the panel used to hide at zero tasks
+        # even while enrichment ran), and this step only captures anything BECAUSE it was removed.
+        await page.set_viewport_size({"width": 1280, "height": 800})
+        await page.goto(demo, wait_until="domcontentloaded", timeout=timeout_ms)
+        # Land on a plain rail surface rather than the default chat landing: the assertion is about
+        # the SHELL's bottom-left corner versus the rail, so the least surface-specific screen is the
+        # least likely to drift for reasons unrelated to the relation being measured.
+        try:
+            btn = page.locator(S.rail_css(S.RAIL_SURFACE_LIBRARY))
+            await btn.wait_for(state="visible", timeout=15_000)
+            await btn.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "(id) => { location.hash = `justsearch://surface/${id}`; }", S.RAIL_SURFACE_LIBRARY
+            )
+        # Both sides of the relation must actually be on screen before measuring.
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SETTINGS)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        await page.locator("[data-help-affordance]").first.wait_for(state="visible", timeout=15_000)
+        # The aggregate card, not merely the host element: `jf-task-list` exists in the DOM whenever
+        # the shell is mounted (it self-hides via [data-empty]), so waiting on the host would wait on
+        # nothing. The card is only rendered on a phase the projection can actually speak to.
+        await page.locator('[data-testid="task-aggregate"]').first.wait_for(
+            state="visible", timeout=15_000
+        )
+        if cooldown_ms > 0:
+            await asyncio.sleep(cooldown_ms / 1000)
     async def setup_chat_bands(page):
         # Tempdoc 814 §D7.2 — the ONE capture where every persistent chat-surface band
         # renders at once (the finding-12 screen): the degraded readiness pill, a
@@ -1192,6 +1237,14 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # the chat header row. Isolated + fixtures: structural, no backend.
         Step("chat-occlusion", setup=setup_chat_occlusion, isolated=True),
 
+        # --- Tempdoc 813 Slice D: the Tasks panel vs the rail's bottom controls ---
+        # Registered in governance/ui-proportion-baseline.v1.json with two mustNotOverlapSelector
+        # rows (Settings / Help) plus a minWidthPx floor on jf-task-list — the non-vacuity companion
+        # a 0-rect hidden panel would otherwise slip past. Isolated + the `indexing` fixtures
+        # variant: the panel only speaks when the worker reports a state the progress projection
+        # accepts, which no other step's fixture does.
+        Step("tasks-occlusion", setup=setup_tasks_occlusion, isolated=True,
+             fixtures_variant="indexing"),
         # --- Tempdoc 814 W4: chrome-allocation gate steps (§D7.2) ---
         # `chat-bands`: the richest all-bands state reachable under --fixtures (degraded
         # pill + submitted turn + activity-rail summary — see its setup's fixture-

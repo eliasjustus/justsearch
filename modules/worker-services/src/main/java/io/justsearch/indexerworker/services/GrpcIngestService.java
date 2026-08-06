@@ -547,7 +547,11 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
         if (collection != null && collection.isBlank()) {
           collection = null;
         }
-        int accepted = jobQueue.enqueue(validPaths, collection);
+        // 813 Slice B: stat each admitted path for its byte size. A stat failure degrades that
+        // entry to unknown size (NULL) — it never rejects the enqueue.
+        int accepted =
+            jobQueue.enqueueEntries(
+                validPaths.stream().map(JobQueue.EnqueueEntry::stat).toList(), collection);
 
         // Mark paths for force reindex if requested (bypasses "unchanged" check)
         if (request.getForceReindex() && accepted > 0) {
@@ -1536,8 +1540,42 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
               .setFailedCount(counts.failedCount())
               .build();
       responseObserver.onNext(
-          io.justsearch.ipc.CountJobsByPathPrefixResponse.newBuilder().setCounts(wire).build());
+          io.justsearch.ipc.CountJobsByPathPrefixResponse.newBuilder()
+              .setCounts(wire)
+              .setCoverage(rootCoverage(request.getPathPrefix()))
+              .build());
       responseObserver.onCompleted();
+    }
+  }
+
+  /**
+   * Per-root enrichment coverage for {@link #countJobsByPathPrefix} (tempdoc 813 §1c). The queue
+   * counts above come from SQLite and are always available; these come from the Lucene index, so
+   * an absent index runtime degrades this leg to all-zero rather than failing the whole response —
+   * the Library row still gets its truthful in-flight/failed numbers.
+   */
+  private io.justsearch.ipc.RootCoverageCounts rootCoverage(String pathPrefix) {
+    io.justsearch.adapters.lucene.runtime.IndexCountOps countOps =
+        ingestLifecycle == null ? null : ingestLifecycle.indexCountOps();
+    if (countOps == null) {
+      return io.justsearch.ipc.RootCoverageCounts.getDefaultInstance();
+    }
+    try {
+      io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.RootCoverageCounts c =
+          countOps.queryRootCoverageCounts(pathPrefix);
+      return io.justsearch.ipc.RootCoverageCounts.newBuilder()
+          .setParentDocsTotalEmbedding(c.parentDocsTotalEmbedding())
+          .setParentDocsSettledEmbedding(c.parentDocsSettledEmbedding())
+          .setParentDocsTotalSplade(c.parentDocsTotalSplade())
+          .setParentDocsSettledSplade(c.parentDocsSettledSplade())
+          .setParentDocsTotalNer(c.parentDocsTotalNer())
+          .setParentDocsSettledNer(c.parentDocsSettledNer())
+          .setChunkDocsTotal(c.chunkDocsTotal())
+          .setChunkDocsSettled(c.chunkDocsSettled())
+          .build();
+    } catch (RuntimeException e) {
+      log.warn("countJobsByPathPrefix: root coverage unavailable: {}", e.getMessage());
+      return io.justsearch.ipc.RootCoverageCounts.getDefaultInstance();
     }
   }
 
@@ -2098,7 +2136,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
         return;
       }
       Path path = Path.of(pathStr);
-      int enqueued = jobQueue.enqueue(List.of(path));
+      int enqueued = jobQueue.enqueueEntries(List.of(JobQueue.EnqueueEntry.stat(path)));
       if (enqueued == 0) {
         responseObserver.onNext(
             io.justsearch.ipc.RetryIndexingJobResponse.newBuilder()

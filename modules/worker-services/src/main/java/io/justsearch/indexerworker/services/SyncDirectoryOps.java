@@ -258,7 +258,7 @@ final class SyncDirectoryOps {
     // enqueue can start after the first bucket settles. The current approach
     // is intentional for determinism; this note exists so the next agent
     // doesn't rediscover the trade-off by accident.
-    List<Path> collected = new ArrayList<>();
+    List<JobQueue.EnqueueEntry> collected = new ArrayList<>();
     int[] counters = {0}; // [0]=fileCount (for throttle)
     boolean[] walkAborted = {false};
     boolean[] walkInterrupted = {false};
@@ -314,7 +314,8 @@ final class SyncDirectoryOps {
                 PathNormalizer.normalizePath(file.toAbsolutePath().toString());
             if (force
                 || (indexedPathsFinal != null && !indexedPathsFinal.contains(normalizedPath))) {
-              collected.add(file);
+              // 813 Slice B: the walk already holds the size — no extra stat.
+              collected.add(new JobQueue.EnqueueEntry(file, attrs.size()));
             }
             return FileVisitResult.CONTINUE;
           }
@@ -334,19 +335,20 @@ final class SyncDirectoryOps {
     // of the Path implementation's natural ordering (which could change
     // between JDKs).
     collected.sort(
-        Comparator.comparing(p -> PathNormalizer.normalizePath(p.toAbsolutePath().toString())));
+        Comparator.comparing(
+            e -> PathNormalizer.normalizePath(e.path().toAbsolutePath().toString())));
 
     int filesAdded = 0;
-    List<Path> batch = new ArrayList<>(SYNC_ENQUEUE_BATCH_SIZE);
-    for (Path file : collected) {
-      batch.add(file);
+    List<JobQueue.EnqueueEntry> batch = new ArrayList<>(SYNC_ENQUEUE_BATCH_SIZE);
+    for (JobQueue.EnqueueEntry entry : collected) {
+      batch.add(entry);
       if (batch.size() >= SYNC_ENQUEUE_BATCH_SIZE) {
-        filesAdded += jobQueue.enqueue(batch);
+        filesAdded += jobQueue.enqueueEntries(batch);
         batch.clear();
       }
     }
     if (!batch.isEmpty()) {
-      filesAdded += jobQueue.enqueue(batch);
+      filesAdded += jobQueue.enqueueEntries(batch);
     }
     if (!walkInterrupted[0] && !walkAborted[0] && filesAdded > 0) {
       log.info("syncDirectory: enqueued {} missing files for indexing", filesAdded);

@@ -15,24 +15,27 @@
  * flag (the caller's projection of the `Stability` axis, mirroring `renderObserved`), so the seam
  * needs no host-utility or store import and is trivially unit-testable.
  *
- * `ready` means the folder's own index jobs drained AND the enrichment backfill owes no pending work
- * (809 finding 1). Tempdoc 599 §10 originally excluded the vector/embedding tier here on the grounds
- * that it is a separate global backfill — but a row that says "✓ indexed" during that backfill is the
- * §8.1 false-terminal defect one layer up: extraction + the Lucene write are done, so keyword search
- * works, while embedding/SPLADE/NER are still running and semantic + hybrid search — the actual
- * product — do not. `enriching` is that window, named. The enrichment fact itself is derived ONCE in
- * `enrichmentCoverage.ts` (which reads BOTH the doc-level and passage-level counters; the doc-level
- * ones read 100% during a passage backfill — 809 finding 9's diagnostic trap).
+ * TWO TIERS (tempdoc 813 §4 + 809 finding 1, superseding the 599 §10 / 598 note that used to sit
+ * here): job drain makes a folder KEYWORD-searchable, which is not the same fact as "fully
+ * searchable" — the semantic layers are a separate backfill that carries no per-root job rows, and
+ * the DOC-level counters read fully healthy during a PASSAGE-level backfill (809 finding 9's trap;
+ * `enrichmentCoverage.ts` documents it). Since 813 the wire row also carries per-root enrichment
+ * COVERAGE, so the drained tier splits: `enriching` while coverage is still climbing (the shared
+ * `ENRICHMENT_CATCHING_UP_CAVEAT` wording, plus this root's own percent when derivable) and `ready`
+ * once it is complete ("fully searchable"). When per-root coverage is not derivable the index-wide
+ * positive-evidence boolean (`enrichmentProgress(status).pending`) is the fallback gate — caveat
+ * without a percent, never a fabricated number. Neither tier derives from the walk timestamp.
  */
 
 import type { IndexedRootView } from '../../api/generated/schema-types/indexed-root-view.js';
+import type { EnrichmentApplicability } from './indexingProgress.js';
 import { ENRICHMENT_CATCHING_UP_CAVEAT } from './enrichmentCoverage.js';
 
 export type FolderState =
   | 'scanning' // walk in progress — files not yet fully enqueued
   | 'indexing' // in-flight jobs > 0
-  | 'ready' // scanned, drained, no failures, enrichment settled — fully searchable
-  | 'enriching' // 809 finding 1 — indexed + keyword-searchable, but the enrichment backfill is still running
+  | 'enriching' // 809 finding 1 / 813 §4 — drained + keyword-searchable, enrichment still catching up
+  | 'ready' // scanned, drained, no failures — fully searchable (or coverage unknowable)
   | 'unverified' // tempdoc 626 §Axis-C — indexed, but the reconcile couldn't verify deletions (cap-skipped)
   | 'failed' // walk error, or terminal failed jobs with nothing in flight
   | 'empty' // scanned, zero indexable files
@@ -62,13 +65,96 @@ export interface FolderStatusContext {
   /** The system `Stability` axis projected to a boolean (`stability.kind === 'provisional'`). */
   readonly provisional: boolean;
   /**
-   * 809 finding 1 — does the enrichment backfill still owe work? From the ONE derivation
-   * (`enrichmentProgress(status).pending`), passed in like `provisional` so this seam stays pure and
-   * store-free. INDEX-WIDE, not per-folder: the backfill does not record which root a document came
-   * from (809 finding 2), so this gates the completion CLAIM, and the caveat names the capability
-   * rather than promising a per-folder percentage it cannot compute.
+   * Tempdoc 813 §4 — which parent enrichment stages apply to this deployment, taken from the ONE
+   * index-wide progress derivation (`selectIndexingProgress(...).stages`). The wire row carries
+   * per-root coverage counts but no enabled flags, so without this a switched-off stage's
+   * never-settling documents would pin every folder at "enriching 67%" forever.
+   *
+   * Absent / `null` ⟹ applicability is UNKNOWN (no poll snapshot yet, or the worker did not
+   * report) ⟹ no percent is asserted and the row falls back to the pre-813 wording.
    */
-  readonly enrichmentPending: boolean;
+  readonly enrichmentStages?: EnrichmentApplicability | null;
+  /**
+   * 809 finding 1 — does the enrichment backfill still owe work, INDEX-WIDE? From the ONE claim
+   * derivation (`enrichmentProgress(status).pending`), passed in like `provisional` so this seam
+   * stays pure and store-free. The FALLBACK gate for the `enriching` tier when this root's own
+   * coverage is not derivable (`rootCoverage(...) === null`): positive evidence of pending work
+   * still withholds the terminal "✓ fully searchable" claim, it just cannot name a percent.
+   */
+  readonly enrichmentPending?: boolean;
+}
+
+/** A non-negative finite count from an optional wire number (absent / negative ⟹ 0). */
+function count(value: number | null | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/**
+ * Tempdoc 813 §4 — this root's enrichment coverage as a settled-over-total percent, or `null` when
+ * there is no faithful denominator (the `indexingProgress` discipline at folder granularity: never
+ * 0/0 → NaN, never a fabricated 0%).
+ *
+ * Same semantics as the index-wide selector: each APPLICABLE stage contributes its own numerator and
+ * denominator, and "settled" is the TERMINAL count the Worker computed (COMPLETED + COMPLETED_EMPTY
+ * where the stage defines it + FAILED — `IndexedRootView`'s numerator discipline), so a permanently
+ * failed document cannot hold a folder below 100% forever. Denominator discipline is likewise the
+ * wire's: every parent stage counts only the documents that carry ITS status field (chunk docs
+ * excluded) and the chunk tier is counted over CHUNKED documents, never "N of M files".
+ *
+ * `complete` is EXACT (`settled >= total`), never "the percent rounded to 100": 999 settled of 1000
+ * rounds to 100%, and claiming "fully searchable" there would be the §8.1 false-terminal in a new
+ * costume. The displayed percent is correspondingly capped at 99 while work remains.
+ */
+interface RootCoverage {
+  /** 0-100, capped at 99 while any document is unsettled. */
+  readonly percent: number;
+  readonly complete: boolean;
+}
+
+function rootCoverage(
+  row: IndexedRootView,
+  stages: EnrichmentApplicability | null | undefined,
+): RootCoverage | null {
+  // Applicability UNKNOWN (no poll snapshot yet — the synchronous first store callback delivers
+  // exactly this) ⟹ no tier may be claimed, in EITHER direction: "fully searchable" off a
+  // surviving chunk count is the §8.1 false-terminal again.
+  if (!stages) return null;
+  let total = 0;
+  let settled = 0;
+  /**
+   * A stage joins the ratio only when it is applicable, has its own denominator, AND the wire
+   * actually reported its settled count. A MISSING settled key is not "zero settled": it is the
+   * same absence as a missing total, and counting the stage anyway freezes a numerator at 0 over a
+   * live denominator — a fraction that can never move.
+   */
+  const addStage = (
+    applicable: boolean,
+    stageTotal: number | undefined,
+    stageSettled: number | undefined,
+  ): void => {
+    if (!applicable) return;
+    if (typeof stageSettled !== 'number' || !Number.isFinite(stageSettled)) return;
+    const denominator = count(stageTotal);
+    if (denominator <= 0) return;
+    total += denominator;
+    settled += Math.min(count(stageSettled), denominator);
+  };
+  // Each parent stage carries its OWN denominator (the docs that actually have that stage's status
+  // field — the Worker's `FieldExistsQuery` half), so a document indexed before a stage existed
+  // cannot pin the folder below 100% forever.
+  addStage(stages.embedding, row.parentDocsTotalEmbedding, row.parentDocsSettledEmbedding);
+  addStage(stages.splade, row.parentDocsTotalSplade, row.parentDocsSettledSplade);
+  addStage(stages.ner, row.parentDocsTotalNer, row.parentDocsSettledNer);
+  // The chunk tier's applicability is the EMBEDDING stage's — chunk vectors come from the same
+  // encoder, so with embedding off no chunk will ever settle. (A deployment that does not chunk
+  // withdraws it a second way: no chunk docs, no denominator.)
+  addStage(stages.embedding, row.chunkDocsTotal, row.chunkDocsSettled);
+  if (total <= 0) return null;
+  const complete = settled >= total;
+  return {
+    percent: complete ? 100 : Math.min(99, Math.round((settled / total) * 100)),
+    complete,
+  };
 }
 
 /**
@@ -169,7 +255,9 @@ export function folderStatus(row: IndexedRootView, ctx: FolderStatusContext): Fo
     };
   }
 
-  // Drained, indexed, no failures → keyword-searchable. The ONLY path that yields the ✓ glyph.
+  // Drained, indexed, no failures → searchable. The ONLY path that yields the ✓ glyph — in either of
+  // its two tiers (813 §4): the row is honestly searchable as soon as its jobs drain, so the ✓ stays
+  // and the meta line carries which tier (the catching-up caveat + a percent vs "fully searchable").
   if (indexed) {
     // Tempdoc 626 §Axis-C — an indexed folder whose deletions couldn't be verified must NOT show the
     // green ✓ (the 599 false-"✓" class, generalized to reconciliation completeness). It is still
@@ -185,13 +273,32 @@ export function folderStatus(row: IndexedRootView, ctx: FolderStatusContext): Fo
       };
     }
     const indexedSuffix = ctx.relativeTime ? ` · indexed ${ctx.relativeTime}` : '';
-    // 809 finding 1 — the folder's own jobs drained, but the enrichment backfill has not. Extraction
-    // and the Lucene write are what "drained" proves; embedding/SPLADE/NER run afterwards, and until
-    // they do, semantic and hybrid search do not work. So this is NOT the terminal ✓: say what IS
-    // true (indexed, keyword-searchable) and what is still happening. Ordered AFTER the failure and
-    // deletion-verification branches — those are conditions about this folder, this one is about the
-    // index-wide backfill, and a folder-specific problem is the more useful thing to surface.
-    if (ctx.enrichmentPending) {
+    // Tempdoc 626 §Recency — the freshness heartbeat. Showing WHEN the index↔disk correspondence was
+    // last confirmed turns a bare "✓" into a checkable fact ("Verified 2m ago") and makes a folder the
+    // round-robin reconcile hasn't reached lately read as mildly stale ("Verified 8m ago") rather than
+    // falsely-fresh. Display-only — the `index.drift-unknown` Condition owns the "needs attention" alarm.
+    const verifiedSuffix = ctx.verifiedRelativeTime ? ` · Verified ${ctx.verifiedRelativeTime}` : '';
+    // Tempdoc 813 §4 + 809 finding 1 — the two-tier split, with a percent rendered ONLY when this
+    // root's own coverage denominator is faithful. Four honest arms:
+    //   coverage known, incomplete  → `enriching` + the shared caveat + this root's percent
+    //   coverage known, complete    → `ready` ("fully searchable") — even while OTHER roots still
+    //                                 enrich (per-root truth outranks the index-wide boolean)
+    //   coverage unknown, backfill pending index-wide → `enriching` + caveat, NO percent (positive
+    //                                 evidence withholds the terminal claim; it cannot name a number)
+    //   coverage unknown, nothing pending → pre-813 terminal wording (no tier asserted either way)
+    const coverage = rootCoverage(row, ctx.enrichmentStages);
+    if (coverage !== null && !coverage.complete) {
+      // Keyword-searchable NOW, semantic layers still catching up. The "indexed <time>" stamp is
+      // dropped here: the folder's headline fact is the work still running, not when it last changed.
+      return {
+        state: 'enriching',
+        glyph: 'pending',
+        metaText: `${collection} · ${fileCountText} · ${ENRICHMENT_CATCHING_UP_CAVEAT} · ${coverage.percent}%${verifiedSuffix}`,
+        inFlight,
+        failed,
+      };
+    }
+    if (coverage === null && ctx.enrichmentPending === true) {
       return {
         state: 'enriching',
         glyph: 'pending',
@@ -200,15 +307,13 @@ export function folderStatus(row: IndexedRootView, ctx: FolderStatusContext): Fo
         failed,
       };
     }
-    // Tempdoc 626 §Recency — the freshness heartbeat. Showing WHEN the index↔disk correspondence was
-    // last confirmed turns a bare "✓" into a checkable fact ("Verified 2m ago") and makes a folder the
-    // round-robin reconcile hasn't reached lately read as mildly stale ("Verified 8m ago") rather than
-    // falsely-fresh. Display-only — the `index.drift-unknown` Condition owns the "needs attention" alarm.
-    const verifiedSuffix = ctx.verifiedRelativeTime ? ` · Verified ${ctx.verifiedRelativeTime}` : '';
     return {
       state: 'ready',
       glyph: 'indexed',
-      metaText: `${collection} · ${fileCountText}${indexedSuffix}${verifiedSuffix}`,
+      metaText:
+        coverage === null
+          ? `${collection} · ${fileCountText}${indexedSuffix}${verifiedSuffix}`
+          : `${collection} · ${fileCountText} · fully searchable${indexedSuffix}${verifiedSuffix}`,
       inFlight,
       failed,
     };

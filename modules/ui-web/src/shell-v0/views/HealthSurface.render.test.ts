@@ -470,6 +470,9 @@ describe('HealthSurface — Queue card status vocabulary (630 D1)', () => {
   const queueSubs = (el: HealthSurface) =>
     Array.from(el.shadowRoot?.querySelectorAll('.card-sub') ?? []).map((s) => s.textContent?.trim() ?? '');
 
+  // Tempdoc 813 §4 — "Up to date" is now the COVERAGE-complete close, not the job-drain close. This
+  // case keeps its original intent (idle + verified-healthy ⇒ the terminal trust state, never a bare
+  // "Idle") and now exercises it with nothing left to enrich, which is when the claim is true.
   it('idle + verified-healthy index ⇒ "Up to date" (the terminal trust state), never "Idle"', async () => {
     feed({ indexedDocuments: 5, pendingJobs: 0, indexHealthy: true });
     const el = await mount();
@@ -505,11 +508,19 @@ describe('HealthSurface — Queue card status vocabulary (630 D1)', () => {
         worker: {
           core: { indexState: 'IDLE', indexedDocuments: 5, pendingJobs: 0, indexHealthy: true },
           // 809 finding 9's trap: the doc-level tier is clean, the passage tier is not.
+          // `chunkDocCount` is the passage tier's DENOMINATOR — the wire always carries it beside
+          // the pending count (one `ChunkCoverageView` message), and since 813 §3b the card's phase
+          // comes from the coverage ratio, so a pending count without its denominator is not the
+          // shape this trap ever arrives in.
           enrichment: {
             embeddingEnabled: true,
             embeddingPendingCount: 0,
             embeddingCoveragePercent: 100,
-            chunk: { chunkEmbeddingPendingCount: 1554, chunkVectorsReady: false },
+            chunk: {
+              chunkDocCount: 2000,
+              chunkEmbeddingPendingCount: 1554,
+              chunkVectorsReady: false,
+            },
           },
         },
         readiness: {
@@ -526,7 +537,8 @@ describe('HealthSurface — Queue card status vocabulary (630 D1)', () => {
       const subs = queueSubs(el);
       expect(subs).not.toContain('Up to date');
       expect(subs).not.toContain('Idle');
-      expect(subs).toContain('Building semantic search');
+      // 446 of 2000 passages settled ⇒ the card names the work AND its honest percent.
+      expect(subs).toContain('Building semantic search — 22%');
     } finally {
       teardown(el);
     }
@@ -539,6 +551,81 @@ describe('HealthSurface — Queue card status vocabulary (630 D1)', () => {
       const subs = queueSubs(el);
       expect(subs).toContain('Indexing');
       expect(subs).not.toContain('Up to date');
+    } finally {
+      teardown(el);
+    }
+  });
+
+  // Tempdoc 813 §4 — the two-tier terminal close. Job drain buys the KEYWORD tier only; the semantic
+  // layers keep building afterwards, and `indexState` stays IDLE throughout that window. Claiming
+  // "Up to date" there was the §1d completion lie ("a completion claim is a capability claim").
+  function feedEnrichment(enrichment: Record<string, unknown>): void {
+    __feedForTest({
+      status: {
+        worker: {
+          core: { indexState: 'IDLE', indexedDocuments: 5, pendingJobs: 0, indexHealthy: true },
+          enrichment,
+        },
+        readiness: {
+          composites: {
+            retrieval: { state: 'READY', reasonCodes: [] },
+            aiFeatures: { state: 'READY', reasonCodes: [] },
+          },
+        },
+      } as unknown as StatusSnapshot,
+    });
+    __tickClockForTest();
+  }
+
+  it('813: jobs drained but coverage incomplete ⇒ "Building semantic search — N%", never "Up to date"', async () => {
+    feedEnrichment({
+      backfillMode: 'combined',
+      embeddingEnabled: true,
+      embeddingDocCount: 100,
+      embeddingPendingCount: 36,
+    });
+    const el = await mount();
+    try {
+      const subs = queueSubs(el);
+      expect(subs).toContain('Building semantic search — 64%');
+      expect(subs).not.toContain('Up to date');
+      expect(subs).not.toContain('Idle');
+    } finally {
+      teardown(el);
+    }
+  });
+
+  it('813: the chunk tier alone can hold the card off the terminal claim', async () => {
+    feedEnrichment({
+      backfillMode: 'idle',
+      embeddingEnabled: true,
+      embeddingDocCount: 100,
+      embeddingPendingCount: 0,
+      chunk: { chunkDocCount: 100, chunkEmbeddingPendingCount: 50 },
+    });
+    const el = await mount();
+    try {
+      const subs = queueSubs(el);
+      expect(subs).toContain('Building semantic search — 75%');
+      expect(subs).not.toContain('Up to date');
+    } finally {
+      teardown(el);
+    }
+  });
+
+  it('813: coverage complete ⇒ the terminal "Up to date" returns', async () => {
+    feedEnrichment({
+      backfillMode: 'idle',
+      embeddingEnabled: true,
+      embeddingDocCount: 100,
+      embeddingPendingCount: 0,
+      chunk: { chunkDocCount: 100, chunkEmbeddingPendingCount: 0 },
+    });
+    const el = await mount();
+    try {
+      const subs = queueSubs(el);
+      expect(subs).toContain('Up to date');
+      expect(subs.some((s) => s.startsWith('Building semantic search'))).toBe(false);
     } finally {
       teardown(el);
     }

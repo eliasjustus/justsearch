@@ -28,6 +28,8 @@
     "home-light", "library-light", "ai-brain-light", "health-light",
     "settings-light", "security-light", "help-light"
   ],
+  "shell-v0/components/TaskList.ts": ["tasks-occlusion"],
+  "shell-v0/chrome/OverlayHost.ts": ["tasks-occlusion"],
   "shell-v0/plugin-api/CorePlugin.ts": [
     "home", "library", "ai-brain", "health", "settings", "security", "help"
   ],

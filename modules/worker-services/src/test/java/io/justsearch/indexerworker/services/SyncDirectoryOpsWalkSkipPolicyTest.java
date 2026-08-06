@@ -42,8 +42,42 @@ final class SyncDirectoryOpsWalkSkipPolicyTest {
     assertEquals(List.of(keep), queue.enqueuedPaths, "Only the non-policy-skipped file is enqueued");
   }
 
+  /**
+   * Pins that the sync-directory walk passes each file's real byte size to the queue (tempdoc 813
+   * Slice B) — the visitor already holds {@code BasicFileAttributes}, so a regression to the
+   * size-dropping path-only default overload would silently null every size on re-sync.
+   */
+  @Test
+  void syncWalkCarriesEachFilesRealSizeToTheQueue() throws Exception {
+    Path root = tempDir.resolve("size-pin");
+    Files.createDirectories(root);
+    Path small = Files.writeString(root.resolve("small.md"), "abc");
+    Path large = Files.writeString(root.resolve("large.md"), "0123456789");
+    RecordingQueue queue = new RecordingQueue();
+    SyncDirectoryOps ops = new SyncDirectoryOps(null, null, null, queue, null);
+
+    ops.execute(root.toString(), true, new CapturingObserver());
+
+    assertEquals(2, queue.enqueuedEntries.size(), "Both files enqueued as sized entries");
+    for (JobQueue.EnqueueEntry entry : queue.enqueuedEntries) {
+      assertEquals(
+          Files.size(entry.path()),
+          entry.sizeBytes(),
+          "Entry for " + entry.path() + " must carry the file's real size");
+    }
+    long smallSize = Files.size(small);
+    long largeSize = Files.size(large);
+    assertEquals(
+        2,
+        queue.enqueuedEntries.stream()
+            .filter(e -> e.sizeBytes() == smallSize || e.sizeBytes() == largeSize)
+            .count(),
+        "The two distinct real sizes must both be recorded");
+  }
+
   private static final class RecordingQueue implements JobQueue {
     final List<Path> enqueuedPaths = new ArrayList<>();
+    final List<EnqueueEntry> enqueuedEntries = new ArrayList<>();
 
     @Override
     public void open() {}
@@ -52,6 +86,12 @@ final class SyncDirectoryOpsWalkSkipPolicyTest {
     public int enqueue(List<Path> paths, String collection) {
       enqueuedPaths.addAll(paths);
       return paths.size();
+    }
+
+    @Override
+    public int enqueueEntries(List<EnqueueEntry> entries, String collection) {
+      enqueuedEntries.addAll(entries);
+      return enqueue(EnqueueEntry.paths(entries), collection);
     }
 
     @Override
