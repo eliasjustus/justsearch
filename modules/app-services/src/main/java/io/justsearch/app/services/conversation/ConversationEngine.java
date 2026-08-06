@@ -147,6 +147,39 @@ public final class ConversationEngine {
   }
 
   /**
+   * Tempdoc 734 round-14 F4 — TRUE when this shape + body WOULD record its turns to the conversation
+   * store, but the store is encrypted and locked, so every append throws and the turn is
+   * accepted-and-dropped. Asked by the dispatch controller BEFORE it commits an SSE 200, so the
+   * caller gets the same locked answer the history read path already gives (423) instead of silence.
+   *
+   * <p>Gated on the WRITE KEY, not bluntly on "locked": a dispatch that records nothing (an EPHEMERAL
+   * shape that is not {@code recordsToThread}, an OPERATOR/AGENT-audience or shape-driven shape, a
+   * request carrying neither {@code sessionId} nor {@code conversationId}, or an internal throwaway
+   * conversation) touches no store and stays serviceable while locked. The key is resolved by the
+   * SAME two helpers the substrate-driven dispatch resolves it with ({@link #sessionIdFor} /
+   * {@link #threadRecordId}), so the gate cannot drift from what actually gets written.
+   */
+  public boolean wouldDiscardWhileLocked(ConversationShapeRef shapeId, Map<String, Object> body) {
+    if (conversationStore == null || !conversationStore.isLocked()) {
+      return false;
+    }
+    Map<String, Object> safeBody = body == null ? Map.of() : body;
+    return catalog
+        .findById(shapeId)
+        .map(shape -> persistenceKey(shape, safeBody) != null)
+        .orElse(false);
+  }
+
+  /**
+   * The conversation-record write key for a request: the PERSISTENT shape's {@code sessionId}, else
+   * the recordsToThread {@code conversationId}. {@code null} = this request persists nothing.
+   */
+  private static String persistenceKey(ConversationShape shape, Map<String, Object> body) {
+    String sessionId = sessionIdFor(shape, body);
+    return sessionId != null ? sessionId : threadRecordId(shape, sessionId, body);
+  }
+
+  /**
    * Run a registered shape. Lookup → audience-validate → dispatch by mode. Blocks until the
    * shape's runner (or substrate-driven loop) returns.
    */
@@ -237,9 +270,7 @@ public final class ConversationEngine {
     // The prior stub (Phase C) left the message list empty and said "later phase."
     // Phase 496 implements the integration: sessionId from the request body seeds
     // the context with the conversation history. EPHEMERAL shapes still start empty.
-    String sessionId = shape.persistenceMode() == io.justsearch.agent.api.conversation.PersistenceMode.PERSISTENT
-        ? (String) body.get("sessionId")
-        : null;
+    String sessionId = sessionIdFor(shape, body);
     List<Map<String, Object>> initialMessages = new ArrayList<>();
     if (sessionId != null && conversationStore != null) {
       // Tempdoc 610 Phase C — seed the prompt from the EFFECTIVE context (the
@@ -648,6 +679,17 @@ public final class ConversationEngine {
     m.put("role", "assistant");
     m.put("content", text);
     return m;
+  }
+
+  /**
+   * The history-LOAD key: the request's {@code sessionId} for PERSISTENT shapes, {@code null} for
+   * EPHEMERAL ones (which start from a fresh context every turn). Also the primary write key —
+   * a PERSISTENT shape records its turns under it.
+   */
+  private static String sessionIdFor(ConversationShape shape, Map<String, Object> body) {
+    return shape.persistenceMode() == io.justsearch.agent.api.conversation.PersistenceMode.PERSISTENT
+        ? (String) body.get("sessionId")
+        : null;
   }
 
   /**

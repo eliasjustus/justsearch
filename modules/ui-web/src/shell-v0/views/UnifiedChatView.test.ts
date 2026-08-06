@@ -4835,3 +4835,131 @@ describe('798 — the wide-layout query container wraps the zones that query it'
     view.remove();
   });
 });
+
+// Tempdoc 734 round-14 F4 — with chat history encrypted and locked, the composer accepted input and
+// `POST /api/chat/dispatch` answered 200 while the turn was discarded: the transcript fetched after
+// unlock contained no user message, no reply, no placeholder. The backend now refuses with 423 (the
+// same status its history read already gives); these are the two surface halves — Send is refused
+// BEFORE the round-trip with the reason named, and a 423 that arrives anyway (the store locked
+// between render and submit) is spoken, never swallowed.
+describe('734 F4 — the composer does not accept chat input the locked store would discard', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    vi.mocked(consumeShapeStream).mockImplementation(() => Promise.resolve());
+  });
+
+  it('Send is disabled AND names the lock as the reason while chat history is locked', async () => {
+    const view = mountView();
+    view.affordance = 'documents';
+    view.inputDraft = 'what did I save about the audit?';
+    await view.updateComplete;
+    const composer = () => view.shadowRoot?.querySelector('jf-composer');
+    // Precondition: with an unlocked store this exact turn IS sendable — otherwise "disabled after
+    // the lock" would prove nothing about the lock.
+    expect(composer()?.hasAttribute('submit-disabled')).toBe(false);
+
+    view.historyLocked = true;
+    await view.updateComplete;
+
+    expect(composer()?.hasAttribute('submit-disabled')).toBe(true);
+    // The reason, not just the disabled bit: a Send that goes grey with no wording is the silent
+    // no-op wearing a different hat. It speaks the ONE CAUSE_ROWS vocabulary + names the remedy.
+    const reason = composer()?.getAttribute('submit-title') ?? '';
+    expect(reason).toContain('encrypted and locked');
+    expect(reason).toContain('Security');
+    view.remove();
+  });
+
+  it('a locked store does NOT disable the retrieve tier — plain search needs no chat store', async () => {
+    const view = mountView();
+    view.affordance = 'retrieve';
+    view.inputDraft = 'audit';
+    view.historyLocked = true;
+    await view.updateComplete;
+
+    const composer = view.shadowRoot?.querySelector('jf-composer');
+    expect(composer?.hasAttribute('submit-disabled')).toBe(false);
+    // No reason, because there is nothing to refuse: the search floor stays open while locked.
+    expect(composer?.getAttribute('submit-title')).toBe('');
+    view.remove();
+  });
+
+  it('a 423 from dispatch renders the actionable notice, keeps the text, and takes back the unsent bubble', async () => {
+    vi.mocked(consumeShapeStream).mockImplementation(() =>
+      Promise.reject(
+        Object.assign(new Error('consumeShapeStream: HTTP 423 from /api/chat/dispatch'), {
+          status: 423,
+        }),
+      ),
+    );
+    const view = mountView();
+    view.affordance = 'documents';
+    view.inputDraft = 'what did I save about the audit?';
+    await view.updateComplete;
+    // The race this covers: the view still believes the store is unlocked when the user hits Send.
+    expect(view.historyLocked).toBe(false);
+
+    view.shadowRoot!.querySelector('jf-composer')!.dispatchEvent(new CustomEvent('composer-submit'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await view.updateComplete;
+
+    const notice = view.shadowRoot?.querySelector('.locked-send-notice');
+    expect(notice).not.toBeNull();
+    expect(notice?.textContent).toContain('not sent');
+    // Actionable, not just true: the remedy affordance is on screen with the refusal.
+    expect(view.shadowRoot?.querySelector('.history-locked')?.textContent).toContain(
+      'Unlock in Security',
+    );
+    // The message was never recorded, so it must not sit in the transcript looking sent — and the
+    // user's text is back where they can re-send it.
+    expect(view.thread.some((m) => m.content === 'what did I save about the audit?')).toBe(false);
+    expect(view.inputDraft).toBe('what did I save about the audit?');
+    view.remove();
+  });
+
+  it('a non-423 stream failure still reads as an ordinary error, not as a lock', async () => {
+    vi.mocked(consumeShapeStream).mockImplementation(() =>
+      Promise.reject(Object.assign(new Error('HTTP 500 from /api/chat/dispatch'), { status: 500 })),
+    );
+    const view = mountView();
+    view.affordance = 'documents';
+    view.inputDraft = 'anything';
+    await view.updateComplete;
+
+    view.shadowRoot!.querySelector('jf-composer')!.dispatchEvent(new CustomEvent('composer-submit'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await view.updateComplete;
+
+    expect(view.historyLocked).toBe(false);
+    expect(view.shadowRoot?.querySelector('.locked-send-notice')).toBeNull();
+    expect(view.shadowRoot?.querySelector('.error')?.textContent).toContain('500');
+    view.remove();
+  });
+});
+
+// Tempdoc 734 round-14 F4 (second half) — the round observed "200, no answer, NO ERROR". The backend
+// was not silent: a locked dispatch raised KeyLockedException out of loadEffectiveContext → readMeta
+// and the controller wrote an SSE `error` event. The SURFACE was silent — the locked branch replaced
+// the whole conversation column, error div included. A stream failure must be legible in both.
+describe('734 F4 — a stream error is not swallowed by the locked branch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+  });
+
+  it('an error reported while the store is locked is on screen next to the locked notice', async () => {
+    const view = mountView();
+    view.affordance = 'documents';
+    view.historyLocked = true;
+    view.errorMessage = 'Conversation store is locked';
+    await view.updateComplete;
+
+    // Both, not either: the transcript stays gated AND the failure is stated.
+    expect(view.shadowRoot?.querySelector('.history-locked')).not.toBeNull();
+    const shown = view.shadowRoot?.querySelector('.error');
+    expect(shown).not.toBeNull();
+    expect(shown?.textContent).toContain('Conversation store is locked');
+    view.remove();
+  });
+});
