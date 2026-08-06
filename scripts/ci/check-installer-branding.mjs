@@ -19,9 +19,33 @@
  * This is a static gate on the DECLARED source. It cannot prove a built wizard renders the text;
  * the Sandbox round's page-by-page installer walk is what does that. What it prevents is the
  * declaration silently changing underneath that round.
+ *
+ * ASSET CLASS (tempdoc 815, the visual-identity kernel). Text branding was only half the wizard.
+ * The other half is artwork, and artwork fails in ways a build never notices: a `bundle.icon` entry
+ * can point at a file that does not exist, the shipped `icon.ico` can quietly still be the stock
+ * Tauri one, an NSIS bitmap can be the right filename at the wrong pixel size (MUI stretches it
+ * without complaint), and the web favicon can still be Vite's logo. Every asset here derives from
+ * `brand/` via `node brand/generate.mjs` -- an identity surface never invents brand -- so these
+ * checks assert the derived files exist, are real, and are wired to the surfaces that show them.
  */
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+
+/**
+ * sha256 of the stock Tauri `icon.ico` as it stood at 1a716e08, the last commit before the
+ * identity kernel. Shipping an installer whose icon is the framework's placeholder is the exact
+ * failure this gate exists to make impossible; recompute with
+ * `git show <commit>:modules/shell/src-tauri/icons/icon.ico | sha256sum` if it ever needs re-basing.
+ */
+export const STOCK_TAURI_ICON_SHA256 =
+  '392206b573a809997f3ff16fe68f456a52e931c372107eade9572b329bbe3321';
+
+/** MUI's wizard bitmaps are fixed-size surfaces; anything else is stretched or cropped silently. */
+const WIZARD_BITMAPS = {
+  sidebarImage: { width: 164, height: 314, where: 'the Welcome/Finish sidebar' },
+  headerImage: { width: 150, height: 57, where: 'the interior-page header' },
+};
 
 /** Strip NSIS line comments so a commented-out define never counts as present. */
 function codeLines(nsh) {
@@ -108,10 +132,210 @@ export function checkFullPageBranding(nsh) {
   return failures;
 }
 
-export function runCheck(root, read = (p) => readFileSync(resolve(root, p), 'utf8')) {
+/**
+ * Read a BITMAPFILEHEADER + BITMAPINFOHEADER. Returns null when the buffer is not a BMP at all,
+ * which is a distinct failure from "a BMP of the wrong size" and is reported as such.
+ */
+function bmpInfo(buffer) {
+  if (buffer.length < 54 || buffer[0] !== 0x42 || buffer[1] !== 0x4d) return null;
+  return {
+    width: buffer.readInt32LE(18),
+    height: Math.abs(buffer.readInt32LE(22)),
+    bitCount: buffer.readUInt16LE(28),
+  };
+}
+
+/**
+ * `bundle.icon` is the list tauri-bundler canonicalises at build time -- a missing entry fails the
+ * build, but only on a machine that can build the installer, which on Windows with Smart App
+ * Control means not the developer's. The list stood with three PNG entries that did not exist for
+ * as long as nobody built an installer locally. `assets` maps a src-tauri-relative path to its
+ * bytes, or to null/undefined when the file is absent.
+ */
+export function checkBundleIcons(tauriConfJson, assets, stockSha = STOCK_TAURI_ICON_SHA256) {
+  const failures = [];
+  let conf;
+  try {
+    conf = JSON.parse(tauriConfJson);
+  } catch (error) {
+    return [`tauri.conf.json does not parse: ${error.message}`];
+  }
+  const icons = conf?.bundle?.icon;
+  if (!Array.isArray(icons) || icons.length === 0) {
+    return ['tauri.conf.json has no bundle.icon list. The bundler has no app icon to embed.'];
+  }
+  for (const relative of icons) {
+    const bytes = assets.get(relative);
+    if (bytes === undefined || bytes === null) {
+      failures.push(
+        `bundle.icon lists "${relative}" but no such file exists under modules/shell/src-tauri/. ` +
+          `tauri-bundler canonicalises every entry, so this fails the installer build. Run ` +
+          `\`node brand/generate.mjs\` -- every icon here derives from brand/.`,
+      );
+      continue;
+    }
+    if (bytes.length === 0) {
+      failures.push(`bundle.icon entry "${relative}" is a zero-byte file.`);
+    }
+  }
+  const ico = assets.get('icons/icon.ico');
+  if (ico !== undefined && ico !== null && ico.length > 0) {
+    const digest = createHash('sha256').update(ico).digest('hex');
+    if (digest === stockSha) {
+      failures.push(
+        'modules/shell/src-tauri/icons/icon.ico is byte-identical to the stock Tauri placeholder ' +
+          'icon. JustSearch ships its own mark: the icon derives from brand/mark-dark.svg (and ' +
+          'brand/mark-small-dark.svg / mark-24-dark.svg for the small frames) via ' +
+          '`node brand/generate.mjs`. An identity surface never invents brand and never ships the ' +
+          "framework's default in place of it (tempdoc 815).",
+      );
+    }
+  }
+  return failures;
+}
+
+/**
+ * The wizard artwork seam is `bundle.windows.nsis`, NOT installer-hooks.nsh: the generated
+ * template declares `!define SIDEBARIMAGE "{{sidebar_image}}"` and only then, guarded by
+ * `!if "${SIDEBARIMAGE}" != ""`, does `!define MUI_WELCOMEFINISHPAGE_BITMAP` / `MUI_HEADERIMAGE` /
+ * `MUI_HEADERIMAGE_BITMAP` (installer.nsi:47-49 and :131-150 at tag tauri-cli-v2.11.4, the version
+ * modules/shell/package-lock.json pins). Defining those symbols in the hooks file instead would
+ * collide with the template's own defines, and MUI_HEADERIMAGE -- which is only ever enabled inside
+ * `!if "${HEADERIMAGE}" != ""` -- would still never fire. So the config keys are what this checks.
+ */
+export function checkWizardImages(tauriConfJson, assets) {
+  const failures = [];
+  let conf;
+  try {
+    conf = JSON.parse(tauriConfJson);
+  } catch (error) {
+    return [`tauri.conf.json does not parse: ${error.message}`];
+  }
+  const nsis = conf?.bundle?.windows?.nsis ?? {};
+  for (const [key, spec] of Object.entries(WIZARD_BITMAPS)) {
+    const relative = nsis[key];
+    if (typeof relative !== 'string' || relative.length === 0) {
+      failures.push(
+        `bundle.windows.nsis.${key} is not set, so ${spec.where} falls back to the stock NSIS ` +
+          `artwork (win.bmp / the MUI default). That is round-14 F1, closed by tempdoc 815 -- ` +
+          `point it at the generated bitmap rather than dropping back to the framework default.`,
+      );
+      continue;
+    }
+    const bytes = assets.get(relative);
+    if (bytes === undefined || bytes === null || bytes.length === 0) {
+      failures.push(
+        `bundle.windows.nsis.${key} points at "${relative}", which is missing or empty under ` +
+          `modules/shell/src-tauri/. Run \`node brand/generate.mjs\`.`,
+      );
+      continue;
+    }
+    const info = bmpInfo(bytes);
+    if (info === null) {
+      failures.push(
+        `bundle.windows.nsis.${key} points at "${relative}", which is not a BMP. NSIS/MUI reads ` +
+          `only uncompressed BMP for wizard artwork; a renamed PNG shows as a blank panel.`,
+      );
+      continue;
+    }
+    if (info.width !== spec.width || info.height !== spec.height) {
+      failures.push(
+        `"${relative}" is ${info.width}x${info.height}, but ${spec.where} is a fixed ` +
+          `${spec.width}x${spec.height} surface. MUI stretches or crops a mismatched bitmap ` +
+          `without warning, so this regresses silently.`,
+      );
+    }
+    if (info.bitCount > 24) {
+      failures.push(
+        `"${relative}" is ${info.bitCount}-bit. NSIS wizard bitmaps must be 24-bit or lower; ` +
+          `a 32-bit BMP renders with a black alpha channel on some Windows versions.`,
+      );
+    }
+  }
+  // MUI defaults MUI_ICON to modern-install.ico and MUI_UNICON to modern-uninstall.ico
+  // (Contrib/Modern UI 2/Interface.nsh:49-50), and unlike MUI_HEADERIMAGE_UNBITMAP -- which does
+  // inherit from the installer's bitmap at Interface.nsh:68-70 -- the uninstaller icon inherits
+  // nothing. Both keys are therefore required, or one of the two wizards ships stock NSIS artwork.
+  for (const [key, wizard] of [
+    ['installerIcon', 'installer'],
+    ['uninstallerIcon', 'uninstaller'],
+  ]) {
+    const icon = nsis[key];
+    if (typeof icon !== 'string' || icon.length === 0) {
+      failures.push(
+        `bundle.windows.nsis.${key} is not set, so the ${wizard} wizard window falls back to ` +
+          `NSIS's own icon rather than the JustSearch mark.`,
+      );
+      continue;
+    }
+    const bytes = assets.get(icon);
+    if (bytes === undefined || bytes === null || bytes.length === 0) {
+      failures.push(
+        `bundle.windows.nsis.${key} points at "${icon}", which is missing or empty.`,
+      );
+    }
+  }
+  return failures;
+}
+
+/**
+ * The web surface's identity. `vite.svg` was the scaffold's logo and shipped as the app favicon
+ * for the whole pre-0.2.0 life of the frontend; the replacement derives from brand/mark-small-*.svg.
+ */
+export function checkFaviconWiring(indexHtml) {
+  const failures = [];
+  if (/vite\.svg/.test(indexHtml)) {
+    failures.push(
+      'modules/ui-web/index.html still references vite.svg. That is the Vite scaffold logo, not ' +
+        'JustSearch identity. The favicon is generated into modules/ui-web/public/favicon.svg by ' +
+        '`node brand/generate.mjs` (tempdoc 815).',
+    );
+  }
+  if (!/<link[^>]+rel="icon"[^>]+href="\/favicon\.svg"/.test(indexHtml)) {
+    failures.push(
+      'modules/ui-web/index.html declares no <link rel="icon" href="/favicon.svg">, so the app ' +
+        'tab falls back to the browser default.',
+    );
+  }
+  return failures;
+}
+
+export function runCheck(
+  root,
+  read = (p) => readFileSync(resolve(root, p), 'utf8'),
+  readBinary = (p) => {
+    try {
+      return readFileSync(resolve(root, p));
+    } catch {
+      return null;
+    }
+  },
+) {
+  const conf = read('modules/shell/src-tauri/tauri.conf.json');
+  // Collect every src-tauri-relative asset path the config names, then read each once.
+  let declared = [];
+  try {
+    const parsed = JSON.parse(conf);
+    const nsis = parsed?.bundle?.windows?.nsis ?? {};
+    declared = [
+      ...(Array.isArray(parsed?.bundle?.icon) ? parsed.bundle.icon : []),
+      nsis.sidebarImage,
+      nsis.headerImage,
+      nsis.installerIcon,
+      nsis.uninstallerIcon,
+    ].filter((value) => typeof value === 'string' && value.length > 0);
+  } catch {
+    declared = [];
+  }
+  const assets = new Map(
+    declared.map((relative) => [relative, readBinary(`modules/shell/src-tauri/${relative}`)]),
+  );
   return [
-    ...checkBrandingSource(read('modules/shell/src-tauri/tauri.conf.json')),
+    ...checkBrandingSource(conf),
     ...checkFullPageBranding(read('modules/shell/src-tauri/nsis/installer-hooks.nsh')),
+    ...checkBundleIcons(conf, assets),
+    ...checkWizardImages(conf, assets),
+    ...checkFaviconWiring(read('modules/ui-web/index.html')),
   ];
 }
 
@@ -125,7 +349,9 @@ if (invokedDirectly) {
     process.exit(1);
   }
   console.log(
-    'installer-branding gate OK - bundle.copyright names the bundle version, and both MUI ' +
-      'full pages (Welcome, Finish) declare version-bearing text (tempdoc 807 R13-F1).',
+    'installer-branding gate OK - bundle.copyright names the bundle version, both MUI full pages ' +
+      '(Welcome, Finish) declare version-bearing text (tempdoc 807 R13-F1), every bundle.icon and ' +
+      'wizard-artwork entry resolves to a real correctly-sized file that is not the stock Tauri ' +
+      'placeholder, and the web favicon is JustSearch\'s own (tempdoc 815).',
   );
 }

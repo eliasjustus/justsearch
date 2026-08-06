@@ -92,6 +92,24 @@ independent layers an attacker (or a misbehaving MCP client) must clear, by desi
 ### Repudiation
 Single-user local app; no multi-tenant identity. Out of scope — there is no shared server to repudiate to.
 
+### Information disclosure at rest — the action-ledger audit journal
+The action-ledger audit journal (grant, gate and operation records — including operation subjects and
+scan roots) persists **as plaintext at rest** under the data dir. This is an accepted, dated owner
+decision (2026-08-06, tempdoc 812): accept-and-document, not an oversight.
+
+Two facts bound what that exposure is. First, the journal holds **metadata, not content** — which
+folders were scanned, which grant was given, which gate fired and when; it does not carry document
+text. A reader with disk access learns *what you pointed the app at*, not *what is in those files*.
+Second, the encrypted-store catalog **deliberately excludes it**: a catalog entry without a real
+cipher behind it would be a false claim of sealing, and this model would rather name an unsealed
+store than list one that only looks sealed. Neither fact is a defence against the threat the model
+already declines to cover — a malicious local user with disk access (see *What this model
+deliberately does not claim*).
+
+Revisit this if audit rows ever start carrying **content** rather than metadata — for example a query
+string, a snippet, a document title, or an answer excerpt. At that point the decision changes
+category, because the "metadata, not content" bound is the whole reason plaintext is acceptable here.
+
 ### Denial of service
 A local process could spam the loopback API; impact is confined to the user's own machine (no remote
 amplification, no shared service). Deny logging is rate-limited (`maybeRecordHostDeny`/`maybeRecordTokenDeny`)
