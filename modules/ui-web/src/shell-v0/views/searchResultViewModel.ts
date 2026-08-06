@@ -26,6 +26,8 @@ export interface SearchResultView {
   snippetSource: 'excerpt' | 'preview' | 'none';
   /** Line anchor of the best excerpt (code rows show it as :L<n>). */
   approxLine?: number;
+  /** Tempdoc 811 (C-1a) — the corpus marker, absent for the user's own documents. */
+  collection?: CollectionBadge;
 }
 
 /** The wire identity subset the projection reads (matches SearchHit / SearchHitSnapshot). */
@@ -36,6 +38,66 @@ export interface ResultViewInput {
   kind?: string;
   mimeBase?: string;
   excerptRegions?: Array<{ text?: string; approxLine?: number }>;
+  /** Tempdoc 811 (C-1a) — `fields.collection`; absent/`default` for the user's own documents. */
+  collection?: string;
+}
+
+/**
+ * Tempdoc 811 (C-1a) — the row marker for a hit that did NOT come from the user's own documents.
+ * JustSearch deliberately ships and auto-ingests its own help files under the `justsearch-help`
+ * collection (UIX-015), so app-internal docs intermix with user documents in the result list;
+ * unmarked, the user cannot tell which is which (tempdoc 809 finding 5).
+ *
+ * The mechanism is per-collection, not a `justsearch-help` string check: any named non-default
+ * collection (e.g. `agent-history`, reachable when that scope is explicitly enabled) is marked
+ * through the same badge, so a new collection is legible the day it exists.
+ */
+export interface CollectionBadge {
+  /** The raw wire value (`fields.collection`). */
+  readonly collection: string;
+  /** The pill text. */
+  readonly label: string;
+  /** Teal for the built-in help corpus (`search-ui-behavior.md` §Result Row Anatomy 9); else neutral. */
+  readonly tone: 'help' | 'neutral';
+  /** Hover text stating why the row is marked. */
+  readonly title: string;
+}
+
+/**
+ * Collection values that ARE the user's own documents, so they carry no marker: an absent/blank
+ * field (`IndexingDocumentOps.buildDocument` only writes `collection` when the job carries one) and
+ * the `default` sentinel an untagged watched root gets (`RootLifecycleOps.addWatchedRoot`).
+ */
+const DEFAULT_COLLECTIONS: ReadonlySet<string> = new Set(['', 'default']);
+
+/** Per-collection presentation; an unlisted collection falls back to its own name, neutral. */
+const COLLECTION_PRESENTATION: Readonly<
+  Record<string, { label: string; tone: CollectionBadge['tone']; title: string }>
+> = {
+  'justsearch-help': {
+    label: 'Help',
+    tone: 'help',
+    title: "Built-in JustSearch help — not one of your own documents",
+  },
+  'agent-history': {
+    label: 'Agent history',
+    tone: 'neutral',
+    title: 'A saved agent conversation — not one of your own documents',
+  },
+};
+
+/** The ONE collection → badge decision. Returns `undefined` for the user's own documents. */
+export function collectionBadgeFor(collection: string | undefined): CollectionBadge | undefined {
+  const value = (collection ?? '').trim();
+  if (DEFAULT_COLLECTIONS.has(value)) return undefined;
+  const known = COLLECTION_PRESENTATION[value];
+  if (known) return { collection: value, ...known };
+  return {
+    collection: value,
+    label: value,
+    tone: 'neutral',
+    title: `From the "${value}" collection — not one of your own documents`,
+  };
 }
 
 const SNIPPET_MAX = 240;
@@ -85,6 +147,7 @@ export function projectResultView(hit: ResultViewInput): SearchResultView {
   const excerpt = hit.excerptRegions?.find((r) => (r.text ?? '').trim().length > 0);
   const snippetRaw = excerpt?.text ?? hit.snippet ?? '';
   const snippet = snippetRaw.trim() ? truncateAtWord(snippetRaw) : '';
+  const collection = collectionBadgeFor(hit.collection);
   return {
     kind,
     icon: KIND_ICONS[kind],
@@ -93,5 +156,6 @@ export function projectResultView(hit: ResultViewInput): SearchResultView {
     snippet,
     snippetSource: snippet ? (excerpt ? 'excerpt' : 'preview') : 'none',
     ...(excerpt?.approxLine != null ? { approxLine: excerpt.approxLine } : {}),
+    ...(collection ? { collection } : {}),
   };
 }

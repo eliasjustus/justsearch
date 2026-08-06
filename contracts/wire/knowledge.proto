@@ -106,6 +106,45 @@ message KnowledgeSearchResponse {
   // distinct from total_hits (the bounded fused-candidate-union). The FE headline binds to this
   // ("Top N of M matches"). Mirrors app-api KnowledgeSearchResponse.matchCount.
   int64 match_count = 28 [json_name = "matchCount"];
+  // Tempdoc 366 §1b: the filter echo — mirrors the `filters` / `boostFilters` the request carried,
+  // so a client can distinguish a scoped search from one whose scope was silently dropped without
+  // inferring it from the rows. Absent when the request carried no filters. Mirrors app-api
+  // KnowledgeSearchResponse.appliedFilters.
+  AppliedFilters applied_filters = 29 [json_name = "appliedFilters"];
+}
+
+// The filter echo (366 §1b). Each half is present only when that half carried at least one value.
+// Mirrors app-api KnowledgeSearchResponse.AppliedFilters.
+message AppliedFilters {
+  SearchFilters filters = 1;
+  SearchFilters boost_filters = 2 [json_name = "boostFilters"];
+}
+
+// The request's filter set, echoed back on the response. Mirrors app-api
+// KnowledgeSearchRequest.Filters; unset members are omitted from the JSON (NON_EMPTY).
+message SearchFilters {
+  repeated string mime = 1;
+  repeated string language = 2;
+  repeated string file_kind = 3 [json_name = "fileKind"];
+  repeated string mime_base = 4 [json_name = "mimeBase"];
+  string path_prefix = 5 [json_name = "pathPrefix"];
+  optional bool include_chunks = 6 [json_name = "includeChunks"];
+  TimeRangeMs modified_at = 7 [json_name = "modifiedAt"];
+  repeated string entity_persons = 8 [json_name = "entityPersons"];
+  repeated string entity_organizations = 9 [json_name = "entityOrganizations"];
+  repeated string entity_locations = 10 [json_name = "entityLocations"];
+  repeated string meta_source = 11 [json_name = "metaSource"];
+  repeated string meta_author = 12 [json_name = "metaAuthor"];
+  repeated string meta_category = 13 [json_name = "metaCategory"];
+  TimeRangeMs meta_published_at = 14 [json_name = "metaPublishedAt"];
+  repeated string doc_ids = 15 [json_name = "docIds"];
+  repeated string collection = 16;
+}
+
+// A millisecond epoch range. Mirrors app-api KnowledgeSearchRequest.TimeRangeMs.
+message TimeRangeMs {
+  optional int64 from_ms = 1 [json_name = "fromMs"];
+  optional int64 to_ms = 2 [json_name = "toMs"];
 }
 
 // Wire shape for one row of facets[category]: facet-value → count.

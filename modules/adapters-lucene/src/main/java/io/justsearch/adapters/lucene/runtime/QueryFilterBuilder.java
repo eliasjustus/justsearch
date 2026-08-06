@@ -284,10 +284,19 @@ public final class QueryFilterBuilder {
   /**
    * Builds a filter query for chunk search from structured filters.
    *
-   * <p>Only applies filters that are stored on chunk documents: mime, fileKind, mimeBase, language.
-   * Skips: IS_CHUNK exclusion (chunks are the target), pathPrefix (PATH on chunks stores
-   * parentDocId, not the file path), modifiedAt range (not stored on chunks), and entity filters
-   * (not stored on chunks).
+   * <p>Applies the filters whose fields chunk documents actually carry: mime, fileKind, mimeBase,
+   * language, and the two PATH-keyed scopes (pathPrefix, doc_ids). A chunk's {@code PATH} holds its
+   * PARENT's absolute path — {@code ChunkDocumentWriter} writes {@code PATH = parentDocId} and
+   * {@code IndexingDocumentOps} writes the parent's {@code DOC_ID = PATH = absolutePath} — so the
+   * same {@link PrefixQuery}/TermInSet the whole-doc legs use is valid verbatim on chunks. (An
+   * earlier revision skipped both on the premise that chunk PATH "stores parentDocId, not the file
+   * path"; the two are the same string, and skipping them let the chunk branch retrieve candidates
+   * from OUTSIDE the requested scope — inflating the fused candidate union that {@code totalHits}
+   * reports and, at high enough fused rank, leaking an out-of-scope document into {@code results}.)
+   *
+   * <p>Still skipped, because chunk documents genuinely do not carry these fields: IS_CHUNK
+   * exclusion (chunks are the target), collection scope, modifiedAt / metaPublishedAt ranges,
+   * entity filters, and metadata filters.
    *
    * @param filters optional structured filters (may be null)
    * @return filter query for chunk search, or null if no applicable filters exist
@@ -303,6 +312,13 @@ public final class QueryFilterBuilder {
     hasClause |= addTermOrFilter(qb, filters.fileKind(), SchemaFields.FILE_KIND);
     hasClause |= addTermOrFilter(qb, filters.mimeBase(), SchemaFields.MIME_BASE);
     hasClause |= addTermOrFilter(qb, filters.language(), SchemaFields.LANGUAGE);
+
+    if (filters.pathPrefix() != null && !filters.pathPrefix().isBlank()) {
+      String normalized = normalizePathPrefix(filters.pathPrefix());
+      qb.add(new PrefixQuery(new Term(SchemaFields.PATH, normalized)), BooleanClause.Occur.FILTER);
+      hasClause = true;
+    }
+    hasClause |= addTermOrFilter(qb, filters.docIds(), SchemaFields.PATH);
 
     return hasClause ? qb.build() : null;
   }

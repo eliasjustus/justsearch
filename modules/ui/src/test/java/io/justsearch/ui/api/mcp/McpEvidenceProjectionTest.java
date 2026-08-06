@@ -85,7 +85,7 @@ final class McpEvidenceProjectionTest {
                     StageId.DENSE_RETRIEVAL, StageStatus.SKIPPED, "vector_blocked", null, null, null)));
     KnowledgeSearchResponse resp =
         new KnowledgeSearchResponse(
-            1L, 1L, 5L, List.of(), null, null, null, null, null, null, null, trace);
+            1L, 1L, 5L, List.of(), null, null, null, null, null, null, null, trace, null);
 
     Map<String, Object> evidence = McpEvidenceProjection.searchEvidence(resp, false);
     Map<String, Object> t = asMap(evidence.get("searchTrace"));
@@ -138,7 +138,7 @@ final class McpEvidenceProjectionTest {
             List.of(sparse, fused, splade));
     KnowledgeSearchResponse resp =
         new KnowledgeSearchResponse(
-            1L, 1L, 5L, List.of(hit), null, null, null, null, null, null, null, null);
+            1L, 1L, 5L, List.of(hit), null, null, null, null, null, null, null, null, null);
 
     Map<String, Object> evidence = McpEvidenceProjection.searchEvidence(resp, true);
     List<Object> results = asList(evidence.get("results"));
@@ -271,7 +271,7 @@ final class McpEvidenceProjectionTest {
             List.of(region),
             List.of(hitStage));
     return new KnowledgeSearchResponse(
-        1L, 1L, 5L, List.of(hit), null, null, null, null, null, null, null, trace);
+        1L, 1L, 5L, List.of(hit), null, null, null, null, null, null, null, trace, null);
   }
 
   @Test
@@ -355,7 +355,7 @@ final class McpEvidenceProjectionTest {
     KnowledgeSearchResponse resp =
         new KnowledgeSearchResponse(
             3L, 3L, 5L, List.of(distinctId, idEqualsPath, noPath),
-            null, null, null, null, null, null, null, null);
+            null, null, null, null, null, null, null, null, null);
 
     for (boolean includeDetail : new boolean[] {false, true}) {
       List<Object> results =

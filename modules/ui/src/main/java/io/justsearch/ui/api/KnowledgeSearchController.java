@@ -441,6 +441,10 @@ public class KnowledgeSearchController {
       if (response.searchTrace() != null) {
         out.put("searchTrace", response.searchTrace());
       }
+      // Tempdoc 366 §1b: the filter echo, present only when the request carried filters.
+      if (response.appliedFilters() != null) {
+        out.put("appliedFilters", response.appliedFilters());
+      }
       ctx.json(out);
 
     } catch (StatusRuntimeException e) {
