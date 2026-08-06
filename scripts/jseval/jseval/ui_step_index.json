@@ -21,11 +21,14 @@
     "chat-mode", "qa-response", "chat-proportion",
     "chat-bands", "chat-bands-detailed", "chat-composer-small",
     "chat-spine-single", "chat-spine-multi", "chat-chip-yield",
-    "chat-evidence-rail", "chat-activity-rail-open"
+    "chat-evidence-rail", "chat-activity-rail-open", "chat-wide-docked"
   ],
   "shell-v0/views/unifiedChatStyles.ts": [
     "chat-bands", "chat-bands-detailed", "chat-spine-multi",
-    "chat-evidence-rail", "chat-activity-rail-open"
+    "chat-evidence-rail", "chat-activity-rail-open", "chat-wide-docked"
+  ],
+  "shell-v0/primitives/compositionLayout.ts": [
+    "chat-bands", "chat-bands-detailed", "chat-occlusion", "chat-wide-docked"
   ],
   "shell-v0/components/StatusDeck.ts": ["chat-chip-yield"],
   "shell-v0/components/ContextMenu.ts": ["context-menu"],

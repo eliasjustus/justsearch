@@ -8,7 +8,10 @@
     "zOverlayScale": ["--z-overlay-chrome", "--z-overlay-drawer", "--z-overlay-float", "--z-overlay-modal", "--z-overlay-top", "--z-overlay-transient"],
     "durationScale": ["--duration-instant", "--duration-fast", "--duration-normal", "--duration-slow"],
     "easeScale": ["--ease-accelerate", "--ease-decelerate", "--ease-standard"],
-    "spacingGridPx": 4
+    "spacingGridPx": 4,
+    "measureNote": "Tempdoc 816 — an element's WIDTH claim must be justified by its function, not by the space available: width = clamp(functional minimum, content need, functional maximum), with the bounds coming from the element's ROLE in content units (ch/rem), never as a percentage of the window. The role register governance/ui-proportion-baseline.v1.json (`roles`) is the authority for the numbers; these tokens render them. A text-bearing element stretching to whatever width the container offers is a finding even when nothing overlaps — full-bleed is the CSS default, not a decision. Full-bleed CHROME is a declared exception: the background may bleed edge to edge while the content box inside it takes a role's bounds.",
+    "measureScale": ["--measure-prose", "--measure-text-entry", "--measure-notice"],
+    "paneWidthFamily": "Space-sharing panes (inspector, rails, split regions) are the ONE legitimate percentage/container-share family — their function genuinely is 'share of workspace'. Do not judge them against a ch measure."
   },
   "shell": {
     "note": "Every surface renders inside the one shell: a banner, a navigation rail, and a single main landmark.",
@@ -33,6 +36,7 @@
     { "id": "heading-order", "ask": "Do headings descend without skipping a level (no h1 -> h3)?" },
     { "id": "visual-hierarchy", "ask": "Does the geometry imply a clear primary region and reading order, or do elements compete/overlap?" },
     { "id": "spacing-rhythm", "ask": "Do element positions/sizes sit on the 4px grid, or is there off-scale jitter?" },
+    { "id": "measure-discipline", "ask": "Does every text-bearing element respect its measure — a reading/entry/notice bound derived from its role in content units (foundation.measureScale) — or does something stretch to the container simply because the space was there? Judge the CONTENT box: a full-bleed background over a bounded content row is correct; a full-bleed line of text, input, or chip row is a finding. Panes are exempt (foundation.paneWidthFamily)." },
     { "id": "no-overflow", "ask": "Is the document free of unintended horizontal/vertical overflow?" },
     { "id": "a11y-clean", "ask": "Are there axe violations beyond the accepted baseline?" }
   ]
