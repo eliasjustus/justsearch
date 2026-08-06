@@ -146,6 +146,15 @@
       "note": "The COUNT projection (queueDepth → CoreIndexView.pendingJobs surfaced on /api/status). The §B.2 invariant: this count must agree with the change-feed list — both are projections of the one jobs table, NOT independent representations. Import-invisible (count, not IndexingJobView); declared explicitly so a future divergence is reviewable here."
     },
     {
+      "id": "fe-indexing-progress-projection",
+      "kind": "projection",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/state/indexingProgress.ts",
+      "guard": "test:indexingProgress",
+      "consumesProjection": "count-projection",
+      "note": "Tempdoc 813 §3b — the FE indexing-progress selector: the ONE derivation authority for the index-wide progress NUMBERS every index-wide surface renders (status-bar queue chip, Health Queue card, Health 'Now' strip, IndexingOverlay). It and the jobs SSE list (fe-rail-projection) are projections of the SAME jobs table — the selector owns the rendered numbers, the SSE list owns the per-job row feed; neither may re-derive the other's subject. Import-invisible (reads the generated StatusResponse wire type, not IndexingJobView); declared explicitly so a second FE number-derivation is reviewable here — that fork is the §1a defect this replaces (one queue described by two transports)."
+    },
+    {
       "id": "indexing-ledger-translator",
       "kind": "projection",
       "lang": "java",

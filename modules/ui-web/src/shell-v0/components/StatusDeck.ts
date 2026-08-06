@@ -48,6 +48,7 @@ import { projectFact } from '../display/facts.js';
 import { formatBytes, formatCount } from '../display/format.js';
 import './Control.js';
 import { subscribeTasks, listRunningTasks, type Task } from '../substrates/tasks/index.js';
+import { selectIndexingProgress } from '../state/indexingProgress.js';
 import { requestSurfaceNavigation } from '../controllers/navigateRequest.js';
 
 // Tempdoc 508 §4.3 — core items register via the same contribution
@@ -450,13 +451,16 @@ export class StatusDeck extends JfElement {
         : '…'
       : projectFact('core.size', this.aiState).value ?? '—';
     const memUsedDisp = provisional ? '…' : projectFact('core.memory', this.aiState).value ?? '—';
-    const queue = idx ? orElse(idx.pendingJobs, 0) : 0;
-    const embed =
-      idx && orElse(idx.embeddingBlocked, false)
-        ? 0
-        : idx
-          ? orElse(idx.embeddingPending, 0)
-          : 0;
+    // Tempdoc 813 §3b — the queue chip's NUMBERS come from the ONE indexing-progress projection, not
+    // from a private read of whichever count field this component could reach. `embeddingBlocked`
+    // still zeroes the enrichment tier: a blocked embedding stage has no backlog to work off, so
+    // showing one would claim progress that cannot happen.
+    const progress = selectIndexingProgress(this.status, this.aiState?.snapshotLive ?? false);
+    const embeddingBlocked = idx ? orElse(idx.embeddingBlocked, false) : false;
+    const queue = progress.jobsPending;
+    const enriching = !embeddingBlocked && progress.phase === 'enriching';
+    const enrichingPercent = enriching ? progress.enrichingPercent : null;
+    const embed = embeddingBlocked ? 0 : progress.enrichingPending;
     const mode = this.aiState?.statusLabel ?? 'offline';
     // 559 Authority V — each status metric carries an accessible NAME (a bare
     // span's aria-label is ignored by AT, so the cluster is role="img" + label).
@@ -561,16 +565,29 @@ export class StatusDeck extends JfElement {
             <span class="val">queue: ${NUM.format(queue)} · paused</span>
           </span>`;
         }
+        // 813 §4 — during the enrichment window the honest second number is the COVERAGE fraction,
+        // not a raw backlog count: the files are already indexed, the semantic layers are catching
+        // up. Falls back to the count only when the projection has no faithful denominator.
+        const enrichSuffix =
+          enrichingPercent !== null
+            ? `enriching: ${enrichingPercent}%`
+            : embed > 0
+              ? `embed: ${NUM.format(embed)}`
+              : '';
+        const enrichAria =
+          enrichingPercent !== null
+            ? `, enriching ${enrichingPercent}%`
+            : embed > 0
+              ? `, ${NUM.format(embed)} embedding`
+              : '';
         return html`<span
           class="group"
           role="img"
-          aria-label="${name}: ${NUM.format(queue)} job(s) queued${
-            embed > 0 ? `, ${NUM.format(embed)} embedding` : ''
-          }"
+          aria-label="${name}: ${NUM.format(queue)} job(s) queued${enrichAria}"
         >
           ${icon({ name: 'zap', size: 11 })}
           <span class="val">queue: ${NUM.format(queue)}${
-            embed > 0 ? html` · embed: ${NUM.format(embed)}` : nothing
+            enrichSuffix ? html` · ${enrichSuffix}` : nothing
           }</span>
         </span>`;
       }

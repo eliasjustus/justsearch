@@ -56,6 +56,7 @@ import { presentVerdict, type SystemHealthVerdict } from '../state/verdict.js';
 import { formatRelativeMs } from '../../utils/relativeTime.js';
 import { type Maybe, UNKNOWN } from '../state/known.js';
 import { unavailableBecause } from '../state/availability.js';
+import { selectIndexingProgress } from '../state/indexingProgress.js';
 import { present } from '../display/present.js';
 import { projectFact } from '../display/facts.js';
 import { formatBytes, formatCount } from '../display/format.js';
@@ -843,6 +844,12 @@ export class HealthSurface extends JfElement {
    * working state, and the **terminal "Up to date"** (idle + a verified-healthy index) is the
    * explicit trust close — the Dropbox "Syncing… → Up to date" model, to which "Catching up…" and
    * "Paused…" both resolve once they clear. None of these is a fault — search keeps working.
+   *
+   * Tempdoc 813 §4 makes the terminal close TWO-TIER. Job drain only buys the keyword tier; the
+   * semantic layers keep building afterwards, so "Up to date" on job drain alone was the §1d
+   * completion lie ("a completion claim is a capability claim", §11). Between the tiers the card
+   * reads "Indexed — enriching N%", and "Up to date" is reserved for coverage-complete. The number
+   * comes from the ONE indexing-progress projection — this card derives none of it privately.
    */
   private queueSubLabel(queue: number, known: boolean): string {
     const stability = this.aiState?.stability;
@@ -853,6 +860,12 @@ export class HealthSurface extends JfElement {
     if (this.status?.power?.energyReduced === true && queue > 0) return 'Paused — saving energy';
     if (!known) return 'Unknown';
     if (queue > 0) return 'Indexing';
+    const progress = selectIndexingProgress(this.status, this.aiState?.snapshotLive ?? false);
+    if (progress.phase === 'enriching') {
+      return progress.enrichingPercent === null
+        ? 'Indexed — enriching'
+        : `Indexed — enriching ${progress.enrichingPercent}%`;
+    }
     // Idle + a verified-healthy index ⇒ the explicit terminal "Up to date"; otherwise stay honest
     // with "Idle" (don't claim up-to-date when health isn't confirmed).
     return this.status?.worker?.core?.indexHealthy === true ? 'Up to date' : 'Idle';
@@ -864,7 +877,9 @@ export class HealthSurface extends JfElement {
     const memUsed = this.status?.memoryUsedBytes ?? 0;
     const memMax = this.status?.memoryMaxBytes ?? 0;
     const memRatio = memMax > 0 ? memUsed / memMax : 0;
-    const queue = this.status?.worker?.core?.pendingJobs ?? 0;
+    // 813 §3b — the Queue card's number comes from the ONE indexing-progress projection, the same
+    // authority `queueSubLabel` reads, so the card's value and its sub-text cannot disagree.
+    const queue = selectIndexingProgress(this.status, this.aiState?.snapshotLive ?? false).jobsPending;
     const memColor = memRatio > 0.9 ? 'red' : memRatio > 0.8 ? 'amber' : 'green';
     const memDot = memRatio > 0.9 ? 'error' : memRatio > 0.8 ? 'warning' : 'healthy';
     // §2.B: when no status has arrived, the honest value is "—" (unknown),

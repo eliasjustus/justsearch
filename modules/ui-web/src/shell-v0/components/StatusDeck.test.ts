@@ -165,10 +165,17 @@ describe('StatusDeck (slice 461)', () => {
     expect(badgeTone(el)).toBe('error');
   });
 
+  // Tempdoc 813 §3b — the chip's NUMBERS now come from the one indexing-progress projection over the
+  // `/api/status` snapshot, so these fixtures carry the wire fields that projection reads
+  // (`worker.core.indexState` + `pendingJobs`) alongside the store's `index` slice. Same scenario,
+  // same assertions — only the seed now matches how the number actually reaches the chip.
   it('queue group renders when pendingJobs > 0', async () => {
     const el = make();
     el.aiState = makeAiState({
       index: { documentCount: known(0), pendingJobs: known(5), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      status: {
+        worker: { core: { indexState: 'INDEXING', pendingJobs: 5 } },
+      } as unknown as AiState['status'],
     });
     await el.updateComplete;
     const groups = el.shadowRoot?.querySelectorAll('.group');
@@ -187,7 +194,10 @@ describe('StatusDeck (slice 461)', () => {
     const el = make();
     el.aiState = makeAiState({
       index: { documentCount: known(0), pendingJobs: known(5), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
-      status: { power: { energyReduced: true } } as unknown as AiState['status'],
+      status: {
+        power: { energyReduced: true },
+        worker: { core: { indexState: 'INDEXING', pendingJobs: 5 } },
+      } as unknown as AiState['status'],
     });
     await el.updateComplete;
     expect(queueText(el)).toContain('paused');
@@ -197,11 +207,59 @@ describe('StatusDeck (slice 461)', () => {
     const el = make();
     el.aiState = makeAiState({
       index: { documentCount: known(0), pendingJobs: known(5), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
-      status: { power: { energyReduced: false } } as unknown as AiState['status'],
+      status: {
+        power: { energyReduced: false },
+        worker: { core: { indexState: 'INDEXING', pendingJobs: 5 } },
+      } as unknown as AiState['status'],
     });
     await el.updateComplete;
     expect(queueText(el)).toBeTruthy();
     expect(queueText(el)).not.toContain('paused');
+  });
+
+  // Tempdoc 813 §4 — during the enrichment window the chip's second number is the coverage FRACTION,
+  // not a raw backlog count: the files are already indexed; the semantic layers are catching up.
+  it('813: jobs drained but enrichment outstanding ⇒ the chip reads the enriching percent', async () => {
+    const el = make();
+    el.aiState = makeAiState({
+      index: { documentCount: known(100), pendingJobs: known(0), embeddingPending: known(40), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      status: {
+        worker: {
+          core: { indexState: 'IDLE', pendingJobs: 0 },
+          enrichment: {
+            backfillMode: 'combined',
+            embeddingEnabled: true,
+            embeddingDocCount: 100,
+            embeddingPendingCount: 40,
+          },
+        },
+      } as unknown as AiState['status'],
+    });
+    await el.updateComplete;
+    expect(queueText(el)).toContain('enriching: 60%');
+    expect(queueText(el)).not.toContain('embed:');
+  });
+
+  it('813: a blocked embedding stage claims no enrichment progress', async () => {
+    const el = make();
+    el.aiState = makeAiState({
+      index: { documentCount: known(100), pendingJobs: known(0), embeddingPending: known(40), embeddingBlocked: known(true), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      status: {
+        worker: {
+          core: { indexState: 'IDLE', pendingJobs: 0 },
+          enrichment: {
+            backfillMode: 'combined',
+            embeddingEnabled: true,
+            embeddingDocCount: 100,
+            embeddingPendingCount: 40,
+          },
+        },
+      } as unknown as AiState['status'],
+    });
+    await el.updateComplete;
+    // Nothing to report and nothing to work off ⇒ the chip stays hidden rather than showing a
+    // fraction that will never advance.
+    expect(queueText(el)).toBeUndefined();
   });
 
   it('§17.2 — files/size/memory values come from the projectFact authority (one formatter)', async () => {
