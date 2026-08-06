@@ -6,7 +6,7 @@ updated: 2026-08-06
 related: [810, 809, 807, 798, 738, 734, 687, 610, 600, 577, 565, 559]
 ---
 
-# 811 — Chat-surface chrome allocation (thread T-B of the human-validation campaign)
+# 814 — Chat-surface chrome allocation (thread T-B of the human-validation campaign)
 
 ## What this document is
 
@@ -220,7 +220,7 @@ Conform to existing instruments; no new harness invented:
 measurable): a vertical resize sweep at fixed 1366 width, window heights 1050 → 900 → 768 →
 700, in both disclosure modes, recording per-band heights and content share from
 `.measure.json` geometry — finding 12's own discriminating test. Pre-registering it here is the
-812-adjacent lesson from the campaign (a measurement probe without pre-registered validity
+campaign's own measurement lesson (a measurement probe without pre-registered validity
 rules can bless its own leak): the sweep's validity rule is that band identities and the
 content-region selector are fixed in advance, not chosen after seeing results.
 
