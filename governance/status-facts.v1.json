@@ -8,6 +8,11 @@
       "maxPersistentRenders": 1
     },
     {
+      "$comment": "The warn-tier verdict headline (state/verdict.ts verdictHeadline). The info-tier 'Reduced capability' is bannerless post-finding-9, so this phrase is the one the chat-bands degraded-warn fixture can actually witness duplicated (banner + status chip) — W3 §B.14 finding.",
+      "phrase": "Service degraded",
+      "maxPersistentRenders": 1
+    },
+    {
       "phrase": "Over budget",
       "maxPersistentRenders": 1
     },
