@@ -91,6 +91,26 @@ public interface JobQueue extends Closeable {
   int enqueue(List<Path> paths, String collection);
 
   /**
+   * Enqueues file paths for indexing, tagged with the directory scan that admitted them
+   * (tempdoc 812 D2).
+   *
+   * <p>The scan id is the same {@code ScanRootProgress.scan_id} the Head reads to subscribe to
+   * live scan progress, so a job row remembers which scan produced it and the Head can roll the
+   * per-document terminal outcomes up into ONE durable scan-completion audit record.
+   *
+   * <p>The default implementation drops the scan id (queues without a {@code scan_id} column keep
+   * the pre-812 behaviour; their rows are keyless and fall back to adjacency grouping).
+   *
+   * @param paths List of file paths to index
+   * @param collection collection tag for the indexed documents, or null for default
+   * @param scanId the enqueueing scan's id, or null when not part of a directory scan
+   * @return Number of jobs accepted
+   */
+  default int enqueue(List<Path> paths, String collection, String scanId) {
+    return enqueue(paths, collection);
+  }
+
+  /**
    * Polls for pending jobs and marks them as PROCESSING.
    *
    * @param limit Maximum number of jobs to return

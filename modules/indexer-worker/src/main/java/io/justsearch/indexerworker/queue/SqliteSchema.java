@@ -28,7 +28,7 @@ public final class SqliteSchema {
    * Target schema version. The migrate() method will upgrade the database
    * to this version using the migration ladder.
    */
-  public static final int TARGET_VERSION = 7;
+  public static final int TARGET_VERSION = 8;
 
   // ==================== Table: jobs ====================
 
@@ -230,6 +230,17 @@ public final class SqliteSchema {
    * hash from before the migration. Files still under watched roots are re-resolved naturally
    * on the next scan or watcher-driven update.
    */
+  /**
+   * V7 to V8 migration (tempdoc 812 D2): add the {@code scan_id} column so a job row remembers
+   * WHICH directory scan enqueued it. Nullable — NULL for single-file ingests, watcher-driven
+   * enqueues, and every row written before this migration. The Head groups terminal outcomes by
+   * this key into ONE durable scan-completion audit row; keyless rows fall back to the FE's
+   * adjacency collapse.
+   */
+  public static final String MIGRATE_V7_TO_V8_ADD_SCAN_ID = """
+      ALTER TABLE jobs ADD COLUMN scan_id TEXT DEFAULT NULL
+      """;
+
   static final String[] MIGRATE_V6_TO_V7_ADD_PATH_RESOLUTION = {
       CREATE_PATH_RESOLUTION_TABLE,
       CREATE_PATH_RESOLUTION_PATH_INDEX,

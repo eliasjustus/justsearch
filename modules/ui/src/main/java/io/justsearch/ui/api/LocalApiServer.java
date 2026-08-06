@@ -849,6 +849,15 @@ public class LocalApiServer {
       // /api/knowledge/ingest. The adapter records events into the registry as the worker
       // emits them; the SSE controller (registered below) subscribes by scanId.
       ctrl.getAdapter().setScanProgressRegistry(this.scanProgressRegistry);
+      // Tempdoc 812 D2: bind the substrate-owned scan-rollup aggregator to the same adapter. It
+      // listens on the one action-event log for the terminal per-document outcomes (so its counts
+      // are the REAL DONE/FAILED states, not the enqueue-time admitted count) and publishes one
+      // `operation`-kind scan-completion row back into that log. The adapter is the one Head-side
+      // place that knows a scan's id, root, collection and admitted count together.
+      if (this.HeadAssemblyRef != null) {
+        ctrl.getAdapter()
+            .setScanRollupLedger(this.HeadAssemblyRef.substrate().conversation().scanRollupLedger());
+      }
       this.scanProgressController =
           new ScanProgressController(this.scanProgressRegistry, this.apiCatalog);
       io.justsearch.ui.api.routes.ScansRoutes.register(this.app, this.scanProgressController);

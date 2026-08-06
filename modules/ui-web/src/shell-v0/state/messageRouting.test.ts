@@ -34,10 +34,19 @@ describe('isRoutineActivity', () => {
     expect(isRoutineActivity('effect', 'system', 'navigate')).toBe(false);
   });
 
-  it('does NOT treat operations/gates/index as routine (those are graded elsewhere or always stay)', () => {
+  it('does NOT treat operations/gates as routine (those are graded elsewhere or always stay)', () => {
     expect(isRoutineActivity('operation', 'user')).toBe(false); // graded by isRoutineOperation, not here
     expect(isRoutineActivity('gate', 'user')).toBe(false);
-    expect(isRoutineActivity('index', 'system')).toBe(false);
+    expect(isRoutineActivity('grant', 'user')).toBe(false);
+  });
+
+  // tempdoc 812 D4 — the routine set widened again: a PER-DOCUMENT index row is background
+  // telemetry whose audit record is the scan's rollup (a durable `operation` row). It is routine
+  // on any originator, since index rows are system-originated by construction. The rollup itself
+  // is an operation row, so it is never routed here — it stays foreground.
+  it('treats per-document index rows as routine (the scan rollup is their audit record)', () => {
+    expect(isRoutineActivity('index', 'system')).toBe(true);
+    expect(isRoutineActivity('index', 'user')).toBe(true);
   });
 
   // tempdoc 612 §3/§L — the routine set widened from navigation-only to the witnessed local-ack /

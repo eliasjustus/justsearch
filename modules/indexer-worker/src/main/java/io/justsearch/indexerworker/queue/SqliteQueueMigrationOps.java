@@ -242,6 +242,10 @@ final class SqliteQueueMigrationOps {
           log.info("V6 to V7: Ensured path_resolution table and indexes (ADR-0028)");
         }
       }
+      case 8 -> {
+        addColumnIfMissing(conn, "scan_id", SqliteSchema.MIGRATE_V7_TO_V8_ADD_SCAN_ID);
+        log.info("V7 to V8: Ensured scan_id column on jobs table (tempdoc 812 D2)");
+      }
       default -> throw new SQLException("Unknown migration version: " + version);
     }
   }

@@ -1,6 +1,6 @@
 ---
 title: "812 — Action-ledger audit retention & projection (T-D): design"
-status: "design settled 2026-08-06 by the campaign orchestrator; implementation NOT started; one owner ratification requested (§R1)"
+status: "design settled 2026-08-06; D2 + D4 IMPLEMENTED 2026-08-06 (see the implementation record); D1 + D3 in PR #381; one owner ratification requested (§R1)"
 created: 2026-08-06
 updated: 2026-08-06
 related: [809, 810, 550, 612, 561, 565]
@@ -117,6 +117,66 @@ instead wants the ledger to remain session-scoped by design, D1 is replaced by a
 and D2-D4 still stand. Default on silence: D1 as designed — a private-retrieval product
 whose TYPED_CONFIRM audit trail evaporates on restart is the same defect class round 7-13
 spent the campaign eliminating, applied to the audit layer itself.
+
+## D2 + D4 implementation record (2026-08-06, branch `worktree-hv-b8`)
+
+**Scan identity: the REAL key, not the bridge-side fallback.** The design permitted deriving rollup
+identity from enumerator state if the job records could not carry a scan id; they can, so they do.
+`jobs.scan_id` (SQLite migration V7→V8, `SqliteSchema.MIGRATE_V7_TO_V8_ADD_SCAN_ID`) →
+`IndexingJobChangeFeed.JobRow.scanId` → proto `IndexingJobView.scan_id = 8` →
+`app-api IndexingJobView.scanId` → `ActionEvent.Index.scanId`. `WorkerScanOps.flushBatch` passes
+`ScanRequest.scanId()` (already present, worker-minted, already on `ScanRootProgress.scan_id`) into
+`JobQueue.enqueue(paths, collection, scanId)`. Nullable/empty everywhere: single-file ingests, the
+watcher, and pre-812 rows stay keyless and keep the FE's adjacency collapse. **Defect found and
+fixed on the way**: `KnowledgeSearchController.handleIngest` returned a locally-minted
+`UUID.randomUUID()` as the response `scanId` while the worker-allocated id (already returned by
+`KnowledgeHttpApiAdapter.scanRoot` in `KnowledgeIngestResponse.scanId`) was discarded — every
+`GET /api/scans/{scanId}/progress` subscribe against the returned id resolved to
+`UNKNOWN_SCAN_OR_RETENTION_EXPIRED`. The endpoint now returns the worker's id, which is also the
+rollup key.
+
+**Rollup emission.** `ScanRollupLedger` (app-observability, beside the log it projects) opens a scan
+on the adapter's first progress frame (`scanStarted`, emits a `STARTED` row so an unfinished scan
+still left a trace), learns the admitted count when the walk ends (`scanEnumerated`), and counts
+terminal outcomes off a new typed `ActionLedgerChangeRegistry.addEventListener` seam. It emits the
+`FINISHED` row when every admitted document reached a terminal state (`COMPLETED`) or when the scan
+goes quiet for 120s (`PARTIAL`). Emit chain: `ScanRollupLedger.emit` → `emitExecutor.execute` →
+`ActionLedgerChangeRegistry.broadcastActionEvent` → `publish` → `store.append` + `channel.publish`
+— the same fan-out every other actor event uses, so D1's journal picks it up for free.
+`ActionEvent.ScanRollup.kind()` returns `OPERATION` deliberately: kind-keyed consumers (journal,
+`kind` filter, FE tier split, index-first eviction) must treat it as consequential without each
+learning a seventh kind.
+
+**Counts are the real terminal states**, never the admitted count: the aggregator only counts
+`ActionEvent.Index` events, which `IndexingJobsBridgeWiring.terminalIndexEvent` emits solely for
+`DONE`/`FAILED` rows (`IndexingJobsBridgeWiring.java:95-97`). `docsAdmitted` is carried separately so
+a partial scan reads as "N of M".
+
+**D4 default tier.** `isRoutineActivity` gained ONE line — per-document `index` rows are routine
+(the scan rollup is their audit record) — reusing the existing vocabulary rather than inventing a
+classification; `isRoutineBackendRow` grades it before the direct-user guard because index rows are
+system-originated. Grants, gates, operations and scan rollups are unaffected on every originator
+(asserted explicitly in both FE test files). A rollup renders as one collapsible row expandable to
+the per-document rows of THAT scan (matched by scanId), each resolved to a friendly name via the
+same `core.resolve-path-hash` resolver the Tasks bridge uses; the row-altitude formatter moved to
+`hooks/resolvePathLazy.ts` (`friendlyPathName`) now that it has two consumers. A scan's `STARTED`
+row is suppressed once its completion row exists.
+
+**Known gaps (logged as observations, not fixed here).** (1) The MCP/agent ingest path constructs a
+SECOND `KnowledgeHttpApiAdapter` that never receives `setScanProgressRegistry` — nor the new
+`setScanRollupLedger` — so agent-driven directory ingests get neither progress SSE nor a rollup.
+(2) Watched-root scans dispatch `RemoteKnowledgeClient.scanRoot` directly, bypassing the adapter:
+their jobs carry a worker-minted scanId but no Head-side scan is opened, so they produce per-document
+rows with no rollup row.
+
+**Verification.** Full `./gradlew.bat test` BUILD SUCCESSFUL; ui-web `npm run typecheck` clean +
+`npm run test:unit:run` 4102 passed; `operation-surface`, `register-guard-resolution` gates and
+`check-wire-schema-types-regen` pass; `SSOT/schemas/indexing-job-view.v1.json` recaptured. New tests:
+`ScanRollupLedgerTest` (9), `IndexingJobsChangeStreamTest.scanIdRoundTripsFromEnqueueToDelta`,
+`IndexingJobsBridgeWiringTest.carriesScanId`, 5 view tests + 5 client tests. Six pre-existing view
+tests changed tier deliberately (they used a per-doc index row as the stand-in for "a system event
+the user opened Activity to see"; that role is now the scan rollup) — each rewritten to keep its
+original intent, not weakened.
 
 ## Not built (scope discipline)
 

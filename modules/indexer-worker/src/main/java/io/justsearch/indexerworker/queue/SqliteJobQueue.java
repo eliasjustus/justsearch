@@ -259,6 +259,11 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
 
   @Override
   public int enqueue(List<Path> paths, String collection) {
+    return enqueue(paths, collection, null);
+  }
+
+  @Override
+  public int enqueue(List<Path> paths, String collection, String scanId) {
     if (paths == null || paths.isEmpty()) {
       return 0;
     }
@@ -274,13 +279,16 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
       ensureOpen();
 
       String sql = """
-          INSERT OR REPLACE INTO jobs (path, state, attempts, last_updated, collection)
-          VALUES (?, 'PENDING', 0, ?, ?)
+          INSERT OR REPLACE INTO jobs (path, state, attempts, last_updated, collection, scan_id)
+          VALUES (?, 'PENDING', 0, ?, ?, ?)
           """;
 
       long now = System.currentTimeMillis();
       int count = 0;
       String col = (collection != null && !collection.isBlank()) ? collection : null;
+      // Tempdoc 812 D2: the enqueueing scan's identity rides the row so the Head can group the
+      // per-document terminal outcomes into one durable scan-completion audit record.
+      String scan = (scanId != null && !scanId.isBlank()) ? scanId : null;
 
       try (PreparedStatement stmt = connection.prepareStatement(sql)) {
         for (Path path : paths) {
@@ -288,13 +296,14 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
           stmt.setString(1, normalizedPath);
           stmt.setLong(2, now);
           stmt.setString(3, col);
+          stmt.setString(4, scan);
           stmt.addBatch();
           count++;
         }
         stmt.executeBatch();
       }
 
-      log.debug("Enqueued {} jobs (collection={})", count, col);
+      log.debug("Enqueued {} jobs (collection={}, scanId={})", count, col, scan);
       return count;
     } catch (SQLException e) {
       log.error("Failed to enqueue jobs", e);

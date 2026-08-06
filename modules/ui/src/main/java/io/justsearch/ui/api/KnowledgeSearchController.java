@@ -729,9 +729,12 @@ public class KnowledgeSearchController {
       Map<String, List<Path>> singleFilesByCollection = new java.util.LinkedHashMap<>();
       long totalAdmitted = 0L;
       List<String> terminalReasons = new ArrayList<>();
-      // Per docs/reference/api-contract-map.md: directory inputs get a scanId
-      // for live progress SSE. Generated once per request and returned to the
-      // caller alongside the accepted count.
+      // Per docs/reference/api-contract-map.md: directory inputs get a scanId for live progress
+      // SSE. Tempdoc 812 D2 — this is the WORKER-allocated id carried back on the scan's progress
+      // stream (`KnowledgeIngestResponse.scanId`), the same value `GET /api/scans/{scanId}/progress`
+      // subscribes on and the same value the job rows / scan-rollup audit record carry. It used to
+      // be a locally-minted UUID that matched nothing: every subscribe against it resolved to
+      // UNKNOWN_SCAN_OR_RETENTION_EXPIRED.
       String scanId = null;
 
       for (String p : paths) {
@@ -746,10 +749,10 @@ public class KnowledgeSearchController {
           // precedent: no released users, no migration); they acquire a tag on re-index.
           String collection = IngestCollectionPolicy.resolve(requestedCollection, input, rootBindings);
           if (Files.isDirectory(input)) {
-              if (scanId == null) {
-                  scanId = java.util.UUID.randomUUID().toString();
-              }
               var scanResp = adapter.scanRoot(input.toString(), collection, excludeGlobs);
+              if (scanId == null && scanResp.scanId() != null && !scanResp.scanId().isEmpty()) {
+                  scanId = scanResp.scanId();
+              }
               totalAdmitted += scanResp.accepted();
               if (scanResp.error() != null && !scanResp.error().isEmpty()) {
                   terminalReasons.add(input + ":" + scanResp.error());

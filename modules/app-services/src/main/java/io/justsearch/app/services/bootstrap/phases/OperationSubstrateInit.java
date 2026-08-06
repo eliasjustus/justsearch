@@ -80,6 +80,8 @@ public final class OperationSubstrateInit {
           authorizationOutcomeStore,
       io.justsearch.app.observability.ledger.ActionLedgerChangeRegistry
           actionLedgerChangeRegistry,
+      // Tempdoc 812 D2: the scan-rollup aggregator over that log (one durable audit row per scan).
+      io.justsearch.app.observability.ledger.ScanRollupLedger scanRollupLedger,
       io.justsearch.app.services.registry.executor.GlobalHardStop globalHardStop,
       // Tempdoc 550 thesis III: the ONE intent-gate evaluator, shared with the Preview endpoint.
       io.justsearch.app.services.intent.IntentGateEvaluator intentGateEvaluator,
@@ -162,6 +164,12 @@ public final class OperationSubstrateInit {
     // endpoint subscribes once so the receipt/timeline/undo/trust-audit are live read-views.
     io.justsearch.app.observability.ledger.ActionLedgerChangeRegistry actionLedgerChangeRegistry =
         new io.justsearch.app.observability.ledger.ActionLedgerChangeRegistry();
+    // Tempdoc 812 D2: the scan-rollup aggregator listens on that one log for terminal per-document
+    // indexing outcomes and emits ONE durable `operation`-kind scan-completion row per directory
+    // scan. Owned here (beside the log it projects) rather than on the API composition root, so its
+    // quiescence sweeper's lifetime is the substrate's.
+    io.justsearch.app.observability.ledger.ScanRollupLedger scanRollupLedger =
+        new io.justsearch.app.observability.ledger.ScanRollupLedger(actionLedgerChangeRegistry);
     // Tempdoc 550 E2: process-wide emergency stop the lattice consults (default released).
     io.justsearch.app.services.registry.executor.GlobalHardStop globalHardStop =
         new io.justsearch.app.services.registry.executor.GlobalHardStop();
@@ -294,6 +302,7 @@ public final class OperationSubstrateInit {
         healthRecoveryProjector,
         authorizationOutcomeStore,
         actionLedgerChangeRegistry,
+        scanRollupLedger,
         globalHardStop,
         intentGateEvaluator,
         durableGrantStore,

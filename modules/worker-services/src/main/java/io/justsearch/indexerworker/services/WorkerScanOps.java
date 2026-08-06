@@ -161,6 +161,9 @@ final class WorkerScanOps {
     List<Path> batch = new ArrayList<>(ENQUEUE_BATCH_SIZE);
     boolean[] cancelled = {false};
     String collection = request.collection();
+    // Tempdoc 812 D2: every job this walk admits remembers the scan that admitted it, so the Head
+    // can roll the per-document terminal outcomes up into ONE durable scan-completion audit row.
+    String enqueueScanId = scanId;
 
     Files.walkFileTree(
         root,
@@ -200,7 +203,7 @@ final class WorkerScanOps {
             batch.add(file);
             if (batch.size() >= ENQUEUE_BATCH_SIZE) {
               awaitQueueBelowThreshold();
-              flushBatch(batch, collection);
+              flushBatch(batch, collection, enqueueScanId);
               if (isCancelled.getAsBoolean()) {
                 cancelled[0] = true;
                 return FileVisitResult.TERMINATE;
@@ -226,7 +229,7 @@ final class WorkerScanOps {
 
     if (!batch.isEmpty()) {
       awaitQueueBelowThreshold();
-      flushBatch(batch, collection);
+      flushBatch(batch, collection, enqueueScanId);
       if (isCancelled.getAsBoolean()) {
         cancelled[0] = true;
       }
@@ -239,9 +242,9 @@ final class WorkerScanOps {
     return terminal;
   }
 
-  private void flushBatch(List<Path> batch, String collection) {
+  private void flushBatch(List<Path> batch, String collection, String scanId) {
     String coll = collection == null || collection.isBlank() ? null : collection;
-    jobQueue.enqueue(List.copyOf(batch), coll);
+    jobQueue.enqueue(List.copyOf(batch), coll, scanId == null || scanId.isBlank() ? null : scanId);
     batch.clear();
   }
 
