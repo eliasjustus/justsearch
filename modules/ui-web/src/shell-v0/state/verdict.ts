@@ -98,6 +98,24 @@ export interface StabilityInput {
  * higher-severity flux).
  */
 export function computeStability(i: StabilityInput): Stability {
+  // Tempdoc 807 §E.4 — LOST CONTACT DOMINATES EVERY RETAINED-SNAPSHOT CAUSE.
+  //
+  // Every branch below reads a field off the LAST SUCCESSFUL snapshot, which `statusSig` retains
+  // through failed polls. Once the backend is gone, whichever of them the final snapshot happened to
+  // hold won forever, and the status line projected it present-tense ("Restarting…" off a retained
+  // `UNAVAILABLE`) while every liveness signal correctly read stale — 807 W1 fixed the surfaces
+  // AROUND the line but left the line itself pinned by a value nothing verifies. The tense, not the
+  // value, is the error: those causes were true when they were measured; they are unobservable now.
+  //
+  // Scoped to `stale` — the poll-freshness phase that means "a poll DID succeed once and its data has
+  // aged out" — because that is the only phase where a retained snapshot exists to be projected from.
+  // `connecting` is the first-poll window (nothing retained; the boot grace must stay `initial-load`),
+  // and `disconnected` is already dominated by `computeVerdict`'s `unreachable` arm, which outranks
+  // stability entirely. `reachableViaContact === false` is the SAME contact fact `isSnapshotLive`
+  // consumes (`computeReachability`, 40 s window) — no second authority, no new number.
+  if (i.phase === 'stale' && i.reachableViaContact === false) {
+    return { kind: 'provisional', cause: 'channel-stale' };
+  }
   // Worker process down/restarting: a SUCCESSFUL poll returned the fallback view
   // (ConnectionPhase stays `connected`, so this is NOT caught by phase — 595 §9.1).
   if ((i.indexState ?? '').toUpperCase() === 'UNAVAILABLE') {

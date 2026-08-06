@@ -56,6 +56,7 @@ import { presentVerdict, type SystemHealthVerdict } from '../state/verdict.js';
 import { formatRelativeMs } from '../../utils/relativeTime.js';
 import { type Maybe, UNKNOWN } from '../state/known.js';
 import { unavailableBecause } from '../state/availability.js';
+import { enrichmentProgress, ENRICHMENT_IN_PROGRESS_LABEL } from '../state/enrichmentCoverage.js';
 import { present } from '../display/present.js';
 import { projectFact } from '../display/facts.js';
 import { formatBytes, formatCount } from '../display/format.js';
@@ -853,6 +854,11 @@ export class HealthSurface extends JfElement {
     if (this.status?.power?.energyReduced === true && queue > 0) return 'Paused — saving energy';
     if (!known) return 'Unknown';
     if (queue > 0) return 'Indexing';
+    // 809 finding 1 — the JOB queue draining is not the work finishing. Embedding/SPLADE/NER run
+    // afterwards on the backfill scheduler, and until they drain, semantic and hybrid search do not
+    // work — so neither the terminal "Up to date" nor "Idle" is true here. Same coverage authority the
+    // Library rows consult, same phrase the Brain surface uses for this work.
+    if (enrichmentProgress(this.status).pending) return ENRICHMENT_IN_PROGRESS_LABEL;
     // Idle + a verified-healthy index ⇒ the explicit terminal "Up to date"; otherwise stay honest
     // with "Idle" (don't claim up-to-date when health isn't confirmed).
     return this.status?.worker?.core?.indexHealthy === true ? 'Up to date' : 'Idle';
