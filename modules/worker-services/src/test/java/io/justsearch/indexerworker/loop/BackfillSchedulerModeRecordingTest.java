@@ -8,9 +8,11 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.justsearch.adapters.lucene.runtime.CommitOps;
@@ -292,5 +294,80 @@ class BackfillSchedulerModeRecordingTest {
 
     assertEquals(false, didWork);
     assertEquals("idle", OperationalMetrics.getInstance().getBackfillMode());
+  }
+
+  /**
+   * Tempdoc 813 §20a (owner finding, 2026-08-07). The individual branch pre-stamps "individual"
+   * BEFORE running the pass (mid-pass observability), so a pass that then found nothing eligible
+   * used to leave the gauge reading "individual" until the next cycle changed it — on a fully
+   * enriched index, forever. {@code getBackfillMode}'s own contract calls that state "idle" ("no
+   * backfill work was available/eligible last cycle"), so the pass now re-stamps it.
+   */
+  @Test
+  @DisplayName("§20a: an individual pass that advances NOTHING re-stamps mode=idle")
+  void individualMode_withNothingEligible_reStampsIdle() {
+    // Gauge seeded to a value neither branch would produce by accident, so a passing assertion
+    // cannot come from a leftover "idle" that was simply never overwritten (this class shares one
+    // process-wide OperationalMetrics singleton across tests).
+    OperationalMetrics.getInstance().recordBackfillMode("combined");
+
+    // Nothing seeded: every stage query returns empty. Only embed available -> availCount=1 -> the
+    // combined pass writes nothing -> the INDIVIDUAL branch is the one that runs.
+    BackfillScheduler scheduler = scheduler(true, false, false);
+
+    long embedCompletedBefore =
+        OperationalMetrics.getInstance()
+            .getEnrichmentCompleted()
+            .getOrDefault(BatchTimingKeys.EMBED, 0L);
+
+    boolean didWork = scheduler.runIdleCycle();
+
+    assertEquals(false, didWork);
+    // Right-reason guard #1: the backfill was NOT skipped wholesale (that path stamps "idle" from
+    // the else-branch and would pass this test vacuously) — the pass ran and queried for work.
+    verify(documentFieldOps, atLeastOnce()).queryDocIdsByField(anyString(), anyString(), anyInt());
+    // Right-reason guard #2: it genuinely advanced nothing, so "idle" is the truthful gauge value
+    // rather than a stamp that raced past real work.
+    assertEquals(
+        embedCompletedBefore,
+        OperationalMetrics.getInstance()
+            .getEnrichmentCompleted()
+            .getOrDefault(BatchTimingKeys.EMBED, 0L),
+        "no documents were eligible, so no stage may have recorded a completion");
+    assertEquals("idle", OperationalMetrics.getInstance().getBackfillMode());
+  }
+
+  /**
+   * The other direction of §20a's re-stamp: a pass that DID advance documents keeps "individual".
+   * {@code runIndividualBackfills}' pacing flag is false even here (a parent-embedding batch never
+   * sets it — only the chunk loop and a SPLADE pass over a non-empty backlog do), so a re-stamp
+   * keyed on that flag instead of on ACTIVITY would stamp "idle" over a working cycle.
+   */
+  @Test
+  @DisplayName("§20a: an individual pass that DOES advance documents keeps mode=individual")
+  void individualMode_withWorkDone_keepsIndividual() {
+    seedDoc(
+        "doc-3",
+        "content for doc three",
+        Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
+
+    BackfillScheduler scheduler = scheduler(true, false, false);
+
+    long embedCompletedBefore =
+        OperationalMetrics.getInstance()
+            .getEnrichmentCompleted()
+            .getOrDefault(BatchTimingKeys.EMBED, 0L);
+
+    boolean didWork = scheduler.runIdleCycle();
+
+    // The pacing flag stays false — this is exactly the signal a naive re-stamp would have used.
+    assertEquals(false, didWork);
+    assertTrue(
+        OperationalMetrics.getInstance()
+                .getEnrichmentCompleted()
+                .getOrDefault(BatchTimingKeys.EMBED, 0L)
+            > embedCompletedBefore,
+        "the embedding stage must have advanced the seeded document");
+    assertEquals("individual", OperationalMetrics.getInstance().getBackfillMode());
   }
 }

@@ -272,8 +272,6 @@ interface EnrichmentWork {
    * of unfinished work (813 §17 / §1d's false terminal).
    */
   readonly rawPending: number;
-  /** Is the worker's enrichment backfill running right now? */
-  readonly backfillActive: boolean;
 }
 
 function readEnrichmentWork(status: StatusResponse | null | undefined): EnrichmentWork {
@@ -327,23 +325,27 @@ function readEnrichmentWork(status: StatusResponse | null | undefined): Enrichme
     (applicable.ner ? nerPending : 0) +
     (applicable.embedding ? count(chunk?.chunkEmbeddingPendingCount) : 0);
 
-  const backfillMode = enrichment?.backfillMode ?? 'idle';
-  return {
-    applicable,
-    rows,
-    rawPending,
-    backfillActive: backfillMode !== 'idle' && backfillMode !== '',
-  };
+  return { applicable, rows, rawPending };
 }
 
 /**
  * The positive-evidence phase gate (merged from #375's enrichmentCoverage doctrine, 813 §17).
  * Pending work on an APPLICABLE stage withholds the terminal phase even when that stage lacks a
  * faithful denominator — "Up to date" off a missing denominator would be the §1d false terminal.
+ *
+ * COUNTS ONLY. `enrichment.backfillMode` is deliberately NOT consulted (813 §20a, owner finding
+ * 2026-08-07): it is a LAST-KNOWN operator gauge, written once per `BackfillScheduler.runIdleCycle()`
+ * and held between cycles (`OperationalMetrics.getBackfillMode` — "no backfill work was
+ * available/eligible LAST cycle"), so it describes which pass ran, not whether work remains. Reading
+ * it as activity produced the mirror image of §1d: on a fully settled index (every stage 0 pending)
+ * a stuck `"individual"` gauge kept the phase at `enriching` forever — "Ready — fully searchable"
+ * unreachable, the Tasks card claiming "still improving" over an index with nothing left to improve.
+ * The doctrine is symmetric and the gauge fails it in both directions: pending counts are the
+ * evidence, and a gauge is not a count.
  */
 function derivePhase(jobsPending: number, work: EnrichmentWork): IndexingPhase {
   if (jobsPending > 0) return 'indexing';
-  return work.backfillActive || work.rawPending > 0 ? 'enriching' : 'ready';
+  return work.rawPending > 0 ? 'enriching' : 'ready';
 }
 
 /**

@@ -83,15 +83,87 @@ describe('selectIndexingProgress — phase arms (813 §3a)', () => {
     expect(p.enrichingPending).toBe(40);
   });
 
-  it('jobs drained and no pending counters, but the backfill is running ⇒ "enriching"', () => {
+  // 813 §20a (owner live finding, 2026-08-07) — INVERTED from the pre-§20a expectation, which read
+  // a non-idle `backfillMode` as activity. The gauge is LAST-KNOWN (written once per
+  // `BackfillScheduler.runIdleCycle()`, held between cycles), so with no pending counter anywhere
+  // there is no evidence of work and the honest phase is the terminal one. The old expectation is
+  // what kept a fully-settled index at "still improving" forever.
+  it('jobs drained and NO pending counters ⇒ "ready", whatever the backfill gauge last said', () => {
+    for (const backfillMode of ['combined', 'individual', 'idle', '']) {
+      const p = select(
+        snapshot({
+          core: { indexState: 'IDLE', pendingJobs: 0 },
+          enrichment: { backfillMode },
+        }),
+        true,
+      );
+      expect(p.phase, `backfillMode=${JSON.stringify(backfillMode)}`).toBe('ready');
+    }
+  });
+
+  // The owner's exact live snapshot: every stage fully settled, gauge stuck on "individual".
+  it('REGRESSION: a fully SETTLED index reaches "ready" while the gauge still says "individual"', () => {
     const p = select(
       snapshot({
         core: { indexState: 'IDLE', pendingJobs: 0 },
-        enrichment: { backfillMode: 'combined' },
+        enrichment: {
+          backfillMode: 'individual',
+          embeddingDocCount: 21,
+          embeddingPendingCount: 0,
+          embeddingEnabled: true,
+          spladeDocCount: 21,
+          spladePendingCount: 0,
+          spladeEnabled: true,
+          completedNerCount: 21,
+          pendingNerCount: 0,
+          nerEnabled: true,
+          chunk: { chunkDocCount: 84, chunkEmbeddingPendingCount: 0 },
+        },
+      }),
+      true,
+    );
+    expect(p.phase).toBe('ready');
+    expect(p.enrichingPending).toBe(0);
+    // Right-reason guard: the stages ARE all counted (so this is not passing because the blend was
+    // empty) and the percent reaches a true 100 — the §20 floor only caps a PENDING tail.
+    expect(p.enrichingStages.map((r) => r.id)).toEqual([
+      'embedding',
+      'splade',
+      'ner',
+      'chunkVectors',
+    ]);
+    expect(p.enrichingPercent).toBe(100);
+  });
+
+  // Evidence wins in BOTH directions: the gauge cannot manufacture work, and it cannot deny it.
+  it('pending work ⇒ "enriching" even while the backfill gauge says "idle"', () => {
+    const p = select(
+      snapshot({
+        core: { indexState: 'IDLE', pendingJobs: 0 },
+        enrichment: {
+          backfillMode: 'idle',
+          embeddingDocCount: 100,
+          embeddingPendingCount: 40,
+          embeddingEnabled: true,
+        },
       }),
       true,
     );
     expect(p.phase).toBe('enriching');
+    expect(p.enrichingPending).toBe(40);
+  });
+
+  // A denominator-less pending counter is still evidence (813 §17) — that arm is unchanged by §20a.
+  it('a denominator-less pending counter still withholds "ready" with the gauge idle', () => {
+    const p = select(
+      snapshot({
+        core: { indexState: 'IDLE', pendingJobs: 0 },
+        enrichment: { backfillMode: 'idle', chunk: { chunkEmbeddingPendingCount: 1554 } },
+      }),
+      true,
+    );
+    expect(p.phase).toBe('enriching');
+    expect(p.enrichingPercent).toBeNull();
   });
 
   it('everything settled ⇒ "ready"', () => {

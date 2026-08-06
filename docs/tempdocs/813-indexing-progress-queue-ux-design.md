@@ -755,3 +755,61 @@ would need a shared per-stage colour vocabulary this surface is the only consume
 per-file enrichment names ("which file is being embedded right now") — the wire carries no
 per-file enrichment attribution, so it needs worker support first. Both remain design
 candidates, neither is blocked on anything in this section.
+
+### 20f. Addendum (2026-08-07): the stale gauge — "Ready" was unreachable
+
+A second owner live-validation pass, diagnosed from the API on a running stack, found the
+mirror image of §20's Finding A. Every enrichment stage was fully settled — embedding 21/21
+pending 0, SPLADE 21/21 pending 0, NER 0 pending, chunk 84/84 pending 0 — and the card still
+read "Search is ready — still improving · semantic search catching up", indefinitely. The
+wire showed `backfillMode: "individual"`.
+
+**The doctrine line this establishes:**
+
+> **A last-known gauge is never phase evidence.** Phase is derived from pending COUNTS.
+
+`enrichment.backfillMode` is an operator gauge, not an activity signal: it is written once
+per `BackfillScheduler.runIdleCycle()` and *held between cycles*, and its own getter
+documents `"idle"` as "no backfill work was available/eligible **last cycle**"
+(`OperationalMetrics.java` — tempdoc 710 Move 2 item 4). It answers "which pass ran?", never
+"is work outstanding?". §20's Finding A was a percent claiming completion the phase denied;
+this is a phase denying completion the counts had already reached. Both are the §1d false
+terminal — one fabricating an ending, one refusing to admit a real one — and the positive
+-evidence doctrine (§17) covers both directions: the counts are the evidence, in and out.
+
+**Fault 1 — FE (load-bearing).** `derivePhase` consulted `backfillActive` and is now
+counts-only: `jobsPending > 0 ? 'indexing' : rawPending > 0 ? 'enriching' : 'ready'`. The
+`backfillActive` member is gone from `EnrichmentWork` — it had exactly one consumer, the
+phase gate, so leaving it would be residue. The wire field itself is untouched and remains
+available on the snapshot for any display/ops consumer (ui-web has none today; the sweep
+found only this gate). A welcome consequence for §20c: the `enrichSettleSamples` trail
+clears on any non-`enriching` phase, so a stuck gauge can no longer hold an enrichment-rate
+episode open on a settled index.
+
+**Fault 2 — worker hygiene.** `BackfillScheduler.runIdleCycle()` stamps `"individual"`
+*before* running the pass. The pre-stamp is kept — mid-pass observability is the gauge's
+purpose — but the pass now re-stamps `"idle"` when it advanced nothing, which is exactly
+what the getter's contract already calls idle.
+
+**Implementation note (deviation from the brief, empirically forced).** The re-stamp is
+keyed on ACTIVITY (`StageOutcome.docsProcessed() > 0` across the stages), not on
+`runIndividualBackfills`' boolean return. That return is a PACING flag — only the chunk
+tight-loop and a SPLADE pass over a non-empty backlog set it, so a parent-embedding batch
+leaves it `false` while genuinely embedding documents. Keying the re-stamp on it would stamp
+`"idle"` over a working cycle: the same lie, other direction. This is tempdoc 798's own
+distinction, already stated in this file for the combined branch ("Mode selection reads
+ACTIVITY... the tight loop reads PROGRESS... conflating them is what livelocked ingest"), so
+`runIndividualBackfills` now returns `IndividualOutcome(didWork, anyActivity)` — pacing
+semantics unchanged, gauge served by its own signal. The regression test
+`individualMode_withWorkDone_keepsIndividual` pins this: it asserts `didWork == false` AND
+that a document was embedded AND that the mode stays `"individual"`, so it fails if anyone
+re-keys the re-stamp on the pacing flag.
+
+**Coverage.** FE: `jobs drained and NO pending counters ⇒ "ready", whatever the backfill
+gauge last said` (all four gauge values), `REGRESSION: a fully SETTLED index reaches "ready"
+while the gauge still says "individual"` (the owner's exact snapshot, with a right-reason
+guard that all four stage rows are present and the percent is a true 100), plus both
+evidence-wins-anyway directions. Worker: the two `§20a` cases above, in the existing
+`BackfillSchedulerModeRecordingTest`. The pre-§20a FE case that asserted "backfill running
+with no pending counters ⇒ enriching" was INVERTED rather than deleted — it encoded the
+defect, and its snapshot is now the regression fixture.
