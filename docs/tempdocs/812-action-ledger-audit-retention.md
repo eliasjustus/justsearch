@@ -221,6 +221,14 @@ tests changed tier deliberately (they used a per-doc index row as the stand-in f
 the user opened Activity to see"; that role is now the scan rollup) — each rewritten to keep its
 original intent, not weakened.
 
+## At-rest posture (owner decision 2026-08-06)
+
+The audit journal persists **plaintext at rest** under the data dir by owner decision
+(accept-and-document): it is metadata, not content; the encrypted-store catalog deliberately
+excludes it because an entry without a cipher would falsely claim sealing; revisit if audit rows ever
+carry content. Written up in `docs/reference/security/threat-model.md`
+§*Information disclosure at rest — the action-ledger audit journal* (ride-along with tempdoc 815).
+
 ## Not built (scope discipline)
 
 No re-sourcing of the rail from the ledger (550's rejection stands). No cursor pagination

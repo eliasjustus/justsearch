@@ -1,0 +1,29 @@
+<!--
+  JustSearch lockup - mark + wordmark, dark-ground colorway. Use at installer / hero scale, where
+  the mark renders >= 48px and therefore carries the footnote. Below 32px use the mark ALONE
+  (mark-small-*.svg): the mark never contains text, and the wordmark never appears without room
+  to be read.
+
+  "JustSearch" is one word, weight-split 650 / 350. It is set here as live <text> in the system
+  grotesque so HTML/SVG surfaces get real text (selectable, accessible, hinted).
+
+  FONT FALLBACK, honestly: the split needs a variable face. On Windows 11 the stack resolves to
+  Segoe UI Variable and both weights are exact. Where only static Segoe UI exists, 650 -> Semibold
+  (600) and 350 -> Semilight (350); where neither exists, system-ui / Arial takes over and the
+  split degrades to bold/regular. That is acceptable for a screen surface and NOT acceptable for a
+  fixed raster (an installer bitmap must look the same on every machine), which is exactly why
+  brand/wordmark-outlines.svg exists and is what brand/generate.mjs rasterises.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 248 64" width="248" height="64"
+     role="img" aria-label="JustSearch">
+  <g id="mark">
+    <path id="mass" fill="#eceef1"
+          d="M10,8 H38 A4,4 0 0 1 42,12 V28 H24 V36 H42 V52 A4,4 0 0 1 38,56 H10 A4,4 0 0 1 6,52 V12 A4,4 0 0 1 10,8 Z"/>
+    <rect id="answer-line" x="46" y="28" width="14" height="8" fill="#00CCB2"/>
+    <rect id="footnote" x="58" y="22" width="4" height="4" fill="#00CCB2"/>
+  </g>
+  <text id="wordmark" x="76" y="44" fill="#eceef1" font-size="34" letter-spacing="-0.5"
+        font-family="'Segoe UI Variable Display','Segoe UI Variable','Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif">
+    <tspan font-weight="650">Just</tspan><tspan font-weight="350">Search</tspan>
+  </text>
+</svg>

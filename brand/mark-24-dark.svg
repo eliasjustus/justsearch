@@ -1,0 +1,22 @@
+<!--
+  JustSearch mark - the 24px raster frame, dark-ground colorway. HAND-SNAPPED; do not regenerate
+  by scaling mark-small-dark.svg.
+
+  Why this file exists: the <= 24px cut is drawn on a 16-unit grid, and 24 / 16 = 1.5, so every
+  ODD coordinate in that cut lands on a half-pixel at 24px (1 -> 1.5, 5 -> 7.5, 11 -> 16.5). A
+  half-pixel edge is a grey row, and a grey row at 24px is a blurred icon in the Windows taskbar.
+
+  Three edges were nudged to the nearest whole pixel, silhouette preserved:
+    * mass left wall      1.5 -> 2   (out-margin 2px; matches the right margin, see below)
+    * slot mouth (notch)  7.5 -> 8   (slot depth 15 - 8 = 7px, was 7.5)
+    * answer-line left   16.5 -> 16  (line 16..22, so the right margin is also 2px)
+  Every y coordinate was already whole at 1.5x (3, 9, 15, 21) and was NOT touched.
+
+  The snap happens to regularise the drawing: back wall, top arm and bottom arm all become
+  exactly 6px, and the 1px gap between mass and line survives.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     shape-rendering="crispEdges" role="img" aria-label="JustSearch">
+  <path id="mass" fill="#eceef1" d="M2,3 H15 V9 H8 V15 H15 V21 H2 Z"/>
+  <rect id="answer-line" x="16" y="9" width="6" height="6" fill="#00CCB2"/>
+</svg>
