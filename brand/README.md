@@ -64,8 +64,10 @@ favicon has drifted back to Vite's logo.
 The 16-unit cut is pixel-exact at 16px and 32px. At **24px** the 1.5× scale puts every odd coordinate
 on a half-pixel, so the `.ico`'s 24px frame is a separately authored, hand-snapped file — three edges
 nudged to whole pixels with the silhouette preserved (the full derivation is in the file's own
-comment). The result is verifiably crisp: the 16px and 24px `.ico` frames contain only alpha 0 or 255
-and only the two brand colours — no anti-aliased pixel anywhere.
+comment). At 16px and 24px the mark is drawn 1:1 over the full frame and the plate is sized around
+it, so the snap survives: those two `.ico` frames carry **zero anti-aliased pixels inside the mark**
+— every partial-alpha pixel in them is plate-coloured, i.e. the plate's own rounded corners (12 and
+20 pixels respectively), and every opaque pixel is one of ink, accent or plate.
 
 ## Colour
 
@@ -77,11 +79,22 @@ and only the two brand colours — no anti-aliased pixel anywhere.
 Mass = ink. Answer-line + footnote = accent. Ground is transparent. In single-colour contexts every
 shape is ink.
 
-**Icons take the dark-ground colorway** (`icon.ico`, `icon.icns`, the app PNGs) because an OS icon
-cannot follow the OS theme, and the chrome it spends its life in — taskbar, Start, title bar — is
-dark by default. The honest cost: over a light background the pale mass has little contrast. The NSIS
-**header** bitmap therefore takes the *light* colorway instead, because MUI's header ground is white
-(`MUI_BGCOLOR` defaults to `FFFFFF`); the **sidebar** takes dark on its own `#0e0f12` field.
+**Icon-class assets carry their ground; everything else is plateless.** The mark is specified on a
+near-white *or* near-black ground — a mid-tone collapses it. Surfaces that own their background (the
+installer bitmaps, the app UI, a document page) supply a compliant one, so the mark sits on them
+bare. An OS icon or a browser tab cannot: the ground is whatever the environment happens to be. So
+`icon.ico`, `icon.icns`, the three app PNGs and `favicon.svg` — and only those — are drawn on a
+near-black `#0e0f12` rounded plate (inset ≈ 1/16 of the frame, corner radius ≈ 1/8, both snapped to
+whole pixels) with the dark colorway on top. Over light chrome the plate supplies the contrast; over
+dark chrome it merges with the background and the mark reads as if plateless. This is packaging the
+specified ground, not the glyph-in-rounded-app-square identity formula the mark's own self-critique
+refused — the plate is not part of the mark, and `brand/*.svg` never contains it.
+
+The NSIS **header** bitmap takes the *light* colorway (no plate) because MUI's header ground is
+already white (`MUI_BGCOLOR` defaults to `FFFFFF`); the **sidebar** takes dark on its own `#0e0f12`
+field. Because the plate insets the mark, the size ladder for icon-class assets keys on the
+**rendered mark size**, not the frame: a 48px frame holds a 42px mark, which is below the footnote
+threshold and correctly drops it.
 
 ## Wordmark and lockup
 

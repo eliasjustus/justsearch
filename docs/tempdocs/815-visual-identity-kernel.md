@@ -175,33 +175,75 @@ frames, all eleven ICNS entries and both BMPs without complaint.
 - **`header.bmp` (150×57)** — white ground, 24px small-cut mark + 14px-cap wordmark, left-anchored,
   ~12px right margin. Crisp; the accent line is the dark-ground-appropriate `#00655B`, not the bright
   teal, so it does not glare on white.
-- **ICO frames** — inspected at 1:1 and at 8× nearest-neighbour. **16px and 24px are provably crisp**,
-  not by eye but by oracle: both frames contain only alpha `{0, 255}` and only the two brand colours
-  `{#eceef1, #00ccb2}` — zero anti-aliased pixels. The 24px row map matches the §4 snap exactly (mass
-  cols 2–14, slot cols 8–14 × rows 9–14, line cols 16–21, 2px margins both sides, 6px arms).
-  **32px carries the master without the footnote**, and shows the expected AA on its 2px corner radii
-  (alphas `{0, 80, 232, 233, 255}`). **The footnote appears at 48px and 256px and nowhere below** —
-  the ladder is honoured by construction, since `markFrame()` picks the source file by size.
+- **ICO frames, pre-plate** — the 24px row map matched the §4 snap exactly (mass cols 2–14, slot cols
+  8–14 × rows 9–14, line cols 16–21, 2px margins both sides, 6px arms), and 16/24 contained only
+  alpha `{0, 255}` and only `{#eceef1, #00ccb2}` — zero anti-aliased pixels.
 - **`icon.icns`** — the 1024 entry renders the master correctly: mass, slot, answer-line and footnote
   in the right places with the spec's `y=22` footnote (not the exploration card's `y=20`).
 
-## 7. Open question for the owner — icon contrast on light grounds
+**Re-run after the §7 plate**, all five `.ico` frames laid out over white **and** over Windows 11's
+dark-taskbar grey `#202020`, plus the three app PNGs at 1:1 over white and `#0e0f12`:
 
-The spec says the shipped `.ico`/`.icns` take the **dark-ground** colorway because an icon cannot
-follow the OS theme. That was implemented as written. Rendering the app PNGs over both grounds makes
-the cost visible and it is larger than "slightly lower contrast": over **white**, the `#eceef1` mass
-is very nearly invisible, and because the slot is cut *through* the mass, the mark loses its whole
-subject and reads as a pale smudge with a teal dash beside it. Over `#0e0f12` it is perfect.
+- **Over white the icon now reads at every size.** The dark plate carries it: the pale mass, the slot
+  cut through it and the teal answer-line are all unambiguous at 16px, and by 32px the whole
+  composition is legible. This is the direct fix for the finding above — the pale smudge is gone.
+- **Over dark chrome the plate is essentially invisible**, exactly as intended: against `#202020` its
+  silhouette is only faintly discernible and against `#0e0f12` it vanishes completely, so the mark
+  reads as if plateless. Merging with dark grounds is the design, not a defect.
+- **16px and 24px stay AA-free inside the mark** — by oracle, not by eye. Across both frames: zero
+  opaque pixels off the `{ink, accent, plate}` palette, and **every** partial-alpha pixel is
+  plate-coloured (12 at 16px, 20 at 24px) — i.e. the only anti-aliasing anywhere is the plate's own
+  rounded corners, which is what the coordinator's brief allowed. The mark's pixel grid is untouched.
+- **The footnote now appears on the 256 frame only** (48px insets to a 42px mark — see §7); 32px and
+  48px carry the master without it, with the expected AA on their scaled corner radii.
+- **The installer BMPs are byte-identical to the pre-plate run** (`sha256sum -c`), confirming the
+  plate is scoped to icon-class outputs and did not leak into the surfaces that own their ground.
 
-This is not hypothetical — Windows 11 shows app icons on light Explorer backgrounds, on light-mode
-taskbars, and over arbitrary wallpaper. Three options if the owner wants it addressed, none taken
-here because the colorway is a spec decision, not an implementation detail:
+## 7. Icon contrast on uncontrolled grounds — raised, then resolved
 
-1. Accept it (dark chrome is the common case; light-mode users see a faint icon).
-2. Ship the **light** colorway in the icon instead — inverts the problem onto dark chrome, which is
-   Windows 11's default, so this is probably worse.
-3. Give the icon an opaque plate. The mark's own self-critique explicitly refuses the
-   "glyph-in-rounded-app-square formula", so this needs an owner decision, not an agent's.
+**The finding.** The spec says the shipped `.ico`/`.icns` take the **dark-ground** colorway because an
+icon cannot follow the OS theme. Implemented as written, and rendering the app PNGs over both grounds
+showed the cost was larger than "slightly lower contrast": over **white** the `#eceef1` mass was very
+nearly invisible, and because the slot is cut *through* the mass, the mark lost its whole subject and
+read as a pale smudge with a teal dash beside it. Not hypothetical — Windows 11 shows app icons on
+light Explorer panes, light-mode taskbars, and arbitrary wallpaper.
+
+**The resolution (orchestrator call, 2026-08-06, under the autonomous directive — owner-overridable).**
+Derived from the spec's own constraint hierarchy rather than from taste. The spec specifies the mark
+on a near-white **or** near-black ground *only*; a mid-tone collapses it. Every other surface owns its
+background and supplies a compliant one — the installer bitmaps, the app UI, a document page. An icon
+is the one class that cannot: Windows draws it over whatever is there. Therefore **the icon carries
+its specified ground with it.**
+
+Icon-class assets — and only these — are drawn on a near-black `#0e0f12` rounded plate with the dark
+colorway on top: `icon.ico` (all frames incl. 16 and 24), `icon.icns` (all entries), the three tauri
+PNGs, and `favicon.svg` (a browser tab is an uncontrolled ground too, so it joins the class and drops
+its `prefers-color-scheme` pair — the ground is ours now). The installer BMPs and every `brand/*.svg`
+master are **unchanged and plateless**.
+
+**Why this is not the thing the mark's self-critique refused.** That critique rejected the
+*glyph-in-rounded-app-square formula* — an identity built on a container, where the square is doing
+the distinguishing work. This is supplying-the-specified-ground-as-packaging: the plate is not part
+of the mark, it appears nowhere a ground already exists, and it is generated by the packaging step
+rather than authored into the identity. The distinction is load-bearing and is what makes the call
+reviewable: if the plate ever migrates into `brand/*.svg`, or onto a surface that has its own ground,
+the line has been crossed.
+
+**Geometry.** Inset ≈ 1/16 of the frame, corner radius ≈ 1/8, both snapped to whole pixels
+(`generate.mjs` `iconFrame`). Two deviations from the round formula, each forced and each recorded in
+the code:
+- **16px uses inset 0 (full bleed).** A 1px inset costs 12.5% of the cell, *and* its 2px radius cuts
+  the corners off the ≤24px cut: that cut's mass wall sits at `x=1`, and the corner arc centred on
+  `(3,3)` leaves `(1,2)` and `(1,14)` outside the plate. Full bleed is also the standard 16px
+  treatment.
+- **At ≤24px the mark is drawn 1:1 over the full frame** and the plate is sized around it, so the
+  hand-snapped grid survives intact. At 24px: inset 1, radius 3 — the mark's corners `(2,3)` and
+  `(2,21)` sit 2.24 from the arc centres `(4,4)`/`(4,20)`, inside `r=3`. Verified, not assumed.
+- **At ≥25px the ladder keys on the RENDERED mark size, not the frame**, because the plate insets the
+  mark. A 48px frame now holds a 42px mark, which is below the footnote threshold and correctly drops
+  it. This is the ladder's own logic, not a workaround: the 48px cut-off exists because the footnote
+  dies at small *rendered* sizes. Consequence worth naming — **in the `.ico` the footnote now appears
+  only on the 256 frame**, where before the plate it also appeared at 48.
 
 ## 8. Ride-alongs
 

@@ -563,26 +563,90 @@ export function encodeBmp24(rgba, width, height) {
 
 const svg = (name) => parseSvg(readFileSync(join(BRAND_DIR, name), 'utf8'));
 
-/** Render a square mark SVG at `size`, transparent ground, honouring the size ladder. */
-function renderMark(source, size, { drop = [] } = {}) {
-  const scale = size / source.viewBox.w;
-  return new Canvas(size, size)
-    .paint(source.shapes, {
-      sx: scale,
-      sy: scale,
-      tx: -source.viewBox.x * scale,
-      ty: -source.viewBox.y * scale,
-    }, { drop })
-    .rgba();
+/** The size ladder as a function: pick the source file and shape set for a RENDERED mark size. */
+function markSource(renderedSize, colorway) {
+  if (renderedSize <= 16) return { doc: svg(`mark-small-${colorway}.svg`), drop: [] };
+  if (renderedSize === 24) return { doc: svg(`mark-24-${colorway}.svg`), drop: [] };
+  if (renderedSize < 25) return { doc: svg(`mark-small-${colorway}.svg`), drop: [] };
+  if (renderedSize < 48) return { doc: svg(`mark-${colorway}.svg`), drop: ['footnote'] };
+  return { doc: svg(`mark-${colorway}.svg`), drop: [] };
 }
 
-/** The size ladder as a function: pick the source file and shape set for a raster size. */
-function markFrame(size, colorway) {
-  if (size <= 16) return renderMark(svg(`mark-small-${colorway}.svg`), size);
-  if (size === 24) return renderMark(svg(`mark-24-${colorway}.svg`), size);
-  if (size < 25) return renderMark(svg(`mark-small-${colorway}.svg`), size);
-  if (size < 48) return renderMark(svg(`mark-${colorway}.svg`), size, { drop: ['footnote'] });
-  return renderMark(svg(`mark-${colorway}.svg`), size);
+function paintMark(canvas, { doc, drop }, { x, y, size }) {
+  const scale = size / doc.viewBox.w;
+  canvas.paint(doc.shapes, {
+    sx: scale,
+    sy: scale,
+    tx: x - doc.viewBox.x * scale,
+    ty: y - doc.viewBox.y * scale,
+  }, { drop });
+}
+
+const PLATE_INK = [0x0e, 0x0f, 0x12];
+
+/** A rounded rectangle as one flattened contour, y-down. */
+export function roundedRect(x, y, w, h, r) {
+  const points = [];
+  const corner = (cx, cy, from, to) => {
+    for (let i = 0; i <= 24; i += 1) {
+      const t = from + ((to - from) * i) / 24;
+      points.push([cx + r * Math.cos(t), cy + r * Math.sin(t)]);
+    }
+  };
+  corner(x + r, y + r, Math.PI, Math.PI * 1.5);
+  corner(x + w - r, y + r, Math.PI * 1.5, Math.PI * 2);
+  corner(x + w - r, y + h - r, 0, Math.PI * 0.5);
+  corner(x + r, y + h - r, Math.PI * 0.5, Math.PI);
+  return points;
+}
+
+/**
+ * ICON-CLASS geometry: the mark on a near-black rounded plate.
+ *
+ * WHY THE PLATE EXISTS, and why it is not the thing the mark's self-critique refused. The mark is
+ * specified on a near-white OR near-black ground; a mid-tone ground collapses it, and the dark
+ * colorway over white is nearly invisible because the slot is cut THROUGH the mass. Every other
+ * surface supplies a compliant ground of its own -- the installer bitmaps, the app UI, a document
+ * page. An OS icon cannot: Windows draws it over wallpaper, light Explorer panes, dark taskbars,
+ * whatever. So the icon PACKAGES its specified ground with it. That is supplying-the-ground, not
+ * the glyph-in-rounded-app-square identity formula: the mark itself stays plateless everywhere a
+ * ground already exists, and the plate is not part of the mark.
+ *
+ * Orchestrator call under the autonomous directive, 2026-08-06; owner-overridable (tempdoc 815 §7).
+ *
+ * Geometry: inset ~1/16 of the frame, corner radius ~1/8, both snapped to whole pixels.
+ *   - At 16px the inset is 0 (full bleed). A 1px inset costs 12.5% of the cell AND its 2px radius
+ *     cuts the corners off the <=24px cut's mass, whose left wall sits at x=1: the corner arc
+ *     centred on (3,3) leaves (1,2) and (1,14) outside the plate. Full bleed is also the standard
+ *     16px treatment.
+ *   - At and below 24px the mark is drawn 1:1 over the FULL frame so the hand-snapped pixel grid
+ *     survives, and the plate is sized to contain it (at 24px: inset 1, radius 3 -- the mark's
+ *     corners (2,3) and (2,21) sit 2.24 from the arc centres (4,4)/(4,20), inside r=3).
+ *   - At 25px and up the mark is scaled into the plate's inner box, so the LADDER KEYS ON THE
+ *     RENDERED MARK SIZE, not the frame: a 48px frame insets to a 42px mark, which is below the
+ *     footnote threshold and correctly drops it. The footnote's own reason for the 48px cut-off is
+ *     that it dies at small rendered sizes, and the plate makes the rendered size smaller.
+ */
+function iconFrame(size) {
+  const inset = size <= 16 ? 0 : Math.max(1, Math.floor(size / 16));
+  const radius = Math.max(2, Math.round(size / 8));
+  const snapped = size <= 24; // 16 and 24 are pixel-authored cuts; never rescale them
+  const box = snapped
+    ? { x: 0, y: 0, size }
+    : { x: inset, y: inset, size: size - inset * 2 };
+  const canvas = new Canvas(size, size);
+  canvas.paint(
+    [
+      {
+        id: 'plate',
+        fill: PLATE_INK,
+        contours: [roundedRect(inset, inset, size - inset * 2, size - inset * 2, radius)],
+      },
+    ],
+    { sx: 1, sy: 1, tx: 0, ty: 0 },
+  );
+  paintMark(canvas, markSource(box.size, 'dark'), box);
+  return canvas.rgba();
 }
 
 function paintWordmark(canvas, wordmark, { capHeight, x, baseline, color }) {
@@ -609,19 +673,19 @@ function main() {
   // --- app PNGs referenced by tauri.conf.json bundle.icon ---
   for (const size of [32, 128, 256]) {
     const name = size === 256 ? '128x128@2x.png' : `${size}x${size}.png`;
-    write(`modules/shell/src-tauri/icons/${name}`, encodePng(markFrame(size, 'dark'), size, size));
+    write(`modules/shell/src-tauri/icons/${name}`, encodePng(iconFrame(size), size, size));
   }
 
   // --- Windows .ico: 16 and 24 from the dedicated cut, 32 without footnote, 48/256 full ---
   write(
     'modules/shell/src-tauri/icons/icon.ico',
-    encodeIco([16, 24, 32, 48, 256].map((size) => ({ size, rgba: markFrame(size, 'dark') }))),
+    encodeIco([16, 24, 32, 48, 256].map((size) => ({ size, rgba: iconFrame(size) }))),
   );
 
   // --- macOS .icns (bundle.icon lists it; tauri-bundler canonicalises every entry) ---
   const icnsSizes = [16, 32, 64, 128, 256, 512, 1024];
   const icnsPng = new Map(
-    icnsSizes.map((size) => [size, encodePng(markFrame(size, 'dark'), size, size)]),
+    icnsSizes.map((size) => [size, encodePng(iconFrame(size), size, size)]),
   );
   write(
     'modules/shell/src-tauri/icons/icon.icns',
@@ -640,31 +704,23 @@ function main() {
     ]),
   );
 
-  // --- ui-web favicon: the dedicated cut, both colorways in one file ---
+  // --- ui-web favicon: icon-class, so it carries the plate and the dark colorway ---
+  // A browser tab is as uncontrolled a ground as a desktop is: light chrome, dark chrome, a theme
+  // nobody predicted. The favicon therefore packages the plate like the .ico does, which also
+  // means it has ONE colorway instead of a prefers-color-scheme pair -- the ground is now ours.
   const geometry = readFileSync(join(BRAND_DIR, 'mark-small-dark.svg'), 'utf8');
   const massD = /<path id="mass"[^>]*d="([^"]+)"/.exec(geometry)[1];
   const line = attrs(/<rect id="answer-line"([^>]*)\/>/.exec(geometry)[1]);
-  const lightInk = markSmallLight.shapes[0].fill;
-  const lightAccent = markSmallLight.shapes[1].fill;
-  const darkInk = markSmallDark.shapes[0].fill;
-  const darkAccent = markSmallDark.shapes[1].fill;
   const hex = ([r, g, b]) =>
     `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
   write(
     'modules/ui-web/public/favicon.svg',
     Buffer.from(
-      `<!-- GENERATED by brand/generate.mjs from brand/mark-small-*.svg - do not hand-edit. -->\n` +
+      `<!-- GENERATED by brand/generate.mjs from brand/mark-small-dark.svg - do not hand-edit. -->\n` +
         `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shape-rendering="crispEdges">\n` +
-        `  <style>\n` +
-        `    .ink { fill: ${hex(lightInk)}; }\n` +
-        `    .accent { fill: ${hex(lightAccent)}; }\n` +
-        `    @media (prefers-color-scheme: dark) {\n` +
-        `      .ink { fill: ${hex(darkInk)}; }\n` +
-        `      .accent { fill: ${hex(darkAccent)}; }\n` +
-        `    }\n` +
-        `  </style>\n` +
-        `  <path class="ink" d="${massD}"/>\n` +
-        `  <rect class="accent" x="${line.x}" y="${line.y}" width="${line.width}" height="${line.height}"/>\n` +
+        `  <rect x="0" y="0" width="16" height="16" rx="2" fill="${hex(PLATE_INK)}"/>\n` +
+        `  <path fill="${hex(markSmallDark.shapes[0].fill)}" d="${massD}"/>\n` +
+        `  <rect fill="${hex(markSmallDark.shapes[1].fill)}" x="${line.x}" y="${line.y}" width="${line.width}" height="${line.height}"/>\n` +
         `</svg>\n`,
       'utf8',
     ),
@@ -720,4 +776,4 @@ const invokedDirectly =
   process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/').split('/').pop());
 if (invokedDirectly) main();
 
-export { Canvas, coverage, markFrame };
+export { Canvas, coverage, iconFrame };
