@@ -38,6 +38,12 @@ import {
   sourceKey,
   __resetSelectedSource,
 } from '../state/selectedSource.js';
+// Tempdoc 814 (finding 7) — the thread's background-run pointer drives this store.
+import {
+  isRetrospectiveOpen,
+  takeRequestedTab,
+  __resetRetrospectiveDrawer,
+} from '../state/retrospectiveDrawer.js';
 import {
   getAgentSessionController,
   __resetAgentSessionStore,
@@ -1513,6 +1519,9 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     const text = (sr.textContent ?? '').replace(/\s+/g, ' ');
     expect(text).not.toContain('Based on 2 sources'); // the in-answer count line stands down…
     expect(sr.querySelector('.source-disclosure')).toBeNull(); // …and so does the chip disclosure.
+    // 814 W3 — the toolbar chip too: it used to RENDER and be CSS-hidden at wide, leaving a second
+    // count in the DOM for the status-fact probe and for AT. The gate is now on the render itself.
+    expect(sr.querySelector('.sources-affordance')).toBeNull();
     // The owner-credited grounding disclaimer is NOT a count and is untouched in this state.
     expect(text).toContain('per-sentence grounding not verified');
     __resetAgentSessionStore();
@@ -1545,6 +1554,44 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     expect(sr.querySelector('jf-sources-pane.evidence-rail')).toBeNull();
     expect((sr.textContent ?? '').replace(/\s+/g, ' ')).toContain('Based on 2 sources');
     expect(sr.querySelector('.source-disclosure')).not.toBeNull();
+    expect(sr.querySelector('.sources-affordance')).not.toBeNull(); // 814 W3 — and the toolbar chip returns
+    __resetAgentSessionStore();
+  });
+
+  it('814 finding 7 — a background-origin run segment renders a marked POINTER to its inbox item', async () => {
+    // One authority, one pointer: a background run launched with a conversationId renders in the
+    // thread AND in the drawer's Background-runs tab (`/api/presence`). The inbox item is the
+    // authority; the thread appearance is marked as a reference to it, not an unmarked peer copy.
+    __resetAgentSessionStore();
+    __resetRetrospectiveDrawer();
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
+      {
+        id: 'bs', occurredAt: '2026-01-01T00:00:00Z', kind: 'PROGRESS', originator: 'agent', content: '',
+        attributes: { nodeBoundary: 'start', originKind: 'background', nodeId: 'run-7', label: 'Background activity' },
+      },
+      { id: 'a1', occurredAt: '2026-01-01T00:00:01Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'done', attributes: {} },
+      {
+        id: 'be', occurredAt: '2026-01-01T00:00:02Z', kind: 'PROGRESS', originator: 'agent', content: '',
+        attributes: { nodeBoundary: 'end', originKind: 'background', nodeId: 'run-7' },
+      },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const sr = view.shadowRoot!;
+    expect(sr.querySelector('.run-segment.origin-background')).not.toBeNull();
+    const ref = sr.querySelector('[data-testid="background-run-ref"]') as HTMLButtonElement | null;
+    expect(ref).not.toBeNull();
+    expect((ref!.textContent ?? '').toLowerCase()).toContain('background run');
+
+    // Clicking the pointer opens the drawer store AT the Background-runs (inbox) tab.
+    expect(isRetrospectiveOpen()).toBe(false);
+    ref!.click();
+    expect(isRetrospectiveOpen()).toBe(true);
+    expect(takeRequestedTab()).toBe('inbox');
+    __resetRetrospectiveDrawer();
     __resetAgentSessionStore();
   });
 

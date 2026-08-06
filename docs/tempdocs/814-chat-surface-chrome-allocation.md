@@ -367,6 +367,23 @@ Corrections to the design's premises, each verified at source:
     authority — `container-type: size` collapse semantics make it strictly riskier here for
     no benefit (the surface fills the viewport minus fixed Shell chrome).
 
+13. **The retrospective drawer's History tab is NOT conversation-scoped** (W3 source check,
+    correcting this document's own §Finding-7 assumption "it is `/api/thread`, one conversation's
+    record"). `AgentSessionController.loadHistory` (~:1820-1845) fetches
+    `/api/action-ledger?originator=agent&correlationId=<this.sessionId>` and keeps
+    `kind === 'operation'` — the filter key is the ACTIVE AGENT SESSION id, which
+    `loadForkedConversation` resets (~:1955); `/api/thread` is not involved. So the honest rename is
+    **History → "This run"**, not "This conversation". Timeline's assumption held verbatim
+    (`ActionLedgerClient.unifiedActivity` = unfiltered `/api/action-ledger` + the FE Effect Journal,
+    machine-wide) → **"System activity"**; Inbox is `/api/presence`, cross-conversation →
+    **"Background runs"**; Sessions is `/api/chat/sessions` (the run roster) and keeps its name.
+14. **The chip's yield is scoped to `degraded`, not to every banner-warranting verdict** (W3
+    implementation decision). `warrantsSearchDegradationBanner` also returns true for `unreachable`,
+    but that is a CONNECTION fact, not the capability-degradation register row — yielding it would
+    make the status bar report the AI engine's "Online" while the backend is gone, i.e. the
+    truthfulness regression the rule exists to prevent. Pinned by a fourth unit test alongside
+    finding 9's info-tier case.
+
 Settled parameters (autonomy granted 2026-08-06): content floor ≥ 55% Simple / ≥ 45%
 Detailed at 1366×768; height breakpoint 820px; rail index top-3 + "Open all · N"; cluster
 spacing 14px.

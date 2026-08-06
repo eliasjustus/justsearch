@@ -15,7 +15,12 @@ export const unifiedChatBodyStyles = css`
       width: 100%;
       height: 100%;
       padding: 1rem;
-      gap: 0.75rem;
+      /* Tempdoc 814 §D1 — the surface's own inter-band gap is chrome, and chrome yields to the
+         conversation. Both this gap and the answer-plane's below drop 0.75rem → 0.5rem; every pixel
+         freed lands in .conversation-zone (the only flex:1 child of either column), which is what the
+         registered content-share floor (governance/ui-proportion-baseline.v1.json, step chat-bands,
+         .conversation-zone minShareOfSelector 0.55) asserts. */
+      gap: 0.5rem;
       box-sizing: border-box;
       color: var(--text-primary);
       font-family: system-ui, -apple-system, sans-serif;
@@ -204,7 +209,8 @@ export const unifiedChatBodyStyles = css`
       min-height: 0;
       display: flex;
       flex-direction: column;
-      gap: 0.75rem;
+      /* Tempdoc 814 §D1 — see the :host gap note above: the band separations are chrome and yield. */
+      gap: 0.5rem;
       container-type: inline-size;
       container-name: chat-surface;
     }
@@ -594,6 +600,19 @@ export const unifiedChatBodyStyles = css`
       padding: 0 0.35ch;
       text-transform: lowercase;
     }
+    /* Tempdoc 814 (finding 7) — the background-run POINTER: the same chip geometry as the kind chip
+       it replaces, but operable, because the run's record lives in the drawer's Background-runs tab
+       and this segment is a reference to it, not a second copy of it. */
+    .run-segment-ref {
+      background: transparent;
+      font: inherit;
+      font-size: var(--font-size-xs);
+      cursor: pointer;
+    }
+    .run-segment-ref:hover {
+      color: var(--text-primary);
+      border-color: var(--accent-tint);
+    }
     /* §26.D — a background run reads as a dashed-edge segment (it ran "while you were away"). */
     .run-segment.origin-background {
       border-left-style: dashed;
@@ -973,12 +992,11 @@ export const unifiedChatBodyStyles = css`
       border-color: var(--accent-tint);
     }
     /* Tempdoc 565 §12.3.E — at the wide breakpoint the persistent evidence rail replaces the toggle
-       drawer, so the "Sources · N" affordance (which opens that drawer) is redundant and hidden. */
-    @container chat-surface (min-width: 64rem) {
-      .sources-affordance {
-        display: none;
-      }
-    }
+       drawer, so the "Sources · N" affordance (which opens that drawer) is redundant.
+       Tempdoc 814 §D5 — the hide is no longer a CSS rule here: the affordance is gated on
+       evidenceRailMounted() at RENDER (UnifiedChatView.renderAgentToolbar), so the redundant count
+       leaves the DOM instead of merely leaving the screen — one authority structurally, which is what
+       the status-fact singleton probe and assistive tech both read. */
     /* Tempdoc 561 P-A/P-B (Slice 3): the secondary Activity rail — demoted agent chrome (budget),
        collapsible so the conversation stays primary. */
     .activity-rail {

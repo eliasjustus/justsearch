@@ -175,7 +175,7 @@ import '../components/AutonomyDial.js';
 import { findAgentSearchHit } from '../components/chat/toolSearchCard.js';
 // Tempdoc 561 (surface tier): the ONE shared agent controller + the retrospective drawer.
 import { getAgentSessionController, subscribeAgentSession } from '../state/agentSessionStore.js';
-import { toggleRetrospective } from '../state/retrospectiveDrawer.js';
+import { openRetrospectiveAt, toggleRetrospective } from '../state/retrospectiveDrawer.js';
 import { toggleSources } from '../state/sourcesDrawer.js';
 // Tempdoc 610 §K — the context-inspector drawer (what the last turn saw).
 import '../components/ContextInspectorPane.js';
@@ -2238,7 +2238,7 @@ export class UnifiedChatView extends JfElement {
           <button
             class="new-chat-btn"
             @click=${() => toggleRetrospective()}
-            title="Activity — past sessions, timeline, tool calls, inbox"
+            title="Activity — sessions, system activity, this run, background runs"
           >
             Activity
           </button>
@@ -2479,8 +2479,12 @@ export class UnifiedChatView extends JfElement {
         >
           Abilities
         </button>
-        ${/* Tempdoc 565 §3.A: open the answer's grounding sources (clickable local passages). */ ''}
-        ${(this.agentCtrl?.answerSources.length ?? 0) > 0
+        ${/* Tempdoc 565 §3.A: open the answer's grounding sources (clickable local passages).
+              Tempdoc 814 §D5 — the count has ONE authority: while the docked evidence rail is
+              mounted its head owns it, so this chip does not RENDER (it was already CSS-hidden at
+              wide widths — `unifiedChatStyles.ts` ~976 — which suppressed it visually while leaving
+              a second count in the DOM for the status-fact singleton probe and for AT to read). */ ''}
+        ${!this.evidenceRailMounted() && (this.agentCtrl?.answerSources.length ?? 0) > 0
           ? html`<button
               class="agent-tool-btn sources-affordance"
               @click=${() => toggleSources()}
@@ -4650,7 +4654,11 @@ export class UnifiedChatView extends JfElement {
   ): TemplateResult {
     const label = segment.label ?? segment.nodeId ?? 'Step';
     // §26.D — a background run is one segment with the `background` chip; a workflow node shows its kind.
-    const kindChip = segment.originKind === 'background' ? 'background' : segment.nodeKind;
+    // Tempdoc 814 (finding 7, one authority + one pointer) — for a BACKGROUND-origin segment the chip
+    // becomes a marked POINTER instead of an unmarked peer copy: the run's authority is its inbox item
+    // (the drawer's Background-runs tab, `/api/presence`), and this control opens the drawer there.
+    const backgroundOrigin = segment.originKind === 'background';
+    const kindChip = backgroundOrigin ? null : segment.nodeKind;
     // Tempdoc 565 §29 Tier-2 — per-segment elapsed time from the items' authoritative timestamps
     // (`ts` already on every UnifiedTurnItem): the wall-clock the node took, shown in the header.
     const elapsedSec =
@@ -4665,6 +4673,16 @@ export class UnifiedChatView extends JfElement {
       <header class="run-segment-header">
         <span class="run-segment-name">${label}</span>
         ${kindChip ? html`<span class="run-segment-kind">${kindChip}</span>` : nothing}
+        ${backgroundOrigin
+          ? html`<button
+              class="run-segment-kind run-segment-ref"
+              data-testid="background-run-ref"
+              title="This run is tracked in Background runs — open it there"
+              @click=${() => openRetrospectiveAt('inbox')}
+            >
+              background run ↗
+            </button>`
+          : nothing}
         ${elapsedLabel
           ? html`<span class="run-segment-elapsed" title="Time this step took">${elapsedLabel}</span>`
           : nothing}
