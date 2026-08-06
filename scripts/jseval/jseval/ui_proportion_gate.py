@@ -10,7 +10,7 @@ registered selectors into its shadow-piercing geometry probe), so the gate and t
 `.measure.json` geometry it reads can never disagree about which elements were measured.
 Local-first (ADR-0026): a runnable gate, not a CI-wired kernel gate.
 
-Five element-level constraint kinds, all read off the SAME captured rect. An element
+Element-level constraint kinds, all read off the SAME captured rect. An element
 declares whichever apply; declaring none is an error, not a silent pass. Two STEP-level
 checks (not per-element) round out tempdoc 814's D7 enforcement list.
 
@@ -28,6 +28,21 @@ checks (not per-element) round out tempdoc 814's D7 enforcement list.
                              defect where the RAG answer column collapsed to ~one word
                              per line (measured 102px) while the evidence rail and the
                              document pane held their own min-widths.
+  ``maxWidthPx``             tempdoc 816 — ``minWidthPx``'s symmetric CEILING, for an element
+                             whose function-derived bound is its CONTAINER rather than a line
+                             length. §3's ``control-row`` max is ``fit-content``, which no ``ch``
+                             number can express, so "the chip row does not sprawl past the reading
+                             column" is asserted physically on a pinned-viewport step — the same
+                             contract ``maxHeightPx`` has carried since 697.
+  ``inlineSizeRole``         tempdoc 816 §4a.2 — the ROLE indirection: the row names a role in the
+                             register's ``roles`` block and the gate resolves that role's ``ch``
+                             bounds against the element's OWN captured ``chPx`` (``ui_measure.py``'s
+                             canvas measure of the "0" glyph in the element's rendered font). Width
+                             is handed out top-down, so the unconsidered default is greedy 100% and
+                             the right invariant is a per-element bound in CONTENT units — the
+                             inline-axis complement of 814's block-axis budget-over-the-sum. The
+                             same numbers RENDER as the ``--measure-*`` tokens, and
+                             ``roleTokenEquality`` (below) asserts the two agree.
   ``mustNotOverlapSelector`` two rects must not intersect. Added for the round-7 defect
                              where an unbounded toast stack sat over the chat surface's
                              header control row. A height/width budget cannot express
@@ -131,6 +146,100 @@ def load_register_steps() -> list[dict[str, Any]]:
     return []
 
 
+def _repo_file(*parts: str) -> Path | None:
+    """A repo-root-relative path, resolved by walking up from this module (the same discovery
+    `load_register_steps` uses, factored out for the roles/token readers)."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        cand = parent.joinpath(*parts)
+        if cand.exists():
+            return cand
+    return None
+
+
+def load_roles() -> dict[str, dict[str, Any]]:
+    """The register's `roles` block (tempdoc 816 §4a.1): {role -> {minInlineSizeCh?,
+    maxInlineSizeCh?, token?, documentational?}}. The ONE authority for a role's numbers — element
+    rows reference a role by name rather than repeating them, and `tokens.css` renders the same
+    numbers (asserted by `_role_token_rows` below)."""
+    cand = _repo_file("governance", "ui-proportion-baseline.v1.json")
+    if cand is None:
+        return {}
+    doc = json.loads(cand.read_text(encoding="utf-8"))
+    return dict(doc.get("roles") or {})
+
+
+_TOKENS_CSS = ("modules", "ui-web", "src", "styles", "tokens.css")
+
+
+def _load_declared_tokens() -> dict[str, str] | None:
+    """`{--token: value}` for every custom property declared in `modules/ui-web/src/styles/tokens.css`.
+
+    None when the file cannot be found at all — which the caller reports as a capture ERROR rather
+    than as "no drift", because a token check that silently stops checking is the failure this
+    assertion exists to prevent."""
+    cand = _repo_file(*_TOKENS_CSS)
+    if cand is None:
+        return None
+    out: dict[str, str] = {}
+    for raw in cand.read_text(encoding="utf-8").splitlines():
+        line = raw.split("/*", 1)[0].strip()
+        if not line.startswith("--") or ":" not in line:
+            continue
+        name, _, value = line.partition(":")
+        out[name.strip()] = value.split(";", 1)[0].strip()
+    return out
+
+
+def _role_token_rows(roles: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], bool, bool]:
+    """Tempdoc 816 §4a.3 — the ONE-AUTHORITY loop: assert every role's rendered token equals the
+    role's registered bound.
+
+    The register is where a bound's FUNCTION is written down; `tokens.css` is where the browser reads
+    it. If those two can drift, the register stops describing the rendered UI and the gate starts
+    judging a number nothing applies — the exact `catalog-verbatim` failure mode. Checked for every
+    role that names a `token`, independently of whether a step's element row happens to reference the
+    role, so an unbound role's declaration cannot rot unnoticed.
+
+    Returns (rows, any_violation, any_error)."""
+    rows: list[dict[str, Any]] = []
+    violation = False
+    error = False
+    tokens = _load_declared_tokens()
+    for role, spec in sorted(roles.items()):
+        token = spec.get("token")
+        if not token:
+            continue
+        max_ch = spec.get("maxInlineSizeCh")
+        if max_ch is None:
+            error = True
+            rows.append({"constraint": "roleTokenEquality", "role": role, "status": "ERROR",
+                         "error": f"role {role!r} names a token but declares no maxInlineSizeCh "
+                                  f"for it to render"})
+            continue
+        if tokens is None:
+            error = True
+            rows.append({"constraint": "roleTokenEquality", "role": role, "status": "ERROR",
+                         "error": "modules/ui-web/src/styles/tokens.css not found — the role tokens "
+                                  "cannot be checked against the register"})
+            continue
+        expected = f"{max_ch:g}ch"
+        declared = tokens.get(token)
+        if declared is None:
+            error = True
+            rows.append({"constraint": "roleTokenEquality", "role": role, "token": token,
+                         "status": "ERROR",
+                         "error": f"{token} is not declared in tokens.css (the register's role has "
+                                  f"no renderer)"})
+            continue
+        drift = declared != expected
+        violation = violation or drift
+        rows.append({"constraint": "roleTokenEquality", "role": role, "token": token,
+                     "status": "TOKEN_DRIFT" if drift else "ok",
+                     "declared": declared, "expected": expected})
+    return rows, violation, error
+
+
 def _load_status_facts_register() -> dict[str, int]:
     """The shared status-facts register (tempdoc 814 §D5): {phrase -> maxPersistentRenders}.
     The ONE authority `governance/status-facts.v1.json` — `ui_measure.py` captures the raw
@@ -206,6 +315,11 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
       - ``GROWN``                       — ``rect.h > maxHeightPx + tolerancePx``
       - ``UNDER_MIN_HEIGHT``            — ``rect.h < minHeightPx - tolerancePx``
       - ``STARVED``                     — ``rect.w < minWidthPx - tolerancePx``
+      - ``SPRAWLED``                    — ``rect.w > maxWidthPx + tolerancePx``
+      - ``OVER_MEASURE``                — ``rect.w > role.maxInlineSizeCh * chPx + tolerancePx``
+      - ``UNDER_MEASURE``               — ``rect.w < role.minInlineSizeCh * chPx - tolerancePx``
+      - ``TOKEN_DRIFT``                 — a role's ``--measure-*`` token in tokens.css does not
+                                           equal the role's registered ``maxInlineSizeCh``
       - ``OVERLAPS``                    — the element's rect intersects
                                            ``mustNotOverlapSelector``'s rect
       - ``UNDER_SHARE``                 — ``(rect.h + tolerancePx) / other.rect.h < floor``
@@ -228,9 +342,18 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
     """
     steps = load_register_steps()
     status_facts_register = _load_status_facts_register()
+    roles = load_roles()
     rows: list[dict[str, Any]] = []
     any_violation = False
     any_error = False
+
+    # Tempdoc 816 §4a.3 — the register/token equality loop runs BEFORE any capture: it is a fact about
+    # the two authorities, not about a rendered page, and a drifted token invalidates every role row
+    # judged below.
+    token_rows, token_violation, token_error = _role_token_rows(roles)
+    rows.extend(token_rows)
+    any_violation = any_violation or token_violation
+    any_error = any_error or token_error
 
     for s in steps:
         step = s.get("uiShotStep")
@@ -275,17 +398,21 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
             max_height_px = el.get("maxHeightPx")
             min_height_px = el.get("minHeightPx")
             min_width_px = el.get("minWidthPx")
+            max_width_px = el.get("maxWidthPx")
+            inline_size_role = el.get("inlineSizeRole")
             not_overlap = el.get("mustNotOverlapSelector")
             min_share = el.get("minShareOfSelector")
             max_bottom_px = el.get("maxBottomPx")
             if (max_height_px is None and min_height_px is None and min_width_px is None
+                    and max_width_px is None and inline_size_role is None
                     and not_overlap is None and min_share is None and max_bottom_px is None):
                 any_error = True
                 rows.append({"step": step, "selector": selector, "status": "ERROR",
                              "error": "element declares no constraint (maxHeightPx / "
-                                      "minHeightPx / minWidthPx / mustNotOverlapSelector / "
-                                      "minShareOfSelector / maxBottomPx)"})
+                                      "minHeightPx / minWidthPx / maxWidthPx / inlineSizeRole / "
+                                      "mustNotOverlapSelector / minShareOfSelector / maxBottomPx)"})
                 continue
+            captured_el = geo_elements.get(selector)
             rect = _rect_of(geo_elements, selector)
             if rect is None:
                 any_error = True
@@ -348,6 +475,111 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
                         "minWidthPx": min_width_px,
                         "tolerancePx": tolerance_px,
                     })
+
+            # minWidthPx's symmetric ceiling (816). Physical family on purpose: the elements it
+            # bounds (a chip row) are container-bound, not line-length-bound, and the step pins its
+            # viewport — the same contract maxHeightPx has carried since 697.
+            if max_width_px is not None:
+                measured_width = rect.get("w")
+                if measured_width is None:
+                    any_error = True
+                    rows.append({"step": step, "selector": selector,
+                                 "constraint": "maxWidthPx", "status": "ERROR",
+                                 "error": "captured geometry has no rect.w"})
+                else:
+                    sprawled = measured_width > max_width_px + tolerance_px
+                    any_violation = any_violation or sprawled
+                    rows.append({
+                        "step": step, "selector": selector, "constraint": "maxWidthPx",
+                        "status": "SPRAWLED" if sprawled else "ok",
+                        "measuredWidth": measured_width,
+                        "maxWidthPx": max_width_px,
+                        "tolerancePx": tolerance_px,
+                    })
+
+            # Tempdoc 816 §4a.2 — the ROLE-resolved inline-size bounds. The register stores `ch`; the
+            # capture supplies this element's own `chPx`; the comparison happens here so neither side
+            # ever holds a px number for a content-sized role.
+            if inline_size_role is not None:
+                role = roles.get(inline_size_role)
+                measured_width = rect.get("w")
+                if role is None:
+                    any_error = True
+                    rows.append({"step": step, "selector": selector,
+                                 "constraint": "inlineSizeRole", "status": "ERROR",
+                                 "role": inline_size_role,
+                                 "error": f"unknown role {inline_size_role!r} — declare it in the "
+                                          f"register's `roles` block"})
+                elif role.get("documentational"):
+                    any_error = True
+                    rows.append({"step": step, "selector": selector,
+                                 "constraint": "inlineSizeRole", "status": "ERROR",
+                                 "role": inline_size_role,
+                                 "error": f"role {inline_size_role!r} is documentational (it declares "
+                                          f"no bound); a row cannot be bound to it"})
+                elif role.get("minInlineSizeCh") is None and role.get("maxInlineSizeCh") is None:
+                    any_error = True
+                    rows.append({"step": step, "selector": selector,
+                                 "constraint": "inlineSizeRole", "status": "ERROR",
+                                 "role": inline_size_role,
+                                 "error": f"role {inline_size_role!r} declares neither "
+                                          f"minInlineSizeCh nor maxInlineSizeCh"})
+                elif role.get("minInlineSizeCh") is None and min_width_px is None:
+                    # The register's anti-vacuity doctrine, applied to roles: a ceiling ALONE is
+                    # satisfied by an element that rendered at 0 width, i.e. exactly by the regression
+                    # a width bound exists to catch.
+                    any_error = True
+                    rows.append({"step": step, "selector": selector,
+                                 "constraint": "inlineSizeRole", "status": "ERROR",
+                                 "role": inline_size_role,
+                                 "error": f"role {inline_size_role!r} declares no minInlineSizeCh, so "
+                                          f"this row must carry its own minWidthPx floor (a ceiling "
+                                          f"alone passes on a 0-width render)"})
+                elif measured_width is None:
+                    any_error = True
+                    rows.append({"step": step, "selector": selector,
+                                 "constraint": "inlineSizeRole", "status": "ERROR",
+                                 "role": inline_size_role,
+                                 "error": "captured geometry has no rect.w"})
+                else:
+                    ch_px = (captured_el or {}).get("chPx")
+                    note = None
+                    if ch_px is None or ch_px <= 0:
+                        font_size = (captured_el or {}).get("fontSize") or ""
+                        try:
+                            ch_px = float(str(font_size).removesuffix("px")) * 0.5
+                        except ValueError:
+                            ch_px = None
+                        note = ("no chPx in the capture (ui_measure.py probe stale?) — fell back to "
+                                "fontSize * 0.5, an approximation")
+                    if not ch_px or ch_px <= 0:
+                        any_error = True
+                        rows.append({"step": step, "selector": selector,
+                                     "constraint": "inlineSizeRole", "status": "ERROR",
+                                     "role": inline_size_role,
+                                     "error": "no chPx and no usable fontSize in the capture — a `ch` "
+                                              "bound cannot be resolved"})
+                    else:
+                        max_ch = role.get("maxInlineSizeCh")
+                        min_ch = role.get("minInlineSizeCh")
+                        measured_ch = round(measured_width / ch_px, 1)
+                        over = max_ch is not None and measured_width > max_ch * ch_px + tolerance_px
+                        under = min_ch is not None and measured_width < min_ch * ch_px - tolerance_px
+                        any_violation = any_violation or over or under
+                        row: dict[str, Any] = {
+                            "step": step, "selector": selector, "constraint": "inlineSizeRole",
+                            "status": "OVER_MEASURE" if over else "UNDER_MEASURE" if under else "ok",
+                            "role": inline_size_role,
+                            "measuredWidth": measured_width,
+                            "measuredCh": measured_ch,
+                            "chPx": round(ch_px, 2),
+                            "minInlineSizeCh": min_ch,
+                            "maxInlineSizeCh": max_ch,
+                            "tolerancePx": tolerance_px,
+                        }
+                        if note:
+                            row["note"] = note
+                        rows.append(row)
 
             if not_overlap is not None:
                 other = _rect_of(geo_elements, not_overlap)
