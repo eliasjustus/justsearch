@@ -177,6 +177,14 @@ public final class ScanRollupLedger implements Closeable {
       if (scan == null) {
         return;
       }
+      // Defense in depth behind the registry's ring dedup: count each DOCUMENT's terminal outcome
+      // once. The ring keys on event id, so it catches a re-delivered event but not a second
+      // terminal for the same document (a retry re-enqueued under the same scan mints a new id).
+      // Either would inflate docsDone/docsFailed and could trip `isComplete` before every admitted
+      // document actually finished — an audit row must state what happened.
+      if (!scan.countFirstTerminalFor(idx.pathHash())) {
+        return;
+      }
       if ("FAILED".equalsIgnoreCase(idx.state())) {
         scan.docsFailed++;
       } else {
@@ -223,14 +231,35 @@ public final class ScanRollupLedger implements Closeable {
     }
   }
 
+  /**
+   * Shutdown mid-scan is a real outcome, not an absence of one. Every open scan already has a
+   * DURABLE {@code STARTED} row in the audit journal, so clearing the map silently left that row
+   * dangling forever — the journal would claim a scan that never ended. Each open scan is therefore
+   * closed out with the sweeper's own {@code PARTIAL} shape (counts so far), which is exactly what
+   * quiescence would have emitted had the process stayed up.
+   */
   @Override
   public void close() {
     closed = true;
+    List<OpenScan> stranded;
+    synchronized (this) {
+      stranded = new ArrayList<>(open.values());
+      open.clear();
+    }
+    // Published on the CALLING thread, not via emitExecutor: in production the emit executor IS
+    // the sweeper being shut down here, and a daemon thread's queued task is not guaranteed to run
+    // before the JVM exits — a shutdown row that races shutdown is no row at all. Re-entrancy, the
+    // reason the normal path defers, cannot bite: `closed` is already true, so the listener
+    // callback returns immediately.
+    for (OpenScan scan : stranded) {
+      try {
+        registry.broadcastActionEvent(finishedRow(scan, "PARTIAL"));
+      } catch (RuntimeException e) {
+        log.warn("scan-rollup shutdown row for {} was not recorded", scan.scanId, e);
+      }
+    }
     if (sweeper != null) {
       sweeper.shutdownNow();
-    }
-    synchronized (this) {
-      open.clear();
     }
   }
 
@@ -247,17 +276,20 @@ public final class ScanRollupLedger implements Closeable {
   }
 
   private void emitFinished(OpenScan scan, String outcome) {
-    emit(
-        ActionLedgerProjection.projectScanRollup(
-            scan.scanId,
-            scan.collection,
-            scan.root,
-            outcome,
-            scan.docsDone,
-            scan.docsFailed,
-            scan.admitted,
-            Math.max(0L, clock.getAsLong() - scan.startedAtMs),
-            Instant.ofEpochMilli(clock.getAsLong())));
+    emit(finishedRow(scan, outcome));
+  }
+
+  private ActionEvent finishedRow(OpenScan scan, String outcome) {
+    return ActionLedgerProjection.projectScanRollup(
+        scan.scanId,
+        scan.collection,
+        scan.root,
+        outcome,
+        scan.docsDone,
+        scan.docsFailed,
+        scan.admitted,
+        Math.max(0L, clock.getAsLong() - scan.startedAtMs),
+        Instant.ofEpochMilli(clock.getAsLong()));
   }
 
   private void emit(ActionEvent event) {
@@ -280,12 +312,37 @@ public final class ScanRollupLedger implements Closeable {
     private int docsDone;
     private int docsFailed;
 
+    /**
+     * Documents whose terminal outcome has already been counted, keyed by the event's
+     * {@code pathHash}. Bounded by the scan's own admitted total: each entry corresponds to one
+     * counted document, and the scan is closed out the moment the counts reach {@code admitted},
+     * so this set cannot outgrow the population the scan enumerated. The explicit size guard below
+     * makes that bound hold even if a producer emits terminals for documents this scan never
+     * admitted.
+     */
+    private final java.util.Set<String> countedDocs = new java.util.HashSet<>();
+
     private OpenScan(String scanId, String collection, String root, long startedAtMs) {
       this.scanId = scanId;
       this.collection = collection == null ? "" : collection;
       this.root = root == null ? "" : root;
       this.startedAtMs = startedAtMs;
       this.lastActivityMs = startedAtMs;
+    }
+
+    /**
+     * True when this document's terminal outcome has not been counted yet. An event with no
+     * {@code pathHash} carries no document identity to dedup on, so it is counted — the pre-dedup
+     * behaviour, not a silent drop. Callers hold the ledger's monitor.
+     */
+    private boolean countFirstTerminalFor(String pathHash) {
+      if (pathHash == null || pathHash.isEmpty()) {
+        return true;
+      }
+      if (admitted != ADMITTED_UNKNOWN && countedDocs.size() >= admitted) {
+        return true;
+      }
+      return countedDocs.add(pathHash);
     }
   }
 }

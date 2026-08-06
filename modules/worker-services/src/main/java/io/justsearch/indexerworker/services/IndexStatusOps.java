@@ -243,18 +243,6 @@ final class IndexStatusOps {
     long queueDepth = jobQueue.queueDepth();
     JobQueue.FailureSummary failures = jobQueue.failureSummary();
 
-    long docCount;
-    long searchableDocCount;
-    if (ingestCountOps != null) {
-      long totalDocs = ingestCountOps.docCount();
-      int chunkDocs = ingestCountOps.countByField(SchemaFields.IS_CHUNK, "true");
-      docCount = totalDocs - chunkDocs;
-      searchableDocCount = countDefaultScopeDocs(ingestCountOps, docCount);
-    } else {
-      docCount = jobQueue.completedCount();
-      searchableDocCount = docCount;
-    }
-
     long activeDocCount = 0;
     IndexCountOps activeCountOps = searchCountOps != null ? searchCountOps : ingestCountOps;
     if (activeCountOps != null) {
@@ -262,6 +250,23 @@ final class IndexStatusOps {
       int chunkDocs = activeCountOps.countByField(SchemaFields.IS_CHUNK, "true");
       activeDocCount = totalDocs - chunkDocs;
     }
+
+    long docCount;
+    if (ingestCountOps != null) {
+      long totalDocs = ingestCountOps.docCount();
+      int chunkDocs = ingestCountOps.countByField(SchemaFields.IS_CHUNK, "true");
+      docCount = totalDocs - chunkDocs;
+    } else {
+      docCount = jobQueue.completedCount();
+    }
+
+    // searchableDocCount answers "how many documents can a DEFAULT-scope search return", so it must
+    // be counted on the reader that SERVES search — the same one activeDocCount reads. During a
+    // rebuild the ingest reader is the half-built NEW generation while search still serves the old
+    // one, so counting there described a generation no query could reach.
+    long searchableDocCount =
+        activeCountOps != null ? countDefaultScopeDocs(activeCountOps, activeDocCount) : docCount;
+
     long buildingDocCount = 0;
     if (ingestCountOps != null && ingestCountOps != activeCountOps) {
       buildingDocCount = docCount;
@@ -359,7 +364,18 @@ final class IndexStatusOps {
    */
   private static long countDefaultScopeDocs(IndexCountOps countOps, long fallback) {
     Query defaultScope = QueryFilterBuilder.buildFilterQueryOnly(null);
-    return defaultScope == null ? fallback : countOps.countQuery(defaultScope);
+    if (defaultScope == null) {
+      return fallback;
+    }
+    try {
+      return countOps.countQueryOrThrow(defaultScope);
+    } catch (IOException e) {
+      // A transient reader IO error must not report a hard 0: the FE renders a known 0 as the
+      // "nothing indexed yet" empty-state CTA. Fall back to the unscoped count — an over-count
+      // during a blip is honest about the corpus existing; a 0 is not.
+      log.debug("Default-scope count failed; falling back to the unscoped count: {}", e.getMessage());
+      return fallback;
+    }
   }
 
   private CoreStatus buildCore(
