@@ -118,8 +118,12 @@ describe('shell actions — AI install palette reachability (727 F-1)', () => {
     const repair = getAction('core.action.shell.go-to-brain-repair');
     expect(start).toBeDefined();
     expect(repair).toBeDefined();
-    expect(start!.title).toBe('Start AI Install');
-    expect(repair!.title).toBe('Repair AI Install');
+    // Round-14 F3 — the labels state what the entries DO. They navigate; the consent/terms ceremony
+    // is BrainSurface's, and a palette entry must not promise to have started an install it did not
+    // start (nor bypass the dialog to make the old label true).
+    expect(start!.title).toBe('Go to Brain — Install AI');
+    expect(repair!.title).toBe('Go to Brain — Repair AI Install');
+    expect(start!.title).not.toBe('Start AI Install');
     // Both are global (no appliesTo) so they surface in the flat palette pool, same as
     // core.action.op.core.cancel-ai-install would.
     expect(start!.appliesTo).toBeUndefined();
@@ -142,6 +146,29 @@ describe('shell actions — AI install palette reachability (727 F-1)', () => {
     navigate.mockClear();
     const repairEffect = await invokeAction('core.action.shell.go-to-brain-repair');
     expect(repairEffect).toEqual({ kind: 'navigate', to: 'core.brain-surface' });
+    expect(navigate).toHaveBeenCalledWith('core.brain-surface');
+  });
+
+  it('round-14 F2 — a plain "Go to Brain" navigation entry exists (the documented palette route)', async () => {
+    // Pre-fix, the only palette routes to Brain were the two install-flavoured entries above, so the
+    // reach the coverage register documents for the Brain surface (and for Memory, which is a TAB on
+    // it) — command palette "Go to Brain" — did not exist.
+    const navigate = vi.fn();
+    registerShellActions({
+      navigate,
+      toggleInspector: () => {},
+      togglePalette: () => {},
+      focusComposer: () => {},
+    });
+
+    const brain = getAction('core.action.shell.go-to-brain');
+    expect(brain).toBeDefined();
+    expect(brain!.title).toBe('Go to Brain');
+    expect(brain!.appliesTo).toBeUndefined(); // global — surfaces in the flat palette pool
+    expect(await invokeAction('core.action.shell.go-to-brain')).toEqual({
+      kind: 'navigate',
+      to: 'core.brain-surface',
+    });
     expect(navigate).toHaveBeenCalledWith('core.brain-surface');
   });
 });

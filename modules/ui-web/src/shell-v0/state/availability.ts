@@ -45,6 +45,8 @@ import {
   KEYWORD_FALLBACK_CAVEAT,
   PASSAGE_REDUCED_CAVEAT,
   OPTIONAL_CAPABILITY_CAVEAT,
+  AI_UNAVAILABLE_CAVEAT,
+  OPEN_HEALTH,
   type NoticeRemedy,
 } from './readinessNotice.js';
 import { formatStartupEstimate } from './startupEstimate.js';
@@ -160,6 +162,12 @@ export function projectAvailability(
     // gap, and this projection (like the banner) claimed a keyword fallback over a trace showing dense
     // retrieval + reranking executing. Severity says how loud, never what happened. The wordings are
     // IMPORTED (not re-authored here) so the claim exists in exactly one module.
+    //
+    // Round-14 finding 8 — the caveat NAMES its feature and ROUTES to the detail. Pre-fix, the
+    // `cosmetic` arm said "an optional ranking model" (a reader with full API access resolved that to
+    // the wrong model) and carried no remedy, so the calm tier was the only one with no way to reach
+    // the per-encoder detail the warn tier reaches. `ai-unavailable` gets its OWN wording rather than
+    // borrowing the re-ranking one — same discipline, opposite direction.
     const verdict = s.verdict;
     if (verdict !== undefined && verdict.kind === 'degraded') {
       const consequence = classifyConsequence(verdict.reasons);
@@ -168,11 +176,14 @@ export function projectAvailability(
         caveat:
           consequence === 'passage-reduced'
             ? PASSAGE_REDUCED_CAVEAT
-            : consequence === 'ai-unavailable' || consequence === 'cosmetic'
-              ? OPTIONAL_CAPABILITY_CAVEAT
-              : // `retrieval-impaired` and the conservative `unknown` (an unclassifiable code is not
-                // evidence that retrieval is fine — the classifier's own doctrine).
-                KEYWORD_FALLBACK_CAVEAT,
+            : consequence === 'ai-unavailable'
+              ? AI_UNAVAILABLE_CAVEAT
+              : consequence === 'cosmetic'
+                ? OPTIONAL_CAPABILITY_CAVEAT
+                : // `retrieval-impaired` and the conservative `unknown` (an unclassifiable code is not
+                  // evidence that retrieval is fine — the classifier's own doctrine).
+                  KEYWORD_FALLBACK_CAVEAT,
+        remedy: OPEN_HEALTH,
       };
     }
   }

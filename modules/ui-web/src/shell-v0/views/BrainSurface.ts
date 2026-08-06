@@ -1628,7 +1628,12 @@ export class BrainSurface extends JfElement {
         data-testid="brain-generation-sparkline"
         style="margin-top: 0.75rem; display: flex; align-items: center; gap: 0.5rem; font-size: var(--font-size-xs)"
       >
-        <span style="color: var(--text-secondary)">gen:</span>
+        ${/* Round-14 finding 10 — "gen" was unqualified and collided with a DIFFERENT in-product
+              "generation": /api/inference/status `generation` is an int engine-instance counter,
+              while /api/knowledge/status `servingSearchGenerationId` is a string index id. Beside a
+              model filename the abbreviation also read as "1st-generation model" (a version claim).
+              Naming the axis is the whole fix — the value is unchanged. */ ''}
+        <span style="color: var(--text-secondary)">engine generation:</span>
         <span style="font-weight: 600; font-variant-numeric: tabular-nums">${currentGen}</span>
         <svg width="${W}" height="${H}" style="display: block">
           <polyline
@@ -1664,8 +1669,11 @@ export class BrainSurface extends JfElement {
         data-testid="brain-transitions-timeline"
         style="margin-top: 0.875rem; font-size: var(--font-size-xs)"
       >
+        ${/* Round-14 finding 10 — "mode" is ambiguous on this very window: the same panel carries a
+              Simple | Detailed disclosure mode and the search surface has rungs. These rows are the
+              INFERENCE state machine's transitions; say so. */ ''}
         <summary style="cursor: pointer; color: var(--text-secondary)">
-          Recent mode transitions (${rows.length})
+          Recent inference transitions (${rows.length})
         </summary>
         <ul
           style="margin: 0.5rem 0 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.25rem"

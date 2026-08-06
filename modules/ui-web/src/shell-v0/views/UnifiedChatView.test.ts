@@ -286,15 +286,32 @@ describe('UnifiedChatView retrieve-tier degradation banner (ports SearchSurface.
     expect(op?.getAttribute('operation-id')).toBe('core.trigger-offline-processing');
   });
 
-  it('595 §10.3 — a cosmetic degradation (LambdaMART) renders CALMLY (info), never "keyword results"', async () => {
+  it('round-14 finding 9 — an INFO-severity-only verdict renders NO banner-tier warning', async () => {
+    // Supersedes the 595 §10.3 assertion that this same verdict renders a calm "Reduced search
+    // capability" banner. 595's fix was the WORDING (never "keyword results" for a re-ranking gap);
+    // round 14 measured the remaining defect as the TIER: a permanent, unconfigurable optional gap
+    // held ~25% of the space above the fold behind an alert triangle, in the same slot a genuine
+    // retrieval failure uses. Health still carries the cause (HealthSurface.render.test.ts).
     const view = mountView();
     await view.updateComplete;
     setVerdict(view, { kind: 'degraded', severity: 'info', reasons: ['lambdamart.not_configured'] });
     await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation"]')).toBeNull();
+  });
+
+  it('round-14 finding 9 — the same cause at WARN severity still gets the banner (the tier gate is severity, not the cause)', async () => {
+    // Precision guard: proves the suppression above is not "the banner stopped rendering at all".
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, {
+      kind: 'degraded',
+      severity: 'warn',
+      reasons: ['lambdamart.not_configured', 'worker.health.embedding_not_ready'],
+    });
+    await view.updateComplete;
     const banner = view.shadowRoot?.querySelector('[data-testid="chat-degradation"]');
-    expect(banner?.textContent).toContain('Reduced search capability');
-    expect(banner?.textContent).not.toContain('keyword results');
-    expect(banner?.getAttribute('tone')).toBe('info');
+    expect(banner).not.toBeNull();
+    expect(banner?.getAttribute('tone')).toBe('warning');
   });
 
   it('600 Design A — a compat-blocked index renders "Reindex required" naming the specific cause + the rebuild remedy', async () => {
@@ -404,6 +421,56 @@ describe('UnifiedChatView degradation banner disclosure (Tempdoc 738)', () => {
     // Expanded (Detailed), but the sole redundant bullet is dropped: no <ul> renders.
     expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
     expect(view.shadowRoot?.querySelector('.degradation-banner')?.textContent).toContain('Reindex required');
+  });
+});
+
+// Round-14 finding 14 — the header control set is RUNG-INVARIANT. New chat + Export were gated by
+// `!agentMode`, so crossing to Delegate removed both (GUI-verified in both directions at an identical
+// 1462x800 with ~1000px of free header space, so responsive overflow was ruled out), stranding a
+// finished, unresumable run with neither a reset nor a save affordance. Nothing in the code or the
+// design history justified the gate.
+describe('UnifiedChatView header controls are rung-invariant (round-14 finding 14)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    __resetUserConfigForTest();
+    __resetUiModeForTest();
+  });
+
+  const RUNGS: Array<UnifiedChatView['affordance']> = ['retrieve', 'documents', 'extract', 'agent'];
+
+  it('renders the SAME header controls on all four rungs for the same thread state', async () => {
+    for (const rung of RUNGS) {
+      const view = mountView();
+      await view.updateComplete;
+      (view as unknown as { thread: unknown[] }).thread = [
+        { role: 'user', content: 'q', shapeId: 'core.free-chat' },
+        { role: 'assistant', content: 'a', shapeId: 'core.free-chat' },
+      ];
+      view.affordance = rung;
+      view.requestUpdate();
+      await view.updateComplete;
+      const labels = [...view.shadowRoot!.querySelectorAll('.header .new-chat-btn')].map((b) =>
+        (b.textContent ?? '').trim(),
+      );
+      expect(labels, `rung ${rung}`).toEqual(['Activity', 'New chat', 'Export']);
+    }
+  });
+
+  it('the surviving gate is thread state, not the rung — an empty thread hides them on EVERY rung alike', async () => {
+    // Precision guard: proves the assertion above is not "these buttons always render".
+    for (const rung of RUNGS) {
+      const view = mountView();
+      await view.updateComplete;
+      (view as unknown as { thread: unknown[] }).thread = [];
+      view.affordance = rung;
+      view.requestUpdate();
+      await view.updateComplete;
+      const labels = [...view.shadowRoot!.querySelectorAll('.header .new-chat-btn')].map((b) =>
+        (b.textContent ?? '').trim(),
+      );
+      expect(labels, `rung ${rung}`).toEqual(['Activity']);
+    }
   });
 });
 
@@ -554,6 +621,56 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     view.requestUpdate();
     await view.updateComplete;
     expect(summary()).toContain('Paused — awaiting budget');
+  });
+
+  it('round-14 finding 12(a) — the run-telemetry band starts COLLAPSED', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    await view.updateComplete;
+    const rail = view.shadowRoot?.querySelector('[data-testid="activity-rail"]') as HTMLDetailsElement;
+    expect(rail).not.toBeNull();
+    expect(rail.open).toBe(false);
+  });
+
+  it('round-14 finding 12(b) — a COMPLETED (DONE) run states "Over budget" as a fact, not an alarm', async () => {
+    // The agent session controller is a shared singleton; a neighbouring test leaves a budgetGate on
+    // it, which would take the summary's held-gate branch and mask what this test is about.
+    __resetAgentSessionStore();
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    const overBudget = {
+      sessionId: 's1',
+      state: 'RUNNING',
+      actor: 'agent',
+      turns: 1,
+      iterations: 7,
+      toolCalls: 6,
+      actors: ['agent'],
+      budget: { initial: 20224, consumed: 21431, remaining: 0, overBudget: true },
+    };
+    // The measured live numbers: 21431 tokens used against 20224 granted (over by 1207).
+    const overBudgetUpdate = { tokensConsumed: 21431, tokensRemaining: -1207 };
+    // In flight: the alarm treatment is correct — the run can still be raised or halted.
+    (view as unknown as { unifiedLifecycles: unknown[] }).unifiedLifecycles = [overBudget];
+    (view as unknown as { agentBudget: unknown }).agentBudget = overBudgetUpdate;
+    view.requestUpdate();
+    await view.updateComplete;
+    const row = () => view.shadowRoot?.querySelector('[data-testid="activity-over-budget"]');
+    const summaryChip = () => view.shadowRoot?.querySelector('.activity-rail > summary .over-budget');
+    expect(row()?.className).toBe('over-budget');
+    expect(summaryChip()).not.toBeNull();
+
+    // DONE: same figure, same words, neutral treatment — and the collapsed summary drops the chip.
+    (view as unknown as { unifiedLifecycles: unknown[] }).unifiedLifecycles = [
+      { ...overBudget, state: 'DONE' },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    expect(row()?.className).toBe('budget-settled');
+    expect(row()?.textContent).toContain('Over budget by');
+    expect(summaryChip()).toBeNull();
   });
 
   it('S7 — renders agent search evidence from the RECORD through the shared jf-results-card (live == record, not the raw dump)', async () => {
@@ -987,19 +1104,24 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
       addEventListener() {},
       removeEventListener() {},
     };
+    // Round-14 finding 15 — a SECOND turn, because the spine no longer mounts on an unsegmented
+    // single-turn conversation (it has no boundaries worth marking). What this test asserts — the
+    // prominence grading, the placement, the a11y contract — is unchanged.
     (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
       { id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q', attributes: {} },
       { id: 't1', occurredAt: '2026-01-01T00:00:02Z', kind: 'TOOL_ACTIVITY', originator: 'agent', content: '', attributes: { callId: 'c1', toolName: 'core_search_index', status: 'completed' } },
       { id: 'a1', occurredAt: '2026-01-01T00:00:03Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer', attributes: {} },
+      { id: 'u2', occurredAt: '2026-01-01T00:00:04Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q2', attributes: {} },
+      { id: 'a2', occurredAt: '2026-01-01T00:00:05Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer2', attributes: {} },
     ];
     view.requestUpdate();
     await view.updateComplete;
     const sr = view.shadowRoot!;
     const spine = sr.querySelector('.run-spine');
     expect(spine).not.toBeNull();
-    // §13 Pillar A — the WHOLE conversation: the user landmark + the tool texture + the answer terminal.
+    // §13 Pillar A — the WHOLE conversation: the user landmarks + the tool texture + the answer terminals.
     const nodes = spine!.querySelectorAll('.run-spine-node');
-    expect(nodes.length).toBe(3);
+    expect(nodes.length).toBe(5);
     // §19.3 — prominence-graded by the DECLARED scale (PROMINENCE_SCALE / TERMINAL_NODE_WEIGHT) set
     // inline, not a hand-CSS class: the answer is the terminal landmark (0.8rem), the user turn primary
     // (0.62rem), the tool step secondary texture (0.36rem).
@@ -1100,9 +1222,12 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
       addEventListener() {},
       removeEventListener() {},
     };
+    // Round-14 finding 15 — two turns, so the spine mounts (it no longer does for a single turn).
     (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
       { id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q1', attributes: {} },
       { id: 'a1', occurredAt: '2026-01-01T00:00:02Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer1', attributes: {} },
+      { id: 'u2', occurredAt: '2026-01-01T00:00:03Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q2', attributes: {} },
+      { id: 'a2', occurredAt: '2026-01-01T00:00:04Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer2', attributes: {} },
     ];
     view.requestUpdate();
     await view.updateComplete;
@@ -1134,10 +1259,13 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
       addEventListener() {},
       removeEventListener() {},
     };
+    // Round-14 finding 15 — two turns, so the spine mounts (it no longer does for a single turn).
     (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
       { id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q1', attributes: {} },
       { id: 't1', occurredAt: '2026-01-01T00:00:02Z', kind: 'TOOL_ACTIVITY', originator: 'agent', content: '', attributes: { callId: 'c1', toolName: 'core_search_index', status: 'completed' } },
       { id: 'a1', occurredAt: '2026-01-01T00:00:03Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer', attributes: {} },
+      { id: 'u2', occurredAt: '2026-01-01T00:00:04Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q2', attributes: {} },
+      { id: 'a2', occurredAt: '2026-01-01T00:00:05Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer2', attributes: {} },
     ];
     view.requestUpdate();
     await view.updateComplete;
@@ -1190,10 +1318,13 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     // A completed run (user · tool-step · answer): because the answer has landed, the tool step renders
     // inside a DEFAULT-COLLAPSED <details class="run-trace"> — the ~half of spine nodes the prior review
     // found un-jumpable (scrollIntoView is a no-op on an element inside a closed <details>).
+    // Round-14 finding 15 — two turns, so the spine mounts (it no longer does for a single turn).
     (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
       { id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q1', attributes: {} },
       { id: 't1', occurredAt: '2026-01-01T00:00:02Z', kind: 'TOOL_ACTIVITY', originator: 'agent', content: '', attributes: { callId: 'c1', toolName: 'core_search_index', status: 'completed' } },
       { id: 'a1', occurredAt: '2026-01-01T00:00:03Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer1', attributes: {} },
+      { id: 'u2', occurredAt: '2026-01-01T00:00:04Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q2', attributes: {} },
+      { id: 'a2', occurredAt: '2026-01-01T00:00:05Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer2', attributes: {} },
     ];
     view.requestUpdate();
     await view.updateComplete;
@@ -1244,6 +1375,50 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     // spine is a wide-only margin element.
     expect(sr.querySelector('jf-sources-pane.evidence-rail')).toBeNull();
     expect(sr.querySelector('.run-spine')).toBeNull();
+    __resetAgentSessionStore();
+  });
+
+  it('round-14 finding 15 — a SINGLE-TURN conversation renders no run spine (and keeps its native scrollbar)', async () => {
+    // The spine is the RunSegmentRef / assignRunSegments node-boundary visualization ("the spine
+    // marks node boundaries", 565 §26). Measured live against a single turn it drew ~10 markers in
+    // three glyph types over four content blocks — machinery for structure that isn't there.
+    __resetAgentSessionStore();
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    (view as unknown as { wideZone: boolean }).wideZone = true;
+    (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
+      { id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q', attributes: {} },
+      { id: 't1', occurredAt: '2026-01-01T00:00:02Z', kind: 'TOOL_ACTIVITY', originator: 'agent', content: '', attributes: { callId: 'c1', toolName: 'core_search_index', status: 'completed' } },
+      { id: 'a1', occurredAt: '2026-01-01T00:00:03Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer', attributes: {} },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const sr = view.shadowRoot!;
+    expect(sr.querySelector('.run-spine')).toBeNull();
+    // …and the reading column keeps its native scrollbar: the column hides it only when the spine
+    // (which IS the scroll control) is mounted, so the two gates must read the same predicate.
+    expect(sr.querySelector('.conversation.jf-scrollbar-none')).toBeNull();
+    __resetAgentSessionStore();
+  });
+
+  it('round-14 finding 15 — a SECOND turn brings the spine back (the gate is structure, not the agent rung)', async () => {
+    __resetAgentSessionStore();
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    (view as unknown as { wideZone: boolean }).wideZone = true;
+    (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
+      { id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q', attributes: {} },
+      { id: 'a1', occurredAt: '2026-01-01T00:00:02Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer', attributes: {} },
+      { id: 'u2', occurredAt: '2026-01-01T00:00:03Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q2', attributes: {} },
+      { id: 'a2', occurredAt: '2026-01-01T00:00:04Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer2', attributes: {} },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const sr2 = view.shadowRoot!;
+    expect(sr2.querySelector('.run-spine')).not.toBeNull();
+    expect(sr2.querySelector('.conversation.jf-scrollbar-none')).not.toBeNull();
     __resetAgentSessionStore();
   });
 
