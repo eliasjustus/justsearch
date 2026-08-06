@@ -12,6 +12,9 @@ public final class IndexingRoutes {
     app.get("/api/indexing/suggested-roots", indexingController::handleSuggestedRoots);
     app.post("/api/indexing/roots", indexingController::handleAddRoot);
     app.delete("/api/indexing/roots", indexingController::handleRemoveRoot);
+    // Tempdoc 811 (C-2a) — removal route for collection-tagged ad-hoc ingests, which no
+    // watched-root-prefix prune can reach.
+    app.delete("/api/indexing/collections", indexingController::handleDeleteCollection);
     app.post("/api/indexing/reindex", indexingController::handleReindex);
     app.post("/api/indexing/excludes/apply", indexingController::handleApplyExcludes);
     app.post("/api/indexing/migration/start", indexingController::handleMigrationStart);

@@ -214,8 +214,12 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
         INGEST_FILES,
         Presentation.forId(INGEST_FILES),
         Interface.of(
+            // Tempdoc 811 (C-2a): `collection` is an OPTIONAL tag. Omitted → the containing indexed
+            // root's collection, or `mcp-ingest` for out-of-root paths. Reserved app-internal names
+            // are rejected server-side in IngestTool, not by this schema.
             "{\"type\":\"object\",\"properties\":{\"paths\":{\"type\":\"array\","
-                + "\"items\":{\"type\":\"string\"}}},\"required\":[\"paths\"]}",
+                + "\"items\":{\"type\":\"string\"}},\"collection\":{\"type\":\"string\"}},"
+                + "\"required\":[\"paths\"]}",
             "{\"type\":\"object\"}"),
         new OperationPolicy(
                 RiskTier.MEDIUM,

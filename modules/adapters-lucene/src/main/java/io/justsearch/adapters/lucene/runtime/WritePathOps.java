@@ -256,6 +256,54 @@ public final class WritePathOps {
   }
 
   /**
+   * Tempdoc 811 (C-2a) — deletes every document (parent and chunk) carrying the given collection
+   * term. This is the removal route for ad-hoc ingests: {@link #deleteByPathPrefix} is
+   * watched-root-prefix driven and can never reach a document indexed from a path under no watched
+   * root, so before 811 those documents were permanently unaddressable.
+   *
+   * <p>Caller is responsible for refusing reserved/default collections — this method deletes exactly
+   * what it is told to.
+   *
+   * @return the number of documents matched (and submitted for deletion)
+   */
+  int deleteByCollection(String collection) {
+    if (collection == null || collection.isBlank()) {
+      throw new IllegalArgumentException("deleteByCollection requires a non-blank collection");
+    }
+    LifecycleSnapshot snap = session.snapshot;
+    IndexWriter w = snap != null ? snap.writer() : null;
+    if (w == null) {
+      throw new IllegalStateException("IndexWriter not available (runtime not started or closed)");
+    }
+    Query query = new TermQuery(new Term(SchemaFields.COLLECTION, collection));
+    int matched = 0;
+    org.apache.lucene.search.SearcherManager mgr = snap.searcherManager();
+    try {
+      if (mgr != null) {
+        IndexSearcher searcher = mgr.acquire();
+        try {
+          matched = searcher.count(query);
+        } finally {
+          mgr.release(searcher);
+        }
+      }
+      w.deleteDocuments(query);
+      // Mirrors deleteByPathPrefix (tempdoc 809 finding 3): publish the bulk-deletion signal AFTER
+      // the delete is submitted, so a reader observing the new epoch is guaranteed the deletion is
+      // already in the writer.
+      session.bulkDeleteEpoch.incrementAndGet();
+      log.info(
+          "deleteByCollection: deletion submitted for collection {} ({} documents matched)",
+          collection,
+          matched);
+      return matched;
+    } catch (IOException e) {
+      throw new IndexRuntimeIOException(
+          classifyIOException(e), "Failed to delete by collection", e);
+    }
+  }
+
+  /**
    * Read-modify-write: loads existing stored fields, applies the caller's updates, and re-indexes.
    * Non-stored, non-docValues data-bearing fields the caller omits (vectors, SPLADE) are preserved
    * per their declared {@code rmwPolicy} in the field catalog (tempdoc 711) — a subset-field RMW can

@@ -158,6 +158,15 @@ final class IngestResponses {
     return deleteByPathResponse(0, "");
   }
 
+  /** Tempdoc 811 (C-2a) — collection-keyed removal route response. */
+  static io.justsearch.ipc.DeleteByCollectionResponse deleteByCollectionResponse(
+      int deletedDocs, String error) {
+    return io.justsearch.ipc.DeleteByCollectionResponse.newBuilder()
+        .setDeletedDocs(deletedDocs)
+        .setError(error == null ? "" : error)
+        .build();
+  }
+
   static DeleteByIdResponse deleteByIdResponse(boolean success, String error) {
     return DeleteByIdResponse.newBuilder().setSuccess(success).setError(error == null ? "" : error).build();
   }
