@@ -20,11 +20,17 @@ const row = (over: Partial<IndexedRootView> = {}): IndexedRootView => ({
 });
 
 const ctx = (
-  over: Partial<{ relativeTime: string; verifiedRelativeTime: string; provisional: boolean }> = {},
+  over: Partial<{
+    relativeTime: string;
+    verifiedRelativeTime: string;
+    provisional: boolean;
+    enrichmentPending: boolean;
+  }> = {},
 ) => ({
   relativeTime: 'just now',
   verifiedRelativeTime: '',
   provisional: false,
+  enrichmentPending: false,
   ...over,
 });
 
@@ -174,5 +180,52 @@ describe('folderStatus', () => {
     expect(fs.state).toBe('unknown');
     expect(fs.glyph).toBe('pending');
     expect(fs.metaText).toContain('Rebuilding');
+  });
+});
+
+// 809 finding 1 — the completion claim is gated on COVERAGE, not on job-queue drain. A drained folder
+// has finished text extraction and the Lucene write; embedding/SPLADE/NER run afterwards on the
+// backfill scheduler, and during that window keyword search works while semantic and hybrid search do
+// not. The terminal ✓ claimed that capability. These assertions supersede the tempdoc 599 §10 scoping
+// note ("the vector/embedding tier is intentionally NOT reflected here").
+describe('folderStatus — enrichment coverage gates the completion claim (809 finding 1)', () => {
+  it('drained + indexed BUT enrichment pending ⇒ NOT ready, and never the ✓ glyph', () => {
+    const fs = folderStatus(row(), ctx({ enrichmentPending: true }));
+    expect(fs.state).toBe('enriching');
+    expect(fs.state).not.toBe('ready');
+    expect(fs.glyph).not.toBe('indexed');
+  });
+
+  it('the claim says what IS true: indexed + keyword ready, semantic still catching up', () => {
+    const fs = folderStatus(row(), ctx({ relativeTime: '2 minutes ago', enrichmentPending: true }));
+    // It still reports the true half (the folder IS indexed and keyword-searchable) …
+    expect(fs.metaText).toContain('indexed 2 minutes ago');
+    expect(fs.metaText).toContain('keyword search ready');
+    // … and does not claim the half that is not true yet.
+    expect(fs.metaText).toContain('semantic search still catching up');
+  });
+
+  it('drain alone no longer yields ready — the gate is coverage (the exact pre-fix behaviour)', () => {
+    // Identical row, identical drain; ONLY the coverage fact differs. This is the assertion that
+    // distinguishes a coverage gate from a queue-drain gate.
+    expect(folderStatus(row(), ctx({ enrichmentPending: false })).state).toBe('ready');
+    expect(folderStatus(row(), ctx({ enrichmentPending: true })).state).toBe('enriching');
+  });
+
+  it('a folder-specific problem still outranks the index-wide backfill note', () => {
+    // Failures and unverified deletions are facts about THIS folder; enrichment is index-wide.
+    expect(folderStatus(row({ failedCount: 2 }), ctx({ enrichmentPending: true })).state).toBe('failed');
+    expect(
+      folderStatus(row({ deleteDetectionUnverified: true }), ctx({ enrichmentPending: true })).state,
+    ).toBe('unverified');
+    expect(folderStatus(row({ inFlightCount: 3 }), ctx({ enrichmentPending: true })).state).toBe('indexing');
+  });
+
+  it('enrichment pending does not manufacture a claim for a folder that indexed nothing', () => {
+    const fs = folderStatus(
+      row({ status: 'scanned', lastIndexedIsoTime: '', fileCount: 0 }),
+      ctx({ relativeTime: '', enrichmentPending: true }),
+    );
+    expect(fs.state).toBe('empty');
   });
 });

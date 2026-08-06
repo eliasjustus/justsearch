@@ -494,6 +494,44 @@ describe('HealthSurface — Queue card status vocabulary (630 D1)', () => {
     }
   });
 
+  // 809 finding 1 — the terminal trust close is gated on COVERAGE, not on job-queue drain. The job
+  // queue draining only proves extraction + the Lucene write finished; the enrichment backfill that
+  // makes semantic search work runs afterwards, and "Up to date" during it claims a capability the
+  // system does not have. Supersedes the 630 D1 pin above, which asserted the terminal close from
+  // `pendingJobs === 0 && indexHealthy` alone.
+  it('809: idle + healthy BUT the enrichment backfill is running ⇒ no "Up to date"', async () => {
+    __feedForTest({
+      status: {
+        worker: {
+          core: { indexState: 'IDLE', indexedDocuments: 5, pendingJobs: 0, indexHealthy: true },
+          // 809 finding 9's trap: the doc-level tier is clean, the passage tier is not.
+          enrichment: {
+            embeddingEnabled: true,
+            embeddingPendingCount: 0,
+            embeddingCoveragePercent: 100,
+            chunk: { chunkEmbeddingPendingCount: 1554, chunkVectorsReady: false },
+          },
+        },
+        readiness: {
+          composites: {
+            retrieval: { state: 'READY', reasonCodes: [] },
+            aiFeatures: { state: 'READY', reasonCodes: [] },
+          },
+        },
+      } as unknown as StatusSnapshot,
+    });
+    __tickClockForTest();
+    const el = await mount();
+    try {
+      const subs = queueSubs(el);
+      expect(subs).not.toContain('Up to date');
+      expect(subs).not.toContain('Idle');
+      expect(subs).toContain('Building semantic search');
+    } finally {
+      teardown(el);
+    }
+  });
+
   it('queued work ⇒ "Indexing"', async () => {
     feed({ indexedDocuments: 5, pendingJobs: 5, indexHealthy: true });
     const el = await mount();

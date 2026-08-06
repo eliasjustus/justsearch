@@ -43,6 +43,7 @@ import {
 } from '../../api/generated/schema-types/indexed-root-view.js';
 // Tempdoc 599 §9.1 — the ONE per-folder status derivation; the row glyph + meta line project from it.
 import { folderStatus } from '../state/folderStatus.js';
+import { enrichmentProgress } from '../state/enrichmentCoverage.js';
 // Tempdoc 599 §16/B1 — the clickable "N failed" chip opens the per-folder failed-files drawer.
 import { openFailedJobs } from '../state/failedJobsDrawer.js';
 // Tempdoc 599 §9.4 — gate the Add button with a reachable reason (596 operability authority).
@@ -121,6 +122,7 @@ export class LibrarySurface extends JfElement {
     isTauri: { state: true },
     activeTab: { state: true },
     provisional: { state: true },
+    enrichmentPending: { state: true },
   };
 
   declare apiBase: string;
@@ -145,6 +147,12 @@ export class LibrarySurface extends JfElement {
    * catastrophe-reading empty state. Projected from the one `Stability` axis.
    */
   declare provisional: boolean;
+  /**
+   * 809 finding 1 — the enrichment backfill still owes work, so a drained folder is keyword-searchable
+   * but not yet semantically searchable. Projected from the one `enrichmentProgress` derivation and
+   * handed to `folderStatus`, which decides whether the row may make the terminal "✓ indexed" claim.
+   */
+  declare enrichmentPending: boolean;
 
   private aiUnsub: (() => void) | null = null;
   // Tempdoc 599 §9.4 — debounce the add-time preview while typing.
@@ -167,6 +175,7 @@ export class LibrarySurface extends JfElement {
     this.isTauri = false;
     this.activeTab = 'folders';
     this.provisional = false;
+    this.enrichmentPending = false;
   }
 
   // Tempdoc 571 §11 / 578: Library is a host surface — it delegates layout to <jf-surface-tabs>
@@ -413,6 +422,9 @@ export class LibrarySurface extends JfElement {
     // transition renders as "Rebuilding…", not "No watched folders".
     this.aiUnsub = subscribeAiState((s) => {
       this.provisional = s.stability.kind === 'provisional';
+      // 809 finding 1 — same tick, same store: whether the enrichment backfill is still running, so a
+      // row cannot claim the terminal "✓ indexed" while semantic search is still being built.
+      this.enrichmentPending = enrichmentProgress(s.status).pending;
       // Tempdoc 599 §9.3 — ride the existing status tick to live-refresh the rows (counts-free, no
       // new poller), so a folder's "Indexing · N remaining → ✓ indexed" updates without re-nav.
       void this.refresh({ live: true });
@@ -465,6 +477,7 @@ export class LibrarySurface extends JfElement {
         // confirmed (distinct from lastIndexed, the last write). Same host time-ago util, no new formatter.
         verifiedRelativeTime: this.host_.utilities.formatRelativeTime(r.lastVerifiedIsoTime ?? ''),
         provisional: this.provisional,
+        enrichmentPending: this.enrichmentPending,
       });
       return {
         pathHash,
@@ -764,6 +777,7 @@ export class LibrarySurface extends JfElement {
       // lastIndexed (last write). Same host time-ago util.
       verifiedRelativeTime: this.host_.utilities.formatRelativeTime(root.lastVerifiedIsoTime ?? ''),
       provisional: this.provisional,
+      enrichmentPending: this.enrichmentPending,
     });
     return html`
       <div class="card">

@@ -91,11 +91,20 @@ describe('AiState.snapshotLive — the higher-precedence stability states (round
         vi.setSystemTime(t0 + 41_000); // past the 40s reachability window: no contact of any channel
         __tickClockForTest();
         const dead = getAiState();
-        // Precision: this state must still be winning its higher-precedence branch — otherwise the
-        // assertion below would pass for the WRONG reason (the `channel-stale` path the old
-        // kind-based predicate already handled).
-        expect(dead.stability, c.name).toEqual({ kind: 'provisional', cause: c.cause });
-        expect(dead.verdict.reasons.includes('channel-stale'), c.name).toBe(false);
+        // Tempdoc 807 §E.4 SUPERSEDES what these two lines used to pin. Until §E.4 they asserted
+        // `cause: c.cause` and `includes('channel-stale') === false` — i.e. they PINNED the retained
+        // cause still winning after contact died, which is precisely the residual §E.4 recorded and
+        // deferred: W1 re-tensed the surfaces, but the VERDICT stayed pinned by a retained snapshot
+        // field, so the status LINE went on projecting "Restarting…" / "Rebuilding…" off a value
+        // nothing verifies. `computeStability` now gives lost contact precedence over every
+        // retained-snapshot cause, so all six collapse to `channel-stale` → "Reconnecting…".
+        expect(dead.stability, c.name).toEqual({ kind: 'provisional', cause: 'channel-stale' });
+        expect(dead.verdict.reasons.includes('channel-stale'), c.name).toBe(true);
+        // The precision the old `cause: c.cause` assertion provided — "this case really IS an input
+        // to its higher-precedence branch, so the result is not passing for a wrong reason" — is
+        // preserved two ways: the retained snapshot is still intact below (the branch's input is
+        // present), and the ANTI-REGRESSION twin proves the cause still wins while contact is fresh.
+        expect(dead.status, c.name).toEqual(c.status);
         expect(dead.connection.reachable, c.name).toBe(false);
         expect(dead.snapshotLive, c.name).toBe(false);
       } finally {

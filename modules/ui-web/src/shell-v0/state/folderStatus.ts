@@ -15,16 +15,24 @@
  * flag (the caller's projection of the `Stability` axis, mirroring `renderObserved`), so the seam
  * needs no host-utility or store import and is trivially unit-testable.
  *
- * `ready` means KEYWORD-searchable (the folder's index jobs drained). The vector/embedding tier is
- * a separate global backfill (tempdoc 599 §10 / 598) and is intentionally NOT reflected here.
+ * `ready` means the folder's own index jobs drained AND the enrichment backfill owes no pending work
+ * (809 finding 1). Tempdoc 599 §10 originally excluded the vector/embedding tier here on the grounds
+ * that it is a separate global backfill — but a row that says "✓ indexed" during that backfill is the
+ * §8.1 false-terminal defect one layer up: extraction + the Lucene write are done, so keyword search
+ * works, while embedding/SPLADE/NER are still running and semantic + hybrid search — the actual
+ * product — do not. `enriching` is that window, named. The enrichment fact itself is derived ONCE in
+ * `enrichmentCoverage.ts` (which reads BOTH the doc-level and passage-level counters; the doc-level
+ * ones read 100% during a passage backfill — 809 finding 9's diagnostic trap).
  */
 
 import type { IndexedRootView } from '../../api/generated/schema-types/indexed-root-view.js';
+import { ENRICHMENT_CATCHING_UP_CAVEAT } from './enrichmentCoverage.js';
 
 export type FolderState =
   | 'scanning' // walk in progress — files not yet fully enqueued
   | 'indexing' // in-flight jobs > 0
-  | 'ready' // scanned, drained, no failures — keyword-searchable
+  | 'ready' // scanned, drained, no failures, enrichment settled — fully searchable
+  | 'enriching' // 809 finding 1 — indexed + keyword-searchable, but the enrichment backfill is still running
   | 'unverified' // tempdoc 626 §Axis-C — indexed, but the reconcile couldn't verify deletions (cap-skipped)
   | 'failed' // walk error, or terminal failed jobs with nothing in flight
   | 'empty' // scanned, zero indexable files
@@ -53,6 +61,14 @@ export interface FolderStatusContext {
   readonly verifiedRelativeTime: string;
   /** The system `Stability` axis projected to a boolean (`stability.kind === 'provisional'`). */
   readonly provisional: boolean;
+  /**
+   * 809 finding 1 — does the enrichment backfill still owe work? From the ONE derivation
+   * (`enrichmentProgress(status).pending`), passed in like `provisional` so this seam stays pure and
+   * store-free. INDEX-WIDE, not per-folder: the backfill does not record which root a document came
+   * from (809 finding 2), so this gates the completion CLAIM, and the caveat names the capability
+   * rather than promising a per-folder percentage it cannot compute.
+   */
+  readonly enrichmentPending: boolean;
 }
 
 /**
@@ -169,6 +185,21 @@ export function folderStatus(row: IndexedRootView, ctx: FolderStatusContext): Fo
       };
     }
     const indexedSuffix = ctx.relativeTime ? ` · indexed ${ctx.relativeTime}` : '';
+    // 809 finding 1 — the folder's own jobs drained, but the enrichment backfill has not. Extraction
+    // and the Lucene write are what "drained" proves; embedding/SPLADE/NER run afterwards, and until
+    // they do, semantic and hybrid search do not work. So this is NOT the terminal ✓: say what IS
+    // true (indexed, keyword-searchable) and what is still happening. Ordered AFTER the failure and
+    // deletion-verification branches — those are conditions about this folder, this one is about the
+    // index-wide backfill, and a folder-specific problem is the more useful thing to surface.
+    if (ctx.enrichmentPending) {
+      return {
+        state: 'enriching',
+        glyph: 'pending',
+        metaText: `${collection} · ${fileCountText}${indexedSuffix} · ${ENRICHMENT_CATCHING_UP_CAVEAT}`,
+        inFlight,
+        failed,
+      };
+    }
     // Tempdoc 626 §Recency — the freshness heartbeat. Showing WHEN the index↔disk correspondence was
     // last confirmed turns a bare "✓" into a checkable fact ("Verified 2m ago") and makes a folder the
     // round-robin reconcile hasn't reached lately read as mildly stale ("Verified 8m ago") rather than
