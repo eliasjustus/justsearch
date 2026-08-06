@@ -303,6 +303,29 @@ class McpProtocolHandlerTest {
         List.copyOf(searchProps.keySet()),
         "search inputSchema properties must serialize in declared source order");
 
+    // Tempdoc 811 (C-2a): the ingest tool advertises the optional `collection` tag. Ordered
+    // (not Map.of) for the same byte-stability reason as the search/answer schemas above.
+    @SuppressWarnings("unchecked")
+    Map<String, Object> ingestInputSchema =
+        (Map<String, Object>) tools.get(3).get("inputSchema");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> ingestProps =
+        (Map<String, Object>) ingestInputSchema.get("properties");
+    assertEquals(
+        List.of("paths", "collection"),
+        List.copyOf(ingestProps.keySet()),
+        "ingest inputSchema properties must serialize in declared source order");
+    assertEquals(
+        List.of("paths"),
+        ingestInputSchema.get("required"),
+        "collection stays optional — omitting it inherits the root collection or mcp-ingest");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> collectionProp = (Map<String, Object>) ingestProps.get("collection");
+    assertEquals("string", collectionProp.get("type"));
+    assertTrue(
+        ((String) collectionProp.get("description")).contains("mcp-ingest"),
+        "the schema must name the out-of-root default so an agent knows what it gets");
+
     // Tempdoc 725 W2c: the opt-in `response_format` argument is part of the published
     // answer-tool contract too (sibling of the search-tool assertion above).
     @SuppressWarnings("unchecked")

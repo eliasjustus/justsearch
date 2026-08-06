@@ -91,7 +91,7 @@ Current built-in agent-facing tool names include:
 | `core_search_index` | Read-only | Search indexed knowledge. |
 | `core_browse_folders` | Read-only | Discover indexed folders and paths. |
 | `core_file_operations` | Write/destructive depending on action | Move, rename, copy, delete, or create filesystem items with approval where required. |
-| `core_ingest_files` | Write | Request ingestion of files or folders. |
+| `core_ingest_files` | Write | Request ingestion of files or folders. Takes an optional `collection` tag; omitted, a path inherits its containing indexed root's collection, or `mcp-ingest` when it is under no indexed root (tempdoc 811 C-2a). |
 
 Safety metadata lives with the operation definitions and handlers. Write/destructive operations pause for explicit user approval before execution.
 

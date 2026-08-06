@@ -4,11 +4,14 @@ package io.justsearch.agent.tools;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import io.justsearch.agent.api.registry.OperationResult;
+import io.justsearch.app.api.knowledge.IngestCollectionPolicy;
 import io.justsearch.app.api.knowledge.KnowledgeIngestResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,6 +45,10 @@ public final class IngestTool {
             "minItems": 1,
             "maxItems": 100
           },
+          "collection": {
+            "type": "string",
+            "description": "Optional collection tag for the indexed documents. Omit to inherit the containing indexed root's collection, or 'mcp-ingest' for paths outside every indexed root. The app-internal collections 'justsearch-help' and 'agent-history' are rejected."
+          },
           "explanation": {
             "type": "string",
             "description": "Why these files are being ingested"
@@ -54,6 +61,7 @@ public final class IngestTool {
   private final IngestCallback ingestCallback;
   private final ScanRootCallback scanRootCallback;
   private final Supplier<List<BrowseTool.RootInfo>> rootsSupplier;
+  private final Supplier<List<IngestCollectionPolicy.RootBinding>> rootBindingsSupplier;
 
   /**
    * Constructs the agent ingest tool. Tempdoc 418 Phase B made the {@link ScanRootCallback}
@@ -65,9 +73,23 @@ public final class IngestTool {
       IngestCallback ingestCallback,
       ScanRootCallback scanRootCallback,
       Supplier<List<BrowseTool.RootInfo>> rootsSupplier) {
+    this(ingestCallback, scanRootCallback, rootsSupplier, List::of);
+  }
+
+  /**
+   * Tempdoc 811 (C-2a) — adds the watched-root containment authority so an ad-hoc ingest inherits an
+   * in-root path's collection instead of writing an unlabeled document. The 3-arg constructor keeps
+   * the pre-811 shape for tests that do not exercise tagging (every path then resolves out-of-root).
+   */
+  public IngestTool(
+      IngestCallback ingestCallback,
+      ScanRootCallback scanRootCallback,
+      Supplier<List<BrowseTool.RootInfo>> rootsSupplier,
+      Supplier<List<IngestCollectionPolicy.RootBinding>> rootBindingsSupplier) {
     this.ingestCallback = ingestCallback;
     this.scanRootCallback = scanRootCallback;
     this.rootsSupplier = rootsSupplier;
+    this.rootBindingsSupplier = rootBindingsSupplier;
   }
 
   /** Per tempdoc 429 §C.G: parameter schema preserved as a constant for unit tests. */
@@ -94,11 +116,28 @@ public final class IngestTool {
                 + ". Split into smaller batches.");
       }
 
+      // Tempdoc 811 (C-2a) — optional caller-supplied collection, validated HERE (server side of the
+      // MCP boundary) rather than relying on the advertised tool schema.
+      JsonNode collectionNode = args.get("collection");
+      String requestedCollection;
+      try {
+        requestedCollection =
+            IngestCollectionPolicy.normalizeRequested(
+                collectionNode == null || collectionNode.isNull() ? null : collectionNode.asText());
+      } catch (IllegalArgumentException e) {
+        return OperationResult.failure(e.getMessage());
+      }
+      List<IngestCollectionPolicy.RootBinding> rootBindings = rootBindings();
+
       // Tempdoc 418 Phase B — directories dispatch to Worker-side ScanRoot RPC; only single
       // files keep the local submitBatch path. Worker-side WorkerIngestionAuthority applies
       // the same skip rules + caller exclude_globs (empty for the agent — agent has no exclude
       // policy).
-      List<Path> singleFiles = new ArrayList<>();
+      // Tempdoc 811 (C-2a): single files are grouped by resolved collection ("" = index default) so
+      // one call can mix in-root and out-of-root paths. Pre-811 documents ingested through this tool
+      // carry no collection field and are not backfilled; they acquire a tag on re-index.
+      Map<String, List<Path>> singleFilesByCollection = new LinkedHashMap<>();
+      int singleFileCount = 0;
       int skippedCount = 0;
       int directoryAccepted = 0;
       List<String> directoryErrors = new ArrayList<>();
@@ -109,38 +148,47 @@ public final class IngestTool {
           skippedCount++;
           continue;
         }
+        String collection = IngestCollectionPolicy.resolve(requestedCollection, input, rootBindings);
         if (Files.isDirectory(input)) {
-          KnowledgeIngestResponse scanResp = scanRootCallback.scanRoot(input.toString(), List.of());
+          KnowledgeIngestResponse scanResp =
+              scanRootCallback.scanRoot(input.toString(), collection, List.of());
           directoryAccepted += scanResp.accepted();
           if (scanResp.error() != null && !scanResp.error().isEmpty()) {
             directoryErrors.add(input + ":" + scanResp.error());
           }
         } else if (Files.isRegularFile(input) && Files.isReadable(input)) {
-          singleFiles.add(input);
+          singleFilesByCollection
+              .computeIfAbsent(collection == null ? "" : collection, k -> new ArrayList<>())
+              .add(input);
+          singleFileCount++;
         } else {
           skippedCount++;
         }
       }
 
-      if (singleFiles.isEmpty() && directoryAccepted == 0 && directoryErrors.isEmpty()) {
+      if (singleFileCount == 0 && directoryAccepted == 0 && directoryErrors.isEmpty()) {
         return OperationResult.failure("No readable files found in the provided paths");
       }
-      if (singleFiles.size() >= MAX_EXPANDED_FILES) {
+      if (singleFileCount >= MAX_EXPANDED_FILES) {
         return OperationResult.failure(
             "Too many single-file paths: "
-                + singleFiles.size()
+                + singleFileCount
                 + " exceeds limit of "
                 + MAX_EXPANDED_FILES
                 + ". Pass directories instead so the Worker can scan in bulk.");
       }
 
       int singleAccepted = 0;
-      String singleError = "";
-      if (!singleFiles.isEmpty()) {
-        KnowledgeIngestResponse fileResp = ingestCallback.ingest(singleFiles);
-        singleAccepted = fileResp.accepted();
-        singleError = fileResp.error() == null ? "" : fileResp.error();
+      List<String> singleErrors = new ArrayList<>();
+      for (Map.Entry<String, List<Path>> group : singleFilesByCollection.entrySet()) {
+        String collection = group.getKey().isEmpty() ? null : group.getKey();
+        KnowledgeIngestResponse fileResp = ingestCallback.ingest(group.getValue(), collection);
+        singleAccepted += fileResp.accepted();
+        if (fileResp.error() != null && !fileResp.error().isEmpty()) {
+          singleErrors.add(fileResp.error());
+        }
       }
+      String singleError = String.join("; ", singleErrors);
 
       String combinedError =
           directoryErrors.isEmpty()
@@ -224,20 +272,37 @@ public final class IngestTool {
     return sb.toString();
   }
 
-  /** Callback for ingesting files into the knowledge index. */
+  /**
+   * Best-effort watched-root lookup for collection inheritance (tempdoc 811 C-2a). A failure here
+   * means every path resolves out-of-root, which is a real tag rather than the pre-811 {@code null}.
+   */
+  private List<IngestCollectionPolicy.RootBinding> rootBindings() {
+    try {
+      List<IngestCollectionPolicy.RootBinding> bindings = rootBindingsSupplier.get();
+      return bindings == null ? List.of() : bindings;
+    } catch (RuntimeException e) {
+      LOG.debug("watched-root lookup for ingest tagging failed", e);
+      return List.of();
+    }
+  }
+
+  /**
+   * Callback for ingesting files into the knowledge index. Tempdoc 811 (C-2a) added the {@code
+   * collection} tag ({@code null} = the index default).
+   */
   @FunctionalInterface
   public interface IngestCallback {
-    KnowledgeIngestResponse ingest(List<Path> files);
+    KnowledgeIngestResponse ingest(List<Path> files, String collection);
   }
 
   /**
    * Callback for dispatching a directory scan to the Worker. Tempdoc 418 Phase B —
    * production wiring delegates to {@code KnowledgeHttpApiAdapter.scanRoot}, which calls
    * the server-streaming {@code IngestService.ScanRoot} RPC. Tests can pass a
-   * local-fallback (see {@link IngestTool#defaultLocalScanCallback}).
+   * local-fallback. Tempdoc 811 (C-2a) added the {@code collection} tag.
    */
   @FunctionalInterface
   public interface ScanRootCallback {
-    KnowledgeIngestResponse scanRoot(String rootPath, List<String> excludeGlobs);
+    KnowledgeIngestResponse scanRoot(String rootPath, String collection, List<String> excludeGlobs);
   }
 }
