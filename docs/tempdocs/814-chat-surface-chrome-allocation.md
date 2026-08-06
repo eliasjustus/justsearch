@@ -709,3 +709,90 @@ cd modules/ui-web && npm run typecheck && npm run test:unit:run
   be quoted as current without re-running the gates above.
 - Session-private artifacts (capture PNGs, sweep JSON, audit scripts) lived in a session
   scratch directory and are not archived; the gates re-derive all of them.
+
+## §D8 — Residual-closure design: making the last two obligations capture-reachable (2026-08-06)
+
+§V residual 1 left the activity rail's expanded body and the evidence rail fixture-unreachable,
+so §D2's bounded-expansion rule and §D3's rail no-scroll rule rest on unit tests and indirect
+assertions. This section is the settled design for closing that, plus the two §R tooling
+guards. Design only; source-verified against current `main`.
+
+**Mechanism correction to §C/§V:** the agent stream was never "stubbed as an empty closed
+stream". The browser path goes through `streamViaHost` → POST `/api/chat/dispatch`
+(`plugin-api/capabilities/ai.ts`), which the fixtures' route predicate does not match — the
+request falls through to the unmapped-JSON default `{}`, both stream parsers see no terminal
+frame, and the run ends as a `STREAM_INCOMPLETE` error entry. That is also the origin of the
+"Connection lost — the response was interrupted" row visible in the existing `chat-bands`
+capture. Any fixture must intercept `/api/chat/dispatch` (attach/resume paths use
+`consumeShapeStream` directly).
+
+### D8.1 — Record-path first: take what the thread fixture can already carry
+
+Two of the unreachable obligations do not need a stream at all, because the view hydrates them
+from the `/api/thread/{id}` record: `answerSources` also populates via
+`hydrateAnswerEvidenceFromRecord` (an `ASSISTANT_MESSAGE` event with non-empty
+`attributes.sources`), and the rail's lifecycle row reads `lifecycles[]` from the same record.
+Extending the existing `degraded-thread` fixture body with those two fields mounts the
+**evidence rail** and renders the **lifecycle row** with no new transport. This is the cheap
+half and lands first.
+
+### D8.2 — One deterministic SSE fixture for the three stream-only facts
+
+Only `budgetUpdates`, `budgetGate`, and `contextGate` have no source but the stream. Design:
+
+- A single static SSE body (Playwright fulfills complete bodies only; both parsers are
+  buffer-based frame-splitters, so a whole multi-frame body yields every event in order —
+  byte-stable, which is what a capture wants).
+- Frame grammar mirrors the FE test's `sseChunk` helper; **payload shapes are validated at
+  build time against `scripts/codegen/shapes.fixture.json`'s `core.agent-run` `eventSchema`**
+  — the machine-readable projection of the Java conversation-shape catalog (which is off-wire,
+  so the `wire` gate cannot cover this drift). ~30 lines of validation, no new schema: the
+  fixture fails loudly the day the catalog changes instead of capture rows passing on stale
+  shapes.
+- The DONE sequence: `session_started` → `budget_update` (carrying `promptTokens` +
+  `contextWindow` so the horizon meter renders) → `chunk` → `done{sources[]}` — after which
+  the expanded rail shows the budget row + bar, the context meter, and the DONE-neutral
+  summary, all becoming gateable: a capture step opens the `<details>` and registers the
+  **§D2 bounded-expansion assertion** (content share floor with the rail open — the half the
+  closure audit recorded as untested), and the mounted evidence rail must NOT appear in
+  `scrollableRegions` (§D3's direct witness) while the "Sources · N" toolbar chip is absent
+  (§D5's structural gate, on camera).
+
+### D8.3 — Honest limits (recorded, not designed around)
+
+- **A PAUSED-awaiting-budget capture is a priced design fork, deferred.** A static body always
+  terminates, so a stream ending on `budget_gate` trips the parsers' `STREAM_INCOMPLETE`
+  guard; the alternatives (accept a trailing error entry in the capture, or reset the gate
+  out-of-band after a terminal frame) each misrepresent something. The held-gate auto-expand
+  keeps its unit-tier home (it is transition-triggered, and `budget_update`/`done` clear the
+  gate — a capture would race its own fixture).
+- **The over-budget remedy buttons are capture-unreachable by construction**: they additionally
+  require `runInFlight`, which is only true while the stream's abort controller is live —
+  never after a completed static body. Unit-tier home stands.
+
+### D8.4 — The two §R tooling guards (slot-in points verified)
+
+- **`fold-observations.mjs` base-freshness guard:** a precondition inside `foldShards`, beside
+  the existing malformed-store refusal — refuse `--apply` when `origin/main` is not an
+  ancestor of HEAD for the store's checkout (one `git merge-base --is-ancestor` shell-out; an
+  explicit override flag for deliberate offline use). Failing there composes with the existing
+  crash-safety ordering (store is written before shards are deleted), so a refusal leaves
+  every shard intact.
+- **ui-shot auto-serve provenance clause:** `_is_server_alive` already reads everything except
+  the `provenance` it records; add a final clause returning stale when the recorded `head`
+  differs from the current one, so reuse falls through to a fresh server. Closes the
+  measured-stale-code hazard §R.2 describes; no new state, reads a field already written.
+
+**Orphans:** the unmapped-`{}` fallthrough for `/api/chat/dispatch` (and the accidental
+"Connection lost" row it paints into agent-mode captures) is superseded for the new fixture
+variant; §C/§V's "empty closed stream" wording is corrected by this section. Nothing else is
+displaced — both guards are additive clauses at existing decision points.
+
+**Principle (named, not built beyond need): a fixture's schema authority is the generated
+catalog projection, enforced at fixture build time.** `shapes.fixture.json` already exists as
+the drift-gated projection; the fixture validates against it rather than hand-shaping payloads
+(projection, not fork). Candidate wider scope: `_thread_body()` could be validated against the
+FE's `ThreadLifecycle` zod schema the same way. Earning its keep looks like: a catalog change
+breaks the fixture build loudly instead of capture assertions passing against stale shapes.
+Retirement: if a record-and-replay mechanism (captured real-run SSE bytes replayed verbatim)
+lands, hand-authored frame lists and their validator retire together.
