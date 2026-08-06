@@ -3,6 +3,7 @@ package io.justsearch.ui.api.mcp;
 
 import io.justsearch.app.api.DocumentService.ContextCitation;
 import io.justsearch.app.api.DocumentService.ContextResult;
+import io.justsearch.app.api.knowledge.KnowledgeSearchRequest;
 import io.justsearch.app.api.knowledge.KnowledgeSearchResponse;
 import io.justsearch.app.api.knowledge.SearchTrace;
 import java.util.ArrayList;
@@ -121,6 +122,7 @@ public final class McpEvidenceProjection {
     coverage.put("tookMs", content.tookMs());
     out.put("coverage", coverage);
     out.put("truncated", content.truncated());
+    putAppliedFilters(out, resp);
     return out;
   }
 
@@ -172,7 +174,90 @@ public final class McpEvidenceProjection {
       results.add(h);
     }
     out.put("results", results);
+    putAppliedFilters(out, resp);
     return out;
+  }
+
+  /**
+   * The {@code appliedFilters} echo (366 §1b) on the agent-facing tier. REST has carried it since
+   * 366 ({@code KnowledgeSearchController}) and the delivery governor preserves it through
+   * truncation ({@code McpToolSurface.truncateResults}), but the MCP projection dropped it — so an
+   * agent that scoped a search could not distinguish "the scope was honoured" from "the scope was
+   * silently dropped" without inferring it from the returned rows.
+   *
+   * <p>Emitted on BOTH evidence tiers, and only when the response carries it (the response-level
+   * record is null unless the request actually had filters). Projected to explicit maps for the
+   * same reason the rest of this class is (see the class javadoc): the MCP serializer does not run
+   * the records' Jackson annotations. Empty filter members are omitted — an agent reads "what was
+   * scoped", not a wall of empty lists.
+   */
+  private static void putAppliedFilters(Map<String, Object> out, KnowledgeSearchResponse resp) {
+    KnowledgeSearchResponse.AppliedFilters applied = resp.appliedFilters();
+    if (applied == null) {
+      return;
+    }
+    Map<String, Object> m = new LinkedHashMap<>();
+    Map<String, Object> filters = projectFilters(applied.filters());
+    if (!filters.isEmpty()) {
+      m.put("filters", filters);
+    }
+    Map<String, Object> boost = projectFilters(applied.boostFilters());
+    if (!boost.isEmpty()) {
+      m.put("boostFilters", boost);
+    }
+    if (!m.isEmpty()) {
+      out.put("appliedFilters", m);
+    }
+  }
+
+  /** One {@code Filters} record as a map of only its set members. */
+  private static Map<String, Object> projectFilters(KnowledgeSearchRequest.Filters f) {
+    Map<String, Object> m = new LinkedHashMap<>();
+    if (f == null) {
+      return m;
+    }
+    putIfPresent(m, "mime", f.mime());
+    putIfPresent(m, "mimeBase", f.mimeBase());
+    putIfPresent(m, "language", f.language());
+    putIfPresent(m, "fileKind", f.fileKind());
+    putIfPresent(m, "collection", f.collection());
+    putIfPresent(m, "docIds", f.docIds());
+    putIfPresent(m, "entityPersons", f.entityPersons());
+    putIfPresent(m, "entityOrganizations", f.entityOrganizations());
+    putIfPresent(m, "entityLocations", f.entityLocations());
+    putIfPresent(m, "metaSource", f.metaSource());
+    putIfPresent(m, "metaAuthor", f.metaAuthor());
+    putIfPresent(m, "metaCategory", f.metaCategory());
+    if (f.pathPrefix() != null && !f.pathPrefix().isBlank()) {
+      m.put("pathPrefix", f.pathPrefix());
+    }
+    if (f.includeChunks() != null) {
+      m.put("includeChunks", f.includeChunks());
+    }
+    putTimeRange(m, "modifiedAt", f.modifiedAt());
+    putTimeRange(m, "metaPublishedAt", f.metaPublishedAt());
+    return m;
+  }
+
+  private static void putIfPresent(Map<String, Object> m, String key, List<String> values) {
+    if (values != null && !values.isEmpty()) {
+      m.put(key, values);
+    }
+  }
+
+  private static void putTimeRange(
+      Map<String, Object> m, String key, KnowledgeSearchRequest.TimeRangeMs range) {
+    if (range == null || (range.fromMs() == null && range.toMs() == null)) {
+      return;
+    }
+    Map<String, Object> r = new LinkedHashMap<>();
+    if (range.fromMs() != null) {
+      r.put("fromMs", range.fromMs());
+    }
+    if (range.toMs() != null) {
+      r.put("toMs", range.toMs());
+    }
+    m.put(key, r);
   }
 
   /**

@@ -92,15 +92,23 @@ public final class MemoryExtractionConsumer implements StreamConsumer {
     try {
       String userMessage = lastUserMessage(ctx.messages());
       Extracted fact = extract(userMessage);
+      // Observed writable: the lock episode (if any) has ended — the next one gets its own WARN.
+      // Read and reset BEFORE the cue check, because an episode ends when the STORE unlocks, not
+      // when a cue-bearing turn happens to arrive while it is unlocked. Resetting only on the
+      // latter let lock → cueless unlocked turns → re-lock keep the flag set, so the second
+      // episode's first drop was silent — the exact "one WARN per episode" contract this field
+      // exists to keep.
+      boolean locked = memoryStore.isLocked();
+      if (!locked) {
+        lockedEpisodeReported.set(false);
+      }
       if (fact == null) {
         return StreamConsumerResult.empty();
       }
-      if (memoryStore.isLocked()) {
+      if (locked) {
         reportSkipped(fact);
         return StreamConsumerResult.empty();
       }
-      // Observed writable: the lock episode (if any) has ended — the next one gets its own WARN.
-      lockedEpisodeReported.set(false);
       memoryStore.remember(
           new MemoryRecord(
               "chat:" + Integer.toHexString(fact.content.toLowerCase(Locale.ROOT).hashCode()),

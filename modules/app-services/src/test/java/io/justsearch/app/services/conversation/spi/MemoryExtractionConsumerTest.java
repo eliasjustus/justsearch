@@ -116,6 +116,37 @@ final class MemoryExtractionConsumerTest {
   }
 
   @Test
+  @DisplayName("the episode ends when the STORE unlocks, even if no cue-bearing turn arrives meanwhile")
+  void episodeEndsOnAnyUnlockedObservation() {
+    var store = new FakeStore();
+    store.locked = true;
+    var consumer = new MemoryExtractionConsumer(store);
+    var appender = attach();
+    try {
+      consumer.onDone("ok", ctx("remember that the deploy is Tuesday"));
+      assertEquals(1, warnMessages(appender).size(), "the first drop is announced");
+
+      // The lock episode ends — but the turns that happen while unlocked carry NO memory cue, so
+      // nothing is written. The episode is over all the same.
+      store.locked = false;
+      consumer.onDone("ok", ctx("what files did I index yesterday?"));
+      consumer.onDone("ok", ctx("summarize the last report"));
+      assertEquals(1, warnMessages(appender).size(), "cueless turns warn about nothing");
+
+      // A NEW episode: its first drop must be announced too, or the loss is silent.
+      store.locked = true;
+      consumer.onDone("ok", ctx("remember that it locked again"));
+      assertEquals(
+          2,
+          warnMessages(appender).size(),
+          "a second lock episode must warn again — the flag resets on ANY unlocked observation,"
+              + " not only on a cue-bearing one");
+    } finally {
+      detach(appender);
+    }
+  }
+
+  @Test
   @DisplayName("a store that locks between the pre-check and the write is not swallowed either")
   void racingLockStillWarns() {
     var store = new FakeStore();

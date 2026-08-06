@@ -170,6 +170,18 @@ public class IndexingController {
                     ApiErrorCode.INVALID_PATH, "Path does not exist or is not a directory: " + resolved, telemetry, ApiErrorHandler.routeOf(ctx)));
         return;
       }
+      // A watched root's collection tags every document the root's scan admits, so it is subject to
+      // the same reserved-name guard as the ad-hoc ingest surfaces — routed through the ONE
+      // authority (IngestCollectionPolicy), not a second copy of the rule. Blank/absent stays the
+      // pre-existing "index default" shape; only a supplied, non-blank value is validated.
+      if (collection != null && !collection.isBlank()) {
+        try {
+          collection = io.justsearch.app.api.knowledge.IngestCollectionPolicy.normalizeRequested(collection);
+        } catch (IllegalArgumentException e) {
+          ctx.status(400).json(ApiErrorHandler.toResponse(ApiErrorCode.INVALID_REQUEST, e.getMessage(), telemetry, ApiErrorHandler.routeOf(ctx)));
+          return;
+        }
+      }
       IndexingService indexing = indexingService();
       indexing.addWatchedRoot(collection, resolved);
       ctx.status(200).json(Map.of("status", "ok"));
