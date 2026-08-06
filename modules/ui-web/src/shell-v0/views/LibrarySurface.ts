@@ -439,7 +439,11 @@ export class LibrarySurface extends JfElement {
       this.provisional = s.stability.kind === 'provisional';
       // Tempdoc 813 §4 — the per-root second tier needs to know which stages apply; take it from the
       // ONE index-wide progress derivation rather than re-reading the enrichment wire flags here.
-      this.enrichmentStages = selectIndexingProgress(s.status, s.snapshotLive).stages;
+      this.enrichmentStages = selectIndexingProgress(
+        s.status,
+        s.snapshotLive,
+        s.episodeMaxPendingJobs,
+      ).stages;
       // 809 finding 1 — same tick, same store: whether the enrichment backfill is still running, so a
       // row cannot claim the terminal "✓ indexed" while semantic search is still being built.
       this.enrichmentPending = enrichmentProgress(s.status).pending;
@@ -725,7 +729,12 @@ export class LibrarySurface extends JfElement {
       return;
     }
     const ok = await this.host_.ui.showConfirmDialog(
-      `Remove ${resolved}? Files indexed from this folder will be removed from search results.`,
+      // 813 §19 (W3) — the confirm states the ENRICHMENT consequence too: removal also discards
+      // whatever semantic work was still in flight for this folder. Deliberately no numeric latency:
+      // the stop-to-quiet bound is mode-dependent (combined mode checkpoints at 1-8 document
+      // granularity; individual mode retains whole-batch atomicity), so "within seconds" would
+      // overclaim exactly where the old copy underclaimed.
+      `Remove ${resolved}? Files indexed from this folder will be removed from search results, and any enrichment still running for it is stopped and discarded.`,
       { confirmLabel: 'Remove', destructive: true },
     );
     if (!ok) return;

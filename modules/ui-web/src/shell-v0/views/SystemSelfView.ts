@@ -25,6 +25,7 @@ import { surfaceLayoutStyles } from '../primitives/surfaceLayout.js';
 import { subscribeTasks, listTasks, type Task } from '../substrates/tasks/index.js';
 import { subscribeAiState, type AiState } from '../state/aiStateStore.js';
 import { selectIndexingProgress, type IndexingProgress } from '../state/indexingProgress.js';
+import { ENRICHMENT_BODY } from '../state/enrichmentCoverage.js';
 import {
   subscribeInstallStatus,
   getInstallLiveStatus,
@@ -66,8 +67,8 @@ export function visibleIndexQueueCount(progress: IndexingProgress): number | nul
 export function enrichingLabel(progress: IndexingProgress): string | null {
   if (!progress.live || progress.phase !== 'enriching') return null;
   return progress.enrichingPercent === null
-    ? 'Enriching — semantic search catching up'
-    : `Enriching — ${progress.enrichingPercent}% · semantic search catching up`;
+    ? `Enriching — ${ENRICHMENT_BODY}`
+    : `Enriching — ${progress.enrichingPercent}% · ${ENRICHMENT_BODY}`;
 }
 
 export class SystemSelfView extends JfElement {
@@ -206,6 +207,7 @@ export class SystemSelfView extends JfElement {
     const progress = selectIndexingProgress(
       this.aiState?.status,
       this.aiState?.snapshotLive ?? false,
+      this.aiState?.episodeMaxPendingJobs ?? 0,
     );
     // On the projection's `unknown` arm the worker reported nothing, so there is no honest split to
     // show — the section keeps its label and drops the numbers rather than rendering a fabricated

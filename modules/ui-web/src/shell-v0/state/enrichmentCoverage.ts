@@ -56,6 +56,19 @@ export const ENRICHMENT_CATCHING_UP_CAVEAT = 'keyword search ready · semantic s
  */
 export const ENRICHMENT_IN_PROGRESS_LABEL = 'Building semantic search';
 
+/**
+ * 813 §19 (W1) — the BODY tier of a progress surface whose own phase noun ("Enriching") is already
+ * carried by its headline or label prefix: the one clause naming what is still being built. Distinct
+ * in subject from the two constants above — {@link ENRICHMENT_CATCHING_UP_CAVEAT} qualifies a
+ * COMPLETION claim (so it leads with what already works), and {@link ENRICHMENT_IN_PROGRESS_LABEL}
+ * is a card's short STATUS label — while this is the in-progress body text itself.
+ *
+ * Promoted here because it was authored verbatim at two sites (the Tasks panel's aggregate counts
+ * line and the Health "Now" strip's enrichment row) outside the shared-vocabulary module, which is
+ * the fork this module exists to prevent.
+ */
+export const ENRICHMENT_BODY = 'semantic search catching up';
+
 const positive = (n: number | undefined | null): boolean => typeof n === 'number' && n > 0;
 
 /** Disabled tiers are excluded; an absent flag means "not declared off", so the tier still counts. */
