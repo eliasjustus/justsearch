@@ -625,3 +625,87 @@ part of that cost now **exists** for a different obligation — `ui_fixtures._th
 `degraded-thread` variant added for `chat-spine-multi`. That does not make the evidence rail
 reachable (it carries no sources, and the rail additionally needs the affordance round-trip),
 but a future attempt starts from a working `/api/thread` fixture rather than from nothing.
+
+## §R — Session retrospective (2026-08-06, closing the T-B arc)
+
+The arc ran design → research → derisk → four delegated implementation chunks → independent
+measured audit → closure fixes → merge ([PR #376](https://github.com/eliasjustus/justsearch/pull/376))
+→ post-merge fold ([PR #378](https://github.com/eliasjustus/justsearch/pull/378)) → refute-first
+review → review fixes ([PR #387](https://github.com/eliasjustus/justsearch/pull/387)), all in one
+day. Lessons worth keeping, written to stand without the session transcript.
+
+### What worked and should be preserved
+
+1. **Adversarial verification tiers paid for themselves in found defects, every time they ran.**
+   The pre-merge audit (auditor ≠ implementers) found three gaps the implementers' own green
+   runs could not see; the post-merge refute-first pass found four more, including a
+   measurement instrument counting an invisible `aria-live` node as chrome. Every finding
+   converted into a merged fix. The pattern that made this cheap: each verifier re-derives
+   evidence itself (re-runs gates, re-measures) instead of auditing reports.
+2. **Negative controls on new instruments.** The chip-yield capture witness was accepted only
+   after forcing the yield off and watching the gate turn red. An instrument that has never
+   been seen to fail has not been shown to measure anything — this should be standard for
+   every new gate/probe.
+3. **Pre-registered measurement validity** (selectors and band identities fixed before results
+   are seen) let the resize sweep be re-run by three different agents with directly comparable
+   numbers (chrome constant at 308 px in all three).
+4. **Conforming to existing seams** (`ui-proportion-gate`, `compositionLayout`, OverlayHost)
+   meant the enforcement layer shipped as register rows + small constraint kinds instead of a
+   new harness.
+
+### Frictions and near-misses (with the change each argues for)
+
+1. **Stale-base fold near-miss (the arc's riskiest moment).** `fold-observations.mjs --apply`
+   was run in a checkout whose `main` was ~26 commits behind `origin/main` (blocked from
+   pulling by unrelated in-progress work in the shared checkout — see "known unrelated dirty
+   work" below). The fold silently produced an `observations.md` that would have rolled back
+   newer upstream conditions and it consumed an untracked shard; only a diff review before
+   publication caught it. Recovery: restore, re-fold in a fresh `origin/main` worktree,
+   reconstruct the two entries that existed nowhere else. **Change:** run the post-merge fold
+   only in an origin-fresh checkout, and the tool should refuse `--apply` when HEAD is behind
+   `origin/main` on `docs/observations.md` (filed in the observations inbox).
+2. **ui-shot auto-serve can silently measure stale code.** A Vite server surviving from an
+   earlier commit kept serving while later commits landed; intermediate gate runs measured
+   W1-era code until the audit checked the server's recorded `head` provenance
+   (`tmp/ui-shot-server.json`) and restarted it. The harness records provenance but does not
+   act on it. **Change candidate:** auto-serve should compare the recorded `head` to the
+   current HEAD and restart on mismatch. It also caused an `EPERM` npm failure in a concurrent
+   Gradle web build (file lock on a native module).
+3. **Merge races against a busy `main`.** Both PRs went `BEHIND` during their own CI and needed
+   `gh pr update-branch` + a full re-run; additionally, `gh pr checks --watch` started right
+   after an update can bind to the *previous* run's check set and exit green while the new
+   head's checks are still pending — one merge attempt was made on that stale green (harmless:
+   the merge API refused). **Habit:** after `update-branch`, verify the watched run belongs to
+   the new head SHA before trusting its exit.
+4. **Tempdoc number churn under parallel threads.** This document was born 811, renumbered to
+   813 and then 814 within hours as sibling threads (T-A/T-C/T-D) claimed numbers.
+   `check-tempdoc-numbers` caught every collision (working as designed); the lesson is only to
+   re-run it immediately before each push, not once at creation.
+5. **Session-id aliasing in delegated work.** A subagent's `note-observation.mjs` call wrote to
+   the *orchestrating session's* shard (subagents share the session id), which later collided
+   with the orchestrator's own copy of that shard. Harmless here (append-only merge), but
+   shard tooling should not assume one writer per session id.
+
+### Verification commands (for re-running this work's gates)
+
+From a checkout of current `main` (jseval invoked from a worktree needs the printed
+`PYTHONPATH` remedy):
+
+```
+jseval ui-proportion-gate     # exit 0; chat-surface rows incl. shares, floors, scroller counts
+jseval ui-a11y-gate           # exit 0; chat steps present, 0 new violations
+node scripts/ci/check-ui-step-coverage.mjs
+cd modules/ui-web && npm run typecheck && npm run test:unit:run
+```
+
+### Known unrelated dirty work / non-canonical context
+
+- At the time of this arc, the shared main checkout carried unrelated uncommitted work
+  (a tempdoc-617 edit belonging to a concurrent session) that blocked `git pull` there; this
+  document's work was therefore done entirely in worktrees branched from `origin/main`.
+- The measured numbers quoted in §V/§R (band heights, shares, 308 px chrome) come from the
+  deterministic `--fixtures` capture states at pinned viewports, not from a live indexed
+  corpus; the owner-observed 0.2.0 numbers in §Baseline predate this work. Neither set should
+  be quoted as current without re-running the gates above.
+- Session-private artifacts (capture PNGs, sweep JSON, audit scripts) lived in a session
+  scratch directory and are not archived; the gates re-derive all of them.
