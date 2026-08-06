@@ -36,7 +36,8 @@
   "shell-v0/views/SecuritySurface.ts": ["security", "security-light"],
   "shell-v0/views/security/atRestCard.ts": ["security", "security-light", "health", "health-light"],
   "shell-v0/views/HealthSurface.ts": ["health", "health-light"],
-  "shell-v0/views/LibrarySurface.ts": ["library", "library-light", "skeleton-library"],
+  "shell-v0/views/LibrarySurface.ts": ["library", "library-light", "skeleton-library", "library-enriching"],
+  "shell-v0/state/folderStatus.ts": ["library-enriching"],
   "shell-v0/views/BrainSurface.ts": [
     "ai-brain", "ai-brain-advanced", "ai-brain-light", "ai-brain-advanced-light"
   ],

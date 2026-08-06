@@ -64,6 +64,12 @@
       "knownRules": []
     },
     {
+      "surface": "library",
+      "uiShotStep": "library-enriching",
+      "e2eViews": [],
+      "knownRules": []
+    },
+    {
       "surface": "chat",
       "uiShotStep": "chat-proportion",
       "e2eViews": [],

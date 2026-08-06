@@ -777,6 +777,46 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         )
         if cooldown_ms > 0:
             await asyncio.sleep(cooldown_ms / 1000)
+
+    async def setup_library_enriching(page):
+        # Tempdoc 813 §4 (Library folder rows) + §5 (the Tasks panel aggregate card) — the ONLY
+        # deterministic render of the ENRICHING tier anywhere in the harness. No other fixture
+        # reaches it: `default` reports the fallback "SERVING" state the progress projection refuses
+        # to read, and `indexing` reports a non-empty job backlog, which wins the phase ternary
+        # (indexingProgress.ts:333-334) — so `enriching` is unreachable from both by construction.
+        #
+        # The `enriching` variant is the only one that transforms BOTH halves the tier needs
+        # (ui_fixtures): `/api/status` supplies the index-wide phase + the stage-applicability flags
+        # the per-root row cannot carry, and `/api/indexing-roots/substrate` supplies two rows that
+        # differ only in coverage — one mid-flight (the caveat + this root's percent) and one fully
+        # settled ("fully searchable"). Capturing both arms together is the point: the honest claim
+        # is per-root, so a settled folder must read terminal WHILE the index-wide backfill runs.
+        await page.set_viewport_size({"width": 1280, "height": 800})
+        await page.goto(demo, wait_until="domcontentloaded", timeout=timeout_ms)
+        try:
+            btn = page.locator(S.rail_css(S.RAIL_SURFACE_LIBRARY))
+            await btn.wait_for(state="visible", timeout=15_000)
+            await btn.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "(id) => { location.hash = `justsearch://surface/${id}`; }", S.RAIL_SURFACE_LIBRARY
+            )
+        # BOTH rows, not just the first: a one-row wait would pass on a truncated list and the
+        # capture would silently be about a single arm. `.card-meta` (the meta LINE, which is what
+        # the tier is about) rather than a testid: the row is rendered by the DECLARED path
+        # (FolderCardRenderer, active by default via LIBRARY_CARDS_REGION) whose markup carries no
+        # testid — `library-folder-name` exists only on LibrarySurface's own quarantine fallback, so
+        # waiting on it would time out on the path that actually renders here. Both renderers project
+        # the same `folderStatus` meta text and both use this class.
+        await page.locator(".card-meta").nth(1).wait_for(state="visible", timeout=15_000)
+        # The aggregate card (not the `jf-task-list` host, which exists whenever the shell is mounted
+        # and self-hides via [data-empty]) — the same non-vacuity reasoning as `tasks-occlusion`.
+        await page.locator('[data-testid="task-aggregate"]').first.wait_for(
+            state="visible", timeout=15_000
+        )
+        if cooldown_ms > 0:
+            await asyncio.sleep(cooldown_ms / 1000)
+
     async def setup_chat_bands(page):
         # Tempdoc 814 §D7.2 — the ONE capture where every persistent chat-surface band
         # renders at once (the finding-12 screen): the degraded readiness pill, a
@@ -1245,6 +1285,13 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # accepts, which no other step's fixture does.
         Step("tasks-occlusion", setup=setup_tasks_occlusion, isolated=True,
              fixtures_variant="indexing"),
+        # --- Tempdoc 813 §4/§5: the ENRICHING tier (folder rows + the aggregate card) ---
+        # The one deterministic capture of the drained-but-enriching state: both folder arms (percent
+        # caveat / "fully searchable") and the index-wide aggregate card, from the `enriching`
+        # fixtures variant that no other step uses (see the setup for why the other two variants
+        # cannot reach this phase).
+        Step("library-enriching", setup=setup_library_enriching, isolated=True,
+             fixtures_variant="enriching"),
         # --- Tempdoc 814 W4: chrome-allocation gate steps (§D7.2) ---
         # `chat-bands`: the richest all-bands state reachable under --fixtures (degraded
         # pill + submitted turn + activity-rail summary — see its setup's fixture-
