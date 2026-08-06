@@ -123,6 +123,9 @@ public final class FieldCatalogDef {
                 new FieldDef("mime_base", "keyword", true, true, List.of("filter", "facet"), null, null, false),
                 new FieldDef("file_kind", "keyword", true, true, List.of("filter", "facet"), null, null, false),
                 new FieldDef("language", "keyword", true, true, List.of("filter", "facet"), null, null, false),
+                // Align with SSOT: the collection scope tag (585 D4b). Chunk docs inherit their
+                // parent's value (tempdoc 811 item 3), so chunk-branch scoping tests need it here.
+                new FieldDef("collection", "keyword", true, true, List.of("filter", "facet"), null, null, false),
                 new FieldDef("parent_token_count", "long", true, true, List.of("filter", "sort"), null, null, false),
                 new FieldDef("embedding_status", "keyword", true, true, List.of("filter"), null, null, false),
                 new FieldDef("vdu_status", "keyword", true, true, List.of("filter"), null, null, false),

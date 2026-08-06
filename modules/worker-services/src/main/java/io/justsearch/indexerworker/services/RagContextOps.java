@@ -488,8 +488,10 @@ final class RagContextOps {
     // Build chunk-safe filter once (mime, fileKind, mimeBase, language).
     // Document-level filters (entity, metadata, path, date) are handled by the two-stage
     // pre-filter in executeRetrieval() — only chunk-safe filters remain here.
+    // Tempdoc 811 D-1: null filters mean the DEFAULT scope, not "no scope" — the builder is
+    // null-safe and still applies the default agent-history exclusion, so do not short-circuit it.
     org.apache.lucene.search.Query chunkFilter =
-        ragFilters != null ? QueryFilterBuilder.buildChunkFilterQuery(ragFilters) : null;
+        QueryFilterBuilder.buildChunkFilterQuery(ragFilters);
 
     // Tempdoc 610 §J.3 — drop user-hidden sources pre-search (see ChunkExclusionQuery). Empty = no-op.
     chunkFilter = ChunkExclusionQuery.compose(chunkFilter, excludedChunks);
@@ -729,10 +731,13 @@ final class RagContextOps {
     // Doc-level user filters (mime, language, ...) — same builder the two-stage pre-filter
     // uses; entity/metadata/path/date filters arrive pre-resolved through docIds already, so
     // this is at worst redundant, never wrong.
+    // Tempdoc 811 D-1: with no user filters this leg used to run UNFILTERED — including over
+    // agent-history parents. buildFilterQueryOnly(null) now yields the default scope (chunk
+    // exclusion + agent-history MUST_NOT), which is what "no filters" has always meant.
     org.apache.lucene.search.Query docFilter =
-        ragFilters != null
-            ? QueryFilterBuilder.buildFilterQueryOnly(withIncludeChunks(ragFilters, false))
-            : null;
+        ragFilters == null
+            ? QueryFilterBuilder.buildFilterQueryOnly(null)
+            : QueryFilterBuilder.buildFilterQueryOnly(withIncludeChunks(ragFilters, false));
     LuceneRuntimeTypes.SearchResult unionRaw =
         chunkSearchOps.searchDocLevelUnion(question, queryVector, docIds, limit, docFilter);
     if (unionRaw.hits().isEmpty()) {
@@ -1608,27 +1613,18 @@ final class RagContextOps {
     return list != null && !list.isEmpty();
   }
 
-  /** Returns a copy of the filters with includeChunks overridden. */
-  private static LuceneRuntimeTypes.RuntimeSearchFilters withIncludeChunks(
+  /**
+   * Returns a copy of the filters with includeChunks overridden.
+   *
+   * <p>Tempdoc 811 D-2: this used to rebuild the record component-by-component and OMITTED
+   * {@code collection} and {@code docIds}, so an explicit scope silently vanished on the RAG path
+   * (the class tempdoc 629 §Open issue #1 flagged). The generated wither copies every component by
+   * construction, so a component added to {@code RuntimeSearchFilters} tomorrow cannot be dropped
+   * here.
+   */
+  static LuceneRuntimeTypes.RuntimeSearchFilters withIncludeChunks(
       LuceneRuntimeTypes.RuntimeSearchFilters f, boolean val) {
-    return LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
-        .mime(f.mime())
-        .language(f.language())
-        .fileKind(f.fileKind())
-        .mimeBase(f.mimeBase())
-        .pathPrefix(f.pathPrefix())
-        .modifiedFromMs(f.modifiedFromMs())
-        .modifiedToMs(f.modifiedToMs())
-        .includeChunks(val)
-        .entityPersons(f.entityPersons())
-        .entityOrganizations(f.entityOrganizations())
-        .entityLocations(f.entityLocations())
-        .metaSource(f.metaSource())
-        .metaAuthor(f.metaAuthor())
-        .metaCategory(f.metaCategory())
-        .metaPublishedFromMs(f.metaPublishedFromMs())
-        .metaPublishedToMs(f.metaPublishedToMs())
-        .build();
+    return f.withIncludeChunks(val);
   }
 
   private static <T> Set<T> intersectSets(Set<T> a, Set<T> b) {
