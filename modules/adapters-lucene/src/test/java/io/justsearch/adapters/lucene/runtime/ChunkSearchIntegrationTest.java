@@ -3,6 +3,7 @@ package io.justsearch.adapters.lucene.runtime;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.RuntimeSearchSort;
@@ -617,6 +618,87 @@ class ChunkSearchIntegrationTest {
           "Chunk doc must never surface from the doc-level union hybrid branch, even though it "
               + "carries matching content + vector. Got: " + hit.docId());
     }
+  }
+
+  // ========== Chunk-branch filter scoping (human-validation finding 4) ==========
+
+  /**
+   * The chunk branch runs its legs under {@link QueryFilterBuilder#buildChunkFilterQuery}, which used
+   * to drop {@code pathPrefix} on the premise that a chunk's {@code PATH} "stores parentDocId, not
+   * the file path". It stores both: the parent's {@code DOC_ID} IS its absolute path. Dropping the
+   * scope let the chunk branch retrieve candidates from outside the requested prefix, which enter
+   * the fused candidate union the response reports as {@code totalHits} and — at a high enough fused
+   * rank — leak into {@code results}.
+   */
+  @Test
+  @DisplayName("chunk retrieval is scoped by pathPrefix (out-of-prefix parents must not come back)")
+  void chunkFilterScopesByPathPrefix() throws Exception {
+    String insideDir = QueryFilterBuilder.normalizePathPrefix("corpus/inside");
+    String outsideDir = QueryFilterBuilder.normalizePathPrefix("corpus/outside");
+    String insideDoc = insideDir + "note-a.md";
+    String outsideDoc = outsideDir + "note-b.md";
+
+    indexDoc(insideDoc, "parent inside the requested prefix");
+    indexChunk(insideDoc, 0, 1, "neural networks overview");
+    indexDoc(outsideDoc, "parent outside the requested prefix");
+    indexChunk(outsideDoc, 0, 1, "neural networks overview");
+    commitAndRefresh();
+
+    var filters =
+        LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
+            .pathPrefix("corpus/inside")
+            .build();
+    var chunkFilter = QueryFilterBuilder.buildChunkFilterQuery(filters);
+    var result = runtime.chunkSearchOps().searchChunksText("neural", 10, chunkFilter);
+
+    assertNotNull(result);
+    assertEquals(
+        1,
+        result.hits().size(),
+        "the chunk leg must retrieve only chunks whose parent is under the requested pathPrefix; "
+            + "an extra hit means the out-of-prefix parent's chunk was retrieved");
+    assertEquals(
+        insideDoc,
+        result.hits().get(0).fields().get(SchemaFields.PARENT_DOC_ID),
+        "the surviving chunk must belong to the in-prefix parent");
+  }
+
+  @Test
+  @DisplayName("chunk retrieval is scoped by doc_ids (PATH holds the parent's absolute path)")
+  void chunkFilterScopesByDocIds() throws Exception {
+    String insideDir = QueryFilterBuilder.normalizePathPrefix("corpus/inside");
+    String insideDoc = insideDir + "note-a.md";
+    String otherDoc = insideDir + "note-b.md";
+
+    indexDoc(insideDoc, "first parent");
+    indexChunk(insideDoc, 0, 1, "neural networks overview");
+    indexDoc(otherDoc, "second parent");
+    indexChunk(otherDoc, 0, 1, "neural networks overview");
+    commitAndRefresh();
+
+    var filters =
+        LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
+            .docIds(java.util.List.of(insideDoc))
+            .build();
+    var chunkFilter = QueryFilterBuilder.buildChunkFilterQuery(filters);
+    var result = runtime.chunkSearchOps().searchChunksText("neural", 10, chunkFilter);
+
+    assertNotNull(result);
+    assertEquals(1, result.hits().size(), "doc_ids must scope the chunk leg to the named documents");
+    assertEquals(
+        insideDoc,
+        result.hits().get(0).fields().get(SchemaFields.PARENT_DOC_ID),
+        "the surviving chunk must belong to the requested document");
+  }
+
+  @Test
+  @DisplayName("an unfiltered request still produces no chunk filter (no behaviour change)")
+  void chunkFilterStaysNullWithoutFilters() {
+    var filters = LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder().build();
+    assertNull(
+        QueryFilterBuilder.buildChunkFilterQuery(filters),
+        "an all-default filter set must not synthesize a chunk filter — unfiltered retrieval is "
+            + "unchanged by the pathPrefix/doc_ids addition");
   }
 
   // ========== Helper Methods ==========

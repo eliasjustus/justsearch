@@ -430,7 +430,15 @@ Source: tempdoc 500, ADR-0015, tempdoc 366.
 
 Response fields (additive/optional-by-presence):
 
-- `totalHits`, `tookMs`, `results[]`
+- `totalHits`, `matchCount`, `tookMs`, `results[]`
+  - `matchCount` is the **true matched-document total** — an exact, filter-respecting
+    `IndexSearcher.count` over the same chunk-excluded query the facets scan (tempdoc 597). The FE
+    headline binds to this ("Top N of M matches").
+  - `totalHits` is exact on the single-leg sparse path, but on the multi-leg (HYBRID/VECTOR) path it
+    is the **cardinality of the bounded fused candidate union**, not a match count. It is therefore
+    not monotonic under filtering — narrowing the corpus makes each leg dig deeper, so the legs'
+    top-K lists overlap less and the union can grow. Treat it as telemetry, not as "how many
+    documents matched"; use `matchCount` for that.
 - `nextCursor` (TEXT mode pagination)
 - `facets`, `facetsTruncated`
 - `entityFacetVariants`
@@ -445,7 +453,11 @@ Response fields (additive/optional-by-presence):
   **Subsumes and replaces** the retired `effectiveMode`/`vectorBlocked`/`hybridFallback`/
   `chunkMerge*`/`correction*`/`splade*`/qpp flat fields (E5), `pipelineExecution`/`ComponentTiming`
   (E3), and `introspection`/`SearchIntrospection` (E4).
-- `appliedFilters` (object, echoed when filters active) — mirrors the filters/boostFilters sent in the request (366)
+- `appliedFilters` (object, echoed when filters active) — mirrors the filters/boostFilters sent in the
+  request (366). Shape: `{ "filters"?: <Filters>, "boostFilters"?: <Filters> }`; each half is present
+  only when that half carried at least one value, and each `Filters` object omits its unset members
+  (no empty arrays). Absent entirely when the request carried no filters. This echoes the REQUEST —
+  it says which filters were sent, not which index fields every retrieval leg can enforce them on.
 - `indexCapabilities` — index-level capability flags (362)
 
 Current hit shape in `results[]`:

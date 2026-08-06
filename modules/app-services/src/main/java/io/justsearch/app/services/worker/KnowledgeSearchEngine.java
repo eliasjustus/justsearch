@@ -1137,6 +1137,10 @@ final class KnowledgeSearchEngine {
                     expansionApplied,
                     expansionSkipReason,
                     queryType)))
+        // Tempdoc 366 §1b: echo the filters the request carried, so a client can tell a scoped
+        // search from one whose scope was dropped without inferring it from the rows.
+        .appliedFilters(
+            KnowledgeSearchResponse.AppliedFilters.of(req.filters(), req.boostFilters()))
         .build();
   }
 

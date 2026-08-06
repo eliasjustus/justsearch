@@ -55,6 +55,18 @@ final class KnowledgeWireContractConformanceTest {
     assertRecordSubsetOfProto(
         KnowledgeSearchResponse.FilterNormalization.class,
         io.justsearch.contract.wire.FilterNormalization.getDescriptor());
+    // Tempdoc 366 §1b: the filter echo. Its payload is the REQUEST's Filters record, so the echo
+    // puts a request type on the response wire — gate it here too, or a new filter member would
+    // reach the response JSON undescribed.
+    assertRecordSubsetOfProto(
+        KnowledgeSearchResponse.AppliedFilters.class,
+        io.justsearch.contract.wire.AppliedFilters.getDescriptor());
+    assertRecordSubsetOfProto(
+        KnowledgeSearchRequest.Filters.class,
+        io.justsearch.contract.wire.SearchFilters.getDescriptor());
+    assertRecordSubsetOfProto(
+        KnowledgeSearchRequest.TimeRangeMs.class,
+        io.justsearch.contract.wire.TimeRangeMs.getDescriptor());
     // Tempdoc 549 SearchTrace family — the fields whose omission this test exists to prevent.
     assertRecordSubsetOfProto(SearchTrace.class, io.justsearch.contract.wire.SearchTrace.getDescriptor());
     assertRecordSubsetOfProto(
