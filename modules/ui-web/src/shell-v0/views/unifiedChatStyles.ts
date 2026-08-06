@@ -43,6 +43,12 @@ export const unifiedChatBodyStyles = css`
       display: flex;
       align-items: flex-start;
       gap: 0.4rem;
+      /* Tempdoc 816 §2 — the banner is FULL-BLEED CHROME: the <jf-system-notice> host keeps its
+         edge-to-edge background/accent, while the content box inside it is content-sized at the
+         \`notice\` role's measure (governance/ui-proportion-baseline.v1.json roles.notice, rendered
+         from the same number via --measure-notice). Measured 1804px (209ch) at 1920 before this. */
+      max-inline-size: var(--measure-notice);
+      margin-inline: auto;
     }
     .degradation-banner .notice-row-collapsed {
       align-items: center;
@@ -371,18 +377,11 @@ export const unifiedChatBodyStyles = css`
       border-color: var(--accent-danger);
       color: var(--text-danger);
     }
-    @container chat-surface (min-width: 64rem) {
-      .conversation-zone {
-        /* §13 Pillar B — the wide grid-template-columns + the per-zone placements (.run-spine col 2,
-           .conversation col 3, .evidence-rail col 4) are GENERATED from CONVERSATION_ZONES by
-           composeGridStyles. §13.9 — the outer margins are CAPPED (minmax(0, 8rem)) and the
-           spine/rail tracks are content-sized (collapse when unmounted), so the group sits fuller-width
-           with bounded gutter rather than centred in unbounded 1fr margin. justify-content centres the
-           bounded track group (no left-shift) while the capped margin tracks stay the gutter floor. */
-        width: 100%;
-        justify-content: center;
-      }
-    }
+    /* §13 Pillar B / §13.9 — the wide grid-template-columns, the per-zone placements AND the
+       bounded-group centring (width:100% + justify-content:center) are all GENERATED from
+       CONVERSATION_ZONES by composeGridStyles. The centring pair used to be hand-authored here;
+       tempdoc 816 moved it into the generator because the docked composer now lays out on the SAME
+       frame, and a hand-authored half of the frame is a second authority on where the column falls. */
     .conversation {
       flex: 1;
       min-width: 0;
@@ -543,7 +542,10 @@ export const unifiedChatBodyStyles = css`
        still overflow-scroll on their own. Applies to every mode (agent + chat/RAG). */
     .message.assistant jf-markdown-block {
       display: block;
-      max-width: 88ch;
+      /* Tempdoc 816 §6 — the NUMBER survives, its AUTHORITY moves: this is the \`prose\` role's
+         instance on this surface, so the literal 88ch is now the role token (the register holds the
+         value; the gate asserts token == register). */
+      max-inline-size: var(--measure-prose);
     }
     /* Tempdoc 565 §15.C (fix) — the explicit workflow run affordance (replaces auto-run-on-mount). */
     .workflow-trigger {
@@ -1298,16 +1300,23 @@ export const unifiedChatBodyStyles = css`
       text-align: center;
       margin-bottom: 0.75rem;
     }
-    /* The stable bottom slot in landing mode: bounded, centered, lifted off the floor. */
+    /* The stable bottom slot in landing mode: bounded, centered, lifted off the floor.
+       Tempdoc 816 §5 — the BOX no longer carries the bound; the composer container is now laid out on
+       the generated zone frame in every state (alignToZoneStyles, UnifiedChatView.styles), so landing
+       centring moved one level in, onto the container's children (below). Same 42rem width as before,
+       now centred on the READING COLUMN's centre instead of the surface's — the ~12px landing/column
+       drift the 816 derisk pass measured (landing centre 709 vs column centre 697 at 1366). */
     .composer.landing-dock {
-      align-self: center;
-      width: min(42rem, 100%);
       /* 687 R5a — real flex centering in the freed space, replacing the vh-margin approximation whose
          bands interleaved with the intro at short viewports (the audit-measured overlap). The space is
          freed by \`.landing-collapsed\` below, which the host applies only when the zone is EMPTY. */
       margin-top: auto;
       margin-bottom: auto;
       border-top: none;
+    }
+    .answer-plane > .composer.landing-dock > * {
+      justify-self: center;
+      inline-size: min(42rem, 100%);
     }
     /* 687 R5a — trade the zone's \`flex: 1; min-height: 0\` for content-sizing so the composer can centre
        in what is left. 798 round 8: this is sound ONLY while the landing zone is empty. The host gates
@@ -1355,6 +1364,30 @@ export const unifiedChatBodyStyles = css`
       justify-content: flex-start;
       gap: 0.5rem;
       margin-top: 0.5rem;
+      /* Tempdoc 816 §3 — \`control-row\`: a row of controls has no reason to stretch to fill; its max is
+         the INTRINSIC width of its members. The generated frame already bounds it by the reading
+         column (it is a child of the composer container); this stops it claiming even that much when
+         its chips need less. Measured 1836px full-bleed at 1920 before this. */
+      inline-size: fit-content;
+      max-inline-size: 100%;
+    }
+    /* Tempdoc 816 §3 — the \`text-entry\` role's instance on this surface: what you type you immediately
+       re-read, so the entry field takes the reading measure. \`ch\` resolves against the TEXTAREA's own
+       13px type (not the 16px surface type), which is the point of a content-unit bound — the same
+       token means the same number of characters, not the same pixels. Measured 1760px (251ch) at 1920
+       before this. The landing composer (584px = 83ch) is already inside the bound and is unchanged. */
+    .composer jf-composer textarea {
+      /* The bound is on the RENDERED box, so the gate and the stylesheet judge the same number: a
+         textarea is content-box by default, and with composerStyles' 0.5rem padding + 1px border the
+         measured rect came out 635px against an 88ch (617px) cap — an 18px disagreement between what
+         CSS was told to bound and what the camera sees. */
+      box-sizing: border-box;
+      max-inline-size: var(--measure-text-entry);
+      /* border-box moves the padding INSIDE composerStyles' \`min-height: 3rem\` too, which would have
+         shortened the input from 66px to 52px — an unintended BLOCK-axis change from an inline-axis
+         fix (816 §2b: the axes couple, and the coupling is not allowed to be silent). Restate the
+         same intent — 3rem of CONTENT — with the 0.5rem padding pair + 1px border pair added back. */
+      min-block-size: calc(3rem + 1.125rem);
     }
     /* Schema input textarea: not migrated to jf-composer (no submit). */
     .composer textarea.mono {
