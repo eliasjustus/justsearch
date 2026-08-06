@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { css } from 'lit';
+import { shortViewportMedia } from '../primitives/compositionLayout.js';
 
 /**
  * Tempdoc 621 Phase 1 — the chat window's body styles, extracted verbatim from UnifiedChatView.ts.
@@ -46,9 +47,19 @@ export const unifiedChatBodyStyles = css`
       min-width: 0;
     }
     /* Tempdoc 697 — the one-line pill needs less vertical padding than the expanded multi-cause
-       banner; this outer rule overrides jf-system-notice's :host padding on the collapsed host. */
+       banner; this outer rule overrides jf-system-notice's :host padding on the collapsed host.
+       Tempdoc 814 §D2 — 738 measured the pill at ~76px and recorded the oversized-button artifact
+       without finishing it; the remaining honest size for one line of text is ~36px, so the block
+       padding drops again here and on the pill's remedy control below. The registered ceiling
+       (governance/ui-proportion-baseline.v1.json, \`chat-proportion\` = 42px) is a shrink-only
+       ratchet — going under it is free and nothing here raises it. */
     .degradation-banner-collapsed {
-      padding-block: 0.35rem;
+      padding-block: 0.2rem;
+    }
+    /* The pill is ONE line by construction (the summary ellipsizes), so its row can use a tight
+       line box; the expanded banner's multi-line causes keep the inherited leading. */
+    .degradation-banner-collapsed .notice-row-collapsed {
+      line-height: 1.3;
     }
     .degradation-banner-collapsed .degradation-summary {
       overflow: hidden;
@@ -77,6 +88,12 @@ export const unifiedChatBodyStyles = css`
     }
     .degradation-banner-collapsed .notice-remedy {
       margin-top: 0;
+      /* Tempdoc 814 §D2 — the remedy control is the TALLEST thing in the pill's row, so it is what
+         the pill's height is measured against. 697 already shrank it to a compact action
+         (0.1rem/0.15rem block padding, ~20px) and it is NOT shrunk further here: that is already
+         under the 24px WCAG 2.2 target-size floor, and buying the last two pixels of chrome with a
+         smaller click target is the wrong trade. The pill reaches its one-line size through the
+         host's own block padding above instead. */
     }
     /* Tempdoc 727 F-8 — the failed-unified-thread-refresh notice: shares the icon+text row layout
        with the degradation banner above, but is its own class (a different, usually transient cause
@@ -371,6 +388,18 @@ export const unifiedChatBodyStyles = css`
       min-width: 0;
       min-height: 24rem;
       overflow: hidden;
+    }
+    /* Tempdoc 814 §D6 — the F5 close (734 round 8: clearing results with the preview open clipped the
+       composer below the viewport). The pane, the composer and the header cannot all fit a 768-tall
+       window while this floor is 24rem, and the composer — bottom of the flex column — is what paid.
+       Below the ONE block-axis breakpoint (primitives/compositionLayout.ts) the SECONDARY surface
+       yields instead: the floor survives at normal heights, and this rule precedes the wide
+       \`@container\` block below, which still overrides it with \`min-height: 0\` when the pane is a
+       grid column rather than a stacked row. */
+    ${shortViewportMedia} {
+      .document-pane {
+        min-height: 14rem;
+      }
     }
     @container chat-surface (min-width: 64rem) {
       .document-pane {
@@ -929,9 +958,17 @@ export const unifiedChatBodyStyles = css`
       gap: 0.5rem;
       padding-top: 0.25rem;
     }
+    /* Tempdoc 814 §D4 — a meter is a COMPACT gauge, not a page-wide rule. \`flex: 1\` made both bars
+       eat every pixel the row did not otherwise claim, so a 4px track read as a full-bleed horizontal
+       line across the surface (and, pegged at 100%, as a status bar rather than a reading). Fixed
+       width, allowed to shrink on a cramped row but never to grow; the unit + ceiling wording beside
+       it (577's own requirement) is untouched — the words carry the number, the bar carries the
+       proportion. */
     .activity-budget .budget-bar,
     .context-meter .budget-bar {
-      flex: 1;
+      flex: 0 1 10rem;
+      width: 10rem;
+      max-width: 100%;
       height: 4px;
       border-radius: 2px;
       background: var(--surface-1);
