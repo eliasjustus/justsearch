@@ -113,6 +113,45 @@ export function trackTemplate(zones: readonly ZoneDecl[], viewport: 'narrow' | '
 }
 
 /**
+ * The FRAME half of a zone-set: the container's responsive track list, its gap, and the §13.9
+ * centering decision — everything that fixes WHERE the columns fall, with no per-zone placement.
+ *
+ * Shared by {@link composeGridStyles} (which adds the zone placements) and
+ * {@link alignToZoneStyles} (which places a SECOND element's children in one of those columns,
+ * tempdoc 816 §5). Two consumers, one track authority: a container that wants to line up with the
+ * zones cannot hand-copy a track list that has since changed.
+ *
+ * §13.9 — the outer margins are CAPPED (`minmax(0, 8rem)`) and the spine/rail tracks are
+ * content-sized (they collapse when unmounted), so the track group is narrower than the container at
+ * a wide viewport; `justify-content: center` centres that bounded group rather than leaving it
+ * left-shifted against an unbounded gutter. This lived as a hand-authored `.conversation-zone` rule
+ * until 816 — where it was a second authority on column position, invisible to any consumer trying
+ * to align with the zones.
+ */
+function frameStyles(zones: readonly ZoneDecl[], opts: ComposeOpts): CSSResult {
+  const container = unsafeCSS(opts.container);
+  const containerName = unsafeCSS(opts.containerName);
+  const narrow = unsafeCSS(trackTemplate(zones, 'narrow'));
+  const wide = unsafeCSS(trackTemplate(zones, 'wide'));
+  const gap = unsafeCSS(opts.gap);
+  const bp = unsafeCSS(opts.breakpoint);
+  return css`
+    ${container} {
+      display: grid;
+      grid-template-columns: ${narrow};
+      gap: ${gap};
+    }
+    @container ${containerName} (min-width: ${bp}) {
+      ${container} {
+        grid-template-columns: ${wide};
+        width: 100%;
+        justify-content: center;
+      }
+    }
+  `;
+}
+
+/**
  * §13 Pillar B — generate the grid-frame {@link CSSResult} for a declared zone-set. Faithful to the
  * de-risk Probe S2 (reproduces the prior hand-authored grid exactly). Empty-collapse needs no branch:
  * a zone whose element is unmounted leaves its `minmax(0,…)` track to collapse to zero width.
@@ -125,11 +164,7 @@ export function trackTemplate(zones: readonly ZoneDecl[], viewport: 'narrow' | '
  * are actually laid out in makes that class of error unrepresentable rather than re-tuned.
  */
 export function composeGridStyles(zones: readonly ZoneDecl[], opts: ComposeOpts): CSSResult {
-  const container = unsafeCSS(opts.container);
   const containerName = unsafeCSS(opts.containerName);
-  const narrow = unsafeCSS(trackTemplate(zones, 'narrow'));
-  const wide = unsafeCSS(trackTemplate(zones, 'wide'));
-  const gap = unsafeCSS(opts.gap);
   const bp = unsafeCSS(opts.breakpoint);
   // Lit's `css` tag accepts a CSSResult or number per interpolation (NOT an array, unlike `html`), so
   // the per-zone placements are built as one trusted string (the zone selectors are module constants,
@@ -141,16 +176,54 @@ export function composeGridStyles(zones: readonly ZoneDecl[], opts: ComposeOpts)
       .join('\n      '),
   );
   return css`
-    ${container} {
-      display: grid;
-      grid-template-columns: ${narrow};
-      gap: ${gap};
-    }
+    ${frameStyles(zones, opts)}
     @container ${containerName} (min-width: ${bp}) {
-      ${container} {
-        grid-template-columns: ${wide};
-      }
       ${placements}
+    }
+  `;
+}
+
+export interface AlignOpts extends ComposeOpts {
+  /**
+   * The zone whose column the aligned children adopt — a `selector` that appears in `zones` WITH a
+   * declared `col` (e.g. `'.conversation'`). Resolved from the zone declaration, never passed as a
+   * number, so a column re-ordering moves both consumers together.
+   */
+  readonly alignTo: string;
+  /** The selector for the children to place in that column (e.g. `'.answer-plane > .composer > *'`). */
+  readonly alignedChildren: string;
+}
+
+/**
+ * Tempdoc 816 §5 — lay a SECOND container on the same zone frame and put its children in one zone's
+ * column.
+ *
+ * The chat surface's docked composer, its escalation strip and the conversation column are three
+ * rows of ONE reading column, but the composer is a stable DOM slot that must never re-parent (a
+ * re-parented textarea drops keystrokes — `UnifiedChatView.renderAnswerPlane`), so it cannot become a
+ * child of the conversation zone. Instead it is given the SAME generated frame and its children are
+ * placed in the conversation zone's track: identical tracks, identical gap, identical centering, so
+ * the two containers' columns coincide by construction rather than by a copied `max-width`.
+ *
+ * Throws when `alignTo` names no placed zone — a silently unplaced child would inherit column 1 and
+ * look "nearly right", which is the failure mode this generator exists to remove.
+ */
+export function alignToZoneStyles(zones: readonly ZoneDecl[], opts: AlignOpts): CSSResult {
+  const zone = zones.find((z) => z.selector === opts.alignTo);
+  if (zone?.col === undefined) {
+    throw new Error(
+      `alignToZoneStyles: no zone '${opts.alignTo}' with a declared col in the zone-set`,
+    );
+  }
+  const containerName = unsafeCSS(opts.containerName);
+  const bp = unsafeCSS(opts.breakpoint);
+  const children = unsafeCSS(opts.alignedChildren);
+  return css`
+    ${frameStyles(zones, opts)}
+    @container ${containerName} (min-width: ${bp}) {
+      ${children} {
+        grid-column: ${zone.col};
+      }
     }
   `;
 }
