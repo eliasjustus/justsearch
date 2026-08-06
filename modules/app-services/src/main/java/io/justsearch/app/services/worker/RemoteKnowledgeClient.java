@@ -1218,7 +1218,19 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
                 stub -> stub.countJobsByPathPrefix(req));
         io.justsearch.ipc.IndexingJobCounts c = resp.getCounts();
         long inFlight = c.getPendingCount() + c.getProcessingCount();
-        return new IndexingService.JobCounts(inFlight, c.getFailedCount());
+        io.justsearch.ipc.RootCoverageCounts cov = resp.getCoverage();
+        return new IndexingService.JobCounts(
+                inFlight,
+                c.getFailedCount(),
+                new IndexingService.RootCoverage(
+                        cov.getParentDocsTotalEmbedding(),
+                        cov.getParentDocsSettledEmbedding(),
+                        cov.getParentDocsTotalSplade(),
+                        cov.getParentDocsSettledSplade(),
+                        cov.getParentDocsTotalNer(),
+                        cov.getParentDocsSettledNer(),
+                        cov.getChunkDocsTotal(),
+                        cov.getChunkDocsSettled()));
     }
 
     @Override

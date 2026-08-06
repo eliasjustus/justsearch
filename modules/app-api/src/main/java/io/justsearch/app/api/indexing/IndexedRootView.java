@@ -58,6 +58,22 @@ import java.util.Objects;
  *       <em>write</em>). The FE shows "Verified Xm ago" so a calm "✓" proves it
  *       is fresh and a cap-skipped root reads as visibly stale. Empty string if
  *       never verified.
+ *   <li>{@code parentDocs*} / {@code chunkDocs*}: tempdoc 813 §1c — per-root
+ *       ENRICHMENT coverage, counted from the index under this root's path
+ *       prefix. {@link #inFlightCount} covers only the first phase (a file
+ *       becomes keyword-searchable); enrichment backfill carries no per-root
+ *       job rows, so without these a folder that is 5% embedded and one that is
+ *       100% embedded look identical. Denominator discipline: the parent totals
+ *       EXCLUDE chunk documents, each parent stage counts only documents that
+ *       CARRY its status field (an absent status means the stage does not apply
+ *       to that document, post-798; the backfill selects by status value, so
+ *       counting such a document would pin the folder below 100% forever),
+ *       and the chunk tier is its own denominator —
+ *       {@link #chunkDocsSettled} over {@link #chunkDocsTotal} is never "N of M
+ *       files". Numerator discipline: "settled" = terminal state (COMPLETED +
+ *       COMPLETED_EMPTY where the stage defines it + FAILED), so a permanently
+ *       failed document does not pin the folder below 100% forever. All zero
+ *       when the Worker's index runtime is unavailable.
  * </ul>
  */
 public record IndexedRootView(
@@ -71,7 +87,15 @@ public record IndexedRootView(
     long failedCount,
     boolean walkCompleted,
     boolean deleteDetectionUnverified,
-    String lastVerifiedIsoTime) {
+    String lastVerifiedIsoTime,
+    long parentDocsTotalEmbedding,
+    long parentDocsSettledEmbedding,
+    long parentDocsTotalSplade,
+    long parentDocsSettledSplade,
+    long parentDocsTotalNer,
+    long parentDocsSettledNer,
+    long chunkDocsTotal,
+    long chunkDocsSettled) {
 
   public IndexedRootView {
     Objects.requireNonNull(pathHash, "pathHash");

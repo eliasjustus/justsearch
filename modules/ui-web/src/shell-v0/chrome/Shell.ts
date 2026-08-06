@@ -568,7 +568,10 @@ export class Shell extends JfElement {
   static styles = css`
     :host {
       display: grid;
-      grid-template-columns: 3.25rem 1fr;
+      /* Tempdoc 813 §5c — the rail track reads its width from the ONE --rail-width token
+         (tokens.css) instead of an inline literal, so a viewport-docked overlay can reserve the
+         same band the rail actually occupies rather than re-deriving it. */
+      grid-template-columns: var(--rail-width) 1fr;
       grid-template-rows: 2.5rem auto 1fr 1.75rem;
       grid-template-areas:
         'topbar topbar'
@@ -583,9 +586,13 @@ export class Shell extends JfElement {
       background: var(--surface-1);
     }
     /* Search Thread S5b — the expanded (labels-visible) rail needs its GRID TRACK widened too:
-       the Rail's own :host([expanded]) width is clamped by this column otherwise. */
+       the Rail's own :host([expanded]) width is clamped by this column otherwise.
+       Tempdoc 813 §5c — expressed as an override of the ONE --rail-width token so everything
+       that reserves the rail's band (the OverlayHost bottom-left slot) follows the expansion
+       automatically; a second literal here would have left the reservation calibrated to the
+       collapsed rail and occluded again the moment the user expands it. */
     :host([data-rail-expanded]) {
-      grid-template-columns: 11rem 1fr;
+      --rail-width: 11rem;
     }
     .topbar {
       grid-area: topbar;
