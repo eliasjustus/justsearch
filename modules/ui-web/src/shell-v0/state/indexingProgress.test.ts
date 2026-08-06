@@ -260,3 +260,56 @@ describe('selectIndexingProgress — denominator honesty', () => {
     expect(p.vduPending).toBe(5);
   });
 });
+
+/**
+ * 813 §5b — the estimate is INDICATIVE and suppressed whenever there is no honest basis. Each arm
+ * below is a way the estimate could have been fabricated; the projection must return `null`, so the
+ * Tasks panel renders no line at all rather than a placeholder.
+ */
+describe('selectIndexingProgress — indicative estimate (813 §5b)', () => {
+  const indexing = (pendingJobs: number, recentDocsPerSec: number[]) =>
+    snapshot({ core: { indexState: 'INDEXING', pendingJobs, recentDocsPerSec } });
+
+  it('extrapolates the backlog over the MEDIAN of the trailing rate window', () => {
+    // median(10, 4, 4) = 4 ⇒ 400 / 4 = 100s. The mean (6) would have said 67s — one burst of tiny
+    // files must not halve the estimate.
+    const p = selectIndexingProgress(indexing(400, [1, 2, 10, 4, 4]), true);
+    expect(p.etaSeconds).toBe(100);
+  });
+
+  it('suppresses the estimate when a trailing sample is zero (the producer’s "unknown window")', () => {
+    // `recentDocsPerSec` reports 0.0 for windows it could not measure (WorkerOpsMetricCatalog's
+    // INDEX_DOCS_PER_SEC contract) — a zero in the window means the rate is not established.
+    expect(selectIndexingProgress(indexing(400, [4, 0, 4]), true).etaSeconds).toBeNull();
+  });
+
+  it('suppresses the estimate when the trend is too short to be a window', () => {
+    expect(selectIndexingProgress(indexing(400, [4, 4]), true).etaSeconds).toBeNull();
+    expect(selectIndexingProgress(indexing(400, []), true).etaSeconds).toBeNull();
+  });
+
+  it('suppresses the estimate on a backlog too small to be worth extrapolating', () => {
+    expect(selectIndexingProgress(indexing(5, [4, 4, 4]), true).etaSeconds).toBeNull();
+  });
+
+  it('suppresses an implausibly distant estimate rather than rendering it', () => {
+    // 0.01 docs/s over 400 jobs = ~11 hours; a three-sample window cannot support that claim.
+    expect(selectIndexingProgress(indexing(400, [0.01, 0.01, 0.01]), true).etaSeconds).toBeNull();
+  });
+
+  it('never estimates during enrichment (§1e: ingest preemption makes throughput unstable)', () => {
+    const p = selectIndexingProgress(
+      snapshot({
+        core: { indexState: 'IDLE', pendingJobs: 0, recentDocsPerSec: [4, 4, 4] },
+        enrichment: { embeddingDocCount: 1000, embeddingPendingCount: 400, embeddingEnabled: true },
+      }),
+      true,
+    );
+    expect(p.phase).toBe('enriching');
+    expect(p.etaSeconds).toBeNull();
+  });
+
+  it('never estimates from a stale snapshot (a past rate is not a present one)', () => {
+    expect(selectIndexingProgress(indexing(400, [4, 4, 4]), false).etaSeconds).toBeNull();
+  });
+});

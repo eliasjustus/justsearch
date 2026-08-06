@@ -47,6 +47,22 @@ export interface IndexingProgress {
   /** Documents still awaiting visual (VDU) extraction (`worker.core.pendingVduCount`). */
   vduPending: number;
   /**
+   * 813 §5b — a COARSE, INDICATIVE seconds-remaining for the {@link IndexingPhase} `indexing` arm
+   * only, extrapolated from observed recent throughput over the remaining backlog. `null` whenever
+   * there is no honest basis, and the caller renders NOTHING rather than a placeholder:
+   *  - any phase other than `indexing` — during `enriching` throughput is legitimately unstable
+   *    (§1e: ingest preempts the backfill at batch boundaries), so an estimate there would be a
+   *    fabricated number;
+   *  - a stale snapshot (`live === false`) — extrapolating from a past measurement asserts a
+   *    present rate nobody observed;
+   *  - a backlog below {@link ETA_MIN_JOBS}, where the estimate is noise, not information;
+   *  - an unstable/absent rate (see {@link deriveEtaSeconds});
+   *  - a result beyond {@link ETA_MAX_SECONDS}, which a trailing-3-sample window cannot support.
+   * Doc-count-based by construction and therefore never promoted to a countdown: the job queue has
+   * no byte-size column (§1f), so on a mixed corpus this is an order-of-magnitude hint at best.
+   */
+  etaSeconds: number | null;
+  /**
    * Is this snapshot still a LIVE observation? Threaded in from the ONE liveness authority
    * (`AiState.snapshotLive`, 807 A.3) — this module does NOT invent a staleness signal, and in
    * particular never reads `chunkCoverage.observedAtMs`, which is a Head serialization stamp.
@@ -72,8 +88,20 @@ const EMPTY: IndexingProgress = {
   enrichingPending: 0,
   embeddingPending: 0,
   vduPending: 0,
+  etaSeconds: null,
   live: false,
 };
+
+/** Trailing `recentDocsPerSec` samples that must ALL be non-zero before the rate is extrapolated. */
+const ETA_STABLE_SAMPLES = 3;
+/** Below this backlog the extrapolation is noise (at ~1 doc/s the answer is "a moment", not a number). */
+const ETA_MIN_JOBS = 20;
+/**
+ * Above this the trailing-window extrapolation is not credible, and the shared humanizer
+ * (`startupEstimate.humanizeSeconds`) has no hour form — so the estimate is withdrawn rather than
+ * rendered as an implausible "180m".
+ */
+const ETA_MAX_SECONDS = 3600;
 
 function count(value: number | null | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
@@ -98,6 +126,32 @@ function stage(total: number, pending: number, enabled: boolean | undefined): St
   if (enabled === false) return null;
   if (total <= 0) return null;
   return { total, pending: Math.min(pending, total) };
+}
+
+/**
+ * The coarse seconds-remaining, or `null` when there is no honest basis (see
+ * {@link IndexingProgress.etaSeconds} for the full suppression list).
+ *
+ * `worker.core.recentDocsPerSec` is a 30-minute RRD trend of the worker's own 180 s rolling
+ * throughput gauge (`WorkerOpsMetricCatalog.INDEX_DOCS_PER_SEC`), which reports **0.0** for windows
+ * it could not measure (insufficient samples, or nothing processing). So "every sample in the
+ * trailing window is non-zero" is the stability test the producer's own vocabulary supports; the
+ * MEDIAN of that window is used rather than the mean so one spike (a burst of tiny files) cannot
+ * halve the estimate.
+ */
+function deriveEtaSeconds(
+  samples: readonly number[] | null | undefined,
+  jobsPending: number,
+): number | null {
+  if (jobsPending < ETA_MIN_JOBS) return null;
+  if (!samples || samples.length < ETA_STABLE_SAMPLES) return null;
+  const tail = samples.slice(-ETA_STABLE_SAMPLES);
+  if (!tail.every((v) => Number.isFinite(v) && v > 0)) return null;
+  const sorted = [...tail].sort((a, b) => a - b);
+  const rate = sorted[Math.floor(sorted.length / 2)]!;
+  const seconds = Math.round(jobsPending / rate);
+  if (!Number.isFinite(seconds) || seconds <= 0 || seconds > ETA_MAX_SECONDS) return null;
+  return seconds;
 }
 
 /**
@@ -174,6 +228,10 @@ export function selectIndexingProgress(
     enrichingPending: pending,
     embeddingPending: count(enrichment?.embeddingPendingCount),
     vduPending: count(core.pendingVduCount),
+    etaSeconds:
+      phase === 'indexing' && snapshotLive
+        ? deriveEtaSeconds(core.recentDocsPerSec, jobsPending)
+        : null,
     live: snapshotLive,
   };
 }

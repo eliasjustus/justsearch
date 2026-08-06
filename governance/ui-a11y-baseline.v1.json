@@ -56,6 +56,12 @@
       "uiShotStep": "help",
       "e2eViews": [],
       "knownRules": []
+    },
+    {
+      "surface": "tasks-panel",
+      "uiShotStep": "tasks-occlusion",
+      "e2eViews": [],
+      "knownRules": []
     }
   ]
 }
