@@ -14,8 +14,15 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Tests for {@link QueryFilterBuilder#buildChunkFilterQuery} which builds Lucene filter queries
- * applicable to chunk documents (only mime, fileKind, mimeBase, language — skipping pathPrefix,
- * modifiedAt range, entity fields, and IS_CHUNK exclusion).
+ * applicable to chunk documents: mime, fileKind, mimeBase, language, and the two PATH-keyed scopes
+ * (pathPrefix, doc_ids) — skipping modifiedAt range, entity fields, metadata fields, collection
+ * scope, and IS_CHUNK exclusion, none of which chunk documents carry.
+ *
+ * <p>The PATH-keyed pair used to be skipped too. That was wrong on the facts: {@code
+ * ChunkDocumentWriter} writes {@code PATH = parentDocId} and {@code IndexingDocumentOps} writes the
+ * parent's {@code DOC_ID = PATH = absolutePath}, so a chunk's PATH IS the parent file's path. The
+ * end-to-end consequence (an out-of-prefix parent's chunk retrieved under a pathPrefix filter) is
+ * pinned by {@code ChunkSearchIntegrationTest#chunkFilterScopesByPathPrefix}.
  */
 final class QueryFilterBuilderTest {
 
@@ -80,17 +87,46 @@ final class QueryFilterBuilderTest {
   }
 
   @Test
-  void buildChunkFilterQuery_ignoresPathPrefixAndDateRange() {
-    // pathPrefix and modifiedAt range are NOT stored on chunks — should be ignored
+  void buildChunkFilterQuery_ignoresDateRange() {
+    // modified_at is NOT stored on chunks — should be ignored
     RuntimeSearchFilters filters =
         LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
-            .pathPrefix("/some/path")
             .modifiedFromMs(1000L)
             .modifiedToMs(2000L)
             .build();
     assertNull(
         QueryFilterBuilder.buildChunkFilterQuery(filters),
-        "pathPrefix and date range should not produce chunk filter");
+        "a modified_at range should not produce a chunk filter — chunks do not carry the field");
+  }
+
+  @Test
+  void buildChunkFilterQuery_appliesPathPrefix() {
+    // A chunk's PATH holds the PARENT's absolute path (ChunkDocumentWriter writes
+    // PATH = parentDocId; IndexingDocumentOps writes DOC_ID = PATH = absolutePath), so the same
+    // PrefixQuery the whole-doc legs use is valid on chunks. Skipping it let the chunk branch
+    // retrieve out-of-scope candidates.
+    RuntimeSearchFilters filters =
+        LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
+            .pathPrefix("/some/path")
+            .build();
+    Query q = QueryFilterBuilder.buildChunkFilterQuery(filters);
+    assertNotNull(q, "pathPrefix must scope the chunk branch");
+    assertTrue(
+        q.toString().contains("path:"),
+        "the chunk filter must constrain the PATH field: " + q);
+  }
+
+  @Test
+  void buildChunkFilterQuery_appliesDocIds() {
+    RuntimeSearchFilters filters =
+        LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
+            .docIds(List.of("/path/to/doc1.txt"))
+            .build();
+    Query q = QueryFilterBuilder.buildChunkFilterQuery(filters);
+    assertNotNull(q, "doc_ids must scope the chunk branch (PATH holds the parent path)");
+    assertTrue(
+        q.toString().contains("/path/to/doc1.txt"),
+        "the chunk filter must name the requested document: " + q);
   }
 
   @Test
@@ -143,17 +179,19 @@ final class QueryFilterBuilderTest {
   }
 
   @Test
-  void buildChunkFilterQuery_mimeFilterWithPathPrefixOnlyAppliesMime() {
-    // Mixed: mime is applicable to chunks, pathPrefix is not
+  void buildChunkFilterQuery_mimeAndPathPrefixBothApply() {
+    // Mixed: both mime and pathPrefix are enforceable on chunk documents.
     RuntimeSearchFilters filters =
         LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
             .mime(List.of("application/pdf"))
-            .pathPrefix("/ignored/path")
+            .pathPrefix("/scoped/path")
+            .entityPersons(List.of("Alice")) // not stored on chunks — still skipped
             .build();
     Query q = QueryFilterBuilder.buildChunkFilterQuery(filters);
-    assertNotNull(q, "Should produce a filter for the mime part");
+    assertNotNull(q, "Should produce a filter for the applicable parts");
     BooleanQuery bq = (BooleanQuery) q;
-    assertEquals(1, bq.clauses().size(), "Only mime clause, pathPrefix ignored");
+    assertEquals(
+        2, bq.clauses().size(), "mime + pathPrefix clauses; the entity filter stays skipped");
   }
 
   // ---- doc_ids filter tests (366 Phase 6) ----

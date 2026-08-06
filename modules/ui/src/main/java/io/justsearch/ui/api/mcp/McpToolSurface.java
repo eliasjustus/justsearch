@@ -907,7 +907,8 @@ public final class McpToolSurface {
         resp.indexCapabilities(),
         resp.queryUnderstanding(),
         resp.filterNormalization(),
-        resp.searchTrace());
+        resp.searchTrace(),
+        resp.appliedFilters());
   }
 
   /**

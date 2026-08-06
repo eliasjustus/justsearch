@@ -40,7 +40,9 @@ class KnowledgeSearchResponseContractTest {
           "queryUnderstanding",
           "filterNormalization",
           // Tempdoc 549 Phase E4: introspection retired — the unified trace is the single source.
-          "searchTrace");
+          "searchTrace",
+          // Tempdoc 366 §1b: the filter echo (mapped in KnowledgeSearchController when non-null).
+          "appliedFilters");
 
   @Test
   void recordComponentsMatchControllerMapping() {

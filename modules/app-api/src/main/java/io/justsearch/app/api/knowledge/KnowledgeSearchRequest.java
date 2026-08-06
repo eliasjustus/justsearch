@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.api.knowledge;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import io.soabase.recordbuilder.core.RecordBuilder;
 import java.util.List;
 
@@ -29,7 +30,14 @@ public record KnowledgeSearchRequest(
     querySyntax = querySyntax == null || querySyntax.isBlank() ? null : querySyntax.trim();
   }
 
+  /**
+   * Filter set. Also serialized on the way OUT, as the {@code appliedFilters} echo on {@link
+   * KnowledgeSearchResponse} (366 §1b) — hence {@code NON_EMPTY}, so the echo shows the filters that
+   * were sent rather than fifteen empty arrays. Serialization-only; request parsing is manual
+   * (KnowledgeSearchController reads the body map) and unaffected.
+   */
   @RecordBuilder
+  @JsonInclude(JsonInclude.Include.NON_EMPTY)
   public static record Filters(
       List<String> mime,
       List<String> language,
