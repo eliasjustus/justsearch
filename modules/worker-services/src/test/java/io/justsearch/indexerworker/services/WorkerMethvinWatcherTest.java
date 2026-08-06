@@ -62,6 +62,41 @@ final class WorkerMethvinWatcherTest {
     }
   }
 
+  /**
+   * 813 Slice B call-site pin: the watcher is one of the four producers of queue rows, and the
+   * remaining-work byte weight is only as good as what each producer records. A watcher enqueue
+   * that fell back to the unsized path would be invisible in the aggregate — the sum would simply
+   * understate the backlog — so the size is asserted at the call site, not just in the queue.
+   */
+  @Test
+  @Timeout(15)
+  void createEventCarriesTheFilesRealSizeToTheQueue() throws Exception {
+    Path root = Files.createDirectory(tempDir.resolve("sized"));
+    RecordingQueue queue = new RecordingQueue();
+    RecordingDeleteSink sink = new RecordingDeleteSink();
+    try (WorkerMethvinWatcher watcher = new WorkerMethvinWatcher(queue, null, sink)) {
+      assertTrue(watcher.registerRoot(root, "docs"), "registerRoot must report success");
+      Thread.sleep(500);
+      String body = "x".repeat(4_096);
+      Path created = Files.writeString(root.resolve("sized.txt"), body);
+
+      pollForEnqueued(queue, created, 10_000);
+      JobQueue.EnqueueEntry entry =
+          queue.enqueuedEntries.stream()
+              .filter(e -> e.path().equals(created))
+              .findFirst()
+              .orElseThrow(
+                  () ->
+                      new AssertionError(
+                          "The watcher must enqueue the SIZED form; entries: "
+                              + new ArrayList<>(queue.enqueuedEntries)));
+      assertEquals(
+          Files.size(created),
+          entry.sizeBytes(),
+          "The watcher must record the file's real size, not the unknown-size sentinel");
+    }
+  }
+
   @Test
   @Timeout(15)
   void unregisterRootStopsEventDelivery() throws Exception {
@@ -230,6 +265,9 @@ final class WorkerMethvinWatcherTest {
 
   private static final class RecordingQueue implements JobQueue {
     final CopyOnWriteArrayList<Path> enqueuedPaths = new CopyOnWriteArrayList<>();
+    /** 813 Slice B — the sized form, so a call site's SIZE is observable, not just its path. */
+    final CopyOnWriteArrayList<EnqueueEntry> enqueuedEntries = new CopyOnWriteArrayList<>();
+
     volatile String lastCollection;
 
     @Override
@@ -240,6 +278,12 @@ final class WorkerMethvinWatcherTest {
       enqueuedPaths.addAll(paths);
       lastCollection = collection;
       return paths.size();
+    }
+
+    @Override
+    public int enqueueEntries(List<EnqueueEntry> entries, String collection) {
+      enqueuedEntries.addAll(entries);
+      return enqueue(EnqueueEntry.paths(entries), collection);
     }
 
     @Override

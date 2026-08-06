@@ -111,6 +111,8 @@ def is_api_path(url: str) -> bool:
 # search surface — adding `degraded` here would silently add a fuzzer cell. `degraded` is
 # reachable only via an explicit `install_fixtures(ctx, variant="degraded")` call, made by
 # the isolated `chat-proportion` ui-shot step alone (`ui_check.py`'s `Step.fixtures_variant`).
+# The same reasoning holds for `indexing` (tempdoc 813 Slice D), reachable only from the
+# isolated `tasks-occlusion` step.
 VARIANTS = ("default", "empty")
 
 # The two variants that turn the degraded-readiness knobs. `degraded` (tempdoc 697) also flips
@@ -149,8 +151,47 @@ def _status_body(variant: str) -> str:
     zero document count regardless of AI capability); with docs > 0 the SAME projection
     instead returns `{kind:'degraded', caveat}` off this step's own degraded verdict
     (availability.ts:134-143), which does NOT pin Ask. NOT a fuzzer axis — see the
-    `VARIANTS` note above. `degraded-detailed` needs the identical readiness state — the banner it
-    expands is the same one this transform gives something to render."""
+    `VARIANTS` note above.
+
+    'indexing' (tempdoc 813 Slice D) puts the worker in a live INDEXING state with enrichment
+    still behind, so the Tasks panel renders its aggregate card deterministically for the
+    `tasks-occlusion` step. Every knob is load-bearing for `selectIndexingProgress`
+    (indexingProgress.ts):
+      - `core.indexState` -> "INDEXING": the projection ignores any state the WORKER does not
+        report (WORKER_REPORTED_INDEX_STATES = IDLE/INDEXING/ERROR). The captured live fixture
+        says "SERVING", a `WorkerOperationalView.fallback` state, so the projection is on its
+        `unknown` arm by default and the panel correctly renders nothing.
+      - `core.pendingJobs` > 0: the ONLY input that selects the `indexing` phase (and the panel's
+        "N files remaining" count). `migration.processingJobsCount` splits it running/queued.
+      - `core.recentDocsPerSec`: three equal non-zero samples — the projection's stability test
+        (all trailing samples non-zero) — so the coarse "~" estimate line renders too. Equal
+        samples keep the median, and therefore the rendered string, byte-stable.
+      - the `enrichment` counters + `backfillMode`: enrichment genuinely behind, so the fixture
+        represents the real overlap (jobs draining WHILE the backfill runs) rather than a
+        jobs-only state that could never occur with a live backfill.
+    Critically, the panel's visibility under this variant derives from the POLL projection, not
+    from the SSE task list — `install_fixtures` serves every `/stream` as an EMPTY event stream
+    (see `_handler` below), so a panel gated on SSE tasks would capture as hidden and the
+    occlusion assertion would pass vacuously. NOT a fuzzer axis — see the `VARIANTS` note above.
+
+    `degraded-detailed` needs the identical readiness state — the banner it expands is the same
+    one this transform gives something to render."""
+    if variant == "indexing":
+        d = json.loads(_BODY_STATUS)
+        core = d["worker"]["core"]
+        core["indexState"] = "INDEXING"
+        core["indexHealthy"] = True
+        core["indexedDocuments"] = 1218
+        core["pendingJobs"] = 412
+        core["recentDocsPerSec"] = [4.0, 4.0, 4.0]
+        d["worker"]["migration"]["processingJobsCount"] = 4
+        enrichment = d["worker"]["enrichment"]
+        enrichment["backfillMode"] = "combined"
+        enrichment["embeddingDocCount"] = 1218
+        enrichment["embeddingPendingCount"] = 430
+        enrichment["spladeDocCount"] = 1218
+        enrichment["spladePendingCount"] = 430
+        return json.dumps(d)
     if variant in _DEGRADED_VARIANTS:
         d = json.loads(_BODY_STATUS)
         d["readiness"]["composites"]["retrieval"] = {

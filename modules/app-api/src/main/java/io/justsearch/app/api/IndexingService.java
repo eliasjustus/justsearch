@@ -323,11 +323,58 @@ public interface IndexingService {
    *
    * @param inFlight PENDING + PROCESSING jobs under the prefix (in-flight; reaper-bounded)
    * @param failed permanently FAILED jobs under the prefix
+   * @param coverage per-root enrichment coverage from the index (tempdoc 813 §1c)
    */
-  record JobCounts(long inFlight, long failed) {
+  record JobCounts(long inFlight, long failed, RootCoverage coverage) {
+    public JobCounts {
+      coverage = coverage == null ? RootCoverage.zero() : coverage;
+    }
+
     /** All-zero sentinel for the unavailable / empty-prefix path. */
     public static JobCounts zero() {
-      return new JobCounts(0L, 0L);
+      return new JobCounts(0L, 0L, RootCoverage.zero());
+    }
+  }
+
+  /**
+   * Per-watched-root enrichment coverage counted from the index (tempdoc 813 §1c/§13). Lets a
+   * Library folder row say "keyword search ready · semantic search still catching up · N%" instead
+   * of only reporting the index-wide number. Queue drain ({@link JobCounts#inFlight()}) covers the
+   * FIRST phase (a file becomes keyword-searchable); these counts cover the SECOND (enrichment
+   * backfill), which carries no per-root job rows at all — the backfill selects index-wide by status.
+   *
+   * <p>Denominator discipline: parent-stage totals exclude chunk documents, and each stage counts
+   * only the documents that CARRY its status field — an absent status field means the stage does
+   * not apply to that document (post-798), and since the backfill selects by status value, such a
+   * document would otherwise sit in a denominator nothing can ever drain. The chunk tier has its
+   * own denominator and must never be presented as "N of M files". Numerator discipline: "settled"
+   * = terminal state (COMPLETED + COMPLETED_EMPTY where defined + FAILED), not success — otherwise
+   * a permanently failed document pins the folder below 100% forever.
+   *
+   * @param parentDocsTotalEmbedding parent docs under the prefix carrying an embedding status
+   * @param parentDocsSettledEmbedding parent docs whose embedding stage is terminal
+   * @param parentDocsTotalSplade parent docs under the prefix carrying a SPLADE status
+   * @param parentDocsSettledSplade parent docs whose SPLADE stage is terminal
+   * @param parentDocsTotalNer parent docs under the prefix carrying a NER status
+   * @param parentDocsSettledNer parent docs whose NER stage is terminal
+   * @param chunkDocsTotal chunk docs under the prefix carrying a chunk-embedding status
+   * @param chunkDocsSettled chunk docs whose chunk-embedding stage is terminal
+   */
+  record RootCoverage(
+      long parentDocsTotalEmbedding,
+      long parentDocsSettledEmbedding,
+      long parentDocsTotalSplade,
+      long parentDocsSettledSplade,
+      long parentDocsTotalNer,
+      long parentDocsSettledNer,
+      long chunkDocsTotal,
+      long chunkDocsSettled) {
+
+    private static final RootCoverage ZERO = new RootCoverage(0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L);
+
+    /** All-zero sentinel for the unavailable / empty-prefix path. */
+    public static RootCoverage zero() {
+      return ZERO;
     }
   }
 

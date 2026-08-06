@@ -629,7 +629,13 @@ message CoreStatus {
   // (curated RRD metric) — complementary to recent_job_queue_depth, rendered as a
   // second sparkline next to firing throughput events.
   repeated double recent_docs_per_sec = 17;
-  // Next available field number: 18
+  // Tempdoc 813 Slice B: byte weight of remaining (PENDING+PROCESSING) indexing work, recorded
+  // at enqueue time. pending_unknown_size_jobs counts remaining jobs with NO recorded size so a
+  // consumer can distinguish "nothing left" from "left, weight unknown" instead of reading an
+  // unknown as zero bytes.
+  int64 pending_bytes = 18;
+  int64 pending_unknown_size_jobs = 19;
+  // Next available field number: 20
 }
 
 // Failure tracking and search quality signals.
@@ -1297,8 +1303,29 @@ message IndexingJobCounts {
   int64 failed_count = 3;      // permanently FAILED
 }
 
+// Per-root enrichment coverage (tempdoc 813 §1c/§13). Counted from the Lucene index under the
+// same path prefix, alongside the queue counts above. Parent-stage denominators EXCLUDE chunk
+// documents; the chunk tier is its own denominator and must never be folded into an "N of M
+// files" ratio. "settled" = the stage reached a TERMINAL state (COMPLETED + COMPLETED_EMPTY
+// where the stage defines it + FAILED), not specifically success — a permanently failed doc
+// never leaves PENDING, so a COMPLETED-only numerator would pin a folder below 100% forever.
+// Per-stage denominators: a doc is in a stage's total only if it CARRIES that stage's status
+// field. An absent status field means the stage does not apply to that doc (post-798), and the
+// backfill selects by status value — so counting it would pin the folder below 100% forever.
+message RootCoverageCounts {
+  int64 parent_docs_total_embedding = 1;    // non-chunk docs carrying embedding_status
+  int64 parent_docs_settled_embedding = 2;  // embedding_status terminal (COMPLETED|FAILED)
+  int64 parent_docs_total_splade = 7;       // non-chunk docs carrying splade_status
+  int64 parent_docs_settled_splade = 3;     // splade_status terminal (+COMPLETED_EMPTY)
+  int64 parent_docs_total_ner = 8;          // non-chunk docs carrying ner_status
+  int64 parent_docs_settled_ner = 4;        // ner_status terminal (+COMPLETED_EMPTY)
+  int64 chunk_docs_total = 5;               // chunk docs carrying chunk_embedding_status
+  int64 chunk_docs_settled = 6;             // chunk_embedding_status terminal (COMPLETED|FAILED)
+}
+
 message CountJobsByPathPrefixResponse {
   IndexingJobCounts counts = 1;
+  RootCoverageCounts coverage = 2;  // all-zero when the index runtime is unavailable
 }
 
 // --- Session policies diagnostic (tempdoc 397 §14.28 U4) ---

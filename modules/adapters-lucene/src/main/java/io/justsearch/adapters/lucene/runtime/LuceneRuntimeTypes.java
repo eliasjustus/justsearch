@@ -333,6 +333,51 @@ public final class LuceneRuntimeTypes {
     }
   }
 
+  /**
+   * Per-watched-root enrichment coverage (tempdoc 813 §1c/§13) — the same numerator/denominator
+   * shapes the index-wide {@link EmbeddingCounts} / {@link SpladeFeatureCounts} report, restricted
+   * to documents under one root's path prefix so a Library folder row can say "N% enriched".
+   *
+   * <p>Denominator discipline: the parent-stage totals count only NON-chunk documents; the chunk
+   * tier is counted separately over chunk documents, never mixed into a "N of M files" ratio.
+   * Each stage carries its OWN denominator: a document is in a stage's denominator only when it
+   * actually carries that stage's status field. An absent status field means the stage does not
+   * apply to that document (the post-798 convention) — counting every non-chunk document instead
+   * would put documents indexed before a stage existed into a denominator no backfill can ever
+   * drain (the backfill selects by status VALUE, so a document with no status field is never
+   * picked up), pinning the folder below 100% forever.
+   *
+   * <p>Numerator discipline: "settled" means the stage reached a TERMINAL state, not specifically
+   * success — {@code COMPLETED} + {@code COMPLETED_EMPTY} (where the stage defines it) + {@code
+   * FAILED}. A stage that failed permanently will never leave PENDING, so counting only COMPLETED
+   * would pin a folder below 100% forever. Mirrors the COMPLETED_EMPTY reasoning already applied to
+   * the index-wide SPLADE coverage count.
+   *
+   * @param parentDocsTotalEmbedding parent docs under the prefix that carry {@code
+   *     embedding_status}
+   * @param parentDocsSettledEmbedding parent docs whose {@code embedding_status} is terminal
+   * @param parentDocsTotalSplade parent docs under the prefix that carry {@code splade_status}
+   * @param parentDocsSettledSplade parent docs whose {@code splade_status} is terminal
+   * @param parentDocsTotalNer parent docs under the prefix that carry {@code ner_status}
+   * @param parentDocsSettledNer parent docs whose {@code ner_status} is terminal
+   * @param chunkDocsTotal chunk docs under the prefix that carry {@code chunk_embedding_status}
+   * @param chunkDocsSettled chunk docs whose {@code chunk_embedding_status} is terminal
+   */
+  public record RootCoverageCounts(
+      int parentDocsTotalEmbedding,
+      int parentDocsSettledEmbedding,
+      int parentDocsTotalSplade,
+      int parentDocsSettledSplade,
+      int parentDocsTotalNer,
+      int parentDocsSettledNer,
+      int chunkDocsTotal,
+      int chunkDocsSettled) {
+
+    /** All-zero sentinel for the unavailable / blank-prefix path. */
+    public static final RootCoverageCounts EMPTY =
+        new RootCoverageCounts(0, 0, 0, 0, 0, 0, 0, 0);
+  }
+
   // ==========================================================================
   // Runtime Telemetry Hooks
   // ==========================================================================

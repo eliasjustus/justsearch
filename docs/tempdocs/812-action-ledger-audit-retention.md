@@ -1,10 +1,19 @@
 ---
 title: "812 — Action-ledger audit retention & projection (T-D): design"
-status: "design settled 2026-08-06; D2 + D4 IMPLEMENTED 2026-08-06 (see the implementation record); D1 + D3 in PR #381; one owner ratification requested (§R1)"
+status: "design settled 2026-08-06; R1 adopted by default under the owner's autonomous-proceed directive (2026-08-06); ALL FOUR SLICES IMPLEMENTED 2026-08-06 — D1+D3 (audit journal + kind/limit API, PR #381), D2+D4 (scan rollup + FE audit-first tier, see the implementation record)"
 created: 2026-08-06
 updated: 2026-08-06
 related: [809, 810, 550, 612, 561, 565]
 ---
+
+> **Implementation correction (2026-08-06, D1):** the design's D1 said "StoreCatalog
+> registration + check-store-recoverability". Implementation established that
+> `StoreCatalog` is encryption-scoped (an entry without a `StoreCipher` would falsely
+> declare seal-at-rest, and `StoreCatalogTest` deliberately pins the authored set), and
+> that the gate's actual demand is a `durableStores` authority row — the precedent the
+> three existing HEAD-owned journals (`durable-grants`, `run-events`,
+> `file-operation-journal`) already follow. The journal is registered as a
+> `durableStores` row only; this note supersedes D1's registration sentence.
 
 # 812 — Action-ledger audit retention & projection (T-D)
 
@@ -168,6 +177,40 @@ SECOND `KnowledgeHttpApiAdapter` that never receives `setScanProgressRegistry` �
 (2) Watched-root scans dispatch `RemoteKnowledgeClient.scanRoot` directly, bypassing the adapter:
 their jobs carry a worker-minted scanId but no Head-side scan is opened, so they produce per-document
 rows with no rollup row.
+
+**Merge with D1/D3 (#381) and 813 (#377), 2026-08-06.** Two resolutions worth recording because
+both were near-silent:
+1. **Migration-number collision.** 812 D2 and 813 Slice B were developed in parallel and BOTH
+   authored a `V7 → V8` step (`scan_id` and `size_bytes`). Git auto-merged `SqliteSchema.java`
+   with NO conflict marker: `TARGET_VERSION` stayed 8 while two different V8 constants existed, so
+   whichever `case 8` survived would have left every installed queue at `user_version = 8` with the
+   other column missing and the ladder finished — a permanently half-migrated database. 813 merged
+   first, so it keeps V8; 812's `scan_id` is now `MIGRATE_V8_TO_V9_ADD_SCAN_ID` (`case 9`,
+   `TARGET_VERSION = 9`).
+2. **One enqueue write path, two facts.** 813 made `enqueueEntries` the single jobs-table write
+   path *because* the insert is `INSERT OR REPLACE` — any column the call omits is reset on
+   re-enqueue. D2's scan key needed exactly that property, so it rides the same signature
+   (`enqueueEntries(entries, collection, scanId)`) rather than the separate `enqueue(paths,
+   collection, scanId)` overload it originally added; a parallel path would have made a scan's rows
+   carry sizes or a scan key, never both. Two traps inside that unification, both caught before the
+   first build rather than by a test: the new overload's *default* delegates to the two-arg
+   `enqueueEntries` (not straight to `enqueue`), or the three size-recording test fakes — which
+   override only the two-arg form — would have stopped seeing scan enqueues entirely; and
+   `SqliteJobQueue` must override the two-arg form as well, or `enqueue → enqueueEntries → enqueue`
+   closes into infinite recursion.
+3. **A journaled rollup must recover as a rollup.** D1's read path (`fromWireRow`, added by #381)
+   rebuilt every `kind=operation` row as `ActionEvent.Operation`. A scan rollup is durable
+   *because* its `kind()` is OPERATION — so it journaled correctly and then came back after every
+   restart as a bare operation with its counts and scan key gone, rendering "Indexed 0 documents".
+   Neither PR had this defect alone; the merge created it. `fromWireRow` now reconstructs the
+   rollup (and round-trips `index.scanId`), with `ActionEventJournalTest.scanRollupRoundTripsWithItsSummary`
+   as the regression home.
+
+**Merge regression homes.** Three tests exist because the merge, not either feature, could break
+them: the V7→V9 ladder walk asserts BOTH `size_bytes` and `scan_id` after one migration (proved to
+bite by pinning `TARGET_VERSION` back to 8); `WorkerScanOpsTest.scanIdIsStampedOnTheEnqueuedJobs`
+asserts the scan key reaches the queue through the rewired `enqueueEntries` seam alongside 813's
+sizes (proved to bite by dropping the argument); and the journal round-trip above.
 
 **Verification.** Full `./gradlew.bat test` BUILD SUCCESSFUL; ui-web `npm run typecheck` clean +
 `npm run test:unit:run` 4102 passed; `operation-surface`, `register-guard-resolution` gates and

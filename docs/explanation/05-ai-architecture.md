@@ -482,7 +482,7 @@ That evidence can queue VDU enrichment when baseline text exists but OCR/layout 
 visual understanding would help.
 *   **Flow:**
     1.  Worker extracts with structured Tika. If extracted text is empty/garbage and the file is OCR-eligible, Worker extraction attempts bounded Tika/Tesseract OCR before VDU is considered.
-    2.  User goes idle (Offline Mode) and/or triggers offline processing.
+    2.  The system goes idle (the enrichment backfill runs on idle cycles) and/or the user triggers the "Process pending enrichment" operation (`core.trigger-offline-processing`).
     3.  Head/app-services selects pending docs and runs `VduBatchProcessor` → `VduProcessor`.
     4.  `VduProcessor` calls a Vision-capable model via `llama-server` (e.g., the configured chat model + `--mmproj`) with: “Transcribe the text in this image.”
     5.  Worker persists successful non-empty VDU by overwriting `content`, re-deriving `content_preview` and `language`, regenerating chunks, and recording `extraction_method=VDU`.

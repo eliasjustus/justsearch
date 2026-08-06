@@ -108,3 +108,61 @@ describe('IndexingOverlayHost — snapshot liveness (807)', () => {
     expect(host(true).render()).not.toBe(nothing);
   });
 });
+
+/**
+ * Tempdoc 813 §10.6 — the overlay's private two-row queue readout is retired. Both numbers are the
+ * same worker counts `/api/status` carries; reaching them through `/api/inference/status` was the
+ * §1a "one subject, two transports" divergence class.
+ */
+describe('IndexingOverlayHost — numbers come from the one projection (813)', () => {
+  interface HostHarness {
+    aiState: AiState | null;
+    render(): unknown;
+  }
+  const host = (status: unknown): HostHarness => {
+    const el = document.createElement('jf-indexing-overlay-host') as unknown as HostHarness;
+    el.aiState = {
+      runtime: { mode: 'indexing' },
+      // Deliberately divergent inference-poll residue: if these still fed the rows, the assertions
+      // below would read 999/999.
+      index: { embeddingQueueSize: known(999), vduQueueSize: known(999) },
+      snapshotLive: true,
+      status,
+    } as unknown as AiState;
+    return el;
+  };
+
+  it('renders the status-poll pending counts, not the inference-poll queue residue', () => {
+    const out = host({
+      worker: {
+        core: { indexState: 'IDLE', pendingJobs: 0, pendingVduCount: 7 },
+        enrichment: {
+          backfillMode: 'combined',
+          embeddingEnabled: true,
+          embeddingDocCount: 100,
+          embeddingPendingCount: 12,
+        },
+      },
+    }).render();
+    // The template's interpolations, in source order: embedding-queue-size, vdu-queue-size, …
+    const values = (out as { values: unknown[] }).values;
+    expect(values[0]).toBe(12);
+    expect(values[1]).toBe(7);
+  });
+
+  it('withdraws when the status authority says everything is settled (stale residue, not work)', () => {
+    expect(
+      host({
+        worker: {
+          core: { indexState: 'IDLE', pendingJobs: 0, pendingVduCount: 0 },
+          enrichment: {
+            backfillMode: 'idle',
+            embeddingEnabled: true,
+            embeddingDocCount: 100,
+            embeddingPendingCount: 0,
+          },
+        },
+      }).render(),
+    ).toBe(nothing);
+  });
+});

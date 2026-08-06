@@ -1,11 +1,11 @@
 {
-  "note": "Tempdoc 599 §9.1/§9.5 — the ONE per-folder indexing-status derivation. A folder's truthful state (scanning/indexing/ready/failed/empty) is derived ONCE in `folderStatus` (state/folderStatus.ts) from the wire row's job counts; the Library row glyph + meta line CONSUME it. The raw per-folder count fields (`inFlightCount`/`failedCount`) may be read ONLY in the seam — a second shell-v0 site forming a folder ready/searchable verdict from them is the §8.1 false-terminal split re-introduced (a folder showing '✓ indexed' from somewhere other than job-drain). Mirrors check-verdict-derivation / check-search-issuance.",
+  "note": "Tempdoc 599 §9.1/§9.5 — the ONE per-folder indexing-status derivation. A folder's truthful state (scanning/indexing/ready/failed/empty) is derived ONCE in `folderStatus` (state/folderStatus.ts) from the wire row's job counts; the Library row glyph + meta line CONSUME it. The raw per-folder count fields (`inFlightCount`/`failedCount`) may be read ONLY in the seam — a second shell-v0 site forming a folder ready/searchable verdict from them is the §8.1 false-terminal split re-introduced (a folder showing '✓ indexed' from somewhere other than job-drain). Mirrors check-verdict-derivation / check-search-issuance. Tempdoc 813 §4 added the SECOND tier (enriching vs fully searchable) off per-root enrichment COVERAGE, so the guarded field set now includes those wire counts too: a coverage tier is a searchability claim, and a second site scoring it from `parentDocs*`/`chunkDocs*` would re-open the same split one tier up.",
   "seam": {
     "symbol": "folderStatus",
     "file": "modules/ui-web/src/shell-v0/state/folderStatus.ts"
   },
   "scope": "modules/ui-web/src/shell-v0",
-  "predicatePattern": "\\b(inFlightCount|failedCount)\\b",
+  "predicatePattern": "\\b(inFlightCount|failedCount|parentDocsTotalEmbedding|parentDocsTotalSplade|parentDocsTotalNer|parentDocsSettledEmbedding|parentDocsSettledSplade|parentDocsSettledNer|chunkDocsTotal|chunkDocsSettled)\\b",
   "allowed": [
     "modules/ui-web/src/shell-v0/state/folderStatus.ts"
   ]

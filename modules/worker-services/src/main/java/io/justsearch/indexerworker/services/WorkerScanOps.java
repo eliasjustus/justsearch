@@ -158,7 +158,7 @@ final class WorkerScanOps {
     long[] counters = new long[3]; // [walked, admitted, skipped]
     long[] bytes = new long[1];
     String[] currentDir = new String[] {root.toString()};
-    List<Path> batch = new ArrayList<>(ENQUEUE_BATCH_SIZE);
+    List<JobQueue.EnqueueEntry> batch = new ArrayList<>(ENQUEUE_BATCH_SIZE);
     boolean[] cancelled = {false};
     String collection = request.collection();
     // Tempdoc 812 D2: every job this walk admits remembers the scan that admitted it, so the Head
@@ -200,7 +200,8 @@ final class WorkerScanOps {
             }
             counters[1]++;
             bytes[0] += attrs.size();
-            batch.add(file);
+            // 813 Slice B: the walk already holds the size — no extra stat.
+            batch.add(new JobQueue.EnqueueEntry(file, attrs.size()));
             if (batch.size() >= ENQUEUE_BATCH_SIZE) {
               awaitQueueBelowThreshold();
               flushBatch(batch, collection, enqueueScanId);
@@ -242,9 +243,10 @@ final class WorkerScanOps {
     return terminal;
   }
 
-  private void flushBatch(List<Path> batch, String collection, String scanId) {
+  private void flushBatch(List<JobQueue.EnqueueEntry> batch, String collection, String scanId) {
     String coll = collection == null || collection.isBlank() ? null : collection;
-    jobQueue.enqueue(List.copyOf(batch), coll, scanId == null || scanId.isBlank() ? null : scanId);
+    jobQueue.enqueueEntries(
+        List.copyOf(batch), coll, scanId == null || scanId.isBlank() ? null : scanId);
     batch.clear();
   }
 

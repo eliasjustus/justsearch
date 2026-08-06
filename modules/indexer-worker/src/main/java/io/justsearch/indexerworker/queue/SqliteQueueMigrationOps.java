@@ -243,8 +243,12 @@ final class SqliteQueueMigrationOps {
         }
       }
       case 8 -> {
-        addColumnIfMissing(conn, "scan_id", SqliteSchema.MIGRATE_V7_TO_V8_ADD_SCAN_ID);
-        log.info("V7 to V8: Ensured scan_id column on jobs table (tempdoc 812 D2)");
+        addColumnIfMissing(conn, "size_bytes", SqliteSchema.MIGRATE_V7_TO_V8_ADD_SIZE_BYTES);
+        log.info("V7 to V8: Ensured size_bytes column on jobs table (tempdoc 813)");
+      }
+      case 9 -> {
+        addColumnIfMissing(conn, "scan_id", SqliteSchema.MIGRATE_V8_TO_V9_ADD_SCAN_ID);
+        log.info("V8 to V9: Ensured scan_id column on jobs table (tempdoc 812 D2)");
       }
       default -> throw new SQLException("Unknown migration version: " + version);
     }

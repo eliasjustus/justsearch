@@ -4,6 +4,7 @@ package io.justsearch.ui.api;
 import io.javalin.http.Context;
 import io.javalin.http.sse.SseClient;
 import io.justsearch.app.observability.ledger.ActionEvent;
+import io.justsearch.app.observability.ledger.ActionEventJournal;
 import io.justsearch.app.observability.ledger.ActionLedgerChangeRegistry;
 import io.justsearch.app.observability.ledger.ActionLedgerProjection;
 import io.justsearch.app.observability.navigation.NavigationHistoryEntry;
@@ -72,6 +73,12 @@ public final class ActionLedgerController {
 
   private static final long HEARTBEAT_SECONDS = StreamLivenessWindows.STREAM_HEARTBEAT_INTERVAL_SECONDS;
 
+  /** Tempdoc 812 D3 — default row bound: the ring capacity, so an unparameterized GET is unchanged. */
+  static final int DEFAULT_LIMIT = 500;
+
+  /** Tempdoc 812 D3 — hard cap on {@code ?limit}; above the largest union this endpoint can serve. */
+  static final int MAX_LIMIT = 2000;
+
   public ActionLedgerController(
       OperationHistoryStore operationHistory, NavigationHistoryStore navigationHistory) {
     this(operationHistory, navigationHistory, null);
@@ -110,10 +117,30 @@ public final class ActionLedgerController {
    * wired (production), read the ONE {@link ActionEventStore} it fans every event into — the action
    * ledger no longer re-projects the per-kind stores. Falls back to projecting the per-kind stores
    * only in legacy/test wiring where no change registry is present.
+   *
+   * <p>Tempdoc 812 D1: the wired read is the ring UNION the durable journal's tail, deduped by
+   * event id with the RING winning — the ring holds the freshest copy of a row, and the journal
+   * copy of that same row is byte-identical anyway (both are {@code toWireRow} of one event), so
+   * "which wins" only matters as a rule that keeps the union from double-counting. This is what
+   * makes the Activity surface non-empty after a Head restart: the ring is empty then, and every
+   * pre-restart grant/gate/operation row comes from the journal. The journal contributes at most
+   * {@link ActionEventJournal#TAIL_CAPACITY} rows and serves them from memory (see its class doc),
+   * so this is bounded work per request no matter how large the journal files are.
    */
   private List<ActionEvent> currentEvents() {
     if (changes != null) {
-      return changes.store().recent();
+      List<ActionEvent> ring = changes.store().recent();
+      java.util.Set<String> seen = new java.util.HashSet<>();
+      for (ActionEvent e : ring) {
+        seen.add(e.id());
+      }
+      List<ActionEvent> merged = new ArrayList<>(ring);
+      for (ActionEvent e : changes.journal().tail(ActionEventJournal.TAIL_CAPACITY)) {
+        if (seen.add(e.id())) {
+          merged.add(e);
+        }
+      }
+      return merged;
     }
     List<ActionEvent> entries = new ArrayList<>();
     for (OperationHistoryEntry op : operationHistory.recent()) {
@@ -176,6 +203,23 @@ public final class ActionLedgerController {
   }
 
   /**
+   * Tempdoc 812 D3 — the row bound. {@link #DEFAULT_LIMIT} matches the ring capacity, so an
+   * unparameterized request returns what it always did; {@link #MAX_LIMIT} caps a caller that asks
+   * for more than the ring ∪ journal-tail union can ever hold, which is the point of a cap.
+   */
+  private static int parseLimit(String raw) {
+    if (raw == null || raw.isBlank()) {
+      return DEFAULT_LIMIT;
+    }
+    try {
+      int parsed = Integer.parseInt(raw.trim());
+      return parsed <= 0 ? DEFAULT_LIMIT : Math.min(parsed, MAX_LIMIT);
+    } catch (NumberFormatException notANumber) {
+      return DEFAULT_LIMIT;
+    }
+  }
+
+  /**
    * Handles {@code GET /api/action-ledger}.
    *
    * <p>Tempdoc 561 P-B1: two optional query filters make this one ledger a session-scoped
@@ -186,11 +230,21 @@ public final class ActionLedgerController {
    * {@code ?correlationId=<session>&originator=agent}, so its rows cannot diverge from the live
    * thread — both are projections of this single record, and "empty History while the record is
    * non-empty" becomes unrepresentable.
+   *
+   * <p>Tempdoc 812 D3 adds two more, both additive (a request with neither behaves exactly as
+   * before): {@code ?kind=grant&kind=gate} — repeatable, keeps only those kinds — and
+   * {@code ?limit=N}, which returns the NEWEST {@code N} rows after filtering (default
+   * {@link #DEFAULT_LIMIT}, clamped to {@link #MAX_LIMIT}). Newest rather than oldest because
+   * every consumer of a truncated audit feed wants the recent end; an out-of-range or unparseable
+   * limit falls back to the default rather than erroring. Cursor pagination is deliberately
+   * deferred (812 §D3) — the journal files are the deep-history interface until a consumer needs
+   * to walk past the tail.
    */
   public void handleGet(Context ctx) {
     try {
       String correlationId = ctx.queryParam("correlationId");
       String originator = ctx.queryParam("originator");
+      List<String> kinds = ctx.queryParams("kind");
       List<ActionEvent> entries = currentEvents();
       if (correlationId != null && !correlationId.isBlank()) {
         entries.removeIf(e -> !correlationId.equals(e.correlationId().orElse(null)));
@@ -198,7 +252,23 @@ public final class ActionLedgerController {
       if (originator != null && !originator.isBlank()) {
         entries.removeIf(e -> !originator.equals(e.originator()));
       }
+      if (kinds != null && !kinds.isEmpty()) {
+        java.util.Set<String> wanted = new java.util.HashSet<>();
+        for (String k : kinds) {
+          if (k != null && !k.isBlank()) {
+            wanted.add(k.trim().toLowerCase(java.util.Locale.ROOT));
+          }
+        }
+        if (!wanted.isEmpty()) {
+          entries.removeIf(
+              e -> !wanted.contains(e.kind().name().toLowerCase(java.util.Locale.ROOT)));
+        }
+      }
       entries.sort(Comparator.comparing(ActionEvent::occurredAt));
+      int limit = parseLimit(ctx.queryParam("limit"));
+      if (entries.size() > limit) {
+        entries = new ArrayList<>(entries.subList(entries.size() - limit, entries.size()));
+      }
 
       // Serialize through the one projection (the same the live /stream uses), so snapshot rows
       // and UPDATE rows are byte-identical in shape.

@@ -294,7 +294,8 @@ public final class QueryFilterBuilder {
    * agent-history exclusion (and an explicit collection scope) bind on the chunk branch exactly as
    * they do on the whole-doc legs. Without it, agent-history CHUNKS entered the fused candidate
    * union whenever no pathPrefix/doc_ids filter was set — the same leak class #371 closed for the
-   * two PATH-keyed scopes.
+   * two PATH-keyed scopes. ({@code IndexCountOps#queryRootCoverageCounts} relies on the same
+   * chunk-PATH-is-parent-path fact for per-root coverage counting — tempdoc 813.)
    *
    * <p>Still skipped, because chunk documents genuinely do not carry these fields: IS_CHUNK
    * exclusion (chunks are the target), modifiedAt / metaPublishedAt ranges, entity filters, and

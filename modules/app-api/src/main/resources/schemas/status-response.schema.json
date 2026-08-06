@@ -639,7 +639,13 @@
             "indexedDocuments" : {
               "type" : "integer"
             },
+            "pendingBytes" : {
+              "type" : "integer"
+            },
             "pendingJobs" : {
+              "type" : "integer"
+            },
+            "pendingUnknownSizeJobs" : {
               "type" : "integer"
             },
             "pendingVduCount" : {

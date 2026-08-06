@@ -188,7 +188,8 @@ public final class WorkerMethvinWatcher implements AutoCloseable {
     switch (kind) {
       case CREATE, MODIFY -> {
         try {
-          jobQueue.enqueue(List.of(path), collection);
+          // 813 Slice B: single-file event — stat for the size, unknown if the stat fails.
+          jobQueue.enqueueEntries(List.of(JobQueue.EnqueueEntry.stat(path)), collection);
         } catch (RuntimeException e) {
           log.warn("Worker watcher enqueue failed for {}: {}", path, e.getMessage());
         }

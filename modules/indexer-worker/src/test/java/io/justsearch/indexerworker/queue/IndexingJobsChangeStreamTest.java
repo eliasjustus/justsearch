@@ -80,8 +80,14 @@ final class IndexingJobsChangeStreamTest {
     CapturingSubscriber sub = new CapturingSubscriber();
     var s = jobQueue.changeStream().subscribeWithSnapshot(sub);
 
-    jobQueue.enqueue(List.of(Path.of("/tmp/scanned.txt")), "scifact", "scan-42");
-    jobQueue.enqueue(List.of(Path.of("/tmp/single.txt")), "scifact");
+    // Tempdoc 812 D2 rides 813 Slice B's single jobs-table write path: one call states the size
+    // AND the scan key, because the INSERT OR REPLACE resets any column the call omits.
+    jobQueue.enqueueEntries(
+        List.of(new JobQueue.EnqueueEntry(Path.of("/tmp/scanned.txt"), 1_024L)),
+        "scifact",
+        "scan-42");
+    jobQueue.enqueueEntries(
+        List.of(new JobQueue.EnqueueEntry(Path.of("/tmp/single.txt"), 512L)), "scifact");
 
     sub.awaitDeliveries(2);
     var scanned = (IndexingJobChangeFeed.Delta.Insert) sub.deltas.get(0);

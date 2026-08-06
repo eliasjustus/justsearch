@@ -752,7 +752,11 @@ public final class KnowledgeServerMigrationOps {
     }
 
     if (!toEnqueue.isEmpty()) {
-      int enqueued = context.jobQueue().enqueue(toEnqueue);
+      // 813 Slice B: replayed buffer ops carry only a path — stat for the size (unknown on failure).
+      int enqueued =
+          context
+              .jobQueue()
+              .enqueueEntries(toEnqueue.stream().map(JobQueue.EnqueueEntry::stat).toList());
       context.log().info("Enqueued {} buffered UPSERT ops back into the job queue", enqueued);
     }
 
@@ -826,7 +830,7 @@ public final class KnowledgeServerMigrationOps {
     }
     int total = 0;
     int batchSize = 2_000;
-    ArrayList<Path> batch = new ArrayList<>(batchSize);
+    ArrayList<JobQueue.EnqueueEntry> batch = new ArrayList<>(batchSize);
     long lastPersistMs = 0L;
 
     for (Path root : context.roots()) {
@@ -888,9 +892,11 @@ public final class KnowledgeServerMigrationOps {
             }
           }
 
-          batch.add(path);
+          // 813 Slice B: this walk is a Stream, not a visitor, so no BasicFileAttributes are in
+          // hand — stat for the size (unknown on failure).
+          batch.add(JobQueue.EnqueueEntry.stat(path));
           if (batch.size() >= batchSize) {
-            int enqueued = context.jobQueue().enqueue(batch);
+            int enqueued = context.jobQueue().enqueueEntries(batch);
             total += enqueued;
             context.migrationEnumeratorFilesEnqueued().addAndGet(enqueued);
             batch.clear();
@@ -900,7 +906,7 @@ public final class KnowledgeServerMigrationOps {
         context.log().warn("Migration enumerator failed walking {}: {}", root, e.getMessage());
       }
       if (!batch.isEmpty()) {
-        int enqueued = context.jobQueue().enqueue(batch);
+        int enqueued = context.jobQueue().enqueueEntries(batch);
         total += enqueued;
         context.migrationEnumeratorFilesEnqueued().addAndGet(enqueued);
         batch.clear();

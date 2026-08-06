@@ -253,6 +253,128 @@ public final class ActionLedgerProjection {
   }
 
   /**
+   * The inverse of {@link #toWireRow} — tempdoc 812 D1. The durable audit journal stores one wire
+   * row per line, so reading the journal back is exactly this parse; keeping the inverse HERE,
+   * beside the forward projection, is what stops the journal from becoming a second schema that
+   * drifts from the endpoint's. Returns empty for a row whose {@code kind} is unknown (a file
+   * written by a newer build) or whose required fields are missing/malformed — the caller skips the
+   * line rather than failing the whole read.
+   */
+  public static Optional<ActionEvent> fromWireRow(Map<String, Object> row) {
+    if (row == null) {
+      return Optional.empty();
+    }
+    try {
+      String id = str(row, "id");
+      String kind = str(row, "kind");
+      String originator = str(row, "originator");
+      String transport = str(row, "transport");
+      if (id.isEmpty() || kind.isEmpty()) {
+        return Optional.empty();
+      }
+      Instant occurredAt = Instant.parse(str(row, "occurredAt"));
+      Optional<String> correlationId = optional(row, "correlationId");
+      return Optional.ofNullable(
+          switch (kind) {
+            // Tempdoc 812 D1×D2 — a scan rollup is journaled as an OPERATION row (its kind() IS
+            // operation, which is what makes it durable), so the read path must restore the ROLLUP,
+            // not a bare Operation: the latter would silently drop the counts + scan key and render
+            // a restored row as "Indexed 0 documents".
+            case "operation" ->
+                ActionEvent.ScanRollup.OPERATION_ID.equals(str(row, "operationId"))
+                    ? new ActionEvent.ScanRollup(
+                        id,
+                        occurredAt,
+                        originator,
+                        transport,
+                        str(row, "scanId"),
+                        str(row, "collection"),
+                        str(row, "root"),
+                        str(row, "outcome"),
+                        intOf(row, "docsDone"),
+                        intOf(row, "docsFailed"),
+                        intOf(row, "docsAdmitted"),
+                        row.get("durationMs") instanceof Number n ? n.longValue() : 0L)
+                    : new ActionEvent.Operation(
+                        id,
+                        occurredAt,
+                        originator,
+                        transport,
+                        str(row, "operationId"),
+                        str(row, "outcome"),
+                        optional(row, "executionId"),
+                        correlationId);
+            case "navigation" ->
+                new ActionEvent.Navigation(
+                    id,
+                    occurredAt,
+                    originator,
+                    transport,
+                    str(row, "targetSurface"),
+                    str(row, "sourceId"));
+            case "gate" ->
+                new ActionEvent.Gate(
+                    id,
+                    occurredAt,
+                    originator,
+                    transport,
+                    str(row, "operationId"),
+                    str(row, "disposition"),
+                    str(row, "gateBehavior"),
+                    str(row, "sourceTier"));
+            case "grant" ->
+                new ActionEvent.Grant(
+                    id,
+                    occurredAt,
+                    originator,
+                    transport,
+                    str(row, "grantId"),
+                    str(row, "action"),
+                    str(row, "subject"));
+            case "effect" ->
+                new ActionEvent.Effect(
+                    id,
+                    occurredAt,
+                    originator,
+                    transport,
+                    str(row, "effectKind"),
+                    str(row, "subject"));
+            case "index" ->
+                new ActionEvent.Index(
+                    id,
+                    occurredAt,
+                    originator,
+                    transport,
+                    str(row, "pathHash"),
+                    str(row, "collection"),
+                    str(row, "state"),
+                    intOf(row, "attempts"),
+                    str(row, "errorMessage"),
+                    // Tempdoc 812 D2 — the scan key round-trips too (empty for keyless rows).
+                    str(row, "scanId"));
+            default -> null;
+          });
+    } catch (RuntimeException malformed) {
+      return Optional.empty();
+    }
+  }
+
+  private static String str(Map<String, Object> row, String key) {
+    Object v = row.get(key);
+    return v == null ? "" : v.toString();
+  }
+
+  /** A JSON number round-trips as Integer/Long/Double depending on the parser; 0 when absent. */
+  private static int intOf(Map<String, Object> row, String key) {
+    return row.get(key) instanceof Number n ? n.intValue() : 0;
+  }
+
+  private static Optional<String> optional(Map<String, Object> row, String key) {
+    Object v = row.get(key);
+    return v == null || v.toString().isEmpty() ? Optional.empty() : Optional.of(v.toString());
+  }
+
+  /**
    * Deterministic, stable id for an event: {@code kind:occurredAt:disc0:disc1:…}. Stable across
    * snapshot re-projection and stream broadcast (the stores hold no id), so the FE can dedup a row
    * that appears in both the snapshot and a later UPDATE, and use it as a stable render key.
