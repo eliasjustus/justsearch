@@ -275,6 +275,38 @@ function resolveDataDir(dataDirArg) {
   return path.resolve(uiWebDir, '.dev-data');
 }
 
+/**
+ * Top-level data-dir entry names owned by an AUTHORED durable store, read from
+ * governance/store-recoverability.v1.json (the register `check-store-recoverability` enforces).
+ *
+ * Each row's `ownedPaths` are data-dir-relative globs ("audit/action-ledger.jsonl",
+ * "memories/*.json", "watched-roots.json"); the first path segment is the entry a directory-level
+ * clean would remove. Rows of every `root` are included: AI_HOME and PROGRAM_DATA_OR_DATA_DIR can
+ * resolve inside the dev data dir, and the set is only ever used to PRESERVE, so a superfluous
+ * name costs nothing while a missing one costs user-authored data. Fails soft — an unreadable or
+ * malformed register yields an empty set, leaving the hand-maintained floor exactly as it was.
+ */
+function authoredStoreTopLevelNames(registerPath) {
+  const file = registerPath || path.join(repoRoot, 'governance', 'store-recoverability.v1.json');
+  const names = new Set();
+  try {
+    const register = JSON.parse(fs.readFileSync(file, 'utf8'));
+    for (const store of register.durableStores || []) {
+      if (store?.recoverability !== 'AUTHORED') continue;
+      for (const owned of store.ownedPaths || []) {
+        if (typeof owned !== 'string') continue;
+        const head = owned.replace(/\\/g, '/').split('/')[0];
+        // A glob in the FIRST segment names no single entry to keep — skip rather than guess.
+        if (!head || head.includes('*')) continue;
+        names.add(head);
+      }
+    }
+  } catch (err) {
+    console.warn(`[dev-runner] store-recoverability register unreadable (${err.message}); soft-clean keeps only the built-in list`);
+  }
+  return names;
+}
+
 async function cleanDataDir(dir, mode) {
   if (mode === 'none') return;
   if (mode === 'hard') {
@@ -297,6 +329,13 @@ async function cleanDataDir(dir, mode) {
     'gpl-training-triples.ndjson',     // GPL training data (hours of LLM work)
     'gpl-eval-snapshot.json',          // GPL eval snapshot (revalidation baseline)
   ]);
+  // ...plus every AUTHORED durable store. The hand list above is the floor, not the authority:
+  // governance/store-recoverability.v1.json is where "this store holds user-authored data that
+  // nothing can regenerate" is declared, and a soft clean that deletes an AUTHORED store (audit/,
+  // conversations/, memories/, feedback/, ...) destroys exactly what AUTHORED means. Deriving the
+  // set here instead of restating it keeps this from forking off the register the next time a
+  // store is added. Additive only — a register that cannot be read leaves the floor intact.
+  for (const owned of authoredStoreTopLevelNames()) keep.add(owned);
   await mkdirp(dir);
   const entries = await fsp.readdir(dir).catch(() => []);
   for (const ent of entries) {
@@ -2117,6 +2156,7 @@ if (require.main === module) {
       pruneHistoricRuns,
       resolveDataDir,
       cleanDataDir,
+      authoredStoreTopLevelNames,
       acquireAdmission,
       readActiveOpLeases,
       // Tempdoc 735 G6: lease-duration clamp + CLI arg parsing.
