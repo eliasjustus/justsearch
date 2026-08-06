@@ -521,7 +521,11 @@ export class StatusDeck extends JfElement {
     const queue = progress.jobsPending;
     const enriching = !embeddingBlocked && progress.phase === 'enriching';
     const enrichingPercent = enriching ? progress.enrichingPercent : null;
-    const embed = embeddingBlocked ? 0 : progress.enrichingPending;
+    // 813 review objection 2: the fallback count under the "embed" label must be the EMBEDDING
+    // stage's own pending count, not `enrichingPending` — that sum counts a document once per
+    // pending stage plus its chunks (~10x the embedding number on a chunked corpus), so rendering
+    // it as "embed: N" was a mislabel, not a bigger truth.
+    const embed = embeddingBlocked ? 0 : progress.embeddingPending;
     // Tempdoc 814 §D5 — the chip's readout yields its degradation flavour to the surface banner that
     // owns that fact (see `yieldsDegradationToBanner`); everywhere else it is the verdict projection.
     const chip = this.inferenceChipReadout();

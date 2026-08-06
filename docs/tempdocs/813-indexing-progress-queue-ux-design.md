@@ -560,3 +560,36 @@ chunk-pathPrefix fix). The merge was resolved by the orchestrator; the decisions
   this branch's comment-only correction; the merged javadoc records the history.
 - Additive unions everywhere else (814's new gate constraint kinds + steps alongside
   `tasks-occlusion`; both baselines; both fixture variants).
+
+## 18. Post-merge review record (2026-08-06, /review-changes)
+
+A second refute-first pass covered the post-remediation delta (the three merge
+reconciliations, merge-completion rework, positive-evidence phase gate) plus
+**live-stack verification** of the shipped build — the outside-anchored evidence the
+first review could not supply:
+
+- **Live, held:** `/api/status` carried `pendingBytes` tracking a real 390-doc ingest
+  (4,953,432 → 1,729,474 → 0 bytes, zero unknown-size jobs); the phase window played out
+  as designed (INDEXING → backfill active with counters falling → settled); finding 9's
+  trap was observed live (doc-level pending 0 while 3,850 chunk embeddings pended) and
+  the chunk-inclusive percent guards it. Per-root: a root added via
+  `POST /api/indexing/roots` served all 8 coverage fields with exact denominators
+  (30/30/30 parents — the folder's true file count — and 335 chunks) and settled counts
+  climbing during enrichment. The reviewer verified the samples could only come from the
+  merged build (`pendingUnknownSizeJobs` exists in exactly one commit).
+- **Fixed from the review:** the status-bar chip's count fallback rendered the
+  multi-stage `rawPending` sum under an "embed" label (~10× the embedding number on a
+  chunked corpus) — now renders `embeddingPending`, with a discriminating test.
+- **Found upstream, filed as an observation (not a 813 defect):** live-witnessed
+  SPLADE/NER **stage starvation** — six consecutive backfill cycles selected 100 SPLADE
+  docs and executed zero SPLADE/NER work because the embed stage consumed the whole 5 s
+  budget first (`CombinedEnrichmentBackfillOps` abort branch). The coverage counting and
+  folder states report this truthfully as "enriching", but the terminal states are
+  unreachable while embedding work keeps arriving. Pre-existing 798 D2c budget design;
+  needs its own worker-side budget-fairness slice.
+- **Honest residuals recorded:** field-presence denominators mean a legacy index whose
+  documents predate a stage's field can read "fully searchable" while lacking that layer
+  (the deliberate inverse trade of the false-incompletion fix); stage-enabled flags
+  default applicable during a brief boot window until model init wires them; the
+  proportion-gate captures were re-taken on current `main` because the original capture
+  evidence did not survive worktree teardown.
