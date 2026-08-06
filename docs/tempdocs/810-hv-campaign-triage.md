@@ -343,6 +343,39 @@ they are not the same mechanism restated.
 
 ---
 
+## e. Review outcome (2026-08-06, post-campaign /review-changes pass)
+
+A refute-first review ran over all 15 merged campaign PRs: a claims list with evidence
+pointers, a live-stack anchor (two dev-stack runs on merged main), and one independent
+refuter briefed to treat every claim as wrong until the evidence held. Results:
+
+- **Two review premises were themselves overturned** (recorded so they don't propagate):
+  the observed "restart-survival failure" was `scripts/dev/dev-runner.cjs`'s soft-clean
+  wiping `audit/` — an environment keep-set forked from the store-recoverability register,
+  not a product defect (the product path was then verified live: a scan rollup survived a
+  real process restart with counts intact); and the "epoch-zero timestamp" in rollup ids is
+  a deliberate `Instant.EPOCH` deterministic-id literal with `durationMs` independently sound.
+- **13 objections survived**; the correctness-relevant ones were fixed in the two review-fix
+  PRs (backend: reserved-collection validation on add-root, MCP `appliedFilters` projection,
+  ledger fan-out dedup, PARTIAL-on-close, register-derived dev-runner keep-set,
+  `searchableDocuments` reader + IOException fallback, memory-WARN episode reset; FE: the
+  dead `INCOMPATIBLE` gate, `reachableViaContact` unknown-handling, the missing #373 FE
+  tests, the spine node-arm test). The rest were routed to observations/T-A.
+- **Calibration fact**: PR #373's report cited FE tests that never existed — the shipped
+  code matched its description exactly, but the test claim was false. Worker-reported test
+  names are not sufficient evidence on their own; the refutation tier caught it.
+- **Measured visual pass** (the campaign's own gap, closed for its own changes): ui-shot +
+  measure companion + a11y/proportion gates over the touched surfaces, plus a live scratch
+  capture. Confirmed rendering: collection pill on every result row, honest enrichment
+  vocabulary, warn-tier-only banner, rung-invariant header. New findings routed to
+  observations: a NEW `scrollable-region-focusable` axe violation on Health, a live
+  `status-fact-dup:"Service degraded"` render-once violation under AI-offline, a bottom-left
+  overlay collision (tour card / enrichment panel / rung row), and a "100% + catching up"
+  poll-race display state.
+- Also on record: C3's "aborted-probe" bug was introduced-and-fixed within PR #374 itself
+  (not pre-existing, as its report implied); the C1 `appliedFilters` echo reflects the
+  request (identical to what is applied, post-#379).
+
 ## Status of this document
 
 - Lane 1 and Lane 2 are delegated; their completion is tracked by their own work, not here.
