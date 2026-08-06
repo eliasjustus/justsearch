@@ -37,7 +37,9 @@ public record KnowledgeSearchResponse(
     QueryUnderstanding queryUnderstanding,
     FilterNormalization filterNormalization,
     // Tempdoc 549 Phase E4: introspection retired — the unified trace is the single source.
-    SearchTrace searchTrace) {
+    SearchTrace searchTrace,
+    // Tempdoc 366 §1b: the filter echo — null when the request carried no filters.
+    AppliedFilters appliedFilters) {
 
   public KnowledgeSearchResponse {
     results = results == null ? List.of() : List.copyOf(results);
@@ -130,6 +132,56 @@ public record KnowledgeSearchResponse(
       String expectedAnswerType) {
     public QueryUnderstanding {
       appliedBoosts = appliedBoosts == null ? Map.of() : Map.copyOf(appliedBoosts);
+    }
+  }
+
+  /**
+   * The filter echo (366 §1b, contract-mapped at {@code api-contract-map.md} "appliedFilters"):
+   * mirrors the {@code filters} / {@code boostFilters} the request actually carried, so a client can
+   * distinguish "the search was scoped" from "the scope was silently dropped" without inferring it
+   * from the returned rows. Emitted only when at least one of the two was non-empty; each member is
+   * null when that half was absent.
+   *
+   * <p>This is an echo of the REQUEST, not a claim about retrieval: it says which filters were sent,
+   * not which index fields every leg could enforce them on (chunk documents, for instance, carry
+   * only a subset of the filterable fields — see {@code QueryFilterBuilder.buildChunkFilterQuery}).
+   */
+  @JsonInclude(JsonInclude.Include.NON_NULL)
+  public record AppliedFilters(
+      KnowledgeSearchRequest.Filters filters, KnowledgeSearchRequest.Filters boostFilters) {
+
+    /** True when {@code f} carries at least one filter value (an all-defaults instance does not). */
+    public static boolean isActive(KnowledgeSearchRequest.Filters f) {
+      if (f == null) {
+        return false;
+      }
+      return !f.mime().isEmpty()
+          || !f.language().isEmpty()
+          || !f.fileKind().isEmpty()
+          || !f.mimeBase().isEmpty()
+          || (f.pathPrefix() != null && !f.pathPrefix().isBlank())
+          || Boolean.TRUE.equals(f.includeChunks())
+          || f.modifiedAt() != null
+          || !f.entityPersons().isEmpty()
+          || !f.entityOrganizations().isEmpty()
+          || !f.entityLocations().isEmpty()
+          || !f.metaSource().isEmpty()
+          || !f.metaAuthor().isEmpty()
+          || !f.metaCategory().isEmpty()
+          || f.metaPublishedAt() != null
+          || !f.docIds().isEmpty()
+          || !f.collection().isEmpty();
+    }
+
+    /** Builds the echo, or null when neither half carries a filter value. */
+    public static AppliedFilters of(
+        KnowledgeSearchRequest.Filters filters, KnowledgeSearchRequest.Filters boostFilters) {
+      boolean hard = isActive(filters);
+      boolean soft = isActive(boostFilters);
+      if (!hard && !soft) {
+        return null;
+      }
+      return new AppliedFilters(hard ? filters : null, soft ? boostFilters : null);
     }
   }
 

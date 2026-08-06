@@ -430,6 +430,8 @@ export class UnifiedChatView extends JfElement {
     showResumePrompt: { state: true },
     // Tempdoc 629 (LAYER) — the resumed conversation's store is encrypted + locked (history 423'd).
     historyLocked: { state: true },
+    // Tempdoc 734 round-14 F4 — a send the locked store refused (dispatch answered 423).
+    lockedSendNotice: { state: true },
     // Tempdoc 577 §2.13 #17 — the agent authority-space panel toggle.
     showAbilities: { state: true },
     // Search Thread Round-2 R1a — the degradation banner's expand/collapse disclosure. A transient
@@ -592,6 +594,12 @@ export class UnifiedChatView extends JfElement {
   declare showResumePrompt: boolean;
   /** Tempdoc 629 (LAYER) — the resumed conversation is encrypted + locked (history returned 423). */
   declare historyLocked: boolean;
+  /**
+   * Tempdoc 734 round-14 F4 — the wording for a send the locked store refused: the dispatch answered
+   * 423 because the store locked between this composer's render and the submit. Empty unless that
+   * happened, so the ordinary locked view (a conversation resumed while locked) is unchanged.
+   */
+  declare lockedSendNotice: string;
   /** Tempdoc 577 §2.13 #17 — the agent authority-space ("what can it do") panel is open. */
   declare showAbilities: boolean;
   /**
@@ -763,6 +771,7 @@ export class UnifiedChatView extends JfElement {
     this.streamingText = '';
     this.errorMessage = '';
     this.historyLocked = false;
+    this.lockedSendNotice = '';
     // Tempdoc 577 Goal 3 (§3.11) / Search Thread S5a — the window lands DERIVED (no explicit pin):
     // deriveAffordance yields the `retrieve` base tier, the always-available search floor. The old
     // AI-online auto-upgrade to `documents` is gone (decision B14 — capability appearing must not
@@ -1029,6 +1038,9 @@ export class UnifiedChatView extends JfElement {
       this.historyLocked = true;
     } else if (convState === 'unlocked') {
       this.historyLocked = false;
+      // Tempdoc 734 round-14 F4 — the refusal notice is about a lock that is now gone; keeping it
+      // would leave a stale "your message was not sent" over a composer that can send again.
+      this.lockedSendNotice = '';
     }
     this.maybeAutoRun();
   }
@@ -1067,6 +1079,7 @@ export class UnifiedChatView extends JfElement {
     this.streamingText = '';
     this.errorMessage = '';
     this.historyLocked = false;
+    this.lockedSendNotice = '';
     this.citations = [];
     this.sources = [];
     this.claims = [];
@@ -2589,8 +2602,17 @@ export class UnifiedChatView extends JfElement {
           ${/* Tempdoc 585 §D Phase 1 (C1) — run-replay scrubber: shown only when the shared controller
                is in replayMode (a finished run loaded via RetrospectivePanel → loadReplay). */ ''}
           ${this.agentCtrl?.replayMode ? this.renderReplayBar() : nothing}
+          ${/* Tempdoc 734 round-14 F4 (the second half of "200, no answer, NO ERROR"): the locked
+                branch used to replace the whole column, error div included. A locked dispatch DID
+                report itself — `loadEffectiveContext` → `readMeta` raises KeyLockedException before
+                any append, and the controller writes it as an SSE `error` event — but the surface
+                had already stopped rendering the only element that shows one. Whatever the stream
+                says is now said in both branches; the transcript stays gated, the failure does not. */ ''}
           ${this.historyLocked
-            ? this.renderHistoryLocked()
+            ? html`${this.renderHistoryLocked()}
+                ${this.errorMessage
+                  ? html`<div class="error">${this.errorMessage}</div>`
+                  : nothing}`
             : html`
                 ${this.renderUnifiedConversation()}
                 ${this.renderLiveOverlay()}
@@ -2721,6 +2743,27 @@ export class UnifiedChatView extends JfElement {
   }
 
   /**
+   * The ONE reason this composer's submit cannot run right now, worded — empty string when it can.
+   * Both the `submit-disabled` gate and the `submit-title` reason read it, so a disabled Send always
+   * names why (the sibling of the escalation rungs' `unavailableBecause`, which words their own).
+   *
+   * Tempdoc 734 round-14 F4 adds the locked arm. It is gated on the affordance for the same reason
+   * the backend gates its 423 on the write key: the `retrieve` tier runs a plain search, which is
+   * neither AI-dependent nor encrypted — disabling it while locked would refuse a turn that works
+   * (the locked notice itself promises "your search index is unaffected"). The empty-draft case is
+   * NOT here: it disables Send with no wording because it needs none.
+   */
+  private sendBlockedReason(): string {
+    if (this.aiState?.verdict?.kind === 'unreachable') return 'Backend disconnected';
+    if (this.affordance === 'retrieve') return '';
+    if (!this.aiState?.capabilities?.chat) return 'AI offline';
+    if (this.historyLocked) {
+      return `${reasonFor('conversations.locked').wording} — unlock it in Security to send`;
+    }
+    return '';
+  }
+
+  /**
    * Search Thread D2/D3 (stage S2) — the composer's inner content (steer input / affordance preview /
    * schema input / the retrieve-tier route chip / the one `jf-composer`), extracted so both the
    * docked (bottom) composer and the landing composer render the SAME template — never two mounted
@@ -2739,17 +2782,9 @@ export class UnifiedChatView extends JfElement {
         .value=${this.inputDraft}
         placeholder=${this.getPlaceholder()}
         ?streaming=${this.isStreaming}
-        ?submit-disabled=${!this.inputDraft.trim() ||
-        this.aiState?.verdict?.kind === 'unreachable' ||
-        (this.affordance !== 'retrieve' && !this.aiState?.capabilities?.chat)}
+        ?submit-disabled=${!this.inputDraft.trim() || this.sendBlockedReason() !== ''}
         submit-label=${this.getSubmitLabel()}
-        submit-title=${
-          this.aiState?.verdict?.kind === 'unreachable'
-            ? 'Backend disconnected'
-            : this.affordance !== 'retrieve' && !this.aiState?.capabilities?.chat
-              ? 'AI offline'
-              : ''
-        }
+        submit-title=${this.sendBlockedReason()}
         cancel-label=${this.streamingText ? 'Stop' : 'Cancel'}
         @composer-input=${(e: CustomEvent<{ value: string }>) => {
           this.inputDraft = e.detail.value;
@@ -4308,6 +4343,14 @@ export class UnifiedChatView extends JfElement {
       <div class="history-locked" role="status">
         <p>${icon({ name: 'shield', size: 16 })} <strong>${r.wording}</strong>.</p>
         <p class="help">Unlock it to read your chat history — your search index is unaffected.</p>
+        ${/* Tempdoc 734 round-14 F4 — present only when a send was actually refused (dispatch 423),
+              so the resumed-while-locked case reads exactly as it did before. It says what became of
+              the message, next to the remedy that fixes it; the draft is back in the composer. */ ''}
+        ${this.lockedSendNotice
+          ? html`<p class="locked-send-notice" role="alert">
+              ${this.lockedSendNotice} Your text is back in the composer — unlock to send it.
+            </p>`
+          : nothing}
         ${nav
           ? html`<jf-button .onActivate=${() => requestSurfaceNavigation(nav.target)}>
               ${icon({ name: 'shield', size: 14 })} ${nav.label}
@@ -5935,13 +5978,35 @@ export class UnifiedChatView extends JfElement {
         this.abortController.signal,
       );
     } catch (err) {
-      if (!(err instanceof Error && err.name === 'AbortError')) {
+      const status = err instanceof Error ? (err as Error & { status?: number }).status : undefined;
+      if (status === 423) {
+        this.noteRefusedWhileLocked(text);
+      } else if (!(err instanceof Error && err.name === 'AbortError')) {
         this.errorMessage = friendlyStreamError(err);
       }
     } finally {
       this.isStreaming = false;
       this.abortController = null;
     }
+  }
+
+  /**
+   * Tempdoc 734 round-14 F4 — the store locked between this composer's render and the submit (an
+   * idle/auto-lock, another window, another tab), so dispatch refused with 423 instead of accepting a
+   * turn no store would hold. Three things follow, and all three are required for the surface to stay
+   * honest: adopt the locked state the server just reported (which renders the notice + its "Unlock in
+   * Security" affordance and disables Send), take back the optimistic user bubble — a message shown as
+   * sent that was never recorded is the same lie in the UI as the 200 was on the wire — and put the
+   * text back in the composer, because it is the user's and nothing else is holding it.
+   */
+  private noteRefusedWhileLocked(text: string): void {
+    this.historyLocked = true;
+    this.lockedSendNotice = `${reasonFor('conversations.locked').wording} — your message was not sent.`;
+    const last = this.thread.at(-1);
+    if (last?.role === 'user' && last.content === text) {
+      this.thread = this.thread.slice(0, -1);
+    }
+    if (!this.inputDraft.trim()) this.inputDraft = text;
   }
 }
 

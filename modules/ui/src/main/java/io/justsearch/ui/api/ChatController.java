@@ -46,6 +46,15 @@ public final class ChatController {
   private static final ObjectMapper MAPPER = new ObjectMapper();
   private static final String AUDIENCE_HEADER = "X-JustSearch-Audience";
 
+  /**
+   * Tempdoc 734 round-14 F4 — HTTP 423 Locked, the answer this codebase already gives for "an
+   * AUTHORED store's data key is locked": the conversation-history read raises it through the global
+   * {@code KeyLockedException} mapping ({@code LocalApiServer}) and {@code MemoryController} answers
+   * its locked mutations with it. The dispatch write path conforms rather than minting a second
+   * status for the one condition.
+   */
+  private static final int LOCKED_STATUS = 423;
+
   private final ConversationEngine engine;
   private final SseWriter sseWriter;
   private final Telemetry telemetry;
@@ -93,64 +102,80 @@ public final class ChatController {
    */
   public io.javalin.http.Handler dynamicHandler(String route) {
     return ctx -> {
-      @SuppressWarnings("unchecked")
-      Map<String, Object> body =
-          ctx.body() == null || ctx.body().isEmpty()
-              ? Map.of()
-              : MAPPER.readValue(ctx.body(), Map.class);
-      Object rawShapeId = body.get("shapeId");
+      Object rawShapeId = readBody(ctx).get("shapeId");
       if (rawShapeId == null || rawShapeId.toString().isBlank()) {
         sseWriter.initSseHeaders(ctx, route);
-        Map<String, Object> err = new LinkedHashMap<>();
-        err.put("error", "Missing required field: shapeId");
-        err.put("errorCode", ApiErrorCode.INVALID_REQUEST.name());
-        err.put("errorClass", ApiErrorCode.INVALID_REQUEST.errorClass().name());
-        err.put("retryable", false);
-        sseWriter.writeEvent(ctx, "error", err);
+        sseError(ctx, "Missing required field: shapeId", ApiErrorCode.INVALID_REQUEST);
         return;
       }
       dispatch(ctx, new ConversationShapeRef(rawShapeId.toString().trim()), route);
     };
   }
 
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> readBody(Context ctx) {
+    return ctx.body() == null || ctx.body().isEmpty()
+        ? Map.of()
+        : MAPPER.readValue(ctx.body(), Map.class);
+  }
+
+  /** The one SSE {@code error} event shape: message + the typed code triple the FE reads. */
+  private void sseError(Context ctx, String message, ApiErrorCode code) {
+    Map<String, Object> err = new LinkedHashMap<>();
+    err.put("error", message);
+    err.put("errorCode", code.name());
+    err.put("errorClass", code.errorClass().name());
+    err.put("retryable", code.isRetryable());
+    sseWriter.writeEvent(ctx, "error", err);
+  }
+
+  private static String message(Exception e) {
+    return e.getMessage() == null ? e.toString() : e.getMessage();
+  }
+
   private void dispatch(Context ctx, ConversationShapeRef shapeId, String route) {
+    // Tempdoc 734 round-14 F4 — the locked gate runs BEFORE the SSE headers commit a 200: with chat
+    // persistence encrypted and locked, a turn that would be recorded is accepted-and-dropped (the
+    // append throws, nothing reaches disk, and the transcript after unlock holds no trace of it). The
+    // read path already answers this condition 423; the write path now gives the same answer instead
+    // of an empty success. Parsed here (rather than inside the try below) because the answer depends
+    // on the body's write key — a body that will not parse keeps its previous SSE-error behaviour.
+    Map<String, Object> parsedBody;
+    try {
+      parsedBody = readBody(ctx);
+    } catch (RuntimeException malformed) {
+      sseWriter.initSseHeaders(ctx, route);
+      LOG.error("Chat dispatch failed for shape {}", shapeId.value(), malformed);
+      sseError(ctx, message(malformed), ApiErrorCode.BAD_REQUEST);
+      return;
+    }
+    if (engine.wouldDiscardWhileLocked(shapeId, parsedBody)) {
+      LOG.info("Refusing dispatch of shape {}: conversation store is locked", shapeId.value());
+      Map<String, Object> locked =
+          ApiErrorHandler.toResponse(
+              ApiErrorCode.STORE_LOCKED,
+              "Your chat history is encrypted and locked - unlock it to send a message.");
+      locked.put("locked", true);
+      ctx.status(LOCKED_STATUS).json(locked);
+      return;
+    }
     sseWriter.initSseHeaders(ctx, route);
     try {
-      @SuppressWarnings("unchecked")
-      Map<String, Object> body =
-          ctx.body() == null || ctx.body().isEmpty()
-              ? Map.of()
-              : MAPPER.readValue(ctx.body(), Map.class);
       Audience audience = readAudience(ctx);
       engine.run(
           shapeId,
-          body,
+          parsedBody,
           audience,
           sseEvent -> sseWriter.writeEvent(ctx, sseEvent.name(), sseEvent.payload()));
     } catch (ConversationEngine.AudienceDeniedException denied) {
       LOG.info("Audience denied for shape {}: {}", shapeId.value(), denied.getMessage());
-      Map<String, Object> err = new LinkedHashMap<>();
-      err.put("error", denied.getMessage());
-      err.put("errorCode", ApiErrorCode.INVALID_REQUEST.name());
-      err.put("errorClass", ApiErrorCode.INVALID_REQUEST.errorClass().name());
-      err.put("retryable", ApiErrorCode.INVALID_REQUEST.isRetryable());
-      sseWriter.writeEvent(ctx, "error", err);
+      sseError(ctx, denied.getMessage(), ApiErrorCode.INVALID_REQUEST);
     } catch (ConversationEngine.ShapeNotFoundException notFound) {
       LOG.error("Shape not registered: {}", shapeId.value());
-      Map<String, Object> err = new LinkedHashMap<>();
-      err.put("error", notFound.getMessage());
-      err.put("errorCode", ApiErrorCode.NOT_FOUND.name());
-      err.put("errorClass", ApiErrorCode.NOT_FOUND.errorClass().name());
-      err.put("retryable", ApiErrorCode.NOT_FOUND.isRetryable());
-      sseWriter.writeEvent(ctx, "error", err);
+      sseError(ctx, notFound.getMessage(), ApiErrorCode.NOT_FOUND);
     } catch (Exception e) {
       LOG.error("Chat dispatch failed for shape {}", shapeId.value(), e);
-      Map<String, Object> err = new LinkedHashMap<>();
-      err.put("error", e.getMessage() == null ? e.toString() : e.getMessage());
-      err.put("errorCode", ApiErrorCode.BAD_REQUEST.name());
-      err.put("errorClass", ApiErrorCode.BAD_REQUEST.errorClass().name());
-      err.put("retryable", ApiErrorCode.BAD_REQUEST.isRetryable());
-      sseWriter.writeEvent(ctx, "error", err);
+      sseError(ctx, message(e), ApiErrorCode.BAD_REQUEST);
     }
     // Suppress unused-field warning until telemetry is wired into per-shape spans (Phase D).
     if (telemetry == null) {

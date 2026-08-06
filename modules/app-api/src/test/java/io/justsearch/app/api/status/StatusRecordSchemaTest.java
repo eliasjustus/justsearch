@@ -988,6 +988,16 @@ final class StatusRecordSchemaTest {
                         null,
                         null,
                         null))))
+        // Tempdoc 366 §1b: the filter echo. The sample carries an ACTIVE filter set so the
+        // cross-language fixture exercises the shape the FE actually receives (a scoped search),
+        // not the null the unscoped case emits.
+        .appliedFilters(
+            KnowledgeSearchResponse.AppliedFilters.of(
+                io.justsearch.app.api.knowledge.KnowledgeSearchRequestFiltersBuilder.builder()
+                    .pathPrefix("C:/docs")
+                    .fileKind(List.of("markdown"))
+                    .build(),
+                null))
         .build();
   }
 }

@@ -10,6 +10,52 @@
 
 import { z } from 'zod';
 
+export type TimeRangeMsNullable = {
+  fromMs?: number | null;
+  toMs?: number | null;
+} | null;
+export const timeRangeMsNullableSchema = z.strictObject({
+  "fromMs": z.number().int().nullable().optional(),
+  "toMs": z.number().int().nullable().optional(),
+}).nullable();
+
+export interface Filters {
+  collection?: string[] | null;
+  docIds?: string[] | null;
+  entityLocations?: string[] | null;
+  entityOrganizations?: string[] | null;
+  entityPersons?: string[] | null;
+  fileKind?: string[] | null;
+  includeChunks?: boolean | null;
+  language?: string[] | null;
+  metaAuthor?: string[] | null;
+  metaCategory?: string[] | null;
+  metaPublishedAt?: TimeRangeMsNullable;
+  metaSource?: string[] | null;
+  mime?: string[] | null;
+  mimeBase?: string[] | null;
+  modifiedAt?: TimeRangeMsNullable;
+  pathPrefix?: string | null;
+}
+export const filtersSchema = z.strictObject({
+  "collection": z.array(z.string()).nullable().optional(),
+  "docIds": z.array(z.string()).nullable().optional(),
+  "entityLocations": z.array(z.string()).nullable().optional(),
+  "entityOrganizations": z.array(z.string()).nullable().optional(),
+  "entityPersons": z.array(z.string()).nullable().optional(),
+  "fileKind": z.array(z.string()).nullable().optional(),
+  "includeChunks": z.boolean().nullable().optional(),
+  "language": z.array(z.string()).nullable().optional(),
+  "metaAuthor": z.array(z.string()).nullable().optional(),
+  "metaCategory": z.array(z.string()).nullable().optional(),
+  "metaPublishedAt": timeRangeMsNullableSchema.optional(),
+  "metaSource": z.array(z.string()).nullable().optional(),
+  "mime": z.array(z.string()).nullable().optional(),
+  "mimeBase": z.array(z.string()).nullable().optional(),
+  "modifiedAt": timeRangeMsNullableSchema.optional(),
+  "pathPrefix": z.string().nullable().optional(),
+});
+
 export interface MatchSpan {
   endChar?: number;
   field?: string | null;
@@ -27,6 +73,10 @@ export type StageId = "query-understanding" | "expansion" | "correction" | "spar
 export const stageIdSchema = z.enum(["query-understanding", "expansion", "correction", "sparse-retrieval", "dense-retrieval", "splade-retrieval", "fusion", "chunk-merge", "branch-fusion", "lambdamart", "cross-encoder", "freshness"]);
 
 export interface KnowledgeSearchResponse {
+  appliedFilters?: {
+    boostFilters?: Filters;
+    filters?: Filters;
+  } | null;
   entityFacetVariants?: Record<string, ({
     canonicalForm?: string | null;
     totalCount?: number;
@@ -103,6 +153,10 @@ export interface KnowledgeSearchResponse {
   totalHits?: number;
 }
 export const knowledgeSearchResponseSchema = z.strictObject({
+  "appliedFilters": z.strictObject({
+    "boostFilters": filtersSchema.optional(),
+    "filters": filtersSchema.optional(),
+  }).nullable().optional(),
   "entityFacetVariants": z.record(z.string(), z.array(z.strictObject({
     "canonicalForm": z.string().nullable().optional(),
     "totalCount": z.number().int().optional(),

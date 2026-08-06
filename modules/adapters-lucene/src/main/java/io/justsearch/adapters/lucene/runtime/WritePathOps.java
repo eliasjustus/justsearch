@@ -245,6 +245,9 @@ public final class WritePathOps {
         throw new IllegalStateException("IndexWriter not available (runtime not started or closed)");
       }
       w.deleteDocuments(query);
+      // Tempdoc 809 finding 3: publish the bulk-deletion signal AFTER the delete is submitted, so
+      // any reader that observes the new epoch is guaranteed the deletion is already in the writer.
+      session.bulkDeleteEpoch.incrementAndGet();
       log.info("deleteByPathPrefix: deletion submitted for path prefix: {}", normalized);
     } catch (IOException e) {
       throw new IndexRuntimeIOException(
@@ -638,6 +641,7 @@ public final class WritePathOps {
         throw new IllegalStateException("IndexWriter not available (runtime not started or closed)");
       }
       w.deleteAll();
+      session.bulkDeleteEpoch.incrementAndGet(); // tempdoc 809 finding 3 — see deleteByPathPrefix
       log.info("deleteAll: all documents deleted from index");
     } catch (IOException e) {
       throw new IndexRuntimeIOException(
