@@ -229,6 +229,22 @@ function mountView(): UnifiedChatView {
 // block that sets Detailed mode cannot leak into a later block that expects the Simple default.
 afterEach(() => __resetUiModeForTest());
 
+/**
+ * Tempdoc 814 §D6 — window HEIGHT is now a real input to what this view renders (the block-axis
+ * breakpoint gates Detailed-mode banner expansion). happy-dom's virtual window is 1024x768 — i.e.
+ * already BELOW the 820px breakpoint — so leaving it implicit would silently run the whole file in
+ * the short branch. The suite therefore DECLARES its viewport: tall (above-breakpoint, the roomy
+ * case the pre-814 assertions describe) by default; the cases that exercise the yield set their own.
+ */
+const TALL_VIEWPORT_PX = 1000;
+const SHORT_VIEWPORT_PX = 700;
+function setViewportHeight(px: number): void {
+  (
+    window as unknown as { happyDOM: { setViewport: (v: { height: number }) => void } }
+  ).happyDOM.setViewport({ height: px });
+}
+beforeEach(() => setViewportHeight(TALL_VIEWPORT_PX));
+
 describe('UnifiedChatView — 637 #1 disconnected banner tone (Fix 1)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -410,6 +426,49 @@ describe('UnifiedChatView degradation banner disclosure (Tempdoc 738)', () => {
     (view.shadowRoot?.querySelector('[data-testid="chat-degradation-collapse"]') as HTMLButtonElement).click();
     await view.updateComplete;
     expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
+  });
+
+  // Tempdoc 814 §D2/§D6 — Detailed mode buys its extra height from the conversation, and below the
+  // block-axis breakpoint there is none to buy: the same verdict renders the pill first and expands
+  // on interaction. The 600 wording invariant is unaffected (headline + remedy stay in the pill,
+  // every cause one click away) — this is a height policy, not a wording one.
+  it('below the block-axis breakpoint, Detailed renders the COLLAPSED pill with a working expand affordance', async () => {
+    setViewportHeight(SHORT_VIEWPORT_PX);
+    setUiMode('advanced');
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
+    await view.updateComplete;
+    // Collapsed: the raw causes are not in flow …
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
+    // … the worded headline and the strongest remedy still are …
+    expect(
+      view.shadowRoot?.querySelector('[data-testid="chat-degradation-summary"]')?.textContent,
+    ).toContain('Semantic search degraded');
+    expect(
+      view.shadowRoot?.querySelector('[data-testid="chat-degradation-remedy-op"]')?.getAttribute('operation-id'),
+    ).toBe('core.trigger-offline-processing');
+    // … and the detail is one click away, not gone.
+    const expand = view.shadowRoot?.querySelector(
+      '[data-testid="chat-degradation-expand"]',
+    ) as HTMLButtonElement | null;
+    expect(expand).not.toBeNull();
+    expand!.click();
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).not.toBeNull();
+  });
+
+  it('a severe (error) verdict still forces expansion below the breakpoint — the height gate is not a severity gate', async () => {
+    // Precision guard for the case above: proves the short-viewport branch collapses Detailed's
+    // DISCLOSURE choice, not a genuine failure that the user must be able to read without a click.
+    setViewportHeight(SHORT_VIEWPORT_PX);
+    setUiMode('advanced');
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'error', reasons: ['worker.restart_exhausted'] });
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).not.toBeNull();
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-collapse"]')).toBeNull();
   });
 
   it('drops the single reindex cause bullet (dedup by code) when expanded — the headline already says it', async () => {

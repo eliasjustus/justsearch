@@ -28,7 +28,7 @@ import {
   type ShapeId,
   type ThreadMessage,
 } from './unifiedChatRequest.js';
-import { composeGridStyles } from '../primitives/compositionLayout.js';
+import { composeGridStyles, subscribeShortViewport } from '../primitives/compositionLayout.js';
 import { friendlyStreamError } from '../utils/streamError.js';
 import { composerStyles } from '../components/Composer.js';
 import '../components/Composer.js';
@@ -676,6 +676,12 @@ export class UnifiedChatView extends JfElement {
   // disagree about whether the wide layout is in effect.
   private wideZone = true;
   private unsubWide: (() => void) | null = null;
+  // Tempdoc 814 §D6 — the BLOCK-axis sibling of `wideZone`: is the window below the one block-axis
+  // breakpoint (primitives/compositionLayout.ts)? Chrome that may spend height freely on a tall window
+  // yields on a short one. Defaults to NOT short so an unknown viewport (SSR, unit tests) keeps every
+  // band's full form — the same unavailable-means-roomy default `wideZone` carries.
+  private shortZone = false;
+  private unsubShort: (() => void) | null = null;
   private zoneResizeObserver: ResizeObserver | null = null;
   private observedBox: HTMLElement | null = null;
   // Tempdoc 565 §21 — the chat-first Navigation authority. The run-spine's "where am I / how do I move"
@@ -793,6 +799,12 @@ export class UnifiedChatView extends JfElement {
     // via the shared responsiveState authority (fires once immediately with the current value).
     this.unsubWide = subscribeWide((wide) => {
       this.wideZone = wide;
+      this.requestUpdate();
+    });
+    // Tempdoc 814 §D6 — the same fan-out on the block axis (fires once immediately with the current
+    // value), so a vertical resize across the breakpoint re-renders the height-gated chrome.
+    this.unsubShort = subscribeShortViewport((short) => {
+      this.shortZone = short;
       this.requestUpdate();
     });
     this.observeSurfaceWidth();
@@ -1090,6 +1102,8 @@ export class UnifiedChatView extends JfElement {
     this.selectedSourceUnsub = null;
     this.unsubWide?.();
     this.unsubWide = null;
+    this.unsubShort?.();
+    this.unsubShort = null;
     this.zoneResizeObserver?.disconnect();
     this.zoneResizeObserver = null;
     this.observedBox = null;
@@ -2269,7 +2283,14 @@ export class UnifiedChatView extends JfElement {
     // opens expanded even in Simple so a genuine failure is never a single ellipsized line. The local
     // "See details" toggle (degradationBannerExpanded) lets a Simple user open a cosmetic notice on
     // demand; nothing is remembered per cause-set (687's seen-hash machinery is gone).
-    const forcedExpanded = isAdvancedMode() || verdict.severity === 'error';
+    // Tempdoc 814 §D2/§D6 — Detailed mode buys its extra height from the conversation, and on a short
+    // window there is none to buy: below the block-axis breakpoint Detailed renders the pill FIRST and
+    // expands on interaction (the expand chevron below), so the detail is one click away rather than
+    // permanently in flow. An `error` verdict still forces expansion at any height — a genuine failure
+    // is never a single ellipsized line. The 600 wording invariant is untouched either way: the pill
+    // carries the worded headline + the remedy, and every worded cause stays reachable.
+    const forcedExpanded =
+      verdict.severity === 'error' || (isAdvancedMode() && !this.shortZone);
     if (!forcedExpanded && !this.degradationBannerExpanded) {
       return this.renderCollapsedDegradationBanner(verdict, notice);
     }
