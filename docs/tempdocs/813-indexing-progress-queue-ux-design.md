@@ -469,3 +469,56 @@ single-sense "offline" copy-lint (finding 11's regression home); satisfy
 ui-web gate set, ui-shot steps, critical-analysis pass, independent refute-first review
 (reviewer ≠ implementer), live-stack spot verification if the shared dev stack is free,
 813 updated with evidence.
+
+## 16. Implementation record (2026-08-06/07)
+
+All five slices landed on `worktree-ta-indexing-ux` (A: per-root coverage; C: the
+projection + index-wide consumers; B: size-at-enqueue V8 + `pendingBytes`; D: Tasks
+aggregate card + reserved band + `tasks-occlusion` step; E: two-tier folders, rename,
+docs sweep, gate wiring, offline copy-lint), each verified green before commit.
+
+**Independent refute-first review** (reviewer ≠ implementers) found no blocker; the
+prefix arithmetic, migration, cache keying, and reserved band survived adversarial
+probing. It found **3 HIGHs — all in the claim layer** §11's principle governs, which is
+evidence for the principle and against the first implementation of it: (1+2, one root
+cause) the chunk tier lacked the applicability gate the parent stage had — false
+*incompletion* ("Ready" unreachable) with embeddings disabled, false *completion*
+("fully searchable") on the unknown-applicability sentinel production actually delivers;
+(3) the renamed operation's description asserted an AI-engine precondition the catalog
+deliberately removed. All three fixed in the remediation commit, with a
+production-sentinel-shape test (not a hand-made null) pinning the sentinel fix; ten MEDs
+fixed in the same pass (ERROR-arm dual derivation collapsed; legacy-index denominators
+now field-presence-based — widening the wire to 8 per-stage coverage fields; cache
+javadoc corrected + no caching of failures; the folder-status gate's predicate extended
+to the new fields; ETA additionally suppressed while the backlog is growing, read from
+the queue-depth trend; watcher + gRPC size producers test-pinned; `pendingBytes` gained
+an error-distinguishable `UNAVAILABLE` marker and a real consumer — the Tasks card's
+"N files remaining · N GB" line; occlusion floor 160→140 with rationale).
+
+**Accepted deviations from the letter of this design:** §6's "(N pending)" inline count
+is not wired — the label is one static registry string read by both render sites; a
+dynamic label would be new substrate for marginal value (the banner remedy and folder
+rows already carry pending context). VDU is not a stage in the coverage percent
+(`pendingVduCount` stays separate); with the dual-derivation collapse, VDU-only work no
+longer renders a Now-strip row — consistent, and recorded here as a behavior change.
+`computeRootCoverage`'s no-cache-on-IOException behavior is inspection-verified only
+(the only injection point is a final production class; a seam change for one test was
+not warranted).
+
+**Verification evidence:** full `./gradlew.bat test` BUILD SUCCESSFUL (bare, twice:
+post-Wave-2 and post-remediation); FE 385 files / 4091 tests green + typecheck clean;
+ui-web gate set green except the two recorded pre-existing reds (RecentsMenu
+theme-token ghosts, ActionLedgerView accent-as-text — expected-state.v1.json); wire /
+operation-surface / register-guard-resolution / folder-status-derivation /
+offline-single-sense all green (wire verified non-vacuous after a `buf-cli-missing`
+vacuous pass was caught and logged); `tasks-occlusion` ui-shot captured live in
+fixtures mode — panel genuinely rendered (159×94 rect, "Indexing progress" in the a11y
+tree, coarse "~1m 43s" ETA line visible), no overlap with Settings/Help, axe 0 new.
+Live-stack verification against a running backend was not performed (shared dev stack
+not leased during this arc); the fixtures-mode capture plus unit/gate tiers are the
+evidence base, and the §9 stale-transport live repro remains open for a future
+dev-stack session.
+
+**Register note:** `/search-quality` and `/inference-runtime` registers not updated —
+this work changes no retrieval behavior and no inference runtime; it projects existing
+counters. (Rule satisfied by stating why.)

@@ -24,7 +24,6 @@ import { JfElement } from '../primitives/JfElement.js';
 import { surfaceLayoutStyles } from '../primitives/surfaceLayout.js';
 import { subscribeTasks, listTasks, type Task } from '../substrates/tasks/index.js';
 import { subscribeAiState, type AiState } from '../state/aiStateStore.js';
-import { isKnown, type Maybe } from '../state/known.js';
 import { selectIndexingProgress, type IndexingProgress } from '../state/indexingProgress.js';
 import {
   subscribeInstallStatus,
@@ -32,43 +31,30 @@ import {
   setInstallStatusApiBase,
 } from '../substrates/ai/aiInstallBridge.js';
 
-function knownPositive(value: Maybe<number>): number {
-  return isKnown(value) && value.value > 0 ? value.value : 0;
-}
-
 /**
- * Tempdoc 727 F-2 — the embedding/VDU queue counters are a heuristic fallback for background work
- * that has no explicit job row (`pendingJobs`). They are polled from a DIFFERENT subsystem
- * (`/api/inference/status`) than the worker's own job queue, so they can independently retain a
- * stale positive residue after the worker itself has settled — the observed defect: the "Now" strip
- * kept claiming "Processing 10 items / running" for minutes after `worker.core.indexState` had
- * already gone IDLE (10 = embeddingPending(2) + embeddingQueueSize(3) + vduQueueSize(5) in the
- * captured repro; no single API field ever held the literal value 10). The worker's `indexState` is
- * the SAME authoritative truth the "Index state" row and the Queue card already trust (HealthSurface
- * §renderConnection / §renderStats) — once it has authoritatively settled to IDLE, a residual counter
- * from the other subsystem is stale, not live, so it must not override that truth.
+ * Tempdoc 727 F-2 — the "Now" strip kept claiming "Processing 10 items / running" for minutes after
+ * `worker.core.indexState` had already gone IDLE (10 = embeddingPending(2) + embeddingQueueSize(3)
+ * + vduQueueSize(5) from `/api/inference/status`; no single API field ever held the literal 10).
+ * F-2 cured that by suppressing the counters on IDLE; 813 §4 narrowed the suppression so the real
+ * enrichment window (also IDLE) could speak again.
  *
- * Tempdoc 813 §4 NARROWS this suppression rather than repealing it. F-2 was right that a stale
- * counter must not fake activity; it overcorrected by also hiding REAL activity, because the same
- * `indexState === 'IDLE'` holds throughout the enrichment window (the backfill runs on idle cycles
- * and never sets INDEXING). The narrowing lives at the render site, not here: this function keeps
- * returning `null` for idle residue, and the strip separately renders an "Enriching — N%" row from
- * the {@link selectIndexingProgress} authority when the backfill is genuinely active. So a
- * stale-residue snapshot still reads "System idle"; an enriching one no longer lies about it.
+ * The remediation of 813 finishes the job by removing the SECOND derivation instead of tuning it.
+ * The strip's indexing row now counts the job queue from the ONE projection
+ * ({@link selectIndexingProgress}) — the same jobs table the Health Queue card reads — and the
+ * enrichment backlog is described exactly once, by the Enrichment row ({@link enrichingLabel}).
+ * Before this, a snapshot whose `indexState` was neither IDLE nor job-backed (an ERROR worker, or
+ * INDEXING with the jobs already drained) rendered BOTH rows off two different subsystems: a
+ * "Processing 10 items" line from the inference counters beside an "Enriching — 64%" line from the
+ * status poll, two numbers for one backlog. F-2's stale-residue defect is now unrepresentable
+ * rather than suppressed: there is no cross-subsystem counter left to go stale.
+ *
+ * Returns `null` (no row) unless the projection reports actual job-queue work; `unknown` (the
+ * worker did not report) and a stale snapshot never assert activity — 807 A.3, the same gate
+ * {@link enrichingLabel} applies.
  */
-export function visibleIndexQueueCount(
-  aiState: (Pick<AiState, 'index'> & Partial<Pick<AiState, 'status'>>) | null,
-): number | null {
-  if (aiState === null) return null;
-  const index = aiState.index;
-  const pendingJobs = knownPositive(index.pendingJobs);
-  if (pendingJobs > 0) return pendingJobs;
-  if (aiState.status?.worker?.core?.indexState === 'IDLE') return null;
-  const queued =
-    knownPositive(index.embeddingPending) +
-    knownPositive(index.embeddingQueueSize) +
-    knownPositive(index.vduQueueSize);
-  return queued > 0 ? queued : null;
+export function visibleIndexQueueCount(progress: IndexingProgress): number | null {
+  if (!progress.live || progress.phase === 'unknown') return null;
+  return progress.jobsPending > 0 ? progress.jobsPending : null;
 }
 
 /**
@@ -229,7 +215,7 @@ export class SystemSelfView extends JfElement {
         ? 'Indexing'
         : `Indexing — ${progress.jobsRunning} running · ${progress.jobsQueued} queued`;
     const enriching = enrichingLabel(progress);
-    const indexQueueCount = visibleIndexQueueCount(this.aiState);
+    const indexQueueCount = visibleIndexQueueCount(progress);
     const indexQueueBusy = indexQueueCount !== null && tasks.length === 0;
     const idle =
       tasks.length === 0 &&

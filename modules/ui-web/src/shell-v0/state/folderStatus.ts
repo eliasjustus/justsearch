@@ -86,8 +86,8 @@ function count(value: number | null | undefined): number {
  * denominator, and "settled" is the TERMINAL count the Worker computed (COMPLETED + COMPLETED_EMPTY
  * where the stage defines it + FAILED — `IndexedRootView`'s numerator discipline), so a permanently
  * failed document cannot hold a folder below 100% forever. Denominator discipline is likewise the
- * wire's: the three parent stages share the parent-doc total (chunk docs excluded) and the chunk tier
- * is counted over CHUNKED documents, never "N of M files".
+ * wire's: every parent stage counts only the documents that carry ITS status field (chunk docs
+ * excluded) and the chunk tier is counted over CHUNKED documents, never "N of M files".
  *
  * `complete` is EXACT (`settled >= total`), never "the percent rounded to 100": 999 settled of 1000
  * rounds to 100%, and claiming "fully searchable" there would be the §8.1 false-terminal in a new
@@ -103,25 +103,40 @@ function rootCoverage(
   row: IndexedRootView,
   stages: EnrichmentApplicability | null | undefined,
 ): RootCoverage | null {
+  // Applicability UNKNOWN (no poll snapshot yet — the synchronous first store callback delivers
+  // exactly this) ⟹ no tier may be claimed, in EITHER direction: "fully searchable" off a
+  // surviving chunk count is the §8.1 false-terminal again.
   if (!stages) return null;
-  const parentTotal = count(row.parentDocsTotal);
-  const chunkTotal = count(row.chunkDocsTotal);
   let total = 0;
   let settled = 0;
-  const addParentStage = (applicable: boolean, stageSettled: number | undefined): void => {
-    if (!applicable || parentTotal <= 0) return;
-    total += parentTotal;
-    settled += Math.min(count(stageSettled), parentTotal);
+  /**
+   * A stage joins the ratio only when it is applicable, has its own denominator, AND the wire
+   * actually reported its settled count. A MISSING settled key is not "zero settled": it is the
+   * same absence as a missing total, and counting the stage anyway freezes a numerator at 0 over a
+   * live denominator — a fraction that can never move.
+   */
+  const addStage = (
+    applicable: boolean,
+    stageTotal: number | undefined,
+    stageSettled: number | undefined,
+  ): void => {
+    if (!applicable) return;
+    if (typeof stageSettled !== 'number' || !Number.isFinite(stageSettled)) return;
+    const denominator = count(stageTotal);
+    if (denominator <= 0) return;
+    total += denominator;
+    settled += Math.min(count(stageSettled), denominator);
   };
-  addParentStage(stages.embedding, row.parentDocsSettledEmbedding);
-  addParentStage(stages.splade, row.parentDocsSettledSplade);
-  addParentStage(stages.ner, row.parentDocsSettledNer);
-  // The chunk tier needs no applicability flag: a deployment that does not chunk has no chunk docs
-  // under this root, so its own denominator withdraws it.
-  if (chunkTotal > 0) {
-    total += chunkTotal;
-    settled += Math.min(count(row.chunkDocsSettled), chunkTotal);
-  }
+  // Each parent stage carries its OWN denominator (the docs that actually have that stage's status
+  // field — the Worker's `FieldExistsQuery` half), so a document indexed before a stage existed
+  // cannot pin the folder below 100% forever.
+  addStage(stages.embedding, row.parentDocsTotalEmbedding, row.parentDocsSettledEmbedding);
+  addStage(stages.splade, row.parentDocsTotalSplade, row.parentDocsSettledSplade);
+  addStage(stages.ner, row.parentDocsTotalNer, row.parentDocsSettledNer);
+  // The chunk tier's applicability is the EMBEDDING stage's — chunk vectors come from the same
+  // encoder, so with embedding off no chunk will ever settle. (A deployment that does not chunk
+  // withdraws it a second way: no chunk docs, no denominator.)
+  addStage(stages.embedding, row.chunkDocsTotal, row.chunkDocsSettled);
   if (total <= 0) return null;
   const complete = settled >= total;
   return {

@@ -1513,9 +1513,11 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
       io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.RootCoverageCounts c =
           countOps.queryRootCoverageCounts(pathPrefix);
       return io.justsearch.ipc.RootCoverageCounts.newBuilder()
-          .setParentDocsTotal(c.parentDocsTotal())
+          .setParentDocsTotalEmbedding(c.parentDocsTotalEmbedding())
           .setParentDocsSettledEmbedding(c.parentDocsSettledEmbedding())
+          .setParentDocsTotalSplade(c.parentDocsTotalSplade())
           .setParentDocsSettledSplade(c.parentDocsSettledSplade())
+          .setParentDocsTotalNer(c.parentDocsTotalNer())
           .setParentDocsSettledNer(c.parentDocsSettledNer())
           .setChunkDocsTotal(c.chunkDocsTotal())
           .setChunkDocsSettled(c.chunkDocsSettled())

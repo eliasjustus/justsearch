@@ -2,56 +2,62 @@
   "$schema" : "https://json-schema.org/draft/2020-12/schema",
   "type" : "object",
   "properties" : {
-    "pathHash" : {
-      "type" : "string"
-    },
-    "collection" : {
-      "type" : "string"
-    },
-    "fileCount" : {
-      "type" : "integer"
-    },
-    "lastIndexedIsoTime" : {
-      "type" : "string"
-    },
-    "status" : {
-      "type" : "string"
-    },
-    "walkError" : {
-      "type" : "string"
-    },
-    "inFlightCount" : {
-      "type" : "integer"
-    },
-    "failedCount" : {
-      "type" : "integer"
-    },
-    "walkCompleted" : {
-      "type" : "boolean"
-    },
-    "deleteDetectionUnverified" : {
-      "type" : "boolean"
-    },
-    "lastVerifiedIsoTime" : {
-      "type" : "string"
-    },
-    "parentDocsTotal" : {
-      "type" : "integer"
-    },
-    "parentDocsSettledEmbedding" : {
-      "type" : "integer"
-    },
-    "parentDocsSettledSplade" : {
-      "type" : "integer"
-    },
-    "parentDocsSettledNer" : {
+    "chunkDocsSettled" : {
       "type" : "integer"
     },
     "chunkDocsTotal" : {
       "type" : "integer"
     },
-    "chunkDocsSettled" : {
+    "collection" : {
+      "type" : "string"
+    },
+    "deleteDetectionUnverified" : {
+      "type" : "boolean"
+    },
+    "failedCount" : {
       "type" : "integer"
+    },
+    "fileCount" : {
+      "type" : "integer"
+    },
+    "inFlightCount" : {
+      "type" : "integer"
+    },
+    "lastIndexedIsoTime" : {
+      "type" : "string"
+    },
+    "lastVerifiedIsoTime" : {
+      "type" : "string"
+    },
+    "parentDocsSettledEmbedding" : {
+      "type" : "integer"
+    },
+    "parentDocsSettledNer" : {
+      "type" : "integer"
+    },
+    "parentDocsSettledSplade" : {
+      "type" : "integer"
+    },
+    "parentDocsTotalEmbedding" : {
+      "type" : "integer"
+    },
+    "parentDocsTotalNer" : {
+      "type" : "integer"
+    },
+    "parentDocsTotalSplade" : {
+      "type" : "integer"
+    },
+    "pathHash" : {
+      "type" : "string"
+    },
+    "status" : {
+      "type" : "string"
+    },
+    "walkCompleted" : {
+      "type" : "boolean"
+    },
+    "walkError" : {
+      "type" : "string"
     }
   }
 }

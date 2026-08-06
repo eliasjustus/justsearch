@@ -9,13 +9,29 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import './SystemSelfView.js';
 import { visibleIndexQueueCount, enrichingLabel, type SystemSelfView } from './SystemSelfView.js';
-import { UNKNOWN, known } from '../state/known.js';
 import type { IndexingProgress } from '../state/indexingProgress.js';
 import {
   __feedForTest,
   __resetAiStateForTest,
   __tickClockForTest,
 } from '../state/aiStateStore.js';
+
+/** One projection snapshot — the ONE authority both strip rows now read (813 §3b). */
+const progress = (over: Partial<IndexingProgress>): IndexingProgress => ({
+  phase: 'ready',
+  jobsPending: 0,
+  jobsRunning: 0,
+  jobsQueued: 0,
+  enrichingPercent: null,
+  enrichingPending: 0,
+  embeddingPending: 0,
+  vduPending: 0,
+  etaSeconds: null,
+  pendingBytes: null,
+  live: true,
+  stages: { embedding: true, splade: true, ner: true },
+  ...over,
+});
 
 async function mount(variant?: 'full' | 'strip'): Promise<SystemSelfView> {
   const el = document.createElement('jf-system-self-view') as SystemSelfView;
@@ -61,98 +77,35 @@ describe('jf-system-self-view — strip variant (578 Workstream A)', () => {
 });
 
 describe('visibleIndexQueueCount', () => {
-  const baseIndex = {
-    documentCount: UNKNOWN,
-    pendingJobs: UNKNOWN,
-    embeddingPending: UNKNOWN,
-    embeddingBlocked: UNKNOWN,
-    embeddingQueueSize: UNKNOWN,
-    vduQueueSize: UNKNOWN,
-  };
-
-  it('uses backend pending jobs as live indexing activity', () => {
-    expect(
-      visibleIndexQueueCount({
-        index: {
-          ...baseIndex,
-          pendingJobs: known(3792),
-        },
-      }),
-    ).toBe(3792);
+  it('counts the job queue from the ONE projection', () => {
+    expect(visibleIndexQueueCount(progress({ phase: 'indexing', jobsPending: 3792 }))).toBe(3792);
   });
 
-  it('falls back to known embedding and VDU queues when pending jobs are empty', () => {
-    expect(
-      visibleIndexQueueCount({
-        index: {
-          ...baseIndex,
-          pendingJobs: known(0),
-          embeddingPending: known(2),
-          embeddingQueueSize: known(3),
-          vduQueueSize: known(5),
-        },
-      }),
-    ).toBe(10);
-  });
-
-  it('does not invent activity from unknown or zero queues', () => {
-    expect(visibleIndexQueueCount({ index: baseIndex })).toBeNull();
-    expect(
-      visibleIndexQueueCount({
-        index: {
-          ...baseIndex,
-          pendingJobs: known(0),
-          embeddingPending: known(0),
-          embeddingQueueSize: known(0),
-          vduQueueSize: known(0),
-        },
-      }),
-    ).toBeNull();
+  it('does not invent activity from a drained queue', () => {
+    expect(visibleIndexQueueCount(progress({ phase: 'ready' }))).toBeNull();
   });
 
   // Tempdoc 727 F-2: sandbox-round repro — worker.core.indexState=IDLE, pending/queue_depth/
   // processing_jobs_count all 0, yet the "Now" strip's INDEXING row showed "Processing 10 items /
-  // running" (10 = embeddingPending(2) + embeddingQueueSize(3) + vduQueueSize(5)). On pre-fix code
-  // this test FAILS (returns 10, not null): the embedding/VDU counters were trusted as "busy" even
-  // though the worker had already authoritatively settled to IDLE — the same truth the Queue card
-  // (`pendingJobs`) and the Index-state row already derive from.
-  //
-  // Tempdoc 813 §4 NARROWS, but does not repeal, this suppression: it stays exactly as pinned here
-  // for genuinely-idle residue, and the "backfill is actually running" case is re-expressed as the
-  // `enrichingLabel` pair below (F-2 was right that stale counters must not fake activity; it
-  // overcorrected by also hiding real enrichment activity, which shares this same IDLE indexState).
-  it('does not show stale embedding/VDU residue as busy once the worker has settled to IDLE', () => {
+  // running" (10 = embeddingPending(2) + embeddingQueueSize(3) + vduQueueSize(5), read from
+  // /api/inference/status). The 813 remediation removes that second derivation entirely instead of
+  // suppressing it: the row now counts jobs from the projection, so a cross-subsystem residue has
+  // no way to reach this row at all — and enrichment work is described once, by `enrichingLabel`.
+  it('never describes enrichment work — that belongs to the Enrichment row alone', () => {
+    // The exact contradiction the collapse removes: an enrichment backlog with NO job rows must
+    // produce no indexing row, whatever the worker's index state is.
     expect(
-      visibleIndexQueueCount({
-        index: {
-          ...baseIndex,
-          pendingJobs: known(0),
-          embeddingPending: known(2),
-          embeddingQueueSize: known(3),
-          vduQueueSize: known(5),
-        },
-        status: {
-          worker: { core: { indexState: 'IDLE' } },
-        } as unknown as import('../state/aiStateStore.js').StatusSnapshot,
-      }),
+      visibleIndexQueueCount(
+        progress({ phase: 'enriching', jobsPending: 0, embeddingPending: 2, vduPending: 5 }),
+      ),
     ).toBeNull();
   });
 
-  it('still surfaces the embedding/VDU fallback when the worker is genuinely INDEXING', () => {
+  it('asserts nothing off an unreported or stale snapshot (807 A.3)', () => {
+    expect(visibleIndexQueueCount(progress({ phase: 'unknown', jobsPending: 0 }))).toBeNull();
     expect(
-      visibleIndexQueueCount({
-        index: {
-          ...baseIndex,
-          pendingJobs: known(0),
-          embeddingPending: known(2),
-          embeddingQueueSize: known(3),
-          vduQueueSize: known(5),
-        },
-        status: {
-          worker: { core: { indexState: 'INDEXING' } },
-        } as unknown as import('../state/aiStateStore.js').StatusSnapshot,
-      }),
-    ).toBe(10);
+      visibleIndexQueueCount(progress({ phase: 'indexing', jobsPending: 12, live: false })),
+    ).toBeNull();
   });
 });
 
@@ -163,21 +116,6 @@ describe('visibleIndexQueueCount', () => {
  * while the GPU was busy for minutes — finding 1's exact mechanism. These cases pin the split.
  */
 describe('enrichingLabel (813 §4 — the narrowed F-2 suppression)', () => {
-  const progress = (over: Partial<IndexingProgress>): IndexingProgress => ({
-    phase: 'ready',
-    jobsPending: 0,
-    jobsRunning: 0,
-    jobsQueued: 0,
-    enrichingPercent: null,
-    enrichingPending: 0,
-    embeddingPending: 0,
-    vduPending: 0,
-    etaSeconds: null,
-    live: true,
-    stages: { embedding: true, splade: true, ner: true },
-    ...over,
-  });
-
   it('backfill genuinely active ⇒ an "Enriching — N%" line, NOT the idle close', () => {
     expect(enrichingLabel(progress({ phase: 'enriching', enrichingPercent: 64 }))).toBe(
       'Enriching — 64% · semantic search catching up',
@@ -230,16 +168,27 @@ describe('jf-system-self-view — the narrowed 727 F-2 suppression, rendered (81
     vi.unstubAllGlobals();
   });
 
-  function feed(enrichment: Record<string, unknown>): void {
+  /**
+   * The status snapshot AND the inference counters — the second subsystem F-2's residue came from.
+   * Feeding both is what makes the render cases below DISCRIMINATING: with the inference counters
+   * present, pre-remediation code renders a second, contradictory "Processing N items" row for the
+   * same enrichment backlog, so a case that fed status alone passed no matter what the strip did
+   * with those counters.
+   */
+  function feed(enrichment: Record<string, unknown>, inference?: Record<string, unknown>): void {
     __feedForTest({
       status: {
         worker: { core: { indexState: 'IDLE', pendingJobs: 0, indexHealthy: true }, enrichment },
       } as unknown as import('../state/aiStateStore.js').StatusSnapshot,
+      inference: (inference ?? {
+        embeddingQueueSize: 3,
+        vduQueueSize: 5,
+      }) as unknown as import('../state/aiStateStore.js').InferenceSnapshot,
     });
     __tickClockForTest();
   }
 
-  it('backfill genuinely active ⇒ the strip shows Enriching, NOT "System idle"', async () => {
+  it('backfill genuinely active ⇒ ONE Enriching row, no second count for the same work', async () => {
     feed({
       backfillMode: 'combined',
       embeddingEnabled: true,
@@ -250,6 +199,41 @@ describe('jf-system-self-view — the narrowed 727 F-2 suppression, rendered (81
     const row = el.shadowRoot!.querySelector('[data-testid="self-view-enriching"]');
     expect(row?.textContent).toContain('Enriching — 64%');
     expect(el.shadowRoot!.querySelector('[data-testid="self-view-idle"]')).toBeNull();
+    // The discriminating half: the jobs queue is drained, so the indexing row must be absent —
+    // the inference counters fed above must not become a second description of the same backlog.
+    expect(el.shadowRoot!.querySelector('[data-testid="self-view-index-queue"]')).toBeNull();
+  });
+
+  /**
+   * The arm the F-2 suppression never covered: `indexState` is neither IDLE nor job-backed. Before
+   * the collapse this rendered TWO rows for one backlog — "Processing 8 items / running" from the
+   * inference counters (8 = embeddingQueueSize 3 + vduQueueSize 5) beside "Enriching — 64%" from
+   * the status poll. One backlog, two derivations, two numbers: §1a's defect class.
+   */
+  it('a worker in ERROR renders no second, contradictory count for the same backlog', async () => {
+    __feedForTest({
+      status: {
+        worker: {
+          core: { indexState: 'ERROR', pendingJobs: 0, indexHealthy: false },
+          enrichment: {
+            backfillMode: 'combined',
+            embeddingEnabled: true,
+            embeddingDocCount: 100,
+            embeddingPendingCount: 36,
+          },
+        },
+      } as unknown as import('../state/aiStateStore.js').StatusSnapshot,
+      inference: {
+        embeddingQueueSize: 3,
+        vduQueueSize: 5,
+      } as unknown as import('../state/aiStateStore.js').InferenceSnapshot,
+    });
+    __tickClockForTest();
+    const el = await mount('strip');
+    expect(el.shadowRoot!.querySelector('[data-testid="self-view-index-queue"]')).toBeNull();
+    expect(
+      el.shadowRoot!.querySelector('[data-testid="self-view-enriching"]')?.textContent,
+    ).toContain('Enriching — 64%');
   });
 
   it('idle residue only ⇒ "System idle" is retained (F-2 not repealed)', async () => {

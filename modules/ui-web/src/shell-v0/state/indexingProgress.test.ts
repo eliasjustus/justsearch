@@ -248,6 +248,44 @@ describe('selectIndexingProgress — denominator honesty', () => {
     expect(p.enrichingPercent).toBe(0);
   });
 
+  it('the CHUNK tier is gated on the embedding stage — same encoder, same applicability', () => {
+    // Embedding off (no embedding service, or switched off): chunk vectors come from that same
+    // encoder, so their pending count NEVER settles. Counting them left the deployment permanently
+    // `enriching` — "Up to date" / "System idle" / "fully searchable" unreachable forever.
+    const p = selectIndexingProgress(
+      snapshot({
+        core: { indexState: 'IDLE', pendingJobs: 0 },
+        enrichment: {
+          backfillMode: 'idle',
+          embeddingEnabled: false,
+          embeddingDocCount: 100,
+          embeddingPendingCount: 100,
+          chunk: { chunkDocCount: 400, chunkEmbeddingPendingCount: 400 },
+        },
+      }),
+      true,
+    );
+    expect(p.phase).toBe('ready');
+    expect(p.enrichingPending).toBe(0);
+    expect(p.enrichingPercent).toBeNull();
+  });
+
+  it('applicability is NULL when the worker did not report — never an all-false claim', () => {
+    // All-false says "no stage applies here", which a per-root consumer reads as a licence to
+    // score coverage on whatever counts survive. Nothing observed must stay nothing claimed.
+    expect(selectIndexingProgress(null, false).stages).toBeNull();
+    expect(selectIndexingProgress({} as StatusResponse, true).stages).toBeNull();
+    expect(
+      selectIndexingProgress(snapshot({ core: { indexState: 'UNAVAILABLE' } }), true).stages,
+    ).toBeNull();
+    // A REPORTING worker does answer the question.
+    expect(selectIndexingProgress(snapshot({}), true).stages).toEqual({
+      embedding: true,
+      splade: true,
+      ner: true,
+    });
+  });
+
   it('exposes the per-subject pending counts the overlay renders, from the same snapshot', () => {
     const p = selectIndexingProgress(
       snapshot({
@@ -311,5 +349,85 @@ describe('selectIndexingProgress — indicative estimate (813 §5b)', () => {
 
   it('never estimates from a stale snapshot (a past rate is not a present one)', () => {
     expect(selectIndexingProgress(indexing(400, [4, 4, 4]), false).etaSeconds).toBeNull();
+  });
+
+  // The estimate counted UP while a walk was still enqueueing: "remaining / rate" divides by a
+  // denominator that is still rising. The last two queue-depth samples of the SAME snapshot say
+  // whether it is.
+  it('suppresses the estimate while the backlog is still GROWING (a walk is enqueueing)', () => {
+    const p = selectIndexingProgress(
+      snapshot({
+        core: {
+          indexState: 'INDEXING',
+          pendingJobs: 400,
+          recentDocsPerSec: [4, 4, 4],
+          recentJobQueueDepth: [100, 250, 400],
+        },
+      }),
+      true,
+    );
+    expect(p.phase).toBe('indexing');
+    expect(p.etaSeconds).toBeNull();
+  });
+
+  it('estimates once the backlog is draining (the same snapshot shape, depth falling)', () => {
+    const p = selectIndexingProgress(
+      snapshot({
+        core: {
+          indexState: 'INDEXING',
+          pendingJobs: 400,
+          recentDocsPerSec: [4, 4, 4],
+          recentJobQueueDepth: [900, 650, 400],
+        },
+      }),
+      true,
+    );
+    expect(p.etaSeconds).toBe(100);
+  });
+});
+
+/**
+ * 813 Slice B — the byte weight of the remaining backlog. Same denominator discipline as the
+ * percent: shown only when it is faithful, withdrawn (never 0) when it is not.
+ */
+describe('selectIndexingProgress — remaining byte weight', () => {
+  const withBytes = (over: Record<string, unknown>) =>
+    selectIndexingProgress(
+      snapshot({
+        core: { indexState: 'INDEXING', pendingJobs: 100, ...over },
+      }),
+      true,
+    );
+
+  it('reports the recorded weight of the remaining jobs', () => {
+    expect(withBytes({ pendingBytes: 5_000_000, pendingUnknownSizeJobs: 4 }).pendingBytes).toBe(
+      5_000_000,
+    );
+  });
+
+  it('withdraws it when most of the backlog has no recorded size', () => {
+    // 60 of 100 remaining jobs carry no size: the sum is not a weight of the backlog any more.
+    expect(withBytes({ pendingBytes: 5_000_000, pendingUnknownSizeJobs: 60 }).pendingBytes).toBeNull();
+  });
+
+  it('withdraws it when there is no backlog to weigh', () => {
+    const p = selectIndexingProgress(
+      snapshot({
+        core: {
+          indexState: 'IDLE',
+          pendingJobs: 0,
+          pendingBytes: 5_000_000,
+          pendingUnknownSizeJobs: 0,
+        },
+      }),
+      true,
+    );
+    expect(p.pendingBytes).toBeNull();
+  });
+
+  it('withdraws it when nothing is recorded, and on the worker UNAVAILABLE marker', () => {
+    expect(withBytes({ pendingBytes: 0, pendingUnknownSizeJobs: 0 }).pendingBytes).toBeNull();
+    // JobQueue.PendingBytes.UNAVAILABLE: zero bytes plus the -1 marker, never "0 B remaining".
+    expect(withBytes({ pendingBytes: 0, pendingUnknownSizeJobs: -1 }).pendingBytes).toBeNull();
   });
 });

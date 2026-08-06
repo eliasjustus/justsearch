@@ -2,6 +2,7 @@ package io.justsearch.indexerworker.queue;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -670,6 +671,27 @@ final class JobQueueTest {
         "Only PENDING(500) + PROCESSING(1000) with known sizes count; DONE/FAILED excluded");
     assertEquals(
         1L, bytes.unknownSizeJobs(), "The unknown-size PENDING job is counted, never summed as 0");
+  }
+
+  /**
+   * A failed aggregate must not masquerade as "nothing pending" (813 remediation F9b). Closing the
+   * queue makes the query fail the same way an IO error would; the all-zero {@code EMPTY} would
+   * render as "0 B remaining" mid-backlog, so the failure gets its own marker.
+   */
+  @Test
+  void pendingBytesReportsUnavailableWhenTheAggregateCannotBeComputed() throws Exception {
+    jobQueue.enqueueEntries(List.of(new JobQueue.EnqueueEntry(Path.of("/size/a.txt"), 4_096L)));
+    jobQueue.close();
+
+    JobQueue.PendingBytes bytes = jobQueue.pendingBytes();
+
+    assertEquals(JobQueue.PendingBytes.UNAVAILABLE, bytes);
+    assertEquals(
+        -1L,
+        bytes.unknownSizeJobs(),
+        "a failed aggregate must be distinguishable from the 'nothing pending' sentinel");
+    assertNotEquals(
+        JobQueue.PendingBytes.EMPTY, bytes, "EMPTY is the positive claim that nothing is pending");
   }
 
   /** Raw {@code size_bytes} for a path, or null when the column holds SQL NULL. */

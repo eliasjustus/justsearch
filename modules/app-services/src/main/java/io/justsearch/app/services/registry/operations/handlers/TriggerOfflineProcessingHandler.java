@@ -13,9 +13,12 @@ import org.slf4j.LoggerFactory;
 /**
  * Handler for {@code core.trigger-offline-processing}.
  *
- * <p>Slice 3a-2-c continuation: BrainRuntimeSection Trigger Offline
- * Processing button. Delegates to
- * {@link BrainRuntimeService#triggerOfflineProcessing()} via lazy supplier.
+ * <p>Slice 3a-2-c continuation: the "Finish enrichment now" button. Delegates
+ * to {@link BrainRuntimeService#triggerOfflineProcessing()} via lazy supplier.
+ * The operation ID and the service method keep their historical names (renaming
+ * a wire identifier is not a copy change), but every string this handler hands
+ * back is user-facing, so it uses the 813 §6 vocabulary: the work is
+ * ENRICHMENT, and "offline" names only the engine being down.
  *
  * <p>Returns immediately after dispatch — the actual processing runs on a
  * virtual thread. Success means dispatch succeeded, not that processing
@@ -46,11 +49,11 @@ public final class TriggerOfflineProcessingHandler implements OperationHandler {
 
     try {
       brainRuntime.triggerOfflineProcessing();
-      return OperationResult.success("Offline processing started", Map.of());
+      return OperationResult.success("Enrichment started", Map.of());
     } catch (Exception e) {
       log.error("TriggerOfflineProcessingHandler: triggerOfflineProcessing threw", e);
       return OperationResult.failure(
-          "Failed to trigger offline processing: "
+          "Failed to start enrichment: "
               + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
     }
   }

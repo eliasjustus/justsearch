@@ -18,6 +18,7 @@ import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.search.FieldExistsQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.PrefixQuery;
@@ -383,8 +384,17 @@ public final class IndexCountOps {
    * parent's normalized absolute file path ({@code ChunkDocumentWriter} writes {@code
    * SchemaFields.PATH = parentDocId}), not an opaque id.
    *
-   * <p>Reader-version cached per prefix (see {@link #getOrComputeCorpusProfile()}) because the
-   * Library live tick refreshes every few seconds while the index version changes only on commit.
+   * <p>Reader-version cached per prefix (see {@link #getOrComputeCorpusProfile()}). Honest
+   * accounting of what that buys: the reader version changes on every NRT reopen, not only on
+   * commit — the reopen thread runs on a 50-500 ms target ({@code CommitOps#resumeNrtRefresh}) —
+   * so during active ingest this cache mostly MISSES and nearly every Library tick recomputes.
+   * It is kept because the measured cost of a recompute is small (warm medians &lt; 0.3 ms at
+   * 200k docs, 813 §13) and because the cache does pay off in the steady state the Library
+   * mostly shows: an idle index, where the reader version is stable between commits.
+   *
+   * <p>Only successful computations are cached — a failed query returns the EMPTY sentinel
+   * without poisoning the entry for this reader version, so a transient IO failure cannot pin a
+   * folder at "0 enriched" until the next reopen.
    *
    * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
    */
@@ -399,6 +409,10 @@ public final class IndexCountOps {
       return cached.counts();
     }
     RootCoverageCounts computed = computeRootCoverage(normalized);
+    if (computed == null) {
+      // The query failed; report absence and leave the cache alone.
+      return RootCoverageCounts.EMPTY;
+    }
     if (cachedRootCoverage.size() >= MAX_CACHED_COVERAGE_PREFIXES
         && !cachedRootCoverage.containsKey(normalized)) {
       // Coarse bound: watched roots number in the tens, so eviction is a cold-path event. Dropping
@@ -409,6 +423,7 @@ public final class IndexCountOps {
     return computed;
   }
 
+  /** @return the counts, or {@code null} when the query failed (never a zeroed stand-in). */
   private RootCoverageCounts computeRootCoverage(String normalizedPrefix) {
     try {
       return bridge.withSearcher(searcher -> {
@@ -419,13 +434,19 @@ public final class IndexCountOps {
             .add(prefixQuery, BooleanClause.Occur.FILTER)
             .add(isChunk, BooleanClause.Occur.MUST_NOT)
             .build();
-        int parentTotal = searcher.count(parentDocs);
 
         Query chunkDocs = new BooleanQuery.Builder()
             .add(prefixQuery, BooleanClause.Occur.FILTER)
             .add(isChunk, BooleanClause.Occur.FILTER)
             .build();
-        int chunkTotal = searcher.count(chunkDocs);
+
+        // Each stage's denominator is the documents that CARRY its status field — an absent
+        // status field means the stage does not apply to that document (post-798), and a
+        // document the backfill can never select must not sit in a denominator forever.
+        int embeddingTotal = countWithField(searcher, parentDocs, SchemaFields.EMBEDDING_STATUS);
+        int spladeTotal = countWithField(searcher, parentDocs, SchemaFields.SPLADE_STATUS);
+        int nerTotal = countWithField(searcher, parentDocs, SchemaFields.NER_STATUS);
+        int chunkTotal = countWithField(searcher, chunkDocs, SchemaFields.CHUNK_EMBEDDING_STATUS);
 
         // embedding_status has no COMPLETED_EMPTY member (SchemaFields declares PENDING /
         // COMPLETED / FAILED only), so its terminal set is two-valued; splade_status and
@@ -442,12 +463,28 @@ public final class IndexCountOps {
             SchemaFields.EMBEDDING_STATUS_COMPLETED, SchemaFields.EMBEDDING_STATUS_FAILED);
 
         return new RootCoverageCounts(
-            parentTotal, parentEmbedding, parentSplade, parentNer, chunkTotal, chunkSettled);
+            embeddingTotal, parentEmbedding,
+            spladeTotal, parentSplade,
+            nerTotal, parentNer,
+            chunkTotal, chunkSettled);
       });
     } catch (IOException e) {
       log.debug("Failed to compute root coverage counts: {}", e.getMessage());
-      return RootCoverageCounts.EMPTY;
+      return null;
     }
+  }
+
+  /**
+   * Counts docs matching {@code scope} that carry {@code statusField} at all. Every status field
+   * is docValues-backed (the {@code fields.v1.json} catalog), which is what makes {@link
+   * FieldExistsQuery} usable here; a segment that never saw the field contributes zero.
+   */
+  private static int countWithField(IndexSearcher searcher, Query scope, String statusField)
+      throws IOException {
+    return searcher.count(new BooleanQuery.Builder()
+        .add(scope, BooleanClause.Occur.FILTER)
+        .add(new FieldExistsQuery(statusField), BooleanClause.Occur.FILTER)
+        .build());
   }
 
   /** Counts docs matching {@code scope} whose {@code statusField} holds any terminal value. */

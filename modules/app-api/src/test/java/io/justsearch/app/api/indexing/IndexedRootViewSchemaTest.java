@@ -75,9 +75,11 @@ final class IndexedRootViewSchemaTest {
             .path("properties");
     for (String field :
         new String[] {
-          "parentDocsTotal",
+          "parentDocsTotalEmbedding",
           "parentDocsSettledEmbedding",
+          "parentDocsTotalSplade",
           "parentDocsSettledSplade",
+          "parentDocsTotalNer",
           "parentDocsSettledNer",
           "chunkDocsTotal",
           "chunkDocsSettled"

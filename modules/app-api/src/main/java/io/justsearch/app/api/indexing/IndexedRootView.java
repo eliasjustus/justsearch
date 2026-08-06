@@ -64,7 +64,11 @@ import java.util.Objects;
  *       becomes keyword-searchable); enrichment backfill carries no per-root
  *       job rows, so without these a folder that is 5% embedded and one that is
  *       100% embedded look identical. Denominator discipline: the parent totals
- *       EXCLUDE chunk documents and the chunk tier is its own denominator —
+ *       EXCLUDE chunk documents, each parent stage counts only documents that
+ *       CARRY its status field (an absent status means the stage does not apply
+ *       to that document, post-798; the backfill selects by status value, so
+ *       counting such a document would pin the folder below 100% forever),
+ *       and the chunk tier is its own denominator —
  *       {@link #chunkDocsSettled} over {@link #chunkDocsTotal} is never "N of M
  *       files". Numerator discipline: "settled" = terminal state (COMPLETED +
  *       COMPLETED_EMPTY where the stage defines it + FAILED), so a permanently
@@ -84,9 +88,11 @@ public record IndexedRootView(
     boolean walkCompleted,
     boolean deleteDetectionUnverified,
     String lastVerifiedIsoTime,
-    long parentDocsTotal,
+    long parentDocsTotalEmbedding,
     long parentDocsSettledEmbedding,
+    long parentDocsTotalSplade,
     long parentDocsSettledSplade,
+    long parentDocsTotalNer,
     long parentDocsSettledNer,
     long chunkDocsTotal,
     long chunkDocsSettled) {

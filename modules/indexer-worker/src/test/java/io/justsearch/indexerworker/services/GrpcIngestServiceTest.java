@@ -91,6 +91,34 @@ final class GrpcIngestServiceTest {
     assertTrue(observer.completed);
   }
 
+  /**
+   * Tempdoc 813 Slice B call-site pin. {@code SubmitBatch} is one of the four producers of queue
+   * rows; the remaining-work byte weight is only as good as what each producer records, and a
+   * producer that quietly used the unsized overload would not fail anything — the aggregate would
+   * just understate the backlog. So the size is asserted at the call site.
+   */
+  @Test
+  void submitBatchRecordsEachFilesSizeAtEnqueue() throws Exception {
+    Path small = Files.writeString(tempDir.resolve("small.txt"), "x".repeat(10));
+    Path big = Files.writeString(tempDir.resolve("big.txt"), "y".repeat(4_096));
+
+    CapturingObserver<BatchResponse> observer = new CapturingObserver<>();
+    service.submitBatch(
+        BatchRequest.newBuilder()
+            .addFilePaths(small.toAbsolutePath().toString())
+            .addFilePaths(big.toAbsolutePath().toString())
+            .build(),
+        observer);
+    assertEquals(2, observer.single().getAcceptedCount());
+
+    JobQueue.PendingBytes bytes = jobQueue.pendingBytes();
+    assertEquals(
+        Files.size(small) + Files.size(big),
+        bytes.knownBytes(),
+        "SubmitBatch must stat each admitted file and carry the size on the enqueue entry");
+    assertEquals(0L, bytes.unknownSizeJobs(), "no admitted file may land as an unsized row");
+  }
+
   @Test
   void submitBatchRejectsNonExistentFiles() {
     BatchRequest request = BatchRequest.newBuilder()
@@ -745,9 +773,11 @@ final class GrpcIngestServiceTest {
 
     CountJobsByPathPrefixResponse response = observer.single();
     assertEquals(1, response.getCounts().getPendingCount(), "queue counts must survive");
-    assertEquals(0, response.getCoverage().getParentDocsTotal());
+    assertEquals(0, response.getCoverage().getParentDocsTotalEmbedding());
     assertEquals(0, response.getCoverage().getParentDocsSettledEmbedding());
+    assertEquals(0, response.getCoverage().getParentDocsTotalSplade());
     assertEquals(0, response.getCoverage().getParentDocsSettledSplade());
+    assertEquals(0, response.getCoverage().getParentDocsTotalNer());
     assertEquals(0, response.getCoverage().getParentDocsSettledNer());
     assertEquals(0, response.getCoverage().getChunkDocsTotal());
     assertEquals(0, response.getCoverage().getChunkDocsSettled());

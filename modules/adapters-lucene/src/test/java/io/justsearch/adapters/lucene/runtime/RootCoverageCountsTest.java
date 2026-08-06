@@ -78,7 +78,9 @@ class RootCoverageCountsTest {
     RootCoverageCounts foo = runtime.indexCountOps().queryRootCoverageCounts(ROOT_FOO);
 
     // 3 parents under /lib/foo. The 3 chunks under it and the /lib/foobar parent are excluded.
-    assertEquals(3, foo.parentDocsTotal(), "parent denominator must exclude chunk docs");
+    assertEquals(3, foo.parentDocsTotalEmbedding(), "parent denominator must exclude chunk docs");
+    assertEquals(3, foo.parentDocsTotalSplade());
+    assertEquals(3, foo.parentDocsTotalNer());
     // p1 COMPLETED + p3 FAILED are terminal; p2 PENDING is not. embedding_status has no
     // COMPLETED_EMPTY member, so its terminal set is two-valued.
     assertEquals(2, foo.parentDocsSettledEmbedding());
@@ -101,9 +103,9 @@ class RootCoverageCountsTest {
 
     // The whole index holds 4 parents and 4 chunks; if the trailing-separator boundary were
     // missing, "/lib/foo" would swallow foobar's documents too.
-    assertEquals(3, foo.parentDocsTotal(), "foobar's parent must not leak into foo");
+    assertEquals(3, foo.parentDocsTotalEmbedding(), "foobar's parent must not leak into foo");
     assertEquals(3, foo.chunkDocsTotal(), "foobar's chunk must not leak into foo");
-    assertEquals(1, foobar.parentDocsTotal());
+    assertEquals(1, foobar.parentDocsTotalEmbedding());
     assertEquals(1, foobar.chunkDocsTotal());
     assertEquals(0, foobar.parentDocsSettledEmbedding(), "foobar's parent is still PENDING");
     assertEquals(0, foobar.chunkDocsSettled());
@@ -133,10 +135,12 @@ class RootCoverageCountsTest {
         runtime.indexCountOps().queryRootCoverageCounts(ROOT_FOO.toUpperCase(java.util.Locale.ROOT));
     if (PlatformPaths.isWindows()) {
       assertEquals(
-          3, shouted.parentDocsTotal(), "Windows paths are case-insensitive — must still match");
+          3,
+          shouted.parentDocsTotalEmbedding(),
+          "Windows paths are case-insensitive — must still match");
     } else {
       assertEquals(
-          0, shouted.parentDocsTotal(), "POSIX paths are case-sensitive — must not match");
+          0, shouted.parentDocsTotalEmbedding(), "POSIX paths are case-sensitive — must not match");
     }
   }
 
@@ -153,7 +157,34 @@ class RootCoverageCountsTest {
 
     RootCoverageCounts third = runtime.indexCountOps().queryRootCoverageCounts(ROOT_FOO);
     assertNotSame(third, first, "a new reader version must invalidate the cached instance");
-    assertEquals(4, third.parentDocsTotal(), "the newly committed parent must be visible");
+    assertEquals(4, third.parentDocsTotalEmbedding(), "the newly committed parent must be visible");
+  }
+
+  @Test
+  @DisplayName("a doc with no status field for a stage is in neither that stage's numerator nor "
+      + "its denominator")
+  void anAbsentStatusFieldWithdrawsTheDocumentFromThatStage() {
+    RootCoverageCounts before = runtime.indexCountOps().queryRootCoverageCounts(ROOT_FOO);
+    assertEquals(3, before.parentDocsTotalNer());
+    assertEquals(3, before.parentDocsTotalSplade());
+
+    // A document indexed before splade_status / ner_status existed: it carries embedding_status
+    // only. Those backfills select by status VALUE, so nothing will ever settle it — counting it
+    // in their denominators would pin this folder below 100% forever (post-798: an absent status
+    // field means the stage does not apply to the document).
+    index(parent("legacy", ROOT_FOO + SEP + "legacy.txt", "COMPLETED", null, null));
+    runtime.commitOps().commitAndTrack();
+    runtime.commitOps().maybeRefreshBlocking();
+
+    RootCoverageCounts after = runtime.indexCountOps().queryRootCoverageCounts(ROOT_FOO);
+    assertEquals(
+        4, after.parentDocsTotalEmbedding(), "it DOES carry embedding_status — that stage applies");
+    assertEquals(3, after.parentDocsSettledEmbedding(), "its COMPLETED embedding is terminal");
+    assertEquals(
+        3, after.parentDocsTotalSplade(), "no splade_status ⇒ outside the SPLADE denominator");
+    assertEquals(2, after.parentDocsSettledSplade(), "and outside its numerator");
+    assertEquals(3, after.parentDocsTotalNer(), "no ner_status ⇒ outside the NER denominator");
+    assertEquals(3, after.parentDocsSettledNer(), "and outside its numerator");
   }
 
   // ---- fixture ----------------------------------------------------------------
@@ -184,6 +215,7 @@ class RootCoverageCountsTest {
     runtime.indexingCoordinator().indexSingle(doc);
   }
 
+  /** A {@code null} status omits the FIELD — the "this stage does not apply" shape (post-798). */
   private static IndexDocument parent(
       String id, String path, String embedding, String splade, String ner) {
     Map<String, Object> fields = new HashMap<>();
@@ -191,9 +223,15 @@ class RootCoverageCountsTest {
     fields.put(SchemaFields.DOC_UID, id + "#0");
     fields.put(SchemaFields.PATH, path);
     fields.put(SchemaFields.CONTENT, "content of " + id);
-    fields.put(SchemaFields.EMBEDDING_STATUS, embedding);
-    fields.put(SchemaFields.SPLADE_STATUS, splade);
-    fields.put(SchemaFields.NER_STATUS, ner);
+    if (embedding != null) {
+      fields.put(SchemaFields.EMBEDDING_STATUS, embedding);
+    }
+    if (splade != null) {
+      fields.put(SchemaFields.SPLADE_STATUS, splade);
+    }
+    if (ner != null) {
+      fields.put(SchemaFields.NER_STATUS, ner);
+    }
     return new IndexDocument(fields);
   }
 

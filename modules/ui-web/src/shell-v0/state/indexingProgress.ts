@@ -34,7 +34,11 @@ export type IndexingPhase = 'indexing' | 'enriching' | 'ready' | 'unknown';
  * applicability is decided, so the per-root derivation consumes it instead of re-reading the
  * `*Enabled` wire flags itself.
  *
- * All-false in the {@link EMPTY} snapshot: the worker did not report, so nothing may be asserted.
+ * UNKNOWN applicability is `null`, never an all-false object: all-false is a legible claim ("no
+ * stage applies here"), and a consumer that reads it as such renders a coverage tier off whatever
+ * counts survive — the {@link EMPTY} snapshot's own defect before this was corrected. The
+ * synchronous first callback of `subscribeAiState` delivers exactly that pre-poll snapshot to every
+ * consumer on mount, so this is the production path, not an edge case.
  */
 export interface EnrichmentApplicability {
   readonly embedding: boolean;
@@ -75,11 +79,22 @@ export interface IndexingProgress {
    *    present rate nobody observed;
    *  - a backlog below {@link ETA_MIN_JOBS}, where the estimate is noise, not information;
    *  - an unstable/absent rate (see {@link deriveEtaSeconds});
-   *  - a result beyond {@link ETA_MAX_SECONDS}, which a trailing-3-sample window cannot support.
-   * Doc-count-based by construction and therefore never promoted to a countdown: the job queue has
-   * no byte-size column (§1f), so on a mixed corpus this is an order-of-magnitude hint at best.
+   *  - a result beyond {@link ETA_MAX_SECONDS}, which a trailing-3-sample window cannot support;
+   *  - a backlog that is still GROWING (a walk is enqueueing faster than the queue drains), where
+   *    "remaining / rate" is extrapolating a denominator that has not stopped moving.
+   * Doc-count-based by construction and therefore never promoted to a countdown: {@link
+   * pendingBytes} is the weight of the same backlog, but sizes are recorded per job and the two are
+   * deliberately not combined into a byte-rate, so on a mixed corpus this stays an
+   * order-of-magnitude hint at best.
    */
   etaSeconds: number | null;
+  /**
+   * 813 Slice B — the byte weight of the remaining job backlog (`worker.core.pendingBytes`), or
+   * `null` when it would not be faithful: nothing recorded, the worker could not compute the
+   * aggregate, or more than half the remaining jobs carry no recorded size
+   * (`pendingUnknownSizeJobs`), where the sum understates the backlog enough to mislead.
+   */
+  pendingBytes: number | null;
   /**
    * Is this snapshot still a LIVE observation? Threaded in from the ONE liveness authority
    * (`AiState.snapshotLive`, 807 A.3) — this module does NOT invent a staleness signal, and in
@@ -89,8 +104,9 @@ export interface IndexingProgress {
   /**
    * 813 §4 — the applicable parent enrichment stages (see {@link EnrichmentApplicability}). Read by
    * the per-root folder derivation (`folderStatus`), which has counts but no enabled flags.
+   * `null` ⟹ applicability is UNKNOWN and NO consumer may claim a coverage tier from it.
    */
-  stages: EnrichmentApplicability;
+  stages: EnrichmentApplicability | null;
 }
 
 /**
@@ -112,9 +128,11 @@ const EMPTY: IndexingProgress = {
   embeddingPending: 0,
   vduPending: 0,
   etaSeconds: null,
+  pendingBytes: null,
   live: false,
-  // Nothing was reported ⟹ no stage is known to apply ⟹ no per-root percent may be asserted.
-  stages: { embedding: false, splade: false, ner: false },
+  // Nothing was reported ⟹ applicability is UNKNOWN ⟹ no per-root percent may be asserted. `null`,
+  // not all-false: all-false reads as "no stage applies", which is itself a claim.
+  stages: null,
 };
 
 /** Trailing `recentDocsPerSec` samples that must ALL be non-zero before the rate is extrapolated. */
@@ -154,6 +172,24 @@ function stage(total: number, pending: number, enabled: boolean | undefined): St
 }
 
 /**
+ * Is the job backlog still GROWING? Read off the last two samples of the SAME snapshot's
+ * `worker.core.recentJobQueueDepth` trend, so it needs no cross-poll memory.
+ *
+ * While a walk is still enqueueing, "remaining / rate" divides a denominator that is still rising —
+ * the estimate counts UP as the user watches it, which is worse than no estimate (813 §5b: coarse
+ * or absent, never wrong). A refutation only: a trend too short to compare cannot establish growth,
+ * so it leaves the other suppressions to decide.
+ */
+function backlogGrowing(depths: readonly number[] | null | undefined): boolean {
+  if (!depths || depths.length < 2) return false;
+  const last = depths[depths.length - 1];
+  const prev = depths[depths.length - 2];
+  if (typeof last !== 'number' || typeof prev !== 'number') return false;
+  if (!Number.isFinite(last) || !Number.isFinite(prev)) return false;
+  return last > prev;
+}
+
+/**
  * The coarse seconds-remaining, or `null` when there is no honest basis (see
  * {@link IndexingProgress.etaSeconds} for the full suppression list).
  *
@@ -166,9 +202,11 @@ function stage(total: number, pending: number, enabled: boolean | undefined): St
  */
 function deriveEtaSeconds(
   samples: readonly number[] | null | undefined,
+  queueDepths: readonly number[] | null | undefined,
   jobsPending: number,
 ): number | null {
   if (jobsPending < ETA_MIN_JOBS) return null;
+  if (backlogGrowing(queueDepths)) return null;
   if (!samples || samples.length < ETA_STABLE_SAMPLES) return null;
   const tail = samples.slice(-ETA_STABLE_SAMPLES);
   if (!tail.every((v) => Number.isFinite(v) && v > 0)) return null;
@@ -177,6 +215,28 @@ function deriveEtaSeconds(
   const seconds = Math.round(jobsPending / rate);
   if (!Number.isFinite(seconds) || seconds <= 0 || seconds > ETA_MAX_SECONDS) return null;
   return seconds;
+}
+
+/**
+ * The remaining backlog's byte weight, or `null` when it is not faithful (see {@link
+ * IndexingProgress.pendingBytes}).
+ *
+ * `knownBytes <= 0` covers both "nothing recorded" and the worker's UNAVAILABLE marker (which
+ * reports zero bytes plus `unknownSizeJobs = -1`, normalized to 0 by {@link count}). The
+ * half-the-backlog rule is the same discipline as the enrichment percent: a denominator that is
+ * mostly guesses is not a denominator.
+ */
+function derivePendingBytes(
+  knownBytes: number,
+  unknownSizeJobs: number,
+  jobsPending: number,
+): number | null {
+  // A weight with no backlog is a contradiction (a residue of one poll's aggregate against
+  // another's count); the backlog is the subject, so no backlog means no claim.
+  if (jobsPending <= 0) return null;
+  if (knownBytes <= 0) return null;
+  if (unknownSizeJobs * 2 > jobsPending) return null;
+  return knownBytes;
 }
 
 /**
@@ -233,8 +293,16 @@ export function selectIndexingProgress(
     ),
     // NER reports no doc-count, so its denominator is its own two-valued census.
     stage(nerCompleted + nerPending, nerPending, applicable.ner),
-    // The chunk tier's denominator is CHUNKED documents (813 §13) — never "N of M files".
-    stage(count(chunk?.chunkDocCount), count(chunk?.chunkEmbeddingPendingCount), undefined),
+    // The chunk tier's denominator is CHUNKED documents (813 §13) — never "N of M files". Its
+    // applicability is the EMBEDDING stage's: chunk vectors come from the same encoder, so a
+    // deployment with embedding switched off (or no embedding service at all) never settles a
+    // single chunk. Passing "unknown" here left those chunks pending forever ⟹ phase stuck at
+    // `enriching` ⟹ "Up to date" / "System idle" / folder "fully searchable" unreachable.
+    stage(
+      count(chunk?.chunkDocCount),
+      count(chunk?.chunkEmbeddingPendingCount),
+      applicable.embedding,
+    ),
   ];
 
   let total = 0;
@@ -264,8 +332,13 @@ export function selectIndexingProgress(
     vduPending: count(core.pendingVduCount),
     etaSeconds:
       phase === 'indexing' && snapshotLive
-        ? deriveEtaSeconds(core.recentDocsPerSec, jobsPending)
+        ? deriveEtaSeconds(core.recentDocsPerSec, core.recentJobQueueDepth, jobsPending)
         : null,
+    pendingBytes: derivePendingBytes(
+      count(core.pendingBytes),
+      count(core.pendingUnknownSizeJobs),
+      jobsPending,
+    ),
     live: snapshotLive,
     stages: applicable,
   };

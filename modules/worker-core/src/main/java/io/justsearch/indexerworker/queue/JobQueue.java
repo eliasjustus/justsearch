@@ -103,11 +103,21 @@ public interface JobQueue extends Closeable {
    * an unknown as zero.
    *
    * @param knownBytes summed byte size of remaining jobs with a recorded size
-   * @param unknownSizeJobs remaining jobs with no recorded size
+   * @param unknownSizeJobs remaining jobs with no recorded size; {@code -1} when the aggregate
+   *     could not be computed at all (see {@link #UNAVAILABLE})
    */
   record PendingBytes(long knownBytes, long unknownSizeJobs) {
     /** Nothing known and nothing counted — the default for queues that don't track sizes. */
     public static final PendingBytes EMPTY = new PendingBytes(0L, 0L);
+
+    /**
+     * The query FAILED, so nothing may be asserted about remaining weight. Distinct from {@link
+     * #EMPTY}, which is the positive claim "nothing is pending": a failed aggregate that returned
+     * EMPTY would render as "0 bytes remaining" mid-backlog. The {@code -1} marker keeps that
+     * distinction on the wire, where a consumer that only checks {@code knownBytes > 0} still
+     * renders nothing.
+     */
+    public static final PendingBytes UNAVAILABLE = new PendingBytes(0L, -1L);
   }
 
   /**

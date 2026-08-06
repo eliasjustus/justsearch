@@ -794,10 +794,14 @@ public class IndexingController {
                     // index-wide by status and carries no per-root job rows, so without these a
                     // 5%-embedded folder and a 100%-embedded one are indistinguishable. Parent
                     // totals exclude chunk docs; the chunk tier is its own denominator.
+                    // Each parent stage carries its OWN denominator: a doc without that stage's
+                    // status field is outside the stage (post-798), never a permanent deficit.
                     IndexingService.RootCoverage coverage = jobCounts.coverage();
-                    m.put("parentDocsTotal", coverage.parentDocsTotal());
+                    m.put("parentDocsTotalEmbedding", coverage.parentDocsTotalEmbedding());
                     m.put("parentDocsSettledEmbedding", coverage.parentDocsSettledEmbedding());
+                    m.put("parentDocsTotalSplade", coverage.parentDocsTotalSplade());
                     m.put("parentDocsSettledSplade", coverage.parentDocsSettledSplade());
+                    m.put("parentDocsTotalNer", coverage.parentDocsTotalNer());
                     m.put("parentDocsSettledNer", coverage.parentDocsSettledNer());
                     m.put("chunkDocsTotal", coverage.chunkDocsTotal());
                     m.put("chunkDocsSettled", coverage.chunkDocsSettled());

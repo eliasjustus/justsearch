@@ -1196,9 +1196,11 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
                 inFlight,
                 c.getFailedCount(),
                 new IndexingService.RootCoverage(
-                        cov.getParentDocsTotal(),
+                        cov.getParentDocsTotalEmbedding(),
                         cov.getParentDocsSettledEmbedding(),
+                        cov.getParentDocsTotalSplade(),
                         cov.getParentDocsSettledSplade(),
+                        cov.getParentDocsTotalNer(),
                         cov.getParentDocsSettledNer(),
                         cov.getChunkDocsTotal(),
                         cov.getChunkDocsSettled()));

@@ -13,6 +13,8 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import './LibrarySurface.js';
 import { folderRowLabel, type LibrarySurface } from './LibrarySurface.js';
+import { folderStatus } from '../state/folderStatus.js';
+import type { IndexedRootView } from '../../api/generated/schema-types/indexed-root-view.js';
 import type { PluginHostApi } from '../plugin-api/plugin-types.js';
 import {
   __resetAiStateForTest,
@@ -98,6 +100,56 @@ describe('LibrarySurface — transition-aware empty state (595 §4.3)', () => {
       const text = el.shadowRoot?.textContent ?? '';
       expect(text).toContain('No watched folders');
       expect(text).not.toContain('Rebuilding index');
+    } finally {
+      el.remove();
+    }
+  });
+});
+
+/**
+ * Tempdoc 813 remediation F1 — the PRE-POLL applicability sentinel, taken from the production path
+ * rather than hand-made. `subscribeAiState` invokes its listener SYNCHRONOUSLY on subscribe, so the
+ * very first value every mounted surface sees is the projection of a `null` status snapshot. That
+ * value used to be an all-false applicability object, which reads as "no parent stage applies" —
+ * and a root whose chunk coverage happened to be complete then rendered "fully searchable" off a
+ * snapshot in which nothing had been observed at all. Unknown must stay unknown.
+ */
+describe('LibrarySurface — applicability before the first poll (813 F1)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    __resetAiStateForTest();
+  });
+  afterEach(() => __resetAiStateForTest());
+
+  it('the synchronous first callback yields UNKNOWN stages, and no row claims a coverage tier', async () => {
+    // No __feedForTest: this is the real pre-poll store state the listener fires with on mount.
+    const el = await mount();
+    try {
+      await el.updateComplete;
+      expect(el.enrichmentStages).toBeNull();
+
+      // The same value LibrarySurface hands folderStatus for every row it renders.
+      const row = {
+        pathHash: 'h',
+        collection: 'default',
+        fileCount: 312,
+        lastIndexedIsoTime: '2026-08-06T00:00:00Z',
+        status: 'indexed',
+        walkError: '',
+        inFlightCount: 0,
+        failedCount: 0,
+        walkCompleted: true,
+        chunkDocsTotal: 100,
+        chunkDocsSettled: 100,
+      } as IndexedRootView;
+      const fs = folderStatus(row, {
+        relativeTime: 'just now',
+        verifiedRelativeTime: '',
+        provisional: false,
+        enrichmentStages: el.enrichmentStages,
+      });
+      expect(fs.metaText).not.toContain('fully searchable');
+      expect(fs.metaText).not.toContain('enriching');
     } finally {
       el.remove();
     }

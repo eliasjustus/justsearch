@@ -74,6 +74,7 @@ async function setProgress(p: Partial<IndexingProgress>): Promise<void> {
     embeddingPending: 0,
     vduPending: 0,
     etaSeconds: null,
+    pendingBytes: null,
     live: true,
     stages: { embedding: true, splade: true, ner: true },
     ...p,
@@ -165,6 +166,19 @@ describe('<jf-task-list> — aggregate card (813 §5)', () => {
     expect(bar.classList.contains('indeterminate')).toBe(true);
     expect(bar.getAttribute('aria-valuenow')).toBeNull();
     expect(text('[data-testid="task-aggregate-counts"]')).toBe('412 files remaining');
+  });
+
+  // 813 Slice B — "12 files remaining" says nothing about a mixed corpus where one file is a 2 GB
+  // video. The weight rides the SAME counts line, and only when the projection calls it faithful.
+  it('appends the remaining byte weight when the projection has a faithful one', async () => {
+    await setProgress({ phase: 'indexing', jobsPending: 412, pendingBytes: 8 * 1024 * 1024 * 1024 });
+    expect(text('[data-testid="task-aggregate-counts"]')).toBe('412 files remaining · 8.00 GB');
+  });
+
+  it('renders no byte figure at all when the weight is not faithful (never "0 B")', async () => {
+    await setProgress({ phase: 'indexing', jobsPending: 412, pendingBytes: null });
+    expect(text('[data-testid="task-aggregate-counts"]')).toBe('412 files remaining');
+    expect(text('[data-testid="task-aggregate-counts"]')).not.toContain('B');
   });
 
   it('the Enriching phase renders the coverage percent as a real fraction', async () => {

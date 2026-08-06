@@ -27,7 +27,10 @@ package io.justsearch.app.api.status;
  * file-counted. {@code pendingUnknownSizeJobs} counts the remaining jobs that
  * carry no recorded size — a nonzero value means {@code pendingBytes}
  * understates the real backlog, and a consumer must not present it as a
- * complete denominator.
+ * complete denominator. {@code pendingUnknownSizeJobs == -1} is the distinct
+ * "the queue could not compute the aggregate at all" marker
+ * ({@code JobQueue.PendingBytes.UNAVAILABLE}); {@code pendingBytes} is 0 there,
+ * so a consumer gated on {@code pendingBytes > 0} renders nothing either way.
  */
 @SuppressWarnings("ArrayRecordComponent") // 419 C3 V1/V2: intentional for API time-series payload
 public record CoreIndexView(

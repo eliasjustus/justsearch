@@ -41,7 +41,7 @@ import { subscribeFeedStalled } from '../substrates/tasks/indexingJobsBridge.js'
 import { subscribeAiState } from '../state/aiStateStore.js';
 import { selectIndexingProgress, type IndexingProgress } from '../state/indexingProgress.js';
 import { humanizeSeconds } from '../state/startupEstimate.js';
-import { formatCount } from '../display/format.js';
+import { formatBytes, formatCount } from '../display/format.js';
 
 /**
  * Bounded projection (tempdoc 550 Thesis III). Inside the disclosure the rail shows a per-status
@@ -68,6 +68,18 @@ const COUNT_ORDER: readonly TaskStatus[] = [
  */
 export const READY_DISMISS_MS = 6000;
 
+/**
+ * The Indexing phase's counts line: the file backlog, plus its BYTE weight when the projection has
+ * a faithful one (813 Slice B). The weight is the answer to "why is '12 files remaining' taking so
+ * long" on a mixed corpus — a single 2 GB video and a 2 KB note are both "1 file". It is appended,
+ * never substituted: the file count is the number the indeterminate bar is about, and the byte
+ * figure is withdrawn entirely (not shown as 0 B) whenever the projection says it is not faithful.
+ */
+export function indexingCountsLine(p: IndexingProgress): string {
+  const files = `${formatCount(p.jobsPending)} ${p.jobsPending === 1 ? 'file' : 'files'} remaining`;
+  return p.pendingBytes === null ? files : `${files} · ${formatBytes(p.pendingBytes)}`;
+}
+
 /** The empty projection this component starts from, before the first `/api/status` poll lands. */
 const NO_PROGRESS: IndexingProgress = {
   phase: 'unknown',
@@ -79,8 +91,10 @@ const NO_PROGRESS: IndexingProgress = {
   embeddingPending: 0,
   vduPending: 0,
   etaSeconds: null,
+  pendingBytes: null,
   live: false,
-  stages: { embedding: false, splade: false, ner: false },
+  // Applicability is UNKNOWN before the first poll — never all-false, which reads as a claim.
+  stages: null,
 };
 
 export class TaskList extends JfElement {
@@ -455,7 +469,7 @@ export class TaskList extends JfElement {
             <span></span>
           </div>
           <div class="counts" data-testid="task-aggregate-counts">
-            ${formatCount(p.jobsPending)} ${p.jobsPending === 1 ? 'file' : 'files'} remaining
+            ${indexingCountsLine(p)}
           </div>
           ${eta
             ? html`<div class="eta" data-testid="task-aggregate-eta">

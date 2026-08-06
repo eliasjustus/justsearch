@@ -48,7 +48,10 @@ describe('folderStatus', () => {
     // the new state cannot become a back door around the §8.1 drain requirement.
     for (const inFlight of [0, 1, 5]) {
       for (const failed of [0, 1]) {
-        for (const coverage of [{}, { parentDocsTotal: 10, parentDocsSettledEmbedding: 4 }]) {
+        for (const coverage of [
+          {},
+          { parentDocsTotalEmbedding: 10, parentDocsSettledEmbedding: 4 },
+        ]) {
           const fs = folderStatus(
             row({ inFlightCount: inFlight, failedCount: failed, ...coverage }),
             ctx({ enrichmentStages: ALL_STAGES }),
@@ -208,7 +211,9 @@ describe('folderStatus — per-root enrichment tier (813 §4)', () => {
   const covered = (over: Partial<IndexedRootView> = {}): IndexedRootView =>
     row({
       fileCount: 312,
-      parentDocsTotal: 100,
+      parentDocsTotalEmbedding: 100,
+      parentDocsTotalSplade: 100,
+      parentDocsTotalNer: 100,
       parentDocsSettledEmbedding: 100,
       parentDocsSettledSplade: 100,
       parentDocsSettledNer: 100,
@@ -255,7 +260,7 @@ describe('folderStatus — per-root enrichment tier (813 §4)', () => {
     // Explicit zeros are the "index runtime unavailable" shape (IndexedRootView: all-zero) — the
     // same withdrawal, never "enriching 0%".
     const zeros = folderStatus(
-      row({ parentDocsTotal: 0, chunkDocsTotal: 0, parentDocsSettledEmbedding: 0 }),
+      row({ parentDocsTotalEmbedding: 0, chunkDocsTotal: 0, parentDocsSettledEmbedding: 0 }),
       ctx({ enrichmentStages: ALL_STAGES }),
     );
     expect(zeros.state).toBe('ready');
@@ -297,7 +302,9 @@ describe('folderStatus — per-root enrichment tier (813 §4)', () => {
     const fs = folderStatus(
       row({
         fileCount: 1000,
-        parentDocsTotal: 1000,
+        parentDocsTotalEmbedding: 1000,
+        parentDocsTotalSplade: 1000,
+        parentDocsTotalNer: 1000,
         parentDocsSettledEmbedding: 999,
         parentDocsSettledSplade: 1000,
         parentDocsSettledNer: 1000,
@@ -309,6 +316,44 @@ describe('folderStatus — per-root enrichment tier (813 §4)', () => {
     expect(fs.state).toBe('keyword-ready');
     expect(fs.metaText).toContain('enriching 99%');
     expect(fs.metaText).not.toContain('fully searchable');
+  });
+
+  it('a missing SETTLED key withdraws the stage, exactly like a missing total', () => {
+    // The wire reported no SPLADE numerator for this root. Keeping the stage in the denominator
+    // with a zero numerator freezes a fraction nothing can ever move (100 of 200 forever); the
+    // absence is the same absence as a missing total, so the stage leaves the ratio.
+    const fs = folderStatus(
+      row({
+        fileCount: 312,
+        parentDocsTotalEmbedding: 100,
+        parentDocsSettledEmbedding: 100,
+        parentDocsTotalSplade: 100,
+        // parentDocsSettledSplade deliberately absent
+      }),
+      ctx({ enrichmentStages: { embedding: true, splade: true, ner: false } }),
+    );
+    expect(fs.state).toBe('ready');
+    expect(fs.metaText).toContain('fully searchable');
+    expect(fs.metaText).not.toContain('enriching 50%');
+  });
+
+  it('the chunk tier follows the EMBEDDING stage — same encoder, same applicability', () => {
+    // Embedding switched off: its chunk vectors will never be computed either, so a chunk backlog
+    // must not hold the folder at "enriching" forever.
+    const fs = folderStatus(
+      row({
+        fileCount: 312,
+        parentDocsTotalEmbedding: 100,
+        parentDocsSettledEmbedding: 0,
+        parentDocsTotalNer: 100,
+        parentDocsSettledNer: 100,
+        chunkDocsTotal: 400,
+        chunkDocsSettled: 0,
+      }),
+      ctx({ enrichmentStages: { embedding: false, splade: false, ner: true } }),
+    );
+    expect(fs.state).toBe('ready');
+    expect(fs.metaText).toContain('fully searchable');
   });
 
   it('settled counts are clamped to their total — a stale count can never exceed 100%', () => {

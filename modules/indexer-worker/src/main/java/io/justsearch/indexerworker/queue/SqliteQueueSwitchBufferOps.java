@@ -111,6 +111,11 @@ final class SqliteQueueSwitchBufferOps {
    * <p>Rows enqueued before the size column existed — or by a caller that could not stat the file —
    * hold NULL; they are excluded from the sum and counted separately so a consumer never reads an
    * unknown size as zero bytes.
+   *
+   * <p>On failure this returns {@link JobQueue.PendingBytes#UNAVAILABLE}, not {@code EMPTY}: the
+   * surrounding idiom here is best-effort + {@code errorRecorder} (see {@code jobStateCounts}),
+   * and for a byte weight the all-zero value is the positive claim "nothing pending", which would
+   * read as "0 B remaining" in the middle of a backlog.
    */
   JobQueue.PendingBytes pendingBytes() {
     lock.lock();
@@ -130,12 +135,12 @@ final class SqliteQueueSwitchBufferOps {
           return new JobQueue.PendingBytes(
               rs.getLong("known_bytes"), rs.getLong("unknown_size_jobs"));
         }
-        return JobQueue.PendingBytes.EMPTY;
+        return JobQueue.PendingBytes.UNAVAILABLE;
       }
     } catch (Exception e) {
       errorRecorder.run();
       log.debug("Failed to get pending job bytes (best-effort): {}", e.getMessage());
-      return JobQueue.PendingBytes.EMPTY;
+      return JobQueue.PendingBytes.UNAVAILABLE;
     } finally {
       lock.unlock();
     }
