@@ -24,6 +24,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
+from .agent_stream_fixture import DONE_RUN_BODY
+
 def _find_fixtures_dir() -> Path:
     """Locate `modules/ui-web/src/api/__fixtures__` by walking up to the repo root
     (robust to the file's nesting depth — mirrors ui_measure._find_axe)."""
@@ -217,7 +219,15 @@ VARIANTS = ("default", "empty")
 # readiness/inference/disclosure state as `degraded` PLUS a canonical thread RECORD with two
 # user turns — the state `spineItems()` needs and the only fixture-reachable way to reach it
 # (see `_thread_body`).
-_DEGRADED_VARIANTS = frozenset({"degraded", "degraded-detailed", "degraded-thread"})
+# `agent-run` (tempdoc 814 §D8, the `chat-evidence-rail` / `chat-activity-rail-open` steps) is
+# `degraded-thread` PLUS (a) grounding sources + a DONE lifecycle on the thread record and
+# (b) a real terminating SSE body for POST /api/chat/dispatch (agent_stream_fixture.DONE_RUN).
+# It is the only variant under which a fixture-driven agent RUN completes.
+_DEGRADED_VARIANTS = frozenset({"degraded", "degraded-detailed", "degraded-thread", "agent-run"})
+
+# The variants that serve a `/api/thread/{id}` RECORD (and therefore seed the per-tab
+# lastViewedConversation pointer so a cold chat surface auto-restores it).
+_THREAD_RECORD_VARIANTS = frozenset({"degraded-thread", "agent-run"})
 
 # The per-tab pointer UnifiedChatView reads on connect (`readLastViewedConversation`,
 # controllers/lastViewedConversation.ts KEY) — seeding it is what makes a COLD chat surface
@@ -229,7 +239,68 @@ THREAD_POINTER_SEED = (
 )
 
 
-def _thread_body() -> str:
+# Tempdoc 814 §D8.1 — the grounding the `agent-run` variant hangs on its LAST assistant message.
+# Shape: `api/generated/shape-handlers/shared.ts`'s `AgentSource` (every field required — the FE
+# reads `path`/`title`/`headingText` for the rail rows and `parentDocId` + `startLine`/`endLine`
+# for the click-to-local-line deep link). `hydrateAnswerEvidenceFromRecord` (UnifiedChatView)
+# scans the record BACKWARD for the newest `ASSISTANT_MESSAGE` carrying a non-empty
+# `attributes.sources`, so this is what mounts `.evidence-rail` with NO stream involvement —
+# the whole point of §D8.1's record-path-first split.
+#
+# THREE rows, not one: `EVIDENCE_RAIL_MAX_VISIBLE` bounds the docked rail to a top-N index (§D3),
+# so a single row could never show the "N of M" bounded-index behaviour the rail exists to have.
+_AGENT_RUN_SOURCES: tuple[dict, ...] = (
+    {
+        "parentDocId": "doc-indexing-pipeline",
+        "chunkIndex": 3,
+        "path": "docs/explanation/indexing-pipeline.md",
+        "title": "Indexing pipeline",
+        "excerpt": "The worker enriches each document before the head projects the result set.",
+        "startLine": 41,
+        "endLine": 48,
+        "headingText": "Enrichment stages",
+    },
+    {
+        "parentDocId": "doc-system-overview",
+        "chunkIndex": 7,
+        "path": "docs/explanation/01-system-overview.md",
+        "title": "System overview",
+        "excerpt": "Head, Body and Brain are separate processes; only the Body owns the index.",
+        "startLine": 12,
+        "endLine": 19,
+        "headingText": "Process model",
+    },
+    {
+        "parentDocId": "doc-retrieval-contract",
+        "chunkIndex": 1,
+        "path": "docs/reference/api-contract-map.md",
+        "title": "API contract map",
+        "excerpt": "Retrieval results reach the head over gRPC and are projected onto the surface.",
+        "startLine": 88,
+        "endLine": 95,
+        "headingText": "Knowledge search",
+    },
+)
+
+# Tempdoc 814 §D8.1 — the typed loop object the rail's lifecycle row reads (`unifiedLifecycles`,
+# validated by `unifiedThreadClient.ts`'s `lifecycleSchema`). `state: "DONE"` is load-bearing
+# twice: it is the row's own text, and `runCompleted` (UnifiedChatView) reads it to render a
+# finished run as a neutral FACT rather than an alarm. Counts agree with the SSE `done` payload
+# (`agent_stream_fixture.DONE_RUN`) and the budget agrees with its `budget_update`, so the record
+# and the stream cannot tell two different stories about the same run.
+_AGENT_RUN_LIFECYCLE: dict = {
+    "sessionId": "fixture-agent-run-0001",
+    "state": "DONE",
+    "actor": "primary",
+    "turns": 2,
+    "iterations": 2,
+    "toolCalls": 1,
+    "actors": ["primary"],
+    "budget": {"initial": 8192, "consumed": 1840, "remaining": 6352, "overBudget": False},
+}
+
+
+def _thread_body(variant: str = "degraded-thread") -> str:
     """The `GET /api/thread/{id}` record for the `degraded-thread` variant (tempdoc 814
     review pass): TWO user turns and their answers, in the wire shape
     `views/unifiedThreadClient.ts` validates (`conversationId` + `events[]` of
@@ -243,8 +314,18 @@ def _thread_body() -> str:
     however many turns land: measured — two rendered `.message.user` bubbles, `affordance:
     'agent'`, `wideZone: true`, and still zero `.run-spine`, because the record was empty.
     Two turns is exactly `spineItems()`'s `turns < 2` floor (UnifiedChatView.ts ~3163).
-    Content is inert prose; no evidence/sources, so nothing else in the view changes shape."""
-    def _event(idx: int, kind: str, originator: str, content: str) -> dict:
+    Content is inert prose; no evidence/sources, so nothing else in the view changes shape.
+
+    Tempdoc 814 §D8.1 — the `agent-run` variant keeps that structure UNCHANGED (so
+    `chat-spine-multi` is untouched) and adds exactly the two fields the record can already
+    carry: `attributes.sources` on the LAST assistant message (which
+    `hydrateAnswerEvidenceFromRecord` turns into `agentCtrl.answerSources`, mounting
+    `.evidence-rail`) and a DONE `lifecycles[]` entry (which the activity rail's
+    `.activity-lifecycle` row reads). Neither needs a stream; that is §D8.1's whole claim."""
+    with_evidence = variant == "agent-run"
+
+    def _event(idx: int, kind: str, originator: str, content: str,
+               attributes: dict | None = None) -> dict:
         return {
             "id": f"evt-{idx}",
             # Fixed timestamps keep the capture byte-stable (the projection sorts on them).
@@ -252,7 +333,7 @@ def _thread_body() -> str:
             "kind": kind,
             "originator": originator,
             "content": content,
-            "attributes": {},
+            "attributes": attributes or {},
         }
 
     return json.dumps({
@@ -263,10 +344,21 @@ def _thread_body() -> str:
                    "It describes how the indexing pipeline hands results to the head process."),
             _event(3, "USER_MESSAGE", "user", "And how does indexing reach it?"),
             _event(4, "ASSISTANT_MESSAGE", "assistant",
-                   "The worker enriches each document, then the head projects the result set."),
+                   "The worker enriches each document, then the head projects the result set.",
+                   {"sources": list(_AGENT_RUN_SOURCES), "citations": []} if with_evidence else None),
         ],
-        "lifecycles": [],
+        "lifecycles": [_AGENT_RUN_LIFECYCLE] if with_evidence else [],
     })
+
+
+# Tempdoc 814 §D8.2 — the agent capability probe (`AgentSessionController.checkAvailability`,
+# polled by `agentSessionStore`'s `startPolling`). Under every other variant this endpoint is
+# unmapped, so `data.available` reads `undefined` -> `ctrl.available` never becomes `true` ->
+# `UnifiedChatView.send()`'s `if (ctrl.available !== true) return` SILENTLY drops the submit and
+# no agent run can start. LIVE-VERIFIED as the blocker (the run never left the composer without
+# it). Variant-gated so no other step gains an agent capability it does not model. `tools: []` is
+# honest: the fixture run executes no tool through this probe's catalog.
+_AGENT_TOOLS_BODY = json.dumps({"available": True, "tools": []})
 
 
 def _search_body(variant: str) -> str:
@@ -432,7 +524,7 @@ def _settings_body(variant: str) -> str:
     step gets the EXPANDED banner (`forcedExpanded = isAdvancedMode() && !this.shortZone`) — the
     Detailed-mode height floor that had no registered ceiling. This one function is the ONLY knob
     separating the two degraded variants."""
-    if variant in ("degraded", "degraded-thread"):
+    if variant in ("degraded", "degraded-thread", "agent-run"):
         d = json.loads(_BODY_SETTINGS)
         d["ui"]["mode"] = "simple"
         return json.dumps(d)
@@ -452,8 +544,10 @@ def fixture_body(url: str, variant: str = "default") -> str:
         return _search_body(variant)
     if "/api/indexing-roots/substrate" in url:
         return _indexed_roots_body(variant)
-    if "/api/thread/" in url and variant == "degraded-thread":
-        return _thread_body()
+    if "/api/thread/" in url and variant in _THREAD_RECORD_VARIANTS:
+        return _thread_body(variant)
+    if "/api/chat/agent/tools" in url and variant == "agent-run":
+        return _AGENT_TOOLS_BODY
     for needle, body in _ROUTES:
         if needle in url:
             return body
@@ -467,13 +561,23 @@ async def install_fixtures(ctx, variant: str = "default") -> None:
     'empty') and `_status_body` (readiness state, 'degraded' — tempdoc 697) both key off
     the same ``variant`` string. Call once on a fresh context, before `new_page`."""
     await ctx.add_init_script(WALKTHROUGH_SEED)
-    # Variant-gated: only `degraded-thread` wants a cold chat surface to auto-restore the
-    # fixture conversation (`_thread_body`), so no other step's boot changes.
-    if variant == "degraded-thread":
+    # Variant-gated: only the record-bearing variants want a cold chat surface to auto-restore
+    # the fixture conversation (`_thread_body`), so no other step's boot changes.
+    if variant in _THREAD_RECORD_VARIANTS:
         await ctx.add_init_script(THREAD_POINTER_SEED)
 
     async def _handler(route):
         req = route.request
+        # Tempdoc 814 §D8.2 — the agent run's OWN transport. `host.ai.streamShape` POSTs the
+        # shape to /api/chat/dispatch and reads the RESPONSE as SSE; the generic JSON branch
+        # below used to answer it with `{}`, so both buffer-based parsers saw no terminal frame
+        # and `pumpHostAiStream` threw STREAM_INCOMPLETE — the "Connection lost — the response
+        # was interrupted." row in every agent-mode capture. Serving a complete, schema-validated
+        # multi-frame body instead is what makes a DONE run capture-reachable. Checked BEFORE the
+        # `/stream`-ish branch (this path contains no "/stream") and before the JSON branch.
+        if "/api/chat/dispatch" in req.url and variant == "agent-run":
+            await route.fulfill(status=200, content_type="text/event-stream", body=DONE_RUN_BODY)
+            return
         accept = req.headers.get("accept") or ""
         if "/stream" in req.url or "text/event-stream" in accept:
             await route.fulfill(status=200, content_type="text/event-stream", body="")

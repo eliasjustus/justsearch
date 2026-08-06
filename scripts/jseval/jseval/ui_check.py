@@ -1150,6 +1150,88 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # capture. A short settle instead, so the affordance flip's re-render has landed.
         await asyncio.sleep(0.3)
 
+    async def _drive_agent_run_to_done(page):
+        # Tempdoc 814 §D8 — the ONE recipe that reaches a COMPLETED agent run under `--fixtures`,
+        # shared by the two steps below so they cannot drift into two different "same" states.
+        #
+        # Order is load-bearing at every step:
+        #  1. Delegate FIRST. `escalateAsk()` (the "??"-draft Enter path the older chat steps use)
+        #     re-derives the affordance from route 'ask', which would demote agent mode — so the
+        #     agent branch of `send()` is reachable only from an ALREADY-agent affordance, where
+        #     `handleComposerSubmit` calls `this.send()` directly (UnifiedChatView.ts ~2860).
+        #     Clicking Delegate also creates the hosted controller (`ensureAgentCtrl` on the next
+        #     render), which the record-hydration in step 4 needs to exist.
+        #  2. The submit streams the `agent-run` variant's DONE body from /api/chat/dispatch
+        #     (ui_fixtures._handler). `ctrl.available` must already be true or `send()` returns
+        #     silently — that is what the variant's `/api/chat/agent/tools` body supplies.
+        #  3. `.activity-lifecycle` is the observed condition for "the record is in", not a sleep.
+        #  4. The evidence rail arrives LAST and from the RECORD: `send()` resolves after the whole
+        #     stream drains, and only then does `.then(() => refreshUnifiedThread())` fire
+        #     `hydrateAnswerEvidenceFromRecord`, which is what sets `answerSources` (the DONE frame
+        #     deliberately carries none — see agent_stream_fixture.DONE_RUN). Waiting on the rail
+        #     therefore witnesses the full record round-trip, not just a rendered frame.
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        try:
+            await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "() => { location.hash = 'justsearch://surface/core.unified-chat-surface'; }"
+            )
+        await page.locator(S.CSS_ESCALATION_DELEGATE).first.wait_for(state="visible", timeout=15_000)
+        await page.locator(S.CSS_ESCALATION_DELEGATE).first.click(force=True)
+        await page.locator(S.CSS_ACTIVITY_RAIL).first.wait_for(state="visible", timeout=10_000)
+        ta = page.locator(S.CSS_COMPOSER_TEXTAREA)
+        await ta.wait_for(state="visible", timeout=10_000)
+        await ta.click()
+        await ta.fill("How does indexing reach the head process?")
+        await ta.press("Enter")
+        await page.locator(S.CSS_ACTIVITY_LIFECYCLE).first.wait_for(state="attached", timeout=20_000)
+        await page.locator(S.CSS_EVIDENCE_RAIL).first.wait_for(state="visible", timeout=20_000)
+
+    async def setup_chat_evidence_rail(page):
+        # Tempdoc 814 §D8.1 — the RECORD-path capture: the docked evidence rail on screen at the
+        # pinned 1366x768 viewport, which §V residual 1 recorded as fixture-unreachable ("the rail
+        # additionally an affordance round-trip"). What this step registers, and why each row is
+        # not vacuous on its own:
+        #   - `requiredSelectors: ['.evidence-rail']` — the rail MOUNTED. Every other row below is
+        #     about the rail, so without this they would all pass on a capture where it never
+        #     rendered.
+        #   - `nonScrollableSelectors: ['.evidence-rail']` — §D3's DIRECT witness. The surface-wide
+        #     `maxScrollableRegions: 1` cannot say WHICH element may scroll: a regression where
+        #     `.conversation` stopped scrolling and the rail started would still count 1.
+        #   - `absentSelectors: ['.sources-affordance']` — §D5's source-count single authority, on
+        #     camera: while the rail owns the count the in-answer "Sources · N" chip must not
+        #     render at all (not merely be CSS-hidden — the review pass's own correction).
+        #   - the `.conversation-zone` share floor — §D1 still holds WITH the rail in the grid
+        #     (the rail is a column, so a share regression here would mean the rail cost height).
+        await page.set_viewport_size({"width": 1366, "height": 768})
+        await _drive_agent_run_to_done(page)
+        await asyncio.sleep(0.3)
+
+    async def setup_chat_activity_rail_open(page):
+        # Tempdoc 814 §D8.2 — the EXPANDED activity-rail body, the other half of §V residual 1.
+        # Same completed run, plus one action: open the `<details>`. The three body rows only
+        # exist after a real run reports them, which is exactly what the SSE fixture supplies —
+        # `.activity-budget` + `.activity-context` come from the stream's single `budget_update`
+        # (the context meter needs promptTokens AND contextWindow > 0, else
+        # `projectContextHorizon` returns null and the meter silently does not render), and
+        # `.activity-lifecycle` from the record's DONE lifecycle.
+        #
+        # The assertion this step exists for is §D2's BOUNDED EXPANSION: the conversation zone
+        # keeps its share floor WITH the expanded body in flow. The closure audit recorded that
+        # half as untested precisely because no capture could open a populated rail.
+        await page.set_viewport_size({"width": 1366, "height": 768})
+        await _drive_agent_run_to_done(page)
+        # Click the summary rather than setting `open` in JS: the `<details>` binds `?open` to
+        # `activityRailExpanded` and records the toggle, so a JS poke would be re-closed by the
+        # next render (the state, not the attribute, is the authority — 814 finding 12(a)).
+        await page.locator(S.CSS_ACTIVITY_RAIL_SUMMARY).first.click()
+        await page.locator(S.CSS_ACTIVITY_BUDGET).first.wait_for(state="visible", timeout=10_000)
+        await page.locator(S.CSS_ACTIVITY_CONTEXT).first.wait_for(state="visible", timeout=10_000)
+        await asyncio.sleep(0.3)
+
     async def setup_responsive(page):
         await page.goto(demo, wait_until="domcontentloaded", timeout=timeout_ms)
         await _type_and_search(page)
@@ -1431,6 +1513,15 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # projection and `forbiddenVisibleText` can discriminate yield-on from yield-off.
         Step("chat-chip-yield", setup=setup_chat_chip_yield, isolated=True,
              fixtures_variant="degraded"),
+        # `chat-evidence-rail` / `chat-activity-rail-open`: tempdoc 814 §D8's two residual-closure
+        # captures, both on the `agent-run` variant — `degraded-thread` plus record grounding +
+        # a DONE lifecycle plus a REAL terminating SSE body for POST /api/chat/dispatch. It is the
+        # only variant under which an agent run completes, so it is also the only one whose
+        # captures are free of the spurious "Connection lost" row (asserted, not assumed).
+        Step("chat-evidence-rail", setup=setup_chat_evidence_rail, isolated=True,
+             fixtures_variant="agent-run"),
+        Step("chat-activity-rail-open", setup=setup_chat_activity_rail_open, isolated=True,
+             fixtures_variant="agent-run"),
 
         # --- Slice 3a.1 Phase 6: Lit shell-v0 visual verification ---
         # Mounts the standalone shell demo (Lumino DockPanel + Lit panes)

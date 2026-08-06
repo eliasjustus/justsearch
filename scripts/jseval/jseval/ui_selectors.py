@@ -109,6 +109,19 @@ CSS_RUN_SPINE = '.run-spine'
 # docstring for the fixture-reachability finding this selector exists to exploit).
 TID_ESCALATION_DELEGATE = "escalation-delegate"
 CSS_ESCALATION_DELEGATE = f'[data-testid="{TID_ESCALATION_DELEGATE}"]'
+# Tempdoc 814 §D8 — the two bands the agent-run fixture makes capture-reachable.
+# `.evidence-rail` is the DOCKED sources pane (mounts on `evidenceRailMounted()`: agent
+# affordance + a non-empty `answerSources` + wide zone); `.sources-affordance` is the
+# in-answer "Sources · N" chip, which by §D5 must NOT render while the rail owns the count.
+# `.activity-budget` is the FIRST body row of the expanded activity rail (the budget readout
+# + bar) and `.activity-context` its context-headroom sibling; `.activity-lifecycle` is the
+# turn/iteration/tool + state line the thread record's `lifecycles[]` feeds.
+CSS_EVIDENCE_RAIL = '.evidence-rail'
+CSS_SOURCES_AFFORDANCE = '.sources-affordance'
+CSS_ACTIVITY_RAIL_SUMMARY = '.activity-rail > summary'
+CSS_ACTIVITY_BUDGET = '.activity-budget'
+CSS_ACTIVITY_CONTEXT = '.activity-context'
+CSS_ACTIVITY_LIFECYCLE = '.activity-lifecycle'
 
 @dataclass(frozen=True)
 class Selector:
