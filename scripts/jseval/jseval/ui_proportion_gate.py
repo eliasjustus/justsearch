@@ -44,6 +44,15 @@ Step-level (not per-element; declared alongside ``elements`` on the step object)
                              Asserts ``geometry.scrollableCount`` (ui_measure.py's
                              shadow-piercing scrollable-element walk) does not exceed
                              the declared ceiling.
+  ``minScrollableRegions``   the closure audit's finding C — a ceiling alone is VACUOUS on a
+                             capture whose ``scrollableCount`` is 0: "at most one scroller"
+                             passes trivially when the state never produces one, so the
+                             one-scroller rule would keep reporting green through a
+                             regression that removed the scroller entirely (or through a
+                             setup that silently stopped reaching the overflowing state).
+                             A step that is SUPPOSED to scroll declares this floor, and the
+                             pair (min 1 / max 1) is what makes the rule witness a real
+                             scroller.
   ``statusFactsSingleton``   tempdoc 814 D5/D7.3 — the "one authority, one pointer"
                              copy-lint. Asserts every phrase in
                              governance/status-facts.v1.json renders at most its
@@ -162,6 +171,7 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
       - ``UNDER_SHARE``                 — ``(rect.h + tolerancePx) / other.rect.h < floor``
       - ``CLIPPED``                     — ``rect.y + rect.h > maxBottomPx + tolerancePx``
       - ``MULTI_SCROLL``                — ``geometry.scrollableCount > maxScrollableRegions``
+      - ``NO_SCROLLER``                 — ``geometry.scrollableCount < minScrollableRegions``
       - ``DUPLICATE_STATUS_FACT``       — a status-facts phrase's count exceeds its
                                            registered ``maxPersistentRenders``
       - ``PRESENT_BUT_SHOULD_BE_ABSENT`` — an ``absentSelectors`` entry WAS captured
@@ -182,6 +192,7 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
         elements = s.get("elements") or []
         absent_selectors = s.get("absentSelectors") or []
         max_scrollable = s.get("maxScrollableRegions")
+        min_scrollable = s.get("minScrollableRegions")
         status_facts_singleton = bool(s.get("statusFactsSingleton"))
         if not step:
             continue
@@ -190,7 +201,8 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
         # hatch, not a silent miss: a step that DOES declare a step-level flag with an
         # empty `elements` array, e.g. `chat-spine-single`'s `absentSelectors`-only row,
         # still runs every check below).
-        if not elements and not absent_selectors and max_scrollable is None and not status_facts_singleton:
+        if (not elements and not absent_selectors and max_scrollable is None
+                and min_scrollable is None and not status_facts_singleton):
             continue
         res = capture_fn(step)
         if not res.get("ok"):
@@ -370,6 +382,27 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
                     "status": "MULTI_SCROLL" if multi_scroll else "ok",
                     "scrollableCount": scrollable_count,
                     "maxScrollableRegions": max_scrollable,
+                    "scrollableRegions": geo.get("scrollableRegions"),
+                })
+
+        # The anti-vacuity floor: without it, `maxScrollableRegions` on a 0-scroller capture
+        # asserts nothing at all (closure-audit finding C).
+        if min_scrollable is not None:
+            scrollable_count = geo.get("scrollableCount")
+            if scrollable_count is None:
+                any_error = True
+                rows.append({"step": step, "constraint": "minScrollableRegions",
+                             "status": "ERROR",
+                             "error": "captured geometry has no scrollableCount "
+                                      "(ui_measure.py geometry probe stale?)"})
+            else:
+                no_scroller = scrollable_count < min_scrollable
+                any_violation = any_violation or no_scroller
+                rows.append({
+                    "step": step, "constraint": "minScrollableRegions",
+                    "status": "NO_SCROLLER" if no_scroller else "ok",
+                    "scrollableCount": scrollable_count,
+                    "minScrollableRegions": min_scrollable,
                     "scrollableRegions": geo.get("scrollableRegions"),
                 })
 

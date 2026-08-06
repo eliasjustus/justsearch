@@ -1701,6 +1701,30 @@ export class UnifiedChatView extends JfElement {
     toggleContextInspector();
   }
 
+  /**
+   * Tempdoc 814 §D2 — the held-gate EXCEPTION to "in-flow chrome is summary-height, detail is
+   * on-demand". A run parked awaiting a budget decision is the primary thing on screen at that
+   * moment, and the decision row that resolves it ("Add tokens / Finish with what it has / Stop",
+   * 577 Move 2) lives in the activity rail's BODY — inside a `<details>` that defaults to collapsed.
+   * Without this, the one state where the remedies are real renders them out of sight.
+   *
+   * Keyed on the TRANSITION into the held state (`agentCtrl.budgetGate != null` — the same predicate
+   * the summary's "Paused — awaiting budget" chip renders on), not on the state itself: the rail is
+   * forced open ONCE when the gate engages, so a user who collapses it while the run is still parked
+   * keeps it collapsed (their choice wins over the exception). No other lifecycle state — DONE
+   * included — ever forces it open; a terminal over-budget run is history, and §D2 keeps history in
+   * the collapsed summary.
+   */
+  private budgetGateWasHeld = false;
+
+  protected override willUpdate(_changed: Map<string, unknown>): void {
+    const held = this.agentCtrl?.budgetGate != null;
+    if (held && !this.budgetGateWasHeld) {
+      this.activityRailExpanded = true;
+    }
+    this.budgetGateWasHeld = held;
+  }
+
   /** Tempdoc 610 §K — keep the shell-mounted inspector's view fresh while it is open (e.g. a new turn). */
   protected override updated(_changed: Map<string, unknown>): void {
     if (isContextInspectorOpen()) {
@@ -2521,8 +2545,15 @@ export class UnifiedChatView extends JfElement {
     return html`
       <div class="conversation-zone ${landingCollapsed ? 'landing-collapsed' : ''}">
         ${this.renderRunSpine()}
+        ${/* Tempdoc 814 §D7.4 — `tabindex="0"` because this is THE surface's scroll region (D3), and a
+              scrollable region that no keyboard user can focus cannot be scrolled without a pointer
+              (axe `scrollable-region-focusable`). It went unnoticed until the closure audit's finding C
+              made a capture actually overflow: every prior capture measured `scrollableCount` 0, so the
+              rule never had a scroller to fire on. Not a tab-stop for its own sake — the spine's
+              `role="scrollbar"` thumb is the pointer/AT affordance, this is the plain-keyboard one. */ ''}
         <div
           id="run-conversation"
+          tabindex="0"
           class="conversation ${spineShown ? 'spine-scrolled jf-scrollbar-none' : ''}"
         >
           ${/* Tempdoc 577 Goal 3 (§3.2) — the retrieve base tier renders the ephemeral hit-list IN

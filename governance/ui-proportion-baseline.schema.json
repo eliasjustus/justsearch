@@ -35,6 +35,11 @@
             "minimum": 0,
             "description": "Tempdoc 814 D3/D7.2 — one-scroll-region-per-surface. When set, the gate asserts geometry.scrollableCount (ui_measure.py's shadow-piercing scrollable-element walk) is <= this value."
           },
+          "minScrollableRegions": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Closure-audit finding C — the anti-vacuity FLOOR paired with maxScrollableRegions. A ceiling alone passes trivially on a capture with zero scrollers, so a step whose state is supposed to overflow declares this floor; the pair (1/1) is what makes the one-scroller rule witness a real scroller. A scrollableCount below this is a NO_SCROLLER violation."
+          },
           "statusFactsSingleton": {
             "type": "boolean",
             "description": "Tempdoc 814 D5/D7.3 — when true, the gate asserts every phrase in governance/status-facts.v1.json renders at most its registered maxPersistentRenders times in this step's captured DOM text (measure.json's statusFacts probe)."

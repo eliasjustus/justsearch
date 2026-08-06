@@ -422,3 +422,45 @@ closure (§D7.5).
 3. **Detailed-mode behaviour below the height breakpoint** (D6): interaction-gated expansion is
    proposed; the alternative (Detailed always expands, content floor drops to the 45% hard
    floor) preserves current Detailed semantics at more height cost.
+
+## §C — Closure-audit remediation (2026-08-06; implementer ≠ auditor)
+
+The independent measured audit returned CLOSE-WITH-NOTES with three findings. All three are fixed,
+each with a runnable check rather than a passing read.
+
+- **B (user-visible) — the §D2 held-gate exception was never implemented.** `activityRailExpanded`
+  had only its two reset sites and the user's own `@toggle`, so the budget-gate decision row ("Add
+  tokens / Finish with what it has / Stop") rendered inside a collapsed `<details>` — the one state
+  where §D2 says that row *is* the primary thing on screen. A `willUpdate` hook now keys on the
+  TRANSITION into `agentCtrl.budgetGate != null` (the same predicate the summary's "Paused —
+  awaiting budget" chip renders on) and opens the rail once (`UnifiedChatView.ts`,
+  `budgetGateWasHeld` + `willUpdate`). Three tests: the transition opens it; a user re-collapse
+  while still parked sticks across further re-renders; a DONE transition does not auto-expand.
+- **A — the Detailed-mode floor was prose-only.** No capture existed in Detailed disclosure, so the
+  expanded banner had no registered ceiling and the ≥ 0.45 Detailed floor asserted nothing. New
+  isolated step `chat-bands-detailed` at **1366×900** (above the 820px block-axis breakpoint, so
+  W1's own gate lets Detailed expand) via a new `degraded-detailed` fixtures variant — identical to
+  `degraded` except it does NOT flip `ui.mode` to simple, so the app boots into Advanced from the
+  same `/api/settings/v2` seed the product uses. Measured: expanded `.degradation-banner` **110px**
+  (ceiling 176), `.conversation-zone` share **0.5385** (floor 0.45), rail 25 (40), composer 152 (220).
+- **C — the one-scroller assertion was vacuous.** Every captured state had `scrollableCount` 0, so
+  `maxScrollableRegions: 1` never witnessed a scroller. `ui_proportion_gate.py` gains the paired
+  floor `minScrollableRegions` (violation `NO_SCROLLER`; five unit tests, including the
+  zero-scroller vacuity case), and `chat-bands-detailed` submits one overflowing turn and declares
+  **min 1 / max 1** — the capture witnesses `div#run-conversation.conversation`, scrollDelta 398.
+  - Making a capture actually overflow immediately surfaced a real a11y defect the vacuity had
+    hidden: axe `scrollable-region-focusable` — the surface's only scroll region was not
+    keyboard-focusable. Fixed at the source (`tabindex="0"` on `#run-conversation`), not baselined;
+    `ui-a11y-gate` is clean with `knownRules: []` for the new step.
+  - **Evidence rail: NOT reachable under `--fixtures`** (recorded, not faked).
+    `evidenceRailMounted()` needs `agentCtrl.answerSources.length > 0`, and only two writers exist —
+    a real agent SSE `done` payload (the typed protocol `install_fixtures` stubs empty, W4's own
+    finding) or `hydrateAnswerEvidenceFromRecord` off a `/api/thread` record, which is reached only
+    from `refreshUnifiedThread` and no-ops while `agentCtrl` is still null. The latter would
+    additionally need an affordance round-trip (retrieve → agent → retrieve → submit → agent) plus a
+    hand-authored thread fixture. Its no-scroll obligation stays covered by `maxScrollableRegions: 1`
+    the moment it does mount.
+
+Verification: `npm run typecheck` clean; full FE unit suite 384 files / 4061 tests green;
+`jseval ui-proportion-gate` exit 0 over 27 rows / 6 steps; `jseval ui-a11y-gate` exit 0 over 12
+steps; `check-ui-step-coverage` green; the jseval gate pytests 37 passed.

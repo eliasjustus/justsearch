@@ -210,6 +210,13 @@ def cmd_ui_proportion_gate(ctx, ui_url, output_dir, timeout_ms):
                 f"> maxScrollableRegions={row['maxScrollableRegions']}",
                 err=True,
             )
+        elif status == "NO_SCROLLER":
+            click.echo(
+                f"NO_SCROLLER: step={row['step']} scrollableCount={row['scrollableCount']} "
+                f"< minScrollableRegions={row['minScrollableRegions']} — the one-scroller rule "
+                f"has nothing to witness on this capture",
+                err=True,
+            )
         elif status == "DUPLICATE_STATUS_FACT":
             click.echo(
                 f"DUPLICATE_STATUS_FACT: step={row['step']} phrase={row['phrase']!r} "

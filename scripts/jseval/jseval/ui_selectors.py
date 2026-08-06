@@ -69,6 +69,13 @@ CSS_COMPOSER_TEXTAREA = 'jf-composer textarea'
 # thread (UnifiedChatView.ts:5189 `this.thread = [...]`).
 CSS_DEGRADATION_BANNER_COLLAPSED = '.degradation-banner-collapsed'
 CSS_MESSAGE_USER = '.message.user'
+# Tempdoc 814 closure (audit finding A) — the EXPANDED banner and the cause list only its
+# expanded branch renders. `.degradation-banner` is worn by BOTH forms (the pill's class is
+# `degradation-banner degradation-banner-collapsed`), so the causes list — not the banner
+# class — is what proves a capture actually reached Detailed expansion
+# (UnifiedChatView.renderDegradationBanner's `notice-causes` <ul>).
+CSS_DEGRADATION_BANNER = '.degradation-banner'
+CSS_DEGRADATION_CAUSES = '[data-testid="chat-degradation-causes"]'
 # Sandbox round 7 — the four elements whose RELATIONS the `chat-occlusion` step measures:
 # the reading column starved by the pane beside it, and the toast stack growing over the
 # chat header's control row. `.conversation` / `.document-pane` are UnifiedChatView zones

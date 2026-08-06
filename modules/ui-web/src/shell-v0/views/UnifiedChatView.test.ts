@@ -689,6 +689,10 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
   });
 
   it('round-14 finding 12(a) — the run-telemetry band starts COLLAPSED', async () => {
+    // Same shared-singleton hygiene the 12(b) test below records: a neighbouring test leaves a
+    // budgetGate on the controller, which the 814 §D2 held-gate exception would (correctly) expand
+    // the rail for — masking what THIS test asserts (the no-gate default).
+    __resetAgentSessionStore();
     const view = mountView();
     await view.updateComplete;
     view.affordance = 'agent';
@@ -696,6 +700,78 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     const rail = view.shadowRoot?.querySelector('[data-testid="activity-rail"]') as HTMLDetailsElement;
     expect(rail).not.toBeNull();
     expect(rail.open).toBe(false);
+  });
+
+  describe('814 §D2 — the held budget gate is content, not chrome', () => {
+    const railOf = (view: UnifiedChatView) =>
+      view.shadowRoot?.querySelector('[data-testid="activity-rail"]') as HTMLDetailsElement;
+
+    const mountAgentView = async (): Promise<UnifiedChatView> => {
+      __resetAgentSessionStore();
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'agent';
+      await view.updateComplete; // ensureAgentCtrl creates the real (reset) controller
+      return view;
+    };
+
+    const holdBudgetGate = async (view: UnifiedChatView): Promise<void> => {
+      const ctrl = (view as unknown as { agentCtrl: { budgetGate: unknown } | null }).agentCtrl;
+      expect(ctrl).not.toBeNull();
+      ctrl!.budgetGate = { tokensNeeded: 4000, tokensRemaining: 0, totalTokensConsumed: 20224 };
+      view.requestUpdate();
+      await view.updateComplete;
+    };
+
+    it('the transition INTO the held state opens the rail, so the decision row is on screen', async () => {
+      const view = await mountAgentView();
+      expect(railOf(view).open).toBe(false);
+      await holdBudgetGate(view);
+      expect(railOf(view).open).toBe(true);
+      // The point of opening it: the decision row is what the user must act on.
+      expect(view.shadowRoot?.querySelector('.budget-gate-row')).not.toBeNull();
+    });
+
+    it('a user who re-collapses while still parked keeps it collapsed (no re-force)', async () => {
+      const view = await mountAgentView();
+      await holdBudgetGate(view);
+      const rail = railOf(view);
+      expect(rail.open).toBe(true);
+      // The user's own toggle — the same path the `@toggle` binding records.
+      rail.open = false;
+      rail.dispatchEvent(new Event('toggle'));
+      await view.updateComplete;
+      // The gate is STILL held; further re-renders must not re-open it.
+      view.requestUpdate();
+      await view.updateComplete;
+      view.requestUpdate();
+      await view.updateComplete;
+      expect(railOf(view).open).toBe(false);
+    });
+
+    it('a DONE transition does NOT auto-expand — a terminal run is history, not a decision', async () => {
+      const view = await mountAgentView();
+      expect(railOf(view).open).toBe(false);
+      (view as unknown as { unifiedLifecycles: unknown[] }).unifiedLifecycles = [
+        {
+          sessionId: 's1',
+          state: 'DONE',
+          actor: 'agent',
+          turns: 1,
+          iterations: 7,
+          toolCalls: 6,
+          actors: ['agent'],
+          budget: { initial: 20224, consumed: 21431, remaining: 0, overBudget: true },
+        },
+      ];
+      (view as unknown as { agentBudget: unknown }).agentBudget = {
+        tokensConsumed: 21431,
+        tokensRemaining: -1207,
+      };
+      view.requestUpdate();
+      await view.updateComplete;
+      expect(railOf(view).open).toBe(false);
+    });
   });
 
   it('round-14 finding 12(b) — a COMPLETED (DONE) run states "Over budget" as a fact, not an alarm', async () => {

@@ -798,6 +798,89 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         await page.locator(S.CSS_ACTIVITY_RAIL).first.wait_for(state="visible", timeout=10_000)
         await asyncio.sleep(0.2)
 
+    # The overflowing draft `setup_chat_bands_detailed` submits. Long ENOUGH that the one
+    # rendered user bubble exceeds the conversation zone at 1366x900 with the expanded
+    # banner in flow — the step's `minScrollableRegions: 1` is what keeps that true (see
+    # the setup's docstring for why a scroller has to be witnessed, not merely bounded).
+    _OVERFLOWING_ASK = "?? " + " ".join(
+        f"Part {i}: what does this file say about indexing, retrieval, ranking and "
+        "enrichment, and how does the worker hand its results back to the head process "
+        "so I can verify the whole path end to end?"
+        for i in range(1, 25)
+    )
+
+    async def setup_chat_bands_detailed(page):
+        # Tempdoc 814 closure (audit findings A + C) — the DETAILED-disclosure sibling of
+        # `chat-bands`, and the only capture where the EXPANDED degradation banner exists.
+        #
+        # WHY A SECOND STEP, not a knob on `chat-bands`: the two disclosure modes are
+        # different height regimes, and §D1 states a different floor for each (>= 0.55 in
+        # Simple, >= 0.45 in Detailed — "Detailed legitimately spends more, but bounded").
+        # `chat-bands` registers the Simple pill's 42px ceiling and the 0.55 share; the
+        # expanded banner had NO registered ceiling at all, so the Detailed floor was
+        # prose-only. One step per regime keeps each screenshot/a11y baseline undisturbed
+        # (the same reasoning `chat-proportion` records for not editing `chat-mode`).
+        #
+        # 1366x900, not the 1366x768 design basis: 900 is ABOVE the block-axis breakpoint
+        # (SHORT_VIEWPORT_MAX_HEIGHT_PX = 820, primitives/compositionLayout.ts), so W1's own
+        # gate — `forcedExpanded = severity === 'error' || (isAdvancedMode() && !shortZone)`
+        # — actually lets Detailed expand. At 768 the same Detailed state renders the pill
+        # first (that IS W1's behaviour, and `chat-bands` no longer distinguishes it), so a
+        # 768 capture would register a ceiling for a banner that never expands: a vacuous
+        # row. The width stays 1366 so the wide grid and the band set match `chat-bands`.
+        #
+        # DETAILED-MODE MECHANISM: the `degraded-detailed` fixtures variant. `uiModeState`
+        # is seeded at boot from `/api/settings/v2` (themeState.restoreAppearanceOnBoot ->
+        # setUiMode(data.ui.mode)), and the captured `settings-v2-live.json` fixture already
+        # carries `ui.mode: "advanced"` — so the variant's job is to NOT do what `degraded`
+        # does (flip it to "simple"), while keeping that variant's other two transforms
+        # (`_status_body`'s DEGRADED retrieval verdict, `_inference_body`'s ONLINE model).
+        # Driving the topbar Simple|Detailed control instead would work but adds a second
+        # authority for the same fact to the capture; the settings seed is the one the app
+        # actually boots from.
+        await page.set_viewport_size({"width": 1366, "height": 900})
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        try:
+            await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "() => { location.hash = 'justsearch://surface/core.unified-chat-surface'; }"
+            )
+        ta = page.locator(S.CSS_COMPOSER_TEXTAREA)
+        await ta.wait_for(state="visible", timeout=10_000)
+        await ta.click()
+        await ta.type("justsearch", delay=20)
+        await page.locator(S.CSS_SEARCH_RESULT_ROW).first.wait_for(state="visible", timeout=30_000)
+        # ONE long "?"-bearing draft rather than N short turns: `send()` pushes the user turn
+        # synchronously, but each submit also flips `isStreaming` (cleared only when the
+        # stubbed, immediately-closed SSE response drains), so a submit loop races that flag
+        # and silently drops turns. One overflowing bubble is deterministic.
+        await ta.fill(_OVERFLOWING_ASK)
+        await ta.press("Enter")
+        await page.locator(S.CSS_MESSAGE_USER).first.wait_for(state="visible", timeout=15_000)
+        # The EXPANDED form is the assertion this step exists for, so wait on the element that
+        # ONLY the expanded branch renders (the worded cause list) — not on `.degradation-banner`,
+        # which the collapsed pill also carries (`class="degradation-banner
+        # degradation-banner-collapsed"`). A Detailed regression would otherwise capture the pill
+        # under the expanded banner's registered ceiling and read as a (very comfortable) pass.
+        await page.locator(S.CSS_DEGRADATION_CAUSES).first.wait_for(
+            state="visible", timeout=10_000
+        )
+        await page.locator(S.CSS_ESCALATION_DELEGATE).first.click(force=True)
+        await page.locator(S.CSS_ACTIVITY_RAIL).first.wait_for(state="visible", timeout=10_000)
+        # EVIDENCE-RAIL REACHABILITY (audit finding C.3, investigated and NOT faked): the docked
+        # `.evidence-rail` needs `agentCtrl.answerSources.length > 0` (UnifiedChatView.
+        # evidenceRailMounted), and only two things write that field — a real agent SSE `done`
+        # payload (the typed protocol `install_fixtures` stubs empty, as `setup_chat_bands`
+        # records) or `hydrateAnswerEvidenceFromRecord` off a `/api/thread` record, which is
+        # reached only from `refreshUnifiedThread` and no-ops while `agentCtrl` is still null —
+        # i.e. it would need an affordance round-trip (retrieve -> agent -> retrieve -> submit ->
+        # agent) plus a hand-authored thread fixture. Left unreached; the rail's no-scroll
+        # obligation stays asserted by `maxScrollableRegions: 1` the moment it does mount.
+        await asyncio.sleep(0.3)
+
     async def setup_chat_composer_small(page):
         # Tempdoc 814 §D6/§D7.2 — the F5 close: the small-viewport docked-composer step
         # 807 flagged as a coverage gap ("no ui-shot covers the docked composer at a small
@@ -1116,6 +1199,13 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # for the same two reasons `chat-proportion` does (the pill AND the Delegate
         # escalation rung's `capabilities.chat` availability gate).
         Step("chat-bands", setup=setup_chat_bands, isolated=True, fixtures_variant="degraded"),
+        # `chat-bands-detailed`: the same band family in DETAILED disclosure at 1366x900 (above
+        # the 820px block-axis breakpoint, so the banner genuinely expands) with a conversation
+        # that actually overflows. Registers the expanded banner's ceiling — the Detailed floor
+        # that was prose-only — and is the one capture where the D3 one-scroller rule witnesses a
+        # real scroller (min 1 / max 1) instead of passing vacuously on zero.
+        Step("chat-bands-detailed", setup=setup_chat_bands_detailed, isolated=True,
+             fixtures_variant="degraded-detailed"),
         # `chat-composer-small`: the F5 recipe (807's coverage gap) — default fixtures
         # variant, like `chat-occlusion`; no AI capability needed for a plain search.
         Step("chat-composer-small", setup=setup_chat_composer_small, isolated=True),

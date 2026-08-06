@@ -77,6 +77,12 @@
     },
     {
       "surface": "chat",
+      "uiShotStep": "chat-bands-detailed",
+      "e2eViews": [],
+      "knownRules": []
+    },
+    {
+      "surface": "chat",
       "uiShotStep": "chat-composer-small",
       "e2eViews": [],
       "knownRules": []

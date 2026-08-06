@@ -19,7 +19,7 @@
   ],
   "shell-v0/views/UnifiedChatView.ts": [
     "chat-mode", "qa-response", "chat-proportion",
-    "chat-bands", "chat-composer-small", "chat-spine-single"
+    "chat-bands", "chat-bands-detailed", "chat-composer-small", "chat-spine-single"
   ],
   "shell-v0/components/ContextMenu.ts": ["context-menu"],
 
