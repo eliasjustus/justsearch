@@ -457,7 +457,8 @@ focusable` defect, fixed at source with `tabindex="0"`, not baselined).
 
 **Final state:** FE 384 files / 4061 tests green; `ui-proportion-gate` exit 0 (27 rows /
 6 steps); `ui-a11y-gate` exit 0 (12 steps, 0 new); `check-ui-step-coverage` green; ui-web
-presentation/kernel gate subset green; typecheck clean.
+presentation/kernel gate subset green; typecheck clean. *(Counts stale — see the review-pass
+correction (e) below for the re-measured before/after.)*
 
 **§B corrections discovered during implementation:**
 - **§B.10 correction (W1):** the unit-test env is happy-dom (not jsdom) and *implements*
@@ -477,13 +478,93 @@ presentation/kernel gate subset green; typecheck clean.
 2. The share guarantee is pinned, not scale-invariant: chrome is a constant 308px, so Simple
    mode crosses 45% between 650 and 600px window height. Below the pinned viewport the
    guarantee is "chrome stops growing", not "share holds".
-3. Three of five status-fact phrases measure 0 in current fixtures (the duplication they
+3. ~~Three of five status-fact phrases measure 0 in current fixtures (the duplication they
    guard doesn't exist to witness); "Service degraded" measures 1 with the chip yield
-   active — the register's positive case.
+   active — the register's positive case.~~ **WRONG on both halves — superseded by the
+   review-pass correction below** (the register held four phrases, not five; and the
+   measured 1 was the invisible aria-live announcer, not a positive case).
 4. D2's "toolbar rows consolidate toward one row" was **not needed**: with the trims above,
    both share floors gate green with the toolbar untouched — recorded here per
    tempdoc-is-contract rather than silently dropped; the proportion register now owns the
    question (composer ceiling 220px).
+
+### Review-pass correction (2026-08-06, reviewer ≠ implementers)
+
+A refute-first review of the shipped D5/D7 instruments found five defects. All five are fixed
+on top of the record above; this subsection corrects what §V claimed, it does not rewrite it.
+
+**(a) Residual 3 was wrong, and the measurement under it was vacuous.** The `statusFacts`
+probe concatenated every leaf's text with **no visibility filter**, so StatusDeck's 1×1
+`.visually-hidden` aria-live announcer (`data-testid="verdict-announcer"`,
+`StatusDeck.ts:696-703`) counted as a "persistent render". That is what "Service degraded
+measures 1 … the register's positive case" actually measured: an invisible node that mirrors
+the verdict headline **by design**. Two consequences, both bad — the positive case witnessed
+nothing, and any surface that *visibly* showed the headline once would have counted 2 and
+FALSE-FAILED a rule it does not break. The probe now skips `display:none`,
+`visibility:hidden`, and effectively-zero render boxes (`ui_measure.py` `_JS_STATUS_FACTS`,
+8 browser-backed unit tests in `tests/test_ui_measure.py`).
+
+Deeper: the phrase-singleton register **structurally cannot** witness the chip-vs-banner
+duplication at all, because that duplication is **cross-worded** — the banner says "Semantic
+search degraded." (`readinessNotice.ts:662`) and the chip says "Service degraded"
+(`verdict.ts:283`), so counting either string yields 1 whether the yield works or not. The
+register is now scoped honestly to the same-string class it *can* witness ("Over budget",
+"Sources ·" — the two finding 12 measured); "Reduced capability" and "Service degraded" are
+removed as rows. The fact-level rule keeps two homes instead: `StatusDeck.test.ts`'s
+yield-on/yield-off unit tests, and a new capture witness (c). **Standing residual, stated
+plainly:** both surviving phrases measure 0 in every current fixture — the duplication they
+guard is not reachable under `--fixtures` (the rail's expanded body and the evidence rail,
+residual 1), so the phrase-singleton check is a *live tripwire with no positive case yet*, not
+a passing assertion. What replaced residual 3's false positive case is (c)'s
+`forbiddenVisibleText` witness, which has one (negative control run).
+
+**(b) The Detailed banner's ceiling had no floor.** `maxHeightPx: 176` passes at the 34px
+collapsed pill — i.e. exactly when Detailed expansion has regressed and the row is measuring
+the wrong element. `ui_proportion_gate.py` gains `minHeightPx` (violation
+`UNDER_MIN_HEIGHT`, 6 unit tests, CLI echo, schema), and `chat-bands-detailed` registers
+`minHeightPx: 64`. Measured: 110px, inside 64…176.
+
+**(c) The chip yield now has a capture-level witness.** It had none: under the degraded
+fixtures `chat-bands` submits an ask, the stubbed SSE never drains, `aiState.activity` stays
+`thinking`, and the chip reads "Thinking…" — measured "Thinking" 1 / "Service degraded" 0,
+green for the wrong reason. New isolated step **`chat-chip-yield`** reaches the same degraded
+chat surface with no activity overlay (it simply does not submit — the banner is chrome, not a
+function of the thread), so the chip's label *is* the verdict projection. The register's new
+step-scoped `forbiddenVisibleText: ["Service degraded"]` (violation `FORBIDDEN_TEXT_VISIBLE`,
+counted by the same visibility-filtered probe) then discriminates, with
+`requiredSelectors: [".degradation-banner-collapsed"]` as the non-vacuity companion.
+**Negative control run** (not inferred): with `yieldsDegradationToBanner()` forced to
+`false`, the same capture measures "Service degraded" **1** and the gate goes red; restored,
+**0**.
+
+**(d) §D7.2's segmented-spine step shipped** as **`chat-spine-multi`** — the pair's positive
+half, which W4 had deferred in a code comment. The prior attempt's diagnosis (rapid submits
+race the stubbed-SSE drain) was true but not the blocker: `spineItems()` reads
+`mergedTimeline()`, built from the canonical **record** (`/api/thread`) plus the live agent
+overlay, and never from `this.thread`, the array ask-submits push into. Measured two rendered
+user bubbles, `affordance: 'agent'`, `wideZone: true` — and still zero `.run-spine`, because
+the spine's own input was empty. The step therefore uses a new `degraded-thread` fixtures
+variant (a two-user-turn thread record + the seeded per-tab `lastViewedConversation` pointer),
+promotes the affordance first (the `retrieve` tier renders the hit-list and owns no thread
+history), and asserts `.run-spine` PRESENT via the gate's new step-level `requiredSelectors`
+(violation `MISSING_REQUIRED`). **Division of labour:** the capture witnesses spine
+*presence*; "marker count == segment count" stays unit-tier (`adaptiveSpacing` /
+`UnifiedChatView` tests) because segmented `nodeId`s need a real agent SSE run.
+- Making that step render a **record-path** user turn for the first time immediately exposed a
+  real axe `color-contrast` defect the fixtures had never reached: `.turn-time` (the ambient
+  turn-boundary timestamp) used the surface-calibrated `--text-secondary` while sitting inside
+  `.message.user`, which paints `--accent-tint` — measured **1.27:1** (#9bd8d0 on #00ccb2).
+  Fixed at source (`unifiedChatStyles.ts`: the bubble's own `--accent-on-tint`, recession by
+  size not by fading into the tint), **not baselined** — the same call §C's finding C made.
+
+**(e) Stale counts in "Final state" above.** Re-measured at this review pass: the
+`ui-proportion-gate` line's "27 rows / 6 steps" was already stale when written — the register
+produced **29 rows / 7 steps** before these fixes and **34 rows / 9 steps** after; the
+`ui-a11y-gate` line's "12 steps" was **13** before and is **15** now; and "three of five
+status-fact phrases" miscounted a **four**-row register. Post-fix verification: FE **386 files
+/ 4190 tests** green, typecheck clean, `jseval ui-proportion-gate` exit 0 (34 rows / 9 steps),
+`jseval ui-a11y-gate` exit 0 (15 steps, 0 new), `check-ui-step-coverage` green, the full jseval
+pytest suite **2733 passed / 2 skipped**.
 
 ## Owner decisions this design surfaced (resolved 2026-08-06 under granted autonomy — recorded, not re-asked)
 
@@ -536,4 +617,11 @@ each with a runnable check rather than a passing read.
 
 Verification: `npm run typecheck` clean; full FE unit suite 384 files / 4061 tests green;
 `jseval ui-proportion-gate` exit 0 over 27 rows / 6 steps; `jseval ui-a11y-gate` exit 0 over 12
-steps; `check-ui-step-coverage` green; the jseval gate pytests 37 passed.
+steps; `check-ui-step-coverage` green; the jseval gate pytests 37 passed. *(Gate counts stale
+as of the 2026-08-06 review pass — see §V's review-pass correction (e).)*
+
+Note on C.3 above (evidence-rail reachability): the "hand-authored thread fixture" it prices as
+part of that cost now **exists** for a different obligation — `ui_fixtures._thread_body`, the
+`degraded-thread` variant added for `chat-spine-multi`. That does not make the evidence rail
+reachable (it carries no sources, and the rail additionally needs the affordance round-trip),
+but a future attempt starts from a working `/api/thread` fixture rather than from nothing.

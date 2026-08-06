@@ -191,6 +191,14 @@ def cmd_ui_proportion_gate(ctx, ui_url, output_dir, timeout_ms):
                 f"(+{row['tolerancePx']}px tolerance)",
                 err=True,
             )
+        elif status == "UNDER_MIN_HEIGHT":
+            click.echo(
+                f"UNDER_MIN_HEIGHT: step={row['step']} selector={row['selector']} "
+                f"measured={row['measuredHeight']}px < floor={row['minHeightPx']}px "
+                f"(-{row['tolerancePx']}px tolerance) — the band this row exists to bound "
+                f"collapsed, so its ceiling is measuring the wrong state",
+                err=True,
+            )
         elif status == "UNDER_SHARE":
             click.echo(
                 f"UNDER_SHARE: step={row['step']} selector={row['selector']} "
@@ -226,6 +234,18 @@ def cmd_ui_proportion_gate(ctx, ui_url, output_dir, timeout_ms):
         elif status == "PRESENT_BUT_SHOULD_BE_ABSENT":
             click.echo(
                 f"PRESENT_BUT_SHOULD_BE_ABSENT: step={row['step']} selector={row['selector']}",
+                err=True,
+            )
+        elif status == "MISSING_REQUIRED":
+            click.echo(
+                f"MISSING_REQUIRED: step={row['step']} selector={row['selector']} — the step's "
+                f"state did not mount an element the register requires it to",
+                err=True,
+            )
+        elif status == "FORBIDDEN_TEXT_VISIBLE":
+            click.echo(
+                f"FORBIDDEN_TEXT_VISIBLE: step={row['step']} phrase={row['phrase']!r} "
+                f"count={row['count']} > 0 — this step's state must not render that wording",
                 err=True,
             )
     click.echo(json.dumps(report, indent=2, default=str), err=True)
