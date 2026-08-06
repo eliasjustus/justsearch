@@ -866,7 +866,11 @@ export class HealthSurface extends JfElement {
     // work — so neither the terminal "Up to date" nor "Idle" is true here. Phase comes from the ONE
     // progress projection (which also guards the unknown/zeroed-worker arm); the phrase is the shared
     // enrichment vocabulary the Brain surface and Library rows use, plus the percent when faithful.
-    const progress = selectIndexingProgress(this.status, this.aiState?.snapshotLive ?? false);
+    const progress = selectIndexingProgress(
+      this.status,
+      this.aiState?.snapshotLive ?? false,
+      this.aiState?.episodeMaxPendingJobs ?? 0,
+    );
     if (progress.phase === 'enriching') {
       return progress.enrichingPercent === null
         ? ENRICHMENT_IN_PROGRESS_LABEL
@@ -885,7 +889,11 @@ export class HealthSurface extends JfElement {
     const memRatio = memMax > 0 ? memUsed / memMax : 0;
     // 813 §3b — the Queue card's number comes from the ONE indexing-progress projection, the same
     // authority `queueSubLabel` reads, so the card's value and its sub-text cannot disagree.
-    const queue = selectIndexingProgress(this.status, this.aiState?.snapshotLive ?? false).jobsPending;
+    const queue = selectIndexingProgress(
+      this.status,
+      this.aiState?.snapshotLive ?? false,
+      this.aiState?.episodeMaxPendingJobs ?? 0,
+    ).jobsPending;
     const memColor = memRatio > 0.9 ? 'red' : memRatio > 0.8 ? 'amber' : 'green';
     const memDot = memRatio > 0.9 ? 'error' : memRatio > 0.8 ? 'warning' : 'healthy';
     // §2.B: when no status has arrived, the honest value is "—" (unknown),

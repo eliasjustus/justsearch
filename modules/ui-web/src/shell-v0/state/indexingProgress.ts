@@ -89,6 +89,19 @@ export interface IndexingProgress {
    */
   etaSeconds: number | null;
   /**
+   * 813 §19 (W2) — the DETERMINATE position of the `indexing` phase's drain, 0-100, measured against
+   * the largest backlog observed this drain episode (`AiState.episodeMaxPendingJobs`, the store's
+   * cross-poll memory). `null` whenever there is no denominator to be honest about:
+   *  - any phase other than `indexing` (the enrichment fraction is {@link enrichingPercent}'s job);
+   *  - `episodeMax <= jobsPending` — no drain has been OBSERVED yet, so the backlog's total is
+   *    genuinely unknown and the caller falls back to the indeterminate affordance.
+   * Never NaN, never a fabricated 0 from a missing denominator. A *measured* 0 is possible and is
+   * kept: `episodeMax > jobsPending` is strictly true there, so the drain was witnessed and rounded
+   * below half a percent — "barely started" is what happened, and withholding it would be less
+   * truthful than showing it.
+   */
+  indexingPercent: number | null;
+  /**
    * 813 Slice B — the byte weight of the remaining job backlog (`worker.core.pendingBytes`), or
    * `null` when it would not be faithful: nothing recorded, the worker could not compute the
    * aggregate, or more than half the remaining jobs carry no recorded size
@@ -118,6 +131,18 @@ export interface IndexingProgress {
  */
 const WORKER_REPORTED_INDEX_STATES: ReadonlySet<string> = new Set(['IDLE', 'INDEXING', 'ERROR']);
 
+/**
+ * Does this snapshot carry a WORKER-REPORTED index block (as opposed to the hard-zeroed fallback
+ * shape described above)? Exported so `aiStateStore`'s cross-poll high-water stamp applies the SAME
+ * admission test this projection does: a fallback block's `pendingJobs: 0` is absence, not a drained
+ * queue, and reading it as a drain would reset the episode's denominator mid-drain.
+ */
+export function isWorkerReportedIndex(status: StatusResponse | null | undefined): boolean {
+  const core = status?.worker?.core;
+  if (!status || !core) return false;
+  return WORKER_REPORTED_INDEX_STATES.has(core.indexState ?? '');
+}
+
 const EMPTY: IndexingProgress = {
   phase: 'unknown',
   jobsPending: 0,
@@ -128,6 +153,7 @@ const EMPTY: IndexingProgress = {
   embeddingPending: 0,
   vduPending: 0,
   etaSeconds: null,
+  indexingPercent: null,
   pendingBytes: null,
   live: false,
   // Nothing was reported ⟹ applicability is UNKNOWN ⟹ no per-root percent may be asserted. `null`,
@@ -244,14 +270,19 @@ function derivePendingBytes(
  *
  * @param status the retained poll snapshot (`AiState.status`); `null` before the first poll.
  * @param snapshotLive the ONE liveness answer (`AiState.snapshotLive`).
+ * @param episodeMaxPendingJobs the CROSS-POLL memory this pure function cannot have: the largest
+ *   backlog observed during the current drain episode (`AiState.episodeMaxPendingJobs`, owned and
+ *   stamped by the store). REQUIRED, not optional-with-a-default: a defaulted parameter would let
+ *   six surfaces silently derive a different {@link IndexingProgress.indexingPercent} from the
+ *   seventh — the two-derivation drift §3b forbids. The selector itself stays pure.
  */
 export function selectIndexingProgress(
   status: StatusResponse | null | undefined,
   snapshotLive: boolean,
+  episodeMaxPendingJobs: number,
 ): IndexingProgress {
   const core = status?.worker?.core;
-  const indexState = core?.indexState ?? '';
-  if (!status || !core || !WORKER_REPORTED_INDEX_STATES.has(indexState)) {
+  if (!isWorkerReportedIndex(status) || !core) {
     return { ...EMPTY, live: snapshotLive };
   }
 
@@ -333,6 +364,15 @@ export function selectIndexingProgress(
   const phase: IndexingPhase =
     jobsPending > 0 ? 'indexing' : backfillActive || rawPending > 0 ? 'enriching' : 'ready';
 
+  // 813 §19 (W2) — the high-water denominator. `episodeMax > jobsPending` is the whole admission
+  // test: it is simultaneously "a drain was observed" and "the denominator is positive", so the
+  // division can neither be 0/0 nor produce a percent from a backlog that has only ever grown.
+  const episodeMax = count(episodeMaxPendingJobs);
+  const indexingPercent =
+    phase === 'indexing' && episodeMax > jobsPending
+      ? Math.round(((episodeMax - jobsPending) / episodeMax) * 100)
+      : null;
+
   return {
     phase,
     jobsPending,
@@ -348,6 +388,7 @@ export function selectIndexingProgress(
       phase === 'indexing' && snapshotLive
         ? deriveEtaSeconds(core.recentDocsPerSec, core.recentJobQueueDepth, jobsPending)
         : null,
+    indexingPercent,
     pendingBytes: derivePendingBytes(
       count(core.pendingBytes),
       count(core.pendingUnknownSizeJobs),

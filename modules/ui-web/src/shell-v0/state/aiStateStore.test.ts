@@ -509,6 +509,53 @@ describe('aiStateStore — system-health verdict (595)', () => {
     feed(statusWith('READY', [], { docs: 40, sizeBytes: 4096, searchable: 0 }));
     expect(getAiState().lastSettledIndex?.searchableDocumentCount).toBe(0);
   });
+
+  // 813 §19 (W2) — the drain episode's high-water backlog. Mirrors the E2 cases above: an
+  // imperative stamp on the poll callback, guarded against the hard-zeroed fallback snapshot.
+  function withPendingJobs(pendingJobs: number, indexState = 'INDEXING'): StatusSnapshot {
+    return {
+      worker: {
+        core: { indexedDocuments: 5, indexState, indexHealthy: true, pendingJobs },
+        migration: {
+          migrationState: 'IDLE',
+          activeGenerationId: 'g1',
+          buildingGenerationId: '',
+          servingSearchGenerationId: 'g1',
+          servingIngestGenerationId: 'g1',
+        },
+      },
+    } as unknown as StatusSnapshot;
+  }
+
+  it('W2: episodeMaxPendingJobs is 0 before any poll', () => {
+    expect(getAiState().episodeMaxPendingJobs).toBe(0);
+  });
+
+  it('W2: it rises to the episode PEAK and holds it while the queue drains', () => {
+    feed(withPendingJobs(400));
+    expect(getAiState().episodeMaxPendingJobs).toBe(400);
+    feed(withPendingJobs(1600));
+    expect(getAiState().episodeMaxPendingJobs).toBe(1600);
+    // Draining must NOT lower the mark — it is the denominator the position is measured against.
+    feed(withPendingJobs(900));
+    expect(getAiState().episodeMaxPendingJobs).toBe(1600);
+  });
+
+  it('W2: a genuine drain to 0 ENDS the episode, so the next spike measures itself', () => {
+    feed(withPendingJobs(1600));
+    feed(withPendingJobs(0, 'IDLE'));
+    expect(getAiState().episodeMaxPendingJobs).toBe(0);
+    feed(withPendingJobs(50));
+    expect(getAiState().episodeMaxPendingJobs).toBe(50);
+  });
+
+  it('W2: a hard-zeroed fallback snapshot is absence, not a drain — the mark survives it', () => {
+    feed(withPendingJobs(1600));
+    // Worker restart: a *successful* poll returns the fallback block (UNAVAILABLE + zeroed counts).
+    // Reading its `pendingJobs: 0` as a drain would reset the denominator mid-episode.
+    feed(withPendingJobs(0, 'UNAVAILABLE'));
+    expect(getAiState().episodeMaxPendingJobs).toBe(1600);
+  });
 });
 
 describe('computeRealized — tempdoc 644 realized engine projection', () => {

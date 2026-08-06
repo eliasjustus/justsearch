@@ -41,6 +41,7 @@ import { subscribeFeedStalled } from '../substrates/tasks/indexingJobsBridge.js'
 import { subscribeAiState } from '../state/aiStateStore.js';
 import { selectIndexingProgress, type IndexingProgress } from '../state/indexingProgress.js';
 import { humanizeSeconds } from '../state/startupEstimate.js';
+import { ENRICHMENT_BODY } from '../state/enrichmentCoverage.js';
 import { formatBytes, formatCount } from '../display/format.js';
 
 /**
@@ -69,15 +70,30 @@ const COUNT_ORDER: readonly TaskStatus[] = [
 export const READY_DISMISS_MS = 6000;
 
 /**
- * The Indexing phase's counts line: the file backlog, plus its BYTE weight when the projection has
- * a faithful one (813 Slice B). The weight is the answer to "why is '12 files remaining' taking so
- * long" on a mixed corpus — a single 2 GB video and a 2 KB note are both "1 file". It is appended,
- * never substituted: the file count is the number the indeterminate bar is about, and the byte
- * figure is withdrawn entirely (not shown as 0 B) whenever the projection says it is not faithful.
+ * The Indexing phase's ONE fact row (813 §19 W4): the file backlog, its BYTE weight when the
+ * projection has a faithful one (813 Slice B), and the coarse estimate when one is honest — merged
+ * into a single line rather than stacked, because the panel's height is what occludes the rail's
+ * bottom controls.
+ *
+ * The weight is the answer to "why is '12 files remaining' taking so long" on a mixed corpus — a
+ * single 2 GB video and a 2 KB note are both "1 file". Every segment past the first is APPENDED,
+ * never substituted, and each is withdrawn ENTIRELY (no placeholder, no "0 B") whenever the
+ * projection says it has no honest basis for it — so an absent estimate is an absent segment.
  */
 export function indexingCountsLine(p: IndexingProgress): string {
   const files = `${formatCount(p.jobsPending)} ${p.jobsPending === 1 ? 'file' : 'files'} remaining`;
-  return p.pendingBytes === null ? files : `${files} · ${formatBytes(p.pendingBytes)}`;
+  const weighed = p.pendingBytes === null ? files : `${files} · ${formatBytes(p.pendingBytes)}`;
+  return p.etaSeconds === null ? weighed : `${weighed} · ~${humanizeSeconds(p.etaSeconds)} left`;
+}
+
+/**
+ * The accessible/hover form of {@link indexingCountsLine} — the same facts plus the estimate's
+ * INDICATIVE qualifier, which 813 §19 (W4) moved off the visible line to keep the row to one line
+ * without dropping the honesty it carries. `null` when there is no estimate, so the surface attaches
+ * no label at all rather than one that repeats the visible text.
+ */
+export function indexingCountsLabel(p: IndexingProgress): string | null {
+  return p.etaSeconds === null ? null : `${indexingCountsLine(p)} at the current rate`;
 }
 
 /** The empty projection this component starts from, before the first `/api/status` poll lands. */
@@ -91,6 +107,7 @@ const NO_PROGRESS: IndexingProgress = {
   embeddingPending: 0,
   vduPending: 0,
   etaSeconds: null,
+  indexingPercent: null,
   pendingBytes: null,
   live: false,
   // Applicability is UNKNOWN before the first poll — never all-false, which reads as a claim.
@@ -140,7 +157,9 @@ export class TaskList extends JfElement {
       this.feedStalled = stalled;
     });
     this.aiUnsub = subscribeAiState((s) => {
-      this.applyProgress(selectIndexingProgress(s.status, s.snapshotLive));
+      this.applyProgress(
+        selectIndexingProgress(s.status, s.snapshotLive, s.episodeMaxPendingJobs),
+      );
     });
   }
 
@@ -349,10 +368,6 @@ export class TaskList extends JfElement {
       font-size: var(--font-size-xs);
       color: var(--text-secondary);
     }
-    .eta {
-      font-size: var(--font-size-xs);
-      color: var(--text-tertiary);
-    }
     .disclose {
       align-self: flex-start;
       background: transparent;
@@ -457,25 +472,41 @@ export class TaskList extends JfElement {
       `;
     }
     if (p.phase === 'indexing') {
-      const eta = p.etaSeconds === null ? null : `~${humanizeSeconds(p.etaSeconds)}`;
+      // 813 §19 (W2) — determinate ONLY against an observed drain (`indexingPercent`); with no
+      // high-water denominator yet the backlog's total is genuinely unknown, so the affordance falls
+      // back to claiming activity without implying a position.
+      const pct = p.indexingPercent;
+      const label = indexingCountsLabel(p);
       return html`
         <div class="aggregate" data-testid="task-aggregate" data-phase="indexing">
+          ${pct === null
+            ? html`<div
+                class="bar indeterminate"
+                data-testid="task-aggregate-bar"
+                role="progressbar"
+                aria-label="Indexing progress"
+              >
+                <span></span>
+              </div>`
+            : html`<div
+                class="bar"
+                data-testid="task-aggregate-bar"
+                role="progressbar"
+                aria-label="Indexing progress"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow=${pct}
+              >
+                <span style=${`width:${pct}%`}></span>
+              </div>`}
           <div
-            class="bar indeterminate"
-            data-testid="task-aggregate-bar"
-            role="progressbar"
-            aria-label="Indexing progress"
+            class="counts"
+            data-testid="task-aggregate-counts"
+            title=${label ?? nothing}
+            aria-label=${label ?? nothing}
           >
-            <span></span>
-          </div>
-          <div class="counts" data-testid="task-aggregate-counts">
             ${indexingCountsLine(p)}
           </div>
-          ${eta
-            ? html`<div class="eta" data-testid="task-aggregate-eta">
-                ${eta} at the current rate
-              </div>`
-            : nothing}
         </div>
       `;
     }
@@ -497,7 +528,7 @@ export class TaskList extends JfElement {
                 <span style=${`width:${pct}%`}></span>
               </div>`}
           <div class="counts" data-testid="task-aggregate-counts">
-            ${pct === null ? nothing : html`${pct}% · `}semantic search catching up
+            ${pct === null ? nothing : html`${pct}% · `}${ENRICHMENT_BODY}
           </div>
         </div>
       `;
@@ -585,7 +616,10 @@ export class TaskList extends JfElement {
   private headline(): string {
     if (this.showingReady) return 'Ready — fully searchable';
     if (this.progress.phase === 'indexing') return 'Indexing';
-    if (this.progress.phase === 'enriching') return 'Enriching';
+    // 813 §19 (W1) — capability first: during enrichment keyword search ALREADY works, so the
+    // headline states what the user can do before what is still being built. Same clause order as
+    // the shared caveat constant; "improving" over "learning" to avoid anthropomorphism.
+    if (this.progress.phase === 'enriching') return 'Search is ready — still improving';
     return 'Tasks';
   }
 }
