@@ -50,6 +50,18 @@ import {
   type EnrichmentApplicability,
 } from '../state/indexingProgress.js';
 import { enrichmentProgress } from '../state/enrichmentCoverage.js';
+// Tempdoc 811 C-2a — the non-root (ad-hoc / MCP) sources the folder rows cannot describe.
+import {
+  deriveOtherSources,
+  facetScanCapFor,
+  EMPTY_OTHER_SOURCES,
+  type OtherSource,
+  type OtherSourcesSnapshot,
+} from '../state/otherSources.js';
+// The ONE `/api/knowledge/search` issuance site (577 Ext II / the `search-issuance` gate) — the
+// enumeration probe is issued there, not re-shaped here.
+import { fetchCollectionFacet } from '../state/searchState.js';
+import { UNKNOWN, type Maybe } from '../state/known.js';
 // Tempdoc 599 §16/B1 — the clickable "N failed" chip opens the per-folder failed-files drawer.
 import { openFailedJobs } from '../state/failedJobsDrawer.js';
 // Tempdoc 599 §9.4 — gate the Add button with a reachable reason (596 operability authority).
@@ -130,6 +142,7 @@ export class LibrarySurface extends JfElement {
     provisional: { state: true },
     enrichmentStages: { state: true },
     enrichmentPending: { state: true },
+    otherSources: { state: true },
   };
 
   declare apiBase: string;
@@ -167,8 +180,21 @@ export class LibrarySurface extends JfElement {
    * handed to `folderStatus`, which decides whether the row may make the terminal "✓ indexed" claim.
    */
   declare enrichmentPending: boolean;
+  /**
+   * Tempdoc 811 C-2a — the collections that documents ingested OUTSIDE every watched folder carry
+   * (the MCP/API ingest path). The folder rows describe watched roots only, so without this the
+   * user could not see, let alone remove, what an agent had ingested. Empty ⇒ the section is absent
+   * entirely, not an empty shell.
+   */
+  declare otherSources: OtherSourcesSnapshot;
 
   private aiUnsub: (() => void) | null = null;
+  /**
+   * Tempdoc 811 C-2a — the default-scope document count, used to size the collection facet scan so
+   * it cannot truncate (truncation OMITS collections; see `otherSources.ts`). Not reactive state:
+   * it only feeds the next probe's request, never the render.
+   */
+  private defaultScopeDocuments: Maybe<number> = UNKNOWN;
   // Tempdoc 599 §9.4 — debounce the add-time preview while typing.
   private previewTimer: number | null = null;
   private previewSeq = 0;
@@ -191,6 +217,7 @@ export class LibrarySurface extends JfElement {
     this.provisional = false;
     this.enrichmentStages = null;
     this.enrichmentPending = false;
+    this.otherSources = EMPTY_OTHER_SOURCES;
   }
 
   // Tempdoc 571 §11 / 578: Library is a host surface — it delegates layout to <jf-surface-tabs>
@@ -364,6 +391,16 @@ export class LibrarySurface extends JfElement {
       font-family: monospace;
       font-size: var(--font-size-sm);
     }
+    /* Tempdoc 811 C-2a — "Other sources" reuses the excludes panel's chrome and the folder-row card
+       verbatim; no new idiom, only a second section in the same visual language. */
+    .other-sources-note {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      margin-top: 0.5rem;
+      font-size: var(--font-size-xs);
+      color: var(--text-warning);
+    }
     .excludes-section {
       margin-top: 1.5rem;
       padding: 1rem;
@@ -414,6 +451,16 @@ export class LibrarySurface extends JfElement {
   // Tempdoc 599 §9.3 — live-refresh guards (overlap + throttle); not reactive state.
   private refreshing = false;
   private lastLiveRefreshAtMs = 0;
+  /**
+   * Tempdoc 811 C-2a — the `maxDocsScanned` the last enumeration probe used, and an overlap guard.
+   *
+   * The first probe necessarily runs BEFORE the first status poll (the surface fetches roots on
+   * connect), so it is sized at the engine's floor. On a corpus larger than that floor a capped scan
+   * OMITS collections outright — so when a poll later reveals a bigger index, the probe must run
+   * again rather than leaving a silently short list on screen. `0` means "never probed".
+   */
+  private lastProbeCap = 0;
+  private probing = false;
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -447,6 +494,18 @@ export class LibrarySurface extends JfElement {
       // 809 finding 1 — same tick, same store: whether the enrichment backfill is still running, so a
       // row cannot claim the terminal "✓ indexed" while semantic search is still being built.
       this.enrichmentPending = enrichmentProgress(s.status).pending;
+      // Tempdoc 811 C-2a — the facet probe runs under the DEFAULT search scope, so the
+      // default-scope population is its exact bound; fall back to the whole-index count on a
+      // backend that predates `searchableDocuments` (C-4).
+      this.defaultScopeDocuments = s.index.searchableDocumentCount.known
+        ? s.index.searchableDocumentCount
+        : s.index.documentCount;
+      // Only once a first probe has run (i.e. after the roots are loaded, so root-owned collections
+      // can be subtracted): a poll revealing a LARGER corpus than the last scan covered must
+      // re-probe — a capped scan omits collections rather than undercounting them.
+      if (this.lastProbeCap > 0 && facetScanCapFor(this.defaultScopeDocuments) > this.lastProbeCap) {
+        void this.loadOtherSources();
+      }
       // Tempdoc 599 §9.3 — ride the existing status tick to live-refresh the rows (counts-free, no
       // new poller), so a folder's "Indexing · N remaining → ✓ indexed" updates without re-nav.
       void this.refresh({ live: true });
@@ -579,6 +638,11 @@ export class LibrarySurface extends JfElement {
           });
         }
       }
+      // Tempdoc 811 C-2a — only on a full refresh. The probe is a corpus-wide facet scan, far too
+      // heavy for the 4-second aiState tick, and non-root sources only change on an ingest.
+      if (!live) {
+        void this.loadOtherSources();
+      }
     } catch (err) {
       // Live (background) failures stay silent — don't clobber the surface with a tick error.
       if (!live) {
@@ -589,6 +653,62 @@ export class LibrarySurface extends JfElement {
         this.loading = false;
       }
       this.refreshing = false;
+    }
+  }
+
+  /**
+   * Tempdoc 811 C-2a — enumerate the non-root collections via the `collection` facet.
+   *
+   * Runs AFTER `this.roots` is populated: a watched root's own collection is subtracted, so the
+   * section lists only what no folder row already describes. Failures are silent (the section is
+   * simply absent) — the same posture as `loadExcludes`: an unavailable enumeration must not put an
+   * error banner over a Library whose folder rows loaded fine.
+   */
+  private async loadOtherSources(): Promise<void> {
+    if (this.probing) return;
+    this.probing = true;
+    const cap = facetScanCapFor(this.defaultScopeDocuments);
+    // Stamped before the request, so a failing probe cannot re-fire on every status tick.
+    this.lastProbeCap = cap;
+    try {
+      const payload = await fetchCollectionFacet(cap, this.apiBase);
+      this.otherSources = deriveOtherSources(
+        payload,
+        this.roots.map((r) => r.collection),
+      );
+    } catch {
+      // Silent: an unreachable probe leaves the last known list rather than asserting "none".
+    } finally {
+      this.probing = false;
+    }
+  }
+
+  /**
+   * Tempdoc 811 C-2a — remove every document carrying this collection via the #380 route. Names the
+   * count in the confirm, because "mcp-ingest" tells the user nothing about how much is at stake and
+   * nothing else on this surface can show them the documents first.
+   */
+  private async handleRemoveCollection(source: OtherSource): Promise<void> {
+    const noun = source.docCount === 1 ? 'document' : 'documents';
+    const ok = await this.host_.ui.showConfirmDialog(
+      `Remove ${source.docCount.toLocaleString()} ${noun} ingested as '${source.collection}'? `
+        + 'They were added outside your watched folders, so nothing will re-index them.',
+      { confirmLabel: 'Remove', destructive: true },
+    );
+    if (!ok) return;
+    this.error = null;
+    try {
+      const res = await this.doFetch('/api/indexing/collections', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ collection: source.collection }),
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      await this.refresh();
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : String(err);
     }
   }
 
@@ -855,6 +975,69 @@ export class LibrarySurface extends JfElement {
     `;
   }
 
+  /**
+   * Tempdoc 811 C-2a — the sources that are not a watched folder: documents an agent (or the ingest
+   * API) added from a path under no root. They are searchable and pill-labelled in results, so
+   * leaving them off this surface made them un-seeable and un-removable.
+   *
+   * Absent when there is nothing to say. A TRUNCATED scan is the one case where an empty list still
+   * renders: the scan omits collections rather than undercounting them (see `otherSources.ts`), so
+   * silence there would be the same invisibility this section exists to end.
+   */
+  private renderOtherSources(): TemplateResult | typeof nothing {
+    const { sources, truncated } = this.otherSources;
+    if (sources.length === 0 && !truncated) return nothing;
+    return html`
+      <div class="excludes-section" data-testid="library-other-sources">
+        <div class="excludes-header">
+          <div>
+            <h3>Other sources</h3>
+            <p>
+              Documents added from outside your watched folders — by an agent or the ingest API.
+              Nothing re-indexes them, so removing a source is permanent.
+            </p>
+          </div>
+        </div>
+        ${sources.length > 0
+          ? html`<div class="cards">
+              ${sources.map((s) => this.renderOtherSourceCard(s))}
+            </div>`
+          : nothing}
+        ${truncated
+          ? html`<div class="other-sources-note">
+              ${icon({ name: 'alert-triangle', size: 12 })}
+              <span
+                >The index was too large to scan completely — this list may be missing
+                sources.</span
+              >
+            </div>`
+          : nothing}
+      </div>
+    `;
+  }
+
+  private renderOtherSourceCard(source: OtherSource): TemplateResult {
+    const noun = source.docCount === 1 ? 'document' : 'documents';
+    return html`
+      <div class="card">
+        <span class="card-icon">${icon({ name: 'hard-drive', size: 24 })}</span>
+        <div class="card-info">
+          <div class="card-path">
+            <span data-testid="library-other-source-name">${source.collection}</span>
+          </div>
+          <div class="card-meta">${source.docCount.toLocaleString()} ${noun}</div>
+        </div>
+        <jf-button
+          variant="danger"
+          label=${`Remove ${source.collection}`}
+          .onActivate=${() => void this.handleRemoveCollection(source)}
+        >
+          ${icon({ name: 'trash-2', size: 14 })} Remove
+        </jf-button>
+      </div>
+    `;
+  }
+
   private renderHeader(): TemplateResult {
     return html`
       <div class="header">
@@ -1007,6 +1190,8 @@ export class LibrarySurface extends JfElement {
               No watched folders. Click "Add Folder" to add one.
             </div>`
           : this.renderCardsRegion()}
+
+      ${this.renderOtherSources()}
 
       <div class="excludes-section">
         <div class="excludes-header">
