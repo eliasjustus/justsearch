@@ -349,7 +349,12 @@ export class IndexingOverlayHost extends JfElement {
     // ONE projection; the inference-poll counts remain only as the degraded input on the projection's
     // `unknown` arm (no status snapshot ⇒ the projection cannot speak, and inventing a zero would
     // silently withdraw a live overlay).
-    const progress = selectIndexingProgress(ai.status, ai.snapshotLive, ai.episodeMaxPendingJobs);
+    const progress = selectIndexingProgress(
+      ai.status,
+      ai.snapshotLive,
+      ai.episodeMaxPendingJobs,
+      ai.enrichSettleSamples,
+    );
     // The status authority says everything is settled ⇒ a non-zero queue reading is residue, not
     // work; the overlay must not claim active batch processing against it (the 727 F-2 class).
     if (progress.phase === 'ready') return nothing;

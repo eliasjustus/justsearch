@@ -443,6 +443,7 @@ export class LibrarySurface extends JfElement {
         s.status,
         s.snapshotLive,
         s.episodeMaxPendingJobs,
+        s.enrichSettleSamples,
       ).stages;
       // 809 finding 1 — same tick, same store: whether the enrichment backfill is still running, so a
       // row cannot claim the terminal "✓ indexed" while semantic search is still being built.
