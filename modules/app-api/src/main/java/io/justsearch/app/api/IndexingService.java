@@ -154,6 +154,21 @@ public interface IndexingService {
   }
 
   /**
+   * Tempdoc 811 (C-2a) — deletes every document carrying the given collection tag. This is the
+   * removal route for ad-hoc ingests: {@link #deleteDocsByPathPrefix} is watched-root-prefix driven
+   * and can never reach a document ingested from a path under no watched root.
+   *
+   * <p>Callers must gate on {@code IngestCollectionPolicy.isDeletable} first — this method deletes
+   * exactly what it is told to.
+   *
+   * @param collection the collection tag
+   * @return number of documents deleted, or -1 on error
+   */
+  default int deleteDocsByCollection(String collection) {
+    throw new UnsupportedOperationException("Indexing service unavailable");
+  }
+
+  /**
    * Re-index all currently watched roots (best-effort).
    *
    * <p>Implementations should scan existing files under each watched root and submit batches to the

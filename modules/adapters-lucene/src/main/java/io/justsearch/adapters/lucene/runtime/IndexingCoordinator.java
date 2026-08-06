@@ -153,6 +153,25 @@ public final class IndexingCoordinator {
   }
 
   /**
+   * Tempdoc 811 (C-2a) pass-through. Direct delete, no RMW envelope — takes {@link #dispatchLock}.
+   *
+   * @return number of documents matched (and submitted for deletion)
+   */
+  public int deleteByCollection(String collection) {
+    acquireReadLockTimed();
+    try {
+      dispatchLock.lock();
+      try {
+        return writeOps.get().deleteByCollection(collection);
+      } finally {
+        dispatchLock.unlock();
+      }
+    } finally {
+      session.writeBarrier.readLock().unlock();
+    }
+  }
+
+  /**
    * Monotonic count of bulk deletions ({@code deleteByPathPrefix} / {@code deleteAll}) submitted to
    * the writer (tempdoc 809 finding 3). Removing a watched root lands as a
    * {@link #deleteByPathPrefix(String)} here, so a background batch that captures this value when

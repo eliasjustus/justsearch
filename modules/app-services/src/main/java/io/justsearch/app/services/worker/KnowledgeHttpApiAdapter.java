@@ -100,8 +100,18 @@ public final class KnowledgeHttpApiAdapter {
   // ========== Ingest / scan / browse / suggest (direct Worker client pass-throughs) ==========
 
   public KnowledgeIngestResponse ingest(List<Path> files) {
+    return ingest(files, null);
+  }
+
+  /**
+   * Tempdoc 811 (C-2a) — single-file ingest with an explicit collection tag. The tag rides
+   * {@code BatchRequest.target_collection} to {@code GrpcIngestService.submitBatch}, which passes it
+   * to {@code JobQueue.enqueue} and from there to {@code IndexingDocumentOps}'s {@code collection}
+   * field write. A {@code null}/blank collection preserves the pre-811 untagged behaviour.
+   */
+  public KnowledgeIngestResponse ingest(List<Path> files, String collection) {
     RemoteKnowledgeClient client = knowledgeServer.client();
-    BatchResponse r = client.submitBatch(files);
+    BatchResponse r = client.submitBatch(files, false, collection);
     return new KnowledgeIngestResponse(r.getAcceptedCount(), r.getErrorMessage());
   }
 

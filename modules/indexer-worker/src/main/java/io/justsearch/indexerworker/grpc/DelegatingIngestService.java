@@ -91,6 +91,14 @@ public final class DelegatingIngestService extends IngestServiceGrpc.IngestServi
     delegate.deleteById(req, obs);
   }
 
+  /** Tempdoc 811 (C-2a) — removal route for collection-tagged ad-hoc ingests. */
+  @Override
+  public void deleteByCollection(
+      io.justsearch.ipc.DeleteByCollectionRequest req,
+      StreamObserver<io.justsearch.ipc.DeleteByCollectionResponse> obs) {
+    delegate.deleteByCollection(req, obs);
+  }
+
   @SuppressWarnings("deprecation")
   @Override
   public void pruneMissing(PruneRequest req, StreamObserver<PruneResponse> obs) {

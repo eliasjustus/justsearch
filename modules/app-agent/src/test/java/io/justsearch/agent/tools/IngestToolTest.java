@@ -3,6 +3,7 @@ package io.justsearch.agent.tools;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.justsearch.agent.api.registry.OperationResult;
+import io.justsearch.app.api.knowledge.IngestCollectionPolicy;
 import io.justsearch.app.api.knowledge.KnowledgeIngestResponse;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -35,8 +36,17 @@ class IngestToolTest {
     return new IngestTool(ingestCallback, localScan(ingestCallback), rootsSupplier);
   }
 
+  /** Tempdoc 811 (C-2a): variant that also supplies the watched-root collection bindings. */
+  private static IngestTool toolWithLocalScan(
+      IngestTool.IngestCallback ingestCallback,
+      Supplier<List<BrowseTool.RootInfo>> rootsSupplier,
+      Supplier<List<IngestCollectionPolicy.RootBinding>> rootBindingsSupplier) {
+    return new IngestTool(
+        ingestCallback, localScan(ingestCallback), rootsSupplier, rootBindingsSupplier);
+  }
+
   private static IngestTool.ScanRootCallback localScan(IngestTool.IngestCallback ingest) {
-    return (rootPath, excludeGlobs) -> {
+    return (rootPath, collection, excludeGlobs) -> {
       List<Path> expanded = new ArrayList<>();
       try (Stream<Path> stream = Files.walk(Path.of(rootPath))) {
         stream
@@ -54,7 +64,7 @@ class IngestToolTest {
       if (expanded.isEmpty()) {
         return new KnowledgeIngestResponse(0, "");
       }
-      return ingest.ingest(expanded);
+      return ingest.ingest(expanded, collection);
     };
   }
 
@@ -73,7 +83,7 @@ class IngestToolTest {
     var capturedFiles = new AtomicReference<List<Path>>();
     var tool =
         toolWithLocalScan(
-            files -> {
+            (files, collection) -> {
               capturedFiles.set(files);
               return new KnowledgeIngestResponse(files.size(), "");
             });
@@ -91,7 +101,7 @@ class IngestToolTest {
 
   @Test
   void executeWithEmptyPaths() {
-    var tool = toolWithLocalScan(files -> new KnowledgeIngestResponse(0, ""));
+    var tool = toolWithLocalScan((files, collection) -> new KnowledgeIngestResponse(0, ""));
     OperationResult result = tool.execute("{\"paths\": []}");
     assertFalse(result.success());
     assertTrue(result.message().contains("required"));
@@ -99,7 +109,7 @@ class IngestToolTest {
 
   @Test
   void executeWithMissingPathsField() {
-    var tool = toolWithLocalScan(files -> new KnowledgeIngestResponse(0, ""));
+    var tool = toolWithLocalScan((files, collection) -> new KnowledgeIngestResponse(0, ""));
     OperationResult result = tool.execute("{}");
     assertFalse(result.success());
     assertTrue(result.message().contains("required"));
@@ -117,7 +127,7 @@ class IngestToolTest {
     var capturedFiles = new AtomicReference<List<Path>>();
     var tool =
         toolWithLocalScan(
-            files -> {
+            (files, collection) -> {
               capturedFiles.set(files);
               return new KnowledgeIngestResponse(files.size(), "");
             });
@@ -140,7 +150,7 @@ class IngestToolTest {
 
     var tool =
         toolWithLocalScan(
-            files -> new KnowledgeIngestResponse(files.size(), ""));
+            (files, collection) -> new KnowledgeIngestResponse(files.size(), ""));
 
     String json =
         "{\"paths\": [\"%s\", \"%s\"]}"
@@ -156,7 +166,7 @@ class IngestToolTest {
 
   @Test
   void executeAllPathsMissing() {
-    var tool = toolWithLocalScan(files -> new KnowledgeIngestResponse(0, ""));
+    var tool = toolWithLocalScan((files, collection) -> new KnowledgeIngestResponse(0, ""));
 
     String json = "{\"paths\": [\"/no/such/file.txt\"]}";
     OperationResult result = tool.execute(json);
@@ -171,7 +181,7 @@ class IngestToolTest {
 
     var tool =
         toolWithLocalScan(
-            files -> new KnowledgeIngestResponse(0, "Worker connection lost"));
+            (files, collection) -> new KnowledgeIngestResponse(0, "Worker connection lost"));
 
     String json =
         "{\"paths\": [\"%s\"]}"
@@ -184,7 +194,7 @@ class IngestToolTest {
 
   @Test
   void executeInvalidJson() {
-    var tool = toolWithLocalScan(files -> new KnowledgeIngestResponse(0, ""));
+    var tool = toolWithLocalScan((files, collection) -> new KnowledgeIngestResponse(0, ""));
     OperationResult result = tool.execute("not json");
     assertFalse(result.success());
     assertTrue(result.message().contains("error"));
@@ -192,7 +202,7 @@ class IngestToolTest {
 
   @Test
   void executeBatchLimitExceeded() {
-    var tool = toolWithLocalScan(files -> new KnowledgeIngestResponse(0, ""));
+    var tool = toolWithLocalScan((files, collection) -> new KnowledgeIngestResponse(0, ""));
 
     var sb = new StringBuilder("{\"paths\": [");
     for (int i = 0; i <= IngestTool.MAX_PATHS; i++) {
@@ -218,7 +228,7 @@ class IngestToolTest {
 
   @Test
   void executeNoArgs() {
-    var tool = toolWithLocalScan(files -> new KnowledgeIngestResponse(0, ""));
+    var tool = toolWithLocalScan((files, collection) -> new KnowledgeIngestResponse(0, ""));
     OperationResult result = tool.execute("");
     assertFalse(result.success());
   }
@@ -234,7 +244,7 @@ class IngestToolTest {
     var roots = List.of(new BrowseTool.RootInfo(tempDir.toString(), "root"));
     var tool =
         toolWithLocalScan(
-            files -> {
+            (files, collection) -> {
               capturedFiles.set(files);
               return new KnowledgeIngestResponse(files.size(), "");
             },
@@ -263,7 +273,7 @@ class IngestToolTest {
     var roots = List.of(new BrowseTool.RootInfo(docsRoot.toString(), "docs"));
     var tool =
         toolWithLocalScan(
-            files -> {
+            (files, collection) -> {
               capturedFiles.set(files);
               return new KnowledgeIngestResponse(files.size(), "");
             },
@@ -284,7 +294,7 @@ class IngestToolTest {
     var roots = List.of(new BrowseTool.RootInfo(tempDir.toString(), "root"));
     var tool =
         toolWithLocalScan(
-            files -> new KnowledgeIngestResponse(0, ""),
+            (files, collection) -> new KnowledgeIngestResponse(0, ""),
             () -> roots);
 
     // Relative path that doesn't exist under any root
@@ -292,5 +302,166 @@ class IngestToolTest {
     OperationResult result = tool.execute(json);
     assertFalse(result.success());
     assertTrue(result.message().contains("No readable files"));
+  }
+
+  // ===================================================================================
+  // Tempdoc 811 (C-2a) — collection tagging. Pre-811 EVERY ingest through this tool wrote
+  // collection=null: unlabeled, absent from Library>Folders, passing every collection clause,
+  // and unreachable by any prune path.
+  // ===================================================================================
+
+  @Test
+  void outOfRootIngestIsTaggedMcpIngest() throws IOException {
+    Path file = tempDir.resolve("loose.txt");
+    Files.writeString(file, "content");
+
+    var capturedCollection = new AtomicReference<String>("<never called>");
+    var tool =
+        toolWithLocalScan(
+            (files, collection) -> {
+              capturedCollection.set(collection);
+              return new KnowledgeIngestResponse(files.size(), "");
+            },
+            List::of,
+            List::of); // no watched roots → every path is out-of-root
+
+    OperationResult result =
+        tool.execute("{\"paths\": [\"%s\"]}".formatted(file.toString().replace("\\", "\\\\")));
+    assertTrue(result.success(), result.message());
+    assertEquals(
+        IngestCollectionPolicy.OUT_OF_ROOT,
+        capturedCollection.get(),
+        "an out-of-root ingest must carry a real collection, not the pre-811 null");
+  }
+
+  @Test
+  void inRootIngestInheritsTheRootCollection() throws IOException {
+    Path rootDir = tempDir.resolve("watched");
+    Files.createDirectories(rootDir);
+    Path file = rootDir.resolve("note.txt");
+    Files.writeString(file, "content");
+
+    var capturedCollection = new AtomicReference<String>("<never called>");
+    var tool =
+        toolWithLocalScan(
+            (files, collection) -> {
+              capturedCollection.set(collection);
+              return new KnowledgeIngestResponse(files.size(), "");
+            },
+            List::of,
+            () -> List.of(new IngestCollectionPolicy.RootBinding(rootDir, "work-notes")));
+
+    OperationResult result =
+        tool.execute("{\"paths\": [\"%s\"]}".formatted(file.toString().replace("\\", "\\\\")));
+    assertTrue(result.success(), result.message());
+    assertEquals(
+        "work-notes",
+        capturedCollection.get(),
+        "a path under a watched root must inherit that root's collection, not fork a second label");
+  }
+
+  @Test
+  void explicitCollectionIsThreadedThrough() throws IOException {
+    Path file = tempDir.resolve("explicit.txt");
+    Files.writeString(file, "content");
+
+    var capturedCollection = new AtomicReference<String>("<never called>");
+    var tool =
+        toolWithLocalScan(
+            (files, collection) -> {
+              capturedCollection.set(collection);
+              return new KnowledgeIngestResponse(files.size(), "");
+            },
+            List::of,
+            () -> List.of(new IngestCollectionPolicy.RootBinding(tempDir, "root-collection")));
+
+    OperationResult result =
+        tool.execute(
+            "{\"paths\": [\"%s\"], \"collection\": \"  research  \"}"
+                .formatted(file.toString().replace("\\", "\\\\")));
+    assertTrue(result.success(), result.message());
+    assertEquals(
+        "research",
+        capturedCollection.get(),
+        "an explicit collection wins over root inheritance and is trimmed");
+  }
+
+  @Test
+  void reservedCollectionIsRejectedServerSide() throws IOException {
+    Path file = tempDir.resolve("impersonator.txt");
+    Files.writeString(file, "content");
+
+    var called = new AtomicReference<Boolean>(false);
+    var tool =
+        toolWithLocalScan(
+            (files, collection) -> {
+              called.set(true);
+              return new KnowledgeIngestResponse(files.size(), "");
+            });
+
+    for (String reserved : List.of("agent-history", "justsearch-help", "AGENT-HISTORY")) {
+      OperationResult result =
+          tool.execute(
+              "{\"paths\": [\"%s\"], \"collection\": \"%s\"}"
+                  .formatted(file.toString().replace("\\", "\\\\"), reserved));
+      assertFalse(result.success(), "reserved collection " + reserved + " must be rejected");
+      assertTrue(result.message().contains("reserved"), result.message());
+    }
+    assertFalse(called.get(), "a rejected ingest must not reach the worker");
+  }
+
+  @Test
+  void blankExplicitCollectionIsRejected() throws IOException {
+    Path file = tempDir.resolve("blank.txt");
+    Files.writeString(file, "content");
+
+    var tool = toolWithLocalScan((files, collection) -> new KnowledgeIngestResponse(1, ""));
+    OperationResult result =
+        tool.execute(
+            "{\"paths\": [\"%s\"], \"collection\": \"   \"}"
+                .formatted(file.toString().replace("\\", "\\\\")));
+    assertFalse(result.success());
+    assertTrue(result.message().contains("non-empty"), result.message());
+  }
+
+  @Test
+  void mixedInRootAndOutOfRootFilesAreGroupedByCollection() throws IOException {
+    Path rootDir = tempDir.resolve("watched2");
+    Files.createDirectories(rootDir);
+    Path inRoot = rootDir.resolve("in.txt");
+    Files.writeString(inRoot, "a");
+    Path outside = tempDir.resolve("out.txt");
+    Files.writeString(outside, "b");
+
+    var byCollection = new java.util.LinkedHashMap<String, List<Path>>();
+    var tool =
+        toolWithLocalScan(
+            (files, collection) -> {
+              byCollection.put(String.valueOf(collection), List.copyOf(files));
+              return new KnowledgeIngestResponse(files.size(), "");
+            },
+            List::of,
+            () -> List.of(new IngestCollectionPolicy.RootBinding(rootDir, "watched-coll")));
+
+    OperationResult result =
+        tool.execute(
+            "{\"paths\": [\"%s\", \"%s\"]}"
+                .formatted(
+                    inRoot.toString().replace("\\", "\\\\"),
+                    outside.toString().replace("\\", "\\\\")));
+    assertTrue(result.success(), result.message());
+    assertEquals(
+        java.util.Set.of("watched-coll", IngestCollectionPolicy.OUT_OF_ROOT),
+        byCollection.keySet(),
+        "one call must not force a single label onto paths with different containment");
+    assertEquals(List.of(inRoot), byCollection.get("watched-coll"));
+    assertEquals(List.of(outside), byCollection.get(IngestCollectionPolicy.OUT_OF_ROOT));
+  }
+
+  @Test
+  void parameterSchemaAdvertisesCollection() {
+    assertTrue(
+        IngestTool.parameterSchema().contains("\"collection\""),
+        "the tool schema must advertise the optional collection argument");
   }
 }

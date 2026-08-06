@@ -1008,6 +1008,33 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         return rootLifecycleOps.deleteDocById(docId);
     }
 
+    /**
+     * Tempdoc 811 (C-2a) — collection-keyed removal route. Gating (which collections are deletable)
+     * belongs to the caller via {@code IngestCollectionPolicy.isDeletable}; this is the transport.
+     */
+    @Override
+    public int deleteDocsByCollection(String collection) {
+        if (collection == null || collection.isBlank()) {
+            return -1;
+        }
+        io.justsearch.ipc.DeleteByCollectionRequest request =
+            io.justsearch.ipc.DeleteByCollectionRequest.newBuilder()
+                .setCollection(collection)
+                .build();
+        io.justsearch.ipc.DeleteByCollectionResponse response =
+            executeIngestRpc(
+                "deleteByCollection",
+                RpcDeadlineCategory.STANDARD,
+                stub -> stub.deleteByCollection(request));
+        if (response == null) {
+            return -1;
+        }
+        if (!response.getError().isEmpty()) {
+            log.warn("deleteByCollection RPC returned error for {}: {}", collection, response.getError());
+        }
+        return response.getDeletedDocs();
+    }
+
     @Override
     public int removeWatchedPath(Path path) {
         return rootLifecycleOps.removeWatchedPath(path);

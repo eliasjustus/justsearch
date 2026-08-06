@@ -896,6 +896,23 @@ message DeleteByPathResponse {
   string error = 2;
 }
 
+// === Delete by Collection (tempdoc 811 C-2a) ===
+// Removal route for ad-hoc ingests. `deleteByPath` is watched-root-prefix driven, so documents
+// ingested through POST /api/knowledge/ingest or the core.ingest-files tool from a path under no
+// watched root had NO removal route at all. Deletes every parent + chunk document carrying the
+// collection term. Which collections may be deleted is decided by ONE authority on the Head side
+// (io.justsearch.app.api.knowledge.IngestCollectionPolicy#isDeletable — refuses the reserved
+// app-internal corpora and the untagged default bucket); the worker only refuses a blank value, so
+// the policy has a single home rather than two literal sets that can drift.
+message DeleteByCollectionRequest {
+  string collection = 1;
+}
+
+message DeleteByCollectionResponse {
+  int32 deleted_docs = 1;   // documents matched (and submitted for deletion); -1 on error
+  string error = 2;
+}
+
 // === Delete by Exact ID ===
 // Deletes a single document by exact doc_id (normalized path).
 // Used by file watcher to handle single file deletions.
@@ -1130,6 +1147,11 @@ service IngestService {
   // Delete single document by exact ID (for file watcher DELETE events)
   // NOT strictly idempotent: deletes are one-shot, but retry-safe
   rpc DeleteById(DeleteByIdRequest) returns (DeleteByIdResponse);
+
+  // Tempdoc 811 (C-2a): the removal route for collection-tagged ad-hoc ingests, which no
+  // path-prefix prune can reach. NOT strictly idempotent (one-shot delete), but retry-safe:
+  // a second call matches nothing and reports 0.
+  rpc DeleteByCollection(DeleteByCollectionRequest) returns (DeleteByCollectionResponse);
 
   // Idempotent: best-effort deletion, files either exist or don't - safe to retry on UNAVAILABLE
   // DEPRECATED: use SyncDirectory

@@ -257,6 +257,66 @@ public class IndexingController {
     }
   }
 
+  /**
+   * Tempdoc 811 (C-2a) — the removal route for collection-tagged ad-hoc ingests.
+   *
+   * <p>{@code DELETE /api/indexing/collections} body {@code {"collection": "mcp-ingest"}}. Before
+   * 811 a document ingested through {@code POST /api/knowledge/ingest} or the {@code
+   * core.ingest-files} tool from a path under no watched root carried NO collection and no prune
+   * path could reach it — {@code removeWatchedRoot} / {@code PruneOps.pruneByPathPrefix} are both
+   * watched-root-prefix driven. Deleting by collection is the addressable route the tag creates.
+   *
+   * <p>Reserved app-internal collections ({@code justsearch-help}, {@code agent-history}) and the
+   * untagged {@code default} bucket are refused: the latter would be a whole-index wipe wearing a
+   * collection's clothes. Loopback-only, and the session-token before-handler
+   * ({@code ApiSecurityFilters.setupSessionTokenEnforcement}) covers DELETE like every other
+   * mutation.
+   */
+  public void handleDeleteCollection(Context ctx) {
+    try {
+      Map<String, String> body = ctx.bodyAsClass(Map.class);
+      String collection = body == null ? null : body.get("collection");
+      if (collection == null || collection.isBlank()) {
+        ctx.status(400).json(ApiErrorHandler.toResponse(ApiErrorCode.INVALID_REQUEST, "collection is required", telemetry, ApiErrorHandler.routeOf(ctx)));
+        return;
+      }
+      String trimmed = collection.trim();
+      if (!io.justsearch.app.api.knowledge.IngestCollectionPolicy.isDeletable(trimmed)) {
+        ctx.status(400)
+            .json(
+                ApiErrorHandler.toResponse(
+                    ApiErrorCode.INVALID_REQUEST,
+                    "collection '"
+                        + trimmed
+                        + "' cannot be deleted: the app-internal collections ("
+                        + String.join(
+                            ", ",
+                            io.justsearch.app.api.knowledge.IngestCollectionPolicy
+                                .reservedCollections()
+                                .stream()
+                                .sorted()
+                                .toList())
+                        + ") and the untagged '"
+                        + io.justsearch.app.api.knowledge.IngestCollectionPolicy.DEFAULT_COLLECTION
+                        + "' bucket are protected",
+                    telemetry,
+                    ApiErrorHandler.routeOf(ctx)));
+        return;
+      }
+      int deleted = indexingService().deleteDocsByCollection(trimmed);
+      ctx.status(200).json(Map.of("status", "ok", "collection", trimmed, "deletedDocs", deleted));
+    } catch (StatusRuntimeException e) {
+      int http = ApiErrorHandler.mapGrpcToHttp(e.getStatus().getCode());
+      ctx.status(http).json(ApiErrorHandler.toResponse(e, telemetry, ApiErrorHandler.routeOf(ctx)));
+    } catch (KnowledgeServerNotConnectedException | UnsupportedOperationException e) {
+      ctx.status(503)
+          .json(ApiErrorHandler.toResponse(ApiErrorCode.SERVICE_UNAVAILABLE, "Knowledge Server not ready", telemetry, ApiErrorHandler.routeOf(ctx)));
+    } catch (Exception e) {
+      log.error("Failed to delete collection", e);
+      ctx.status(500).json(ApiErrorHandler.toResponse(e, telemetry, ApiErrorHandler.routeOf(ctx)));
+    }
+  }
+
   public void handleReindex(Context ctx) {
     try {
       boolean force = Boolean.parseBoolean(ctx.queryParam("force"));
