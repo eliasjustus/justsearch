@@ -18,6 +18,8 @@ import {
   KEYWORD_FALLBACK_CAVEAT,
   PASSAGE_REDUCED_CAVEAT,
   OPTIONAL_CAPABILITY_CAVEAT,
+  AI_UNAVAILABLE_CAVEAT,
+  warrantsSearchDegradationBanner,
 } from './readinessNotice.js';
 import type { SystemHealthVerdict } from './verdict.js';
 
@@ -375,6 +377,36 @@ describe('classifyConsequence (805 §G.2)', () => {
     expect(PASSAGE_REDUCED_CAVEAT).not.toContain('keyword');
     expect(PASSAGE_REDUCED_CAVEAT).toContain('still ranked semantically');
     expect(OPTIONAL_CAPABILITY_CAVEAT).not.toContain('keyword');
+    // Round-14 finding 8 — the calm caveat NAMES its feature (the pre-fix "an optional ranking
+    // model" named none and was resolved to the wrong one), and the AI-model class keeps a
+    // separate wording so it never borrows a feature name its cause is not about.
+    expect(OPTIONAL_CAPABILITY_CAVEAT).toContain('Learned re-ranking (LambdaMART)');
+    expect(AI_UNAVAILABLE_CAVEAT).not.toContain('LambdaMART');
+    expect(AI_UNAVAILABLE_CAVEAT).not.toContain('keyword');
+  });
+});
+
+describe('warrantsSearchDegradationBanner (round-14 finding 9)', () => {
+  it('an info-severity-only verdict warrants NO banner-tier warning', () => {
+    expect(warrantsSearchDegradationBanner(degraded('info', ['lambdamart.not_configured']))).toBe(false);
+  });
+
+  it('…while its notice still exists, so Health keeps carrying the cause', () => {
+    const n = readinessNotice(degraded('info', ['lambdamart.not_configured']));
+    expect(n).not.toBeNull();
+    expect(n!.causes).toEqual(['Learned re-ranking (LambdaMART) is not configured']);
+  });
+
+  it('warn / error / unreachable keep the banner (the gate is severity, not "no banner ever")', () => {
+    expect(warrantsSearchDegradationBanner(degraded('warn', ['worker.health.embedding_not_ready']))).toBe(true);
+    expect(warrantsSearchDegradationBanner(degraded('error', ['worker.restart_exhausted']))).toBe(true);
+    expect(
+      warrantsSearchDegradationBanner({ kind: 'unreachable', severity: 'error', reasons: ['binding.unreachable'] }),
+    ).toBe(true);
+  });
+
+  it('an operational verdict warrants nothing (no notice to show)', () => {
+    expect(warrantsSearchDegradationBanner({ kind: 'operational', severity: 'ok', reasons: [] })).toBe(false);
   });
 });
 

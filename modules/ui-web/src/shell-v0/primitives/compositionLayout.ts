@@ -41,6 +41,67 @@ export interface ComposeOpts {
   readonly gap: string;
 }
 
+/**
+ * Tempdoc 814 §D6 — THE single BLOCK-axis breakpoint authority.
+ *
+ * The inline axis is owned above ({@link composeGridStyles} composes the one `@container` query the
+ * surface's grid frame commits on). Height had no owner at all — no height-based `@media`/`@container`
+ * query existed anywhere in the chat-surface layout — which is how chrome accreted to ~60% of a
+ * ~790px window with every band individually justified. This constant is that owner: every block-axis
+ * yield (the Detailed-banner gate, the document-pane floor) reads THIS number, so "what counts as a
+ * short window" is one decision, not one per band.
+ *
+ * VIEWPORT `@media`, not `@container` (§B.12): the surface box declares `container-type: inline-size`,
+ * so it cannot query its own block size, and `container-type: size` collapses a height-indeterminate
+ * box — strictly riskier here for no benefit, because the surface fills the viewport minus fixed Shell
+ * chrome, making the viewport height a faithful proxy.
+ */
+export const SHORT_VIEWPORT_MAX_HEIGHT_PX = 820;
+
+/** The block-axis breakpoint as a media condition — the JS half (`matchMedia`) of the same decision. */
+export const SHORT_VIEWPORT_QUERY = `(max-height: ${SHORT_VIEWPORT_MAX_HEIGHT_PX}px)`;
+
+/** The `@media` prelude, for splicing the block-axis breakpoint into a surface stylesheet's `css`. */
+export const shortViewportMedia: CSSResult = unsafeCSS(`@media ${SHORT_VIEWPORT_QUERY}`);
+
+type ShortViewportListener = (short: boolean) => void;
+const shortViewportListeners = new Set<ShortViewportListener>();
+let shortViewportMql: MediaQueryList | null = null;
+
+/**
+ * Is the window below the block-axis breakpoint? FALSE when `matchMedia` is unavailable (SSR, unit
+ * tests): the roomy branch is the safe default — an unknown viewport keeps every band's full form
+ * rather than silently collapsing chrome the user asked for. Mirrors `isWideLayout`'s own
+ * unavailable-means-roomy fallback in `state/responsiveState.ts`.
+ */
+export function isShortViewport(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia(SHORT_VIEWPORT_QUERY).matches;
+}
+
+/**
+ * Subscribe to block-axis breakpoint crossings. Fires once immediately with the current value (the
+ * `subscribeWide` contract), so a consumer needs no separate initial read.
+ */
+export function subscribeShortViewport(listener: ShortViewportListener): () => void {
+  if (
+    shortViewportMql === null &&
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function'
+  ) {
+    shortViewportMql = window.matchMedia(SHORT_VIEWPORT_QUERY);
+    shortViewportMql.addEventListener('change', () => {
+      const short = isShortViewport();
+      for (const l of shortViewportListeners) l(short);
+    });
+  }
+  shortViewportListeners.add(listener);
+  listener(isShortViewport());
+  return () => {
+    shortViewportListeners.delete(listener);
+  };
+}
+
 /** The narrow / wide `grid-template-columns` track list for a zone-set (exported for the unit assertion). */
 export function trackTemplate(zones: readonly ZoneDecl[], viewport: 'narrow' | 'wide'): string {
   if (viewport === 'narrow') {

@@ -164,6 +164,29 @@ describe('searchState (slice 463)', () => {
     vi.unstubAllGlobals();
   });
 
+  // Tempdoc 811 (C-1a) — the corpus marker's input: `fields.collection` must reach the hit, or the
+  // row pill can never render regardless of how the card is written.
+  it('carries fields.collection onto the hit (and leaves it undefined when the wire omits it)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          results: [
+            { id: 'h', fields: { path: '/help.md', collection: 'justsearch-help' } },
+            { id: 'u', fields: { path: '/mine.md' } },
+          ],
+          totalHits: 2,
+        }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    setQuery('help');
+    await vi.runAllTimersAsync();
+    const results = getSearchState().results;
+    expect(results.find((r) => r.id === 'h')?.collection).toBe('justsearch-help');
+    expect(results.find((r) => r.id === 'u')?.collection).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+
   it('clears searchTrace when a subsequent response omits it', async () => {
     const withTrace = vi.fn().mockResolvedValue({
       ok: true,

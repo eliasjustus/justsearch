@@ -13,7 +13,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Handler for {@code core.trigger-offline-processing}.
  *
- * <p>Slice 3a-2-c continuation: the "Finish enrichment now" button. Delegates
+ * <p>Slice 3a-2-c continuation: the "Process pending enrichment" button. Delegates
  * to {@link BrainRuntimeService#triggerOfflineProcessing()} via lazy supplier.
  * The operation ID and the service method keep their historical names (renaming
  * a wire identifier is not a copy change), but every string this handler hands

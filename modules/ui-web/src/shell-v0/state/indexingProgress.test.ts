@@ -270,6 +270,26 @@ describe('selectIndexingProgress — denominator honesty', () => {
     expect(p.enrichingPercent).toBeNull();
   });
 
+  it('pending work with no denominator still withholds the terminal phase (positive evidence)', () => {
+    // #375's enrichmentCoverage doctrine, kept through the 813 merge (§17): a pending counter on an
+    // APPLICABLE stage is evidence of unfinished work even when its denominator is absent — the
+    // PERCENT is suppressed (no faithful denominator), but the phase must not read 'ready' and let
+    // the queue card claim "Up to date" over work it can see.
+    const p = selectIndexingProgress(
+      snapshot({
+        core: { indexState: 'IDLE', pendingJobs: 0 },
+        enrichment: {
+          backfillMode: 'idle',
+          chunk: { chunkEmbeddingPendingCount: 1554 }, // no chunkDocCount
+        },
+      }),
+      true,
+    );
+    expect(p.phase).toBe('enriching');
+    expect(p.enrichingPending).toBe(1554);
+    expect(p.enrichingPercent).toBeNull();
+  });
+
   it('applicability is NULL when the worker did not report — never an all-false claim', () => {
     // All-false says "no stage applies here", which a per-root consumer reads as a licence to
     // score coverage on whatever counts survive. Nothing observed must stay nothing claimed.

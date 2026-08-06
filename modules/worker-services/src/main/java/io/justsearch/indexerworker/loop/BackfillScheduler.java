@@ -148,7 +148,8 @@ public final class BackfillScheduler {
             signalBus.isEnergyReduced(),
             embeddingLifecycle.embeddingProvider());
     if (runBackfill) {
-      CombinedEnrichmentBackfillOps.CombinedOutcome outcome = processCombinedBackfillIfApplicable();
+      CombinedEnrichmentBackfillOps.CombinedOutcome outcome =
+          processCombinedBackfillIfApplicable(cycleDeadlineNanos);
       recordCombinedOutcome(outcome);
       // Mode selection reads ACTIVITY (did the combined pass touch anything at all); the tight
       // loop below reads PROGRESS. Tempdoc 798: these are different questions and conflating
@@ -164,9 +165,19 @@ public final class BackfillScheduler {
         var chunkIdCache = new ArrayDeque<String>();
         var batchCommitCounter = new int[] {0};
         backfillDidWork = true;
-        final boolean[] useCombinedRef = {useCombined};
+        // Tempdoc 809 finding 3: an aborted probe means a stop condition came up DURING that batch
+        // — pending ingest, the cycle budget, or a bulk deletion that invalidated the documents it
+        // had selected. Starting a fresh tight-loop batch would re-select and re-encode against
+        // that same condition, which is how the mid-batch signal ended up costing a further ~5s of
+        // GPU instead of returning control. Mode selection itself is unchanged: this cycle still
+        // used the combined pass, and the next idle cycle picks the enrichment up where it stopped.
+        final boolean[] useCombinedRef = {!outcome.aborted()};
         final int[] tightLoopBatches = {1};
-        final boolean[] budgetTripped = {false};
+        // Tempdoc 809 finding 3: the mode-selection probe above is a full batch and is now
+        // interruptible too, so it can be the call that spends the budget. Seeding from it keeps
+        // the 798 WARN honest — without this, a cycle whose ONLY batch overran would report
+        // nothing at all.
+        final boolean[] budgetTripped = {outcome.aborted() && System.nanoTime() >= cycleDeadlineNanos};
         // Tempdoc 798 review F3: cumulative across the whole cycle, mode-selection probe included.
         // Budget exhaustion means very different things depending on this flag, and the diagnostic
         // must not assert non-convergence when enrichment was demonstrably converging.
@@ -188,7 +199,7 @@ public final class BackfillScheduler {
                 }
                 CombinedEnrichmentBackfillOps.CombinedOutcome tightLoopOutcome =
                     processCombinedBackfillIfApplicable(
-                        parentIdCache, chunkIdCache, batchCommitCounter);
+                        parentIdCache, chunkIdCache, batchCommitCounter, cycleDeadlineNanos);
                 recordCombinedOutcome(tightLoopOutcome);
                 // Tempdoc 798: PROGRESS, not activity. `wroteAnything()` stays true forever for a
                 // document that is rewritten every batch without ever advancing a stage.
@@ -196,6 +207,15 @@ public final class BackfillScheduler {
                 if (useCombinedRef[0]) {
                   anyProgressThisCycle[0] = true;
                   tightLoopBatches[0]++;
+                }
+                // Tempdoc 809 finding 3: the batch left its own document set unfinished because a
+                // stop condition came up mid-batch. That condition is still true, so starting
+                // another batch would only re-discover it after another sub-batch of GPU work.
+                // Re-read the deadline first: an aborted batch is the most likely way the budget
+                // is now spent, and breaking without this would silently drop 798's WARN.
+                if (tightLoopOutcome.aborted()) {
+                  if (System.nanoTime() >= cycleDeadlineNanos) budgetTripped[0] = true;
+                  break;
                 }
               }
               if (batchCommitCounter[0] > 0) {
@@ -442,14 +462,31 @@ public final class BackfillScheduler {
 
   // ==================== Backfill delegates ====================
 
-  private CombinedEnrichmentBackfillOps.CombinedOutcome processCombinedBackfillIfApplicable() {
-    return processCombinedBackfillIfApplicable(null, null, null);
+  private CombinedEnrichmentBackfillOps.CombinedOutcome processCombinedBackfillIfApplicable(
+      long cycleDeadlineNanos) {
+    return processCombinedBackfillIfApplicable(null, null, null, cycleDeadlineNanos);
+  }
+
+  /**
+   * The composite "stop starting new enrichment work" signal handed to one combined batch (tempdoc
+   * 809 finding 3). Exactly the conditions the tight loop below breaks on, evaluated at the batch's
+   * internal sub-batch boundaries instead of only between batches — a batch is ~150 documents and
+   * was measured at ~63 s, so between-batches was a 12x overshoot of the very budget it enforced.
+   */
+  private boolean shouldStopBackfillWork(long cycleDeadlineNanos) {
+    return !running.get()
+        || Thread.currentThread().isInterrupted()
+        || signalBus.isUserActive()
+        || signalBus.shouldYieldGpuBackfill()
+        || signalBus.hasPendingIngest()
+        || System.nanoTime() >= cycleDeadlineNanos;
   }
 
   private CombinedEnrichmentBackfillOps.CombinedOutcome processCombinedBackfillIfApplicable(
       ArrayDeque<String> parentIdCache,
       ArrayDeque<String> chunkIdCache,
-      int[] batchesSinceCommit) {
+      int[] batchesSinceCommit,
+      long cycleDeadlineNanos) {
     boolean embedAvail =
         embeddingLifecycle.embeddingProvider().isAvailable()
             && embeddingLifecycle.allowEmbeddingWrites();
@@ -483,7 +520,8 @@ public final class BackfillScheduler {
             pacing.chunkSlotsPerBatch(),
             parentIdCache != null ? parentIdCache : new ArrayDeque<>(),
             chunkIdCache != null ? chunkIdCache : new ArrayDeque<>(),
-            batchesSinceCommit != null ? batchesSinceCommit : new int[] {0}));
+            batchesSinceCommit != null ? batchesSinceCommit : new int[] {0},
+            () -> shouldStopBackfillWork(cycleDeadlineNanos)));
   }
 
   private StageOutcome processEmbeddingBackfill() {

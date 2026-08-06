@@ -28,7 +28,7 @@ import {
   type ShapeId,
   type ThreadMessage,
 } from './unifiedChatRequest.js';
-import { composeGridStyles } from '../primitives/compositionLayout.js';
+import { composeGridStyles, subscribeShortViewport } from '../primitives/compositionLayout.js';
 import { friendlyStreamError } from '../utils/streamError.js';
 import { composerStyles } from '../components/Composer.js';
 import '../components/Composer.js';
@@ -63,7 +63,13 @@ import { setAiActivity, subscribeAiState, getAiState, type AiState } from '../st
 import { reportLayoutWidth, subscribeWide } from '../state/responsiveState.js';
 import { copyToClipboard } from '../utils/clipboardCopy.js';
 import { orElse } from '../state/known.js';
-import { readinessNotice, reasonFor, isReindexCause, type ReadinessNoticeView } from '../state/readinessNotice.js';
+import {
+  readinessNotice,
+  reasonFor,
+  isReindexCause,
+  warrantsSearchDegradationBanner,
+  type ReadinessNoticeView,
+} from '../state/readinessNotice.js';
 import { verdictTone, type SystemHealthVerdict } from '../state/verdict.js';
 import { projectAvailability, unavailableBecause } from '../state/availability.js';
 // Tempdoc 738 — the degradation banner's disclosure now projects from the app-wide Simple/Detailed
@@ -169,7 +175,7 @@ import '../components/AutonomyDial.js';
 import { findAgentSearchHit } from '../components/chat/toolSearchCard.js';
 // Tempdoc 561 (surface tier): the ONE shared agent controller + the retrospective drawer.
 import { getAgentSessionController, subscribeAgentSession } from '../state/agentSessionStore.js';
-import { toggleRetrospective } from '../state/retrospectiveDrawer.js';
+import { openRetrospectiveAt, toggleRetrospective } from '../state/retrospectiveDrawer.js';
 import { toggleSources } from '../state/sourcesDrawer.js';
 // Tempdoc 610 §K — the context-inspector drawer (what the last turn saw).
 import '../components/ContextInspectorPane.js';
@@ -292,9 +298,21 @@ import { ReasoningController } from '../controllers/ReasoningController.js';
 import { stepPresentation } from './runStepPresentation.js';
 // Tempdoc 621 Phase 5 — the run-spine's pure presentation helpers.
 import { computeSpinePositions, spineNodeLabel } from './runSpinePresentation.js';
-import { computeSpacedPositions } from '../primitives/adaptiveSpacing.js';
+import { computeSpacedPositions, clusterAdjacent, type PlacedGroup } from '../primitives/adaptiveSpacing.js';
 import { NavigationController } from '../primitives/navigation.js';
 import '../components/chat/RunNode.js';
+
+/**
+ * Tempdoc 814 §D4 (settled parameter) — the spine's aggregation threshold: non-landmark markers whose
+ * de-overlapped positions still sit closer than this collapse into one counted cluster badge.
+ */
+const SPINE_CLUSTER_MIN_GAP_PX = 14;
+
+/**
+ * Tempdoc 814 §D3 (settled parameter) — the docked evidence rail is a BOUNDED INDEX, not a scroller:
+ * it renders at most this many source cards plus an "Open all · N" row into the sanctioned drawer.
+ */
+const EVIDENCE_RAIL_MAX_VISIBLE = 3;
 
 /**
  * Search Thread S4-final — a live search FROZEN at the moment of consequence (open/ask/pin). A
@@ -412,11 +430,16 @@ export class UnifiedChatView extends JfElement {
     showResumePrompt: { state: true },
     // Tempdoc 629 (LAYER) — the resumed conversation's store is encrypted + locked (history 423'd).
     historyLocked: { state: true },
+    // Tempdoc 734 round-14 F4 — a send the locked store refused (dispatch answered 423).
+    lockedSendNotice: { state: true },
     // Tempdoc 577 §2.13 #17 — the agent authority-space panel toggle.
     showAbilities: { state: true },
     // Search Thread Round-2 R1a — the degradation banner's expand/collapse disclosure. A transient
     // UI panel (closes in settleTransients), mirroring showAbilities/queryTrailOpen.
     degradationBannerExpanded: { state: true },
+    // Round-14 finding 12(a) — the run-telemetry band's disclosure, bound so "collapsed by default"
+    // is a stated property rather than whatever the `<details>` element was last left in.
+    activityRailExpanded: { state: true },
     // Slice 515 FIX-1: docIds carried from askAi navigation, forwarded to
     // RAG dispatch so scoped retrieval actually works. Captured in
     // connectedCallback before unifiedChatState is reset.
@@ -571,6 +594,12 @@ export class UnifiedChatView extends JfElement {
   declare showResumePrompt: boolean;
   /** Tempdoc 629 (LAYER) — the resumed conversation is encrypted + locked (history returned 423). */
   declare historyLocked: boolean;
+  /**
+   * Tempdoc 734 round-14 F4 — the wording for a send the locked store refused: the dispatch answered
+   * 423 because the store locked between this composer's render and the submit. Empty unless that
+   * happened, so the ordinary locked view (a conversation resumed while locked) is unchanged.
+   */
+  declare lockedSendNotice: string;
   /** Tempdoc 577 §2.13 #17 — the agent authority-space ("what can it do") panel is open. */
   declare showAbilities: boolean;
   /**
@@ -579,6 +608,12 @@ export class UnifiedChatView extends JfElement {
    * renderDegradationBanner). Tempdoc 687's per-cause-set seen-hash default machinery is removed.
    */
   declare degradationBannerExpanded: boolean;
+  /**
+   * Round-14 finding 12(a) — the run-telemetry band's disclosure. Developer instrumentation with a
+   * disclosure triangle should start closed; this makes that the declared default (and keeps a user's
+   * own toggle across re-renders).
+   */
+  declare activityRailExpanded: boolean;
   /** Tempdoc 738 — re-render the disclosure-gated banner when the Simple/Detailed mode changes. */
   private uiModeUnsubscribe: (() => void) | null = null;
   declare pinnedDocIds: string[];
@@ -661,6 +696,12 @@ export class UnifiedChatView extends JfElement {
   // disagree about whether the wide layout is in effect.
   private wideZone = true;
   private unsubWide: (() => void) | null = null;
+  // Tempdoc 814 §D6 — the BLOCK-axis sibling of `wideZone`: is the window below the one block-axis
+  // breakpoint (primitives/compositionLayout.ts)? Chrome that may spend height freely on a tall window
+  // yields on a short one. Defaults to NOT short so an unknown viewport (SSR, unit tests) keeps every
+  // band's full form — the same unavailable-means-roomy default `wideZone` carries.
+  private shortZone = false;
+  private unsubShort: (() => void) | null = null;
   private zoneResizeObserver: ResizeObserver | null = null;
   private observedBox: HTMLElement | null = null;
   // Tempdoc 565 §21 — the chat-first Navigation authority. The run-spine's "where am I / how do I move"
@@ -705,6 +746,7 @@ export class UnifiedChatView extends JfElement {
     super();
     this.apiBase = '';
     this.degradationBannerExpanded = false;
+    this.activityRailExpanded = false;
     this.inputDraft = '';
     this.steerDraft = '';
     this.forkEditing = false;
@@ -729,6 +771,7 @@ export class UnifiedChatView extends JfElement {
     this.streamingText = '';
     this.errorMessage = '';
     this.historyLocked = false;
+    this.lockedSendNotice = '';
     // Tempdoc 577 Goal 3 (§3.11) / Search Thread S5a — the window lands DERIVED (no explicit pin):
     // deriveAffordance yields the `retrieve` base tier, the always-available search floor. The old
     // AI-online auto-upgrade to `documents` is gone (decision B14 — capability appearing must not
@@ -777,6 +820,12 @@ export class UnifiedChatView extends JfElement {
     // via the shared responsiveState authority (fires once immediately with the current value).
     this.unsubWide = subscribeWide((wide) => {
       this.wideZone = wide;
+      this.requestUpdate();
+    });
+    // Tempdoc 814 §D6 — the same fan-out on the block axis (fires once immediately with the current
+    // value), so a vertical resize across the breakpoint re-renders the height-gated chrome.
+    this.unsubShort = subscribeShortViewport((short) => {
+      this.shortZone = short;
       this.requestUpdate();
     });
     this.observeSurfaceWidth();
@@ -989,6 +1038,9 @@ export class UnifiedChatView extends JfElement {
       this.historyLocked = true;
     } else if (convState === 'unlocked') {
       this.historyLocked = false;
+      // Tempdoc 734 round-14 F4 — the refusal notice is about a lock that is now gone; keeping it
+      // would leave a stale "your message was not sent" over a composer that can send again.
+      this.lockedSendNotice = '';
     }
     this.maybeAutoRun();
   }
@@ -1027,6 +1079,7 @@ export class UnifiedChatView extends JfElement {
     this.streamingText = '';
     this.errorMessage = '';
     this.historyLocked = false;
+    this.lockedSendNotice = '';
     this.citations = [];
     this.sources = [];
     this.claims = [];
@@ -1038,6 +1091,9 @@ export class UnifiedChatView extends JfElement {
     // Tempdoc 738 — the banner's local "See details" toggle resets on hide; the effective expand
     // state is re-derived from disclosure + severity on the next render.
     this.degradationBannerExpanded = false;
+    // Round-14 finding 12(a) — the run-telemetry band is a transient panel too: it returns to its
+    // collapsed default rather than reopening on the next visit.
+    this.activityRailExpanded = false;
     this.forkEditing = false;
     this.forkDraft = '';
     this.steerDraft = '';
@@ -1071,6 +1127,8 @@ export class UnifiedChatView extends JfElement {
     this.selectedSourceUnsub = null;
     this.unsubWide?.();
     this.unsubWide = null;
+    this.unsubShort?.();
+    this.unsubShort = null;
     this.zoneResizeObserver?.disconnect();
     this.zoneResizeObserver = null;
     this.observedBox = null;
@@ -1656,6 +1714,30 @@ export class UnifiedChatView extends JfElement {
     toggleContextInspector();
   }
 
+  /**
+   * Tempdoc 814 §D2 — the held-gate EXCEPTION to "in-flow chrome is summary-height, detail is
+   * on-demand". A run parked awaiting a budget decision is the primary thing on screen at that
+   * moment, and the decision row that resolves it ("Add tokens / Finish with what it has / Stop",
+   * 577 Move 2) lives in the activity rail's BODY — inside a `<details>` that defaults to collapsed.
+   * Without this, the one state where the remedies are real renders them out of sight.
+   *
+   * Keyed on the TRANSITION into the held state (`agentCtrl.budgetGate != null` — the same predicate
+   * the summary's "Paused — awaiting budget" chip renders on), not on the state itself: the rail is
+   * forced open ONCE when the gate engages, so a user who collapses it while the run is still parked
+   * keeps it collapsed (their choice wins over the exception). No other lifecycle state — DONE
+   * included — ever forces it open; a terminal over-budget run is history, and §D2 keeps history in
+   * the collapsed summary.
+   */
+  private budgetGateWasHeld = false;
+
+  protected override willUpdate(_changed: Map<string, unknown>): void {
+    const held = this.agentCtrl?.budgetGate != null;
+    if (held && !this.budgetGateWasHeld) {
+      this.activityRailExpanded = true;
+    }
+    this.budgetGateWasHeld = held;
+  }
+
   /** Tempdoc 610 §K — keep the shell-mounted inspector's view fresh while it is open (e.g. a new turn). */
   protected override updated(_changed: Map<string, unknown>): void {
     if (isContextInspectorOpen()) {
@@ -2193,11 +2275,19 @@ export class UnifiedChatView extends JfElement {
           <button
             class="new-chat-btn"
             @click=${() => toggleRetrospective()}
-            title="Activity — past sessions, timeline, tool calls, inbox"
+            title="Activity — sessions, system activity, this run, background runs"
           >
             Activity
           </button>
-          ${this.thread.length > 0 && !agentMode
+          ${/* Round-14 finding 14 — the header control set is RUNG-INVARIANT. New chat + Export used
+                to carry `&& !agentMode`, so crossing to Delegate removed both with ~1000px of empty
+                header space beside them (ruled out as overflow: three captures one click apart at an
+                identical 1462x800). Nothing in the code or the design history justified the gate, and
+                it stranded a finished, unresumable run with neither a reset nor a save affordance —
+                Export worst of all, since a Delegate run is the costliest artifact the product makes.
+                The remaining gate (`thread.length > 0`) is state, not rung: it holds identically on
+                every rung, so it cannot make the set differ between them. */ ''}
+          ${this.thread.length > 0
             ? html`<button class="new-chat-btn" @click=${() => this.newConversation()}>New chat</button>
                    <button class="new-chat-btn" @click=${() => this.exportMarkdown()}>Export</button>`
             : nothing}
@@ -2231,6 +2321,10 @@ export class UnifiedChatView extends JfElement {
   private renderDegradationBanner(): TemplateResult | typeof nothing {
     const verdict = this.aiState?.verdict;
     if (!verdict) return nothing;
+    // Round-14 finding 9 — the banner is warning-tier chrome, so an info-severity-only verdict does
+    // not get it (the same verdict's causes are still carried, calmly, by Health). The tier decision
+    // lives in the notice authority, beside the wording it gates, not as a local severity test here.
+    if (!warrantsSearchDegradationBanner(verdict)) return nothing;
     const notice = readinessNotice(verdict);
     if (!notice) return nothing;
     // Tempdoc 738 — disclosure decides how much banner. Simple (default) is the one-line pill
@@ -2238,7 +2332,14 @@ export class UnifiedChatView extends JfElement {
     // opens expanded even in Simple so a genuine failure is never a single ellipsized line. The local
     // "See details" toggle (degradationBannerExpanded) lets a Simple user open a cosmetic notice on
     // demand; nothing is remembered per cause-set (687's seen-hash machinery is gone).
-    const forcedExpanded = isAdvancedMode() || verdict.severity === 'error';
+    // Tempdoc 814 §D2/§D6 — Detailed mode buys its extra height from the conversation, and on a short
+    // window there is none to buy: below the block-axis breakpoint Detailed renders the pill FIRST and
+    // expands on interaction (the expand chevron below), so the detail is one click away rather than
+    // permanently in flow. An `error` verdict still forces expansion at any height — a genuine failure
+    // is never a single ellipsized line. The 600 wording invariant is untouched either way: the pill
+    // carries the worded headline + the remedy, and every worded cause stays reachable.
+    const forcedExpanded =
+      verdict.severity === 'error' || (isAdvancedMode() && !this.shortZone);
     if (!forcedExpanded && !this.degradationBannerExpanded) {
       return this.renderCollapsedDegradationBanner(verdict, notice);
     }
@@ -2415,8 +2516,12 @@ export class UnifiedChatView extends JfElement {
         >
           Abilities
         </button>
-        ${/* Tempdoc 565 §3.A: open the answer's grounding sources (clickable local passages). */ ''}
-        ${(this.agentCtrl?.answerSources.length ?? 0) > 0
+        ${/* Tempdoc 565 §3.A: open the answer's grounding sources (clickable local passages).
+              Tempdoc 814 §D5 — the count has ONE authority: while the docked evidence rail is
+              mounted its head owns it, so this chip does not RENDER (it was already CSS-hidden at
+              wide widths — `unifiedChatStyles.ts` ~976 — which suppressed it visually while leaving
+              a second count in the DOM for the status-fact singleton probe and for AT to read). */ ''}
+        ${!this.evidenceRailMounted() && (this.agentCtrl?.answerSources.length ?? 0) > 0
           ? html`<button
               class="agent-tool-btn sources-affordance"
               @click=${() => toggleSources()}
@@ -2433,8 +2538,10 @@ export class UnifiedChatView extends JfElement {
     // §21 AFFORDANCE — when the run-spine is mounted it IS the scroll control (the draggable minimap
     // thumb), so the reading column hides its native scrollbar (`scrollbar-gutter: stable` reserves the
     // gutter so hiding it causes no reflow). Documents/narrow (no spine) keeps the thin native bar.
-    const spineShown =
-      this.affordance === 'agent' && this.wideZone;
+    // Round-14 finding 15 — read the SAME predicate the spine mounts on: agent+wide is no longer
+    // sufficient (an unsegmented single-turn run has no spine), and hiding the native bar behind an
+    // absent minimap would leave the column with no scroll control at all.
+    const spineShown = this.spineItems() !== null;
     // 798 round 8 — `landing-collapsed` swaps the zone's `flex: 1; min-height: 0` for content-sizing so
     // the composer can centre in the freed space (687 R5a). That premise is "the landing zone is empty",
     // and clearing the query does not empty it: nothing unmounts a reading pane on a query clear, so the
@@ -2451,8 +2558,15 @@ export class UnifiedChatView extends JfElement {
     return html`
       <div class="conversation-zone ${landingCollapsed ? 'landing-collapsed' : ''}">
         ${this.renderRunSpine()}
+        ${/* Tempdoc 814 §D7.4 — `tabindex="0"` because this is THE surface's scroll region (D3), and a
+              scrollable region that no keyboard user can focus cannot be scrolled without a pointer
+              (axe `scrollable-region-focusable`). It went unnoticed until the closure audit's finding C
+              made a capture actually overflow: every prior capture measured `scrollableCount` 0, so the
+              rule never had a scroller to fire on. Not a tab-stop for its own sake — the spine's
+              `role="scrollbar"` thumb is the pointer/AT affordance, this is the plain-keyboard one. */ ''}
         <div
           id="run-conversation"
+          tabindex="0"
           class="conversation ${spineShown ? 'spine-scrolled jf-scrollbar-none' : ''}"
         >
           ${/* Tempdoc 577 Goal 3 (§3.2) — the retrieve base tier renders the ephemeral hit-list IN
@@ -2488,8 +2602,17 @@ export class UnifiedChatView extends JfElement {
           ${/* Tempdoc 585 §D Phase 1 (C1) — run-replay scrubber: shown only when the shared controller
                is in replayMode (a finished run loaded via RetrospectivePanel → loadReplay). */ ''}
           ${this.agentCtrl?.replayMode ? this.renderReplayBar() : nothing}
+          ${/* Tempdoc 734 round-14 F4 (the second half of "200, no answer, NO ERROR"): the locked
+                branch used to replace the whole column, error div included. A locked dispatch DID
+                report itself — `loadEffectiveContext` → `readMeta` raises KeyLockedException before
+                any append, and the controller writes it as an SSE `error` event — but the surface
+                had already stopped rendering the only element that shows one. Whatever the stream
+                says is now said in both branches; the transcript stays gated, the failure does not. */ ''}
           ${this.historyLocked
-            ? this.renderHistoryLocked()
+            ? html`${this.renderHistoryLocked()}
+                ${this.errorMessage
+                  ? html`<div class="error">${this.errorMessage}</div>`
+                  : nothing}`
             : html`
                 ${this.renderUnifiedConversation()}
                 ${this.renderLiveOverlay()}
@@ -2620,6 +2743,27 @@ export class UnifiedChatView extends JfElement {
   }
 
   /**
+   * The ONE reason this composer's submit cannot run right now, worded — empty string when it can.
+   * Both the `submit-disabled` gate and the `submit-title` reason read it, so a disabled Send always
+   * names why (the sibling of the escalation rungs' `unavailableBecause`, which words their own).
+   *
+   * Tempdoc 734 round-14 F4 adds the locked arm. It is gated on the affordance for the same reason
+   * the backend gates its 423 on the write key: the `retrieve` tier runs a plain search, which is
+   * neither AI-dependent nor encrypted — disabling it while locked would refuse a turn that works
+   * (the locked notice itself promises "your search index is unaffected"). The empty-draft case is
+   * NOT here: it disables Send with no wording because it needs none.
+   */
+  private sendBlockedReason(): string {
+    if (this.aiState?.verdict?.kind === 'unreachable') return 'Backend disconnected';
+    if (this.affordance === 'retrieve') return '';
+    if (!this.aiState?.capabilities?.chat) return 'AI offline';
+    if (this.historyLocked) {
+      return `${reasonFor('conversations.locked').wording} — unlock it in Security to send`;
+    }
+    return '';
+  }
+
+  /**
    * Search Thread D2/D3 (stage S2) — the composer's inner content (steer input / affordance preview /
    * schema input / the retrieve-tier route chip / the one `jf-composer`), extracted so both the
    * docked (bottom) composer and the landing composer render the SAME template — never two mounted
@@ -2638,17 +2782,9 @@ export class UnifiedChatView extends JfElement {
         .value=${this.inputDraft}
         placeholder=${this.getPlaceholder()}
         ?streaming=${this.isStreaming}
-        ?submit-disabled=${!this.inputDraft.trim() ||
-        this.aiState?.verdict?.kind === 'unreachable' ||
-        (this.affordance !== 'retrieve' && !this.aiState?.capabilities?.chat)}
+        ?submit-disabled=${!this.inputDraft.trim() || this.sendBlockedReason() !== ''}
         submit-label=${this.getSubmitLabel()}
-        submit-title=${
-          this.aiState?.verdict?.kind === 'unreachable'
-            ? 'Backend disconnected'
-            : this.affordance !== 'retrieve' && !this.aiState?.capabilities?.chat
-              ? 'AI offline'
-              : ''
-        }
+        submit-title=${this.sendBlockedReason()}
         cancel-label=${this.streamingText ? 'Stop' : 'Cancel'}
         @composer-input=${(e: CustomEvent<{ value: string }>) => {
           this.inputDraft = e.detail.value;
@@ -2908,17 +3044,29 @@ export class UnifiedChatView extends JfElement {
    * the "Sources · N" affordance + the toggle drawer remain the fallback. Cross-highlights the inline
    * [n] marks via the shared selectedSource store.
    */
+  /**
+   * Tempdoc 814 §D5 — is the docked evidence rail mounted? THE predicate: {@link renderEvidenceRail}
+   * mounts on it and the in-answer source-count renders suppress on it, so "the rail's head is the
+   * one persistent authority for the source count" cannot drift into two disagreeing conditions.
+   *
+   * Fix F — the docked rail mounts ONLY at the wide breakpoint (where it is visible); narrow viewports
+   * fall back to the "Sources · N" chip + the toggle drawer. So exactly one SourcesPane subscribes per
+   * viewport, not a dormant duplicate. Default to mounted when matchMedia is unavailable (tests/SSR).
+   */
+  private evidenceRailMounted(): boolean {
+    return (
+      this.affordance === 'agent' &&
+      (this.agentCtrl?.answerSources.length ?? 0) > 0 &&
+      this.wideZone
+    );
+  }
+
   private renderEvidenceRail(): TemplateResult {
-    const hasSources =
-      this.affordance === 'agent' && (this.agentCtrl?.answerSources.length ?? 0) > 0;
-    // Fix F — mount the docked rail ONLY at the wide breakpoint (where it is visible); narrow viewports
-    // fall back to the "Sources · N" chip + the toggle drawer. So exactly one SourcesPane subscribes per
-    // viewport, not a dormant duplicate. Default to mounting when matchMedia is unavailable (tests/SSR).
-    const wide = this.wideZone;
-    if (!hasSources || !wide) return html`${nothing}`;
+    if (!this.evidenceRailMounted()) return html`${nothing}`;
     return html`<jf-sources-pane
       docked
       class="evidence-rail"
+      .maxVisible=${EVIDENCE_RAIL_MAX_VISIBLE}
       api-base=${this.apiBase}
       .host_=${this.host_ ?? undefined}
     ></jf-sources-pane>`;
@@ -2965,23 +3113,27 @@ export class UnifiedChatView extends JfElement {
   }
 
   /**
-   * Tempdoc 565 §12.3.D/F — the left run-spine: "one ordered run made visual." The LATEST run's steps
-   * render as a persistent vertical status spine (a minimap) in the conversation's left margin — one
-   * node per step (status-tinted via the §3.B `statusAccent`), the answer the terminal node — so the
-   * run's status is scannable at a glance even when the inline trace is collapsed. Positioned in the
-   * margin (no grid disruption); wide viewports only; `aria-hidden` because the real, operable content
-   * is the conversation — this is a decorative projection of the SAME merged timeline.
+   * The timeline items the run-spine projects, or `null` when the spine must NOT mount.
+   *
+   * Tempdoc 565 §13/§19.4 — the WHOLE merged timeline as a POSITION-PROPORTIONAL minimap: primary
+   * turns (user/assistant) are landmark nodes placed at their conversation scroll fraction, the
+   * secondary/ambient steps are smaller texture interpolated between them (`computeSpinePositions`).
+   *
+   * Round-14 finding 15 — the spine is the `RunSegmentRef` / `assignRunSegments` node-boundary
+   * visualization ("the spine marks node boundaries", 565 §26), and it was rendering UNCONDITIONALLY
+   * in ordinary chat, where there are no boundaries worth marking: measured live against four content
+   * blocks of a SINGLE turn it drew ~10 markers in three glyph types with no legend, at ~2.5x content
+   * density, colliding in colour with both the grounded-status dot and the user bubble. The defect is
+   * the unconditional render, not the component — so it mounts only when the run HAS structure to
+   * index: more than one turn, or real workflow-node boundaries.
+   *
+   * This is ONE predicate on purpose: `renderAnswerPlane` hides the reading column's native scrollbar
+   * when the spine is mounted (the minimap IS the scroll control), so a spine gated separately from
+   * that would leave a surface with neither.
    */
-  private renderRunSpine(): TemplateResult {
-    if (this.affordance !== 'agent') return html`${nothing}`;
-    const wide = this.wideZone;
-    if (!wide) return html`${nothing}`;
-    // Tempdoc 565 §13/§19.4 — the WHOLE merged timeline as a POSITION-PROPORTIONAL minimap: primary
-    // turns (user/assistant) are landmark nodes placed at their conversation scroll fraction, the
-    // secondary/ambient steps are smaller texture interpolated between them (`computeSpinePositions`).
-    // A faithful projection of the ONE ordered timeline; `data-item-id` anchors it to the reading
-    // position (scroll-spy + click-jump, §13.1). §19.3 — the node size+opacity are the DECLARED
-    // PROMINENCE_SCALE (set inline), not hand-CSS classes; the status colour stays inline (gate-clean).
+  private spineItems(): UnifiedTurnItem[] | null {
+    if (this.affordance !== 'agent') return null;
+    if (!this.wideZone) return null;
     const items = this.mergedTimeline().filter(
       (it) =>
         it.kind === 'user' ||
@@ -2990,7 +3142,26 @@ export class UnifiedChatView extends JfElement {
         it.kind === 'progress' ||
         it.kind === 'error',
     );
-    if (items.length === 0) return html`${nothing}`;
+    if (items.length === 0) return null;
+    const turns = items.filter((it) => it.kind === 'user').length;
+    // A run whose steps all sit in one node (or in none) has no boundary to mark — one distinct
+    // `nodeId` is not a boundary, it is the whole run.
+    const nodeIds = new Set(items.map((it) => it.segment?.nodeId).filter((id) => id !== undefined));
+    if (turns < 2 && nodeIds.size < 2) return null;
+    return items;
+  }
+
+  /**
+   * Tempdoc 565 §12.3.D/F — the left run-spine: "one ordered run made visual." The LATEST run's steps
+   * render as a persistent vertical status spine (a minimap) in the conversation's left margin — one
+   * node per step (status-tinted via the §3.B `statusAccent`), the answer the terminal node — so the
+   * run's status is scannable at a glance even when the inline trace is collapsed. Positioned in the
+   * margin (no grid disruption); wide viewports only; `aria-hidden` because the real, operable content
+   * is the conversation — this is a decorative projection of the SAME merged timeline.
+   */
+  private renderRunSpine(): TemplateResult {
+    const items = this.spineItems();
+    if (!items) return html`${nothing}`;
     const activeId = this.nav.activeId;
     // Tempdoc 565 §17 — the ONE run-step presentation descriptor per item; §19.3 — its declared
     // prominence weight.
@@ -3029,15 +3200,38 @@ export class UnifiedChatView extends JfElement {
     // %-based ideal placement (graceful, like the sibling adaptive primitives).
     const PX_PER_REM = 16;
     const trackPx = this.nav.trackPx;
-    const tops: string[] =
+    const spacedPx: number[] | null =
       trackPx > 0
         ? computeSpacedPositions(
             fractions.map((f) => f * trackPx),
             weights.map((w) => w.sizeRem * PX_PER_REM),
             trackPx,
             2,
-          ).map((px) => `${px.toFixed(2)}px`)
-        : fractions.map((f) => `${(f * 100).toFixed(2)}%`);
+          )
+        : null;
+    // Tempdoc 814 §D4 — a LANDMARK is a structural index entry (a turn, a workflow-node boundary, a
+    // human steering directive). It renders as its own marker always: never merged into a cluster, and
+    // it breaks a cluster run, so the spine's density floor is the run's STRUCTURE.
+    const isLandmark = items.map(
+      (it) =>
+        it.kind === 'user' ||
+        it.kind === 'assistant' ||
+        segmentStartIds.has(it.id) ||
+        it.attributes?.steer === true,
+    );
+    // §D4's declared aggregation rule: everything else that still sits within SPINE_CLUSTER_MIN_GAP_PX
+    // after the de-overlap pass collapses into ONE counted badge, so marker count is bounded by the
+    // track (≈ trackPx / gap), not by event count. Unmeasured (first paint / jsdom) → %-placement, one
+    // marker per item (no clustering without a measured track).
+    const groups: PlacedGroup[] = spacedPx
+      ? clusterAdjacent(
+          spacedPx,
+          isLandmark.map((l) => !l),
+          SPINE_CLUSTER_MIN_GAP_PX,
+        )
+      : fractions.map((f, i) => ({ positionPx: f * 100, indices: [i] }));
+    const topOf = (g: PlacedGroup): string =>
+      spacedPx ? `${g.positionPx.toFixed(2)}px` : `${g.positionPx.toFixed(2)}%`;
     // §13 Pillar A binding — the spine is an operable nav (keyboard-operable buttons with accessible
     // names → controls-a11y-clean); click/Enter jumps the reading column to that timeline item, and the
     // scroll-spy marks the in-view node `.active`.
@@ -3067,7 +3261,38 @@ export class UnifiedChatView extends JfElement {
           >
           </div>`
         : nothing}
-      ${items.map((it, idx) => {
+      ${groups.map((g) => {
+        // Tempdoc 814 §D4 — an aggregated group renders as ONE counted badge: a real <button> (the
+        // same jump control the single markers are, so it is keyboard-operable by construction) whose
+        // accessible name states what it stands for ("5 steps, 2 errors"), jumping to the first member.
+        if (g.indices.length > 1) {
+          const first = items[g.indices[0] as number]!;
+          let errors = 0;
+          let warnings = 0;
+          for (const i of g.indices) {
+            const tone = pres[i]!.tone;
+            if (tone === 'error') errors++;
+            else if (tone === 'warning') warnings++;
+          }
+          const parts = [`${g.indices.length} steps`];
+          if (errors > 0) parts.push(`${errors} error${errors === 1 ? '' : 's'}`);
+          if (warnings > 0) parts.push(`${warnings} warning${warnings === 1 ? '' : 's'}`);
+          const clusterLabel = `${parts.join(', ')} — jump to the first`;
+          const isActive = g.indices.some((i) => items[i]!.id === activeId);
+          return html`<button
+            type="button"
+            class="run-spine-cluster ${isActive ? 'active' : ''} ${errors > 0 ? 'has-error' : ''}"
+            style=${`top:${topOf(g)}`}
+            data-cluster-size=${g.indices.length}
+            title=${clusterLabel}
+            aria-label=${clusterLabel}
+            @click=${() => this.nav.jumpTo(first.id)}
+          >
+            <span aria-hidden="true">${g.indices.length}</span>
+          </button>`;
+        }
+        const idx = g.indices[0] as number;
+        const it = items[idx]!;
         // The button owns placement/size/active/jump; <jf-run-node> owns the glyph+tone visual
         // (density `minimal` → a clean tone-dot at this scale, §19.2).
         const p = pres[idx]!;
@@ -3081,7 +3306,7 @@ export class UnifiedChatView extends JfElement {
           : it.kind === 'assistant' && !terminalIds.has(it.id)
             ? 'Working step'
             : p.label || spineNodeLabel(it);
-        const style = `top:${tops[idx]};--node-size:${w.sizeRem}rem;opacity:${w.opacity}`;
+        const style = `top:${topOf(g)};--node-size:${w.sizeRem}rem;opacity:${w.opacity}`;
         // Tempdoc 565 §30 — a human STEERING directive (the DIRECTION authority's interject) is a
         // human-origin POINT landmark on the spine, marked so it reads distinctly from agent steps.
         const isSteer = it.attributes?.steer === true;
@@ -3105,7 +3330,11 @@ export class UnifiedChatView extends JfElement {
           aria-label=${spineLabel}
           @click=${() => this.nav.jumpTo(it.id)}
         >
-          <jf-run-node density="minimal" .presentation=${p}></jf-run-node>
+          <jf-run-node
+            density="minimal"
+            ?outline=${!isLandmark[idx]}
+            .presentation=${p}
+          ></jf-run-node>
         </button>`;
       })}
     </nav>`;
@@ -3324,12 +3553,29 @@ export class UnifiedChatView extends JfElement {
     const approvalPosture = postureChrome(
       agencyPosture(this.affordance, getAutonomyLevel()),
     ).approvalPosture;
+    // Round-14 finding 12(b) — a run that reported DONE is a FACT, not an alarm. The measured case:
+    // state DONE with a real answer over 57 sources, while the band rendered "Over budget" twice in
+    // alarm styling. The code already knows this asymmetry — the over-budget remedies below render
+    // only while `runInFlight` — so the presentation follows the same line: the collapsed summary
+    // drops the chip entirely, and the body row states the fact in neutral text.
+    const runCompleted = lc?.state === 'DONE';
     // Tempdoc 577 Ext III — the live run's accountability record, not "Activity" (that name belongs
     // to the retrospective; two records, two names). The summary separates live STATUS from posture
     // POLICY grammatically ("Policy: …"); the budget states its unit (tokens) and ceiling; an
     // over-budget state escalates WITH its remedies (halt / raise) through the one control seam.
+    // Round-14 finding 12(a) — the band DEFAULTS TO COLLAPSED. `<details>` without a bound `open`
+    // inherits whatever DOM state it was last left in, so "collapsed by default" was an accident of
+    // first paint rather than a property anything could assert. Bind it to view state (and record the
+    // user's own toggle) so the default is explicit, testable, and survives a re-render.
     return html`
-      <details class="activity-rail">
+      <details
+        class="activity-rail"
+        data-testid="activity-rail"
+        ?open=${this.activityRailExpanded}
+        @toggle=${(e: Event) => {
+          this.activityRailExpanded = (e.target as HTMLDetailsElement).open;
+        }}
+      >
         <summary>
           This run${agentMode && approvalPosture
             ? html` · <span class="posture-policy">Policy: ${approvalPosture}</span>`
@@ -3339,7 +3585,7 @@ export class UnifiedChatView extends JfElement {
                   ? 'Paused — awaiting budget'
                   : 'Paused — waiting to continue'}</span
               >`
-            : budget?.overBudget
+            : budget?.overBudget && !runCompleted
               ? html` · <span class="over-budget"
                   >${isAdvancedMode()
                     ? html`Over budget +${budget.overBy} tokens`
@@ -3407,7 +3653,9 @@ export class UnifiedChatView extends JfElement {
         ${budget
           ? html`<div class="activity-budget">
               ${budget.overBudget
-                ? html`<span class="over-budget"
+                ? html`<span
+                      class=${runCompleted ? 'budget-settled' : 'over-budget'}
+                      data-testid="activity-over-budget"
                       >Over budget by ${budget.overBy} tokens (granted ${budget.ceiling})</span
                     >
                     ${/* Tempdoc 577 Ext III — control chrome attaches to the LIVE run: the backend
@@ -4095,6 +4343,14 @@ export class UnifiedChatView extends JfElement {
       <div class="history-locked" role="status">
         <p>${icon({ name: 'shield', size: 16 })} <strong>${r.wording}</strong>.</p>
         <p class="help">Unlock it to read your chat history — your search index is unaffected.</p>
+        ${/* Tempdoc 734 round-14 F4 — present only when a send was actually refused (dispatch 423),
+              so the resumed-while-locked case reads exactly as it did before. It says what became of
+              the message, next to the remedy that fixes it; the draft is back in the composer. */ ''}
+        ${this.lockedSendNotice
+          ? html`<p class="locked-send-notice" role="alert">
+              ${this.lockedSendNotice} Your text is back in the composer — unlock to send it.
+            </p>`
+          : nothing}
         ${nav
           ? html`<jf-button .onActivate=${() => requestSurfaceNavigation(nav.target)}>
               ${icon({ name: 'shield', size: 14 })} ${nav.label}
@@ -4225,6 +4481,14 @@ export class UnifiedChatView extends JfElement {
     settled: boolean,
   ): TemplateResult | typeof nothing {
     if (sources.length === 0) return nothing;
+    // Tempdoc 814 §D5 (one authority, one pointer) — the SOURCE-COUNT fact has exactly one persistent
+    // render: the evidence rail's head ("Sources · N") while the rail is mounted. The two provenance
+    // branches below are count lines ("Based on N documents/sources"), so they stand down for that
+    // state — the honest grounding disclaimer is NOT theirs to carry: it is the answer-frame line
+    // ("Based on your documents — per-sentence grounding not verified", `answerFrameLabel`), which
+    // renders next to this badge in every state and is untouched. The coverage branch below
+    // ("Grounded · X of Y sentences") states VERIFICATION, not a source count, and always renders.
+    const countIsOwnedByTheRail = this.evidenceRailMounted();
     const citations = Array.isArray(rawCitations) ? (rawCitations as AgentSentenceCite[]) : [];
     const cov = groundingCoverage(citations, answerText);
     const chunkPrecise = sourcesAreChunkPrecise(sources);
@@ -4233,6 +4497,7 @@ export class UnifiedChatView extends JfElement {
     // "N of M sentences" verdict to give. Show provenance honestly — NEVER "Grounded · 0 of N" (the
     // over-confidence) — derived from the same authority predicate the frame uses, so badge + frame agree.
     if (cov.cited === 0 && !chunkPrecise) {
+      if (countIsOwnedByTheRail) return nothing;
       const n = sources.length;
       return html`<details class="grounding-badge grounding-badge-sourced">
         <summary class="grounding-badge-summary" role="status">
@@ -4252,6 +4517,7 @@ export class UnifiedChatView extends JfElement {
     // (the C1 over-confidence reproduced in the settled render path). Mid-stream (settled=false) keeps the
     // coverage readout below, since marks may still arrive.
     if (cov.cited === 0 && chunkPrecise && settled) {
+      if (countIsOwnedByTheRail) return nothing;
       const n = sources.length;
       return html`<details class="grounding-badge grounding-badge-sourced">
         <summary class="grounding-badge-summary" role="status">
@@ -4302,6 +4568,11 @@ export class UnifiedChatView extends JfElement {
    */
   private renderSourceChips(sources: readonly AgentSource[], key: string): TemplateResult {
     if (!sources || sources.length === 0) return html`${nothing}`;
+    // Tempdoc 814 §D5 — the in-answer "Sources · N" disclosure exists only where the rail is NOT. With
+    // the rail mounted it was the third persistent render of the source count within ~250px; the rail's
+    // head is the authority, and the rail carries the same per-source cards (selection, hide/restore),
+    // so this is a duplicate to delete for that state, not a capability to preserve.
+    if (this.evidenceRailMounted()) return html`${nothing}`;
     // Structural default: collapsed when the wide rail shows the detail; expanded at narrow (no rail).
     const railShown = this.wideZone;
     const open = this.sourceChipsToggles.get(key) ?? !railShown;
@@ -4457,7 +4728,11 @@ export class UnifiedChatView extends JfElement {
   ): TemplateResult {
     const label = segment.label ?? segment.nodeId ?? 'Step';
     // §26.D — a background run is one segment with the `background` chip; a workflow node shows its kind.
-    const kindChip = segment.originKind === 'background' ? 'background' : segment.nodeKind;
+    // Tempdoc 814 (finding 7, one authority + one pointer) — for a BACKGROUND-origin segment the chip
+    // becomes a marked POINTER instead of an unmarked peer copy: the run's authority is its inbox item
+    // (the drawer's Background-runs tab, `/api/presence`), and this control opens the drawer there.
+    const backgroundOrigin = segment.originKind === 'background';
+    const kindChip = backgroundOrigin ? null : segment.nodeKind;
     // Tempdoc 565 §29 Tier-2 — per-segment elapsed time from the items' authoritative timestamps
     // (`ts` already on every UnifiedTurnItem): the wall-clock the node took, shown in the header.
     const elapsedSec =
@@ -4472,6 +4747,16 @@ export class UnifiedChatView extends JfElement {
       <header class="run-segment-header">
         <span class="run-segment-name">${label}</span>
         ${kindChip ? html`<span class="run-segment-kind">${kindChip}</span>` : nothing}
+        ${backgroundOrigin
+          ? html`<button
+              class="run-segment-kind run-segment-ref"
+              data-testid="background-run-ref"
+              title="This run is tracked in Background runs — open it there"
+              @click=${() => openRetrospectiveAt('inbox')}
+            >
+              background run ↗
+            </button>`
+          : nothing}
         ${elapsedLabel
           ? html`<span class="run-segment-elapsed" title="Time this step took">${elapsedLabel}</span>`
           : nothing}
@@ -5693,13 +5978,35 @@ export class UnifiedChatView extends JfElement {
         this.abortController.signal,
       );
     } catch (err) {
-      if (!(err instanceof Error && err.name === 'AbortError')) {
+      const status = err instanceof Error ? (err as Error & { status?: number }).status : undefined;
+      if (status === 423) {
+        this.noteRefusedWhileLocked(text);
+      } else if (!(err instanceof Error && err.name === 'AbortError')) {
         this.errorMessage = friendlyStreamError(err);
       }
     } finally {
       this.isStreaming = false;
       this.abortController = null;
     }
+  }
+
+  /**
+   * Tempdoc 734 round-14 F4 — the store locked between this composer's render and the submit (an
+   * idle/auto-lock, another window, another tab), so dispatch refused with 423 instead of accepting a
+   * turn no store would hold. Three things follow, and all three are required for the surface to stay
+   * honest: adopt the locked state the server just reported (which renders the notice + its "Unlock in
+   * Security" affordance and disables Send), take back the optimistic user bubble — a message shown as
+   * sent that was never recorded is the same lie in the UI as the 200 was on the wire — and put the
+   * text back in the composer, because it is the user's and nothing else is holding it.
+   */
+  private noteRefusedWhileLocked(text: string): void {
+    this.historyLocked = true;
+    this.lockedSendNotice = `${reasonFor('conversations.locked').wording} — your message was not sent.`;
+    const last = this.thread.at(-1);
+    if (last?.role === 'user' && last.content === text) {
+      this.thread = this.thread.slice(0, -1);
+    }
+    if (!this.inputDraft.trim()) this.inputDraft = text;
   }
 }
 

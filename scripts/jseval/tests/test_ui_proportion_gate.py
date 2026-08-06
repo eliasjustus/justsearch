@@ -250,6 +250,75 @@ class TestMustNotOverlap:
         assert report["rows"][0]["status"] == "ERROR"
 
 
+class TestScrollableRegionBounds:
+    """The one-scroller rule (D3) is a BAND, not a ceiling. The closure audit found the
+    ceiling alone vacuous: every captured state had `scrollableCount` 0, so `<= 1` never
+    witnessed a scroller and would have stayed green through a regression that removed the
+    scroller (or a setup that stopped reaching the overflowing state)."""
+
+    def _scroll_measure_file(self, tmp_path, count: int, regions=None):
+        p = tmp_path / "step.measure.json"
+        p.write_text(json.dumps({"geometry": {
+            "elements": {},
+            "scrollableCount": count,
+            "scrollableRegions": regions if regions is not None else [
+                {"selector": f"div.r{i}", "scrollDelta": 100} for i in range(count)
+            ],
+        }}), encoding="utf-8")
+        return str(p)
+
+    def _step(self, monkeypatch, **step_keys):
+        monkeypatch.setattr(
+            ui_proportion_gate, "load_register_steps",
+            lambda: [{"uiShotStep": "home", "tolerancePx": 2, "elements": [], **step_keys}],
+        )
+
+    def test_exactly_one_scroller_satisfies_the_band(self, monkeypatch, tmp_path):
+        self._step(monkeypatch, minScrollableRegions=1, maxScrollableRegions=1)
+        mf = self._scroll_measure_file(tmp_path, 1)
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+        statuses = {row["constraint"]: row["status"] for row in report["rows"]}
+        assert statuses == {"minScrollableRegions": "ok", "maxScrollableRegions": "ok"}
+
+    def test_zero_scrollers_fails_the_floor(self, monkeypatch, tmp_path):
+        # The vacuity case: the ceiling reports ok, the floor is what catches it.
+        self._step(monkeypatch, minScrollableRegions=1, maxScrollableRegions=1)
+        mf = self._scroll_measure_file(tmp_path, 0)
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 1
+        statuses = {row["constraint"]: row["status"] for row in report["rows"]}
+        assert statuses["maxScrollableRegions"] == "ok"
+        assert statuses["minScrollableRegions"] == "NO_SCROLLER"
+
+    def test_two_scrollers_fails_the_ceiling(self, monkeypatch, tmp_path):
+        self._step(monkeypatch, minScrollableRegions=1, maxScrollableRegions=1)
+        mf = self._scroll_measure_file(tmp_path, 2)
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 1
+        statuses = {row["constraint"]: row["status"] for row in report["rows"]}
+        assert statuses["minScrollableRegions"] == "ok"
+        assert statuses["maxScrollableRegions"] == "MULTI_SCROLL"
+
+    def test_floor_alone_runs_on_a_step_with_no_elements(self, monkeypatch, tmp_path):
+        # A step declaring only the floor must still be captured — the elements-empty
+        # skip must not swallow it (the same escape-hatch bug `absentSelectors` avoided).
+        self._step(monkeypatch, minScrollableRegions=1)
+        mf = self._scroll_measure_file(tmp_path, 0)
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 1
+        assert report["rows"][0]["status"] == "NO_SCROLLER"
+
+    def test_missing_scrollable_count_is_exit_2(self, monkeypatch, tmp_path):
+        # A stale geometry probe must not read as "no scrollers, therefore clean".
+        self._step(monkeypatch, minScrollableRegions=1)
+        p = tmp_path / "step.measure.json"
+        p.write_text(json.dumps({"geometry": {"elements": {}}}), encoding="utf-8")
+        report = ui_proportion_gate.evaluate(lambda step: _cap(str(p)))
+        assert report["exit_code"] == 2
+        assert report["rows"][0]["status"] == "ERROR"
+
+
 class TestRegisterAndCaptureAgreeOnSelectors:
     """The capture unions the register's selectors into its geometry probe. An overlap
     counterpart is only ever NAMED (never its own row), so it must be collected too —

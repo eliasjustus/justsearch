@@ -127,6 +127,10 @@ describe('LibrarySurface — applicability before the first poll (813 F1)', () =
     try {
       await el.updateComplete;
       expect(el.enrichmentStages).toBeNull();
+      // The surface feeds `folderStatus` BOTH gates (813 §4 coverage + 809 finding 1's index-wide
+      // fallback). Pre-poll there is no positive evidence of pending work either, so the fallback
+      // arm must not fire off an absent snapshot — unknown stays unknown on both inputs.
+      expect(el.enrichmentPending).toBe(false);
 
       // The same value LibrarySurface hands folderStatus for every row it renders.
       const row = {
@@ -147,9 +151,11 @@ describe('LibrarySurface — applicability before the first poll (813 F1)', () =
         verifiedRelativeTime: '',
         provisional: false,
         enrichmentStages: el.enrichmentStages,
+        enrichmentPending: el.enrichmentPending,
       });
       expect(fs.metaText).not.toContain('fully searchable');
-      expect(fs.metaText).not.toContain('enriching');
+      expect(fs.metaText).not.toContain('semantic search still catching up');
+      expect(fs.metaText).not.toContain('%');
     } finally {
       el.remove();
     }
@@ -218,6 +224,109 @@ describe('LibrarySurface — a folder row never names itself with a hash (804 F8
       // The row still carries a Remove action — it just now names what it would remove.
       expect(el.shadowRoot?.textContent ?? '').toContain('Remove');
       expect(name?.textContent ?? '').not.toMatch(BARE_HEX_ID);
+    } finally {
+      el.remove();
+    }
+  });
+});
+
+/**
+ * 809 finding 1 — the WIRING half of the coverage gate. `folderStatus` decides the claim, but only if
+ * the surface actually hands it the coverage fact: a seam that is correct while its one caller passes
+ * a constant would leave the defect exactly where it was. This drives the real store (a status frame
+ * with a passage-level backfill in flight) through to the rendered row.
+ */
+describe('LibrarySurface — the folder row consults enrichment coverage (809 finding 1)', () => {
+  const HASH = 'c7dd41a900bb2f4e8a1c33ee55aa7719';
+
+  const settledWorker = {
+    core: { indexedDocuments: 400, indexState: 'IDLE', indexHealthy: true },
+    migration: {
+      migrationState: 'IDLE',
+      activeGenerationId: 'g1',
+      buildingGenerationId: '',
+      servingSearchGenerationId: 'g1',
+      servingIngestGenerationId: 'g1',
+    },
+  };
+
+  function feedEnrichment(enrichment: Record<string, unknown>): void {
+    __feedForTest({
+      status: {
+        worker: { ...settledWorker, enrichment },
+        readiness: { composites: { retrieval: { state: 'READY', reasonCodes: [] } } },
+      } as unknown as StatusSnapshot,
+    });
+    __tickClockForTest();
+  }
+
+  const DRAINED = {
+    embeddingEnabled: true,
+    spladeEnabled: true,
+    nerEnabled: true,
+    embeddingPendingCount: 0,
+    spladePendingCount: 0,
+    pendingNerCount: 0,
+    chunk: { chunkEmbeddingPendingCount: 0, chunkVectorsReady: true },
+  };
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    __resetAiStateForTest();
+  });
+  afterEach(() => __resetAiStateForTest());
+
+  async function mountWithRow(): Promise<LibrarySurface> {
+    const el = document.createElement('jf-library-surface') as LibrarySurface;
+    el.host_ = {
+      platform: { capabilities: new Set<string>() },
+      data: { fetch: async () => ({ ok: false, status: 503 }) as unknown as Response },
+      utilities: { formatRelativeTime: () => 'just now' },
+    } as unknown as PluginHostApi;
+    document.body.appendChild(el);
+    await el.updateComplete;
+    el.roots = [
+      {
+        pathHash: HASH,
+        collection: 'default',
+        fileCount: 400,
+        lastIndexedIsoTime: '2026-08-06T00:00:00Z',
+        status: 'indexed',
+        inFlightCount: 0,
+        failedCount: 0,
+        walkCompleted: true,
+      },
+    ];
+    el.resolvedPaths = { [HASH]: '/home/me/Documents/seed-corpus' };
+    el.requestUpdate();
+    await el.updateComplete;
+    return el;
+  }
+
+  it('a drained folder does NOT claim completion while the passage backfill is running', async () => {
+    // 809 finding 9's trap shape: the doc-level counters are clean, the passage tier is not.
+    feedEnrichment({
+      ...DRAINED,
+      embeddingCoveragePercent: 100,
+      chunk: { chunkEmbeddingPendingCount: 1554, chunkVectorsReady: false },
+    });
+    const el = await mountWithRow();
+    try {
+      const text = el.shadowRoot?.textContent ?? '';
+      expect(text).toContain('keyword search ready');
+      expect(text).toContain('semantic search still catching up');
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('ANTI-REGRESSION: with the backfill drained the row makes its terminal claim again', async () => {
+    feedEnrichment(DRAINED);
+    const el = await mountWithRow();
+    try {
+      const text = el.shadowRoot?.textContent ?? '';
+      expect(text).toContain('indexed just now');
+      expect(text).not.toContain('semantic search still catching up');
     } finally {
       el.remove();
     }

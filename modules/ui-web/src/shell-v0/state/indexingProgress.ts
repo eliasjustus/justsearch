@@ -318,8 +318,20 @@ export function selectIndexingProgress(
   const backfillMode = enrichment?.backfillMode ?? 'idle';
   const backfillActive = backfillMode !== 'idle' && backfillMode !== '';
 
+  // Positive-evidence phase gate (merged from #375's enrichmentCoverage doctrine, 813 §17): pending
+  // work on an APPLICABLE stage withholds the terminal phase even when that stage lacks a faithful
+  // denominator — a denominator-less stage contributes no PERCENT, but its pending counter is still
+  // evidence of unfinished work, and "Up to date" off a missing denominator would be the §1d false
+  // terminal. Disabled stages stay excluded: their pending can never settle (813 review F1), so
+  // counting them would pin the phase at `enriching` forever.
+  const rawPending =
+    (applicable.embedding ? count(enrichment?.embeddingPendingCount) : 0) +
+    (applicable.splade ? count(enrichment?.spladePendingCount) : 0) +
+    (applicable.ner ? nerPending : 0) +
+    (applicable.embedding ? count(chunk?.chunkEmbeddingPendingCount) : 0);
+
   const phase: IndexingPhase =
-    jobsPending > 0 ? 'indexing' : backfillActive || pending > 0 ? 'enriching' : 'ready';
+    jobsPending > 0 ? 'indexing' : backfillActive || rawPending > 0 ? 'enriching' : 'ready';
 
   return {
     phase,
@@ -327,7 +339,9 @@ export function selectIndexingProgress(
     jobsRunning,
     jobsQueued,
     enrichingPercent,
-    enrichingPending: pending,
+    // The displayed pending count matches the phase evidence (rawPending), not the percent's
+    // stage-filtered sum — a surface saying "enriching" must be able to show the work it saw.
+    enrichingPending: rawPending,
     embeddingPending: count(enrichment?.embeddingPendingCount),
     vduPending: count(core.pendingVduCount),
     etaSeconds:

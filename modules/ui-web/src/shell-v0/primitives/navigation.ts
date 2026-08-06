@@ -11,6 +11,8 @@
  * controller pattern ({@link OverflowController}/{@link DensityController}): a Lit `ReactiveController` that
  * owns its observers + rAF + state, exposes getters the host render reads, and self-manages its lifecycle.
  *
+ * (`fractions` were MIDPOINTS until tempdoc 814 §D4 made them TOP EDGES — see {@link anchorFractions}.)
+ *
  * §21 FOCUS is derived ({@link deriveFocus}), not observed: the topmost landmark with ≥`MIN_VISIBLE` of
  * itself in the window — matching the retired observer's `threshold: 0.1`. The live↔pinned `intent` is the
  * ONE control state; the prior `activeSpineItemId`+`spinePinnedId`+`adopt`/`release` apparatus (and the
@@ -27,6 +29,22 @@ export interface Landmark {
 
 /** Default min-visible fraction for FOCUS — matches the retired IntersectionObserver's `threshold: 0.1`. */
 export const MIN_VISIBLE = 0.1;
+
+/**
+ * §21 POSITION — each landmark's marker fraction: its TOP edge.
+ *
+ * Tempdoc 814 §D4 / §B.5 (superseding 565's midpoint choice knowingly): a marker anchored at the
+ * item's midpoint lands ~a third down a tall block, so the gutter index points at the middle of a
+ * thing rather than at where the thing STARTS — 809 finding 15's "alignment too loose for
+ * navigation". A gutter index must align with the block's first line, which is exactly `topFrac`
+ * (already measured for the FOCUS facet, so this derives from the same extents, not a second
+ * measurement).
+ */
+export function anchorFractions(landmarks: readonly Landmark[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const l of landmarks) out.set(l.id, l.extent.topFrac);
+  return out;
+}
 
 /**
  * §21 FOCUS — derive the reading-focus item from the reading WINDOW × the landmark EXTENTS: the TOPMOST
@@ -79,7 +97,7 @@ const raf =
       };
 
 export class NavigationController implements ReactiveController {
-  /** §21 POSITION — each conversation-anchored item's 0..1 MIDPOINT scroll fraction (the dot placement). */
+  /** §21 POSITION — each item's 0..1 TOP-EDGE scroll fraction (the dot placement; 814 §D4). */
   fractions = new Map<string, number>();
   /** §21 — each item's 0..1 scroll EXTENT (top/bottom span); FOCUS is derived from these × the window. */
   landmarks: Landmark[] = [];
@@ -260,8 +278,9 @@ export class NavigationController implements ReactiveController {
 
   /**
    * §19.4/§21 — measure each conversation-anchored item's 0..1 scroll EXTENT (top/bottom over the content
-   * height) + MIDPOINT fraction, the spine-track height, and the reading window. Returns true if anything
-   * changed beyond a small tolerance (so the host only re-renders on a real change, never looping).
+   * height) + its TOP-EDGE marker fraction (814 §D4), the spine-track height, and the reading window.
+   * Returns true if anything changed beyond a small tolerance (so the host only re-renders on a real
+   * change, never looping).
    */
   private measure(): boolean {
     const conv = this.opts.scrollEl();
@@ -272,7 +291,6 @@ export class NavigationController implements ReactiveController {
     const convTop = conv.getBoundingClientRect().top;
     const scrollH = conv.scrollHeight || 1;
     const clamp = (f: number): number => Math.min(1, Math.max(0, f));
-    const nextFractions = new Map<string, number>();
     const nextLandmarks: Landmark[] = [];
     conv.querySelectorAll('[data-item-id]').forEach((el) => {
       const id = el.getAttribute('data-item-id');
@@ -285,9 +303,10 @@ export class NavigationController implements ReactiveController {
       const topFrac = clamp(top / scrollH);
       const botFrac = clamp((top + rect.height) / scrollH);
       nextLandmarks.push({ id, extent: { topFrac, botFrac } });
-      // Anchor each dot at its MIDPOINT (a marker represents the whole item's location), not its top.
-      nextFractions.set(id, clamp((topFrac + botFrac) / 2));
     });
+    // 814 §D4 — the marker fractions are the landmarks' TOP edges ({@link anchorFractions}); one
+    // derivation from the one measured extent, so position and focus can never disagree.
+    const nextFractions = anchorFractions(nextLandmarks);
     let changed =
       nextFractions.size !== this.fractions.size ||
       Math.abs(trackPx - this.trackPx) > 1 ||

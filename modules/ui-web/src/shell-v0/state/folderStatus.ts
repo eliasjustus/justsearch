@@ -15,22 +15,26 @@
  * flag (the caller's projection of the `Stability` axis, mirroring `renderObserved`), so the seam
  * needs no host-utility or store import and is trivially unit-testable.
  *
- * TWO TIERS (tempdoc 813 §4, superseding the 599 §10 / 598 note that used to sit here): job drain
- * makes a folder KEYWORD-searchable, which is not the same fact as "fully searchable" — the semantic
- * layers are a separate backfill that carries no per-root job rows. Since 813 the wire row also
- * carries per-root enrichment COVERAGE, so the drained tier splits: `keyword-ready` while coverage is
- * still climbing ("keyword-ready · enriching 40%") and `ready` once it is complete ("fully
- * searchable"). Enrichment is no longer invisible at folder granularity; what is still true is that
- * neither tier is derived from the walk timestamp.
+ * TWO TIERS (tempdoc 813 §4 + 809 finding 1, superseding the 599 §10 / 598 note that used to sit
+ * here): job drain makes a folder KEYWORD-searchable, which is not the same fact as "fully
+ * searchable" — the semantic layers are a separate backfill that carries no per-root job rows, and
+ * the DOC-level counters read fully healthy during a PASSAGE-level backfill (809 finding 9's trap;
+ * `enrichmentCoverage.ts` documents it). Since 813 the wire row also carries per-root enrichment
+ * COVERAGE, so the drained tier splits: `enriching` while coverage is still climbing (the shared
+ * `ENRICHMENT_CATCHING_UP_CAVEAT` wording, plus this root's own percent when derivable) and `ready`
+ * once it is complete ("fully searchable"). When per-root coverage is not derivable the index-wide
+ * positive-evidence boolean (`enrichmentProgress(status).pending`) is the fallback gate — caveat
+ * without a percent, never a fabricated number. Neither tier derives from the walk timestamp.
  */
 
 import type { IndexedRootView } from '../../api/generated/schema-types/indexed-root-view.js';
 import type { EnrichmentApplicability } from './indexingProgress.js';
+import { ENRICHMENT_CATCHING_UP_CAVEAT } from './enrichmentCoverage.js';
 
 export type FolderState =
   | 'scanning' // walk in progress — files not yet fully enqueued
   | 'indexing' // in-flight jobs > 0
-  | 'keyword-ready' // tempdoc 813 §4 — drained + keyword-searchable, enrichment coverage still climbing
+  | 'enriching' // 809 finding 1 / 813 §4 — drained + keyword-searchable, enrichment still catching up
   | 'ready' // scanned, drained, no failures — fully searchable (or coverage unknowable)
   | 'unverified' // tempdoc 626 §Axis-C — indexed, but the reconcile couldn't verify deletions (cap-skipped)
   | 'failed' // walk error, or terminal failed jobs with nothing in flight
@@ -70,6 +74,14 @@ export interface FolderStatusContext {
    * report) ⟹ no percent is asserted and the row falls back to the pre-813 wording.
    */
   readonly enrichmentStages?: EnrichmentApplicability | null;
+  /**
+   * 809 finding 1 — does the enrichment backfill still owe work, INDEX-WIDE? From the ONE claim
+   * derivation (`enrichmentProgress(status).pending`), passed in like `provisional` so this seam
+   * stays pure and store-free. The FALLBACK gate for the `enriching` tier when this root's own
+   * coverage is not derivable (`rootCoverage(...) === null`): positive evidence of pending work
+   * still withholds the terminal "✓ fully searchable" claim, it just cannot name a percent.
+   */
+  readonly enrichmentPending?: boolean;
 }
 
 /** A non-negative finite count from an optional wire number (absent / negative ⟹ 0). */
@@ -245,7 +257,7 @@ export function folderStatus(row: IndexedRootView, ctx: FolderStatusContext): Fo
 
   // Drained, indexed, no failures → searchable. The ONLY path that yields the ✓ glyph — in either of
   // its two tiers (813 §4): the row is honestly searchable as soon as its jobs drain, so the ✓ stays
-  // and the meta line carries which tier ("keyword-ready · enriching N%" vs "fully searchable").
+  // and the meta line carries which tier (the catching-up caveat + a percent vs "fully searchable").
   if (indexed) {
     // Tempdoc 626 §Axis-C — an indexed folder whose deletions couldn't be verified must NOT show the
     // green ✓ (the 599 false-"✓" class, generalized to reconciliation completeness). It is still
@@ -266,17 +278,31 @@ export function folderStatus(row: IndexedRootView, ctx: FolderStatusContext): Fo
     // round-robin reconcile hasn't reached lately read as mildly stale ("Verified 8m ago") rather than
     // falsely-fresh. Display-only — the `index.drift-unknown` Condition owns the "needs attention" alarm.
     const verifiedSuffix = ctx.verifiedRelativeTime ? ` · Verified ${ctx.verifiedRelativeTime}` : '';
-    // Tempdoc 813 §4 — the two-tier split. A percent is rendered ONLY when the coverage denominator is
-    // faithful; with no denominator (coverage fields absent/zero, or applicability unknown) the row
-    // keeps the pre-813 wording rather than inventing "enriching 0%".
+    // Tempdoc 813 §4 + 809 finding 1 — the two-tier split, with a percent rendered ONLY when this
+    // root's own coverage denominator is faithful. Four honest arms:
+    //   coverage known, incomplete  → `enriching` + the shared caveat + this root's percent
+    //   coverage known, complete    → `ready` ("fully searchable") — even while OTHER roots still
+    //                                 enrich (per-root truth outranks the index-wide boolean)
+    //   coverage unknown, backfill pending index-wide → `enriching` + caveat, NO percent (positive
+    //                                 evidence withholds the terminal claim; it cannot name a number)
+    //   coverage unknown, nothing pending → pre-813 terminal wording (no tier asserted either way)
     const coverage = rootCoverage(row, ctx.enrichmentStages);
     if (coverage !== null && !coverage.complete) {
       // Keyword-searchable NOW, semantic layers still catching up. The "indexed <time>" stamp is
       // dropped here: the folder's headline fact is the work still running, not when it last changed.
       return {
-        state: 'keyword-ready',
-        glyph: 'indexed',
-        metaText: `${collection} · ${fileCountText} · keyword-ready · enriching ${coverage.percent}%${verifiedSuffix}`,
+        state: 'enriching',
+        glyph: 'pending',
+        metaText: `${collection} · ${fileCountText} · ${ENRICHMENT_CATCHING_UP_CAVEAT} · ${coverage.percent}%${verifiedSuffix}`,
+        inFlight,
+        failed,
+      };
+    }
+    if (coverage === null && ctx.enrichmentPending === true) {
+      return {
+        state: 'enriching',
+        glyph: 'pending',
+        metaText: `${collection} · ${fileCountText}${indexedSuffix} · ${ENRICHMENT_CATCHING_UP_CAVEAT}`,
         inFlight,
         failed,
       };

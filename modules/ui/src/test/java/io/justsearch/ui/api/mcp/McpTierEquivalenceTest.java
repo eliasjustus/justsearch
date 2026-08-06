@@ -213,7 +213,7 @@ final class McpTierEquivalenceTest {
     facets.put("meta_source", sourceFacet);
     KnowledgeSearchResponse canned =
         new KnowledgeSearchResponse(
-            37L, 37L, 15L, hits, null, facets, null, null, null, null, null, null);
+            37L, 37L, 15L, hits, null, facets, null, null, null, null, null, null, null);
 
     KnowledgeHttpApiAdapter adapter = mock(KnowledgeHttpApiAdapter.class);
     when(adapter.search(any())).thenReturn(canned);

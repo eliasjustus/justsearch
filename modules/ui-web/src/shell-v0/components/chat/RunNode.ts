@@ -31,11 +31,19 @@ export class RunNode extends JfElement {
   static properties = {
     presentation: { attribute: false },
     density: { type: String },
+    outline: { type: Boolean, reflect: true },
   };
 
   declare presentation: StepPresentation | null;
   /** §19 — the surface's declared density ceiling/intent (the measured box caps it). */
   declare density: RunNodeDensity;
+  /**
+   * Tempdoc 814 §D4 — draw the tone SHAPES as rings instead of filled discs. The tone is unchanged
+   * (statusTone stays the one colour authority); fill-vs-outline is the non-colour cue that separates a
+   * spine texture marker from the two filled meanings already spoken for on this screen (the
+   * grounded-status dot and a spine LANDMARK). Filled is reserved for landmarks.
+   */
+  declare outline: boolean;
 
   /** §19 — projects the legible representation for the measured host box (the FILL-half controller). */
   private readonly densityCtl = new DensityController(this, {
@@ -46,6 +54,7 @@ export class RunNode extends JfElement {
     super();
     this.presentation = null;
     this.density = 'full';
+    this.outline = false;
   }
 
   static styles = css`
@@ -109,6 +118,15 @@ export class RunNode extends JfElement {
         opacity: 0.45;
         transform: scale(0.7);
       }
+    }
+    /* Tempdoc 814 §D4 — the OUTLINE treatment: the same tone, drawn as a ring. Applied to the FILLED
+       shapes only (the pending glyph is already a ring); the decisive glyph chars are unaffected. */
+    :host([outline]) .g-none::before,
+    :host([outline]) .g-dot::before,
+    :host([outline]) .g-running::before {
+      background: transparent;
+      border: 1.5px solid currentColor;
+      box-sizing: border-box;
     }
     /* 559 reduced-motion guard — the alive dot settles to static. */
     @media (prefers-reduced-motion: reduce) {

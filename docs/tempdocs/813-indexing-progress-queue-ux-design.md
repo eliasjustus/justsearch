@@ -522,3 +522,41 @@ dev-stack session.
 **Register note:** `/search-quality` and `/inference-runtime` registers not updated —
 this work changes no retrieval behavior and no inference runtime; it projects existing
 counters. (Rule satisfied by stating why.)
+
+## 17. Merge reconciliation with the parallel lanes (2026-08-07)
+
+While this branch was built, the campaign's other lanes landed on main: **both Lane-1
+fixes** (#374 backfill yield/abandon — finding 3's cancel/budget; #375 witnessed
+"indexing done" — finding 1's gating, including its own `enrichmentCoverage.ts` module
+and a global `enriching` folder state), **T-B's chrome pass** (#376 / tempdoc 814),
+and Lane-2's quick wins (#370, which independently renamed the operation, and #371's
+chunk-pathPrefix fix). The merge was resolved by the orchestrator; the decisions:
+
+- **Two authorities reconciled as two CONCEPTS, not one winner.** #375's
+  `enrichmentCoverage.ts` (positive-evidence boolean + tier names — a CLAIM gate) and
+  this branch's `selectIndexingProgress` (phase/percent/staleness — the NUMBERS
+  authority) stay separate, cross-referenced; folderStatus consumes both. This is a
+  recorded deviation from §16's earlier "projection of the projection" intent: merging
+  them mid-merge would have churned #375's landed tests for no truthfulness gain. If
+  the two ever disagree in the field, that is the trigger to unify them.
+- **Folder tier**: state name `enriching` (theirs) with this branch's per-root
+  percent mechanics; four honest arms — per-root percent when derivable, their global
+  boolean as the caveat-without-percent fallback, per-root complete outranking the
+  global boolean (a strict improvement on both sides), pre-813 wording only when
+  nothing is known. Their `pending` glyph for the enriching tier was adopted over this
+  branch's ✓ — a checkmark while semantic search is still building is the soft form of
+  the original defect.
+- **Vocabulary**: their shared constants win everywhere
+  (`ENRICHMENT_CATCHING_UP_CAVEAT`, `ENRICHMENT_IN_PROGRESS_LABEL` = "Building
+  semantic search" — deliberately the Brain surface's existing phrase); this branch
+  appends the percent when faithful. Operation label: their **"Process pending
+  enrichment"** (closest to the owner's own suggested copy in finding 11) with this
+  branch's corrected description — their comment's repeated `InferenceOnline`
+  precondition claim was false (813 review F2) and was fixed in the merged comment.
+- **Cancel/budget dependency (§7) partially discharged**: #374 landed batch-boundary
+  yield + abandonment of bulk-deleted work. The UI still offers no Cancel affordance;
+  upgrading copy to name #374's actual latency bound is follow-up work, not blocked.
+- `QueryFilterBuilder`: #371's fix (chunk branch now RESPECTS pathPrefix) supersedes
+  this branch's comment-only correction; the merged javadoc records the history.
+- Additive unions everywhere else (814's new gate constraint kinds + steps alongside
+  `tasks-occlusion`; both baselines; both fixture variants).

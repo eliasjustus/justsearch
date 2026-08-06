@@ -152,6 +152,19 @@ public final class IndexingCoordinator {
     }
   }
 
+  /**
+   * Monotonic count of bulk deletions ({@code deleteByPathPrefix} / {@code deleteAll}) submitted to
+   * the writer (tempdoc 809 finding 3). Removing a watched root lands as a
+   * {@link #deleteByPathPrefix(String)} here, so a background batch that captures this value when
+   * it selects its documents and re-reads it at its interruption points learns that its selection
+   * is stale — without a second flag to keep in sync with the deletion.
+   *
+   * @return the current bulk-deletion epoch; a change means documents may have been removed
+   */
+  public long bulkDeleteEpoch() {
+    return session.bulkDeleteEpoch.get();
+  }
+
   /** Pass-through convenience. Takes {@link #dispatchLock} to serialize with RMW ops. */
   public int updateDocumentPaths(String oldPath, String newPath) {
     acquireReadLockTimed();

@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { projectAvailability, unavailableBecause, type Availability } from './availability.js';
 import {
+  AI_UNAVAILABLE_CAVEAT,
   KEYWORD_FALLBACK_CAVEAT,
   OPTIONAL_CAPABILITY_CAVEAT,
   PASSAGE_REDUCED_CAVEAT,
@@ -151,7 +152,17 @@ describe('projectAvailability (tempdoc 596)', () => {
     );
     expect(a.kind).toBe('degraded');
     expect(a.kind === 'degraded' && a.caveat).toBe(OPTIONAL_CAPABILITY_CAVEAT);
-    expect(a.kind === 'degraded' && /optional|ranking|simpler/i.test(a.caveat)).toBe(true);
+    // Round-14 finding 8 — the info-tier availability row must NAME the specific feature. The
+    // pre-fix wording ("an optional ranking model") named none, and a reader with full API access
+    // resolved it to the cross-encoder reranker, which was measured healthy at the time.
+    expect(a.kind === 'degraded' && a.caveat).toContain('Learned re-ranking');
+    expect(a.kind === 'degraded' && a.caveat).toContain('LambdaMART');
+    // …and it routes to the same detail the warn tier routes to (it carried no remedy before).
+    expect(a.kind === 'degraded' && a.remedy).toEqual({
+      kind: 'navigate',
+      target: 'core.health-surface',
+      label: 'Open Health',
+    });
   });
 
   it('805 §G.2: a RETRIEVAL-impairing cause → the keyword-fallback caveat (imported, not re-authored)', () => {
@@ -186,7 +197,10 @@ describe('projectAvailability (tempdoc 596)', () => {
       aiState({ chat: true, docs: 5, degradedSeverity: 'warn', reasons: ['inference.offline'] }),
     );
     expect(a.kind).toBe('degraded');
-    expect(a.kind === 'degraded' && a.caveat).toBe(OPTIONAL_CAPABILITY_CAVEAT);
+    // Round-14 finding 8 — this class gets its OWN wording: now that the cosmetic caveat names
+    // learned re-ranking, borrowing it here would claim a feature this cause is not about.
+    expect(a.kind === 'degraded' && a.caveat).toBe(AI_UNAVAILABLE_CAVEAT);
+    expect(a.kind === 'degraded' && a.caveat).not.toContain('LambdaMART');
   });
 
   it('805 §G.2: an UNCLASSIFIED cause stays conservative (the keyword-fallback caveat)', () => {

@@ -323,10 +323,10 @@ public interface IndexingService {
 
   /**
    * Per-watched-root enrichment coverage counted from the index (tempdoc 813 §1c/§13). Lets a
-   * Library folder row say "keyword-ready · enriching N%" instead of only reporting the index-wide
-   * number. Queue drain ({@link JobCounts#inFlight()}) covers the FIRST phase (a file becomes
-   * keyword-searchable); these counts cover the SECOND (enrichment backfill), which carries no
-   * per-root job rows at all — the backfill selects index-wide by status.
+   * Library folder row say "keyword search ready · semantic search still catching up · N%" instead
+   * of only reporting the index-wide number. Queue drain ({@link JobCounts#inFlight()}) covers the
+   * FIRST phase (a file becomes keyword-searchable); these counts cover the SECOND (enrichment
+   * backfill), which carries no per-root job rows at all — the backfill selects index-wide by status.
    *
    * <p>Denominator discipline: parent-stage totals exclude chunk documents, and each stage counts
    * only the documents that CARRY its status field — an absent status field means the stage does

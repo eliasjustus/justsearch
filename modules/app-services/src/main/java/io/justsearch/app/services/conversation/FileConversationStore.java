@@ -177,6 +177,17 @@ public final class FileConversationStore implements ConversationStore {
     }
   }
 
+  /**
+   * Tempdoc 734 round-14 F4 — the SAME condition {@link io.justsearch.agent.api.encryption.StoreCipher}
+   * throws on: {@code open} of a sealed line raises {@code KeyLockedException} (the history 423), and
+   * {@code seal} of a new line raises it too, so a locked append cannot persist. Asked before the
+   * write, this turns accepted-and-dropped into a refusal. Mirrors {@code FileMemoryStore#isLocked()}.
+   */
+  @Override
+  public boolean isLocked() {
+    return cipher.enabled() && cipher.locked();
+  }
+
   @Override
   public void appendMessage(String sessionId, String shapeId, Map<String, Object> message) {
     Path sessionDir = resolveSessionDir(sessionId);

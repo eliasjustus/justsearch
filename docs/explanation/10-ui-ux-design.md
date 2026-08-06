@@ -111,7 +111,7 @@ graph TD
     *   **Index Stats:** Total documents, Index size, Memory usage.
     *   **AI Mode:** "Online" (Brain active) vs "Indexing" (Embeddings active).
     *   **Queues:** **Only visible when active.** Shows pending VDU or Embedding job counts (e.g., "5 VDU pending").
-    *   **Finish enrichment now:** Appears only when queues are non-zero, allowing a manual trigger of the pending enrichment work (VDU + embedding backfill) for already-indexed documents.
+    *   **Process pending enrichment:** Appears only when queues are non-zero, allowing a manual trigger of the pending enrichment work (VDU + embedding backfill) for already-indexed documents.
 
 ### Progress vocabulary (Tasks panel, Health, folder rows)
 
@@ -126,7 +126,8 @@ snapshot (`shell-v0/state/indexingProgress.ts`). Numbers may differ between surf
     already-indexed documents) → **Ready**.
 *   **Two tiers of "done":** job drain makes a folder keyword-searchable, which is not the
     same fact as fully searchable. A Library row therefore reads
-    `312 files · keyword-ready · enriching 40%` while coverage climbs, and
+    `312 files · keyword search ready · semantic search still catching up · 40%` while
+    coverage climbs, and
     `312 files · fully searchable · indexed 2m ago` once it is complete
     (`shell-v0/state/folderStatus.ts`, from the per-root coverage counts on
     `IndexedRootView`). "Up to date" in Health is likewise reserved for
@@ -181,7 +182,7 @@ The system operates in two mutually exclusive modes to manage GPU VRAM:
 
 **Transition:**
 *   Users can manually toggle via the "Brain" view (Settings).
-*   "Finish enrichment now" (Library header and the degradation-banner remedy) drains the pending enrichment work — vision transcription (VDU) plus the semantic layers — for already-indexed documents, by dispatching the `core.trigger-offline-processing` Operation (catalog-driven `<jf-operation>`); it starts the AI engine itself when the engine is down (tempdoc 737 §8a removed the circular `InferenceOnline` precondition — the operation's own first phase brings inference online), and reflects progress via `/api/inference/status`. The operation id keeps its historical name; the user-visible label lives once in the operation catalog (`registry-operation.en.properties`), so both render sites read the same words. (The earlier direct `POST /api/offline/process` endpoint this button previously would have called was orphaned — zero FE consumers — and was torn down.)
+*   "Process pending enrichment" (Library header and the degradation-banner remedy) drains the pending enrichment work — vision transcription (VDU) plus the semantic layers — for already-indexed documents, by dispatching the `core.trigger-offline-processing` Operation (catalog-driven `<jf-operation>`); it starts the AI engine itself when the engine is down (tempdoc 737 §8a removed the circular `InferenceOnline` precondition — the operation's own first phase brings inference online), and reflects progress via `/api/inference/status`. The operation id keeps its historical name; the user-visible label lives once in the operation catalog (`registry-operation.en.properties`), so both render sites read the same words. (The earlier direct `POST /api/offline/process` endpoint this button previously would have called was orphaned — zero FE consumers — and was torn down.)
 
 ## 4. Visual Language & Accessibility
 

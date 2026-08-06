@@ -62,6 +62,42 @@
       "uiShotStep": "tasks-occlusion",
       "e2eViews": [],
       "knownRules": []
+    },
+    {
+      "surface": "chat",
+      "uiShotStep": "chat-proportion",
+      "e2eViews": [],
+      "knownRules": []
+    },
+    {
+      "surface": "chat",
+      "uiShotStep": "chat-occlusion",
+      "e2eViews": [],
+      "knownRules": []
+    },
+    {
+      "surface": "chat",
+      "uiShotStep": "chat-bands",
+      "e2eViews": [],
+      "knownRules": []
+    },
+    {
+      "surface": "chat",
+      "uiShotStep": "chat-bands-detailed",
+      "e2eViews": [],
+      "knownRules": []
+    },
+    {
+      "surface": "chat",
+      "uiShotStep": "chat-composer-small",
+      "e2eViews": [],
+      "knownRules": []
+    },
+    {
+      "surface": "chat",
+      "uiShotStep": "chat-spine-single",
+      "e2eViews": [],
+      "knownRules": []
     }
   ]
 }

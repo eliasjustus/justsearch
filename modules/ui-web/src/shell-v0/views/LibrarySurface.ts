@@ -49,6 +49,7 @@ import {
   selectIndexingProgress,
   type EnrichmentApplicability,
 } from '../state/indexingProgress.js';
+import { enrichmentProgress } from '../state/enrichmentCoverage.js';
 // Tempdoc 599 §16/B1 — the clickable "N failed" chip opens the per-folder failed-files drawer.
 import { openFailedJobs } from '../state/failedJobsDrawer.js';
 // Tempdoc 599 §9.4 — gate the Add button with a reachable reason (596 operability authority).
@@ -128,6 +129,7 @@ export class LibrarySurface extends JfElement {
     activeTab: { state: true },
     provisional: { state: true },
     enrichmentStages: { state: true },
+    enrichmentPending: { state: true },
   };
 
   declare apiBase: string;
@@ -154,11 +156,17 @@ export class LibrarySurface extends JfElement {
   declare provisional: boolean;
   /**
    * Tempdoc 813 §4 — which enrichment stages apply, from the ONE index-wide progress derivation.
-   * Passed into `folderStatus` so a row's second tier ("keyword-ready · enriching N%" → "fully
-   * searchable") is computed from applicable stages only. `null` until the first poll snapshot
-   * arrives, which the seam reads as "coverage unknown" (no percent).
+   * Passed into `folderStatus` so a row's second tier (the catching-up caveat + this root's percent
+   * → "fully searchable") is computed from applicable stages only. `null` until the first poll
+   * snapshot arrives, which the seam reads as "coverage unknown" (no percent).
    */
   declare enrichmentStages: EnrichmentApplicability | null;
+  /**
+   * 809 finding 1 — the enrichment backfill still owes work, so a drained folder is keyword-searchable
+   * but not yet semantically searchable. Projected from the one `enrichmentProgress` derivation and
+   * handed to `folderStatus`, which decides whether the row may make the terminal "✓ indexed" claim.
+   */
+  declare enrichmentPending: boolean;
 
   private aiUnsub: (() => void) | null = null;
   // Tempdoc 599 §9.4 — debounce the add-time preview while typing.
@@ -182,6 +190,7 @@ export class LibrarySurface extends JfElement {
     this.activeTab = 'folders';
     this.provisional = false;
     this.enrichmentStages = null;
+    this.enrichmentPending = false;
   }
 
   // Tempdoc 571 §11 / 578: Library is a host surface — it delegates layout to <jf-surface-tabs>
@@ -431,6 +440,9 @@ export class LibrarySurface extends JfElement {
       // Tempdoc 813 §4 — the per-root second tier needs to know which stages apply; take it from the
       // ONE index-wide progress derivation rather than re-reading the enrichment wire flags here.
       this.enrichmentStages = selectIndexingProgress(s.status, s.snapshotLive).stages;
+      // 809 finding 1 — same tick, same store: whether the enrichment backfill is still running, so a
+      // row cannot claim the terminal "✓ indexed" while semantic search is still being built.
+      this.enrichmentPending = enrichmentProgress(s.status).pending;
       // Tempdoc 599 §9.3 — ride the existing status tick to live-refresh the rows (counts-free, no
       // new poller), so a folder's "Indexing · N remaining → ✓ indexed" updates without re-nav.
       void this.refresh({ live: true });
@@ -485,6 +497,7 @@ export class LibrarySurface extends JfElement {
         provisional: this.provisional,
         // Tempdoc 813 §4 — the enrichment tier of the row's meta line.
         enrichmentStages: this.enrichmentStages,
+        enrichmentPending: this.enrichmentPending,
       });
       return {
         pathHash,
@@ -786,6 +799,7 @@ export class LibrarySurface extends JfElement {
       provisional: this.provisional,
       // Tempdoc 813 §4 — the enrichment tier of the row's meta line.
       enrichmentStages: this.enrichmentStages,
+      enrichmentPending: this.enrichmentPending,
     });
     return html`
       <div class="card">
@@ -845,7 +859,7 @@ export class LibrarySurface extends JfElement {
                is user-tier; core.reindex's wire audience=USER passes
                the gate. -->
           <jf-operation context="button" operation-id="core.reindex" api-base=${this.apiBase} @op-success=${() => this.refresh()}></jf-operation>
-          <!-- Tempdoc 813 §6: the manual "Finish enrichment now" trigger — drains the pending
+          <!-- Tempdoc 813 §6: the manual "Process pending enrichment" trigger — drains the pending
                VDU + embedding work for already-indexed documents, same catalog-driven pattern as
                core.reindex above. Its LABEL comes from the operation catalog (one string, both
                render sites); the operation id keeps its historical name. -->

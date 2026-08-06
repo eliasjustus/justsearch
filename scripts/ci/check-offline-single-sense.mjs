@@ -50,6 +50,9 @@ const ALLOW = {
   'modules/ui-web/src/shell-v0/views/UnifiedChatView.ts': [
     'the model may be offline',
     'The local AI model is offline',
+    // Both casings are live: the composer's window-level reason and the run-node badge. Same
+    // sanctioned sense — the chat model itself is down, not a work mode.
+    'AI offline',
     'AI Offline',
   ],
   'modules/ui-web/src/shell-v0/state/readinessNotice.ts': [
@@ -194,7 +197,7 @@ if (failures.length > 0) {
   console.error(
     '✗ offline-single-sense lint FAILED — "offline" appears in copy outside its one sanctioned\n' +
       '  sense (the AI engine / a service being down; tempdoc 813 §6). Enrichment and indexing copy\n' +
-      '  uses the phase nouns Indexing / Enriching instead — e.g. "Finish enrichment now", not\n' +
+      '  uses the phase nouns Indexing / Enriching instead — e.g. "Process pending enrichment", not\n' +
       '  "Run Offline Processing". If the occurrence really is the engine sense (or a wire\n' +
       '  identifier, not copy), add it to ALLOW in scripts/ci/check-offline-single-sense.mjs:\n' +
       failures.map((x) => '  - ' + x).join('\n'),

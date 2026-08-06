@@ -796,6 +796,11 @@ export function registerShellActions(deps: ShellActionDeps): void {
   navigateAction('core.action.shell.go-to-health', 'Go to System Health', 'core.health-surface');
   navigateAction('core.action.shell.go-to-chat', 'Go to Chat', 'core.unified-chat-surface');
   navigateAction('core.action.shell.go-to-browse', 'Go to Browse', 'core.browse-surface');
+  // Round-14 F2 — the Brain surface had no plain navigation entry: the only palette routes to it
+  // were the two install-flavoured ones below, so "open Brain" (and Memory, which is a TAB on Brain
+  // — the coverage register names "command palette 'Go to Brain'" as its documented reach) was
+  // unreachable by name. This makes the documented route true.
+  navigateAction('core.action.shell.go-to-brain', 'Go to Brain', 'core.brain-surface');
 
   // 727 F-1 — `core.start-ai-install` / `core.repair-ai-install` are deliberately excluded from
   // `canProjectOperationAsZeroArgAction` below: both require `acceptTerms: true`
@@ -807,8 +812,14 @@ export function registerShellActions(deps: ShellActionDeps): void {
   // symptom. Fix: give them navigate-only palette entries (same "distinct label, shared target"
   // pattern as go-to-search/go-to-chat above) that route to the Brain surface, where
   // BrainSurface's `hostConfirm` collects the actual terms acceptance before invoking.
-  navigateAction('core.action.shell.go-to-brain-install', 'Start AI Install', 'core.brain-surface');
-  navigateAction('core.action.shell.go-to-brain-repair', 'Repair AI Install', 'core.brain-surface');
+  //
+  // Round-14 F3 — the LABELS now say what invoking them does. "Start AI Install" promised to start
+  // the install and only navigated; the terms/consent ceremony is BrainSurface's `hostConfirm`, and
+  // routing there is the whole point (a palette entry must never bypass that dialog). Both labels
+  // keep "Install AI" / "Repair AI" so the natural query still finds them (the scorer is token-wise
+  // since 804 §B9, so `install ai` matches either label).
+  navigateAction('core.action.shell.go-to-brain-install', 'Go to Brain — Install AI', 'core.brain-surface');
+  navigateAction('core.action.shell.go-to-brain-repair', 'Go to Brain — Repair AI Install', 'core.brain-surface');
 
   shellAction(
     'core.action.shell.toggle-inspector',

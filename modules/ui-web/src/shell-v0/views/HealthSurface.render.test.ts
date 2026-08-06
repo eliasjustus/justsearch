@@ -497,6 +497,53 @@ describe('HealthSurface — Queue card status vocabulary (630 D1)', () => {
     }
   });
 
+  // 809 finding 1 — the terminal trust close is gated on COVERAGE, not on job-queue drain. The job
+  // queue draining only proves extraction + the Lucene write finished; the enrichment backfill that
+  // makes semantic search work runs afterwards, and "Up to date" during it claims a capability the
+  // system does not have. Supersedes the 630 D1 pin above, which asserted the terminal close from
+  // `pendingJobs === 0 && indexHealthy` alone.
+  it('809: idle + healthy BUT the enrichment backfill is running ⇒ no "Up to date"', async () => {
+    __feedForTest({
+      status: {
+        worker: {
+          core: { indexState: 'IDLE', indexedDocuments: 5, pendingJobs: 0, indexHealthy: true },
+          // 809 finding 9's trap: the doc-level tier is clean, the passage tier is not.
+          // `chunkDocCount` is the passage tier's DENOMINATOR — the wire always carries it beside
+          // the pending count (one `ChunkCoverageView` message), and since 813 §3b the card's phase
+          // comes from the coverage ratio, so a pending count without its denominator is not the
+          // shape this trap ever arrives in.
+          enrichment: {
+            embeddingEnabled: true,
+            embeddingPendingCount: 0,
+            embeddingCoveragePercent: 100,
+            chunk: {
+              chunkDocCount: 2000,
+              chunkEmbeddingPendingCount: 1554,
+              chunkVectorsReady: false,
+            },
+          },
+        },
+        readiness: {
+          composites: {
+            retrieval: { state: 'READY', reasonCodes: [] },
+            aiFeatures: { state: 'READY', reasonCodes: [] },
+          },
+        },
+      } as unknown as StatusSnapshot,
+    });
+    __tickClockForTest();
+    const el = await mount();
+    try {
+      const subs = queueSubs(el);
+      expect(subs).not.toContain('Up to date');
+      expect(subs).not.toContain('Idle');
+      // 446 of 2000 passages settled ⇒ the card names the work AND its honest percent.
+      expect(subs).toContain('Building semantic search — 22%');
+    } finally {
+      teardown(el);
+    }
+  });
+
   it('queued work ⇒ "Indexing"', async () => {
     feed({ indexedDocuments: 5, pendingJobs: 5, indexHealthy: true });
     const el = await mount();
@@ -530,7 +577,7 @@ describe('HealthSurface — Queue card status vocabulary (630 D1)', () => {
     __tickClockForTest();
   }
 
-  it('813: jobs drained but coverage incomplete ⇒ "Indexed — enriching N%", never "Up to date"', async () => {
+  it('813: jobs drained but coverage incomplete ⇒ "Building semantic search — N%", never "Up to date"', async () => {
     feedEnrichment({
       backfillMode: 'combined',
       embeddingEnabled: true,
@@ -540,7 +587,7 @@ describe('HealthSurface — Queue card status vocabulary (630 D1)', () => {
     const el = await mount();
     try {
       const subs = queueSubs(el);
-      expect(subs).toContain('Indexed — enriching 64%');
+      expect(subs).toContain('Building semantic search — 64%');
       expect(subs).not.toContain('Up to date');
       expect(subs).not.toContain('Idle');
     } finally {
@@ -559,7 +606,7 @@ describe('HealthSurface — Queue card status vocabulary (630 D1)', () => {
     const el = await mount();
     try {
       const subs = queueSubs(el);
-      expect(subs).toContain('Indexed — enriching 75%');
+      expect(subs).toContain('Building semantic search — 75%');
       expect(subs).not.toContain('Up to date');
     } finally {
       teardown(el);
@@ -578,7 +625,7 @@ describe('HealthSurface — Queue card status vocabulary (630 D1)', () => {
     try {
       const subs = queueSubs(el);
       expect(subs).toContain('Up to date');
-      expect(subs.some((s) => s.startsWith('Indexed — enriching'))).toBe(false);
+      expect(subs.some((s) => s.startsWith('Building semantic search'))).toBe(false);
     } finally {
       teardown(el);
     }

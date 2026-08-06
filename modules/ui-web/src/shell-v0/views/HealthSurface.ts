@@ -57,6 +57,7 @@ import { formatRelativeMs } from '../../utils/relativeTime.js';
 import { type Maybe, UNKNOWN } from '../state/known.js';
 import { unavailableBecause } from '../state/availability.js';
 import { selectIndexingProgress } from '../state/indexingProgress.js';
+import { ENRICHMENT_IN_PROGRESS_LABEL } from '../state/enrichmentCoverage.js';
 import { present } from '../display/present.js';
 import { projectFact } from '../display/facts.js';
 import { formatBytes, formatCount } from '../display/format.js';
@@ -848,7 +849,7 @@ export class HealthSurface extends JfElement {
    * Tempdoc 813 §4 makes the terminal close TWO-TIER. Job drain only buys the keyword tier; the
    * semantic layers keep building afterwards, so "Up to date" on job drain alone was the §1d
    * completion lie ("a completion claim is a capability claim", §11). Between the tiers the card
-   * reads "Indexed — enriching N%", and "Up to date" is reserved for coverage-complete. The number
+   * reads "Building semantic search — N%", and "Up to date" is reserved for coverage-complete. The number
    * comes from the ONE indexing-progress projection — this card derives none of it privately.
    */
   private queueSubLabel(queue: number, known: boolean): string {
@@ -860,11 +861,16 @@ export class HealthSurface extends JfElement {
     if (this.status?.power?.energyReduced === true && queue > 0) return 'Paused — saving energy';
     if (!known) return 'Unknown';
     if (queue > 0) return 'Indexing';
+    // 809 finding 1 — the JOB queue draining is not the work finishing. Embedding/SPLADE/NER run
+    // afterwards on the backfill scheduler, and until they drain, semantic and hybrid search do not
+    // work — so neither the terminal "Up to date" nor "Idle" is true here. Phase comes from the ONE
+    // progress projection (which also guards the unknown/zeroed-worker arm); the phrase is the shared
+    // enrichment vocabulary the Brain surface and Library rows use, plus the percent when faithful.
     const progress = selectIndexingProgress(this.status, this.aiState?.snapshotLive ?? false);
     if (progress.phase === 'enriching') {
       return progress.enrichingPercent === null
-        ? 'Indexed — enriching'
-        : `Indexed — enriching ${progress.enrichingPercent}%`;
+        ? ENRICHMENT_IN_PROGRESS_LABEL
+        : `${ENRICHMENT_IN_PROGRESS_LABEL} — ${progress.enrichingPercent}%`;
     }
     // Idle + a verified-healthy index ⇒ the explicit terminal "Up to date"; otherwise stay honest
     // with "Idle" (don't claim up-to-date when health isn't confirmed).
