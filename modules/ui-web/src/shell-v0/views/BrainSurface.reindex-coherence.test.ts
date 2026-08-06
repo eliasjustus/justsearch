@@ -22,7 +22,7 @@ interface CalloutHarness {
 
 /** Build a detached BrainSurface (no connectedCallback ⇒ no poll/subscribe), drive the private
  *  callout renderer, and return its rendered text. */
-function calloutText(systemStatus: unknown, verdictReasons: string[]): string {
+function renderCallout(systemStatus: unknown, verdictReasons: string[]): HTMLDivElement {
   const el = document.createElement('jf-brain-surface') as unknown as CalloutHarness;
   el.systemStatus = systemStatus;
   el.apiBase = '';
@@ -30,7 +30,18 @@ function calloutText(systemStatus: unknown, verdictReasons: string[]): string {
   const tpl = el.renderCompatibilityCallouts();
   const container = document.createElement('div');
   render(tpl as TemplateResult, container);
-  return container.textContent ?? '';
+  return container;
+}
+
+function calloutText(systemStatus: unknown, verdictReasons: string[]): string {
+  return renderCallout(systemStatus, verdictReasons).textContent ?? '';
+}
+
+/** The one-click reindex remedy the callout carries, or null when the callout did not render. */
+function rebuildRemedy(systemStatus: unknown, verdictReasons: string[]): Element | null {
+  return renderCallout(systemStatus, verdictReasons).querySelector(
+    'jf-operation[operation-id="core.rebuild-index"]',
+  );
 }
 
 const EMB_BLOCKED_LEGACY = {
@@ -64,5 +75,53 @@ describe('BrainSurface compat callout — tempdoc 613 reindex coherence', () => 
   it('falls back to a generic remedy line when the verdict carries no reindex code (no per-cause fork)', () => {
     const text = calloutText(EMB_BLOCKED_LEGACY, []);
     expect(text).toContain('Rebuild the index to restore full search.');
+  });
+});
+
+/**
+ * Review 2026-08 (FE review-fix bundle, item 1) — the schema arm of this callout was gated on
+ * `compatState === 'INCOMPATIBLE'`, a literal NO producer emits. The real vocabulary is
+ * `COMPATIBLE | BLOCKED_LEGACY | BLOCKED_MISMATCH | REBUILDING | UNAVAILABLE`
+ * (`indexing.proto` CompatibilityStatus.schema_compat_state; emitted by
+ * `IndexStatusOps.safeSchemaCompatState()`), so the schema arm — and with it the 804 §D1
+ * schema-mismatch remedy — was unreachable in the UI. These tests drive the REAL values through
+ * the surface. They are written against the vocabulary, not the current gate: an arm re-gated on
+ * a value the wire never carries fails them again.
+ */
+describe('BrainSurface compat callout — schema arm speaks the REAL compat vocabulary', () => {
+  const schemaOnly = (compatState: string) => ({
+    embedding: { compatState: 'COMPATIBLE' },
+    schema: { compatState, reindexRequiredReason: 'schema_mismatch' },
+  });
+
+  it('BLOCKED_MISMATCH renders the callout with the canonical index.schema_mismatch wording', () => {
+    const text = calloutText(schemaOnly('BLOCKED_MISMATCH'), ['index.schema_mismatch']);
+    // `StatusLifecycleHandler.compatBlockedReason` maps schema BLOCKED_MISMATCH → this code.
+    expect(text).toContain(reasonFor('index.schema_mismatch').wording);
+    expect(text).toContain('Schema incompatible');
+    expect(text).toContain('schema_mismatch'); // the reindexRequiredReason detail
+  });
+
+  it('BLOCKED_MISMATCH carries the core.rebuild-index remedy (the §D1 remedy is now reachable)', () => {
+    expect(rebuildRemedy(schemaOnly('BLOCKED_MISMATCH'), ['index.schema_mismatch'])).not.toBeNull();
+  });
+
+  it('BLOCKED_LEGACY renders too, worded from its own canonical code (index.blocked_legacy)', () => {
+    const text = calloutText(schemaOnly('BLOCKED_LEGACY'), ['index.blocked_legacy']);
+    expect(text).toContain(reasonFor('index.blocked_legacy').wording);
+    expect(rebuildRemedy(schemaOnly('BLOCKED_LEGACY'), ['index.blocked_legacy'])).not.toBeNull();
+  });
+
+  it('negative control: COMPATIBLE and REBUILDING render NO blocked callout and NO remedy', () => {
+    for (const state of ['COMPATIBLE', 'REBUILDING', 'UNAVAILABLE']) {
+      expect(calloutText(schemaOnly(state), ['index.schema_mismatch']), state).toBe('');
+      expect(rebuildRemedy(schemaOnly(state), ['index.schema_mismatch']), state).toBeNull();
+    }
+  });
+
+  it('negative control: the retired INCOMPATIBLE literal is not a gate any more', () => {
+    // If someone re-introduces the dead literal as the gate, the two assertions above/below split:
+    // the wire values would stop rendering and this one would start.
+    expect(calloutText(schemaOnly('INCOMPATIBLE'), ['index.schema_mismatch'])).toBe('');
   });
 });

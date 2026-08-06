@@ -63,12 +63,17 @@ describe('computeStability (595 §4.1)', () => {
     ).toEqual({ kind: 'provisional', cause: 'rebuilding' });
   });
 
-  it('generalizes ConnectionPhase: connecting→initial-load, stale→channel-stale', () => {
+  it('generalizes ConnectionPhase: connecting→initial-load, stale(no contact)→channel-stale', () => {
     expect(computeStability({ ...settledInput, phase: 'connecting' })).toEqual({
       kind: 'provisional',
       cause: 'initial-load',
     });
-    expect(computeStability({ ...settledInput, phase: 'stale' })).toEqual({
+    // Review 2026-08 (FE review-fix bundle, item 2) — RE-ENCODED. This used to omit
+    // `reachableViaContact` entirely and pin `undefined ⇒ channel-stale`, which is what made the two
+    // consumption sites disagree about the same value (`=== false` at the lost-contact guard, truthy
+    // here). Lost contact is now a claim only an explicit `false` can license, so the assertion states
+    // the contact fact it depends on instead of leaning on the UNKNOWN case.
+    expect(computeStability({ ...settledInput, phase: 'stale', reachableViaContact: false })).toEqual({
       kind: 'provisional',
       cause: 'channel-stale',
     });
@@ -110,6 +115,58 @@ describe('computeStability (595 §4.1)', () => {
         indexState: 'UNAVAILABLE',
       }),
     ).toEqual({ kind: 'provisional', cause: 'worker-restart' });
+  });
+});
+
+/**
+ * Review 2026-08 (FE review-fix bundle, item 2) — `reachableViaContact` is OPTIONAL, so it has three
+ * states, and the two consumption sites used to read the third one oppositely: the lost-contact guard
+ * tests `=== false` while the stale-phase branch tested it truthily, so `undefined` (an older snapshot
+ * shape, or the field not populated yet) was UNKNOWN at one site and "contact lost" at the other.
+ * The unified rule: UNKNOWN never licenses a positive claim about contact IN EITHER DIRECTION — the
+ * phase's own default stands. Asserting contact LOSS needs an explicit `false` (computeStability);
+ * asserting contact ALIVE needs an explicit `true` (computeVerdict's disconnected arm).
+ */
+describe('reachableViaContact is three-state: true / false / undefined(UNKNOWN)', () => {
+  it('computeStability(stale): true ⇒ updating, false ⇒ channel-stale, undefined ⇒ updating', () => {
+    const at = (reachableViaContact?: boolean) =>
+      computeStability({ ...settledInput, phase: 'stale', reachableViaContact });
+    expect(at(true)).toEqual({ kind: 'provisional', cause: 'updating' });
+    expect(at(false)).toEqual({ kind: 'provisional', cause: 'channel-stale' });
+    // UNKNOWN is not evidence of a lost channel — the poll data is merely behind.
+    expect(at(undefined)).toEqual({ kind: 'provisional', cause: 'updating' });
+  });
+
+  it('computeStability: UNKNOWN does not fire the lost-contact override either — retained causes stand', () => {
+    // The override at the top of computeStability must not steal a retained cause on UNKNOWN: with no
+    // explicit `false` there is nothing to say contact was lost, so `UNAVAILABLE` still reads
+    // worker-restart (this is what the `=== false` guard already did — pinned so it stays symmetric).
+    expect(
+      computeStability({ ...settledInput, phase: 'stale', indexState: 'UNAVAILABLE' }),
+    ).toEqual({ kind: 'provisional', cause: 'worker-restart' });
+    expect(
+      computeStability({
+        ...settledInput,
+        phase: 'stale',
+        reachableViaContact: false,
+        indexState: 'UNAVAILABLE',
+      }),
+    ).toEqual({ kind: 'provisional', cause: 'channel-stale' });
+  });
+
+  it('computeVerdict(disconnected): true ⇒ connecting; false and undefined ⇒ unreachable', () => {
+    const at = (reachableViaContact?: boolean) =>
+      computeVerdict({
+        phase: 'disconnected',
+        stability: { kind: 'settled' },
+        readiness: UNKNOWN,
+        reachableViaContact,
+      }).kind;
+    expect(at(true)).toBe('connecting');
+    expect(at(false)).toBe('unreachable');
+    // The SAME rule, pointing the other way: downgrading the unreachable alarm to a calm
+    // "Connecting…" is a positive claim that contact is alive, so UNKNOWN must not license it.
+    expect(at(undefined)).toBe('unreachable');
   });
 });
 

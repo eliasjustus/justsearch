@@ -1786,8 +1786,17 @@ export class BrainSurface extends JfElement {
     const embeddingBlocked =
       emb?.compatState === 'BLOCKED_LEGACY' || emb?.compatState === 'BLOCKED_MISMATCH';
     const isLegacy = emb?.compatState === 'BLOCKED_LEGACY';
-    const schemaIncompat = schema?.compatState === 'INCOMPATIBLE';
-    if (!embeddingBlocked && !schemaIncompat) return nothing;
+    // Review 2026-08 (FE review-fix bundle, item 1): this read `=== 'INCOMPATIBLE'`, a literal the
+    // producer never emits — `IndexStatusOps.safeSchemaCompatState()` (worker-services) returns only
+    // COMPATIBLE / BLOCKED_LEGACY / BLOCKED_MISMATCH / UNAVAILABLE, and `indexing.proto`'s
+    // `CompatibilityStatus.schema_compat_state` documents exactly that vocabulary (plus REBUILDING).
+    // The gate was therefore dead, and with it the §D1 schema-mismatch remedy this callout carries.
+    // Gate on the same blocked pair the backend maps to reason codes in
+    // `StatusLifecycleHandler.compatBlockedReason` (BLOCKED_MISMATCH → `index.schema_mismatch`,
+    // BLOCKED_LEGACY → `index.blocked_legacy`), so surface and wire agree by construction.
+    const schemaBlocked =
+      schema?.compatState === 'BLOCKED_LEGACY' || schema?.compatState === 'BLOCKED_MISMATCH';
+    if (!embeddingBlocked && !schemaBlocked) return nothing;
     // Tempdoc 613 — coherence. The user-facing CAUSE wording projects the ONE canonical reindex
     // vocabulary (`reasonFor`/CAUSE_ROWS — identical to the Chat degradation banner and the 595
     // verdict), so the same condition can no longer read three different ways across surfaces. The
@@ -1796,7 +1805,7 @@ export class BrainSurface extends JfElement {
     // drift. The legacy/mismatch distinction, fingerprint hashes, and schema reason stay as
     // config-altitude technical DETAIL beneath the canonical lead.
     // Tempdoc 804 §D1: `index.schema_mismatch` left the degrading REINDEX_CAUSE_CODES bucket (it is
-    // advisory — zero query-path consumers), but this callout still renders for a schema INCOMPATIBLE
+    // advisory — zero query-path consumers), but this callout still renders for a schema BLOCKED_*
     // state, so it must keep projecting that code's canonical wording rather than falling through to
     // the generic "Rebuild the index to restore full search." lead, which would over-claim here.
     const reindexCauses = [
@@ -1839,7 +1848,7 @@ export class BrainSurface extends JfElement {
                     : nothing}
                 `
               : nothing}
-            ${schemaIncompat
+            ${schemaBlocked
               ? html`
                   <div style="font-size: var(--font-size-sm); color: var(--text-secondary); margin-top: 0.375rem">
                     Schema incompatible${schema?.reindexRequiredReason
