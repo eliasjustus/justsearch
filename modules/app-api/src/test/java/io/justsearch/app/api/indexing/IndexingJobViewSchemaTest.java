@@ -59,7 +59,7 @@ final class IndexingJobViewSchemaTest {
   }
 
   @Test
-  @DisplayName("IndexingJobView schema captures the 7-field wire shape")
+  @DisplayName("IndexingJobView schema captures the 8-field wire shape")
   void indexingJobViewSchema() throws Exception {
     captureOrVerify(IndexingJobView.class, "indexing-job-view.v1.json");
   }

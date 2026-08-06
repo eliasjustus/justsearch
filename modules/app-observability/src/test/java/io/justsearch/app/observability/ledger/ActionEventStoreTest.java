@@ -33,7 +33,7 @@ class ActionEventStoreTest {
 
   private static ActionEvent idx(String id, String at) {
     return new ActionEvent.Index(
-        id, Instant.parse(at), "system", "WORKER_INDEXER", "h-" + id, "default", "DONE", 0, "");
+        id, Instant.parse(at), "system", "WORKER_INDEXER", "h-" + id, "default", "DONE", 0, "", "");
   }
 
   @Test

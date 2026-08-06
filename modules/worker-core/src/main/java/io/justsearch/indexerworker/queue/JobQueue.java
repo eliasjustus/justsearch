@@ -189,6 +189,33 @@ public interface JobQueue extends Closeable {
     return enqueue(EnqueueEntry.paths(entries), collection);
   }
 
+  /**
+   * Enqueues sized entries tagged with the directory scan that admitted them (tempdoc 812 D2).
+   *
+   * <p>The scan id is the same {@code ScanRootProgress.scan_id} the Head reads to subscribe to live
+   * scan progress, so a job row remembers which scan produced it and the Head can roll the
+   * per-document terminal outcomes up into ONE durable scan-completion audit record.
+   *
+   * <p>It rides THIS signature — the single jobs-table write path (813 Slice B) — rather than a
+   * parallel enqueue overload, for the same reason the size does: the insert is
+   * {@code INSERT OR REPLACE}, so any column not supplied by the enqueue call is reset on every
+   * re-enqueue of the same path. One call states both facts, or one of them is silently lost.
+   *
+   * <p>Default implementation drops the scan id and delegates to {@link #enqueueEntries(List,
+   * String)} — NOT straight to {@link #enqueue(List, String)}: implementations that record sized
+   * entries by overriding the two-arg form (the size-asserting test queues) must still see the
+   * entries when a scan enqueues through this overload. Queues without a {@code scan_id} column
+   * keep the pre-812 behaviour; their rows are keyless and fall back to adjacency grouping.
+   *
+   * @param entries paths plus their sizes ({@link #UNKNOWN_SIZE_BYTES} where unknown)
+   * @param collection collection tag for the indexed documents, or null for default
+   * @param scanId the enqueueing scan's id, or null when not part of a directory scan
+   * @return number of jobs accepted
+   */
+  default int enqueueEntries(List<EnqueueEntry> entries, String collection, String scanId) {
+    return enqueueEntries(entries, collection);
+  }
+
   /** Enqueues sized entries with no collection tag. */
   default int enqueueEntries(List<EnqueueEntry> entries) {
     return enqueueEntries(entries, null);

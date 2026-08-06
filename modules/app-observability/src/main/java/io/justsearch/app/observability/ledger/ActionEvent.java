@@ -27,7 +27,8 @@ public sealed interface ActionEvent
       ActionEvent.Gate,
       ActionEvent.Grant,
       ActionEvent.Effect,
-      ActionEvent.Index {
+      ActionEvent.Index,
+      ActionEvent.ScanRollup {
 
   /** Stable, deterministic identity (kind + occurredAt + subject); the dedup / correlation key. */
   String id();
@@ -157,12 +158,55 @@ public sealed interface ActionEvent
       String collection,
       String state,
       int attempts,
-      String errorMessage)
+      String errorMessage,
+      String scanId)
       implements ActionEvent {
     @Override
     public ActionEventKind kind() {
       return ActionEventKind.INDEX;
     }
+  }
+
+  /**
+   * Tempdoc 812 D2 — a directory scan's ROLLUP: one record for "this scan indexed N documents".
+   *
+   * <p>Per-document {@link Index} rows are operational telemetry (ring-only ephemera, evicted
+   * first under pressure); the scan they belong to is the audit fact, so it is recorded ONCE as an
+   * {@code OPERATION}-kind event — the durable tier. {@link #kind()} deliberately returns
+   * {@code OPERATION} rather than minting a seventh kind: every kind-keyed consumer (the durable
+   * journal, the {@code kind} API filter, the FE's tier split, the store's index-first eviction)
+   * must treat a scan rollup as the consequential record it is, and a new kind would have to be
+   * added to each of them by hand. The typed variant exists so the summary's fields are a record,
+   * not a stringly-typed detail blob.
+   *
+   * <p>{@code docsDone}/{@code docsFailed} are counted from the REAL terminal job states
+   * ({@code DONE}/{@code FAILED} rows observed on the indexing-jobs bridge), never from the
+   * enqueue-time admitted count — an audit row must state what happened, not what was attempted.
+   * {@code outcome} ∈ {@code STARTED} (enumeration began) / {@code COMPLETED} (every admitted
+   * document reached a terminal state) / {@code PARTIAL} (the scan went quiet before all of them
+   * did — cancellation, worker restart, or a re-enqueue that stole a row).
+   */
+  record ScanRollup(
+      String id,
+      Instant occurredAt,
+      String originator,
+      String transport,
+      String scanId,
+      String collection,
+      String root,
+      String outcome,
+      int docsDone,
+      int docsFailed,
+      int docsAdmitted,
+      long durationMs)
+      implements ActionEvent {
+    @Override
+    public ActionEventKind kind() {
+      return ActionEventKind.OPERATION;
+    }
+
+    /** The catalog-shaped operation id this rollup reports under (the FE's discriminator). */
+    public static final String OPERATION_ID = "core.scan-root";
   }
 
   /** A trust-gate firing. {@code disposition} ∈ GATED / DENIED / APPROVED (the outcome union). */

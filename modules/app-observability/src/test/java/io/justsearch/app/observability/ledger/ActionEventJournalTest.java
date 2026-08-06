@@ -2,6 +2,7 @@ package io.justsearch.app.observability.ledger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -52,7 +53,7 @@ class ActionEventJournalTest {
 
   private static ActionEvent idx(String id, String at) {
     return new ActionEvent.Index(
-        id, Instant.parse(at), "system", "WORKER_INDEXER", "h-" + id, "default", "DONE", 0, "");
+        id, Instant.parse(at), "system", "WORKER_INDEXER", "h-" + id, "default", "DONE", 0, "", "");
   }
 
   private static String at(int second) {
@@ -89,6 +90,38 @@ class ActionEventJournalTest {
         ActionLedgerProjection.toWireRow(original),
         ActionLedgerProjection.toWireRow(recovered),
         "and therefore serializes to a byte-identical wire row");
+  }
+
+  /**
+   * Tempdoc 812 D1×D2 — the scan rollup is durable precisely BECAUSE its {@code kind()} is
+   * OPERATION, so it takes the journal path with no wiring of its own. That makes the read path the
+   * risk: restoring it as a plain {@code Operation} would compile, journal, recover, and render as
+   * "Indexed 0 documents" after every restart — losing exactly the counts the row exists to state.
+   */
+  @Test
+  @DisplayName("a scan rollup is journaled and recovers as a ROLLUP, counts and scan key intact")
+  void scanRollupRoundTripsWithItsSummary(@TempDir Path dir) {
+    Path audit = dir.resolve("audit");
+    ActionEvent rollup =
+        ActionLedgerProjection.projectScanRollup(
+            "scan-1", "scifact", "C:/corpus/scifact", "COMPLETED", 5184, 3, 5187, 372_000L,
+            Instant.parse(at(4)));
+    ActionEventJournal.at(audit).append(rollup);
+
+    List<ActionEvent> recovered = ActionEventJournal.at(audit).tail(10);
+    assertEquals(1, recovered.size(), "an operation-kind rollup IS a durable actor row");
+    ActionEvent.ScanRollup restored =
+        assertInstanceOf(
+            ActionEvent.ScanRollup.class,
+            recovered.get(0),
+            "recovered as the rollup, not flattened into a bare Operation");
+    assertEquals(rollup, restored);
+    assertEquals("scan-1", restored.scanId());
+    assertEquals(5184, restored.docsDone());
+    assertEquals(3, restored.docsFailed());
+    assertEquals(5187, restored.docsAdmitted());
+    assertEquals(372_000L, restored.durationMs());
+    assertEquals("C:/corpus/scifact", restored.root());
   }
 
   @Test

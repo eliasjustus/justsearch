@@ -124,6 +124,24 @@ export async function resolvePathLazy(
   return promise;
 }
 
+/**
+ * "C:\a\b\report.pdf" → "b/report.pdf" — a resolved path at ROW altitude: the file plus its parent
+ * folder for context, never the full absolute path. Lives beside the resolver because every caller
+ * that resolves a hash for display shares this reason to change (tempdoc 812 D4 gave it its second
+ * consumer: the Activity ledger's per-document rows, alongside the Tasks tray).
+ */
+export function friendlyPathName(path: string): string {
+  const parts = path
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '')
+    .split('/')
+    .filter(Boolean);
+  if (parts.length === 0) return path;
+  const file = parts[parts.length - 1]!;
+  const parent = parts.length >= 2 ? parts[parts.length - 2] : '';
+  return parent ? `${parent}/${file}` : file;
+}
+
 /** Test-only: clear all cached resolutions. */
 export function __resetForTest(): void {
   cache.clear();

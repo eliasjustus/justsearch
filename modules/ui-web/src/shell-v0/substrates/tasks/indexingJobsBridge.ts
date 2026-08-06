@@ -45,7 +45,9 @@ import {
   type TaskStatus,
 } from './index.js';
 import { isInFlightLive } from './inFlightLiveness.js';
-import { resolvePathLazy } from '../../hooks/resolvePathLazy.js';
+// tempdoc 812 D4 — the row-altitude path formatter moved beside the resolver when the Activity
+// ledger became its second consumer; ONE display rule for a resolved hash.
+import { resolvePathLazy, friendlyPathName } from '../../hooks/resolvePathLazy.js';
 
 /** The Resource id whose `privacy.resolver` (core.resolve-path-hash) resolves a job pathHash. */
 const INDEXING_JOBS_RESOURCE = 'core.indexing-jobs';
@@ -110,18 +112,6 @@ export function __resetResolvedLabelsForTest(): void {
   resolvingHashes.clear();
 }
 
-/** "C:\a\b\report.pdf" → "b/report.pdf" — the file plus its parent folder for context. */
-function friendlyName(path: string): string {
-  const parts = path
-    .replace(/\\/g, '/')
-    .replace(/\/+$/, '')
-    .split('/')
-    .filter(Boolean);
-  if (parts.length === 0) return path;
-  const file = parts[parts.length - 1]!;
-  const parent = parts.length >= 2 ? parts[parts.length - 2] : '';
-  return parent ? `${parent}/${file}` : file;
-}
 
 function labelFor(job: IndexingJobRow): string {
   const friendly = resolvedLabel.get(job.pathHash);
@@ -142,7 +132,7 @@ function ensureResolvedLabel(pathHash: string): void {
   void resolveHashFn(INDEXING_JOBS_RESOURCE, pathHash)
     .then((path) => {
       if (path) {
-        resolvedLabel.set(pathHash, friendlyName(path));
+        resolvedLabel.set(pathHash, friendlyPathName(path));
         reproject?.();
       }
     })

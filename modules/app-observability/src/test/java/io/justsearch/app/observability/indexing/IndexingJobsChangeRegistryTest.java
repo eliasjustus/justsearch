@@ -68,6 +68,6 @@ final class IndexingJobsChangeRegistryTest {
   }
 
   private static IndexingJobView view(String hash, String state) {
-    return new IndexingJobView(hash, state, 0, 1L, "", 0L, "default");
+    return new IndexingJobView(hash, state, 0, 1L, "", 0L, "default", "");
   }
 }

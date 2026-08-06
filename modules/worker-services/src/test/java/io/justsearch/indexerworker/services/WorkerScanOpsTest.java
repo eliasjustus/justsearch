@@ -382,6 +382,35 @@ final class WorkerScanOpsTest {
   }
 
   /**
+   * Tempdoc 812 D2 — the scan key reaches the QUEUE, not just the progress stream. The walk's
+   * enqueue is the only place the row's {@code scan_id} can be set (the insert is
+   * {@code INSERT OR REPLACE}, so a later side-channel write would be erased by any re-enqueue),
+   * and this is the seam the 813 merge rewired from {@code enqueue} to {@code enqueueEntries} —
+   * a silent drop here would leave every scanned row keyless and no other test would notice.
+   */
+  @Test
+  void scanIdIsStampedOnTheEnqueuedJobs() throws Exception {
+    Path root = tempDir.resolve("scanid-enqueue");
+    Files.createDirectories(root);
+    Files.writeString(root.resolve("a.txt"), "x");
+    Files.writeString(root.resolve("b.txt"), "y");
+    RecordingQueue queue = new RecordingQueue();
+
+    new WorkerScanOps(queue)
+        .scan(
+            new WorkerScanOps.ScanRequest(
+                root, "scifact", WorkerScanOps.ScanMode.INITIAL, List.of(), "scan-77"),
+            p -> {});
+
+    assertEquals("scan-77", queue.lastScanId, "the walk stamps its scan on every enqueue");
+    assertEquals("scifact", queue.lastCollection, "and still carries 813's collection");
+    assertEquals(2, queue.enqueuedEntries.size(), "and still carries 813's sized entries");
+    assertTrue(
+        queue.enqueuedEntries.stream().allMatch(e -> e.sizeBytes() >= 0),
+        "sizes survive the scan-key overload — one call states both facts");
+  }
+
+  /**
    * Tempdoc 419 / T2 back-compat — the legacy 4-arg {@link WorkerScanOps.ScanRequest}
    * constructor (used by older callers and tests) defaults {@code scanId} to the empty string.
    * This pin confirms the back-compat shim doesn't accidentally start emitting null scan_id
@@ -435,6 +464,7 @@ final class WorkerScanOpsTest {
     final List<Path> enqueuedPaths = new ArrayList<>();
     final List<EnqueueEntry> enqueuedEntries = new ArrayList<>();
     String lastCollection;
+    String lastScanId;
 
     @Override
     public void open() {}
@@ -450,6 +480,14 @@ final class WorkerScanOpsTest {
     public int enqueueEntries(List<EnqueueEntry> entries, String collection) {
       enqueuedEntries.addAll(entries);
       return enqueue(EnqueueEntry.paths(entries), collection);
+    }
+
+    @Override
+    public int enqueueEntries(List<EnqueueEntry> entries, String collection, String scanId) {
+      // Tempdoc 812 D2: record the scan key the walk stamps on its enqueues, then fall through to
+      // the sized path so 813's size assertions keep seeing every entry.
+      lastScanId = scanId;
+      return enqueueEntries(entries, collection);
     }
 
     @Override

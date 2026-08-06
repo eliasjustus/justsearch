@@ -267,14 +267,26 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
   }
 
   /**
+   * Untagged enqueue of sized entries. Overridden (rather than inherited) because the interface
+   * default routes back through {@link #enqueue(List, String)}, which lands here again — this is
+   * the one hop that ends the cycle at the real write path.
+   */
+  @Override
+  public int enqueueEntries(List<JobQueue.EnqueueEntry> entries, String collection) {
+    return enqueueEntries(entries, collection, null);
+  }
+
+  /**
    * Tempdoc 813 Slice B: the single write path for the jobs table. {@code size_bytes} is listed in
    * the INSERT precisely because the statement is {@code INSERT OR REPLACE} — an unlisted column
    * would be reset to its default on every re-enqueue of an already-queued path, so the caller's
    * entry is the sole authority for the recorded size (a re-enqueue restates it, including
-   * restating it as unknown).
+   * restating it as unknown). Tempdoc 812 D2 puts {@code scan_id} on the same footing for the same
+   * reason: the enqueue call states which scan admitted the row, or the key is lost on re-enqueue.
    */
   @Override
-  public int enqueueEntries(List<JobQueue.EnqueueEntry> entries, String collection) {
+  public int enqueueEntries(
+      List<JobQueue.EnqueueEntry> entries, String collection, String scanId) {
     if (entries == null || entries.isEmpty()) {
       return 0;
     }
@@ -290,13 +302,17 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
       ensureOpen();
 
       String sql = """
-          INSERT OR REPLACE INTO jobs (path, state, attempts, last_updated, collection, size_bytes)
-          VALUES (?, 'PENDING', 0, ?, ?, ?)
+          INSERT OR REPLACE INTO jobs
+            (path, state, attempts, last_updated, collection, size_bytes, scan_id)
+          VALUES (?, 'PENDING', 0, ?, ?, ?, ?)
           """;
 
       long now = System.currentTimeMillis();
       int count = 0;
       String col = (collection != null && !collection.isBlank()) ? collection : null;
+      // Tempdoc 812 D2: the enqueueing scan's identity rides the row so the Head can group the
+      // per-document terminal outcomes into one durable scan-completion audit record.
+      String scan = (scanId != null && !scanId.isBlank()) ? scanId : null;
 
       try (PreparedStatement stmt = connection.prepareStatement(sql)) {
         for (JobQueue.EnqueueEntry entry : entries) {
@@ -313,13 +329,14 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
           } else {
             stmt.setNull(4, java.sql.Types.INTEGER);
           }
+          stmt.setString(5, scan);
           stmt.addBatch();
           count++;
         }
         stmt.executeBatch();
       }
 
-      log.debug("Enqueued {} jobs (collection={})", count, col);
+      log.debug("Enqueued {} jobs (collection={}, scanId={})", count, col, scan);
       return count;
     } catch (SQLException e) {
       log.error("Failed to enqueue jobs", e);

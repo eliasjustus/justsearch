@@ -141,7 +141,7 @@ final class ActionLedgerControllerTest {
 
   private static ActionEvent index(String id, int second) {
     return new ActionEvent.Index(
-        id, atSecond(second), "system", "WORKER_INDEXER", "h-" + id, "default", "DONE", 0, "");
+        id, atSecond(second), "system", "WORKER_INDEXER", "h-" + id, "default", "DONE", 0, "", "");
   }
 
   private static ActionEvent opAt(String id, int second) {

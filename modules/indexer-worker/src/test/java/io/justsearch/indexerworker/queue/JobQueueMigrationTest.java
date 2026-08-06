@@ -3,6 +3,7 @@ package io.justsearch.indexerworker.queue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -610,9 +611,15 @@ final class JobQueueMigrationTest {
    * V7 to V8 (tempdoc 813 Slice B): the nullable {@code size_bytes} column is added and existing
    * rows keep their state, collection and a NULL size — a pre-V8 row's byte weight is genuinely
    * unknown and must not be backfilled with a fabricated 0.
+   *
+   * <p>V8 to V9 (tempdoc 812 D2) is asserted in the SAME walk on purpose. The two slices were
+   * developed in parallel and both originally authored a "V7 to V8" step; the merge that renumbered
+   * 812's to V9 could just as easily have left one rung shadowing the other, and a database stuck at
+   * {@code user_version = 8} with a missing column is silent until a query fails in production.
+   * Asserting BOTH columns after one ladder walk is what makes that class of collision loud.
    */
   @Test
-  void migratesV7ToV8AddsNullableSizeBytesAndPreservesRows() throws Exception {
+  void migratesV7ThroughV9AddingBothSizeBytesAndScanIdAndPreservingRows() throws Exception {
     Path dbPath = tempDir.resolve("v7.db");
     String jdbcUrl = "jdbc:sqlite:" + dbPath.toAbsolutePath();
 
@@ -688,14 +695,17 @@ final class JobQueueMigrationTest {
         assertEquals(SqliteSchema.TARGET_VERSION, rs.getInt(1));
       }
       assertTrue(hasColumn(stmt, "size_bytes"), "V8 should add the size_bytes column");
+      assertTrue(hasColumn(stmt, "scan_id"), "V9 should add the scan_id column");
       try (ResultSet rs =
           stmt.executeQuery(
-              "SELECT state, collection, size_bytes FROM jobs WHERE path = '/v7/file.txt'")) {
+              "SELECT state, collection, size_bytes, scan_id FROM jobs"
+                  + " WHERE path = '/v7/file.txt'")) {
         assertTrue(rs.next());
         assertEquals("PENDING", rs.getString("state"));
         assertEquals("docs", rs.getString("collection"));
         rs.getLong("size_bytes");
         assertTrue(rs.wasNull(), "A pre-V8 row's size is unknown (NULL), not 0");
+        assertNull(rs.getString("scan_id"), "A pre-V9 row belongs to no known scan");
       }
     } finally {
       jobQueue.close();

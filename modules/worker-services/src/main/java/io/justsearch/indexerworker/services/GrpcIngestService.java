@@ -2169,6 +2169,8 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
         .setErrorMessage(row.errorMessage() == null ? "" : row.errorMessage())
         .setRetryAfterMs(row.retryAfterMs())
         .setCollection(row.collection())
+        // Tempdoc 812 D2 — the rollup key: which directory scan enqueued this job (empty when none).
+        .setScanId(row.scanId())
         .build();
   }
 

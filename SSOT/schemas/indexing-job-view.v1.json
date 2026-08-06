@@ -20,6 +20,9 @@
     "retryAfterMs" : {
       "type" : "integer"
     },
+    "scanId" : {
+      "type" : "string"
+    },
     "state" : {
       "type" : "string"
     }

@@ -1371,6 +1371,11 @@ message IndexingJobView {
   string error_message = 5;    // empty when not FAILED
   int64 retry_after_ms = 6;    // 0 when no backoff scheduled
   string collection = 7;
+  // Tempdoc 812 D2 — the scan that enqueued this job (ScanRootProgress.scan_id), or empty for
+  // jobs enqueued outside a directory scan (single-file ingest, watcher) and for rows written
+  // before the scan_id column existed. The rollup key: the Head groups per-document terminal
+  // outcomes by this value into ONE durable scan-completion audit row.
+  string scan_id = 8;
 }
 
 // Snapshot frame: full collection at the point of subscription. Only one snapshot

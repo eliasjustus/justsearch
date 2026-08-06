@@ -17,6 +17,7 @@ package io.justsearch.indexerworker.queue;
  *   <li>V6: Added privacy-safe ingestion outcome ledger table</li>
  *   <li>V7: Added scoped path-resolution table (ADR-0028, tempdoc 419 T5.1)</li>
  *   <li>V8: Added nullable size_bytes column to jobs (tempdoc 813 Slice B)</li>
+ *   <li>V9: Added nullable scan_id column to jobs (tempdoc 812 D2)</li>
  * </ul>
  */
 public final class SqliteSchema {
@@ -29,7 +30,7 @@ public final class SqliteSchema {
    * Target schema version. The migrate() method will upgrade the database
    * to this version using the migration ladder.
    */
-  public static final int TARGET_VERSION = 8;
+  public static final int TARGET_VERSION = 9;
 
   // ==================== Table: jobs ====================
 
@@ -247,6 +248,21 @@ public final class SqliteSchema {
    */
   public static final String MIGRATE_V7_TO_V8_ADD_SIZE_BYTES = """
       ALTER TABLE jobs ADD COLUMN size_bytes INTEGER DEFAULT NULL
+      """;
+
+  /**
+   * V8 to V9 migration (tempdoc 812 D2): add the {@code scan_id} column so a job row remembers
+   * WHICH directory scan enqueued it. Nullable — NULL for single-file ingests, watcher-driven
+   * enqueues, and every row written before this migration. The Head groups terminal outcomes by
+   * this key into ONE durable scan-completion audit row; keyless rows fall back to the FE's
+   * adjacency collapse.
+   *
+   * <p>Numbering note: 812 D2 and 813 Slice B were developed in parallel and BOTH authored a
+   * "V7 to V8" step. 813 merged first, so it owns V8 ({@code size_bytes}) and this one is V9 —
+   * a version number is a position in a ladder every installed database walks, never a label.
+   */
+  public static final String MIGRATE_V8_TO_V9_ADD_SCAN_ID = """
+      ALTER TABLE jobs ADD COLUMN scan_id TEXT DEFAULT NULL
       """;
 
   // ==================== Utility Methods ====================

@@ -69,6 +69,55 @@ final class IndexingJobsChangeStreamTest {
     s.subscription().close();
   }
 
+  /**
+   * Tempdoc 812 D2 — the capture-side rollup key round-trips: the scan that enqueued a job is
+   * persisted on the row and rides every delta the Head reads, so the Head can group per-document
+   * terminal outcomes by scan instead of guessing from render adjacency. A job enqueued outside a
+   * scan carries an EMPTY key (never a fake one).
+   */
+  @Test
+  void scanIdRoundTripsFromEnqueueToDelta() throws Exception {
+    CapturingSubscriber sub = new CapturingSubscriber();
+    var s = jobQueue.changeStream().subscribeWithSnapshot(sub);
+
+    // Tempdoc 812 D2 rides 813 Slice B's single jobs-table write path: one call states the size
+    // AND the scan key, because the INSERT OR REPLACE resets any column the call omits.
+    jobQueue.enqueueEntries(
+        List.of(new JobQueue.EnqueueEntry(Path.of("/tmp/scanned.txt"), 1_024L)),
+        "scifact",
+        "scan-42");
+    jobQueue.enqueueEntries(
+        List.of(new JobQueue.EnqueueEntry(Path.of("/tmp/single.txt"), 512L)), "scifact");
+
+    sub.awaitDeliveries(2);
+    var scanned = (IndexingJobChangeFeed.Delta.Insert) sub.deltas.get(0);
+    var single = (IndexingJobChangeFeed.Delta.Insert) sub.deltas.get(1);
+    assertEquals("scan-42", scanned.row().scanId());
+    assertEquals("", single.row().scanId(), "no scan → no key, not a fabricated one");
+
+    // The key also survives the state transition the ledger actually reads (the terminal outcome).
+    var batch = jobQueue.pollPending(2);
+    assertEquals(2, batch.size());
+    jobQueue.markDone(Path.of("/tmp/scanned.txt"));
+    sub.awaitDeliveries(5); // 2 PROCESSING claims + 1 DONE (the poll updates both rows)
+    var lastForScanned =
+        sub.deltas.stream()
+            .filter(d -> d instanceof IndexingJobChangeFeed.Delta.Update)
+            .map(d -> ((IndexingJobChangeFeed.Delta.Update) d).row())
+            .filter(r -> "DONE".equals(r.state()))
+            .findFirst()
+            .orElseThrow();
+    assertEquals("scan-42", lastForScanned.scanId());
+
+    // And through the snapshot path a reconnecting Head reads.
+    var s2 = jobQueue.changeStream().subscribeWithSnapshot(new CapturingSubscriber());
+    assertTrue(
+        s2.items().stream().anyMatch(r -> "scan-42".equals(r.scanId())),
+        "the snapshot frame carries the scan key too");
+    s2.subscription().close();
+    s.subscription().close();
+  }
+
   @Test
   void markDoneEmitsUpdateDelta() throws Exception {
     jobQueue.enqueue(List.of(Path.of("/tmp/b.txt")));
