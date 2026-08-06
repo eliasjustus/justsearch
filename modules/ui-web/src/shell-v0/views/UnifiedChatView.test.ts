@@ -63,6 +63,7 @@ import { createMockHostApi } from '../plugin-api/testHostApi.js';
 // the REAL userConfig document (not mocked); tests reset it so each case starts as an unseen (first-
 // sighting) cause-set, matching the pre-round-2 always-expanded assertions these tests carry forward.
 import { __resetUserConfigForTest } from '../state/userConfigState.js';
+import { known, UNKNOWN } from '../state/known.js';
 import { setUiMode, __resetUiModeForTest } from '../state/uiModeState.js';
 
 // Need to mock aiStateStore so connectedCallback doesn't try to start it
@@ -2451,6 +2452,89 @@ describe('UnifiedChatView §33 — window-level J/K step navigation', () => {
     view.remove(); // → disconnectedCallback → removeEventListener('keydown', boundWindowKeydown)
     pressWindow('j');
     expect(jumpTo).not.toHaveBeenCalled();
+  });
+});
+
+// Tempdoc 811 C-4 — the two "Searching N …" strings must describe the population a DEFAULT-scope
+// search can actually return, not the whole index (which includes agent-run transcripts the default
+// scope excludes and app-internal docs the user never added).
+describe('UnifiedChatView corpus counts (tempdoc 811 C-4)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    searchListener = null;
+  });
+
+  function corpusText(view: UnifiedChatView): string {
+    return view.shadowRoot?.querySelector('[data-testid="landing-corpus"]')?.textContent?.trim() ?? '';
+  }
+
+  async function previewText(view: UnifiedChatView, index: unknown): Promise<string> {
+    view.aiState = { ...AI_STATE_READY, index } as unknown as UnifiedChatView['aiState'];
+    view.affordance = 'documents';
+    await view.updateComplete;
+    return view.shadowRoot?.querySelector('.affordance-preview')?.textContent?.trim() ?? '';
+  }
+
+  it('the documents preview counts the searchable population, not the whole index', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    expect(await previewText(view, { documentCount: known(140), searchableDocumentCount: known(31) }))
+      .toBe('Searching 31 documents');
+    view.remove();
+  });
+
+  it('the documents preview falls back to the whole-index count when the field is absent', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    // Pre-811 backend: the field never arrives, so the store reports UNKNOWN.
+    expect(await previewText(view, { documentCount: known(140), searchableDocumentCount: UNKNOWN }))
+      .toBe('Searching 140 documents');
+    view.remove();
+  });
+
+  it('a KNOWN searchable count of 0 is shown as 0, never silently replaced by the index count', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    // The precision this pins: `0` is a real value (an index of nothing but excluded collections),
+    // NOT the absent case — a `||`-style fallback would wrongly print 140 here.
+    expect(await previewText(view, { documentCount: known(140), searchableDocumentCount: known(0) }))
+      .toBe('Searching 0 documents');
+    view.remove();
+  });
+
+  it('the landing corpus line counts the searchable population, falling back when absent', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'retrieve';
+    view.aiState = {
+      ...AI_STATE_READY,
+      lastSettledIndex: { documentCount: 140, searchableDocumentCount: 31, indexSizeBytes: null },
+    } as unknown as UnifiedChatView['aiState'];
+    await view.updateComplete;
+    expect(corpusText(view)).toBe('Searching 31 files');
+
+    view.aiState = {
+      ...AI_STATE_READY,
+      lastSettledIndex: { documentCount: 140, searchableDocumentCount: null, indexSizeBytes: null },
+    } as unknown as UnifiedChatView['aiState'];
+    await view.updateComplete;
+    expect(corpusText(view)).toBe('Searching 140 files');
+    view.remove();
+  });
+
+  it('a searchable count of 0 offers "Add folders" instead of claiming to search 0 files', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'retrieve';
+    view.aiState = {
+      ...AI_STATE_READY,
+      lastSettledIndex: { documentCount: 140, searchableDocumentCount: 0, indexSizeBytes: null },
+    } as unknown as UnifiedChatView['aiState'];
+    await view.updateComplete;
+    expect(corpusText(view)).not.toContain('Searching');
+    expect(view.shadowRoot?.querySelector('.landing-add-folders')).not.toBeNull();
+    view.remove();
   });
 });
 

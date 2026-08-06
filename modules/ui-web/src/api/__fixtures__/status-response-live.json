@@ -42,7 +42,8 @@
       "recentJobQueueDepth" : [ ],
       "recentDocsPerSec" : [ ],
       "pendingBytes" : 0,
-      "pendingUnknownSizeJobs" : 0
+      "pendingUnknownSizeJobs" : 0,
+      "searchableDocuments" : 0
     },
     "failure" : {
       "failedJobs" : 0,

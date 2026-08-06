@@ -19,7 +19,7 @@ function makeAiState(overrides: Partial<AiState> = {}): AiState {
     connection: { reachable: true, lastSuccessMs: Date.now(), lastContactMs: Date.now(), consecutiveFailures: 0 },
     runtime: { mode: 'offline', modelId: null, modelLabel: null, contextWindow: null, gpu: null, installed: known(false), installing: known(false), loadStartedAtMs: null },
     activity: { state: 'idle', shapeId: null, startedAtMs: null, canCancel: false, cancel: null },
-    index: { documentCount: known(0), pendingJobs: known(0), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+    index: { documentCount: known(0), searchableDocumentCount: known(0), pendingJobs: known(0), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
     realized: {
       reranker: { loaded: false, accelerator: null, failureReason: null },
       embed: { loaded: false, accelerator: null, failureReason: null },
@@ -173,7 +173,7 @@ describe('StatusDeck (slice 461)', () => {
   it('queue group renders when pendingJobs > 0', async () => {
     const el = make();
     el.aiState = makeAiState({
-      index: { documentCount: known(0), pendingJobs: known(5), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      index: { documentCount: known(0), searchableDocumentCount: known(0), pendingJobs: known(5), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
       status: {
         worker: { core: { indexState: 'INDEXING', pendingJobs: 5 } },
       } as unknown as AiState['status'],
@@ -194,7 +194,7 @@ describe('StatusDeck (slice 461)', () => {
   it('630: queue reads "paused" on the main-surface bar when energy saver is active', async () => {
     const el = make();
     el.aiState = makeAiState({
-      index: { documentCount: known(0), pendingJobs: known(5), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      index: { documentCount: known(0), searchableDocumentCount: known(0), pendingJobs: known(5), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
       status: {
         power: { energyReduced: true },
         worker: { core: { indexState: 'INDEXING', pendingJobs: 5 } },
@@ -207,7 +207,7 @@ describe('StatusDeck (slice 461)', () => {
   it('630: queue stays the plain active count when not energy-reduced', async () => {
     const el = make();
     el.aiState = makeAiState({
-      index: { documentCount: known(0), pendingJobs: known(5), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      index: { documentCount: known(0), searchableDocumentCount: known(0), pendingJobs: known(5), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
       status: {
         power: { energyReduced: false },
         worker: { core: { indexState: 'INDEXING', pendingJobs: 5 } },
@@ -223,7 +223,7 @@ describe('StatusDeck (slice 461)', () => {
   it('813: jobs drained but enrichment outstanding ⇒ the chip reads the enriching percent', async () => {
     const el = make();
     el.aiState = makeAiState({
-      index: { documentCount: known(100), pendingJobs: known(0), embeddingPending: known(40), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      index: { documentCount: known(100), searchableDocumentCount: known(100), pendingJobs: known(0), embeddingPending: known(40), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
       status: {
         worker: {
           core: { indexState: 'IDLE', pendingJobs: 0 },
@@ -244,7 +244,7 @@ describe('StatusDeck (slice 461)', () => {
   it('813: a blocked embedding stage claims no enrichment progress', async () => {
     const el = make();
     el.aiState = makeAiState({
-      index: { documentCount: known(100), pendingJobs: known(0), embeddingPending: known(40), embeddingBlocked: known(true), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      index: { documentCount: known(100), searchableDocumentCount: known(100), pendingJobs: known(0), embeddingPending: known(40), embeddingBlocked: known(true), embeddingQueueSize: known(0), vduQueueSize: known(0) },
       status: {
         worker: {
           core: { indexState: 'IDLE', pendingJobs: 0 },
@@ -266,7 +266,7 @@ describe('StatusDeck (slice 461)', () => {
   it('§17.2 — files/size/memory values come from the projectFact authority (one formatter)', async () => {
     const el = make();
     el.aiState = makeAiState({
-      index: { documentCount: known(605), pendingJobs: known(0), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      index: { documentCount: known(605), searchableDocumentCount: known(605), pendingJobs: known(0), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
       status: {
         worker: { core: { indexSizeBytes: 53_477_376 } },
         memoryUsedBytes: 238_026_752,
@@ -401,7 +401,7 @@ describe('StatusDeck (slice 461)', () => {
     const el = make();
     el.aiState = makeAiState({
       stability: { kind: 'provisional', cause: 'worker-restart' },
-      lastSettledIndex: { documentCount: 1234, indexSizeBytes: 4096 },
+      lastSettledIndex: { documentCount: 1234, searchableDocumentCount: 1234, indexSizeBytes: 4096 },
     });
     await el.updateComplete;
     const vals = Array.from(el.shadowRoot?.querySelectorAll('.val') ?? []);
@@ -429,7 +429,7 @@ describe('StatusDeck (slice 461)', () => {
     const el = make();
     el.aiState = makeAiState({
       stability: { kind: 'provisional', cause: 'worker-restart' },
-      lastSettledIndex: { documentCount: 1234, indexSizeBytes: null },
+      lastSettledIndex: { documentCount: 1234, searchableDocumentCount: 1234, indexSizeBytes: null },
     });
     await el.updateComplete;
     const texts = Array.from(el.shadowRoot?.querySelectorAll('.val') ?? []).map((v) => v.textContent?.trim());

@@ -158,6 +158,11 @@ message CoreIndexView {
   // recorded size — an unknown weight must not read as zero bytes.
   int64 pending_bytes = 13 [json_name = "pendingBytes"];
   int64 pending_unknown_size_jobs = 14 [json_name = "pendingUnknownSizeJobs"];
+  // Tempdoc 811 C-4: the population a DEFAULT-scope search can actually return — indexedDocuments
+  // minus the collections the default scope excludes (today: agent-history). indexedDocuments keeps
+  // describing the whole non-chunk index (Health, jseval, sandbox evidence read it that way); a
+  // user-facing "Searching N documents" string must use THIS field.
+  int64 searchable_documents = 15 [json_name = "searchableDocuments"];
 }
 
 message FailureTrackingView {

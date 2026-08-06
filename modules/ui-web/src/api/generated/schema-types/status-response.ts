@@ -259,6 +259,7 @@ export interface StatusResponse {
       recentDocsPerSec?: number[] | null;
       recentJobQueueDepth?: number[] | null;
       refreshLagMs?: number;
+      searchableDocuments?: number;
       writerPendingDocs?: number;
       writerQueueDepth?: number;
     };
@@ -587,6 +588,7 @@ export const statusResponseSchema = z.strictObject({
       "recentDocsPerSec": z.array(z.number()).nullable().optional(),
       "recentJobQueueDepth": z.array(z.number().int()).nullable().optional(),
       "refreshLagMs": z.number().int().optional(),
+      "searchableDocuments": z.number().int().optional(),
       "writerPendingDocs": z.number().int().optional(),
       "writerQueueDepth": z.number().int().optional(),
     }).optional(),

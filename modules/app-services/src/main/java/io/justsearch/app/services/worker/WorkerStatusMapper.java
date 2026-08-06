@@ -83,7 +83,8 @@ final class WorkerStatusMapper {
                         toLongArray(core.getRecentJobQueueDepthList()),
                         toDoubleArray(core.getRecentDocsPerSecList()),
                         core.getPendingBytes(),
-                        core.getPendingUnknownSizeJobs()))
+                        core.getPendingUnknownSizeJobs(),
+                        core.getSearchableDocCount()))
                 .failure(new FailureTrackingView(
                         failure.getFailedCount(),
                         failure.getLastFailedPath(),

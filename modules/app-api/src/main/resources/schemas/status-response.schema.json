@@ -666,6 +666,9 @@
             "refreshLagMs" : {
               "type" : "integer"
             },
+            "searchableDocuments" : {
+              "type" : "integer"
+            },
             "writerPendingDocs" : {
               "type" : "integer"
             },
