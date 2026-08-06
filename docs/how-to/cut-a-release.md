@@ -70,7 +70,17 @@ A release **candidate** is qualified before its number is finalized:
    Round modes cover the supported **arrival states**, not only the empty
    machine: first and final qualifying rounds run `fresh-install`, and the qualifying set must
    include at least one `upgrade-from-release` round (previous public release installed first,
-   candidate installed over it — tempdoc 750 Part C). *What* to cover is not remembered — it is
+   candidate installed over it — tempdoc 750 Part C).
+   **The qualifying set also includes one owner/human gestalt-tier manual pass per release
+   candidate, performed WITHOUT API access.** The reviewer must experience the surface, not
+   compensate for it: an agent with the API, the tempdocs and the source conventions resolves an
+   unclear surface by reading `/api/…` and correctly files nothing, which is exactly the
+   competence that disqualifies it as the observer for this class. Findings are recorded and then
+   agent-verified against the running build, each claim tagged with its provenance. Origin: the
+   0.2.0 round-14 manual pass (2026-08-05/06) — run immediately after a round that passed
+   coverage 26/26, golden parity, token health and a full screenshot reader pass with no blocking
+   defect — produced **15 findings**, the whole-screen and design-debt classes no per-item
+   existence gate can see (tempdocs 809 verbatim, 810 triage). *What* to cover is not remembered — it is
    **derived from what the candidate ships:**
    `scripts/sandbox/sandbox-launch.py` generates a per-candidate `coverage-brief.md` from the
    committed surface artifacts against `governance/sandbox-coverage.v1.json` and **fails closed**
@@ -114,6 +124,12 @@ A release **candidate** is qualified before its number is finalized:
    charter). A needs-dig classification carries an owner and a timebox so the gate cannot
    stall a release indefinitely; by-catch from past confirmatory rounds is real but is
    measured in the debrief (on-opportunity share), not used to justify the next one.
+   **Campaign hygiene: audit the charter's do-not-refile list once per campaign** for entries
+   that have drifted from *known residual* into *accepted behaviour*. The list is necessary — it
+   is what stops a round re-filing a known-correct signature as a false HIGH — but every entry
+   permanently converts an observation into a non-observation, and nothing expires it. Re-read
+   each entry and ask whether it is still a residual someone intends to fix, or has quietly
+   become the product's behaviour by default.
 4. **Finalize on zero findings.** Only when a Sandbox round finds no blocking issues is the
    number finalized and the release published.
 
