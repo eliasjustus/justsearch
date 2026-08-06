@@ -388,7 +388,7 @@ Source: slices 491 (substrate), 496 (FreeChat + Extract), 497 (dynamic dispatch)
 | 1 | `justsearch_answer` | RAG retrieval — assembled passages | `DocumentService.retrieveContext()` (in-process) |
 | 2 | `justsearch_search` | Exploratory search with facets | `KnowledgeHttpApiAdapter.search()` |
 | 3 | `justsearch_browse` | Folder structure exploration | `core.browse-folders` Operation |
-| 4 | `justsearch_ingest` | File indexing | `core.ingest-files` Operation |
+| 4 | `justsearch_ingest` | File indexing (`paths[]`, optional `collection` — tempdoc 811 C-2a) | `core.ingest-files` Operation |
 | 5 | `justsearch_status` | Index health + enrichment | `KnowledgeHttpApiAdapter.status()` |
 | 6 | `justsearch_runtime_manifest` | Redacted runtime manifest for identity-aware caching | `RuntimeManifestPublisher` |
 
@@ -502,9 +502,17 @@ Frontend compatibility note: `modules/ui-web/src/api/domains/search.ts` maps thi
 
 `POST /api/knowledge/ingest`:
 
-- Request body: `paths[]` (required root/file paths)
-- Controller expands directories to readable files (respecting configured excludes), then submits batch ingest.
+- Request body: `paths[]` (required root/file paths), `collection` (optional string).
+- Directory inputs dispatch to the Worker's `ScanRoot` RPC (the Worker owns the walk); regular-file inputs go through `submitBatch`.
+- **Collection tagging (tempdoc 811 C-2a).** Every ingest carries an addressable collection, resolved by `IngestCollectionPolicy` (`modules/app-api/.../knowledge/IngestCollectionPolicy.java`): an explicit `collection` wins; otherwise a path under a registered watched root inherits that root's collection; otherwise the path is out-of-root and gets `mcp-ingest`. A supplied `collection` must be a non-empty string and must not be one of the reserved app-internal collections (`justsearch-help`, `agent-history`) — either violation is a `400`. One request may mix in-root and out-of-root paths; single files are grouped by resolved collection. Pre-811 documents ingested here carry no `collection` field and are not backfilled; they acquire a tag on re-index.
 - Response: `accepted` (count accepted by Worker queue), `error` (best-effort error message), `scanId` (worker-allocated UUID for the scan; empty when no progress was emitted, e.g. inputs that weren't directories). Use the `scanId` to subscribe to live progress via the SSE endpoint below (tempdoc 419 / T4).
+
+`DELETE /api/indexing/collections`:
+
+- Request body: `collection` (required string). Removal route for collection-tagged ad-hoc ingests — `removeWatchedRoot` and `PruneOps.pruneByPathPrefix` are both watched-root-prefix driven, so before 811 an out-of-root ingest had no removal route at all.
+- Deletes every parent and chunk document carrying the collection term (Worker RPC `IngestService.DeleteByCollection`), then commits.
+- Refuses (`400`) the reserved app-internal collections (`justsearch-help`, `agent-history`) and the untagged `default` bucket — the latter would be a whole-index wipe wearing a collection's clothes.
+- Response: `status: "ok"`, `collection`, `deletedDocs` (documents matched and submitted for deletion).
 
 ### Live Scan Progress (SSE)
 

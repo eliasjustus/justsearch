@@ -13,6 +13,8 @@ import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanContext;
 import io.justsearch.ipc.BatchRequest;
 import io.justsearch.ipc.BatchResponse;
+import io.justsearch.ipc.DeleteByCollectionRequest;
+import io.justsearch.ipc.DeleteByCollectionResponse;
 import io.justsearch.ipc.DeleteByIdRequest;
 import io.justsearch.ipc.DeleteByIdResponse;
 import io.justsearch.ipc.DeleteByPathRequest;
@@ -922,6 +924,55 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
       responseObserver.onNext(deleteByPathResponse(-1, e.getMessage()));
       responseObserver.onCompleted();
     }
+    }
+  }
+
+  /**
+   * Tempdoc 811 (C-2a) — the removal route for collection-tagged ad-hoc ingests. {@link
+   * #deleteByPath} is watched-root-prefix driven and can never reach a document ingested from a path
+   * under no watched root; this deletes by the {@code collection} term instead.
+   *
+   * <p>WHICH collections are deletable is decided by ONE Head-side authority ({@code
+   * IngestCollectionPolicy#isDeletable} — refuses the reserved app-internal corpora and the untagged
+   * default bucket). The worker deliberately does not fork that list; it only refuses a blank value.
+   */
+  @Override
+  public void deleteByCollection(
+      DeleteByCollectionRequest request, StreamObserver<DeleteByCollectionResponse> responseObserver) {
+    try (var ignored = openRequestMdc()) {
+      String collection = request.getCollection();
+      log.info("deleteByCollection RPC called for collection: {}", collection);
+
+      if (replyIfBlank(
+          collection, responseObserver, deleteByCollectionResponse(-1, "Collection is required"))) {
+        return;
+      }
+      if (replyIfIndexRuntimeUnavailable(
+          "deleteByCollection",
+          responseObserver,
+          deleteByCollectionResponse(-1, "Index runtime not available"))) {
+        return;
+      }
+
+      try {
+        if (switchBufferOps.isSwitching()) {
+          // Fail closed rather than buffer: a collection-scoped bulk delete replayed against a
+          // freshly-switched index could race the migration's own document set.
+          IngestSwitchBufferOps.replySwitchingUnavailable(responseObserver);
+          return;
+        }
+
+        int deleted = ingestLifecycle.indexingCoordinator().deleteByCollection(collection);
+        ingestLifecycle.commitOps().commitAndTrack(CommitReason.GRPC_DELETE_BY_COLLECTION);
+
+        log.info("deleteByCollection complete: {} documents deleted for {}", deleted, collection);
+        responseObserver.onNext(deleteByCollectionResponse(deleted, ""));
+        responseObserver.onCompleted();
+      } catch (Exception e) {
+        log.error("deleteByCollection failed for collection: {}", collection, e);
+        responseObserver.onNext(deleteByCollectionResponse(-1, e.getMessage()));
+        responseObserver.onCompleted();
+      }
     }
   }
 
