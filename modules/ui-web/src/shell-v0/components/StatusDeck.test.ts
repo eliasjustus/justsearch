@@ -7,6 +7,7 @@ import { __resetStatusPollForTest } from '../utils/statusPoll.js';
 import { __resetInferencePollForTest } from '../utils/inferencePoll.js';
 import { __resetAiStateForTest, isSnapshotLive, type AiState } from '../state/aiStateStore.js';
 import { known, UNKNOWN } from '../state/known.js';
+import { updateShellContext, __resetShellContextForTest } from '../state/shellContextState.js';
 import { EPHEMERAL_TOAST_EVENT } from './advisory/ephemeralToast.js';
 import { formatCount } from '../display/format.js';
 
@@ -440,6 +441,94 @@ describe('StatusDeck (slice 461)', () => {
       await el.updateComplete;
       const control = el.shadowRoot?.querySelector('[label*="Open Health"]');
       expect(control).not.toBeNull();
+    });
+  });
+
+  // ── Tempdoc 814 §D5 — the chip yields the degradation fact to a surface banner ──
+  //
+  // Finding 12's measured duplication: "Reduced capability"/"Service degraded" rendered twice, ~660px
+  // apart, in two components (this bar is Shell chrome; the banner is UnifiedChatView's) neither of
+  // which could see the other. The rule is per-SURFACE, not global — these four cases pin both halves
+  // of it, including the two ways over-suppressing would be a truthfulness regression.
+  describe('814 §D5 — capability-degradation arbitration with the surface banner', () => {
+    const CHAT_SURFACE = 'core.unified-chat-surface';
+    const DEGRADED_WARN = {
+      kind: 'degraded',
+      severity: 'warn',
+      reasons: ['worker.health.embedding_not_ready'],
+    } as AiState['verdict'];
+
+    function degradedDeck(): StatusDeck {
+      const el = make();
+      el.aiState = makeAiState({
+        verdict: DEGRADED_WARN,
+        // The production projections of that verdict (aiStateStore.computeStatusLabel/Tone).
+        statusLabel: 'Service degraded',
+        statusTone: 'warning',
+        // …while the AI engine itself is up: the mode readout the chip falls back to.
+        runtime: { mode: 'online', modelId: 'm', modelLabel: 'Qwen', contextWindow: null, gpu: null, installed: known(true), installing: known(false), loadStartedAtMs: null },
+        aiEngine: { kind: 'online', stability: { kind: 'settled' }, installFailure: null },
+      });
+      return el;
+    }
+
+    function pillText(el: StatusDeck): string {
+      return (el.shadowRoot?.querySelector('.status-pill jf-status-badge')?.textContent ?? '').trim();
+    }
+
+    beforeEach(() => {
+      __resetShellContextForTest();
+    });
+
+    it('yields on the chat surface when the verdict warrants that surface a banner', async () => {
+      updateShellContext({ activeSurface: CHAT_SURFACE });
+      const el = degradedDeck();
+      await el.updateComplete;
+      // The banner (UnifiedChatView.renderDegradationBanner) is the ONE persistent home of the fact
+      // here — it carries the 600 wording and the remedy — so the chip reports the AI mode instead.
+      expect(pillText(el)).not.toContain('degraded');
+      expect(pillText(el)).toBe('Online — Qwen');
+      expect(el.shadowRoot?.querySelector('.status-pill jf-status-badge')?.getAttribute('tone')).toBe(
+        'success',
+      );
+    });
+
+    it('does NOT yield on another surface — the chip is the global indicator there', async () => {
+      updateShellContext({ activeSurface: 'core.library-surface' });
+      const el = degradedDeck();
+      await el.updateComplete;
+      expect(pillText(el)).toBe('Service degraded');
+    });
+
+    it('does NOT yield on the chat surface when the verdict warrants NO banner (info tier)', async () => {
+      // Post-finding-9 an info-severity verdict is bannerless (`warrantsSearchDegradationBanner`),
+      // so yielding here would suppress the ONLY indicator of the fact — the load-bearing case.
+      updateShellContext({ activeSurface: CHAT_SURFACE });
+      const el = make();
+      el.aiState = makeAiState({
+        verdict: { kind: 'degraded', severity: 'info', reasons: ['lambdamart.not_configured'] },
+        statusLabel: 'Reduced capability',
+        statusTone: 'info',
+        aiEngine: { kind: 'online', stability: { kind: 'settled' }, installFailure: null },
+      });
+      await el.updateComplete;
+      expect(pillText(el)).toBe('Reduced capability');
+    });
+
+    it('does NOT yield an UNREACHABLE verdict — that is a connection fact, not this register row', async () => {
+      // `unreachable` also warrants a banner, but yielding it would let the bar report the AI engine's
+      // "Online" while the backend is gone: the regression this rule exists to prevent.
+      updateShellContext({ activeSurface: CHAT_SURFACE });
+      const el = make();
+      el.aiState = makeAiState({
+        verdict: { kind: 'unreachable', severity: 'error', reasons: ['binding.unreachable'] },
+        statusLabel: 'Backend disconnected',
+        statusTone: 'error',
+        connection: { reachable: false, lastSuccessMs: null, lastContactMs: null, consecutiveFailures: 3 },
+        aiEngine: { kind: 'online', stability: { kind: 'settled' }, installFailure: null },
+      });
+      await el.updateComplete;
+      expect(pillText(el)).toBe('Backend disconnected');
     });
   });
 });

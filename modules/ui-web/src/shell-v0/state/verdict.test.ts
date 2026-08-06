@@ -113,6 +113,81 @@ describe('computeStability (595 §4.1)', () => {
   });
 });
 
+// Tempdoc 807 §E.4 — the residual that document recorded and deliberately deferred: the VERDICT
+// itself was still pinned by retained snapshot fields, so after contact was lost the status LINE
+// projected a retained cause present-tense (probed: retained `UNAVAILABLE` + 41 s aged contact ⇒
+// `worker-restart` / "Restarting…") while every liveness signal correctly read stale. These
+// assertions SUPERSEDE the pre-807-§E.4 precedence (a retained cause winning over lost contact);
+// the live-contact cases above are unchanged and pin that this is a lost-contact rule, not a
+// retained-cause deletion.
+describe('807 §E.4: lost contact dominates every retained-snapshot cause', () => {
+  it('retained UNAVAILABLE + no contact ⇒ channel-stale, not the retained "Restarting…" cause', () => {
+    expect(
+      computeStability({
+        ...settledInput,
+        phase: 'stale',
+        reachableViaContact: false,
+        indexState: 'UNAVAILABLE',
+      }),
+    ).toEqual({ kind: 'provisional', cause: 'channel-stale' });
+  });
+
+  it('all six retained-cause branches yield channel-stale once contact is lost', () => {
+    const lost = { phase: 'stale' as const, reachableViaContact: false };
+    const retained: ReadonlyArray<Partial<StabilityInput>> = [
+      { indexState: 'UNAVAILABLE' },
+      { migrationState: 'SWITCHING' },
+      { migrationState: 'MIGRATING' },
+      { buildingGenerationId: 'g2', activeGenerationId: 'g1' },
+      { servingSearchGenerationId: 'g1', servingIngestGenerationId: 'g2' },
+      { catchingUp: true },
+    ];
+    for (const r of retained) {
+      expect(computeStability({ ...settledInput, ...lost, ...r }), JSON.stringify(r)).toEqual({
+        kind: 'provisional',
+        cause: 'channel-stale',
+      });
+    }
+  });
+
+  it('live contact leaves every retained cause exactly as it was (this is a contact rule)', () => {
+    expect(
+      computeStability({ ...settledInput, reachableViaContact: true, migrationState: 'MIGRATING' }),
+    ).toEqual({ kind: 'provisional', cause: 'rebuilding' });
+    expect(computeStability({ ...settledInput, reachableViaContact: true, catchingUp: true })).toEqual({
+      kind: 'provisional',
+      cause: 'catching-up',
+    });
+    expect(computeStability({ ...settledInput, reachableViaContact: true })).toEqual({ kind: 'settled' });
+  });
+
+  it('the boot grace is untouched: connecting + no contact yet stays initial-load', () => {
+    // Scoped to the POLL-STALE phase deliberately: `connecting` is the first-poll window (no poll has
+    // ever succeeded), so there is no retained snapshot for a cause to be projected FROM, and
+    // `disconnected` is already dominated by `computeVerdict`'s own `unreachable` arm.
+    expect(
+      computeStability({ ...settledInput, phase: 'connecting', reachableViaContact: false }),
+    ).toEqual({ kind: 'provisional', cause: 'initial-load' });
+  });
+
+  it('the lost-contact verdict words itself "Reconnecting…", never a retained cause', () => {
+    const stability = computeStability({
+      ...settledInput,
+      phase: 'stale',
+      reachableViaContact: false,
+      indexState: 'UNAVAILABLE',
+    });
+    const v = computeVerdict({
+      phase: 'stale',
+      stability,
+      readiness: known(readyReadiness),
+      reachableViaContact: false,
+    });
+    expect(v).toEqual({ kind: 'transitioning', severity: 'warn', reasons: ['channel-stale'] });
+    expect(verdictHeadline(v)).toBe('Reconnecting…');
+  });
+});
+
 describe('649: connection truthfulness under load', () => {
   it('updating verdict is a calm transition headed "Catching up…"', () => {
     const v = computeVerdict({

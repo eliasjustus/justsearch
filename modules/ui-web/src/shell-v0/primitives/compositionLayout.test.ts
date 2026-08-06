@@ -1,6 +1,15 @@
 // @vitest-environment happy-dom
-import { describe, it, expect } from 'vitest';
-import { trackTemplate, composeGridStyles, type ZoneDecl } from './compositionLayout.js';
+import { describe, it, expect, afterEach } from 'vitest';
+import {
+  trackTemplate,
+  composeGridStyles,
+  isShortViewport,
+  subscribeShortViewport,
+  shortViewportMedia,
+  SHORT_VIEWPORT_MAX_HEIGHT_PX,
+  SHORT_VIEWPORT_QUERY,
+  type ZoneDecl,
+} from './compositionLayout.js';
 import { CONVERSATION_ZONES } from '../views/unifiedChatRequest.js';
 import { unifiedChatBodyStyles } from '../views/unifiedChatStyles.js';
 import { isWideLayout, reportLayoutWidth } from '../state/responsiveState.js';
@@ -202,5 +211,67 @@ describe('798 — the wide layout commits only at a width its declared minimums 
     reportLayoutWidth(other, null);
     expect(isWideLayout()).toBe(true);
     reportLayoutWidth(REPORTER, null);
+  });
+});
+
+// Tempdoc 814 §D6 — the BLOCK-axis breakpoint authority. Chrome accreted to ~60% of a ~790px window
+// because no height-based query existed anywhere in the surface: every band's own maximum was
+// individually defensible and nothing owned the sum. These assert the one number has one home, that
+// both its halves (CSS `@media`, JS `matchMedia`) are spelled from it, and that the surface stylesheet
+// actually consumes it.
+describe('814 — the one block-axis breakpoint', () => {
+  /** happy-dom's viewport IS controllable, and its 768px default sits BELOW this breakpoint. */
+  function setViewportHeight(px: number): void {
+    (
+      window as unknown as { happyDOM: { setViewport: (v: { height: number }) => void } }
+    ).happyDOM.setViewport({ height: px });
+  }
+
+  afterEach(() => setViewportHeight(768));
+
+  it('spells the media condition from the one constant', () => {
+    expect(SHORT_VIEWPORT_MAX_HEIGHT_PX).toBe(820);
+    expect(SHORT_VIEWPORT_QUERY).toBe('(max-height: 820px)');
+    // A VIEWPORT media query, not a container query (§B.12): the surface box is `container-type:
+    // inline-size` and cannot query its own block size.
+    expect(shortViewportMedia.cssText).toBe('@media (max-height: 820px)');
+    expect(shortViewportMedia.cssText).not.toContain('@container');
+  });
+
+  it('reads the live viewport on both sides of the breakpoint', () => {
+    setViewportHeight(700);
+    expect(isShortViewport()).toBe(true);
+    setViewportHeight(1000);
+    expect(isShortViewport()).toBe(false);
+    // Precision: the breakpoint is inclusive at exactly 820 and clear one pixel above it.
+    setViewportHeight(SHORT_VIEWPORT_MAX_HEIGHT_PX);
+    expect(isShortViewport()).toBe(true);
+    setViewportHeight(SHORT_VIEWPORT_MAX_HEIGHT_PX + 1);
+    expect(isShortViewport()).toBe(false);
+  });
+
+  it('fires a subscriber once immediately with the current value, and stops after unsubscribe', () => {
+    setViewportHeight(700);
+    const seen: boolean[] = [];
+    const unsub = subscribeShortViewport((short) => seen.push(short));
+    expect(seen).toEqual([true]);
+    unsub();
+    setViewportHeight(1000);
+    expect(seen).toEqual([true]);
+  });
+
+  it('is CONSUMED by the surface stylesheet — the document pane yields its floor below it', () => {
+    // The F5 close (734 round 8): the 24rem floor + fixed chrome exceeds a 768-tall window and the
+    // composer, bottom of the flex column, paid. Asserted against the real stylesheet so deleting the
+    // yield fails here rather than silently reopening the defect.
+    const cssText = unifiedChatBodyStyles.cssText;
+    expect(cssText).toContain('@media (max-height: 820px)');
+    const short = /@media \(max-height: 820px\)\s*\{([\s\S]*?)\n {4}\}/.exec(cssText);
+    expect(short).not.toBeNull();
+    expect(short![1]).toContain('.document-pane');
+    const yielded = /min-height:\s*([\d.]+)rem/.exec(short![1] ?? '');
+    expect(yielded).not.toBeNull();
+    // The floor yields — it does not merely restate the 24rem it is overriding.
+    expect(Number(yielded?.[1])).toBeLessThan(24);
   });
 });

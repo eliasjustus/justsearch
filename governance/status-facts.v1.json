@@ -1,0 +1,24 @@
+{
+  "$comment": "Tempdoc 814 D5 — One authority, one pointer. A status fact (capability degradation, budget state, source count) has exactly one persistent-chrome authority surface at the pinned viewport; every other appearance is a pointer to the authority or absent. This register names the phrase-level surface of that rule: each entry is a literal phrase the measurement probe (scripts/jseval/jseval/ui_measure.py capture_measure -> statusFacts) counts across the shadow-piercing deep DOM text of a capture. `maxPersistentRenders` is the ceiling `jseval ui-proportion-gate` enforces on any step that opts in via `statusFactsSingleton: true` (governance/ui-proportion-baseline.v1.json) — a count above the ceiling is the copy-lint the D5 charter asked for, not eyeballed. See docs/tempdocs/814-chat-surface-chrome-allocation.md §D5 / §D7.3.",
+  "schema": "status-facts.v1",
+  "version": 1,
+  "facts": [
+    {
+      "phrase": "Reduced capability",
+      "maxPersistentRenders": 1
+    },
+    {
+      "$comment": "The warn-tier verdict headline (state/verdict.ts verdictHeadline). The info-tier 'Reduced capability' is bannerless post-finding-9, so this phrase is the one the chat-bands degraded-warn fixture can actually witness duplicated (banner + status chip) — W3 §B.14 finding.",
+      "phrase": "Service degraded",
+      "maxPersistentRenders": 1
+    },
+    {
+      "phrase": "Over budget",
+      "maxPersistentRenders": 1
+    },
+    {
+      "phrase": "Sources ·",
+      "maxPersistentRenders": 1
+    }
+  ]
+}

@@ -68,7 +68,11 @@ def _find_proportion_baseline() -> dict[str, list[str]]:
     A `mustNotOverlapSelector` counterpart is collected too: an overlap constraint is a
     RELATION, so the gate needs BOTH rects out of the one capture, and a counterpart that
     is only ever named (never registered as its own row) would otherwise be missing from
-    the geometry and read as a capture error."""
+    the geometry and read as a capture error. Tempdoc 814 (W4 activation) extends the same
+    union to `minShareOfSelector`'s denominator selector (also a RELATION — the share
+    assertion needs both rects) and to a step-level `absentSelectors` list (an element that
+    must NOT be present still needs to be *probed* so its absence is a capture fact, not
+    a missing key indistinguishable from a typo)."""
     here = Path(__file__).resolve()
     for parent in here.parents:
         cand = parent / "governance" / "ui-proportion-baseline.v1.json"
@@ -86,6 +90,14 @@ def _find_proportion_baseline() -> dict[str, list[str]]:
                             sel = el.get(key)
                             if sel and sel not in sels:
                                 sels.append(sel)
+                        share = el.get("minShareOfSelector")
+                        if isinstance(share, dict):
+                            sel = share.get("selector")
+                            if sel and sel not in sels:
+                                sels.append(sel)
+                    for sel in s.get("absentSelectors") or []:
+                        if sel and sel not in sels:
+                            sels.append(sel)
                     out[step] = sels
                 return out
             except Exception:
@@ -94,6 +106,29 @@ def _find_proportion_baseline() -> dict[str, list[str]]:
 
 
 _PROPORTION_BASELINE_SELECTORS = _find_proportion_baseline()
+
+
+def _find_status_facts() -> list[str]:
+    """Load the shared status-facts register (tempdoc 814 §D5): the ONE authority for
+    which literal phrases the D5 single-authority-render rule tracks (e.g. "Reduced
+    capability"). Returns the phrase list — the per-phrase `maxPersistentRenders`
+    ceiling is a `ui-proportion-gate` concern (it cross-references the same register),
+    not this capture's. Best-effort: an absent/garbled register yields an empty list
+    (the probe then reports no facts, never crashes a capture), mirroring
+    `_find_a11y_baseline` / `_find_proportion_baseline`'s fail-open contract."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        cand = parent / "governance" / "status-facts.v1.json"
+        if cand.exists():
+            try:
+                reg = json.loads(cand.read_text(encoding="utf-8"))
+                return [f["phrase"] for f in reg.get("facts") or [] if f.get("phrase")]
+            except Exception:
+                return []
+    return []
+
+
+_STATUS_FACT_PHRASES = _find_status_facts()
 
 
 def split_new_vs_known(
@@ -249,6 +284,15 @@ _JS_DEEP = """
 # Takes `extraSels` (tempdoc 697): the current step's registered chrome-proportion
 # baseline selectors, unioned in so their heights land in the same `elements` map
 # under their own selector key — one geometry probe, no second capture path.
+#
+# Tempdoc 814 (W4 activation): also walks the WHOLE shadow-pierced document for every
+# scrollable region — a port of `ui_check.py`'s `_JS_GET_SCROLL_DELTA` (which finds only
+# the single BEST scrollable region, scoped to `.zone-stage`/`main`, for the screenshot's
+# scroll-to-top step), generalized to (a) shadow-pierce via `deepAll` (the light-DOM-only
+# original can't see scrollers inside a component's own shadow root) and (b) enumerate
+# EVERY scrollable region, not just the largest — so `geometry.scrollableCount` is a real
+# "how many scroll affordances does this surface have" fact for D3's one-scroller rule
+# (`ui_proportion_gate.py`'s `maxScrollableRegions` step-level check), not a proxy for it.
 _JS_GEOMETRY = """(extraSels) => {
 """ + _JS_DEEP + """
     const pick = (el) => {
@@ -263,13 +307,34 @@ _JS_GEOMETRY = """(extraSels) => {
             z: cs.zIndex, fontSize: cs.fontSize, display: cs.display,
         };
     };
+    const describeScrollable = (el) => {
+        let s = el.tagName.toLowerCase();
+        if (el.id) s += '#' + el.id;
+        const cls = (el.className && typeof el.className === 'string')
+            ? el.className.trim().split(/\\s+/).filter(Boolean) : [];
+        if (cls.length) s += '.' + cls.slice(0, 3).join('.');
+        const testid = el.getAttribute && el.getAttribute('data-testid');
+        if (testid) s += '[data-testid="' + testid + '"]';
+        return s;
+    };
     const sels = ['[role="banner"]','[role="navigation"]','[role="main"]','main','.zone-stage','h1',
                   '[data-surface-id]','jf-rail','jf-stage','jf-inspector-pane'].concat(extraSels || []);
     const elements = {};
     for (const s of sels) { const e = deepQuery(s); if (e) elements[s] = pick(e); }
+    const scrollableRegions = [];
+    for (const el of deepAll()) {
+        const cs = getComputedStyle(el);
+        const oy = cs.overflowY;
+        if (oy !== 'auto' && oy !== 'scroll') continue;
+        const d = Math.round((el.scrollHeight || 0) - (el.clientHeight || 0));
+        if (d <= 1) continue;
+        scrollableRegions.push({ selector: describeScrollable(el), scrollDelta: d });
+    }
     const de = document.documentElement;
     return {
         elements,
+        scrollableRegions,
+        scrollableCount: scrollableRegions.length,
         focused: pick(document.activeElement),
         document: {
             scrollWidth: de.scrollWidth, clientWidth: de.clientWidth,
@@ -278,6 +343,25 @@ _JS_GEOMETRY = """(extraSels) => {
             overflowY: de.scrollHeight > de.clientHeight + 1,
         },
     };
+}"""
+
+# Tempdoc 814 §D5/§D7.3 — the status-fact SINGLETON probe: given a phrase list (loaded
+# from governance/status-facts.v1.json), count how many times each phrase appears across
+# the shadow-pierced deep DOM text. Counts LEAF elements only (elements with zero element
+# children) so a phrase is not double-counted through a parent's aggregated textContent —
+# a `<slot>` with nothing directly assigned to it as a DOM child is a leaf too (its own
+# textContent is empty unless it carries fallback content), so slotted light-DOM text is
+# counted once, at its own leaf, not a second time through the slot.
+_JS_STATUS_FACTS = """(phrases) => {
+""" + _JS_DEEP + """
+    let text = '';
+    for (const el of deepAll()) {
+        if (el.children && el.children.length === 0) {
+            const t = (el.textContent || '').trim();
+            if (t) text += ' ' + t;
+        }
+    }
+    return (phrases || []).map((p) => ({ phrase: p, count: text.split(p).length - 1 }));
 }"""
 
 # Shadow-piercing a11y landmark/role/heading collection — the live "perception
@@ -356,6 +440,15 @@ async def capture_measure(
         except Exception as e:
             axe = {"error": str(e)[:200]}
 
+    # Tempdoc 814 §D5/§D7.3 — the status-fact singleton probe (best-effort, empty register
+    # or a failed evaluate both degrade to an empty list, never fail the capture).
+    status_facts: list[dict[str, Any]] = []
+    if _STATUS_FACT_PHRASES:
+        try:
+            status_facts = await page.evaluate(_JS_STATUS_FACTS, _STATUS_FACT_PHRASES) or []
+        except Exception:
+            pass
+
     console_errors = list(console_sink.errors) if console_sink else []
     for e in console_errors:
         e["category"] = _classify_console(e)
@@ -370,6 +463,7 @@ async def capture_measure(
         "a11y_landmarks": a11y_landmarks,
         "axe": axe,
         "geometry": geometry,
+        "statusFacts": status_facts,
         "console_errors": console_errors,
     }
     out = output_dir / f"{name}.measure.json"
@@ -384,10 +478,13 @@ async def capture_measure(
     doc = (geometry or {}).get("document", {}) if geometry else {}
     overflow = [ax for ax, key in (("x", "overflowX"), ("y", "overflowY")) if doc.get(key)]
     geo_els = len((geometry or {}).get("elements", {})) if geometry else 0
+    scrollable_count = (geometry or {}).get("scrollableCount") if geometry else None
+    dup_facts = [f["phrase"] for f in status_facts if (f.get("count") or 0) > 1]
     summary = {
         "measure_path": str(out),
         "a11y_landmarks": len(a11y_landmarks),
         "geometry_elements": geo_els,
+        "scrollable_regions": scrollable_count,
         "axe_violations": len(axe_v),
         "axe_serious": serious,
         # Baseline-relative (§13 Move 2): NEW rule ids vs this surface's accepted set,
@@ -406,6 +503,11 @@ async def capture_measure(
             # if serious. Without a baseline (axe_new is None), fall back to axe-serious.
             + ([f"axe-NEW:{','.join(axe_new)}"] if axe_new else [])
             + ([f"axe-serious:{serious}"] if serious and axe_new is None else [])
+            # Tempdoc 814 §D5 — an informational flag only; the enforcement decision (does
+            # THIS step's persistent chrome duplicate a status fact) is `ui-proportion-gate`'s
+            # `statusFactsSingleton` check, which cross-references the phrase's registered
+            # `maxPersistentRenders` ceiling. This flag is a raw >1-occurrence signal.
+            + ([f"status-fact-dup:{','.join(dup_facts)}"] if dup_facts else [])
         ),
     }
     return str(out), summary

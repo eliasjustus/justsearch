@@ -15,6 +15,7 @@ import {
   isRetrospectiveOpen,
   toggleRetrospective,
   setRetrospectiveOpen,
+  openRetrospectiveAt,
   __resetRetrospectiveDrawer,
 } from '../state/retrospectiveDrawer.js';
 
@@ -25,6 +26,15 @@ afterEach(() => {
 
 async function settle(el: Element): Promise<void> {
   await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+}
+
+/** Tab labels with the Background-runs count badge stripped (it is a sibling fact, not the name). */
+function tabLabels(el: RetrospectivePanel): string[] {
+  return Array.from(el.shadowRoot?.querySelectorAll('[role="tab"]') ?? []).map((t) => {
+    const clone = t.cloneNode(true) as Element;
+    clone.querySelector('.tab-count')?.remove();
+    return (clone.textContent ?? '').replace(/\s+/g, ' ').trim();
+  });
 }
 
 describe('agentSessionStore — ONE shared controller (561 surface tier)', () => {
@@ -61,11 +71,12 @@ describe('RetrospectivePanel', () => {
     document.body.appendChild(el);
     await settle(el);
 
-    const tabs = Array.from(el.shadowRoot?.querySelectorAll('[role="tab"]') ?? []).map((t) =>
-      (t.textContent ?? '').trim(),
-    );
     // Tempdoc 565 §26.D — the Inbox tab folds the Memory surface's presence/activity half in.
-    expect(tabs).toEqual(['Sessions', 'Timeline', 'History', 'Inbox']);
+    // Tempdoc 814 (finding 7) — each tab is named by the QUESTION it answers, at its verified scope:
+    // Timeline (machine-wide `/api/action-ledger`) → "System activity"; History
+    // (`/api/action-ledger` filtered to the ACTIVE agent session id — not `/api/thread`, so not
+    // conversation-scoped) → "This run"; Inbox (`/api/presence`) → "Background runs" + a count badge.
+    expect(tabLabels(el)).toEqual(['Sessions', 'System activity', 'This run', 'Background runs']);
 
     const text = (el.shadowRoot?.textContent ?? '').replace(/\s+/g, ' ');
     expect(text).toContain('find my tax docs'); // the human label, not a raw UUID
@@ -175,5 +186,103 @@ describe('RetrospectivePanel', () => {
     );
     expect(statuses).toEqual(['running', 'done', 'failed']);
     el.remove();
+  });
+
+  // ── Tempdoc 814 (finding 7) — naming, scope and empty states ──
+
+  it('814 — every tab carries a one-line scope descriptor naming the record it answers from', async () => {
+    const el = document.createElement('jf-interaction-retrospective-panel') as RetrospectivePanel;
+    el.apiBase = 'http://x';
+    el.open = true;
+    document.body.appendChild(el);
+
+    const scopeOf = async (tab: string): Promise<string> => {
+      (el as unknown as { activeTab: string }).activeTab = tab;
+      el.requestUpdate();
+      await settle(el);
+      return (
+        el.shadowRoot?.querySelector(`[data-testid="scope-${tab}"]`)?.textContent ?? ''
+      ).replace(/\s+/g, ' ').trim();
+    };
+
+    expect(await scopeOf('sessions')).toContain('Every agent run');
+    // The two former near-synonyms now state the difference the labels imply.
+    expect(await scopeOf('timeline')).toContain('this workspace');
+    expect(await scopeOf('history')).toContain('run open right now');
+    expect(await scopeOf('inbox')).toContain('background');
+    el.remove();
+  });
+
+  it('814 — each empty state names its FILLING condition, not just its emptiness', async () => {
+    const el = document.createElement('jf-interaction-retrospective-panel') as RetrospectivePanel;
+    el.apiBase = 'http://x';
+    el.open = true;
+    document.body.appendChild(el);
+
+    const emptyOf = async (tab: string): Promise<string> => {
+      (el as unknown as { activeTab: string }).activeTab = tab;
+      el.requestUpdate();
+      await settle(el);
+      return (el.shadowRoot?.querySelector('.empty-state')?.textContent ?? '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    };
+
+    expect(await emptyOf('inbox')).toContain('Runs you launch in the background appear here');
+    expect(await emptyOf('timeline')).toContain('appear here as they happen');
+    expect(await emptyOf('history')).toContain('Each tool the agent uses in the current run');
+    expect(await emptyOf('sessions')).toContain('Agent runs appear here once you start one');
+    el.remove();
+  });
+
+  it('814 — the Background-runs tab carries a count badge, so empty reads as a legible zero', async () => {
+    const ctrl = getAgentSessionController('http://x');
+    const el = document.createElement('jf-interaction-retrospective-panel') as RetrospectivePanel;
+    el.apiBase = 'http://x';
+    el.open = true;
+    document.body.appendChild(el);
+    await settle(el);
+    const badge = (): string =>
+      (el.shadowRoot?.querySelector('[data-testid="background-runs-count"]')?.textContent ?? '').trim();
+    expect(badge()).toBe('0');
+
+    (ctrl as unknown as { presence: unknown[] }).presence = [
+      { sessionId: 'r1', state: 'DONE', actor: 'agent', toolCalls: 1, turns: 1, iterations: 1 },
+      { sessionId: 'r2', state: 'READY_FOR_LLM', actor: 'agent', toolCalls: 0, turns: 1, iterations: 1 },
+    ];
+    el.requestUpdate();
+    await settle(el);
+    expect(badge()).toBe('2');
+    el.remove();
+  });
+
+  it('814 — openRetrospectiveAt selects the requested tab, opening the drawer if needed', async () => {
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })) as typeof fetch;
+    try {
+      const el = document.createElement('jf-interaction-retrospective-panel') as RetrospectivePanel;
+      el.apiBase = 'http://x';
+      document.body.appendChild(el);
+      await settle(el);
+      expect(isRetrospectiveOpen()).toBe(false);
+
+      openRetrospectiveAt('inbox');
+      await settle(el);
+      expect(isRetrospectiveOpen()).toBe(true);
+      expect((el as unknown as { activeTab: string }).activeTab).toBe('inbox');
+      expect(el.shadowRoot?.querySelector('[data-tab="inbox"]')?.getAttribute('aria-selected')).toBe(
+        'true',
+      );
+
+      // Requested-once: a later plain open keeps whatever tab the user is on.
+      setRetrospectiveOpen(false);
+      setRetrospectiveOpen(true);
+      await settle(el);
+      expect((el as unknown as { activeTab: string }).activeTab).toBe('inbox');
+      el.remove();
+    } finally {
+      globalThis.fetch = origFetch;
+    }
   });
 });
