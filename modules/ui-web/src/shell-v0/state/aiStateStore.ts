@@ -133,6 +133,15 @@ export interface AiActivity {
 
 export interface AiIndex {
   documentCount: Maybe<number>;
+  /**
+   * Tempdoc 811 C-4 — the population a DEFAULT-scope search can actually return: `documentCount`
+   * minus the collections the default scope excludes (today `agent-history`). `documentCount` still
+   * describes the whole non-chunk index, which is the right number for Health's "Files"; a
+   * user-facing "Searching N documents" string must read THIS one, because it is the only one of
+   * the two the user could enumerate. UNKNOWN on a backend that predates the field — a consumer
+   * falls back to `documentCount` there, but a KNOWN `0` is a real value and must be shown as 0.
+   */
+  searchableDocumentCount: Maybe<number>;
   pendingJobs: Maybe<number>;
   embeddingPending: Maybe<number>;
   embeddingBlocked: Maybe<boolean>;
@@ -245,8 +254,16 @@ export interface AiState {
    * show this dimmed "last known" value instead of collapsing to `…`, so a healthy rebuild
    * stops reading as data loss. `null` until the first settled poll. Stamped imperatively in
    * `onStatusUpdate` (the poll callback), never written by a `computed`, so the graph is acyclic.
+   *
+   * <p>811 C-4: `searchableDocumentCount` is the default-search-scope population (see
+   * {@link AiIndex}); `null` means the backend did not report it, NOT "zero searchable documents" —
+   * a consumer falls back to `documentCount` on `null` and shows a real `0` as `0`.
    */
-  lastSettledIndex: { documentCount: number; indexSizeBytes: number | null } | null;
+  lastSettledIndex: {
+    documentCount: number;
+    searchableDocumentCount: number | null;
+    indexSizeBytes: number | null;
+  } | null;
   /**
    * 663 Stage 3 — the last-known install/runtime/pack snapshots, fed by the shared, always-on
    * `aiInstallPoll` (mirrors `status`/`inference` above: `null` until the first successful poll,
@@ -291,7 +308,11 @@ const runtimeStatusSig = signal<AiRuntimeStatus | null>(null);
 const packStatusSig = signal<PackImportStatus | null>(null);
 // 595 §15.3 (E2) — retained last-settled index counts. Written ONLY by the poll
 // callback (`onStatusUpdate`), read by `buildSnapshot`; no computed writes it.
-const lastSettledIndexSig = signal<{ documentCount: number; indexSizeBytes: number | null } | null>(null);
+const lastSettledIndexSig = signal<{
+  documentCount: number;
+  searchableDocumentCount: number | null;
+  indexSizeBytes: number | null;
+} | null>(null);
 // Time is not reactive; the staleness timer bumps this when reachability
 // would flip, so the `connection` derivation re-evaluates.
 const clockTickSig = signal(0);
@@ -588,6 +609,7 @@ function computeIndex(): AiIndex {
     inference === null || v === undefined || v === null ? UNKNOWN : known(v);
   return {
     documentCount: fromStatus(status?.worker?.core?.indexedDocuments),
+    searchableDocumentCount: fromStatus(status?.worker?.core?.searchableDocuments),
     pendingJobs: fromStatus(status?.worker?.core?.pendingJobs),
     embeddingPending: fromStatus(status?.embedding?.pendingCount),
     embeddingBlocked:
@@ -929,6 +951,9 @@ function stampSettledIndex(snap: StatusSnapshot): void {
   if (documentCount == null) return;
   lastSettledIndexSig.set({
     documentCount,
+    // 811 C-4: `null` = the backend never reported it (fall back to documentCount); a reported 0 is
+    // a real "the default scope searches nothing" and is retained as 0.
+    searchableDocumentCount: snap.worker?.core?.searchableDocuments ?? null,
     // Honesty: a size that was never observed stays `null` (renderers show "…" for Size, not
     // a confident "0 B"). Files retention is gated on documentCount above, the primary path.
     indexSizeBytes: snap.worker?.core?.indexSizeBytes ?? null,

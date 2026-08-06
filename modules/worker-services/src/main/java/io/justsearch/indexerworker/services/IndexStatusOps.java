@@ -4,6 +4,7 @@ package io.justsearch.indexerworker.services;
 import io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource;
 import io.justsearch.adapters.lucene.runtime.IndexCountOps;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
+import io.justsearch.adapters.lucene.runtime.QueryFilterBuilder;
 import io.justsearch.adapters.lucene.runtime.VectorFormatDetector;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.embed.EmbeddingCompatibilityController;
@@ -42,6 +43,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
+import org.apache.lucene.search.Query;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -242,12 +244,15 @@ final class IndexStatusOps {
     JobQueue.FailureSummary failures = jobQueue.failureSummary();
 
     long docCount;
+    long searchableDocCount;
     if (ingestCountOps != null) {
       long totalDocs = ingestCountOps.docCount();
       int chunkDocs = ingestCountOps.countByField(SchemaFields.IS_CHUNK, "true");
       docCount = totalDocs - chunkDocs;
+      searchableDocCount = countDefaultScopeDocs(ingestCountOps, docCount);
     } else {
       docCount = jobQueue.completedCount();
+      searchableDocCount = docCount;
     }
 
     long activeDocCount = 0;
@@ -281,7 +286,9 @@ final class IndexStatusOps {
 
     // --- Build sub-messages ---
     return StatusResponse.newBuilder()
-        .setCore(buildCore(queueDepth, docCount, healthy, state, jobQueue.pendingBytes()))
+        .setCore(
+            buildCore(
+                queueDepth, docCount, searchableDocCount, healthy, state, jobQueue.pendingBytes()))
         .setFailure(buildFailure(failures))
         .setMigration(
             buildMigration(
@@ -331,9 +338,34 @@ final class IndexStatusOps {
     }
   }
 
+  /**
+   * Tempdoc 811 C-4 — the population a DEFAULT-scope search can actually return: non-chunk
+   * documents minus the collections the default scope excludes (today exactly {@code
+   * agent-history}). The exclusion set is NOT re-listed here: {@link
+   * QueryFilterBuilder#buildFilterQueryOnly} with {@code null} filters IS the production
+   * default-scope filter (chunk {@code MUST_NOT} + the reserved-collection {@code MUST_NOT} + the
+   * {@code MatchAllDocs} anchor), so this count is a projection of the one search authority and
+   * cannot drift from what search does. Help docs and {@code mcp-ingest} documents are IN the
+   * default scope and therefore counted — that is the honest number; a per-collection breakdown is
+   * deferred (811 §After the decisions).
+   *
+   * <p>Honest limit: the collection {@code MUST_NOT} only matches documents that CARRY the
+   * collection tag, and chunk documents written before #379 carry none. That caveat cannot bite
+   * here because this counts NON-chunk documents, whose {@code collection} has always been written.
+   *
+   * @param fallback returned when the builder yields no filter at all (it cannot today — the
+   *     default scope always contributes the two exclusions — but a zero would be a silent lie if
+   *     that ever changed)
+   */
+  private static long countDefaultScopeDocs(IndexCountOps countOps, long fallback) {
+    Query defaultScope = QueryFilterBuilder.buildFilterQueryOnly(null);
+    return defaultScope == null ? fallback : countOps.countQuery(defaultScope);
+  }
+
   private CoreStatus buildCore(
       long queueDepth,
       long docCount,
+      long searchableDocCount,
       boolean healthy,
       String state,
       JobQueue.PendingBytes pendingBytes) {
@@ -345,6 +377,7 @@ final class IndexStatusOps {
         CoreStatus.newBuilder()
             .setQueueDepth(queueDepth)
             .setDocCount(docCount)
+            .setSearchableDocCount(searchableDocCount)
             .setIsHealthy(healthy)
             .setState(state)
             .setLastCommitTimestamp(indexingLoop.getLastCommitTime())

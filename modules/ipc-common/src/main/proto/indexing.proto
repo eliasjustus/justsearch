@@ -635,7 +635,12 @@ message CoreStatus {
   // unknown as zero bytes.
   int64 pending_bytes = 18;
   int64 pending_unknown_size_jobs = 19;
-  // Next available field number: 20
+  // Tempdoc 811 C-4: the population a DEFAULT-scope search can actually return — doc_count minus
+  // the collections the default scope excludes (today: agent-history). doc_count keeps its meaning
+  // (the whole non-chunk index) because Health/jseval/sandbox evidence describe the index itself;
+  // this is the number a user-facing "Searching N documents" string may honestly use.
+  int64 searchable_doc_count = 20;
+  // Next available field number: 21
 }
 
 // Failure tracking and search quality signals.

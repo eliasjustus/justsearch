@@ -23,7 +23,7 @@ import {
 } from './aiStateStore.js';
 import type { StatusSnapshot } from '../utils/statusPoll.js';
 import type { InferenceSnapshot } from '../utils/inferencePoll.js';
-import { known } from './known.js';
+import { known, UNKNOWN } from './known.js';
 import { verdictHeadline, verdictTone } from './verdict.js';
 
 const microtask = () => new Promise<void>((r) => queueMicrotask(() => r()));
@@ -287,12 +287,15 @@ describe('aiStateStore — system-health verdict (595)', () => {
       active?: string;
       docs?: number;
       sizeBytes?: number;
+      /** 811 C-4 — omitted means the backend does NOT report the field (the pre-811 shape). */
+      searchable?: number;
     } = {},
   ): StatusSnapshot {
     return {
       worker: {
         core: {
           indexedDocuments: over.docs ?? 5,
+          ...(over.searchable === undefined ? {} : { searchableDocuments: over.searchable }),
           indexSizeBytes: over.sizeBytes ?? 1024,
           pendingJobs: 0,
           indexState: over.indexState ?? 'IDLE',
@@ -445,19 +448,23 @@ describe('aiStateStore — system-health verdict (595)', () => {
 
   it('E2: a settled poll stamps lastSettledIndex; a provisional poll keeps it', () => {
     feed(statusWith('READY', [], { docs: 1234, sizeBytes: 4096 }));
-    expect(getAiState().lastSettledIndex).toEqual({ documentCount: 1234, indexSizeBytes: 4096 });
+    expect(getAiState().lastSettledIndex).toEqual({ documentCount: 1234, searchableDocumentCount: null, indexSizeBytes: 4096 });
     // Worker restarts: a *successful* poll returns the fallback (0 docs / UNAVAILABLE). The
     // retained settled value must NOT be overwritten by that transient zero.
     feed(statusWith('UNKNOWN', [], { indexState: 'UNAVAILABLE', docs: 0, sizeBytes: 0 }));
     const s = getAiState();
     expect(s.stability.kind).toBe('provisional');
-    expect(s.lastSettledIndex).toEqual({ documentCount: 1234, indexSizeBytes: 4096 });
+    expect(s.lastSettledIndex).toEqual({ documentCount: 1234, searchableDocumentCount: null, indexSizeBytes: 4096 });
   });
 
   it('E2: a later settled poll refreshes lastSettledIndex', () => {
     feed(statusWith('READY', [], { docs: 10, sizeBytes: 100 }));
     feed(statusWith('READY', [], { docs: 20, sizeBytes: 200 }));
-    expect(getAiState().lastSettledIndex).toEqual({ documentCount: 20, indexSizeBytes: 200 });
+    expect(getAiState().lastSettledIndex).toEqual({
+      documentCount: 20,
+      searchableDocumentCount: null,
+      indexSizeBytes: 200,
+    });
   });
 
   it('E2: a settled poll with a doc count but NO size stamps indexSizeBytes=null (honesty)', () => {
@@ -469,7 +476,38 @@ describe('aiStateStore — system-health verdict (595)', () => {
       },
       readiness: { composites: { retrieval: { state: 'READY', reasonCodes: [] } } },
     } as unknown as StatusSnapshot);
-    expect(getAiState().lastSettledIndex).toEqual({ documentCount: 77, indexSizeBytes: null });
+    expect(getAiState().lastSettledIndex).toEqual({
+      documentCount: 77,
+      searchableDocumentCount: null,
+      indexSizeBytes: null,
+    });
+  });
+
+  // Tempdoc 811 C-4 — the default-search-scope population, distinct from the whole-index count.
+  it('C-4: index.searchableDocumentCount is UNKNOWN when the backend omits the field', () => {
+    feed(statusWith('READY', [], { docs: 40 }));
+    const index = getAiState().index;
+    expect(index.documentCount).toEqual(known(40));
+    expect(index.searchableDocumentCount).toBe(UNKNOWN);
+  });
+
+  it('C-4: index.searchableDocumentCount carries the reported value, including a real 0', () => {
+    feed(statusWith('READY', [], { docs: 40, searchable: 31 }));
+    expect(getAiState().index.searchableDocumentCount).toEqual(known(31));
+    // A default scope that excludes EVERY indexed document reports 0 — a known value, not absence.
+    feed(statusWith('READY', [], { docs: 40, searchable: 0 }));
+    expect(getAiState().index.searchableDocumentCount).toEqual(known(0));
+  });
+
+  it('C-4: a settled poll retains searchableDocumentCount; 0 is retained as 0, not as null', () => {
+    feed(statusWith('READY', [], { docs: 40, sizeBytes: 4096, searchable: 31 }));
+    expect(getAiState().lastSettledIndex).toEqual({
+      documentCount: 40,
+      searchableDocumentCount: 31,
+      indexSizeBytes: 4096,
+    });
+    feed(statusWith('READY', [], { docs: 40, sizeBytes: 4096, searchable: 0 }));
+    expect(getAiState().lastSettledIndex?.searchableDocumentCount).toBe(0);
   });
 });
 

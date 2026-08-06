@@ -100,6 +100,20 @@ fires. The pattern is named-question, not generic-dashboard (419 C3 explicit non
   onlineAi.isAvailable()) at 0. Frontend `deriveHealthEvents.ts` emits `gpu-saturated`;
   the existing `gpu.recentUtilizationPercent` sparkline renders next to it.
 
+**Corpus counts — two distinct numbers (post tempdoc 811 C-4, 2026-08-06):**
+- `worker.core.indexedDocuments: long` — every non-chunk document in the index (total docs minus
+  chunk docs). Describes the INDEX. Consumed by Health (`core.files`), jseval readiness, and
+  sandbox evidence; its meaning is unchanged and must stay unchanged.
+- `worker.core.searchableDocuments: long` — the population a DEFAULT-scope search can actually
+  return: `indexedDocuments` minus the collections the default scope excludes (today exactly
+  `agent-history`). Derived in `IndexStatusOps#countDefaultScopeDocs` from
+  `QueryFilterBuilder.buildFilterQueryOnly(null)` — the production default-scope filter itself, so
+  it cannot drift from what search does. Bundled help docs and `mcp-ingest` documents ARE counted:
+  a default search returns them. **Any user-facing "Searching N documents" string must read this
+  field, not `indexedDocuments`** — the latter counts a corpus the user can neither see nor
+  enumerate. A consumer must treat an ABSENT field (older backend) as "fall back to
+  `indexedDocuments`" and a reported `0` as a real value.
+
 Each metric-backed field declares `surfacedAt(StatusEndpoint, fieldName)` on its
 `MetricDefinition`; `MetricSurfaceContractTest` (worker-services) and
 `HeadMetricSurfaceContractTest` (app-services) fail CI if the catalog declaration drifts

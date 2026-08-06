@@ -62,7 +62,7 @@ import {
 import { setAiActivity, subscribeAiState, getAiState, type AiState } from '../state/aiStateStore.js';
 import { reportLayoutWidth, subscribeWide } from '../state/responsiveState.js';
 import { copyToClipboard } from '../utils/clipboardCopy.js';
-import { orElse } from '../state/known.js';
+import { orElse, whenKnown } from '../state/known.js';
 import {
   readinessNotice,
   reasonFor,
@@ -1219,8 +1219,21 @@ export class UnifiedChatView extends JfElement {
     return Math.round((Date.now() - start) / 1000);
   }
 
+  /**
+   * Tempdoc 811 C-4 — the number the "Searching N documents" preview may honestly show: the
+   * DEFAULT-search-scope population, not the whole index. `indexedDocuments` counts collections the
+   * default scope excludes (agent-run transcripts), so it described a corpus the user cannot see or
+   * enumerate. An older backend omits `searchableDocumentCount` (UNKNOWN) → fall back to the
+   * whole-index count; a KNOWN `0` is a real value and stays 0.
+   */
   private get docCount(): number {
-    return this.aiState?.index ? orElse(this.aiState.index.documentCount, 0) : 0;
+    const index = this.aiState?.index;
+    if (!index) return 0;
+    return whenKnown(
+      index.searchableDocumentCount,
+      (n) => n,
+      () => orElse(index.documentCount, 0),
+    );
   }
 
   // Tempdoc 565 §15.B — the inline marks now carry their resolved source directly (every mode renders
@@ -2984,13 +2997,17 @@ export class UnifiedChatView extends JfElement {
    */
   private renderLanding(): TemplateResult {
     const docs = this.aiState?.lastSettledIndex;
-    const hasDocs = docs != null && docs.documentCount > 0;
+    // Tempdoc 811 C-4 — the default-search-scope population, falling back to the whole-index count
+    // when an older backend omits the field (`null`). A reported `0` is real: the landing then
+    // offers "Add folders" rather than claiming to search 0 files.
+    const fileCount = docs == null ? null : (docs.searchableDocumentCount ?? docs.documentCount);
+    const hasDocs = fileCount != null && fileCount > 0;
     return html`
       <div class="landing">
         <div class="landing-title">Search your files</div>
         <div class="landing-corpus" data-testid="landing-corpus">
           ${hasDocs
-            ? html`Searching ${docs!.documentCount} files`
+            ? html`Searching ${fileCount} files`
             : html`<button
                 type="button"
                 class="landing-add-folders"

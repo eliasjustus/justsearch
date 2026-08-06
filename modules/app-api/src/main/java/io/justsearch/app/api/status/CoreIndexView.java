@@ -31,6 +31,13 @@ package io.justsearch.app.api.status;
  * "the queue could not compute the aggregate at all" marker
  * ({@code JobQueue.PendingBytes.UNAVAILABLE}); {@code pendingBytes} is 0 there,
  * so a consumer gated on {@code pendingBytes > 0} renders nothing either way.
+ *
+ * <p>Tempdoc 811 C-4 (2026-08-06) added {@code searchableDocuments}: the population a DEFAULT-scope
+ * search can actually return — {@code indexedDocuments} minus the collections the default search
+ * scope excludes (today exactly {@code agent-history}). {@code indexedDocuments} deliberately keeps
+ * its meaning (the whole non-chunk index) because Health, jseval and sandbox evidence describe the
+ * index itself; a user-facing "Searching N documents" string must read {@code searchableDocuments}
+ * instead, which is the only one of the two the user could enumerate.
  */
 @SuppressWarnings("ArrayRecordComponent") // 419 C3 V1/V2: intentional for API time-series payload
 public record CoreIndexView(
@@ -47,14 +54,21 @@ public record CoreIndexView(
     long[] recentJobQueueDepth,
     double[] recentDocsPerSec,
     long pendingBytes,
-    long pendingUnknownSizeJobs) {
+    long pendingUnknownSizeJobs,
+    long searchableDocuments) {
   public CoreIndexView {
     indexState = indexState == null ? "" : indexState;
     recentJobQueueDepth = recentJobQueueDepth == null ? new long[0] : recentJobQueueDepth;
     recentDocsPerSec = recentDocsPerSec == null ? new double[0] : recentDocsPerSec;
   }
 
-  /** Backward-compatible 6-arg ctor; defaults the 406 runtime gauges + V1/V2 trends to empty. */
+  /**
+   * Backward-compatible 6-arg ctor; defaults the 406 runtime gauges + V1/V2 trends to empty.
+   *
+   * <p>Every short ctor defaults {@code searchableDocuments} to {@code indexedDocuments} — the
+   * "nothing is excluded from the default scope" case. Zero would be the wrong default: it would
+   * claim the caller's documents are unsearchable rather than that no exclusion was expressed.
+   */
   public CoreIndexView(
       boolean indexHealthy,
       long indexedDocuments,
@@ -63,7 +77,7 @@ public record CoreIndexView(
       long indexSizeBytes,
       int pendingVduCount) {
     this(indexHealthy, indexedDocuments, pendingJobs, indexState, indexSizeBytes, pendingVduCount,
-        0L, 0L, 0L, 0L, new long[0], new double[0], 0L, 0L);
+        0L, 0L, 0L, 0L, new long[0], new double[0], 0L, 0L, indexedDocuments);
   }
 
   /** Backward-compatible 10-arg ctor; defaults the 419 V1/V2 trends to empty. */
@@ -80,7 +94,7 @@ public record CoreIndexView(
       long refreshLagMs) {
     this(indexHealthy, indexedDocuments, pendingJobs, indexState, indexSizeBytes, pendingVduCount,
         writerQueueDepth, writerPendingDocs, commitCount, refreshLagMs,
-        new long[0], new double[0], 0L, 0L);
+        new long[0], new double[0], 0L, 0L, indexedDocuments);
   }
 
   /** Backward-compatible 11-arg ctor; defaults the 419 V2 P2 docs/sec trend to empty. */
@@ -98,7 +112,7 @@ public record CoreIndexView(
       long[] recentJobQueueDepth) {
     this(indexHealthy, indexedDocuments, pendingJobs, indexState, indexSizeBytes, pendingVduCount,
         writerQueueDepth, writerPendingDocs, commitCount, refreshLagMs,
-        recentJobQueueDepth, new double[0], 0L, 0L);
+        recentJobQueueDepth, new double[0], 0L, 0L, indexedDocuments);
   }
 
   /** Backward-compatible 12-arg ctor; defaults the 813 Slice B pending-byte weights to zero. */
@@ -117,11 +131,11 @@ public record CoreIndexView(
       double[] recentDocsPerSec) {
     this(indexHealthy, indexedDocuments, pendingJobs, indexState, indexSizeBytes, pendingVduCount,
         writerQueueDepth, writerPendingDocs, commitCount, refreshLagMs,
-        recentJobQueueDepth, recentDocsPerSec, 0L, 0L);
+        recentJobQueueDepth, recentDocsPerSec, 0L, 0L, indexedDocuments);
   }
 
   public static CoreIndexView fallback(String indexState) {
     return new CoreIndexView(
-        false, 0, 0, indexState, 0, 0, 0L, 0L, 0L, 0L, new long[0], new double[0], 0L, 0L);
+        false, 0, 0, indexState, 0, 0, 0L, 0L, 0L, 0L, new long[0], new double[0], 0L, 0L, 0L);
   }
 }

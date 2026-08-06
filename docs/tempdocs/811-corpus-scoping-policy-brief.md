@@ -1,6 +1,6 @@
 ---
 title: "811 — Corpus scoping & internal-documents policy (T-C): decision brief"
-status: "investigation complete 2026-08-06; recommendations C-1a/C-2a/C-3-keep adopted by default under the owner's autonomous-proceed directive; IMPLEMENTED: D-1/D-2/chunk-collection (#379), C-1a pill (#372), C-2a tagging+removal (#380); HELD pending T-A's #377: C-4 count fix + Library Other-sources section; C-3/C-4 remain owner-overridable"
+status: "investigation complete 2026-08-06; recommendations C-1a/C-2a/C-3-keep adopted by default under the owner's autonomous-proceed directive; IMPLEMENTED: D-1/D-2/chunk-collection (#379), C-1a pill (#372), C-2a tagging+removal (#380), C-4 count fix (searchableDocuments, 2026-08-06); HELD pending T-A's #377: Library Other-sources section; C-3 remains owner-overridable"
 
 > **Correction (2026-08-06, from C-2a implementation):** §investigation item 2 wrongly
 > states the MCP `justsearch_ingest` tool reaches `KnowledgeSearchController.handleIngest`.
@@ -139,6 +139,16 @@ be broken down ("N yours · M app docs"). Recommended: count the default-scope p
 with the breakdown available on the Health/Library surface once C-1/C-2 labels exist. This
 is the fix for finding 5's sharpest user-facing consequence and slots into the T-A progress
 design's vocabulary.
+
+> **IMPLEMENTED 2026-08-06.** `indexedDocuments` keeps its meaning (the whole non-chunk index —
+> Health, jseval and sandbox evidence describe the index itself); a NEW
+> `worker.core.searchableDocuments` carries the default-scope population. It is derived in
+> `IndexStatusOps#countDefaultScopeDocs` by counting `QueryFilterBuilder.buildFilterQueryOnly(null)`
+> — the production default-scope filter itself — so the excluded set is the search authority, not a
+> second list. Help docs and `mcp-ingest` documents COUNT (a default search returns them; the
+> per-collection breakdown stays deferred). Both "Searching N …" strings in `UnifiedChatView` bind to
+> it, falling back to `indexedDocuments` when an older backend omits the field; a reported `0` is a
+> real value, and the landing then offers "Add folders" instead of claiming to search 0 files.
 
 ## After the decisions
 
