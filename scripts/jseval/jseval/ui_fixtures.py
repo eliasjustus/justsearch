@@ -113,6 +113,13 @@ def is_api_path(url: str) -> bool:
 # the isolated `chat-proportion` ui-shot step alone (`ui_check.py`'s `Step.fixtures_variant`).
 VARIANTS = ("default", "empty")
 
+# The two variants that turn the degraded-readiness knobs. `degraded` (tempdoc 697) also flips
+# `ui.mode` to "simple" so the COLLAPSED pill renders; `degraded-detailed` (tempdoc 814 closure,
+# the `chat-bands-detailed` step) is the same readiness/inference state with the captured
+# "advanced" disclosure LEFT ALONE, so the banner renders EXPANDED instead — the Detailed-mode
+# floor the D1 share assertion had no capture for. Neither is a fuzzer axis (see the note above).
+_DEGRADED_VARIANTS = frozenset({"degraded", "degraded-detailed"})
+
 
 def _search_body(variant: str) -> str:
     """The search response for a variant. 'empty' = the zero-results edge state."""
@@ -142,8 +149,9 @@ def _status_body(variant: str) -> str:
     zero document count regardless of AI capability); with docs > 0 the SAME projection
     instead returns `{kind:'degraded', caveat}` off this step's own degraded verdict
     (availability.ts:134-143), which does NOT pin Ask. NOT a fuzzer axis — see the
-    `VARIANTS` note above."""
-    if variant == "degraded":
+    `VARIANTS` note above. `degraded-detailed` needs the identical readiness state — the banner it
+    expands is the same one this transform gives something to render."""
+    if variant in _DEGRADED_VARIANTS:
         d = json.loads(_BODY_STATUS)
         d["readiness"]["composites"]["retrieval"] = {
             "state": "DEGRADED",
@@ -164,8 +172,9 @@ def _inference_body(variant: str) -> str:
     correct behavior for those (AI genuinely offline with no dev stack). 'degraded' reports
     the model ONLINE so the `chat-proportion` step can actually submit a turn (escalateAsk()
     -> send()). Kept variant-gated (NOT added to `_ROUTES`) so no other step's rendering
-    changes."""
-    if variant == "degraded":
+    changes. `degraded-detailed` needs the same ONLINE report for the same two reasons (a
+    submitted turn, and the Delegate rung's `capabilities.chat` availability gate)."""
+    if variant in _DEGRADED_VARIANTS:
         return json.dumps({
             "mode": "online",
             "available": True,
@@ -192,8 +201,13 @@ def _settings_body(variant: str) -> str:
     'error'`), so `.degradation-banner-collapsed` never renders under the captured default —
     only the wider expanded `.degradation-banner` form does. 'degraded' flips `ui.mode` to
     "simple" so the collapsed pill (the element this ratchet tracks) renders. Every other
-    variant keeps the captured `advanced` default unchanged (no other step reads disclosure
-    mode from its screenshot)."""
+    variant keeps the captured `advanced` default unchanged.
+
+    DELIBERATELY not extended to `degraded-detailed` (tempdoc 814 closure): that variant exists
+    precisely to KEEP the captured "advanced" disclosure, which is how the `chat-bands-detailed`
+    step gets the EXPANDED banner (`forcedExpanded = isAdvancedMode() && !this.shortZone`) — the
+    Detailed-mode height floor that had no registered ceiling. This one function is the ONLY knob
+    separating the two degraded variants."""
     if variant == "degraded":
         d = json.loads(_BODY_SETTINGS)
         d["ui"]["mode"] = "simple"

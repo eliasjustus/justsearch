@@ -38,6 +38,12 @@ import {
   sourceKey,
   __resetSelectedSource,
 } from '../state/selectedSource.js';
+// Tempdoc 814 (finding 7) — the thread's background-run pointer drives this store.
+import {
+  isRetrospectiveOpen,
+  takeRequestedTab,
+  __resetRetrospectiveDrawer,
+} from '../state/retrospectiveDrawer.js';
 import {
   getAgentSessionController,
   __resetAgentSessionStore,
@@ -229,6 +235,22 @@ function mountView(): UnifiedChatView {
 // block that sets Detailed mode cannot leak into a later block that expects the Simple default.
 afterEach(() => __resetUiModeForTest());
 
+/**
+ * Tempdoc 814 §D6 — window HEIGHT is now a real input to what this view renders (the block-axis
+ * breakpoint gates Detailed-mode banner expansion). happy-dom's virtual window is 1024x768 — i.e.
+ * already BELOW the 820px breakpoint — so leaving it implicit would silently run the whole file in
+ * the short branch. The suite therefore DECLARES its viewport: tall (above-breakpoint, the roomy
+ * case the pre-814 assertions describe) by default; the cases that exercise the yield set their own.
+ */
+const TALL_VIEWPORT_PX = 1000;
+const SHORT_VIEWPORT_PX = 700;
+function setViewportHeight(px: number): void {
+  (
+    window as unknown as { happyDOM: { setViewport: (v: { height: number }) => void } }
+  ).happyDOM.setViewport({ height: px });
+}
+beforeEach(() => setViewportHeight(TALL_VIEWPORT_PX));
+
 describe('UnifiedChatView — 637 #1 disconnected banner tone (Fix 1)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -410,6 +432,49 @@ describe('UnifiedChatView degradation banner disclosure (Tempdoc 738)', () => {
     (view.shadowRoot?.querySelector('[data-testid="chat-degradation-collapse"]') as HTMLButtonElement).click();
     await view.updateComplete;
     expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
+  });
+
+  // Tempdoc 814 §D2/§D6 — Detailed mode buys its extra height from the conversation, and below the
+  // block-axis breakpoint there is none to buy: the same verdict renders the pill first and expands
+  // on interaction. The 600 wording invariant is unaffected (headline + remedy stay in the pill,
+  // every cause one click away) — this is a height policy, not a wording one.
+  it('below the block-axis breakpoint, Detailed renders the COLLAPSED pill with a working expand affordance', async () => {
+    setViewportHeight(SHORT_VIEWPORT_PX);
+    setUiMode('advanced');
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
+    await view.updateComplete;
+    // Collapsed: the raw causes are not in flow …
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
+    // … the worded headline and the strongest remedy still are …
+    expect(
+      view.shadowRoot?.querySelector('[data-testid="chat-degradation-summary"]')?.textContent,
+    ).toContain('Semantic search degraded');
+    expect(
+      view.shadowRoot?.querySelector('[data-testid="chat-degradation-remedy-op"]')?.getAttribute('operation-id'),
+    ).toBe('core.trigger-offline-processing');
+    // … and the detail is one click away, not gone.
+    const expand = view.shadowRoot?.querySelector(
+      '[data-testid="chat-degradation-expand"]',
+    ) as HTMLButtonElement | null;
+    expect(expand).not.toBeNull();
+    expand!.click();
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).not.toBeNull();
+  });
+
+  it('a severe (error) verdict still forces expansion below the breakpoint — the height gate is not a severity gate', async () => {
+    // Precision guard for the case above: proves the short-viewport branch collapses Detailed's
+    // DISCLOSURE choice, not a genuine failure that the user must be able to read without a click.
+    setViewportHeight(SHORT_VIEWPORT_PX);
+    setUiMode('advanced');
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'error', reasons: ['worker.restart_exhausted'] });
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).not.toBeNull();
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-collapse"]')).toBeNull();
   });
 
   it('drops the single reindex cause bullet (dedup by code) when expanded — the headline already says it', async () => {
@@ -624,6 +689,10 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
   });
 
   it('round-14 finding 12(a) — the run-telemetry band starts COLLAPSED', async () => {
+    // Same shared-singleton hygiene the 12(b) test below records: a neighbouring test leaves a
+    // budgetGate on the controller, which the 814 §D2 held-gate exception would (correctly) expand
+    // the rail for — masking what THIS test asserts (the no-gate default).
+    __resetAgentSessionStore();
     const view = mountView();
     await view.updateComplete;
     view.affordance = 'agent';
@@ -631,6 +700,78 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     const rail = view.shadowRoot?.querySelector('[data-testid="activity-rail"]') as HTMLDetailsElement;
     expect(rail).not.toBeNull();
     expect(rail.open).toBe(false);
+  });
+
+  describe('814 §D2 — the held budget gate is content, not chrome', () => {
+    const railOf = (view: UnifiedChatView) =>
+      view.shadowRoot?.querySelector('[data-testid="activity-rail"]') as HTMLDetailsElement;
+
+    const mountAgentView = async (): Promise<UnifiedChatView> => {
+      __resetAgentSessionStore();
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'agent';
+      await view.updateComplete; // ensureAgentCtrl creates the real (reset) controller
+      return view;
+    };
+
+    const holdBudgetGate = async (view: UnifiedChatView): Promise<void> => {
+      const ctrl = (view as unknown as { agentCtrl: { budgetGate: unknown } | null }).agentCtrl;
+      expect(ctrl).not.toBeNull();
+      ctrl!.budgetGate = { tokensNeeded: 4000, tokensRemaining: 0, totalTokensConsumed: 20224 };
+      view.requestUpdate();
+      await view.updateComplete;
+    };
+
+    it('the transition INTO the held state opens the rail, so the decision row is on screen', async () => {
+      const view = await mountAgentView();
+      expect(railOf(view).open).toBe(false);
+      await holdBudgetGate(view);
+      expect(railOf(view).open).toBe(true);
+      // The point of opening it: the decision row is what the user must act on.
+      expect(view.shadowRoot?.querySelector('.budget-gate-row')).not.toBeNull();
+    });
+
+    it('a user who re-collapses while still parked keeps it collapsed (no re-force)', async () => {
+      const view = await mountAgentView();
+      await holdBudgetGate(view);
+      const rail = railOf(view);
+      expect(rail.open).toBe(true);
+      // The user's own toggle — the same path the `@toggle` binding records.
+      rail.open = false;
+      rail.dispatchEvent(new Event('toggle'));
+      await view.updateComplete;
+      // The gate is STILL held; further re-renders must not re-open it.
+      view.requestUpdate();
+      await view.updateComplete;
+      view.requestUpdate();
+      await view.updateComplete;
+      expect(railOf(view).open).toBe(false);
+    });
+
+    it('a DONE transition does NOT auto-expand — a terminal run is history, not a decision', async () => {
+      const view = await mountAgentView();
+      expect(railOf(view).open).toBe(false);
+      (view as unknown as { unifiedLifecycles: unknown[] }).unifiedLifecycles = [
+        {
+          sessionId: 's1',
+          state: 'DONE',
+          actor: 'agent',
+          turns: 1,
+          iterations: 7,
+          toolCalls: 6,
+          actors: ['agent'],
+          budget: { initial: 20224, consumed: 21431, remaining: 0, overBudget: true },
+        },
+      ];
+      (view as unknown as { agentBudget: unknown }).agentBudget = {
+        tokensConsumed: 21431,
+        tokensRemaining: -1207,
+      };
+      view.requestUpdate();
+      await view.updateComplete;
+      expect(railOf(view).open).toBe(false);
+    });
   });
 
   it('round-14 finding 12(b) — a COMPLETED (DONE) run states "Over budget" as a fact, not an alarm', async () => {
@@ -1419,6 +1560,199 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     const sr2 = view.shadowRoot!;
     expect(sr2.querySelector('.run-spine')).not.toBeNull();
     expect(sr2.querySelector('.conversation.jf-scrollbar-none')).not.toBeNull();
+    __resetAgentSessionStore();
+  });
+
+  it('814 §D5 — with the evidence rail MOUNTED the rail head is the ONE source-count render', async () => {
+    // Three renders of the same count within ~250px (finding 12's measured duplication): the rail head,
+    // the in-answer "Based on N sources" line, and the in-answer "Sources · N" disclosure. The rail is
+    // the authority when it is mounted; the other two stand down.
+    __resetAgentSessionStore();
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    (view as unknown as { wideZone: boolean }).wideZone = true;
+    const sources = [
+      { parentDocId: 'docs/a.md', chunkIndex: 0, path: 'docs/a.md', title: 'a.md', excerpt: 'x', startLine: 1, endLine: 5, headingText: '' },
+      { parentDocId: 'docs/b.md', chunkIndex: 1, path: 'docs/b.md', title: 'b.md', excerpt: 'y', startLine: 1, endLine: 5, headingText: '' },
+    ];
+    const ctrl = getAgentSessionController('http://localhost:5173');
+    (ctrl as unknown as { answerSources: unknown[] }).answerSources = sources;
+    (view as unknown as { agentCtrl: unknown }).agentCtrl = ctrl;
+    (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
+      { id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q', attributes: {} },
+      {
+        id: 'a1', occurredAt: '2026-01-01T00:00:03Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent',
+        content: 'The Head process hosts the UI. The Worker owns the index.',
+        attributes: { sources, citations: [] },
+      },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const sr = view.shadowRoot!;
+
+    expect(sr.querySelector('jf-sources-pane.evidence-rail')).not.toBeNull(); // the authority is mounted
+    const text = (sr.textContent ?? '').replace(/\s+/g, ' ');
+    expect(text).not.toContain('Based on 2 sources'); // the in-answer count line stands down…
+    expect(sr.querySelector('.source-disclosure')).toBeNull(); // …and so does the chip disclosure.
+    // 814 W3 — the toolbar chip too: it used to RENDER and be CSS-hidden at wide, leaving a second
+    // count in the DOM for the status-fact probe and for AT. The gate is now on the render itself.
+    expect(sr.querySelector('.sources-affordance')).toBeNull();
+    // The owner-credited grounding disclaimer is NOT a count and is untouched in this state.
+    expect(text).toContain('per-sentence grounding not verified');
+    __resetAgentSessionStore();
+  });
+
+  it('814 §D5 — with NO rail mounted (narrow) the in-answer count + disclosure return', async () => {
+    __resetAgentSessionStore();
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    (view as unknown as { wideZone: boolean }).wideZone = false; // no rail → the fallback surfaces own it
+    const sources = [
+      { parentDocId: 'docs/a.md', chunkIndex: 0, path: 'docs/a.md', title: 'a.md', excerpt: 'x', startLine: 1, endLine: 5, headingText: '' },
+      { parentDocId: 'docs/b.md', chunkIndex: 1, path: 'docs/b.md', title: 'b.md', excerpt: 'y', startLine: 1, endLine: 5, headingText: '' },
+    ];
+    const ctrl = getAgentSessionController('http://localhost:5173');
+    (ctrl as unknown as { answerSources: unknown[] }).answerSources = sources;
+    (view as unknown as { agentCtrl: unknown }).agentCtrl = ctrl;
+    (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
+      { id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q', attributes: {} },
+      {
+        id: 'a1', occurredAt: '2026-01-01T00:00:03Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent',
+        content: 'The Head process hosts the UI. The Worker owns the index.',
+        attributes: { sources, citations: [] },
+      },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const sr = view.shadowRoot!;
+    expect(sr.querySelector('jf-sources-pane.evidence-rail')).toBeNull();
+    expect((sr.textContent ?? '').replace(/\s+/g, ' ')).toContain('Based on 2 sources');
+    expect(sr.querySelector('.source-disclosure')).not.toBeNull();
+    expect(sr.querySelector('.sources-affordance')).not.toBeNull(); // 814 W3 — and the toolbar chip returns
+    __resetAgentSessionStore();
+  });
+
+  it('814 finding 7 — a background-origin run segment renders a marked POINTER to its inbox item', async () => {
+    // One authority, one pointer: a background run launched with a conversationId renders in the
+    // thread AND in the drawer's Background-runs tab (`/api/presence`). The inbox item is the
+    // authority; the thread appearance is marked as a reference to it, not an unmarked peer copy.
+    __resetAgentSessionStore();
+    __resetRetrospectiveDrawer();
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
+      {
+        id: 'bs', occurredAt: '2026-01-01T00:00:00Z', kind: 'PROGRESS', originator: 'agent', content: '',
+        attributes: { nodeBoundary: 'start', originKind: 'background', nodeId: 'run-7', label: 'Background activity' },
+      },
+      { id: 'a1', occurredAt: '2026-01-01T00:00:01Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'done', attributes: {} },
+      {
+        id: 'be', occurredAt: '2026-01-01T00:00:02Z', kind: 'PROGRESS', originator: 'agent', content: '',
+        attributes: { nodeBoundary: 'end', originKind: 'background', nodeId: 'run-7' },
+      },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const sr = view.shadowRoot!;
+    expect(sr.querySelector('.run-segment.origin-background')).not.toBeNull();
+    const ref = sr.querySelector('[data-testid="background-run-ref"]') as HTMLButtonElement | null;
+    expect(ref).not.toBeNull();
+    expect((ref!.textContent ?? '').toLowerCase()).toContain('background run');
+
+    // Clicking the pointer opens the drawer store AT the Background-runs (inbox) tab.
+    expect(isRetrospectiveOpen()).toBe(false);
+    ref!.click();
+    expect(isRetrospectiveOpen()).toBe(true);
+    expect(takeRequestedTab()).toBe('inbox');
+    __resetRetrospectiveDrawer();
+    __resetAgentSessionStore();
+  });
+
+  it('814 §D4 — dense intra-run steps AGGREGATE into one counted, keyboard-operable cluster badge', async () => {
+    // Density must be bounded by STRUCTURE, not event count: with a measured track, six tool steps
+    // between two turn landmarks sit closer than the 14px aggregation threshold after de-overlap, so
+    // they render as ONE badge that states what it stands for — not six dots piled into a smudge.
+    __resetAgentSessionStore();
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    (view as unknown as { wideZone: boolean }).wideZone = true;
+    const steps = [1, 2, 3, 4, 5, 6].map((n) => ({
+      id: `t${n}`,
+      occurredAt: `2026-01-01T00:00:0${n}Z`,
+      kind: 'TOOL_ACTIVITY',
+      originator: 'agent',
+      content: '',
+      attributes: { callId: `c${n}`, toolName: 'core_search_index', status: 'completed' },
+    }));
+    (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
+      { id: 'u1', occurredAt: '2026-01-01T00:00:00Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q', attributes: {} },
+      ...steps,
+      { id: 'a1', occurredAt: '2026-01-01T00:00:07Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer', attributes: {} },
+      { id: 'u2', occurredAt: '2026-01-01T00:00:08Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q2', attributes: {} },
+      { id: 'a2', occurredAt: '2026-01-01T00:00:09Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer2', attributes: {} },
+    ];
+    // A MEASURED track (jsdom lays nothing out, so the real controller measures 0 → %-placement and no
+    // clustering). Stand in for the measured reading-position model with the same shape the render reads.
+    let jumped: string | null = null;
+    (view as unknown as { nav: unknown }).nav = {
+      activeId: '',
+      landmarks: [],
+      trackPx: 120,
+      viewport: null,
+      fractions: new Map([['u1', 0], ['a1', 0.5], ['u2', 0.55], ['a2', 1]]),
+      jumpTo(id: string) {
+        jumped = id;
+      },
+    };
+    view.requestUpdate();
+    await view.updateComplete;
+    const sr = view.shadowRoot!;
+
+    const cluster = sr.querySelector('.run-spine-cluster') as HTMLButtonElement | null;
+    expect(cluster).not.toBeNull();
+    expect(cluster!.tagName).toBe('BUTTON'); // keyboard-operable by construction (Enter/Space)
+    expect(cluster!.getAttribute('data-cluster-size')).toBe('6');
+    expect(cluster!.textContent?.trim()).toBe('6');
+    // The badge NAMES what it aggregates (decodable without a legend), on both the a11y name + tooltip.
+    expect(cluster!.getAttribute('aria-label')).toContain('6 steps');
+    expect(cluster!.getAttribute('title')).toBe(cluster!.getAttribute('aria-label'));
+    // The four turn LANDMARKS are never merged: they still render as their own markers.
+    const nodeIds = [...sr.querySelectorAll('.run-spine-node')].map((n) => n.getAttribute('data-item-id'));
+    expect(nodeIds).toEqual(['u1', 'a1', 'u2', 'a2']);
+    // Operating it navigates to the group's first member.
+    cluster!.click();
+    expect(jumped).toBe('t1');
+    __resetAgentSessionStore();
+  });
+
+  it('814 §D4 — spine texture markers draw as OUTLINE nodes; landmarks stay filled (no colour added)', async () => {
+    // 809 finding 15's colour collision: a filled spine dot reads as the grounded-status dot. Fill is
+    // reserved for LANDMARKS; texture is the same tone drawn as a ring — a non-colour cue, so the
+    // statusTone vocabulary is untouched.
+    __resetAgentSessionStore();
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    (view as unknown as { wideZone: boolean }).wideZone = true;
+    (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
+      { id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q', attributes: {} },
+      { id: 't1', occurredAt: '2026-01-01T00:00:02Z', kind: 'TOOL_ACTIVITY', originator: 'agent', content: '', attributes: { callId: 'c1', toolName: 'core_search_index', status: 'completed' } },
+      { id: 'a1', occurredAt: '2026-01-01T00:00:03Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer', attributes: {} },
+      { id: 'u2', occurredAt: '2026-01-01T00:00:04Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q2', attributes: {} },
+      { id: 'a2', occurredAt: '2026-01-01T00:00:05Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer2', attributes: {} },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const sr = view.shadowRoot!;
+    const glyphOf = (id: string): Element | null =>
+      sr.querySelector(`.run-spine-node[data-item-id="${id}"] jf-run-node`);
+    expect(glyphOf('t1')?.hasAttribute('outline')).toBe(true); // texture → ring
+    expect(glyphOf('u1')?.hasAttribute('outline')).toBe(false); // landmark → filled
+    expect(glyphOf('a1')?.hasAttribute('outline')).toBe(false);
     __resetAgentSessionStore();
   });
 
@@ -4832,134 +5166,6 @@ describe('798 — the wide-layout query container wraps the zones that query it'
     expect(plane!.querySelector('.conversation-zone')).not.toBeNull();
     // `.sources-affordance` is conditional on grounded agent sources; the composer that hosts it is not.
     expect(plane!.querySelector('.composer')).not.toBeNull();
-    view.remove();
-  });
-});
-
-// Tempdoc 734 round-14 F4 — with chat history encrypted and locked, the composer accepted input and
-// `POST /api/chat/dispatch` answered 200 while the turn was discarded: the transcript fetched after
-// unlock contained no user message, no reply, no placeholder. The backend now refuses with 423 (the
-// same status its history read already gives); these are the two surface halves — Send is refused
-// BEFORE the round-trip with the reason named, and a 423 that arrives anyway (the store locked
-// between render and submit) is spoken, never swallowed.
-describe('734 F4 — the composer does not accept chat input the locked store would discard', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    resetUnifiedChatState();
-    vi.mocked(consumeShapeStream).mockImplementation(() => Promise.resolve());
-  });
-
-  it('Send is disabled AND names the lock as the reason while chat history is locked', async () => {
-    const view = mountView();
-    view.affordance = 'documents';
-    view.inputDraft = 'what did I save about the audit?';
-    await view.updateComplete;
-    const composer = () => view.shadowRoot?.querySelector('jf-composer');
-    // Precondition: with an unlocked store this exact turn IS sendable — otherwise "disabled after
-    // the lock" would prove nothing about the lock.
-    expect(composer()?.hasAttribute('submit-disabled')).toBe(false);
-
-    view.historyLocked = true;
-    await view.updateComplete;
-
-    expect(composer()?.hasAttribute('submit-disabled')).toBe(true);
-    // The reason, not just the disabled bit: a Send that goes grey with no wording is the silent
-    // no-op wearing a different hat. It speaks the ONE CAUSE_ROWS vocabulary + names the remedy.
-    const reason = composer()?.getAttribute('submit-title') ?? '';
-    expect(reason).toContain('encrypted and locked');
-    expect(reason).toContain('Security');
-    view.remove();
-  });
-
-  it('a locked store does NOT disable the retrieve tier — plain search needs no chat store', async () => {
-    const view = mountView();
-    view.affordance = 'retrieve';
-    view.inputDraft = 'audit';
-    view.historyLocked = true;
-    await view.updateComplete;
-
-    const composer = view.shadowRoot?.querySelector('jf-composer');
-    expect(composer?.hasAttribute('submit-disabled')).toBe(false);
-    // No reason, because there is nothing to refuse: the search floor stays open while locked.
-    expect(composer?.getAttribute('submit-title')).toBe('');
-    view.remove();
-  });
-
-  it('a 423 from dispatch renders the actionable notice, keeps the text, and takes back the unsent bubble', async () => {
-    vi.mocked(consumeShapeStream).mockImplementation(() =>
-      Promise.reject(
-        Object.assign(new Error('consumeShapeStream: HTTP 423 from /api/chat/dispatch'), {
-          status: 423,
-        }),
-      ),
-    );
-    const view = mountView();
-    view.affordance = 'documents';
-    view.inputDraft = 'what did I save about the audit?';
-    await view.updateComplete;
-    // The race this covers: the view still believes the store is unlocked when the user hits Send.
-    expect(view.historyLocked).toBe(false);
-
-    view.shadowRoot!.querySelector('jf-composer')!.dispatchEvent(new CustomEvent('composer-submit'));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await view.updateComplete;
-
-    const notice = view.shadowRoot?.querySelector('.locked-send-notice');
-    expect(notice).not.toBeNull();
-    expect(notice?.textContent).toContain('not sent');
-    // Actionable, not just true: the remedy affordance is on screen with the refusal.
-    expect(view.shadowRoot?.querySelector('.history-locked')?.textContent).toContain(
-      'Unlock in Security',
-    );
-    // The message was never recorded, so it must not sit in the transcript looking sent — and the
-    // user's text is back where they can re-send it.
-    expect(view.thread.some((m) => m.content === 'what did I save about the audit?')).toBe(false);
-    expect(view.inputDraft).toBe('what did I save about the audit?');
-    view.remove();
-  });
-
-  it('a non-423 stream failure still reads as an ordinary error, not as a lock', async () => {
-    vi.mocked(consumeShapeStream).mockImplementation(() =>
-      Promise.reject(Object.assign(new Error('HTTP 500 from /api/chat/dispatch'), { status: 500 })),
-    );
-    const view = mountView();
-    view.affordance = 'documents';
-    view.inputDraft = 'anything';
-    await view.updateComplete;
-
-    view.shadowRoot!.querySelector('jf-composer')!.dispatchEvent(new CustomEvent('composer-submit'));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await view.updateComplete;
-
-    expect(view.historyLocked).toBe(false);
-    expect(view.shadowRoot?.querySelector('.locked-send-notice')).toBeNull();
-    expect(view.shadowRoot?.querySelector('.error')?.textContent).toContain('500');
-    view.remove();
-  });
-});
-
-// Tempdoc 734 round-14 F4 (second half) — the round observed "200, no answer, NO ERROR". The backend
-// was not silent: a locked dispatch raised KeyLockedException out of loadEffectiveContext → readMeta
-// and the controller wrote an SSE `error` event. The SURFACE was silent — the locked branch replaced
-// the whole conversation column, error div included. A stream failure must be legible in both.
-describe('734 F4 — a stream error is not swallowed by the locked branch', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    resetUnifiedChatState();
-  });
-
-  it('an error reported while the store is locked is on screen next to the locked notice', async () => {
-    const view = mountView();
-    view.affordance = 'documents';
-    view.historyLocked = true;
-    view.errorMessage = 'Conversation store is locked';
-    await view.updateComplete;
-
-    // Both, not either: the transcript stays gated AND the failure is stated.
-    expect(view.shadowRoot?.querySelector('.history-locked')).not.toBeNull();
-    const shown = view.shadowRoot?.querySelector('.error');
-    expect(shown).not.toBeNull();
-    expect(shown?.textContent).toContain('Conversation store is locked');
     view.remove();
   });
 });

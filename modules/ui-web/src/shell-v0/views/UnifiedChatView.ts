@@ -28,7 +28,7 @@ import {
   type ShapeId,
   type ThreadMessage,
 } from './unifiedChatRequest.js';
-import { composeGridStyles } from '../primitives/compositionLayout.js';
+import { composeGridStyles, subscribeShortViewport } from '../primitives/compositionLayout.js';
 import { friendlyStreamError } from '../utils/streamError.js';
 import { composerStyles } from '../components/Composer.js';
 import '../components/Composer.js';
@@ -175,7 +175,7 @@ import '../components/AutonomyDial.js';
 import { findAgentSearchHit } from '../components/chat/toolSearchCard.js';
 // Tempdoc 561 (surface tier): the ONE shared agent controller + the retrospective drawer.
 import { getAgentSessionController, subscribeAgentSession } from '../state/agentSessionStore.js';
-import { toggleRetrospective } from '../state/retrospectiveDrawer.js';
+import { openRetrospectiveAt, toggleRetrospective } from '../state/retrospectiveDrawer.js';
 import { toggleSources } from '../state/sourcesDrawer.js';
 // Tempdoc 610 §K — the context-inspector drawer (what the last turn saw).
 import '../components/ContextInspectorPane.js';
@@ -298,9 +298,21 @@ import { ReasoningController } from '../controllers/ReasoningController.js';
 import { stepPresentation } from './runStepPresentation.js';
 // Tempdoc 621 Phase 5 — the run-spine's pure presentation helpers.
 import { computeSpinePositions, spineNodeLabel } from './runSpinePresentation.js';
-import { computeSpacedPositions } from '../primitives/adaptiveSpacing.js';
+import { computeSpacedPositions, clusterAdjacent, type PlacedGroup } from '../primitives/adaptiveSpacing.js';
 import { NavigationController } from '../primitives/navigation.js';
 import '../components/chat/RunNode.js';
+
+/**
+ * Tempdoc 814 §D4 (settled parameter) — the spine's aggregation threshold: non-landmark markers whose
+ * de-overlapped positions still sit closer than this collapse into one counted cluster badge.
+ */
+const SPINE_CLUSTER_MIN_GAP_PX = 14;
+
+/**
+ * Tempdoc 814 §D3 (settled parameter) — the docked evidence rail is a BOUNDED INDEX, not a scroller:
+ * it renders at most this many source cards plus an "Open all · N" row into the sanctioned drawer.
+ */
+const EVIDENCE_RAIL_MAX_VISIBLE = 3;
 
 /**
  * Search Thread S4-final — a live search FROZEN at the moment of consequence (open/ask/pin). A
@@ -684,6 +696,12 @@ export class UnifiedChatView extends JfElement {
   // disagree about whether the wide layout is in effect.
   private wideZone = true;
   private unsubWide: (() => void) | null = null;
+  // Tempdoc 814 §D6 — the BLOCK-axis sibling of `wideZone`: is the window below the one block-axis
+  // breakpoint (primitives/compositionLayout.ts)? Chrome that may spend height freely on a tall window
+  // yields on a short one. Defaults to NOT short so an unknown viewport (SSR, unit tests) keeps every
+  // band's full form — the same unavailable-means-roomy default `wideZone` carries.
+  private shortZone = false;
+  private unsubShort: (() => void) | null = null;
   private zoneResizeObserver: ResizeObserver | null = null;
   private observedBox: HTMLElement | null = null;
   // Tempdoc 565 §21 — the chat-first Navigation authority. The run-spine's "where am I / how do I move"
@@ -802,6 +820,12 @@ export class UnifiedChatView extends JfElement {
     // via the shared responsiveState authority (fires once immediately with the current value).
     this.unsubWide = subscribeWide((wide) => {
       this.wideZone = wide;
+      this.requestUpdate();
+    });
+    // Tempdoc 814 §D6 — the same fan-out on the block axis (fires once immediately with the current
+    // value), so a vertical resize across the breakpoint re-renders the height-gated chrome.
+    this.unsubShort = subscribeShortViewport((short) => {
+      this.shortZone = short;
       this.requestUpdate();
     });
     this.observeSurfaceWidth();
@@ -1103,6 +1127,8 @@ export class UnifiedChatView extends JfElement {
     this.selectedSourceUnsub = null;
     this.unsubWide?.();
     this.unsubWide = null;
+    this.unsubShort?.();
+    this.unsubShort = null;
     this.zoneResizeObserver?.disconnect();
     this.zoneResizeObserver = null;
     this.observedBox = null;
@@ -1688,6 +1714,30 @@ export class UnifiedChatView extends JfElement {
     toggleContextInspector();
   }
 
+  /**
+   * Tempdoc 814 §D2 — the held-gate EXCEPTION to "in-flow chrome is summary-height, detail is
+   * on-demand". A run parked awaiting a budget decision is the primary thing on screen at that
+   * moment, and the decision row that resolves it ("Add tokens / Finish with what it has / Stop",
+   * 577 Move 2) lives in the activity rail's BODY — inside a `<details>` that defaults to collapsed.
+   * Without this, the one state where the remedies are real renders them out of sight.
+   *
+   * Keyed on the TRANSITION into the held state (`agentCtrl.budgetGate != null` — the same predicate
+   * the summary's "Paused — awaiting budget" chip renders on), not on the state itself: the rail is
+   * forced open ONCE when the gate engages, so a user who collapses it while the run is still parked
+   * keeps it collapsed (their choice wins over the exception). No other lifecycle state — DONE
+   * included — ever forces it open; a terminal over-budget run is history, and §D2 keeps history in
+   * the collapsed summary.
+   */
+  private budgetGateWasHeld = false;
+
+  protected override willUpdate(_changed: Map<string, unknown>): void {
+    const held = this.agentCtrl?.budgetGate != null;
+    if (held && !this.budgetGateWasHeld) {
+      this.activityRailExpanded = true;
+    }
+    this.budgetGateWasHeld = held;
+  }
+
   /** Tempdoc 610 §K — keep the shell-mounted inspector's view fresh while it is open (e.g. a new turn). */
   protected override updated(_changed: Map<string, unknown>): void {
     if (isContextInspectorOpen()) {
@@ -2225,7 +2275,7 @@ export class UnifiedChatView extends JfElement {
           <button
             class="new-chat-btn"
             @click=${() => toggleRetrospective()}
-            title="Activity — past sessions, timeline, tool calls, inbox"
+            title="Activity — sessions, system activity, this run, background runs"
           >
             Activity
           </button>
@@ -2282,7 +2332,14 @@ export class UnifiedChatView extends JfElement {
     // opens expanded even in Simple so a genuine failure is never a single ellipsized line. The local
     // "See details" toggle (degradationBannerExpanded) lets a Simple user open a cosmetic notice on
     // demand; nothing is remembered per cause-set (687's seen-hash machinery is gone).
-    const forcedExpanded = isAdvancedMode() || verdict.severity === 'error';
+    // Tempdoc 814 §D2/§D6 — Detailed mode buys its extra height from the conversation, and on a short
+    // window there is none to buy: below the block-axis breakpoint Detailed renders the pill FIRST and
+    // expands on interaction (the expand chevron below), so the detail is one click away rather than
+    // permanently in flow. An `error` verdict still forces expansion at any height — a genuine failure
+    // is never a single ellipsized line. The 600 wording invariant is untouched either way: the pill
+    // carries the worded headline + the remedy, and every worded cause stays reachable.
+    const forcedExpanded =
+      verdict.severity === 'error' || (isAdvancedMode() && !this.shortZone);
     if (!forcedExpanded && !this.degradationBannerExpanded) {
       return this.renderCollapsedDegradationBanner(verdict, notice);
     }
@@ -2459,8 +2516,12 @@ export class UnifiedChatView extends JfElement {
         >
           Abilities
         </button>
-        ${/* Tempdoc 565 §3.A: open the answer's grounding sources (clickable local passages). */ ''}
-        ${(this.agentCtrl?.answerSources.length ?? 0) > 0
+        ${/* Tempdoc 565 §3.A: open the answer's grounding sources (clickable local passages).
+              Tempdoc 814 §D5 — the count has ONE authority: while the docked evidence rail is
+              mounted its head owns it, so this chip does not RENDER (it was already CSS-hidden at
+              wide widths — `unifiedChatStyles.ts` ~976 — which suppressed it visually while leaving
+              a second count in the DOM for the status-fact singleton probe and for AT to read). */ ''}
+        ${!this.evidenceRailMounted() && (this.agentCtrl?.answerSources.length ?? 0) > 0
           ? html`<button
               class="agent-tool-btn sources-affordance"
               @click=${() => toggleSources()}
@@ -2497,8 +2558,15 @@ export class UnifiedChatView extends JfElement {
     return html`
       <div class="conversation-zone ${landingCollapsed ? 'landing-collapsed' : ''}">
         ${this.renderRunSpine()}
+        ${/* Tempdoc 814 §D7.4 — `tabindex="0"` because this is THE surface's scroll region (D3), and a
+              scrollable region that no keyboard user can focus cannot be scrolled without a pointer
+              (axe `scrollable-region-focusable`). It went unnoticed until the closure audit's finding C
+              made a capture actually overflow: every prior capture measured `scrollableCount` 0, so the
+              rule never had a scroller to fire on. Not a tab-stop for its own sake — the spine's
+              `role="scrollbar"` thumb is the pointer/AT affordance, this is the plain-keyboard one. */ ''}
         <div
           id="run-conversation"
+          tabindex="0"
           class="conversation ${spineShown ? 'spine-scrolled jf-scrollbar-none' : ''}"
         >
           ${/* Tempdoc 577 Goal 3 (§3.2) — the retrieve base tier renders the ephemeral hit-list IN
@@ -2976,17 +3044,29 @@ export class UnifiedChatView extends JfElement {
    * the "Sources · N" affordance + the toggle drawer remain the fallback. Cross-highlights the inline
    * [n] marks via the shared selectedSource store.
    */
+  /**
+   * Tempdoc 814 §D5 — is the docked evidence rail mounted? THE predicate: {@link renderEvidenceRail}
+   * mounts on it and the in-answer source-count renders suppress on it, so "the rail's head is the
+   * one persistent authority for the source count" cannot drift into two disagreeing conditions.
+   *
+   * Fix F — the docked rail mounts ONLY at the wide breakpoint (where it is visible); narrow viewports
+   * fall back to the "Sources · N" chip + the toggle drawer. So exactly one SourcesPane subscribes per
+   * viewport, not a dormant duplicate. Default to mounted when matchMedia is unavailable (tests/SSR).
+   */
+  private evidenceRailMounted(): boolean {
+    return (
+      this.affordance === 'agent' &&
+      (this.agentCtrl?.answerSources.length ?? 0) > 0 &&
+      this.wideZone
+    );
+  }
+
   private renderEvidenceRail(): TemplateResult {
-    const hasSources =
-      this.affordance === 'agent' && (this.agentCtrl?.answerSources.length ?? 0) > 0;
-    // Fix F — mount the docked rail ONLY at the wide breakpoint (where it is visible); narrow viewports
-    // fall back to the "Sources · N" chip + the toggle drawer. So exactly one SourcesPane subscribes per
-    // viewport, not a dormant duplicate. Default to mounting when matchMedia is unavailable (tests/SSR).
-    const wide = this.wideZone;
-    if (!hasSources || !wide) return html`${nothing}`;
+    if (!this.evidenceRailMounted()) return html`${nothing}`;
     return html`<jf-sources-pane
       docked
       class="evidence-rail"
+      .maxVisible=${EVIDENCE_RAIL_MAX_VISIBLE}
       api-base=${this.apiBase}
       .host_=${this.host_ ?? undefined}
     ></jf-sources-pane>`;
@@ -3120,15 +3200,38 @@ export class UnifiedChatView extends JfElement {
     // %-based ideal placement (graceful, like the sibling adaptive primitives).
     const PX_PER_REM = 16;
     const trackPx = this.nav.trackPx;
-    const tops: string[] =
+    const spacedPx: number[] | null =
       trackPx > 0
         ? computeSpacedPositions(
             fractions.map((f) => f * trackPx),
             weights.map((w) => w.sizeRem * PX_PER_REM),
             trackPx,
             2,
-          ).map((px) => `${px.toFixed(2)}px`)
-        : fractions.map((f) => `${(f * 100).toFixed(2)}%`);
+          )
+        : null;
+    // Tempdoc 814 §D4 — a LANDMARK is a structural index entry (a turn, a workflow-node boundary, a
+    // human steering directive). It renders as its own marker always: never merged into a cluster, and
+    // it breaks a cluster run, so the spine's density floor is the run's STRUCTURE.
+    const isLandmark = items.map(
+      (it) =>
+        it.kind === 'user' ||
+        it.kind === 'assistant' ||
+        segmentStartIds.has(it.id) ||
+        it.attributes?.steer === true,
+    );
+    // §D4's declared aggregation rule: everything else that still sits within SPINE_CLUSTER_MIN_GAP_PX
+    // after the de-overlap pass collapses into ONE counted badge, so marker count is bounded by the
+    // track (≈ trackPx / gap), not by event count. Unmeasured (first paint / jsdom) → %-placement, one
+    // marker per item (no clustering without a measured track).
+    const groups: PlacedGroup[] = spacedPx
+      ? clusterAdjacent(
+          spacedPx,
+          isLandmark.map((l) => !l),
+          SPINE_CLUSTER_MIN_GAP_PX,
+        )
+      : fractions.map((f, i) => ({ positionPx: f * 100, indices: [i] }));
+    const topOf = (g: PlacedGroup): string =>
+      spacedPx ? `${g.positionPx.toFixed(2)}px` : `${g.positionPx.toFixed(2)}%`;
     // §13 Pillar A binding — the spine is an operable nav (keyboard-operable buttons with accessible
     // names → controls-a11y-clean); click/Enter jumps the reading column to that timeline item, and the
     // scroll-spy marks the in-view node `.active`.
@@ -3158,7 +3261,38 @@ export class UnifiedChatView extends JfElement {
           >
           </div>`
         : nothing}
-      ${items.map((it, idx) => {
+      ${groups.map((g) => {
+        // Tempdoc 814 §D4 — an aggregated group renders as ONE counted badge: a real <button> (the
+        // same jump control the single markers are, so it is keyboard-operable by construction) whose
+        // accessible name states what it stands for ("5 steps, 2 errors"), jumping to the first member.
+        if (g.indices.length > 1) {
+          const first = items[g.indices[0] as number]!;
+          let errors = 0;
+          let warnings = 0;
+          for (const i of g.indices) {
+            const tone = pres[i]!.tone;
+            if (tone === 'error') errors++;
+            else if (tone === 'warning') warnings++;
+          }
+          const parts = [`${g.indices.length} steps`];
+          if (errors > 0) parts.push(`${errors} error${errors === 1 ? '' : 's'}`);
+          if (warnings > 0) parts.push(`${warnings} warning${warnings === 1 ? '' : 's'}`);
+          const clusterLabel = `${parts.join(', ')} — jump to the first`;
+          const isActive = g.indices.some((i) => items[i]!.id === activeId);
+          return html`<button
+            type="button"
+            class="run-spine-cluster ${isActive ? 'active' : ''} ${errors > 0 ? 'has-error' : ''}"
+            style=${`top:${topOf(g)}`}
+            data-cluster-size=${g.indices.length}
+            title=${clusterLabel}
+            aria-label=${clusterLabel}
+            @click=${() => this.nav.jumpTo(first.id)}
+          >
+            <span aria-hidden="true">${g.indices.length}</span>
+          </button>`;
+        }
+        const idx = g.indices[0] as number;
+        const it = items[idx]!;
         // The button owns placement/size/active/jump; <jf-run-node> owns the glyph+tone visual
         // (density `minimal` → a clean tone-dot at this scale, §19.2).
         const p = pres[idx]!;
@@ -3172,7 +3306,7 @@ export class UnifiedChatView extends JfElement {
           : it.kind === 'assistant' && !terminalIds.has(it.id)
             ? 'Working step'
             : p.label || spineNodeLabel(it);
-        const style = `top:${tops[idx]};--node-size:${w.sizeRem}rem;opacity:${w.opacity}`;
+        const style = `top:${topOf(g)};--node-size:${w.sizeRem}rem;opacity:${w.opacity}`;
         // Tempdoc 565 §30 — a human STEERING directive (the DIRECTION authority's interject) is a
         // human-origin POINT landmark on the spine, marked so it reads distinctly from agent steps.
         const isSteer = it.attributes?.steer === true;
@@ -3196,7 +3330,11 @@ export class UnifiedChatView extends JfElement {
           aria-label=${spineLabel}
           @click=${() => this.nav.jumpTo(it.id)}
         >
-          <jf-run-node density="minimal" .presentation=${p}></jf-run-node>
+          <jf-run-node
+            density="minimal"
+            ?outline=${!isLandmark[idx]}
+            .presentation=${p}
+          ></jf-run-node>
         </button>`;
       })}
     </nav>`;
@@ -4343,6 +4481,14 @@ export class UnifiedChatView extends JfElement {
     settled: boolean,
   ): TemplateResult | typeof nothing {
     if (sources.length === 0) return nothing;
+    // Tempdoc 814 §D5 (one authority, one pointer) — the SOURCE-COUNT fact has exactly one persistent
+    // render: the evidence rail's head ("Sources · N") while the rail is mounted. The two provenance
+    // branches below are count lines ("Based on N documents/sources"), so they stand down for that
+    // state — the honest grounding disclaimer is NOT theirs to carry: it is the answer-frame line
+    // ("Based on your documents — per-sentence grounding not verified", `answerFrameLabel`), which
+    // renders next to this badge in every state and is untouched. The coverage branch below
+    // ("Grounded · X of Y sentences") states VERIFICATION, not a source count, and always renders.
+    const countIsOwnedByTheRail = this.evidenceRailMounted();
     const citations = Array.isArray(rawCitations) ? (rawCitations as AgentSentenceCite[]) : [];
     const cov = groundingCoverage(citations, answerText);
     const chunkPrecise = sourcesAreChunkPrecise(sources);
@@ -4351,6 +4497,7 @@ export class UnifiedChatView extends JfElement {
     // "N of M sentences" verdict to give. Show provenance honestly — NEVER "Grounded · 0 of N" (the
     // over-confidence) — derived from the same authority predicate the frame uses, so badge + frame agree.
     if (cov.cited === 0 && !chunkPrecise) {
+      if (countIsOwnedByTheRail) return nothing;
       const n = sources.length;
       return html`<details class="grounding-badge grounding-badge-sourced">
         <summary class="grounding-badge-summary" role="status">
@@ -4370,6 +4517,7 @@ export class UnifiedChatView extends JfElement {
     // (the C1 over-confidence reproduced in the settled render path). Mid-stream (settled=false) keeps the
     // coverage readout below, since marks may still arrive.
     if (cov.cited === 0 && chunkPrecise && settled) {
+      if (countIsOwnedByTheRail) return nothing;
       const n = sources.length;
       return html`<details class="grounding-badge grounding-badge-sourced">
         <summary class="grounding-badge-summary" role="status">
@@ -4420,6 +4568,11 @@ export class UnifiedChatView extends JfElement {
    */
   private renderSourceChips(sources: readonly AgentSource[], key: string): TemplateResult {
     if (!sources || sources.length === 0) return html`${nothing}`;
+    // Tempdoc 814 §D5 — the in-answer "Sources · N" disclosure exists only where the rail is NOT. With
+    // the rail mounted it was the third persistent render of the source count within ~250px; the rail's
+    // head is the authority, and the rail carries the same per-source cards (selection, hide/restore),
+    // so this is a duplicate to delete for that state, not a capability to preserve.
+    if (this.evidenceRailMounted()) return html`${nothing}`;
     // Structural default: collapsed when the wide rail shows the detail; expanded at narrow (no rail).
     const railShown = this.wideZone;
     const open = this.sourceChipsToggles.get(key) ?? !railShown;
@@ -4575,7 +4728,11 @@ export class UnifiedChatView extends JfElement {
   ): TemplateResult {
     const label = segment.label ?? segment.nodeId ?? 'Step';
     // §26.D — a background run is one segment with the `background` chip; a workflow node shows its kind.
-    const kindChip = segment.originKind === 'background' ? 'background' : segment.nodeKind;
+    // Tempdoc 814 (finding 7, one authority + one pointer) — for a BACKGROUND-origin segment the chip
+    // becomes a marked POINTER instead of an unmarked peer copy: the run's authority is its inbox item
+    // (the drawer's Background-runs tab, `/api/presence`), and this control opens the drawer there.
+    const backgroundOrigin = segment.originKind === 'background';
+    const kindChip = backgroundOrigin ? null : segment.nodeKind;
     // Tempdoc 565 §29 Tier-2 — per-segment elapsed time from the items' authoritative timestamps
     // (`ts` already on every UnifiedTurnItem): the wall-clock the node took, shown in the header.
     const elapsedSec =
@@ -4590,6 +4747,16 @@ export class UnifiedChatView extends JfElement {
       <header class="run-segment-header">
         <span class="run-segment-name">${label}</span>
         ${kindChip ? html`<span class="run-segment-kind">${kindChip}</span>` : nothing}
+        ${backgroundOrigin
+          ? html`<button
+              class="run-segment-kind run-segment-ref"
+              data-testid="background-run-ref"
+              title="This run is tracked in Background runs — open it there"
+              @click=${() => openRetrospectiveAt('inbox')}
+            >
+              background run ↗
+            </button>`
+          : nothing}
         ${elapsedLabel
           ? html`<span class="run-segment-elapsed" title="Time this step took">${elapsedLabel}</span>`
           : nothing}

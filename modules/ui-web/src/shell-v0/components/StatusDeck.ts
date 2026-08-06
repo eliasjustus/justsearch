@@ -25,7 +25,16 @@ import { icon } from './Icon.js';
 import './StatusBadge.js';
 import { type NoticeTone } from '../utils/statusTone.js';
 import { LIFECYCLE } from '../../api/lifecycleState.js';
-import { subscribeAiState, type AiState } from '../state/aiStateStore.js';
+import {
+  subscribeAiState,
+  statusWithoutVerdictFlavor,
+  type AiState,
+} from '../state/aiStateStore.js';
+// Tempdoc 814 §D5 / §B.7 — the chip's yield rule reads the SAME banner-presence authority the chat
+// surface's banner does, and the SAME activeSurface Shell already publishes on every navigation.
+// No new signal, no state fork.
+import { readinessNotice, warrantsSearchDegradationBanner } from '../state/readinessNotice.js';
+import { getShellContext, subscribeShellContext } from '../state/shellContextState.js';
 import { presentVerdict, type VerdictKind } from '../state/verdict.js';
 import { presentAiEngineVerdict, type AiEngineKind } from '../state/aiVerdict.js';
 import { emitEphemeralToast } from './advisory/ephemeralToast.js';
@@ -103,6 +112,13 @@ function ensureCoreStatusItemsRegistered(): void {
 
 const NUM = new Intl.NumberFormat();
 
+/**
+ * Tempdoc 814 §D5 — the surface that renders its OWN degradation banner, i.e. the one the chip
+ * yields the degradation fact to. Declared in `plugin-api/CorePlugin.ts` (`CORE_SURFACES`); mirrored
+ * here the same way `chrome/Shell.ts` mirrors it as `INTERACTION_SURFACE_ID`.
+ */
+const BANNER_OWNING_SURFACE_ID = 'core.unified-chat-surface';
+
 export class StatusDeck extends JfElement {
   static properties = {
     apiBase: { type: String, attribute: 'api-base' },
@@ -125,7 +141,9 @@ export class StatusDeck extends JfElement {
   private readonly overflow = new OverflowController(this, {
     items: () => Array.from(this.renderRoot.querySelectorAll('.adaptive-bar .item')) as HTMLElement[],
     container: () => this.renderRoot.querySelector('.adaptive-bar'),
-    signature: () => this.leftItemIds().join('|') + ':' + (this.aiState?.statusLabel ?? ''),
+    // 814 §D5 — the measured signature is the label actually RENDERED (which the yield rule can
+    // change without `statusLabel` moving), so the adaptive bar re-measures when the chip yields.
+    signature: () => this.leftItemIds().join('|') + ':' + this.inferenceChipReadout().label,
     reserve: 40,
     // 559 Authority VI per-item policy — same DOM query/order as items(), so the
     // pinned flags align index-for-index with the measured `.item` elements.
@@ -143,6 +161,8 @@ export class StatusDeck extends JfElement {
 
   private unsubAi: (() => void) | null = null;
   private unsubStatusBar: (() => void) | null = null;
+  // Tempdoc 814 §D5 — the active-surface half of the chip's yield rule.
+  private unsubShellContext: (() => void) | null = null;
   // 595 §15.3 N1 — true once a `transitioning` verdict has been seen since the last
   // `operational`, so the one-shot completion toast fires even when recovery passes
   // through an intermediate `checking` (settled-but-readiness-unknown) before settling
@@ -279,6 +299,9 @@ export class StatusDeck extends JfElement {
     this.unsubTasks = subscribeTasks(() => {
       this.runningTasks = listRunningTasks();
     });
+    // Tempdoc 814 §D5 — re-render when the active surface changes: whether the chip yields the
+    // degradation fact to a surface banner depends on WHERE the user is, not only on the verdict.
+    this.unsubShellContext = subscribeShellContext(() => this.requestUpdate());
   }
 
   override disconnectedCallback(): void {
@@ -286,6 +309,7 @@ export class StatusDeck extends JfElement {
     this.unsubAi?.();
     this.unsubStatusBar?.();
     this.unsubTasks?.();
+    this.unsubShellContext?.();
   }
 
   /**
@@ -418,6 +442,43 @@ export class StatusDeck extends JfElement {
   }
 
   /**
+   * Tempdoc 814 §D5 / §B.7 — does the chip YIELD the capability-degradation fact to a surface banner?
+   *
+   * The measured duplication: "Reduced capability" / "Service degraded" rendered twice, ~660px apart,
+   * in two components neither of which could see the other. The rule: on a surface that renders its
+   * own degradation banner, the banner is the persistent authority (it carries the 600 wording AND the
+   * remedy); the chip drops the degradation flavour there and stays the AI-mode readout. On every
+   * other surface the chip remains the global indicator — nothing is suppressed system-wide.
+   *
+   * No new signal (§B.7): the banner-presence half is the SAME predicate pair the banner itself gates
+   * on (`warrantsSearchDegradationBanner` + a non-null `readinessNotice`, UnifiedChatView.ts
+   * ~2290-2292 — post-finding-9 an info-tier verdict is bannerless, so verdict-degraded ≠ banner
+   * shown), and the surface half is the `activeSurface` Shell already publishes into
+   * `shellContextState` on every navigation.
+   *
+   * Scoped to `degraded` deliberately. `unreachable` also warrants a banner, but it is a CONNECTION
+   * fact, not the capability-degradation fact this register row names — yielding it would make the bar
+   * report the AI engine's "Online" while the backend is gone, which is the truthfulness regression
+   * this rule exists to prevent, not an instance of it.
+   */
+  private yieldsDegradationToBanner(): boolean {
+    const verdict = this.aiState?.verdict;
+    if (!verdict || verdict.kind !== 'degraded') return false;
+    if (getShellContext().activeSurface !== BANNER_OWNING_SURFACE_ID) return false;
+    return warrantsSearchDegradationBanner(verdict) && readinessNotice(verdict) !== null;
+  }
+
+  /**
+   * Tempdoc 814 §D5 — the chip's effective label + tone: the verdict projection normally, the
+   * verdict-free AI-mode projection while yielding to a surface banner.
+   */
+  private inferenceChipReadout(): { label: string; tone: NoticeTone } {
+    const s = this.aiState;
+    if (s && this.yieldsDegradationToBanner()) return statusWithoutVerdictFlavor(s);
+    return { label: s?.statusLabel ?? 'offline', tone: this.inferencePillTone() };
+  }
+
+  /**
    * Tempdoc 508 §4.3 — dispatch core status bar items by id. Each
    * core item's render() returns its id as a marker; this method
    * produces the actual reactive template from current state.
@@ -457,7 +518,10 @@ export class StatusDeck extends JfElement {
         : idx
           ? orElse(idx.embeddingPending, 0)
           : 0;
-    const mode = this.aiState?.statusLabel ?? 'offline';
+    // Tempdoc 814 §D5 — the chip's readout yields its degradation flavour to the surface banner that
+    // owns that fact (see `yieldsDegradationToBanner`); everywhere else it is the verdict projection.
+    const chip = this.inferenceChipReadout();
+    const mode = chip.label;
     // 559 Authority V — each status metric carries an accessible NAME (a bare
     // span's aria-label is ignored by AT, so the cluster is role="img" + label).
     // The NAME projects from the StatusBarItem registry via present({kind:'metric'})
@@ -540,7 +604,7 @@ export class StatusDeck extends JfElement {
           .onActivate=${() =>
             needsBrain ? requestSurfaceNavigation('core.brain-surface') : this.openHealth()}
         >
-          <jf-status-badge tone=${this.inferencePillTone()}>${mode}</jf-status-badge>
+          <jf-status-badge tone=${chip.tone}>${mode}</jf-status-badge>
         </jf-control>`;
       }
       case 'core.queue': {

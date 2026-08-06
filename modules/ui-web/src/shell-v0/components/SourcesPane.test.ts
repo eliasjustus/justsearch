@@ -196,6 +196,78 @@ describe('SourcesPane docked rail + cross-highlight (565 §12.3.E)', () => {
     el.remove();
   });
 
+  it('814 §D3 — maxVisible bounds the docked INDEX to the top N; the head still states the TOTAL', async () => {
+    const ctrl = getAgentSessionController('http://x');
+    (ctrl as unknown as { answerSources: unknown[] }).answerSources = [1, 2, 3, 4, 5].map((n) => ({
+      parentDocId: `C:/docs/d${n}.md`,
+      chunkIndex: n,
+      path: `C:/docs/d${n}.md`,
+      title: `d${n}.md`,
+      excerpt: 'x',
+      startLine: n,
+      endLine: n + 2,
+      headingText: '',
+    }));
+    const el = document.createElement('jf-sources-pane') as SourcesPane;
+    el.apiBase = 'http://x';
+    el.docked = true;
+    el.maxVisible = 3;
+    document.body.appendChild(el);
+    await settle(el);
+
+    // Bounded: 3 of 5 cards rendered, in order.
+    const cards = [...(el.shadowRoot?.querySelectorAll('.source') ?? [])];
+    expect(cards.length).toBe(3);
+    expect(cards[0]?.textContent).toContain('d1.md');
+    expect(cards[2]?.textContent).toContain('d3.md');
+    // §D5 — the head is the source-count AUTHORITY, so it states the total, never the truncation.
+    expect(el.shadowRoot?.querySelector('.title')?.textContent).toBe('Sources · 5');
+    el.remove();
+  });
+
+  it('814 §D3 — the docked index carries an "Open all · N" row that opens the sanctioned drawer', async () => {
+    seedSource();
+    const el = document.createElement('jf-sources-pane') as SourcesPane;
+    el.apiBase = 'http://x';
+    el.docked = true;
+    el.maxVisible = 3;
+    document.body.appendChild(el);
+    await settle(el);
+
+    const openAll = el.shadowRoot?.querySelector('.open-all') as HTMLButtonElement | null;
+    expect(openAll).not.toBeNull();
+    expect(openAll!.tagName).toBe('BUTTON'); // keyboard-operable
+    expect(openAll!.textContent?.replace(/\s+/g, ' ').trim()).toBe('Open all · 1');
+    expect(isSourcesOpen()).toBe(false);
+    openAll!.click();
+    // The full list opens in the SAME pane, undocked, in Shell's OverlayHost right-drawer.
+    expect(isSourcesOpen()).toBe(true);
+    el.remove();
+  });
+
+  it('814 §D3 — the DRAWER copy is unbounded and keeps its own scroller (only the docked rail is bounded)', async () => {
+    const ctrl = getAgentSessionController('http://x');
+    (ctrl as unknown as { answerSources: unknown[] }).answerSources = [1, 2, 3, 4, 5].map((n) => ({
+      parentDocId: `C:/docs/d${n}.md`,
+      chunkIndex: n,
+      path: `C:/docs/d${n}.md`,
+      title: `d${n}.md`,
+      excerpt: 'x',
+      startLine: n,
+      endLine: n + 2,
+      headingText: '',
+    }));
+    const el = document.createElement('jf-sources-pane') as SourcesPane;
+    el.apiBase = 'http://x';
+    el.open = true; // the drawer mount — NOT docked, no maxVisible
+    document.body.appendChild(el);
+    await settle(el);
+
+    expect(el.shadowRoot?.querySelectorAll('.source').length).toBe(5);
+    expect(el.shadowRoot?.querySelector('.open-all')).toBeNull(); // the drawer IS the full list
+    el.remove();
+  });
+
   it('reflects an EXTERNAL selection (e.g. an inline [n] mark) by highlighting the matching card', async () => {
     seedSource();
     const el = document.createElement('jf-sources-pane') as SourcesPane;

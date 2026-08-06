@@ -1,6 +1,12 @@
 // @vitest-environment happy-dom
 import { describe, it, expect } from 'vitest';
-import { deriveFocus, NavigationController, MIN_VISIBLE, type Landmark } from './navigation.js';
+import {
+  anchorFractions,
+  deriveFocus,
+  NavigationController,
+  MIN_VISIBLE,
+  type Landmark,
+} from './navigation.js';
 import type { ReactiveControllerHost } from 'lit';
 
 // A three-item run: a short user turn, a tool step, and a tall answer, laid out top→bottom over the
@@ -41,6 +47,29 @@ describe('navigation — §21 FOCUS (deriveFocus)', () => {
   it('honors a custom minVisibleFrac threshold', () => {
     // 5% of t1 visible: rejected at the default 0.1, accepted at 0.04.
     expect(deriveFocus(RUN, { topFrac: 0.29, botFrac: 0.7 }, 0.04)).toBe('t1');
+  });
+});
+
+// Tempdoc 814 §D4 — POSITION anchoring: a gutter index must point at where a block STARTS, so the
+// marker fraction is the landmark's TOP edge. (565 anchored the midpoint; 809 finding 15 measured that
+// as "alignment too loose for navigation" and 814 §B.5 supersedes it knowingly.)
+describe('navigation — §21 POSITION (top-edge anchoring, 814 §D4)', () => {
+  it('anchors each marker at its landmark TOP edge, not its midpoint', () => {
+    const f = anchorFractions(RUN);
+    expect(f.get('u1')).toBe(0.0); // midpoint would be 0.05
+    expect(f.get('t1')).toBe(0.1); // midpoint would be 0.2
+    expect(f.get('a1')).toBe(0.3); // midpoint would be 0.65 — a tall answer's worst case
+  });
+
+  it('a tall block anchors at its first line, so the marker never drifts down with block height', () => {
+    const short: Landmark[] = [{ id: 'x', extent: { topFrac: 0.4, botFrac: 0.45 } }];
+    const tall: Landmark[] = [{ id: 'x', extent: { topFrac: 0.4, botFrac: 1.0 } }];
+    expect(anchorFractions(short).get('x')).toBe(anchorFractions(tall).get('x'));
+  });
+
+  it('is empty for no landmarks and covers every landmark exactly once', () => {
+    expect(anchorFractions([]).size).toBe(0);
+    expect(anchorFractions(RUN).size).toBe(RUN.length);
   });
 });
 

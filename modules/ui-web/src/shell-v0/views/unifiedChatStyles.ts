@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { css } from 'lit';
+import { shortViewportMedia } from '../primitives/compositionLayout.js';
 
 /**
  * Tempdoc 621 Phase 1 — the chat window's body styles, extracted verbatim from UnifiedChatView.ts.
@@ -14,7 +15,12 @@ export const unifiedChatBodyStyles = css`
       width: 100%;
       height: 100%;
       padding: 1rem;
-      gap: 0.75rem;
+      /* Tempdoc 814 §D1 — the surface's own inter-band gap is chrome, and chrome yields to the
+         conversation. Both this gap and the answer-plane's below drop 0.75rem → 0.5rem; every pixel
+         freed lands in .conversation-zone (the only flex:1 child of either column), which is what the
+         registered content-share floor (governance/ui-proportion-baseline.v1.json, step chat-bands,
+         .conversation-zone minShareOfSelector 0.55) asserts. */
+      gap: 0.5rem;
       box-sizing: border-box;
       color: var(--text-primary);
       font-family: system-ui, -apple-system, sans-serif;
@@ -46,9 +52,19 @@ export const unifiedChatBodyStyles = css`
       min-width: 0;
     }
     /* Tempdoc 697 — the one-line pill needs less vertical padding than the expanded multi-cause
-       banner; this outer rule overrides jf-system-notice's :host padding on the collapsed host. */
+       banner; this outer rule overrides jf-system-notice's :host padding on the collapsed host.
+       Tempdoc 814 §D2 — 738 measured the pill at ~76px and recorded the oversized-button artifact
+       without finishing it; the remaining honest size for one line of text is ~36px, so the block
+       padding drops again here and on the pill's remedy control below. The registered ceiling
+       (governance/ui-proportion-baseline.v1.json, \`chat-proportion\` = 42px) is a shrink-only
+       ratchet — going under it is free and nothing here raises it. */
     .degradation-banner-collapsed {
-      padding-block: 0.35rem;
+      padding-block: 0.2rem;
+    }
+    /* The pill is ONE line by construction (the summary ellipsizes), so its row can use a tight
+       line box; the expanded banner's multi-line causes keep the inherited leading. */
+    .degradation-banner-collapsed .notice-row-collapsed {
+      line-height: 1.3;
     }
     .degradation-banner-collapsed .degradation-summary {
       overflow: hidden;
@@ -77,6 +93,12 @@ export const unifiedChatBodyStyles = css`
     }
     .degradation-banner-collapsed .notice-remedy {
       margin-top: 0;
+      /* Tempdoc 814 §D2 — the remedy control is the TALLEST thing in the pill's row, so it is what
+         the pill's height is measured against. 697 already shrank it to a compact action
+         (0.1rem/0.15rem block padding, ~20px) and it is NOT shrunk further here: that is already
+         under the 24px WCAG 2.2 target-size floor, and buying the last two pixels of chrome with a
+         smaller click target is the wrong trade. The pill reaches its one-line size through the
+         host's own block padding above instead. */
     }
     /* Tempdoc 727 F-8 — the failed-unified-thread-refresh notice: shares the icon+text row layout
        with the degradation banner above, but is its own class (a different, usually transient cause
@@ -187,7 +209,8 @@ export const unifiedChatBodyStyles = css`
       min-height: 0;
       display: flex;
       flex-direction: column;
-      gap: 0.75rem;
+      /* Tempdoc 814 §D1 — see the :host gap note above: the band separations are chrome and yield. */
+      gap: 0.5rem;
       container-type: inline-size;
       container-name: chat-surface;
     }
@@ -305,6 +328,49 @@ export const unifiedChatBodyStyles = css`
     .run-spine-node.active {
       box-shadow: 0 0 0 3px var(--accent-tint);
     }
+    /* Tempdoc 814 §D4 — the CLUSTER badge: the aggregated form of markers too close to draw apart, so
+       spine density stays bounded by the run's structure rather than its event count. A counted disc,
+       operable like every other marker (it jumps to the group's first step). */
+    .run-spine-cluster {
+      position: absolute;
+      left: 50%;
+      top: 0;
+      z-index: 1;
+      transform: translate(-50%, -50%);
+      min-width: 1.05rem;
+      height: 1.05rem;
+      padding: 0 0.15rem;
+      border-radius: 0.55rem;
+      box-sizing: border-box;
+      background: var(--surface-1);
+      border: 1px solid var(--border-default);
+      color: var(--text-secondary);
+      font-size: var(--font-size-xs);
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      appearance: none;
+      margin: 0;
+      cursor: pointer;
+    }
+    .run-spine-cluster:hover {
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+    .run-spine-cluster:focus-visible {
+      outline: 2px solid var(--accent-tint);
+      outline-offset: 2px;
+    }
+    .run-spine-cluster.active {
+      box-shadow: 0 0 0 3px var(--accent-tint);
+    }
+    /* A cluster carrying a failed step keeps the run-health cue the single markers have. */
+    .run-spine-cluster.has-error {
+      border-color: var(--accent-danger);
+      color: var(--text-danger);
+    }
     @container chat-surface (min-width: 64rem) {
       .conversation-zone {
         /* §13 Pillar B — the wide grid-template-columns + the per-zone placements (.run-spine col 2,
@@ -341,14 +407,15 @@ export const unifiedChatBodyStyles = css`
     /* The webkit/Chromium half of "hide the native bar" is the ambient \`.jf-scrollbar-none\` utility
        (574 §16 — ::-webkit-scrollbar is a Class-B shadow-scoped pseudo, owned by ambientStyles); the
        template adds that class alongside \`spine-scrolled\`. */
+    /* Tempdoc 814 §D3 — ONE scroll region per surface: \`.conversation\` is it. The rail was a second,
+       independent \`overflow-y: auto\` region in the same grid row (finding 13's nested-scroller stack);
+       it is now a BOUNDED INDEX — top-N cards + an "Open all · N" row into the sanctioned drawer — so
+       it has nothing to scroll. \`hidden\` (not \`auto\`) makes that structural, not a hope. */
     .evidence-rail {
       display: none;
       min-width: 0;
       min-height: 0;
-      overflow-y: auto;
-      overflow-x: hidden;
-      scrollbar-width: thin;
-      scrollbar-color: var(--border-subtle) transparent;
+      overflow: hidden;
     }
     @container chat-surface (min-width: 64rem) {
       .evidence-rail {
@@ -371,6 +438,18 @@ export const unifiedChatBodyStyles = css`
       min-width: 0;
       min-height: 24rem;
       overflow: hidden;
+    }
+    /* Tempdoc 814 §D6 — the F5 close (734 round 8: clearing results with the preview open clipped the
+       composer below the viewport). The pane, the composer and the header cannot all fit a 768-tall
+       window while this floor is 24rem, and the composer — bottom of the flex column — is what paid.
+       Below the ONE block-axis breakpoint (primitives/compositionLayout.ts) the SECONDARY surface
+       yields instead: the floor survives at normal heights, and this rule precedes the wide
+       \`@container\` block below, which still overrides it with \`min-height: 0\` when the pane is a
+       grid column rather than a stacked row. */
+    ${shortViewportMedia} {
+      .document-pane {
+        min-height: 14rem;
+      }
     }
     @container chat-surface (min-width: 64rem) {
       .document-pane {
@@ -521,6 +600,19 @@ export const unifiedChatBodyStyles = css`
       padding: 0 0.35ch;
       text-transform: lowercase;
     }
+    /* Tempdoc 814 (finding 7) — the background-run POINTER: the same chip geometry as the kind chip
+       it replaces, but operable, because the run's record lives in the drawer's Background-runs tab
+       and this segment is a reference to it, not a second copy of it. */
+    .run-segment-ref {
+      background: transparent;
+      font: inherit;
+      font-size: var(--font-size-xs);
+      cursor: pointer;
+    }
+    .run-segment-ref:hover {
+      color: var(--text-primary);
+      border-color: var(--accent-tint);
+    }
     /* §26.D — a background run reads as a dashed-edge segment (it ran "while you were away"). */
     .run-segment.origin-background {
       border-left-style: dashed;
@@ -536,13 +628,18 @@ export const unifiedChatBodyStyles = css`
       background: var(--text-tertiary);
       transform: translateY(-50%);
     }
-    /* Tempdoc 565 §30 — a human STEERING directive is a distinct human-origin spine landmark (accent ring). */
+    /* Tempdoc 565 §30 — a human STEERING directive is a distinct human-origin spine landmark.
+       814 §D4 / 809 finding 15 — the ring was drawn in \`--accent-command\`, the same purple family as
+       the user bubble ~a column away, so two different meanings shared one colour. The cue is now
+       SHAPE, not hue: a rotated square (diamond) in the neutral text token. Same token system, one
+       less colour collision. */
     .run-spine-node.steer-landmark::before {
       content: '';
       position: absolute;
-      inset: -0.18rem;
-      border-radius: 50%;
-      border: 1px solid var(--accent-command);
+      inset: -0.22rem;
+      border-radius: 0.1rem;
+      border: 1px solid var(--text-primary);
+      transform: rotate(45deg);
     }
     /* Tempdoc 565 §30 — the "Your direction" body chip for an acknowledged steer (human-origin, accent). */
     .steer-directive {
@@ -895,12 +992,11 @@ export const unifiedChatBodyStyles = css`
       border-color: var(--accent-tint);
     }
     /* Tempdoc 565 §12.3.E — at the wide breakpoint the persistent evidence rail replaces the toggle
-       drawer, so the "Sources · N" affordance (which opens that drawer) is redundant and hidden. */
-    @container chat-surface (min-width: 64rem) {
-      .sources-affordance {
-        display: none;
-      }
-    }
+       drawer, so the "Sources · N" affordance (which opens that drawer) is redundant.
+       Tempdoc 814 §D5 — the hide is no longer a CSS rule here: the affordance is gated on
+       evidenceRailMounted() at RENDER (UnifiedChatView.renderAgentToolbar), so the redundant count
+       leaves the DOM instead of merely leaving the screen — one authority structurally, which is what
+       the status-fact singleton probe and assistive tech both read. */
     /* Tempdoc 561 P-A/P-B (Slice 3): the secondary Activity rail — demoted agent chrome (budget),
        collapsible so the conversation stays primary. */
     .activity-rail {
@@ -929,9 +1025,17 @@ export const unifiedChatBodyStyles = css`
       gap: 0.5rem;
       padding-top: 0.25rem;
     }
+    /* Tempdoc 814 §D4 — a meter is a COMPACT gauge, not a page-wide rule. \`flex: 1\` made both bars
+       eat every pixel the row did not otherwise claim, so a 4px track read as a full-bleed horizontal
+       line across the surface (and, pegged at 100%, as a status bar rather than a reading). Fixed
+       width, allowed to shrink on a cramped row but never to grow; the unit + ceiling wording beside
+       it (577's own requirement) is untouched — the words carry the number, the bar carries the
+       proportion. */
     .activity-budget .budget-bar,
     .context-meter .budget-bar {
-      flex: 1;
+      flex: 0 1 10rem;
+      width: 10rem;
+      max-width: 100%;
       height: 4px;
       border-radius: 2px;
       background: var(--surface-1);

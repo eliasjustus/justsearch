@@ -30,6 +30,25 @@
             "minimum": 0,
             "description": "Optional per-step override of the top-level tolerancePx."
           },
+          "maxScrollableRegions": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Tempdoc 814 D3/D7.2 — one-scroll-region-per-surface. When set, the gate asserts geometry.scrollableCount (ui_measure.py's shadow-piercing scrollable-element walk) is <= this value."
+          },
+          "minScrollableRegions": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Closure-audit finding C — the anti-vacuity FLOOR paired with maxScrollableRegions. A ceiling alone passes trivially on a capture with zero scrollers, so a step whose state is supposed to overflow declares this floor; the pair (1/1) is what makes the one-scroller rule witness a real scroller. A scrollableCount below this is a NO_SCROLLER violation."
+          },
+          "statusFactsSingleton": {
+            "type": "boolean",
+            "description": "Tempdoc 814 D5/D7.3 — when true, the gate asserts every phrase in governance/status-facts.v1.json renders at most its registered maxPersistentRenders times in this step's captured DOM text (measure.json's statusFacts probe)."
+          },
+          "absentSelectors": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Tempdoc 814 D7.2 — selectors that must NOT be present in the captured geometry (e.g. the run-spine on a single-turn conversation). A present selector is a PRESENT_BUT_SHOULD_BE_ABSENT violation. Unioned into ui_measure.py's geometry probe like `selector`/`mustNotOverlapSelector`."
+          },
           "elements": {
             "type": "array",
             "items": {
@@ -38,7 +57,9 @@
               "anyOf": [
                 { "required": ["maxHeightPx"] },
                 { "required": ["minWidthPx"] },
-                { "required": ["mustNotOverlapSelector"] }
+                { "required": ["mustNotOverlapSelector"] },
+                { "required": ["minShareOfSelector"] },
+                { "required": ["maxBottomPx"] }
               ],
               "description": "An element declares at least one geometric constraint; the gate reports an element with none as an ERROR rather than a silent pass.",
               "properties": {
@@ -59,6 +80,29 @@
                 "mustNotOverlapSelector": {
                   "type": "string",
                   "description": "A second registered selector whose rect this element's rect must not intersect (by more than tolerancePx on both axes). Expresses occlusion, which no per-element size budget can."
+                },
+                "minShareOfSelector": {
+                  "type": "object",
+                  "description": "Tempdoc 814 D1/D7.1 — the owner-of-the-sum share assertion: this element's rect.h divided by a second registered selector's rect.h must be >= floor. Expresses 'primary content owns the remainder', which no absolute px ceiling/floor can.",
+                  "required": ["selector", "floor"],
+                  "properties": {
+                    "selector": {
+                      "type": "string",
+                      "description": "The denominator element's selector (e.g. the surface host, 'jf-unified-chat-view')."
+                    },
+                    "floor": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1,
+                      "description": "Minimum acceptable share (0-1) of the denominator's height this element's height must occupy."
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "maxBottomPx": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Tempdoc 814 D6/D7.2 (the F5 close) — rect.y + rect.h must not exceed this value + tolerancePx, i.e. the element's bottom edge must stay within a viewport of this height."
                 }
               },
               "additionalProperties": false
