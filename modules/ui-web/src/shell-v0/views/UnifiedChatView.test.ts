@@ -5253,3 +5253,179 @@ describe('798 — the wide-layout query container wraps the zones that query it'
     view.remove();
   });
 });
+
+// Review 2026-08 (FE review-fix bundle, item 3) — PR #373 claimed FE tests for the locked-send
+// affordance (`sendBlockedReason`) and the 423-dispatch handler (`noteRefusedWhileLocked`). No such
+// tests existed anywhere in the tree (grep: zero references to either symbol, or to
+// `lockedSendNotice` / `.locked-send-notice`, outside the view itself). The production code DID ship
+// (tempdoc 734 round-14 F4), so these tests are written against the SHIPPED behaviour.
+describe('734 round-14 F4 — a locked chat store blocks Send and names why', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+  });
+
+  /** The composer element the docked/landing block renders (one stable slot in every state). */
+  function composer(view: UnifiedChatView): Element {
+    const el = view.shadowRoot!.querySelector('jf-composer');
+    expect(el).not.toBeNull();
+    return el!;
+  }
+
+  it('locked ⇒ Send is disabled and the reason names the lock AND where to unlock it', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    // The retrieve tier is deliberately EXEMPT (a plain search is neither AI-dependent nor
+    // encrypted), so the lock case only exists above it.
+    view.affordance = 'documents';
+    (view as unknown as { inputDraft: string }).inputDraft = 'a message worth keeping';
+    await view.updateComplete;
+
+    // Positive control FIRST: with the same draft and no lock, Send is live and names no reason.
+    expect(composer(view).hasAttribute('submit-disabled')).toBe(false);
+    expect(composer(view).getAttribute('submit-title')).toBe('');
+
+    (view as unknown as { historyLocked: boolean }).historyLocked = true;
+    await view.updateComplete;
+    expect(composer(view).hasAttribute('submit-disabled')).toBe(true);
+    const reason = composer(view).getAttribute('submit-title') ?? '';
+    expect(reason).toContain('encrypted and locked');
+    expect(reason).toContain('Security');
+    view.remove();
+  });
+
+  it('the retrieve tier stays sendable while locked (the exemption is deliberate, not an oversight)', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'retrieve';
+    (view as unknown as { inputDraft: string }).inputDraft = 'invoice';
+    (view as unknown as { historyLocked: boolean }).historyLocked = true;
+    await view.updateComplete;
+    expect(composer(view).getAttribute('submit-title')).toBe('');
+    expect(composer(view).hasAttribute('submit-disabled')).toBe(false);
+    view.remove();
+  });
+
+  it('a 423 dispatch renders the notice + Unlock affordance, restores the draft, and takes back the optimistic bubble', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'documents';
+    const text = 'please summarise the contract';
+    (view as unknown as { inputDraft: string }).inputDraft = text;
+
+    vi.mocked(consumeShapeStream).mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new Error('locked'), { status: 423 })),
+    );
+    await (view as unknown as { send(): Promise<void> }).send();
+    await view.updateComplete;
+
+    // 1. The surface adopts the locked state the server just reported.
+    expect((view as unknown as { historyLocked: boolean }).historyLocked).toBe(true);
+    // 2. The optimistic user bubble is taken back — a message shown as sent that was never recorded
+    //    is the same lie in the UI as a 200 would have been on the wire.
+    expect(
+      (view as unknown as { thread: Array<{ role: string; content: string }> }).thread.some(
+        (m) => m.role === 'user' && m.content === text,
+      ),
+    ).toBe(false);
+    // 3. The text is back in the composer — it is the user's and nothing else holds it.
+    expect((view as unknown as { inputDraft: string }).inputDraft).toBe(text);
+
+    // …and the rendered notice says what became of the message, next to the remedy that fixes it.
+    const sr = view.shadowRoot!;
+    const notice = sr.querySelector('.locked-send-notice');
+    expect(notice).not.toBeNull();
+    expect(notice!.textContent).toContain('was not sent');
+    expect(notice!.getAttribute('role')).toBe('alert');
+    const locked = sr.querySelector('.history-locked')!;
+    expect(locked.textContent).toContain('encrypted and locked');
+    // The Unlock affordance routes to the Security surface (the remedy on the ONE CAUSE_ROWS row).
+    const unlock = locked.querySelector('jf-button');
+    expect(unlock).not.toBeNull();
+    expect(unlock!.textContent).toContain('Unlock in Security');
+    view.remove();
+  });
+
+  it('negative control: a 500 dispatch is an ERROR, never treated as locked', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'documents';
+    const text = 'please summarise the contract';
+    (view as unknown as { inputDraft: string }).inputDraft = text;
+
+    vi.mocked(consumeShapeStream).mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new Error('boom'), { status: 500 })),
+    );
+    await (view as unknown as { send(): Promise<void> }).send();
+    await view.updateComplete;
+
+    expect((view as unknown as { historyLocked: boolean }).historyLocked).toBe(false);
+    expect(view.shadowRoot!.querySelector('.history-locked')).toBeNull();
+    // The non-423 path keeps the ordinary error contract: message shown, draft consumed, bubble kept.
+    expect((view as unknown as { errorMessage: string }).errorMessage).not.toBe('');
+    expect(
+      (view as unknown as { thread: Array<{ role: string; content: string }> }).thread.some(
+        (m) => m.role === 'user' && m.content === text,
+      ),
+    ).toBe(true);
+    view.remove();
+  });
+});
+
+// Review 2026-08 (FE review-fix bundle, item 4) — `spineItems()` suppresses the run spine unless the
+// conversation has structure to index: `turns >= 2` OR `>= 2` distinct workflow-node boundaries. Only
+// the TURN arm was tested (round-14 finding 15's pair above); this is the node-boundary arm, which is
+// the arm the spine was actually built for ("the spine marks node boundaries", 565 §26).
+describe('round-14 finding 15 — the spine gate is a DISJUNCTION: node boundaries are the second arm', () => {
+  it('a SINGLE-turn run with two node boundaries renders the spine', async () => {
+    __resetAgentSessionStore();
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    (view as unknown as { wideZone: boolean }).wideZone = true;
+    (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
+      { id: 'u1', occurredAt: '2026-01-01T00:00:00Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q', attributes: {} },
+      { id: 's1', occurredAt: '2026-01-01T00:00:01Z', kind: 'PROGRESS', originator: 'agent', content: '', attributes: { nodeBoundary: 'start', nodeId: 'think', nodeKind: 'llm', label: 'think' } },
+      { id: 't1', occurredAt: '2026-01-01T00:00:02Z', kind: 'TOOL_ACTIVITY', originator: 'agent', content: '', attributes: { callId: 'c1', toolName: 'core_search_index', status: 'completed' } },
+      { id: 'e1', occurredAt: '2026-01-01T00:00:03Z', kind: 'PROGRESS', originator: 'agent', content: '', attributes: { nodeBoundary: 'end', nodeId: 'think' } },
+      { id: 's2', occurredAt: '2026-01-01T00:00:04Z', kind: 'PROGRESS', originator: 'agent', content: '', attributes: { nodeBoundary: 'start', nodeId: 'act', nodeKind: 'tool', label: 'act' } },
+      { id: 'a1', occurredAt: '2026-01-01T00:00:05Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer', attributes: {} },
+      { id: 'e2', occurredAt: '2026-01-01T00:00:06Z', kind: 'PROGRESS', originator: 'agent', content: '', attributes: { nodeBoundary: 'end', nodeId: 'act' } },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const sr = view.shadowRoot!;
+    // ONE user turn — the turn arm cannot be what mounted this.
+    expect(
+      (view as unknown as { unifiedEvents: Array<{ kind: string }> }).unifiedEvents.filter(
+        (e) => e.kind === 'USER_MESSAGE',
+      ),
+    ).toHaveLength(1);
+    expect(sr.querySelector('.run-spine')).not.toBeNull();
+    // The ONE predicate: the reading column hides its native scrollbar only when the spine (which IS
+    // the scroll control) mounts, so both gates must read the same disjunction.
+    expect(sr.querySelector('.conversation.jf-scrollbar-none')).not.toBeNull();
+    __resetAgentSessionStore();
+    view.remove();
+  });
+
+  it('ONE node boundary is not a boundary — it is the whole run, so the spine stays suppressed', async () => {
+    __resetAgentSessionStore();
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    (view as unknown as { wideZone: boolean }).wideZone = true;
+    (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
+      { id: 'u1', occurredAt: '2026-01-01T00:00:00Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q', attributes: {} },
+      { id: 's1', occurredAt: '2026-01-01T00:00:01Z', kind: 'PROGRESS', originator: 'agent', content: '', attributes: { nodeBoundary: 'start', nodeId: 'think', nodeKind: 'llm', label: 'think' } },
+      { id: 't1', occurredAt: '2026-01-01T00:00:02Z', kind: 'TOOL_ACTIVITY', originator: 'agent', content: '', attributes: { callId: 'c1', toolName: 'core_search_index', status: 'completed' } },
+      { id: 'a1', occurredAt: '2026-01-01T00:00:03Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent', content: 'answer', attributes: {} },
+      { id: 'e1', occurredAt: '2026-01-01T00:00:04Z', kind: 'PROGRESS', originator: 'agent', content: '', attributes: { nodeBoundary: 'end', nodeId: 'think' } },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    expect(view.shadowRoot!.querySelector('.run-spine')).toBeNull();
+    __resetAgentSessionStore();
+    view.remove();
+  });
+});
