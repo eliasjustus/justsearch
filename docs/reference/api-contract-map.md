@@ -408,6 +408,14 @@ Source: slices 491 (substrate), 496 (FreeChat + Extract), 497 (dynamic dispatch)
 | 5 | `justsearch_status` | Index health + enrichment | `KnowledgeHttpApiAdapter.status()` |
 | 6 | `justsearch_runtime_manifest` | Redacted runtime manifest for identity-aware caching | `RuntimeManifestPublisher` |
 
+`justsearch_search`'s `structuredContent` evidence tier (projected by `McpEvidenceProjection`)
+carries the same `appliedFilters` echo the REST response does — see
+[Knowledge Search API](#knowledge-search-api) for its shape. It is present only when the request
+carried filters, is emitted on both evidence overloads, and survives the delivery governor's
+tail truncation. As on REST, it echoes the filters the request **sent**; since the tempdoc-811 D-1
+null-scope fix a null/empty filter set runs the same code path as an explicit one, so the engine
+applies the requested filters verbatim and the echo is not a claim about anything else.
+
 MCP Prompts: 3 onboarding templates (`search_files`, `answer_question`, `index_folder`) with live system context.
 
 MCP Resources: 4 proposed URIs (`justsearch://index/summary`, `roots`, `top-sources`, `top-entities`) + 9 catalog-driven resources.

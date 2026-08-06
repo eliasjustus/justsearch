@@ -141,11 +141,29 @@ public final class IndexCountOps {
       return 0;
     }
     try {
-      return bridge.withSearcher(searcher -> searcher.count(query));
+      return countQueryOrThrow(query);
     } catch (IOException e) {
       log.debug("Failed to count query: {}", e.getMessage());
       return 0;
     }
+  }
+
+  /**
+   * {@link #countQuery} without the swallow: propagates the reader {@link IOException} to a caller
+   * that has a meaningful fallback.
+   *
+   * <p>Returning 0 on a transient IO error is a lie a caller cannot detect — "the query matched
+   * nothing" and "the reader could not be read" are the same value. Callers that report a count to
+   * a user surface (which renders a known 0 as "the index is empty") must be able to fall back
+   * instead, so they call this and decide.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   */
+  public int countQueryOrThrow(Query query) throws IOException {
+    if (query == null) {
+      return 0;
+    }
+    return bridge.withSearcher(searcher -> searcher.count(query));
   }
 
   /**

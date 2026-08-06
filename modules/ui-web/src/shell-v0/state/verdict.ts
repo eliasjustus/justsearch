@@ -141,10 +141,16 @@ export function computeStability(i: StabilityInput): Stability {
   if (i.phase === 'stale') {
     // 649: the poll-data aged out. If the backend is still reachable via another channel (an SSE
     // heartbeat), the data is merely behind (the poll starved under load) — a calm `updating` state.
-    // Only when NO channel has had recent contact is this a true lost-channel `channel-stale`.
-    return i.reachableViaContact
-      ? { kind: 'provisional', cause: 'updating' }
-      : { kind: 'provisional', cause: 'channel-stale' };
+    //
+    // Review 2026-08 (FE review-fix bundle, item 2): this site used to read the field TRUTHILY while
+    // the lost-contact guard at the top of this function reads `=== false`, so `undefined` — an older
+    // snapshot shape, or the field not populated yet — meant UNKNOWN at one site and "contact lost" at
+    // the other. Unified: asserting contact LOSS requires an explicit `false`, which the guard above
+    // already returned on, so anything reaching here is contact-live or contact-UNKNOWN and gets the
+    // calm `updating` state rather than the `channel-stale` alarm. (The symmetric half of the same
+    // rule lives in `computeVerdict`: asserting contact ALIVE requires an explicit `true` there.
+    // UNKNOWN never licenses a positive claim in either direction; the phase's own default stands.)
+    return { kind: 'provisional', cause: 'updating' };
   }
   return { kind: 'settled' };
 }
