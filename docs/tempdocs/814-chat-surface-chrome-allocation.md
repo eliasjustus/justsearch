@@ -1,6 +1,6 @@
 ---
 title: "Chat-surface layout & chrome allocation — the height budget gets an owner (T-B design)"
-status: "design settled 2026-08-06 — no implementation licensed yet; measured-baseline sweep pre-registered below"
+status: "in implementation 2026-08-06 — design settled, derisked (§B), autonomous implementation licensed by owner; plan in §P"
 created: 2026-08-06
 updated: 2026-08-06
 related: [810, 809, 807, 798, 738, 734, 687, 610, 600, 577, 565, 559]
@@ -298,7 +298,104 @@ the accretion mechanism it polices is apparatus; this one is scoped to "multiple
 workstreams add bands to shared surfaces," and retires when that stops being how chrome is
 made.
 
-## Owner decisions this design surfaces (none block Lane 2; all block implementation start)
+## §B — Derisk corrections (2026-08-06, source-verified before implementation)
+
+Two read-only audits (harness + FE code) against this worktree's base (`origin/main` +
+PR #370's `worktree-hv-fe` branch, merged here as the Lane-2 baseline the charter promised).
+Corrections to the design's premises, each verified at source:
+
+1. **The spine track is already a solid 2px hairline** (`unifiedChatStyles.ts:227-237`; zero
+   `dotted` rules in the file). 809's "dotted track" described the 0.2.0 build. D4's track item
+   is done-by-baseline.
+2. **SearchSurface.ts no longer exists** — its degradation banner was folded into the one
+   `chat-degradation` banner rendering in every affordance tier (`UnifiedChatView.test.ts:257-263`).
+   "Change both surfaces consistently" is satisfied by construction; finding 13's "second
+   surface" reproduction now lives in `renderRetrieveTier()`/`ResultsCard` inside the same
+   `.conversation` scroller and is covered by D3's one-scroller rule directly.
+3. **The pill's registered ceiling is already 42px** (`governance/ui-proportion-baseline.v1.json`,
+   step `chat-proportion`) — 738's ~76px measurement predates the current fixture state; the
+   shrink-only ratchet makes further slimming free.
+4. **The spine is the column's scroll control by design** (565 §21, restated at
+   `UnifiedChatView.ts:2464-2470`): when mounted, the native scrollbar is hidden
+   (`scrollbar-gutter: stable`) and the spine is a position-proportional minimap with
+   scroll-spy + click-jump and a `role="scrollbar"` viewport thumb. **D4 is revised**: commit
+   to the minimap (make it a competent scroll control — draggable thumb, honest affordance)
+   rather than de-scrollbarizing it. One scroll affordance per column is thereby preserved.
+5. **Marker positions are measured DOM geometry** (`primitives/navigation.ts:266-290`),
+   deliberately midpoint-anchored; top-edge alignment is a one-line swap because
+   `landmarks[].extent.topFrac` is already published (`navigation.ts:287`). The midpoint
+   choice is superseded knowingly (the owner's finding: alignment too loose for navigation).
+6. **Clustering is genuinely new**: `computeSpacedPositions` documents aggregation as "a
+   future extension" (`primitives/adaptiveSpacing.ts:35-37`) — D4 implements that extension
+   (group ideal positions within min spacing → one counted, keyboard-operable badge).
+7. **Chip arbitration needs no new signal**: the chip (`components/StatusDeck.ts:522-545`) and
+   the banner are two projections of the same `aiState.verdict`
+   (`aiStateStore.ts:756-772`); Shell already writes `activeSurface` into `shellContextState`
+   on every navigation (`Shell.ts:1443`). Post-#370, banner presence ≠ verdict-degraded
+   (info-tier causes are bannerless by finding 9's fix), so the yield rule evaluates the same
+   authority predicate the banner uses — `warrantsSearchDegradationBanner(verdict)` in
+   `readinessNotice.ts` — from StatusDeck: the chip yields exactly when the active surface is
+   the chat surface AND that predicate says the surface shows a banner. One authority
+   predicate, two consumers, no state fork.
+8. **The "open all sources" affordance already exists end-to-end**: the identical
+   `<jf-sources-pane>` is mounted in Shell's OverlayHost right-drawer
+   (`Shell.ts:2346-2352`), opened by `toggleSources()`, which the "Sources · N" toolbar
+   button already calls — it is merely `display:none`'d at wide widths
+   (`unifiedChatStyles.ts:899-903`). D3's rail conversion is a top-N slice + dropping two
+   `overflow-y:auto` rules + un-hiding/adding the open-all row.
+9. **`check-intent-tier-coverage` cannot be tripped by this work** (it regex-parses
+   `presetByShape` and requires a `submitSearch` token; it knows nothing of DOM/toolbars).
+   The 687 R5a protected element is the `.composer` div itself (comment at
+   `UnifiedChatView.ts:2540-2549`); row consolidation *inside* `renderComposerBlock()` is
+   safe.
+10. **Disclosure tests pin Detailed force-expansion** (`UnifiedChatView.test.ts:335-408`,
+    esp. `:364`): the height gate must default to "above breakpoint" when layout/matchMedia
+    is unavailable (jsdom), mirroring `wideZone`'s test-friendly default, and add a
+    below-breakpoint case rather than rewriting the five existing ones.
+11. **Enforcement wiring is nearly pre-built**: `chat-proportion`/`chat-occlusion` fixture
+    steps already exist (deterministic `--fixtures`, no dev stack) with two chat selectors
+    registered; the share assertion is a ~15-line fourth constraint kind in
+    `ui_proportion_gate.py`; the single-scroller enumeration already exists as
+    `ui_check.py:186-212`'s scroll-walk and needs porting into `ui_measure.py`'s geometry;
+    the status-fact phrase probe is the only net-new capture. The F5 step extends
+    `chat-occlusion`'s exact setup (search → open pane) with a clear-results action.
+    `core.unified-chat-surface` is already exempt in the step-coverage register, so new
+    steps ride the existing exemption; the a11y baseline needs chat-step rows added
+    (`knownRules: []`).
+12. **Mechanism decision (research pass)**: block-axis breakpoints use viewport
+    `@media (max-height: 820px)` routed through `compositionLayout` as the one breakpoint
+    authority — `container-type: size` collapse semantics make it strictly riskier here for
+    no benefit (the surface fills the viewport minus fixed Shell chrome).
+
+Settled parameters (autonomy granted 2026-08-06): content floor ≥ 55% Simple / ≥ 45%
+Detailed at 1366×768; height breakpoint 820px; rail index top-3 + "Open all · N"; cluster
+spacing 14px.
+
+## §P — Implementation plan (contract)
+
+Four bounded chunks; W1+W4 parallel (disjoint files), then W2, then W3, in this worktree.
+
+- **W1 — Height axis + bands** (`compositionLayout` max-height authority; Detailed
+  interaction-gating below breakpoint with jsdom-safe default + test updates; document-pane
+  floor yield below breakpoint = the F5 close; activity-rail expanded-body meters and the
+  610 context meter restyled to compact fixed-width with unit + ceiling; pill button slim).
+- **W2 — Spine minimap + evidence rail** (top-edge anchoring; clustering extension in
+  `adaptiveSpacing` + counted badge; draggable thumb if absent; marker treatment
+  de-collision via outline-vs-filled within the statusTone authority; rail → top-3
+  non-scrolling index + open-all row; source-count single authority).
+- **W3 — Chip arbitration + retro drawer** (StatusDeck yield rule via the
+  `warrantsSearchDegradationBanner` authority + `shellContextState`; RetrospectivePanel tab
+  renames/scope descriptors/empty states; thread-side background-run reference marker).
+- **W4 — Measurement + gates** (`ui_measure.py` scrollableRegions + status-fact probe;
+  `ui_proportion_gate.py` share constraint; baseline rows for all bands at a new pinned
+  1366×768 all-bands fixture step; F5 step; spine steps; a11y rows; `ui_step_index.json`).
+
+Verification per chunk: `npm run typecheck` + affected unit tests; whole-arc: full FE unit
+suite, `./gradlew.bat build -x test`, the fixture-backed gates (`ui-proportion-gate`,
+`ui-a11y-gate`), and the pre-registered resize sweep + independent measured audit before
+closure (§D7.5).
+
+## Owner decisions this design surfaces (resolved 2026-08-06 under granted autonomy — recorded, not re-asked)
 
 1. **The two floor numbers** (D1: Simple-mode share target, Detailed-mode hard floor) — the
    design proposes ≥ 55% / ≥ 45% at 1366×768; the register makes them owner-tunable.
