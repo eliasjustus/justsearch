@@ -516,7 +516,11 @@ export class StatusDeck extends JfElement {
     // from a private read of whichever count field this component could reach. `embeddingBlocked`
     // still zeroes the enrichment tier: a blocked embedding stage has no backlog to work off, so
     // showing one would claim progress that cannot happen.
-    const progress = selectIndexingProgress(this.status, this.aiState?.snapshotLive ?? false);
+    const progress = selectIndexingProgress(
+      this.status,
+      this.aiState?.snapshotLive ?? false,
+      this.aiState?.episodeMaxPendingJobs ?? 0,
+    );
     const embeddingBlocked = idx ? orElse(idx.embeddingBlocked, false) : false;
     const queue = progress.jobsPending;
     const enriching = !embeddingBlocked && progress.phase === 'enriching';

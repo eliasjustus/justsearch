@@ -593,3 +593,63 @@ first review could not supply:
   default applicable during a brief boot window until model init wires them; the
   proportion-gate captures were re-taken on current `main` because the original capture
   evidence did not survive worktree teardown.
+
+## 19. Follow-up plan (2026-08-06, /plan): design-exploration candidates + recorded residuals
+
+Inputs: a generative design exploration (owner-directed, Claude Design; project
+"JustSearch indexing progress card") produced three candidates the owner routed into
+implementation, plus §17's cancel-copy residual. An investigation pass mapped every seam
+first; decisions below cite it.
+
+**W1 — Capability-first enriching copy.** The Tasks card's enriching headline becomes
+"Search is ready — still improving" (capability first, matching the caveat constant's
+own order; "improving" over the exploration's "learning" to avoid anthropomorphism).
+Seam: `TaskList.headline()` is a private literal with one render site — change it there;
+do NOT add a third shared constant (the two in `enrichmentCoverage.ts` have documented,
+deliberately distinct subjects). While there, fix a real fork the investigation found:
+the literal `'semantic search catching up'` is duplicated in TaskList and SystemSelfView
+outside the shared-vocabulary module — promote it to a body-tier constant in
+`enrichmentCoverage.ts` and consume it at both sites. No governance register carries
+these phrases; no gate constrains the change.
+
+**W2 — High-water-mark determinate indexing bar.** During the indexing phase the bar
+may honestly be determinate against the backlog's observed maximum this drain episode:
+`episodeMaxPendingJobs` lives in `aiStateStore` (mirroring `lastSettledIndex`'s
+imperative-stamp pattern exactly: signal, doctrine comment, stamp in `onStatusUpdate`,
+snapshot exposure, test reset; reset when `pendingJobs` drains to 0) and is passed to
+`selectIndexingProgress` as a REQUIRED third parameter — optional-with-default would
+let six surfaces silently derive a different percent from the seventh, the exact
+two-derivation drift §3b forbids. The bar falls back to the indeterminate arm whenever
+`episodeMax <= jobsPending` (no drain observed yet — genuinely no denominator; also
+what a static fixture shows, so `tasks-occlusion` stays byte-stable). Honest cost,
+stated: the determinate indexing arm has no deterministic ui-shot capture (a static
+fixture cannot exhibit cross-poll memory); its coverage is the unit suite, recorded
+here rather than silently omitted.
+
+**W3 — Cancel copy: fact without a fabricated bound.** The root-removal confirm gains
+the enrichment fact: in-flight enrichment for the folder is stopped and its work
+discarded. The plan deliberately names NO numeric latency: #374's bound is
+mode-dependent (combined mode checkpoints at 1-8-document granularity with a
+deliberate SPLADE stage-boundary hole; individual mode retains whole-batch atomicity
+per #374's own logged residual), so "within seconds" would overclaim exactly where the
+old copy underclaimed. No test pins the current confirm string; the registry keys stay.
+
+**W4 — Compact fact row.** Counts and ETA merge to one line
+("412 files remaining · 8.00 GB · ~1m 43s left"); the indicative qualifier "at the
+current rate" survives in the element's accessible label/title rather than the visible
+line. The eta-absence intent (no placeholder, segment simply absent) is re-expressed at
+segment level. Width risk is real (the merged run lengthens toward the 24rem cap near
+the Settings/Help overlap assertions) — `tasks-occlusion` re-capture + proportion gate
+are the acceptance check.
+
+**Explicitly NOT in scope, with reasons:** SPLADE/NER budget-fairness (its own
+worker-side slice; observation filed with live evidence); the §16 stale-transport live
+repro (superseded by structure — every rendered number now derives from the one poll
+projection, so the two-transport disagreement class has no code path left to
+reproduce); byte-weighted ETA (needs a processed-bytes rate the wire does not carry;
+`pendingBytes` substrate is in place, consumer shipped).
+
+**Validation:** FE typecheck + full unit suite; re-capture `tasks-occlusion` +
+`library-enriching` + proportion gate; copy lints (`check-offline-single-sense`,
+folder-status gate untouched); real-UI check via the fixtures-served browser captures.
+Work in worktree `813-followups`; no PR until the owner licenses it.

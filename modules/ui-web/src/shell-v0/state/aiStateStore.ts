@@ -50,6 +50,9 @@ import {
   type PackImportStatus,
 } from '../utils/aiInstallPoll.js';
 import { type Maybe, known, UNKNOWN, mapKnown } from './known.js';
+// 813 §19 (W2) — the projection's own admission test, reused (not re-implemented) by the high-water
+// stamp below so the store and the selector agree on what counts as a worker-reported snapshot.
+import { isWorkerReportedIndex } from './indexingProgress.js';
 import { humanizeSeconds, elapsedSecondsSince } from './startupEstimate.js';
 // Tempdoc 649 — the ONE reachability authority (positive contact across ANY channel), registered as
 // the `connection` liveness domain. `aiStateStore` is its sole render site (imports `isOriginReachable`).
@@ -265,6 +268,20 @@ export interface AiState {
     indexSizeBytes: number | null;
   } | null;
   /**
+   * 813 §19 (W2) — the largest job backlog observed during the CURRENT drain episode, and the ONLY
+   * cross-poll memory the indexing surfaces have. `selectIndexingProgress` is a pure function of a
+   * single snapshot, so it cannot know that a backlog of 400 was 1,600 two polls ago; without a
+   * remembered maximum the indexing affordance can only ever be indeterminate. Stamped imperatively
+   * in `onStatusUpdate` (the poll callback), never written by a `computed`, so the graph is acyclic
+   * — the same discipline as {@link lastSettledIndex} above.
+   *
+   * <p>Only WORKER-REPORTED snapshots are admitted (`isWorkerReportedIndex`): the fallback block's
+   * `pendingJobs: 0` is absence, not a drained queue, and reading it as a drain would reset the
+   * denominator mid-episode. A genuine drain to 0 DOES reset it, so the next episode measures itself
+   * instead of inheriting a stale ceiling.
+   */
+  episodeMaxPendingJobs: number;
+  /**
    * 663 Stage 3 — the last-known install/runtime/pack snapshots, fed by the shared, always-on
    * `aiInstallPoll` (mirrors `status`/`inference` above: `null` until the first successful poll,
    * retained — never regressed to `null` — on a later transient failure). BrainSurface consumes
@@ -313,6 +330,9 @@ const lastSettledIndexSig = signal<{
   searchableDocumentCount: number | null;
   indexSizeBytes: number | null;
 } | null>(null);
+// 813 §19 (W2) — the drain episode's high-water backlog. Written ONLY by the poll
+// callback (`onStatusUpdate`), read by `buildSnapshot`; no computed writes it.
+const episodeMaxPendingJobsSig = signal(0);
 // Time is not reactive; the staleness timer bumps this when reachability
 // would flip, so the `connection` derivation re-evaluates.
 const clockTickSig = signal(0);
@@ -819,6 +839,7 @@ function buildSnapshot(): AiState {
     status,
     inference: inferenceSig.get(),
     lastSettledIndex: lastSettledIndexSig.get(),
+    episodeMaxPendingJobs: episodeMaxPendingJobsSig.get(),
     installStatus,
     runtimeStatus,
     packStatus: packStatusSig.get(),
@@ -903,6 +924,7 @@ function onStatusUpdate(snap: StatusSnapshot | null): void {
     statusSig.set(snap);
     lastStatusSuccessSig.set(Date.now());
     stampSettledIndex(snap);
+    stampEpisodeMaxPendingJobs(snap);
   } else {
     clockTickSig.set(clockTickSig.get() + 1);
   }
@@ -958,6 +980,23 @@ function stampSettledIndex(snap: StatusSnapshot): void {
     // a confident "0 B"). Files retention is gated on documentCount above, the primary path.
     indexSizeBytes: snap.worker?.core?.indexSizeBytes ?? null,
   });
+}
+
+/**
+ * 813 §19 (W2) — track the drain episode's high-water backlog (see
+ * {@link AiState.episodeMaxPendingJobs}). Mirrors {@link stampSettledIndex}: imperative-on-input,
+ * guarded against the hard-zeroed fallback snapshot, never written from a `computed`. A reported
+ * backlog of 0 ENDS the episode, so the next spike starts from a fresh denominator rather than
+ * measuring itself against a ceiling from an hour ago.
+ */
+function stampEpisodeMaxPendingJobs(snap: StatusSnapshot): void {
+  if (!isWorkerReportedIndex(snap)) return;
+  const pending = snap.worker?.core?.pendingJobs;
+  if (typeof pending !== 'number' || !Number.isFinite(pending) || pending <= 0) {
+    episodeMaxPendingJobsSig.set(0);
+    return;
+  }
+  if (pending > episodeMaxPendingJobsSig.get()) episodeMaxPendingJobsSig.set(pending);
 }
 
 function checkStaleness(): void {
@@ -1051,6 +1090,7 @@ export function __feedForTest(opts: {
     if (opts.status) {
       lastStatusSuccessSig.set(Date.now());
       stampSettledIndex(opts.status); // E2 — mirror the production poll-callback stamp.
+      stampEpisodeMaxPendingJobs(opts.status); // 813 §19 W2 — same mirror, same reason.
     }
   }
   if (opts.inference !== undefined) {
@@ -1088,6 +1128,7 @@ export function __resetAiStateForTest(): void {
   runtimeStatusSig.set(null);
   packStatusSig.set(null);
   lastSettledIndexSig.set(null);
+  episodeMaxPendingJobsSig.set(0);
   clockTickSig.set(0);
   loadStartedAtSig.set(null);
   __resetOriginContactForTest();
