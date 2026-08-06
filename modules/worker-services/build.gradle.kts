@@ -58,6 +58,12 @@ dependencies {
 
   testImplementation("io.opentelemetry:opentelemetry-sdk-common:1.60.1")
   testRuntimeOnly(libs.opentelemetry.sdk.testing)
+
+  // Tempdoc 809 finding 3: BackfillSchedulerSlowBatchTest asserts the tempdoc-798 budget-trip WARN
+  // is still emitted, which needs a real SLF4J binding to attach a ListAppender to. Same pair
+  // app-services already uses for its log-assertion tests.
+  testImplementation(libs.logback.classic)
+  testImplementation(libs.logback.core)
 }
 
 configurations.configureEach {

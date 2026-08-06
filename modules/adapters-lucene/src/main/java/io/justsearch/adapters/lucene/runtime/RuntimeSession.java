@@ -120,6 +120,22 @@ final class RuntimeSession implements AutoCloseable {
   final AtomicLong commitCount = new AtomicLong(0L);
   final AtomicLong queueDepth = new AtomicLong(0L);
 
+  /**
+   * Monotonic counter of BULK deletions submitted to the writer — {@code deleteByPathPrefix} and
+   * {@code deleteAll} (tempdoc 809 finding 3). Removing a watched root lands here as a
+   * {@code deleteByPathPrefix} on the worker (Head {@code RootLifecycleOps.removeWatchedPath} →
+   * {@code deleteByPath} RPC → {@code GrpcIngestService.deleteByPath} →
+   * {@link IndexingCoordinator#deleteByPathPrefix}), so this is the removal signal itself rather
+   * than a parallel flag mirroring it.
+   *
+   * <p>A long-running background batch captures this once and re-reads it at its interruption
+   * points: a changed value means the document population the batch selected from no longer
+   * describes the index, so continuing to enrich the rest of that batch spends GPU on documents
+   * that may already be gone. Per-document deletes deliberately do NOT bump it — a single missing
+   * document costs one no-op RMW, while a bulk delete can invalidate an entire batch.
+   */
+  final AtomicLong bulkDeleteEpoch = new AtomicLong(0L);
+
   // ==========================================================================
   // Ops collaborators. Final: assigned exactly once in each constructor.
   // In the test ctor, every ops field is explicitly assigned {@code null} — tests that need
