@@ -63,7 +63,13 @@ import { setAiActivity, subscribeAiState, getAiState, type AiState } from '../st
 import { reportLayoutWidth, subscribeWide } from '../state/responsiveState.js';
 import { copyToClipboard } from '../utils/clipboardCopy.js';
 import { orElse } from '../state/known.js';
-import { readinessNotice, reasonFor, isReindexCause, type ReadinessNoticeView } from '../state/readinessNotice.js';
+import {
+  readinessNotice,
+  reasonFor,
+  isReindexCause,
+  warrantsSearchDegradationBanner,
+  type ReadinessNoticeView,
+} from '../state/readinessNotice.js';
 import { verdictTone, type SystemHealthVerdict } from '../state/verdict.js';
 import { projectAvailability, unavailableBecause } from '../state/availability.js';
 // Tempdoc 738 — the degradation banner's disclosure now projects from the app-wide Simple/Detailed
@@ -2231,6 +2237,10 @@ export class UnifiedChatView extends JfElement {
   private renderDegradationBanner(): TemplateResult | typeof nothing {
     const verdict = this.aiState?.verdict;
     if (!verdict) return nothing;
+    // Round-14 finding 9 — the banner is warning-tier chrome, so an info-severity-only verdict does
+    // not get it (the same verdict's causes are still carried, calmly, by Health). The tier decision
+    // lives in the notice authority, beside the wording it gates, not as a local severity test here.
+    if (!warrantsSearchDegradationBanner(verdict)) return nothing;
     const notice = readinessNotice(verdict);
     if (!notice) return nothing;
     // Tempdoc 738 — disclosure decides how much banner. Simple (default) is the one-line pill

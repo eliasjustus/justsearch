@@ -286,15 +286,32 @@ describe('UnifiedChatView retrieve-tier degradation banner (ports SearchSurface.
     expect(op?.getAttribute('operation-id')).toBe('core.trigger-offline-processing');
   });
 
-  it('595 §10.3 — a cosmetic degradation (LambdaMART) renders CALMLY (info), never "keyword results"', async () => {
+  it('round-14 finding 9 — an INFO-severity-only verdict renders NO banner-tier warning', async () => {
+    // Supersedes the 595 §10.3 assertion that this same verdict renders a calm "Reduced search
+    // capability" banner. 595's fix was the WORDING (never "keyword results" for a re-ranking gap);
+    // round 14 measured the remaining defect as the TIER: a permanent, unconfigurable optional gap
+    // held ~25% of the space above the fold behind an alert triangle, in the same slot a genuine
+    // retrieval failure uses. Health still carries the cause (HealthSurface.render.test.ts).
     const view = mountView();
     await view.updateComplete;
     setVerdict(view, { kind: 'degraded', severity: 'info', reasons: ['lambdamart.not_configured'] });
     await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation"]')).toBeNull();
+  });
+
+  it('round-14 finding 9 — the same cause at WARN severity still gets the banner (the tier gate is severity, not the cause)', async () => {
+    // Precision guard: proves the suppression above is not "the banner stopped rendering at all".
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, {
+      kind: 'degraded',
+      severity: 'warn',
+      reasons: ['lambdamart.not_configured', 'worker.health.embedding_not_ready'],
+    });
+    await view.updateComplete;
     const banner = view.shadowRoot?.querySelector('[data-testid="chat-degradation"]');
-    expect(banner?.textContent).toContain('Reduced search capability');
-    expect(banner?.textContent).not.toContain('keyword results');
-    expect(banner?.getAttribute('tone')).toBe('info');
+    expect(banner).not.toBeNull();
+    expect(banner?.getAttribute('tone')).toBe('warning');
   });
 
   it('600 Design A — a compat-blocked index renders "Reindex required" naming the specific cause + the rebuild remedy', async () => {
