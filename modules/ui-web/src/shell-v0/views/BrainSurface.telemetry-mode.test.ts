@@ -61,7 +61,7 @@ describe('BrainSurface developer telemetry placement (round 8)', () => {
     expect(html).not.toContain('brain-transitions-timeline');
     expect(html).not.toContain('brain-generation-sparkline');
     expect(html).not.toContain('brain-trace-explorer');
-    expect(html).not.toContain('Recent mode transitions');
+    expect(html).not.toContain('Recent inference transitions');
     expect(html).not.toContain('Recent spans');
     expect(html).not.toContain('copy trace ID');
   });
@@ -70,7 +70,12 @@ describe('BrainSurface developer telemetry placement (round 8)', () => {
     const html = await mount('advanced');
     expect(html).toContain('brain-transitions-timeline');
     expect(html).toContain('brain-trace-explorer');
-    expect(html).toContain('Recent mode transitions');
+    // Round-14 finding 10 — the labels name their axis: "mode" was ambiguous against this window's
+    // own Simple|Detailed mode and the search rungs; `gen:` collided with the index's own
+    // `servingSearchGenerationId` and read as a model-version claim beside the model filename.
+    expect(html).toContain('Recent inference transitions');
+    expect(html).not.toContain('Recent mode transitions');
+    expect(html).toContain('engine generation:');
     expect(html).toContain('Recent spans');
   });
 
