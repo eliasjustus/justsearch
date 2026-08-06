@@ -11,6 +11,9 @@ import {
   QUICK_PIPELINE,
   recordInspectorOpen,
   recordInspectorClose,
+  buildCollectionFacetProbe,
+  fetchCollectionFacet,
+  COLLECTION_FACET_FIELD,
 } from './searchState.js';
 import {
   setFilterRange,
@@ -501,5 +504,72 @@ describe('searchState — DWELLED (tempdoc 580 §17 P3)', () => {
     recordInspectorOpen('not-a-result'); // e.g. a deep-link open — no join key
     await vi.advanceTimersByTimeAsync(3100);
     expect(dwellPosts(fetchMock)).toHaveLength(0);
+  });
+});
+
+/**
+ * Tempdoc 811 C-2a — the collection enumeration probe. It is issued from this module because this
+ * is the ONE `/api/knowledge/search` site (577 Ext II / the `search-issuance` gate); it is an
+ * aggregation rather than a user query, so it does NOT go through `buildSearchIntent`.
+ */
+describe('collection enumeration probe (811 C-2a)', () => {
+  const probe = () =>
+    buildCollectionFacetProbe(120_000) as {
+      query: string;
+      querySyntax: string;
+      limit: number;
+      pipeline: { sparseEnabled: boolean; denseEnabled: boolean; expansionEnabled: boolean };
+      facets: { include: boolean; maxDocsScanned: number; fields: Array<{ field: string }> };
+    };
+
+  it('asks for the collection facet over a NON-BLANK corpus-wide query', () => {
+    // SearchPlanner.plan short-circuits a blank query to EmptyQueryDecision BEFORE any facet is
+    // planned, so a blank query would silently answer with no facets at all.
+    const body = probe();
+    expect(body.query.trim().length).toBeGreaterThan(0);
+    expect(body.querySyntax).toBe('lucene');
+    expect(body.facets.include).toBe(true);
+    expect(body.facets.fields).toEqual([{ field: COLLECTION_FACET_FIELD, size: 100 }]);
+    expect(body.facets.maxDocsScanned).toBe(120_000);
+  });
+
+  it('runs the cheap sparse-only pipeline — no dense leg, no expansion', () => {
+    const body = probe();
+    expect(body.pipeline).toEqual(QUICK_PIPELINE);
+    expect(body.limit).toBe(1);
+  });
+
+  it('POSTs to the one search endpoint and returns the parsed body', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ facets: { collection: { 'mcp-ingest': 4 } } }),
+    })) as unknown as typeof globalThis.fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const payload = await fetchCollectionFacet(50_000, 'http://test');
+      expect(payload).toEqual({ facets: { collection: { 'mcp-ingest': 4 } } });
+      const [url, init] = (fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [
+        string,
+        { method: string; body: string },
+      ];
+      expect(url).toBe('http://test/api/knowledge/search');
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body)).toEqual(buildCollectionFacetProbe(50_000));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('throws on a non-2xx rather than reporting an empty corpus', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 503 })) as unknown as typeof globalThis.fetch,
+    );
+    try {
+      await expect(fetchCollectionFacet(50_000, 'http://test')).rejects.toThrow('HTTP 503');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

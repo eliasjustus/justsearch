@@ -1,0 +1,16 @@
+<!--
+  JustSearch mark "The Slot" - master, dark-ground colorway (ink #eceef1, accent #00CCB2).
+
+  Geometry is identical to mark-light.svg; only the two colours differ. This is also the colorway
+  the shipped .ico / .icns / app PNGs use, because an OS icon cannot follow the OS theme and the
+  mark has to survive the dark chrome (taskbar, Start, title bar) it lives in most.
+
+  The 64-unit viewBox IS the artboard - never re-centre, trim or re-pad it.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
+     role="img" aria-label="JustSearch">
+  <path id="mass" fill="#eceef1"
+        d="M10,8 H38 A4,4 0 0 1 42,12 V28 H24 V36 H42 V52 A4,4 0 0 1 38,56 H10 A4,4 0 0 1 6,52 V12 A4,4 0 0 1 10,8 Z"/>
+  <rect id="answer-line" x="46" y="28" width="14" height="8" fill="#00CCB2"/>
+  <rect id="footnote" x="58" y="22" width="4" height="4" fill="#00CCB2"/>
+</svg>
