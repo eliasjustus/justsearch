@@ -1,6 +1,6 @@
 ---
 title: "Chat-surface layout & chrome allocation — the height budget gets an owner (T-B design)"
-status: "in implementation 2026-08-06 — design settled, derisked (§B), autonomous implementation licensed by owner; plan in §P"
+status: "implemented + independently audit-closed 2026-08-06 — design (§D), derisk (§B), plan (§P), verification + audit record (§V); audit verdict CLOSE-WITH-NOTES, all notes fixed"
 created: 2026-08-06
 updated: 2026-08-06
 related: [810, 809, 807, 798, 738, 734, 687, 610, 600, 577, 565, 559]
@@ -13,8 +13,9 @@ related: [810, 809, 807, 798, 738, 734, 687, 610, 600, 577, 565, 559]
 The design pass for tempdoc 810's charter **T-B**: 809 findings **12** (vertical space has no
 owner), **13** (nested scroll regions + scrollbar-geometry reuse), **15**'s structural half (what
 the run spine should be when a run genuinely segments), and **7**'s structural half
-(Timeline/History/Inbox naming, empty states, one-authority-one-pointer). Design only — nothing
-here is licensed for implementation until the owner says so.
+(Timeline/History/Inbox naming, empty states, one-authority-one-pointer). Written as a design
+pass; the owner then licensed autonomous implementation the same day — §V is the
+implementation and audit record.
 
 The problem in one line: on a ~790 px window, chrome accreted to ~60% of the chat surface's
 height — each band independently justified by its own workstream (593/600 banner, 577 activity
@@ -412,7 +413,79 @@ suite, `./gradlew.bat build -x test`, the fixture-backed gates (`ui-proportion-g
 `ui-a11y-gate`), and the pre-registered resize sweep + independent measured audit before
 closure (§D7.5).
 
-## Owner decisions this design surfaces (resolved 2026-08-06 under granted autonomy — recorded, not re-asked)
+## §V — Implementation & verification record (2026-08-06)
+
+Implemented in four delegated chunks (W1 opus, W2 opus, W3 opus, W4 sonnet) + one closure
+chunk (opus), each verified green before the next; orchestrator judged every report against
+this document. `feat(814 W1..W4)` + `feat(814 closure)` commits on this branch.
+
+**What shipped, against the design:** D1 (budget registered + share-floor gates at 1366×768
+Simple and 1366×900 Detailed), D2 (pill slim to 34px; rail collapsed-by-default bound + the
+held-budget-gate auto-expand exception; compact fixed-width meters), D3 (rail → top-3
+non-scrolling index + "Open all · N" into the existing OverlayHost drawer; `.conversation` is
+the one scroller, witnessed by the gate), D4-as-revised (top-edge anchoring superseding the
+565 midpoint choice; clustering as `adaptiveSpacing`'s documented future extension —
+landmark-immune counted badges; drag already existed and was verified, not rebuilt;
+outline-vs-filled de-collision + diamond steer marker within the statusTone authority), D5
+(chip yields to the banner via the shared `warrantsSearchDegradationBanner` predicate —
+scoped to `kind === 'degraded'`, §B.14; source-count single authority incl. the toolbar chip
+render-gate; `status-facts.v1.json` + measure-time singleton probe), D6 (`@media (max-height:
+820px)` authority in `compositionLayout`; Detailed interaction-gated below it; document-pane
+floor 24rem → 14rem short = the 734 F5 close), D7 (share/`maxBottomPx`/`absentSelectors`/
+`min`+`maxScrollableRegions`/statusFacts constraint kinds in `ui_proportion_gate.py`; steps
+`chat-bands`, `chat-bands-detailed`, `chat-composer-small`, `chat-spine-single`; a11y rows).
+Finding-7 half: drawer tabs renamed by verified scope — Inbox → **Background runs** (+count
+badge), Timeline → **System activity**, History → **This run** (scope CORRECTION: it is
+agent-session-scoped `action-ledger?originator=agent&correlationId=<session>`, not
+`/api/thread` — the design's "This conversation" would have been the third wrong name on that
+tab), Sessions kept; empty states name their filling condition; thread-side background
+segments render an operable `background run ↗` pointer to the inbox authority.
+
+**Independent measured audit (auditor ≠ implementers): CLOSE-WITH-NOTES → notes fixed.**
+The pre-registered resize sweep (1366 wide; 1050/900/768/700; both disclosure modes;
+selectors fixed in advance) measured chrome as a **constant 308px** at every point (pill 34,
+rail 25, composer 152, header 32) with `.conversation-zone` absorbing **100% of
+compression** — shares 0.686/0.630/0.560/0.513 Simple, 0.609/0.539/0.560/0.513 Detailed
+(below the 820 breakpoint Detailed renders the pill, as designed). All spot-checks passed
+(composer bottom 724 ≤ 768; status-fact singletons; no spine single-turn; scrollableCount ≤ 1
+everywhere). The audit's three findings were fixed before closure: the §D2 held-gate
+auto-expand (delivered by no W-chunk — an inherited Lane-2 collapse the design specified a
+correction to), the Detailed floor + expanded-banner ceiling (now gated: 110 ≤ 176, share
+0.5385 ≥ 0.45 at 900), and the one-scroller assertion's vacuity (`minScrollableRegions: 1`
+now witnesses a real scroller — and immediately exposed a real axe `scrollable-region-
+focusable` defect, fixed at source with `tabindex="0"`, not baselined).
+
+**Final state:** FE 384 files / 4061 tests green; `ui-proportion-gate` exit 0 (27 rows /
+6 steps); `ui-a11y-gate` exit 0 (12 steps, 0 new); `check-ui-step-coverage` green; ui-web
+presentation/kernel gate subset green; typecheck clean.
+
+**§B corrections discovered during implementation:**
+- **§B.10 correction (W1):** the unit-test env is happy-dom (not jsdom) and *implements*
+  matchMedia with a default 1024×768 viewport — already below the 820 breakpoint. The suite
+  now declares its viewport explicitly instead of inheriting the incidental default.
+- **§B.14 (W3):** the chip yield is scoped to `verdict.kind === 'degraded'` — yielding
+  `unreachable` would report the AI engine's own state while the backend is gone, the exact
+  truthfulness regression D5 exists to prevent.
+
+**Residuals (recorded, not silently capped):**
+1. The activity rail's **expanded body** and the **evidence rail** are fixture-unreachable
+   (both need a real agent SSE `done` payload through the typed stream protocol; the rail
+   additionally an affordance round-trip). Their obligations are covered indirectly
+   (`maxScrollableRegions: 1` catches a rail scroller the moment it mounts; the held-gate
+   exception is unit-tested at the store seam) — a fixtures extension for the agent stream is
+   the natural follow-up if a future finding lands there.
+2. The share guarantee is pinned, not scale-invariant: chrome is a constant 308px, so Simple
+   mode crosses 45% between 650 and 600px window height. Below the pinned viewport the
+   guarantee is "chrome stops growing", not "share holds".
+3. Three of five status-fact phrases measure 0 in current fixtures (the duplication they
+   guard doesn't exist to witness); "Service degraded" measures 1 with the chip yield
+   active — the register's positive case.
+4. D2's "toolbar rows consolidate toward one row" was **not needed**: with the trims above,
+   both share floors gate green with the toolbar untouched — recorded here per
+   tempdoc-is-contract rather than silently dropped; the proportion register now owns the
+   question (composer ceiling 220px).
+
+## Owner decisions this design surfaced (resolved 2026-08-06 under granted autonomy — recorded, not re-asked)
 
 1. **The two floor numbers** (D1: Simple-mode share target, Detailed-mode hard floor) — the
    design proposes ≥ 55% / ≥ 45% at 1366×768; the register makes them owner-tunable.
