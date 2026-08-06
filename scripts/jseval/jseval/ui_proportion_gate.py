@@ -10,8 +10,9 @@ registered selectors into its shadow-piercing geometry probe), so the gate and t
 `.measure.json` geometry it reads can never disagree about which elements were measured.
 Local-first (ADR-0026): a runnable gate, not a CI-wired kernel gate.
 
-Three constraint kinds, all read off the SAME captured rect. An element declares
-whichever apply; declaring none is an error, not a silent pass.
+Five element-level constraint kinds, all read off the SAME captured rect. An element
+declares whichever apply; declaring none is an error, not a silent pass. Two STEP-level
+checks (not per-element) round out tempdoc 814's D7 enforcement list.
 
   ``maxHeightPx``            697's original shrink-only ratchet — persistent chrome must
                              not GROW. Shrinking is always clean.
@@ -25,6 +26,34 @@ whichever apply; declaring none is an error, not a silent pass.
                              header control row. A height/width budget cannot express
                              this: each element was individually within budget — the
                              defect was the RELATION between them.
+  ``minShareOfSelector``     tempdoc 814 D1/D7.1 — this element's rect.h divided by a
+                             second registered selector's rect.h must be >= floor. The
+                             "owner of the sum" assertion: primary content must own a
+                             minimum SHARE of the surface, not just clear an absolute px
+                             floor (a surface can shrink and keep its share, or grow
+                             chrome and lose it — an absolute floor catches neither).
+  ``maxBottomPx``            tempdoc 814 D6/D7.2 (the F5 close) — rect.y + rect.h must
+                             not exceed this value, i.e. the element's bottom edge must
+                             stay within a viewport of this height. Added for round 8's
+                             F5: clearing results with the document pane open used to
+                             clip the composer below a short viewport.
+
+Step-level (not per-element; declared alongside ``elements`` on the step object):
+
+  ``maxScrollableRegions``   tempdoc 814 D3/D7.2 — the one-scroller-per-surface rule.
+                             Asserts ``geometry.scrollableCount`` (ui_measure.py's
+                             shadow-piercing scrollable-element walk) does not exceed
+                             the declared ceiling.
+  ``statusFactsSingleton``   tempdoc 814 D5/D7.3 — the "one authority, one pointer"
+                             copy-lint. Asserts every phrase in
+                             governance/status-facts.v1.json renders at most its
+                             registered ``maxPersistentRenders`` times in this step's
+                             captured DOM text (``ui_measure.py``'s statusFacts probe).
+  ``absentSelectors``        a selector that must NOT be present in the captured
+                             geometry (e.g. the run-spine on a single-turn conversation).
+                             A present selector is a violation, not a silent pass —
+                             mirrors the "declaring none is an error" discipline for the
+                             positive case.
 """
 from __future__ import annotations
 
@@ -54,10 +83,41 @@ def load_register_steps() -> list[dict[str, Any]]:
     return []
 
 
+def _load_status_facts_register() -> dict[str, int]:
+    """The shared status-facts register (tempdoc 814 §D5): {phrase -> maxPersistentRenders}.
+    The ONE authority `governance/status-facts.v1.json` — `ui_measure.py` captures the raw
+    per-phrase COUNT from the DOM; this gate cross-references the same register for the
+    CEILING, mirroring how `load_register_steps` is the one authority for element ceilings.
+    Best-effort: an absent/garbled register yields an empty map (a step declaring
+    `statusFactsSingleton` then has nothing to check against, reported as a capture error
+    rather than a silent pass — see the ERROR row in `evaluate`)."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        cand = parent / "governance" / "status-facts.v1.json"
+        if cand.exists():
+            try:
+                reg = json.loads(cand.read_text(encoding="utf-8"))
+                return {
+                    f["phrase"]: f.get("maxPersistentRenders", 1)
+                    for f in reg.get("facts") or []
+                    if f.get("phrase")
+                }
+            except Exception:
+                return {}
+    return {}
+
+
+def _measure_doc(measure_path: str) -> dict[str, Any]:
+    """The full parsed `<step>.measure.json` document — read once per step and shared by
+    every check (elements, scrollableCount, statusFacts) so the gate never disagrees with
+    itself about which capture it is reading."""
+    return json.loads(Path(measure_path).read_text(encoding="utf-8"))
+
+
 def _geometry_elements(measure_path: str) -> dict[str, Any]:
     """The `geometry.elements` map recorded in a `<step>.measure.json` capture —
     keyed by the same shadow-piercing selector strings the baseline registers."""
-    m = json.loads(Path(measure_path).read_text(encoding="utf-8"))
+    m = _measure_doc(measure_path)
     return ((m.get("geometry") or {}).get("elements")) or {}
 
 
@@ -95,9 +155,16 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
     ui-shot result dict (with ``ok`` and a ``measure`` summary carrying ``measure_path``).
 
     Violations, one row per declared constraint:
-      - ``GROWN``    — ``rect.h > maxHeightPx + tolerancePx``
-      - ``STARVED``  — ``rect.w < minWidthPx - tolerancePx``
-      - ``OVERLAPS`` — the element's rect intersects ``mustNotOverlapSelector``'s rect
+      - ``GROWN``                       — ``rect.h > maxHeightPx + tolerancePx``
+      - ``STARVED``                     — ``rect.w < minWidthPx - tolerancePx``
+      - ``OVERLAPS``                    — the element's rect intersects
+                                           ``mustNotOverlapSelector``'s rect
+      - ``UNDER_SHARE``                 — ``(rect.h + tolerancePx) / other.rect.h < floor``
+      - ``CLIPPED``                     — ``rect.y + rect.h > maxBottomPx + tolerancePx``
+      - ``MULTI_SCROLL``                — ``geometry.scrollableCount > maxScrollableRegions``
+      - ``DUPLICATE_STATUS_FACT``       — a status-facts phrase's count exceeds its
+                                           registered ``maxPersistentRenders``
+      - ``PRESENT_BUT_SHOULD_BE_ABSENT`` — an ``absentSelectors`` entry WAS captured
 
     Returns ``exit_code`` 0 = clean, 1 = a violation, 2 = capture error (including a
     registered selector missing from the captured geometry, or an element that declares
@@ -105,6 +172,7 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
     rows. Injecting ``capture_fn`` keeps this unit-testable (mirrors `ui_a11y_gate.evaluate`).
     """
     steps = load_register_steps()
+    status_facts_register = _load_status_facts_register()
     rows: list[dict[str, Any]] = []
     any_violation = False
     any_error = False
@@ -112,7 +180,17 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
     for s in steps:
         step = s.get("uiShotStep")
         elements = s.get("elements") or []
-        if not step or not elements:
+        absent_selectors = s.get("absentSelectors") or []
+        max_scrollable = s.get("maxScrollableRegions")
+        status_facts_singleton = bool(s.get("statusFactsSingleton"))
+        if not step:
+            continue
+        # A step with NO declared check at all (no elements, no step-level flag) has
+        # nothing to assert — skip it (this is the register's placeholder-row escape
+        # hatch, not a silent miss: a step that DOES declare a step-level flag with an
+        # empty `elements` array, e.g. `chat-spine-single`'s `absentSelectors`-only row,
+        # still runs every check below).
+        if not elements and not absent_selectors and max_scrollable is None and not status_facts_singleton:
             continue
         res = capture_fn(step)
         if not res.get("ok"):
@@ -125,7 +203,9 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
             rows.append({"step": step, "status": "ERROR",
                          "error": "no measurement companion (measure disabled?)"})
             continue
-        geo_elements = _geometry_elements(measure_path)
+        doc = _measure_doc(measure_path)
+        geo = doc.get("geometry") or {}
+        geo_elements = geo.get("elements") or {}
         tolerance_px = s.get("tolerancePx", _DEFAULT_TOLERANCE_PX)
 
         for el in elements:
@@ -133,11 +213,15 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
             max_height_px = el.get("maxHeightPx")
             min_width_px = el.get("minWidthPx")
             not_overlap = el.get("mustNotOverlapSelector")
-            if max_height_px is None and min_width_px is None and not_overlap is None:
+            min_share = el.get("minShareOfSelector")
+            max_bottom_px = el.get("maxBottomPx")
+            if (max_height_px is None and min_width_px is None and not_overlap is None
+                    and min_share is None and max_bottom_px is None):
                 any_error = True
                 rows.append({"step": step, "selector": selector, "status": "ERROR",
                              "error": "element declares no constraint (maxHeightPx / "
-                                      "minWidthPx / mustNotOverlapSelector)"})
+                                      "minWidthPx / mustNotOverlapSelector / "
+                                      "minShareOfSelector / maxBottomPx)"})
                 continue
             rect = _rect_of(geo_elements, selector)
             if rect is None:
@@ -200,6 +284,119 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
                         "mustNotOverlapSelector": not_overlap,
                         "rect": rect, "otherRect": other,
                         "tolerancePx": tolerance_px,
+                    })
+
+            if min_share is not None:
+                other_selector = min_share.get("selector")
+                floor = min_share.get("floor")
+                other = _rect_of(geo_elements, other_selector)
+                measured_height = rect.get("h")
+                other_height = (other or {}).get("h")
+                if (measured_height is None or other is None or other_height is None
+                        or floor is None or other_selector is None):
+                    any_error = True
+                    rows.append({"step": step, "selector": selector,
+                                 "constraint": "minShareOfSelector", "status": "ERROR",
+                                 "error": f"minShareOfSelector needs rect.h for both "
+                                          f"{selector!r} and {other_selector!r}, plus a "
+                                          f"declared floor"})
+                elif other_height <= 0:
+                    any_error = True
+                    rows.append({"step": step, "selector": selector,
+                                 "constraint": "minShareOfSelector", "status": "ERROR",
+                                 "error": f"denominator {other_selector!r} has rect.h <= 0"})
+                else:
+                    share = measured_height / other_height
+                    # Mirrors STARVED's px-tolerance allowance: the numerator may be up to
+                    # tolerancePx short of the floor without failing (a sub-tolerance nudge
+                    # is not a real regression).
+                    under_share = (measured_height + tolerance_px) < floor * other_height
+                    any_violation = any_violation or under_share
+                    rows.append({
+                        "step": step, "selector": selector, "constraint": "minShareOfSelector",
+                        "status": "UNDER_SHARE" if under_share else "ok",
+                        "measuredShare": round(share, 4),
+                        "floor": floor,
+                        "otherSelector": other_selector,
+                        "measuredHeight": measured_height,
+                        "otherHeight": other_height,
+                        "tolerancePx": tolerance_px,
+                    })
+
+            if max_bottom_px is not None:
+                y = rect.get("y")
+                h = rect.get("h")
+                if y is None or h is None:
+                    any_error = True
+                    rows.append({"step": step, "selector": selector,
+                                 "constraint": "maxBottomPx", "status": "ERROR",
+                                 "error": "captured geometry has no rect.y/rect.h"})
+                else:
+                    measured_bottom = y + h
+                    clipped = measured_bottom > max_bottom_px + tolerance_px
+                    any_violation = any_violation or clipped
+                    rows.append({
+                        "step": step, "selector": selector, "constraint": "maxBottomPx",
+                        "status": "CLIPPED" if clipped else "ok",
+                        "measuredBottom": measured_bottom,
+                        "maxBottomPx": max_bottom_px,
+                        "tolerancePx": tolerance_px,
+                    })
+
+        # --- Step-level checks (tempdoc 814 D7.2/D7.3): not per-element, read off the
+        # whole capture doc rather than a single registered selector's rect. ---
+
+        for sel in absent_selectors:
+            present = _rect_of(geo_elements, sel) is not None
+            any_violation = any_violation or present
+            rows.append({
+                "step": step, "selector": sel, "constraint": "absentSelectors",
+                "status": "PRESENT_BUT_SHOULD_BE_ABSENT" if present else "ok",
+            })
+
+        if max_scrollable is not None:
+            scrollable_count = geo.get("scrollableCount")
+            if scrollable_count is None:
+                any_error = True
+                rows.append({"step": step, "constraint": "maxScrollableRegions",
+                             "status": "ERROR",
+                             "error": "captured geometry has no scrollableCount "
+                                      "(ui_measure.py geometry probe stale?)"})
+            else:
+                multi_scroll = scrollable_count > max_scrollable
+                any_violation = any_violation or multi_scroll
+                rows.append({
+                    "step": step, "constraint": "maxScrollableRegions",
+                    "status": "MULTI_SCROLL" if multi_scroll else "ok",
+                    "scrollableCount": scrollable_count,
+                    "maxScrollableRegions": max_scrollable,
+                    "scrollableRegions": geo.get("scrollableRegions"),
+                })
+
+        if status_facts_singleton:
+            if not status_facts_register:
+                any_error = True
+                rows.append({"step": step, "constraint": "statusFactsSingleton",
+                             "status": "ERROR",
+                             "error": "governance/status-facts.v1.json is missing/empty — "
+                                      "statusFactsSingleton has nothing to check against"})
+            else:
+                captured = {f.get("phrase"): f.get("count") for f in doc.get("statusFacts") or []}
+                for phrase, max_renders in status_facts_register.items():
+                    count = captured.get(phrase)
+                    if count is None:
+                        any_error = True
+                        rows.append({"step": step, "constraint": "statusFactsSingleton",
+                                     "status": "ERROR", "phrase": phrase,
+                                     "error": "phrase missing from this capture's statusFacts "
+                                              "(ui_measure.py probe stale or register drifted)"})
+                        continue
+                    dup = count > max_renders
+                    any_violation = any_violation or dup
+                    rows.append({
+                        "step": step, "constraint": "statusFactsSingleton",
+                        "status": "DUPLICATE_STATUS_FACT" if dup else "ok",
+                        "phrase": phrase, "count": count, "maxPersistentRenders": max_renders,
                     })
 
     exit_code = 2 if any_error else (1 if any_violation else 0)

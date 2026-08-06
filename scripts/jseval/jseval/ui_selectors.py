@@ -78,6 +78,30 @@ CSS_CONVERSATION_COLUMN = '.conversation'
 CSS_DOCUMENT_PANE = '.document-pane'
 CSS_TOAST = '.toast'
 CSS_CHAT_HEADER = '.header'
+# Tempdoc 814 (W4 activation) — the D7 gate-registration elements for the "richest
+# all-bands" (`chat-bands`), small-viewport docked-composer (`chat-composer-small`), and
+# single-turn no-spine (`chat-spine-single`) steps.
+# `.conversation-zone` is the grid that owns the run-spine + `.conversation` scroller
+# (UnifiedChatView.renderAnswerPlane); `jf-unified-chat-view` is the surface HOST custom
+# element (`customElements.define('jf-unified-chat-view', ...)`), the D1 "owner of the
+# sum" denominator the D7.1 share assertion divides against.
+CSS_CONVERSATION_ZONE = '.conversation-zone'
+CSS_SURFACE_HOST = 'jf-unified-chat-view'
+# `.composer` is the composer BLOCK div (687 R5a's protected element — row-consolidation
+# happens inside it, never replacing it); `.activity-rail` is the agent-mode `<details>`
+# run-summary band (renders whenever `affordance === 'agent'`, even before a run reports
+# budget/lifecycle — UnifiedChatView.ts tempdoc-561-C-2 comment); `.run-spine` is the
+# agent-mode run-timeline minimap (mounts only when `spineItems()` is non-null — agent
+# affordance + wide zone + a run with more than one turn or real node boundaries).
+CSS_COMPOSER_BLOCK = '.composer'
+CSS_ACTIVITY_RAIL = '.activity-rail'
+CSS_RUN_SPINE = '.run-spine'
+# The "Delegate a multi-step task to the agent" escalation rung — the plain affordance
+# toggle (`this.affordance = 'agent'`) that mounts `.activity-rail` / gates `.run-spine`
+# WITHOUT requiring an actual agent run (no SSE stream needed; see chat-bands' setup
+# docstring for the fixture-reachability finding this selector exists to exploit).
+TID_ESCALATION_DELEGATE = "escalation-delegate"
+CSS_ESCALATION_DELEGATE = f'[data-testid="{TID_ESCALATION_DELEGATE}"]'
 
 @dataclass(frozen=True)
 class Selector:
