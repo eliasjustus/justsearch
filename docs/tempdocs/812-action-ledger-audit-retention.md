@@ -1,8 +1,17 @@
 ---
 title: "812 — Action-ledger audit retention & projection (T-D): design"
-status: "design settled 2026-08-06 by the campaign orchestrator; implementation NOT started; one owner ratification requested (§R1)"
+status: "design settled 2026-08-06; R1 adopted by default under the owner's autonomous-proceed directive (2026-08-06); D1+D3 IMPLEMENTED (audit journal + kind/limit API, PR with this edit); D2+D4 (scan rollup + FE tier) in progress"
 created: 2026-08-06
 updated: 2026-08-06
+
+> **Implementation correction (2026-08-06, D1):** the design's D1 said "StoreCatalog
+> registration + check-store-recoverability". Implementation established that
+> `StoreCatalog` is encryption-scoped (an entry without a `StoreCipher` would falsely
+> declare seal-at-rest, and `StoreCatalogTest` deliberately pins the authored set), and
+> that the gate's actual demand is a `durableStores` authority row — the precedent the
+> three existing HEAD-owned journals (`durable-grants`, `run-events`,
+> `file-operation-journal`) already follow. The journal is registered as a
+> `durableStores` row only; this note supersedes D1's registration sentence.
 related: [809, 810, 550, 612, 561, 565]
 ---
 

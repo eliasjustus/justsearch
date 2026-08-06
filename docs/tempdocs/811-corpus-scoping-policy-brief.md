@@ -1,6 +1,14 @@
 ---
 title: "811 — Corpus scoping & internal-documents policy (T-C): decision brief"
-status: "investigation complete 2026-08-06; correctness lane (D-1, D-2, chunk-collection item 3) IMPLEMENTED 2026-08-06; OWNER DECISIONS STILL PENDING (§Decisions C-1..C-4)"
+status: "investigation complete 2026-08-06; recommendations C-1a/C-2a/C-3-keep adopted by default under the owner's autonomous-proceed directive; IMPLEMENTED: D-1/D-2/chunk-collection (#379), C-1a pill (#372), C-2a tagging+removal (#380); HELD pending T-A's #377: C-4 count fix + Library Other-sources section; C-3/C-4 remain owner-overridable"
+
+> **Correction (2026-08-06, from C-2a implementation):** §investigation item 2 wrongly
+> states the MCP `justsearch_ingest` tool reaches `KnowledgeSearchController.handleIngest`.
+> It actually dispatches `core.ingest-files` -> `IngestOperationHandler` -> `IngestTool` —
+> a second, independent ingest surface. Both surfaces now resolve collections through the
+> shared `IngestCollectionPolicy` (#380). Related follow-up logged: watched-root scans drop
+> their own collection (`RootLifecycleOps.ScanRootFn` has no collection parameter), so a
+> root's own scan writes untagged docs while the registry reports its label.
 created: 2026-08-06
 updated: 2026-08-06
 related: [809, 810, 585, 629, 553]
