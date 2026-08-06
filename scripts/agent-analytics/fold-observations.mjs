@@ -12,8 +12,9 @@
  * not a rule violation) or opens a new condition with a PROPOSED kind
  * (trailing `?`) for the triage pass to confirm.
  *
- *   node scripts/agent-analytics/fold-observations.mjs            # dry run (default)
- *   node scripts/agent-analytics/fold-observations.mjs --apply    # write + delete folded shards
+ *   node scripts/agent-analytics/fold-observations.mjs               # dry run (default)
+ *   node scripts/agent-analytics/fold-observations.mjs --apply       # write + delete folded shards
+ *   node scripts/agent-analytics/fold-observations.mjs --allow-stale # skip the base-freshness guard
  *
  * Properties (unchanged from the 618/665 fold):
  *  - Writes observations.md FIRST, then deletes the consumed shards — a crash
@@ -30,6 +31,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { repoRoot } from './lib/telemetry-io.mjs';
 import { SHARD_DIR } from './note-observation.mjs';
 import {
@@ -60,11 +62,47 @@ export function entriesFromShard(text) {
 }
 
 /**
+ * Is the store's checkout a DESCENDANT of `origin/main`?  (tempdoc 814 §D8.4 / §R.2)
+ *
+ * The fold REWRITES the shared conditions store. Run from a checkout that is behind
+ * `origin/main`, it serializes a store built from a stale parse — every condition another
+ * session added since then is silently dropped from the written file, and the consumed shards
+ * are deleted right after, so the loss is not recoverable from the shards either. The
+ * precondition belongs here, beside the malformed-store refusal, for the same reason: both are
+ * "this checkout cannot safely produce the next store".
+ *
+ * Tri-state, deliberately: `git merge-base --is-ancestor` exits 0 (ancestor → fresh) or 1 (NOT an
+ * ancestor → stale). ANY other outcome (not a git repo — which is what the unit tests' tmp roots
+ * are; no `origin/main` ref; git missing) is INDETERMINATE, and an indeterminate check must not
+ * invent a refusal: `null` means "no opinion" and the fold proceeds. This tool never fetches —
+ * refreshing the remote is the caller's decision, not a side effect of folding.
+ *
+ * @returns {boolean|null} true = fresh, false = stale, null = undeterminable
+ */
+export function isBaseFresh(root = repoRoot) {
+  try {
+    execFileSync('git', ['rev-parse', '--verify', '--quiet', 'origin/main'], {
+      cwd: root, stdio: 'ignore',
+    });
+  } catch {
+    return null; // no origin/main ref (or not a repo) — nothing to compare against
+  }
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', 'origin/main', 'HEAD'], {
+      cwd: root, stdio: 'ignore',
+    });
+    return true;
+  } catch (e) {
+    return e && e.status === 1 ? false : null;
+  }
+}
+
+/**
  * Fold all shards into the conditions store.
  * @returns {{folded:number, entries:number, merged:number, opened:number,
  *            unchangedDupes:number, proposedKinds:number, shards:string[], changed:boolean}}
  */
-export function foldShards({ root = repoRoot, apply = false } = {}) {
+export function foldShards({ root = repoRoot, apply = false, allowStale = false } = {}) {
   const shards = listShards(root);
   const storePath = path.join(root, INBOX_FILE);
   const storeText = fs.readFileSync(storePath, 'utf8');
@@ -73,6 +111,15 @@ export function foldShards({ root = repoRoot, apply = false } = {}) {
     throw new Error(
       `fold-observations: ${INBOX_FILE} has no '## Conditions' section — the store predates the ` +
         'tempdoc-680 grouped format. Migrate it first (see tempdoc 680) or update this checkout.',
+    );
+  }
+  if (!allowStale && isBaseFresh(root) === false) {
+    throw new Error(
+      'fold-observations: this checkout is NOT a descendant of origin/main, so folding would ' +
+        `rewrite ${INBOX_FILE} from a stale parse and drop every condition landed since — then ` +
+        'delete the shards that carried them. Remedy: update the checkout first (`git fetch ' +
+        'origin && git merge origin/main`, or run the fold from an up-to-date main), then re-run. ' +
+        'Pass --allow-stale (or allowStale: true) only when folding a deliberately old base.',
     );
   }
 
@@ -112,7 +159,8 @@ export function foldShards({ root = repoRoot, apply = false } = {}) {
 
 function main() {
   const apply = process.argv.includes('--apply');
-  const r = foldShards({ apply });
+  const allowStale = process.argv.includes('--allow-stale');
+  const r = foldShards({ apply, allowStale });
   if (r.entries === 0) {
     console.log('fold-observations: no shard entries to fold.');
   } else {

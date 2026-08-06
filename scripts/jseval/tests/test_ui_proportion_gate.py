@@ -490,3 +490,75 @@ class TestRegisterAndCaptureAgreeOnSelectors:
 
         for step, sels in ui_measure._find_proportion_baseline().items():
             assert len(sels) == len(set(sels)), f"{step} registers a duplicate selector"
+
+
+class TestNonScrollableSelectors:
+    """Tempdoc 814 §D8 — §D3's one-scroller rule addressed at a NAMED element. The
+    surface-wide `maxScrollableRegions` counts scrollers but cannot say WHICH element may
+    be one, so a regression that moved the scroller from `.conversation` to the evidence
+    rail still counts 1 and passes. These rows judge the registered element's own captured
+    `scrollable` flag (`ui_measure.py` computes it with the SAME overflow+delta predicate
+    that builds `scrollableRegions`)."""
+
+    def _step(self, monkeypatch, **step_keys):
+        monkeypatch.setattr(
+            ui_proportion_gate, "load_register_steps",
+            lambda: [{"uiShotStep": "home", "tolerancePx": 2, "elements": [], **step_keys}],
+        )
+
+    def _scroll_measure_file(self, tmp_path, elements: dict):
+        p = tmp_path / "scroll.measure.json"
+        p.write_text(json.dumps({"geometry": {"elements": elements}}), encoding="utf-8")
+        return str(p)
+
+    def test_non_scrolling_element_is_clean(self, monkeypatch, tmp_path):
+        self._step(monkeypatch, nonScrollableSelectors=[".evidence-rail"])
+        mf = self._scroll_measure_file(
+            tmp_path, {".evidence-rail": {"rect": {"h": 300}, "scrollable": False, "scrollDelta": 0}}
+        )
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+        assert report["rows"][0]["constraint"] == "nonScrollableSelectors"
+        assert report["rows"][0]["status"] == "ok"
+
+    def test_a_scrolling_element_is_a_violation(self, monkeypatch, tmp_path):
+        self._step(monkeypatch, nonScrollableSelectors=[".evidence-rail"])
+        mf = self._scroll_measure_file(
+            tmp_path, {".evidence-rail": {"rect": {"h": 300}, "scrollable": True, "scrollDelta": 210}}
+        )
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 1
+        assert report["rows"][0]["status"] == "IS_SCROLLER"
+        assert report["rows"][0]["scrollDelta"] == 210
+
+    def test_a_missing_element_is_a_violation_not_a_pass(self, monkeypatch, tmp_path):
+        # The anti-vacuity half: "the rail does not scroll" must not be satisfiable by a
+        # rail that never mounted.
+        self._step(monkeypatch, nonScrollableSelectors=[".evidence-rail"])
+        mf = self._scroll_measure_file(tmp_path, {})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 1
+        assert report["rows"][0]["status"] == "IS_SCROLLER"
+
+    def test_a_capture_without_the_flag_is_an_error(self, monkeypatch, tmp_path):
+        # A stale ui_measure probe must report a capture ERROR, never a silent pass.
+        self._step(monkeypatch, nonScrollableSelectors=[".evidence-rail"])
+        mf = self._scroll_measure_file(tmp_path, {".evidence-rail": {"rect": {"h": 300}}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 2
+        assert report["rows"][0]["status"] == "ERROR"
+
+    def test_non_scrollable_alone_runs_on_a_step_with_no_elements(self, monkeypatch, tmp_path):
+        self._step(monkeypatch, nonScrollableSelectors=[".evidence-rail"])
+        mf = self._scroll_measure_file(tmp_path, {})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert len(report["rows"]) == 1
+
+    def test_registered_non_scrollable_selectors_reach_the_capture_probe(self):
+        # Same collection discipline as the overlap counterpart: a selector judged off its
+        # own captured element must be unioned into the geometry probe, or every row of
+        # this kind reports "not found" instead of a verdict.
+        from jseval import ui_measure
+
+        sels = ui_measure._find_proportion_baseline().get("chat-evidence-rail") or []
+        assert ".evidence-rail" in sels

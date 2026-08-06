@@ -10,7 +10,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { listShards, entriesFromShard, foldShards, INBOX_FILE } from './fold-observations.mjs';
+import { execFileSync } from 'node:child_process';
+import { listShards, entriesFromShard, foldShards, isBaseFresh, INBOX_FILE } from './fold-observations.mjs';
 import { appendObservation, SHARD_DIR } from './note-observation.mjs';
 import { parseStore } from './lib/observations-store.mjs';
 
@@ -221,6 +222,77 @@ try {
     const r = foldShards({ root, apply: true });
     assert.equal(r.merged, 0, 'identifier-less prose must not fuzzy-merge on shared boilerplate');
     assert.equal(r.opened, 1, 'the different-subsystem note opens its own condition');
+  });
+
+  // --- base-freshness guard (tempdoc 814 §D8.4) ---
+  //
+  // The fold REWRITES the shared store from THIS checkout's parse and then deletes the
+  // shards, so folding from a checkout behind origin/main silently drops every condition
+  // landed since — and the shards that carried them are gone. These build real (tiny) git
+  // repos rather than stubbing the shell-out, so the guard is tested through the same
+  // `git merge-base --is-ancestor` it will run in production.
+  const git = (root, ...args) =>
+    execFileSync('git', args, { cwd: root, stdio: 'pipe', encoding: 'utf8' });
+
+  function gitRoot(store = STORE_FIXTURE) {
+    const root = freshRoot(store);
+    git(root, 'init', '-q', '-b', 'main');
+    git(root, 'config', 'user.email', 'test@example.com');
+    git(root, 'config', 'user.name', 'test');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'base');
+    return root;
+  }
+
+  run('freshness: a plain (non-git) root is INDETERMINATE — the guard has no opinion', () => {
+    // The indeterminate arm must not invent a refusal: every existing test root above is a
+    // bare tmp dir, and they all still fold.
+    const root = freshRoot();
+    assert.equal(isBaseFresh(root), null);
+  });
+
+  run('freshness: HEAD == origin/main is FRESH and folds', () => {
+    const root = gitRoot();
+    git(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    assert.equal(isBaseFresh(root), true);
+    appendObservation({ description: 'a note about `foo.ts`', root, sessionId: 'sFresh', date: '2026-08-06' });
+    const r = foldShards({ root, apply: true });
+    assert.equal(r.entries, 1);
+  });
+
+  run('freshness: HEAD BEHIND origin/main refuses --apply, names the remedy, keeps shards', () => {
+    const root = gitRoot();
+    // origin/main moves ahead of HEAD: commit, point the remote ref at it, roll HEAD back.
+    const base = git(root, 'rev-parse', 'HEAD').trim();
+    fs.writeFileSync(path.join(root, 'newer.txt'), 'newer\n', 'utf8');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'newer');
+    git(root, 'update-ref', 'refs/remotes/origin/main', git(root, 'rev-parse', 'HEAD').trim());
+    git(root, 'reset', '-q', '--hard', base);
+    assert.equal(isBaseFresh(root), false);
+
+    appendObservation({ description: 'a note about `bar.ts`', root, sessionId: 'sStale', date: '2026-08-06' });
+    const shardsBefore = listShards(root).length;
+    assert.equal(shardsBefore, 1);
+    assert.throws(
+      () => foldShards({ root, apply: true }),
+      (e) => /NOT a descendant of origin\/main/.test(e.message) && /--allow-stale/.test(e.message),
+    );
+    assert.equal(listShards(root).length, shardsBefore, 'a refusal must leave every shard intact');
+  });
+
+  run('freshness: --allow-stale folds a deliberately old base', () => {
+    const root = gitRoot();
+    const base = git(root, 'rev-parse', 'HEAD').trim();
+    fs.writeFileSync(path.join(root, 'newer.txt'), 'newer\n', 'utf8');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'newer');
+    git(root, 'update-ref', 'refs/remotes/origin/main', git(root, 'rev-parse', 'HEAD').trim());
+    git(root, 'reset', '-q', '--hard', base);
+    appendObservation({ description: 'a note about `baz.ts`', root, sessionId: 'sOverride', date: '2026-08-06' });
+    const r = foldShards({ root, apply: true, allowStale: true });
+    assert.equal(r.entries, 1);
+    assert.equal(listShards(root).length, 0);
   });
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });

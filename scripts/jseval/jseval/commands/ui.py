@@ -242,6 +242,14 @@ def cmd_ui_proportion_gate(ctx, ui_url, output_dir, timeout_ms):
                 f"state did not mount an element the register requires it to",
                 err=True,
             )
+        elif status == "IS_SCROLLER":
+            click.echo(
+                f"IS_SCROLLER: step={row['step']} selector={row['selector']} "
+                f"scrollDelta={row.get('scrollDelta')} — D3 reserves the surface's one scroll "
+                f"region for the conversation; this element must not be a scroller"
+                + (f" ({row['error']})" if row.get("error") else ""),
+                err=True,
+            )
         elif status == "FORBIDDEN_TEXT_VISIBLE":
             click.echo(
                 f"FORBIDDEN_TEXT_VISIBLE: step={row['step']} phrase={row['phrase']!r} "

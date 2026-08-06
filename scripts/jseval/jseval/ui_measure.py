@@ -101,6 +101,11 @@ def _find_proportion_baseline() -> dict[str, list[str]]:
                     for sel in s.get("requiredSelectors") or []:
                         if sel and sel not in sels:
                             sels.append(sel)
+                    # Tempdoc 814 §D8 — a `nonScrollableSelectors` entry is judged off its OWN
+                    # captured element (`scrollable`), so it must be in the probe's union too.
+                    for sel in s.get("nonScrollableSelectors") or []:
+                        if sel and sel not in sels:
+                            sels.append(sel)
                     out[step] = sels
                 return out
             except Exception:
@@ -325,6 +330,17 @@ _JS_DEEP = """
 # (`ui_proportion_gate.py`'s `maxScrollableRegions` step-level check), not a proxy for it.
 _JS_GEOMETRY = """(extraSels) => {
 """ + _JS_DEEP + """
+    // Tempdoc 814 §D8 — the SAME predicate the scrollableRegions walk below applies, evaluated
+    // for a REGISTERED selector: overflow-y auto/scroll AND real overflow. Reported per element so
+    // `ui_proportion_gate`'s `nonScrollableSelectors` can say "selector X must not be a scroller"
+    // WITHOUT string-matching the region walk's `describeScrollable()` label (which truncates to
+    // the first three class tokens and would silently stop matching when a class is added). Same
+    // fact, addressed by the registered selector instead of by a rendered description.
+    const isScroller = (el) => {
+        const oy = getComputedStyle(el).overflowY;
+        if (oy !== 'auto' && oy !== 'scroll') return false;
+        return Math.round((el.scrollHeight || 0) - (el.clientHeight || 0)) > 1;
+    };
     const pick = (el) => {
         if (!el) return null;
         const r = el.getBoundingClientRect();
@@ -335,6 +351,8 @@ _JS_GEOMETRY = """(extraSels) => {
             label: el.getAttribute && el.getAttribute('aria-label') || null,
             rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
             z: cs.zIndex, fontSize: cs.fontSize, display: cs.display,
+            scrollable: isScroller(el),
+            scrollDelta: Math.round((el.scrollHeight || 0) - (el.clientHeight || 0)),
         };
     };
     const describeScrollable = (el) => {

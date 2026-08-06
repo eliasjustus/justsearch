@@ -55,6 +55,11 @@
             "items": { "type": "string" },
             "description": "Tempdoc 814 D7.2 — absentSelectors' positive twin (the spine PAIR): selectors that MUST be present in the captured geometry (e.g. the run-spine on a multi-turn agent run). An absent selector is a MISSING_REQUIRED violation. Declared on the STEP, not as an element row, because the assertion is presence itself — an element row with no size constraint is an error by design. Unioned into ui_measure.py's geometry probe."
           },
+          "nonScrollableSelectors": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Tempdoc 814 D8 — selectors that must be PRESENT and must NOT be scrollers: D3's one-scroller rule addressed at a NAMED element. maxScrollableRegions bounds the surface TOTAL and structurally cannot say which element may scroll (a capture where .conversation stopped scrolling and the evidence rail started still counts 1). Judged off the element's own geometry.elements[sel].scrollable flag, computed by ui_measure.py with the same overflow+delta predicate that builds scrollableRegions, so this is 'absent from scrollableRegions' addressed by the registered selector rather than by that walk's truncated description string. A missing selector is an IS_SCROLLER violation too (a must-not-scroll assertion on an element that never mounted asserts nothing). Unioned into ui_measure.py's geometry probe."
+          },
           "forbiddenVisibleText": {
             "type": "array",
             "items": { "type": "string" },

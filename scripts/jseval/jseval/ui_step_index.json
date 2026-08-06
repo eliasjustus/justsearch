@@ -20,10 +20,12 @@
   "shell-v0/views/UnifiedChatView.ts": [
     "chat-mode", "qa-response", "chat-proportion",
     "chat-bands", "chat-bands-detailed", "chat-composer-small",
-    "chat-spine-single", "chat-spine-multi", "chat-chip-yield"
+    "chat-spine-single", "chat-spine-multi", "chat-chip-yield",
+    "chat-evidence-rail", "chat-activity-rail-open"
   ],
   "shell-v0/views/unifiedChatStyles.ts": [
-    "chat-bands", "chat-bands-detailed", "chat-spine-multi"
+    "chat-bands", "chat-bands-detailed", "chat-spine-multi",
+    "chat-evidence-rail", "chat-activity-rail-open"
   ],
   "shell-v0/components/StatusDeck.ts": ["chat-chip-yield"],
   "shell-v0/components/ContextMenu.ts": ["context-menu"],

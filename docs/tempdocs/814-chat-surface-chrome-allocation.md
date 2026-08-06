@@ -1,6 +1,6 @@
 ---
 title: "Chat-surface layout & chrome allocation — the height budget gets an owner (T-B design)"
-status: "implemented + independently audit-closed 2026-08-06 — design (§D), derisk (§B), plan (§P), verification + audit record (§V); audit verdict CLOSE-WITH-NOTES, all notes fixed"
+status: "implemented + independently audit-closed 2026-08-06 — design (§D), derisk (§B), plan (§P), verification + audit record (§V); audit verdict CLOSE-WITH-NOTES, all notes fixed. §D8 residual-closure shipped 2026-08-06: both §V residuals (expanded activity rail, docked evidence rail) are capture-reachable and gated, plus the two §R tooling guards — see the §D8 implementation record"
 created: 2026-08-06
 updated: 2026-08-06
 related: [810, 809, 807, 798, 738, 734, 687, 610, 600, 577, 565, 559]
@@ -762,10 +762,27 @@ Only `budgetUpdates`, `budgetGate`, and `contextGate` have no source but the str
 
 - **A PAUSED-awaiting-budget capture is a priced design fork, deferred.** A static body always
   terminates, so a stream ending on `budget_gate` trips the parsers' `STREAM_INCOMPLETE`
-  guard; the alternatives (accept a trailing error entry in the capture, or reset the gate
-  out-of-band after a terminal frame) each misrepresent something. The held-gate auto-expand
-  keeps its unit-tier home (it is transition-triggered, and `budget_update`/`done` clear the
-  gate — a capture would race its own fixture).
+  guard. The fork is **THREE-way**, not two-way (amended 2026-08-06 during the §D8
+  implementation, once the `agent-run` variant made the transport concrete):
+  1. **Accept a trailing error entry in the capture** — cheapest. The screenshot then shows a
+     PAUSED rail beside a "Connection lost" row no real paused run produces. It misrepresents
+     the state *on camera*, which is the one thing a capture must not do.
+  2. **Reset the gate out-of-band after a terminal frame** — reaches a clean paused rail, but
+     the state photographed was assembled by the harness rather than reached by the app, so the
+     assertion stops witnessing the transition it names.
+  3. **A held-open SSE stub** — a real local endpoint (NOT `route.fulfill`, which by
+     construction serves only a complete body) that emits `session_started` → `budget_update` →
+     `budget_gate` and then holds the connection open. This is the HONEST option: the run
+     genuinely is parked mid-stream, which is what PAUSED means, so both the screenshot and the
+     assertions are about the real state. It is also the expensive one — a socket whose lifetime
+     the step owns, a teardown path on every failure route, and a step bounded by something other
+     than "the body ended": new harness machinery of a kind `install_fixtures` has none of today
+     (it is a pure Playwright route-mock).
+  **Deferred to (3) when triggered, and not re-priced in the meantime.** Owner-agreed trigger:
+  the next human validation pass flagging the PAUSED state, or the first shipped-looking-wrong
+  regression in the held-gate surface. Absent either, the held-gate auto-expand keeps its
+  unit-tier home (it is transition-triggered, and `budget_update`/`done` clear the gate — a
+  static-body capture would race its own fixture).
 - **The over-budget remedy buttons are capture-unreachable by construction**: they additionally
   require `runInFlight`, which is only true while the stream's abort controller is live —
   never after a completed static body. Unit-tier home stands.
@@ -796,3 +813,112 @@ FE's `ThreadLifecycle` zod schema the same way. Earning its keep looks like: a c
 breaks the fixture build loudly instead of capture assertions passing against stale shapes.
 Retirement: if a record-and-replay mechanism (captured real-run SSE bytes replayed verbatim)
 lands, hand-authored frame lists and their validator retire together.
+
+### §D8 — Implementation record (2026-08-06, worker `814-d8`)
+
+**Both §V residuals are now capture-reachable and gated.** The activity rail's expanded body and
+the docked evidence rail have registered rows in `ui-proportion-baseline.v1.json`; the "Connection
+lost" row is gone from agent-mode captures and its absence is asserted rather than assumed.
+
+**What landed**
+
+- **`scripts/jseval/jseval/agent_stream_fixture.py`** (new) — `sse_frame(event, payload)` +
+  `DONE_RUN` (`session_started` → `budget_update` → `chunk` → `done`) + `DONE_RUN_BODY`, every
+  payload validated at IMPORT time against `scripts/codegen/shapes.fixture.json`'s `core.agent-run`
+  `eventSchema` (required-field presence, declared type, ENUM membership, ARRAY element kind,
+  undeclared-field rejection). Projection, not fork: the schema is read from the generated catalog,
+  never restated.
+- **`ui_fixtures.py`** — new `agent-run` variant: the thread record gains `attributes.sources`
+  (3 full `AgentSource` rows on the newest assistant message) + a DONE `lifecycles[]` entry;
+  `/api/chat/dispatch` is fulfilled with `DONE_RUN_BODY` as `text/event-stream`;
+  `/api/chat/agent/tools` reports `{available: true}`. That last one was the LIVE-FOUND blocker —
+  without it `ctrl.available` never becomes `true` and `UnifiedChatView.send()` drops the submit
+  silently. `degraded-thread` is byte-for-byte unchanged (asserted by a test), so `chat-spine-multi`
+  is untouched.
+- **`ui_check.py`** — `_drive_agent_run_to_done` + two steps, `chat-evidence-rail` and
+  `chat-activity-rail-open`, both 1366×768 on the `agent-run` variant. Order is load-bearing:
+  Delegate FIRST (the `escalateAsk` path re-derives the affordance and would demote agent mode, so
+  the agent branch of `send()` is reachable only from an already-agent affordance), then submit,
+  then the record round-trip.
+- **`ui_measure.py` / `ui_proportion_gate.py` / the register + its schema** — new step-level
+  `nonScrollableSelectors` constraint (§D3's direct witness on a NAMED element), judged off a new
+  per-element `scrollable` flag computed with the SAME predicate that builds `scrollableRegions`.
+- **The two §R tooling guards** — `fold-observations.mjs` gains `isBaseFresh()` + a refusal inside
+  `foldShards` beside the malformed-store check, with `--allow-stale`; `ui_shot._is_server_alive`
+  gains the provenance-head clause, kept last so the cheap gates still short-circuit.
+
+**Measured (1366×768, `--fixtures`)**
+
+| Fact | `chat-evidence-rail` | `chat-activity-rail-open` |
+|---|---|---|
+| `.evidence-rail` | 320×392, scrollDelta 2, **not a scroller** | 320×331, not a scroller |
+| `.activity-rail` | 25px (collapsed summary) | **86px** (expanded body) |
+| `.conversation-zone` share | **0.5600** (floor 0.55) | **0.4729** (floor 0.45) |
+| `.composer` | 152px | 152px |
+| `scrollableCount` | 1 (`.conversation`, delta 107) | 1 (`.conversation`, delta 168) |
+| "Connection lost" | **0** | **0** |
+
+Gate state: `jseval ui-proportion-gate` exit 0, **53 rows / 11 steps, 0 non-ok** (was 34 rows /
+9 steps); `jseval ui-a11y-gate` exit 0 (12 surfaces, 0 NEW); `check-ui-step-coverage` green;
+`check-tempdoc-numbers` OK; the jseval ui-\* pytest subset 152 passed / 8 skipped;
+`agent-analytics` 31/31 test files. No `modules/ui-web` source was changed by this work.
+
+**Negative controls — every new assertion was observed RED before being trusted**
+
+| # | Break | Observed red |
+|---|---|---|
+| A | record's `attributes.sources` emptied | step FAILS on the `.evidence-rail` wait; gate rows `MISSING_REQUIRED` + `IS_SCROLLER` ("selector not found … asserts nothing") |
+| B | `.evidence-rail` CSS `overflow: hidden` → `overflow-y: auto` (the exact §D3 regression) | `IS_SCROLLER` scrollDelta 2, **and** `MULTI_SCROLL` count 2 — the new row NAMES the element, the count row only says "too many" |
+| C | `/api/chat/dispatch` interception disabled | `FORBIDDEN_TEXT_VISIBLE: "Connection lost" count=1` (the rail still mounted, so the delta is exactly the stream) |
+| D | `done.iterationsUsed` renamed / `budget_update.tokensRemaining` typed as a string | import-time `AgentStreamFixtureError: … event 'done': required field 'iterationsUsed' (NUMBER) is missing from the fixture payload` / `… field 'tokensRemaining' is declared NUMBER but the fixture supplies str` |
+| E | `budget_update` stripped of `promptTokens`/`contextWindow` | `.activity-context` `MISSING_REQUIRED` (and the step's own wait times out) |
+| F | rail left COLLAPSED (summary click removed) | `.activity-rail` `UNDER_MIN_HEIGHT` 25 < 64 |
+| G | the D5 chip-suppression gate removed from `UnifiedChatView` | `.sources-affordance` `PRESENT_BUT_SHOULD_BE_ABSENT` (the capture summary also flagged `status-fact-dup:Sources ·`) |
+| H | `fold-observations --apply` from a checkout behind `origin/main` | exit 1 + the remedy-naming refusal; the shard survived intact; `--allow-stale` then folded it |
+| I | `tmp/ui-shot-server.json` `provenance.head` tampered | `_is_server_alive` → False, and end-to-end a NEW vite pid (22604 → 34216) with the head re-recorded |
+| J | share floor raised 0.45 → 0.55 on the expanded capture | `UNDER_SHARE 0.4729 < 0.55` — the row discriminates, it is not passing on slack |
+
+**Two findings the controls produced, recorded because they change how a row should be read**
+
+1. **Presence rows do not witness expansion.** With the `<details>` closed, all three body
+   `requiredSelectors` rows still report ok — `ui_measure`'s `deepQuery` finds a collapsed
+   `<details>`' children in the DOM. Only `minHeightPx` went red. So on that step the presence rows
+   mean "the run reported these facts" and the FLOOR means "the rail is actually open". Both are
+   needed; neither substitutes for the other.
+2. **A real axe defect the new capture exposed.** `chat-evidence-rail` measures
+   `nested-interactive` (serious, 3 nodes): the docked rail's `.source[role="button"]` cards have
+   focusable descendants. Pre-existing in the sources pane, newly VISIBLE because nothing had ever
+   captured the mounted rail. The two new steps were deliberately **NOT** added to
+   `ui-a11y-baseline.v1.json` — a row with `knownRules: []` would fail the gate, and a row with
+   `knownRules: ["nested-interactive"]` would baseline a real defect, which the §V closure audit
+   explicitly declined to do for its own `scrollable-region-focusable` find. Logged to the
+   observations inbox; fixing it at source is FE work outside this worker's brief.
+
+**Deviation from the §D8.2 sketch, deliberate.** `done` carries **no** `sources`/`citations` (both
+optional in the schema). §D8.1 gives the grounding to the RECORD, so letting the stream carry it too
+would over-determine the rail and make control (A) un-runnable — stripping the record's sources
+would leave the rail mounted and the row green. One provider per fact is what makes each row
+falsifiable, and the split mirrors §D8's own division: record → sources + lifecycle, stream →
+budget + context.
+
+**Real-world validation of guard §D8.4a, from an accident during this session.** A negative
+control's repository clone failed on a Windows long-path error, breaking the shell's `&&` chain, so
+the follow-on `node scripts/agent-analytics/fold-observations.mjs --apply` ran in the MAIN checkout
+— which was 3 commits behind `origin/main` — using main's own (unguarded) copy of the tool. It
+folded 13 entries from 6 shards and deleted them. Recovery was complete only because every shard
+was tracked, so a per-path restore brought back all six plus `observations.md`. The new guard
+refuses exactly this: `origin/main` was not an ancestor of main's HEAD, so `isBaseFresh` returns
+false and nothing is written. The incident is the guard's motivating case, observed rather than
+argued.
+
+**Residuals after §D8**
+
+1. The PAUSED-awaiting-budget capture stays deferred to §D8.3 option (3) on its stated trigger.
+2. The over-budget remedy buttons stay unit-tier (`runInFlight` is false after any completed body).
+3. `chat-bands` still reports `maxScrollableRegions ok` at `scrollableCount: 0` — pre-existing
+   vacuity on that step (the closure audit's finding C added the floor only to
+   `chat-bands-detailed`); noted, not touched, because it is outside this brief.
+4. The two new steps carry no a11y-baseline row (see finding 2) — they are proportion-gated only.
+5. The jseval pytest suite has 56 pre-existing collection errors and 43 pre-existing failures in
+   this checkout's interpreter (missing third-party deps: `httpx`, and the corpus/utility stack).
+   Every `ui_*` test module collects and passes; the gap predates this work and is unrelated to it.

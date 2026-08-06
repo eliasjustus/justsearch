@@ -70,6 +70,21 @@ Step-level (not per-element; declared alongside ``elements`` on the step object)
                              A present selector is a violation, not a silent pass —
                              mirrors the "declaring none is an error" discipline for the
                              positive case.
+  ``nonScrollableSelectors`` tempdoc 814 §D8 — the §D3 rule's DIRECT witness on a NAMED
+                             element: this selector must be present AND must not be a
+                             scroller. `maxScrollableRegions` bounds the surface's TOTAL,
+                             which is the right shape for "one scroller per surface" but
+                             cannot say WHICH element is allowed to be it: a capture where
+                             `.conversation` stopped scrolling and the evidence rail started
+                             would still count 1 and pass. Judged off the registered
+                             element's own `geometry.elements[sel].scrollable` flag —
+                             computed by `ui_measure.py` with the SAME predicate that builds
+                             `scrollableRegions`, so "not a scroller" and "absent from
+                             scrollableRegions" are the same fact, addressed by the
+                             registered selector rather than by the region walk's truncated
+                             description string. A MISSING selector is a violation, not a
+                             pass (a rail that never mounted must not satisfy "the rail does
+                             not scroll").
   ``requiredSelectors``      `absentSelectors`' positive twin (814 §D7.2's spine PAIR):
                              a selector that MUST be present in the captured geometry.
                              Registered on the step, not as an element row, because the
@@ -201,6 +216,8 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
                                            registered ``maxPersistentRenders``
       - ``PRESENT_BUT_SHOULD_BE_ABSENT`` — an ``absentSelectors`` entry WAS captured
       - ``MISSING_REQUIRED``            — a ``requiredSelectors`` entry was NOT captured
+      - ``IS_SCROLLER``                 — a ``nonScrollableSelectors`` entry scrolls
+                                           (or was not captured at all)
       - ``FORBIDDEN_TEXT_VISIBLE``      — a ``forbiddenVisibleText`` phrase rendered
                                            visibly (count > 0)
 
@@ -220,6 +237,7 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
         elements = s.get("elements") or []
         absent_selectors = s.get("absentSelectors") or []
         required_selectors = s.get("requiredSelectors") or []
+        non_scrollable_selectors = s.get("nonScrollableSelectors") or []
         forbidden_text = s.get("forbiddenVisibleText") or []
         max_scrollable = s.get("maxScrollableRegions")
         min_scrollable = s.get("minScrollableRegions")
@@ -232,6 +250,7 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
         # empty `elements` array, e.g. `chat-spine-single`'s `absentSelectors`-only row,
         # still runs every check below).
         if (not elements and not absent_selectors and not required_selectors
+                and not non_scrollable_selectors
                 and not forbidden_text and max_scrollable is None
                 and min_scrollable is None and not status_facts_singleton):
             continue
@@ -424,6 +443,40 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
             rows.append({
                 "step": step, "selector": sel, "constraint": "requiredSelectors",
                 "status": "ok" if present else "MISSING_REQUIRED",
+            })
+
+        # Tempdoc 814 §D8 — the §D3 rule addressed at a NAMED element, the complement of the
+        # surface-wide count below. Read off the same capture: `ui_measure.py` records each
+        # registered element's own `scrollable` flag with the predicate that builds
+        # `scrollableRegions`, so this is "X is absent from scrollableRegions" without matching
+        # on that walk's truncated description string.
+        for sel in non_scrollable_selectors:
+            captured = geo_elements.get(sel)
+            if captured is None:
+                any_violation = True
+                rows.append({
+                    "step": step, "selector": sel, "constraint": "nonScrollableSelectors",
+                    "status": "IS_SCROLLER",
+                    "error": "selector not found in captured geometry — a 'must not scroll' "
+                             "assertion on an element that never mounted asserts nothing",
+                })
+                continue
+            flag = captured.get("scrollable")
+            if flag is None:
+                any_error = True
+                rows.append({
+                    "step": step, "selector": sel, "constraint": "nonScrollableSelectors",
+                    "status": "ERROR",
+                    "error": "captured element has no `scrollable` flag (ui_measure.py geometry "
+                             "probe stale?)",
+                })
+                continue
+            scrolls = bool(flag)
+            any_violation = any_violation or scrolls
+            rows.append({
+                "step": step, "selector": sel, "constraint": "nonScrollableSelectors",
+                "status": "IS_SCROLLER" if scrolls else "ok",
+                "scrollDelta": captured.get("scrollDelta"),
             })
 
         if max_scrollable is not None:

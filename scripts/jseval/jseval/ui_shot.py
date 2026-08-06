@@ -243,9 +243,23 @@ def _is_server_alive(info: dict) -> bool:
     import urllib.request
     try:
         urllib.request.urlopen(f"http://localhost:{port}", timeout=2)
-        return True
     except Exception:
         return False
+    # PROVENANCE, part 2 (tempdoc 814 §D8.4 / §R.2): the recorded `provenance.head` is written at
+    # start (see `_start_vite`) but was never READ back, so a server started before a commit was
+    # reused after it and the capture measured code that is no longer HEAD — a silently stale
+    # measurement, the worst failure mode for a gate whose whole job is measuring. Vite's own HMR
+    # does not cover a `git commit`/branch move, and the reuse path has no other freshness signal.
+    # Kept LAST so the cheap gates (port/pid/cmdline) still short-circuit; a mismatch simply falls
+    # through to starting a fresh server, which is the correct repair.
+    recorded_head = (info.get("provenance") or {}).get("head")
+    if recorded_head:
+        current_head = _git_provenance(ui_web).get("head") if ui_web else None
+        if current_head and current_head != recorded_head:
+            log.debug("Vite server provenance stale (recorded head %s, current %s) — restarting",
+                      recorded_head, current_head)
+            return False
+    return True
 
 
 def _ensure_node_modules_junction(ui_web: Path) -> bool:
