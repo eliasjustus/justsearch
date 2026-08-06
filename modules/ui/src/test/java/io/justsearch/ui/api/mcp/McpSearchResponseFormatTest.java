@@ -75,7 +75,7 @@ final class McpSearchResponseFormatTest {
             List.of(region),
             null);
     return new KnowledgeSearchResponse(
-        1L, 1L, 12L, List.of(hit), null, null, null, null, null, null, null, null);
+        1L, 1L, 12L, List.of(hit), null, null, null, null, null, null, null, null, null);
   }
 
   @Test

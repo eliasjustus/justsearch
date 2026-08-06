@@ -144,5 +144,11 @@
       "id" : "freshness",
       "status" : "disabled"
     } ]
+  },
+  "appliedFilters" : {
+    "filters" : {
+      "fileKind" : [ "markdown" ],
+      "pathPrefix" : "C:/docs"
+    }
   }
 }

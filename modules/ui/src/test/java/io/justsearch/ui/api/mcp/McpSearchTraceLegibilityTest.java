@@ -104,7 +104,7 @@ final class McpSearchTraceLegibilityTest {
             null);
     KnowledgeSearchResponse canned =
         new KnowledgeSearchResponse(
-            1L, 1L, 12L, List.of(hit), null, null, null, null, null, null, null, null);
+            1L, 1L, 12L, List.of(hit), null, null, null, null, null, null, null, null, null);
 
     Map<String, Object> result = invokeSearch(canned);
     String text = textOf(result);
@@ -157,7 +157,7 @@ final class McpSearchTraceLegibilityTest {
             null);
     KnowledgeSearchResponse canned =
         new KnowledgeSearchResponse(
-            1L, 1L, 9L, List.of(hit), null, null, null, null, null, null, null, null);
+            1L, 1L, 9L, List.of(hit), null, null, null, null, null, null, null, null, null);
 
     Map<String, Object> result = invokeSearch(canned);
     String text = textOf(result);
@@ -186,7 +186,7 @@ final class McpSearchTraceLegibilityTest {
         new SearchTrace.Degradation(true, "FINGERPRINT_MISMATCH", false, null, true, null);
     SearchTrace trace = new SearchTrace(SearchTrace.SCHEMA_VERSION, "HYBRID", null, null, degradation, List.of());
     KnowledgeSearchResponse canned =
-        new KnowledgeSearchResponse(0L, 0L, 3L, List.of(), null, null, null, null, null, null, null, trace);
+        new KnowledgeSearchResponse(0L, 0L, 3L, List.of(), null, null, null, null, null, null, null, trace, null);
 
     String text = textOf(invokeSearch(canned));
 
@@ -211,7 +211,7 @@ final class McpSearchTraceLegibilityTest {
         new SearchTrace.Degradation(false, null, true, "NO_EMBEDDING_SERVICE", false, "absent");
     SearchTrace trace = new SearchTrace(SearchTrace.SCHEMA_VERSION, "HYBRID", null, null, degradation, List.of());
     KnowledgeSearchResponse canned =
-        new KnowledgeSearchResponse(0L, 0L, 3L, List.of(), null, null, null, null, null, null, null, trace);
+        new KnowledgeSearchResponse(0L, 0L, 3L, List.of(), null, null, null, null, null, null, null, trace, null);
 
     String text = textOf(invokeSearch(canned));
 
@@ -228,7 +228,7 @@ final class McpSearchTraceLegibilityTest {
     SearchTrace.Degradation degradation = new SearchTrace.Degradation(false, null, false, null, true, null);
     SearchTrace trace = new SearchTrace(SearchTrace.SCHEMA_VERSION, "HYBRID", null, null, degradation, List.of());
     KnowledgeSearchResponse canned =
-        new KnowledgeSearchResponse(0L, 0L, 3L, List.of(), null, null, null, null, null, null, null, trace);
+        new KnowledgeSearchResponse(0L, 0L, 3L, List.of(), null, null, null, null, null, null, null, trace, null);
 
     String text = textOf(invokeSearch(canned));
 
@@ -239,7 +239,7 @@ final class McpSearchTraceLegibilityTest {
   @DisplayName("(c) no degradation note when trace is null (null-safe)")
   void noDegradationNoteWhenTraceNull() {
     KnowledgeSearchResponse canned =
-        new KnowledgeSearchResponse(0L, 0L, 3L, List.of(), null, null, null, null, null, null, null, null);
+        new KnowledgeSearchResponse(0L, 0L, 3L, List.of(), null, null, null, null, null, null, null, null, null);
 
     String text = textOf(invokeSearch(canned));
 
@@ -258,14 +258,14 @@ final class McpSearchTraceLegibilityTest {
     List<Hit> tenHits = new ArrayList<>();
     for (int i = 0; i < 10; i++) tenHits.add(minimalHit("doc-" + i));
     KnowledgeSearchResponse truncated =
-        new KnowledgeSearchResponse(37L, 37L, 12L, tenHits, null, null, null, null, null, null, null, null);
+        new KnowledgeSearchResponse(37L, 37L, 12L, tenHits, null, null, null, null, null, null, null, null, null);
     String truncatedText = textOf(invokeSearch(truncated));
     assertTrue(truncatedText.contains("Found 37 results (took 12ms); showing 10."), truncatedText);
 
     List<Hit> fiveHits = new ArrayList<>();
     for (int i = 0; i < 5; i++) fiveHits.add(minimalHit("doc-" + i));
     KnowledgeSearchResponse exact =
-        new KnowledgeSearchResponse(5L, 5L, 8L, fiveHits, null, null, null, null, null, null, null, null);
+        new KnowledgeSearchResponse(5L, 5L, 8L, fiveHits, null, null, null, null, null, null, null, null, null);
     String exactText = textOf(invokeSearch(exact));
     assertTrue(exactText.contains("Found 5 results (took 8ms)."), exactText);
     assertFalse(exactText.contains("showing"), exactText);
@@ -289,7 +289,7 @@ final class McpSearchTraceLegibilityTest {
             List.of(),
             null);
     KnowledgeSearchResponse canned =
-        new KnowledgeSearchResponse(1L, 1L, 4L, List.of(hit), null, null, null, null, null, null, null, null);
+        new KnowledgeSearchResponse(1L, 1L, 4L, List.of(hit), null, null, null, null, null, null, null, null, null);
 
     Map<String, Object> result = invokeSearch(canned);
     String text = textOf(result);
@@ -331,7 +331,7 @@ final class McpSearchTraceLegibilityTest {
             null);
     KnowledgeSearchResponse cutResp =
         new KnowledgeSearchResponse(
-            1L, 1L, 5L, List.of(cutHit), null, null, null, null, null, null, null, null);
+            1L, 1L, 5L, List.of(cutHit), null, null, null, null, null, null, null, null, null);
     String cutText = textOf(invokeSearch(cutResp));
     assertTrue(cutText.contains(McpSearchResultFormatter.TRUNCATION_REMEDY), cutText);
     assertFalse(cutText.contains("tail-marker-not-in-window"), cutText);
@@ -351,7 +351,7 @@ final class McpSearchTraceLegibilityTest {
             null);
     KnowledgeSearchResponse shortResp =
         new KnowledgeSearchResponse(
-            1L, 1L, 5L, List.of(shortHit), null, null, null, null, null, null, null, null);
+            1L, 1L, 5L, List.of(shortHit), null, null, null, null, null, null, null, null, null);
     String shortText = textOf(invokeSearch(shortResp));
     assertTrue(shortText.contains("    Preview: " + shortRegionText), shortText);
     assertFalse(shortText.contains(McpSearchResultFormatter.TRUNCATION_REMEDY), shortText);
@@ -474,7 +474,7 @@ final class McpSearchTraceLegibilityTest {
             List.of(),
             null);
     KnowledgeSearchResponse canned =
-        new KnowledgeSearchResponse(1L, 1L, 4L, List.of(hit), null, null, null, null, null, null, null, null);
+        new KnowledgeSearchResponse(1L, 1L, 4L, List.of(hit), null, null, null, null, null, null, null, null, null);
 
     Map<String, Object> result = invokeSearch(canned);
     String text = textOf(result);
@@ -528,7 +528,7 @@ final class McpSearchTraceLegibilityTest {
             null);
     KnowledgeSearchResponse canned =
         new KnowledgeSearchResponse(
-            1L, 1L, 10L, List.of(hit), null, null, null, null, null, null, null, null);
+            1L, 1L, 10L, List.of(hit), null, null, null, null, null, null, null, null, null);
 
     String text = textOf(invokeSearch(canned));
 
@@ -566,7 +566,7 @@ final class McpSearchTraceLegibilityTest {
             null);
     KnowledgeSearchResponse canned =
         new KnowledgeSearchResponse(
-            1L, 1L, 12L, List.of(hit), null, null, null, null, null, null, null, null);
+            1L, 1L, 12L, List.of(hit), null, null, null, null, null, null, null, null, null);
 
     String text = textOf(invokeSearch(canned));
 
@@ -597,7 +597,7 @@ final class McpSearchTraceLegibilityTest {
             null);
     KnowledgeSearchResponse canned =
         new KnowledgeSearchResponse(
-            1L, 1L, 12L, List.of(hit), null, null, null, null, null, null, null, null);
+            1L, 1L, 12L, List.of(hit), null, null, null, null, null, null, null, null, null);
 
     String text = textOf(invokeSearch(canned));
 
@@ -628,7 +628,7 @@ final class McpSearchTraceLegibilityTest {
             null);
     KnowledgeSearchResponse canned =
         new KnowledgeSearchResponse(
-            1L, 1L, 4L, List.of(hit), null, null, null, null, null, null, null, null);
+            1L, 1L, 4L, List.of(hit), null, null, null, null, null, null, null, null, null);
 
     String text = textOf(invokeSearch(canned));
 
@@ -676,7 +676,7 @@ final class McpSearchTraceLegibilityTest {
             null);
     KnowledgeSearchResponse canned =
         new KnowledgeSearchResponse(
-            1L, 1L, 4L, List.of(hit), null, null, null, null, null, null, null, null);
+            1L, 1L, 4L, List.of(hit), null, null, null, null, null, null, null, null, null);
 
     String text = textOf(invokeSearch(canned));
 
@@ -721,7 +721,7 @@ final class McpSearchTraceLegibilityTest {
             null);
     KnowledgeSearchResponse canned =
         new KnowledgeSearchResponse(
-            1L, 1L, 4L, List.of(hit), null, null, null, null, null, null, null, null);
+            1L, 1L, 4L, List.of(hit), null, null, null, null, null, null, null, null, null);
 
     String text = textOf(invokeSearch(canned));
 
