@@ -68,6 +68,26 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 # other screenshot.
 BULK_FRAMES_DIRNAME = "raw-frames"
 
+# Post-round investigation exclusion (round-15 retrospective finding 6,
+# tempdoc 817): a same-share investigation session that runs AFTER finalize
+# (e.g. following up on a filed finding) can add screenshots/notes into the
+# SAME evidence dir the finalized round already reviewed. Round 15: a
+# post-finalize investigation session added ~52 screenshots, and re-running
+# check_coverage.py against that evidence dir then failed the ALREADY-
+# FINALIZED review as incomplete, because none of those new files were (or
+# could have been) in the round's evidence-review.v1.json 'examined' list --
+# the review was complete and correct at the moment the round finalized.
+#
+# Convention (sandbox-CLAUDE.md, "Writing results" section): investigation
+# that happens after finalize writes its screenshots/notes into a
+# subdirectory of the evidence dir named POST_ROUND_DIRNAME. Same treatment
+# as BULK_FRAMES_DIRNAME above: files under it are still collected by
+# load_evidence_files (present as evidence, inspectable, never deleted) but
+# excluded from the credit-eligible screenshot set -- they cannot satisfy a
+# mustTouch surface/shape token, and evidence-review.v1.json's 'examined'
+# list is not required to enumerate them.
+POST_ROUND_DIRNAME = "post-round"
+
 
 # --------------------------------------------------------------------------
 # Round retrospective check (D1): a required PROCESS deliverable, not a
@@ -877,8 +897,9 @@ def load_evidence_files(path: str | None) -> dict[str, int]:
     Keys are relative to `path` with forward-slash separators regardless of
     platform, so a top-level file's key is unchanged from before this walked
     subdirectories (e.g. "42-recovery-key.png"), and a nested file's key
-    carries its subdirectory prefix (e.g. "raw-frames/seq-0001.png") -- see
-    BULK_FRAMES_DIRNAME above for the one convention that currently reads
+    carries its subdirectory prefix (e.g. "raw-frames/seq-0001.png",
+    "post-round/investigation-01.png") -- see BULK_FRAMES_DIRNAME and
+    POST_ROUND_DIRNAME above for the two conventions that currently read
     that prefix.
 
     A missing directory yields an empty dict plus a warning.
@@ -917,6 +938,17 @@ def is_bulk_frame(evidence_relpath: str) -> bool:
     """
     parts = evidence_relpath.split("/", 1)
     return len(parts) > 1 and parts[0] == BULK_FRAMES_DIRNAME
+
+
+def is_post_round_capture(evidence_relpath: str) -> bool:
+    """True if `evidence_relpath` lives under the post-finalize investigation
+    convention directory (POST_ROUND_DIRNAME) -- same direct-child-only rule
+    as is_bulk_frame above, and the same exclusion treatment: present as
+    evidence, never required in evidence-review.v1.json's 'examined' list,
+    never credit-eligible for a mustTouch surface/shape token.
+    """
+    parts = evidence_relpath.split("/", 1)
+    return len(parts) > 1 and parts[0] == POST_ROUND_DIRNAME
 
 
 # --------------------------------------------------------------------------
@@ -1286,6 +1318,20 @@ def main(argv: list[str] | None = None) -> int:
             "excluded from the credit-eligible set (bulk/periodic capture-driver "
             "convention) -- present as evidence, not required in evidence-review.v1.json's "
             "'examined' list, and cannot satisfy a mustTouch surface/shape token.",
+            file=sys.stderr,
+        )
+    # Post-round investigation exclusion (round-15 retrospective finding 6,
+    # tempdoc 817): same treatment as the bulk-frame exclusion above, for
+    # screenshots/notes a same-share investigation session added AFTER this
+    # round already finalized -- see POST_ROUND_DIRNAME's docstring.
+    post_round_frames = {f for f in all_screenshots if is_post_round_capture(f)}
+    all_screenshots = all_screenshots - post_round_frames
+    if post_round_frames:
+        print(
+            f"INFO: {len(post_round_frames)} screenshot(s) under '{POST_ROUND_DIRNAME}/' are "
+            "excluded from the credit-eligible set (post-finalize investigation convention) -- "
+            "present as evidence, not required in evidence-review.v1.json's 'examined' list, "
+            "and cannot satisfy a mustTouch surface/shape token.",
             file=sys.stderr,
         )
     # F-729-2: drop screenshots under the size floor before they can match a
