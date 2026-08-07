@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Self-test for Assert-AppSurface's ledger predicate (round 15 fix, tempdoc 798).
+    Self-test for Assert-AppSurface's ledger predicate (round 15 fix, tempdoc 817).
 
 .DESCRIPTION
     Assert-AppSurface used to check ONLY `kind == "navigation"` / "targetSurface",

@@ -980,7 +980,7 @@ class BulkFrameExclusionTests(unittest.TestCase):
 
 
 class PostRoundExclusionTests(unittest.TestCase):
-    """Round-15 retrospective finding 6 (tempdoc 798): a post-finalize
+    """Round-15 retrospective finding 6 (tempdoc 817): a post-finalize
     investigation session's screenshots must not (a) require individual
     reader review in evidence-review.v1.json's 'examined' list, or (b)
     silently satisfy a mustTouch surface/shape token by filename alone --

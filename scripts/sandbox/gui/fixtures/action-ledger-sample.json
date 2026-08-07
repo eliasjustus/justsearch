@@ -1,5 +1,5 @@
 {
-  "_comment": "Captured/reconstructed GET /api/action-ledger payload shape (round 15, tempdoc 798). Used by test-assert-app-surface.ps1 -- do not hand-edit field names without re-verifying against modules/app-observability/.../ActionLedgerProjection.java toWireRow and modules/ui/.../ActionLedgerController.java. Entries are oldest-first, most-recent-last, matching the real endpoint's documented order.",
+  "_comment": "Captured/reconstructed GET /api/action-ledger payload shape (round 15, tempdoc 817). Used by test-assert-app-surface.ps1 -- do not hand-edit field names without re-verifying against modules/app-observability/.../ActionLedgerProjection.java toWireRow and modules/ui/.../ActionLedgerController.java. Entries are oldest-first, most-recent-last, matching the real endpoint's documented order.",
   "entries": [
     {
       "id": "op-1",

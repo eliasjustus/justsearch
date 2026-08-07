@@ -69,7 +69,7 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 BULK_FRAMES_DIRNAME = "raw-frames"
 
 # Post-round investigation exclusion (round-15 retrospective finding 6,
-# tempdoc 798): a same-share investigation session that runs AFTER finalize
+# tempdoc 817): a same-share investigation session that runs AFTER finalize
 # (e.g. following up on a filed finding) can add screenshots/notes into the
 # SAME evidence dir the finalized round already reviewed. Round 15: a
 # post-finalize investigation session added ~52 screenshots, and re-running
@@ -1321,7 +1321,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
     # Post-round investigation exclusion (round-15 retrospective finding 6,
-    # tempdoc 798): same treatment as the bulk-frame exclusion above, for
+    # tempdoc 817): same treatment as the bulk-frame exclusion above, for
     # screenshots/notes a same-share investigation session added AFTER this
     # round already finalized -- see POST_ROUND_DIRNAME's docstring.
     post_round_frames = {f for f in all_screenshots if is_post_round_capture(f)}

@@ -640,7 +640,7 @@ afterwards to resume the original round on its real data. This is what turned
 round 10's F7 ("upgrade defect?") into "shipped-UI blocker, reproduced on a
 pristine data dir" — that round's single highest-value diagnostic act.
 
-**Why the explicit copy matters (round 15, tempdoc 798 finding 5):** the
+**Why the explicit copy matters (round 15, tempdoc 817 finding 5):** the
 pristine instance launched against the renamed-aside (non-existent) data dir
 writes its OWN fresh, short `traces.ndjson` from scratch. `collect-evidence.ps1`
 now auto-archives the evidence-root copy to `evidence\api-history\` before an
@@ -770,7 +770,7 @@ interval) is the better fix when a driver can do it; `raw-frames/` is the
 fallback for drivers that can't or didn't.
 
 **Investigation that happens AFTER finalize writes screenshots/notes into
-`evidence/post-round/`, not the evidence root (round 15, tempdoc 798).** A
+`evidence/post-round/`, not the evidence root (round 15, tempdoc 817).** A
 round's evidence review is complete and correct at the moment the round
 finalizes — but the same mapped share can outlive that finalize, and a later
 same-share investigation session (e.g. following up on a filed finding) can

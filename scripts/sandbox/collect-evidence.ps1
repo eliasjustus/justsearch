@@ -458,7 +458,7 @@ elseif ($installedExeFound -or $dataDirFound -or $uninstallRegFound) {
         $installStateLines += ("Install signal(s) found, but timestamped AFTER this session's boot " +
             "($($roundStartUtc.ToString('o')) UTC) -- consistent with an install performed by THIS " +
             "round itself (Windows Sandbox boots a fresh, ephemeral environment per launch), not a " +
-            "stale prior install. No warning (round-start-relative fingerprint, tempdoc 798).")
+            "stale prior install. No warning (round-start-relative fingerprint, tempdoc 817).")
         Write-Log "Install signal(s) found, but post-dates this session's boot -- treated as this round's own install, not a defect."
     }
     else {
@@ -1137,7 +1137,7 @@ $tracesDst = Join-Path -Path $EvidenceDir -ChildPath "traces.ndjson"
 $tracesCopied = $false
 if (Test-Path -LiteralPath $tracesSrc) {
     try {
-        # Round-15 finding 5 (tempdoc 798, F1 renamed-aside-data-dir
+        # Round-15 finding 5 (tempdoc 817, F1 renamed-aside-data-dir
         # reproduction): renaming %APPDATA%\io.justsearch.shell aside and
         # relaunching against a pristine data dir resets traces.ndjson to a
         # fresh, near-empty file. An unconditional overwrite here silently
