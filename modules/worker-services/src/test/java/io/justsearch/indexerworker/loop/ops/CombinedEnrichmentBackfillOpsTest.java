@@ -189,7 +189,9 @@ class CombinedEnrichmentBackfillOpsTest {
         new ArrayDeque<>(),
         new ArrayDeque<>(),
         new int[] {0},
-        () -> false);
+        () -> false,
+        () -> false,
+        new WindowedEmbedProgress());
   }
 
   private CombinedEnrichmentBackfillOps.BackfillContext embedOnlyContext() {

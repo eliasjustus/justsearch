@@ -488,6 +488,43 @@ public final class EmbeddingService implements EmbeddingProvider, Closeable {
     }
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Counted on the PREFIXED text, exactly as {@link #embedDocumentBatch} embeds it, so the
+   * window count a resuming caller plans against is the window count the encoder will produce.
+   */
+  @Override
+  public int documentWindowCount(String text) {
+    if (closed.get() || !available || backend == null || text == null || text.isBlank()) {
+      return 1;
+    }
+    if (!(backend
+        instanceof io.justsearch.indexerworker.embed.onnx.OnnxEmbeddingBackend onnxBackend)) {
+      return 1;
+    }
+    return onnxBackend.encoder().windowCount(documentPrefix + text);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public WindowSlice embedDocumentWindows(String text, int fromWindow, int maxWindows) {
+    if (closed.get() || !available || backend == null || text == null || text.isBlank()) {
+      return null;
+    }
+    if (!(backend
+        instanceof io.justsearch.indexerworker.embed.onnx.OnnxEmbeddingBackend onnxBackend)) {
+      return null;
+    }
+    String prefixed = documentPrefix + text;
+    try {
+      var slice = onnxBackend.encoder().embedWindows(prefixed, fromWindow, maxWindows);
+      return new WindowSlice(slice.vectors(), fromWindow, slice.totalWindows());
+    } catch (ai.onnxruntime.OrtException e) {
+      throw new RuntimeException("Windowed document embed failed: " + e.getMessage(), e);
+    }
+  }
+
   private static float[] toFloatArray(List<Double> vector) {
     float[] arr = new float[vector.size()];
     for (int i = 0; i < vector.size(); i++) {

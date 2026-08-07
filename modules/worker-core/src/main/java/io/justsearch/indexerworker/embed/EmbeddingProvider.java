@@ -37,6 +37,49 @@ public interface EmbeddingProvider {
    */
   EmbeddingService.ChunkedEmbedding embedWithSpans(String content, int[][] charSpans);
 
+  /**
+   * One resumable slice of a single document's encoder windows.
+   *
+   * @param vectors one vector per window actually embedded, in window order starting at {@code
+   *     fromWindow}
+   * @param fromWindow the window index this slice started at
+   * @param totalWindows how many windows the whole document needs — the resumption bound
+   */
+  record WindowSlice(List<float[]> vectors, int fromWindow, int totalWindows) {}
+
+  /**
+   * How many encoder windows this document text needs (round-15 post-round finding; the
+   * head-of-line-blocking half of the {@code 813 §18} starvation residual).
+   *
+   * <p>A document longer than the model's context window is embedded as several overlapping
+   * windows that are mean-pooled into one vector. {@link #embedDocumentBatch} does all of a
+   * document's windows inside one uninterruptible call and only materialises the pooled vector at
+   * the end, so a document whose windowing cannot finish inside one scheduler cycle restarts from
+   * window 0 forever. Callers that want to resume ask for the count here and then drive {@link
+   * #embedDocumentWindows} a slice at a time.
+   *
+   * @return the window count, or {@code 1} when this provider does not expose window granularity —
+   *     which keeps every such caller on the historical whole-document batch path unchanged
+   */
+  default int documentWindowCount(String text) {
+    return 1;
+  }
+
+  /**
+   * Embeds windows {@code [fromWindow, fromWindow + maxWindows)} of one document.
+   *
+   * <p>Deliberately returns the RAW per-window vectors rather than a pooled document vector: the
+   * caller accumulates them across cycles and pools only once every window has been embedded, which
+   * is what makes a long document's progress survive a cycle boundary.
+   *
+   * @return the slice, or {@code null} when this provider does not expose window granularity
+   * @throws RuntimeException if the underlying inference call fails — treat like any other
+   *     embedding failure (do not mark complete; let the doc retry/escalate)
+   */
+  default WindowSlice embedDocumentWindows(String text, int fromWindow, int maxWindows) {
+    return null;
+  }
+
   /** Returns the embedding dimension (e.g., 768 for nomic-embed-text). */
   int dimension();
 
