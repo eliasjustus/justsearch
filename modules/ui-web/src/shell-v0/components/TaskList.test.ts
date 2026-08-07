@@ -79,6 +79,7 @@ async function setProgress(p: Partial<IndexingProgress>): Promise<void> {
     jobsQueued: 0,
     enrichingPercent: null,
     enrichingPending: 0,
+    blockedPending: 0,
     enrichingStages: [],
     enrichingEtaSeconds: null,
     embeddingPending: 0,
@@ -102,6 +103,54 @@ const INDEXING_SNAPSHOT = snapshot({
 const READY_SNAPSHOT = snapshot({
   core: { indexState: 'IDLE', pendingJobs: 0 },
   enrichment: { backfillMode: 'idle' },
+});
+
+/**
+ * Round-15 F1 — the state this card claimed "Everything is indexed and enriched" over: jobs drained,
+ * nothing enriched, and every enrichment stage inapplicable because no embedding service exists.
+ * The enrichment block is the round's captured `/api/status`
+ * (`evidence/api-history/20260807-011454/api-api-status.json`), verbatim.
+ */
+const NO_EMBEDDING_MODEL_SNAPSHOT = snapshot({
+  core: { indexState: 'IDLE', pendingJobs: 0 },
+  enrichment: {
+    backfillMode: 'idle',
+    embeddingEnabled: false,
+    spladeEnabled: false,
+    nerEnabled: false,
+    embeddingDocCount: 5,
+    embeddingPendingCount: 5,
+    embeddingCoveragePercent: 0,
+    spladeDocCount: 5,
+    spladePendingCount: 5,
+    spladeCoveragePercent: 0,
+    pendingNerCount: 5,
+    completedNerCount: 0,
+    chunk: { chunkDocCount: 2, chunkEmbeddingPendingCount: 2, chunkVectorsReady: false },
+  },
+});
+
+/**
+ * F1-repro's first attempt: the model was removed AFTER enrichment completed, so the vectors persist
+ * in the index. Stage flags are identically false — only the coverage differs — which is exactly why
+ * the two cases must not be told apart by the flags.
+ */
+const VECTORS_PERSISTED_SNAPSHOT = snapshot({
+  core: { indexState: 'IDLE', pendingJobs: 0 },
+  enrichment: {
+    backfillMode: 'idle',
+    embeddingEnabled: false,
+    spladeEnabled: false,
+    nerEnabled: false,
+    embeddingDocCount: 5191,
+    embeddingPendingCount: 0,
+    embeddingCoveragePercent: 100,
+    spladeDocCount: 5191,
+    spladePendingCount: 0,
+    completedNerCount: 5191,
+    pendingNerCount: 0,
+    chunk: { chunkDocCount: 1557, chunkEmbeddingPendingCount: 0, chunkVectorsReady: true },
+  },
 });
 
 describe('<jf-task-list> (§32 R-E1)', () => {
@@ -382,6 +431,71 @@ describe('<jf-task-list> — disclosure + terminal state (813 §5)', () => {
     await flush();
     expect(el.showingReady).toBe(false);
     expect(el.hasAttribute('data-empty')).toBe(true);
+    el.remove();
+  });
+
+  /**
+   * Round-15 F1 (HIGH, twice reproduced) — the card's completion tier must be a claim about
+   * COVERAGE, not about an empty work queue. With no embedding model, nothing can be queued; the
+   * card read that as "done" and told the user their corpus was fully enriched at 0% coverage.
+   */
+  it('F1: does NOT claim "indexed and enriched" when nothing was enriched and nothing can be', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    __feedForTest({ status: INDEXING_SNAPSHOT });
+    const el = document.createElement('jf-task-list') as TaskList;
+    document.body.appendChild(el);
+    await flush();
+    expect(el.progress.phase).toBe('indexing');
+
+    __feedForTest({ status: NO_EMBEDDING_MODEL_SNAPSHOT });
+    await flush();
+    await flush();
+    // The terminal window still opens (the run DID end) — with honest words.
+    expect(el.progress.phase).toBe('blocked');
+    expect(el.showingReady).toBe(true);
+    const title = el.shadowRoot?.querySelector('[data-testid="task-title"]')?.textContent?.trim();
+    const body = el.shadowRoot
+      ?.querySelector('[data-testid="task-aggregate-counts"]')
+      ?.textContent?.trim();
+    expect(title).not.toBe('Ready — fully searchable');
+    expect(title).toBe('Search is ready — keyword only');
+    expect(body).not.toContain('indexed and enriched');
+    expect(body).toContain('semantic search waiting for AI install');
+    expect(
+      el.shadowRoot?.querySelector('[data-testid="task-aggregate"]')?.getAttribute('data-phase'),
+    ).toBe('blocked');
+    // No fabricated progress bar: nothing is progressing.
+    expect(el.shadowRoot?.querySelector('[data-testid="task-aggregate-bar"]')).toBeNull();
+
+    // ...and it still gets out of the way, rather than pinning the overlay panel up forever.
+    vi.advanceTimersByTime(READY_DISMISS_MS);
+    await flush();
+    expect(el.hasAttribute('data-empty')).toBe(true);
+    el.remove();
+  });
+
+  /**
+   * F1-repro's negative result, protected: the model is gone but the vectors are in the index, so
+   * the corpus IS fully enriched and the completion claim is true. The two states differ only in
+   * their coverage counters — a fix that keyed on the model's absence would break this one.
+   */
+  it('F1-repro BOUNDARY: vectors persisted with the model removed still reads "fully searchable"', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    __feedForTest({ status: INDEXING_SNAPSHOT });
+    const el = document.createElement('jf-task-list') as TaskList;
+    document.body.appendChild(el);
+    await flush();
+
+    __feedForTest({ status: VECTORS_PERSISTED_SNAPSHOT });
+    await flush();
+    await flush();
+    expect(el.progress.phase).toBe('ready');
+    expect(el.shadowRoot?.querySelector('[data-testid="task-title"]')?.textContent?.trim()).toBe(
+      'Ready — fully searchable',
+    );
+    expect(
+      el.shadowRoot?.querySelector('[data-testid="task-aggregate-counts"]')?.textContent,
+    ).toContain('indexed and enriched');
     el.remove();
   });
 

@@ -358,6 +358,10 @@ export class IndexingOverlayHost extends JfElement {
     // The status authority says everything is settled ⇒ a non-zero queue reading is residue, not
     // work; the overlay must not claim active batch processing against it (the 727 F-2 class).
     if (progress.phase === 'ready') return nothing;
+    // Round-15 F1 — same rule for the unreachable case: with the embedding stage absent, its pending
+    // count is a standing backlog no batch will ever process, so an overlay claiming live embedding
+    // work off it is the 727 F-2 class again (the Brain surface's install CTA is the real remedy).
+    if (progress.phase === 'blocked') return nothing;
     const speaks = progress.phase !== 'unknown';
     const embeddingQueue = speaks ? progress.embeddingPending : orElse(ai.index.embeddingQueueSize, 0);
     const vduQueue = speaks ? progress.vduPending : orElse(ai.index.vduQueueSize, 0);

@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { render, type TemplateResult } from 'lit';
+import { nothing, render, type TemplateResult } from 'lit';
 import './BrainSurface.js';
 import '../components/Control.js';
 import type { Control } from '../components/Control.js';
@@ -39,12 +39,19 @@ interface Harness {
   policy: unknown;
   busy: Record<string, boolean>;
   _unifiedAiState: unknown;
-  renderEmbeddingProgress(): TemplateResult | symbol;
+  renderEnrichmentProgress(): TemplateResult | symbol;
   renderSearchQualityFeatures(): TemplateResult;
   renderRuntimeSection(): TemplateResult;
 }
 
-/** A detached BrainSurface (no connectedCallback ⇒ no poll/subscribe) primed with the round-13 data. */
+/**
+ * A detached BrainSurface (no connectedCallback ⇒ no poll/subscribe) primed with the round-13 data.
+ *
+ * The `worker` block was added by the round-15 scope fix: the card reads the shared index-wide
+ * projection now, not `status.embedding` alone, so the fixture has to carry what that projection
+ * reads. The round-13 figures are preserved — one stage, 104 of 5,188 settled — so these cases keep
+ * asserting about tense, which is their subject.
+ */
 function harness(live: boolean): Harness {
   const el = document.createElement('jf-brain-surface') as unknown as Harness;
   el.apiBase = '';
@@ -52,6 +59,15 @@ function harness(live: boolean): Harness {
   el.policy = {};
   el.systemStatus = {
     embedding: { pendingCount: 5084, completedCount: 104, docCount: 5188, coveragePercent: 2.0 },
+    worker: {
+      core: { indexState: 'IDLE', pendingJobs: 0 },
+      enrichment: {
+        backfillMode: 'combined',
+        embeddingEnabled: true,
+        embeddingDocCount: 5188,
+        embeddingPendingCount: 5084,
+      },
+    },
   };
   el.runtimeStatus = {
     onnxFeatures: [
@@ -70,6 +86,8 @@ function harness(live: boolean): Harness {
     verdict: live ? LIVE_VERDICT : DEAD_VERDICT,
     snapshotLive: live,
     aiEngine: { kind: 'online', stability: { kind: 'settled' }, installFailure: null },
+    episodeMaxPendingJobs: 0,
+    enrichSettleSamples: [],
   } as unknown as AiState;
   return el;
 }
@@ -86,30 +104,138 @@ function domOf(tpl: TemplateResult | symbol): HTMLElement {
   return container;
 }
 
-describe('BrainSurface — embedding progress card (807)', () => {
+describe('BrainSurface — enrichment progress card (807)', () => {
   it('stops presenting as live progress when the snapshot is not live', () => {
-    const text = textOf(harness(false).renderEmbeddingProgress());
+    const text = textOf(harness(false).renderEnrichmentProgress());
     expect(text).not.toContain('Building semantic search');
     expect(text).toContain('last known');
     expect(text).toContain(DISCONNECTED);
     // The figures survive — this bundle changes their tense, not their existence.
-    expect(text).toContain('2.0%');
+    expect(text).toContain('2%');
     expect(text).toContain('pending when last observed');
   });
 
   it('stops ANIMATING when the snapshot is not live (the spinner is the present-tense claim)', () => {
-    const dead = domOf(harness(false).renderEmbeddingProgress());
+    const dead = domOf(harness(false).renderEnrichmentProgress());
     expect(dead.querySelector('.spin, [class*="spin"]')).toBeNull();
-    const live = domOf(harness(true).renderEmbeddingProgress());
+    const live = domOf(harness(true).renderEnrichmentProgress());
     expect(live.querySelector('.spin, [class*="spin"]')).not.toBeNull();
   });
 
   it('ANTI-REGRESSION: a healthy verdict still renders the live progress card unchanged', () => {
-    const text = textOf(harness(true).renderEmbeddingProgress());
+    const text = textOf(harness(true).renderEnrichmentProgress());
     expect(text).toContain('Building semantic search');
-    expect(text).toContain('2.0%');
+    expect(text).toContain('2%');
     expect(text).toContain(`${num(5084)} pending`);
     expect(text).not.toContain('last known');
+  });
+});
+
+/**
+ * Round-15 "two progress indicators, two scopes, neither declared"
+ * (`evidence/progress-indicator-scope-mismatch.md`).
+ *
+ * The round captured one frame in which this card read 96.8% while the Tasks card read 19%, both
+ * calling it "semantic search"; then the card VANISHED at 100% of its single signal while overall
+ * enrichment was 46%, leaving the AI-status surface reading idle mid-run. The fixture below is that
+ * document's own worked example — `Semantic vectors 570/570 ✓ · Keyword expansion 104/570 · Entity
+ * recognition 57/570 · Passage vectors 4,689/15,910`, whose unit-weighted blend it computes as
+ * 30.8% against a displayed 31%.
+ */
+describe('BrainSurface — enrichment progress SCOPE (round-15 scope mismatch)', () => {
+  function scoped(): Harness {
+    const el = harness(true);
+    el.systemStatus = {
+      // Document-level embedding is COMPLETE — the single signal the card used to track, and the
+      // exact reading that used to make it disappear.
+      embedding: { pendingCount: 0, completedCount: 570, docCount: 570, coveragePercent: 100 },
+      worker: {
+        core: { indexState: 'IDLE', pendingJobs: 0 },
+        enrichment: {
+          backfillMode: 'combined',
+          embeddingEnabled: true,
+          spladeEnabled: true,
+          nerEnabled: true,
+          embeddingDocCount: 570,
+          embeddingPendingCount: 0,
+          spladeDocCount: 570,
+          spladePendingCount: 466,
+          completedNerCount: 57,
+          pendingNerCount: 513,
+          chunk: { chunkDocCount: 15910, chunkEmbeddingPendingCount: 11221 },
+        },
+      },
+    };
+    return el;
+  }
+
+  it('THE defect: the card does not disappear when its old single signal hits 100%', () => {
+    const tpl = scoped().renderEnrichmentProgress();
+    expect(tpl).not.toBe(nothing);
+    expect(textOf(tpl)).toContain('Building semantic search');
+  });
+
+  it('shows the AGGREGATE percent, the one the other surfaces show — not the embedding stage', () => {
+    const text = textOf(scoped().renderEnrichmentProgress());
+    // (570 + 104 + 57 + 4,689) / (570 + 570 + 570 + 15,910) = 30.8% → 31%.
+    expect(text).toContain('31%');
+    // The stage-scoped number this card used to render, and would render again if it regressed.
+    expect(text).not.toContain('100%');
+  });
+
+  it('declares its SCOPE, and no longer promises a quantity it is not measuring', () => {
+    const text = textOf(scoped().renderEnrichmentProgress());
+    expect(text).toContain('Overall enrichment across all stages');
+    // The subtitle that named chunk embeddings while displaying document vectors.
+    expect(text).not.toContain('Generating chunk embeddings');
+    // The pending figure is the blend's, so it is labelled as the blend's.
+    expect(text).toContain('pending across all stages');
+  });
+
+  it('withdraws once the WHOLE blend settles, not once one stage does', () => {
+    const el = scoped();
+    el.systemStatus = {
+      embedding: { pendingCount: 0, completedCount: 570, docCount: 570, coveragePercent: 100 },
+      worker: {
+        core: { indexState: 'IDLE', pendingJobs: 0 },
+        enrichment: {
+          backfillMode: 'idle',
+          embeddingEnabled: true,
+          spladeEnabled: true,
+          nerEnabled: true,
+          embeddingDocCount: 570,
+          embeddingPendingCount: 0,
+          spladeDocCount: 570,
+          spladePendingCount: 0,
+          completedNerCount: 570,
+          pendingNerCount: 0,
+          chunk: { chunkDocCount: 15910, chunkEmbeddingPendingCount: 0 },
+        },
+      },
+    };
+    expect(el.renderEnrichmentProgress()).toBe(nothing);
+  });
+
+  it('renders no progress bar when semantic enrichment cannot run at all (round-15 F1)', () => {
+    // Nothing is progressing, so a bar would be a fabrication; the surface's own Install AI section
+    // is the remedy this state actually has.
+    const el = harness(true);
+    el.systemStatus = {
+      embedding: { pendingCount: 5, completedCount: 0, docCount: 5, coveragePercent: 0 },
+      worker: {
+        core: { indexState: 'IDLE', pendingJobs: 0 },
+        enrichment: {
+          backfillMode: 'idle',
+          embeddingEnabled: false,
+          spladeEnabled: false,
+          nerEnabled: false,
+          embeddingDocCount: 5,
+          embeddingPendingCount: 5,
+          chunk: { chunkDocCount: 2, chunkEmbeddingPendingCount: 2 },
+        },
+      },
+    };
+    expect(el.renderEnrichmentProgress()).toBe(nothing);
   });
 });
 
