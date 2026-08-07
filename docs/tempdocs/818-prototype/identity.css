@@ -1,0 +1,86 @@
+/* =============================================================================
+   IDENTITY — a swap layer over the structure prototype. Loads after style.css;
+   touches ONLY :root tokens, the two typefaces, and one signature treatment.
+   The structure, the laws, and every audit are untouched by design.
+
+   THE DIRECTION — "the registrar's ledger."
+   Subject: local-first search over YOUR files, whose whole interaction model
+   is built on honest counts, receipts, immutable records, and provenance.
+   The identity comes from that world: ledger paper, iron-gall ink, a green
+   the colour of evidence, and sealing-wax for risk — the materials of a tool
+   whose job is to never lie about a record.
+
+   Deliberate departures from the current AI-default looks: not warm cream +
+   terracotta serif, not near-black + acid accent, not broadsheet hairlines.
+
+   Palette (6 named values):
+     ledger paper   #f3f4ee   grounds
+     sage board     #ccd2c6   outside the window
+     iron-gall ink  #181d14   primary text — black with a green memory
+     evidence green #175d43   citations, the ok verdict (was teal)
+     sealing wax    #93401f   risk, locks, stale (was amber-brown)
+     quiet moss     #79806f   secondary text
+
+   Type: IBM Plex Sans + IBM Plex Mono — a pairing designed for man-machine
+   interfaces, archival modernism rather than startup neutrality. The five-step
+   scale and the mono-for-machine-facts rule are inherited unchanged.
+
+   SIGNATURE — the registrar's stamp. Every verdict ABOUT a record (grounding
+   banner, LOCKED, the stale notice, quoted-from-your-file, the lock seam)
+   renders as a stamped mark: bordered, tracked mono caps, faintly rotated.
+   A stamp is the physical form of an immutable verdict — the one aesthetic
+   risk, spent where the model's honesty already lives. Everything else stays
+   quiet. Not stamped on purpose: tool tags (READ ONLY / WRITES), counts,
+   pills — they are controls and facts, not verdicts about records.
+   ============================================================================= */
+
+:root{
+  /* ---- grey ramp → ledger ramp ---- */
+  --g0:#f3f4ee;
+  --g1:#e9ece1;
+  --g1d:#dbdfd0;
+  --g2:#fcfdf8;
+  --g3:#d2d7c8;
+  --g3l:#e4e8db;
+  --g4:#79806f;
+  --g5:#525848;
+  --g6:#181d14;
+  --page:#ccd2c6;
+
+  /* ---- the two load-bearing hues ---- */
+  --cite:#175d43;  --cite-bg:#e3eee6;  --cite-line:#b6d2c1;
+  --risk:#93401f;  --risk-bg:#f6ece3;  --risk-line:#e3cab4;  --risk-hl:#f1dcc6;
+  --ok:#1c6b46;    --bad:#9c2f14;
+
+  /* ---- type ---- */
+  --sans:'IBM Plex Sans',-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+}
+
+/* ---- the signature: the registrar's stamp -------------------------------
+   Verdicts about records only. Border in currentColor so each stamp carries
+   its own ink; the rotation is one degree — a mark made by a hand, read by
+   a machine. Reduced motion is irrelevant (nothing moves); contrast is
+   inherited from the token pairs above. */
+.banner .k,
+.srow .lk, .ritem.two .lock,
+.quoted .k,
+.lockseam span{
+  display:inline-block;
+  border:1.5px solid currentColor;
+  padding:1px 6px;
+  border-radius:2px;
+  transform:rotate(-1deg);
+  letter-spacing:.16em;
+  background:transparent;
+}
+/* NOT stamped, on reflection: the stale notice — it is a sentence with a
+   remedy, and a sentence-length stamp reads as a crooked banner. Stamps are
+   reserved for short verdicts. The notice keeps its quiet chip form. */
+.srow .lk, .ritem.two .lock{color:var(--risk)}
+.quoted .k{margin-bottom:6px}
+.lockseam span{background:var(--g0)}   /* keeps the seam legible through the rule */
+
+/* the one filled element rule survives the theme: the approval's primary
+   button takes the ink, nothing else gains a fill */
+.btn.primary{background:var(--g6);color:var(--g0)}
