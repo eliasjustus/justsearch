@@ -27,6 +27,7 @@ from check_coverage import (  # noqa: E402
     MIN_SCREENSHOT_BYTES,
     MUSTWATCH_VERDICTS_FILENAME,
     MUTATING_PROBE_FILENAME,
+    POST_ROUND_DIRNAME,
     RETROSPECTIVE_FILENAME,
     RETROSPECTIVE_MIN_BYTES,
     SESSION_ANALYSIS_FILENAME,
@@ -42,6 +43,7 @@ from check_coverage import (  # noqa: E402
     emit_evidence_timeline,
     find_duplicate_token_collisions,
     is_bulk_frame,
+    is_post_round_capture,
     main,
     required_evidence_tokens,
 )
@@ -975,6 +977,153 @@ class BulkFrameExclusionTests(unittest.TestCase):
         # Only a DIRECT child of the evidence dir counts -- a nested
         # coincidental name deeper in the tree is not the convention.
         self.assertFalse(is_bulk_frame(f"other/{BULK_FRAMES_DIRNAME}/seq-0001.png"))
+
+
+class PostRoundExclusionTests(unittest.TestCase):
+    """Round-15 retrospective finding 6 (tempdoc 817): a post-finalize
+    investigation session's screenshots must not (a) require individual
+    reader review in evidence-review.v1.json's 'examined' list, or (b)
+    silently satisfy a mustTouch surface/shape token by filename alone --
+    exactly parallel to BulkFrameExclusionTests above, for POST_ROUND_DIRNAME
+    instead of BULK_FRAMES_DIRNAME. Round 15's actual failure: a post-finalize
+    investigation added ~52 screenshots into the SAME evidence dir an
+    already-complete, already-correct review had finalized against, and
+    re-running check_coverage.py then failed that finalized review as
+    incomplete.
+    """
+
+    def _manifest_path(self, tmp: Path) -> Path:
+        manifest = {
+            "version": 1,
+            "mustTouch": [
+                {
+                    "kind": "surface", "id": "core.security-surface", "tier": "sandbox",
+                    "validateHow": "security", "evidenceToken": "security",
+                },
+            ],
+            "coveredElsewhere": [],
+            "exempt": [],
+        }
+        path = tmp / "coverage-manifest.json"
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        return path
+
+    def _image_bytes(self) -> bytes:
+        return b"\x89PNG-real-capture" + b"\x00" * MIN_SCREENSHOT_BYTES
+
+    def _base_evidence_dir(self, tmp: Path) -> Path:
+        evidence = tmp / "evidence"
+        evidence.mkdir()
+        (evidence / RETROSPECTIVE_FILENAME).write_text(SUBSTANTIAL_RETROSPECTIVE, encoding="utf-8")
+        _write_round_process_artifacts(evidence)
+        return evidence
+
+    def test_post_round_frames_excluded_from_required_examined_list(self):
+        """Screenshots added by a post-finalize investigation need not be
+        opened/listed by the reader -- only the genuine top-level, in-round
+        capture does -- and the round still passes."""
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._base_evidence_dir(tmp)
+            post_round_dir = evidence / POST_ROUND_DIRNAME
+            post_round_dir.mkdir()
+            (post_round_dir / "investigation-01.png").write_bytes(self._image_bytes())
+            (post_round_dir / "investigation-02.png").write_bytes(self._image_bytes())
+            (evidence / "01-security-panel.png").write_bytes(self._image_bytes())
+            review = {
+                "version": 1,
+                "examined": ["01-security-panel.png"],  # post-round frames deliberately absent
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
+            rc = main([
+                "--manifest", str(self._manifest_path(tmp)),
+                "--evidence-dir", str(evidence),
+            ])
+            self.assertEqual(rc, 0)
+
+    def test_control_same_frames_at_top_level_must_be_examined(self):
+        """Precision guard: WITHOUT the post-round-dir convention (identical
+        files, same names, top level), omitting them from 'examined' fails
+        closed -- proving the pass above is because of the post-round
+        exclusion, not merely because the fixture is otherwise lenient."""
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._base_evidence_dir(tmp)
+            (evidence / "investigation-01.png").write_bytes(self._image_bytes())
+            (evidence / "01-security-panel.png").write_bytes(self._image_bytes())
+            review = {
+                "version": 1,
+                "examined": ["01-security-panel.png"],  # investigation-01.png NOT listed
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
+            rc = main([
+                "--manifest", str(self._manifest_path(tmp)),
+                "--evidence-dir", str(evidence),
+            ])
+            self.assertEqual(rc, 1)
+
+    def test_post_round_frame_cannot_satisfy_mustTouch_token(self):
+        """A mustTouch token whose ONLY matching filename lives under
+        post-round/ must remain UNCOVERED -- a post-finalize investigation
+        cannot retroactively manufacture coverage credit for the already-
+        finalized round.
+
+        Isolation: the file's relpath is listed in 'examined' anyway
+        (harmless whether or not it's required) so a failure here can only
+        come from the coverage gate, not incidentally from the evidence-
+        review gate also failing for the same underlying reason.
+        """
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._base_evidence_dir(tmp)
+            post_round_dir = evidence / POST_ROUND_DIRNAME
+            post_round_dir.mkdir()
+            (post_round_dir / "01-security-panel.png").write_bytes(self._image_bytes())
+            review = {
+                "version": 1,
+                "examined": [f"{POST_ROUND_DIRNAME}/01-security-panel.png"],
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
+            rc = main([
+                "--manifest", str(self._manifest_path(tmp)),
+                "--evidence-dir", str(evidence),
+            ])
+            self.assertEqual(rc, 1)
+
+    def test_control_same_filename_at_top_level_satisfies_the_token(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._base_evidence_dir(tmp)
+            (evidence / "01-security-panel.png").write_bytes(self._image_bytes())
+            review = {
+                "version": 1,
+                "examined": ["01-security-panel.png"],
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
+            rc = main([
+                "--manifest", str(self._manifest_path(tmp)),
+                "--evidence-dir", str(evidence),
+            ])
+            self.assertEqual(rc, 0)
+
+    def test_is_post_round_capture_helper(self):
+        self.assertTrue(is_post_round_capture(f"{POST_ROUND_DIRNAME}/investigation-01.png"))
+        self.assertFalse(is_post_round_capture("investigation-01.png"))
+        self.assertFalse(is_post_round_capture("findings/f1.md"))
+        # Only a DIRECT child of the evidence dir counts -- a nested
+        # coincidental name deeper in the tree is not the convention.
+        self.assertFalse(is_post_round_capture(f"other/{POST_ROUND_DIRNAME}/investigation-01.png"))
+        # Distinct from BULK_FRAMES_DIRNAME -- the two conventions don't
+        # cross-satisfy each other's exclusion.
+        self.assertFalse(is_post_round_capture(f"{BULK_FRAMES_DIRNAME}/seq-0001.png"))
 
 
 # --------------------------------------------------------------------------
