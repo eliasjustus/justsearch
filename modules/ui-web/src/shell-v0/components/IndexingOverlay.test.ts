@@ -96,6 +96,10 @@ describe('IndexingOverlayHost — snapshot liveness (807)', () => {
       runtime: { mode: 'indexing' },
       index: { embeddingQueueSize: known(4789), vduQueueSize: known(0) },
       snapshotLive,
+      // 813 §20 — the store's cross-poll memories are non-optional on AiState; a fixture that omits
+      // them is not a smaller AiState, it is an impossible one.
+      episodeMaxPendingJobs: 0,
+      enrichSettleSamples: [],
     } as unknown as AiState;
     return el;
   };
@@ -128,6 +132,9 @@ describe('IndexingOverlayHost — numbers come from the one projection (813)', (
       index: { embeddingQueueSize: known(999), vduQueueSize: known(999) },
       snapshotLive: true,
       status,
+      // 813 §20 — see above: both store memories are part of the shape this fixture claims to be.
+      episodeMaxPendingJobs: 0,
+      enrichSettleSamples: [],
     } as unknown as AiState;
     return el;
   };

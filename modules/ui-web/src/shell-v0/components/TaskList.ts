@@ -4,9 +4,15 @@
  *
  * The default view is ONE compact aggregate card — phase label, a progress affordance with a
  * FAITHFUL denominator (or none), the counts line, and a coarse indicative estimate when one is
- * honest. The per-file rows the panel used to lead with are now an opt-in disclosure ("Show
- * files"): at ~1 s/file a live per-file list is noise, and it was the panel's whole reason to grow
- * tall enough to occlude the rail's bottom controls.
+ * honest. The per-file rows the panel used to lead with are now an opt-in disclosure ("Details"):
+ * at ~1 s/file a live per-file list is noise, and it was the panel's whole reason to grow tall
+ * enough to occlude the rail's bottom controls.
+ *
+ * 813 §20 puts TWO layers behind that one card: the surface states the CAPABILITY tier (what works
+ * now, how far the whole enrichment blend has come), and the disclosure lists the MACHINE stages
+ * that add up to it. Every number in the disclosure is a narrower scope of the same projection —
+ * `enrichingStages` is literally the row set the surface percent sums — so the detail tier can
+ * never contradict the headline (§3b).
  *
  * Two transports, two subjects, no overlap (813 §3b / §13):
  *  - the AGGREGATE numbers come from the ONE indexing-progress projection over the `/api/status`
@@ -39,7 +45,11 @@ import { countByKey, capWithOverflow } from '../projections/boundedProjection.js
 import { requestSurfaceNavigation } from '../controllers/navigateRequest.js';
 import { subscribeFeedStalled } from '../substrates/tasks/indexingJobsBridge.js';
 import { subscribeAiState } from '../state/aiStateStore.js';
-import { selectIndexingProgress, type IndexingProgress } from '../state/indexingProgress.js';
+import {
+  selectIndexingProgress,
+  type EnrichingStageRow,
+  type IndexingProgress,
+} from '../state/indexingProgress.js';
 import { humanizeSeconds } from '../state/startupEstimate.js';
 import { ENRICHMENT_BODY } from '../state/enrichmentCoverage.js';
 import { formatBytes, formatCount } from '../display/format.js';
@@ -96,6 +106,42 @@ export function indexingCountsLabel(p: IndexingProgress): string | null {
   return p.etaSeconds === null ? null : `${indexingCountsLine(p)} at the current rate`;
 }
 
+/**
+ * The Enriching phase's fact row (813 §20): the coverage percent when the projection has a faithful
+ * one, the shared caveat, and the enrichment estimate when the projection has an honest basis for
+ * one — built with the same segment discipline as {@link indexingCountsLine}, including the same
+ * humanizer, so the two phases speak one dialect.
+ *
+ * The percent here is the CAPABILITY-tier number (how far the whole blend has come). The per-stage
+ * breakdown that adds up to it lives in the disclosure — §20's two layers.
+ */
+export function enrichingCountsLine(p: IndexingProgress): string {
+  const base =
+    p.enrichingPercent === null ? ENRICHMENT_BODY : `${p.enrichingPercent}% · ${ENRICHMENT_BODY}`;
+  return p.enrichingEtaSeconds === null
+    ? base
+    : `${base} · ~${humanizeSeconds(p.enrichingEtaSeconds)} left`;
+}
+
+/** {@link enrichingCountsLine} plus the INDICATIVE qualifier (§19 W4's accessible-label form). */
+export function enrichingCountsLabel(p: IndexingProgress): string | null {
+  return p.enrichingEtaSeconds === null ? null : `${enrichingCountsLine(p)} at the current rate`;
+}
+
+/**
+ * 813 §20 — the USER words for the machine stages the disclosure lists. Local literals on purpose
+ * (§19 W1): this is the only surface that renders per-stage enrichment detail, and a shared constant
+ * without a second consumer is a fork waiting to happen. The wire/machine names (`splade`, `ner`)
+ * stay on the projection's stage ids; they are already shown as capability chips elsewhere
+ * (`display/facts.ts`), where the subject is "is this engine present?", not "how far along is it?".
+ */
+const STAGE_LABELS: Record<EnrichingStageRow['id'], string> = {
+  embedding: 'Semantic vectors',
+  splade: 'Keyword expansion',
+  ner: 'Entity recognition',
+  chunkVectors: 'Passage vectors',
+};
+
 /** The empty projection this component starts from, before the first `/api/status` poll lands. */
 const NO_PROGRESS: IndexingProgress = {
   phase: 'unknown',
@@ -104,6 +150,8 @@ const NO_PROGRESS: IndexingProgress = {
   jobsQueued: 0,
   enrichingPercent: null,
   enrichingPending: 0,
+  enrichingStages: [],
+  enrichingEtaSeconds: null,
   embeddingPending: 0,
   vduPending: 0,
   etaSeconds: null,
@@ -158,7 +206,12 @@ export class TaskList extends JfElement {
     });
     this.aiUnsub = subscribeAiState((s) => {
       this.applyProgress(
-        selectIndexingProgress(s.status, s.snapshotLive, s.episodeMaxPendingJobs),
+        selectIndexingProgress(
+          s.status,
+          s.snapshotLive,
+          s.episodeMaxPendingJobs,
+          s.enrichSettleSamples,
+        ),
       );
     });
   }
@@ -390,6 +443,20 @@ export class TaskList extends JfElement {
       flex-direction: column;
       gap: 0.5rem;
     }
+    /* 813 §20 — a machine-stage readout row: name left, its own fraction right. Same type scale and
+       tone as the counts line, so the disclosure reads as detail UNDER the card, not as a second
+       card of its own. */
+    .stage {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.75rem;
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+    }
+    .stage-count {
+      white-space: nowrap;
+    }
     /* 574 B (remediation) — cancel/clear are jf-button(sm) atoms now. */
   `;
 
@@ -512,6 +579,7 @@ export class TaskList extends JfElement {
     }
     if (p.phase === 'enriching') {
       const pct = p.enrichingPercent;
+      const label = enrichingCountsLabel(p);
       return html`
         <div class="aggregate" data-testid="task-aggregate" data-phase="enriching">
           ${pct === null
@@ -527,8 +595,13 @@ export class TaskList extends JfElement {
               >
                 <span style=${`width:${pct}%`}></span>
               </div>`}
-          <div class="counts" data-testid="task-aggregate-counts">
-            ${pct === null ? nothing : html`${pct}% · `}${ENRICHMENT_BODY}
+          <div
+            class="counts"
+            data-testid="task-aggregate-counts"
+            title=${label ?? nothing}
+            aria-label=${label ?? nothing}
+          >
+            ${enrichingCountsLine(p)}
           </div>
         </div>
       `;
@@ -543,6 +616,11 @@ export class TaskList extends JfElement {
     const detail = this.tasks.filter((t) => t.status !== 'queued');
     const { shown, overflow } = capWithOverflow(detail, MAX_DETAIL_ROWS);
     const speaks = this.showingReady || isActivePhase(this.progress.phase);
+    // 813 §20 — what the disclosure has to show: per-file rows, per-stage enrichment detail, or the
+    // denominator-less extraction backlog. Any one of them makes the affordance meaningful.
+    const stageRows = this.progress.enrichingStages;
+    const hasDetail =
+      this.tasks.length > 0 || stageRows.length > 0 || this.progress.vduPending > 0;
     // 807 A.3 — a projection that is no longer a live observation says so; the SSE feed's own
     // 595 §4.4 stall carries the same message for the row list, so they share one line.
     const stalled = this.feedStalled || (speaks && !this.showingReady && !this.progress.live);
@@ -569,9 +647,12 @@ export class TaskList extends JfElement {
               ⚠ Live updates paused — reconnecting…
             </div>`
           : nothing}
-        <!-- 813 §5: the per-file list is opt-in. A native <button> so it is keyboard-operable by
-             construction (559 Authority V / check-controls-a11y). -->
-        ${this.tasks.length > 0
+        <!-- 813 §5/§20: the DETAIL tier is opt-in. A native <button> so it is keyboard-operable by
+             construction (559 Authority V / check-controls-a11y). It now opens on per-stage
+             enrichment detail as well as per-file rows — during pure enrichment there are no task
+             rows at all, and gating the button on them left the card with nothing to open exactly
+             when the user most wants to know which stage is still running. -->
+        ${hasDetail
           ? html`<button
               type="button"
               class="disclose"
@@ -579,27 +660,42 @@ export class TaskList extends JfElement {
               aria-expanded=${this.filesOpen ? 'true' : 'false'}
               @click=${() => (this.filesOpen = !this.filesOpen)}
             >
-              ${this.filesOpen ? 'Hide files' : 'Show files'}
+              ${this.filesOpen ? 'Hide details' : 'Details'}
             </button>`
           : nothing}
-        ${this.filesOpen && this.tasks.length > 0
+        ${this.filesOpen && hasDetail
           ? html`<div class="files" data-testid="tasks-files">
-              <!-- Bounded summary: one count chip per non-empty status (550 Thesis III).
-                   Absorbed into the disclosure by 813 §5 — inside, they label the row SETS
-                   (which rows are listed, which are collapsed), not the panel. -->
-              <div class="summary" data-testid="task-summary">
-                ${COUNT_ORDER.filter((s) => (counts.get(s) ?? 0) > 0).map(
-                  (s) => html`<span class="count ${s}" data-testid="task-count-${s}"
-                    >${counts.get(s)} ${s}</span
-                  >`,
-                )}
-              </div>
-              <!-- Individual rows for actionable/recent tasks; queued stays a count. -->
-              ${shown.map((t) => this.renderTask(t))}
-              ${overflow > 0
-                ? html`<div class="more" data-testid="task-more">
-                    +${overflow} more
+              <!-- 813 §20 — machine stages, in the disclosure: the very rows the surface percent
+                   sums (enrichingStages), so this is a narrower SCOPE of the same number, never a
+                   second derivation. -->
+              ${stageRows.map((r) => renderStageRow(r))}
+              ${this.progress.vduPending > 0
+                ? html`<div class="stage" data-testid="task-stage-vdu">
+                    <span class="stage-label"
+                      >Content extraction — ${formatCount(this.progress.vduPending)} remaining</span
+                    >
                   </div>`
+                : nothing}
+              ${this.tasks.length > 0
+                ? html`
+                    <!-- Bounded summary: one count chip per non-empty status (550 Thesis III).
+                         Absorbed into the disclosure by 813 §5 — inside, they label the row SETS
+                         (which rows are listed, which are collapsed), not the panel. -->
+                    <div class="summary" data-testid="task-summary">
+                      ${COUNT_ORDER.filter((s) => (counts.get(s) ?? 0) > 0).map(
+                        (s) => html`<span class="count ${s}" data-testid="task-count-${s}"
+                          >${counts.get(s)} ${s}</span
+                        >`,
+                      )}
+                    </div>
+                    <!-- Individual rows for actionable/recent tasks; queued stays a count. -->
+                    ${shown.map((t) => this.renderTask(t))}
+                    ${overflow > 0
+                      ? html`<div class="more" data-testid="task-more">
+                          +${overflow} more
+                        </div>`
+                      : nothing}
+                  `
                 : nothing}
             </div>`
           : nothing}
@@ -622,6 +718,24 @@ export class TaskList extends JfElement {
     if (this.progress.phase === 'enriching') return 'Search is ready — still improving';
     return 'Tasks';
   }
+}
+
+/**
+ * One machine stage's line inside the disclosure (813 §20): its user name and its own settled
+ * fraction, with a ✓ once the stage itself is finished. Plain text, no bar and no control — the
+ * disclosure is a detail READOUT, and a second progress bar per stage would compete with the one
+ * capability-tier bar the card leads with.
+ */
+function renderStageRow(row: EnrichingStageRow): TemplateResult {
+  const settled = row.total - row.pending;
+  return html`
+    <div class="stage" data-testid="task-stage-${row.id}">
+      <span class="stage-label">${STAGE_LABELS[row.id]}</span>
+      <span class="stage-count"
+        >${formatCount(settled)} / ${formatCount(row.total)}${row.pending === 0 ? ' ✓' : ''}</span
+      >
+    </div>
+  `;
 }
 
 /** The two phases that mean work is happening right now (and the panel has something to report). */

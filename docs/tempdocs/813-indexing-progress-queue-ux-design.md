@@ -653,3 +653,163 @@ reproduce); byte-weighted ETA (needs a processed-bytes rate the wire does not ca
 `library-enriching` + proportion gate; copy lints (`check-offline-single-sense`,
 folder-status gate untouched); real-UI check via the fixtures-served browser captures.
 Work in worktree `813-followups`; no PR until the owner licenses it.
+
+## 20. Owner live-validation follow-up (2026-08-06): honest percent + a detail tier
+
+Two findings from the owner running the shipped card against a real index, and the design
+they settle. Both are about the same thing: the card had exactly ONE altitude, and it was
+being asked to be both a capability claim and a machine report.
+
+**Finding A — the fake 100%.** The card rendered "100% · semantic search catching up": a
+full bar next to a caveat saying the work was unfinished. Cause: `Math.round` promotes a
+sub-half-percent tail (e.g. 2 pending of 600) to 100. This is §1d's false terminal wearing
+a number — the same defect the whole redesign exists to remove, re-entering through the
+formatter rather than through the phase gate.
+
+*The floor rule.* The enriching percent is capped at **99 while any counted work is
+pending**; a true 100 is reachable only when `pending === 0`
+(`indexingProgress.ts` — the `Math.min(pending > 0 ? 99 : 100, …)` clause). Symmetric with
+the existing no-fake-0% rule: a denominator-less blend still yields `null`, unchanged. The
+phase gate is untouched and still decides `ready` on its own evidence, which includes the
+denominator-less stages the percent cannot see.
+
+**Finding B — no way in.** The card offered no route to per-stage detail. The disclosure
+listed per-file rows only, and during pure enrichment there are no task rows at all — so
+the button was not merely uninformative, it was *absent* exactly when the user most wants
+to know which stage is still running.
+
+### 20a. The two-layer principle
+
+> **Capability tiers on the surface, machine stages in the disclosure.**
+
+The surface says what the user can *do* and how far the whole blend has come ("Search is
+ready — still improving · 62% · semantic search catching up"). The disclosure lists the
+machine stages that add up to that number. The layers are an altitude split, not two
+subjects — and the mechanical guarantee is that **numbers may only differ by SCOPE, never
+by DERIVATION** (§3b, applied one level down).
+
+### 20b. `enrichingStages` — a projection, not a fork
+
+`IndexingProgress.enrichingStages: readonly EnrichingStageRow[]` carries the blend's own
+inputs: `{ id, total, pending }` per stage, built from the very `stage()` results the
+percent sums. There is no second read of the wire and no second applicability decision —
+the four stage constructions moved into one `readEnrichmentWork(status)` whose result feeds
+the percent, the phase gate and the settled-sum authority alike. Consequences that fall out
+for free rather than needing their own rules: a disabled stage has no row *because* it has
+no blend contribution; the chunk row rides embedding applicability *because* the blend's
+chunk stage does; a stage with nothing to enrich has no row *because* `stage()` already
+refuses a zero denominator.
+
+Two supporting exports, both for the store and both for the same reason (a store-side
+re-derivation is a fork by construction): `enrichSettledSum(status)` — the ONE settled-sum
+authority — and `selectIndexingPhase(status)`, so the store's episode-clear test asks the
+same phase question the selector answers.
+
+### 20c. `enrichingEtaSeconds` — its own rate, or nothing
+
+The indexing arm's ETA gauge (`core.recentDocsPerSec`) measures the **indexing** pipeline;
+reusing it here would answer a question about enrichment with a measurement of something
+else. The wire carries no enrichment-throughput gauge, so the rate is built from cross-poll
+memory following §19 W2's `episodeMaxPendingJobs` pattern exactly — signal, doctrine
+comment, imperative stamp in `onStatusUpdate`, snapshot exposure, test reset:
+
+- `AiState.enrichSettleSamples` — up to `ENRICH_SETTLE_SAMPLE_CAP` (6) `{ t, settled }`
+  samples, stamped through `enrichSettledSum` so the trail measures the quantity the bar
+  renders, and **cleared whenever the derived phase is not `enriching`** (a fresh episode
+  measures itself; intervals spanning a phase change compare two regimes).
+- Passed to `selectIndexingProgress` as a **REQUIRED** fourth parameter, for W2's reason:
+  optional-with-a-default lets six surfaces silently derive a seventh answer.
+- Suppressions (render nothing, never a placeholder): fewer than 3 measured intervals; any
+  interval whose settled sum did not strictly advance (a paused or preempted backfill is
+  not a slow one, and a backwards sum means ingest moved the denominator); a non-live
+  snapshot; any phase but `enriching`; a result past `ETA_MAX_SECONDS` (3600). Median
+  interval rate, not mean — one fast poll cannot halve the estimate.
+
+### 20d. What the card renders
+
+- The counts line gains a `· ~Nm Ns left` segment during enrichment, appended never
+  substituted, with the INDICATIVE qualifier in `title`/`aria-label` (§19 W4's form, reused).
+- The disclosure is now **"Details" / "Hide details"**, and is present whenever there is
+  anything to show: task rows, stage rows, **or** a non-zero extraction backlog. It opens
+  during pure enrichment with zero task rows — the whole point of Finding B.
+- Inside, above the unchanged files section: one plain-text row per stage,
+  `{label}  {settled} / {total}` with a trailing ✓ at zero pending; plus a denominator-less
+  `Content extraction — N remaining` row when `vduPending > 0` (no fraction, no bar — no
+  denominator exists, and inventing one is the defect this whole tempdoc is about).
+- Labels are USER words held as local literals in `TaskList.ts` (§19 W1: no shared constant
+  without a second consumer): Semantic vectors / Keyword expansion / Entity recognition /
+  Passage vectors. A sweep of Health and Brain found the only existing user-facing names for
+  these to be the bare acronyms "SPLADE"/"NER" in `display/facts.ts` capability chips and
+  Health's realized-engine rows — a different subject ("is this engine present?", not "how
+  far along is it?") and wire words besides, so they were not adopted.
+
+### 20e. What this orphans, and what stays parked
+
+**Orphaned:** the "Show files" / "Hide files" disclosure label (renamed at its one render
+site and its two test assertions; §5 and §16's prose above are dated history and keep their
+original wording). Nothing else — no constant, registry key, gate or capture depends on it.
+
+**Parked, with reasons:** a segmented bar (one band per stage) — the stage rows carry the
+same information without competing with the single capability-tier bar, and a segmented bar
+would need a shared per-stage colour vocabulary this surface is the only consumer of;
+per-file enrichment names ("which file is being embedded right now") — the wire carries no
+per-file enrichment attribution, so it needs worker support first. Both remain design
+candidates, neither is blocked on anything in this section.
+
+### 20f. Addendum (2026-08-07): the stale gauge — "Ready" was unreachable
+
+A second owner live-validation pass, diagnosed from the API on a running stack, found the
+mirror image of §20's Finding A. Every enrichment stage was fully settled — embedding 21/21
+pending 0, SPLADE 21/21 pending 0, NER 0 pending, chunk 84/84 pending 0 — and the card still
+read "Search is ready — still improving · semantic search catching up", indefinitely. The
+wire showed `backfillMode: "individual"`.
+
+**The doctrine line this establishes:**
+
+> **A last-known gauge is never phase evidence.** Phase is derived from pending COUNTS.
+
+`enrichment.backfillMode` is an operator gauge, not an activity signal: it is written once
+per `BackfillScheduler.runIdleCycle()` and *held between cycles*, and its own getter
+documents `"idle"` as "no backfill work was available/eligible **last cycle**"
+(`OperationalMetrics.java` — tempdoc 710 Move 2 item 4). It answers "which pass ran?", never
+"is work outstanding?". §20's Finding A was a percent claiming completion the phase denied;
+this is a phase denying completion the counts had already reached. Both are the §1d false
+terminal — one fabricating an ending, one refusing to admit a real one — and the positive
+-evidence doctrine (§17) covers both directions: the counts are the evidence, in and out.
+
+**Fault 1 — FE (load-bearing).** `derivePhase` consulted `backfillActive` and is now
+counts-only: `jobsPending > 0 ? 'indexing' : rawPending > 0 ? 'enriching' : 'ready'`. The
+`backfillActive` member is gone from `EnrichmentWork` — it had exactly one consumer, the
+phase gate, so leaving it would be residue. The wire field itself is untouched and remains
+available on the snapshot for any display/ops consumer (ui-web has none today; the sweep
+found only this gate). A welcome consequence for §20c: the `enrichSettleSamples` trail
+clears on any non-`enriching` phase, so a stuck gauge can no longer hold an enrichment-rate
+episode open on a settled index.
+
+**Fault 2 — worker hygiene.** `BackfillScheduler.runIdleCycle()` stamps `"individual"`
+*before* running the pass. The pre-stamp is kept — mid-pass observability is the gauge's
+purpose — but the pass now re-stamps `"idle"` when it advanced nothing, which is exactly
+what the getter's contract already calls idle.
+
+**Implementation note (deviation from the brief, empirically forced).** The re-stamp is
+keyed on ACTIVITY (`StageOutcome.docsProcessed() > 0` across the stages), not on
+`runIndividualBackfills`' boolean return. That return is a PACING flag — only the chunk
+tight-loop and a SPLADE pass over a non-empty backlog set it, so a parent-embedding batch
+leaves it `false` while genuinely embedding documents. Keying the re-stamp on it would stamp
+`"idle"` over a working cycle: the same lie, other direction. This is tempdoc 798's own
+distinction, already stated in this file for the combined branch ("Mode selection reads
+ACTIVITY... the tight loop reads PROGRESS... conflating them is what livelocked ingest"), so
+`runIndividualBackfills` now returns `IndividualOutcome(didWork, anyActivity)` — pacing
+semantics unchanged, gauge served by its own signal. The regression test
+`individualMode_withWorkDone_keepsIndividual` pins this: it asserts `didWork == false` AND
+that a document was embedded AND that the mode stays `"individual"`, so it fails if anyone
+re-keys the re-stamp on the pacing flag.
+
+**Coverage.** FE: `jobs drained and NO pending counters ⇒ "ready", whatever the backfill
+gauge last said` (all four gauge values), `REGRESSION: a fully SETTLED index reaches "ready"
+while the gauge still says "individual"` (the owner's exact snapshot, with a right-reason
+guard that all four stage rows are present and the percent is a true 100), plus both
+evidence-wins-anyway directions. Worker: the two `§20a` cases above, in the existing
+`BackfillSchedulerModeRecordingTest`. The pre-§20a FE case that asserted "backfill running
+with no pending counters ⇒ enriching" was INVERTED rather than deleted — it encoded the
+defect, and its snapshot is now the regression fixture.

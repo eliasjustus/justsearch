@@ -24,6 +24,7 @@ import {
 import type { StatusSnapshot } from '../utils/statusPoll.js';
 import type { InferenceSnapshot } from '../utils/inferencePoll.js';
 import { known, UNKNOWN } from './known.js';
+import { selectIndexingProgress } from './indexingProgress.js';
 import { verdictHeadline, verdictTone } from './verdict.js';
 
 const microtask = () => new Promise<void>((r) => queueMicrotask(() => r()));
@@ -555,6 +556,107 @@ describe('aiStateStore — system-health verdict (595)', () => {
     // Reading its `pendingJobs: 0` as a drain would reset the denominator mid-episode.
     feed(withPendingJobs(0, 'UNAVAILABLE'));
     expect(getAiState().episodeMaxPendingJobs).toBe(1600);
+  });
+
+  // 813 §20 — the ENRICHMENT episode's settle trail, the second cross-poll memory. Same shape as
+  // W2 above: an imperative stamp on the poll callback, cleared when the episode ends.
+  function withEnrichment(pendingCount: number, docCount = 1000): StatusSnapshot {
+    return {
+      worker: {
+        core: { indexedDocuments: 5, indexState: 'IDLE', indexHealthy: true, pendingJobs: 0 },
+        enrichment: {
+          backfillMode: 'running',
+          embeddingDocCount: docCount,
+          embeddingPendingCount: pendingCount,
+          embeddingEnabled: true,
+        },
+        migration: {
+          migrationState: 'IDLE',
+          activeGenerationId: 'g1',
+          buildingGenerationId: '',
+          servingSearchGenerationId: 'g1',
+          servingIngestGenerationId: 'g1',
+        },
+      },
+    } as unknown as StatusSnapshot;
+  }
+
+  it('§20: the settle trail is empty before any poll', () => {
+    expect(getAiState().enrichSettleSamples).toEqual([]);
+  });
+
+  it('§20: an enriching poll stamps the blend SETTLED sum against the wall clock', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    feed(withEnrichment(300));
+    vi.setSystemTime(11_000);
+    feed(withEnrichment(200));
+    // 1,000 documents, 300 then 200 pending ⟹ 700 then 800 settled — the same quantity
+    // `enrichingPercent` divides, not a private count.
+    expect(getAiState().enrichSettleSamples).toEqual([
+      { t: 1_000, settled: 700 },
+      { t: 11_000, settled: 800 },
+    ]);
+    vi.useRealTimers();
+  });
+
+  it('§20: the trail is bounded — only the most recent samples are kept', () => {
+    vi.useFakeTimers();
+    for (let i = 0; i < 9; i += 1) {
+      vi.setSystemTime((i + 1) * 10_000);
+      feed(withEnrichment(300 - i * 10));
+    }
+    const samples = getAiState().enrichSettleSamples;
+    expect(samples.length).toBe(6);
+    // The window slid: the oldest sample is the 4th poll, not the 1st.
+    expect(samples[0]).toEqual({ t: 40_000, settled: 730 });
+    expect(samples[5]).toEqual({ t: 90_000, settled: 780 });
+    vi.useRealTimers();
+  });
+
+  it('§20: leaving the enriching phase CLEARS the trail — a fresh episode measures itself', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    feed(withEnrichment(300));
+    vi.setSystemTime(11_000);
+    feed(withEnrichment(200));
+    expect(getAiState().enrichSettleSamples.length).toBe(2);
+
+    // Ingest resumes ⟹ the phase is `indexing`, and intervals spanning the two regimes would
+    // compare rates nobody measured together.
+    vi.setSystemTime(21_000);
+    feed(withPendingJobs(400));
+    expect(getAiState().enrichSettleSamples).toEqual([]);
+
+    vi.setSystemTime(31_000);
+    feed(withEnrichment(150));
+    expect(getAiState().enrichSettleSamples).toEqual([{ t: 31_000, settled: 850 }]);
+    vi.useRealTimers();
+  });
+
+  it('§20: a hard-zeroed fallback snapshot clears the trail rather than stamping its zeros', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    feed(withEnrichment(300));
+    vi.setSystemTime(11_000);
+    feed(withPendingJobs(0, 'UNAVAILABLE'));
+    expect(getAiState().enrichSettleSamples).toEqual([]);
+    vi.useRealTimers();
+  });
+
+  it('§20: four stamped polls are enough for the selector to render an estimate', () => {
+    vi.useFakeTimers();
+    // 100 documents settled per 10 s poll ⟹ 10/s; 0 pending would end the phase, so stop at 200.
+    [300, 200, 100, 50].forEach((pending, i) => {
+      vi.setSystemTime((i + 1) * 10_000);
+      feed(withEnrichment(pending, 1000));
+    });
+    const s = getAiState();
+    const p = selectIndexingProgress(s.status, true, s.episodeMaxPendingJobs, s.enrichSettleSamples);
+    expect(p.phase).toBe('enriching');
+    // Rates 10/s, 10/s, 5/s ⟹ median 10/s over 50 pending ⟹ 5 s.
+    expect(p.enrichingEtaSeconds).toBe(5);
+    vi.useRealTimers();
   });
 });
 
