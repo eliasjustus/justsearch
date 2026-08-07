@@ -55,6 +55,8 @@ import { unavailableBecause, AVAILABLE } from '../state/availability.js';
 // vocabulary (the same `reasonFor`/CAUSE_ROWS the Chat degradation banner + 595 verdict use),
 // so the same condition cannot be worded differently across surfaces.
 import { INDEX_SCHEMA_MISMATCH, isReindexCause, reasonFor } from '../state/readinessNotice.js';
+import { ENRICHMENT_IN_PROGRESS_LABEL } from '../state/enrichmentCoverage.js';
+import { selectIndexingProgress } from '../state/indexingProgress.js';
 import { formatStartupEstimate, humanizeSeconds, elapsedSecondsSince } from '../state/startupEstimate.js';
 import { isAiInstallLive } from '../substrates/ai/aiInstallLiveness.js';
 import { icon } from '../components/Icon.js';
@@ -133,6 +135,18 @@ interface LlmSettings {
 }
 
 const NUM = new Intl.NumberFormat();
+
+/**
+ * Round-15 scope-mismatch fix — the enrichment card's SCOPE, stated on the card itself.
+ *
+ * The finding was not only that this surface showed the wrong number; it was that neither surface
+ * declared which quantity it meant while both said "semantic search". The number is now the shared
+ * index-wide blend, and this says so, so a reader can tell what the percent is a percent OF.
+ *
+ * A local literal on purpose (the `STAGE_LABELS` precedent in `TaskList.ts`): one consumer, and a
+ * shared constant with no second consumer is a fork waiting to happen.
+ */
+const ENRICHMENT_SCOPE_NOTE = 'Overall enrichment across all stages';
 
 // Tempdoc 663 — the local `friendlyModel()` formatter (model-label cleanup) was removed; its one call
 // site now projects `core.ai.model` via `projectFact`, which reads `aiState.runtime.modelLabel` — the
@@ -1873,29 +1887,51 @@ export class BrainSurface extends JfElement {
     `;
   }
 
-  private renderEmbeddingProgress(): TemplateResult | typeof nothing {
+  /**
+   * The enrichment progress card — round-15 scope-mismatch fix.
+   *
+   * IT USED TO READ ONE SIGNAL. `systemStatus.embedding` is DOCUMENT-level semantic-vector coverage:
+   * 1 of the 4 signals enrichment actually consists of. The round photographed the consequence in a
+   * single frame — this card at 96.8% while the Tasks card read 19%, its subtitle promising "chunk
+   * embeddings" beside a number ~67 points away from actual chunk coverage, and then the card
+   * VANISHING at 100% of its one signal while overall enrichment sat at 46%, leaving the surface
+   * dedicated to AI status reading fully idle mid-run.
+   *
+   * IT NOW READS THE SHARED PROJECTION (813 §3b), the same `selectIndexingProgress` the Tasks card
+   * and the status-bar chip render from — chosen over keeping a stage-scoped bar because two numbers
+   * both called "semantic search" is the defect itself, and §3b already names one derivation
+   * authority for index-wide progress. Consequences that are the point: the percent is the
+   * unit-weighted blend over every applicable stage, so it cannot disagree with the other surfaces;
+   * and the card persists until the WHOLE blend settles, so a per-stage 100% can no longer read as
+   * done. The per-stage breakdown stays available in the Tasks card's disclosure (§20's two layers).
+   */
+  private renderEnrichmentProgress(): TemplateResult | typeof nothing {
     const emb = this.systemStatus?.embedding;
-    const pending = emb?.pendingCount ?? 0;
-    const completed = emb?.completedCount ?? 0;
-    const total = emb?.docCount ?? completed + pending;
-    if (pending === 0 || total === 0) return nothing;
+    // The compat callout above owns the BLOCKED_* states (it carries the reindex remedy); a second
+    // card about the same condition would be two voices on one fact.
     if (emb?.compatState?.startsWith('BLOCKED')) return nothing;
-    // Use the canonical coveragePercent from the wire when present;
-    // fall back to completed/total when absent.
-    const pct =
-      emb?.coveragePercent != null
-        ? emb.coveragePercent
-        : total > 0
-          ? (completed / total) * 100
-          : 0;
+    const live = !this._unifiedAiState || this._unifiedAiState.snapshotLive;
+    const progress = selectIndexingProgress(
+      this.systemStatus,
+      live,
+      this._unifiedAiState?.episodeMaxPendingJobs ?? 0,
+      this._unifiedAiState?.enrichSettleSamples ?? [],
+    );
+    // Only the enrichment phase is this card's subject: `indexing` is the Tasks card's countdown,
+    // `blocked` is the install CTA's business (nothing is progressing, so a progress bar would be a
+    // fabrication), and `ready`/`unknown` have no progress to report.
+    if (progress.phase !== 'enriching') return nothing;
+    const pending = progress.enrichingPending;
+    // Never a fabricated number: the projection withholds the percent when it has no faithful
+    // denominator, and the bar is withheld with it rather than rendered at a made-up 0.
+    const pct = progress.enrichingPercent;
     // Tempdoc 807 A.3 — these are fields off the RETAINED snapshot. With the backend gone they kept
     // animating a confident "Building semantic search 2.0% · 5,084 pending" (round 13, R13-F2): the
     // numbers were right, the present tense was not. Not live ⟹ stop asserting progress — no spinner,
     // no live-work colouring, every figure explicitly labelled as the last observation.
-    const live = !this._unifiedAiState || this._unifiedAiState.snapshotLive;
     if (!live) {
       return html`
-        <div class="section">
+        <div class="section" data-testid="brain-enrichment-progress">
           <div style="display: flex; gap: 0.625rem; align-items: flex-start">
             ${icon({ name: 'zap', size: 18 })}
             <div style="flex: 1">
@@ -1907,39 +1943,57 @@ export class BrainSurface extends JfElement {
                 values, not live progress.
               </div>
             </div>
-            <div style="font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-muted)">
-              ${pct.toFixed(1)}%
-            </div>
+            ${pct === null
+              ? nothing
+              : html`<div
+                  style="font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-muted)"
+                >
+                  ${pct}%
+                </div>`}
           </div>
-          <div class="progress" style="margin-top: 0.625rem">
-            <div class="progress-bar" style="width: ${pct}%; background: var(--text-muted)"></div>
-          </div>
+          ${pct === null
+            ? nothing
+            : html`<div class="progress" style="margin-top: 0.625rem">
+                <div class="progress-bar" style="width: ${pct}%; background: var(--text-muted)"></div>
+              </div>`}
           <div style="font-size: var(--font-size-xs); color: var(--text-muted); margin-top: 0.5rem">
-            ${NUM.format(pending)} pending when last observed
+            ${ENRICHMENT_SCOPE_NOTE} · ${NUM.format(pending)} pending when last observed
           </div>
         </div>
       `;
     }
     return html`
-      <div class="section" style="border-color: var(--accent-warning-30); background: var(--accent-warning-08)">
+      <div
+        class="section"
+        data-testid="brain-enrichment-progress"
+        style="border-color: var(--accent-warning-30); background: var(--accent-warning-08)"
+      >
         <div style="display: flex; gap: 0.625rem; align-items: flex-start">
           ${icon({ name: 'zap', size: 18 })}
           <div style="flex: 1">
             <div style="font-weight: 600; color: var(--text-warning)">
-              Building semantic search
+              ${ENRICHMENT_IN_PROGRESS_LABEL}
             </div>
+            <!-- The subtitle names the SCOPE of the number above it. Before this it promised chunk
+                 embeddings while the figure measured document vectors — one stage's number under
+                 another stage's sentence. -->
             <div style="font-size: var(--font-size-sm); color: var(--text-secondary); margin-top: 0.25rem">
-              Generating chunk embeddings for improved Q&amp;A retrieval.
+              ${ENRICHMENT_SCOPE_NOTE}: semantic vectors, passage vectors, keyword expansion and
+              entity recognition.
             </div>
           </div>
-          <div style="font-weight: 600; font-variant-numeric: tabular-nums">${pct.toFixed(1)}%</div>
+          ${pct === null
+            ? nothing
+            : html`<div style="font-weight: 600; font-variant-numeric: tabular-nums">${pct}%</div>`}
         </div>
-        <div class="progress" style="margin-top: 0.625rem">
-          <div class="progress-bar" style="width: ${pct}%; background: var(--accent-warning)"></div>
-        </div>
+        ${pct === null
+          ? nothing
+          : html`<div class="progress" style="margin-top: 0.625rem">
+              <div class="progress-bar" style="width: ${pct}%; background: var(--accent-warning)"></div>
+            </div>`}
         <div style="font-size: var(--font-size-xs); color: var(--text-secondary); margin-top: 0.5rem; display: flex; align-items: center; gap: 0.375rem">
           ${icon({ name: 'loader-2', size: 12, spin: true })}
-          ${NUM.format(pending)} pending
+          ${NUM.format(pending)} pending across all stages
         </div>
       </div>
     `;
@@ -2640,7 +2694,7 @@ export class BrainSurface extends JfElement {
                 Simple view
               </button>
               ${this.renderCompatibilityCallouts()}
-              ${this.renderEmbeddingProgress()}
+              ${this.renderEnrichmentProgress()}
               ${this.renderAccordion(
                 'install',
                 'Install AI',

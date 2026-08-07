@@ -522,7 +522,11 @@ export class StatusDeck extends JfElement {
       this.aiState?.episodeMaxPendingJobs ?? 0,
       this.aiState?.enrichSettleSamples ?? [],
     );
-    const embeddingBlocked = idx ? orElse(idx.embeddingBlocked, false) : false;
+    // Round-15 F1 — the projection's own `blocked` arm joins the compat-state flag: an embedding
+    // stage that is ABSENT (no model) has just as little backlog to work off as one that is
+    // fingerprint-blocked, and rendering "embed: 5,189" against it claims a queue that cannot drain.
+    const embeddingBlocked =
+      progress.phase === 'blocked' || (idx ? orElse(idx.embeddingBlocked, false) : false);
     const queue = progress.jobsPending;
     const enriching = !embeddingBlocked && progress.phase === 'enriching';
     const enrichingPercent = enriching ? progress.enrichingPercent : null;

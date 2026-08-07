@@ -29,12 +29,13 @@
 
 import type { IndexedRootView } from '../../api/generated/schema-types/indexed-root-view.js';
 import type { EnrichmentApplicability } from './indexingProgress.js';
-import { ENRICHMENT_CATCHING_UP_CAVEAT } from './enrichmentCoverage.js';
+import { ENRICHMENT_BLOCKED_CAVEAT, ENRICHMENT_CATCHING_UP_CAVEAT } from './enrichmentCoverage.js';
 
 export type FolderState =
   | 'scanning' // walk in progress — files not yet fully enqueued
   | 'indexing' // in-flight jobs > 0
   | 'enriching' // 809 finding 1 / 813 §4 — drained + keyword-searchable, enrichment still catching up
+  | 'keyword-only' // round-15 F1b — drained + keyword-searchable, semantic enrichment CANNOT run
   | 'ready' // scanned, drained, no failures — fully searchable (or coverage unknowable)
   | 'unverified' // tempdoc 626 §Axis-C — indexed, but the reconcile couldn't verify deletions (cap-skipped)
   | 'failed' // walk error, or terminal failed jobs with nothing in flight
@@ -82,6 +83,17 @@ export interface FolderStatusContext {
    * still withholds the terminal "✓ fully searchable" claim, it just cannot name a percent.
    */
   readonly enrichmentPending?: boolean;
+  /**
+   * Round-15 F1b — is the SEMANTIC enrichment stage unable to run at all, index-wide? From the same
+   * ONE derivation as {@link enrichmentStages} (`selectIndexingProgress(...).phase === 'blocked'`),
+   * passed in for the same reason.
+   *
+   * A row cannot answer this from its own coverage numbers: with the embedding stage inapplicable,
+   * every stage this root could count is excluded, so `rootCoverage` is `null` — the same shape as
+   * "coverage not derivable yet". Without this flag the row fell through to the terminal wording and
+   * rendered an unqualified green "✓ … Verified just now" at 0% coverage (F1b).
+   */
+  readonly enrichmentBlocked?: boolean;
 }
 
 /** A non-negative finite count from an optional wire number (absent / negative ⟹ 0). */
@@ -283,6 +295,8 @@ export function folderStatus(row: IndexedRootView, ctx: FolderStatusContext): Fo
     //   coverage known, incomplete  → `enriching` + the shared caveat + this root's percent
     //   coverage known, complete    → `ready` ("fully searchable") — even while OTHER roots still
     //                                 enrich (per-root truth outranks the index-wide boolean)
+    //   coverage unknown, semantic stage inapplicable with work outstanding → `keyword-only` +
+    //                                 the blocked caveat, NO percent (round-15 F1b)
     //   coverage unknown, backfill pending index-wide → `enriching` + caveat, NO percent (positive
     //                                 evidence withholds the terminal claim; it cannot name a number)
     //   coverage unknown, nothing pending → pre-813 terminal wording (no tier asserted either way)
@@ -294,6 +308,19 @@ export function folderStatus(row: IndexedRootView, ctx: FolderStatusContext): Fo
         state: 'enriching',
         glyph: 'pending',
         metaText: `${collection} · ${fileCountText} · ${ENRICHMENT_CATCHING_UP_CAVEAT} · ${coverage.percent}%${verifiedSuffix}`,
+        inFlight,
+        failed,
+      };
+    }
+    // Round-15 F1b — the semantic stage cannot run: keyword-searchable is the WHOLE truth about this
+    // folder, so the row says so instead of falling through to the terminal wording. Ranked above the
+    // pending arm because the two are mutually exclusive by construction (an inapplicable stage
+    // contributes no pending evidence) and this one names a state the user can act on.
+    if (coverage === null && ctx.enrichmentBlocked === true) {
+      return {
+        state: 'keyword-only',
+        glyph: 'pending',
+        metaText: `${collection} · ${fileCountText} · ${ENRICHMENT_BLOCKED_CAVEAT}${verifiedSuffix}`,
         inFlight,
         failed,
       };

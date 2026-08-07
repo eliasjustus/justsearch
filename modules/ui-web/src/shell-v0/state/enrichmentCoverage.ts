@@ -49,6 +49,31 @@ export interface EnrichmentProgress {
 export const ENRICHMENT_CATCHING_UP_CAVEAT = 'keyword search ready · semantic search still catching up';
 
 /**
+ * The caveat a completion claim carries when the semantic layers CANNOT be built at all — no
+ * embedding service, so the documents that lack vectors will never be enriched by any amount of
+ * waiting (round-15 F1/F1b: coverage 0 + no model + empty queue rendered as "fully searchable").
+ *
+ * Distinct in SUBJECT from {@link ENRICHMENT_CATCHING_UP_CAVEAT}, which promises work in flight:
+ * this one promises nothing, because nothing is running. Same clause order — what already works
+ * first, then what does not — so the two tiers read as one vocabulary rather than two moods.
+ */
+export const ENRICHMENT_BLOCKED_CAVEAT =
+  'keyword search ready · semantic search waiting for AI install';
+
+/**
+ * The BODY-tier clause of the blocked state (the {@link ENRICHMENT_BODY} twin): what is still
+ * missing, for a surface whose headline already carried the capability that does work.
+ */
+export const ENRICHMENT_BLOCKED_BODY = 'semantic search waiting for AI install';
+
+/**
+ * The short STATUS label for the blocked state — {@link ENRICHMENT_IN_PROGRESS_LABEL}'s twin, for a
+ * card whose subject is the work (Health's queue card). Its terminal "Up to date" is a coverage
+ * claim (813 §4), and coverage is exactly what is missing here.
+ */
+export const ENRICHMENT_BLOCKED_LABEL = 'Semantic search waiting for AI install';
+
+/**
  * The short status label for a card whose subject is the WORK, not a folder — Health's queue card,
  * whose "Up to date" is an explicit terminal trust close (630 D1) that a running backfill contradicts.
  * Deliberately the phrase the Brain surface's own progress card already uses for this exact work, so

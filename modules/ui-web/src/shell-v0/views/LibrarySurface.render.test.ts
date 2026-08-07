@@ -331,4 +331,61 @@ describe('LibrarySurface — the folder row consults enrichment coverage (809 fi
       el.remove();
     }
   });
+
+  /**
+   * Round-15 F1b, at the WIRING altitude the seam test cannot reach: the row's blocked caveat only
+   * appears if this surface actually projects `selectIndexingProgress(...).phase === 'blocked'` into
+   * the seam. Enrichment block verbatim from the round's captured `/api/status`
+   * (`evidence/api-history/20260807-011454/api-api-status.json`).
+   */
+  it('F1b: with no embedding model the row is qualified rather than plainly "Verified"', async () => {
+    feedEnrichment({
+      embeddingEnabled: false,
+      spladeEnabled: false,
+      nerEnabled: false,
+      embeddingDocCount: 5,
+      embeddingPendingCount: 5,
+      embeddingCoveragePercent: 0,
+      spladeDocCount: 5,
+      spladePendingCount: 5,
+      spladeCoveragePercent: 0,
+      pendingNerCount: 5,
+      completedNerCount: 0,
+      chunk: { chunkDocCount: 2, chunkEmbeddingPendingCount: 2, chunkVectorsReady: false },
+    });
+    const el = await mountWithRow();
+    try {
+      expect(el.enrichmentBlocked).toBe(true);
+      const text = el.shadowRoot?.textContent ?? '';
+      expect(text).toContain('semantic search waiting for AI install');
+      expect(text).not.toContain('fully searchable');
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('F1-repro BOUNDARY: model gone but vectors persisted ⟹ no caveat is added', async () => {
+    feedEnrichment({
+      embeddingEnabled: false,
+      spladeEnabled: false,
+      nerEnabled: false,
+      embeddingDocCount: 400,
+      embeddingPendingCount: 0,
+      embeddingCoveragePercent: 100,
+      spladeDocCount: 400,
+      spladePendingCount: 0,
+      completedNerCount: 400,
+      pendingNerCount: 0,
+      chunk: { chunkDocCount: 120, chunkEmbeddingPendingCount: 0, chunkVectorsReady: true },
+    });
+    const el = await mountWithRow();
+    try {
+      expect(el.enrichmentBlocked).toBe(false);
+      const text = el.shadowRoot?.textContent ?? '';
+      expect(text).toContain('indexed just now');
+      expect(text).not.toContain('semantic search waiting for AI install');
+    } finally {
+      el.remove();
+    }
+  });
 });
