@@ -46,6 +46,37 @@ export interface EnrichmentApplicability {
   readonly ner: boolean;
 }
 
+/**
+ * One enrichment stage's contribution to the blend, tagged with the stage it came from (813 §20).
+ *
+ * `settled = total - pending` rather than `completed + failed` on purpose: the wire exposes only the
+ * COMPLETED / PENDING / FAILED buckets, while a stage's terminal vocabulary also includes
+ * COMPLETED_EMPTY (ran fine, produced nothing — `IndexStatusOps.buildEnrichment`'s own note for NER).
+ * Counting "not pending" is therefore the faithful TERMINAL count per 813 §13; counting
+ * `completed + failed` would under-count and leave enrichment looking permanently unfinished.
+ *
+ * The id is the MACHINE stage name and stays a machine name here: 813 §20's two layers are
+ * capability tiers on the surface and machine stages in the disclosure, so the user-facing wording
+ * belongs to the consuming surface, not to this projection.
+ */
+export interface EnrichingStageRow {
+  readonly id: 'embedding' | 'splade' | 'ner' | 'chunkVectors';
+  readonly total: number;
+  readonly pending: number;
+}
+
+/**
+ * 813 §20 — one observation of the enrichment blend's SETTLED sum at a wall-clock instant. The
+ * enrichment rate cannot be read off a single snapshot (the wire carries no enrichment-throughput
+ * gauge, and `core.recentDocsPerSec` measures INDEXING), so the store keeps a short trail of these
+ * and this module turns them into a rate. Owned and stamped by `aiStateStore`, exactly as
+ * {@link IndexingProgress.indexingPercent}'s high-water denominator is.
+ */
+export interface EnrichSettleSample {
+  readonly t: number;
+  readonly settled: number;
+}
+
 export interface IndexingProgress {
   /** §3a phase. `unknown` ⟹ the worker did not report; NO number below may be rendered. */
   phase: IndexingPhase;
@@ -64,6 +95,29 @@ export interface IndexingProgress {
   enrichingPercent: number | null;
   /** Documents still PENDING across every applicable enrichment stage (0 when nothing is pending). */
   enrichingPending: number;
+  /**
+   * 813 §20 — the per-stage BREAKDOWN of {@link enrichingPercent}, one row per stage that
+   * contributes to the blend. A PROJECTION of that blend, not a second derivation: the rows are the
+   * very {@link EnrichingStageRow}s the percent sums, so a disclosure showing them can differ from
+   * the surface percent by SCOPE (one stage vs all) but never by DERIVATION (§3b).
+   *
+   * Empty whenever the blend has no inputs — a disabled stage contributes no row (as it contributes
+   * no numerator and no denominator), and a stage with no documents to enrich has nothing to say.
+   */
+  enrichingStages: readonly EnrichingStageRow[];
+  /**
+   * 813 §20 — a COARSE, INDICATIVE seconds-remaining for the `enriching` phase, extrapolated from
+   * the OBSERVED settle rate across polls ({@link EnrichSettleSample}). Deliberately NOT
+   * {@link etaSeconds}' rate: `core.recentDocsPerSec` gauges the indexing pipeline, and reusing it
+   * here would answer a question about enrichment with a measurement of something else.
+   *
+   * `null` — render nothing, never a placeholder — whenever there is no honest basis: any phase but
+   * `enriching`; a stale snapshot; fewer than {@link ENRICH_ETA_MIN_INTERVALS} measured intervals; an
+   * interval where the settled sum did not strictly advance (paused/preempted backfill, or the
+   * denominator itself moving as ingest adds documents); or a result beyond {@link ETA_MAX_SECONDS},
+   * which a six-sample trail cannot support.
+   */
+  enrichingEtaSeconds: number | null;
   /** Whole documents whose parent embedding is still PENDING (`worker.enrichment.embedding.pendingCount`). */
   embeddingPending: number;
   /** Documents still awaiting visual (VDU) extraction (`worker.core.pendingVduCount`). */
@@ -150,6 +204,8 @@ const EMPTY: IndexingProgress = {
   jobsQueued: 0,
   enrichingPercent: null,
   enrichingPending: 0,
+  enrichingStages: [],
+  enrichingEtaSeconds: null,
   embeddingPending: 0,
   vduPending: 0,
   etaSeconds: null,
@@ -171,30 +227,187 @@ const ETA_MIN_JOBS = 20;
  * rendered as an implausible "180m".
  */
 const ETA_MAX_SECONDS = 3600;
+/**
+ * 813 §20 — how many settle samples the store retains. One more than the intervals the enrichment
+ * estimate needs, plus headroom, so a median over intervals is possible without keeping a history
+ * whose oldest end no longer describes the current rate.
+ */
+export const ENRICH_SETTLE_SAMPLE_CAP = 6;
+/** Measured intervals that must ALL show forward progress before an enrichment rate is extrapolated. */
+const ENRICH_ETA_MIN_INTERVALS = 3;
 
 function count(value: number | null | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-/**
- * One enrichment stage's contribution. `settled = total - pending` rather than `completed + failed`
- * on purpose: the wire exposes only the COMPLETED / PENDING / FAILED buckets, while a stage's
- * terminal vocabulary also includes COMPLETED_EMPTY (ran fine, produced nothing —
- * `IndexStatusOps.buildEnrichment`'s own note for NER). Counting "not pending" is therefore the
- * faithful TERMINAL count per 813 §13; counting `completed + failed` would under-count and leave
- * enrichment looking permanently unfinished.
- */
-interface StageWork {
-  total: number;
-  pending: number;
-}
-
-function stage(total: number, pending: number, enabled: boolean | undefined): StageWork | null {
+function stage(
+  id: EnrichingStageRow['id'],
+  total: number,
+  pending: number,
+  enabled: boolean | undefined,
+): EnrichingStageRow | null {
   // A disabled stage is not-applicable — it contributes to neither numerator nor denominator, so a
   // deployment with SPLADE off cannot be stuck at "67% enriched" forever.
   if (enabled === false) return null;
   if (total <= 0) return null;
-  return { total, pending: Math.min(pending, total) };
+  return { id, total, pending: Math.min(pending, total) };
+}
+
+/**
+ * Everything the enrichment half of the projection needs, read ONCE from one snapshot (813 §20).
+ *
+ * Assembled here rather than inline in the selector so the three consumers — the selector's percent
+ * blend, {@link selectIndexingPhase}, and {@link enrichSettledSum} (which the store calls to stamp
+ * its rate memory) — cannot answer "which stages count, and how much of each is settled?" three
+ * different ways. That is the §3b rule applied one level down: one derivation, several scopes.
+ */
+interface EnrichmentWork {
+  /** The ONE applicability decision (813 §4). */
+  readonly applicable: EnrichmentApplicability;
+  /** The blend's inputs: applicable stages that also have a faithful denominator. */
+  readonly rows: readonly EnrichingStageRow[];
+  /**
+   * Phase evidence: pending across applicable stages INCLUDING the denominator-less ones. A stage
+   * with no faithful denominator contributes no PERCENT, but its pending counter is still evidence
+   * of unfinished work (813 §17 / §1d's false terminal).
+   */
+  readonly rawPending: number;
+}
+
+function readEnrichmentWork(status: StatusResponse | null | undefined): EnrichmentWork {
+  const enrichment = status?.worker?.enrichment;
+  const chunk = enrichment?.chunk ?? null;
+  const nerCompleted = count(enrichment?.completedNerCount);
+  const nerPending = count(enrichment?.pendingNerCount);
+
+  // The ONE applicability decision (813 §4): consumed by the index-wide stage math below and, via
+  // `IndexingProgress.stages`, by the per-root folder derivation — so "is SPLADE on?" is answered
+  // once for every progress surface.
+  const applicable: EnrichmentApplicability = {
+    embedding: enrichment?.embeddingEnabled !== false,
+    splade: enrichment?.spladeEnabled !== false,
+    ner: enrichment?.nerEnabled !== false,
+  };
+
+  const rows = [
+    stage(
+      'embedding',
+      count(enrichment?.embeddingDocCount),
+      count(enrichment?.embeddingPendingCount),
+      applicable.embedding,
+    ),
+    stage(
+      'splade',
+      count(enrichment?.spladeDocCount),
+      count(enrichment?.spladePendingCount),
+      applicable.splade,
+    ),
+    // NER reports no doc-count, so its denominator is its own two-valued census.
+    stage('ner', nerCompleted + nerPending, nerPending, applicable.ner),
+    // The chunk tier's denominator is CHUNKED documents (813 §13) — never "N of M files". Its
+    // applicability is the EMBEDDING stage's: chunk vectors come from the same encoder, so a
+    // deployment with embedding switched off (or no embedding service at all) never settles a
+    // single chunk. Passing "unknown" here left those chunks pending forever ⟹ phase stuck at
+    // `enriching` ⟹ "Up to date" / "System idle" / folder "fully searchable" unreachable.
+    stage(
+      'chunkVectors',
+      count(chunk?.chunkDocCount),
+      count(chunk?.chunkEmbeddingPendingCount),
+      applicable.embedding,
+    ),
+  ].filter((s): s is EnrichingStageRow => s !== null);
+
+  // Disabled stages stay excluded: their pending can never settle (813 review F1), so counting them
+  // would pin the phase at `enriching` forever.
+  const rawPending =
+    (applicable.embedding ? count(enrichment?.embeddingPendingCount) : 0) +
+    (applicable.splade ? count(enrichment?.spladePendingCount) : 0) +
+    (applicable.ner ? nerPending : 0) +
+    (applicable.embedding ? count(chunk?.chunkEmbeddingPendingCount) : 0);
+
+  return { applicable, rows, rawPending };
+}
+
+/**
+ * The positive-evidence phase gate (merged from #375's enrichmentCoverage doctrine, 813 §17).
+ * Pending work on an APPLICABLE stage withholds the terminal phase even when that stage lacks a
+ * faithful denominator — "Up to date" off a missing denominator would be the §1d false terminal.
+ *
+ * COUNTS ONLY. `enrichment.backfillMode` is deliberately NOT consulted (813 §20a, owner finding
+ * 2026-08-07): it is a LAST-KNOWN operator gauge, written once per `BackfillScheduler.runIdleCycle()`
+ * and held between cycles (`OperationalMetrics.getBackfillMode` — "no backfill work was
+ * available/eligible LAST cycle"), so it describes which pass ran, not whether work remains. Reading
+ * it as activity produced the mirror image of §1d: on a fully settled index (every stage 0 pending)
+ * a stuck `"individual"` gauge kept the phase at `enriching` forever — "Ready — fully searchable"
+ * unreachable, the Tasks card claiming "still improving" over an index with nothing left to improve.
+ * The doctrine is symmetric and the gauge fails it in both directions: pending counts are the
+ * evidence, and a gauge is not a count.
+ */
+function derivePhase(jobsPending: number, work: EnrichmentWork): IndexingPhase {
+  if (jobsPending > 0) return 'indexing';
+  return work.rawPending > 0 ? 'enriching' : 'ready';
+}
+
+/**
+ * The §3a phase alone, as a pure function of one snapshot (813 §20).
+ *
+ * Exported for `aiStateStore`, whose enrichment-rate memory must be CLEARED the moment the phase
+ * stops being `enriching` (a fresh episode measures itself). The store therefore needs the phase
+ * before the selector can run — and answering it with a private re-derivation is exactly the fork
+ * §3b forbids, so it asks the same function {@link selectIndexingProgress} uses.
+ */
+export function selectIndexingPhase(status: StatusResponse | null | undefined): IndexingPhase {
+  const core = status?.worker?.core;
+  if (!isWorkerReportedIndex(status) || !core) return 'unknown';
+  return derivePhase(count(core.pendingJobs), readEnrichmentWork(status));
+}
+
+/**
+ * The enrichment blend's SETTLED sum — documents past the pending bucket across every stage that
+ * contributes to {@link IndexingProgress.enrichingPercent} (813 §20).
+ *
+ * The ONE settled-sum authority. The store stamps its rate samples by calling THIS, so the trail it
+ * accumulates measures the very quantity the percent renders; a store-side re-derivation could drift
+ * (a differently-filtered stage set would make the estimate describe a different denominator than
+ * the bar above it).
+ */
+export function enrichSettledSum(status: StatusResponse | null | undefined): number {
+  let settled = 0;
+  for (const row of readEnrichmentWork(status).rows) settled += row.total - row.pending;
+  return settled;
+}
+
+/**
+ * The coarse enrichment seconds-remaining, or `null` when there is no honest basis (see
+ * {@link IndexingProgress.enrichingEtaSeconds}).
+ *
+ * Every interval must show the settled sum STRICTLY advancing. Enrichment's own instability (§1e:
+ * ingest preempts the backfill at batch boundaries) is precisely what a "0 documents settled this
+ * poll" interval reports, and averaging over it would extrapolate a rate nobody observed. As with
+ * {@link deriveEtaSeconds} the MEDIAN interval rate is used rather than the mean, so one fast poll
+ * cannot halve the estimate.
+ */
+function deriveEnrichEtaSeconds(
+  samples: readonly EnrichSettleSample[],
+  pending: number,
+): number | null {
+  if (pending <= 0) return null;
+  if (samples.length < ENRICH_ETA_MIN_INTERVALS + 1) return null;
+  const rates: number[] = [];
+  for (let i = 1; i < samples.length; i += 1) {
+    const elapsedSec = (samples[i]!.t - samples[i - 1]!.t) / 1000;
+    const settledDelta = samples[i]!.settled - samples[i - 1]!.settled;
+    if (!Number.isFinite(elapsedSec) || elapsedSec <= 0) return null;
+    if (!Number.isFinite(settledDelta) || settledDelta <= 0) return null;
+    rates.push(settledDelta / elapsedSec);
+  }
+  if (rates.length < ENRICH_ETA_MIN_INTERVALS) return null;
+  const sorted = [...rates].sort((a, b) => a - b);
+  const rate = sorted[Math.floor(sorted.length / 2)]!;
+  if (!Number.isFinite(rate) || rate <= 0) return null;
+  const seconds = Math.round(pending / rate);
+  if (!Number.isFinite(seconds) || seconds <= 0 || seconds > ETA_MAX_SECONDS) return null;
+  return seconds;
 }
 
 /**
@@ -275,11 +488,16 @@ function derivePendingBytes(
  *   stamped by the store). REQUIRED, not optional-with-a-default: a defaulted parameter would let
  *   six surfaces silently derive a different {@link IndexingProgress.indexingPercent} from the
  *   seventh — the two-derivation drift §3b forbids. The selector itself stays pure.
+ * @param enrichSettleSamples the second piece of cross-poll memory the store owns (813 §20): the
+ *   trail of {@link EnrichSettleSample}s backing {@link IndexingProgress.enrichingEtaSeconds}.
+ *   REQUIRED for the same reason, and stamped through {@link enrichSettledSum} so the trail and the
+ *   percent measure one quantity.
  */
 export function selectIndexingProgress(
   status: StatusResponse | null | undefined,
   snapshotLive: boolean,
   episodeMaxPendingJobs: number,
+  enrichSettleSamples: readonly EnrichSettleSample[],
 ): IndexingProgress {
   const core = status?.worker?.core;
   if (!isWorkerReportedIndex(status) || !core) {
@@ -297,72 +515,28 @@ export function selectIndexingProgress(
   // add up to the total the same surface shows. running + queued == jobsPending, by construction.
   const jobsQueued = jobsPending - jobsRunning;
 
-  const enrichment = status.worker?.enrichment;
-  const chunk = enrichment?.chunk ?? null;
-  const nerCompleted = count(enrichment?.completedNerCount);
-  const nerPending = count(enrichment?.pendingNerCount);
-
-  // The ONE applicability decision (813 §4): consumed both by the index-wide stage math below and,
-  // via `IndexingProgress.stages`, by the per-root folder derivation — so "is SPLADE on?" is
-  // answered once for every progress surface.
-  const applicable: EnrichmentApplicability = {
-    embedding: enrichment?.embeddingEnabled !== false,
-    splade: enrichment?.spladeEnabled !== false,
-    ner: enrichment?.nerEnabled !== false,
-  };
-
-  const stages: Array<StageWork | null> = [
-    stage(
-      count(enrichment?.embeddingDocCount),
-      count(enrichment?.embeddingPendingCount),
-      applicable.embedding,
-    ),
-    stage(
-      count(enrichment?.spladeDocCount),
-      count(enrichment?.spladePendingCount),
-      applicable.splade,
-    ),
-    // NER reports no doc-count, so its denominator is its own two-valued census.
-    stage(nerCompleted + nerPending, nerPending, applicable.ner),
-    // The chunk tier's denominator is CHUNKED documents (813 §13) — never "N of M files". Its
-    // applicability is the EMBEDDING stage's: chunk vectors come from the same encoder, so a
-    // deployment with embedding switched off (or no embedding service at all) never settles a
-    // single chunk. Passing "unknown" here left those chunks pending forever ⟹ phase stuck at
-    // `enriching` ⟹ "Up to date" / "System idle" / folder "fully searchable" unreachable.
-    stage(
-      count(chunk?.chunkDocCount),
-      count(chunk?.chunkEmbeddingPendingCount),
-      applicable.embedding,
-    ),
-  ];
+  // ONE read of the enrichment half (813 §20) — the same `EnrichmentWork` the phase gate and the
+  // store's settled-sum stamp consume, so the blend, its per-stage breakdown and the rate memory are
+  // three SCOPES of one derivation rather than three derivations.
+  const work = readEnrichmentWork(status);
+  const applicable = work.applicable;
 
   let total = 0;
   let pending = 0;
-  for (const s of stages) {
-    if (s === null) continue;
+  for (const s of work.rows) {
     total += s.total;
     pending += s.pending;
   }
   // No applicable stage ⟹ no faithful denominator ⟹ no percent (never 0/0 → NaN, never a fake 0%).
-  const enrichingPercent = total > 0 ? Math.round(((total - pending) / total) * 100) : null;
+  // Symmetric rule (owner finding, 2026-08-06): never a fake 100% either — Math.round lets a
+  // sub-half-percent tail (e.g. 2 of 600 pending) render "100%" beside "semantic search catching
+  // up", a full bar contradicting its own caveat. While ANY counted work is pending the display
+  // is capped at 99; a true 100 is only reachable when pending === 0 (and the phase gate, which
+  // also sees denominator-less stages, still decides `ready` on its own evidence).
+  const enrichingPercent =
+    total > 0 ? Math.min(pending > 0 ? 99 : 100, Math.round(((total - pending) / total) * 100)) : null;
 
-  const backfillMode = enrichment?.backfillMode ?? 'idle';
-  const backfillActive = backfillMode !== 'idle' && backfillMode !== '';
-
-  // Positive-evidence phase gate (merged from #375's enrichmentCoverage doctrine, 813 §17): pending
-  // work on an APPLICABLE stage withholds the terminal phase even when that stage lacks a faithful
-  // denominator — a denominator-less stage contributes no PERCENT, but its pending counter is still
-  // evidence of unfinished work, and "Up to date" off a missing denominator would be the §1d false
-  // terminal. Disabled stages stay excluded: their pending can never settle (813 review F1), so
-  // counting them would pin the phase at `enriching` forever.
-  const rawPending =
-    (applicable.embedding ? count(enrichment?.embeddingPendingCount) : 0) +
-    (applicable.splade ? count(enrichment?.spladePendingCount) : 0) +
-    (applicable.ner ? nerPending : 0) +
-    (applicable.embedding ? count(chunk?.chunkEmbeddingPendingCount) : 0);
-
-  const phase: IndexingPhase =
-    jobsPending > 0 ? 'indexing' : backfillActive || rawPending > 0 ? 'enriching' : 'ready';
+  const phase = derivePhase(jobsPending, work);
 
   // 813 §19 (W2) — the high-water denominator. `episodeMax > jobsPending` is the whole admission
   // test: it is simultaneously "a drain was observed" and "the denominator is positive", so the
@@ -381,8 +555,15 @@ export function selectIndexingProgress(
     enrichingPercent,
     // The displayed pending count matches the phase evidence (rawPending), not the percent's
     // stage-filtered sum — a surface saying "enriching" must be able to show the work it saw.
-    enrichingPending: rawPending,
-    embeddingPending: count(enrichment?.embeddingPendingCount),
+    enrichingPending: work.rawPending,
+    // The percent's own inputs, handed on unchanged (813 §20) — a projection of the blend, not a
+    // second pass over the wire.
+    enrichingStages: work.rows,
+    enrichingEtaSeconds:
+      phase === 'enriching' && snapshotLive
+        ? deriveEnrichEtaSeconds(enrichSettleSamples, pending)
+        : null,
+    embeddingPending: count(status.worker?.enrichment?.embeddingPendingCount),
     vduPending: count(core.pendingVduCount),
     etaSeconds:
       phase === 'indexing' && snapshotLive

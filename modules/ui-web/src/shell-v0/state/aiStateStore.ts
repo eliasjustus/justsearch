@@ -52,7 +52,13 @@ import {
 import { type Maybe, known, UNKNOWN, mapKnown } from './known.js';
 // 813 §19 (W2) — the projection's own admission test, reused (not re-implemented) by the high-water
 // stamp below so the store and the selector agree on what counts as a worker-reported snapshot.
-import { isWorkerReportedIndex } from './indexingProgress.js';
+import {
+  ENRICH_SETTLE_SAMPLE_CAP,
+  enrichSettledSum,
+  isWorkerReportedIndex,
+  selectIndexingPhase,
+  type EnrichSettleSample,
+} from './indexingProgress.js';
 import { humanizeSeconds, elapsedSecondsSince } from './startupEstimate.js';
 // Tempdoc 649 — the ONE reachability authority (positive contact across ANY channel), registered as
 // the `connection` liveness domain. `aiStateStore` is its sole render site (imports `isOriginReachable`).
@@ -282,6 +288,19 @@ export interface AiState {
    */
   episodeMaxPendingJobs: number;
   /**
+   * 813 §20 — the ENRICHMENT half's cross-poll memory: a short trail of the enrichment blend's
+   * settled sum, each stamped with the wall-clock instant it was observed. The wire carries no
+   * enrichment-throughput gauge (`core.recentDocsPerSec` measures the INDEXING pipeline), so an
+   * enrichment estimate has no basis at all without remembering how much settled between polls.
+   *
+   * Stamped imperatively in `onStatusUpdate` through the ONE settled-sum authority
+   * (`enrichSettledSum`), never written by a `computed` — the same discipline as
+   * {@link episodeMaxPendingJobs} above. CLEARED whenever the derived phase is not `enriching`: a
+   * fresh enrichment episode must measure itself rather than inherit a rate from an hour ago, and
+   * intervals spanning a phase change would compare two different regimes.
+   */
+  enrichSettleSamples: readonly EnrichSettleSample[];
+  /**
    * 663 Stage 3 — the last-known install/runtime/pack snapshots, fed by the shared, always-on
    * `aiInstallPoll` (mirrors `status`/`inference` above: `null` until the first successful poll,
    * retained — never regressed to `null` — on a later transient failure). BrainSurface consumes
@@ -333,6 +352,10 @@ const lastSettledIndexSig = signal<{
 // 813 §19 (W2) — the drain episode's high-water backlog. Written ONLY by the poll
 // callback (`onStatusUpdate`), read by `buildSnapshot`; no computed writes it.
 const episodeMaxPendingJobsSig = signal(0);
+// 813 §20 — the enrichment episode's settle trail. Written ONLY by the poll
+// callback (`onStatusUpdate`), read by `buildSnapshot`; no computed writes it.
+const NO_ENRICH_SAMPLES: readonly EnrichSettleSample[] = [];
+const enrichSettleSamplesSig = signal<readonly EnrichSettleSample[]>(NO_ENRICH_SAMPLES);
 // Time is not reactive; the staleness timer bumps this when reachability
 // would flip, so the `connection` derivation re-evaluates.
 const clockTickSig = signal(0);
@@ -840,6 +863,7 @@ function buildSnapshot(): AiState {
     inference: inferenceSig.get(),
     lastSettledIndex: lastSettledIndexSig.get(),
     episodeMaxPendingJobs: episodeMaxPendingJobsSig.get(),
+    enrichSettleSamples: enrichSettleSamplesSig.get(),
     installStatus,
     runtimeStatus,
     packStatus: packStatusSig.get(),
@@ -925,6 +949,7 @@ function onStatusUpdate(snap: StatusSnapshot | null): void {
     lastStatusSuccessSig.set(Date.now());
     stampSettledIndex(snap);
     stampEpisodeMaxPendingJobs(snap);
+    stampEnrichSettleSamples(snap);
   } else {
     clockTickSig.set(clockTickSig.get() + 1);
   }
@@ -997,6 +1022,26 @@ function stampEpisodeMaxPendingJobs(snap: StatusSnapshot): void {
     return;
   }
   if (pending > episodeMaxPendingJobsSig.get()) episodeMaxPendingJobsSig.set(pending);
+}
+
+/**
+ * 813 §20 — track the enrichment episode's settle trail (see {@link AiState.enrichSettleSamples}).
+ * Mirrors {@link stampEpisodeMaxPendingJobs}: imperative-on-input, never written from a `computed`,
+ * and phase-gated through the ONE progress authority rather than a private phase re-derivation.
+ *
+ * The settled sum comes from `enrichSettledSum`, the same stage set `selectIndexingProgress` blends
+ * into the percent — so the estimate this trail backs cannot describe a different quantity than the
+ * bar it is rendered beside. The empty-array reset is guarded on length because a fresh `[]` is
+ * never `Object.is`-equal to the old one, and an unconditional write would invalidate the memoized
+ * snapshot on every idle poll.
+ */
+function stampEnrichSettleSamples(snap: StatusSnapshot): void {
+  if (selectIndexingPhase(snap) !== 'enriching') {
+    if (enrichSettleSamplesSig.get().length > 0) enrichSettleSamplesSig.set(NO_ENRICH_SAMPLES);
+    return;
+  }
+  const next = [...enrichSettleSamplesSig.get(), { t: Date.now(), settled: enrichSettledSum(snap) }];
+  enrichSettleSamplesSig.set(next.slice(-ENRICH_SETTLE_SAMPLE_CAP));
 }
 
 function checkStaleness(): void {
@@ -1091,6 +1136,7 @@ export function __feedForTest(opts: {
       lastStatusSuccessSig.set(Date.now());
       stampSettledIndex(opts.status); // E2 — mirror the production poll-callback stamp.
       stampEpisodeMaxPendingJobs(opts.status); // 813 §19 W2 — same mirror, same reason.
+      stampEnrichSettleSamples(opts.status); // 813 §20 — same mirror, same reason.
     }
   }
   if (opts.inference !== undefined) {
@@ -1129,6 +1175,7 @@ export function __resetAiStateForTest(): void {
   packStatusSig.set(null);
   lastSettledIndexSig.set(null);
   episodeMaxPendingJobsSig.set(0);
+  enrichSettleSamplesSig.set(NO_ENRICH_SAMPLES);
   clockTickSig.set(0);
   loadStartedAtSig.set(null);
   __resetOriginContactForTest();

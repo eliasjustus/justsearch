@@ -520,6 +520,7 @@ export class StatusDeck extends JfElement {
       this.status,
       this.aiState?.snapshotLive ?? false,
       this.aiState?.episodeMaxPendingJobs ?? 0,
+      this.aiState?.enrichSettleSamples ?? [],
     );
     const embeddingBlocked = idx ? orElse(idx.embeddingBlocked, false) : false;
     const queue = progress.jobsPending;

@@ -253,7 +253,16 @@ Three decisions that agent work should not make unilaterally. Nothing below is u
 release-blocking sense — round 14 found no blocking product defect — but T-C cannot start and the
 0.2.0 call cannot be made without them.
 
-1. **F1 — installer sidebar artwork scope.** Round 14 F1 (LOW): text branding on the MUI
+1. **F1 — installer sidebar artwork scope. CLOSED 2026-08-06.** The owner settled it in the
+   identity direction: artwork **is** in scope, and the visual-identity kernel (tempdoc 815)
+   implements it. The Welcome/Finish sidebar is now `nsis/sidebar.bmp` and the interior header
+   `nsis/header.bmp`, both generated from `brand/` by `node brand/generate.mjs` and wired through
+   `bundle.windows.nsis.{sidebarImage,headerImage,installerIcon}`; the stock NSIS `win.bmp` and the
+   stock Tauri `icon.ico`/`icon.icns` are gone. What a healthy Welcome page looks like is no longer
+   a judgement call for a round to make — `check-installer-branding.mjs` fails the build if any of
+   those entries is unset, missing, the wrong pixel size, or byte-identical to the framework
+   placeholder. Original finding text, kept for the record:
+   Round 14 F1 (LOW): text branding on the MUI
    Welcome/Finish pages is present and correct, and interior pages carry a JustSearch header icon,
    but the Welcome/Finish **sidebar bitmap is the stock NSIS `win.bmp`**. The round could not
    determine whether 807 E.1's fix was scoped to text only or was meant to include artwork,
