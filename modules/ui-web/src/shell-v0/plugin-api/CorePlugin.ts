@@ -90,6 +90,17 @@ const CORE_SURFACES: PluginSurfaceContribution[] = [
     audience: 'DEVELOPER',
     placement: 'DEEPLINK',
   },
+  // Tempdoc 818 slice 1 — Search v2: the from-scratch window skeleton, built beside the shipped
+  // window so the comparison is empirical. DEVELOPER/DEEPLINK and deliberately off-rail (a visible
+  // peer would recreate the defect 687 deleted); it is not user-reachable until the §5 cutover.
+  {
+    id: 'core.search-v2-surface',
+    mountTag: 'jf-search-v2',
+    labelKey: 'registry-surface.search-v2-surface.label',
+    descriptionKey: 'registry-surface.search-v2-surface.description',
+    audience: 'DEVELOPER',
+    placement: 'DEEPLINK',
+  },
   {
     id: 'core.brain-surface',
     mountTag: 'jf-brain-surface',
