@@ -544,6 +544,54 @@ describe('HealthSurface — Queue card status vocabulary (630 D1)', () => {
     }
   });
 
+  /**
+   * Round-15 F1, on the Queue card: the same terminal close, reached the same wrong way. With no
+   * embedding model nothing can be queued, so job-drain + `indexHealthy` alone used to land on the
+   * coverage-complete "Up to date" over an index with zero vectors. Enrichment block verbatim from
+   * the round's captured `/api/status` (`evidence/api-history/20260807-011454/api-api-status.json`).
+   */
+  it('F1: no embedding model ⇒ no "Up to date" close over coverage that was never built', async () => {
+    __feedForTest({
+      status: {
+        worker: {
+          core: { indexState: 'IDLE', indexedDocuments: 5, pendingJobs: 0, indexHealthy: true },
+          enrichment: {
+            backfillMode: 'idle',
+            embeddingEnabled: false,
+            spladeEnabled: false,
+            nerEnabled: false,
+            embeddingDocCount: 5,
+            embeddingPendingCount: 5,
+            embeddingCoveragePercent: 0,
+            spladeDocCount: 5,
+            spladePendingCount: 5,
+            pendingNerCount: 5,
+            completedNerCount: 0,
+            chunk: { chunkDocCount: 2, chunkEmbeddingPendingCount: 2, chunkVectorsReady: false },
+          },
+        },
+        readiness: {
+          composites: {
+            retrieval: { state: 'READY', reasonCodes: [] },
+            aiFeatures: { state: 'READY', reasonCodes: [] },
+          },
+        },
+      } as unknown as StatusSnapshot,
+    });
+    __tickClockForTest();
+    const el = await mount();
+    try {
+      const subs = queueSubs(el);
+      expect(subs).not.toContain('Up to date');
+      expect(subs).toContain('Semantic search waiting for AI install');
+      // Nothing is progressing, so no percent and no "Building…" present tense.
+      expect(subs.join(' ')).not.toContain('Building semantic search');
+      expect(subs.join(' ')).not.toContain('%');
+    } finally {
+      teardown(el);
+    }
+  });
+
   it('queued work ⇒ "Indexing"', async () => {
     feed({ indexedDocuments: 5, pendingJobs: 5, indexHealthy: true });
     const el = await mount();

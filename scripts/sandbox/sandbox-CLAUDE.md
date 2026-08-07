@@ -269,6 +269,16 @@ Two staged tools make rounds repeatable and make coverage fail closed:
   identifiable (e.g. `NN-security-panel.png`, `NN-rag-ask-answer.png`); **surface
   coverage is credited from screenshots only** (image files), never from the API-JSON
   snapshots the harness also writes there.
+  **The match is a literal substring of the filename against a per-surface
+  `evidenceToken`, not a semantic check** — for the chat/search escalation-ladder
+  surface (`core.unified-chat-surface`), the required token is `unified-chat`
+  (derived mechanically from the surface id: strip `core.` and `-surface`).
+  Round 15 screenshotted that surface heavily under names like `09-tour-step2.png`
+  and never once used the literal substring `unified-chat`, so a genuinely
+  well-covered surface read as uncovered at finalize. **Every chat-surface capture's
+  filename must contain `unified-chat`** (e.g. `12-unified-chat-search.png`,
+  `13-unified-chat-ask-answer.png`) — do not rely on a looser word like "chat" or
+  "search" alone to satisfy this token.
 - **At finalize (host-side)**, the round's coverage is asserted by diffing the
   must-touch set against the exercised endpoints + screenshots. Because the sandbox
   has no Python, this runs on the **host** against the persisted evidence dir after the
@@ -615,7 +625,12 @@ Used twice (round 9 and round 10, tempdoc 734) to reclassify a blocker as
 **build-level** (reproduces on a pristine install, nothing to do with the
 upgrade) vs **upgrade-specific** (only reproduces against carried-over user
 state): stop all four processes (see *Restart cycles* above — the Tauri shell,
-Head `javaw.exe`, Worker `java.exe`, and `llama-server.exe` if active), rename
+Head `javaw.exe`, Worker `java.exe`, and `llama-server.exe` if active), **first
+copy the current `%APPDATA%\io.justsearch.shell\telemetry\traces.ndjson` to a
+timestamped safe name under `evidence\`** (e.g.
+`Copy-Item "$env:APPDATA\io.justsearch.shell\telemetry\traces.ndjson"
+"evidence\traces-pre-rename-$(Get-Date -Format 'yyyyMMddTHHmmssZ').ndjson"`
+— skip silently if the file does not exist yet), rename
 `%APPDATA%\io.justsearch.shell` aside (e.g. to `io.justsearch.shell.bak` —
 rename, do not delete, so the original round's data is recoverable), relaunch
 the candidate against the now-pristine (non-existent) data dir, and re-test the
@@ -624,6 +639,24 @@ is build-level, not an upgrade artifact — restore the renamed-aside directory
 afterwards to resume the original round on its real data. This is what turned
 round 10's F7 ("upgrade defect?") into "shipped-UI blocker, reproduced on a
 pristine data dir" — that round's single highest-value diagnostic act.
+
+**Why the explicit copy matters (round 15, tempdoc 817 finding 5):** the
+pristine instance launched against the renamed-aside (non-existent) data dir
+writes its OWN fresh, short `traces.ndjson` from scratch. `collect-evidence.ps1`
+now auto-archives the evidence-root copy to `evidence\api-history\` before an
+overwrite when the existing copy's first span predates the new file's first
+span (so a plain re-run after restoring the real data dir will not silently
+lose the earlier record) — but the round's own explicit copy above is still the
+first line of defence, taken at the moment of highest risk (right before the
+rename), not after the fact. Round 15's F1 reproduction skipped this and a
+subsequent `collect-evidence.ps1` run copied the pristine instance's ~7-minute-
+short trace over the round's full trace record; the finalize coverage check
+then reported four false "uncovered" items because the real spans were gone.
+**After restoring the renamed-aside directory, run the host-side coverage
+check against the UNION of `evidence\traces.ndjson`, any
+`evidence\traces-pre-rename-*.ndjson` you saved, and anything
+`collect-evidence.ps1` auto-archived under `evidence\api-history\` —
+not against the root file alone.**
 
 ### Verify-the-active-surface-before-clicking (GUI capture)
 
@@ -735,6 +768,26 @@ screenshot, credit-eligible and required in `examined` like any other.
 De-duplicating at capture time (only write on visible change, not on a fixed
 interval) is the better fix when a driver can do it; `raw-frames/` is the
 fallback for drivers that can't or didn't.
+
+**Investigation that happens AFTER finalize writes screenshots/notes into
+`evidence/post-round/`, not the evidence root (round 15, tempdoc 817).** A
+round's evidence review is complete and correct at the moment the round
+finalizes — but the same mapped share can outlive that finalize, and a later
+same-share investigation session (e.g. following up on a filed finding) can
+add new screenshots into the same evidence dir. Round 15's finalized review
+was already complete when a post-finalize investigation added ~52 new
+screenshots, and re-running `check_coverage.py` afterward failed the
+already-correct, already-finalized review as incomplete, because none of the
+new files could have been (or needed to be) in that review's `examined` list.
+Same treatment as `raw-frames/` above: write post-finalize investigation
+output into a subdirectory literally named `post-round/` (direct child of
+`evidence/`) — `check_coverage.py` still counts it as present evidence
+(nothing hidden or deleted) but excludes it from the credit-eligible set: not
+required in `examined`, and it cannot satisfy a `mustTouch` surface/shape
+token by itself. If a post-round capture turns out to genuinely matter to the
+original round's coverage, that is itself a sign the original review should
+be revisited, not silently patched by dropping a new file into the old
+evidence dir.
 
 `evidence/evidence-review.v1.json` is checked at finalize (see *Coverage &
 evidence* above) and the round **fails closed** if it is missing, malformed,

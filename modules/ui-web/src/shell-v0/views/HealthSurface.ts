@@ -57,7 +57,10 @@ import { formatRelativeMs } from '../../utils/relativeTime.js';
 import { type Maybe, UNKNOWN } from '../state/known.js';
 import { unavailableBecause } from '../state/availability.js';
 import { selectIndexingProgress } from '../state/indexingProgress.js';
-import { ENRICHMENT_IN_PROGRESS_LABEL } from '../state/enrichmentCoverage.js';
+import {
+  ENRICHMENT_BLOCKED_LABEL,
+  ENRICHMENT_IN_PROGRESS_LABEL,
+} from '../state/enrichmentCoverage.js';
 import { present } from '../display/present.js';
 import { projectFact } from '../display/facts.js';
 import { formatBytes, formatCount } from '../display/format.js';
@@ -877,6 +880,9 @@ export class HealthSurface extends JfElement {
         ? ENRICHMENT_IN_PROGRESS_LABEL
         : `${ENRICHMENT_IN_PROGRESS_LABEL} — ${progress.enrichingPercent}%`;
     }
+    // Round-15 F1 — "Up to date" is the COVERAGE-complete close (813 §4), so it may not be reached by
+    // a coverage the system never built and cannot build. No percent: nothing is progressing.
+    if (progress.phase === 'blocked') return ENRICHMENT_BLOCKED_LABEL;
     // Idle + a verified-healthy index ⇒ the explicit terminal "Up to date"; otherwise stay honest
     // with "Idle" (don't claim up-to-date when health isn't confirmed).
     return this.status?.worker?.core?.indexHealthy === true ? 'Up to date' : 'Idle';

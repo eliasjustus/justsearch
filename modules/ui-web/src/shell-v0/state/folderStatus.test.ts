@@ -35,12 +35,14 @@ const ctx = (
     provisional: boolean;
     enrichmentStages: { embedding: boolean; splade: boolean; ner: boolean } | null;
     enrichmentPending: boolean;
+    enrichmentBlocked: boolean;
   }> = {},
 ) => ({
   relativeTime: 'just now',
   verifiedRelativeTime: '',
   provisional: false,
   enrichmentPending: false,
+  enrichmentBlocked: false,
   ...over,
 });
 
@@ -49,6 +51,17 @@ const ALL_STAGES = { embedding: true, splade: true, ner: true };
 
 /** The shared caveat wording, authored once in `enrichmentCoverage.ts` (809 finding 2). */
 const CAVEAT = 'keyword search ready · semantic search still catching up';
+
+/** Its round-15 F1b twin: the semantic stage cannot run at all. */
+const BLOCKED_CAVEAT = 'keyword search ready · semantic search waiting for AI install';
+
+/**
+ * The applicability the round captured: no embedding service ⟹ every stage inapplicable. Note that
+ * this is ALSO what a fully-enriched index looks like after the model is deleted — the two states
+ * are indistinguishable by flags, which is why the row consults the index-wide blocked evidence
+ * rather than the flags themselves.
+ */
+const NO_STAGES = { embedding: false, splade: false, ner: false };
 
 describe('folderStatus', () => {
   it('a searchable tier ⟹ inFlight === 0 && failed === 0 (the core invariant)', () => {
@@ -266,6 +279,56 @@ describe('folderStatus — per-root enrichment tier (813 §4)', () => {
     expect(fs.metaText).toBe(
       'default · 312 files · fully searchable · indexed 2 minutes ago · Verified just now',
     );
+  });
+
+  /**
+   * Round-15 F1b — the Library row's half of F1. At 0% coverage with no embedding model the row
+   * rendered "scifact ✓ — default · 5184 files · indexed 4m ago · Verified just now": a green check
+   * and a freshness heartbeat with NO semantic qualifier, because every stage being inapplicable
+   * leaves `rootCoverage` null — the same shape as "coverage not derivable yet".
+   */
+  it('F1b: no embedding model ⟹ the row is qualified, not an unadorned "✓ … Verified just now"', () => {
+    const fs = folderStatus(
+      covered({
+        parentDocsSettledEmbedding: 0,
+        parentDocsSettledSplade: 0,
+        parentDocsSettledNer: 0,
+        chunkDocsSettled: 0,
+      }),
+      ctx({
+        relativeTime: '4 minutes ago',
+        verifiedRelativeTime: 'just now',
+        enrichmentStages: NO_STAGES,
+        enrichmentBlocked: true,
+      }),
+    );
+    expect(fs.state).toBe('keyword-only');
+    expect(fs.glyph).not.toBe('indexed');
+    expect(fs.metaText).toContain(BLOCKED_CAVEAT);
+    expect(fs.metaText).not.toContain('fully searchable');
+    // Never a fabricated number: no stage is countable, so no percent may be shown.
+    expect(fs.metaText).not.toContain('%');
+    // The heartbeat itself is still true and still shown — the defect was its being UNQUALIFIED.
+    expect(fs.metaText).toBe(`default · 312 files · ${BLOCKED_CAVEAT} · Verified just now`);
+  });
+
+  it('F1-repro BOUNDARY: same flags, vectors persisted ⟹ the row stays terminal', () => {
+    // The round's non-reproducing first attempt: model deleted after enrichment finished. Nothing is
+    // outstanding index-wide, so `enrichmentBlocked` is false and the row must not acquire a caveat
+    // for work that does not exist.
+    const fs = folderStatus(
+      covered(),
+      ctx({
+        relativeTime: '4 minutes ago',
+        verifiedRelativeTime: 'just now',
+        enrichmentStages: NO_STAGES,
+        enrichmentBlocked: false,
+      }),
+    );
+    expect(fs.state).toBe('ready');
+    expect(fs.glyph).toBe('indexed');
+    expect(fs.metaText).not.toContain(BLOCKED_CAVEAT);
+    expect(fs.metaText).toContain('Verified just now');
   });
 
   it('arm b outranks the index-wide boolean — a complete root is done while OTHER roots enrich', () => {

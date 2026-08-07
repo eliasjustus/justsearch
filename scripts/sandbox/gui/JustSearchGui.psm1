@@ -382,30 +382,14 @@ function Get-AppApiPort {
   return $null
 }
 
-function Assert-AppSurface {
-  # Assert-then-act: fetches GET /api/action-ledger and checks that the most
-  # recent NAVIGATION entry's targetSurface matches $ExpectedSurface. Throws
-  # (terminating error) on mismatch or on any fetch failure -- this is meant
-  # to distinguish "the click was a silent no-op" from "the surface changed
-  # but not to the one we expected" for a caller that just drove a nav click.
-  #
-  # $ExpectedSurface accepts either a bare surface id (e.g. "core.library")
-  # or a full justsearch://surface/<id>[?...] address -- the justsearch://
-  # scheme prefix and any query string are stripped before comparing, since
-  # the ledger's wire row (ActionLedgerProjection.toWireRow) carries the bare
-  # SurfaceRef id in "targetSurface", not the full address.
-  #
-  # Wire shape actually returned by the controller (verified against
-  # modules/ui/.../ActionLedgerController.java + app-observability's
-  # ActionLedgerProjection.java, NOT the "subject" field the brief assumed):
-  #   GET /api/action-ledger -> { entries: [ { kind, occurredAt, originator,
-  #     transport, ..., targetSurface, sourceId } ] }, oldest first (most
-  #   recent last). Navigation rows carry kind == "navigation" and
-  #   "targetSurface" -- there is no "subject" field on a navigation row
-  #   (only Grant/Effect rows carry "subject").
+function Get-AppSurfaceLedgerEntries {
+  # Fetches GET /api/action-ledger and returns the raw @($resp.entries) array.
+  # Split out of Assert-AppSurface so the predicate below (Test-AppNavigationEntry
+  # + the entry-selection/comparison logic) can be exercised against a captured
+  # fixture payload without an HTTP round-trip -- see
+  # scripts/sandbox/gui/test-assert-app-surface.ps1.
   [CmdletBinding()]
   param(
-    [Parameter(Mandatory = $true)][string]$ExpectedSurface,
     [int]$ApiPort,
     [string]$BaseUrl,
     [string]$DataDir = "$env:APPDATA\io.justsearch.shell",
@@ -417,14 +401,9 @@ function Assert-AppSurface {
       $port = Get-AppApiPort -DataDir $DataDir
     }
     if (-not $port) {
-      throw "Assert-AppSurface: could not resolve an API port -- pass -ApiPort or -BaseUrl explicitly (no manifest.json found under '$DataDir')"
+      throw "Get-AppSurfaceLedgerEntries: could not resolve an API port -- pass -ApiPort or -BaseUrl explicitly (no manifest.json found under '$DataDir')"
     }
     $BaseUrl = "http://127.0.0.1:$port"
-  }
-
-  $expectedId = $ExpectedSurface
-  if ($expectedId -match '^justsearch://surface/([^?]+)') {
-    $expectedId = $Matches[1]
   }
 
   $url = "$BaseUrl/api/action-ledger"
@@ -445,21 +424,102 @@ function Assert-AppSurface {
     if ($respBody) {
       $detail = "$detail body: $respBody"
     }
-    throw "Assert-AppSurface: GET $url failed: $detail"
+    throw "Get-AppSurfaceLedgerEntries: GET $url failed: $detail"
+  }
+  return @($resp.entries)
+}
+
+function Get-AppSurfaceFromLedgerEntry {
+  # Extracts the navigated-to surface id from ONE action-ledger entry, or
+  # $null if the entry is not a navigation of either recognized shape (see
+  # Assert-AppSurface below for why there are two).
+  [CmdletBinding()]
+  param([Parameter(Mandatory = $true)]$Entry)
+  if ($Entry.kind -eq 'navigation') {
+    return $Entry.targetSurface
+  }
+  if ($Entry.kind -eq 'effect' -and $Entry.effectKind -eq 'navigate') {
+    $surface = $Entry.subject
+    if ($surface -match '^justsearch://surface/([^?]+)') {
+      return $Matches[1]
+    }
+    return $surface
+  }
+  return $null
+}
+
+function Assert-AppSurface {
+  # Assert-then-act: fetches GET /api/action-ledger (or takes a pre-fetched
+  # -Entries array, for self-testing -- see test-assert-app-surface.ps1) and
+  # checks that the most recent NAVIGATION entry's target surface matches
+  # $ExpectedSurface. Throws (terminating error) on mismatch or on any fetch
+  # failure -- this is meant to distinguish "the click was a silent no-op"
+  # from "the surface changed but not to the one we expected" for a caller
+  # that just drove a nav click.
+  #
+  # $ExpectedSurface accepts either a bare surface id (e.g. "core.library")
+  # or a full justsearch://surface/<id>[?...] address -- the justsearch://
+  # scheme prefix and any query string are stripped before comparing.
+  #
+  # TWO entry shapes both count as "a navigation" (round 15 finding, tempdoc
+  # 798): this function used to check ONLY `kind == "navigation"` with a
+  # "targetSurface" field, which is the shape ActionLedgerProjection.java
+  # emits for a BACKEND-driven navigation (routed through
+  # BackendIntentRouterImpl, e.g. an agent/MCP-initiated nav) -- but the GUI
+  # harness drives the REAL shell via raw pixel clicks, and a normal human
+  # navigation click never goes through that backend path at all. It is
+  # FE-local (the client-side router), and the FE bridges it into the SAME
+  # ledger via `POST /api/action-ledger/events` (ActionLedgerClient.ts
+  # startEffectIngest), which lands as an ActionEvent.Effect row:
+  # `kind == "effect"`, `effectKind == "navigate"`, `subject == "<route>"`
+  # (verified against modules/app-observability/.../ActionLedgerProjection.java
+  # toWireRow's `case ActionEvent.Effect` branch: m.put("effectKind", ...),
+  # m.put("subject", ...) -- there is no "targetSurface" on an Effect row).
+  # A round-15 GUI click observed exactly this shape:
+  # {"kind":"effect","effectKind":"navigate","subject":"justsearch://surface/core.unified-chat-surface"}
+  # -- the old kind=="navigation"-only predicate found ZERO matching entries
+  # for every GUI-driven navigation and threw "no navigation entries in
+  # action-ledger" on clicks that had genuinely succeeded. Both shapes are
+  # now recognized (Get-AppSurfaceFromLedgerEntry above); the "subject" field
+  # on an effect/navigate row is parsed the same way "targetSurface" always
+  # was (justsearch://surface/<id> -> <id>).
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)][string]$ExpectedSurface,
+    [int]$ApiPort,
+    [string]$BaseUrl,
+    [string]$DataDir = "$env:APPDATA\io.justsearch.shell",
+    [int]$TimeoutSec = 10,
+    # Self-test seam: when supplied, skips the HTTP fetch entirely and uses
+    # this array as the ledger's entries -- see
+    # scripts/sandbox/gui/test-assert-app-surface.ps1.
+    [object[]]$Entries
+  )
+  $expectedId = $ExpectedSurface
+  if ($expectedId -match '^justsearch://surface/([^?]+)') {
+    $expectedId = $Matches[1]
   }
 
-  $entries = @($resp.entries)
-  $navEntries = @($entries | Where-Object { $_.kind -eq 'navigation' })
+  if ($PSBoundParameters.ContainsKey('Entries')) {
+    $entries = @($Entries)
+  } else {
+    $entries = Get-AppSurfaceLedgerEntries -ApiPort $ApiPort -BaseUrl $BaseUrl -DataDir $DataDir -TimeoutSec $TimeoutSec
+  }
+
+  $navEntries = @($entries | Where-Object {
+      ($_.kind -eq 'navigation') -or ($_.kind -eq 'effect' -and $_.effectKind -eq 'navigate')
+    })
   if ($navEntries.Count -eq 0) {
     throw "Assert-AppSurface: no navigation entries in action-ledger (expected surface '$expectedId')"
   }
   # Entries are oldest-first, most recent last (controller doc comment) --
   # the last navigation entry is the most recent navigation.
   $last = $navEntries[$navEntries.Count - 1]
-  if ($last.targetSurface -ne $expectedId) {
-    throw "Assert-AppSurface: most recent navigation targetSurface='$($last.targetSurface)' occurredAt=$($last.occurredAt) does not match expected '$expectedId'"
+  $actualSurface = Get-AppSurfaceFromLedgerEntry -Entry $last
+  if ($actualSurface -ne $expectedId) {
+    throw "Assert-AppSurface: most recent navigation (kind='$($last.kind)') resolved surface='$actualSurface' occurredAt=$($last.occurredAt) does not match expected '$expectedId'"
   }
-  Write-Host "Assert-AppSurface: OK -- targetSurface='$($last.targetSurface)' occurredAt=$($last.occurredAt)"
+  Write-Host "Assert-AppSurface: OK -- kind='$($last.kind)' surface='$actualSurface' occurredAt=$($last.occurredAt)"
   return $last
 }
 
@@ -475,4 +535,6 @@ Export-ModuleMember -Function `
   Save-DesktopShot, `
   Save-AppShotRegion, `
   Get-AppApiPort, `
+  Get-AppSurfaceLedgerEntries, `
+  Get-AppSurfaceFromLedgerEntry, `
   Assert-AppSurface

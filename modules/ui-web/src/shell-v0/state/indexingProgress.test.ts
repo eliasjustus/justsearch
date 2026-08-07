@@ -343,8 +343,15 @@ describe('selectIndexingProgress — denominator honesty', () => {
 
   it('the CHUNK tier is gated on the embedding stage — same encoder, same applicability', () => {
     // Embedding off (no embedding service, or switched off): chunk vectors come from that same
-    // encoder, so their pending count NEVER settles. Counting them left the deployment permanently
-    // `enriching` — "Up to date" / "System idle" / "fully searchable" unreachable forever.
+    // encoder, so their pending count NEVER settles. Counting them into the BLEND left the
+    // deployment permanently `enriching` — "Up to date" / "System idle" / "fully searchable"
+    // unreachable forever, with a percent frozen at a number that would never move.
+    //
+    // Round-15 F1 REVISED the phase this case yields, not the exclusion it is about: the blend and
+    // the percent still exclude the stage (asserted below, unchanged), but zero REACHABLE work is
+    // not completion when the reason it is zero is that the stage does not exist. `blocked` keeps
+    // everything the original expectation was protecting — no frozen percent, no ETA, no permanent
+    // "still improving" — while refusing the completion claim the old `ready` licensed.
     const p = select(
       snapshot({
         core: { indexState: 'IDLE', pendingJobs: 0 },
@@ -358,9 +365,13 @@ describe('selectIndexingProgress — denominator honesty', () => {
       }),
       true,
     );
-    expect(p.phase).toBe('ready');
+    expect(p.phase).toBe('blocked');
     expect(p.enrichingPending).toBe(0);
     expect(p.enrichingPercent).toBeNull();
+    expect(p.enrichingEtaSeconds).toBeNull();
+    expect(p.enrichingStages).toEqual([]);
+    // The evidence the phase was decided on: the parent stage's 100 + the chunk tier's 400.
+    expect(p.blockedPending).toBe(500);
   });
 
   it('pending work with no denominator still withholds the terminal phase (positive evidence)', () => {
@@ -906,5 +917,138 @@ describe('selectIndexingProgress — enrichment estimate (813 §20)', () => {
       },
     });
     expect(select(withIndexRate, true, 0, []).enrichingEtaSeconds).toBeNull();
+  });
+});
+
+/**
+ * Round-15 F1/F1b (sandbox validation of 0.2.0, 2026-08-07) — the `unreachable-seed-green` case.
+ *
+ * The build under test rendered "Ready — fully searchable / Everything is indexed and enriched" over
+ * an index with ZERO enriched documents, and the Library row a bare green "Verified just now",
+ * because every enrichment stage was inapplicable (no embedding service ⟹
+ * `KnowledgeServer.java:1216` wires `embedding/splade/ner = false`) and the applicability filter
+ * discounted their pending counters — leaving no evidence of outstanding work anywhere in the
+ * projection, which `derivePhase` then read as `ready`.
+ *
+ * The fixture below is the enrichment block of the round's own captured `/api/status`
+ * (`evidence/api-history/20260807-011454/api-api-status.json`), verbatim — including the three
+ * `*Enabled: false` flags that are the mechanism. The headline F1 moment
+ * (`evidence/api-knowledge-status-during-install.json`: 5,189 docs, `NO_EMBEDDING_MODEL`,
+ * `embeddingCoveragePercent 0.0`, `pendingNerCount 5189`) is the same shape at a larger scale, and
+ * this derivation is scale-free.
+ */
+describe('selectIndexingProgress — round-15 F1: coverage 0 + no model + empty queue', () => {
+  /** The captured enrichment block, verbatim. */
+  const F1_ENRICHMENT = {
+    backfillMode: 'idle',
+    embeddingEnabled: false,
+    spladeEnabled: false,
+    nerEnabled: false,
+    embeddingDocCount: 5,
+    embeddingPendingCount: 5,
+    embeddingCoveragePercent: 0,
+    spladeDocCount: 5,
+    spladePendingCount: 5,
+    spladeCoveragePercent: 0,
+    pendingNerCount: 5,
+    completedNerCount: 0,
+    chunk: { chunkDocCount: 2, chunkEmbeddingPendingCount: 2, chunkVectorsReady: false },
+  } as const;
+
+  const f1Snapshot = (): StatusResponse =>
+    snapshot({ core: { indexState: 'IDLE', pendingJobs: 0 }, enrichment: { ...F1_ENRICHMENT } });
+
+  const f1 = (): ReturnType<typeof selectIndexingProgress> => select(f1Snapshot(), true);
+
+  it('THE defect: nothing enriched and nothing queued does NOT read as the terminal phase', () => {
+    expect(f1().phase).not.toBe('ready');
+    expect(f1().phase).toBe('blocked');
+  });
+
+  it('right-reason guard: the queue really is empty and every stage really is excluded', () => {
+    const p = f1();
+    // Without these, the case above could pass for a reason that is not the defect.
+    expect(p.jobsPending).toBe(0);
+    expect(p.enrichingPending).toBe(0);
+    expect(p.enrichingStages).toEqual([]);
+    expect(p.stages).toEqual({ embedding: false, splade: false, ner: false });
+    // ...and the evidence deciding `blocked` is the SEMANTIC backlog: 5 parent docs + 2 chunk docs.
+    expect(p.blockedPending).toBe(7);
+  });
+
+  it('claims no number it cannot support — no percent, no estimate, no fabricated 0%', () => {
+    const p = f1();
+    expect(p.enrichingPercent).toBeNull();
+    expect(p.enrichingEtaSeconds).toBeNull();
+    expect(p.indexingPercent).toBeNull();
+  });
+
+  it('the phase-only selector agrees (one derivation, two entry points)', () => {
+    expect(selectIndexingPhase(f1Snapshot())).toBe('blocked');
+  });
+
+  // F1-repro's FIRST attempt, which did NOT reproduce — recorded by the round as informative and
+  // pinned here as the boundary: model-absent alone is not the trigger. Vectors already persisted in
+  // the index survive the model's removal, so nothing is outstanding and completion is TRUE.
+  it('BOUNDARY: coverage complete with the model since removed still reads complete', () => {
+    const p = select(
+      snapshot({
+        core: { indexState: 'IDLE', pendingJobs: 0 },
+        enrichment: {
+          backfillMode: 'idle',
+          embeddingEnabled: false,
+          spladeEnabled: false,
+          nerEnabled: false,
+          embeddingDocCount: 5191,
+          embeddingPendingCount: 0,
+          embeddingCoveragePercent: 100,
+          spladeDocCount: 5191,
+          spladePendingCount: 0,
+          completedNerCount: 5191,
+          pendingNerCount: 0,
+          chunk: { chunkDocCount: 1557, chunkEmbeddingPendingCount: 0, chunkVectorsReady: true },
+        },
+      }),
+      true,
+    );
+    expect(p.phase).toBe('ready');
+    expect(p.blockedPending).toBe(0);
+  });
+
+  // The applicability filter's original subject (813 review F1) is untouched: a deployment running
+  // with SPLADE switched off is not "blocked" — only the SEMANTIC stage's absence is, because only
+  // it is what the completion claim and the words "semantic search" rest on.
+  it('BOUNDARY: SPLADE off with embedding running is ordinary completion, not blocked', () => {
+    const p = select(
+      snapshot({
+        core: { indexState: 'IDLE', pendingJobs: 0 },
+        enrichment: {
+          backfillMode: 'idle',
+          embeddingEnabled: true,
+          embeddingDocCount: 100,
+          embeddingPendingCount: 0,
+          spladeEnabled: false,
+          spladeDocCount: 100,
+          spladePendingCount: 100,
+        },
+      }),
+      true,
+    );
+    expect(p.phase).toBe('ready');
+    expect(p.enrichingPercent).toBe(100);
+    expect(p.blockedPending).toBe(0);
+  });
+
+  // Precedence: a running job queue is still the headline — `blocked` describes what happens AFTER
+  // the drain, so it must not pre-empt the countdown the user is watching.
+  it('an active job queue outranks the blocked arm', () => {
+    const p = select(
+      snapshot({
+        core: { indexState: 'INDEXING', pendingJobs: 42 },
+        enrichment: { ...F1_ENRICHMENT },
+      }),
+      true,
+    );
+    expect(p.phase).toBe('indexing');
   });
 });
