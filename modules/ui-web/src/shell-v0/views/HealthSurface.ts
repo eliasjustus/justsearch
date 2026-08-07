@@ -870,6 +870,7 @@ export class HealthSurface extends JfElement {
       this.status,
       this.aiState?.snapshotLive ?? false,
       this.aiState?.episodeMaxPendingJobs ?? 0,
+      this.aiState?.enrichSettleSamples ?? [],
     );
     if (progress.phase === 'enriching') {
       return progress.enrichingPercent === null
@@ -893,6 +894,7 @@ export class HealthSurface extends JfElement {
       this.status,
       this.aiState?.snapshotLive ?? false,
       this.aiState?.episodeMaxPendingJobs ?? 0,
+      this.aiState?.enrichSettleSamples ?? [],
     ).jobsPending;
     const memColor = memRatio > 0.9 ? 'red' : memRatio > 0.8 ? 'amber' : 'green';
     const memDot = memRatio > 0.9 ? 'error' : memRatio > 0.8 ? 'warning' : 'healthy';

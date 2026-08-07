@@ -208,6 +208,7 @@ export class SystemSelfView extends JfElement {
       this.aiState?.status,
       this.aiState?.snapshotLive ?? false,
       this.aiState?.episodeMaxPendingJobs ?? 0,
+      this.aiState?.enrichSettleSamples ?? [],
     );
     // On the projection's `unknown` arm the worker reported nothing, so there is no honest split to
     // show — the section keeps its label and drops the numbers rather than rendering a fabricated

@@ -249,8 +249,20 @@ public final class BackfillScheduler {
           log.debug("Tight backfill loop: {} consecutive batches", tightLoopBatches[0]);
         }
       } else {
+        // Pre-stamped BEFORE the pass runs on purpose: mid-pass observability is the gauge's whole
+        // purpose (710 S-B3), so an operator polling DURING a long individual pass must see
+        // "individual" rather than the previous cycle's value.
         OperationalMetrics.getInstance().recordBackfillMode("individual");
-        backfillDidWork = runIndividualBackfills(cycleDeadlineNanos);
+        IndividualOutcome individual = runIndividualBackfills(cycleDeadlineNanos);
+        backfillDidWork = individual.didWork();
+        if (!individual.anyActivity()) {
+          // ...but a pass that ran and advanced NOTHING is exactly what getBackfillMode() documents
+          // as "idle" ("no backfill work was available/eligible last cycle"). Leaving "individual"
+          // standing left a last-known gauge looking like live activity for as long as the worker
+          // stayed idle — the worker half of the owner's 2026-08-07 finding (813 §20a), where a
+          // fully-settled index reported backfillMode="individual" indefinitely.
+          OperationalMetrics.getInstance().recordBackfillMode("idle");
+        }
       }
     } else {
       OperationalMetrics.getInstance().recordBackfillMode("idle");
@@ -321,11 +333,27 @@ public final class BackfillScheduler {
     lastKnownNerCompletedCount = 0;
   }
 
-  private boolean runIndividualBackfills(long cycleDeadlineNanos) {
+  /**
+   * What one individual-backfill pass did, on the two axes this loop keeps deliberately separate.
+   *
+   * <p>{@code didWork} drives the caller's active-vs-truly-idle SLEEP pacing and keeps its exact
+   * historical semantics (only the chunk tight-loop and a SPLADE pass over a non-empty backlog set
+   * it — a parent-embedding batch does not). {@code anyActivity} answers the OPERATOR GAUGE's
+   * different question: did any stage actually advance a document this cycle. Tempdoc 798 already
+   * draws this line for the combined branch ("Mode selection reads ACTIVITY... the tight loop reads
+   * PROGRESS... conflating them is what livelocked ingest"); reusing {@code didWork} for the gauge
+   * would stamp "idle" over a cycle that embedded a batch, which is the same lie in the other
+   * direction.
+   */
+  private record IndividualOutcome(boolean didWork, boolean anyActivity) {}
+
+  private IndividualOutcome runIndividualBackfills(long cycleDeadlineNanos) {
     boolean backfillDidWork = false;
+    boolean anyActivity = false;
     if (embeddingLifecycle.embeddingProvider().isAvailable()) {
       StageOutcome outcome = processEmbeddingBackfill();
       recordStageOutcome(BatchTimingKeys.EMBED, outcome);
+      anyActivity |= outcome.docsProcessed() > 0;
     }
     // Chunk vectors after parent embedding completes. 334 Phase 8 tight loop.
     if (resolvedConfigSupplier.get().rag().chunkVectorsEnabled()) {
@@ -335,6 +363,7 @@ public final class BackfillScheduler {
       if (pendingDocEmbeddings == 0) {
         StageOutcome chunkOutcome = processChunkEmbeddingBackfill();
         recordStageOutcome(BatchTimingKeys.EMBED, chunkOutcome);
+        anyActivity |= chunkOutcome.docsProcessed() > 0;
         boolean chunkDidWork = chunkOutcome.success();
         // Tempdoc 798 review F3: same distinction as the combined loop — a budget hit while chunks
         // were genuinely embedding is a healthy long cycle, not non-convergence.
@@ -363,7 +392,10 @@ public final class BackfillScheduler {
           chunkOutcome = processChunkEmbeddingBackfill();
           recordStageOutcome(BatchTimingKeys.EMBED, chunkOutcome);
           chunkDidWork = chunkOutcome.success();
-          if (chunkOutcome.docsProcessed() > 0) anyChunkProgress = true;
+          if (chunkOutcome.docsProcessed() > 0) {
+            anyChunkProgress = true;
+            anyActivity = true;
+          }
         }
       }
     }
@@ -388,6 +420,7 @@ public final class BackfillScheduler {
       if (embeddingsReady) {
         StageOutcome outcome = processNerBackfill();
         recordStageOutcome(BatchTimingKeys.NER, outcome);
+        anyActivity |= outcome.docsProcessed() > 0;
       }
     }
     // SPLADE after embedding nearly completes (tempdoc 312 item 39, relaxed 334 item 37).
@@ -404,6 +437,7 @@ public final class BackfillScheduler {
                 SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING);
         StageOutcome outcome = processSpladeBackfill();
         recordStageOutcome(BatchTimingKeys.SPLADE, outcome);
+        anyActivity |= outcome.docsProcessed() > 0;
         boolean success = outcome.success();
         recordSpladeBackfillResult(success);
         if (success && spladePendingBefore > 0) {
@@ -411,7 +445,7 @@ public final class BackfillScheduler {
         }
       }
     }
-    return backfillDidWork;
+    return new IndividualOutcome(backfillDidWork, anyActivity);
   }
 
   private void runDisambiguationIfReady(boolean alreadyDidWork) {

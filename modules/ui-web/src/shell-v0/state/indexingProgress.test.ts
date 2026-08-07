@@ -7,7 +7,12 @@
  * denominator).
  */
 import { describe, it, expect } from 'vitest';
-import { selectIndexingProgress } from './indexingProgress.js';
+import {
+  enrichSettledSum,
+  selectIndexingPhase,
+  selectIndexingProgress,
+  type EnrichSettleSample,
+} from './indexingProgress.js';
 import type { StatusResponse } from '../../api/generated/index.js';
 
 type Core = NonNullable<NonNullable<StatusResponse['worker']>['core']>;
@@ -29,17 +34,19 @@ function snapshot(parts: {
 }
 
 /**
- * Call the selector with the store-owned high-water backlog defaulted to 0 — i.e. "no drain has been
- * observed", which is what every case below except the W2 group is about. The parameter is REQUIRED
- * on the production function on purpose (813 §19 W2: a defaulted one would let surfaces derive
- * different percents); this local default keeps the other cases reading about their own subject.
+ * Call the selector with the two store-owned memories defaulted to "nothing observed yet" — no drain
+ * high-water, no enrichment settle trail — which is what every case below except the W2 and §20
+ * groups is about. Both parameters are REQUIRED on the production function on purpose (813 §19 W2 /
+ * §20: a defaulted one would let surfaces derive different numbers); this local default keeps the
+ * other cases reading about their own subject.
  */
 function select(
   status: StatusResponse | null | undefined,
   live: boolean,
   episodeMaxPendingJobs = 0,
+  enrichSettleSamples: readonly EnrichSettleSample[] = [],
 ): ReturnType<typeof selectIndexingProgress> {
-  return selectIndexingProgress(status, live, episodeMaxPendingJobs);
+  return selectIndexingProgress(status, live, episodeMaxPendingJobs, enrichSettleSamples);
 }
 
 describe('selectIndexingProgress — phase arms (813 §3a)', () => {
@@ -76,15 +83,87 @@ describe('selectIndexingProgress — phase arms (813 §3a)', () => {
     expect(p.enrichingPending).toBe(40);
   });
 
-  it('jobs drained and no pending counters, but the backfill is running ⇒ "enriching"', () => {
+  // 813 §20a (owner live finding, 2026-08-07) — INVERTED from the pre-§20a expectation, which read
+  // a non-idle `backfillMode` as activity. The gauge is LAST-KNOWN (written once per
+  // `BackfillScheduler.runIdleCycle()`, held between cycles), so with no pending counter anywhere
+  // there is no evidence of work and the honest phase is the terminal one. The old expectation is
+  // what kept a fully-settled index at "still improving" forever.
+  it('jobs drained and NO pending counters ⇒ "ready", whatever the backfill gauge last said', () => {
+    for (const backfillMode of ['combined', 'individual', 'idle', '']) {
+      const p = select(
+        snapshot({
+          core: { indexState: 'IDLE', pendingJobs: 0 },
+          enrichment: { backfillMode },
+        }),
+        true,
+      );
+      expect(p.phase, `backfillMode=${JSON.stringify(backfillMode)}`).toBe('ready');
+    }
+  });
+
+  // The owner's exact live snapshot: every stage fully settled, gauge stuck on "individual".
+  it('REGRESSION: a fully SETTLED index reaches "ready" while the gauge still says "individual"', () => {
     const p = select(
       snapshot({
         core: { indexState: 'IDLE', pendingJobs: 0 },
-        enrichment: { backfillMode: 'combined' },
+        enrichment: {
+          backfillMode: 'individual',
+          embeddingDocCount: 21,
+          embeddingPendingCount: 0,
+          embeddingEnabled: true,
+          spladeDocCount: 21,
+          spladePendingCount: 0,
+          spladeEnabled: true,
+          completedNerCount: 21,
+          pendingNerCount: 0,
+          nerEnabled: true,
+          chunk: { chunkDocCount: 84, chunkEmbeddingPendingCount: 0 },
+        },
+      }),
+      true,
+    );
+    expect(p.phase).toBe('ready');
+    expect(p.enrichingPending).toBe(0);
+    // Right-reason guard: the stages ARE all counted (so this is not passing because the blend was
+    // empty) and the percent reaches a true 100 — the §20 floor only caps a PENDING tail.
+    expect(p.enrichingStages.map((r) => r.id)).toEqual([
+      'embedding',
+      'splade',
+      'ner',
+      'chunkVectors',
+    ]);
+    expect(p.enrichingPercent).toBe(100);
+  });
+
+  // Evidence wins in BOTH directions: the gauge cannot manufacture work, and it cannot deny it.
+  it('pending work ⇒ "enriching" even while the backfill gauge says "idle"', () => {
+    const p = select(
+      snapshot({
+        core: { indexState: 'IDLE', pendingJobs: 0 },
+        enrichment: {
+          backfillMode: 'idle',
+          embeddingDocCount: 100,
+          embeddingPendingCount: 40,
+          embeddingEnabled: true,
+        },
       }),
       true,
     );
     expect(p.phase).toBe('enriching');
+    expect(p.enrichingPending).toBe(40);
+  });
+
+  // A denominator-less pending counter is still evidence (813 §17) — that arm is unchanged by §20a.
+  it('a denominator-less pending counter still withholds "ready" with the gauge idle', () => {
+    const p = select(
+      snapshot({
+        core: { indexState: 'IDLE', pendingJobs: 0 },
+        enrichment: { backfillMode: 'idle', chunk: { chunkEmbeddingPendingCount: 1554 } },
+      }),
+      true,
+    );
+    expect(p.phase).toBe('enriching');
+    expect(p.enrichingPercent).toBeNull();
   });
 
   it('everything settled ⇒ "ready"', () => {
@@ -520,5 +599,312 @@ describe('selectIndexingProgress — determinate indexing percent (813 §19 W2)'
     expect(select(snapshot({ core: { indexState: 'IDLE', pendingJobs: 0 } }), true, 1600).indexingPercent).toBeNull();
     expect(select(snapshot({ core: { indexState: 'UNAVAILABLE' } }), true, 1600).indexingPercent).toBeNull();
     expect(select(null, false, 1600).indexingPercent).toBeNull();
+  });
+});
+
+/**
+ * 813 §20 — the enriching percent's FLOOR. The owner found a live card reading "100% · semantic
+ * search catching up": a full bar contradicting its own caveat, because `Math.round` promotes a
+ * sub-half-percent tail to 100. A percent that says "finished" beside a phase that says "still
+ * working" is the §1d false terminal wearing a number.
+ */
+describe('selectIndexingProgress — the enriching percent may not fake a 100 (813 §20)', () => {
+  it('caps at 99 while ANY counted work is pending, where Math.round alone would say 100', () => {
+    // Right-reason guard: the unrounded fraction really is above 99.5, so a passing 99 can only come
+    // from the floor rule — not from a fixture that was never near 100 in the first place.
+    expect(Math.round(((600 - 2) / 600) * 100)).toBe(100);
+
+    const p = select(
+      snapshot({
+        core: { indexState: 'IDLE', pendingJobs: 0 },
+        enrichment: {
+          backfillMode: 'idle',
+          embeddingDocCount: 600,
+          embeddingPendingCount: 2,
+          embeddingEnabled: true,
+        },
+      }),
+      true,
+    );
+    expect(p.phase).toBe('enriching');
+    expect(p.enrichingPercent).toBe(99);
+  });
+
+  it('caps at 99 for a single pending document out of a very large corpus', () => {
+    const p = select(
+      snapshot({
+        enrichment: {
+          embeddingDocCount: 250_000,
+          embeddingPendingCount: 1,
+          embeddingEnabled: true,
+        },
+      }),
+      true,
+    );
+    expect(p.enrichingPercent).toBe(99);
+  });
+
+  it('reaches a true 100 the moment nothing is pending', () => {
+    const p = select(
+      snapshot({
+        core: { indexState: 'IDLE', pendingJobs: 0 },
+        enrichment: {
+          backfillMode: 'idle',
+          embeddingDocCount: 600,
+          embeddingPendingCount: 0,
+          embeddingEnabled: true,
+        },
+      }),
+      true,
+    );
+    expect(p.enrichingPercent).toBe(100);
+    // The cap is about the DISPLAY of unfinished work, not about withholding completion: with the
+    // pending bucket empty the phase itself has moved on.
+    expect(p.phase).toBe('ready');
+  });
+
+  it('leaves the no-denominator arm alone — no total ⇒ null, not 99 and not 100', () => {
+    const p = select(
+      snapshot({
+        core: { indexState: 'IDLE', pendingJobs: 0 },
+        enrichment: { backfillMode: 'idle' },
+      }),
+      true,
+    );
+    expect(p.enrichingPercent).toBeNull();
+  });
+});
+
+/**
+ * 813 §20 — the per-stage breakdown is a PROJECTION of the blend: the rows the disclosure lists are
+ * the very rows the surface percent sums, so the two can differ by scope but never by derivation.
+ */
+describe('selectIndexingProgress — enrichingStages (813 §20)', () => {
+  const fourStages = snapshot({
+    enrichment: {
+      embeddingDocCount: 400,
+      embeddingPendingCount: 100,
+      embeddingEnabled: true,
+      spladeDocCount: 400,
+      spladePendingCount: 200,
+      spladeEnabled: true,
+      completedNerCount: 30,
+      pendingNerCount: 10,
+      nerEnabled: true,
+      chunk: { chunkDocCount: 1000, chunkEmbeddingPendingCount: 500 },
+    },
+  });
+
+  it('carries one row per blend input, with the wire fixture values verbatim', () => {
+    const p = select(fourStages, true);
+    expect(p.enrichingStages).toEqual([
+      { id: 'embedding', total: 400, pending: 100 },
+      { id: 'splade', total: 400, pending: 200 },
+      { id: 'ner', total: 40, pending: 10 },
+      { id: 'chunkVectors', total: 1000, pending: 500 },
+    ]);
+  });
+
+  it('the rows ADD UP to the percent — same numbers, narrower scope', () => {
+    const p = select(fourStages, true);
+    const total = p.enrichingStages.reduce((n, r) => n + r.total, 0);
+    const pending = p.enrichingStages.reduce((n, r) => n + r.pending, 0);
+    expect(total).toBe(1840);
+    expect(pending).toBe(810);
+    expect(p.enrichingPercent).toBe(Math.round(((total - pending) / total) * 100));
+  });
+
+  it('a disabled stage produces NO row and no blend contribution — one exclusion, not two rules', () => {
+    const spladeOff = select(
+      snapshot({
+        enrichment: {
+          embeddingDocCount: 100,
+          embeddingPendingCount: 0,
+          embeddingEnabled: true,
+          spladeDocCount: 100,
+          spladePendingCount: 100,
+          spladeEnabled: false,
+        },
+      }),
+      true,
+    );
+    expect(spladeOff.enrichingStages.map((r) => r.id)).toEqual(['embedding']);
+    expect(spladeOff.enrichingPercent).toBe(100);
+  });
+
+  it('a stage with nothing to enrich has no row (no 0/0 row to render)', () => {
+    const p = select(
+      snapshot({
+        enrichment: { embeddingDocCount: 100, embeddingPendingCount: 25, embeddingEnabled: true },
+      }),
+      true,
+    );
+    expect(p.enrichingStages.map((r) => r.id)).toEqual(['embedding']);
+  });
+
+  it('the chunk row rides the EMBEDDING stage applicability, not its own flag', () => {
+    const embeddingOff = select(
+      snapshot({
+        core: { indexState: 'IDLE', pendingJobs: 0 },
+        enrichment: {
+          backfillMode: 'idle',
+          embeddingEnabled: false,
+          embeddingDocCount: 100,
+          embeddingPendingCount: 100,
+          chunk: { chunkDocCount: 400, chunkEmbeddingPendingCount: 400 },
+        },
+      }),
+      true,
+    );
+    // Chunk vectors come from the same encoder: embedding off ⟹ neither row exists.
+    expect(embeddingOff.enrichingStages).toEqual([]);
+
+    const embeddingOn = select(
+      snapshot({
+        enrichment: {
+          embeddingEnabled: true,
+          embeddingDocCount: 100,
+          embeddingPendingCount: 100,
+          chunk: { chunkDocCount: 400, chunkEmbeddingPendingCount: 400 },
+        },
+      }),
+      true,
+    );
+    expect(embeddingOn.enrichingStages.map((r) => r.id)).toEqual(['embedding', 'chunkVectors']);
+  });
+
+  it('is empty on the unknown arm — a worker that did not report has no stages to list', () => {
+    expect(select(null, false).enrichingStages).toEqual([]);
+    expect(select(snapshot({ core: { indexState: 'UNAVAILABLE' } }), true).enrichingStages).toEqual(
+      [],
+    );
+  });
+
+  it('enrichSettledSum is the SAME settled sum the percent divides (store/selector cannot fork)', () => {
+    const p = select(fourStages, true);
+    const fromRows = p.enrichingStages.reduce((n, r) => n + (r.total - r.pending), 0);
+    expect(enrichSettledSum(fourStages)).toBe(fromRows);
+    expect(enrichSettledSum(fourStages)).toBe(1030);
+  });
+
+  it('selectIndexingPhase answers exactly what the selector answers (one phase authority)', () => {
+    for (const s of [
+      fourStages,
+      snapshot({ core: { indexState: 'INDEXING', pendingJobs: 12 } }),
+      snapshot({ core: { indexState: 'IDLE', pendingJobs: 0 } }),
+      snapshot({ core: { indexState: 'UNAVAILABLE' } }),
+    ]) {
+      expect(selectIndexingPhase(s)).toBe(select(s, true).phase);
+    }
+    expect(selectIndexingPhase(null)).toBe('unknown');
+  });
+});
+
+/**
+ * 813 §20 — the enrichment estimate. Its rate comes from the store's OWN cross-poll settle trail,
+ * never from `core.recentDocsPerSec` (which gauges the indexing pipeline). Each arm below is a way
+ * the estimate could have been fabricated; the projection must return `null` so the card renders no
+ * segment at all.
+ */
+describe('selectIndexingProgress — enrichment estimate (813 §20)', () => {
+  /** 300 of 1,000 documents still pending on one applicable stage ⟹ blend pending = 300. */
+  const enriching = snapshot({
+    core: { indexState: 'IDLE', pendingJobs: 0 },
+    enrichment: {
+      backfillMode: 'running',
+      embeddingDocCount: 1000,
+      embeddingPendingCount: 300,
+      embeddingEnabled: true,
+    },
+  });
+
+  /** A settle trail: `settledDeltas` documents settled per 10 s poll interval. */
+  const trail = (settledDeltas: readonly number[]): EnrichSettleSample[] => {
+    const out: EnrichSettleSample[] = [{ t: 0, settled: 700 }];
+    settledDeltas.forEach((d, i) => {
+      out.push({ t: (i + 1) * 10_000, settled: out[out.length - 1]!.settled + d });
+    });
+    return out;
+  };
+
+  it('extrapolates the blend backlog over the observed settle rate', () => {
+    // 100 documents per 10 s ⟹ 10/s; 300 pending ⟹ 30 s.
+    const p = select(enriching, true, 0, trail([100, 100, 100]));
+    expect(p.phase).toBe('enriching');
+    expect(p.enrichingEtaSeconds).toBe(30);
+  });
+
+  it('uses the MEDIAN interval rate — one fast poll cannot halve the estimate', () => {
+    // Rates 10/s, 10/s, 100/s. Median 10 ⟹ 30 s. The MEAN (40/s) would have said 8 s.
+    const p = select(enriching, true, 0, trail([100, 100, 1000]));
+    expect(p.enrichingEtaSeconds).toBe(30);
+  });
+
+  it('is null with too few intervals to establish a rate', () => {
+    // Three samples ⟹ two intervals; the rule needs three.
+    expect(select(enriching, true, 0, trail([100, 100])).enrichingEtaSeconds).toBeNull();
+    expect(select(enriching, true, 0, []).enrichingEtaSeconds).toBeNull();
+  });
+
+  it('is null when an interval settled NOTHING — a paused backfill is not a slow one', () => {
+    expect(select(enriching, true, 0, trail([100, 0, 100])).enrichingEtaSeconds).toBeNull();
+  });
+
+  it('is null when the settled sum went BACKWARDS (ingest moved the denominator)', () => {
+    expect(select(enriching, true, 0, trail([100, -50, 100])).enrichingEtaSeconds).toBeNull();
+  });
+
+  it('is null when two samples share an instant — no elapsed time, no rate', () => {
+    const samples: EnrichSettleSample[] = [
+      { t: 1000, settled: 700 },
+      { t: 1000, settled: 800 },
+      { t: 2000, settled: 900 },
+      { t: 3000, settled: 1000 },
+    ];
+    expect(select(enriching, true, 0, samples).enrichingEtaSeconds).toBeNull();
+  });
+
+  it('is null beyond the one-hour cap a six-sample trail cannot support', () => {
+    const huge = snapshot({
+      core: { indexState: 'IDLE', pendingJobs: 0 },
+      enrichment: {
+        backfillMode: 'running',
+        embeddingDocCount: 1_000_000,
+        embeddingPendingCount: 500_000,
+        embeddingEnabled: true,
+      },
+    });
+    // 100/s over 500,000 pending ⟹ 5,000 s > ETA_MAX_SECONDS.
+    const samples: EnrichSettleSample[] = [0, 1, 2, 3].map((i) => ({
+      t: i * 10_000,
+      settled: 500_000 + i * 1000,
+    }));
+    expect(select(huge, true, 0, samples).enrichingEtaSeconds).toBeNull();
+  });
+
+  it('is null on a stale snapshot — a past rate is not a present one', () => {
+    expect(select(enriching, false, 0, trail([100, 100, 100])).enrichingEtaSeconds).toBeNull();
+  });
+
+  it('is null in every phase other than `enriching`, whatever the trail says', () => {
+    const indexing = snapshot({ core: { indexState: 'INDEXING', pendingJobs: 400 } });
+    expect(select(indexing, true, 0, trail([100, 100, 100])).enrichingEtaSeconds).toBeNull();
+    const ready = snapshot({ core: { indexState: 'IDLE', pendingJobs: 0 } });
+    expect(select(ready, true, 0, trail([100, 100, 100])).enrichingEtaSeconds).toBeNull();
+    expect(select(null, true, 0, trail([100, 100, 100])).enrichingEtaSeconds).toBeNull();
+  });
+
+  it('does NOT reuse the indexing rate gauge — a rich recentDocsPerSec buys no enrichment estimate', () => {
+    // The two questions have two measurements: `core.recentDocsPerSec` describes the job pipeline.
+    const withIndexRate = snapshot({
+      core: { indexState: 'IDLE', pendingJobs: 0, recentDocsPerSec: [20, 20, 20, 20] },
+      enrichment: {
+        backfillMode: 'running',
+        embeddingDocCount: 1000,
+        embeddingPendingCount: 300,
+        embeddingEnabled: true,
+      },
+    });
+    expect(select(withIndexRate, true, 0, []).enrichingEtaSeconds).toBeNull();
   });
 });

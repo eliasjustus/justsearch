@@ -4,9 +4,12 @@
  * §32 R-E1 — <jf-task-list> render tests, re-expressed for the tempdoc 813 §5 redesign.
  *
  * The panel's default view is now ONE aggregate card driven by the indexing-progress projection;
- * the per-file rows moved behind an opt-in "Show files" disclosure. Every pre-813 case below is
+ * the per-file rows moved behind an opt-in "Details" disclosure. Every pre-813 case below is
  * preserved in INTENT and re-pointed at where its subject now lives (the row cases open the
  * disclosure first), plus the new cases the redesign's honesty rules require.
+ *
+ * 813 §20 widened that disclosure into the DETAIL tier: per-stage enrichment rows sit above the
+ * per-file rows, and the affordance exists whenever there is any of the two to show.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -22,6 +25,7 @@ import {
   type StatusSnapshot,
 } from '../state/aiStateStore.js';
 import type { IndexingProgress } from '../state/indexingProgress.js';
+import { formatCount } from '../display/format.js';
 
 void TaskList;
 
@@ -56,7 +60,11 @@ async function activateJfButton(el: Element | null | undefined): Promise<void> {
 const q = (sel: string): Element | null | undefined => host.shadowRoot?.querySelector(sel);
 const text = (sel: string): string | undefined => q(sel)?.textContent?.trim();
 
-/** Open the opt-in per-file disclosure (813 §5) — where the row list now lives. */
+/** Collapse lit's inter-element whitespace so a multi-span row reads as one line. */
+const rowText = (sel: string): string | undefined =>
+  q(sel)?.textContent?.trim().replace(/\s+/g, ' ');
+
+/** Open the opt-in detail disclosure (813 §5/§20) — where the row lists now live. */
 async function showFiles(): Promise<void> {
   (q('[data-testid="tasks-disclosure"]') as HTMLButtonElement | null)?.click();
   await flush();
@@ -71,6 +79,8 @@ async function setProgress(p: Partial<IndexingProgress>): Promise<void> {
     jobsQueued: 0,
     enrichingPercent: null,
     enrichingPending: 0,
+    enrichingStages: [],
+    enrichingEtaSeconds: null,
     embeddingPending: 0,
     vduPending: 0,
     etaSeconds: null,
@@ -250,7 +260,8 @@ describe('<jf-task-list> — aggregate card (813 §5)', () => {
     expect((host as TaskList).tasks.length).toBe(0);
     expect(host.hasAttribute('data-empty')).toBe(false);
     expect(text('[data-testid="task-title"]')).toBe('Search is ready — still improving');
-    // Nothing to disclose — the disclosure is a row-list affordance, not decoration.
+    // 813 §20 — with no stage rows and no extraction backlog either, there is genuinely nothing to
+    // disclose, so the affordance stays absent rather than opening on an empty box.
     expect(q('[data-testid="tasks-disclosure"]')).toBeNull();
   });
 
@@ -333,13 +344,13 @@ describe('<jf-task-list> — disclosure + terminal state (813 §5)', () => {
     await flush();
     const btn = () => q('[data-testid="tasks-disclosure"]') as HTMLButtonElement;
     expect(btn().getAttribute('aria-expanded')).toBe('false');
-    expect(btn().textContent?.trim()).toBe('Show files');
+    expect(btn().textContent?.trim()).toBe('Details');
     expect(q('[data-testid="tasks-files"]')).toBeNull();
 
     btn().click();
     await flush();
     expect(btn().getAttribute('aria-expanded')).toBe('true');
-    expect(btn().textContent?.trim()).toBe('Hide files');
+    expect(btn().textContent?.trim()).toBe('Hide details');
     expect(q('[data-testid="tasks-files"]')).not.toBeNull();
 
     btn().click();
@@ -386,3 +397,156 @@ describe('<jf-task-list> — disclosure + terminal state (813 §5)', () => {
     el.remove();
   });
 });
+
+/**
+ * 813 §20 — the DETAIL tier. The surface states the capability ("search is ready, N% enriched");
+ * the disclosure lists the machine stages that add up to that N. Every number below is a narrower
+ * SCOPE of `enrichingStages`, which is itself the row set the percent sums (§3b).
+ */
+describe('<jf-task-list> — per-stage detail (813 §20)', () => {
+  const STAGES = [
+    { id: 'embedding', total: 400, pending: 100 },
+    { id: 'splade', total: 400, pending: 0 },
+    { id: 'ner', total: 40, pending: 10 },
+    { id: 'chunkVectors', total: 1000, pending: 500 },
+  ] as const;
+
+  it('opens during PURE enrichment, when there is not a single task row to show', async () => {
+    // The defect this closes: the disclosure was gated on the SSE row list, so during enrichment
+    // (no jobs, no rows) the card offered no way to see what was still running.
+    await setProgress({
+      phase: 'enriching',
+      enrichingPercent: 62,
+      enrichingPending: 610,
+      enrichingStages: [...STAGES],
+    });
+    expect((host as TaskList).tasks.length).toBe(0);
+    const btn = q('[data-testid="tasks-disclosure"]') as HTMLButtonElement;
+    expect(btn).not.toBeNull();
+    expect(btn.textContent?.trim()).toBe('Details');
+
+    await showFiles();
+    expect(q('[data-testid="tasks-files"]')).not.toBeNull();
+    expect(q('[data-testid="task-stage-embedding"]')).not.toBeNull();
+  });
+
+  it('lists one row per stage, in user words, with that stage own settled fraction', async () => {
+    await setProgress({
+      phase: 'enriching',
+      enrichingPercent: 62,
+      enrichingStages: [...STAGES],
+    });
+    await showFiles();
+    expect(rowText('[data-testid="task-stage-embedding"]')).toBe('Semantic vectors 300 / 400');
+    expect(rowText('[data-testid="task-stage-ner"]')).toBe('Entity recognition 30 / 40');
+    // Grouped through the shared formatter, not printed raw (the separator is locale-dependent, so
+    // the expectation is built from the same authority the row renders with).
+    expect(rowText('[data-testid="task-stage-chunkVectors"]')).toBe(
+      `Passage vectors ${formatCount(500)} / ${formatCount(1000)}`,
+    );
+    expect(rowText('[data-testid="task-stage-chunkVectors"]')).not.toContain('1000');
+    // The machine names stay on the projection's ids; the rows speak the user's language.
+    expect(q('[data-testid="tasks-files"]')?.textContent).not.toContain('SPLADE');
+  });
+
+  it('marks a finished stage with a ✓ and leaves the unfinished ones unmarked', async () => {
+    await setProgress({ phase: 'enriching', enrichingPercent: 62, enrichingStages: [...STAGES] });
+    await showFiles();
+    expect(rowText('[data-testid="task-stage-splade"]')).toBe('Keyword expansion 400 / 400 ✓');
+    expect(rowText('[data-testid="task-stage-embedding"]')).not.toContain('✓');
+  });
+
+  it('a stage with no row on the projection gets no row here (a disabled stage is not 0%)', async () => {
+    await setProgress({
+      phase: 'enriching',
+      enrichingPercent: 75,
+      enrichingStages: [{ id: 'embedding', total: 400, pending: 100 }],
+    });
+    await showFiles();
+    expect(q('[data-testid="task-stage-embedding"]')).not.toBeNull();
+    expect(q('[data-testid="task-stage-splade"]')).toBeNull();
+    expect(q('[data-testid="task-stage-ner"]')).toBeNull();
+  });
+
+  it('renders the extraction backlog WITHOUT a fraction — no denominator exists for it', async () => {
+    await setProgress({ phase: 'enriching', enrichingPercent: 62, vduPending: 1234 });
+    await showFiles();
+    expect(rowText('[data-testid="task-stage-vdu"]')).toBe(
+      `Content extraction — ${formatCount(1234)} remaining`,
+    );
+    // No invented "of N": `pendingVduCount` is a remaining count, not a slice of a known total.
+    expect(rowText('[data-testid="task-stage-vdu"]')).not.toContain('/');
+  });
+
+  it('omits the extraction row entirely at zero — absence, not "0 remaining"', async () => {
+    await setProgress({ phase: 'enriching', enrichingPercent: 62, vduPending: 0, enrichingStages: [...STAGES] });
+    await showFiles();
+    expect(q('[data-testid="task-stage-vdu"]')).toBeNull();
+  });
+
+  it('keeps the per-file section unchanged, BELOW the stage rows', async () => {
+    upsertMirroredTask({ id: 'idxjob:r1', label: 'Indexing · default (r1)', status: 'running' });
+    await setProgress({ phase: 'enriching', enrichingPercent: 62, enrichingStages: [...STAGES] });
+    await showFiles();
+    // Both tiers present, and the machine stages come first (detail reads top-down: what the system
+    // is doing, then which files it is doing it to).
+    const kids = Array.from(q('[data-testid="tasks-files"]')!.children);
+    const firstStage = kids.findIndex((k) => k.getAttribute('data-testid')?.startsWith('task-stage-'));
+    const summary = kids.findIndex((k) => k.getAttribute('data-testid') === 'task-summary');
+    expect(firstStage).toBeGreaterThanOrEqual(0);
+    expect(summary).toBeGreaterThan(firstStage);
+    expect(q('[data-testid="task-idxjob:r1"]')).not.toBeNull();
+  });
+});
+
+/**
+ * 813 §20 — the enrichment estimate on the card. Same segment discipline as the indexing arm
+ * (§19 W4): appended, never substituted; absent entirely when the projection has no honest basis.
+ */
+describe('<jf-task-list> — enrichment estimate (813 §20)', () => {
+  it('appends the estimate to the enriching fact row', async () => {
+    await setProgress({ phase: 'enriching', enrichingPercent: 62, enrichingEtaSeconds: 130 });
+    expect(text('[data-testid="task-aggregate-counts"]')).toBe(
+      '62% · semantic search catching up · ~2m 10s left',
+    );
+  });
+
+  it('carries "at the current rate" in the accessible label and title, not the visible text', async () => {
+    await setProgress({ phase: 'enriching', enrichingPercent: 62, enrichingEtaSeconds: 130 });
+    const line = q('[data-testid="task-aggregate-counts"]')!;
+    expect(line.textContent).not.toContain('at the current rate');
+    expect(line.getAttribute('aria-label')).toBe(
+      '62% · semantic search catching up · ~2m 10s left at the current rate',
+    );
+    expect(line.getAttribute('title')).toBe(
+      '62% · semantic search catching up · ~2m 10s left at the current rate',
+    );
+  });
+
+  it('renders NO estimate segment when the projection has none (no placeholder)', async () => {
+    await setProgress({ phase: 'enriching', enrichingPercent: 62, enrichingEtaSeconds: null });
+    const line = q('[data-testid="task-aggregate-counts"]')!;
+    expect(line.textContent?.trim()).toBe('62% · semantic search catching up');
+    expect(line.textContent).not.toContain('left');
+    expect(line.getAttribute('aria-label')).toBeNull();
+    expect(line.getAttribute('title')).toBeNull();
+  });
+
+  it('still suppresses the percent when there is none, estimate or not', async () => {
+    await setProgress({
+      phase: 'enriching',
+      enrichingPercent: null,
+      enrichingEtaSeconds: 130,
+    });
+    expect(text('[data-testid="task-aggregate-counts"]')).toBe(
+      'semantic search catching up · ~2m 10s left',
+    );
+    expect(q('[data-testid="task-aggregate-bar"]')).toBeNull();
+  });
+
+  it('never renders the enrichment estimate on the indexing arm', async () => {
+    await setProgress({ phase: 'indexing', jobsPending: 412, enrichingEtaSeconds: 130 });
+    expect(text('[data-testid="task-aggregate-counts"]')).toBe('412 files remaining');
+  });
+});
+
