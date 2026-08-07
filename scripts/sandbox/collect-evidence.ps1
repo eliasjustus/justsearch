@@ -81,6 +81,39 @@ function Write-Utf8NoBom {
     }
 }
 
+function Get-FirstSpanStartUtc {
+    # Extracts the EARLIEST span's "start" timestamp from a traces.ndjson file,
+    # via regex over the raw text -- NEVER line-by-line JSON parsing. Per
+    # sandbox-CLAUDE.md's documented trap: traces.ndjson embeds document
+    # excerpts in span attrs that can contain literal CRLFs, so a "line" of
+    # the file is not reliably one JSON document, and Get-Content | ConvertFrom-Json
+    # can throw or silently under-read. Spans are appended in chronological
+    # order, so the FIRST "start" match in the raw text is the earliest span.
+    # Returns $null if the file is missing/unreadable or has no "start" field.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $null
+    }
+    try {
+        $content = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
+    }
+    catch {
+        return $null
+    }
+    $m = [regex]::Match($content, '"start"\s*:\s*"([^"]+)"')
+    if (-not $m.Success) {
+        return $null
+    }
+    try {
+        return [datetime]::Parse(
+            $m.Groups[1].Value, [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::RoundtripKind)
+    }
+    catch {
+        return $null
+    }
+}
+
 function Write-MutatingProbeVerdict {
     # tempdoc 808 I1b: the mutating-surface rung's verdict, machine-readable.
     # It was already detected and already printed loudly -- but only to the
@@ -334,6 +367,64 @@ $dataDirFound = Test-Path -LiteralPath $DataDir
 $uninstallRegKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\JustSearch"
 $uninstallRegFound = Test-Path -LiteralPath $uninstallRegKey
 
+# Round-start-relative fingerprint (round-15 retrospective item 3, tempdoc
+# 798): the raw presence check above cannot distinguish "installed by THIS
+# round, moments ago" from "a genuinely stale prior install" -- on every
+# fresh-install round that installs before ever calling collect-evidence.ps1
+# (the normal, documented workflow: install, THEN start capturing evidence),
+# the FIRST invocation already finds the just-installed exe and fires the
+# "known round defect" alarm against a candidate that has nothing wrong with
+# it. Windows Sandbox boots a fresh, ephemeral environment per launch
+# (sandbox-CLAUDE.md's "Mission" section) -- so the OS's own boot time IS
+# this round's start, with no marker file to write and no invocation-order
+# dependency. An artifact created AFTER boot was necessarily created during
+# THIS round's own session; only an artifact that PREDATES boot (impossible
+# in a true ephemeral Sandbox launch, but a real signal if this script is
+# ever run against a persistent/reused environment) is evidence of a
+# genuinely stale install.
+$roundStartUtc = $null
+try {
+    $roundStartUtc = (Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
+}
+catch {
+    Write-Log "Could not read system boot time for the round-start-relative install fingerprint ($($_.Exception.Message)) -- falling back to the non-timestamped fingerprint."
+}
+
+function Test-ArtifactPredatesRoundStart {
+    # Fails OPEN (treats as "predates round start", i.e. potentially stale)
+    # on any read error -- a missing timestamp must not silently suppress a
+    # real warning, it should fall back to the pre-fix behavior instead.
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][datetime]$RoundStartUtc
+    )
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $false
+    }
+    try {
+        $created = (Get-Item -LiteralPath $Path -ErrorAction Stop).CreationTimeUtc
+        return $created -lt $RoundStartUtc
+    }
+    catch {
+        return $true
+    }
+}
+
+$exePredatesRound = $false
+$dataDirPredatesRound = $false
+if ($roundStartUtc) {
+    if ($installedExeFound) {
+        $exePredatesRound = Test-ArtifactPredatesRoundStart -Path $installedExePath -RoundStartUtc $roundStartUtc
+    }
+    if ($dataDirFound) {
+        $dataDirPredatesRound = Test-ArtifactPredatesRoundStart -Path $DataDir -RoundStartUtc $roundStartUtc
+    }
+}
+# The uninstall registry key's creation time is not exposed by Get-Item for a
+# registry path (unlike a filesystem path) without extra P/Invoke -- its
+# signal stays presence-only and does not gate staleness by itself.
+$installPredatesRound = $exePredatesRound -or $dataDirPredatesRound
+
 $installStateLines = @(
     "",
     "--- Install-state fingerprint (tempdoc 729-followup / 750 Part C) ---",
@@ -363,13 +454,23 @@ if ($expectPriorInstall) {
     }
 }
 elseif ($installedExeFound -or $dataDirFound -or $uninstallRegFound) {
-    $installStateLines += ("WARNING: JustSearch already appears to be installed on this system " +
-        "(at least one signal above is FOUND). Relaunching the installer over an " +
-        "existing install is a known round defect. If this round intends a fresh " +
-        "install, uninstall first (or use a clean sandbox); if this round intends " +
-        "to validate upgrade/repair/re-run behavior over an existing install, record " +
-        "that as the deliberate scenario instead of an oversight.")
-    Write-Log "WARNING: install-state fingerprint found an EXISTING install -- see elevation-check.txt"
+    if ($roundStartUtc -and -not $installPredatesRound) {
+        $installStateLines += ("Install signal(s) found, but timestamped AFTER this session's boot " +
+            "($($roundStartUtc.ToString('o')) UTC) -- consistent with an install performed by THIS " +
+            "round itself (Windows Sandbox boots a fresh, ephemeral environment per launch), not a " +
+            "stale prior install. No warning (round-start-relative fingerprint, tempdoc 798).")
+        Write-Log "Install signal(s) found, but post-dates this session's boot -- treated as this round's own install, not a defect."
+    }
+    else {
+        $installStateLines += ("WARNING: JustSearch already appears to be installed on this system " +
+            "(at least one signal above is FOUND, and predates this session's boot or the boot time " +
+            "could not be read). Relaunching the installer over an " +
+            "existing install is a known round defect. If this round intends a fresh " +
+            "install, uninstall first (or use a clean sandbox); if this round intends " +
+            "to validate upgrade/repair/re-run behavior over an existing install, record " +
+            "that as the deliberate scenario instead of an oversight.")
+        Write-Log "WARNING: install-state fingerprint found an EXISTING install predating round start -- see elevation-check.txt"
+    }
 }
 else {
     $installStateLines += "No existing install detected -- clean-install precondition holds."
@@ -1036,6 +1137,36 @@ $tracesDst = Join-Path -Path $EvidenceDir -ChildPath "traces.ndjson"
 $tracesCopied = $false
 if (Test-Path -LiteralPath $tracesSrc) {
     try {
+        # Round-15 finding 5 (tempdoc 798, F1 renamed-aside-data-dir
+        # reproduction): renaming %APPDATA%\io.justsearch.shell aside and
+        # relaunching against a pristine data dir resets traces.ndjson to a
+        # fresh, near-empty file. An unconditional overwrite here silently
+        # replaced a round's real ~7-minute trace record with the pristine
+        # instance's short one, and the finalize coverage check then reported
+        # four false "uncovered" items because the real spans were gone.
+        # Before overwriting, compare the two files' EARLIEST span timestamp:
+        # if the existing evidence-root copy's first span predates the new
+        # source file's first span, the existing copy carries history the new
+        # file does not have, so archive it under evidence\api-history\
+        # instead of losing it. Deliberately minimal: no merge, no dedup --
+        # just don't destroy the older record.
+        if (Test-Path -LiteralPath $tracesDst) {
+            $existingFirstSpan = Get-FirstSpanStartUtc -Path $tracesDst
+            $newFirstSpan = Get-FirstSpanStartUtc -Path $tracesSrc
+            if ($existingFirstSpan -and $newFirstSpan -and ($existingFirstSpan -lt $newFirstSpan)) {
+                $tracesArchiveDir = Join-Path -Path $EvidenceDir -ChildPath "api-history"
+                if (-not (Test-Path -LiteralPath $tracesArchiveDir)) {
+                    New-Item -ItemType Directory -Path $tracesArchiveDir -Force | Out-Null
+                }
+                $tracesArchiveStamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
+                $tracesArchivePath = Join-Path -Path $tracesArchiveDir -ChildPath "traces-preempted-$tracesArchiveStamp.ndjson"
+                Copy-Item -LiteralPath $tracesDst -Destination $tracesArchivePath -Force -ErrorAction Stop
+                Write-Log ("Existing traces.ndjson (first span $($existingFirstSpan.ToString('o'))) predates the " +
+                    "new source's first span ($($newFirstSpan.ToString('o'))) -- archived the existing copy to " +
+                    "$tracesArchivePath before overwriting, so the earlier trace history is not lost. " +
+                    "check_coverage.py should be run against the UNION of traces.ndjson and evidence\api-history\*.ndjson.")
+            }
+        }
         Copy-Item -LiteralPath $tracesSrc -Destination $tracesDst -Force -ErrorAction Stop
         $tracesCopied = $true
         Write-Log "Copied traces.ndjson into evidence dir (for host-side coverage check)."

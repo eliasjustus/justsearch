@@ -33,6 +33,8 @@ the resulting error while reporting nothing:
 | `Save-DesktopShot` | `-Out` | Full-desktop capture. **NOT `-Path`.** |
 | `Save-AppShot` | `-Handle`, `-Out` | Captures ONE window by hwnd (pass `$conn.Handle`). **NOT `-Path`, and there is NO `-ProcName`** on this function -- unlike `win-capture.ps1`, which takes `-ProcName` and calls `Connect-App` + `Save-AppShot` internally. |
 | `Save-AppShotRegion` | `-InPath`, `-OutPath`, `-X -Y -W -H`, `-Scale` (default `3`) | Crop + magnify an EXISTING PNG. Different shape from the two above: `-InPath`/`-OutPath`, not `-Out`. |
+| `Invoke-AppClick` | `-Connection`, `-X`, `-Y` | Clicks window-relative `-X`/`-Y` inside the window described by a `Connect-App` connection object. **Takes `-Connection` (the whole `$conn` object from `Connect-App`), NOT `-Handle`.** Passing `-Handle` binds to nothing, PowerShell does not error on the unrecognized parameter inside a `try/catch` that swallows it, and the click silently no-ops while the function still returns -- a round guessed `-Handle` (extrapolating from `Save-AppShot`'s shape) and got three confidently-named screenshots of a state the click never reached (round 15, tempdoc 798). Fails closed (returns `$false`, no click sent) if `$Connection.Focused` is `$false`. |
+| `Send-AppKeys` | `-Keys` | Raw `SendKeys` typing to whatever element currently has focus. **Takes `-Keys` only -- there is no connection/window parameter on this function** (unlike `Invoke-AppClick`/`win-capture.ps1`, which do take one). Click the target field first (focus is not sticky -- gotcha #1 below); do not pass `-Handle` or `-Connection` here, it will bind to nothing. |
 
 Passing `-Path` to `Save-DesktopShot`/`Save-AppShot`/`Save-AppShotRegion` is a
 silent no-op from PowerShell's perspective in a script that also swallows
@@ -108,6 +110,14 @@ coordinates fresh each round from a screenshot of *that* round's dialog.
    (`Set-Clipboard -Value $Text; [System.Windows.Forms.SendKeys]::SendWait("^v")`);
    use it instead of `Send-AppKeys`/raw `SendKeys` for any payload that isn't
    plain, metacharacter-free text.
+4. **The native "Select folder" dialog: pasting a full path + Enter NAVIGATES
+   INTO the folder, it does not select it** (standard Windows Explorer
+   behaviour, not a JustSearch quirk). Sending `^v` then `{ENTER}` into the
+   folder-name field lands you one level DEEPER in the tree, not on the
+   folder you meant to pick — costing round 15 ~4 minutes rediscovering this.
+   The correct sequence is paste, `{ENTER}` (to commit the path into the
+   field/navigate to it), THEN click the "Select Folder" button — do not
+   treat Enter alone as a substitute for the click.
 
 ## Pixel-coordinate caveat
 
