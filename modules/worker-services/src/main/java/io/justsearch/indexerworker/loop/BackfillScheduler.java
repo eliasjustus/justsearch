@@ -61,6 +61,34 @@ public final class BackfillScheduler {
    */
   private static final long CYCLE_BUDGET_MS = 5_000L;
 
+  /**
+   * The embed stage's reserved share of one cycle (round-15 post-round finding; the starvation
+   * residual recorded in tempdoc 813 §18).
+   *
+   * <p>Phases 3b/3c of the combined pass run after the embed stage and open by consulting the stop
+   * signal, so an embed stage allowed to spend the whole {@link #CYCLE_BUDGET_MS} makes SPLADE and
+   * NER structurally unrunnable — live evidence: {@code splade=0ms(ok=0)} and {@code ner=0ms(ok=0)}
+   * on 54 consecutive cycles with SPLADE stuck at 1.05% coverage, both advancing the instant embed
+   * finished. Past this point embed stops STARTING new units so the remaining ~40% reaches the
+   * other stages; see {@code CombinedEnrichmentBackfillOps.embedShareSpent} for why that is not the
+   * same signal as the yield/abort disjunction and why it does not apply to an embed-only backlog.
+   *
+   * <p>Cycle-absolute, not per-batch, on purpose: within one cycle the first batch takes the embed
+   * share and later batches then serve the other stages, which is the round-robin the reservation
+   * exists to produce.
+   */
+  private static final long EMBED_BUDGET_SHARE_MS = 3_000L;
+
+  /**
+   * Consecutive cycles with an identical combined work-set before the stall WARN fires (round-15
+   * post-round finding).
+   *
+   * <p>Five ~5 s cycles is ~25 s of selecting the same documents — long past any legitimate
+   * "one big batch spanning a couple of cycles" and far short of the 12+ minutes the field incident
+   * ran before anyone noticed, because nothing in the log distinguished it from healthy progress.
+   */
+  private static final int STALL_SIGNATURE_CYCLES = 5;
+
   // Tempdoc 710 Wave-1.5 Move 4: the per-stage backfill batch sizes (formerly static fields
   // computed once from LoopPacingPolicy, plus the BGE-M3 pair which bypassed LoopPacingPolicy
   // entirely as bare literals here) all moved onto ResolvedConfig.Ai.BackfillPacing
@@ -86,6 +114,20 @@ public final class BackfillScheduler {
   private long nextSpladeRetryTime = 0;
   private boolean disambiguationPassComplete = false;
   private int lastKnownNerCompletedCount = 0;
+
+  /**
+   * Cross-cycle per-window accumulator for long documents (round-15 post-round finding). Lives here
+   * because this is the object whose lifetime spans cycles — the pending-ID caches deliberately do
+   * not, so a per-cycle store would restore exactly the defect it removes.
+   */
+  private final io.justsearch.indexerworker.loop.ops.WindowedEmbedProgress windowedEmbedProgress =
+      new io.justsearch.indexerworker.loop.ops.WindowedEmbedProgress();
+
+  /** Stall detection state (round-15 post-round finding) — see {@link #noteWorkSet}. */
+  private long lastWorkSetSignature = 0;
+
+  private int repeatedWorkSetCycles = 0;
+  private boolean stallWarnedThisEpisode = false;
 
   public BackfillScheduler(
       DocumentFieldOps documentFieldOps,
@@ -139,8 +181,11 @@ public final class BackfillScheduler {
    */
   public boolean runIdleCycle() {
     boolean backfillDidWork = false;
+    final long cycleStartNanos = System.nanoTime();
     final long cycleDeadlineNanos =
-        System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(CYCLE_BUDGET_MS);
+        cycleStartNanos + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(CYCLE_BUDGET_MS);
+    final long embedShareDeadlineNanos =
+        cycleStartNanos + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(EMBED_BUDGET_SHARE_MS);
 
     boolean runBackfill =
         LoopPacingPolicy.shouldRunBackfill(
@@ -149,8 +194,11 @@ public final class BackfillScheduler {
             embeddingLifecycle.embeddingProvider());
     if (runBackfill) {
       CombinedEnrichmentBackfillOps.CombinedOutcome outcome =
-          processCombinedBackfillIfApplicable(cycleDeadlineNanos);
+          processCombinedBackfillIfApplicable(cycleDeadlineNanos, embedShareDeadlineNanos);
       recordCombinedOutcome(outcome);
+      // The mode-selection probe is the batch that re-selects the head of the pending queue each
+      // cycle — the one whose signature repeated byte-identically for 12+ minutes in the field.
+      noteWorkSet(outcome);
       // Mode selection reads ACTIVITY (did the combined pass touch anything at all); the tight
       // loop below reads PROGRESS. Tempdoc 798: these are different questions and conflating
       // them is what livelocked ingest.
@@ -199,7 +247,11 @@ public final class BackfillScheduler {
                 }
                 CombinedEnrichmentBackfillOps.CombinedOutcome tightLoopOutcome =
                     processCombinedBackfillIfApplicable(
-                        parentIdCache, chunkIdCache, batchCommitCounter, cycleDeadlineNanos);
+                        parentIdCache,
+                        chunkIdCache,
+                        batchCommitCounter,
+                        cycleDeadlineNanos,
+                        embedShareDeadlineNanos);
                 recordCombinedOutcome(tightLoopOutcome);
                 // Tempdoc 798: PROGRESS, not activity. `wroteAnything()` stays true forever for a
                 // document that is rewritten every batch without ever advancing a stage.
@@ -331,6 +383,10 @@ public final class BackfillScheduler {
     nextSpladeRetryTime = 0;
     disambiguationPassComplete = false;
     lastKnownNerCompletedCount = 0;
+    windowedEmbedProgress.clear();
+    lastWorkSetSignature = 0;
+    repeatedWorkSetCycles = 0;
+    stallWarnedThisEpisode = false;
   }
 
   /**
@@ -497,8 +553,51 @@ public final class BackfillScheduler {
   // ==================== Backfill delegates ====================
 
   private CombinedEnrichmentBackfillOps.CombinedOutcome processCombinedBackfillIfApplicable(
-      long cycleDeadlineNanos) {
-    return processCombinedBackfillIfApplicable(null, null, null, cycleDeadlineNanos);
+      long cycleDeadlineNanos, long embedShareDeadlineNanos) {
+    return processCombinedBackfillIfApplicable(
+        null, null, null, cycleDeadlineNanos, embedShareDeadlineNanos);
+  }
+
+  /**
+   * Non-termination detector (round-15 post-round finding): WARNs when the combined backfill keeps
+   * selecting the IDENTICAL work-set cycle after cycle while still attempting encoder work.
+   *
+   * <p>The gap this closes is not "no diagnostic existed" but "the wrong discriminator was used".
+   * 798's WARN fires only when a budget-spending cycle advanced NOTHING; the field incident
+   * advanced 56-80 documents per cycle and never moved its queue head, so it took the healthy INFO
+   * branch 54 times in a row. Progress is therefore deliberately NOT part of this condition —
+   * work-set identity is. A draining backfill's selection changes as its head drains; a stalled
+   * one's does not, whatever its per-cycle counters say.
+   *
+   * <p>Deduplicated per episode: one WARN, not one per cycle. The episode ends when the signature
+   * changes, which re-arms it.
+   */
+  private void noteWorkSet(CombinedEnrichmentBackfillOps.CombinedOutcome outcome) {
+    long signature = outcome.workSetSignature();
+    // No selection (nothing pending), or the pass returned before any stage ran: neither is an
+    // observation about whether enrichment is draining, so neither may extend OR reset an episode.
+    if (signature == 0 || !outcome.recordTiming()) {
+      return;
+    }
+    if (signature != lastWorkSetSignature) {
+      lastWorkSetSignature = signature;
+      repeatedWorkSetCycles = 1;
+      stallWarnedThisEpisode = false;
+      return;
+    }
+    repeatedWorkSetCycles++;
+    if (repeatedWorkSetCycles >= STALL_SIGNATURE_CYCLES && !stallWarnedThisEpisode) {
+      stallWarnedThisEpisode = true;
+      log.warn(
+          "Combined enrichment backfill has selected an IDENTICAL work-set for {} consecutive"
+              + " cycles while still attempting encoder work — the queue head is not draining."
+              + " Per-cycle counters can look healthy in this state (documents ARE being encoded);"
+              + " what is not happening is documents LEAVING the pending population. The known"
+              + " cause is documents whose enrichment cannot finish inside one cycle budget"
+              + " (round-15 post-round finding). Check the combined-backfill summary line's"
+              + " windowDocsResuming= and deferredForOtherStages= counters.",
+          repeatedWorkSetCycles);
+    }
   }
 
   /**
@@ -520,7 +619,8 @@ public final class BackfillScheduler {
       ArrayDeque<String> parentIdCache,
       ArrayDeque<String> chunkIdCache,
       int[] batchesSinceCommit,
-      long cycleDeadlineNanos) {
+      long cycleDeadlineNanos,
+      long embedShareDeadlineNanos) {
     boolean embedAvail =
         embeddingLifecycle.embeddingProvider().isAvailable()
             && embeddingLifecycle.allowEmbeddingWrites();
@@ -555,7 +655,9 @@ public final class BackfillScheduler {
             parentIdCache != null ? parentIdCache : new ArrayDeque<>(),
             chunkIdCache != null ? chunkIdCache : new ArrayDeque<>(),
             batchesSinceCommit != null ? batchesSinceCommit : new int[] {0},
-            () -> shouldStopBackfillWork(cycleDeadlineNanos)));
+            () -> shouldStopBackfillWork(cycleDeadlineNanos),
+            () -> System.nanoTime() >= embedShareDeadlineNanos,
+            windowedEmbedProgress));
   }
 
   private StageOutcome processEmbeddingBackfill() {

@@ -82,6 +82,50 @@ public final class CombinedEnrichmentBackfillOps {
   private static final int EMBED_ENCODE_SLICE = 8;
 
   /**
+   * Encoder windows per resumable long-document embed unit (round-15 post-round finding).
+   *
+   * <p>{@link #EMBED_ENCODE_SLICE} above slices the batch by DOCUMENT, which is the right unit only
+   * while a document is one forward pass. A 420 KB document is ~250 windows, so an 8-DOCUMENT slice
+   * of long documents is ~2,000 forward passes inside one uninterruptible call — the 5 s cycle
+   * budget could not touch it, and the long documents (folded in at the TAIL of the embed list by
+   * the late-chunking fallback below) were never reached at all. Long documents are therefore
+   * driven window-by-window instead, from the front of the batch.
+   *
+   * <p>32 windows is 4 ORT runs at {@code OnnxEmbeddingEncoder.MAX_ORT_BATCH_SIZE} — ~270 ms at the
+   * 68 ms/run measured on the corpus that exposed this. Deliberately not 8: each slice re-tokenizes
+   * the document to rebuild its window set, so a smaller slice buys interruption granularity the
+   * budget does not need and pays for it in tokenizer CPU on exactly the largest documents.
+   */
+  private static final int EMBED_WINDOW_SLICE = 32;
+
+  /**
+   * Whether the embed stage must hand the rest of the cycle to SPLADE/NER (round-15 post-round
+   * finding; the starvation residual recorded in tempdoc 813 §18).
+   *
+   * <p>Phases 3b and 3c run AFTER 3a and open with {@link #stopRequested}, so an embed stage that
+   * spends the whole cycle budget leaves them structurally unable to run: live evidence showed
+   * {@code splade=0ms(ok=0)} and {@code ner=0ms(ok=0)} on EVERY cycle for 12+ minutes while SPLADE
+   * sat at 1.05% coverage, and both began advancing the moment embed reached 100%. This is the
+   * reservation: past the embed share, embed stops STARTING new units so the remaining budget
+   * reaches the other stages.
+   *
+   * <p>Three deliberate properties. (1) It is NOT the {@code aborted} signal — the batch is not
+   * yielding to the caller, it is rebalancing inside itself, so Phases 3b/3c still run, Phase 4
+   * still writes, and the tight loop is not stopped (which would hand the reserved slice straight
+   * back to the next cycle's embed stage). (2) It only applies when another stage actually has work
+   * in this batch; a pure-embed backlog keeps the whole budget. (3) The {@code unitsDone == 0} floor
+   * from {@link #stopRequested} applies here too — every batch does at least one embed unit, so the
+   * reservation can never starve embed in the other direction.
+   */
+  private static boolean embedShareSpent(
+      BackfillContext context, int unitsDone, boolean otherStagesHaveWork) {
+    if (unitsDone == 0 || !otherStagesHaveWork) {
+      return false;
+    }
+    return context.embedShareExhaustedSupplier().getAsBoolean();
+  }
+
+  /**
    * Whether this batch should stop starting NEW enrichment work (tempdoc 809 finding 3).
    *
    * <p>Two independent reasons, both meaning "everything after this point is wasted": the
@@ -134,7 +178,14 @@ public final class CombinedEnrichmentBackfillOps {
       // shutdown, user activity, GPU yield, pending ingest and the remaining cycle budget. Read at
       // the sub-batch boundaries below, never mid-encode. A context that supplies `() -> false`
       // behaves exactly as this pass did before the checkpoints existed.
-      BooleanSupplier stopRequestedSupplier) {}
+      BooleanSupplier stopRequestedSupplier,
+      // Round-15 post-round finding: "the embed stage has used its reserved share of the cycle" —
+      // see embedShareSpent. A context supplying `() -> false` gives embed the whole budget, i.e.
+      // the pre-fix behaviour.
+      BooleanSupplier embedShareExhaustedSupplier,
+      // Round-15 post-round finding: cross-cycle per-window accumulator for long documents. Owned
+      // by the caller so partial windowing survives the cycle boundary — see WindowedEmbedProgress.
+      WindowedEmbedProgress windowedEmbedProgress) {}
 
   /**
    * Outcome of one {@link #processCombinedBackfill} call (tempdoc 710 Move 2 item 4).
@@ -178,6 +229,12 @@ public final class CombinedEnrichmentBackfillOps {
    *     field below is a meaningless zero and must NOT be recorded.
    * @param embedProcessed / spladeProcessed / nerProcessed document counts (not batch counts).
    * @param embedMs / spladeMs / nerMs / fetchMs / writeMs / totalMs per-phase wall-clock ms.
+   * @param workSetSignature identifies WHICH documents this batch selected and how they were routed
+   *     — the exact document-id list plus the per-stage counts the summary line prints. {@code 0}
+   *     means no work-set was selected. It exists so the caller can tell a backfill that is DRAINING
+   *     from one that is re-selecting the identical head of the queue every cycle: those two emit
+   *     the same INFO line today, which is why 54 consecutive stalled cycles produced no diagnostic
+   *     at all (round-15 post-round finding). Counts alone would collide; the id list will not.
    */
   public record CombinedOutcome(
       boolean wroteAnything,
@@ -192,11 +249,12 @@ public final class CombinedEnrichmentBackfillOps {
       long nerMs,
       long fetchMs,
       long writeMs,
-      long totalMs) {
+      long totalMs,
+      long workSetSignature) {
 
     /** No pending work / interrupted before any stage ran — nothing to record. */
     public static CombinedOutcome none() {
-      return new CombinedOutcome(false, false, false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+      return new CombinedOutcome(false, false, false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
   }
 
@@ -227,6 +285,9 @@ public final class CombinedEnrichmentBackfillOps {
     int docsSkipped = 0;
     int unitsDone = 0;
     long epochAtSelection = 0;
+    // Round-15 post-round finding: stamped as soon as this batch's selection + routing is final, so
+    // the catch path below reports the same work-set the success path does.
+    long workSetSignature = 0;
 
     // Tempdoc 400 LR2-a: enrichment.batch parent span. Encoder ORT spans
     // emitted inside are parented under this when detailed tracing is on;
@@ -372,6 +433,13 @@ public final class CombinedEnrichmentBackfillOps {
       // intermediate retry bumps below are not (see CombinedOutcome#progressed).
       int blankContentTerminal = 0;
 
+      // Round-15 post-round finding: how many documents Phase 3c would actually run NER on. Uses
+      // Phase 3c's OWN predicate (absent status defaults to PENDING there) rather than the raw read
+      // used for embed/SPLADE enrollment, so the budget reservation below fires in exactly the
+      // scenario where the reserved stage has work — a wrong-gate here would either starve NER
+      // anyway or hand embed a shorter budget for nothing.
+      int nerCandidates = 0;
+
       for (String docId : pendingIds) {
         boolean isChunkDoc = chunkDocIds.contains(docId);
         updatesByDocId.put(docId, new HashMap<>());
@@ -500,6 +568,11 @@ public final class CombinedEnrichmentBackfillOps {
           spladeContents.add(
               (chunkContent != null && !chunkContent.isBlank()) ? chunkContent : content);
         }
+        if (nerAvailable
+            && SchemaFields.NER_STATUS_PENDING.equals(
+                docFields.getOrDefault(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_PENDING))) {
+          nerCandidates++;
+        }
       }
 
       fetchMs = (System.nanoTime() - t0) / 1_000_000;
@@ -512,6 +585,18 @@ public final class CombinedEnrichmentBackfillOps {
       // Past early returns — any work from here should be recorded.
       recordTiming = true;
 
+      // Round-15 post-round finding: does any stage other than embed have work in THIS batch? Only
+      // then does embed hand back part of the cycle (see embedShareSpent).
+      boolean otherStagesHaveWork = !spladeDocIds.isEmpty() || nerCandidates > 0;
+
+      workSetSignature =
+          computeWorkSetSignature(
+              pendingIds,
+              embedDocIds.size() + lateChunkingDocIds.size(),
+              spladeDocIds.size(),
+              chunkIdsInBatch.size(),
+              nerCandidates);
+
       // Phase 3a: Batch embedding
       long tEmbed = System.nanoTime();
       int embedFailed = 0;
@@ -522,6 +607,11 @@ public final class CombinedEnrichmentBackfillOps {
       int singlePassProcessed = 0;
       int longDocWindowed = 0;
       int arenaOomWindowed = 0;
+      // Round-15 post-round finding, resumable-windowing bookkeeping.
+      int windowUnitsDone = 0;
+      int windowDocsCompleted = 0;
+      int windowDocsResumable = 0;
+      int embedDeferredForOtherStages = 0;
 
       // Phase 3a-i: Late-chunking single-pass embed (tempdoc 691 forensics fold-in). Tries one
       // whole-document forward pass per chunked parent. A null result (content over the raised
@@ -538,6 +628,10 @@ public final class CombinedEnrichmentBackfillOps {
           if (stopRequested(context, unitsDone, epochAtSelection)) {
             aborted = true;
             docsSkipped += lateChunkingDocIds.size() - i;
+            break;
+          }
+          if (embedShareSpent(context, unitsDone, otherStagesHaveWork)) {
+            embedDeferredForOtherStages += lateChunkingDocIds.size() - i;
             break;
           }
           String lcDocId = lateChunkingDocIds.get(i);
@@ -592,6 +686,154 @@ public final class CombinedEnrichmentBackfillOps {
         }
       }
 
+      // Phase 3a-ii: resumable per-window embed for documents longer than the encoder's context
+      // window (round-15 post-round finding). These are the documents the pre-fix pass could never
+      // finish: the late-chunking fallback above appends them at the TAIL of embedDocIds, behind
+      // every short parent and every chunk doc, so an 8-DOCUMENT slice loop under a 5 s budget
+      // reached them last or not at all — and when it did, all of a document's windows ran inside
+      // one uninterruptible call whose partial results were discarded on interruption. Here they go
+      // FIRST, one window slice at a time, and every embedded window is folded into the cross-cycle
+      // accumulator, so an interrupted document resumes at its next window instead of window 0.
+      //
+      // Documents whose provider reports a single window (every short document, every chunk doc,
+      // and EVERY document when the provider does not expose window granularity — the interface
+      // default) stay on the historical whole-document batch path below, unchanged.
+      List<String> windowedDocIds = new ArrayList<>();
+      List<String> windowedContents = new ArrayList<>();
+      if (!embedDocIds.isEmpty() && embedAvailable) {
+        EmbeddingProvider windowProbe = context.embeddingProviderSupplier().get();
+        List<String> singleWindowDocIds = new ArrayList<>(embedDocIds.size());
+        List<String> singleWindowContents = new ArrayList<>(embedContents.size());
+        for (int i = 0; i < embedDocIds.size(); i++) {
+          if (windowProbe.documentWindowCount(embedContents.get(i)) > 1) {
+            windowedDocIds.add(embedDocIds.get(i));
+            windowedContents.add(embedContents.get(i));
+          } else {
+            singleWindowDocIds.add(embedDocIds.get(i));
+            singleWindowContents.add(embedContents.get(i));
+          }
+        }
+        if (!windowedDocIds.isEmpty()) {
+          embedDocIds = singleWindowDocIds;
+          embedContents = singleWindowContents;
+        }
+      }
+
+      if (!windowedDocIds.isEmpty() && embedAvailable) {
+        EmbeddingProvider provider = context.embeddingProviderSupplier().get();
+        WindowedEmbedProgress progress = context.windowedEmbedProgress();
+        for (int i = 0; i < windowedDocIds.size(); i++) {
+          if (stopRequested(context, unitsDone, epochAtSelection)) {
+            aborted = true;
+            docsSkipped += windowedDocIds.size() - i;
+            break;
+          }
+          if (embedShareSpent(context, unitsDone, otherStagesHaveWork)) {
+            embedDeferredForOtherStages += windowedDocIds.size() - i;
+            break;
+          }
+          String docId = windowedDocIds.get(i);
+          String content = windowedContents.get(i);
+          boolean isChunk = chunkIdsInBatch.contains(docId);
+          // Scoped to THIS document, deliberately: `aborted` is sticky across phases (Phase 3a-i
+          // may already have set it), so reading it to decide whether the windowed lane stopped
+          // would end the lane on a stale flag and mis-report every remaining document as skipped.
+          boolean stoppedOnThisDocument = false;
+          boolean abortedOnThisDocument = false;
+          try {
+            int nextWindow = progress.nextWindow(docId, content);
+            while (true) {
+              EmbeddingProvider.WindowSlice slice =
+                  provider.embedDocumentWindows(content, nextWindow, EMBED_WINDOW_SLICE);
+              if (slice == null || slice.vectors().isEmpty()) {
+                // Either the provider stopped exposing windows mid-batch or it has no window at
+                // this index — neither can produce a vector, so escalate through the same retry
+                // seam every other embed failure uses rather than looping.
+                throw new IllegalStateException(
+                    "windowed embed returned no vectors at window " + nextWindow);
+              }
+              unitsDone++;
+              windowUnitsDone++;
+              int advancedTo =
+                  progress.record(
+                      docId, content, slice.totalWindows(), nextWindow, slice.vectors());
+              if (advancedTo <= nextWindow) {
+                // The accumulator did not advance (every returned window was unusable, or the
+                // provider answered a different range than it was asked for). Looping would spin
+                // the GPU forever on a document that can never complete — the exact non-termination
+                // class this work exists to remove — so escalate through the retry seam instead.
+                throw new IllegalStateException(
+                    "windowed embed made no progress at window " + nextWindow);
+              }
+              nextWindow = advancedTo;
+              if (nextWindow >= slice.totalWindows()) {
+                break;
+              }
+              if (stopRequested(context, unitsDone, epochAtSelection)) {
+                aborted = true;
+                abortedOnThisDocument = true;
+                stoppedOnThisDocument = true;
+                break;
+              }
+              if (embedShareSpent(context, unitsDone, otherStagesHaveWork)) {
+                stoppedOnThisDocument = true;
+                break;
+              }
+            }
+            if (progress.isComplete(docId)) {
+              float[] vector = progress.complete(docId);
+              Map<String, Object> updates = updatesByDocId.get(docId);
+              updates.put(isChunk ? SchemaFields.CHUNK_VECTOR : SchemaFields.VECTOR, vector);
+              updates.put(
+                  isChunk ? SchemaFields.CHUNK_EMBEDDING_STATUS : SchemaFields.EMBEDDING_STATUS,
+                  SchemaFields.EMBEDDING_STATUS_COMPLETED);
+              updates.put(
+                  isChunk
+                      ? SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT
+                      : SchemaFields.EMBEDDING_RETRY_COUNT,
+                  "0");
+              embedProcessed++;
+              windowDocsCompleted++;
+            } else {
+              // Interrupted part-way. The document stays PENDING with no update of any kind — a
+              // partial mean-pool is NOT this document's embedding and must never be written — but
+              // its windows are now held in the accumulator, so the next cycle continues instead of
+              // starting over. This is the whole fix.
+              windowDocsResumable++;
+            }
+          } catch (Exception e) {
+            context
+                .log()
+                .warn(
+                    "Combined backfill: windowed embed failed for {}: {}", docId, e.getMessage());
+            progress.forget(docId);
+            Map<String, String> docFields = batchedFields.getOrDefault(docId, Map.of());
+            int currentRetryCount =
+                parseRetryCountOrZero(
+                    docFields.get(
+                        isChunk
+                            ? SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT
+                            : SchemaFields.EMBEDDING_RETRY_COUNT));
+            updatesByDocId
+                .get(docId)
+                .putAll(
+                    isChunk
+                        ? EmbeddingBackfillOps.computeChunkEmbeddingFailureUpdate(currentRetryCount)
+                        : EmbeddingBackfillOps.computeEmbeddingFailureUpdate(currentRetryCount));
+            embedFailed++;
+          }
+          if (stoppedOnThisDocument) {
+            int remaining = windowedDocIds.size() - i - 1;
+            if (abortedOnThisDocument) {
+              docsSkipped += remaining;
+            } else {
+              embedDeferredForOtherStages += remaining;
+            }
+            break;
+          }
+        }
+      }
+
       if (!embedDocIds.isEmpty() && embedAvailable) {
         EmbeddingProvider provider = context.embeddingProviderSupplier().get();
         // Tempdoc 809 finding 3: encode in EMBED_ENCODE_SLICE-document slices instead of one call
@@ -603,6 +845,10 @@ public final class CombinedEnrichmentBackfillOps {
           if (stopRequested(context, unitsDone, epochAtSelection)) {
             aborted = true;
             docsSkipped += embedDocIds.size() - sliceStart;
+            break;
+          }
+          if (embedShareSpent(context, unitsDone, otherStagesHaveWork)) {
+            embedDeferredForOtherStages += embedDocIds.size() - sliceStart;
             break;
           }
           int sliceEnd = Math.min(sliceStart + EMBED_ENCODE_SLICE, embedDocIds.size());
@@ -827,11 +1073,12 @@ public final class CombinedEnrichmentBackfillOps {
           .info(
               "Combined backfill: docs={} (embed={},splade={},chunks={}),"
                   + " fetch={}ms, embed={}ms(ok={},fail={},singlePass={},longDocWindowed={},"
-                  + "arenaOomWindowed={}),"
+                  + "arenaOomWindowed={},windowUnits={},windowDocsDone={},windowDocsResuming={},"
+                  + "deferredForOtherStages={}),"
                   + " splade={}ms(ok={},fail={}), ner={}ms(ok={},fail={}),"
                   + " write={}ms(written={}), total={}ms",
               pendingIds.size(),
-              embedDocIds.size(),
+              embedDocIds.size() + windowedDocIds.size(),
               spladeDocIds.size(),
               chunkIdsInBatch.size(),
               fetchMs,
@@ -841,6 +1088,10 @@ public final class CombinedEnrichmentBackfillOps {
               singlePassProcessed,
               longDocWindowed,
               arenaOomWindowed,
+              windowUnitsDone,
+              windowDocsCompleted,
+              windowDocsResumable,
+              embedDeferredForOtherStages,
               spladeMs,
               spladeProcessed,
               spladeFailed,
@@ -879,7 +1130,12 @@ public final class CombinedEnrichmentBackfillOps {
       // blank-content doc reached terminal FAILED). `written > 0` is only ACTIVITY and can stay
       // true forever. See CombinedOutcome#progressed for what is deliberately NOT counted.
       return new CombinedOutcome(
-          written > 0,
+          // Round-15 post-round finding: encoder windows advanced on a long document are ACTIVITY
+          // in exactly this field's documented sense — the pass demonstrably touched something and
+          // the mode selector must keep choosing the combined pass while a long-document backlog is
+          // converging window by window. It stays OUT of `progressed` below: the document has not
+          // left the pending population, and `progressed` is a loop's continue-condition.
+          written > 0 || windowUnitsDone > 0,
           embedProcessed
                   + spladeProcessed
                   + nerProcessed
@@ -899,7 +1155,8 @@ public final class CombinedEnrichmentBackfillOps {
           nerMs,
           fetchMs,
           writeMs,
-          totalMs);
+          totalMs,
+          workSetSignature);
 
     } catch (Exception e) {
       context.log().error("Error during combined enrichment backfill", e);
@@ -923,12 +1180,39 @@ public final class CombinedEnrichmentBackfillOps {
               nerMs,
               fetchMs,
               writeMs,
-              totalMs)
+              totalMs,
+              workSetSignature)
           : CombinedOutcome.none();
     }
     } finally {
       enrichmentSpan.end();
     }
+  }
+
+  /**
+   * Identifies WHICH documents a batch selected and how it routed them (round-15 post-round
+   * finding). See {@link CombinedOutcome#workSetSignature()}.
+   *
+   * <p>The document-id list is the load-bearing part: per-stage COUNTS repeat routinely on a
+   * healthy drain (100 parents + 50 chunks every batch), so a counts-only signature would cry wolf
+   * on every large corpus. The id list changes as soon as the head of the queue moves, which is
+   * exactly the property a stalled backfill lacks. Never {@code 0} for a non-empty selection, since
+   * {@code 0} is the caller's "no work-set" sentinel.
+   */
+  private static long computeWorkSetSignature(
+      List<String> pendingIds, int embedCount, int spladeCount, int chunkCount, int nerCount) {
+    if (pendingIds.isEmpty()) {
+      return 0L;
+    }
+    long hash = 1125899906842597L;
+    for (String id : pendingIds) {
+      hash = hash * 31 + (id == null ? 0 : id.hashCode());
+    }
+    hash = hash * 31 + embedCount;
+    hash = hash * 31 + spladeCount;
+    hash = hash * 31 + chunkCount;
+    hash = hash * 31 + nerCount;
+    return hash == 0L ? 1L : hash;
   }
 
   /**

@@ -62,6 +62,10 @@
     "install-completeness": {
       "minStrength": 100,
       "maxNoCoverage": 0
+    },
+    "windowed-embed-progress": {
+      "minStrength": 88,
+      "maxNoCoverage": 0
     }
   }
 }

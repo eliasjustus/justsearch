@@ -188,6 +188,18 @@
       "law": "compute(plan, contract) classifies each required file: a file the plan still wants to download is MISSING_CONTRACTED iff the contract's entry for its package is present, NOT skipped-kind, and lists that exact filename in installedFiles; otherwise MISSING_UNCONTRACTED. installedFully() = something installed AND no MISSING_CONTRACTED AND (a contract exists OR nothing is missing). pendingRegistryAdditions() = the MISSING_UNCONTRACTED package ids, deduped. repairNeeded() = any file missing at all, INDEPENDENT of contractedness. Widening 'contracted' to package granularity (or to skipped-kind entries) makes a newer version's added artifact read as retroactive non-installation (round-10 F2 / round-11 F4); narrowing repairNeeded to contracted gaps only hides the round-11 consequence entirely (an upgraded machine loses GPU for every ONNX encoder while the status claims a complete install).",
       "guard": "test:InstallCompletenessTest",
       "note": "Tempdoc 805 G.3 W-TRUTH: the file-granularity install-completeness decision consumed by AiInstallService.applyInstalledFromPlan for installedFully / pendingRegistryAdditions / repairNeeded. Three authorities meet here: registry x profile (what is required), disk via the planner's already-installed probe (what is present), the install contract (what was installed)."
+    },
+    {
+      "id": "windowed-embed-progress",
+      "gradlePath": ":modules:worker-services",
+      "targetClass": "io.justsearch.indexerworker.loop.ops.WindowedEmbedProgress",
+      "targetTests": [
+        "io.justsearch.indexerworker.loop.ops.CombinedEnrichmentLongDocumentTest"
+      ],
+      "pure": true,
+      "law": "record(docId, content, total, from, windows) folds a slice into the document's running sum ONLY when from == the tracked resume point and the content fingerprint matches; it returns the new resume point. complete(docId) = L2Normalize(sum / windowsAccumulated), which is exactly OnnxEmbeddingEncoder.meanPoolChunks over the same windows, and drops the entry. nextWindow(docId, content) = 0 whenever nothing is tracked OR the fingerprint differs. Every failure here is a silent WRONG VECTOR that indexes cleanly: double-counting a slice (accepting a non-matching from) skews the mean, blending two content revisions embeds a document that never existed, and a resume point that does not advance re-embeds windows forever.",
+      "guard": "test:CombinedEnrichmentLongDocumentTest",
+      "note": "Round-15 post-round finding: the cross-cycle accumulator that lets a long document's windowed embedding resume instead of restarting every scheduler cycle."
     }
   ]
 }
