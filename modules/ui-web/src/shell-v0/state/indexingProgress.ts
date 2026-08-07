@@ -21,8 +21,16 @@ import type { StatusResponse } from '../../api/generated/index.js';
 /**
  * The 813 §3a phase model, index-wide scope. `Scanning` is per-scan (the scan SSE) and is therefore
  * not derivable from this snapshot — it is not modelled here.
+ *
+ * `blocked` (round-15 F1/F1b) is the fourth arm the original three could not express: documents that
+ * NEED semantic enrichment while the stage that would produce it is not applicable at all (no
+ * embedding service — `NO_EMBEDDING_MODEL`). Before it, that state fell through the applicability
+ * filter and was indistinguishable from `ready`, so the card claimed "Everything is indexed and
+ * enriched" at 0% coverage — a completion signal green precisely because the work never became
+ * reachable (`unreachable-seed-green`). It is deliberately NOT folded into `enriching`: nothing is
+ * running, so no percent moves and no estimate exists.
  */
-export type IndexingPhase = 'indexing' | 'enriching' | 'ready' | 'unknown';
+export type IndexingPhase = 'indexing' | 'enriching' | 'blocked' | 'ready' | 'unknown';
 
 /**
  * 813 §4 — which PARENT enrichment stages are applicable to this deployment, index-wide.
@@ -95,6 +103,14 @@ export interface IndexingProgress {
   enrichingPercent: number | null;
   /** Documents still PENDING across every applicable enrichment stage (0 when nothing is pending). */
   enrichingPending: number;
+  /**
+   * Round-15 F1 — documents whose SEMANTIC enrichment is outstanding while the embedding stage is
+   * NOT applicable (no embedding service). Positive evidence that the work exists AND cannot run:
+   * the sole basis for the {@link IndexingPhase} `blocked` arm, and the reason a surface may not
+   * read this state as completion. 0 whenever embedding is applicable — a reachable backlog is
+   * {@link enrichingPending}'s subject, not this one.
+   */
+  blockedPending: number;
   /**
    * 813 §20 — the per-stage BREAKDOWN of {@link enrichingPercent}, one row per stage that
    * contributes to the blend. A PROJECTION of that blend, not a second derivation: the rows are the
@@ -204,6 +220,7 @@ const EMPTY: IndexingProgress = {
   jobsQueued: 0,
   enrichingPercent: null,
   enrichingPending: 0,
+  blockedPending: 0,
   enrichingStages: [],
   enrichingEtaSeconds: null,
   embeddingPending: 0,
@@ -272,6 +289,19 @@ interface EnrichmentWork {
    * of unfinished work (813 §17 / §1d's false terminal).
    */
   readonly rawPending: number;
+  /**
+   * Round-15 F1 — the same evidence for work that is UNREACHABLE: pending documents on the semantic
+   * stages (parent embedding + the chunk tier that shares its encoder) while embedding is NOT
+   * applicable. See {@link IndexingProgress.blockedPending}.
+   *
+   * Scoped to the EMBEDDING stage on purpose. SPLADE and NER are independently configurable — a
+   * deployment can legitimately run with SPLADE off forever (`SpladeConfig.from`), and their
+   * never-settling documents are exactly what the applicability filter exists to discount. Embedding
+   * is the stage the completion claim rests on: it is what "semantic search" means to the user, it is
+   * what `NO_EMBEDDING_MODEL` reports, and its absence is a state the user can ACT on (install AI),
+   * which is what makes saying so useful rather than merely pedantic.
+   */
+  readonly blockedPending: number;
 }
 
 function readEnrichmentWork(status: StatusResponse | null | undefined): EnrichmentWork {
@@ -325,7 +355,15 @@ function readEnrichmentWork(status: StatusResponse | null | undefined): Enrichme
     (applicable.ner ? nerPending : 0) +
     (applicable.embedding ? count(chunk?.chunkEmbeddingPendingCount) : 0);
 
-  return { applicable, rows, rawPending };
+  // The mirror of the line above: the SAME counters on the SAME stages, taken when the stage is not
+  // applicable. Excluding them from the blend is right (nothing will settle, so a percent and an ETA
+  // would both be fabrications); excluding them from the EVIDENCE is what made 0% coverage read as
+  // completion.
+  const blockedPending = applicable.embedding
+    ? 0
+    : count(enrichment?.embeddingPendingCount) + count(chunk?.chunkEmbeddingPendingCount);
+
+  return { applicable, rows, rawPending, blockedPending };
 }
 
 /**
@@ -342,9 +380,17 @@ function readEnrichmentWork(status: StatusResponse | null | undefined): Enrichme
  * unreachable, the Tasks card claiming "still improving" over an index with nothing left to improve.
  * The doctrine is symmetric and the gauge fails it in both directions: pending counts are the
  * evidence, and a gauge is not a count.
+ *
+ * COUNTS ONLY, in BOTH directions (round-15 F1). Zero REACHABLE work is not evidence of completion
+ * when the reason it is zero is that the stage producing it does not exist: `blocked` outranks
+ * `ready` on the same positive-evidence rule that makes pending outrank drained. It also outranks
+ * `enriching`, because the enriching tier's own words ("semantic search catching up") are false while
+ * the semantic stage cannot run — a SPLADE-only backfill is still visible as a stage row in the
+ * disclosure, so nothing is hidden by saying the truer thing in the headline.
  */
 function derivePhase(jobsPending: number, work: EnrichmentWork): IndexingPhase {
   if (jobsPending > 0) return 'indexing';
+  if (work.blockedPending > 0) return 'blocked';
   return work.rawPending > 0 ? 'enriching' : 'ready';
 }
 
@@ -556,6 +602,9 @@ export function selectIndexingProgress(
     // The displayed pending count matches the phase evidence (rawPending), not the percent's
     // stage-filtered sum — a surface saying "enriching" must be able to show the work it saw.
     enrichingPending: work.rawPending,
+    // The same discipline for the `blocked` arm: the evidence the phase was decided on, so a surface
+    // saying "semantic search is waiting" can show how much is waiting.
+    blockedPending: work.blockedPending,
     // The percent's own inputs, handed on unchanged (813 §20) — a projection of the blend, not a
     // second pass over the wire.
     enrichingStages: work.rows,

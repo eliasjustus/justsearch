@@ -24,6 +24,7 @@ const progress = (over: Partial<IndexingProgress>): IndexingProgress => ({
   jobsQueued: 0,
   enrichingPercent: null,
   enrichingPending: 0,
+  blockedPending: 0,
   enrichingStages: [],
   enrichingEtaSeconds: null,
   embeddingPending: 0,

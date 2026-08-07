@@ -51,7 +51,7 @@ import {
   type IndexingProgress,
 } from '../state/indexingProgress.js';
 import { humanizeSeconds } from '../state/startupEstimate.js';
-import { ENRICHMENT_BODY } from '../state/enrichmentCoverage.js';
+import { ENRICHMENT_BLOCKED_BODY, ENRICHMENT_BODY } from '../state/enrichmentCoverage.js';
 import { formatBytes, formatCount } from '../display/format.js';
 
 /**
@@ -150,6 +150,7 @@ const NO_PROGRESS: IndexingProgress = {
   jobsQueued: 0,
   enrichingPercent: null,
   enrichingPending: 0,
+  blockedPending: 0,
   enrichingStages: [],
   enrichingEtaSeconds: null,
   embeddingPending: 0,
@@ -235,17 +236,22 @@ export class TaskList extends JfElement {
   }
 
   /**
-   * Apply a fresh projection, opening the terminal window on the active→`ready` EDGE.
+   * Apply a fresh projection, opening the terminal window on the active→TERMINAL EDGE.
    *
    * The edge, not the level: `ready` is also the steady state of an idle, fully-searchable index,
    * and a panel that popped up to say "Ready" whenever a poll landed would be claiming a completion
    * it never observed happening. The window is armed only when this component actually saw the
    * active phase it is now reporting the end of.
+   *
+   * Round-15 F1: `blocked` shares the window rather than counting as active work. It IS the end of
+   * the indexing run (nothing is running), so it gets the same brief terminal card — with different
+   * words. Treating it as active instead would leave the overlay panel up forever on an install
+   * that has no embedding model, which is the opposite failure.
    */
   private applyProgress(next: IndexingProgress): void {
     const wasActive = isActivePhase(this.progress.phase);
     this.progress = next;
-    if (wasActive && next.phase === 'ready') {
+    if (wasActive && isTerminalPhase(next.phase)) {
       this.clearReadyTimer();
       this.showingReady = true;
       this.readyTimer = setTimeout(() => {
@@ -530,10 +536,20 @@ export class TaskList extends JfElement {
   private renderAggregate(): TemplateResult | typeof nothing {
     const p = this.progress;
     if (this.showingReady) {
+      // Round-15 F1 — the terminal card has TWO bodies, and which one is true is decided by the
+      // projection's own evidence, never by the absence of queued work: an index whose semantic
+      // stage cannot run is finished with what it can do, not "enriched".
+      const blocked = p.phase === 'blocked';
       return html`
-        <div class="aggregate" data-testid="task-aggregate" data-phase="ready">
+        <div
+          class="aggregate"
+          data-testid="task-aggregate"
+          data-phase=${blocked ? 'blocked' : 'ready'}
+        >
           <div class="counts" data-testid="task-aggregate-counts">
-            Everything is indexed and enriched.
+            ${blocked
+              ? `Indexed and keyword-searchable — ${ENRICHMENT_BLOCKED_BODY}.`
+              : 'Everything is indexed and enriched.'}
           </div>
         </div>
       `;
@@ -710,7 +726,14 @@ export class TaskList extends JfElement {
    * panel is up for agent operations alone.
    */
   private headline(): string {
-    if (this.showingReady) return 'Ready — fully searchable';
+    // Round-15 F1 — "fully searchable" is a claim about COVERAGE, so it may only be made when the
+    // projection says coverage supports it. With the semantic stage unable to run, the honest
+    // headline keeps the capability lead (§19 W1) and names the limit instead of hiding it.
+    if (this.showingReady) {
+      return this.progress.phase === 'blocked'
+        ? 'Search is ready — keyword only'
+        : 'Ready — fully searchable';
+    }
     if (this.progress.phase === 'indexing') return 'Indexing';
     // 813 §19 (W1) — capability first: during enrichment keyword search ALREADY works, so the
     // headline states what the user can do before what is still being built. Same clause order as
@@ -741,6 +764,14 @@ function renderStageRow(row: EnrichingStageRow): TemplateResult {
 /** The two phases that mean work is happening right now (and the panel has something to report). */
 function isActivePhase(phase: IndexingProgress['phase']): boolean {
   return phase === 'indexing' || phase === 'enriching';
+}
+
+/**
+ * The two phases that END a run: everything settled (`ready`) and everything that COULD settle
+ * settled (`blocked`). Both open the brief terminal window; only their words differ (round-15 F1).
+ */
+function isTerminalPhase(phase: IndexingProgress['phase']): boolean {
+  return phase === 'ready' || phase === 'blocked';
 }
 
 if (!customElements.get('jf-task-list')) {

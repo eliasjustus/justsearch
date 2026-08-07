@@ -142,6 +142,7 @@ export class LibrarySurface extends JfElement {
     provisional: { state: true },
     enrichmentStages: { state: true },
     enrichmentPending: { state: true },
+    enrichmentBlocked: { state: true },
     otherSources: { state: true },
   };
 
@@ -181,6 +182,12 @@ export class LibrarySurface extends JfElement {
    */
   declare enrichmentPending: boolean;
   /**
+   * Round-15 F1b — the semantic enrichment stage cannot run at all (no embedding service), so a
+   * drained folder is keyword-searchable and will stay that way until AI is installed. Same
+   * derivation, same tick as {@link enrichmentStages}; `folderStatus` turns it into the row's caveat.
+   */
+  declare enrichmentBlocked: boolean;
+  /**
    * Tempdoc 811 C-2a — the collections that documents ingested OUTSIDE every watched folder carry
    * (the MCP/API ingest path). The folder rows describe watched roots only, so without this the
    * user could not see, let alone remove, what an agent had ingested. Empty ⇒ the section is absent
@@ -217,6 +224,7 @@ export class LibrarySurface extends JfElement {
     this.provisional = false;
     this.enrichmentStages = null;
     this.enrichmentPending = false;
+    this.enrichmentBlocked = false;
     this.otherSources = EMPTY_OTHER_SOURCES;
   }
 
@@ -486,12 +494,16 @@ export class LibrarySurface extends JfElement {
       this.provisional = s.stability.kind === 'provisional';
       // Tempdoc 813 §4 — the per-root second tier needs to know which stages apply; take it from the
       // ONE index-wide progress derivation rather than re-reading the enrichment wire flags here.
-      this.enrichmentStages = selectIndexingProgress(
+      const progress = selectIndexingProgress(
         s.status,
         s.snapshotLive,
         s.episodeMaxPendingJobs,
         s.enrichSettleSamples,
-      ).stages;
+      );
+      this.enrichmentStages = progress.stages;
+      // Round-15 F1b — same projection, same tick: whether the semantic stage can run at all, so a
+      // row cannot render an unqualified "✓ … Verified just now" over an index with no vectors.
+      this.enrichmentBlocked = progress.phase === 'blocked';
       // 809 finding 1 — same tick, same store: whether the enrichment backfill is still running, so a
       // row cannot claim the terminal "✓ indexed" while semantic search is still being built.
       this.enrichmentPending = enrichmentProgress(s.status).pending;
@@ -562,6 +574,7 @@ export class LibrarySurface extends JfElement {
         // Tempdoc 813 §4 — the enrichment tier of the row's meta line.
         enrichmentStages: this.enrichmentStages,
         enrichmentPending: this.enrichmentPending,
+        enrichmentBlocked: this.enrichmentBlocked,
       });
       return {
         pathHash,
@@ -930,6 +943,7 @@ export class LibrarySurface extends JfElement {
       // Tempdoc 813 §4 — the enrichment tier of the row's meta line.
       enrichmentStages: this.enrichmentStages,
       enrichmentPending: this.enrichmentPending,
+      enrichmentBlocked: this.enrichmentBlocked,
     });
     return html`
       <div class="card">
