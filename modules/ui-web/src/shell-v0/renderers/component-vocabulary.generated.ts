@@ -20,6 +20,7 @@ export type ComponentTag =
   | 'jf-agent-emitter-demo'
   | 'jf-ai-activity-digest'
   | 'jf-api-explorer-view'
+  | 'jf-app-update-banner'
   | 'jf-array-control'
   | 'jf-authorization-host'
   | 'jf-autonomy-dial'
@@ -108,6 +109,7 @@ export type ComponentTag =
   | 'jf-scope-chip'
   | 'jf-search-results'
   | 'jf-search-trace'
+  | 'jf-search-v2'
   | 'jf-security-surface'
   | 'jf-selection-actions-menu'
   | 'jf-settings-surface'
@@ -152,6 +154,7 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-agent-emitter-demo',
   'jf-ai-activity-digest',
   'jf-api-explorer-view',
+  'jf-app-update-banner',
   'jf-array-control',
   'jf-authorization-host',
   'jf-autonomy-dial',
@@ -240,6 +243,7 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-scope-chip',
   'jf-search-results',
   'jf-search-trace',
+  'jf-search-v2',
   'jf-security-surface',
   'jf-selection-actions-menu',
   'jf-settings-surface',
