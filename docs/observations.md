@@ -305,8 +305,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] **First-plugin onboarding broken: the scaffold `dev-server.js` won't run.** `modules/ui-web/dev-examples/plugin-scaffold/dev-server.js` uses CommonJS `require`, but `modules/ui-web/package.json` is `"type": "module"`, so `node dev-server.js` throws `require is not defined in ES module scope`. This is the *documented first step* of 533's "Browser dev mode" first-plugin flow (README: "Run `node dev-server.js`"), so the canonical onboarding path is dead. Fix: rename to `dev-server.cjs` (and update the README) or rewrite with ESM imports. Workaround used in the 560 §20 de-risk: serve `plugin.js` same-origin via the app's Vite (`http://localhost:5174/dev-examples/plugin-scaffold/plugin.js`) — but note Vite *transforms* the module, which mangled the manifest id to `'unknown'` (so the plugin loaded + attenuated correctly but its surface didn't mount); a faithful load needs the raw source. — `modules/ui-web/dev-examples/plugin-scaffold/dev-server.js` (2026-06-04)
 
 ### obs:index-general — Packaged Tauri CSP likely blocks the `index.html` Google Fonts `<link href="https://fonts.googleapis
-`kind: defect?` `anchor: modules/ui-web/index.html` `seen: 1` `first: 2026-06-05` `last: 2026-06-05`
+`kind: defect?` `anchor: modules/ui-web/index.html` `seen: 2` `first: 2026-06-05` `last: 2026-08-06`
 - [ ] Packaged Tauri CSP likely blocks the `index.html` Google Fonts `<link href="https://fonts.googleapis.com…">` (Plus Jakarta Sans display font): CSP `style-src 'self' 'unsafe-inline'` (no googleapis) + `font-src 'self' data:` (no gstatic) — works in vite dev, silently drops the display font in packaged builds — `modules/ui-web/index.html:26` vs `modules/shell/src-tauri/tauri.conf.json:70` (2026-06-05)
+- [ ] ui-web index.html loads /src/main.jsx and titles the document 'ui-web' — a .jsx entry filename and a scaffold title on a Lit/shell-v0 app; left untouched as out of scope for the identity kernel — `modules/ui-web/index.html:22` (2026-08-06)
 
 ### obs:coreplugin — Surface audience drift: `core.health-surface` + `core.activity-surface` are USER in Java CoreSurface
 `kind: defect?` `anchor: modules/ui-web/src/shell-v0/plugin-api/CorePlugin.ts` `seen: 1` `first: 2026-06-09` `last: 2026-06-09`
@@ -332,8 +333,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] UPDATE (supersedes the earlier two-instance note): FOUR orchestrator brief-premise errors in one chartering sitting, each refutable by one command, each caught only after a full worker round-trip — 787-4b (assumed jseval sends the deprecated wire shape; KnowledgeSearchEngine.java:683 sets pipeline unconditionally), 783 B.1 (assumed real corpora carry answer strings; legal-clerc/miracl-de/miracl-fr all answer:""), 784 (assumed chunk-SPLADE unbuilt; shipped 2026-07-11 behind rag.chunk_splade.enabled), 785 (assumed a 20-30x per-doc enrichment anomaly; normalized by bytes legal is the FASTEST corpus at 35.5kB/s vs scifact 30.8kB/s — wrong unit, no pathology). Proposed rule: charters/briefs must run the one refuting command per load-bearing factual premise and cite the result inline — the same file:line evidence standard briefs already impose on workers, applied to the brief author (2026-07-27)
 
 ### obs:searchplanner — Live worker returns chunk-merge skipped(SKIPPED_QUERY_SYNTAX) even for simple/absent querySyntax, co
-`kind: defect?` `anchor: modules/worker-services/.../plan/SearchPlanner.java` `seen: 1` `first: 2026-06-12` `last: 2026-06-12`
+`kind: defect?` `anchor: modules/worker-services/.../plan/SearchPlanner.java` `seen: 2` `first: 2026-06-12` `last: 2026-08-06`
 - [ ] Live worker returns chunk-merge skipped(SKIPPED_QUERY_SYNTAX) even for simple/absent querySyntax, contradicting SearchPlanner.planChunkMerge on main which only skips for LUCENE — suspect stale worker dist on the shared dev stack; re-verify after fresh installDist — `modules/worker-services/.../plan/SearchPlanner.java:252` (2026-06-12)
+- [ ] No collection-enumeration endpoint exists: the Library's 811 C-2a "Other sources" section must enumerate via a `*:*` lucene-syntax facet search because a blank query short-circuits to EmptyQueryDecision before facets are planned — a first-class `GET /api/indexing/collections` returning {collection,docCount}[] would replace the probe — `modules/worker-services/src/main/java/io/justsearch/indexerworker/services/plan/SearchPlanner.java:73` (2026-08-06)
 
 ### obs:knowledgesearchcontroller-general — Search wire matchSpans entries carry empty `term` strings — `modules/ui/.../KnowledgeSearchControlle
 `kind: defect?` `anchor: modules/ui/.../KnowledgeSearchController.java` `seen: 1` `first: 2026-06-12` `last: 2026-06-12`
@@ -1860,7 +1862,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] The 'Process pending enrichment' trigger cannot show its pending count: jf-operation renders the catalog label with no per-instance override by design, and LibrarySurface plumbs no enrichment queue depth — round-14 finding 11's unimplemented half — `modules/ui-web/src/shell-v0/views/LibrarySurface.ts:830` (2026-08-06)
 
 ### obs:component-vocabulary-generated — `gen-component-vocabulary --check` is stale on origin/main@50121ccd: the generated tag union is miss
-`kind: defect?` `anchor: modules/ui-web/src/shell-v0/renderers/component-vocabulary.generated.ts` `seen: 9` `first: 2026-08-04` `last: 2026-08-06`
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/renderers/component-vocabulary.generated.ts` `seen: 11` `first: 2026-08-04` `last: 2026-08-06`
 - [ ] `gen-component-vocabulary --check` is stale on origin/main@50121ccd: the generated tag union is missing `jf-app-update-banner`, so the ui-web gate set fails for anyone touching `modules/ui-web/src/**` — `modules/ui-web/src/shell-v0/renderers/component-vocabulary.generated.ts:23` (2026-08-06)
 - [ ] component-vocabulary.generated.ts is stale on main — jf-app-update-banner missing, so `node scripts/ci/gen-component-vocabulary.mjs --check` fails for an unrelated reason on any ui-web branch — `modules/ui-web/src/shell-v0/renderers/component-vocabulary.generated.ts:23` (2026-08-06)
 - [ ] check-consequence-classification and gen-component-vocabulary --check are stale/red on main independent of any bundle: component-vocabulary.generated.ts misses jf-app-update-banner — `modules/ui-web/src/shell-v0/renderers/component-vocabulary.generated.ts:23` (2026-08-04)
@@ -1870,6 +1872,8 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] check-gen-component-vocabulary --check is RED on origin/main — 'jf-app-update-banner' missing from the generated vocabulary (regen step skipped when the component landed) — `modules/ui-web/src/shell-v0/renderers/component-vocabulary.generated.ts` (2026-08-06)
 - [ ] component-vocabulary.generated.ts is stale on this base: gen-component-vocabulary --check fails because jf-app-update-banner (AppUpdateBanner.ts) was never regenerated in — `modules/ui-web/src/shell-v0/renderers/component-vocabulary.generated.ts:23` (2026-08-06)
 - [ ] check-gen-component-vocabulary is stale on main: 'jf-app-update-banner' is defined but missing from component-vocabulary.generated.ts — regen not committed with the banner (out of scope for 812; reverted rather than sweeping an unrelated component into an unrelated PR) — `modules/ui-web/src/shell-v0/renderers/component-vocabulary.generated.ts` (2026-08-06)
+- [ ] check-gen-component-vocabulary is stale on origin/main — the generated ComponentTag union is missing `jf-app-update-banner` (pre-existing; regenerating is a one-command fix but out of scope for the 813 §20 branch) — `modules/ui-web/src/shell-v0/renderers/component-vocabulary.generated.ts:23` (2026-08-06)
+- [ ] component-vocabulary.generated.ts is stale on main (missing `jf-app-update-banner`), so `gen-component-vocabulary --check` fails for anyone editing modules/ui-web/src — `modules/ui-web/src/shell-v0/renderers/component-vocabulary.generated.ts:23` (2026-08-06)
 
 ### obs:memoryextractionconsumer — `MemoryExtractionConsumer` swallows every `RuntimeException` from `memoryStore.remember`, including
 `kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/MemoryExtractionConsumer.java` `seen: 1` `first: 2026-08-06` `last: 2026-08-06`
@@ -2002,7 +2006,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-08-06` `last: 2026-08-06`
 - [ ] `:modules:app-api:updateSchemas` always FAILS on its first run after a record change (the SchemaDrift/CrossLanguageContract assertions run in the same task that writes the regen), so every schema update needs the task invoked twice — the failure text says 'regenerate with <this exact command>', which reads like the command did not work — `modules/app-api/build.gradle.kts` (updateSchemas task) (2026-08-06)
 
-### obs:watchedrootsstore — store-recoverability register declares the watched-roots store as `watched-roots.json` (hyphen) but 
+### obs:watchedrootsstore — store-recoverability register declares the watched-roots store as `watched-roots.json` (hyphen) but
 `kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/worker/WatchedRootsStore.java` `seen: 1` `first: 2026-08-06` `last: 2026-08-06`
 - [ ] store-recoverability register declares the watched-roots store as `watched-roots.json` (hyphen) but the real file is `watched_roots.json` (underscore), so any register-derived path handling for that row silently matches nothing — `governance/store-recoverability.v1.json:watched-roots` vs `modules/app-services/src/main/java/io/justsearch/app/services/worker/WatchedRootsStore.java:24` (2026-08-06)
 
@@ -2010,13 +2014,37 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: modules/ui-web/scripts/dev-all.cjs` `seen: 1` `first: 2026-08-06` `last: 2026-08-06`
 - [ ] second hand-maintained soft-clean keep list still forks the store-recoverability register (dev-runner.cjs now derives its AUTHORED set; this copy does not) — `modules/ui-web/scripts/dev-all.cjs:55` (2026-08-06)
 
-### obs:indexingcontroller — POST /api/indexing/roots still 500s on a non-string `collection` (unchecked Map<String,String> cast 
+### obs:indexingcontroller — POST /api/indexing/roots still 500s on a non-string `collection` (unchecked Map<String,String> cast
 `kind: defect?` `anchor: modules/ui/src/main/java/io/justsearch/ui/api/IndexingController.java` `seen: 1` `first: 2026-08-06` `last: 2026-08-06`
 - [ ] POST /api/indexing/roots still 500s on a non-string `collection` (unchecked Map<String,String> cast -> ClassCastException) where POST /api/knowledge/ingest 400s on the same input — `modules/ui/src/main/java/io/justsearch/ui/api/IndexingController.java:158` (2026-08-06)
 
-### obs:unifiedchatview-test — PR #373 claimed FE tests for sendBlockedReason + the 423-dispatch handler that never existed (grep: 
+### obs:unifiedchatview-test — PR #373 claimed FE tests for sendBlockedReason + the 423-dispatch handler that never existed (grep:
 `kind: defect?` `anchor: modules/ui-web/src/shell-v0/views/UnifiedChatView.test.ts` `seen: 1` `first: 2026-08-06` `last: 2026-08-06`
 - [ ] PR #373 claimed FE tests for sendBlockedReason + the 423-dispatch handler that never existed (grep: zero refs to either symbol in any .test.ts) — a merged PR's test claim went unverified; the tests are written for real in this bundle — `modules/ui-web/src/shell-v0/views/UnifiedChatView.test.ts` (2026-08-06)
+
+### obs:sourcespane — axe nested-interactive (serious, 3 nodes) in the docked evidence rail: `.source[role="button"]` rows
+`kind: environment?` `anchor: modules/ui-web/src/shell-v0/components/SourcesPane.ts` `seen: 1` `first: 2026-08-06` `last: 2026-08-06`
+- [ ] axe nested-interactive (serious, 3 nodes) in the docked evidence rail: `.source[role="button"]` rows have focusable descendants — newly VISIBLE via tempdoc 814 §D8's `chat-evidence-rail` capture, pre-existing in the component; the two new steps were deliberately NOT added to the a11y baseline rather than baselining a real defect — `modules/ui-web/src/shell-v0/components/SourcesPane.ts` (2026-08-06)
+
+### obs:mark-dark — Dark-ground app icon is near-invisible over light grounds: icon.ico/icns/app-PNGs ship ink #eceef1 o
+`kind: defect?` `anchor: brand/mark-dark.svg` `seen: 1` `first: 2026-08-06` `last: 2026-08-06`
+- [ ] Dark-ground app icon is near-invisible over light grounds: icon.ico/icns/app-PNGs ship ink #eceef1 on a transparent field per the mark spec, so on a white Explorer background the mass and its slot both vanish — spec-mandated, raised as an owner question in tempdoc 815 §7 — `brand/mark-dark.svg` (2026-08-06)
+
+### obs:extract-wordmark — Segoe UI Variable's GPOS carries a kern-pair variation index fontTools cannot resolve (KeyError in v
+`kind: defect?` `anchor: brand/extract-wordmark.py` `seen: 1` `first: 2026-08-06` `last: 2026-08-06`
+- [ ] Segoe UI Variable's GPOS carries a kern-pair variation index fontTools cannot resolve (KeyError in varLib.merger), so instantiateVariableFont fails on the stock Windows face; brand/extract-wordmark.py drops GPOS first — worth knowing for any future variable-font work — `brand/extract-wordmark.py` (2026-08-06)
+
+### obs:facetingengine — FacetingEngine truncation OMITS rather than undercounts: on exceeding maxDocsScanned it breaks out o
+`kind: defect?` `anchor: modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/FacetingEngine.java` `seen: 1` `first: 2026-08-06` `last: 2026-08-06`
+- [ ] FacetingEngine truncation OMITS rather than undercounts: on exceeding maxDocsScanned it breaks out of the segment loop, so a facet value living only in a later segment vanishes entirely — any consumer treating facets as complete without checking facetsTruncated can silently lose whole categories — `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/FacetingEngine.java:100` (2026-08-06)
+
+### obs:envelopestream-test — Flaky under full-suite load only: EnvelopeStream heartbeat-watchdog reconnect test expects >=2 sourc
+`kind: environment?` `anchor: modules/ui-web/src/shell-v0/streaming/EnvelopeStream.test.ts` `seen: 1` `first: 2026-08-06` `last: 2026-08-06`
+- [ ] Flaky under full-suite load only: EnvelopeStream heartbeat-watchdog reconnect test expects >=2 sources, got 1; passes in isolation — `modules/ui-web/src/shell-v0/streaming/EnvelopeStream.test.ts:488` (2026-08-06)
+
+### obs:ui-shot — jseval ui-shot / ui-*-gate auto-serve leaks its Vite child process — two survived my session in the 
+`kind: defect?` `anchor: scripts/jseval/jseval/ui_shot.py` `seen: 1` `first: 2026-08-06` `last: 2026-08-06`
+- [ ] jseval ui-shot / ui-*-gate auto-serve leaks its Vite child process — two survived my session in the worktree and their open handle on node_modules/lightningcss-win32-x64-msvc/lightningcss.win32-x64-msvc.node made `gradlew build` fail with npm EPERM unlink at :modules:ui:installWebDependencies (looks like a build break, is a stale lock) — `scripts/jseval/jseval/ui_shot.py` (2026-08-06)
 
 ## Parked
 
