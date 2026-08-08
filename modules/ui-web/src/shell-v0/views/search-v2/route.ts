@@ -21,14 +21,17 @@ export interface RungSpec {
   readonly label: string;
 }
 
+// The labels are what a reader sees on the pill's tooltip, so they are written in the reader's
+// terms: what this destination will DO with the text, never what the design calls it (818 slice 5's
+// copy pass — "rung", "floor" and "chip" are words for the tempdoc, not for the window).
 export const RUNGS: Readonly<Record<Rung, RungSpec>> = Object.freeze({
-  search: { pill: 'SEARCH', label: 'the floor · runs on every keystroke' },
-  ask: { pill: 'ASK', label: 'answered with citations into your files' },
-  extract: { pill: 'EXTRACT', label: 'attachment — a schema chip, not a place' },
-  agent: { pill: 'DELEGATE', label: 'handed to the agent, supervised' },
-  chat: { pill: 'CHAT', label: 'no relationship to your files' },
-  steer: { pill: 'STEER', label: 'redirects the run in flight' },
-  workflow: { pill: 'WORKFLOW', label: 'a saved routine, run as a delegated task' },
+  search: { pill: 'SEARCH', label: 'Searches your files as you type' },
+  ask: { pill: 'ASK', label: 'Answers from your files, with sources' },
+  extract: { pill: 'EXTRACT', label: 'Pulls the attached fields out of your files' },
+  agent: { pill: 'DELEGATE', label: 'Hands the task to the agent — you can watch it and stop it' },
+  chat: { pill: 'CHAT', label: 'Answers without looking at your files' },
+  steer: { pill: 'STEER', label: 'Redirects the run that is going now' },
+  workflow: { pill: 'WORKFLOW', label: 'Runs a saved routine as a delegated task' },
 });
 
 /** The visible facts routing reads. Nothing else may influence the destination. */

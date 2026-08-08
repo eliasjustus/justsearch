@@ -36,7 +36,10 @@ A live search is not a record; it lives in the deck and becomes a record only by
 ### The twelve laws (the behavioural test list — each becomes a unit test)
 
 1. **L1** the destination pill is a pure function of visible facts; the ⇥ flip is a
-   one-shot lens that dies with the draft (never a stored affordance).
+   one-shot lens that dies with the submission or Escape — never stored across turns.
+   (Wording tightened 2026-08-08: the flip deliberately survives typing — the pill
+   always displays the post-flip truth, so it cannot surprise; "dies with the draft"
+   misread as per-keystroke was a slice-5 false alarm.)
 2. **L2** a run claims the alt slot (STEER), nothing else — ASK stays reachable mid-run.
 3. **L3** scope chips narrow every destination; they change none.
 4. **L4** a frozen block is append-only; staleness is a labelled "re-run as new", never mutation.
@@ -130,6 +133,34 @@ Two windows is a phase, not a state. The comparison ends when **either**:
 Predictable evasion, pre-named: "we'll keep both for a while" / "a follow-up PR will
 sweep it." 742's corpus is follow-ups that never came.
 
+## 5b. Comparison-campaign scaffolding (authored 2026-08-08; produces §5's evidence, does not make its decision)
+
+**Parity checklist** — v2 must match or consciously supersede each before promotion
+(checked = present in v2 as of slice 5):
+- [x] live search + facets + honest counts (shared card)  ·  [x] frozen/committed searches
+- [x] grounded ASK with citations + grounding stats  ·  [x] answer refusals (locked/error)
+- [x] agent run hosting: feed, tool cards, approvals, steer, halt, budget
+- [x] document reading pane + citation follow  ·  [x] scope chips (file + set)
+- [x] sessions sidebar + session index  ·  [x] lock discipline on all paths
+- [x] context meter  ·  [x] zero-result + AI-offline honesty  ·  [x] small-window (≤820px)
+- [ ] conversation resume/branch/edit-retry (v2 renders history read-only; no branch/edit)
+- [ ] export  ·  [ ] compaction/context floor + exclusion ledger  ·  [ ] extract tier (schema)
+- [ ] workflow trigger  ·  [ ] Simple/Detailed projection toggle
+- [ ] walkthroughs/empty-state registry integration, command-palette actions
+
+**Procedure** (dev stack + `serve-worktree-fe`, model active, same corpus): run each task
+on BOTH windows, record task success, count honesty (every on-screen number vs its set),
+and interaction dead-ends: (1) find a named file; (2) refine with facets; (3) open + read
+a result; (4) ask about a committed set, follow a citation; (5) delegate a bounded task,
+approve one step, steer, halt; (6) hit a lock mid-flow; (7) zero-result query; (8) all of
+it at 790px height. Measured pass: axe + the contrast oracle via the ui-shot harness
+(`/ui-check`), whole-screen, both windows, auditor ≠ implementer (slice-execution
+discipline). Score against §6's defect-class table: each class must be demonstrably
+absent in v2 and (where applicable) still present in the shipped window.
+
+**Output**: a dated results table appended here; §5's sunset call then needs only the
+owner's judgment on top of it.
+
 ## 6. Defect classes in the shipped window this design kills by construction
 
 | Shipped-window defect (evidence) | Killed by |
@@ -141,6 +172,42 @@ sweep it." 742's corpus is follow-ups that never came.
 | locked-path text loss (obs. `:5673`) | L9 session-level gate |
 | three parallel conversation models (`mergedTimeline:3816`) | one records array (L11) |
 | triplicated reset protocol (`settleTransients:1077` et al.) | projections have no state to reset |
+
+## 6b. The presentation pass (slices 4–5, designed 2026-08-08; owner additions incorporated)
+
+Scope: bring the in-app window to the prototype's spatial/motion discipline, plus two
+owner-directed principles, formalised as laws:
+
+13. **L13 — every movable boundary is clamped by the minimum honest forms on both
+    sides.** The deck's vertical grip generalises: BOTH rails (session rail, material
+    rail) gain horizontal grips. Clamps derive from content (rail floor = its collapsed
+    strip / minimum readable form; the centre column never drops below the reading
+    measure). Difference in memory: **rails remember** (a width is a user preference,
+    persisted), **the deck resets** (a height is per-session-shape). Widths must respect
+    the 816 sizing-role register; double-click returns any boundary to automatic.
+14. **L14 — the resting surface shows the identifying minimum; elaboration extends on
+    hover AND keyboard focus, never by default.** Applies to sidebar rows (resting:
+    title + LOCKED; extended: meta + actions), index nodes (extended: record detail),
+    context meter (extended: breakdown), frozen headers and receipts (extended:
+    timings/mode). Hard boundary: **honesty facts never hide behind hover** — counts,
+    verdicts, LOCKED, grounding stay resting-visible; only elaboration extends. Focus
+    parity is mandatory (hover-only fails accessibility); the shared results card
+    already follows this principle and is not forked.
+
+Slice 4 (motion + vertical space): commit choreography (record lands first, periphery
+follows, ~700 ms, reduced-motion instant); deck grip with computed floor + collapse to
+count line; unhappy states (zero-results with n=0 escalation labels, AI-offline pill
+honesty); small-window pass at ~790 px bound to the 814 height-budget substrate.
+
+Slice 5 (horizontal space + hover + input): L13 rail grips; L14 hover/focus extension
+sweep; omnibox query-trail dropdown (pinned + recent searches — the rail never shows
+them, L12); citation-follow landing (document pane at cited range, land-strong-then-
+settle); keyboard pass (⌥↑/⌥↓ index nav — never while typing, Escape order); copy audit
+(one verb per action, user-side naming).
+
+Parallel tracks (not in these slices): identity directions as swappable theme files
+(owner picks); comparison-campaign scaffolding (§5 evidence); matchCount-inversion
+diagnosis (observations inbox item).
 
 ## 7. Log
 
@@ -196,3 +263,47 @@ sweep it." 742's corpus is follow-ups that never came.
   two-window phase persists); mid-run lock (a lock taken between status polls) is not
   refused on the agent path — needs a typed lock terminal on the agent stream
   (controller work, out of this window's scope).
+- 2026-08-08 — **Slices 4+5 implemented** (presentation pass; two sequential opus
+  workers + orchestrator review + live verification). Slice 4: commit choreography
+  (prototype timing ported, last-animation-owns-teardown, reduced-motion doubly
+  disabled); deck grip with drag-time computed floor (`deckSizing.ts` pure math,
+  keyboard-operable native button, run controls raise the floor); zero-result honest
+  empty + n=0 affordance labels; AI-offline via the `projectAvailability` authority
+  with a REACHABLE reason (a11y gate caught title-on-disabled — root-caused, not
+  suppressed); 814 binding by consuming the `shortViewportMax` breakpoint authority +
+  one-scroller-per-region (registration deferred with evidence: the proportion register
+  is keyed by ui-shot step; obligation written where the §5 cutover will read it).
+  Slice 5: rail grips per L13 (`railSizing.ts`; floors/ceilings cited to tokens.css +
+  ui-proportion-baseline minWidthPx rows; rails remember via localStorage, forget on
+  automatic); L14 hover/focus extension as ONE mechanism (`.ext` + clip-path, AT-visible;
+  hard boundary structurally tested — counts/verdicts never inside `.ext`); omnibox
+  query trail (pinned via `pinnedSearchState`, recents = session frozen queries +
+  capped submitted-trail; fills-never-commits); citation landing via the shared panel's
+  own `citation-select` → `jf-document-pane` at the cited range (land-strong-settle
+  already lives in the pane — nothing forked); keyboard pass (⌥↑⌥↓ never-while-typing,
+  Escape order trail→pane→flip, full Tab traversal); copy audit (verb set unified on
+  ASK, user-side naming, ~20 strings — table in the slice-5 worker report).
+  145 search-v2 tests (suite 4447), typecheck + full gate recipe + eslint green; the 4
+  known pre-existing failures unchanged in other files. **Live-verified** (stack +
+  worktree FE + active GPU model): mount, both grips (document grip appears with the
+  pane), commit choreography fires and tears down, real cited answer, citations panel,
+  citation click landed the pane at `629-data-at-rest-encryption.md` lines 2360-2381.
+  Live-inconclusive (unit-covered): omnibox open-on-focus — synthetic focus events are
+  untrusted in Chrome and the screenshot path was down, so no real-click check.
+  L1 wording tightened (above) — the slice-5 "flip survives typing" observation was
+  the designed behavior, not a defect.
+  Parallel tracks: §5b campaign scaffolding authored; matchCount inversion ROOT-CAUSED
+  to lexical-only `matchCount` vs 3-leg fusion window admitting dense/SPLADE-only rows
+  (full chain in the observations shard; needs its own count-semantics tempdoc);
+  identity directions authored as three swappable themes: **Registrar's Ledger**
+  (light — sage paper, iron-gall ink, "green is evidence", wax is risk),
+  **Night Registry** (dark — reading-room green-black, lamp-green evidence, ember risk),
+  **Cyanotype** (mid-dark chromatic Prussian ground — "cyan means exposure"; its one
+  declared risk). All under `modules/ui-web/public/themes/` + manifest entries; default
+  UNCHANGED — owner picks. Every text/surface pair measured (body ≥4.5 everywhere;
+  matrices in the worker report), plus a CVD simulation (protan/deutan/tritan ΔE) that
+  drove three value corrections; validation + manifest schema green. Owner notes before
+  adopting one: the chosen theme's filename must join `builtinPaletteContrast.test.ts`
+  `BUILT_IN_PALETTES` and ideally `themesCatalog.ts` `BUILT_IN_THEMES`; the ledger's
+  intended IBM Plex faces need local bundling (three related out-of-scope findings in
+  the observations shard, incl. sepia-focus's 1.39:1 text-grade gaps).

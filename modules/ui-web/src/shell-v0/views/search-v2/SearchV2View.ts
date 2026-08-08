@@ -42,6 +42,49 @@
  *  - **the sidebar's time buckets** — rail mode A groups prior sessions by last activity through the
  *    pure `sessionBuckets` module (no clock inside the grouping).
  *
+ * Slice 4 is the presentation pass's first half — motion and vertical space:
+ *  - **the commit choreography** — the causal order of §1 rendered as motion (turn → record → deck →
+ *    rail/name → answer), on a transient host class, removed by the last animation's end or a
+ *    timeout, and entirely absent under `prefers-reduced-motion`.
+ *  - **the deck's movable boundary (L7/L13 complete)** — a grip whose FLOOR is computed at drag time
+ *    from the deck's own occupants (`deckSizing.ts`), so while a run is live the run controls are
+ *    part of the floor and a held decision cannot be dragged off screen any more than it can be
+ *    scrolled off; the transcript's own minimum honest form is the ceiling; double-click returns the
+ *    boundary to automatic.
+ *  - **the unhappy states** — a zero-result search states the honest empty and re-derives its
+ *    escalation label for n = 0 ("Ask anyway…", never "Ask about these 0"), and an AI-offline
+ *    verdict dims the ASK/DELEGATE destinations WITH the shared reason while SEARCH — the floor —
+ *    is untouched.
+ *  - **the small-window pass** — the surface consumes tempdoc 814's block-axis breakpoint authority
+ *    (`compositionLayout.SHORT_VIEWPORT_*`) rather than minting a second one: the transcript owns
+ *    the centre column's slack, the chrome yields below the breakpoint, and each region owns exactly
+ *    one scroller (814 §D3). It is deliberately NOT registered in
+ *    `governance/ui-proportion-baseline.v1.json`: that register is keyed by ui-shot STEP, so
+ *    declaring this window would require a new deterministic capture step for a DEEPLINK/DEVELOPER
+ *    surface with no rail entry — the same reason `governance/sandbox-coverage.v1.json` already
+ *    carries it as `tier: exempt`. At the §5 cutover, both rows move together: the exemption becomes
+ *    a sandbox tier and the window declares its bands' ceilings + the transcript's share floor.
+ *
+ * Slice 5 is the presentation pass's second half — horizontal space, elaboration and input:
+ *  - **the rails' movable boundaries (L13 complete)** — both rails carry a grip, with the clamps in
+ *    `railSizing.ts` derived from existing authorities (the product's collapsed rail strip, the
+ *    proportion register's readable-document and reading-column floors). Widths REMEMBER, because a
+ *    width is a preference; the deck's height still resets, because a height is a per-session shape.
+ *  - **the extension convention (L14)** — the resting surface shows the identifying minimum and
+ *    elaboration extends on hover AND on `:focus-within`, through ONE mechanism (`.ext-row` / `.ext`)
+ *    so the rule cannot fork per region. The extended text stays in the accessibility tree (the same
+ *    clip pattern `ambientStyles`' `.visually-hidden` uses). The hard boundary holds: counts,
+ *    verdicts, LOCKED and grounding stats rest visible — only elaboration extends.
+ *  - **the query trail (L12)** — history lives in the input band, never in the rail: pinned searches
+ *    from the shared `pinnedSearchState` projection plus this window's own recents (`queryTrail.ts`).
+ *    A picked row FILLS the draft and runs the live search; it never commits, because committing is
+ *    the user's act.
+ *  - **citation-follow landing** — a source click in the shared citations panel (`citation-select`,
+ *    the panel's own event — nothing is forked into this window) opens `<jf-document-pane>` at the
+ *    cited line range. The land-strong-then-settle is the PANE's own decay, not a second emphasis.
+ *  - **the keyboard pass** — ⌥↑/⌥↓ walks the session index and scrolls the record into view, never
+ *    while an input has focus; Escape unwinds one layer at a time (history → document → the flip).
+ *
  * Mounted as a hidden DEEPLINK surface, dev audience, no rail entry:
  * `#justsearch://surface/core.search-v2-surface`.
  *
@@ -56,6 +99,9 @@
 import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
 import { surfaceLayoutStyles } from '../../primitives/surfaceLayout.js';
+// Tempdoc 814 §D6 — the ONE block-axis breakpoint authority. This window reads it rather than
+// minting a second "what counts as a short window" number (see the §4 note on {@link SearchV2View}).
+import { shortViewportMedia, subscribeShortViewport } from '../../primitives/compositionLayout.js';
 import {
   addScopeChip,
   clearScopeChips,
@@ -77,6 +123,7 @@ import {
   subscribeConversationList,
 } from '../../state/conversationListStore.js';
 import { subscribeAiState, type AiState } from '../../state/aiStateStore.js';
+import { projectAvailability, type Availability } from '../../state/availability.js';
 import { reasonFor } from '../../state/readinessNotice.js';
 import { requestSurfaceNavigation } from '../../controllers/navigateRequest.js';
 import { projectBudget, projectContextHorizon } from '../budgetProjection.js';
@@ -94,6 +141,7 @@ import type { SearchTrace } from '../../../api/generated/index.js';
 import type { CardSnapshot, SearchProvenance } from '../../components/searchResults/ResultsCard.js';
 import type { RetrievalCitation } from '../../components/chat/citationTypes.js';
 import { matchCountLabel } from '../../components/searchResults/matchCountLabel.js';
+import { formatRelative } from '../../utils/relativeTime.js';
 import '../../components/searchResults/ResultsCard.js';
 import '../../components/documentPane/DocumentPane.js';
 import '../../components/chat/CitationsPanel.js';
@@ -106,6 +154,7 @@ import {
   appendUserTurn,
   commitSearch,
   finalizeAnswer,
+  frozenTimingLabel,
   pendingAnswerIdFor,
   projectIndex,
   projectSessionName,
@@ -125,6 +174,31 @@ import {
   messageCountLabel,
   type BucketableSession,
 } from './sessionBuckets.js';
+import {
+  DECK_KEY_STEP_PX,
+  clampDeckHeight,
+  collectIncompressibleHeights,
+  deckFloorFrom,
+  listYields,
+  transcriptMinPx,
+} from './deckSizing.js';
+import {
+  RAIL_KEY_STEP_PX,
+  clampRailWidth,
+  documentRailCeiling,
+  forgetRailWidth,
+  railDefaultPx,
+  railFloorPx,
+  railYields,
+  readStoredRailWidth,
+  sessionRailCeiling,
+  storeRailWidth,
+  type RailId,
+} from './railSizing.js';
+import { filterTrail, mergeRecents, readTrail, recordSubmittedQuery } from './queryTrail.js';
+import { subscribePinnedSearches, type SearchPin } from '../../state/pinnedSearchState.js';
+import type { DocumentLineRange } from '../../components/documentPane/DocumentPane.js';
+import type { CitationSelectDetail } from '../../components/chat/citationTypes.js';
 
 /** A rail mode-A row: one prior session, named by what the user can recognise. */
 type SessionRow = BucketableSession;
@@ -142,6 +216,58 @@ const RUN_ENTRY_LABEL: Readonly<Record<string, string>> = Object.freeze({
 interface StreamingAnswer {
   readonly id: string;
   text: string;
+}
+
+/**
+ * The transient class that runs the commit choreography (the prototype's `#win.committing`). It is a
+ * HOST class, not view state: the animation is presentation, so it must not enter the records array
+ * or any projection — nothing on screen means anything different while it is applied.
+ */
+export const COMMITTING_CLASS = 'committing';
+
+/**
+ * The choreography's own length: the last animation starts at 550 ms and runs 300 ms, so 950 ms is
+ * the settle plus a rounding margin. Used as the fallback teardown for the case where no
+ * `animationend` arrives at all — a delegate commits with no answer region, and a window animating
+ * nothing (an element removed mid-flight) must still shed the class.
+ */
+export const COMMIT_CHOREOGRAPHY_MS = 950;
+
+/** The animation whose end IS the choreography's end (the answer, last in causal order). */
+const CHOREOGRAPHY_LAST_ANIMATION = 'sv2-cm-answer';
+
+/**
+ * L6 — the ask affordance's label, derived from the set it would freeze. At n = 0 it re-derives
+ * rather than degrading: "Ask about these 0" would name a scope that does not exist, and an empty
+ * result list is not an empty corpus — the model still retrieves at answer time, which is exactly
+ * what the n = 0 wording offers.
+ */
+export function askAffordanceLabel(resultCount: number): string {
+  return resultCount > 0
+    ? `Ask about these ${resultCount}`
+    : 'Ask anyway — your files are searched again while answering';
+}
+
+/**
+ * The reachable reason a capability-gated destination cannot be served right now, or `null` when it
+ * can. `degraded` deliberately does NOT read as a reason: a quality caveat is not a block, and
+ * dimming an affordance that works would be the same over-claim in the other direction.
+ */
+function unavailableReason(a: Availability | null): string | null {
+  return a !== null && a.kind === 'unavailable' ? a.reason : null;
+}
+
+/** Is this element a text entry — i.e. is the user typing into it right now? */
+function isTextEntry(el: HTMLElement | null): boolean {
+  const tag = el?.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA';
+}
+
+/** Does this window's user want motion suppressed? Unknown (no `matchMedia`) means "no" — the CSS
+ * media block is the guarantee either way; this only spares the DOM a class it would ignore. */
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 export class SearchV2View extends JfElement {
@@ -187,7 +313,41 @@ export class SearchV2View extends JfElement {
   private steerDraft = '';
   /** L7 — the ONLY compressible deck occupant: the live search LIST body. */
   private listCollapsed = false;
+  /**
+   * L7/L13 — the deck's user-chosen height. `null` is AUTOMATIC (the deck sizes to its content), and
+   * double-clicking the grip returns to it. Deliberately NOT persisted: a height is a per-session
+   * shape, unlike a rail width (a preference), per L13's remember/reset asymmetry.
+   */
+  private deckHeightPx: number | null = null;
+  /**
+   * L13 — the rails' chosen widths, `null` for automatic. Unlike the deck's height these are
+   * REMEMBERED (`railSizing`'s storage edge): a width is a preference about this window, not a shape
+   * of one session's contents, so it survives the session it was chosen in.
+   */
+  private sessionRailPx: number | null = null;
+  private documentRailPx: number | null = null;
+  /** L13 — the sessions rail below its legible width takes its collapsed strip form. */
+  private railCollapsed = false;
+  /** The omnibox query trail (L12): open only while the user is choosing from it. */
+  private historyOpen = false;
+  /** Which trail row the keyboard walk is on; -1 means the input itself still holds focus. */
+  private historyCursor = -1;
+  /** The shared pinned-search projection — read, never copied. */
+  private pins: readonly SearchPin[] = [];
+  /** This window's own recents (the queries that ran but were never committed). */
+  private trail: readonly string[] = [];
+  /** The cited passage the reading pane is landing on — the pane owns the settle. */
+  private highlightRange: DocumentLineRange | null = null;
+  /** ⌥↑/⌥↓ — which index node the walk is on; -1 means the walk has not started. */
+  private indexCursor = -1;
+  /** Tempdoc 814 §D6 — is the window below the shared block-axis breakpoint? */
+  private shortViewport = false;
+  /** The last observed AI state, kept so the escalation affordances can project their availability. */
+  private aiSnapshot: AiState | null = null;
+  private choreographyTimer: ReturnType<typeof setTimeout> | null = null;
+  private unsubscribePins: (() => void) | null = null;
   private unsubscribeSearch: (() => void) | null = null;
+  private unsubscribeShortViewport: (() => void) | null = null;
   private unsubscribeAgent: (() => void) | null = null;
   private unsubscribeSessions: (() => void) | null = null;
   private unsubscribeChips: (() => void) | null = null;
@@ -223,6 +383,28 @@ export class SearchV2View extends JfElement {
       this.requestUpdate();
     });
     this.unsubscribeAi = subscribeAiState((s) => this.applyAiState(s));
+    // 814 §D6 — a vertical resize across the breakpoint re-renders the height-gated chrome, and the
+    // grip's transcript floor re-derives on the next drag. Fires once immediately.
+    this.unsubscribeShortViewport = subscribeShortViewport((short) => {
+      this.shortViewport = short;
+      this.requestUpdate();
+    });
+    this.unsubscribePins = subscribePinnedSearches((pins) => {
+      this.pins = pins;
+      this.requestUpdate();
+    });
+    // L13 — the rails open at the width this user last chose. A stored width outside today's clamps
+    // is discarded by the reader, so a memory from a wider window cannot open a shape the floors
+    // reject.
+    this.sessionRailPx = readStoredRailWidth('sessions');
+    this.documentRailPx = readStoredRailWidth('document');
+    this.railCollapsed = this.sessionRailPx !== null && railYields(this.sessionRailPx);
+    this.trail = readTrail();
+    this.addEventListener('animationend', this.onChoreographyEnd);
+    // The ⌥↑/⌥↓ index walk is a WINDOW-level key, so it listens on the host rather than on any one
+    // region — and refuses while a text entry has focus, which is the whole of the prototype's
+    // "never while typing".
+    this.addEventListener('keydown', this.onWindowKeydown);
     // Subscribing does NOT create the shared controller (the store's `peek` reader is what this
     // window uses until it actually delegates), so merely mounting Search v2 starts no polling.
     this.unsubscribeAgent = subscribeAgentSession(() => this.onAgentUpdate());
@@ -233,6 +415,13 @@ export class SearchV2View extends JfElement {
     super.disconnectedCallback();
     this.askAbort?.abort();
     this.askAbort = null;
+    this.removeEventListener('animationend', this.onChoreographyEnd);
+    this.removeEventListener('keydown', this.onWindowKeydown);
+    this.endCommitChoreography();
+    this.unsubscribePins?.();
+    this.unsubscribePins = null;
+    this.unsubscribeShortViewport?.();
+    this.unsubscribeShortViewport = null;
     this.unsubscribeSearch?.();
     this.unsubscribeSearch = null;
     this.unsubscribeSessions?.();
@@ -256,6 +445,7 @@ export class SearchV2View extends JfElement {
    * shipped one; an unlock clears the refusal, because the refusal describes a lock that is gone.
    */
   private applyAiState(s: AiState): void {
+    this.aiSnapshot = s;
     const protection = s.status?.conversationProtection?.state;
     if (protection === 'locked') {
       this.sessionLocked = true;
@@ -338,6 +528,9 @@ export class SearchV2View extends JfElement {
       outcome,
       toolCallCount: this.observedToolCalls(ctrl),
       tokensUsed: ctrl.totalTokensUsed,
+      // L14 — the wall clock at the run's terminal, captured here (the records module owns no clock)
+      // so the receipt's extended form can say when, instead of guessing.
+      endedAt: new Date().toISOString(),
     });
   }
 
@@ -380,6 +573,8 @@ export class SearchV2View extends JfElement {
     this.draft = '';
     this.flipped = false;
     this.lockRefused = false;
+    this.closeHistory();
+    this.beginCommitChoreography();
     this.requestUpdate();
     void dispatchRunControl(ctrl, { kind: 'initiate', prompt: text });
   }
@@ -427,14 +622,438 @@ export class SearchV2View extends JfElement {
     void dispatchRunControl(ctrl, { kind: 'context-decision', decision });
   }
 
+  /**
+   * The commit choreography (818 §1) — causal order made visible: the turn rises in, the frozen
+   * record lands with an evidence-tinted settle, the deck collapses, the rail and the name follow,
+   * and the answer arrives last. The periphery never moves before the record, because the record is
+   * what happened; the rest is consequence.
+   *
+   * The whole sequence is CSS on a transient host class, so it can carry no meaning: nothing on
+   * screen says anything different while it runs, and a window that never renders it (reduced
+   * motion) is not showing less. Both send paths start it — an ask commit and a delegate are the
+   * same act of committing a turn, and a periphery that reordered itself on one but not the other
+   * would be teaching two different causal stories.
+   */
+  private beginCommitChoreography(): void {
+    // Reduced motion is honoured twice: the CSS media block is the guarantee (it also covers a
+    // preference changed while the class is applied), and this early return keeps the class off the
+    // host entirely, so no consumer can read "committing" as a state that only some users enter.
+    if (prefersReducedMotion()) return;
+    this.classList.add(COMMITTING_CLASS);
+    if (this.choreographyTimer !== null) clearTimeout(this.choreographyTimer);
+    this.choreographyTimer = setTimeout(() => this.endCommitChoreography(), COMMIT_CHOREOGRAPHY_MS);
+  }
+
+  /** Idempotent teardown — reached by whichever of `animationend` / the timer arrives first. */
+  private endCommitChoreography(): void {
+    if (this.choreographyTimer !== null) {
+      clearTimeout(this.choreographyTimer);
+      this.choreographyTimer = null;
+    }
+    this.classList.remove(COMMITTING_CLASS);
+  }
+
+  private onChoreographyEnd = (e: Event): void => {
+    if ((e as AnimationEvent).animationName === CHOREOGRAPHY_LAST_ANIMATION) {
+      this.endCommitChoreography();
+    }
+  };
+
+  /** The deck element — the boundary's subject, read from the shadow root at interaction time. */
+  private deckElement(): HTMLElement | null {
+    return (this.shadowRoot?.querySelector('.deck') as HTMLElement | null) ?? null;
+  }
+
+  /**
+   * L7/L13 — the floor, computed AT DRAG TIME from what the deck is holding right now. It is not a
+   * constant because the deck's occupancy is not: the moment a run is live the run controls join the
+   * sum, so the boundary the user can drag to stops above them.
+   */
+  private deckFloorPx(deck: HTMLElement): number {
+    return deckFloorFrom(
+      collectIncompressibleHeights(deck, (el) => el.getBoundingClientRect().height),
+    );
+  }
+
+  /**
+   * The grip's drag. Pointer capture keeps the gesture on the grip even when the pointer outruns it,
+   * and the deck's inline height is written DIRECTLY during the move (not through a re-render): the
+   * results card should not re-render on every pointer frame. The chosen height is adopted into view
+   * state at the end of the gesture, so a later render keeps it.
+   */
+  private onGripPointerDown(e: PointerEvent): void {
+    const deck = this.deckElement();
+    const centre = deck?.parentElement;
+    if (!deck || !centre) return;
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeightPx = deck.getBoundingClientRect().height;
+    const availablePx = centre.getBoundingClientRect().height;
+    const floorPx = this.deckFloorPx(deck);
+    const grip = e.currentTarget as HTMLElement;
+    grip.setPointerCapture?.(e.pointerId);
+    let height = startHeightPx;
+    const move = (ev: PointerEvent): void => {
+      height = clampDeckHeight({
+        startHeightPx,
+        deltaPx: startY - ev.clientY,
+        floorPx,
+        availablePx,
+        transcriptMinPx: transcriptMinPx(this.shortViewport),
+      });
+      deck.style.flex = `0 0 ${height}px`;
+      // L7 — at the floor the list has no room to be a list, so it takes its minimum honest form.
+      const yields = listYields(height, floorPx);
+      if (yields !== this.listCollapsed) {
+        this.listCollapsed = yields;
+        this.requestUpdate();
+      }
+    };
+    const up = (): void => {
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', up);
+      grip.removeEventListener('pointercancel', up);
+      this.deckHeightPx = height;
+      this.requestUpdate();
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up);
+    grip.addEventListener('pointercancel', up);
+  }
+
+  /** The keyboard half of the SAME boundary — same clamp, same floor, one nudge at a time. */
+  private onGripKeydown(e: KeyboardEvent): void {
+    const deck = this.deckElement();
+    const centre = deck?.parentElement;
+    if (!deck || !centre) return;
+    if (e.key === 'Home' || e.key === 'Escape') {
+      e.preventDefault();
+      this.resetDeckSize();
+      return;
+    }
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    const floorPx = this.deckFloorPx(deck);
+    this.deckHeightPx = clampDeckHeight({
+      startHeightPx: deck.getBoundingClientRect().height,
+      deltaPx: e.key === 'ArrowUp' ? DECK_KEY_STEP_PX : -DECK_KEY_STEP_PX,
+      floorPx,
+      availablePx: centre.getBoundingClientRect().height,
+      transcriptMinPx: transcriptMinPx(this.shortViewport),
+    });
+    this.listCollapsed = listYields(this.deckHeightPx, floorPx);
+    this.requestUpdate();
+  }
+
+  /** L13 — double-click returns the boundary to automatic: the height was a choice, not a setting. */
+  private resetDeckSize(): void {
+    const deck = this.deckElement();
+    if (deck) deck.style.removeProperty('flex');
+    this.deckHeightPx = null;
+    this.listCollapsed = false;
+    this.requestUpdate();
+  }
+
+  /** The element a horizontal boundary sizes. Read at interaction time, like the deck's. */
+  private railElement(rail: RailId): HTMLElement | null {
+    const selector = rail === 'sessions' ? '.rail' : '.reading';
+    return (this.shadowRoot?.querySelector(selector) as HTMLElement | null) ?? null;
+  }
+
+  private railWidthPx(rail: RailId): number | null {
+    return rail === 'sessions' ? this.sessionRailPx : this.documentRailPx;
+  }
+
+  /**
+   * L13 — a rail's clamps, computed AT GESTURE TIME from what the window is currently holding. The
+   * ceiling is the OTHER side's minimum honest form: whatever leaves the centre column its reading
+   * floor beside the region on the far side, which is why opening the document pane tightens what
+   * the sessions rail may take without either boundary knowing about the other.
+   */
+  private railBounds(rail: RailId): { floorPx: number; ceilingPx: number } | null {
+    const win = this.shadowRoot?.querySelector('.win') as HTMLElement | null;
+    if (!win) return null;
+    // The grips themselves occupy the row, so the width the three regions actually share is the
+    // window minus them — otherwise the centre column's floor would be short by the chrome.
+    const gripsPx = [...(this.shadowRoot?.querySelectorAll('button.vgrip') ?? [])].reduce(
+      (sum, g) => sum + g.getBoundingClientRect().width,
+      0,
+    );
+    const availablePx = win.getBoundingClientRect().width - gripsPx;
+    const sessionsPx = this.railElement('sessions')?.getBoundingClientRect().width ?? 0;
+    const documentPx = this.railElement('document')?.getBoundingClientRect().width ?? 0;
+    return {
+      floorPx: railFloorPx(rail),
+      ceilingPx:
+        rail === 'sessions'
+          ? sessionRailCeiling(availablePx, documentPx)
+          : documentRailCeiling(availablePx, sessionsPx),
+    };
+  }
+
+  /** The width a gesture starts from: the chosen width, else what is on screen, else automatic. */
+  private railStartWidthPx(rail: RailId): number {
+    const chosen = this.railWidthPx(rail);
+    if (chosen !== null) return chosen;
+    const measured = this.railElement(rail)?.getBoundingClientRect().width ?? 0;
+    return measured > 0 ? measured : railDefaultPx(rail);
+  }
+
+  /**
+   * The horizontal grip's drag — the same gesture as the deck's, one axis over. The rail's inline
+   * width is written DIRECTLY during the move (the rail's rows and the document pane must not
+   * re-render on every pointer frame); the chosen width is adopted, and remembered, at the end.
+   */
+  private onRailPointerDown(e: PointerEvent, rail: RailId): void {
+    const el = this.railElement(rail);
+    const bounds = this.railBounds(rail);
+    if (!el || !bounds) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidthPx = this.railStartWidthPx(rail);
+    // The sessions rail grows rightward; the document region grows leftward. One clamp, two signs.
+    const grow = rail === 'sessions' ? 1 : -1;
+    const grip = e.currentTarget as HTMLElement;
+    grip.setPointerCapture?.(e.pointerId);
+    let width = startWidthPx;
+    const move = (ev: PointerEvent): void => {
+      width = clampRailWidth({ ...bounds, startWidthPx, deltaPx: (ev.clientX - startX) * grow });
+      el.style.flex = `0 0 ${width}px`;
+      if (rail === 'sessions') this.syncRailCollapsed(width);
+    };
+    const up = (): void => {
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', up);
+      grip.removeEventListener('pointercancel', up);
+      this.adoptRailWidth(rail, width);
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up);
+    grip.addEventListener('pointercancel', up);
+  }
+
+  /** The keyboard half of the SAME boundary — same clamp, same floor, one nudge at a time. */
+  private onRailKeydown(e: KeyboardEvent, rail: RailId): void {
+    if (e.key === 'Home' || e.key === 'Escape') {
+      e.preventDefault();
+      this.resetRailSize(rail);
+      return;
+    }
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const bounds = this.railBounds(rail);
+    if (!bounds) return;
+    e.preventDefault();
+    const grow = rail === 'sessions' ? 1 : -1;
+    const width = clampRailWidth({
+      ...bounds,
+      startWidthPx: this.railStartWidthPx(rail),
+      deltaPx: (e.key === 'ArrowRight' ? RAIL_KEY_STEP_PX : -RAIL_KEY_STEP_PX) * grow,
+    });
+    this.adoptRailWidth(rail, width);
+  }
+
+  /** L13 — a chosen width is adopted into view state AND remembered; the two are one act. */
+  private adoptRailWidth(rail: RailId, px: number): void {
+    if (rail === 'sessions') {
+      this.sessionRailPx = px;
+      this.syncRailCollapsed(px);
+    } else {
+      this.documentRailPx = px;
+    }
+    storeRailWidth(rail, px);
+    this.requestUpdate();
+  }
+
+  private syncRailCollapsed(widthPx: number): void {
+    const yields = railYields(widthPx);
+    if (yields !== this.railCollapsed) {
+      this.railCollapsed = yields;
+      this.requestUpdate();
+    }
+  }
+
+  /**
+   * L13 — back to automatic, and the memory goes with it. A width the user withdrew must not come
+   * back at the next mount: "automatic" is a choice too, and a remembered width would overrule it.
+   */
+  private resetRailSize(rail: RailId): void {
+    this.railElement(rail)?.style.removeProperty('flex');
+    if (rail === 'sessions') {
+      this.sessionRailPx = null;
+      this.railCollapsed = false;
+    } else {
+      this.documentRailPx = null;
+    }
+    forgetRailWidth(rail);
+    this.requestUpdate();
+  }
+
+  /**
+   * The window's own keys. ⌥↑/⌥↓ walks the session index and brings the matching record into view —
+   * and refuses outright while a text entry has focus, because a modifier chord that steals the
+   * caret's line-movement is worse than no shortcut (the prototype's "never while typing").
+   */
+  private onWindowKeydown = (e: KeyboardEvent): void => {
+    if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+    if (this.typingSomewhere(e)) return;
+    const nodes = projectIndex(this.records, Date.now()).nodes;
+    if (nodes.length === 0) return;
+    e.preventDefault();
+    const step = e.key === 'ArrowDown' ? 1 : -1;
+    const from = this.indexCursor < 0 ? (step === 1 ? -1 : nodes.length) : this.indexCursor;
+    const next = Math.min(nodes.length - 1, Math.max(0, from + step));
+    this.selectIndexNode(next);
+  };
+
+  /** Is a text entry holding focus? Checked on the composed path AND on the shadow root's own
+   * active element — a key event dispatched at the host retargets, and the caret is what matters. */
+  private typingSomewhere(e: KeyboardEvent): boolean {
+    const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+    const first = (path[0] ?? e.target) as HTMLElement | null;
+    return isTextEntry(first) || isTextEntry(this.shadowRoot?.activeElement as HTMLElement | null);
+  }
+
+  /**
+   * The index walk's landing: the node becomes the selected one and the record it stands for is
+   * brought into view. The transcript is the authority for what is shown, so the walk scrolls it —
+   * it never re-renders a record inside the rail (L12: the rail does not yield item-by-item).
+   */
+  private selectIndexNode(index: number): void {
+    const nodes = projectIndex(this.records, Date.now()).nodes;
+    const node = nodes[index];
+    if (!node) return;
+    this.indexCursor = index;
+    this.requestUpdate();
+    const recordId = node.recordIds[0] ?? node.id;
+    const target = this.shadowRoot?.querySelector(`[data-record-id="${recordId}"]`);
+    if (target && typeof target.scrollIntoView === 'function') {
+      target.scrollIntoView({
+        block: 'center',
+        behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+      });
+    }
+  }
+
+  /**
+   * The citation landing. The shared panel's own `citation-select` is the source — this window adds
+   * no citation affordance of its own — and the pane's `highlightRange` is the cited line span, so
+   * the land-strong-then-settle is the PANE's own decay (`DocumentPane`'s `HIGHLIGHT_DECAY_MS`,
+   * which already lands quiet under reduced motion). A second emphasis here would be a fork of an
+   * authority that already exists.
+   */
+  private onCitationSelect(detail: CitationSelectDetail): void {
+    if (!detail?.parentDocId) return;
+    this.readingDocPath = detail.parentDocId;
+    this.highlightRange =
+      Number.isFinite(detail.startLine) && Number.isFinite(detail.endLine)
+        ? { startLine: detail.startLine, endLine: detail.endLine }
+        : null;
+    this.requestUpdate();
+  }
+
+  /** The trail's rows, filtered by whatever is in the draft (an empty draft filters nothing). */
+  private trailRows(): { pinned: readonly string[]; recent: readonly string[] } {
+    const committed = this.records
+      .filter((r): r is FrozenSearchRecord => r.kind === 'frozen-search')
+      .map((r) => r.query)
+      .reverse();
+    return {
+      pinned: filterTrail(
+        this.pins.map((p) => p.query),
+        this.draft,
+      ),
+      recent: filterTrail(mergeRecents(committed, this.trail), this.draft),
+    };
+  }
+
+  private trailFlat(): readonly string[] {
+    const rows = this.trailRows();
+    return [...rows.pinned, ...rows.recent];
+  }
+
+  /** The trail opens on the focus of an EMPTY draft — a draft in progress is not a history search. */
+  private onDraftFocus(): void {
+    if (this.draft.trim()) return;
+    this.historyOpen = true;
+    this.historyCursor = -1;
+    this.requestUpdate();
+  }
+
+  private closeHistory(): void {
+    if (!this.historyOpen) return;
+    this.historyOpen = false;
+    this.historyCursor = -1;
+    this.requestUpdate();
+  }
+
+  /**
+   * Picking a trail row FILLS the draft and runs the live search. It never commits: a committed
+   * record is the user's act of saying "this is the set", and a history row is a shortcut to a
+   * query, not to a commitment (L4/L8).
+   */
+  private runTrailQuery(query: string): void {
+    this.draft = query;
+    this.historyOpen = false;
+    this.historyCursor = -1;
+    setQuery(query);
+    submitSearch();
+    this.trail = recordSubmittedQuery(query);
+    this.requestUpdate();
+    const input = this.shadowRoot?.querySelector('[data-testid="draft"]') as HTMLInputElement | null;
+    input?.focus();
+  }
+
+  /** Move the walk's cursor and take the focus with it — the selection IS where the focus is. */
+  private moveTrailCursor(index: number): void {
+    this.historyCursor = index;
+    this.requestUpdate();
+    void this.updateComplete.then(() => {
+      const row = this.shadowRoot?.querySelector(
+        `[data-testid="trail-row"][data-index="${index}"]`,
+      ) as HTMLElement | null;
+      row?.focus();
+    });
+  }
+
+  /** The keyboard walk into the trail: ↓ enters the list, ↑/↓ move, Enter picks, Escape returns. */
+  private onTrailKeydown(e: KeyboardEvent): void {
+    const rows = this.trailFlat();
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      this.closeHistory();
+      (this.shadowRoot?.querySelector('[data-testid="draft"]') as HTMLInputElement | null)?.focus();
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const step = e.key === 'ArrowDown' ? 1 : -1;
+      this.moveTrailCursor(Math.min(rows.length - 1, Math.max(0, this.historyCursor + step)));
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const picked = rows[this.historyCursor];
+      if (picked) this.runTrailQuery(picked);
+    }
+  }
+
   static styles = [
     surfaceLayoutStyles,
     css`
       :host {
         color: var(--text-primary);
       }
+      /* 814 §D3 — one scroller per region. The shared surface layout scrolls the .body region; here
+         the regions inside it (rail, transcript, list, feed, reading pane) own their own scrolling,
+         so leaving .body scrollable too would wrap every one of them in a second, outer scroller. */
+      .body {
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
       .win {
         display: flex;
+        flex: 1 1 auto;
         gap: var(--density-inner-pad-x);
         min-height: 0;
       }
@@ -445,15 +1064,68 @@ export class SearchV2View extends JfElement {
         gap: var(--density-inner-pad-y);
         border-right: 1px solid var(--border-subtle);
         padding-right: var(--density-inner-pad-x);
+        min-height: 0;
         overflow-y: auto;
       }
       .centre {
         flex: 1;
         min-width: 0;
+        min-height: 0;
         display: flex;
         flex-direction: column;
         gap: var(--density-inner-pad-y);
+        overflow: hidden;
+      }
+      /* 814 §D1 — the priority region: the transcript takes the centre column's slack and owns the
+         only scroller between the two, so accreting chrome costs the DECK, never the reading. */
+      .transcript {
+        flex: 1 1 auto;
+        min-height: 0;
         overflow-y: auto;
+      }
+      .deck {
+        flex: 0 0 auto;
+        min-height: 0;
+      }
+      /* Before the first commit there is no transcript to protect, so the deck is the column. */
+      .deck.fills {
+        flex: 1 1 auto;
+      }
+      /* Once the user has SIZED the deck, the list body spends whatever the fixed height leaves,
+         instead of holding the automatic cap and leaving the extra room blank. */
+      .deck.sized > .list {
+        max-height: none;
+        flex: 1 1 auto;
+      }
+      /* L7/L13 — the ONE movable boundary, drawn as movable rather than as a rule. A native button,
+         so the keyboard half of the boundary (↑/↓ resize, Home for automatic) comes for free. */
+      button.grip {
+        align-self: stretch;
+        height: 0.6rem;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        cursor: row-resize;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        touch-action: none;
+      }
+      button.grip::after {
+        content: '';
+        width: 2.5rem;
+        height: 3px;
+        border-radius: 1.5px;
+        background: var(--border-subtle);
+      }
+      button.grip:hover,
+      button.grip:focus-visible {
+        background: transparent;
+      }
+      button.grip:hover::after,
+      button.grip:focus-visible::after {
+        width: 5.75rem;
+        background: var(--border-strong);
       }
       .reading {
         flex: 0 0 24rem;
@@ -461,6 +1133,76 @@ export class SearchV2View extends JfElement {
         border-left: 1px solid var(--border-subtle);
         padding-left: var(--density-inner-pad-x);
         overflow-y: auto;
+      }
+      /* L13 — the horizontal twin of the deck's grip, and deliberately the same construction: a
+         native button, so the boundary is keyboard-operable (←/→ resize, Home returns to automatic)
+         without a hand-rolled role/tabindex triad. */
+      button.vgrip {
+        flex: 0 0 0.6rem;
+        align-self: stretch;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        cursor: col-resize;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        touch-action: none;
+      }
+      button.vgrip::after {
+        content: '';
+        width: 3px;
+        height: 2.5rem;
+        border-radius: 1.5px;
+        background: var(--border-subtle);
+      }
+      button.vgrip:hover,
+      button.vgrip:focus-visible {
+        background: transparent;
+      }
+      button.vgrip:hover::after,
+      button.vgrip:focus-visible::after {
+        height: 5.75rem;
+        background: var(--border-strong);
+      }
+      /* L13 — the rail's minimum honest form: at its floor it is a strip with the one affordance
+         that undoes the choice, plus the count it would otherwise be showing. */
+      .strip {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.35rem;
+      }
+      /* ── L14: the ONE extension mechanism ──────────────────────────────────────────────────
+         An .ext rests visually collapsed but STAYS in the accessibility tree — the same clip
+         pattern ambientStyles' .visually-hidden uses (JfElement adopts it into every root), so a
+         screen reader reads the elaboration at rest while the visual surface keeps its identifying
+         minimum. Its .ext-row reveals it on hover AND on :focus-within: focus parity is not
+         optional, because a hover-only elaboration is unreachable from a keyboard. One convention,
+         every region — the rule cannot fork per surface. No transition: the reveal carries no
+         meaning, so there is nothing to animate and nothing for reduced motion to suppress. */
+      .ext {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        clip-path: inset(50%);
+        white-space: nowrap;
+        border: 0;
+      }
+      .ext-row:hover .ext,
+      .ext-row:focus-within .ext {
+        position: static;
+        width: auto;
+        height: auto;
+        margin: 0;
+        overflow: visible;
+        clip: auto;
+        clip-path: none;
+        white-space: normal;
       }
       .name {
         font-size: var(--font-size-md);
@@ -487,6 +1229,46 @@ export class SearchV2View extends JfElement {
         font-size: var(--font-size-sm);
         color: var(--text-secondary);
         overflow-wrap: anywhere;
+      }
+      /* Divergence 1 of the copied sidebar convention: rows WRAP, never truncate. */
+      .rowlist li,
+      button.node {
+        white-space: normal;
+      }
+      /* An index node is a real affordance — it jumps the transcript to the record it stands for —
+         so it is a native button and reaches the keyboard for free. */
+      button.node {
+        display: flex;
+        gap: 0.4rem;
+        align-items: baseline;
+        width: 100%;
+        background: transparent;
+        border-color: transparent;
+        padding: 0.2rem 0.3rem;
+      }
+      button.node[aria-current='true'] {
+        border-color: var(--border-strong);
+        background: var(--surface-3);
+      }
+      /* The trail — omnibox history, in the input band where history belongs (L12). */
+      .qhist {
+        display: flex;
+        flex-direction: column;
+        border: 1px solid var(--border-subtle);
+        border-radius: 0.4rem;
+        background: var(--surface-2);
+        overflow: hidden;
+      }
+      .qhist button {
+        background: transparent;
+        border: 0;
+        border-radius: 0;
+        display: flex;
+        gap: 0.5rem;
+        align-items: baseline;
+      }
+      .qhist h2 {
+        padding: 0.3rem var(--density-inner-pad-x) 0.1rem;
       }
       .count {
         font-size: var(--font-size-xs);
@@ -556,6 +1338,19 @@ export class SearchV2View extends JfElement {
         border-color: var(--accent-tint);
         text-decoration: underline dashed 1px;
         text-underline-offset: 3px;
+      }
+      /* The AI-dependent rungs when the model cannot answer. Distinct from .off (the L10 empty-draft
+         preview): that says "nothing to send", this says "this destination is not reachable right
+         now" — and the reason rides the same element's title, never a suppressed one. SEARCH carries
+         neither, because the floor never degrades. */
+      .rung-pill.unavailable {
+        color: var(--text-muted);
+        background: transparent;
+        border-style: dashed;
+      }
+      button[data-unavailable='true'] {
+        color: var(--text-muted);
+        border-style: dashed;
       }
       .pins {
         display: flex;
@@ -706,6 +1501,110 @@ export class SearchV2View extends JfElement {
         font-size: var(--font-size-sm);
         color: var(--text-secondary);
       }
+      /* The honest empty (818 §6b): a direction-giving line, never a fabricated row. The count
+         itself stays the card's — this line explains, it does not count. */
+      .none-left {
+        margin: 0;
+        font-size: var(--font-size-sm);
+        color: var(--text-secondary);
+        padding: var(--density-inner-pad-y) 0;
+      }
+
+      /* ── the commit choreography (818 §1) ──────────────────────────────────────────────────
+         Causal order made visible: the turn rises in, the record lands with an evidence-tinted
+         settle, the deck follows, then the rail and the name, and the answer last. Timing ported
+         from the prototype (818-prototype/index3.html:26-42), selectors adapted to this window's
+         regions. The periphery must never move before the record. */
+      @keyframes sv2-cm-rise {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      @keyframes sv2-cm-land {
+        0% {
+          opacity: 0;
+          transform: translateY(-6px);
+          box-shadow: 0 0 0 3px var(--accent-tint-45);
+        }
+        55% {
+          opacity: 1;
+          box-shadow: 0 0 0 3px var(--accent-tint-45);
+        }
+        100% {
+          opacity: 1;
+          transform: none;
+          box-shadow: 0 0 0 0 transparent;
+        }
+      }
+      @keyframes sv2-cm-fade {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+      /* The LAST animation of the sequence carries its own name, so the teardown can end the
+         choreography on the real end of it rather than on whichever animation finishes first. */
+      @keyframes sv2-cm-answer {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+      :host(.committing) .turn {
+        animation: sv2-cm-rise 0.2s ease both;
+      }
+      :host(.committing) .frozen {
+        animation: sv2-cm-land 0.5s ease 0.12s both;
+      }
+      :host(.committing) .deck {
+        animation: sv2-cm-fade 0.25s ease 0.3s both;
+      }
+      :host(.committing) .rail,
+      :host(.committing) .name {
+        animation: sv2-cm-fade 0.3s ease 0.4s both;
+      }
+      :host(.committing) .answer,
+      :host(.committing) .pending {
+        animation: sv2-cm-answer 0.3s ease 0.55s both;
+      }
+      /* Reduced motion removes the whole sequence, not a softened version of it: the choreography
+         carries no information, so a window that renders the committed state instantly is showing
+         exactly the same facts. */
+      @media (prefers-reduced-motion: reduce) {
+        :host(.committing) .turn,
+        :host(.committing) .frozen,
+        :host(.committing) .deck,
+        :host(.committing) .rail,
+        :host(.committing) .name,
+        :host(.committing) .answer,
+        :host(.committing) .pending {
+          animation: none;
+        }
+      }
+
+      /* Tempdoc 814 §D6 — below the shared block-axis breakpoint the CHROME yields and the
+         transcript does not: the two deck bodies take shorter caps, and the not-yet-built material
+         rail placeholder (an announcement, not a fact of this session) stands down entirely. */
+      ${shortViewportMedia} {
+        .list {
+          max-height: 12rem;
+        }
+        .feed {
+          max-height: 10rem;
+        }
+        .placeholders {
+          display: none;
+        }
+      }
     `,
   ];
 
@@ -752,7 +1651,26 @@ export class SearchV2View extends JfElement {
       this.requestUpdate();
       return;
     }
+    // ↓ from the input steps into the trail — the list is a continuation of the field, not a
+    // separate destination the user has to Tab to.
+    if (e.key === 'ArrowDown' && this.historyOpen && this.trailFlat().length > 0) {
+      e.preventDefault();
+      this.moveTrailCursor(0);
+      return;
+    }
+    // The Escape ORDER, one layer per press, outermost first: the query trail is on top of the
+    // window, the document pane is beside it, and the ⇥ flip is the innermost thing a draft holds.
+    // Collapsing them into one press would throw away two states the user did not ask to leave.
     if (e.key === 'Escape') {
+      e.preventDefault();
+      if (this.historyOpen) {
+        this.closeHistory();
+        return;
+      }
+      if (this.readingDocPath) {
+        this.closeReadingPane();
+        return;
+      }
       this.flipped = false;
       this.requestUpdate();
       return;
@@ -773,7 +1691,12 @@ export class SearchV2View extends JfElement {
     }
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (this.draft.trim()) submitSearch();
+      if (this.draft.trim()) {
+        this.closeHistory();
+        submitSearch();
+        // The trail's own source: a query the user SUBMITTED. Nothing typed-and-abandoned enters it.
+        this.trail = recordSubmittedQuery(this.draft);
+      }
     }
   }
 
@@ -808,6 +1731,8 @@ export class SearchV2View extends JfElement {
     this.draft = '';
     this.flipped = false;
     this.lockRefused = false;
+    this.closeHistory();
+    this.beginCommitChoreography();
     this.requestUpdate();
     void this.dispatchAsk(turnText, rawDraft, frozen, pendingId);
   }
@@ -917,6 +1842,10 @@ export class SearchV2View extends JfElement {
     this.flipped = false;
     this.sessionId = null;
     this.readingDocPath = null;
+    this.highlightRange = null;
+    this.historyOpen = false;
+    this.historyCursor = -1;
+    this.indexCursor = -1;
     this.lockRefused = false;
     this.contextPromptTokens = null;
     // A live run is backend-owned and keeps going; this window simply stops hosting it, so its
@@ -926,6 +1855,10 @@ export class SearchV2View extends JfElement {
     this.haltRequested = false;
     this.steerDraft = '';
     this.listCollapsed = false;
+    // L13 — the deck RESETS (a height is a per-session shape, not a preference): a new session opens
+    // with the automatic deck, which is the honest default for a session with nothing in it yet.
+    this.deckHeightPx = null;
+    this.deckElement()?.style.removeProperty('flex');
     clearScopeChips();
     this.requestUpdate();
   }
@@ -947,6 +1880,9 @@ export class SearchV2View extends JfElement {
     const hit = hits.find((h) => h.id === id);
     if (!hit) return;
     this.readingDocPath = hit.path;
+    // Opening a whole result is not a landing on a passage: no range, so the pane shows no emphasis
+    // it cannot justify.
+    this.highlightRange = null;
     addScopeChip({ kind: 'file', label: hit.title, docIds: [hit.path] });
     this.requestUpdate();
   }
@@ -963,6 +1899,7 @@ export class SearchV2View extends JfElement {
 
   private closeReadingPane(): void {
     this.readingDocPath = null;
+    this.highlightRange = null;
     this.requestUpdate();
   }
 
@@ -977,13 +1914,74 @@ export class SearchV2View extends JfElement {
         <div class="name" data-testid="session-name">${projectSessionName(this.records)}</div>
       </div>
       <div class="body win">
-        <nav class="rail" data-testid="rail" aria-label="Session rail">
-          ${this.records.length === 0 ? this.sidebar() : this.sessionIndex()}
+        <nav
+          class="rail"
+          data-testid="rail"
+          aria-label="Sessions"
+          style=${this.sessionRailPx !== null ? `flex: 0 0 ${this.sessionRailPx}px` : nothing}
+        >
+          ${this.railCollapsed
+            ? this.railStrip()
+            : this.records.length === 0
+              ? this.sidebar()
+              : this.sessionIndex()}
         </nav>
+        ${this.railGrip('sessions')}
         <div class="centre">
           ${this.transcript()} ${this.deck()} ${this.placeholders()}
         </div>
-        ${this.readingPane()}
+        ${this.readingDocPath ? this.railGrip('document') : nothing} ${this.readingPane()}
+      </div>
+    `;
+  }
+
+  /**
+   * L13 — a rail's movable boundary. Same construction as the deck's grip (a native button, so the
+   * keyboard half comes for free), same three gestures: drag, arrow-key nudge, and a double-click
+   * that returns the boundary to automatic AND forgets the remembered width.
+   */
+  private railGrip(rail: RailId): TemplateResult {
+    const label =
+      rail === 'sessions'
+        ? 'Resize the sessions list — arrow keys resize, Home returns to automatic'
+        : 'Resize the document panel — arrow keys resize, Home returns to automatic';
+    return html`<button
+      type="button"
+      class="vgrip"
+      data-testid=${rail === 'sessions' ? 'rail-grip' : 'document-grip'}
+      aria-label=${label}
+      @pointerdown=${(e: PointerEvent) => this.onRailPointerDown(e, rail)}
+      @keydown=${(e: KeyboardEvent) => this.onRailKeydown(e, rail)}
+      @dblclick=${() => this.resetRailSize(rail)}
+    ></button>`;
+  }
+
+  /**
+   * The sessions rail at its floor: its minimum honest form. It keeps the ONE affordance that undoes
+   * the choice and the count it would otherwise be showing — narrowing a region may cost its rows,
+   * it may not cost the fact that they are there.
+   */
+  private railStrip(): TemplateResult {
+    const count =
+      this.records.length === 0
+        ? this.sessions.length
+        : projectIndex(this.records, Date.now()).headerCount;
+    const noun = this.records.length === 0 ? 'earlier sessions' : 'entries';
+    return html`
+      <div class="strip" data-testid="rail-strip">
+        <button
+          type="button"
+          class="quiet"
+          data-testid="rail-expand"
+          aria-label="Widen the sessions list"
+          @click=${() => this.resetRailSize('sessions')}
+        >›</button>
+        ${/* The unit rides in the shared `.visually-hidden` utility (`ambientStyles`) rather than an
+              `aria-label` on a span, which has no role to carry one: the number is what the strip has
+              room for, the word is what a screen reader needs. */ ''}
+        <span class="count" data-testid="rail-strip-count"
+          >${count}<span class="visually-hidden"> ${noun}</span></span
+        >
       </div>
     `;
   }
@@ -1008,11 +2006,21 @@ export class SearchV2View extends JfElement {
               (b) => html`<div class="stack" data-testid="session-bucket" data-bucket=${b.id}>
                 <h2 data-testid="session-bucket-label">${b.label}</h2>
                 <ul class="rowlist" data-testid="session-list">
+                  ${/* L14 — the row RESTS at its identifying minimum (the title, which is what the
+                        user recognises it by) and its meta extends. The row is focusable so the
+                        elaboration is reachable from the keyboard as well as the pointer; it is
+                        deliberately not a button yet, because opening a prior session is not a thing
+                        this window can do until it can load one. */ ''}
                   ${b.rows.map(
-                    (s) => html`<li data-testid="session-row" data-session-id=${s.id}>
+                    (s) => html`<li
+                      class="ext-row"
+                      tabindex="0"
+                      data-testid="session-row"
+                      data-session-id=${s.id}
+                    >
                       ${s.label}
-                      <span class="count" data-testid="session-row-meta"
-                        >${messageCountLabel(s.messageCount)}</span
+                      <span class="count ext" data-testid="session-row-meta"
+                        >${messageCountLabel(s.messageCount)} · ${b.label}</span
                       >
                     </li>`,
                   )}
@@ -1025,7 +2033,7 @@ export class SearchV2View extends JfElement {
 
   /** Rail mode B (L12 / L8 corollary): the session index, projected from the records array. */
   private sessionIndex(): TemplateResult {
-    const index = projectIndex(this.records);
+    const index = projectIndex(this.records, Date.now());
     return html`
       <div class="stack" data-testid="rail-index">
         <button type="button" data-testid="rail-back" @click=${this.clearRecords}>
@@ -1034,12 +2042,28 @@ export class SearchV2View extends JfElement {
         <h2>This session</h2>
         <p class="count" data-testid="index-count">${index.headerCount} entries</p>
         <ul class="rowlist">
+          ${/* L14 — a node rests as what it IS (its label and the size of the cluster it stands
+                for, both honesty facts) and elaborates into the detail of the record that opened
+                it. The node is a button because it does something: it jumps the transcript. */ ''}
           ${index.nodes.map(
-            (n) => html`<li data-testid="index-node" data-node-id=${n.id}>
-              ${n.label} <span class="count">${n.size}</span>
+            (n, i) => html`<li class="ext-row" data-node-id=${n.id}>
+              <button
+                type="button"
+                class="node"
+                data-testid="index-node"
+                data-node-id=${n.id}
+                aria-current=${this.indexCursor === i ? 'true' : nothing}
+                @click=${() => this.selectIndexNode(i)}
+              >
+                <span>${n.label}</span> <span class="count">${n.size}</span>
+                ${n.detail
+                  ? html`<span class="count ext" data-testid="index-node-detail">${n.detail}</span>`
+                  : nothing}
+              </button>
             </li>`,
           )}
         </ul>
+        <p class="count" data-testid="index-foot">⌥↑ ⌥↓ — never while you are typing</p>
       </div>
     `;
   }
@@ -1048,9 +2072,15 @@ export class SearchV2View extends JfElement {
   private readingPane(): TemplateResult | typeof nothing {
     if (!this.readingDocPath) return nothing;
     return html`
-      <aside class="reading" data-testid="reading-pane" aria-label="Document">
+      <aside
+        class="reading"
+        data-testid="reading-pane"
+        aria-label="Document"
+        style=${this.documentRailPx !== null ? `flex: 0 0 ${this.documentRailPx}px` : nothing}
+      >
         <jf-document-pane
           .docPath=${this.readingDocPath}
+          .highlightRange=${this.highlightRange}
           api-base=${this.apiBase}
           @pane-close=${this.closeReadingPane}
         ></jf-document-pane>
@@ -1062,7 +2092,7 @@ export class SearchV2View extends JfElement {
     const items = projectTranscript(this.records);
     if (items.length === 0) return nothing;
     return html`
-      <section class="stack" data-testid="transcript">
+      <section class="stack transcript" data-testid="transcript" data-scrollable="true">
         ${items.map((item) => this.transcriptItem(item))}
       </section>
     `;
@@ -1071,12 +2101,17 @@ export class SearchV2View extends JfElement {
   private transcriptItem(item: TranscriptItem): TemplateResult {
     if (item.kind === 'frozen-search') return this.frozenBlock(item);
     if (item.kind === 'user-turn') {
-      return html`<p class="turn" data-testid="turn">${item.text}</p>`;
+      return html`<p class="turn" data-testid="turn" data-record-id=${item.id}>${item.text}</p>`;
     }
     if (item.kind === 'answer') return this.answerBlock(item);
     if (item.kind === 'agent-run') return this.runReceipt(item);
     if (item.kind === 'refused-answer') {
-      return html`<p class="pending" data-testid="refused-answer" data-reason=${item.reason}>
+      return html`<p
+        class="pending"
+        data-testid="refused-answer"
+        data-record-id=${item.id}
+        data-reason=${item.reason}
+      >
         ${item.label}
       </p>`;
     }
@@ -1084,8 +2119,12 @@ export class SearchV2View extends JfElement {
     // no partial answer is ever written into the records array (L4).
     const streamingText = this.streaming?.id === item.id ? this.streaming.text : '';
     return streamingText
-      ? html`<p class="answer-text" data-testid="streaming-answer">${streamingText}</p>`
-      : html`<p class="pending" data-testid="pending-answer">${item.label}</p>`;
+      ? html`<p class="answer-text" data-testid="streaming-answer" data-record-id=${item.id}>
+          ${streamingText}
+        </p>`
+      : html`<p class="pending" data-testid="pending-answer" data-record-id=${item.id}>
+          ${item.label}
+        </p>`;
   }
 
   /**
@@ -1095,12 +2134,20 @@ export class SearchV2View extends JfElement {
    */
   private runReceipt(item: TranscriptRunItem): TemplateResult {
     return html`<p
-      class="turn"
+      class="turn ext-row"
       data-testid="agent-run"
       data-record-id=${item.id}
       data-outcome=${item.outcome}
+      tabindex="0"
     >
       ${item.label}
+      ${/* L14 — the outcome and the counts REST (they are what the receipt is); when the run ended
+            extends beside them. */ ''}
+      ${item.endedAt
+        ? html`<span class="count ext" data-testid="agent-run-timing"
+            >${formatRelative(new Date(item.endedAt).getTime())}</span
+          >`
+        : nothing}
     </p>`;
   }
 
@@ -1130,8 +2177,19 @@ export class SearchV2View extends JfElement {
       resultCount: item.capturedCount,
       executedAt: item.executedAt,
     };
+    const timing = frozenTimingLabel(item.mode, item.tookMs);
     return html`
-      <div class="frozen" data-testid="frozen-block" data-record-id=${item.id}>
+      ${/* No `tabindex` here, unlike the receipt and the sidebar row: the card inside this block
+            already holds focusable controls, and `:focus-within` crosses the shadow boundary — so
+            tabbing into the card reveals the elaboration without this wrapper adding a tab stop of
+            its own. Focus parity comes from the focus that is already there. */ ''}
+      <div class="frozen ext-row" data-testid="frozen-block" data-record-id=${item.id}>
+        ${/* L14 — the card's header already states the query, the counts, the retrieval mode and
+              when it ran, and every one of those rests visible. What extends is only what the
+              header does NOT carry: how the pass ran and how long it took. */ ''}
+        ${timing
+          ? html`<span class="count ext" data-testid="frozen-timing">${timing}</span>`
+          : nothing}
         <jf-results-card
           variant="snapshot"
           .snapshot=${snapshot}
@@ -1156,12 +2214,17 @@ export class SearchV2View extends JfElement {
         ${item.groundedSentencesLabel
           ? html`<p class="count" data-testid="grounding-line">${item.groundedSentencesLabel}</p>`
           : nothing}
+        ${/* The citation-follow landing: the panel already emits `citation-select` with the cited
+              doc and its line span, so following a source needs no affordance of this window's own —
+              it needs the pane mounted at the range the panel names. */ ''}
         ${item.citations.length > 0 || sources.length > 0
           ? html`<jf-citations-panel
               data-testid="citations"
               .citations=${[...item.citations]}
               .sources=${sources}
               .retrievalMode=${item.retrievalMode ?? ''}
+              @citation-select=${(e: CustomEvent<CitationSelectDetail>) =>
+                this.onCitationSelect(e.detail)}
             ></jf-citations-panel>`
           : nothing}
       </div>
@@ -1177,38 +2240,74 @@ export class SearchV2View extends JfElement {
     const live = this.live;
     const results = live?.results ?? [];
     const { primary, alt, dimmed } = this.slots();
-    const askLabel =
-      results.length > 0
-        ? `Ask about these ${results.length}`
-        : 'Ask anyway — the model retrieves at answer time';
+    const askLabel = askAffordanceLabel(results.length);
+    const ask = this.escalationAvailability('documents');
+    const agent = this.escalationAvailability('agent');
+    const askReason = unavailableReason(ask);
+    const agentReason = unavailableReason(agent);
     return html`
-      <section class="stack" data-testid="deck">
-        ${this.scopeChips()}
+      <section
+        class="stack deck ${projectTranscript(this.records).length === 0 ? 'fills' : ''} ${this
+          .deckHeightPx !== null
+          ? 'sized'
+          : ''}"
+        data-testid="deck"
+        style=${this.deckHeightPx !== null ? `flex: 0 0 ${this.deckHeightPx}px` : nothing}
+      >
+        ${this.deckGrip()} ${this.scopeChips()}
         <div class="band" data-testid="input-band">
           <input
             type="text"
             data-testid="draft"
-            aria-label="Search or ask about your documents"
+            aria-label="Search or ask about your files"
+            placeholder="Search your files…"
+            autocomplete="off"
+            aria-describedby=${this.historyOpen ? 'sv2-query-trail' : nothing}
             .value=${this.draft}
+            @focus=${this.onDraftFocus}
             @input=${this.onInput}
             @keydown=${this.onKeydown}
           />
+          ${/* The rung pills carry the degraded truth too: a destination the model cannot serve reads
+                as unavailable WITH its reason, rather than promising a rung that would fail on
+                arrival. SEARCH is never marked — it is the floor, and the floor does not degrade. */ ''}
           <span
-            class="rung-pill ${dimmed ? 'off' : ''} ${this.flipped && !dimmed ? 'flip' : ''}"
+            class="rung-pill ${dimmed ? 'off' : ''} ${this.flipped && !dimmed
+              ? 'flip'
+              : ''} ${unavailableReason(this.rungAvailability(primary)) ? 'unavailable' : ''}"
             data-testid="pill"
             data-dimmed=${String(dimmed)}
-            title=${dimmed
-              ? 'previews the default — an empty draft submits nothing (L10)'
-              : RUNGS[primary].label}
+            data-unavailable=${String(unavailableReason(this.rungAvailability(primary)) !== null)}
+            title=${unavailableReason(this.rungAvailability(primary)) ??
+            (dimmed
+              ? 'Nothing to send yet — type to see where this goes'
+              : RUNGS[primary].label)}
             >${this.flipped && !dimmed ? '⇥ ' : ''}${RUNGS[primary].pill} ⏎</span
           >
-          <span class="rung-pill alt ${dimmed ? 'off' : ''}" data-testid="pill-alt" title=${RUNGS[alt].label}
+          <span
+            class="rung-pill alt ${dimmed ? 'off' : ''} ${unavailableReason(
+              this.rungAvailability(alt),
+            )
+              ? 'unavailable'
+              : ''}"
+            data-testid="pill-alt"
+            data-unavailable=${String(unavailableReason(this.rungAvailability(alt)) !== null)}
+            title=${unavailableReason(this.rungAvailability(alt)) ?? RUNGS[alt].label}
             >${RUNGS[alt].pill} ${alt === 'steer' ? '⌘⏎' : '⇥'}</span
           >
+          ${/* The escalation affordances stay OPERABLE while the model is down (a soft unavailability,
+                per `availability.ts`: the reason is reachable, the click is not silently swallowed) —
+                the lock is the only hard gate, because only the lock is this session's own refusal.
+                The reason itself is a VISIBLE line below, referenced by `aria-describedby`, never a
+                `title`: a tooltip on a control that may also be lock-disabled is unreachable in the
+                state it describes (596 face 1.1), and an honesty fact must not hide behind hover. */ ''}
           <button
             type="button"
             data-testid="commit"
             ?disabled=${this.sessionLocked}
+            aria-disabled=${String(askReason !== null)}
+            data-unavailable=${String(askReason !== null)}
+            aria-describedby=${askReason !== null ? 'sv2-ai-unavailable' : nothing}
             @click=${this.commit}
           >${askLabel}</button>
           ${/* L9 — the same optimistic hint on BOTH send buttons: a locked session promises no send
@@ -1218,9 +2317,18 @@ export class SearchV2View extends JfElement {
             type="button"
             data-testid="delegate"
             ?disabled=${this.sessionLocked}
+            aria-disabled=${String(agentReason !== null)}
+            data-unavailable=${String(agentReason !== null)}
+            aria-describedby=${agentReason !== null ? 'sv2-ai-unavailable' : nothing}
             @click=${this.delegate}
           >Delegate ⌘⏎</button>
         </div>
+        ${this.queryTrail()}
+        ${askReason ?? agentReason
+          ? html`<p class="count" id="sv2-ai-unavailable" data-testid="ai-unavailable">
+              ${askReason ?? agentReason} — searching your files is unaffected.
+            </p>`
+          : nothing}
         ${this.lockRefusal()} ${this.contextMeter()}
         ${/* No count line of this window's own: the card's meta line IS the headline count, derived
               through the shared `matchCountLabel`. A second count here would be exactly the fork
@@ -1248,9 +2356,119 @@ export class SearchV2View extends JfElement {
                   this.openResult(e.detail.id, results)}
               ></jf-results-card>
             </div>`}
-        ${this.runRegion()}
+        ${this.zeroNote()} ${this.runRegion()}
       </section>
     `;
+  }
+
+  /**
+   * L12 — the query trail, in the input band. The rail never shows queries: it shows SESSIONS
+   * (mode A) or this session's index (mode B), and a history that leaked into it would be exactly
+   * the item-by-item yielding L12 forbids.
+   *
+   * Two sections with two different sources, each named on screen so neither can be mistaken for the
+   * other: PINNED comes from the shared `pinnedSearchState` projection (the same pins the shipped
+   * search surface writes — this window neither forks nor mints them), RECENT from this session's
+   * own committed searches first and then the local trail of queries that ran without being
+   * committed (`queryTrail.ts` states that order and why).
+   */
+  private queryTrail(): TemplateResult | typeof nothing {
+    if (!this.historyOpen) return nothing;
+    const { pinned, recent } = this.trailRows();
+    if (pinned.length === 0 && recent.length === 0) return nothing;
+    let index = -1;
+    const row = (query: string, pinnedRow: boolean): TemplateResult => {
+      index += 1;
+      const i = index;
+      return html`<button
+        type="button"
+        data-testid="trail-row"
+        data-index=${i}
+        data-pinned=${String(pinnedRow)}
+        aria-current=${this.historyCursor === i ? 'true' : nothing}
+        @click=${() => this.runTrailQuery(query)}
+      >
+        <span>${query}</span>
+      </button>`;
+    };
+    return html`
+      ${/* A labelled GROUP of real buttons, not a hand-rolled combobox: the rows are natively
+            focusable and the walk marks its position with `aria-current`, so nothing here claims an
+            ARIA pattern the window only half implements. Stated residual: the trail closes on
+            Escape, on a pick, and on a send — not on a click elsewhere in the window. */ ''}
+      <div
+        class="qhist"
+        id="sv2-query-trail"
+        role="group"
+        aria-label="Earlier searches"
+        data-testid="query-trail"
+        @keydown=${this.onTrailKeydown}
+      >
+        ${pinned.length > 0
+          ? html`<h2 data-testid="trail-pinned-label">Pinned searches</h2>
+              ${pinned.map((q) => row(q, true))}`
+          : nothing}
+        ${recent.length > 0
+          ? html`<h2 data-testid="trail-recent-label">Recent</h2>
+              ${recent.map((q) => row(q, false))}`
+          : nothing}
+      </div>
+    `;
+  }
+
+  /**
+   * L7/L13 — the deck's movable boundary. It is a button, not a styled `div`: the same boundary has
+   * to be movable from the keyboard, and a native button gets focus + activation semantics by
+   * construction instead of a hand-rolled role/tabindex triad.
+   */
+  private deckGrip(): TemplateResult {
+    return html`<button
+      type="button"
+      class="grip"
+      data-testid="deck-grip"
+      aria-label="Resize the search area — arrow keys resize, Home returns to automatic"
+      @pointerdown=${this.onGripPointerDown}
+      @keydown=${this.onGripKeydown}
+      @dblclick=${this.resetDeckSize}
+    ></button>`;
+  }
+
+  /**
+   * The honest empty (818 §6b). Zero is a count like any other and the card already states it
+   * ("No matches for …") — this line adds the DIRECTION the count cannot: what typically causes an
+   * empty set here, and that an empty list is not an empty corpus. No fabricated rows, no
+   * near-match list this window cannot actually produce yet, and no second count.
+   */
+  private zeroNote(): TemplateResult | typeof nothing {
+    const live = this.live;
+    // Collapsed, the deck is at its minimum honest form — the derived count line, which already
+    // states the zero. The direction belongs to the expanded form; it is elaboration, not the fact.
+    if (!live || this.listCollapsed) return nothing;
+    const query = live.query.trim();
+    if (!query || live.isSearching || live.error || live.results.length > 0) return nothing;
+    return html`<p class="none-left" data-testid="zero-note">
+      Nothing in your files matches all of “${query}”. Names are the usual culprit — try fewer words,
+      or ask anyway — no matches here does not mean there is nothing to answer from.
+    </p>`;
+  }
+
+  /**
+   * The availability of an escalation affordance, projected ONCE from the observed-state authority
+   * (`projectAvailability`) rather than re-derived here from `capabilities.chat` / phase / liveness.
+   * The window's pills therefore give the same reason, in the same words, that every other
+   * capability-gated control in the product gives — including its remedy.
+   */
+  private escalationAvailability(affordance: 'documents' | 'agent'): Availability {
+    return projectAvailability(affordance, this.aiSnapshot);
+  }
+
+  /** Which capability a destination rung depends on — `null` for SEARCH, the floor, which has none. */
+  private rungAvailability(rung: Rung): Availability | null {
+    if (rung === 'ask' || rung === 'chat') return this.escalationAvailability('documents');
+    if (rung === 'agent' || rung === 'steer' || rung === 'workflow') {
+      return this.escalationAvailability('agent');
+    }
+    return null;
   }
 
   /** L7 — the list BODY is the one compressible occupant; nothing else in the deck collapses. */
@@ -1268,7 +2486,7 @@ export class SearchV2View extends JfElement {
     const live = this.live;
     const shown = live?.results.length ?? 0;
     if (!live || (!live.query.trim() && shown === 0)) return 'Nothing searched yet';
-    return `${matchCountLabel(live.matchCount, shown, false, live.totalHits, live.facetsTruncated)} · hidden`;
+    return `${matchCountLabel(live.matchCount, shown, false, live.totalHits, live.facetsTruncated)} · results hidden`;
   }
 
   /**
@@ -1352,7 +2570,7 @@ export class SearchV2View extends JfElement {
                 type="text"
                 class="steer"
                 data-testid="steer-input"
-                aria-label="Redirect the run"
+                aria-label="Steer the running agent"
                 placeholder="Redirect the run…"
                 .value=${this.steerDraft}
                 @input=${(e: Event) => {
@@ -1476,7 +2694,7 @@ export class SearchV2View extends JfElement {
     const nav = r.remedy?.kind === 'navigate' ? r.remedy : null;
     return html`
       <div class="refusal" role="alert" data-testid="lock-refusal">
-        <p>${r.wording} — your question was not sent. Your text is back in the composer.</p>
+        <p>${r.wording} — your question was not asked. Your text is still in the search box.</p>
         <div class="refusal-exits">
           ${nav
             ? html`<button
@@ -1486,7 +2704,7 @@ export class SearchV2View extends JfElement {
               >${nav.label}</button>`
             : nothing}
           <button type="button" data-testid="lock-exit-new" @click=${this.newSessionWithDraft}>
-            New session with this draft
+            New session with this text
           </button>
         </div>
       </div>
@@ -1506,8 +2724,20 @@ export class SearchV2View extends JfElement {
       contextWindow: this.contextWindow ?? 0,
     });
     if (!horizon) return nothing;
-    return html`<p class="count" data-testid="context-meter" data-band=${horizon.color}>
-      Context ${horizon.pct}% of ${horizon.window.toLocaleString()} tokens
+    // L14 — the OCCUPANCY rests (it is the verdict the meter exists to give); the numbers it was
+    // computed from extend. There is no separate breakdown feed on this window, so the breakdown IS
+    // those numbers — the elaboration is never a second, differently-derived figure.
+    return html`<p
+      class="count ext-row"
+      data-testid="context-meter"
+      data-band=${horizon.color}
+      tabindex="0"
+    >
+      Context ${horizon.pct}% full
+      <span class="ext" data-testid="context-meter-breakdown"
+        >${(this.contextPromptTokens ?? 0).toLocaleString()} of
+        ${horizon.window.toLocaleString()} tokens</span
+      >
     </p>`;
   }
 
@@ -1516,7 +2746,7 @@ export class SearchV2View extends JfElement {
     return html`
       <div class="placeholders">
         <div class="placeholder" data-testid="placeholder-material-rail">
-          Material rail — not yet built
+          Documents you keep — not built yet
         </div>
       </div>
     `;

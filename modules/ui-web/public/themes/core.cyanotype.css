@@ -1,0 +1,191 @@
+/* =============================================================================
+   CYANOTYPE — a cold palette on a chromatic ground.
+   Delivered as CSS for the same reason as the other two: the text-grade role
+   tokens, --cat-*, shadows and glows are outside the JSON format's closed
+   KNOWN_TOKEN_NAMES list. Every token below already exists in
+   modules/ui-web/src/styles/tokens.css. Injected under @layer user-theme.
+
+   THE DIRECTION
+   Still the records world, one room over: the copy room. A cyanotype is the
+   oldest copying process — you lay the original on sensitised paper, let light
+   through it, and the paper keeps what the light did. The white in a blueprint
+   is not paint; it is where the object BLOCKED the light. So the print is a
+   provenance record by construction: every white line is evidence that
+   something was physically there. That is the same claim this tool makes about
+   your files, which is why the direction earns its place next to the ledger.
+
+   Distinct from the other two in temperature and character:
+     - the ledger is warm-neutral and light; the night registry is warm and
+       dark; this is COLD and mid-dark, and it is the only one of the three
+       whose ground is a saturated colour rather than a neutral.
+     - character: the ledger is written by hand, the registry is read by lamp,
+       this one is PRINTED — mechanical, drafted, no hand in it. The type says
+       so (Bahnschrift, the DIN drafting face).
+
+   THE ONE RISK, stated plainly: the ground is Prussian blue (#12293f), not a
+   grey or a near-black. A chromatic UI ground is unfashionable and it commits
+   the whole window to one temperature — you cannot un-see the blue. It is here
+   because in a cyanotype the ground IS the medium: strip the blue and there is
+   no print, only paper. Restraint is spent everywhere else — two hues carry
+   verdicts (exposure cyan, iron-oxide rust), the rest of the field is one blue
+   at five lightnesses, and nothing glows except focus.
+
+   CORE VALUES (6)
+     prussian ground   #12293f  the print's own field; the paper IS the pigment
+     wash line         #1d3e5c  raised surfaces — where the wash ran thinner
+     exposed paper     #e6eef4  primary text: the white is where light was
+                                blocked, so it is the thing itself
+     exposure cyan     #6ecfe8  the accent: a place the index actually reached
+     iron-oxide rust   #f0765f  risk, locks, staleness — the one warm hue
+     ferro-jade        #5fd3ad  the ok verdict, out of the fixing bath
+   (command lilac #b3a9f0 and cross-reference sky #9cc8f7 are field-adjacent
+    hues, derived to stay separable from cyan; they carry no verdict.)
+
+   SIGNATURE EMPHASIS — cyan means exposure.
+   An accent marks a place the index actually reached: a matched term, a followed
+   citation, a file the tool really opened. Plain ground means unexposed — the
+   tool is claiming nothing there, and the absence is as informative as the mark.
+   Rust is the counter-claim: reached once, no longer trustworthy (stale, locked,
+   failed). Cyan and rust sit on opposite sides of the field and both clear AA as
+   text on every surface here, so "reached" and "at risk" never blur.
+
+   TYPE: display = Bahnschrift (DIN 1451 — the drafting standard, Windows-
+   bundled); facts = Cascadia Mono. No webfont fetch.
+   ============================================================================= */
+
+:root {
+  /* === Primitives === */
+  --p-glass: 214, 232, 242;   /* cool paper tint for overlays */
+  --p-shadow: 4, 14, 26;
+  --p-text: 230, 238, 244;
+
+  /* === Surface elevation: one blue, five washes === */
+  --surface-0: #0e2133;       /* deepest wash */
+  --surface-1: #12293f;       /* prussian ground — primary background */
+  --surface-2: #17334c;
+  --surface-3: #1d3e5c;       /* wash line — elevated */
+  --surface-4: #244a6c;       /* thinnest wash — modals */
+  --layer-base: rgba(14, 33, 51, 0.7);
+  --layer-base-solid: #16304a;
+
+  /* === Glass === */
+  --glass-surface: rgba(214, 232, 242, 0.05);
+  --glass-surface-hover: rgba(214, 232, 242, 0.085);
+  --glass-surface-active: rgba(214, 232, 242, 0.12);
+  --glass-border: rgba(214, 232, 242, 0.12);
+  --glass-border-hover: rgba(214, 232, 242, 0.18);
+  --glass-border-strong: rgba(214, 232, 242, 0.32);
+  --glass-blur: 22px;
+  --glass-blur-elevated: 30px;
+  --glass-saturation: 1.12;
+  --glass-saturation-elevated: 1.18;
+
+  /* === Text: solid, so each ratio holds on every wash === */
+  --text-primary: #e6eef4;
+  --text-secondary: #c6d8e6;
+  --text-tertiary: #a5bdd0;
+  --text-muted: #93aec4;
+  --text-ghost: #4f6c85;      /* non-informational only (placeholder/disabled); below AA by intent */
+
+  /* === Accent fills === */
+  --accent-tint: #6ecfe8;        /* exposure cyan — the primary accent */
+  --accent-chat: #5ec6e0;        /* the agent speaks from the same exposure, half a step down */
+  --accent-success: #5fd3ad;     /* ferro-jade */
+  --accent-warning: #e0a463;     /* oxidised iron */
+  --accent-danger: #f0765f;      /* iron-oxide rust */
+  --accent-command: #b3a9f0;     /* aniline lilac */
+  --accent-link: #b5d6f9;        /* cross-reference sky — the thinnest wash */
+  --accent-highlight: #b8e4f2;   /* the exposed white edge, behind a matched term */
+  --accent-warm: #ef8b63;
+  --accent-warm-muted: #c79080;
+
+  /* === On-colours (558): dark inks tinted toward each fill's own hue, matching
+     what `deriveRoleForegrounds` re-derives at apply time in @layer
+     user-override. These are the AA fallbacks the palette audit reads. === */
+  --accent-on-tint: #062230;
+  --accent-on-chat: #052029;
+  --accent-on-success: #04231a;
+  --accent-on-warning: #1c0f02;
+  --accent-on-danger: #1b0803;
+  --accent-on-command: #191142;
+  --accent-on-link: #071c33;
+  --accent-on-highlight: #0c2534;
+
+  /* === Text-grade roles (576 §6): each role legible as TEXT on the ground === */
+  --text-tint: #7ad6ec;
+  --text-chat: #6fcde5;
+  --text-success: #6ddcb8;
+  --text-warning: #f2bd85;
+  --text-danger: #fba996;
+  /* command keeps its fill's saturation rather than washing out toward the cyan:
+     lightening it further collapsed the pair for deutan viewers (dE 3.2 → 9.8 here). */
+  --text-command: #bdb0f2;
+  /* the palest blue in the theme — a cross-reference is where the print is thinnest.
+     Chosen for lightness separation from the cyan, which is what survives CVD. */
+  --text-link: #cfe0fb;
+  --text-highlight: #c4dff0;
+
+  /* === Error surfaces === */
+  --error-bg: rgba(240, 118, 95, 0.14);
+  --error-border: rgba(240, 118, 95, 0.36);
+
+  /* === Categorical semiotics === */
+  --cat-doc: #9cc8f7;
+  --cat-code: #5fd3ad;
+  --cat-image: #e0b3ec;
+  --cat-note: #e0d17a;
+  --cat-pdf: #f79b86;
+  --cat-folder: #eab77e;
+
+  /* === Code surfaces === */
+  --code-bg-inline: rgba(214, 232, 242, 0.07);
+  --code-bg-block: rgba(214, 232, 242, 0.05);
+
+  /* === Rail icons === */
+  --rail-icon-inactive: #9fb8cc;
+  --rail-icon-hover: #e6eef4;
+
+  /* === Result rows === */
+  --result-row-hover: rgba(214, 232, 242, 0.05);
+  --result-row-cursor: rgba(214, 232, 242, 0.08);
+
+  /* === Shadows: a print is pressed flat under glass === */
+  --shadow-glass: 0 3px 18px rgba(4, 14, 26, 0.45);
+  --shadow-float: 0 8px 30px rgba(4, 14, 26, 0.55);
+  --shadow-lift: 0 2px 6px rgba(4, 14, 26, 0.4);
+  --shadow-card: 0 3px 16px rgba(4, 14, 26, 0.45);
+  --shadow-card-sm: 0 1px 6px rgba(4, 14, 26, 0.35);
+  --shadow-menu: 0 8px 40px rgba(4, 14, 26, 0.62), 0 0 1px rgba(214, 232, 242, 0.12), inset 0 1px 0 rgba(214, 232, 242, 0.06);
+  --shadow-panel-edge: -8px 0 30px rgba(4, 14, 26, 0.5), -2px 0 8px rgba(4, 14, 26, 0.35);
+
+  /* === Glows: nothing glows except focus === */
+  --glow-accent: 0 0 14px rgba(110, 207, 232, 0.2);
+  --glow-focus: 0 0 0 2px rgba(110, 207, 232, 0.6);
+  --glow-success: 0 0 12px rgba(95, 211, 173, 0.28);
+  --glow-warning: 0 0 12px rgba(224, 164, 99, 0.28);
+  --glow-danger: 0 0 12px rgba(240, 118, 95, 0.3);
+  --glow-warm: 0 0 12px rgba(239, 139, 99, 0.28);
+  --glow-hover-subtle: 0 0 12px rgba(214, 232, 242, 0.05);
+  --glow-inset-subtle: inset 0 0 12px rgba(214, 232, 242, 0.05);
+  --glow-inset-rim: inset 0 1px 0 rgba(214, 232, 242, 0.07);
+
+  /* === Tooltip === */
+  --tooltip-bg: rgba(4, 14, 26, 0.93);
+  --tooltip-shadow: 0 4px 16px rgba(4, 14, 26, 0.45);
+
+  /* === Halo === */
+  --halo-shadow: 0 1px 3px rgba(4, 14, 26, 0.65);
+
+  /* === Selection + scrollbar === */
+  --selection-bg: rgba(110, 207, 232, 0.28);
+  --scrollbar-thumb: rgba(214, 232, 242, 0.18);
+  --scrollbar-thumb-hover: rgba(214, 232, 242, 0.28);
+  --scrollbar-track: transparent;
+
+  /* === Controls === */
+  --toggle-track-off: #658399;   /* 3.72:1 on the ground — an off switch must still be a switch (1.4.11) */
+
+  /* === Type === */
+  --font-display: 'Bahnschrift SemiLight', 'Bahnschrift', 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
+}

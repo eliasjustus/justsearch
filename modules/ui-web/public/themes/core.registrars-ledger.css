@@ -1,0 +1,197 @@
+/* =============================================================================
+   REGISTRAR'S LEDGER — a light palette for a tool that keeps records.
+   Delivered as CSS (not the JSON token tree) because the direction needs the
+   text-grade role tokens (--text-success/-danger/-warning/-tint/-chat/-command/
+   -link/-highlight), the categorical set (--cat-*) and the shadow/glow family —
+   none of which are in the JSON format's closed KNOWN_TOKEN_NAMES list
+   (modules/ui-web/src/shell-v0/themes/designTokenTree.ts). Every token below
+   already exists in modules/ui-web/src/styles/tokens.css; nothing is invented.
+   Injected under @layer user-theme, so these :root declarations win over
+   core-theme at any specificity — one block is correct in both light and dark
+   appearance.
+
+   THE DIRECTION
+   Subject: local-first search over YOUR files, whose interaction model is built
+   on receipts, immutable records, derived counts and provenance. The identity
+   comes from that world — ledger paper, iron-gall ink, a green the colour of a
+   citation, and sealing wax for risk: the materials of a tool whose job is to
+   never lie about a record. Adapted from docs/tempdocs/818-prototype/identity.css.
+
+   Not the current AI defaults, and how this differs on purpose:
+     - not warm cream + terracotta: the paper is a LAID SAGE white (green cast,
+       #f3f4ee) and the ink is green-black, so the whole field is cool-neutral;
+       the one warm hue is reserved for risk and never decorates.
+     - not near-black + one acid accent: this is a light theme, and it spends
+       four meanings on four muted hues instead of one saturated one.
+     - not broadsheet hairlines: rules are visible ledger rules (border alpha
+       0.18–0.40, stronger than the shipped light theme), because a ledger is
+       ruled — the lines are structure, not decoration.
+
+   CORE VALUES (6)
+     ledger paper        #f3f4ee  the ground; laid paper with a green cast, so
+                                  the field reads cool and the ink belongs to it
+     sage board          #ccd2c6  the desk behind the page; deepest elevation,
+                                  the only surface that is not paper
+     iron-gall ink       #181d14  primary text: a black that remembers it was
+                                  green, the ink records were actually kept in
+     evidence green      #175d43  citations, quoted spans, the ok verdict — the
+                                  colour that means "this came from your file"
+     sealing wax         #93401f  risk, locks, staleness; a seal is what you
+                                  break, so it marks what cannot be undone
+     copying-pencil violet #4a2f7d the operator's own marks (commands), after the
+                                  indelible copying pencil used on duplicates
+
+   SIGNATURE EMPHASIS — green is evidence.
+   The primary accent is not a brand colour: --accent-tint IS the citation
+   green, so every focus ring, every selection, every "this is grounded" mark is
+   the same ink a quoted span is written in. Wax is its opposite: it appears only
+   where something is at risk, locked or stale. If a surface is green the tool is
+   showing you a record; if it is wax the tool is telling you a record is in
+   question. Nothing else in the palette carries a verdict.
+
+   TYPE: display = Aptos / Segoe UI Variable Display (archival modernism — a
+   man-machine grotesque, deliberately not a serif); facts = Cascadia Mono.
+   Windows-bundled only: this theme fetches no webfont, which a local-first tool
+   should not need in order to look like itself.
+   ============================================================================= */
+
+:root {
+  /* === Primitives === */
+  --p-glass: 24, 34, 20;    /* ink-green overlay tint (not white — glass on this paper is ink) */
+  --p-shadow: 20, 28, 16;
+  --p-text: 24, 29, 20;     /* iron-gall ink */
+
+  /* === Surface elevation: paper over board (higher = closer to the board) === */
+  --surface-0: #fbfcf6;     /* unruled sheet — deepest/base */
+  --surface-1: #f3f4ee;     /* ledger paper — primary background */
+  --surface-2: #e9ece1;     /* a ruled panel */
+  --surface-3: #dde2d3;     /* elevated */
+  --surface-4: #ccd2c6;     /* sage board — modals */
+  --layer-base: rgba(243, 244, 238, 0.97);
+  --layer-base-solid: #f3f4ee;
+
+  /* === Glass: paper barely refracts. Fills stay quiet; borders are RULES. === */
+  --glass-surface: rgba(24, 34, 20, 0.05);
+  --glass-surface-hover: rgba(24, 34, 20, 0.09);
+  --glass-surface-active: rgba(24, 34, 20, 0.13);
+  --glass-border: rgba(24, 34, 20, 0.18);
+  --glass-border-hover: rgba(24, 34, 20, 0.26);
+  --glass-border-strong: rgba(24, 34, 20, 0.40);
+  --glass-blur: 8px;
+  --glass-blur-elevated: 12px;
+  --glass-saturation: 1;
+  --glass-saturation-elevated: 1.02;
+
+  /* === Text: solid inks, not alpha ramps ===
+     The shipped ramp is rgba(var(--p-text), a); solid values are used here so
+     every ratio in the audit is the rendered one on ANY surface, with no
+     compositing step that changes it per elevation. */
+  --text-primary: #181d14;
+  --text-secondary: #3b4333;
+  --text-tertiary: #59614f;
+  --text-muted: #656d5b;
+  --text-ghost: #a3a999;    /* non-informational only (placeholder/disabled); below AA by intent */
+
+  /* === Accent fills === */
+  --accent-tint: #175d43;        /* evidence green — the primary accent */
+  --accent-chat: #12564a;        /* the agent speaks in the same ink, one step cooler */
+  --accent-success: #1c6b46;
+  --accent-warning: #93401f;     /* sealing wax */
+  --accent-danger: #9c2f14;
+  --accent-command: #4a2f7d;     /* copying-pencil violet */
+  --accent-link: #22508f;        /* docket indigo — a cross-reference. Indigo rather than a
+                                    teal-blue so it does not collapse into the evidence green
+                                    for a tritan viewer (measured dE 7.1 → 11.0). */
+  --accent-highlight: #dfc165;   /* pencil wash behind a matched term — deep enough to
+                                    read as a mark on paper (1.59:1 vs the ledger sheet;
+                                    the shipped light theme's own wash is 1.44:1) */
+  --accent-warm: #b5552a;
+  --accent-warm-muted: #a06a4a;
+
+  /* === On-colours (558): the ink that sits ON each fill. `deriveRoleForegrounds`
+     re-derives these at apply time in @layer user-override; these are the AA
+     fallbacks and the values the palette-contrast audit reads. === */
+  --accent-on-tint: #ffffff;
+  --accent-on-chat: #ffffff;
+  --accent-on-success: #ffffff;
+  --accent-on-warning: #ffffff;
+  --accent-on-danger: #ffffff;
+  --accent-on-command: #ffffff;
+  --accent-on-link: #ffffff;
+  --accent-on-highlight: #3d3208;
+
+  /* === Text-grade roles (576 §6): each role legible as TEXT on paper —
+     distinct from the fills above, which are backgrounds. === */
+  --text-tint: #14523c;
+  --text-chat: #124e44;
+  --text-success: #14603e;
+  --text-warning: #7a3517;
+  --text-danger: #8b2a11;
+  --text-command: #422a6f;
+  --text-link: #1e4680;
+  --text-highlight: #6a5200;
+
+  /* === Error surfaces === */
+  --error-bg: rgba(156, 47, 20, 0.10);
+  --error-border: rgba(156, 47, 20, 0.32);
+
+  /* === Categorical semiotics: the materials a registry actually files === */
+  --cat-doc: #22508f;       /* docket indigo */
+  --cat-code: #14603e;      /* moss */
+  --cat-image: #7a2a6b;     /* aniline magenta */
+  --cat-note: #705214;      /* pencil ochre */
+  --cat-pdf: #9c2f14;       /* wax red */
+  --cat-folder: #63451c;    /* manila tobacco */
+
+  /* === Code surfaces === */
+  --code-bg-inline: rgba(24, 34, 20, 0.07);
+  --code-bg-block: rgba(24, 34, 20, 0.05);
+
+  /* === Rail icons === */
+  --rail-icon-inactive: #59614f;
+  --rail-icon-hover: #181d14;
+
+  /* === Result rows === */
+  --result-row-hover: rgba(24, 34, 20, 0.04);
+  --result-row-cursor: rgba(24, 34, 20, 0.07);
+
+  /* === Shadows: paper lies flat. Short, low-alpha, green-black. === */
+  --shadow-glass: 0 1px 2px rgba(20, 28, 16, 0.10), 0 2px 10px rgba(20, 28, 16, 0.06);
+  --shadow-float: 0 6px 24px rgba(20, 28, 16, 0.14), 0 1px 3px rgba(20, 28, 16, 0.08);
+  --shadow-lift: 0 1px 4px rgba(20, 28, 16, 0.12);
+  --shadow-card: 0 2px 12px rgba(20, 28, 16, 0.12);
+  --shadow-card-sm: 0 1px 4px rgba(20, 28, 16, 0.10);
+  --shadow-menu: 0 8px 32px rgba(20, 28, 16, 0.16), 0 0 1px rgba(20, 28, 16, 0.14);
+  --shadow-panel-edge: -6px 0 24px rgba(20, 28, 16, 0.10), -1px 0 4px rgba(20, 28, 16, 0.07);
+
+  /* === Glows: an ink theme does not glow; these are rings and washes === */
+  --glow-accent: 0 0 10px rgba(23, 93, 67, 0.18);
+  --glow-focus: 0 0 0 2px rgba(23, 93, 67, 0.55);
+  --glow-success: 0 0 10px rgba(28, 107, 70, 0.22);
+  --glow-warning: 0 0 10px rgba(147, 64, 31, 0.22);
+  --glow-danger: 0 0 10px rgba(156, 47, 20, 0.24);
+  --glow-warm: 0 0 10px rgba(181, 85, 42, 0.22);
+  --glow-hover-subtle: 0 0 10px rgba(24, 34, 20, 0.05);
+  --glow-inset-subtle: inset 0 0 10px rgba(24, 34, 20, 0.04);
+  --glow-inset-rim: inset 0 1px 0 rgba(251, 252, 246, 0.7);
+
+  /* === Tooltip === */
+  --tooltip-bg: rgba(24, 29, 20, 0.94);
+  --tooltip-shadow: 0 4px 16px rgba(20, 28, 16, 0.18);
+
+  /* === Halo: paper glow, for text over mixed grounds === */
+  --halo-shadow: 0 1px 2px rgba(251, 252, 246, 0.75);
+
+  /* === Selection + scrollbar === */
+  --selection-bg: rgba(23, 93, 67, 0.20);
+  --scrollbar-thumb: rgba(24, 34, 20, 0.18);
+  --scrollbar-thumb-hover: rgba(24, 34, 20, 0.30);
+  --scrollbar-track: transparent;
+
+  /* === Controls === */
+  --toggle-track-off: #727964;   /* 4.10:1 on paper — an off switch must still be a switch (1.4.11) */
+
+  /* === Type === */
+  --font-display: 'Aptos Display', 'Aptos', 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
+}

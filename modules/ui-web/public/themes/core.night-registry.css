@@ -1,0 +1,182 @@
+/* =============================================================================
+   NIGHT REGISTRY — a dark palette for records kept after hours.
+   Delivered as CSS for the same reason as the ledger: the text-grade role
+   tokens, --cat-*, shadows and glows are outside the JSON format's closed
+   KNOWN_TOKEN_NAMES list. Every token below already exists in
+   modules/ui-web/src/styles/tokens.css. Injected under @layer user-theme.
+
+   THE DIRECTION
+   Same world as the ledger, opposite hour: the reading room after closing, one
+   shaded lamp over an open volume, microfilm in the next carrel. The instincts
+   are physical — a lamp reaches a few shelves and no further; paper under
+   tungsten is cream, never white; the ember of a wax seal is what you see of it
+   at night.
+
+   Deliberately NOT the dark defaults, and not Nord-with-different-numbers:
+     - the ground is a green-black, not a blue-grey. Nord's Polar Night is
+       desaturated BLUE (#2e3440) with Frost cyan on top; here the near-black
+       carries a low-chroma GREEN cast (#131711) taken from the lamp shade, and
+       every elevation step warms slightly toward olive as the lamp reaches it.
+     - not near-black + one acid accent: four hues carry four meanings, and the
+       brightest thing on screen is paper (text), not an accent.
+     - text is index-card cream (#f0ece0), not #fff — under a tungsten lamp
+       nothing is pure white, and the cream keeps long reading quiet.
+
+   CORE VALUES (6)
+     reading-room dark   #131711  the room, not the void: black with a green cast
+                                  borrowed from the lamp shade
+     shelf olive         #252b23  raised surfaces — the shelves the lamp reaches
+     index-card cream    #f0ece0  primary text: paper under tungsten, never white
+     lamp green          #57c489  evidence: citations, quoted spans, the ok verdict
+     ember               #e2913f  risk, locks, staleness — a wax seal seen by
+                                  lamplight; the highlight wash is this hue lifted
+     indelible violet    #ac8cf2  the operator's own marks (commands)
+
+   SIGNATURE EMPHASIS — green is evidence, and it is the only thing that is lit.
+   --accent-tint is the lamp green, so a focus ring, a selection and a quoted
+   span are the same light. Risk is the ember family (warning, danger, warm,
+   highlight) — a hue far enough from the green that the two verdicts never
+   trade places in peripheral vision, and both clear AA as text on the room's
+   own surfaces. Unlit means unrecorded: a panel with no accent is a panel where
+   the tool is claiming nothing.
+
+   TYPE: display = Sitka Heading (a reading-room serif, screen-cut; the one risk
+   in this theme's type) over Constantia/Georgia; facts = Cascadia Mono.
+   Windows-bundled only — no webfont fetch.
+   ============================================================================= */
+
+:root {
+  /* === Primitives === */
+  --p-glass: 232, 236, 220;   /* overlay tint is CREAM, not white — lamplight on paper */
+  --p-shadow: 6, 9, 5;
+  --p-text: 240, 236, 224;
+
+  /* === Surface elevation: the lamp reaches further as you rise === */
+  --surface-0: #0d100c;       /* the room past the lamp */
+  --surface-1: #131711;       /* reading-room dark — primary background */
+  --surface-2: #1b201a;       /* the desk */
+  --surface-3: #252b23;       /* shelf olive — elevated */
+  --surface-4: #30372e;       /* under the shade — modals */
+  --layer-base: rgba(13, 16, 12, 0.66);
+  --layer-base-solid: #171b15;
+
+  /* === Glass === */
+  --glass-surface: rgba(232, 236, 220, 0.035);
+  --glass-surface-hover: rgba(232, 236, 220, 0.065);
+  --glass-surface-active: rgba(232, 236, 220, 0.105);
+  --glass-border: rgba(232, 236, 220, 0.09);
+  --glass-border-hover: rgba(232, 236, 220, 0.14);
+  --glass-border-strong: rgba(232, 236, 220, 0.26);
+  --glass-blur: 18px;
+  --glass-blur-elevated: 26px;
+  --glass-saturation: 1.06;
+  --glass-saturation-elevated: 1.1;
+
+  /* === Text: solid creams, so each ratio holds on every elevation === */
+  --text-primary: #f0ece0;
+  --text-secondary: #d3d0c2;
+  --text-tertiary: #adaa9c;
+  --text-muted: #a3a091;
+  --text-ghost: #5c5f55;      /* non-informational only (placeholder/disabled); below AA by intent */
+
+  /* === Accent fills === */
+  --accent-tint: #57c489;        /* lamp green — the primary accent */
+  --accent-chat: #46bfae;        /* the agent speaks from the same green, one step cooler */
+  --accent-success: #63cf94;
+  --accent-warning: #e2913f;     /* ember */
+  --accent-danger: #f0685a;
+  --accent-command: #ac8cf2;     /* indelible violet */
+  --accent-link: #8fb8f5;        /* microfilm blue — a cross-reference */
+  --accent-highlight: #d9a05a;   /* the ember hue lifted: a wash behind a matched term */
+  --accent-warm: #e08a45;
+  --accent-warm-muted: #c08a67;
+
+  /* === On-colours (558): dark inks tinted toward each fill's own hue, matching
+     what `deriveRoleForegrounds` re-derives at apply time in @layer
+     user-override. These are the AA fallbacks the palette audit reads. === */
+  --accent-on-tint: #06140d;
+  --accent-on-chat: #020c09;
+  --accent-on-success: #05170e;
+  --accent-on-warning: #140900;
+  --accent-on-danger: #150302;
+  --accent-on-command: #0e0620;
+  --accent-on-link: #06152c;
+  --accent-on-highlight: #150c02;
+
+  /* === Text-grade roles (576 §6): each role legible as TEXT on the room === */
+  --text-tint: #6ecf98;
+  --text-chat: #55c9b8;
+  /* success/danger are separated by LIGHTNESS as well as hue: a red-green-deficient
+     viewer loses the hue difference, so the pair is measured under simulation
+     (deutan dE 13.4) rather than assumed from the hue names. */
+  --text-success: #7fd9a6;
+  --text-warning: #eeb374;
+  --text-danger: #f79086;
+  --text-command: #c9b2f8;
+  --text-link: #9dc2f7;
+  --text-highlight: #dfb473;
+
+  /* === Error surfaces === */
+  --error-bg: rgba(240, 104, 90, 0.12);
+  --error-border: rgba(240, 104, 90, 0.34);
+
+  /* === Categorical semiotics === */
+  --cat-doc: #8fb8f5;
+  --cat-code: #6ecf98;
+  --cat-image: #dea9de;
+  --cat-note: #e0c06a;
+  --cat-pdf: #f59a8f;
+  --cat-folder: #dda86a;
+
+  /* === Code surfaces === */
+  --code-bg-inline: rgba(232, 236, 220, 0.065);
+  --code-bg-block: rgba(232, 236, 220, 0.045);
+
+  /* === Rail icons === */
+  --rail-icon-inactive: #a7a89a;
+  --rail-icon-hover: #e6e3d6;
+
+  /* === Result rows === */
+  --result-row-hover: rgba(232, 236, 220, 0.045);
+  --result-row-cursor: rgba(232, 236, 220, 0.07);
+
+  /* === Shadows: a lamp casts one long shadow === */
+  --shadow-glass: 0 4px 24px rgba(6, 9, 5, 0.55);
+  --shadow-float: 0 10px 36px rgba(6, 9, 5, 0.62);
+  --shadow-lift: 0 2px 8px rgba(6, 9, 5, 0.5);
+  --shadow-card: 0 4px 20px rgba(6, 9, 5, 0.55);
+  --shadow-card-sm: 0 2px 8px rgba(6, 9, 5, 0.45);
+  --shadow-menu: 0 10px 44px rgba(6, 9, 5, 0.7), 0 0 1px rgba(232, 236, 220, 0.1), inset 0 1px 0 rgba(232, 236, 220, 0.05);
+  --shadow-panel-edge: -8px 0 32px rgba(6, 9, 5, 0.6), -2px 0 8px rgba(6, 9, 5, 0.4);
+
+  /* === Glows: the lamp is the only light source === */
+  --glow-accent: 0 0 16px rgba(87, 196, 137, 0.22);
+  --glow-focus: 0 0 0 2px rgba(87, 196, 137, 0.55);
+  --glow-success: 0 0 12px rgba(99, 207, 148, 0.3);
+  --glow-warning: 0 0 12px rgba(226, 145, 63, 0.32);
+  --glow-danger: 0 0 12px rgba(240, 104, 90, 0.32);
+  --glow-warm: 0 0 12px rgba(224, 138, 69, 0.3);
+  --glow-hover-subtle: 0 0 12px rgba(232, 236, 220, 0.05);
+  --glow-inset-subtle: inset 0 0 12px rgba(232, 236, 220, 0.05);
+  --glow-inset-rim: inset 0 1px 0 rgba(232, 236, 220, 0.05);
+
+  /* === Tooltip === */
+  --tooltip-bg: rgba(6, 9, 5, 0.92);
+  --tooltip-shadow: 0 4px 16px rgba(6, 9, 5, 0.5);
+
+  /* === Halo === */
+  --halo-shadow: 0 1px 3px rgba(6, 9, 5, 0.7);
+
+  /* === Selection + scrollbar === */
+  --selection-bg: rgba(87, 196, 137, 0.28);
+  --scrollbar-thumb: rgba(232, 236, 220, 0.16);
+  --scrollbar-thumb-hover: rgba(232, 236, 220, 0.26);
+  --scrollbar-track: transparent;
+
+  /* === Controls === */
+  --toggle-track-off: #6f7569;   /* 3.82:1 on the room — an off switch must still be a switch (1.4.11) */
+
+  /* === Type === */
+  --font-display: 'Sitka Heading', 'Sitka Text', Constantia, Georgia, serif;
+  --font-mono: 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
+}
