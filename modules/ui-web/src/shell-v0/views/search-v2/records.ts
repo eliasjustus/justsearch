@@ -36,6 +36,10 @@ import type {
   Claim,
   RetrievalCitation,
 } from '../../components/chat/citationTypes.js';
+// The product's ONE relative-time wording (the results card's frozen header reads the same helper),
+// so an elaboration never mints a second way of saying when something happened. `now` is a
+// parameter here as it is there, which is what keeps this module clock-free.
+import { formatRelative } from '../../utils/relativeTime.js';
 
 /** A hit as CAPTURED — a value copy, deliberately narrower than the live store's hit type. */
 export interface FrozenHit {
@@ -142,6 +146,12 @@ export interface AgentRunRecord {
   readonly outcome: RunOutcome;
   readonly toolCallCount: number;
   readonly tokensUsed: number | null;
+  /**
+   * L14 (slice 5) — when the run reached its terminal, ISO-8601. Elaboration, never the fact: the
+   * receipt's outcome and counts rest visible and this is what extends beside them. Null when the
+   * caller captured no clock, which renders NOTHING rather than a fabricated time.
+   */
+  readonly endedAt: string | null;
 }
 
 export type SessionRecord =
@@ -253,6 +263,8 @@ export interface RunCapture {
   readonly outcome: RunOutcome;
   readonly toolCallCount: number;
   readonly tokensUsed: number | null;
+  /** When the run ended (ISO-8601). Optional: a caller with no clock records no time. */
+  readonly endedAt?: string;
 }
 
 /** L8 (slice 3) — the run's terminal: append its ONE receipt. Append-only, like every commit. */
@@ -268,6 +280,7 @@ export function appendAgentRun(
       outcome: capture.outcome,
       toolCallCount: capture.toolCallCount,
       tokensUsed: capture.tokensUsed,
+      endedAt: capture.endedAt ?? null,
     }),
   ]);
 }
@@ -377,6 +390,8 @@ export interface TranscriptRunItem {
   readonly outcome: RunOutcome;
   /** L6 — derived from the record's own counts by {@link runSummaryLabel}. */
   readonly label: string;
+  /** L14 — the receipt's timing, elaboration only. Null when the run recorded no end time. */
+  readonly endedAt: string | null;
 }
 export type TranscriptItem =
   | TranscriptFrozenItem
@@ -458,6 +473,7 @@ export function projectTranscript(records: readonly SessionRecord[]): readonly T
         id: r.id,
         outcome: r.outcome,
         label: runSummaryLabel(r.outcome, r.toolCallCount, r.tokensUsed),
+        endedAt: r.endedAt,
       };
     }
     if (r.kind === 'refused-answer') {
@@ -466,10 +482,12 @@ export function projectTranscript(records: readonly SessionRecord[]): readonly T
         id: r.id,
         reason: r.reason,
         detail: r.detail,
-        label: r.reason === 'locked' ? 'Not sent — the session is locked' : 'No answer',
+        // One verb per action (818 slice 5 copy pass): the affordance says Ask, so the pending state
+        // says Asking and a refusal says what was not asked.
+        label: r.reason === 'locked' ? 'Not asked — the session is locked' : 'Not answered',
       };
     }
-    return { kind: 'pending-answer', id: r.id, label: 'Answer pending' };
+    return { kind: 'pending-answer', id: r.id, label: 'Asking your files…' };
   });
 }
 
@@ -480,6 +498,12 @@ export interface IndexNode {
   /** |cluster| — the number of records this node stands for. */
   readonly size: number;
   readonly recordIds: readonly string[];
+  /**
+   * L14 (slice 5) — the node's ELABORATION: what the opening record was, in detail. Null when the
+   * record has nothing to elaborate. It is not the node's identity (that is `label` + `size`, both
+   * resting-visible); it is what extends on hover and on keyboard focus.
+   */
+  readonly detail: string | null;
 }
 
 export interface IndexProjection {
@@ -488,11 +512,51 @@ export interface IndexProjection {
   readonly nodes: readonly IndexNode[];
 }
 
+/** How a capture's own pass reads to the person who ran it — never the raw enum. */
+const CAPTURE_MODE_WORDING: Readonly<Record<CaptureMode, string | null>> = Object.freeze({
+  quick: 'Quick pass',
+  refined: 'Refined pass',
+  unknown: null,
+});
+
+/**
+ * L14 — a frozen record's TIMINGS, the elaboration beside the results card's own header. The card
+ * already states the query, the counts, the retrieval mode and when it ran; this states only what it
+ * does not, so the extended line is elaboration rather than a second copy of a resting fact. Null
+ * when neither the pass nor a latency was captured — an absent measurement renders nothing.
+ */
+export function frozenTimingLabel(mode: CaptureMode, tookMs: number | null): string | null {
+  const parts = [CAPTURE_MODE_WORDING[mode], tookMs === null ? null : `${tookMs} ms`].filter(
+    (p): p is string => p !== null,
+  );
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+/**
+ * L14 — the elaboration a session-index node carries, derived from the record that OPENS it. Every
+ * branch states a fact the record already holds; a record with nothing further to say elaborates
+ * into nothing rather than into filler.
+ */
+export function indexNodeDetail(r: SessionRecord, now: number): string | null {
+  if (r.kind === 'frozen-search') {
+    const timing = frozenTimingLabel(r.mode, r.tookMs);
+    const when = formatRelative(new Date(r.executedAt).getTime(), now);
+    return timing ? `${timing} · ${when}` : when;
+  }
+  if (r.kind === 'agent-run') {
+    const ended = r.endedAt === null ? null : formatRelative(new Date(r.endedAt).getTime(), now);
+    return ended ? `${runSummaryLabel(r.outcome, r.toolCallCount, r.tokensUsed)} · ${ended}` : null;
+  }
+  if (r.kind === 'answer') return groundedSentencesLabel(r.grounding);
+  if (r.kind === 'refused-answer') return r.detail || null;
+  return null;
+}
+
 /** The label a non-frozen record carries when it happens to OPEN a cluster (no commit before it). */
 function leadingNodeLabel(r: SessionRecord): string {
   if (r.kind === 'user-turn') return r.text.trim() || 'Untitled turn';
   if (r.kind === 'answer' || r.kind === 'pending-answer') return 'Answer';
-  if (r.kind === 'refused-answer') return 'Not sent';
+  if (r.kind === 'refused-answer') return 'Not asked';
   if (r.kind === 'agent-run') return 'Delegated run';
   return 'Untitled turn';
 }
@@ -503,9 +567,9 @@ function leadingNodeLabel(r: SessionRecord): string {
  * frozen search (a bare turn) form a leading cluster, so the clusters partition the array and the
  * header count is exactly Σ sizes.
  */
-export function projectIndex(records: readonly SessionRecord[]): IndexProjection {
+export function projectIndex(records: readonly SessionRecord[], now: number): IndexProjection {
   const nodes: IndexNode[] = [];
-  let open: { id: string; label: string; recordIds: string[] } | null = null;
+  let open: { id: string; label: string; recordIds: string[]; detail: string | null } | null = null;
 
   const flush = (): void => {
     if (!open) return;
@@ -515,6 +579,7 @@ export function projectIndex(records: readonly SessionRecord[]): IndexProjection
         label: open.label,
         size: open.recordIds.length,
         recordIds: Object.freeze([...open.recordIds]),
+        detail: open.detail,
       }),
     );
     open = null;
@@ -523,11 +588,16 @@ export function projectIndex(records: readonly SessionRecord[]): IndexProjection
   for (const r of records) {
     if (r.kind === 'frozen-search') {
       flush();
-      open = { id: r.id, label: r.query.trim() || 'Untitled search', recordIds: [r.id] };
+      open = {
+        id: r.id,
+        label: r.query.trim() || 'Untitled search',
+        recordIds: [r.id],
+        detail: indexNodeDetail(r, now),
+      };
       continue;
     }
     if (!open) {
-      open = { id: r.id, label: leadingNodeLabel(r), recordIds: [] };
+      open = { id: r.id, label: leadingNodeLabel(r), recordIds: [], detail: indexNodeDetail(r, now) };
     }
     open.recordIds.push(r.id);
   }

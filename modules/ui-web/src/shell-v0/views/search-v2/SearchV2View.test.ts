@@ -242,11 +242,15 @@ describe('818 SearchV2View — the rail (L12)', () => {
     expect(q(el, 'rail-index')).toBeNull();
     expect(
       all(el, 'session-row').map((r) => (r.textContent ?? '').replace(/\s+/g, ' ').trim()),
-    ).toEqual(['Supplier renewals 4 messages', 'What did we renegotiate 1 message']);
+    ).toEqual([
+      'Supplier renewals 4 messages · Today',
+      'What did we renegotiate 1 message · Today',
+    ]);
     // L6 — the row meta is the message count of the row it sits on, never an authored figure.
-    expect(all(el, 'session-row-meta').map((m) => m.textContent?.trim())).toEqual([
-      '4 messages',
-      '1 message',
+    // (L14, slice 5: the meta is the EXTENDED form; the row rests at its title.)
+    expect(all(el, 'session-row-meta').map((m) => m.textContent?.replace(/\s+/g, ' ').trim())).toEqual([
+      '4 messages · Today',
+      '1 message · Today',
     ]);
     // The sidebar's New session affordance is always present — never state-gated.
     expect(q(el, 'new-session')).not.toBeNull();

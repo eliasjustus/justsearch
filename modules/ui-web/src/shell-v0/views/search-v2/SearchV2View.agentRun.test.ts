@@ -339,8 +339,17 @@ describe('818 SearchV2View — delegating a run (L2, L8)', () => {
     const receipts = all(el, 'agent-run');
     expect(receipts).toHaveLength(1);
     expect(receipts[0]?.getAttribute('data-outcome')).toBe('completed');
-    expect(receipts[0]?.textContent?.replace(/\s+/g, ' ').trim()).toBe(
-      `Run finished · 2 tool calls · ${(41_200).toLocaleString()} tokens`,
+    // L14 — the receipt's RESTING form is its own text nodes: the outcome and the counts. The run's
+    // end time is elaboration and sits in the `.ext` child, so it is read separately here.
+    const resting = Array.from(receipts[0]?.childNodes ?? [])
+      .filter((n) => n.nodeType === 3)
+      .map((n) => n.textContent ?? '')
+      .join('')
+      .replace(/\s+/g, ' ')
+      .trim();
+    expect(resting).toBe(`Run finished · 2 tool calls · ${(41_200).toLocaleString()} tokens`);
+    expect(receipts[0]?.querySelector('[data-testid="agent-run-timing"]')?.textContent).toContain(
+      'just now',
     );
     // Two records now: the turn and its receipt — and the earlier turn is untouched (L4).
     expect(text(el, 'index-count')).toBe('2 entries');
