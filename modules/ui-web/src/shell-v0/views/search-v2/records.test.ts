@@ -30,6 +30,12 @@ import {
   type TranscriptFrozenItem,
 } from './records.js';
 
+/**
+ * The index projection takes `now` as a parameter (slice 5: L14's node elaboration includes when a
+ * record happened, and this module owns no clock) — one fixed instant for every assertion here.
+ */
+const NOW = Date.parse('2026-08-08T12:00:00.000Z');
+
 /** Narrowing helper — the transcript is a union, and these assertions are about frozen blocks. */
 function frozenAt(records: readonly SessionRecord[], i = 0): TranscriptFrozenItem {
   const item = projectTranscript(records)[i];
@@ -170,8 +176,9 @@ describe('818 records — the answer slot lifecycle (L4, slice 2)', () => {
     expect(refused[1]).toBe(committed[1]);
     const item = projectTranscript(refused)[2];
     expect(item?.kind).toBe('refused-answer');
+    // Slice 5's copy pass carries ONE verb through the ask path: Ask / Asking / not asked.
     expect(item && item.kind === 'refused-answer' ? item.label : '').toBe(
-      'Not sent — the session is locked',
+      'Not asked — the session is locked',
     );
   });
 
@@ -188,7 +195,7 @@ describe('818 records — derived counts (L6)', () => {
     records = commitSearch(records, capture({ query: 'second search' }), 'and after that?');
     records = commitSearch(records, capture({ query: 'third search' }), 'anything else?');
 
-    const index = projectIndex(records);
+    const index = projectIndex(records, NOW);
     expect(index.nodes).toHaveLength(3);
     expect(index.nodes.map((n) => n.size)).toEqual([3, 3, 3]);
     expect(index.headerCount).toBe(index.nodes.reduce((sum, n) => sum + n.size, 0));
@@ -269,11 +276,11 @@ describe('818 records — projections (L8 corollary, L11)', () => {
   it('L11 — transcript and index are projections of ONE array (no second authority to diverge)', () => {
     const records = commitSearch(NO_RECORDS, capture(), 'what changed?');
     const transcript = projectTranscript(records);
-    const index = projectIndex(records);
+    const index = projectIndex(records, NOW);
     expect(transcript.map((t) => t.id)).toEqual(records.map((r) => r.id));
     expect(index.nodes[0]?.recordIds).toEqual(records.map((r) => r.id));
     expect(projectTranscript(NO_RECORDS)).toEqual([]);
-    expect(projectIndex(NO_RECORDS)).toEqual({ headerCount: 0, nodes: [] });
+    expect(projectIndex(NO_RECORDS, NOW)).toEqual({ headerCount: 0, nodes: [] });
   });
 
   it('L11 — an answer projects its own evidence; the index labels its cluster "Answer"', () => {
@@ -310,7 +317,7 @@ describe('818 records — projections (L8 corollary, L11)', () => {
       'r0',
       answer(),
     );
-    expect(projectIndex(bare).nodes[0]?.label).toBe('Answer');
+    expect(projectIndex(bare, NOW).nodes[0]?.label).toBe('Answer');
   });
 });
 
@@ -336,6 +343,8 @@ describe('818 records — the delegated run (L4, L6, L8)', () => {
       outcome: 'completed',
       toolCallCount: 3,
       tokensUsed: 41_200,
+      // L14 — a caller with no clock records no time; the receipt never invents one.
+      endedAt: null,
     });
   });
 
@@ -383,7 +392,7 @@ describe('818 records — the delegated run (L4, L6, L8)', () => {
       toolCallCount: 2,
       tokensUsed: 900,
     });
-    const index = projectIndex(records);
+    const index = projectIndex(records, NOW);
 
     expect(index.nodes).toHaveLength(1);
     expect(index.nodes[0]?.label).toBe('file the agreements');
@@ -397,7 +406,7 @@ describe('818 records — the delegated run (L4, L6, L8)', () => {
       toolCallCount: 0,
       tokensUsed: null,
     });
-    expect(projectIndex(orphan).nodes[0]?.label).toBe('Delegated run');
+    expect(projectIndex(orphan, NOW).nodes[0]?.label).toBe('Delegated run');
     expect(projectSessionName(orphan)).toBe(UNNAMED_SESSION);
   });
 });

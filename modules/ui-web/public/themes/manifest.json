@@ -25,6 +25,30 @@
       "cssPath": "/themes/core.high-vis.json",
       "author": "core",
       "version": "1.0.0"
+    },
+    {
+      "id": "core.registrars-ledger",
+      "displayName": "Registrar's Ledger",
+      "description": "Light. Ledger paper and iron-gall ink. Green marks evidence: citations, quoted spans, confirmed records. Sealing-wax brown marks risk: locks, stale results, failures.",
+      "cssPath": "/themes/core.registrars-ledger.css",
+      "author": "core",
+      "version": "1.0.0"
+    },
+    {
+      "id": "core.night-registry",
+      "displayName": "Night Registry",
+      "description": "Dark. A reading room after hours: green-black surfaces, index-card cream text. Lamp green marks evidence; ember marks risk. Headings set in a serif, machine facts in mono.",
+      "cssPath": "/themes/core.night-registry.css",
+      "author": "core",
+      "version": "1.0.0"
+    },
+    {
+      "id": "core.cyanotype",
+      "displayName": "Cyanotype",
+      "description": "Dark and cold, on a Prussian-blue ground rather than a grey one. Cyan marks what the index reached; rust marks what is stale or locked. Labels set in a drafting typeface.",
+      "cssPath": "/themes/core.cyanotype.css",
+      "author": "core",
+      "version": "1.0.0"
     }
   ]
 }

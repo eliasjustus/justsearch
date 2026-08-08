@@ -268,6 +268,74 @@ describe('818 SearchV2View — the landed answer (L4, L6)', () => {
     expect(panel?.citations).toHaveLength(1);
   });
 
+  it('slice 5 — following a citation opens the document pane AT the cited range', async () => {
+    askImpl = async (_req, sink) => sink.onDone(OUTCOME);
+    const el = await mount();
+    await commitByEnter(el, 'what changed?');
+    expect(q(el, 'reading-pane')).toBeNull();
+
+    // The SHARED panel's own event — this window adds no citation affordance of its own.
+    const panel = q(el, 'citations') as HTMLElement;
+    panel.dispatchEvent(
+      new CustomEvent('citation-select', {
+        detail: {
+          parentDocId: 'Contracts/Northfield.pdf',
+          startLine: 1,
+          endLine: 2,
+          startChar: 0,
+          endChar: 40,
+          excerpt: '…net-45…',
+        },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await el.updateComplete;
+
+    const pane = q(el, 'reading-pane')?.querySelector('jf-document-pane') as
+      | (HTMLElement & { docPath: string; highlightRange: unknown })
+      | null;
+    expect(pane).not.toBeNull();
+    expect(pane?.docPath).toBe('Contracts/Northfield.pdf');
+    // The landing IS the range: the strong→settle belongs to the pane's own decay, not to a second
+    // emphasis in this window.
+    expect(pane?.highlightRange).toEqual({ startLine: 1, endLine: 2 });
+  });
+
+  it('slice 5 — opening a whole result carries NO range: there is no passage to emphasise', async () => {
+    askImpl = async (_req, sink) => sink.onDone(OUTCOME);
+    const el = await mount();
+    await commitByEnter(el, 'what changed?');
+    const panel = q(el, 'citations') as HTMLElement;
+    panel.dispatchEvent(
+      new CustomEvent('citation-select', {
+        detail: {
+          parentDocId: 'Contracts/Northfield.pdf',
+          startLine: 1,
+          endLine: 2,
+          startChar: 0,
+          endChar: 40,
+          excerpt: '',
+        },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await el.updateComplete;
+
+    const card = q(el, 'frozen-block')?.querySelector('jf-results-card') as HTMLElement;
+    card.dispatchEvent(
+      new CustomEvent('card-open', { detail: { id: 'd1' }, bubbles: true, composed: true }),
+    );
+    await el.updateComplete;
+
+    const pane = q(el, 'reading-pane')?.querySelector('jf-document-pane') as
+      | (HTMLElement & { docPath: string; highlightRange: unknown })
+      | null;
+    expect(pane?.docPath).toBe('Ops/Reviews/Q2.md');
+    expect(pane?.highlightRange).toBeNull();
+  });
+
   it('L6 — an answer the backend never citation-matched renders NO grounding line', async () => {
     askImpl = async (_req, sink) => sink.onDone({ ...OUTCOME, grounding: null });
     const el = await mount();
@@ -290,8 +358,19 @@ describe('818 SearchV2View — the landed answer (L4, L6)', () => {
     aiListener?.({ status: null, runtime: { contextWindow: 8192 } });
     await el.updateComplete;
     // (the window figure is locale-formatted — assert the derived percentage, not the separator)
-    expect(text(el, 'context-meter')).toContain('Context 25% of');
+    // L14 — the OCCUPANCY rests (the verdict the meter exists to give); the numbers it was computed
+    // from are the elaboration, in the one `.ext` mechanism, inside its `.ext-row`.
+    expect(text(el, 'context-meter')).toContain('Context 25% full');
     expect(text(el, 'context-meter')).toContain('tokens');
+    const meter = q(el, 'context-meter') as HTMLElement;
+    expect(meter.classList.contains('ext-row')).toBe(true);
+    const breakdown = meter.querySelector('[data-testid="context-meter-breakdown"]') as HTMLElement;
+    expect(breakdown.classList.contains('ext')).toBe(true);
+    expect(breakdown.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      `${(2048).toLocaleString()} of ${(8192).toLocaleString()} tokens`,
+    );
+    // The occupancy itself is NOT inside the extended container.
+    expect(meter.classList.contains('ext')).toBe(false);
     expect(q(el, 'context-meter')?.getAttribute('data-band')).toBe('green');
   });
 
