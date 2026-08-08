@@ -164,3 +164,35 @@ sweep it." 742's corpus is follow-ups that never came.
   backend returned 5 result rows with `matchCount=4` (597-class count inversion at the
   API level — pre-existing, not a search-v2 defect; the frozen header derived honestly
   from its captured set).
+- 2026-08-08 — **Slices 2+3 implemented** (two sequential opus workers + orchestrator
+  review + full live verification). Slice 2: `jf-results-card` reuse for live AND frozen
+  lists (the inline rows were a fork of the product's one results projection — deleted,
+  along with search-v2's own count-label fork, in favour of the card's `matchCountLabel`
+  authority); the real ASK tier (`askClient.ts` — the ONE dispatch site by construction,
+  `core.rag-ask` via `buildRequestBody` + `consumeShapeStream`, typed handlers);
+  `AnswerRecord`/`refused-answer` slot terminals (filling the slot is the record's own
+  lifecycle; everything else carried by identity — L4 tested); `jf-citations-panel` +
+  `citationResolve` reuse; `jf-document-pane` on card-open + file scope chip (shared
+  `searchState` chip authority — L3 real); L5 literal (ask docIds === frozen set);
+  L9: one `refuseLocked` path, 423-caught, draft never swallowed. Slice 3: agent hosting
+  via the shared `AgentSessionController` (all directives through the
+  `dispatchRunControl` seam — `check-steering-arbitration` green); live run feed with
+  `jf-tool-call-card` reuse; ONE `agent-run` receipt record at run end with derived
+  counts; L7 deck (controls outside every scroll container, DOM-asserted); L2 live
+  (`runInFlight` claims the alt slot only, releases on end); `refuseIfLocked` pre-gate
+  shared by commit AND delegate (the shipped agent-branch bypass class, killed);
+  time-bucketed sessions sidebar (pure, `now`-injected). Registers: +3
+  execution-surfaces, +1 live-channels, run-renderers mountSites, steering-surfaces
+  adopters. 82 law tests in search-v2 (suite 4384 green), typecheck clean, full gate
+  recipe green (3 worker-caught root-cause fixes: `groundedSentencesLabel` rename,
+  `.pin` atom rename, live-channel registration; 4 known pre-existing failures in
+  other files unchanged). **Live-verified with an ACTIVE GPU model**: real streamed
+  cited answer (correct content from the docs corpus, 5 sources in the citations
+  panel, context meter at real 43%/4096), real agent run (feed + tool card + budget
+  37%/3840 + STEER claiming the alt slot), halt through the seam → derived receipt
+  "Run halted by you · 2 tool calls", index/entries projections consistent at 5,
+  alt slot released. Known residuals recorded: no chat-issuance gate exists
+  (askClient is single-site by review, not by gate — candidate for a register if the
+  two-window phase persists); mid-run lock (a lock taken between status polls) is not
+  refused on the agent path — needs a typed lock terminal on the agent stream
+  (controller work, out of this window's scope).

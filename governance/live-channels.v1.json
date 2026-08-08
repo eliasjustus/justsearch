@@ -172,6 +172,12 @@
       "openerId": "fetch-stream-shape",
       "class": "lazy",
       "note": "consumeShapeStream-driven chat generation — open only while the chat view is mounted and a generation is in flight."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/views/search-v2/askClient.ts",
+      "openerId": "fetch-stream-shape",
+      "class": "lazy",
+      "note": "Tempdoc 818 slice 2 — the Search v2 window's ONE ask issuance site delegates to consumeShapeStream (core.rag-ask). Same demand shape as the UnifiedChatView row: open only while the (dev-gated) Search v2 window is mounted and a committed turn is streaming, closed at the terminal event. The two windows are siblings during the 818 comparison phase, never both driving a turn; the sunset criterion retires one of these rows with its window."
     }
   ]
 }
