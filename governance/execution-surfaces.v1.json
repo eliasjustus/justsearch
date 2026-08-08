@@ -228,6 +228,30 @@
       "note": "Search Thread S1: the ONE results card \u2014 meta-line mode/latency projection from SearchTrace.effectiveMode + per-hit why-chips (Search Thread S5b: the standalone SearchSurface + its fe-search-surface row retired; this is now the sole FE projection)."
     },
     {
+      "id": "sv2-window",
+      "kind": "projection",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/views/search-v2/SearchV2View.ts",
+      "guard": "test:SearchV2View.answerProjection",
+      "note": "Tempdoc 818 slice 2 — the Search v2 window. Projects SearchTrace.effectiveMode into the frozen record's captured retrieval mode (the provenance header the ONE results card then renders) and projects the RetrievalCitation evidence set into the shared citations panel + the derived grounding line. It authors no evidence of its own: the grounding counts come from the backend's `rag.citation_matches` payload, and the results counts from `matchCountLabel` inside fe-results-card."
+    },
+    {
+      "id": "sv2-records",
+      "kind": "carrier",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/views/search-v2/records.ts",
+      "guard": "exempt:opaque carrier — the answer record stores the citation set verbatim; it projects no field of it",
+      "note": "Tempdoc 818 slice 2 — the Search v2 records array. An `answer` record holds the RetrievalCitation sources the backend minted so the frozen transcript keeps its own evidence; rendering/derivation happens in sv2-window."
+    },
+    {
+      "id": "sv2-ask-client",
+      "kind": "carrier",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/views/search-v2/askClient.ts",
+      "guard": "exempt:opaque carrier — hands the backend's citation set to its caller unchanged, projects no field of it",
+      "note": "Tempdoc 818 slice 2 — the Search v2 window's ONE ask issuance site (core.rag-ask via the shared consumeShapeStream). Accumulates the `rag.citations` / `rag.citation_matches` payloads into the turn outcome without deriving anything from a citation's fields."
+    },
+    {
       "id": "eval-provenance",
       "kind": "consumer",
       "lang": "python",
