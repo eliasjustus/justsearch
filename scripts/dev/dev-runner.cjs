@@ -912,7 +912,16 @@ async function maybeGracefulBackendShutdown(apiPort, pid, markerPath = null) {
     if (markerPath) { try { await fsp.rm(markerPath, { force: true }); } catch (_) { /* best-effort */ } }
     return { outcome: 'failed', reason: null, requested: true, httpStatus: post.status, error: post.error, waitedMs: Date.now() - startedAt };
   }
-  const deadline = Date.now() + 5000;
+  // Measured on this machine (tempdoc 819 §D live verification): Head acks the POST with 202
+  // immediately, then runs its ordered close on a daemon thread — manifest, API server, health
+  // monitor, HeadAssembly, then knowledgeServer.closeForUpgrade(), which gracefully stops the
+  // Worker subprocess. The Worker's "shutdown signal received" landed ~5.5s after the POST and the
+  // JVM exited shortly after, so a 5s budget reported `timeout` and force-killed a JVM that was
+  // mid-clean-shutdown — destroying the finalizeShutdownCommit() stamp this path exists to
+  // preserve. The shell's 8s (lib.rs:149) would have cleared it with almost no margin; 15s keeps
+  // the same bounded-poll contract with room for a slower machine. Cost is paid only when the
+  // backend genuinely hangs, and the taskkill fallback is unchanged.
+  const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
     if (!isPidAlive(pid)) {
       return { outcome: 'exited', reason: null, requested: true, httpStatus: post.status, error: null, waitedMs: Date.now() - startedAt };

@@ -119,7 +119,8 @@ public final class EmbeddingRecoveryOps {
 
   /**
    * Re-marks every parent document currently {@code COMPLETED} or {@code FAILED} back to
-   * {@code PENDING} so the embedding backfill re-embeds it under the current model.
+   * {@code PENDING} — and resets {@code embedding_retry_count} to 0 — so the embedding backfill
+   * re-embeds it under the current model with a full retry budget (tempdoc 819 C).
    *
    * <p>The full COMPLETED/FAILED id set is collected FIRST (the set is stable while nothing has been
    * mutated), then re-marked with read-modify-write batch updates (other fields, e.g. content, are
@@ -148,9 +149,18 @@ public final class EmbeddingRecoveryOps {
     int total = 0;
     List<Map.Entry<String, Map<String, Object>>> batch = new ArrayList<>(batchSize);
     for (String id : ids) {
+      // Tempdoc 819 C: reset embedding_retry_count alongside the status. Re-marking status alone
+      // left a document rescued from FAILED carrying an exhausted counter, so the backfill's very
+      // first re-attempt escalated it straight back to FAILED — one attempt per boot, no matter how
+      // many boots. A rescue is a deliberate re-embed request; it earns a full retry budget.
       batch.add(
           Map.entry(
-              id, Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING)));
+              id,
+              Map.of(
+                  SchemaFields.EMBEDDING_STATUS,
+                  SchemaFields.EMBEDDING_STATUS_PENDING,
+                  SchemaFields.EMBEDDING_RETRY_COUNT,
+                  "0")));
       if (batch.size() >= batchSize) {
         total += coordinator.updateDocumentsBatch(batch).updatedCount();
         batch.clear();

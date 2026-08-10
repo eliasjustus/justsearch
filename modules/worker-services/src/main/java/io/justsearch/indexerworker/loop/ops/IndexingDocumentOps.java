@@ -237,7 +237,17 @@ public final class IndexingDocumentOps {
         } catch (RuntimeException e) {
           log.debug(
               "Failed to generate embedding for {}: {}", filePath.getFileName(), e.getMessage());
-          fields.put(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_FAILED);
+          // Tempdoc 819 C: route the inline failure through the SAME 3-strike escalation the
+          // backfill uses instead of marking FAILED on the first fault. The backfill selects only
+          // PENDING documents (EmbeddingBackfillOps.java:46-50), so a first-fault FAILED document
+          // was never retried — one transient fault (a GPU/ORT hiccup) permanently cost that
+          // document its vector. This is a freshly written document, so the count starts at 0; a
+          // forced reindex likewise deserves a fresh budget. `computeEmbeddingFailureUpdate` sets
+          // EMBEDDING_STATUS=FAILED only once the count reaches EMBEDDING_MAX_RETRIES, so PENDING
+          // is the correct status for every attempt before that.
+          fields.putAll(EmbeddingBackfillOps.computeEmbeddingFailureUpdate(0));
+          fields.putIfAbsent(
+              SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING);
         }
       }
     } else {

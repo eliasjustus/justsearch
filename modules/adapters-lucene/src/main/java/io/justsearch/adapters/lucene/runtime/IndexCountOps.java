@@ -81,6 +81,22 @@ public final class IndexCountOps {
   }
 
   /**
+   * {@link #docCount()} without the swallow: propagates the reader {@link IOException} instead of
+   * reporting 0.
+   *
+   * <p>Same rationale as {@link #countQueryOrThrow}: "the index is empty" and "the reader could not
+   * be read" are the same value to a caller of {@link #docCount()}. A caller that makes a SAFETY
+   * decision from emptiness — e.g. {@code EmbeddingCompatibilityController.refresh()}, which treats
+   * {@code docCount == 0} as "new index, safe to stamp the embedding fingerprint" (tempdoc 819
+   * defect B) — must be able to distinguish, so it calls this and fails closed.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   */
+  public long docCountOrThrow() throws IOException {
+    return bridge.withSearcher(searcher -> (long) searcher.getIndexReader().numDocs());
+  }
+
+  /**
    * Counts documents matching a specific field value.
    *
    * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
@@ -98,6 +114,24 @@ public final class IndexCountOps {
       log.debug("Failed to count {}={}: {}", field, value, e.getMessage());
       return 0;
     }
+  }
+
+  /**
+   * {@link #countByField} without the swallow: propagates the reader {@link IOException} to a caller
+   * that must distinguish "no document matches" from "the reader could not be read".
+   *
+   * <p>Used by {@code EmbeddingCompatibilityController}'s rebuild certification (tempdoc 819 defect
+   * B), where a swallowed error reading the COMPLETED-embedding count would read as "no embedding
+   * ever succeeded" — or, worse, a swallowed doc-count error as "the index is empty" — and either
+   * decides whether an attestation gets stamped.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   */
+  public int countByFieldOrThrow(String field, String value) throws IOException {
+    if (field == null || value == null) {
+      return 0;
+    }
+    return bridge.withSearcher(searcher -> searcher.count(new TermQuery(new Term(field, value))));
   }
 
   /**

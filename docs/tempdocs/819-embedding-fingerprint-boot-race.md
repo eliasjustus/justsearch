@@ -167,12 +167,62 @@ the approved plan. Summary of what is being implemented:
    `embedding_retry_count` on re-mark.
 4. **dev-runner graceful stop** mirroring the shell (separable).
 
-## Verification
+## Verification — outcome (2026-08-10)
 
-The acceptance criterion is the live reproduction, not the unit tests: empty the dev data dir, start the
-stack, and confirm `/api/status` `worker.compatibility` reports `COMPATIBLE`/`FINGERPRINT_MATCH` rather
-than `REBUILDING`. Today that deterministically reports `REBUILDING`.
+Two coverage gaps are why both defects shipped, and both are now closed:
+- no test booted on a genuinely empty index and asserted COMPATIBLE;
+- no test passed a non-zero `failed` count to `checkRebuildCompletion`.
 
-Two coverage gaps are why both defects shipped, and both must be closed:
-- no test boots on a genuinely empty index and asserts COMPATIBLE;
-- no test passes a non-zero `failed` count to `checkRebuildCompletion`.
+**Static.** `spotlessApply` clean; `build -x test` green; full `./gradlew.bat test` green (no failures;
+`VduEligibilityPdfFixturesTest`, known-environmental on this machine, did not fail). Diff carries only
+U+2014/U+2026 as non-ASCII — no cp1252 corruption.
+
+**Live — the acceptance criterion, on a genuinely fresh profile (a new worktree data dir):**
+
+```
+Embedding compatibility: COMPATIBLE (new/empty index; fingerprint will be stamped on commit)  22:59:18.975
+Embedding service ready (dimension=768)                                                       22:59:25.015
+```
+
+The controller resolves **6 s before the embedding model is ready**, proving it no longer waits on
+`initDeferredModels`. `/api/status` reported `COMPATIBLE` / `FINGERPRINT_MATCH` with the fingerprint
+stored, against `embeddingDocCount=5` (the help batch). The worker log contains **zero** occurrences of
+`BLOCKED_LEGACY`, `auto-started rebuild`, or `transitioned to REBUILDING` — the pre-fix path is gone, not
+merely masked. Embedding coverage then reached **100%**, so the attestation is earned, not just granted
+by emptiness.
+
+**Restart durability (the `attestationAlreadyOnDisk` arm).** After a force-kill stop and restart with no
+new embeddings, the index stayed `COMPATIBLE`/`FINGERPRINT_MATCH` with the fingerprint intact — i.e. the
+evidence gate did not strip an attestation already earned. This is the failure mode the original design
+would have caused; see §Design note below.
+
+**§D graceful stop.** `POST /api/lifecycle/shutdown` returned **202** and the worker log then showed the
+clean sequence — `Shutting down KnowledgeServer… → Indexing loop stopped → KnowledgeServer shutdown
+complete`. `Indexing loop stopped` is `IndexingLoop.java:741`, immediately after `finalizeShutdownCommit()`
+at `:739`, so the stamp backstop ran. The force-killed run immediately prior left
+`Unclean previous shutdown detected` instead — the direct contrast.
+
+Live verification also caught a defect static checks could not: the exit-wait budget was **5 s**, but the
+ordered close takes **7.3 s** on this machine, so `stop` reported `timeout` and would have force-killed a
+JVM mid-clean-shutdown — destroying the very stamp the path exists to preserve. Raised to 15 s; re-tested
+`outcome: "exited"`, `waitedMs: 7316`. Noted out of scope: the Tauri shell's own budget is 8 s
+(`lib.rs:149`), i.e. 0.7 s of margin here, so the shipped app could plausibly time out on a slower machine.
+
+### Known limitations of the regression guard
+
+The behavioural pair in `EmbeddingCompatibilityBootOrderingTest` constructs both orderings explicitly and
+therefore passes before *and* after the fix — it demonstrates that order decides the outcome, not that the
+production order is correct. The part that actually regresses is a **source-order assertion** over
+`KnowledgeServer.start()`'s body, with a self-test proving the checker can go red; red→green was
+demonstrated by temporarily moving the call. That is a structural guard, not a behavioural one — the true
+end-to-end guarantee is the live check above, which is not automated.
+
+### Design note — the correction that mattered
+
+Gating the stamp on "did an embedding succeed" **alone** would have been actively harmful: a healthy,
+already-stamped index that merely restarts embeds nothing new, so the next timer commit would have
+withheld — and thereby stripped — its fingerprint, and the following boot would re-derive BLOCKED_LEGACY
+and re-embed the whole corpus. The gate needed a third permitting fact,
+`attestationAlreadyOnDisk`, latched from real commit metadata: **the gate governs the first persistence of
+an attestation, never the preservation of one already earned.** Without it this tempdoc's fix would have
+manufactured the defect it set out to remove.

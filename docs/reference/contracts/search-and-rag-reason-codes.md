@@ -33,6 +33,7 @@ Used by VECTOR block and HYBRID fallback paths:
 - `FINGERPRINT_MISMATCH`: stored fingerprint differs; vector/hybrid blocked until forced reindex
 - `REBUILD_IN_PROGRESS`: forced rebuild/reindex in progress to realign embeddings
 - `REBUILD_COMPLETED`: rebuild completed and fingerprint stamped
+- `REBUILD_FAILED_NO_VECTORS`: rebuild drained (`pending_embedding == 0`) without a single successful embedding; the fingerprint was **refused**, not stamped, so vector/hybrid stays blocked. Terminal for the boot — the embedding runtime must be fixed and the worker restarted
 
 ### Search degradation reason codes (`GrpcSearchService`)
 
