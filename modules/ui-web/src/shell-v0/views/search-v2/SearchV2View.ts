@@ -58,12 +58,23 @@
  *  - **the small-window pass** — the surface consumes tempdoc 814's block-axis breakpoint authority
  *    (`compositionLayout.SHORT_VIEWPORT_*`) rather than minting a second one: the transcript owns
  *    the centre column's slack, the chrome yields below the breakpoint, and each region owns exactly
- *    one scroller (814 §D3). It is deliberately NOT registered in
- *    `governance/ui-proportion-baseline.v1.json`: that register is keyed by ui-shot STEP, so
- *    declaring this window would require a new deterministic capture step for a DEEPLINK/DEVELOPER
- *    surface with no rail entry — the same reason `governance/sandbox-coverage.v1.json` already
- *    carries it as `tier: exempt`. At the §5 cutover, both rows move together: the exemption becomes
- *    a sandbox tier and the window declares its bands' ceilings + the transcript's share floor.
+ *    one scroller.
+ *
+ *    That last claim is this window's OWN, and it is deliberately not 814 §D3's: D3 says one scroller
+ *    per SURFACE (`.conversation` becomes the single scrolling region of the chat surface), and this
+ *    window has five side-by-side regions that each scroll. The two are compatible in spirit — D3
+ *    attacks NESTED scrollers, each of which marks a place a layout ran out of room and solved it
+ *    locally, and none of these nest — but citing D3 as the warrant said something D3 does not say.
+ *    The claim is measured on its own terms by the scroller rows of the two ui-shot steps below.
+ *
+ *    Registered in `governance/ui-proportion-baseline.v1.json` (`search-v2-window`,
+ *    `search-v2-small`) since tempdoc 818 §6g C2. It was previously NOT registered, with the cost
+ *    deferred to the §5 cutover; the §6c critical pass spent that deferral by showing it was
+ *    circular — the cutover is gated on a comparison campaign that is itself gated on this window
+ *    being spatially correct, and four of the thirteen findings were geometry no unit test can see.
+ *    `governance/sandbox-coverage.v1.json` still carries the surface as `tier: exempt`, and that is
+ *    correct rather than an oversight: that register is release-candidate validation of user
+ *    journeys, whose trigger genuinely IS the cutover.
  *
  * Slice 5 is the presentation pass's second half — horizontal space, elaboration and input:
  *  - **the rails' movable boundaries (L13 complete)** — both rails carry a grip, with the clamps in

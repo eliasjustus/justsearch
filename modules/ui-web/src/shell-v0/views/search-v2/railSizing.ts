@@ -25,10 +25,12 @@
  *  - the floor WINS when the two cross, for the same reason as the deck: a window too narrow to
  *    satisfy both minimums must degrade the region that CAN degrade honestly.
  *
- * Why this window declares no rows in `governance/ui-proportion-baseline.v1.json`: that register is
- * keyed by ui-shot STEP, and Search v2 is a DEEPLINK/DEVELOPER surface with no rail entry and no
- * capture step (the same reason `governance/sandbox-coverage.v1.json` carries it as `tier: exempt`).
- * The §5 cutover moves both rows together — see the note in {@link SearchV2View}'s docblock.
+ * These two floors are not local numbers: each is the value a row in
+ * `governance/ui-proportion-baseline.v1.json` already pins, and that link is asserted as EQUALITY in
+ * `railSizing.test.ts` rather than trusted as prose. It has to be — for five slices this module cited
+ * the register in a comment while the window declared no rows of its own, so the numbers came in and
+ * the judgment stayed out, and nothing would have noticed the register moving underneath them. The
+ * window now declares its own rows (`search-v2-window`, `search-v2-small`); tempdoc 818 §6g C2.
  *
  * The one impure edge lives at the bottom: rails REMEMBER (L13's remember/reset asymmetry — a width
  * is a preference, a deck height is a per-session shape), so the chosen widths are persisted.

@@ -162,6 +162,27 @@ class Selector:
 SEARCH_INPUT = Selector(role="searchbox", name="Search files", testid=TID_SEARCH_INPUT)
 
 
+# Tempdoc 818 §6g C2 — the Search v2 window's geometry hooks.
+#
+# This surface is DEEPLINK/DEVELOPER with no rail entry, so there is no `rail_css` button to click
+# and navigation is the shell's hash route directly (the same fallback `_view_setup` uses for the
+# other two off-rail surfaces). It is deliberately NOT added to `VIEWS`: that map is keyed by rail
+# surface id and drives the rail-navigation steps, which this window has no place in.
+#
+# `.rail` / `.centre` / `.reading` are the three regions of the window's horizontal track, and
+# `.deck` / `.transcript` are the centre column's two occupants — the elements the 818 §6c findings
+# are about, and the ones the proportion register measures.
+SURFACE_SEARCH_V2 = "core.search-v2-surface"
+CSS_SV2_DRAFT = '[data-testid="draft"]'
+CSS_SV2_RAIL = '.rail'
+CSS_SV2_CENTRE = '.centre'
+CSS_SV2_DECK = '.deck'
+CSS_SV2_TRANSCRIPT = '[data-testid="transcript"]'
+CSS_SV2_LIVE_RESULTS = '[data-testid="live-results"]'
+CSS_SV2_READING_PANE = '[data-testid="reading-pane"]'
+CSS_SV2_FROZEN_BLOCK = '[data-testid="frozen-block"]'
+
+
 # Navigation views — maps view name to the rail button's surface id
 VIEWS: dict[str, str] = {
     "home": RAIL_SURFACE_SEARCH,

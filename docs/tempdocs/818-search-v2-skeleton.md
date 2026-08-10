@@ -125,21 +125,41 @@ campaign vs UnifiedChatView, then sunset per §5.
 
 ## 5. Sunset criterion (written up front, per retire-with-a-sweep)
 
-> **→ FALSIFIED and REPLACED 2026-08-11 (§6e.5).** The criterion below assumes the law suite is a
-> faithful oracle for the laws; the §6c critical pass found it green while five laws were violated
-> in ways it structurally cannot see. Read §6e.5 as current; the text below is kept as the record
-> of what was assumed.
-
-
-Two windows is a phase, not a state. The comparison ends when **either**:
-- Search v2 passes the full law suite + a feature-parity checklist (to be enumerated in
-  the cutover tempdoc) + a measured UX audit → it is promoted, and **the same PR** sweeps
-  UnifiedChatView and its fingerprints (grep names/paths across code, config, gates,
-  baselines, docs — label or delete every hit); **or**
-- the comparison falsifies the model → search-v2 is deleted in one PR and this tempdoc
-  records why.
+Two windows is a phase, not a state. The comparison ends when **either** Search v2 is promoted —
+and **the same PR** sweeps UnifiedChatView and its fingerprints (grep names/paths across code,
+config, gates, baselines, docs — label or delete every hit) — **or** the comparison falsifies the
+model, search-v2 is deleted in one PR, and this tempdoc records why.
 Predictable evasion, pre-named: "we'll keep both for a while" / "a follow-up PR will
 sweep it." 742's corpus is follow-ups that never came.
+
+**Promotion criterion (rewritten 2026-08-11, §6g C2).** The original criterion — "passes the full
+law suite + a parity checklist + a measured UX audit" — was falsified by its own first audit: the
+§6c critical pass found the law suite **green while five laws were violated**, four of them geometry
+no unit test can observe. It assumed the suite is a faithful oracle for the laws. It is not, and a
+criterion cannot be repaired by running it more carefully. Search v2 is promoted when, and only when:
+
+- **(a)** every law names its **verification tier** in a per-law table — unit / rendered-geometry
+  (`ui-proportion-gate` at a named ui-shot step) / measured-audit / *unverified* — and no law's only
+  witness is a unit test asserting the DOM structure the implementation trivially guarantees;
+- **(b)** every law whose tier is rendered-geometry is enrolled in
+  `governance/ui-proportion-baseline.v1.json` with anti-vacuity companions, and green;
+- **(c)** the §5b parity checklist is complete, or each gap consciously superseded;
+- **(d)** an independent measured UX audit (auditor ≠ implementer, axe + contrast oracle, live)
+  passes at **both** the roomy and the short camera;
+- **(e)** the `governance/sandbox-coverage.v1.json` exemption row has moved to a real tier.
+
+A law marked *unverified* does not block promotion, but it **must be listed in the promotion PR** —
+the point is that the blind spot is stated, not that it is absent. The same standard applies to the
+shipped window it is compared against, so the "comparison falsifies the model" branch stays live.
+
+**Per-law verification tiers (opened 2026-08-11; completed by the promotion PR).** Recorded as the
+work lands, so clause (a) is a running obligation rather than a scramble at the end:
+
+| Law | Tier | Witness |
+|---|---|---|
+| L7 (short height, run controls) | **unverified** → measured-audit, one-time | Not gateable: a fixtured run cannot be held in flight (§6g C0). Live pass only. |
+| L13 (rail floors/ceilings) | rendered-geometry | `search-v2-window` — `.rail` max/min, `.centre` floor |
+| L13 (the axis the boundaries sit on) | unit + rendered-geometry | cascade + node-identity witnesses; `.rail maxWidthPx` |
 
 ## 5b. Comparison-campaign scaffolding (authored 2026-08-08; produces §5's evidence, does not make its decision)
 
