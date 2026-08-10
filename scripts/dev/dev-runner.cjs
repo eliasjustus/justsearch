@@ -663,6 +663,7 @@ function buildStopReport({
   workerLog = null,
   criticalOpsInterrupted = null,
   interruptibleWithLossInterrupted = null,
+  gracefulBackendShutdown = null,
 }) {
   return {
     schemaVersion: 2,
@@ -689,6 +690,10 @@ function buildStopReport({
     ...(workerLog ? { workerLog } : {}),
     ...(criticalOpsInterrupted ? { criticalOpsInterrupted } : {}),
     ...(interruptibleWithLossInterrupted ? { interruptibleWithLossInterrupted } : {}),
+    // Tempdoc 819 §D: outcome of the graceful POST /api/lifecycle/shutdown attempt made before
+    // the backend taskkill fallback. Additive/optional like the two fields above it — no
+    // existing reader depends on its absence, so no schemaVersion bump.
+    ...(gracefulBackendShutdown ? { gracefulBackendShutdown } : {}),
   };
 }
 
@@ -828,6 +833,94 @@ function fetchJsonHttp(url, timeoutMs) {
     req.on('error', () => resolve(null));
     req.end();
   });
+}
+
+// Tempdoc 819 §D: mirrors the shell's kill_child() ordered-shutdown request
+// (modules/shell/src-tauri/src/lib.rs:218-241) so a dev-runner `stop` gives the Head JVM a
+// chance to run its normal shutdown hooks — in particular IndexingLoop's finalizeShutdownCommit
+// backstop, which never runs under a bare `taskkill /F` because that kills with no JVM shutdown
+// hook. No session-token header is attached: dev-runner-launched backends never set
+// JUSTSEARCH_PROD / -Djustsearch.prod (grepped the spawn env block — absent), so
+// ResolvedConfigBuilder's `resolveBoolean("justsearch.prod", false)` default leaves prodMode
+// false and ApiSecurityFilters.setupSessionTokenEnforcement (ApiSecurityFilters.java:200-210)
+// is a no-op — the endpoint is unauthenticated for dev-runner's own backends.
+function postLifecycleShutdown(apiPort, timeoutMs) {
+  return new Promise((resolve) => {
+    const body = Buffer.from('{}', 'utf8');
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: apiPort,
+        path: '/api/lifecycle/shutdown',
+        method: 'POST',
+        timeout: timeoutMs,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': body.length,
+        },
+      },
+      (res) => {
+        res.resume();
+        const ok = res.statusCode >= 200 && res.statusCode < 300;
+        resolve({ ok, status: res.statusCode, error: ok ? null : `http_${res.statusCode}` });
+      },
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({ ok: false, status: null, error: 'timeout' });
+    });
+    req.on('error', (err) => {
+      resolve({ ok: false, status: null, error: err.code || err.message });
+    });
+    req.write(body);
+    req.end();
+  });
+}
+
+// Tempdoc 819 §D: attempt the graceful ordered shutdown before stopRun's unconditional
+// `taskkill /T /F` fallback. Bounded (a 2s POST timeout + a 5s exit-wait, polled — never a blind
+// sleep) so a graceful attempt can never make `stop` less reliable than the taskkill-only path:
+// any failure (bad pid/port, connection refused, non-2xx, exit-wait timeout) falls through with
+// `outcome` set to something other than 'exited', and the caller taskkills as before.
+//
+// `markerPath`, if given, is written right before the POST — the one moment a real shutdown
+// request is in flight — and left in place for any outcome where the backend genuinely received
+// it ('exited' or 'timeout': a 2xx ack means the request landed even if the exit itself is slow).
+// The supervisor process's `backend.on('exit')` handler (a DIFFERENT OS process from this one)
+// consults the marker's existence to tell "I asked for this" apart from "it crashed on its own",
+// and skips writing a racing self-exit stop-report. Deleted immediately when the POST itself never
+// reached the backend ('failed') — no request means nothing for the marker to explain. The caller
+// (stopRun) removes it unconditionally once it has finished reacting to this function's outcome.
+async function maybeGracefulBackendShutdown(apiPort, pid, markerPath = null) {
+  if (!Number.isFinite(apiPort) || apiPort <= 0) {
+    return { outcome: 'not_attempted', reason: 'no_api_port', requested: false, httpStatus: null, error: null, waitedMs: null };
+  }
+  if (!Number.isFinite(pid) || pid <= 0) {
+    return { outcome: 'not_attempted', reason: 'no_backend_pid', requested: false, httpStatus: null, error: null, waitedMs: null };
+  }
+  if (!isPidAlive(pid)) {
+    return { outcome: 'not_attempted', reason: 'already_dead', requested: false, httpStatus: null, error: null, waitedMs: null };
+  }
+  if (markerPath) {
+    try { await writeJsonAtomic(markerPath, { requestedAt: nowIso(), apiPort, pid }); } catch (_) { /* best-effort */ }
+  }
+  const startedAt = Date.now();
+  const post = await postLifecycleShutdown(apiPort, 2000);
+  if (!post.ok) {
+    // The request never reached (or was refused by) the backend — nothing for the marker to
+    // suppress, and leaving it would wrongly blind a genuine future self-exit report for this run.
+    if (markerPath) { try { await fsp.rm(markerPath, { force: true }); } catch (_) { /* best-effort */ } }
+    return { outcome: 'failed', reason: null, requested: true, httpStatus: post.status, error: post.error, waitedMs: Date.now() - startedAt };
+  }
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) {
+      return { outcome: 'exited', reason: null, requested: true, httpStatus: post.status, error: null, waitedMs: Date.now() - startedAt };
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return { outcome: 'timeout', reason: null, requested: true, httpStatus: post.status, error: 'pid_still_alive_after_wait', waitedMs: Date.now() - startedAt };
 }
 
 function resolveExpectedIndexBasePath(dataDir) {
@@ -1801,6 +1894,18 @@ async function cmdStart(opts) {
 
   backend.on('exit', (code) => {
     if (reaping) return; // deliberate reap owns teardown + exit (avoids racing stopRun cleanup)
+    // Tempdoc 819 §D: an external `stop` (a DIFFERENT OS process — the in-process `reaping` flag
+    // above can't see it) may have just POSTed /api/lifecycle/shutdown and be waiting on this
+    // very exit. It drops a marker file right before the POST so this handler can tell "I asked
+    // for this" apart from "it crashed on its own" and skip writing a report that would race
+    // stopRun's own (authoritative) one for the same run. stopRun deletes the marker once it is
+    // done reacting to the exit, so a later, unrelated crash in this same run is never masked.
+    if (fs.existsSync(path.join(path.dirname(runPath), 'graceful-shutdown.json'))) {
+      onExit();
+      if (code != null && code !== 0) process.exit(code);
+      process.exit(0);
+      return;
+    }
     // Tempdoc 730 B2: capture the exit code + preserve worker.log (B1) even though no
     // stopRun() ran for this exit. Best-effort/fire-and-forget: a signal-driven exit can't
     // await, so the write races the process.exit() below but is fast (fs-local, ms-scale).
@@ -1923,6 +2028,26 @@ async function stopRun(opts) {
     });
   };
 
+  // Tempdoc 819 §D: try the graceful ordered shutdown FIRST, before anything in the runner's
+  // process tree is touched. The backend is a non-detached child of the runner (spawnLogged with
+  // no `detached: true` — see `pids.backendRootPid: backend.pid` at run.json write time), so the
+  // runner taskkill below uses `/T` (whole-tree) and would kill the backend JVM out from under a
+  // graceful attempt made after it — with no JVM shutdown hook, exactly the outcome this change
+  // exists to avoid. Confirmed against a captured stop-report from before this reordering:
+  // backend `aliveBeforeKill: false` with `taskkillStderrTail: "process ... not found"`, i.e. the
+  // runner's `/T` sweep had already taken it down.
+  //
+  // `gracefulShutdownMarkerPath` is a cross-process signal: this `stop` invocation and the
+  // long-running supervisor holding the backend/frontend children are DIFFERENT OS processes (the
+  // in-process `reaping` flag below only covers the same-process reaper path), so an in-memory
+  // flag can't reach the supervisor's `backend.on('exit')` handler. The marker file is how it
+  // learns "this exit was requested by an external stop" and skips writing its own racing
+  // `writeSelfExitStopReport` (see the handler in cmdStart).
+  const backendRootPid = Number(run?.pids?.backendRootPid);
+  const gracefulShutdownMarkerPath = path.join(path.dirname(runPath), 'graceful-shutdown.json');
+  const gracefulBackendShutdown =
+    await maybeGracefulBackendShutdown(apiPort, backendRootPid, gracefulShutdownMarkerPath);
+
   // Prefer killing the runner (tree) if recorded; it owns backend/frontend stdin pipes.
   // Tempdoc 606 3b: but when stopRun is invoked IN-PROCESS by the supervisor's own reaper
   // (process.pid === runnerPid), taskkill /T on runnerPid would nuke this very process tree
@@ -1933,7 +2058,22 @@ async function stopRun(opts) {
   const stopRunnerPid = Number(run?.pids?.runnerPid);
   if (stopRunnerPid && stopRunnerPid !== process.pid) await taskkill(stopRunnerPid, 'runner');
   await taskkill(Number(run?.pids?.frontendRootPid), 'frontend');
-  await taskkill(Number(run?.pids?.backendRootPid), 'backend');
+
+  if (gracefulBackendShutdown.outcome === 'exited') {
+    // Backend exited on request — it WAS alive when we asked it to stop (maybeGracefulBackend-
+    // Shutdown only proceeds past its `isPidAlive` precondition when true), so the pre-kill
+    // liveness fact is true, not false; `gracefulBackendShutdown.outcome` is what disambiguates
+    // "we shut it down" from "found it already dead" for a death investigation, not this field.
+    pidLiveness.push({ role: 'backend', pid: backendRootPid, aliveBeforeKill: true });
+  } else {
+    await taskkill(backendRootPid, 'backend');
+  }
+
+  // Tempdoc 819 §D: best-effort cleanup — the marker's job (letting the supervisor's exit handler
+  // know not to write a racing report) is done once we reach here regardless of outcome: either
+  // the backend already exited (and the handler already made its call), or we're about to
+  // taskkill it ourselves (forceful kill; no graceful exit event for the marker to matter to).
+  try { await fsp.rm(gracefulShutdownMarkerPath, { force: true }); } catch (_) { /* best-effort */ }
 
   const portInfo = async (port) => {
     const listening = port > 0 ? await isTcpListening(port, 500) : false;
@@ -1998,6 +2138,7 @@ async function stopRun(opts) {
     // permanent audit record. Tells the operator what was lost on a `force` takeover.
     criticalOpsInterrupted,
     interruptibleWithLossInterrupted,
+    gracefulBackendShutdown,
   });
 
   const stopReportPath = path.join(path.dirname(runPath), 'stop-report.json');
@@ -2184,6 +2325,9 @@ if (require.main === module) {
       buildHeadJavaOpts,
       writeSelfExitStopReport,
       captureWorkerLogStamp,
+      // Tempdoc 819 §D: graceful ordered-shutdown-before-taskkill helpers.
+      postLifecycleShutdown,
+      maybeGracefulBackendShutdown,
     },
   };
 }

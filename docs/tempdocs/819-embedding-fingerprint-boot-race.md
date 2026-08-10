@@ -128,6 +128,23 @@ experiment refuted that. What it does remove is the backstop for a rebuild that 
 loop stops. 805 G.1 gave the Tauri shell the ordered path (`modules/shell/src-tauri/src/lib.rs:145-154`);
 the dev-runner was not swept.
 
+Two implementation notes worth keeping, both found in review rather than in the original design:
+
+- **Ordering was load-bearing and initially wrong.** `stopRun` kills the runner first with `taskkill /T`,
+  and the backend is a non-detached child of the runner (`spawnLogged` sets no `detached: true`), so a
+  graceful attempt placed just before the *backend's* own kill would find the JVM already swept away by
+  the runner's tree kill. The graceful POST must precede the entire kill sequence. Confirmed against a
+  captured stop-report predating the change: backend `aliveBeforeKill: false` with
+  `taskkillStderrTail: "process … not found"`.
+- **Suppressing the racing self-exit report needs a cross-process signal.** The supervisor's
+  `backend.on('exit')` handler writes `writeSelfExitStopReport` and guards it with an *in-process*
+  `reaping` flag; a `stop` invocation is a different OS process and cannot set it. A per-run marker file
+  (`<runDir>/graceful-shutdown.json`) carries the signal instead.
+  *Known limitation:* if the `stop` process dies between writing the marker and deleting it, a genuine
+  backend crash later in that same run would be suppressed from the death report — the diagnostic loss
+  730 B2 closed. The window is narrow and contained to one run directory; accepted rather than adding a
+  staleness guard, but it is a real edge and should be revisited if death diagnosability regresses.
+
 ## Design
 
 Full rationale, rejected alternatives, and the adversarial review that corrected the first design are in
