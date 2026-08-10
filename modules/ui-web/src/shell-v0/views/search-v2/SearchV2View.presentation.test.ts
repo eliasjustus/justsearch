@@ -574,6 +574,64 @@ describe('818 SearchV2View — the small window (814 §D3/D6)', () => {
   });
 });
 
+/**
+ * The layout AXIS (tempdoc 818 §6c finding 1 / §6g C1). The window's three regions sit side by side,
+ * and for two slices they did not: `.body` (the shared surface layout's scroll-policy region, which
+ * this surface makes `flex-direction: column`) and `.win` (the horizontal track) were carried on ONE
+ * node, so the column direction landed on the track — uncontested, because `.win` declares no
+ * direction of its own — and the rail rendered as a full-width band above the centre column.
+ *
+ * Two witnesses, because they fail for different reasons and one alone is escapable:
+ *  - the CASCADE witness asserts the defect's exact negation. It is deliberately NOT `toBe('row')`:
+ *    happy-dom resolves only DECLARED properties, so the correct nested structure — where `.win`
+ *    simply inherits the initial `row` — computes to '' and a `toBe('row')` assertion would fail on
+ *    the fix while passing on a same-node declaration (818 §6f(a), measured).
+ *  - the STRUCTURAL witness asserts the cause rather than the symptom: the two roles are two nodes.
+ *    A future edit that re-merges the classes is caught here even if it happens to declare a
+ *    direction that keeps the cascade witness green.
+ *
+ * The third test below is deliberately NOT labelled a witness: it was measured against the broken
+ * code and PASSED there (with the classes merged, `.win` is `.body`, whose children are still the
+ * three regions in order), so it is no evidence for finding 1. It is kept as a companion regression
+ * guard for the restructure itself — the template rewrite that separated the nodes could have
+ * reordered the regions or left one outside the track — and it is named honestly rather than
+ * counted as coverage it does not provide.
+ */
+describe('818 SearchV2View — the layout axis (§6c finding 1)', () => {
+  it('the horizontal track never resolves to a column', async () => {
+    const el = await mount();
+    const track = el.shadowRoot?.querySelector('.win') as HTMLElement;
+    expect(track).not.toBeNull();
+    expect(getComputedStyle(track).flexDirection).not.toBe('column');
+  });
+
+  it('the scroll-policy region and the horizontal track are different elements', async () => {
+    const el = await mount();
+    const body = el.shadowRoot?.querySelector('.body');
+    const track = el.shadowRoot?.querySelector('.win');
+    expect(body).not.toBeNull();
+    expect(track).not.toBeNull();
+    expect(body).not.toBe(track);
+    // …and the track is inside the policy region, not a sibling that escaped it.
+    expect(body?.contains(track as Node)).toBe(true);
+  });
+
+  // Companion, not a witness — see the block comment above.
+  it('the three regions are siblings on that track, in reading order', async () => {
+    const el = await mount();
+    await live(el, SEARCH_WITH_RESULTS);
+    const card = q(el, 'live-results')?.querySelector('jf-results-card') as HTMLElement;
+    card.dispatchEvent(
+      new CustomEvent('card-open', { detail: { id: 'd0' }, bubbles: true, composed: true }),
+    );
+    await el.updateComplete;
+
+    const track = el.shadowRoot?.querySelector('.win') as HTMLElement;
+    const regions = [...track.children].filter((c) => !c.classList.contains('vgrip'));
+    expect(regions.map((r) => r.className.split(' ')[0])).toEqual(['rail', 'centre', 'reading']);
+  });
+});
+
 /* ── slice 5 ───────────────────────────────────────────────────────────────────────────────── */
 
 function all(el: Mounted, testid: string): HTMLElement[] {

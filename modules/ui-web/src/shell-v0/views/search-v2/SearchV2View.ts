@@ -1043,9 +1043,15 @@ export class SearchV2View extends JfElement {
       :host {
         color: var(--text-primary);
       }
-      /* 814 §D3 — one scroller per region. The shared surface layout scrolls the .body region; here
-         the regions inside it (rail, transcript, list, feed, reading pane) own their own scrolling,
-         so leaving .body scrollable too would wrap every one of them in a second, outer scroller. */
+      /* The shared surface layout scrolls the .body region; here the regions inside it (rail,
+         transcript, list, feed, reading pane) own their own scrolling, so leaving .body scrollable
+         too would wrap every one of them in a second, outer scroller.
+
+         .body is the SCROLL-POLICY region and .win is the horizontal TRACK, and they must stay
+         different elements. Carrying both classes on one node put this rule's flex-direction column
+         on the track — where nothing contested it, because .win never declares a direction — and the
+         window silently rendered its three regions stacked instead of side by side for two slices.
+         Guarded by the axis + node-identity witnesses in the presentation suite. */
       .body {
         overflow: hidden;
         display: flex;
@@ -1913,24 +1919,26 @@ export class SearchV2View extends JfElement {
       <div class="header">
         <div class="name" data-testid="session-name">${projectSessionName(this.records)}</div>
       </div>
-      <div class="body win">
-        <nav
-          class="rail"
-          data-testid="rail"
-          aria-label="Sessions"
-          style=${this.sessionRailPx !== null ? `flex: 0 0 ${this.sessionRailPx}px` : nothing}
-        >
-          ${this.railCollapsed
-            ? this.railStrip()
-            : this.records.length === 0
-              ? this.sidebar()
-              : this.sessionIndex()}
-        </nav>
-        ${this.railGrip('sessions')}
-        <div class="centre">
-          ${this.transcript()} ${this.deck()} ${this.placeholders()}
+      <div class="body">
+        <div class="win">
+          <nav
+            class="rail"
+            data-testid="rail"
+            aria-label="Sessions"
+            style=${this.sessionRailPx !== null ? `flex: 0 0 ${this.sessionRailPx}px` : nothing}
+          >
+            ${this.railCollapsed
+              ? this.railStrip()
+              : this.records.length === 0
+                ? this.sidebar()
+                : this.sessionIndex()}
+          </nav>
+          ${this.railGrip('sessions')}
+          <div class="centre">
+            ${this.transcript()} ${this.deck()} ${this.placeholders()}
+          </div>
+          ${this.readingDocPath ? this.railGrip('document') : nothing} ${this.readingPane()}
         </div>
-        ${this.readingDocPath ? this.railGrip('document') : nothing} ${this.readingPane()}
       </div>
     `;
   }
