@@ -276,6 +276,19 @@ NOT break is evidence too.
    shrinkable exactly when the run controls appear. At ~790 px the centre column is ~430 px
    (`deckSizing.ts:28-34`) while the deck's short-viewport content is ~540 px — Halt is clipped.
    Same class via resize: `deckHeightPx` is clamped only at gesture time (`:697-703`, `:737-743`).
+   **→ THRESHOLD CORRECTED 2026-08-11 by the C2 capture (§6g).** The mechanism above is confirmed —
+   the deck is `flex-shrink: 0` and `.centre` is `overflow: hidden`, so the deck wins and the excess
+   is clipped — but the arithmetic overstated when it bites, and it did so because it trusted a
+   number that is itself wrong. Measured at 1366×790: the centre column is **642px**, not the
+   "~430px" `deckSizing.ts:28-34` asserts, and the deck without a run is 375px (transcript 256px,
+   comfortably above its 160px short floor). Adding the run's two occupants at their short caps
+   (feed 10rem + controls ≈ 250px) puts the deck at ≈625px against 642px — so at 790px the failure
+   is the transcript **starved toward zero**, not the controls clipped. Clipping begins below
+   ≈740px of viewport height, where the column can no longer hold the deck at all. The finding
+   stands and so does the eviction remedy (which is what makes the deck degrade instead of either
+   starving its neighbour or overflowing); what changes is that the deck-heavy state is a
+   *continuum* of the same defect rather than a cliff at one number, and that the stale ~430px
+   comment is itself repaired in the boundary work.
 4. **Tab is a keyboard trap in the omnibox** (WCAG 2.1.2). `onKeydown` (`:1645-1653`)
    `preventDefault()`s Tab whenever the draft is non-empty, with no `shiftKey` check — neither
    Tab nor Shift+Tab can move focus, and nothing advises the escape (empty the field).
