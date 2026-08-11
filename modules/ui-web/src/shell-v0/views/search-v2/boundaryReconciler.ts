@@ -36,6 +36,8 @@ import {
   type Eviction,
 } from './deckSizing.js';
 import {
+  SESSION_RAIL_DEFAULT_PX,
+  SESSION_RAIL_FLOOR_PX,
   clampRailWidth,
   documentRailCeiling,
   railFloorPx,
@@ -176,21 +178,42 @@ export function reconcileBoundaries(input: BoundaryInput): BoundaryState {
       )
     : null;
 
-  const effectiveRailPx =
-    sessionPx ?? (input.sessionRailMeasuredPx > 0 ? input.sessionRailMeasuredPx : null);
+  /**
+   * The width the rail is ALLOCATED — what it would occupy if it rendered its rows.
+   *
+   * Derived from the TRACK, never from the rail's own measured box, and that is deliberate: once the
+   * rail is in strip form its box is the strip's width, so measuring it would make the regime decide
+   * on the consequence of its own last decision and latch there forever. With no chosen width the
+   * allocation is the CSS basis as the track can actually honour it — which is also the honest
+   * account of §6c finding 19, where a 1350px window with the document region open left the rail
+   * ~124px and it kept rendering rows under its own legibility floor.
+   */
+  const allocatedRailPx = widthKnown
+    ? (sessionPx ??
+      Math.max(
+        0,
+        Math.min(
+          SESSION_RAIL_DEFAULT_PX,
+          sessionRailCeiling(input.availableWidthPx, documentClaimPx),
+        ),
+      ))
+    : sessionPx;
+
+  const railCollapsedNow = allocatedRailPx !== null && railYields(allocatedRailPx);
 
   return {
-    sessionRailPx: sessionPx,
+    // §6c finding 20 — in strip form the CONTAINER is the strip's own width. It used to keep the
+    // full allocation, so a 123px rail rendered ~50px of strip and ~73px of dead gutter between the
+    // grip and the centre column, which reads as a broken layout rather than a collapsed region.
+    // The remembered width is untouched in storage, so re-expansion still has something to return to.
+    sessionRailPx: railCollapsedNow ? SESSION_RAIL_FLOOR_PX : sessionPx,
     documentRailPx: documentPx,
     deckHeightPx,
     deckMaxPx,
     // The collapsed strip follows the APPLIED width, not the remembered one: a rail clamped narrow
     // by a small window is narrow on screen, and rendering wrapping rows into it would be the
     // squashed form L13 exists to forbid.
-    // The width in force: what this reconcile will apply if it applies anything, else what the rail
-    // measures right now. Either way a REAL width, which is the whole of rule 4 — and an unmeasured
-    // rail (0) is still not a narrow one, so it yields nothing, exactly as the axes above do.
-    railCollapsed: effectiveRailPx !== null && railYields(effectiveRailPx),
+    railCollapsed: railCollapsedNow,
     eviction: mergeEviction(
       // The deck the user SIZED is too short to hold rows. This is a different question from the one
       // `evictionFor` answers — it is about the deck's own two numbers, not about the column's

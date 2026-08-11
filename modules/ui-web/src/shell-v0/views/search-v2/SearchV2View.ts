@@ -761,7 +761,15 @@ export class SearchV2View extends JfElement {
     const availablePx = centre.getBoundingClientRect().height;
     const floorPx = this.deckFloorPx(deck);
     const grip = e.currentTarget as HTMLElement;
-    grip.setPointerCapture?.(e.pointerId);
+    // Capture is an ENHANCEMENT, not a precondition: it keeps the gesture on the grip when the
+    // pointer outruns it. `?.` guards the method's existence but not its throw — an inactive
+    // pointer id raises NotFoundError, which propagated out of pointerdown and killed the drag
+    // before a single listener was attached. The drag proceeds uncaptured instead.
+    try {
+      grip.setPointerCapture?.(e.pointerId);
+    } catch {
+      // No capture: the gesture still works while the pointer stays over the grip.
+    }
     let height = startHeightPx;
     const move = (ev: PointerEvent): void => {
       height = clampDeckHeight({
@@ -932,11 +940,21 @@ export class SearchV2View extends JfElement {
   }
 
   /** The width a gesture starts from: the chosen width, else what is on screen, else automatic. */
+  /**
+   * L13 (§6h rule 3) — where a gesture STARTS: the width the boundary actually has on screen.
+   *
+   * It used to prefer the CHOSEN width, and that is the whole of §6c finding 21. A memory the
+   * current window cannot honour is clamped for rendering but kept verbatim in storage, so chosen
+   * and on-screen routinely differ — and starting from the memory meant the gesture computed from a
+   * width the user could not see. Live, that showed as the stored width moving 240 → 107 while the
+   * rail on screen never budged; the same gap makes a pull LEFT snap back to the ceiling and a pull
+   * out of the collapsed strip jump to an unrelated width. A boundary that follows the pointer has
+   * to start from where the pointer grabbed it.
+   */
   private railStartWidthPx(rail: RailId): number {
-    const chosen = this.railWidthPx(rail);
-    if (chosen !== null) return chosen;
     const measured = this.railElement(rail)?.getBoundingClientRect().width ?? 0;
-    return measured > 0 ? measured : railDefaultPx(rail);
+    if (measured > 0) return measured;
+    return this.railWidthPx(rail) ?? railDefaultPx(rail);
   }
 
   /**
@@ -954,7 +972,15 @@ export class SearchV2View extends JfElement {
     // The sessions rail grows rightward; the document region grows leftward. One clamp, two signs.
     const grow = rail === 'sessions' ? 1 : -1;
     const grip = e.currentTarget as HTMLElement;
-    grip.setPointerCapture?.(e.pointerId);
+    // Capture is an ENHANCEMENT, not a precondition: it keeps the gesture on the grip when the
+    // pointer outruns it. `?.` guards the method's existence but not its throw — an inactive
+    // pointer id raises NotFoundError, which propagated out of pointerdown and killed the drag
+    // before a single listener was attached. The drag proceeds uncaptured instead.
+    try {
+      grip.setPointerCapture?.(e.pointerId);
+    } catch {
+      // No capture: the gesture still works while the pointer stays over the grip.
+    }
     let width = startWidthPx;
     const move = (ev: PointerEvent): void => {
       width = clampRailWidth({ ...bounds, startWidthPx, deltaPx: (ev.clientX - startX) * grow });
@@ -2732,17 +2758,22 @@ export class SearchV2View extends JfElement {
         ${/* No count line of this window's own: the card's meta line IS the headline count, derived
               through the shared `matchCountLabel`. A second count here would be exactly the fork
               L6 exists to prevent. */ ''}
-        <div class="listhead">
-          <button
-            type="button"
-            class="quiet"
-            data-testid="list-collapse"
-            aria-expanded=${String(!this.listCollapsed)}
-            aria-disabled=${String(this.listEvicted())}
-            data-evicted=${String(this.listEvicted())}
-            @click=${this.toggleList}
-          >${this.listLabel()}</button>
-        </div>
+        ${/* §6c finding 22 — a collapse control over zero results is a control for nothing: the
+              dead-affordance class of findings 5, 8 and 15, one more time. It renders when there is
+              a list to collapse. */ ''}
+        ${results.length > 0
+          ? html`<div class="listhead">
+              <button
+                type="button"
+                class="quiet"
+                data-testid="list-collapse"
+                aria-expanded=${String(!this.listCollapsed)}
+                aria-disabled=${String(this.listEvicted())}
+                data-evicted=${String(this.listEvicted())}
+                @click=${this.toggleList}
+              >${this.listLabel()}</button>
+            </div>`
+          : nothing}
         ${this.listCollapsed
           ? html`<p class="count" data-testid="live-count">${this.liveCountLabel()}</p>`
           : html`<div class="list" data-testid="live-results" data-scrollable="true">

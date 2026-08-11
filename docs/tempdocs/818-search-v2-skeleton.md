@@ -1273,13 +1273,56 @@ squeezed to 124px by the live layout kept rendering rows under its own 128px leg
 switch must read the width the rail HAS. The mechanism that produced 124 is not inferred here — the
 point of the fix is that it does not need to be, because the rule is evaluated against measurement.
 
+### Second round (findings 20–22 + one hardening), after live validation
+
+The owner's CDP pass validated F16, F18 and — with real trusted input — rule 3 for the deck
+(drag down ~87px: grip 315→402, transcript 193→282, deck 486→397, the boundary tracking the pointer
+exactly). Three more findings followed, and they force two decisions the model had left open.
+
+**F20 — the collapsed regime left a dead gutter.** At a 123px rail the strip rendered correctly
+(with New session, per F11) but the CONTAINER kept its 123px: ~50px of strip, then ~73px of nothing
+between the grip and the centre column. I had predicted this state and called it acceptable; seen on
+screen it plainly is not. **Decision: a region in its minimum honest form sizes its container to that
+form.** The remembered width stays in storage, so re-expansion has something to return to — the
+memory is a preference, and preferences are not deleted by a regime they happen to be too wide for.
+
+**F21 — the gesture started from the wrong number.** Reported as an inverted sign: a rightward drag
+took the stored width 240 → 107. The sign is not inverted (`grow` is +1 for the sessions rail, and
+the rail witness now fails under an inverted-sign mutation, so it is discriminating). What was wrong
+is subtler and worse: **the gesture started from the CHOSEN width rather than the width on screen.**
+A memory the window cannot honour is clamped for rendering but kept verbatim in storage, so chosen
+and on-screen routinely differ; computing from the memory meant the drag operated on a width the
+user could not see. Live that showed as storage moving while the rail stood still, and it is the same
+root as F20's "the container ignored the adopted width entirely". **Decision (rule 3, sharpened): a
+gesture starts from where the boundary IS.** That also settles what a drag does from strip form, in
+exactly the shape the owner called: starting at the strip's own width, a rightward drag crosses the
+legibility threshold and expands continuously in one gesture, and a leftward drag has nowhere to go
+and is a no-op with the grip still rendered, because the grip is still the separator.
+
+**F22 — a collapse control over zero results**, which is the dead-affordance class of findings 5, 8
+and 15 for the fourth time. It renders when there is a list to collapse.
+
+**Hardening — `setPointerCapture` killed drags.** `?.` guards the method's existence, not its throw:
+an inactive pointer id raises `NotFoundError`, which escaped `pointerdown` before a single listener
+was attached, so the whole gesture died. Capture is an enhancement (it keeps the drag alive when the
+pointer outruns the grip), never a precondition, so it is wrapped and the drag proceeds uncaptured.
+This is why synthetic and instrumented pointers could not drive the boundaries at all.
+
+One consequence worth recording, because it changed a test rather than the code: with the rail's
+allocation now derived from the TRACK, a rail measuring 124px inside a roomy 900px track is not a
+reachable state, and the rule-4 witness that stubbed exactly that was asserting an impossibility. It
+now creates the squeeze the way the live finding did — through a track too narrow to fund the rail
+beside the centre column's floor.
+
 ### L13, amended
 
 > **L13** — every movable boundary is clamped by the minimum honest forms on both sides. A boundary
 > **exists** only between two live regions that can both trade space; it **sits on** the separator
-> the user sees; and it **follows the pointer**, the regions on either side absorbing the change.
-> Its clamps and its regime switches are evaluated against **live geometry** — the size a region
-> has, not the size it was chosen to have — at mount, on restore, on resize and on content change.
+> the user sees; and it **follows the pointer** — a gesture starts from where the boundary IS, and
+> the regions on either side absorb the change. Its clamps and its regime switches are evaluated
+> against **live geometry** — the size a region has, not the size it was chosen to have — at mount,
+> on restore, on resize and on content change. A region in its **minimum honest form sizes its
+> container to that form**, and the width it would otherwise take is remembered, not discarded.
 > Rails remember; the deck resets.
 
 The first sentence is the original law. The rest is what the owner's pass showed was assumed rather

@@ -12,6 +12,7 @@
  * presentation suite's helpers do not provide.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { SESSION_RAIL_FLOOR_PX } from './railSizing.js';
 
 interface LiveFixture {
   query: string;
@@ -146,8 +147,18 @@ function stubRect(el: Element, rect: { width: number; height: number; top?: numb
   })) as never;
 }
 
+/**
+ * The size a region is actually being given, in px.
+ *
+ * Reads BOTH spellings deliberately: Lit renders the `flex` shorthand, while an imperative
+ * `style.flex = …` during a gesture expands to longhands. Matching only the shorthand made this
+ * helper return 0 after a drag — a test that would then have failed for the wrong reason.
+ */
 function appliedPx(el: Element | null): number {
-  return Number(/flex:\s*0\s+0\s+(\d+)px/.exec(el?.getAttribute('style') ?? '')?.[1] ?? '0');
+  const style = el?.getAttribute('style') ?? '';
+  const shorthand = /flex:\s*\d+\s+\d+\s+(\d+(?:\.\d+)?)px/.exec(style)?.[1];
+  const basis = /flex-basis:\s*(\d+(?:\.\d+)?)px/.exec(style)?.[1];
+  return Number(shorthand ?? basis ?? '0');
 }
 
 beforeEach(() => {
@@ -281,14 +292,16 @@ describe('§6h rule 3 — a boundary follows the pointer', () => {
 });
 
 describe('§6h rule 4 — regime switches read LIVE geometry', () => {
-  it('an AUTOMATIC rail squeezed under its legibility floor takes its collapsed form', async () => {
-    // §6c finding 19 exactly: no width was ever chosen, so the old predicate
-    // (`chosen !== null && railYields(chosen)`) never evaluated the rule at all, and the rail kept
-    // rendering full rows at 124px — under its own 128px floor.
+  it('an AUTOMATIC rail the TRACK cannot fund takes its collapsed form', async () => {
+    // §6c finding 19: no width was ever chosen, so the old predicate
+    // (`chosen !== null && railYields(chosen)`) never evaluated the rule at all and the rail kept
+    // rendering rows at 124px, under its own 128px floor.
+    //
+    // The squeeze is created through the TRACK rather than by stubbing the rail's own box, because
+    // that is how it happens and because the allocation is now derived from the track: a 500px
+    // window leaves 500 − 384 (the centre column's floor) = 116 for the rail, under the floor.
     const el = await mount();
-    stubRect(el.shadowRoot?.querySelector('.win') as HTMLElement, { width: 900, height: 545 });
-    stubRect(el.shadowRoot?.querySelector('.rail') as HTMLElement, { width: 124, height: 500 });
-    stubRect(el.shadowRoot?.querySelector('.centre') as HTMLElement, { width: 600, height: 500 });
+    stubRect(el.shadowRoot?.querySelector('.win') as HTMLElement, { width: 500, height: 545 });
 
     reconcile(el);
     await el.updateComplete;
@@ -297,11 +310,29 @@ describe('§6h rule 4 — regime switches read LIVE geometry', () => {
     expect(q(el, 'rail-sidebar'), 'and stops rendering rows it has no room for').toBeNull();
   });
 
+  it('§6c finding 20 — the collapsed CONTAINER is the strip, not a strip in a gutter', async () => {
+    // The regime was right and the box was not: a 123px rail rendered ~50px of strip and left ~73px
+    // of dead space between the grip and the centre column, which reads as broken rather than
+    // collapsed. The container takes the strip's own width; the memory stays in storage.
+    localStorage.setItem('justsearch.searchV2.railWidth.sessions.v1', '240');
+    const el = await mount();
+    stubRect(el.shadowRoot?.querySelector('.win') as HTMLElement, { width: 500, height: 545 });
+
+    reconcile(el);
+    await el.updateComplete;
+
+    expect(q(el, 'rail-strip')).not.toBeNull();
+    const rail = el.shadowRoot?.querySelector('.rail') as HTMLElement;
+    expect(appliedPx(rail), 'the container is the strip’s own width').toBe(SESSION_RAIL_FLOOR_PX);
+    expect(
+      localStorage.getItem('justsearch.searchV2.railWidth.sessions.v1'),
+      'and the remembered width is still there to expand back into',
+    ).toBe('240');
+  });
+
   it('a rail with room keeps its rows', async () => {
     const el = await mount();
     stubRect(el.shadowRoot?.querySelector('.win') as HTMLElement, { width: 1400, height: 900 });
-    stubRect(el.shadowRoot?.querySelector('.rail') as HTMLElement, { width: 224, height: 800 });
-    stubRect(el.shadowRoot?.querySelector('.centre') as HTMLElement, { width: 1000, height: 800 });
 
     reconcile(el);
     await el.updateComplete;
@@ -314,5 +345,47 @@ describe('§6h rule 4 — regime switches read LIVE geometry', () => {
     reconcile(el);
     await el.updateComplete;
     expect(q(el, 'rail-strip')).toBeNull();
+  });
+});
+
+describe('§6h rule 3 — a drag never moves the boundary AGAINST the pointer', () => {
+  /**
+   * §6c finding 21, measured live: a rightward drag of ~133px took the stored rail width 240 → 107.
+   * The handler's SIGN is not inverted — `grow` is +1 for the sessions rail and the plain case above
+   * proves the boundary follows the pointer. What happened is that the gesture STARTED from the
+   * remembered 240 while the ceiling in force was ~107, so `clamp(240 + 133)` snapped straight to
+   * the ceiling and the boundary jumped LEFT in answer to a rightward pull.
+   *
+   * Same visible outcome as an inverted sign, different cause — and only an assertion about the
+   * boundary's own displacement can tell them apart, which is why this is written as "never moves
+   * against the pointer" rather than "equals start + delta".
+   */
+  it('the gesture starts from the width ON SCREEN, not from the remembered one', async () => {
+    // A memory this window cannot honour: the track leaves ~316 for the rail (700 − the centre
+    // column's 384 floor), so reconciliation renders 316 while storage still holds 600.
+    localStorage.setItem('justsearch.searchV2.railWidth.sessions.v1', '600');
+    const el = await mount();
+    stubRect(el.shadowRoot?.querySelector('.win') as HTMLElement, { width: 700, height: 600 });
+    const rail = el.shadowRoot?.querySelector('.rail') as HTMLElement;
+    stubRect(rail, { width: 316, height: 600 });
+    reconcile(el);
+    await el.updateComplete;
+
+    const onScreen = appliedPx(rail);
+    expect(onScreen, 'precondition: the memory is not what is rendered').toBe(316);
+
+    // Pull the boundary 50px LEFT. Rule 3: it moves 50px left, from where it IS.
+    const grip = q(el, 'rail-grip') as HTMLElement;
+    grip.dispatchEvent(new PointerEvent('pointerdown', { clientX: 316, bubbles: true }));
+    grip.dispatchEvent(new PointerEvent('pointermove', { clientX: 266, bubbles: true }));
+    grip.dispatchEvent(new PointerEvent('pointerup', { clientX: 266, bubbles: true }));
+    await el.updateComplete;
+
+    // Starting from the remembered 600 instead gives 550, which the ceiling snaps back to 316 —
+    // the boundary does not move at all, and the width stored is unrelated to the gesture. That is
+    // the shape of §6c finding 21: storage moved while the rail on screen stayed put.
+    expect(appliedPx(rail), 'the boundary followed the pointer from where it was').toBe(
+      onScreen - 50,
+    );
   });
 });
