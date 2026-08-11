@@ -788,17 +788,22 @@ export class SearchV2View extends JfElement {
       }
     };
     const up = (): void => {
-      grip.removeEventListener('pointermove', move);
-      grip.removeEventListener('pointerup', up);
-      grip.removeEventListener('pointercancel', up);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
       // GESTURE END — the third caller of the one reconciliation seam.
       this.deckHeightPx = height;
       this.reconcileBoundaries();
       this.requestUpdate();
     };
-    grip.addEventListener('pointermove', move);
-    grip.addEventListener('pointerup', up);
-    grip.addEventListener('pointercancel', up);
+    // On the WINDOW, not on the grip. The grip is ~12px; any real drag leaves it within the first
+    // few pixels, so grip-bound listeners only ever worked while `setPointerCapture` happened to
+    // succeed — and when it silently did not, the gesture died with no error and no effect
+    // (§6c finding 23). Capture stays as an enhancement; the drag no longer depends on it, nor on
+    // the grip element surviving a re-render mid-gesture.
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
   }
 
   /** The keyboard half of the SAME boundary — same clamp, same floor, one nudge at a time. */
@@ -992,14 +997,18 @@ export class SearchV2View extends JfElement {
       else this.applied = { ...this.applied, documentRailPx: width };
     };
     const up = (): void => {
-      grip.removeEventListener('pointermove', move);
-      grip.removeEventListener('pointerup', up);
-      grip.removeEventListener('pointercancel', up);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
       this.adoptRailWidth(rail, width);
     };
-    grip.addEventListener('pointermove', move);
-    grip.addEventListener('pointerup', up);
-    grip.addEventListener('pointercancel', up);
+    // On the WINDOW — see the deck grip's note. This boundary showed the failure most sharply:
+    // dragging out of the collapsed strip ALSO flips the rail's contents mid-gesture, so the grip
+    // element itself can be re-rendered under the pointer, taking any grip-bound listener and any
+    // capture with it.
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
   }
 
   /** The keyboard half of the SAME boundary — same clamp, same floor, one nudge at a time. */
@@ -1028,9 +1037,16 @@ export class SearchV2View extends JfElement {
    * is why this ends at the seam rather than writing an applied width straight to the DOM.
    */
   private adoptRailWidth(rail: RailId, px: number): void {
-    if (rail === 'sessions') this.sessionRailPx = px;
-    else this.documentRailPx = px;
-    storeRailWidth(rail, px);
+    // §6c finding 24 — memory holds a width the rail can actually RENDER, never one it cannot.
+    // A gesture that ends under the legibility threshold produces the STRIP on screen, so the strip
+    // is what it remembers; storing the raw 112 instead recorded a width no state of the rail
+    // corresponds to, and every later mount read it back as "collapsed" on any window at all. This
+    // is rule 4 applied to memory: do not remember a size the region cannot have.
+    const adopted =
+      rail === 'sessions' && railYields(px) ? railFloorPx('sessions') : px;
+    if (rail === 'sessions') this.sessionRailPx = adopted;
+    else this.documentRailPx = adopted;
+    storeRailWidth(rail, adopted);
     // GESTURE END — the third caller of the one reconciliation seam.
     this.reconcileBoundaries();
     this.requestUpdate();

@@ -443,19 +443,22 @@ describe('818 SearchV2View — the deck grip (L7/L13)', () => {
     const deck = el.shadowRoot?.querySelector('.deck') as HTMLElement;
 
     grip.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, clientY: 500 }));
-    grip.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: 300 }));
+    // §6c finding 23 — the moves go to the WINDOW, because that is where a real pointer's events
+    // are delivered once it has left a ~12px grip. Dispatching them on the grip tested the listener
+    // wiring rather than the gesture, which is how a completely dead drag stayed invisible.
+    window.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: 300 }));
     // Written directly during the gesture — the results card does not re-render per pointer frame.
     // (An imperative `style.flex` write expands to the longhands, unlike the rendered shorthand.)
     expect(deck.getAttribute('style') ?? '').toMatch(/flex(-basis)?:\s*(0 0 )?\d+px/);
 
-    grip.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
+    window.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
     await el.updateComplete;
     // …and adopted, so the next render keeps the user's size.
     expect(el.shadowRoot?.querySelector('.deck')?.classList.contains('sized')).toBe(true);
 
     // A further move after the gesture ended is not a resize: the listeners came off with it.
     const sized = el.shadowRoot?.querySelector('.deck')?.getAttribute('style');
-    grip.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: 100 }));
+    window.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: 100 }));
     expect(el.shadowRoot?.querySelector('.deck')?.getAttribute('style')).toBe(sized);
   });
 

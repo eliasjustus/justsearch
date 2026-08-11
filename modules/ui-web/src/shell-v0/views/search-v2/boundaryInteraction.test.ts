@@ -161,6 +161,23 @@ function appliedPx(el: Element | null): number {
   return Number(shorthand ?? basis ?? '0');
 }
 
+/**
+ * A drag as the BROWSER delivers one: pointerdown on the grip, then the pointer moves AWAY from it.
+ *
+ * The moves go to `window`, not to the grip, and that is the whole point. A grip is ~12px wide, so a
+ * real drag leaves it within a few pixels and every later event is delivered elsewhere; dispatching
+ * on the grip instead tests the listener wiring rather than the gesture, which is exactly how §6c
+ * finding 23 (a completely dead strip drag) stayed invisible while four grip-dispatched witnesses
+ * reported green.
+ */
+function drag(grip: HTMLElement, from: number, to: number, axis: 'x' | 'y' = 'x'): void {
+  const at = (v: number): PointerEventInit =>
+    axis === 'x' ? { clientX: v, bubbles: true } : { clientY: v, bubbles: true };
+  grip.dispatchEvent(new PointerEvent('pointerdown', at(from)));
+  window.dispatchEvent(new PointerEvent('pointermove', at(to)));
+  window.dispatchEvent(new PointerEvent('pointerup', at(to)));
+}
+
 beforeEach(() => {
   document.body.innerHTML = '';
   localStorage.clear();
@@ -260,9 +277,7 @@ describe('§6h rule 3 — a boundary follows the pointer', () => {
     stubRect(centre, { width: 800, height: 600 });
     stubRect(deck, { width: 800, height: startHeight, top: 600 - startHeight });
 
-    grip.dispatchEvent(new PointerEvent('pointerdown', { clientY: 300, bubbles: true }));
-    grip.dispatchEvent(new PointerEvent('pointermove', { clientY: 400, bubbles: true }));
-    grip.dispatchEvent(new PointerEvent('pointerup', { clientY: 400, bubbles: true }));
+    drag(grip, 300, 400, 'y');
     await el.updateComplete;
 
     const applied = appliedPx(deck);
@@ -279,11 +294,7 @@ describe('§6h rule 3 — a boundary follows the pointer', () => {
     stubRect(win, { width: 1400, height: 600 });
     const startWidth = 224;
     stubRect(rail, { width: startWidth, height: 600 });
-    const grip = q(el, 'rail-grip') as HTMLElement;
-
-    grip.dispatchEvent(new PointerEvent('pointerdown', { clientX: 224, bubbles: true }));
-    grip.dispatchEvent(new PointerEvent('pointermove', { clientX: 304, bubbles: true }));
-    grip.dispatchEvent(new PointerEvent('pointerup', { clientX: 304, bubbles: true }));
+    drag(q(el, 'rail-grip') as HTMLElement, 224, 304);
     await el.updateComplete;
 
     // The rail's right edge IS the boundary, so its width change is the boundary's displacement.
@@ -375,10 +386,7 @@ describe('§6h rule 3 — a drag never moves the boundary AGAINST the pointer', 
     expect(onScreen, 'precondition: the memory is not what is rendered').toBe(316);
 
     // Pull the boundary 50px LEFT. Rule 3: it moves 50px left, from where it IS.
-    const grip = q(el, 'rail-grip') as HTMLElement;
-    grip.dispatchEvent(new PointerEvent('pointerdown', { clientX: 316, bubbles: true }));
-    grip.dispatchEvent(new PointerEvent('pointermove', { clientX: 266, bubbles: true }));
-    grip.dispatchEvent(new PointerEvent('pointerup', { clientX: 266, bubbles: true }));
+    drag(q(el, 'rail-grip') as HTMLElement, 316, 266);
     await el.updateComplete;
 
     // Starting from the remembered 600 instead gives 550, which the ceiling snaps back to 316 —
@@ -387,5 +395,84 @@ describe('§6h rule 3 — a drag never moves the boundary AGAINST the pointer', 
     expect(appliedPx(rail), 'the boundary followed the pointer from where it was').toBe(
       onScreen - 50,
     );
+  });
+});
+
+describe('§6c finding 23 — the drag survives the pointer leaving the grip', () => {
+  it('a drag out of the collapsed strip expands the rail in ONE continuous gesture', async () => {
+    // The gesture the model promises: from strip form, pull right through the legibility threshold
+    // and the rail expands. Live this did nothing at all — no width change, no storage write, no
+    // error — because the listeners lived on the grip and the pointer had left it.
+    localStorage.setItem('justsearch.searchV2.railWidth.sessions.v1', '112');
+    const el = await mount();
+    const win = el.shadowRoot?.querySelector('.win') as HTMLElement;
+    const rail = el.shadowRoot?.querySelector('.rail') as HTMLElement;
+    stubRect(win, { width: 1400, height: 800 });
+    stubRect(rail, { width: SESSION_RAIL_FLOOR_PX, height: 700 });
+    reconcile(el);
+    await el.updateComplete;
+    expect(q(el, 'rail-strip'), 'precondition: the rail starts collapsed').not.toBeNull();
+
+    drag(q(el, 'rail-grip') as HTMLElement, SESSION_RAIL_FLOOR_PX, SESSION_RAIL_FLOOR_PX + 160);
+    await el.updateComplete;
+
+    expect(appliedPx(rail), 'the boundary followed the pointer out of the strip').toBe(
+      SESSION_RAIL_FLOOR_PX + 160,
+    );
+    expect(q(el, 'rail-sidebar'), 'and the rail is showing rows again').not.toBeNull();
+    expect(q(el, 'rail-strip')).toBeNull();
+  });
+
+  it('the deck boundary also survives it', async () => {
+    const el = await mount();
+    await commit(el, 'what changed?');
+    const deck = el.shadowRoot?.querySelector('.deck') as HTMLElement;
+    stubRect(el.shadowRoot?.querySelector('.centre') as HTMLElement, { width: 800, height: 600 });
+    stubRect(deck, { width: 800, height: 300, top: 300 });
+
+    drag(q(el, 'deck-grip') as HTMLElement, 300, 400, 'y');
+    await el.updateComplete;
+
+    expect(600 - appliedPx(deck) - 300, 'the boundary moved with the pointer').toBe(100);
+  });
+});
+
+describe('§6c finding 24 — memory never holds a width the rail cannot render', () => {
+  it('a drag that ends under the threshold remembers the STRIP, not the raw width', async () => {
+    const el = await mount();
+    const win = el.shadowRoot?.querySelector('.win') as HTMLElement;
+    const rail = el.shadowRoot?.querySelector('.rail') as HTMLElement;
+    stubRect(win, { width: 1400, height: 800 });
+    stubRect(rail, { width: 240, height: 700 });
+    reconcile(el);
+    await el.updateComplete;
+
+    // Pull the boundary well below the legibility threshold: on screen that is the strip.
+    drag(q(el, 'rail-grip') as HTMLElement, 240, 110);
+    await el.updateComplete;
+    expect(q(el, 'rail-strip'), 'the gesture collapsed it').not.toBeNull();
+
+    // Storing the raw sub-threshold number recorded a width no state of the rail corresponds to,
+    // and every later mount read it back as collapsed on ANY window (§6c finding 24).
+    const stored = Number(localStorage.getItem('justsearch.searchV2.railWidth.sessions.v1'));
+    expect(stored, 'the memory is a width the rail can actually be').toBe(SESSION_RAIL_FLOOR_PX);
+  });
+
+  it('a remembered collapse is still escapable by dragging back out', async () => {
+    localStorage.setItem(
+      'justsearch.searchV2.railWidth.sessions.v1',
+      String(SESSION_RAIL_FLOOR_PX),
+    );
+    const el = await mount();
+    stubRect(el.shadowRoot?.querySelector('.win') as HTMLElement, { width: 1400, height: 800 });
+    const rail = el.shadowRoot?.querySelector('.rail') as HTMLElement;
+    stubRect(rail, { width: SESSION_RAIL_FLOOR_PX, height: 700 });
+    reconcile(el);
+    await el.updateComplete;
+    expect(q(el, 'rail-strip')).not.toBeNull();
+
+    drag(q(el, 'rail-grip') as HTMLElement, SESSION_RAIL_FLOOR_PX, SESSION_RAIL_FLOOR_PX + 180);
+    await el.updateComplete;
+    expect(q(el, 'rail-sidebar'), 'the rail is not a one-way door').not.toBeNull();
   });
 });

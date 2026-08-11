@@ -1314,6 +1314,48 @@ reachable state, and the rule-4 witness that stubbed exactly that was asserting 
 now creates the squeeze the way the live finding did — through a track too narrow to fund the rail
 beside the centre column's floor.
 
+### Third round (findings 23–25), after the second live validation
+
+Round 2 validated F20, F21's on-screen origin (240 rendered + 98 pointer = 338 stored), drag-collapse
+through the threshold, the chevron's self-healing expand, and the deck grip's absence in a fresh
+session. Two findings remained, and the first is the most instructive of the whole arc.
+
+**F23 — the strip→expanded drag was dead under real input, and my witnesses could not see it.**
+I told the owner to target that gesture; I had never written a test for it. Worse, when I did, the
+cause turned out to indict the four drag witnesses that were already green: **they dispatched
+`pointermove` on the grip.** A grip is ~12px wide, so a real pointer leaves it within a few pixels
+and every later event is delivered elsewhere — the listeners only ever fired because
+`setPointerCapture` happened to succeed, and the round-2 hardening made a capture failure *silent*.
+So the tests were asserting the listener WIRING while the user's GESTURE was dead, and the silent
+guard removed the last symptom. **Decision: a drag listens on the window for the duration of the
+gesture**, keyed by pointer id; capture stays a pure enhancement. That also makes the gesture immune
+to the grip element being re-rendered mid-drag, which is exactly what dragging out of strip form does
+(the rail's contents flip under the pointer).
+
+Recorded as a testing rule, because it generalises past this window: **a pointer-gesture test must
+deliver events where the POINTER would be, not where the handler happens to listen.** Dispatching on
+the element under test is the `proxy-assertion` shape wearing gloves — it encodes the implementation
+and reports green on a feature that does not work.
+
+**F24 — sub-threshold widths persisted, recreating the collapsed-everywhere trap.** A drag ending at
+112 stored 112, and every later mount read it back as collapsed on any window at all. **Decision:
+memory holds a width the rail can actually RENDER, never one it cannot.** A gesture ending under the
+legibility threshold produces the strip on screen, so the strip's own width is what it remembers.
+This is rule 4 applied to memory — do not remember a size the region cannot have — and it keeps the
+stored value meaningful rather than a number no state of the rail corresponds to. With F23 fixed the
+collapse is also no longer a one-way door: dragging back out is a real escape, so the chevron is a
+convenience rather than the only rescue.
+
+**F25 — unresolved, and stated rather than guessed at.** The report places the strip's grip at
+x≈91–103 while the rail box extends to 136 and the centre begins at 148. Under flex layout the grip
+is a sibling that comes AFTER the rail's box, so it cannot render inside that span — which makes the
+measured element most likely the strip's own chevron ("Widen the sessions list") rather than the
+`rail-grip` vgrip. That would also independently explain F23's dead drag, since the chevron is a
+click affordance with no drag handler. With the collapsed container now sized to the strip, the grip
+is flush against it by construction. Round 3 should confirm which element was grabbed
+(`data-testid="rail-grip"` vs `rail-expand`) before anything is changed here — a fix aimed at the
+wrong element would be churn, and the geometry as reported is not reproducible from the layout.
+
 ### L13, amended
 
 > **L13** — every movable boundary is clamped by the minimum honest forms on both sides. A boundary
@@ -1322,8 +1364,9 @@ beside the centre column's floor.
 > the regions on either side absorb the change. Its clamps and its regime switches are evaluated
 > against **live geometry** — the size a region has, not the size it was chosen to have — at mount,
 > on restore, on resize and on content change. A region in its **minimum honest form sizes its
-> container to that form**, and the width it would otherwise take is remembered, not discarded.
-> Rails remember; the deck resets.
+> container to that form**. A gesture is owned by the **window**, not by the handle, so it survives
+> the pointer leaving a 12px grip and the handle being re-rendered under it. Rails remember — and
+> what they remember is always a size the rail can actually be; the deck resets.
 
 The first sentence is the original law. The rest is what the owner's pass showed was assumed rather
 than stated — and four findings is what an unstated interaction model costs.
