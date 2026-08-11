@@ -17,6 +17,8 @@ const BASE: BoundaryInput = {
   availableWidthPx: 1600,
   availableHeightPx: 900,
   sessionRailChosenPx: null,
+  // 0 = unmeasured; an unmeasured rail is not a narrow one, so it triggers no regime switch.
+  sessionRailMeasuredPx: 0,
   documentRailChosenPx: null,
   documentOpen: false,
   deckChosenPx: null,

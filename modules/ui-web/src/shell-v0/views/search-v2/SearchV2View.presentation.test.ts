@@ -399,8 +399,10 @@ describe('818 SearchV2View — the deck grip (L7/L13)', () => {
 
   it('the keyboard half of the boundary sizes the deck, and at the floor the list takes its count line', async () => {
     const el = await mount();
-    await live(el, SEARCH_WITH_RESULTS);
+    // §6h rule 1 — the deck boundary exists only opposite a transcript, so commit one first.
+    await commit(el, 'what changed?');
     const grip = q(el, 'deck-grip') as HTMLElement;
+    expect(grip, 'the boundary exists in this state').not.toBeNull();
     expect(q(el, 'live-results')).not.toBeNull();
 
     grip.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
@@ -417,7 +419,8 @@ describe('818 SearchV2View — the deck grip (L7/L13)', () => {
 
   it('double-click returns the boundary to AUTOMATIC — the inline size is cleared', async () => {
     const el = await mount();
-    await live(el, SEARCH_WITH_RESULTS);
+    // §6h rule 1 — the deck boundary exists only opposite a transcript, so commit one first.
+    await commit(el, 'what changed?');
     const grip = q(el, 'deck-grip') as HTMLElement;
     grip.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
     await el.updateComplete;
@@ -434,7 +437,8 @@ describe('818 SearchV2View — the deck grip (L7/L13)', () => {
 
   it('a pointer drag writes the clamped height onto the deck and adopts it at the end of the gesture', async () => {
     const el = await mount();
-    await live(el, SEARCH_WITH_RESULTS);
+    // §6h rule 1 — the deck boundary exists only opposite a transcript, so commit one first.
+    await commit(el, 'what changed?');
     const grip = q(el, 'deck-grip') as HTMLElement;
     const deck = el.shadowRoot?.querySelector('.deck') as HTMLElement;
 
@@ -457,13 +461,15 @@ describe('818 SearchV2View — the deck grip (L7/L13)', () => {
 
   it('L13 — the deck RESETS with the session (a height is a shape, not a preference)', async () => {
     const el = await mount();
-    await live(el, SEARCH_WITH_RESULTS);
+    // §6h rule 1 — the deck boundary exists only opposite a transcript, so commit one first.
+    await commit(el, 'what changed?');
     (q(el, 'deck-grip') as HTMLElement).dispatchEvent(
       new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }),
     );
     await el.updateComplete;
 
-    (q(el, 'new-session') as HTMLButtonElement).click();
+    // With records on screen the rail is in index mode, so leaving the session is its back control.
+    (q(el, 'rail-back') as HTMLButtonElement).click();
     await el.updateComplete;
 
     expect(el.shadowRoot?.querySelector('.deck')?.getAttribute('style') ?? '').not.toContain('flex');
@@ -676,6 +682,7 @@ describe('818 SearchV2View — the rails’ movable boundaries (L13)', () => {
     const el = await mount();
     expect(q(el, 'rail-grip')?.tagName).toBe('BUTTON');
     expect(q(el, 'rail-grip')?.getAttribute('aria-label')).toContain('arrow keys resize');
+    await commit(el, 'what changed?');
     expect(q(el, 'deck-grip')?.tagName).toBe('BUTTON');
   });
 
@@ -731,6 +738,8 @@ describe('818 SearchV2View — the rails’ movable boundaries (L13)', () => {
 
   it('the DECK still resets per session while the rails remember (the L13 asymmetry, both halves)', async () => {
     const el = await mount();
+    // §6h rule 1 — the deck boundary exists only opposite a transcript, so commit one first.
+    await commit(el, 'what changed?');
     stubWindowWidth(el, 1400);
     (q(el, 'rail-grip') as HTMLElement).dispatchEvent(
       new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),

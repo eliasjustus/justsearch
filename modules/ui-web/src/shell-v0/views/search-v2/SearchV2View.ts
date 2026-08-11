@@ -875,6 +875,8 @@ export class SearchV2View extends JfElement {
       availableWidthPx: this.trackAvailableWidthPx(),
       availableHeightPx: centre.getBoundingClientRect().height,
       sessionRailChosenPx: this.sessionRailPx,
+      // Rule 4 — the width the rail HAS, so a regime switch about a rendered width is given one.
+      sessionRailMeasuredPx: this.railElement('sessions')?.getBoundingClientRect().width ?? 0,
       documentRailChosenPx: this.documentRailPx,
       documentOpen: this.readingDocPath !== null,
       deckChosenPx: this.deckHeightPx,
@@ -1214,10 +1216,16 @@ export class SearchV2View extends JfElement {
         display: flex;
         flex-direction: column;
       }
+      /* L13 (amended, §6h rule 2) — the grip SITS ON the separator the user sees, and the only
+         version of that which cannot drift is the one where the grip IS the separator. The track
+         carried a gap and the rail drew its own border-right, so the grip landed in the gap 16px to
+         the right of the line the eye finds — and 16px right of a rail edge is where the rail's
+         scrollbar renders, so reaching for the boundary got the scrollbar instead (§6c finding 18).
+         No gap, no border: the grip's own rule draws the line, and being the separator is then
+         structural rather than two numbers that happen to agree. */
       .win {
         display: flex;
         flex: 1 1 auto;
-        gap: var(--density-inner-pad-x);
         min-height: 0;
       }
       .rail {
@@ -1225,7 +1233,6 @@ export class SearchV2View extends JfElement {
         display: flex;
         flex-direction: column;
         gap: var(--density-inner-pad-y);
-        border-right: 1px solid var(--border-subtle);
         padding-right: var(--density-inner-pad-x);
         min-height: 0;
         overflow-y: auto;
@@ -1293,7 +1300,6 @@ export class SearchV2View extends JfElement {
       .reading {
         flex: 0 0 24rem;
         min-width: 0;
-        border-left: 1px solid var(--border-subtle);
         padding-left: var(--density-inner-pad-x);
         overflow-y: auto;
       }
@@ -1301,7 +1307,7 @@ export class SearchV2View extends JfElement {
          native button, so the boundary is keyboard-operable (←/→ resize, Home returns to automatic)
          without a hand-rolled role/tabindex triad. */
       button.vgrip {
-        flex: 0 0 0.6rem;
+        flex: 0 0 0.75rem;
         align-self: stretch;
         padding: 0;
         border: 0;
@@ -1311,9 +1317,23 @@ export class SearchV2View extends JfElement {
         align-items: center;
         justify-content: center;
         touch-action: none;
+        position: relative;
       }
+      /* The separator itself, drawn by the control that moves it — full height, down the grip's
+         centre line, replacing the borders the two regions used to draw for themselves. */
+      button.vgrip::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 50%;
+        width: 1px;
+        background: var(--border-subtle);
+      }
+      /* The grab marker, riding on the line so the affordance and the boundary are one thing. */
       button.vgrip::after {
         content: '';
+        position: relative;
         width: 3px;
         height: 2.5rem;
         border-radius: 1.5px;
@@ -2805,7 +2825,15 @@ export class SearchV2View extends JfElement {
    * to be movable from the keyboard, and a native button gets focus + activation semantics by
    * construction instead of a hand-rolled role/tabindex triad.
    */
-  private deckGrip(): TemplateResult {
+  private deckGrip(): TemplateResult | typeof nothing {
+    // L13 (amended, §6h rule 1) — a boundary exists only between two live regions that can both
+    // trade space. This grip is the TRANSCRIPT/deck boundary, and the transcript renders only once
+    // there is a committed record, so before the first commit there is nothing on the other side to
+    // negotiate with. Rendering it anyway produced a full-width bar at the top of the column
+    // separating the deck from nothing (§6c finding 16) — and, because a top-anchored deck cannot
+    // move its own top edge, a drag there shrank the deck away from the pointer (finding 17). Both
+    // stop existing here rather than being corrected downstream.
+    if (this.records.length === 0) return nothing;
     return html`<button
       type="button"
       class="grip"

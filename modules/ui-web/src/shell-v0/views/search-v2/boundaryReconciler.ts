@@ -56,6 +56,17 @@ export interface BoundaryInput {
   readonly availableHeightPx: number;
   /** The user's chosen session-rail width, or null for automatic. Never mutated here. */
   readonly sessionRailChosenPx: number | null;
+  /**
+   * The width the session rail actually HAS right now, measured. Distinct from the chosen width and
+   * not derivable from it: with no choice made the rail still has a width, and the live layout can
+   * hand it one its own thresholds reject.
+   *
+   * L13 (amended, §6h rule 4) — regime switches read this. `railCollapsed` used to be
+   * `chosen !== null && railYields(chosen)`, so an automatic rail never evaluated the rule at all
+   * and rendered full rows at 124px, under its own 128px legibility floor (§6c finding 19). A
+   * threshold that describes a rendered width has to be given the rendered width.
+   */
+  readonly sessionRailMeasuredPx: number;
   /** The user's chosen document-region width, or null for automatic. Never mutated here. */
   readonly documentRailChosenPx: number | null;
   /** Is the document region mounted at all? Its width is only a claim on the track when it is. */
@@ -165,6 +176,9 @@ export function reconcileBoundaries(input: BoundaryInput): BoundaryState {
       )
     : null;
 
+  const effectiveRailPx =
+    sessionPx ?? (input.sessionRailMeasuredPx > 0 ? input.sessionRailMeasuredPx : null);
+
   return {
     sessionRailPx: sessionPx,
     documentRailPx: documentPx,
@@ -173,7 +187,10 @@ export function reconcileBoundaries(input: BoundaryInput): BoundaryState {
     // The collapsed strip follows the APPLIED width, not the remembered one: a rail clamped narrow
     // by a small window is narrow on screen, and rendering wrapping rows into it would be the
     // squashed form L13 exists to forbid.
-    railCollapsed: sessionPx !== null && railYields(sessionPx),
+    // The width in force: what this reconcile will apply if it applies anything, else what the rail
+    // measures right now. Either way a REAL width, which is the whole of rule 4 — and an unmeasured
+    // rail (0) is still not a narrow one, so it yields nothing, exactly as the axes above do.
+    railCollapsed: effectiveRailPx !== null && railYields(effectiveRailPx),
     eviction: mergeEviction(
       // The deck the user SIZED is too short to hold rows. This is a different question from the one
       // `evictionFor` answers — it is about the deck's own two numbers, not about the column's

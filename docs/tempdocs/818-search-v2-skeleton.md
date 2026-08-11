@@ -1206,6 +1206,85 @@ dev-gated surfaces") remain **proposals**. Neither is implemented by this plan.
    window is outside that gate entirely. Logged to the observations shard; **not fixed here** (it is a
    gate-scope question with reach past this window).
 
+## 6h. The boundary-interaction model (2026-08-11) — findings 16–19
+
+The owner drove the PR build at real window sizes and found the boundaries badly wrong. Four
+findings, measured live at 1350×545. They share one cause, and it is not a bug in any clamp: **the
+boundary's own interaction model was never stated.** L13 said what a boundary is clamped BY; it never
+said when a boundary EXISTS, where it SITS, which way it MOVES, or against what its regime switches
+are evaluated. Everything below was therefore authored ad hoc, per grip, and drifted.
+
+### What was measured
+
+| # | Measured | Reading |
+|---|---|---|
+| F16 | Empty transcript (nothing committed); deck at y=108, top of the column; the deck grip renders as an 1100×3 bar at y=108 | A boundary control between a region and **nothing** |
+| F17 | pointerdown on the grip, +100px DOWN, pointerup → deck height 238 → 138 | Pulling the bar down makes the deck retreat upward, away from the pointer |
+| F18 | rail x=68..192; rail grip x=208..218 | The grip floats 16px right of the visible separator — where the rail's scrollbar also lives |
+| F19 | vh=545 (far below the 820 threshold); rail renders full rows at w=124, under its own 128px legibility floor | A regime switch that never consulted the geometry it describes |
+
+### The model, stated
+
+Four rules. Each is the answer to a question the code was answering implicitly and inconsistently.
+
+1. **A boundary EXISTS only between two live, tradeable regions.** Not "a region has a grip" —
+   a grip is the visible form of a trade, and a trade needs two sides with something to give. The
+   deck grip is the transcript/deck boundary, so with no transcript it is a control for a
+   negotiation with nobody.
+2. **A boundary SITS on the separator the user sees.** The one the eye finds is the rendered line;
+   an offset control is not that boundary, whatever its hit area contains. Structurally: the grip
+   *is* the separator, rather than a thing placed near one — which is the only version that cannot
+   drift apart again.
+3. **A boundary FOLLOWS THE POINTER**, and the regions on either side absorb the change. This is
+   the only convention users have, and it is definable without reference to any region's anchoring:
+   after a drag of Δ, the boundary's own rect has moved by Δ. "Which region grows" is then a
+   consequence, never a separate decision to get backwards.
+4. **Clamps and regime switches bind to LIVE geometry, always** — at mount, restore, resize, and
+   content change alike, and evaluated against the size a region actually HAS, not the size it was
+   chosen to have. A rail with no chosen width still has a width, and every threshold that describes
+   it must read that one.
+
+### What each finding is, under the model
+
+**F16** violates rule 1 directly: the deck grip renders unconditionally while the transcript renders
+only when records exist.
+
+**F17 is a symptom of F16, not an independent sign error — and this is the one place the report and
+the code disagree, so it is stated with its evidence.** The grip is the deck's FIRST child, i.e. it
+sits on the deck's TOP edge, which is the transcript/deck boundary. With a transcript present, the
+transcript is the column's one `flex: 1 1 auto` occupant, so shrinking the deck by Δ grows the
+transcript by Δ and the deck's top edge — the grabbed boundary — moves DOWN by Δ. That is rule 3
+satisfied, and `deltaPx: startY − clientY` is the correct sign for it. **With no transcript** the
+deck is the column's only occupant and top-anchored: a height change cannot move its top edge, so
+the grabbed edge stays put and the far edge retreats — exactly the 238 → 138 that reads backwards.
+Inverting the sign would fix the empty state by breaking the populated one. The fix is F16's: the
+boundary should not exist there at all. Guarded by a test that asserts the BOUNDARY'S RECT follows
+the pointer, which is rule 3 stated as an assertion and is agnostic to anchoring.
+
+**F18** violates rule 2: `.win` carries a `gap`, and the grip is a flex sibling AFTER the rail, so it
+lands in the gap while the rail's own `border-right` draws the line the user aims at. Fixed by making
+the grip the separator: the track's gap goes, the rail's border goes, and the grip's own rule draws
+the line — so "the grip is where the separator is" holds by construction rather than by two numbers
+agreeing.
+
+**F19** violates rule 4, and is finding 7's class one level down. `railCollapsed` was
+`chosen !== null && railYields(chosen)`: with no chosen width the regime switch never ran, so a rail
+squeezed to 124px by the live layout kept rendering rows under its own 128px legibility floor. The
+switch must read the width the rail HAS. The mechanism that produced 124 is not inferred here — the
+point of the fix is that it does not need to be, because the rule is evaluated against measurement.
+
+### L13, amended
+
+> **L13** — every movable boundary is clamped by the minimum honest forms on both sides. A boundary
+> **exists** only between two live regions that can both trade space; it **sits on** the separator
+> the user sees; and it **follows the pointer**, the regions on either side absorbing the change.
+> Its clamps and its regime switches are evaluated against **live geometry** — the size a region
+> has, not the size it was chosen to have — at mount, on restore, on resize and on content change.
+> Rails remember; the deck resets.
+
+The first sentence is the original law. The rest is what the owner's pass showed was assumed rather
+than stated — and four findings is what an unstated interaction model costs.
+
 ## 7. Log
 
 - 2026-08-08 — tempdoc created from the prototype harvest; worktree `818-search-v2`;
