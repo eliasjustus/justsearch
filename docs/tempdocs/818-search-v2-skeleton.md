@@ -164,9 +164,32 @@ work lands, so clause (a) is a running obligation rather than a scramble at the 
 
 | Law | Tier | Witness |
 |---|---|---|
-| L7 (short height, run controls) | **unverified** → measured-audit, one-time | Not gateable: a fixtured run cannot be held in flight (§6g C0). Live pass only. |
+| L7 — controls stay on screen mid-run | **measured-audit, one-time** (not gateable) | A fixtured run cannot be held in flight (§6g C0), so no camera can reach the state. The 2026-08-11 audit FOUND a violation here; re-run pending after the §6g C6 fix. |
+| L7 — compression policy (deck bounded by the column) | unit | `boundaryReconciler.test.ts` — the deck's cap, incl. the normal regime |
+| L7 — the bodies yield and the decisions do not | unit (stylesheet) | `SearchV2View.presentation.test.ts` — flex-shrink on bodies vs controls |
+| L7 — eviction order | unit | `deckSizing.test.ts` — list before feed, decisions never |
 | L13 (rail floors/ceilings) | rendered-geometry | `search-v2-window` — `.rail` max/min, `.centre` floor |
 | L13 (the axis the boundaries sit on) | unit + rendered-geometry | cascade + node-identity witnesses; `.rail maxWidthPx` |
+
+**Live-audit finding, 2026-08-11 (L7, normal-height regime).** The first measured audit of a real
+in-flight run found the run controls leaving the screen: `[data-testid="run-controls"]` bottom
+sampled at 851 → 921 → 921 → **975** against a 945px viewport, i.e. Halt off screen roughly 2.4 s
+into streaming — in the seconds the control exists for. Not a short-viewport case: `innerHeight` was
+945, so slice 4's 12rem/10rem caps were inactive and the **normal-regime** caps (22rem list + 18rem
+feed) applied.
+
+Diagnosis: the deck is `flex: 0 0 auto` (it cannot shrink — its floor is its incompressible
+occupants) and its bodies carried FIXED rem caps, so the deck's content simply outgrew the centre
+column, which is `overflow: hidden`, and the overflow took the controls with it. The §6g C3
+eviction could not see it, and that is the instructive part: **eviction reasons about the bodies'
+MINIMUMS, and their minimums fit** — what did not fit was what the bodies actually rendered. C3 had
+built the amended L7's floor (eviction) and its manual clamp, but not its middle rung. Compression
+was never wired: the bodies scrolled internally without ever *shrinking* to fit the column.
+
+Fix (§6g C6): the deck is bounded by the column (`deckMaxPx = available − transcriptMin`, never
+below its own floor), and inside that bound the two bodies shrink while the controls carry an
+explicit zero flex-shrink. Being outside every scroller stops the controls being SCROLLED away; that
+was already true. This stops them being SQUEEZED away, which was not.
 
 ## 5b. Comparison-campaign scaffolding (authored 2026-08-08; produces §5's evidence, does not make its decision)
 

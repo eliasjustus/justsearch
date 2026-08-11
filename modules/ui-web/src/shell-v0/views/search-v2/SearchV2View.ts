@@ -371,6 +371,7 @@ export class SearchV2View extends JfElement {
     sessionRailPx: null,
     documentRailPx: null,
     deckHeightPx: null,
+    deckMaxPx: null,
     railCollapsed: false,
     eviction: { listYields: false, feedYields: false },
   };
@@ -895,6 +896,7 @@ export class SearchV2View extends JfElement {
       prev.sessionRailPx !== next.sessionRailPx ||
       prev.documentRailPx !== next.documentRailPx ||
       prev.deckHeightPx !== next.deckHeightPx ||
+      prev.deckMaxPx !== next.deckMaxPx ||
       prev.railCollapsed !== next.railCollapsed ||
       prev.eviction.listYields !== next.eviction.listYields ||
       prev.eviction.feedYields !== next.eviction.feedYields ||
@@ -1589,12 +1591,24 @@ export class SearchV2View extends JfElement {
         flex-direction: column;
         gap: var(--density-inner-pad-y);
       }
-      /* L7 — the two deck BODIES scroll; they are the compressible half of the deck. */
+      /* L7 — the two deck BODIES are the compressible half of the deck, and COMPRESSION is what
+         these three declarations buy. They scroll (overflow-y), they yield space before anything
+         else does (flex-shrink, via a 1 1 auto basis and a zero min-height), and the rem caps are
+         only their ceiling when the column is roomy enough to grant it.
+
+         The shrink half was missing until the live audit found it. The deck cannot shrink by design
+         — its floor is its incompressible occupants — so with fixed rem caps the bodies simply took
+         22rem + 18rem whatever the column had, the deck overflowed the centre column, and the run CONTROLS
+         were pushed past the fold DURING streaming: measured bottom 851 → 921 → 975 against a 945
+         viewport, i.e. Halt off screen in the seconds it exists for. Eviction did not catch it
+         because eviction reasons about the bodies' MINIMUMS, and their minimums fit fine; what did
+         not fit was what they actually rendered. Compression before eviction, in that order. */
       .list,
       .feed {
         max-height: 22rem;
         overflow-y: auto;
         min-height: 0;
+        flex: 1 1 auto;
       }
       .feed {
         display: flex;
@@ -1617,15 +1631,22 @@ export class SearchV2View extends JfElement {
         background: transparent;
         color: var(--text-primary);
       }
+      /* Shrinkable, so the pressure reaches the FEED inside it rather than stopping here. */
       .run {
         display: flex;
         flex-direction: column;
         gap: var(--density-inner-pad-y);
         min-height: 0;
+        flex: 1 1 auto;
       }
-      /* L7 — the incompressible occupant: a SIBLING of the scroll containers, never inside one. */
+      /* L7 — the incompressible occupant: a SIBLING of the scroll containers, never inside one, and
+         never a flex item that yields. A zero flex-shrink is the half of that sentence the DOM
+         position alone could not carry: being outside every scroller stops it being SCROLLED away,
+         and this stops it being SQUEEZED away. Both are needed — the live audit found it leaving
+         the screen by the second route while the first was still perfectly satisfied. */
       .run-controls {
         display: flex;
+        flex: 0 0 auto;
         flex-wrap: wrap;
         align-items: center;
         gap: 0.5rem;
@@ -2561,6 +2582,21 @@ export class SearchV2View extends JfElement {
    * and, while a run is live, that run's feed and controls. Two of those bodies scroll; the
    * decisions never do (see {@link runControls}).
    */
+  /**
+   * L7 — the deck's inline geometry: the height the user CHOSE, and the height the column ALLOWS.
+   *
+   * The cap is applied whether or not a height was chosen, because it is not about the choice: the
+   * deck cannot shrink and `.centre` clips, so an unbounded deck takes the run controls off screen
+   * on its own. With the cap in place the pressure lands on the two bodies, which are the occupants
+   * L7 permits to yield.
+   */
+  private deckStyle(): string | typeof nothing {
+    const parts: string[] = [];
+    if (this.applied.deckHeightPx !== null) parts.push(`flex: 0 0 ${this.applied.deckHeightPx}px`);
+    if (this.applied.deckMaxPx !== null) parts.push(`max-height: ${this.applied.deckMaxPx}px`);
+    return parts.length > 0 ? parts.join('; ') : nothing;
+  }
+
   private deck(): TemplateResult {
     const live = this.live;
     const results = live?.results ?? [];
@@ -2577,9 +2613,7 @@ export class SearchV2View extends JfElement {
           ? 'sized'
           : ''}"
         data-testid="deck"
-        style=${this.applied.deckHeightPx !== null
-          ? `flex: 0 0 ${this.applied.deckHeightPx}px`
-          : nothing}
+        style=${this.deckStyle()}
       >
         ${this.deckGrip()} ${this.scopeChips()}
         <div class="band" data-testid="input-band">

@@ -152,3 +152,50 @@ describe('818 boundaryReconciler — eviction reaches the deck the user sized', 
     expect(600 - (r.deckHeightPx as number)).toBeGreaterThanOrEqual(TRANSCRIPT_MIN_PX);
   });
 });
+
+/**
+ * L7's MIDDLE rung — compression (tempdoc 818 §6g C6, from the live audit).
+ *
+ * C3 built the floor (eviction) and the manual clamp, and the live pass found the gap between them.
+ * `.deck` cannot shrink and its bodies carry FIXED rem caps, so in the normal regime the deck simply
+ * outgrew the centre column and `.centre` clipped — taking the run controls with it, mid-stream,
+ * with `[data-testid="run-controls"]` measured at bottom 851 → 921 → 975 against a 945px viewport.
+ *
+ * Eviction could not see it: it asks whether the bodies' MINIMUMS fit, and they did. What did not
+ * fit was what the bodies actually rendered. The cap below is what converts that into pressure on
+ * the bodies, which are the occupants L7 lets yield.
+ */
+describe('818 boundaryReconciler — the deck is bounded by the column (L7 compression)', () => {
+  it('the deck may not exceed what the transcript floor leaves it', () => {
+    const r = reconcileBoundaries({ ...BASE, availableHeightPx: 870 });
+    expect(r.deckMaxPx).toBe(870 - TRANSCRIPT_MIN_PX);
+  });
+
+  it('the cap applies with NO chosen height — it is not about the user’s choice', () => {
+    // The regression's own shape: nothing was dragged, the run simply grew.
+    const r = reconcileBoundaries({ ...BASE, availableHeightPx: 870, deckChosenPx: null });
+    expect(r.deckHeightPx).toBeNull();
+    expect(r.deckMaxPx).not.toBeNull();
+  });
+
+  it('the NORMAL regime is bounded too — the short-viewport caps were never the whole answer', () => {
+    // The audit ran at innerHeight 945 with the short caps INACTIVE, which is exactly why the fixed
+    // 22rem + 18rem body caps were free to overrun the column.
+    const roomy = reconcileBoundaries({ ...BASE, availableHeightPx: 870, shortViewport: false });
+    const short = reconcileBoundaries({ ...BASE, availableHeightPx: 870, shortViewport: true });
+    expect(roomy.deckMaxPx).toBeLessThan(short.deckMaxPx as number);
+    expect(roomy.deckMaxPx).toBeGreaterThan(0);
+  });
+
+  it('a column too small for both never asks the DECISIONS to yield', () => {
+    // Where the floor and the transcript's floor cross, the floor wins: a cap below the deck's
+    // incompressible occupants would be an instruction to push a held decision off screen.
+    const r = reconcileBoundaries({ ...BASE, availableHeightPx: 200, deckFloorPx: 400 });
+    expect(r.deckMaxPx).toBe(400);
+  });
+
+  it('an unmeasured column caps nothing, like every other boundary', () => {
+    const r = reconcileBoundaries({ ...BASE, availableHeightPx: 0 });
+    expect(r.deckMaxPx).toBeNull();
+  });
+});

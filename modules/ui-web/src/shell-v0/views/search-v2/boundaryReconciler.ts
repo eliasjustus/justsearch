@@ -75,6 +75,17 @@ export interface BoundaryState {
   readonly sessionRailPx: number | null;
   readonly documentRailPx: number | null;
   readonly deckHeightPx: number | null;
+  /**
+   * L7 — the most the deck may occupy, whether or not the user has sized it. Null where the column
+   * is unmeasured.
+   *
+   * This is COMPRESSION's lever and it is not the same thing as `deckHeightPx`, which is a choice.
+   * The deck cannot shrink (its floor is its incompressible occupants), and its bodies carry fixed
+   * rem caps, so without a bound tied to the column the deck simply outgrows `.centre` — which
+   * clips, taking the run controls with it. Bounding the deck instead pushes the pressure into the
+   * bodies, which are the things allowed to yield.
+   */
+  readonly deckMaxPx: number | null;
   /** L13 — below its legible width the session rail takes its collapsed strip form. */
   readonly railCollapsed: boolean;
   /** L7 (amended) — which deck bodies are evicted to their minimum honest form. */
@@ -143,10 +154,22 @@ export function reconcileBoundaries(input: BoundaryInput): BoundaryState {
           transcriptMinPx: transcriptMinPx(input.shortViewport),
         });
 
+  // The deck may take everything the transcript's own floor does not need — and never less than its
+  // own incompressible floor, because a bound below that would ask a DECISION to yield, which L7
+  // forbids. Where the two cross the floor wins and the transcript is what bends, exactly as it does
+  // on the manual boundary.
+  const deckMaxPx = heightKnown
+    ? Math.max(
+        input.deckFloorPx,
+        Math.round(input.availableHeightPx - transcriptMinPx(input.shortViewport)),
+      )
+    : null;
+
   return {
     sessionRailPx: sessionPx,
     documentRailPx: documentPx,
     deckHeightPx,
+    deckMaxPx,
     // The collapsed strip follows the APPLIED width, not the remembered one: a rail clamped narrow
     // by a small window is narrow on screen, and rendering wrapping rows into it would be the
     // squashed form L13 exists to forbid.

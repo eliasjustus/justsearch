@@ -1071,3 +1071,44 @@ describe('818 SearchV2View — the keyboard pass (slice 5)', () => {
     }
   });
 });
+
+/**
+ * The STYLESHEET half of L7's compression rung (tempdoc 818 §6g C6).
+ *
+ * The policy above decides the deck's cap; these three declarations are what make the cap land on
+ * the bodies instead of on the decision. They are asserted on the stylesheet rather than on
+ * geometry because happy-dom performs no layout — the rendered proof is the live audit, recorded in
+ * §5's per-law tier table. Together they are the invariant the live finding cost: being outside
+ * every scroller stops the controls being SCROLLED away, `flex-shrink: 0` stops them being SQUEEZED
+ * away, and the first was already true when the second was not.
+ */
+describe('818 SearchV2View — the deck yields at its bodies, never at its decisions (L7)', () => {
+  /** The declarations of the LAST rule whose selector list ends with `selector`. */
+  function block(selector: string): string {
+    const css = SearchV2View.styles?.toString() ?? '';
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'g');
+    const found = [...css.matchAll(re)].map((m) => m[1] ?? '');
+    return found.join('\n');
+  }
+
+  it('the run CONTROLS are not a flex item that can shrink', () => {
+    const controls = block('.run-controls');
+    expect(controls, 'the .run-controls rule was not found — selector drifted').not.toBe('');
+    expect(controls).toMatch(/flex:\s*0\s+0\s+auto/);
+  });
+
+  it('both deck BODIES shrink, and can scroll what is left', () => {
+    // `.feed` appears in the shared body rule AND in its own; joining every match is what makes the
+    // assertion about the CASCADED result rather than about whichever rule happened to come first.
+    const feed = block('.feed');
+    expect(feed, 'the .feed rules were not found — selector drifted').not.toBe('');
+    expect(feed).toMatch(/flex:\s*1\s+1\s+auto/);
+    expect(feed).toMatch(/overflow-y:\s*auto/);
+    expect(feed).toMatch(/min-height:\s*0/);
+  });
+
+  it('the run region passes the pressure down to its feed rather than absorbing it', () => {
+    expect(block('.run')).toMatch(/flex:\s*1\s+1\s+auto/);
+  });
+});
