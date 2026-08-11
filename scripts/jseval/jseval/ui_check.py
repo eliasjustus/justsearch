@@ -1234,6 +1234,77 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         await page.locator(S.CSS_ACTIVITY_LIFECYCLE).first.wait_for(state="attached", timeout=20_000)
         await page.locator(S.CSS_EVIDENCE_RAIL).first.wait_for(state="visible", timeout=20_000)
 
+    async def _open_search_v2(page, width: int, height: int):
+        # Tempdoc 818 §6g C2 — the shared entry for both Search v2 steps. This surface is
+        # DEEPLINK/DEVELOPER with NO rail entry (818 §3: "a visible peer would recreate the exact
+        # defect 687 deleted"), so unlike every rail step there is no button to dispatch a click to
+        # and the hash route is the ONLY path — the same route `_view_setup` already falls back to
+        # for Health and Help, which is why this needs no new navigation mechanism.
+        await page.set_viewport_size({"width": width, "height": height})
+        await page.evaluate(
+            "(id) => { location.hash = `justsearch://surface/${id}`; }", S.SURFACE_SEARCH_V2
+        )
+        # The omnibox is the window's one input and it renders unconditionally, so its presence is
+        # the honest "the surface mounted" condition — not a sleep.
+        await page.locator(S.CSS_SV2_DRAFT).first.wait_for(state="visible", timeout=15_000)
+
+    async def _search_v2_live_results(page, query: str):
+        # A live search is the shared `searchState` seam, so it needs no AI capability — the default
+        # fixtures variant serves it, exactly as `chat-occlusion` and `chat-composer-small` rely on.
+        draft = page.locator(S.CSS_SV2_DRAFT).first
+        await draft.click()
+        await draft.type(query, delay=20)
+        await draft.press("Enter")
+        await page.locator(S.CSS_SV2_LIVE_RESULTS).first.wait_for(state="visible", timeout=30_000)
+
+    async def setup_search_v2_window(page):
+        # Tempdoc 818 §6c finding 1's RENDERED witness, and the one camera on this window's
+        # horizontal track. The unit tier can assert that the track never resolves to a column
+        # (SearchV2View.presentation.test.ts), but only a real render can say the three regions
+        # actually sit side by side at real widths — which is precisely the check whose absence let
+        # the axis defect ship for two slices ("the screenshot path was down", 818 slice-5 log).
+        #
+        # Why the document pane is opened: it is the third region, and with it mounted all three of
+        # the register's width rows have a subject. `.rail`'s ceiling is the finding-1 witness (a
+        # column-stacked rail spans the window and blows it); `.centre`'s floor is finding 7's (a
+        # remembered over-wide rail starves the reading column).
+        await _open_search_v2(page, 1366, 768)
+        await _search_v2_live_results(page, "justsearch")
+        # Opening a result is this window's L3 act: the document pane mounts AND a file scope chip
+        # pins. Clicking the card's own row is what emits `card-open` — the shared results card is
+        # the only row authority here, so there is no search-v2 row markup to target.
+        await page.locator(S.CSS_SEARCH_RESULT_ROW).first.click(force=True)
+        await page.locator(S.CSS_SV2_READING_PANE).first.wait_for(state="visible", timeout=15_000)
+        await asyncio.sleep(0.3)
+
+    async def setup_search_v2_small(page):
+        # Tempdoc 818 §6g C2 — the short-viewport camera, at the ~790px block height 818 slice 4
+        # targeted and below the shared 820px breakpoint, so the height-gated chrome is in force.
+        #
+        # HONEST SCOPE, stated because the register cannot state it: this step does NOT witness
+        # §6c finding 3. That finding is the RUN CONTROLS being clipped, and a run cannot be held
+        # in flight under --fixtures — Playwright's route.fulfill serves only a complete body, so a
+        # fixtured run drains to its terminal instantly (agent_stream_fixture.py:11-17, 814 §D8.3),
+        # and this window unmounts its run region at the terminal. Without the run the deck is
+        # ~290px against a ~430px column, so a `.run-controls` row here would pass for reasons
+        # unrelated to the finding. Finding 3's witness is the one-time live pass (818 §6e.5's
+        # measured-audit tier), and the law is listed `unverified` in the promotion table.
+        #
+        # What this step DOES witness, and it is not vacuous: the committed state at short height,
+        # where the transcript and the deck genuinely compete for the centre column. The deck must
+        # stay within the fold and the transcript must not be starved to nothing — the 814-style
+        # floor/ceiling pair, which a future deck occupant or a regressed short-viewport cap breaks.
+        await _open_search_v2(page, 1366, 790)
+        await _search_v2_live_results(page, "justsearch")
+        # Commit (⇧⏎) is what creates the competition: it freezes the live set into the transcript,
+        # so the deck stops being the whole column (`.deck.fills` is dropped) and the two regions
+        # must share. The ask this dispatches has no fixtured body and terminates as a refusal —
+        # which is the honest fixtured outcome and costs the geometry nothing.
+        await page.locator(S.CSS_SV2_DRAFT).first.press("Shift+Enter")
+        await page.locator(S.CSS_SV2_FROZEN_BLOCK).first.wait_for(state="visible", timeout=15_000)
+        await page.locator(S.CSS_SV2_TRANSCRIPT).first.wait_for(state="visible", timeout=10_000)
+        await asyncio.sleep(0.3)
+
     async def setup_chat_evidence_rail(page):
         # Tempdoc 814 §D8.1 — the RECORD-path capture: the docked evidence rail on screen at the
         # pinned 1366x768 viewport, which §V residual 1 recorded as fixture-unreachable ("the rail
@@ -1573,6 +1644,15 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
              fixtures_variant="agent-run"),
         Step("chat-activity-rail-open", setup=setup_chat_activity_rail_open, isolated=True,
              fixtures_variant="agent-run"),
+
+        # --- Tempdoc 818 §6g C2: the Search v2 window enters the rendered-geometry tier ---
+        # This window declared no proportion rows for five slices while BORROWING that register's
+        # numbers by prose comment (railSizing.ts's two floors cite it), and the §6c critical pass
+        # is what that cost: a layout-axis regression that no unit test could see. Both steps use
+        # the DEFAULT fixtures variant — a live search is the shared searchState seam and needs no
+        # AI capability, the same reason `chat-occlusion` and `chat-composer-small` do.
+        Step("search-v2-window", setup=setup_search_v2_window, isolated=True),
+        Step("search-v2-small", setup=setup_search_v2_small, isolated=True),
 
         # --- Slice 3a.1 Phase 6: Lit shell-v0 visual verification ---
         # Mounts the standalone shell demo (Lumino DockPanel + Lit panes)

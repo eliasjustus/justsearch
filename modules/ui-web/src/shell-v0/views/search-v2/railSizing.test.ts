@@ -11,6 +11,26 @@
  * edge is small enough to assert directly.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
+// The rendered-geometry authority these floors are derived from. Imported, not transcribed — the
+// point of the guard below is that the link cannot rot into a stale copy.
+import proportionBaseline from '../../../../../../governance/ui-proportion-baseline.v1.json';
+import { reconcileBoundaries, type BoundaryInput } from './boundaryReconciler.js';
+
+/** A measured, roomy window with both boundaries automatic — the base each case perturbs. */
+const RECONCILE_BASE: BoundaryInput = {
+  availableWidthPx: 1600,
+  availableHeightPx: 900,
+  sessionRailChosenPx: null,
+  // 0 = unmeasured; an unmeasured rail is not a narrow one, so it triggers no regime switch.
+  sessionRailMeasuredPx: 0,
+  documentRailChosenPx: null,
+  documentOpen: false,
+  deckChosenPx: null,
+  deckFloorPx: 120,
+  shortViewport: false,
+  hasList: true,
+  hasFeed: false,
+};
 import {
   CENTRE_MIN_PX,
   DOCUMENT_RAIL_FLOOR_PX,
@@ -126,16 +146,79 @@ describe('818 railSizing — rails REMEMBER, and forget when returned to automat
     expect(readStoredRailWidth('sessions')).toBeNull();
   });
 
-  it('a remembered width that today’s floors reject is discarded, never restored', () => {
-    // A width from a window whose floors no longer apply must not reopen a shape they forbid.
-    localStorage.setItem(storageKey('document'), '40');
-    expect(readStoredRailWidth('document')).toBeNull();
+  it('a corrupt entry is not a preference — there is nothing to clamp', () => {
     localStorage.setItem(storageKey('sessions'), 'not-a-number');
     expect(readStoredRailWidth('sessions')).toBeNull();
+    localStorage.setItem(storageKey('document'), '0');
+    expect(readStoredRailWidth('document')).toBeNull();
+  });
+
+  it('a width today’s window cannot honour is RESTORED, and clamped where it is applied', () => {
+    // Replaces the previous "…is discarded, never restored" contract, which was the shape of
+    // §6c finding 7: the reader judged a remembered width against a STATIC range, so it knew
+    // nothing about the window actually on screen and a 448px rail reopened at 448px on a narrow
+    // one. Discarding was also the wrong remedy even when it fired — it threw the preference away
+    // permanently, so widening the window never brought it back.
+    localStorage.setItem(storageKey('sessions'), '448');
+    expect(readStoredRailWidth('sessions')).toBe(448);
+
+    // On a window too narrow to honour it, the APPLIED width is clamped…
+    const narrow = reconcileBoundaries({
+      ...RECONCILE_BASE,
+      availableWidthPx: 700,
+      sessionRailChosenPx: 448,
+    });
+    expect(narrow.sessionRailPx).toBeLessThan(448);
+
+    // …the MEMORY is untouched, so the preference survives the narrow window…
+    expect(readStoredRailWidth('sessions')).toBe(448);
+
+    // …and comes back in full once there is room for it again.
+    const roomy = reconcileBoundaries({
+      ...RECONCILE_BASE,
+      availableWidthPx: 1600,
+      sessionRailChosenPx: 448,
+    });
+    expect(roomy.sessionRailPx).toBe(448);
   });
 
   it('no memory means automatic — the absence of a preference is itself the default', () => {
     expect(readStoredRailWidth('sessions')).toBeNull();
     expect(readStoredRailWidth('document')).toBeNull();
+  });
+});
+
+/**
+ * The register link, made checkable (tempdoc 818 §6g C1).
+ *
+ * This module's two floors are not local inventions — the docblock derives each from a row in
+ * `governance/ui-proportion-baseline.v1.json`, the rendered-geometry authority. Until now that
+ * derivation was a PROSE citation: the numbers were borrowed from the register while the surface
+ * declared no rows, so nothing would have noticed the register moving underneath them. That is the
+ * `catalog-verbatim` failure shape, and this is its guard — the same dual-projection discipline
+ * tempdoc 816 §4a.3 states ("one authority renders AND judges").
+ *
+ * It asserts EQUALITY, not merely presence: a floor that silently drifted from the register it cites
+ * would still be a plausible number, which is exactly why a human reading the docblock would not
+ * catch it.
+ */
+describe('818 §6g C1 — the clamp floors equal the register rows they cite', () => {
+  const step = proportionBaseline.steps.find(
+    (s: { uiShotStep: string }) => s.uiShotStep === 'chat-occlusion',
+  );
+
+  it('the register still carries the step these floors are derived from', () => {
+    // Anti-vacuity: without this, a renamed step would make every lookup below undefined and the
+    // equality assertions would silently compare undefined to undefined.
+    expect(step, 'the chat-occlusion step is the floors’ cited source').toBeDefined();
+  });
+
+  it.each([
+    ['.conversation', CENTRE_MIN_PX, 'the centre column’s reading floor'],
+    ['.document-pane', DOCUMENT_RAIL_FLOOR_PX, 'the readable document column'],
+  ])('%s minWidthPx is %i — %s', (selector, constant) => {
+    const row = step?.elements.find((e: { selector: string }) => e.selector === selector);
+    expect(row, `${selector} is registered`).toBeDefined();
+    expect((row as { minWidthPx?: number }).minWidthPx).toBe(constant);
   });
 });

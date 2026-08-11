@@ -274,13 +274,17 @@ describe('818 SearchV2View — the rail (L12)', () => {
 });
 
 describe('818 SearchV2View — the input band (L1, L10)', () => {
-  it('L1 — ⇥ flips the pill for this draft only, and Escape restores the derived destination', async () => {
+  it('L1 — the pill flips for this draft only, and Escape restores the derived destination', async () => {
     const el = await mount();
     await type(el, 'northfield supplier agreement');
     expect(text(el, 'pill')).toContain('SEARCH');
     expect(text(el, 'pill-alt')).toContain('ASK');
 
-    await key(el, { key: 'Tab' });
+    // The flip is the ALT pill's own affordance now: L1 says the pill is what tells you where a
+    // draft goes, so the thing that tells you is the thing you press. ⇥ used to be the only way in,
+    // which made it invisible and trapped the keyboard (§6c finding 4).
+    (q(el, 'pill-alt') as HTMLButtonElement).click();
+    await el.updateComplete;
     expect(text(el, 'pill')).toContain('ASK');
     expect(text(el, 'pill')).toContain('⇥');
     expect(text(el, 'pill-alt')).toContain('SEARCH');
@@ -294,7 +298,8 @@ describe('818 SearchV2View — the input band (L1, L10)', () => {
   it('L1 — the flip dies with the draft: a new draft re-derives its destination unflipped', async () => {
     const el = await mount();
     await type(el, 'northfield supplier agreement');
-    await key(el, { key: 'Tab' });
+    (q(el, 'pill-alt') as HTMLButtonElement).click();
+    await el.updateComplete;
     expect(text(el, 'pill')).toContain('ASK');
 
     await live(el, SEARCH_WITH_RESULTS);

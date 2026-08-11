@@ -25,10 +25,12 @@
  *  - the floor WINS when the two cross, for the same reason as the deck: a window too narrow to
  *    satisfy both minimums must degrade the region that CAN degrade honestly.
  *
- * Why this window declares no rows in `governance/ui-proportion-baseline.v1.json`: that register is
- * keyed by ui-shot STEP, and Search v2 is a DEEPLINK/DEVELOPER surface with no rail entry and no
- * capture step (the same reason `governance/sandbox-coverage.v1.json` carries it as `tier: exempt`).
- * The §5 cutover moves both rows together — see the note in {@link SearchV2View}'s docblock.
+ * These two floors are not local numbers: each is the value a row in
+ * `governance/ui-proportion-baseline.v1.json` already pins, and that link is asserted as EQUALITY in
+ * `railSizing.test.ts` rather than trusted as prose. It has to be — for five slices this module cited
+ * the register in a comment while the window declared no rows of its own, so the numbers came in and
+ * the judgment stayed out, and nothing would have noticed the register moving underneath them. The
+ * window now declares its own rows (`search-v2-window`, `search-v2-small`); tempdoc 818 §6g C2.
  *
  * The one impure edge lives at the bottom: rails REMEMBER (L13's remember/reset asymmetry — a width
  * is a preference, a deck height is a per-session shape), so the chosen widths are persisted.
@@ -116,9 +118,20 @@ export function railDefaultPx(rail: RailId): number {
 
 /**
  * The remembered width, or null for automatic. Storage keys are versioned per rail so the two
- * boundaries cannot overwrite each other, and a stored value outside today's clamps is DISCARDED
- * rather than restored — a remembered width from a wider window must not reopen the window in a
- * shape its own floors reject.
+ * boundaries cannot overwrite each other.
+ *
+ * What this deliberately does NOT do is judge the width against today's window. It used to: a value
+ * outside a static range was DISCARDED, and the docblock claimed that stopped a memory from a wider
+ * window reopening a shape the floors reject. It did not — the range was static (a floor and four
+ * times the rail ceiling), so it knew nothing about the window actually on screen, and a 448px rail
+ * remembered from a wide monitor reopened at 448px on a 700px window and starved the reading column
+ * (tempdoc 818 §6c finding 7). Worse, discarding is the wrong remedy even when it fires: it throws
+ * the preference away permanently for being briefly un-honourable, so widening the window never
+ * brings it back.
+ *
+ * The width is therefore restored VERBATIM and clamped at APPLY time, against measured bounds, by
+ * `reconcileBoundaries`. The memory is a preference; the clamp is a fact about the current window;
+ * conflating them loses the preference. Only an explicit reset forgets.
  *
  * Promotion path, deliberately not taken yet: a rail width is a user preference, so its durable home
  * is `UserStateDocument` (a `searchV2.railWidths` slice projected through a `railWidthState.ts`
@@ -133,8 +146,8 @@ export function readStoredRailWidth(rail: RailId): number | null {
     const raw = localStorage.getItem(storageKey(rail));
     if (raw === null) return null;
     const px = Number.parseInt(raw, 10);
-    if (!Number.isFinite(px)) return null;
-    return px >= railFloorPx(rail) && px <= SESSION_RAIL_CEILING_PX * 4 ? px : null;
+    // A non-numeric or non-positive entry is corrupt, not a preference — there is nothing to clamp.
+    return Number.isFinite(px) && px > 0 ? px : null;
   } catch {
     // localStorage unavailable (private mode / SSR / quota) — the rail simply opens automatic.
     return null;

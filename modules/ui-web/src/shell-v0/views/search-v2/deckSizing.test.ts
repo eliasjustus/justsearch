@@ -15,9 +15,11 @@ import {
   LIST_BODY_MIN_PX,
   TRANSCRIPT_MIN_PX,
   TRANSCRIPT_MIN_SHORT_PX,
+  FEED_BODY_MIN_PX,
   clampDeckHeight,
   collectIncompressibleHeights,
   deckFloorFrom,
+  evictionFor,
   listYields,
   transcriptMinPx,
 } from './deckSizing.js';
@@ -106,5 +108,75 @@ describe('818 deckSizing — the list’s minimum honest form (L7)', () => {
   it('does not yield while a row still fits', () => {
     expect(listYields(120 + LIST_BODY_MIN_PX, 120)).toBe(false);
     expect(listYields(400, 120)).toBe(false);
+  });
+});
+
+/**
+ * L7 as amended (tempdoc 818 §6e.4): under pressure a region first COMPRESSES and then EVICTS, in a
+ * DECLARED order, and decisions do neither. These assert the ORDER, which is the part that cannot be
+ * left to flexbox — the deck's floor is its incompressible occupants, so without eviction the excess
+ * leaves the screen, and for a live run that means a held decision leaves the screen.
+ */
+describe('818 deckSizing — the eviction order (L7 amended)', () => {
+  const base = {
+    availablePx: 900,
+    deckFloorPx: 120,
+    transcriptMinPx: TRANSCRIPT_MIN_PX,
+    hasList: true,
+    hasFeed: true,
+  };
+
+  it('nothing yields while the column can hold every body', () => {
+    expect(evictionFor(base)).toEqual({ listYields: false, feedYields: false });
+  });
+
+  it('the LIST yields first — its count line states the same fact its rows do', () => {
+    // Room for the floor + the feed, but not for the list as well.
+    const availablePx = TRANSCRIPT_MIN_PX + base.deckFloorPx + FEED_BODY_MIN_PX + 1;
+    expect(evictionFor({ ...base, availablePx })).toEqual({
+      listYields: true,
+      feedYields: false,
+    });
+  });
+
+  it('the FEED yields only once the list already has, never before it', () => {
+    const availablePx = TRANSCRIPT_MIN_PX + base.deckFloorPx;
+    expect(evictionFor({ ...base, availablePx })).toEqual({
+      listYields: true,
+      feedYields: true,
+    });
+  });
+
+  it('a body that is not mounted is not evicted — absence is not a yield', () => {
+    const availablePx = TRANSCRIPT_MIN_PX;
+    expect(evictionFor({ ...base, availablePx, hasFeed: false })).toEqual({
+      listYields: true,
+      feedYields: false,
+    });
+    expect(evictionFor({ ...base, availablePx, hasList: false })).toEqual({
+      listYields: false,
+      feedYields: true,
+    });
+  });
+
+  it('the DECISIONS are never what yields: the floor is spent before any body is', () => {
+    // Even with nothing left at all, eviction only ever reports on the two BODIES — the floor (which
+    // carries the run controls) is an input it never proposes to reduce.
+    const verdict = evictionFor({ ...base, availablePx: 0 });
+    expect(Object.keys(verdict).sort()).toEqual(['feedYields', 'listYields']);
+    expect(verdict).toEqual({ listYields: true, feedYields: true });
+  });
+
+  it('a short window yields sooner, because its transcript floor is smaller', () => {
+    // The same column height, judged against the two different reading floors: the short floor
+    // leaves more for the deck, so a state that evicts under the roomy floor need not under it.
+    const availablePx = TRANSCRIPT_MIN_SHORT_PX + base.deckFloorPx + FEED_BODY_MIN_PX + LIST_BODY_MIN_PX;
+    expect(evictionFor({ ...base, availablePx, transcriptMinPx: TRANSCRIPT_MIN_SHORT_PX })).toEqual({
+      listYields: false,
+      feedYields: false,
+    });
+    expect(evictionFor({ ...base, availablePx, transcriptMinPx: TRANSCRIPT_MIN_PX }).listYields).toBe(
+      true,
+    );
   });
 });

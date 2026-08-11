@@ -26,10 +26,14 @@
 export const TRANSCRIPT_MIN_PX = 260;
 
 /**
- * The same floor below the 814 block-axis breakpoint. A ~790px window has ~430px of centre column
- * after the surface chrome; holding the roomy floor there would leave the deck at its own floor with
- * no list at all, so the reading floor yields first — the transcript still keeps priority, it just
- * keeps less of it.
+ * The same floor below the 814 block-axis breakpoint. A short window has less to give, so the
+ * reading floor yields first — the transcript still keeps priority, it just keeps less of it.
+ *
+ * The measured figure, since a wrong one lived here for two slices: at a 1366×790 viewport the
+ * centre column is 642px (ui-shot `search-v2-small`, tempdoc 818 §6g C2), not the ~430px this
+ * comment used to assert. That mis-estimate is what made §6c finding 3 read as a cliff at 790px
+ * when it is really a continuum — a deck carrying the run's occupants reaches ~625px, which fits
+ * 642px while starving the transcript, and only clips below ~740px of viewport height.
  */
 export const TRANSCRIPT_MIN_SHORT_PX = 160;
 
@@ -116,4 +120,58 @@ export function clampDeckHeight(input: DeckClampInput): number {
  */
 export function listYields(heightPx: number, floorPx: number): boolean {
   return heightPx - floorPx < LIST_BODY_MIN_PX;
+}
+
+/**
+ * The room the run FEED needs to be worth rendering as a feed: one entry line plus the step line's
+ * neighbour. Below it the feed has no honest rendering as a list of events, so it takes its own
+ * minimum honest form — a count of what the run has done — exactly as the list takes its count line.
+ */
+export const FEED_BODY_MIN_PX = 64;
+
+export interface EvictionInput {
+  /** The centre column's height — everything the transcript and the deck share. */
+  readonly availablePx: number;
+  /** The deck's incompressible occupants (band, chips, meters, and any run CONTROLS). */
+  readonly deckFloorPx: number;
+  /** The transcript's minimum honest form for this window height. */
+  readonly transcriptMinPx: number;
+  readonly hasList: boolean;
+  readonly hasFeed: boolean;
+}
+
+/** Which deck bodies have been evicted to their minimum honest form, in the declared order. */
+export interface Eviction {
+  readonly listYields: boolean;
+  readonly feedYields: boolean;
+}
+
+/**
+ * L7 (as amended, tempdoc 818 §6e.4) — a region under pressure first COMPRESSES and then EVICTS,
+ * in a DECLARED order, and decisions never do either.
+ *
+ * The order is authored here rather than emerging from flexbox because flexbox's own answer is the
+ * wrong one: the deck cannot shrink (its floor is its incompressible occupants) and `.centre` clips,
+ * so without eviction the excess leaves the screen — which for a live run means a held decision
+ * leaves the screen, the one thing L7 forbids. Eviction is what lets the deck give room back.
+ *
+ * The list yields before the feed because a search list is the deck's oldest and most re-derivable
+ * occupant — its count line states the same fact the rows do (L6) — whereas the feed is the only
+ * live account of a run in progress. The transcript yields last and by flexbox (it is the one
+ * `flex: 1 1 auto` occupant), which is the same priority `clampDeckHeight` gives it on the manual
+ * boundary: the reading floor is a floor, not a guarantee, and it is the last thing to bend.
+ */
+export function evictionFor(input: EvictionInput): Eviction {
+  // What the deck may occupy while the transcript still keeps its own minimum honest form.
+  const budgetPx = input.availablePx - input.transcriptMinPx;
+  const feedNeed = input.hasFeed ? FEED_BODY_MIN_PX : 0;
+  const listNeed = input.hasList ? LIST_BODY_MIN_PX : 0;
+
+  if (input.deckFloorPx + listNeed + feedNeed <= budgetPx) {
+    return { listYields: false, feedYields: false };
+  }
+  if (input.deckFloorPx + feedNeed <= budgetPx) {
+    return { listYields: input.hasList, feedYields: false };
+  }
+  return { listYields: input.hasList, feedYields: input.hasFeed };
 }

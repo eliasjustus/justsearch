@@ -250,6 +250,43 @@
       ],
       "requiredSelectors": [".degradation-banner-collapsed", ".message.user"],
       "maxScrollableRegions": 1
+    },
+    {
+      "uiShotStep": "search-v2-window",
+      "$comment": "Tempdoc 818 §6g C2 — the Search v2 window enters this register. It had been BORROWING the register's numbers by prose comment for five slices (railSizing.ts derives its two floors from the `chat-occlusion` rows below) while declaring no rows of its own: the numbers came in, the judgment stayed out, and the §6c critical pass is what that cost — a layout-axis regression no unit test could see, shipped for two slices because 'the screenshot path was down'. `.rail`'s CEILING is finding 1's rendered witness: the window's three regions sit on a horizontal track, and when `.body` (the scroll-policy region) and `.win` (that track) were carried on ONE node the track inherited `flex-direction: column`, so the rail spanned the full window — SPRAWLED against a ceiling of 448, which is the code's own SESSION_RAIL_CEILING_PX ('a rail wider than twice its automatic width is no longer periphery'). `.centre`'s FLOOR is finding 7's: a remembered over-wide rail is never re-clamped against a narrower window, starving the reading column below the 384px the `chat-occlusion` row already pins for its sibling. The `.rail` minWidthPx is the anti-vacuity companion this register's doctrine requires — a rail that failed to render yields a 0x0 rect and would satisfy a ceiling trivially; 52 is the product's collapsed strip (`--rail-width`), the rail's own minimum honest form. The scroller counts are MEASURED, not derived: this window's claim is one scroller per REGION (not 814 §D3's one per surface — see the note on that citation in SearchV2View.ts), so the honest number is what the capture observes. At this step exactly one region overflows (the live results list), and the floor/ceiling pair is 1/1 so the rule witnesses a real scroller instead of passing vacuously on a capture with none. `.centre` is asserted non-scrollable because it is `overflow: hidden` BY DESIGN, which is exactly the property that makes finding 3's clipping possible — a regression that made it scroll would hide that defect rather than fix it. The document region's floor is asserted on `.reading`, this window's own wrapper, and NOT on `.document-pane` as the first draft of this row had it: `.document-pane` is a UnifiedChatView ZONE class (see `ui_selectors.py`), not a class the shared `<jf-document-pane>` component carries, so it does not exist in this window's DOM and the row errored on the first gate run. It is named here because that error is the register's anti-vacuity doctrine paying for itself — a selector missing from the capture is an ERROR rather than a silent pass, which is the only reason a row that could never have asserted anything was caught on day one instead of reading green forever.",
+      "elements": [
+        {
+          "selector": ".rail",
+          "minWidthPx": 52,
+          "maxWidthPx": 448
+        },
+        {
+          "selector": ".centre",
+          "minWidthPx": 384
+        },
+        {
+          "selector": ".reading",
+          "minWidthPx": 384
+        }
+      ],
+      "requiredSelectors": [".rail", ".centre", ".reading"],
+      "nonScrollableSelectors": [".centre"],
+      "minScrollableRegions": 1,
+      "maxScrollableRegions": 1
+    },
+    {
+      "uiShotStep": "search-v2-small",
+      "$comment": "Tempdoc 818 §6g C2 — the short-viewport camera (1366x790, below the shared 820px block-axis breakpoint). HONEST SCOPE, because the register cannot state it and a future reader would otherwise assume it: this step does NOT witness §6c finding 3. That finding is the run CONTROLS clipped below the fold, and a run cannot be held in flight under `--fixtures` — Playwright's `route.fulfill` serves only a complete body, so a fixtured run drains to its terminal instantly (agent_stream_fixture.py:11-17, the cost 814 §D8.3 already recorded) and this window unmounts its run region at that terminal. Without the run the deck measures ~290px against a ~430px column, so a `.run-controls` row here would pass for reasons unrelated to the finding — a proxy assertion in register form. Finding 3's witness is the one-time live pass (818 §6e.5's measured-audit tier) and the law is listed `unverified` in the promotion table. What this step DOES witness is the committed state at short height, where the transcript and the deck genuinely compete for the centre column: the deck must stay within the fold, and `requiredSelectors` proves the capture actually reached that state rather than passing on an empty window. The scroller pair is 2/2, measured: at this step the transcript AND the list both overflow, and neither nests inside the other — which is the whole of this window's one-per-region claim, asserted as a number rather than as prose. A `minHeightPx` floor on `.transcript` is deliberately NOT authored: the code's short reading floor (160px) is the grip's DRAG clamp and the automatic layout enforces no such floor, so a row here would be asserting a constant that does not describe the un-dragged state. The first capture measured the transcript at 256px — comfortably above that floor, so the risk this row was reserved for does not exist AT THIS STATE. It is not retired, only relocated: the state where the sum genuinely threatens the transcript is the one with the run region mounted, which is exactly the state no fixture can reach (see the run note above), so it belongs to the live pass with the rest of finding 3.",
+      "elements": [
+        {
+          "selector": ".deck",
+          "maxBottomPx": 790
+        }
+      ],
+      "requiredSelectors": [".transcript", ".deck", ".frozen"],
+      "nonScrollableSelectors": [".centre"],
+      "minScrollableRegions": 2,
+      "maxScrollableRegions": 2
     }
   ]
 }

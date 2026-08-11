@@ -58,12 +58,23 @@
  *  - **the small-window pass** — the surface consumes tempdoc 814's block-axis breakpoint authority
  *    (`compositionLayout.SHORT_VIEWPORT_*`) rather than minting a second one: the transcript owns
  *    the centre column's slack, the chrome yields below the breakpoint, and each region owns exactly
- *    one scroller (814 §D3). It is deliberately NOT registered in
- *    `governance/ui-proportion-baseline.v1.json`: that register is keyed by ui-shot STEP, so
- *    declaring this window would require a new deterministic capture step for a DEEPLINK/DEVELOPER
- *    surface with no rail entry — the same reason `governance/sandbox-coverage.v1.json` already
- *    carries it as `tier: exempt`. At the §5 cutover, both rows move together: the exemption becomes
- *    a sandbox tier and the window declares its bands' ceilings + the transcript's share floor.
+ *    one scroller.
+ *
+ *    That last claim is this window's OWN, and it is deliberately not 814 §D3's: D3 says one scroller
+ *    per SURFACE (`.conversation` becomes the single scrolling region of the chat surface), and this
+ *    window has five side-by-side regions that each scroll. The two are compatible in spirit — D3
+ *    attacks NESTED scrollers, each of which marks a place a layout ran out of room and solved it
+ *    locally, and none of these nest — but citing D3 as the warrant said something D3 does not say.
+ *    The claim is measured on its own terms by the scroller rows of the two ui-shot steps below.
+ *
+ *    Registered in `governance/ui-proportion-baseline.v1.json` (`search-v2-window`,
+ *    `search-v2-small`) since tempdoc 818 §6g C2. It was previously NOT registered, with the cost
+ *    deferred to the §5 cutover; the §6c critical pass spent that deferral by showing it was
+ *    circular — the cutover is gated on a comparison campaign that is itself gated on this window
+ *    being spatially correct, and four of the thirteen findings were geometry no unit test can see.
+ *    `governance/sandbox-coverage.v1.json` still carries the surface as `tier: exempt`, and that is
+ *    correct rather than an oversight: that register is release-candidate validation of user
+ *    journeys, whose trigger genuinely IS the cutover.
  *
  * Slice 5 is the presentation pass's second half — horizontal space, elaboration and input:
  *  - **the rails' movable boundaries (L13 complete)** — both rails carry a grip, with the clamps in
@@ -123,7 +134,11 @@ import {
   subscribeConversationList,
 } from '../../state/conversationListStore.js';
 import { subscribeAiState, type AiState } from '../../state/aiStateStore.js';
-import { projectAvailability, type Availability } from '../../state/availability.js';
+import {
+  projectAvailability,
+  unavailableBecause,
+  type Availability,
+} from '../../state/availability.js';
 import { reasonFor } from '../../state/readinessNotice.js';
 import { requestSurfaceNavigation } from '../../controllers/navigateRequest.js';
 import { projectBudget, projectContextHorizon } from '../budgetProjection.js';
@@ -159,12 +174,14 @@ import {
   projectIndex,
   projectSessionName,
   projectTranscript,
+  recordsFromThread,
   refuseAnswer,
   type FrozenSearchRecord,
   type RunOutcome,
   type SearchCapture,
   type SessionRecord,
   type TranscriptAnswerItem,
+  type TranscriptForeignItem,
   type TranscriptFrozenItem,
   type TranscriptItem,
   type TranscriptRunItem,
@@ -182,6 +199,8 @@ import {
   listYields,
   transcriptMinPx,
 } from './deckSizing.js';
+import { reconcileBoundaries, type BoundaryState } from './boundaryReconciler.js';
+import { BoundaryReconcilerController } from './BoundaryReconcilerController.js';
 import {
   RAIL_KEY_STEP_PX,
   clampRailWidth,
@@ -196,6 +215,7 @@ import {
   type RailId,
 } from './railSizing.js';
 import { filterTrail, mergeRecents, readTrail, recordSubmittedQuery } from './queryTrail.js';
+import { fetchUnifiedThread } from '../unifiedThreadClient.js';
 import { subscribePinnedSearches, type SearchPin } from '../../state/pinnedSearchState.js';
 import type { DocumentLineRange } from '../../components/documentPane/DocumentPane.js';
 import type { CitationSelectDetail } from '../../components/chat/citationTypes.js';
@@ -295,6 +315,19 @@ export class SearchV2View extends JfElement {
   private readingDocPath: string | null = null;
   /** L9 — the optimistic hint, read from the same `/api/status` field the shipped window reads. */
   private sessionLocked = false;
+  /**
+   * L4/L9 — the session's IDENTITY as far as an in-flight terminal is concerned. Record ids are
+   * positional (`r0`, `r1`, …) and the array resets when the user starts a new session, so the ids
+   * recur; an ask that outlives its session would otherwise fill a slot belonging to a DIFFERENT
+   * question (§6c finding 2). Each dispatch captures this value and every terminal checks it, so a
+   * stale stream terminates against nothing instead of against the wrong turn. Injected rather than
+   * clocked, and never part of an id — the projections stay exactly as they were.
+   */
+  private sessionEpoch = 0;
+  /** The session being fetched, so the rail can say so rather than looking inert. */
+  private loadingSessionId: string | null = null;
+  /** L9/§6c finding 2 — why the last send was refused, or null. Drives the visible refusal. */
+  private sendRefusal: { rung: 'ask' | 'agent'; reason: string } | null = null;
   /** L9 — set only by {@link refuseLocked}: a send the lock actually refused. */
   private lockRefused = false;
   private contextPromptTokens: number | null = null;
@@ -311,8 +344,16 @@ export class SearchV2View extends JfElement {
   /** L7 — set by the Halt control, so the receipt says the run was halted rather than "finished". */
   private haltRequested = false;
   private steerDraft = '';
-  /** L7 — the ONLY compressible deck occupant: the live search LIST body. */
+  /**
+   * L7 — the deck's compressible bodies, evicted to their minimum honest form. `listCollapsed` is
+   * also the user's own toggle; `feedCollapsed` has no toggle because a run's feed is not something
+   * the user asked for room for. Both are OUTPUTS of {@link reconcileBoundaries} whenever the window
+   * decides, and the toggle is an input to the next reconcile rather than a competing authority.
+   */
   private listCollapsed = false;
+  private feedCollapsed = false;
+  /** True while the user has explicitly collapsed the list, so a reconcile cannot silently reopen it. */
+  private listCollapsedByUser = false;
   /**
    * L7/L13 — the deck's user-chosen height. `null` is AUTOMATIC (the deck sizes to its content), and
    * double-clicking the grip returns to it. Deliberately NOT persisted: a height is a per-session
@@ -320,18 +361,33 @@ export class SearchV2View extends JfElement {
    */
   private deckHeightPx: number | null = null;
   /**
-   * L13 — the rails' chosen widths, `null` for automatic. Unlike the deck's height these are
-   * REMEMBERED (`railSizing`'s storage edge): a width is a preference about this window, not a shape
-   * of one session's contents, so it survives the session it was chosen in.
+   * L13 — the rails' CHOSEN widths, `null` for automatic: the user's preference, not what is on
+   * screen. Unlike the deck's height these are REMEMBERED (`railSizing`'s storage edge): a width is
+   * a preference about this window, not a shape of one session's contents.
+   *
+   * What renders is {@link applied}, which is these clamped against the window as it is right now.
+   * Keeping the two apart is the whole of §6c finding 7's fix: a preference narrowed to fit a small
+   * window must come back when the window grows, so the clamp may never be written back here.
    */
   private sessionRailPx: number | null = null;
   private documentRailPx: number | null = null;
+  /** The reconciled, render-ready boundaries. Recomputed at mount, on resize, and at gesture end. */
+  private applied: BoundaryState = {
+    sessionRailPx: null,
+    documentRailPx: null,
+    deckHeightPx: null,
+    deckMaxPx: null,
+    railCollapsed: false,
+    eviction: { listYields: false, feedYields: false },
+  };
   /** L13 — the sessions rail below its legible width takes its collapsed strip form. */
   private railCollapsed = false;
   /** The omnibox query trail (L12): open only while the user is choosing from it. */
   private historyOpen = false;
   /** Which trail row the keyboard walk is on; -1 means the input itself still holds focus. */
   private historyCursor = -1;
+  /** True only while this window is returning focus to the composer itself (§6c finding 9). */
+  private reopenSuppressed = false;
   /** The shared pinned-search projection — read, never copied. */
   private pins: readonly SearchPin[] = [];
   /** This window's own recents (the queries that ran but were never committed). */
@@ -345,6 +401,8 @@ export class SearchV2View extends JfElement {
   /** The last observed AI state, kept so the escalation affordances can project their availability. */
   private aiSnapshot: AiState | null = null;
   private choreographyTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The records the RUNNING choreography is about — the only ones it may animate (§6c finding 10). */
+  private committingIds: readonly string[] = [];
   private unsubscribePins: (() => void) | null = null;
   private unsubscribeSearch: (() => void) | null = null;
   private unsubscribeShortViewport: (() => void) | null = null;
@@ -357,6 +415,20 @@ export class SearchV2View extends JfElement {
   constructor() {
     super();
     this.apiBase = '';
+    // L13 — the RESIZE caller of the reconciliation seam. Constructed for its registration: a
+    // ReactiveController adds itself to its host, and this one exposes no value to read back (unlike
+    // its `adaptiveDensity`/`adaptiveBar` siblings, which the host queries), so holding a reference
+    // would only be a field nothing uses.
+    new BoundaryReconcilerController(this);
+  }
+
+  /**
+   * The MOUNT caller: a remembered width meets this window for the first time here. It is explicit
+   * rather than left to the controller's first frame because the controller no-ops where
+   * `ResizeObserver` is undefined, and restoring a preference must not depend on an optional API.
+   */
+  protected override firstUpdated(): void {
+    this.reconcileBoundaries();
   }
 
   override connectedCallback(): void {
@@ -393,12 +465,12 @@ export class SearchV2View extends JfElement {
       this.pins = pins;
       this.requestUpdate();
     });
-    // L13 — the rails open at the width this user last chose. A stored width outside today's clamps
-    // is discarded by the reader, so a memory from a wider window cannot open a shape the floors
-    // reject.
+    // L13 — the rails open at the width this user last chose, restored VERBATIM. It is reconciled
+    // against this window in `firstUpdated`, once there is a box to measure: the reader deliberately
+    // does not judge a remembered width, because a clamp is a fact about the window on screen and
+    // discarding the preference for briefly not fitting would lose it for good (§6c finding 7).
     this.sessionRailPx = readStoredRailWidth('sessions');
     this.documentRailPx = readStoredRailWidth('document');
-    this.railCollapsed = this.sessionRailPx !== null && railYields(this.sessionRailPx);
     this.trail = readTrail();
     this.addEventListener('animationend', this.onChoreographyEnd);
     // The ⌥↑/⌥↓ index walk is a WINDOW-level key, so it listens on the host rather than on any one
@@ -564,9 +636,10 @@ export class SearchV2View extends JfElement {
   private delegate(): void {
     const text = this.draft.trim();
     if (!text) return; // L10 — an empty draft submits nowhere, on this rung too.
-    if (this.refuseIfLocked()) return;
+    if (this.refuseSend('agent')) return;
     const ctrl = this.ensureAgentCtrl();
     this.records = appendUserTurn(this.records, text);
+    const committedIds = [this.records[this.records.length - 1]?.id ?? ''];
     this.runOwned = true;
     this.runEntryStart = ctrl.conversation.length;
     this.haltRequested = false;
@@ -574,7 +647,7 @@ export class SearchV2View extends JfElement {
     this.flipped = false;
     this.lockRefused = false;
     this.closeHistory();
-    this.beginCommitChoreography();
+    this.beginCommitChoreography(committedIds);
     this.requestUpdate();
     void dispatchRunControl(ctrl, { kind: 'initiate', prompt: text });
   }
@@ -634,11 +707,12 @@ export class SearchV2View extends JfElement {
    * same act of committing a turn, and a periphery that reordered itself on one but not the other
    * would be teaching two different causal stories.
    */
-  private beginCommitChoreography(): void {
+  private beginCommitChoreography(ids: readonly string[]): void {
     // Reduced motion is honoured twice: the CSS media block is the guarantee (it also covers a
     // preference changed while the class is applied), and this early return keeps the class off the
     // host entirely, so no consumer can read "committing" as a state that only some users enter.
     if (prefersReducedMotion()) return;
+    this.committingIds = ids;
     this.classList.add(COMMITTING_CLASS);
     if (this.choreographyTimer !== null) clearTimeout(this.choreographyTimer);
     this.choreographyTimer = setTimeout(() => this.endCommitChoreography(), COMMIT_CHOREOGRAPHY_MS);
@@ -651,6 +725,7 @@ export class SearchV2View extends JfElement {
       this.choreographyTimer = null;
     }
     this.classList.remove(COMMITTING_CLASS);
+    this.committingIds = [];
   }
 
   private onChoreographyEnd = (e: Event): void => {
@@ -691,7 +766,15 @@ export class SearchV2View extends JfElement {
     const availablePx = centre.getBoundingClientRect().height;
     const floorPx = this.deckFloorPx(deck);
     const grip = e.currentTarget as HTMLElement;
-    grip.setPointerCapture?.(e.pointerId);
+    // Capture is an ENHANCEMENT, not a precondition: it keeps the gesture on the grip when the
+    // pointer outruns it. `?.` guards the method's existence but not its throw — an inactive
+    // pointer id raises NotFoundError, which propagated out of pointerdown and killed the drag
+    // before a single listener was attached. The drag proceeds uncaptured instead.
+    try {
+      grip.setPointerCapture?.(e.pointerId);
+    } catch {
+      // No capture: the gesture still works while the pointer stays over the grip.
+    }
     let height = startHeightPx;
     const move = (ev: PointerEvent): void => {
       height = clampDeckHeight({
@@ -710,15 +793,22 @@ export class SearchV2View extends JfElement {
       }
     };
     const up = (): void => {
-      grip.removeEventListener('pointermove', move);
-      grip.removeEventListener('pointerup', up);
-      grip.removeEventListener('pointercancel', up);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      // GESTURE END — the third caller of the one reconciliation seam.
       this.deckHeightPx = height;
+      this.reconcileBoundaries();
       this.requestUpdate();
     };
-    grip.addEventListener('pointermove', move);
-    grip.addEventListener('pointerup', up);
-    grip.addEventListener('pointercancel', up);
+    // On the WINDOW, not on the grip. The grip is ~12px; any real drag leaves it within the first
+    // few pixels, so grip-bound listeners only ever worked while `setPointerCapture` happened to
+    // succeed — and when it silently did not, the gesture died with no error and no effect
+    // (§6c finding 23). Capture stays as an enhancement; the drag no longer depends on it, nor on
+    // the grip element surviving a re-render mid-gesture.
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
   }
 
   /** The keyboard half of the SAME boundary — same clamp, same floor, one nudge at a time. */
@@ -741,7 +831,7 @@ export class SearchV2View extends JfElement {
       availablePx: centre.getBoundingClientRect().height,
       transcriptMinPx: transcriptMinPx(this.shortViewport),
     });
-    this.listCollapsed = listYields(this.deckHeightPx, floorPx);
+    this.reconcileBoundaries();
     this.requestUpdate();
   }
 
@@ -750,7 +840,8 @@ export class SearchV2View extends JfElement {
     const deck = this.deckElement();
     if (deck) deck.style.removeProperty('flex');
     this.deckHeightPx = null;
-    this.listCollapsed = false;
+    this.listCollapsedByUser = false;
+    this.reconcileBoundaries();
     this.requestUpdate();
   }
 
@@ -764,22 +855,89 @@ export class SearchV2View extends JfElement {
     return rail === 'sessions' ? this.sessionRailPx : this.documentRailPx;
   }
 
+  /** The horizontal track — the box whose size decides every boundary (the controller observes it). */
+  boundaryBoxElement(): HTMLElement | null {
+    return (this.shadowRoot?.querySelector('.win') as HTMLElement | null) ?? null;
+  }
+
   /**
-   * L13 — a rail's clamps, computed AT GESTURE TIME from what the window is currently holding. The
+   * The width the three regions actually share: the track minus its chrome. The grips sit in the
+   * row and the track carries a gap between every pair of children, so a ceiling computed against
+   * the raw track width is generous by exactly that chrome — which is enough to let the centre
+   * column land under its own floor while every clamp agrees it is fine (§6c finding 13b).
+   */
+  private trackAvailableWidthPx(): number {
+    const win = this.boundaryBoxElement();
+    if (!win) return 0;
+    const grips = [...(this.shadowRoot?.querySelectorAll('button.vgrip') ?? [])];
+    const gripsPx = grips.reduce((sum, g) => sum + g.getBoundingClientRect().width, 0);
+    const gapPx = Number.parseFloat(getComputedStyle(win).columnGap || '0') || 0;
+    // One gap between each adjacent pair of flex children.
+    const childCount = win.children.length;
+    const gapsPx = childCount > 1 ? gapPx * (childCount - 1) : 0;
+    return win.getBoundingClientRect().width - gripsPx - gapsPx;
+  }
+
+  /**
+   * L13 — the ONE reconciliation call. Its three callers are the whole lifecycle of a boundary:
+   * MOUNT (a remembered width meets this window for the first time), RESIZE (the window moved under
+   * boundaries that were legal a moment ago) and GESTURE END (a new choice). §6c findings 3 and 7
+   * were both "the clamp existed but only a gesture ever ran it"; routing all three through one
+   * entry point is what makes that state unrepresentable rather than merely fixed.
+   */
+  reconcileBoundaries(): void {
+    const centre = this.shadowRoot?.querySelector('.centre') as HTMLElement | null;
+    const deck = this.deckElement();
+    if (!this.boundaryBoxElement() || !centre) return;
+    const next = reconcileBoundaries({
+      availableWidthPx: this.trackAvailableWidthPx(),
+      availableHeightPx: centre.getBoundingClientRect().height,
+      sessionRailChosenPx: this.sessionRailPx,
+      // Rule 4 — the width the rail HAS, so a regime switch about a rendered width is given one.
+      sessionRailMeasuredPx: this.railElement('sessions')?.getBoundingClientRect().width ?? 0,
+      documentRailChosenPx: this.documentRailPx,
+      documentOpen: this.readingDocPath !== null,
+      deckChosenPx: this.deckHeightPx,
+      deckFloorPx: deck ? this.deckFloorPx(deck) : 0,
+      shortViewport: this.shortViewport,
+      hasList: true,
+      hasFeed: this.runOwned,
+    });
+    this.applyBoundaryState(next);
+  }
+
+  /** Adopt a reconciled state, re-rendering only when something actually moved. */
+  private applyBoundaryState(next: BoundaryState): void {
+    const prev = this.applied;
+    // The user's own collapse survives reconciliation: eviction may TAKE the list's rows away, but
+    // it may not hand them back to someone who put them away themselves.
+    const listCollapsed = this.listCollapsedByUser || next.eviction.listYields;
+    const changed =
+      prev.sessionRailPx !== next.sessionRailPx ||
+      prev.documentRailPx !== next.documentRailPx ||
+      prev.deckHeightPx !== next.deckHeightPx ||
+      prev.deckMaxPx !== next.deckMaxPx ||
+      prev.railCollapsed !== next.railCollapsed ||
+      prev.eviction.listYields !== next.eviction.listYields ||
+      prev.eviction.feedYields !== next.eviction.feedYields ||
+      this.listCollapsed !== listCollapsed ||
+      this.feedCollapsed !== next.eviction.feedYields;
+    this.applied = next;
+    this.railCollapsed = next.railCollapsed;
+    this.listCollapsed = listCollapsed;
+    this.feedCollapsed = next.eviction.feedYields;
+    if (changed) this.requestUpdate();
+  }
+
+  /**
+   * L13 — a rail's clamps for a GESTURE, computed from what the window is currently holding. The
    * ceiling is the OTHER side's minimum honest form: whatever leaves the centre column its reading
    * floor beside the region on the far side, which is why opening the document pane tightens what
    * the sessions rail may take without either boundary knowing about the other.
    */
   private railBounds(rail: RailId): { floorPx: number; ceilingPx: number } | null {
-    const win = this.shadowRoot?.querySelector('.win') as HTMLElement | null;
-    if (!win) return null;
-    // The grips themselves occupy the row, so the width the three regions actually share is the
-    // window minus them — otherwise the centre column's floor would be short by the chrome.
-    const gripsPx = [...(this.shadowRoot?.querySelectorAll('button.vgrip') ?? [])].reduce(
-      (sum, g) => sum + g.getBoundingClientRect().width,
-      0,
-    );
-    const availablePx = win.getBoundingClientRect().width - gripsPx;
+    if (!this.boundaryBoxElement()) return null;
+    const availablePx = this.trackAvailableWidthPx();
     const sessionsPx = this.railElement('sessions')?.getBoundingClientRect().width ?? 0;
     const documentPx = this.railElement('document')?.getBoundingClientRect().width ?? 0;
     return {
@@ -792,11 +950,21 @@ export class SearchV2View extends JfElement {
   }
 
   /** The width a gesture starts from: the chosen width, else what is on screen, else automatic. */
+  /**
+   * L13 (§6h rule 3) — where a gesture STARTS: the width the boundary actually has on screen.
+   *
+   * It used to prefer the CHOSEN width, and that is the whole of §6c finding 21. A memory the
+   * current window cannot honour is clamped for rendering but kept verbatim in storage, so chosen
+   * and on-screen routinely differ — and starting from the memory meant the gesture computed from a
+   * width the user could not see. Live, that showed as the stored width moving 240 → 107 while the
+   * rail on screen never budged; the same gap makes a pull LEFT snap back to the ceiling and a pull
+   * out of the collapsed strip jump to an unrelated width. A boundary that follows the pointer has
+   * to start from where the pointer grabbed it.
+   */
   private railStartWidthPx(rail: RailId): number {
-    const chosen = this.railWidthPx(rail);
-    if (chosen !== null) return chosen;
     const measured = this.railElement(rail)?.getBoundingClientRect().width ?? 0;
-    return measured > 0 ? measured : railDefaultPx(rail);
+    if (measured > 0) return measured;
+    return this.railWidthPx(rail) ?? railDefaultPx(rail);
   }
 
   /**
@@ -814,22 +982,38 @@ export class SearchV2View extends JfElement {
     // The sessions rail grows rightward; the document region grows leftward. One clamp, two signs.
     const grow = rail === 'sessions' ? 1 : -1;
     const grip = e.currentTarget as HTMLElement;
-    grip.setPointerCapture?.(e.pointerId);
+    // Capture is an ENHANCEMENT, not a precondition: it keeps the gesture on the grip when the
+    // pointer outruns it. `?.` guards the method's existence but not its throw — an inactive
+    // pointer id raises NotFoundError, which propagated out of pointerdown and killed the drag
+    // before a single listener was attached. The drag proceeds uncaptured instead.
+    try {
+      grip.setPointerCapture?.(e.pointerId);
+    } catch {
+      // No capture: the gesture still works while the pointer stays over the grip.
+    }
     let width = startWidthPx;
     const move = (ev: PointerEvent): void => {
       width = clampRailWidth({ ...bounds, startWidthPx, deltaPx: (ev.clientX - startX) * grow });
       el.style.flex = `0 0 ${width}px`;
       if (rail === 'sessions') this.syncRailCollapsed(width);
+      // The gesture is live, so it is the one place the applied width is the gesture's own — keeping
+      // `applied` in step means a render mid-drag does not fight the inline style being written here.
+      if (rail === 'sessions') this.applied = { ...this.applied, sessionRailPx: width };
+      else this.applied = { ...this.applied, documentRailPx: width };
     };
     const up = (): void => {
-      grip.removeEventListener('pointermove', move);
-      grip.removeEventListener('pointerup', up);
-      grip.removeEventListener('pointercancel', up);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
       this.adoptRailWidth(rail, width);
     };
-    grip.addEventListener('pointermove', move);
-    grip.addEventListener('pointerup', up);
-    grip.addEventListener('pointercancel', up);
+    // On the WINDOW — see the deck grip's note. This boundary showed the failure most sharply:
+    // dragging out of the collapsed strip ALSO flips the rail's contents mid-gesture, so the grip
+    // element itself can be re-rendered under the pointer, taking any grip-bound listener and any
+    // capture with it.
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
   }
 
   /** The keyboard half of the SAME boundary — same clamp, same floor, one nudge at a time. */
@@ -852,15 +1036,24 @@ export class SearchV2View extends JfElement {
     this.adoptRailWidth(rail, width);
   }
 
-  /** L13 — a chosen width is adopted into view state AND remembered; the two are one act. */
+  /**
+   * L13 — a chosen width is adopted into view state AND remembered; the two are one act. What is
+   * stored is the user's CHOICE; what renders is that choice reconciled against the window, which
+   * is why this ends at the seam rather than writing an applied width straight to the DOM.
+   */
   private adoptRailWidth(rail: RailId, px: number): void {
-    if (rail === 'sessions') {
-      this.sessionRailPx = px;
-      this.syncRailCollapsed(px);
-    } else {
-      this.documentRailPx = px;
-    }
-    storeRailWidth(rail, px);
+    // §6c finding 24 — memory holds a width the rail can actually RENDER, never one it cannot.
+    // A gesture that ends under the legibility threshold produces the STRIP on screen, so the strip
+    // is what it remembers; storing the raw 112 instead recorded a width no state of the rail
+    // corresponds to, and every later mount read it back as "collapsed" on any window at all. This
+    // is rule 4 applied to memory: do not remember a size the region cannot have.
+    const adopted =
+      rail === 'sessions' && railYields(px) ? railFloorPx('sessions') : px;
+    if (rail === 'sessions') this.sessionRailPx = adopted;
+    else this.documentRailPx = adopted;
+    storeRailWidth(rail, adopted);
+    // GESTURE END — the third caller of the one reconciliation seam.
+    this.reconcileBoundaries();
     this.requestUpdate();
   }
 
@@ -878,13 +1071,10 @@ export class SearchV2View extends JfElement {
    */
   private resetRailSize(rail: RailId): void {
     this.railElement(rail)?.style.removeProperty('flex');
-    if (rail === 'sessions') {
-      this.sessionRailPx = null;
-      this.railCollapsed = false;
-    } else {
-      this.documentRailPx = null;
-    }
+    if (rail === 'sessions') this.sessionRailPx = null;
+    else this.documentRailPx = null;
     forgetRailWidth(rail);
+    this.reconcileBoundaries();
     this.requestUpdate();
   }
 
@@ -973,16 +1163,33 @@ export class SearchV2View extends JfElement {
 
   /** The trail opens on the focus of an EMPTY draft — a draft in progress is not a history search. */
   private onDraftFocus(): void {
+    // Focus we returned ourselves is not the user reaching for their history.
+    if (this.reopenSuppressed) return;
     if (this.draft.trim()) return;
     this.historyOpen = true;
     this.historyCursor = -1;
     this.requestUpdate();
   }
 
-  private closeHistory(): void {
+  /**
+   * Close the trail, optionally returning focus to the composer.
+   *
+   * The refocus has to live HERE because only this function knows the focus move is ours. Escape
+   * from inside the list used to close the trail and then call `input.focus()` from the key handler
+   * — which fired a real focus event, which `onDraftFocus` could not tell from the user clicking
+   * into an empty box, so it reopened the trail and the press did nothing (§6c finding 9). One
+   * place knows; one place suppresses.
+   */
+  private closeHistory(returnFocus = false): void {
     if (!this.historyOpen) return;
     this.historyOpen = false;
     this.historyCursor = -1;
+    if (returnFocus) {
+      this.reopenSuppressed = true;
+      const input = this.shadowRoot?.querySelector('[data-testid="draft"]') as HTMLInputElement | null;
+      input?.focus();
+      this.reopenSuppressed = false;
+    }
     this.requestUpdate();
   }
 
@@ -1020,8 +1227,7 @@ export class SearchV2View extends JfElement {
     const rows = this.trailFlat();
     if (e.key === 'Escape') {
       e.preventDefault();
-      this.closeHistory();
-      (this.shadowRoot?.querySelector('[data-testid="draft"]') as HTMLInputElement | null)?.focus();
+      this.closeHistory(true);
       return;
     }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -1043,18 +1249,30 @@ export class SearchV2View extends JfElement {
       :host {
         color: var(--text-primary);
       }
-      /* 814 §D3 — one scroller per region. The shared surface layout scrolls the .body region; here
-         the regions inside it (rail, transcript, list, feed, reading pane) own their own scrolling,
-         so leaving .body scrollable too would wrap every one of them in a second, outer scroller. */
+      /* The shared surface layout scrolls the .body region; here the regions inside it (rail,
+         transcript, list, feed, reading pane) own their own scrolling, so leaving .body scrollable
+         too would wrap every one of them in a second, outer scroller.
+
+         .body is the SCROLL-POLICY region and .win is the horizontal TRACK, and they must stay
+         different elements. Carrying both classes on one node put this rule's flex-direction column
+         on the track — where nothing contested it, because .win never declares a direction — and the
+         window silently rendered its three regions stacked instead of side by side for two slices.
+         Guarded by the axis + node-identity witnesses in the presentation suite. */
       .body {
         overflow: hidden;
         display: flex;
         flex-direction: column;
       }
+      /* L13 (amended, §6h rule 2) — the grip SITS ON the separator the user sees, and the only
+         version of that which cannot drift is the one where the grip IS the separator. The track
+         carried a gap and the rail drew its own border-right, so the grip landed in the gap 16px to
+         the right of the line the eye finds — and 16px right of a rail edge is where the rail's
+         scrollbar renders, so reaching for the boundary got the scrollbar instead (§6c finding 18).
+         No gap, no border: the grip's own rule draws the line, and being the separator is then
+         structural rather than two numbers that happen to agree. */
       .win {
         display: flex;
         flex: 1 1 auto;
-        gap: var(--density-inner-pad-x);
         min-height: 0;
       }
       .rail {
@@ -1062,7 +1280,6 @@ export class SearchV2View extends JfElement {
         display: flex;
         flex-direction: column;
         gap: var(--density-inner-pad-y);
-        border-right: 1px solid var(--border-subtle);
         padding-right: var(--density-inner-pad-x);
         min-height: 0;
         overflow-y: auto;
@@ -1130,7 +1347,6 @@ export class SearchV2View extends JfElement {
       .reading {
         flex: 0 0 24rem;
         min-width: 0;
-        border-left: 1px solid var(--border-subtle);
         padding-left: var(--density-inner-pad-x);
         overflow-y: auto;
       }
@@ -1138,7 +1354,7 @@ export class SearchV2View extends JfElement {
          native button, so the boundary is keyboard-operable (←/→ resize, Home returns to automatic)
          without a hand-rolled role/tabindex triad. */
       button.vgrip {
-        flex: 0 0 0.6rem;
+        flex: 0 0 0.75rem;
         align-self: stretch;
         padding: 0;
         border: 0;
@@ -1148,9 +1364,23 @@ export class SearchV2View extends JfElement {
         align-items: center;
         justify-content: center;
         touch-action: none;
+        position: relative;
       }
+      /* The separator itself, drawn by the control that moves it — full height, down the grip's
+         centre line, replacing the borders the two regions used to draw for themselves. */
+      button.vgrip::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 50%;
+        width: 1px;
+        background: var(--border-subtle);
+      }
+      /* The grab marker, riding on the line so the affordance and the boundary are one thing. */
       button.vgrip::after {
         content: '';
+        position: relative;
         width: 3px;
         height: 2.5rem;
         border-radius: 1.5px;
@@ -1270,7 +1500,8 @@ export class SearchV2View extends JfElement {
       .qhist h2 {
         padding: 0.3rem var(--density-inner-pad-x) 0.1rem;
       }
-      .count {
+      .count,
+      .meta {
         font-size: var(--font-size-xs);
         color: var(--text-muted);
         font-variant-numeric: tabular-nums;
@@ -1427,12 +1658,24 @@ export class SearchV2View extends JfElement {
         flex-direction: column;
         gap: var(--density-inner-pad-y);
       }
-      /* L7 — the two deck BODIES scroll; they are the compressible half of the deck. */
+      /* L7 — the two deck BODIES are the compressible half of the deck, and COMPRESSION is what
+         these three declarations buy. They scroll (overflow-y), they yield space before anything
+         else does (flex-shrink, via a 1 1 auto basis and a zero min-height), and the rem caps are
+         only their ceiling when the column is roomy enough to grant it.
+
+         The shrink half was missing until the live audit found it. The deck cannot shrink by design
+         — its floor is its incompressible occupants — so with fixed rem caps the bodies simply took
+         22rem + 18rem whatever the column had, the deck overflowed the centre column, and the run CONTROLS
+         were pushed past the fold DURING streaming: measured bottom 851 → 921 → 975 against a 945
+         viewport, i.e. Halt off screen in the seconds it exists for. Eviction did not catch it
+         because eviction reasons about the bodies' MINIMUMS, and their minimums fit fine; what did
+         not fit was what they actually rendered. Compression before eviction, in that order. */
       .list,
       .feed {
         max-height: 22rem;
         overflow-y: auto;
         min-height: 0;
+        flex: 1 1 auto;
       }
       .feed {
         display: flex;
@@ -1442,8 +1685,13 @@ export class SearchV2View extends JfElement {
         border-left: 3px solid var(--accent-tint-45);
         padding-left: var(--density-inner-pad-x);
       }
+      /* §6c finding 26 — the band rests as ONE line. The collapse control used to occupy a row of
+         its own above the card, which cost a full line of vertical space to say something the card's
+         own meta line is already the home for. */
       .listhead {
         display: flex;
+        justify-content: flex-end;
+        margin-bottom: -0.4rem;
       }
       button.quiet {
         background: transparent;
@@ -1455,15 +1703,22 @@ export class SearchV2View extends JfElement {
         background: transparent;
         color: var(--text-primary);
       }
+      /* Shrinkable, so the pressure reaches the FEED inside it rather than stopping here. */
       .run {
         display: flex;
         flex-direction: column;
         gap: var(--density-inner-pad-y);
         min-height: 0;
+        flex: 1 1 auto;
       }
-      /* L7 — the incompressible occupant: a SIBLING of the scroll containers, never inside one. */
+      /* L7 — the incompressible occupant: a SIBLING of the scroll containers, never inside one, and
+         never a flex item that yields. A zero flex-shrink is the half of that sentence the DOM
+         position alone could not carry: being outside every scroller stops it being SCROLLED away,
+         and this stops it being SQUEEZED away. Both are needed — the live audit found it leaving
+         the screen by the second route while the first was still perfectly satisfied. */
       .run-controls {
         display: flex;
+        flex: 0 0 auto;
         flex-wrap: wrap;
         align-items: center;
         gap: 0.5rem;
@@ -1559,10 +1814,16 @@ export class SearchV2View extends JfElement {
           opacity: 1;
         }
       }
-      :host(.committing) .turn {
+      /* Scoped to what JUST landed, not to every element of its kind. Selecting on the .turn and
+         .frozen classes alone meant the Nth commit re-ran the entrance on all N records — settled
+         blocks dropped to opacity 0 (animation fill mode both) and faded back in, so the whole
+         transcript flashed on every commit (818 §6c finding 10). The choreography is about one
+         record arriving; anything it animates that did not just arrive says something untrue. */
+      :host(.committing) .committed .turn,
+      :host(.committing) .turn.committed {
         animation: sv2-cm-rise 0.2s ease both;
       }
-      :host(.committing) .frozen {
+      :host(.committing) .frozen.committed {
         animation: sv2-cm-land 0.5s ease 0.12s both;
       }
       :host(.committing) .deck {
@@ -1572,8 +1833,8 @@ export class SearchV2View extends JfElement {
       :host(.committing) .name {
         animation: sv2-cm-fade 0.3s ease 0.4s both;
       }
-      :host(.committing) .answer,
-      :host(.committing) .pending {
+      :host(.committing) .answer.committed,
+      :host(.committing) .pending.committed {
         animation: sv2-cm-answer 0.3s ease 0.55s both;
       }
       /* Reduced motion removes the whole sequence, not a softened version of it: the choreography
@@ -1586,7 +1847,8 @@ export class SearchV2View extends JfElement {
         :host(.committing) .rail,
         :host(.committing) .name,
         :host(.committing) .answer,
-        :host(.committing) .pending {
+        :host(.committing) .pending,
+        :host(.committing) .committed {
           animation: none;
         }
       }
@@ -1636,6 +1898,17 @@ export class SearchV2View extends JfElement {
     return { primary: lensed.primary, alt: lensed.alt, dimmed: false };
   }
 
+  /**
+   * L1 — apply or withdraw the one-shot lens. It stores nothing beyond this draft: a commit, a
+   * delegate or Escape all stop applying it, which is what keeps it a lens rather than a mode.
+   * An empty draft has no destination to swap, so there is nothing to flip.
+   */
+  private toggleFlip(): void {
+    if (route(this.draft, this.routeContext()).empty) return;
+    this.flipped = !this.flipped;
+    this.requestUpdate();
+  }
+
   private onInput(e: Event): void {
     this.draft = (e.target as HTMLInputElement).value;
     setQuery(this.draft);
@@ -1643,14 +1916,6 @@ export class SearchV2View extends JfElement {
   }
 
   private onKeydown(e: KeyboardEvent): void {
-    if (e.key === 'Tab') {
-      // The flip only exists while a draft does; an empty input keeps native focus movement.
-      if (route(this.draft, this.routeContext()).empty) return;
-      e.preventDefault();
-      this.flipped = !this.flipped;
-      this.requestUpdate();
-      return;
-    }
     // ↓ from the input steps into the trail — the list is a continuation of the field, not a
     // separate destination the user has to Tab to.
     if (e.key === 'ArrowDown' && this.historyOpen && this.trailFlat().length > 0) {
@@ -1711,7 +1976,7 @@ export class SearchV2View extends JfElement {
     const rawDraft = this.draft;
     const turnText = rawDraft.trim() || (live?.query ?? '').trim();
     if (!turnText) return; // L10 — nothing to commit.
-    if (this.refuseIfLocked()) return;
+    if (this.refuseSend('ask')) return;
     const capture: SearchCapture = {
       query: live?.query ?? '',
       hits: live?.results ?? [],
@@ -1732,7 +1997,8 @@ export class SearchV2View extends JfElement {
     this.flipped = false;
     this.lockRefused = false;
     this.closeHistory();
-    this.beginCommitChoreography();
+    // Exactly the three records this commit appended — the frozen scope, the turn, and the slot.
+    this.beginCommitChoreography(this.records.slice(before.length).map((r) => r.id));
     this.requestUpdate();
     void this.dispatchAsk(turnText, rawDraft, frozen, pendingId);
   }
@@ -1759,6 +2025,11 @@ export class SearchV2View extends JfElement {
     if (!this.sessionId) this.sessionId = createConversationId();
     this.askAbort = new AbortController();
     this.streaming = { id: pendingId, text: '' };
+    // The session this turn belongs to. Every terminal below is checked against it, because an
+    // answer that outlives its session must not land on a slot that now means something else
+    // (§6c finding 2: ids are positional and recur after a reset).
+    const epoch = this.sessionEpoch;
+    const current = (): boolean => this.sessionEpoch === epoch;
     this.requestUpdate();
     await askDocuments(
       {
@@ -1770,19 +2041,24 @@ export class SearchV2View extends JfElement {
       },
       {
         onDelta: (delta) => {
-          if (this.streaming?.id !== pendingId) return;
+          if (!current() || this.streaming?.id !== pendingId) return;
           this.streaming = { id: pendingId, text: this.streaming.text + delta };
           this.requestUpdate();
         },
         onDone: (outcome) => {
+          if (!current()) return;
           this.streaming = null;
           this.askAbort = null;
           this.contextPromptTokens = outcome.promptTokens;
           this.records = finalizeAnswer(this.records, pendingId, outcome);
           this.requestUpdate();
         },
-        onLocked: () => this.refuseLocked(rawDraft || question, pendingId),
+        onLocked: () => {
+          if (!current()) return;
+          this.refuseLocked(rawDraft || question, pendingId);
+        },
         onError: (message) => {
+          if (!current()) return;
           this.streaming = null;
           this.askAbort = null;
           this.records = refuseAnswer(this.records, pendingId, 'error', message);
@@ -1793,13 +2069,79 @@ export class SearchV2View extends JfElement {
   }
 
   /**
-   * L9 — the ONE pre-dispatch lock gate, consulted by EVERY send path (ask commit and delegate
-   * alike). The lock gates the session, not a button: a refusal must read the same and cost the same
-   * whichever rung the draft was headed for. Returns true when the send was refused.
+   * L9 — the ONE predicate every send path consults, for its AFFORDANCE and for its DISPATCH alike.
+   *
+   * This is the `runControlIntent.directiveAvailable` discipline ("the affordance's visibility and
+   * the dispatch read the same lifecycle fact") applied to the composer, which previously had it
+   * only for the run controls. Everything that can refuse a send answers here, in the shared
+   * `Availability` vocabulary, so a reason is never invented per call site.
+   *
+   * `unavailable` and not `blocked`: `availability.ts` reserves `blocked` for a HARD INTENT gate —
+   * unconfirmed input, an operation mid-flight — where the click is genuinely inert. None of these
+   * are that. The user's intent is complete in every case; it is the CAPABILITY that is missing, so
+   * the control stays operable, carries a reachable reason, and refuses out loud when activated.
+   * That is also what L9 requires ("identical refusal on every send path, draft never swallowed"),
+   * which a natively-disabled button structurally cannot do: it has no activation to refuse.
    */
-  private refuseIfLocked(): boolean {
-    if (!this.sessionLocked) return false;
-    this.refuseLocked(this.draft, null);
+  private sendAvailability(rung: 'ask' | 'agent'): Availability {
+    const gate = this.sendGate(rung);
+    if (gate !== null) return unavailableBecause(gate.reason, gate.transient);
+    // Otherwise the only thing left to say is what the CAPABILITY authority says.
+    return this.escalationAvailability(rung === 'ask' ? 'documents' : 'agent');
+  }
+
+  /**
+   * The window's OWN refusals — the subset of the above that actually stops a dispatch.
+   *
+   * The distinction is deliberate and it is the one `availability.ts` already draws. A capability
+   * caveat (the model is offline) is NOT a gate here: this window does not own that decision, the
+   * files are still searched at answer time, and refusing on its behalf would be the over-claim the
+   * escalation affordances were explicitly built to avoid — they stay operable, state the reason,
+   * and let the send reach the backend that actually knows. A SESSION gate is different: the lock,
+   * a run already in flight, an answer already streaming are all facts about state this window
+   * holds, so it can and must answer for them itself.
+   *
+   * Both halves read the same fields, so a control can never promise a send its handler refuses;
+   * what differs is only the consequence, which is what the two availability kinds are for.
+   */
+  private sendGate(rung: 'ask' | 'agent'): { reason: string; transient: boolean } | null {
+    if (this.sessionLocked) {
+      return { reason: reasonFor('conversations.locked').wording, transient: false };
+    }
+    if (rung === 'agent' && this.routeContext().runInFlight) {
+      // §6c finding 6 — `directiveAvailable('initiate')` answers `true` unconditionally, so the seam
+      // does not refuse a second run; this window refuses at its own boundary rather than corrupting
+      // its run bookkeeping. ⌘⏎ already steers instead of delegating, so the two paths now agree.
+      return { reason: 'A run is already going — steer it, or halt it first.', transient: true };
+    }
+    if (rung === 'ask' && this.streaming !== null) {
+      // §6c finding 2 — one ask at a time. Committing again while an answer streamed left two
+      // terminals racing for one window's worth of state.
+      return {
+        reason: 'An answer is still arriving — wait for it, or start a new session.',
+        transient: true,
+      };
+    }
+    return null;
+  }
+
+  /**
+   * The dispatch half. Returns true when the send was refused, and leaves the reason ON SCREEN: a
+   * refusal the user cannot read is the same dead end as a disabled button.
+   */
+  private refuseSend(rung: 'ask' | 'agent'): boolean {
+    const gate = this.sendGate(rung);
+    if (gate === null) {
+      this.sendRefusal = null;
+      return false;
+    }
+    // The lock has its own richer refusal — it restores the draft and names its exit.
+    if (this.sessionLocked) {
+      this.refuseLocked(this.draft, null);
+      return true;
+    }
+    this.sendRefusal = { rung, reason: gate.reason };
+    this.requestUpdate();
     return true;
   }
 
@@ -1817,7 +2159,11 @@ export class SearchV2View extends JfElement {
    */
   private refuseLocked(draftText: string, pendingId: string | null): void {
     this.streaming = null;
+    // ABORT, don't merely drop: releasing the handle left the request running with nothing able to
+    // stop it, which is how a stream outlived the session that owned it (§6c finding 2).
+    this.askAbort?.abort();
     this.askAbort = null;
+    this.sendRefusal = null;
     this.sessionLocked = true;
     this.lockRefused = true;
     if (pendingId !== null) {
@@ -1832,11 +2178,51 @@ export class SearchV2View extends JfElement {
     this.requestUpdate();
   }
 
-  /** Back to the sessions sidebar — an explicit user intent, never a lifecycle side effect. */
-  private clearRecords(): void {
+  /**
+   * L8/L11 (818 §6i, §6c finding 27) — open a prior session.
+   *
+   * The rail has always known these sessions (it subscribes to the shared conversation list); what
+   * was missing was the load, and the row carried a comment saying so. The transcript is fetched
+   * through the SAME `fetchUnifiedThread` the shipped window uses — no second fetch authority — and
+   * mapped INTO `records`, so every projection reads a loaded session exactly as it reads a typed
+   * one and there is no parallel model to drift (which is the defect 818 exists to avoid).
+   *
+   * Loading is not searching: this issues nothing through the search seam, and the live deck is left
+   * exactly as the user left it. The epoch is bumped first, so an ask still streaming against the
+   * PREVIOUS session cannot land in this one (§6c finding 2's guard, doing its job on a new path).
+   */
+  private async openSession(id: string): Promise<void> {
+    this.sessionEpoch += 1;
+    const epoch = this.sessionEpoch;
     this.askAbort?.abort();
     this.askAbort = null;
     this.streaming = null;
+    this.sendRefusal = null;
+    this.sessionId = id;
+    this.loadingSessionId = id;
+    this.requestUpdate();
+
+    const thread = await fetchUnifiedThread(this.apiBase, id);
+    // The user moved on (a new session, another row) while this was in flight.
+    if (this.sessionEpoch !== epoch) return;
+    this.loadingSessionId = null;
+    this.records = recordsFromThread(thread.events);
+    this.indexCursor = -1;
+    this.reconcileBoundaries();
+    this.requestUpdate();
+  }
+
+  /** Back to the sessions sidebar — an explicit user intent, never a lifecycle side effect. */
+  private clearRecords(): void {
+    // The records array is about to be re-indexed from zero, so anything still in flight against the
+    // OLD indices must be unable to land. The abort covers a stream that can hear it; the epoch
+    // covers one that cannot (already-resolved, or aborted too late to matter).
+    this.sessionEpoch += 1;
+    this.askAbort?.abort();
+    this.askAbort = null;
+    this.streaming = null;
+    this.sendRefusal = null;
+    this.loadingSessionId = null;
     this.records = NO_RECORDS;
     this.draft = '';
     this.flipped = false;
@@ -1860,14 +2246,6 @@ export class SearchV2View extends JfElement {
     this.deckHeightPx = null;
     this.deckElement()?.style.removeProperty('flex');
     clearScopeChips();
-    this.requestUpdate();
-  }
-
-  /** L9 exit — the refused draft survives the reset: a new session opens WITH the text still in it. */
-  private newSessionWithDraft(): void {
-    const kept = this.draft;
-    this.clearRecords();
-    this.draft = kept;
     this.requestUpdate();
   }
 
@@ -1897,6 +2275,35 @@ export class SearchV2View extends JfElement {
     if (this.live?.query.trim()) submitSearch();
   }
 
+  /**
+   * L4 — "staleness is a labelled re-run as new, never mutation". The shared card renders that
+   * affordance on every frozen block ("Search again") and emits `card-fork`; this window listened
+   * for it nowhere, so the one control the law names was inert on every committed record (§6c
+   * finding 8). It re-runs the query as a LIVE search — the frozen record is untouched, and
+   * committing the new one stays the user's act.
+   */
+  private rerunQuery(query: string): void {
+    const text = query.trim();
+    if (!text) return;
+    this.draft = text;
+    this.closeHistory();
+    setQuery(text);
+    submitSearch();
+    this.trail = recordSubmittedQuery(text);
+    this.requestUpdate();
+  }
+
+  /**
+   * L3 — the card's row menu offers "Ask about this file", which narrows through the SAME shared
+   * scope authority the open path uses. Unwired it was a menu action that did nothing (§6c finding
+   * 8); it pins the chip without opening the document, which is the difference between scoping to a
+   * file and reading it.
+   */
+  private scopeToFile(path: string, title: string): void {
+    addScopeChip({ kind: 'file', label: title, docIds: [path] });
+    if (this.live?.query.trim()) submitSearch();
+  }
+
   private closeReadingPane(): void {
     this.readingDocPath = null;
     this.highlightRange = null;
@@ -1913,24 +2320,28 @@ export class SearchV2View extends JfElement {
       <div class="header">
         <div class="name" data-testid="session-name">${projectSessionName(this.records)}</div>
       </div>
-      <div class="body win">
-        <nav
-          class="rail"
-          data-testid="rail"
-          aria-label="Sessions"
-          style=${this.sessionRailPx !== null ? `flex: 0 0 ${this.sessionRailPx}px` : nothing}
-        >
-          ${this.railCollapsed
-            ? this.railStrip()
-            : this.records.length === 0
-              ? this.sidebar()
-              : this.sessionIndex()}
-        </nav>
-        ${this.railGrip('sessions')}
-        <div class="centre">
-          ${this.transcript()} ${this.deck()} ${this.placeholders()}
+      <div class="body">
+        <div class="win">
+          <nav
+            class="rail"
+            data-testid="rail"
+            aria-label="Sessions"
+            style=${this.applied.sessionRailPx !== null
+              ? `flex: 0 0 ${this.applied.sessionRailPx}px`
+              : nothing}
+          >
+            ${this.railCollapsed
+              ? this.railStrip()
+              : this.records.length === 0
+                ? this.sidebar()
+                : this.sessionIndex()}
+          </nav>
+          ${this.railGrip('sessions')}
+          <div class="centre">
+            ${this.transcript()} ${this.deck()} ${this.placeholders()}
+          </div>
+          ${this.readingDocPath ? this.railGrip('document') : nothing} ${this.readingPane()}
         </div>
-        ${this.readingDocPath ? this.railGrip('document') : nothing} ${this.readingPane()}
       </div>
     `;
   }
@@ -1969,6 +2380,19 @@ export class SearchV2View extends JfElement {
     const noun = this.records.length === 0 ? 'earlier sessions' : 'entries';
     return html`
       <div class="strip" data-testid="rail-strip">
+        ${/* L7 (amended) — a minimum honest form may drop rows; it may never drop an ESCAPE HATCH.
+              The strip used to keep only the control that undoes the collapse, which left the
+              session's own exit — New session, or the way back to the list — reachable nowhere while
+              the rail was narrow. And the rail REMEMBERS, so one drag hid it in every future session
+              (§6c finding 11). §6's claim that this window kills the state-gated-New-chat defect
+              class only holds if the affordance survives every form the rail can take. */ ''}
+        <button
+          type="button"
+          class="quiet"
+          data-testid="strip-new-session"
+          aria-label=${this.records.length === 0 ? 'New session' : 'All sessions'}
+          @click=${this.clearRecords}
+        >${this.records.length === 0 ? '+' : '‹'}</button>
         <button
           type="button"
           class="quiet"
@@ -2007,21 +2431,34 @@ export class SearchV2View extends JfElement {
                 <h2 data-testid="session-bucket-label">${b.label}</h2>
                 <ul class="rowlist" data-testid="session-list">
                   ${/* L14 — the row RESTS at its identifying minimum (the title, which is what the
-                        user recognises it by) and its meta extends. The row is focusable so the
-                        elaboration is reachable from the keyboard as well as the pointer; it is
-                        deliberately not a button yet, because opening a prior session is not a thing
-                        this window can do until it can load one. */ ''}
+                        user recognises it by) and its meta extends. It is a BUTTON because it does
+                        something: it opens that session (818 §6i / §6c finding 27). */ ''}
                   ${b.rows.map(
-                    (s) => html`<li
-                      class="ext-row"
-                      tabindex="0"
-                      data-testid="session-row"
-                      data-session-id=${s.id}
-                    >
+                    (s) => html`<li class="ext-row">
+                      <button
+                        type="button"
+                        class="node"
+                        data-testid="session-row"
+                        data-session-id=${s.id}
+                        aria-label=${`Open session: ${s.label}`}
+                        aria-busy=${this.loadingSessionId === s.id ? 'true' : nothing}
+                        @click=${() => void this.openSession(s.id)}
+                      >
                       ${s.label}
-                      <span class="count ext" data-testid="session-row-meta"
+                      ${/* A fetch takes time; a row that looks inert while it runs is the
+                            dead-affordance reading this window keeps having to fix. */ ''}
+                      ${this.loadingSessionId === s.id
+                        ? html`<span class="meta" data-testid="session-row-loading">Opening…</span>`
+                        : nothing}
+                      ${/* L14 (amended) — this is META: a fact about ANOTHER object (a prior
+                            session), not about the set this surface is describing. It may extend.
+                            It deliberately does NOT carry the `count` class, which now marks
+                            current-set honesty facts only, so the structural boundary test can tell
+                            the two apart by selector instead of by a hand-kept list of ids. */ ''}
+                      <span class="meta ext" data-testid="session-row-meta"
                         >${messageCountLabel(s.messageCount)} · ${b.label}</span
                       >
+                      </button>
                     </li>`,
                   )}
                 </ul>
@@ -2057,7 +2494,7 @@ export class SearchV2View extends JfElement {
               >
                 <span>${n.label}</span> <span class="count">${n.size}</span>
                 ${n.detail
-                  ? html`<span class="count ext" data-testid="index-node-detail">${n.detail}</span>`
+                  ? html`<span class="meta ext" data-testid="index-node-detail">${n.detail}</span>`
                   : nothing}
               </button>
             </li>`,
@@ -2076,7 +2513,9 @@ export class SearchV2View extends JfElement {
         class="reading"
         data-testid="reading-pane"
         aria-label="Document"
-        style=${this.documentRailPx !== null ? `flex: 0 0 ${this.documentRailPx}px` : nothing}
+        style=${this.applied.documentRailPx !== null
+          ? `flex: 0 0 ${this.applied.documentRailPx}px`
+          : nothing}
       >
         <jf-document-pane
           .docPath=${this.readingDocPath}
@@ -2098,13 +2537,23 @@ export class SearchV2View extends JfElement {
     `;
   }
 
+  /** Is this record one the running choreography is about? Drives the scoped entrance. */
+  private isCommitting(id: string): boolean {
+    return this.committingIds.includes(id);
+  }
+
   private transcriptItem(item: TranscriptItem): TemplateResult {
     if (item.kind === 'frozen-search') return this.frozenBlock(item);
     if (item.kind === 'user-turn') {
-      return html`<p class="turn" data-testid="turn" data-record-id=${item.id}>${item.text}</p>`;
+      return html`<p
+        class="turn ${this.isCommitting(item.id) ? 'committed' : ''}"
+        data-testid="turn"
+        data-record-id=${item.id}
+      >${item.text}</p>`;
     }
     if (item.kind === 'answer') return this.answerBlock(item);
     if (item.kind === 'agent-run') return this.runReceipt(item);
+    if (item.kind === 'foreign') return this.foreignBlock(item);
     if (item.kind === 'refused-answer') {
       return html`<p
         class="pending"
@@ -2122,9 +2571,23 @@ export class SearchV2View extends JfElement {
       ? html`<p class="answer-text" data-testid="streaming-answer" data-record-id=${item.id}>
           ${streamingText}
         </p>`
-      : html`<p class="pending" data-testid="pending-answer" data-record-id=${item.id}>
-          ${item.label}
-        </p>`;
+      : html`<p
+          class="pending ${this.isCommitting(item.id) ? 'committed' : ''}"
+          data-testid="pending-answer"
+          data-record-id=${item.id}
+        >${item.label}</p>`;
+  }
+
+  /**
+   * L8 — a loaded turn this window has no native record for. It is NAMED and its words are kept
+   * verbatim: dropping it would make a loaded transcript quietly shorter than the conversation it
+   * claims to be, and rendering it as one of this window's own record kinds would claim a structure
+   * it does not have.
+   */
+  private foreignBlock(item: TranscriptForeignItem): TemplateResult {
+    return html`<p class="turn" data-testid="foreign-record" data-record-id=${item.id}>
+      <span class="meta">${item.label}</span> ${item.text}
+    </p>`;
   }
 
   /**
@@ -2144,7 +2607,7 @@ export class SearchV2View extends JfElement {
       ${/* L14 — the outcome and the counts REST (they are what the receipt is); when the run ended
             extends beside them. */ ''}
       ${item.endedAt
-        ? html`<span class="count ext" data-testid="agent-run-timing"
+        ? html`<span class="meta ext" data-testid="agent-run-timing"
             >${formatRelative(new Date(item.endedAt).getTime())}</span
           >`
         : nothing}
@@ -2183,12 +2646,16 @@ export class SearchV2View extends JfElement {
             already holds focusable controls, and `:focus-within` crosses the shadow boundary — so
             tabbing into the card reveals the elaboration without this wrapper adding a tab stop of
             its own. Focus parity comes from the focus that is already there. */ ''}
-      <div class="frozen ext-row" data-testid="frozen-block" data-record-id=${item.id}>
+      <div
+        class="frozen ext-row ${this.isCommitting(item.id) ? 'committed' : ''}"
+        data-testid="frozen-block"
+        data-record-id=${item.id}
+      >
         ${/* L14 — the card's header already states the query, the counts, the retrieval mode and
               when it ran, and every one of those rests visible. What extends is only what the
               header does NOT carry: how the pass ran and how long it took. */ ''}
         ${timing
-          ? html`<span class="count ext" data-testid="frozen-timing">${timing}</span>`
+          ? html`<span class="meta ext" data-testid="frozen-timing">${timing}</span>`
           : nothing}
         <jf-results-card
           variant="snapshot"
@@ -2196,6 +2663,9 @@ export class SearchV2View extends JfElement {
           .provenance=${provenance}
           .askAvailability=${null}
           @card-open=${(e: CustomEvent<{ id: string }>) => this.openResult(e.detail.id, item.hits)}
+          @card-fork=${(e: CustomEvent<{ query: string }>) => this.rerunQuery(e.detail.query)}
+          @card-scope-file=${(e: CustomEvent<{ path: string; title: string }>) =>
+            this.scopeToFile(e.detail.path, e.detail.title)}
         ></jf-results-card>
       </div>
     `;
@@ -2209,7 +2679,11 @@ export class SearchV2View extends JfElement {
   private answerBlock(item: TranscriptAnswerItem): TemplateResult {
     const sources: RetrievalCitation[] = [...item.sources];
     return html`
-      <div class="answer" data-testid="answer" data-record-id=${item.id}>
+      <div
+        class="answer ${this.isCommitting(item.id) ? 'committed' : ''}"
+        data-testid="answer"
+        data-record-id=${item.id}
+      >
         <p class="answer-text" data-testid="answer-text">${item.text}</p>
         ${item.groundedSentencesLabel
           ? html`<p class="count" data-testid="grounding-line">${item.groundedSentencesLabel}</p>`
@@ -2236,15 +2710,30 @@ export class SearchV2View extends JfElement {
    * and, while a run is live, that run's feed and controls. Two of those bodies scroll; the
    * decisions never do (see {@link runControls}).
    */
+  /**
+   * L7 — the deck's inline geometry: the height the user CHOSE, and the height the column ALLOWS.
+   *
+   * The cap is applied whether or not a height was chosen, because it is not about the choice: the
+   * deck cannot shrink and `.centre` clips, so an unbounded deck takes the run controls off screen
+   * on its own. With the cap in place the pressure lands on the two bodies, which are the occupants
+   * L7 permits to yield.
+   */
+  private deckStyle(): string | typeof nothing {
+    const parts: string[] = [];
+    if (this.applied.deckHeightPx !== null) parts.push(`flex: 0 0 ${this.applied.deckHeightPx}px`);
+    if (this.applied.deckMaxPx !== null) parts.push(`max-height: ${this.applied.deckMaxPx}px`);
+    return parts.length > 0 ? parts.join('; ') : nothing;
+  }
+
   private deck(): TemplateResult {
     const live = this.live;
     const results = live?.results ?? [];
     const { primary, alt, dimmed } = this.slots();
     const askLabel = askAffordanceLabel(results.length);
-    const ask = this.escalationAvailability('documents');
-    const agent = this.escalationAvailability('agent');
-    const askReason = unavailableReason(ask);
-    const agentReason = unavailableReason(agent);
+    // The ONE predicate, for the affordance. `refuseSend` consults the same function for the
+    // dispatch, so a control can never promise a send its own handler will refuse.
+    const askReason = unavailableReason(this.sendAvailability('ask'));
+    const agentReason = unavailableReason(this.sendAvailability('agent'));
     return html`
       <section
         class="stack deck ${projectTranscript(this.records).length === 0 ? 'fills' : ''} ${this
@@ -2252,7 +2741,7 @@ export class SearchV2View extends JfElement {
           ? 'sized'
           : ''}"
         data-testid="deck"
-        style=${this.deckHeightPx !== null ? `flex: 0 0 ${this.deckHeightPx}px` : nothing}
+        style=${this.deckStyle()}
       >
         ${this.deckGrip()} ${this.scopeChips()}
         <div class="band" data-testid="input-band">
@@ -2284,7 +2773,15 @@ export class SearchV2View extends JfElement {
               : RUNGS[primary].label)}
             >${this.flipped && !dimmed ? '⇥ ' : ''}${RUNGS[primary].pill} ⏎</span
           >
-          <span
+          ${/* L1 — the FLIP's affordance. It used to be ⇥ alone, which made a window-level control
+                invisible AND trapped the keyboard: the handler swallowed Tab in BOTH directions
+                whenever a draft existed, so focus could not leave the composer at all (§6c finding
+                4, WCAG 2.1.2). The pill is where it belongs — L1 already says the pill is the thing
+                that tells you the truth about a destination, so the thing that tells you is the
+                thing you press. A native button carries focus, Enter/Space and an accessible name
+                for free, and ⇥ goes back to meaning what it means everywhere else. */ ''}
+          <button
+            type="button"
             class="rung-pill alt ${dimmed ? 'off' : ''} ${unavailableReason(
               this.rungAvailability(alt),
             )
@@ -2292,36 +2789,45 @@ export class SearchV2View extends JfElement {
               : ''}"
             data-testid="pill-alt"
             data-unavailable=${String(unavailableReason(this.rungAvailability(alt)) !== null)}
-            title=${unavailableReason(this.rungAvailability(alt)) ?? RUNGS[alt].label}
-            >${RUNGS[alt].pill} ${alt === 'steer' ? '⌘⏎' : '⇥'}</span
+            aria-disabled=${String(dimmed)}
+            aria-label=${dimmed
+              ? `${RUNGS[alt].pill} — nothing to send yet`
+              : `Send to ${RUNGS[alt].pill} instead: ${RUNGS[alt].label}`}
+            @click=${this.toggleFlip}
+            >${RUNGS[alt].pill} ${alt === 'steer' ? '⌘⏎' : '⇥'}</button
           >
-          ${/* The escalation affordances stay OPERABLE while the model is down (a soft unavailability,
-                per `availability.ts`: the reason is reachable, the click is not silently swallowed) —
-                the lock is the only hard gate, because only the lock is this session's own refusal.
-                The reason itself is a VISIBLE line below, referenced by `aria-describedby`, never a
-                `title`: a tooltip on a control that may also be lock-disabled is unreachable in the
-                state it describes (596 face 1.1), and an honesty fact must not hide behind hover. */ ''}
+          ${/* The send affordances stay OPERABLE whatever is refusing them, and that now includes the
+                LOCK. The reason it did not before is preserved here rather than deleted, because it
+                was an argument and it reached the wrong conclusion: it held that a soft
+                unavailability (the model down) keeps its reason reachable while "the lock is the
+                only hard gate, because only the lock is this session's own refusal." Ownership is
+                not what `availability.ts` sorts on. `blocked` — the natively-disabled kind — is for
+                a HARD INTENT gate, where the user has not finished saying what they want and the
+                click is genuinely inert. A lock is the opposite: the intent is complete and the
+                CAPABILITY is missing, which is `unavailable`. Disabling it cost exactly what L9
+                forbids — the pointer path got no refusal, no reason and no exits, while only the
+                keyboard path reached the refusal handler, so the "identical refusal on every send
+                path" the law demands held on one path out of two (§6c finding 5).
+
+                The reason stays a VISIBLE line referenced by `aria-describedby`, never a `title`:
+                a tooltip on a disabled control is unreachable in the state it describes (596 face
+                1.1), and an honesty fact must not hide behind hover. */ ''}
           <button
             type="button"
             data-testid="commit"
-            ?disabled=${this.sessionLocked}
             aria-disabled=${String(askReason !== null)}
             data-unavailable=${String(askReason !== null)}
             aria-describedby=${askReason !== null ? 'sv2-ai-unavailable' : nothing}
             @click=${this.commit}
           >${askLabel}</button>
-          ${/* L9 — the same optimistic hint on BOTH send buttons: a locked session promises no send
-                on either rung. The keyboard paths still reach the ONE refusal handler, so the draft
-                and the refusal's exits are never lost. */ ''}
           <button
             type="button"
             data-testid="delegate"
-            ?disabled=${this.sessionLocked}
             aria-disabled=${String(agentReason !== null)}
             data-unavailable=${String(agentReason !== null)}
             aria-describedby=${agentReason !== null ? 'sv2-ai-unavailable' : nothing}
             @click=${this.delegate}
-          >Delegate ⌘⏎</button>
+          >${this.routeContext().runInFlight ? 'Delegate' : 'Delegate ⌘⏎'}</button>
         </div>
         ${this.queryTrail()}
         ${askReason ?? agentReason
@@ -2329,24 +2835,33 @@ export class SearchV2View extends JfElement {
               ${askReason ?? agentReason} — searching your files is unaffected.
             </p>`
           : nothing}
+        ${this.sendRefusalNote()}
         ${this.lockRefusal()} ${this.contextMeter()}
         ${/* No count line of this window's own: the card's meta line IS the headline count, derived
               through the shared `matchCountLabel`. A second count here would be exactly the fork
               L6 exists to prevent. */ ''}
-        <div class="listhead">
-          <button
-            type="button"
-            class="quiet"
-            data-testid="list-collapse"
-            aria-expanded=${String(!this.listCollapsed)}
-            @click=${this.toggleList}
-          >${this.listCollapsed ? '▸ Show results' : '▾ Collapse results'}</button>
-        </div>
+        ${/* §6c finding 22 — a collapse control over zero results is a control for nothing: the
+              dead-affordance class of findings 5, 8 and 15, one more time. It renders when there is
+              a list to collapse. */ ''}
+        ${results.length > 0
+          ? html`<div class="listhead">
+              <button
+                type="button"
+                class="quiet"
+                data-testid="list-collapse"
+                aria-expanded=${String(!this.listCollapsed)}
+                aria-disabled=${String(this.listEvicted())}
+                data-evicted=${String(this.listEvicted())}
+                @click=${this.toggleList}
+              >${this.listLabel()}</button>
+            </div>`
+          : nothing}
         ${this.listCollapsed
           ? html`<p class="count" data-testid="live-count">${this.liveCountLabel()}</p>`
           : html`<div class="list" data-testid="live-results" data-scrollable="true">
               <jf-results-card
                 variant="live"
+                elaboration="on-demand"
                 .snapshot=${live}
                 .facetSelections=${this.facetSelections}
                 .askAvailability=${null}
@@ -2354,6 +2869,9 @@ export class SearchV2View extends JfElement {
                   this.toggleFacet(e.detail.field, e.detail.value)}
                 @card-open=${(e: CustomEvent<{ id: string }>) =>
                   this.openResult(e.detail.id, results)}
+                @card-fork=${(e: CustomEvent<{ query: string }>) => this.rerunQuery(e.detail.query)}
+                @card-scope-file=${(e: CustomEvent<{ path: string; title: string }>) =>
+                  this.scopeToFile(e.detail.path, e.detail.title)}
               ></jf-results-card>
             </div>`}
         ${this.zeroNote()} ${this.runRegion()}
@@ -2421,7 +2939,15 @@ export class SearchV2View extends JfElement {
    * to be movable from the keyboard, and a native button gets focus + activation semantics by
    * construction instead of a hand-rolled role/tabindex triad.
    */
-  private deckGrip(): TemplateResult {
+  private deckGrip(): TemplateResult | typeof nothing {
+    // L13 (amended, §6h rule 1) — a boundary exists only between two live regions that can both
+    // trade space. This grip is the TRANSCRIPT/deck boundary, and the transcript renders only once
+    // there is a committed record, so before the first commit there is nothing on the other side to
+    // negotiate with. Rendering it anyway produced a full-width bar at the top of the column
+    // separating the deck from nothing (§6c finding 16) — and, because a top-anchored deck cannot
+    // move its own top edge, a drag there shrank the deck away from the pointer (finding 17). Both
+    // stop existing here rather than being corrected downstream.
+    if (this.records.length === 0) return nothing;
     return html`<button
       type="button"
       class="grip"
@@ -2471,10 +2997,35 @@ export class SearchV2View extends JfElement {
     return null;
   }
 
-  /** L7 — the list BODY is the one compressible occupant; nothing else in the deck collapses. */
+  /**
+   * L7 — the user's own collapse of the list body. Distinct from EVICTION, which the window decides
+   * when the column cannot hold everything: the two can both be true, and re-expanding here only
+   * withdraws the user's half. If the room genuinely is not there, the next reconcile keeps the list
+   * in its minimum honest form and the affordance says so, rather than promising rows that would be
+   * two pixels tall.
+   */
   private toggleList(): void {
-    this.listCollapsed = !this.listCollapsed;
+    this.listCollapsedByUser = !this.listCollapsed;
+    this.reconcileBoundaries();
     this.requestUpdate();
+  }
+
+  /** Is the list in its minimum honest form because the WINDOW decided, not the user? */
+  private listEvicted(): boolean {
+    return this.applied.eviction.listYields && !this.listCollapsedByUser;
+  }
+
+  /**
+   * L7 — what the toggle can honestly offer. While EVICTION holds the list down there is no room to
+   * expand into, so offering "Show results" would be a control that cannot do what it says: pressing
+   * it withdraws the user's own collapse, the next reconcile evicts again, and nothing moves. This
+   * PR exists largely because of affordances like that, so it does not get to ship one — the label
+   * states the reason instead, and `aria-disabled` carries it to a screen reader without taking the
+   * control out of the tab order (the same posture the send affordances take).
+   */
+  private listLabel(): string {
+    if (this.listEvicted()) return '▸ Results hidden — not enough room';
+    return this.listCollapsed ? '▸ Show results' : '▾ Collapse results';
   }
 
   /**
@@ -2512,6 +3063,16 @@ export class SearchV2View extends JfElement {
    */
   private runFeed(ctrl: AgentSessionController): TemplateResult {
     const entries = ctrl.conversation.slice(this.runEntryStart);
+    // L7 (amended) — EVICTED: the column cannot hold the feed's body without starving something that
+    // may not yield, so the feed takes its own minimum honest form. It states what the run has done,
+    // derived from the same observed activity the receipt will carry (L6), rather than rendering a
+    // scroller too short to read. The CONTROLS beside it are untouched: a decision never yields.
+    if (this.feedCollapsed) {
+      const calls = this.observedToolCalls(ctrl);
+      return html`<p class="count" data-testid="run-feed-collapsed">
+        Run in progress · ${calls} tool ${calls === 1 ? 'call' : 'calls'} · steps hidden for room
+      </p>`;
+    }
     return html`
       <div class="feed" data-testid="run-feed" data-scrollable="true">
         ${entries.map((e) => this.runEntry(ctrl, e))}
@@ -2685,8 +3246,26 @@ export class SearchV2View extends JfElement {
   }
 
   /**
-   * L9 — the refusal, rendered only once a send was ACTUALLY refused (a merely-locked session gets
-   * the disabled commit hint, not a claim that something was lost). It names both of its exits.
+   * A send the user ATTEMPTED and this window refused, for a reason that is not the lock (the lock
+   * has its own richer refusal below, with exits). Rendered only on an attempt: the reason line
+   * above already states a standing unavailability, and repeating it before anyone tried would be
+   * two claims about one fact.
+   */
+  private sendRefusalNote(): TemplateResult | typeof nothing {
+    const refusal = this.sendRefusal;
+    if (!refusal) return nothing;
+    // A refusal describes a gate that was holding at the moment of the attempt. When that gate
+    // lifts — the run ends, the answer lands — the sentence stops being true, and a notice that
+    // outlives its own condition is exactly the "visible at all times" complaint (§6c finding 26).
+    // Derived rather than cleared by hand, so there is no path that forgets to.
+    if (this.sendGate(refusal.rung) === null) return nothing;
+    return html`<p class="count" role="status" data-testid="send-refused" data-rung=${refusal.rung}>
+      ${refusal.reason} Your text is still in the search box.
+    </p>`;
+  }
+
+  /**
+   * L9 — the refusal, rendered only once a send was ACTUALLY refused. It names its exits.
    */
   private lockRefusal(): TemplateResult | typeof nothing {
     if (!this.lockRefused) return nothing;
@@ -2703,9 +3282,13 @@ export class SearchV2View extends JfElement {
                 @click=${() => requestSurfaceNavigation(nav.target)}
               >${nav.label}</button>`
             : nothing}
-          <button type="button" data-testid="lock-exit-new" @click=${this.newSessionWithDraft}>
-            New session with this text
-          </button>
+          ${/* §6c finding 5 — "New session with this text" USED to sit here as the second exit. It
+                could not change the outcome: `conversations.locked` is the encryption state of the
+                chat store, not a property of this conversation, so a new session is refused
+                identically. What it DID do was discard the transcript and clear this very refusal,
+                leaving two dead controls and no reason on screen. An exit that cannot exit is worse
+                than one exit, so the offer is gone — the draft is already safe where the user left
+                it, which the line above says. */ ''}
         </div>
       </div>
     `;
