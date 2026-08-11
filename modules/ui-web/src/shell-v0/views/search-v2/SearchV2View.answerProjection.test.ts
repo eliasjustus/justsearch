@@ -86,6 +86,8 @@ const OUTCOME: AskOutcome = {
 let searchListener: ((s: LiveSearchFixture) => void) | null = null;
 let aiListener: ((s: unknown) => void) | null = null;
 const submitSearchMock = vi.fn();
+const setQueryMock = vi.fn();
+const addScopeChipMock = vi.fn();
 
 /** What `askDocuments` should do when the view calls it. Each test scripts its own terminal. */
 let askImpl: (req: AskRequest, sink: AskSink) => Promise<void> = async () => {};
@@ -103,13 +105,13 @@ vi.mock('../../state/searchState.js', () => ({
       searchListener = null;
     };
   }),
-  setQuery: vi.fn(),
+  setQuery: (q: string) => setQueryMock(q),
   submitSearch: () => submitSearchMock(),
   subscribeScopeChips: vi.fn((listener: (c: unknown[]) => void) => {
     listener([]);
     return () => {};
   }),
-  addScopeChip: vi.fn(),
+  addScopeChip: (c: unknown) => addScopeChipMock(c),
   removeScopeChip: vi.fn(),
   clearScopeChips: vi.fn(),
   recordOpenDisposition: vi.fn(),
@@ -166,6 +168,10 @@ function q(el: Mounted, testid: string): HTMLElement | null {
   return el.shadowRoot?.querySelector(`[data-testid="${testid}"]`) ?? null;
 }
 
+function all(el: Mounted, testid: string): HTMLElement[] {
+  return [...(el.shadowRoot?.querySelectorAll(`[data-testid="${testid}"]`) ?? [])] as HTMLElement[];
+}
+
 function text(el: Mounted, testid: string): string {
   return (q(el, testid)?.textContent ?? '').replace(/\s+/g, ' ').trim();
 }
@@ -206,6 +212,8 @@ beforeEach(() => {
   document.body.innerHTML = '';
   askDocumentsMock.mockClear();
   submitSearchMock.mockClear();
+  setQueryMock.mockClear();
+  addScopeChipMock.mockClear();
   askImpl = async () => {};
 });
 
@@ -397,14 +405,15 @@ describe('818 SearchV2View — the session lock (L9)', () => {
     expect(refusal).not.toBeNull();
     expect(refusal?.getAttribute('role')).toBe('alert');
     expect(refusal?.textContent).toContain('encrypted and locked');
-    // Both exits, named.
+    // The exit that can actually change the outcome, named.
     expect(q(el, 'lock-exit-unlock')?.textContent?.trim()).toBe('Unlock in Security');
-    expect(q(el, 'lock-exit-new')).not.toBeNull();
     // The slot terminated as refused — no pending answer left behind.
     expect(q(el, 'pending-answer')).toBeNull();
     expect(q(el, 'refused-answer')?.getAttribute('data-reason')).toBe('locked');
-    // The composer stops promising a send it cannot make.
-    expect((q(el, 'commit') as HTMLButtonElement).disabled).toBe(true);
+    // The composer says it cannot send, and stays operable so it can say so again.
+    const commit = q(el, 'commit') as HTMLButtonElement;
+    expect(commit.disabled).toBe(false);
+    expect(commit.getAttribute('aria-disabled')).toBe('true');
   });
 
   it('L9 — BOTH send paths run the SAME refusal handler (one function, not a per-path branch)', async () => {
@@ -426,37 +435,167 @@ describe('818 SearchV2View — the session lock (L9)', () => {
     refuse.mockRestore();
   });
 
-  it('L9 — the “new session with this draft” exit keeps the text and drops the records', async () => {
+  it('L9 — the refusal offers no exit that cannot exit', async () => {
+    // This replaces a case that asserted the OLD "New session with this text" exit "keeps the text
+    // and drops the records" — and passed, because that is exactly what it did. What it never
+    // asserted is whether the user could then SEND, and they could not: `conversations.locked` is
+    // the encryption state of the chat store, not a property of one conversation, so the new
+    // session was refused identically. The transcript was discarded for nothing and the refusal
+    // cleared itself on the way out, leaving no reason on screen (§6c finding 5).
     askImpl = async (_req, sink) => sink.onLocked();
     const el = await mount();
     await commitByEnter(el, 'what changed?');
 
-    (q(el, 'lock-exit-new') as HTMLButtonElement).click();
-    await el.updateComplete;
-
+    expect(q(el, 'lock-refusal')).not.toBeNull();
+    expect(q(el, 'lock-exit-new'), 'the exit that changed nothing is gone').toBeNull();
+    // The one exit left is the one that addresses the actual cause.
+    expect(q(el, 'lock-exit-unlock')).not.toBeNull();
+    // And the thing that exit used to be needed for is simply still true: the draft is safe.
     expect((q(el, 'draft') as HTMLInputElement).value).toBe('what changed?');
-    expect(q(el, 'transcript')).toBeNull();
-    expect(q(el, 'lock-refusal')).toBeNull();
-    expect(text(el, 'session-name')).toBe('New session');
+    expect(q(el, 'transcript'), 'the record of what happened is kept, not discarded').not.toBeNull();
   });
 
   it('L9 — the lock hint comes from the SAME /api/status field the shipped window reads', async () => {
     const el = await mount();
-    expect((q(el, 'commit') as HTMLButtonElement).disabled).toBe(false);
+    // Settle the CAPABILITY first, so the only thing that changes below is the lock. Without this
+    // the composed availability is already unavailable for an unrelated reason and the assertion
+    // would pass or fail on the wrong fact.
+    const healthy = {
+      phase: 'ready',
+      snapshotLive: true,
+      capabilities: { chat: true, rag: true, extract: true, embedding: true },
+      runtime: { mode: 'online', contextWindow: 4096 },
+      status: null,
+      index: {},
+    };
+    aiListener?.(healthy);
+    await el.updateComplete;
+    expect(q(el, 'commit')?.getAttribute('aria-disabled')).toBe('false');
 
-    aiListener?.({
-      status: { conversationProtection: { state: 'locked' } },
-      runtime: { contextWindow: null },
-    });
+    aiListener?.({ ...healthy, status: { conversationProtection: { state: 'locked' } } });
     await el.updateComplete;
-    expect((q(el, 'commit') as HTMLButtonElement).disabled).toBe(true);
-    // …and a lock that is gone leaves no stale refusal behind.
-    aiListener?.({
-      status: { conversationProtection: { state: 'unlocked' } },
-      runtime: { contextWindow: null },
-    });
-    await el.updateComplete;
+    // The hint is the same fact, carried the way a reachable reason has to be carried: the control
+    // stays operable and says it is unavailable, rather than going inert with nothing to read.
+    expect(q(el, 'commit')?.getAttribute('aria-disabled')).toBe('true');
     expect((q(el, 'commit') as HTMLButtonElement).disabled).toBe(false);
+    // …and a lock that is gone leaves no stale refusal behind.
+    aiListener?.({ ...healthy, status: { conversationProtection: { state: 'unlocked' } } });
+    await el.updateComplete;
+    expect(q(el, 'commit')?.getAttribute('aria-disabled')).toBe('false');
     expect(q(el, 'lock-refusal')).toBeNull();
+  });
+});
+
+/**
+ * §6c finding 2 — one ask at a time, and a stale terminal that cannot land.
+ *
+ * The finding was a chain, not a single slip: `commit()` neither aborted nor refused while an
+ * answer streamed, both terminals wrote the same singular `streaming`/`askAbort` fields, and record
+ * ids are POSITIONAL and reset with the session — so an ask that outlived its session could fill a
+ * slot that by then belonged to a different question. Serialising closes the path; the epoch closes
+ * the class, because the reset is what makes ids ambiguous and no amount of serialising changes that.
+ */
+describe('818 SearchV2View — one ask at a time, and no stale terminal (§6c finding 2)', () => {
+  it('a second commit mid-stream is REFUSED, visibly, and never dispatches', async () => {
+    // A stream that starts and does not finish.
+    askImpl = async () => new Promise<void>(() => {});
+    const el = await mount();
+    await commitByEnter(el, 'what changed in the renewal?');
+    expect(askDocumentsMock).toHaveBeenCalledTimes(1);
+
+    await commitByEnter(el, 'and after that?');
+
+    // The refusal is ON SCREEN — the assertion that distinguishes "refused" from "silently ignored".
+    const note = q(el, 'send-refused');
+    expect(note, 'the refusal is visible').not.toBeNull();
+    expect(note?.textContent).toContain('An answer is still arriving');
+    expect(note?.getAttribute('data-rung')).toBe('ask');
+    // …no second dispatch…
+    expect(askDocumentsMock).toHaveBeenCalledTimes(1);
+    // …the draft is not swallowed…
+    expect((q(el, 'draft') as HTMLInputElement).value).toBe('and after that?');
+    // …and no second slot was opened, so nothing is left pending forever.
+    expect(all(el, 'pending-answer')).toHaveLength(1);
+  });
+
+  it('the affordance says so before the click — one predicate, both halves', async () => {
+    askImpl = async () => new Promise<void>(() => {});
+    const el = await mount();
+    await commitByEnter(el, 'what changed?');
+    const commit = q(el, 'commit') as HTMLButtonElement;
+    expect(commit.getAttribute('aria-disabled')).toBe('true');
+    // Operable, so activating it can still produce the refusal above rather than a dead click.
+    expect(commit.disabled).toBe(false);
+  });
+
+  it('a terminal that outlived its session lands nowhere near the new one', async () => {
+    // Capture the sink so the stream can be resolved LATE, after the session has moved on.
+    // ONLY the first sink: the second commit gets its own, and resolving THAT would just be the new
+    // session answering its own question — which proves nothing about a stale terminal.
+    const sinks: AskSink[] = [];
+    askImpl = async (_req, sink) => {
+      sinks.push(sink);
+      return new Promise<void>(() => {});
+    };
+    const el = await mount();
+    await commitByEnter(el, 'the first question?');
+    expect(q(el, 'pending-answer')).not.toBeNull();
+
+    // New session: the records array is re-indexed from zero, so the old slot id now names a
+    // DIFFERENT record — this is exactly the ambiguity that made the finding reachable.
+    (q(el, 'rail-back') as HTMLButtonElement).click();
+    await settle(el);
+    await commitByEnter(el, 'a completely different question?');
+    await settle(el);
+
+    // The first stream finally answers, against the id it was minted with.
+    sinks[0]?.onDone({ ...OUTCOME, text: 'AN ANSWER TO THE OLD QUESTION' });
+    await settle(el);
+
+    expect(text(el, 'transcript')).not.toContain('AN ANSWER TO THE OLD QUESTION');
+    expect(q(el, 'pending-answer'), 'the new session keeps its own open slot').not.toBeNull();
+  });
+});
+
+/** §6c finding 8 — the shared card's affordances are wired, not rendered into the void. */
+describe('818 SearchV2View — the results card’s affordances reach a handler', () => {
+  it('L4 — "Search again" on a frozen block re-runs the query as a LIVE search', async () => {
+    const el = await mount();
+    await commitByEnter(el, 'what changed in the renewal?');
+    const card = q(el, 'frozen-block')?.querySelector('jf-results-card') as HTMLElement;
+
+    card.dispatchEvent(
+      new CustomEvent('card-fork', {
+        detail: { query: 'northfield renewal' },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await el.updateComplete;
+
+    expect(setQueryMock).toHaveBeenCalledWith('northfield renewal');
+    expect(submitSearchMock).toHaveBeenCalled();
+    // L4 — the frozen record is a snapshot: re-running beside it never rewrites it.
+    expect(q(el, 'frozen-block')).not.toBeNull();
+  });
+
+  it('L3 — the row menu’s "Ask about this file" pins the shared scope chip', async () => {
+    const el = await mount();
+    const card = q(el, 'live-results')?.querySelector('jf-results-card') as HTMLElement;
+
+    card.dispatchEvent(
+      new CustomEvent('card-scope-file', {
+        detail: { id: 'd0', path: 'Contracts/Northfield.pdf', title: 'Northfield agreement' },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await el.updateComplete;
+
+    expect(addScopeChipMock).toHaveBeenCalledWith({
+      kind: 'file',
+      label: 'Northfield agreement',
+      docIds: ['Contracts/Northfield.pdf'],
+    });
   });
 });

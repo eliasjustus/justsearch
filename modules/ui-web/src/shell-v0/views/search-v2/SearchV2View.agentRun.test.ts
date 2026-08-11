@@ -572,12 +572,18 @@ describe('818 SearchV2View — the session lock on the agent path (L9)', () => {
     expect(ctrl.send).not.toHaveBeenCalled();
     // …the draft is the user's and comes back verbatim…
     expect((q(el, 'draft') as HTMLInputElement).value).toBe(draft);
-    // …the refusal names its exits…
+    // …the refusal names the exit that can actually change the outcome…
     expect(q(el, 'lock-refusal')).not.toBeNull();
-    expect(q(el, 'lock-exit-new')).not.toBeNull();
-    // …both send buttons carry the same hint, so neither rung promises a send it cannot make…
-    expect((q(el, 'delegate') as HTMLButtonElement).disabled).toBe(true);
-    expect((q(el, 'commit') as HTMLButtonElement).disabled).toBe(true);
+    expect(q(el, 'lock-exit-unlock')).not.toBeNull();
+    // …both send controls stay OPERABLE and say why, on both rungs. A natively-disabled button
+    // would have no activation to refuse, which is how the pointer path used to reach a dead end
+    // with no reason on screen while only the keyboard path got the refusal (§6c finding 5).
+    for (const id of ['delegate', 'commit']) {
+      const btn = q(el, id) as HTMLButtonElement;
+      expect(btn.disabled, `${id} stays operable`).toBe(false);
+      expect(btn.getAttribute('aria-disabled')).toBe('true');
+      expect(btn.getAttribute('aria-describedby')).toBe('sv2-ai-unavailable');
+    }
     // …and NOTHING was recorded: a turn that never entered the transcript leaves no history.
     expect(q(el, 'transcript')).toBeNull();
     expect(text(el, 'session-name')).toBe('New session');

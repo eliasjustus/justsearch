@@ -134,7 +134,11 @@ import {
   subscribeConversationList,
 } from '../../state/conversationListStore.js';
 import { subscribeAiState, type AiState } from '../../state/aiStateStore.js';
-import { projectAvailability, type Availability } from '../../state/availability.js';
+import {
+  projectAvailability,
+  unavailableBecause,
+  type Availability,
+} from '../../state/availability.js';
 import { reasonFor } from '../../state/readinessNotice.js';
 import { requestSurfaceNavigation } from '../../controllers/navigateRequest.js';
 import { projectBudget, projectContextHorizon } from '../budgetProjection.js';
@@ -308,6 +312,17 @@ export class SearchV2View extends JfElement {
   private readingDocPath: string | null = null;
   /** L9 — the optimistic hint, read from the same `/api/status` field the shipped window reads. */
   private sessionLocked = false;
+  /**
+   * L4/L9 — the session's IDENTITY as far as an in-flight terminal is concerned. Record ids are
+   * positional (`r0`, `r1`, …) and the array resets when the user starts a new session, so the ids
+   * recur; an ask that outlives its session would otherwise fill a slot belonging to a DIFFERENT
+   * question (§6c finding 2). Each dispatch captures this value and every terminal checks it, so a
+   * stale stream terminates against nothing instead of against the wrong turn. Injected rather than
+   * clocked, and never part of an id — the projections stay exactly as they were.
+   */
+  private sessionEpoch = 0;
+  /** L9/§6c finding 2 — why the last send was refused, or null. Drives the visible refusal. */
+  private sendRefusal: { rung: 'ask' | 'agent'; reason: string } | null = null;
   /** L9 — set only by {@link refuseLocked}: a send the lock actually refused. */
   private lockRefused = false;
   private contextPromptTokens: number | null = null;
@@ -611,7 +626,7 @@ export class SearchV2View extends JfElement {
   private delegate(): void {
     const text = this.draft.trim();
     if (!text) return; // L10 — an empty draft submits nowhere, on this rung too.
-    if (this.refuseIfLocked()) return;
+    if (this.refuseSend('agent')) return;
     const ctrl = this.ensureAgentCtrl();
     this.records = appendUserTurn(this.records, text);
     this.runOwned = true;
@@ -1834,7 +1849,7 @@ export class SearchV2View extends JfElement {
     const rawDraft = this.draft;
     const turnText = rawDraft.trim() || (live?.query ?? '').trim();
     if (!turnText) return; // L10 — nothing to commit.
-    if (this.refuseIfLocked()) return;
+    if (this.refuseSend('ask')) return;
     const capture: SearchCapture = {
       query: live?.query ?? '',
       hits: live?.results ?? [],
@@ -1882,6 +1897,11 @@ export class SearchV2View extends JfElement {
     if (!this.sessionId) this.sessionId = createConversationId();
     this.askAbort = new AbortController();
     this.streaming = { id: pendingId, text: '' };
+    // The session this turn belongs to. Every terminal below is checked against it, because an
+    // answer that outlives its session must not land on a slot that now means something else
+    // (§6c finding 2: ids are positional and recur after a reset).
+    const epoch = this.sessionEpoch;
+    const current = (): boolean => this.sessionEpoch === epoch;
     this.requestUpdate();
     await askDocuments(
       {
@@ -1893,19 +1913,24 @@ export class SearchV2View extends JfElement {
       },
       {
         onDelta: (delta) => {
-          if (this.streaming?.id !== pendingId) return;
+          if (!current() || this.streaming?.id !== pendingId) return;
           this.streaming = { id: pendingId, text: this.streaming.text + delta };
           this.requestUpdate();
         },
         onDone: (outcome) => {
+          if (!current()) return;
           this.streaming = null;
           this.askAbort = null;
           this.contextPromptTokens = outcome.promptTokens;
           this.records = finalizeAnswer(this.records, pendingId, outcome);
           this.requestUpdate();
         },
-        onLocked: () => this.refuseLocked(rawDraft || question, pendingId),
+        onLocked: () => {
+          if (!current()) return;
+          this.refuseLocked(rawDraft || question, pendingId);
+        },
         onError: (message) => {
+          if (!current()) return;
           this.streaming = null;
           this.askAbort = null;
           this.records = refuseAnswer(this.records, pendingId, 'error', message);
@@ -1916,13 +1941,79 @@ export class SearchV2View extends JfElement {
   }
 
   /**
-   * L9 — the ONE pre-dispatch lock gate, consulted by EVERY send path (ask commit and delegate
-   * alike). The lock gates the session, not a button: a refusal must read the same and cost the same
-   * whichever rung the draft was headed for. Returns true when the send was refused.
+   * L9 — the ONE predicate every send path consults, for its AFFORDANCE and for its DISPATCH alike.
+   *
+   * This is the `runControlIntent.directiveAvailable` discipline ("the affordance's visibility and
+   * the dispatch read the same lifecycle fact") applied to the composer, which previously had it
+   * only for the run controls. Everything that can refuse a send answers here, in the shared
+   * `Availability` vocabulary, so a reason is never invented per call site.
+   *
+   * `unavailable` and not `blocked`: `availability.ts` reserves `blocked` for a HARD INTENT gate —
+   * unconfirmed input, an operation mid-flight — where the click is genuinely inert. None of these
+   * are that. The user's intent is complete in every case; it is the CAPABILITY that is missing, so
+   * the control stays operable, carries a reachable reason, and refuses out loud when activated.
+   * That is also what L9 requires ("identical refusal on every send path, draft never swallowed"),
+   * which a natively-disabled button structurally cannot do: it has no activation to refuse.
    */
-  private refuseIfLocked(): boolean {
-    if (!this.sessionLocked) return false;
-    this.refuseLocked(this.draft, null);
+  private sendAvailability(rung: 'ask' | 'agent'): Availability {
+    const gate = this.sendGate(rung);
+    if (gate !== null) return unavailableBecause(gate.reason, gate.transient);
+    // Otherwise the only thing left to say is what the CAPABILITY authority says.
+    return this.escalationAvailability(rung === 'ask' ? 'documents' : 'agent');
+  }
+
+  /**
+   * The window's OWN refusals — the subset of the above that actually stops a dispatch.
+   *
+   * The distinction is deliberate and it is the one `availability.ts` already draws. A capability
+   * caveat (the model is offline) is NOT a gate here: this window does not own that decision, the
+   * files are still searched at answer time, and refusing on its behalf would be the over-claim the
+   * escalation affordances were explicitly built to avoid — they stay operable, state the reason,
+   * and let the send reach the backend that actually knows. A SESSION gate is different: the lock,
+   * a run already in flight, an answer already streaming are all facts about state this window
+   * holds, so it can and must answer for them itself.
+   *
+   * Both halves read the same fields, so a control can never promise a send its handler refuses;
+   * what differs is only the consequence, which is what the two availability kinds are for.
+   */
+  private sendGate(rung: 'ask' | 'agent'): { reason: string; transient: boolean } | null {
+    if (this.sessionLocked) {
+      return { reason: reasonFor('conversations.locked').wording, transient: false };
+    }
+    if (rung === 'agent' && this.routeContext().runInFlight) {
+      // §6c finding 6 — `directiveAvailable('initiate')` answers `true` unconditionally, so the seam
+      // does not refuse a second run; this window refuses at its own boundary rather than corrupting
+      // its run bookkeeping. ⌘⏎ already steers instead of delegating, so the two paths now agree.
+      return { reason: 'A run is already going — steer it, or halt it first.', transient: true };
+    }
+    if (rung === 'ask' && this.streaming !== null) {
+      // §6c finding 2 — one ask at a time. Committing again while an answer streamed left two
+      // terminals racing for one window's worth of state.
+      return {
+        reason: 'An answer is still arriving — wait for it, or start a new session.',
+        transient: true,
+      };
+    }
+    return null;
+  }
+
+  /**
+   * The dispatch half. Returns true when the send was refused, and leaves the reason ON SCREEN: a
+   * refusal the user cannot read is the same dead end as a disabled button.
+   */
+  private refuseSend(rung: 'ask' | 'agent'): boolean {
+    const gate = this.sendGate(rung);
+    if (gate === null) {
+      this.sendRefusal = null;
+      return false;
+    }
+    // The lock has its own richer refusal — it restores the draft and names its exit.
+    if (this.sessionLocked) {
+      this.refuseLocked(this.draft, null);
+      return true;
+    }
+    this.sendRefusal = { rung, reason: gate.reason };
+    this.requestUpdate();
     return true;
   }
 
@@ -1940,7 +2031,11 @@ export class SearchV2View extends JfElement {
    */
   private refuseLocked(draftText: string, pendingId: string | null): void {
     this.streaming = null;
+    // ABORT, don't merely drop: releasing the handle left the request running with nothing able to
+    // stop it, which is how a stream outlived the session that owned it (§6c finding 2).
+    this.askAbort?.abort();
     this.askAbort = null;
+    this.sendRefusal = null;
     this.sessionLocked = true;
     this.lockRefused = true;
     if (pendingId !== null) {
@@ -1957,9 +2052,14 @@ export class SearchV2View extends JfElement {
 
   /** Back to the sessions sidebar — an explicit user intent, never a lifecycle side effect. */
   private clearRecords(): void {
+    // The records array is about to be re-indexed from zero, so anything still in flight against the
+    // OLD indices must be unable to land. The abort covers a stream that can hear it; the epoch
+    // covers one that cannot (already-resolved, or aborted too late to matter).
+    this.sessionEpoch += 1;
     this.askAbort?.abort();
     this.askAbort = null;
     this.streaming = null;
+    this.sendRefusal = null;
     this.records = NO_RECORDS;
     this.draft = '';
     this.flipped = false;
@@ -1986,14 +2086,6 @@ export class SearchV2View extends JfElement {
     this.requestUpdate();
   }
 
-  /** L9 exit — the refused draft survives the reset: a new session opens WITH the text still in it. */
-  private newSessionWithDraft(): void {
-    const kept = this.draft;
-    this.clearRecords();
-    this.draft = kept;
-    this.requestUpdate();
-  }
-
   /**
    * L3 — opening a result is one act with two visible consequences: the document opens in the
    * reading pane, and a `file` scope chip pins onto the shared scope authority so the next search
@@ -2017,6 +2109,35 @@ export class SearchV2View extends JfElement {
    */
   private toggleFacet(field: string, value: string): void {
     toggleFacetValue(field, value);
+    if (this.live?.query.trim()) submitSearch();
+  }
+
+  /**
+   * L4 — "staleness is a labelled re-run as new, never mutation". The shared card renders that
+   * affordance on every frozen block ("Search again") and emits `card-fork`; this window listened
+   * for it nowhere, so the one control the law names was inert on every committed record (§6c
+   * finding 8). It re-runs the query as a LIVE search — the frozen record is untouched, and
+   * committing the new one stays the user's act.
+   */
+  private rerunQuery(query: string): void {
+    const text = query.trim();
+    if (!text) return;
+    this.draft = text;
+    this.closeHistory();
+    setQuery(text);
+    submitSearch();
+    this.trail = recordSubmittedQuery(text);
+    this.requestUpdate();
+  }
+
+  /**
+   * L3 — the card's row menu offers "Ask about this file", which narrows through the SAME shared
+   * scope authority the open path uses. Unwired it was a menu action that did nothing (§6c finding
+   * 8); it pins the chip without opening the document, which is the difference between scoping to a
+   * file and reading it.
+   */
+  private scopeToFile(path: string, title: string): void {
+    addScopeChip({ kind: 'file', label: title, docIds: [path] });
     if (this.live?.query.trim()) submitSearch();
   }
 
@@ -2325,6 +2446,9 @@ export class SearchV2View extends JfElement {
           .provenance=${provenance}
           .askAvailability=${null}
           @card-open=${(e: CustomEvent<{ id: string }>) => this.openResult(e.detail.id, item.hits)}
+          @card-fork=${(e: CustomEvent<{ query: string }>) => this.rerunQuery(e.detail.query)}
+          @card-scope-file=${(e: CustomEvent<{ path: string; title: string }>) =>
+            this.scopeToFile(e.detail.path, e.detail.title)}
         ></jf-results-card>
       </div>
     `;
@@ -2370,10 +2494,10 @@ export class SearchV2View extends JfElement {
     const results = live?.results ?? [];
     const { primary, alt, dimmed } = this.slots();
     const askLabel = askAffordanceLabel(results.length);
-    const ask = this.escalationAvailability('documents');
-    const agent = this.escalationAvailability('agent');
-    const askReason = unavailableReason(ask);
-    const agentReason = unavailableReason(agent);
+    // The ONE predicate, for the affordance. `refuseSend` consults the same function for the
+    // dispatch, so a control can never promise a send its own handler will refuse.
+    const askReason = unavailableReason(this.sendAvailability('ask'));
+    const agentReason = unavailableReason(this.sendAvailability('agent'));
     return html`
       <section
         class="stack deck ${projectTranscript(this.records).length === 0 ? 'fills' : ''} ${this
@@ -2426,33 +2550,38 @@ export class SearchV2View extends JfElement {
             title=${unavailableReason(this.rungAvailability(alt)) ?? RUNGS[alt].label}
             >${RUNGS[alt].pill} ${alt === 'steer' ? '⌘⏎' : '⇥'}</span
           >
-          ${/* The escalation affordances stay OPERABLE while the model is down (a soft unavailability,
-                per `availability.ts`: the reason is reachable, the click is not silently swallowed) —
-                the lock is the only hard gate, because only the lock is this session's own refusal.
-                The reason itself is a VISIBLE line below, referenced by `aria-describedby`, never a
-                `title`: a tooltip on a control that may also be lock-disabled is unreachable in the
-                state it describes (596 face 1.1), and an honesty fact must not hide behind hover. */ ''}
+          ${/* The send affordances stay OPERABLE whatever is refusing them, and that now includes the
+                LOCK. The reason it did not before is preserved here rather than deleted, because it
+                was an argument and it reached the wrong conclusion: it held that a soft
+                unavailability (the model down) keeps its reason reachable while "the lock is the
+                only hard gate, because only the lock is this session's own refusal." Ownership is
+                not what `availability.ts` sorts on. `blocked` — the natively-disabled kind — is for
+                a HARD INTENT gate, where the user has not finished saying what they want and the
+                click is genuinely inert. A lock is the opposite: the intent is complete and the
+                CAPABILITY is missing, which is `unavailable`. Disabling it cost exactly what L9
+                forbids — the pointer path got no refusal, no reason and no exits, while only the
+                keyboard path reached the refusal handler, so the "identical refusal on every send
+                path" the law demands held on one path out of two (§6c finding 5).
+
+                The reason stays a VISIBLE line referenced by `aria-describedby`, never a `title`:
+                a tooltip on a disabled control is unreachable in the state it describes (596 face
+                1.1), and an honesty fact must not hide behind hover. */ ''}
           <button
             type="button"
             data-testid="commit"
-            ?disabled=${this.sessionLocked}
             aria-disabled=${String(askReason !== null)}
             data-unavailable=${String(askReason !== null)}
             aria-describedby=${askReason !== null ? 'sv2-ai-unavailable' : nothing}
             @click=${this.commit}
           >${askLabel}</button>
-          ${/* L9 — the same optimistic hint on BOTH send buttons: a locked session promises no send
-                on either rung. The keyboard paths still reach the ONE refusal handler, so the draft
-                and the refusal's exits are never lost. */ ''}
           <button
             type="button"
             data-testid="delegate"
-            ?disabled=${this.sessionLocked}
             aria-disabled=${String(agentReason !== null)}
             data-unavailable=${String(agentReason !== null)}
             aria-describedby=${agentReason !== null ? 'sv2-ai-unavailable' : nothing}
             @click=${this.delegate}
-          >Delegate ⌘⏎</button>
+          >${this.routeContext().runInFlight ? 'Delegate' : 'Delegate ⌘⏎'}</button>
         </div>
         ${this.queryTrail()}
         ${askReason ?? agentReason
@@ -2460,6 +2589,7 @@ export class SearchV2View extends JfElement {
               ${askReason ?? agentReason} — searching your files is unaffected.
             </p>`
           : nothing}
+        ${this.sendRefusalNote()}
         ${this.lockRefusal()} ${this.contextMeter()}
         ${/* No count line of this window's own: the card's meta line IS the headline count, derived
               through the shared `matchCountLabel`. A second count here would be exactly the fork
@@ -2485,6 +2615,9 @@ export class SearchV2View extends JfElement {
                   this.toggleFacet(e.detail.field, e.detail.value)}
                 @card-open=${(e: CustomEvent<{ id: string }>) =>
                   this.openResult(e.detail.id, results)}
+                @card-fork=${(e: CustomEvent<{ query: string }>) => this.rerunQuery(e.detail.query)}
+                @card-scope-file=${(e: CustomEvent<{ path: string; title: string }>) =>
+                  this.scopeToFile(e.detail.path, e.detail.title)}
               ></jf-results-card>
             </div>`}
         ${this.zeroNote()} ${this.runRegion()}
@@ -2833,8 +2966,21 @@ export class SearchV2View extends JfElement {
   }
 
   /**
-   * L9 — the refusal, rendered only once a send was ACTUALLY refused (a merely-locked session gets
-   * the disabled commit hint, not a claim that something was lost). It names both of its exits.
+   * A send the user ATTEMPTED and this window refused, for a reason that is not the lock (the lock
+   * has its own richer refusal below, with exits). Rendered only on an attempt: the reason line
+   * above already states a standing unavailability, and repeating it before anyone tried would be
+   * two claims about one fact.
+   */
+  private sendRefusalNote(): TemplateResult | typeof nothing {
+    const refusal = this.sendRefusal;
+    if (!refusal) return nothing;
+    return html`<p class="count" role="status" data-testid="send-refused" data-rung=${refusal.rung}>
+      ${refusal.reason} Your text is still in the search box.
+    </p>`;
+  }
+
+  /**
+   * L9 — the refusal, rendered only once a send was ACTUALLY refused. It names its exits.
    */
   private lockRefusal(): TemplateResult | typeof nothing {
     if (!this.lockRefused) return nothing;
@@ -2851,9 +2997,13 @@ export class SearchV2View extends JfElement {
                 @click=${() => requestSurfaceNavigation(nav.target)}
               >${nav.label}</button>`
             : nothing}
-          <button type="button" data-testid="lock-exit-new" @click=${this.newSessionWithDraft}>
-            New session with this text
-          </button>
+          ${/* §6c finding 5 — "New session with this text" USED to sit here as the second exit. It
+                could not change the outcome: `conversations.locked` is the encryption state of the
+                chat store, not a property of this conversation, so a new session is refused
+                identically. What it DID do was discard the transcript and clear this very refusal,
+                leaving two dead controls and no reason on screen. An exit that cannot exit is worse
+                than one exit, so the offer is gone — the draft is already safe where the user left
+                it, which the line above says. */ ''}
         </div>
       </div>
     `;
