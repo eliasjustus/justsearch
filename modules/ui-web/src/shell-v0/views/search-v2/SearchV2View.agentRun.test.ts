@@ -468,6 +468,33 @@ describe('818 SearchV2View — the deck stack (L7)', () => {
     expect(q(el, 'run-controls')).not.toBeNull();
     expect(q(el, 'budget-gate')).not.toBeNull();
     expect(q(el, 'run-halt')).not.toBeNull();
+
+    // …and the list's own control does not offer what it cannot do. While eviction holds the list
+    // down there is no room to expand into, so a plain "Show results" would be a dead click: it
+    // withdraws the user's collapse, the next reconcile evicts again, and nothing moves.
+    const toggle = q(el, 'list-collapse') as HTMLButtonElement;
+    expect(toggle.getAttribute('data-evicted')).toBe('true');
+    expect(toggle.getAttribute('aria-disabled')).toBe('true');
+    expect(toggle.textContent?.trim()).toContain('not enough room');
+    expect(toggle.disabled, 'still operable, so the reason stays reachable').toBe(false);
+  });
+
+  it('L7 — the user’s OWN collapse still reads as reversible, because it is', async () => {
+    const el = await mount();
+    await type(el, 'file the agreements');
+    await key(el, { key: 'Enter', metaKey: true });
+    await runStarts(el);
+
+    (q(el, 'list-collapse') as HTMLButtonElement).click();
+    await el.updateComplete;
+
+    const toggle = q(el, 'list-collapse') as HTMLButtonElement;
+    expect(toggle.getAttribute('data-evicted')).toBe('false');
+    expect(toggle.textContent?.trim()).toContain('Show results');
+
+    (q(el, 'list-collapse') as HTMLButtonElement).click();
+    await el.updateComplete;
+    expect(q(el, 'live-results'), 'and pressing it again brings the rows back').not.toBeNull();
   });
 
   it('L7 — collapsing the ONE compressible occupant keeps the decision on screen', async () => {

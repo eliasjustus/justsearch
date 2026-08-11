@@ -2718,8 +2718,10 @@ export class SearchV2View extends JfElement {
             class="quiet"
             data-testid="list-collapse"
             aria-expanded=${String(!this.listCollapsed)}
+            aria-disabled=${String(this.listEvicted())}
+            data-evicted=${String(this.listEvicted())}
             @click=${this.toggleList}
-          >${this.listCollapsed ? '▸ Show results' : '▾ Collapse results'}</button>
+          >${this.listLabel()}</button>
         </div>
         ${this.listCollapsed
           ? html`<p class="count" data-testid="live-count">${this.liveCountLabel()}</p>`
@@ -2864,6 +2866,24 @@ export class SearchV2View extends JfElement {
     this.listCollapsedByUser = !this.listCollapsed;
     this.reconcileBoundaries();
     this.requestUpdate();
+  }
+
+  /** Is the list in its minimum honest form because the WINDOW decided, not the user? */
+  private listEvicted(): boolean {
+    return this.applied.eviction.listYields && !this.listCollapsedByUser;
+  }
+
+  /**
+   * L7 — what the toggle can honestly offer. While EVICTION holds the list down there is no room to
+   * expand into, so offering "Show results" would be a control that cannot do what it says: pressing
+   * it withdraws the user's own collapse, the next reconcile evicts again, and nothing moves. This
+   * PR exists largely because of affordances like that, so it does not get to ship one — the label
+   * states the reason instead, and `aria-disabled` carries it to a screen reader without taking the
+   * control out of the tab order (the same posture the send affordances take).
+   */
+  private listLabel(): string {
+    if (this.listEvicted()) return '▸ Results hidden — not enough room';
+    return this.listCollapsed ? '▸ Show results' : '▾ Collapse results';
   }
 
   /**
