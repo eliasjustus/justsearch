@@ -118,9 +118,20 @@ export function railDefaultPx(rail: RailId): number {
 
 /**
  * The remembered width, or null for automatic. Storage keys are versioned per rail so the two
- * boundaries cannot overwrite each other, and a stored value outside today's clamps is DISCARDED
- * rather than restored — a remembered width from a wider window must not reopen the window in a
- * shape its own floors reject.
+ * boundaries cannot overwrite each other.
+ *
+ * What this deliberately does NOT do is judge the width against today's window. It used to: a value
+ * outside a static range was DISCARDED, and the docblock claimed that stopped a memory from a wider
+ * window reopening a shape the floors reject. It did not — the range was static (a floor and four
+ * times the rail ceiling), so it knew nothing about the window actually on screen, and a 448px rail
+ * remembered from a wide monitor reopened at 448px on a 700px window and starved the reading column
+ * (tempdoc 818 §6c finding 7). Worse, discarding is the wrong remedy even when it fires: it throws
+ * the preference away permanently for being briefly un-honourable, so widening the window never
+ * brings it back.
+ *
+ * The width is therefore restored VERBATIM and clamped at APPLY time, against measured bounds, by
+ * `reconcileBoundaries`. The memory is a preference; the clamp is a fact about the current window;
+ * conflating them loses the preference. Only an explicit reset forgets.
  *
  * Promotion path, deliberately not taken yet: a rail width is a user preference, so its durable home
  * is `UserStateDocument` (a `searchV2.railWidths` slice projected through a `railWidthState.ts`
@@ -135,8 +146,8 @@ export function readStoredRailWidth(rail: RailId): number | null {
     const raw = localStorage.getItem(storageKey(rail));
     if (raw === null) return null;
     const px = Number.parseInt(raw, 10);
-    if (!Number.isFinite(px)) return null;
-    return px >= railFloorPx(rail) && px <= SESSION_RAIL_CEILING_PX * 4 ? px : null;
+    // A non-numeric or non-positive entry is corrupt, not a preference — there is nothing to clamp.
+    return Number.isFinite(px) && px > 0 ? px : null;
   } catch {
     // localStorage unavailable (private mode / SSR / quota) — the rail simply opens automatic.
     return null;

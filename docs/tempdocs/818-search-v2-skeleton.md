@@ -45,10 +45,17 @@ A live search is not a record; it lives in the deck and becomes a record only by
 4. **L4** a frozen block is append-only; staleness is a labelled "re-run as new", never mutation.
 5. **L5** ask-about-these-N means these N — the frozen snapshot is the retrieval scope.
 6. **L6** every count on screen derives from the set it describes.
-7. **L7** decisions are incompressible; every deck occupant has a minimum honest form;
-   only the list body is compressible.
-   **→ AMENDED 2026-08-11 (§6e.4): compression vs eviction, a declared yield order, and
-   "a minimum honest form may never drop a fact or an escape hatch." Read §6e.4 as current.**
+7. **L7** decisions are incompressible. Every deck occupant has a minimum honest form, and a
+   region under pressure reaches it in a **declared order**: it first *compresses* (a body
+   scrolls), then *evicts* (a body is replaced by its minimum honest form entirely). The order
+   is authored, not emergent — the list yields before the feed, and the transcript last. A
+   minimum honest form may drop elaboration and rows; it may **never** drop a fact or an escape
+   hatch. Decisions never compress, never evict, and are never clipped: a held decision that
+   cannot fit is the signal that a *body* must yield, not that the decision may leave the screen.
+   *(Amended 2026-08-11, §6e.4; implemented and witnessed in §6g C3. The original wording — "only
+   the list body is compressible" — described compression alone, so it had nothing to say about
+   the case where the column cannot hold the incompressible occupants at all, which is where §6c
+   finding 3 lived.)*
 8. **L8** the transcript records commitments, not attention. Corollary: a session is
    *named and indexed by its first committed record*. (Deliberate asymmetry: user reading
    leaves no record; agent reading leaves a receipt.)

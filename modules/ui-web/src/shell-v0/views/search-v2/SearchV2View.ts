@@ -193,6 +193,8 @@ import {
   listYields,
   transcriptMinPx,
 } from './deckSizing.js';
+import { reconcileBoundaries, type BoundaryState } from './boundaryReconciler.js';
+import { BoundaryReconcilerController } from './BoundaryReconcilerController.js';
 import {
   RAIL_KEY_STEP_PX,
   clampRailWidth,
@@ -322,8 +324,16 @@ export class SearchV2View extends JfElement {
   /** L7 — set by the Halt control, so the receipt says the run was halted rather than "finished". */
   private haltRequested = false;
   private steerDraft = '';
-  /** L7 — the ONLY compressible deck occupant: the live search LIST body. */
+  /**
+   * L7 — the deck's compressible bodies, evicted to their minimum honest form. `listCollapsed` is
+   * also the user's own toggle; `feedCollapsed` has no toggle because a run's feed is not something
+   * the user asked for room for. Both are OUTPUTS of {@link reconcileBoundaries} whenever the window
+   * decides, and the toggle is an input to the next reconcile rather than a competing authority.
+   */
   private listCollapsed = false;
+  private feedCollapsed = false;
+  /** True while the user has explicitly collapsed the list, so a reconcile cannot silently reopen it. */
+  private listCollapsedByUser = false;
   /**
    * L7/L13 — the deck's user-chosen height. `null` is AUTOMATIC (the deck sizes to its content), and
    * double-clicking the grip returns to it. Deliberately NOT persisted: a height is a per-session
@@ -331,12 +341,24 @@ export class SearchV2View extends JfElement {
    */
   private deckHeightPx: number | null = null;
   /**
-   * L13 — the rails' chosen widths, `null` for automatic. Unlike the deck's height these are
-   * REMEMBERED (`railSizing`'s storage edge): a width is a preference about this window, not a shape
-   * of one session's contents, so it survives the session it was chosen in.
+   * L13 — the rails' CHOSEN widths, `null` for automatic: the user's preference, not what is on
+   * screen. Unlike the deck's height these are REMEMBERED (`railSizing`'s storage edge): a width is
+   * a preference about this window, not a shape of one session's contents.
+   *
+   * What renders is {@link applied}, which is these clamped against the window as it is right now.
+   * Keeping the two apart is the whole of §6c finding 7's fix: a preference narrowed to fit a small
+   * window must come back when the window grows, so the clamp may never be written back here.
    */
   private sessionRailPx: number | null = null;
   private documentRailPx: number | null = null;
+  /** The reconciled, render-ready boundaries. Recomputed at mount, on resize, and at gesture end. */
+  private applied: BoundaryState = {
+    sessionRailPx: null,
+    documentRailPx: null,
+    deckHeightPx: null,
+    railCollapsed: false,
+    eviction: { listYields: false, feedYields: false },
+  };
   /** L13 — the sessions rail below its legible width takes its collapsed strip form. */
   private railCollapsed = false;
   /** The omnibox query trail (L12): open only while the user is choosing from it. */
@@ -368,6 +390,20 @@ export class SearchV2View extends JfElement {
   constructor() {
     super();
     this.apiBase = '';
+    // L13 — the RESIZE caller of the reconciliation seam. Constructed for its registration: a
+    // ReactiveController adds itself to its host, and this one exposes no value to read back (unlike
+    // its `adaptiveDensity`/`adaptiveBar` siblings, which the host queries), so holding a reference
+    // would only be a field nothing uses.
+    new BoundaryReconcilerController(this);
+  }
+
+  /**
+   * The MOUNT caller: a remembered width meets this window for the first time here. It is explicit
+   * rather than left to the controller's first frame because the controller no-ops where
+   * `ResizeObserver` is undefined, and restoring a preference must not depend on an optional API.
+   */
+  protected override firstUpdated(): void {
+    this.reconcileBoundaries();
   }
 
   override connectedCallback(): void {
@@ -404,12 +440,12 @@ export class SearchV2View extends JfElement {
       this.pins = pins;
       this.requestUpdate();
     });
-    // L13 — the rails open at the width this user last chose. A stored width outside today's clamps
-    // is discarded by the reader, so a memory from a wider window cannot open a shape the floors
-    // reject.
+    // L13 — the rails open at the width this user last chose, restored VERBATIM. It is reconciled
+    // against this window in `firstUpdated`, once there is a box to measure: the reader deliberately
+    // does not judge a remembered width, because a clamp is a fact about the window on screen and
+    // discarding the preference for briefly not fitting would lose it for good (§6c finding 7).
     this.sessionRailPx = readStoredRailWidth('sessions');
     this.documentRailPx = readStoredRailWidth('document');
-    this.railCollapsed = this.sessionRailPx !== null && railYields(this.sessionRailPx);
     this.trail = readTrail();
     this.addEventListener('animationend', this.onChoreographyEnd);
     // The ⌥↑/⌥↓ index walk is a WINDOW-level key, so it listens on the host rather than on any one
@@ -724,7 +760,9 @@ export class SearchV2View extends JfElement {
       grip.removeEventListener('pointermove', move);
       grip.removeEventListener('pointerup', up);
       grip.removeEventListener('pointercancel', up);
+      // GESTURE END — the third caller of the one reconciliation seam.
       this.deckHeightPx = height;
+      this.reconcileBoundaries();
       this.requestUpdate();
     };
     grip.addEventListener('pointermove', move);
@@ -752,7 +790,7 @@ export class SearchV2View extends JfElement {
       availablePx: centre.getBoundingClientRect().height,
       transcriptMinPx: transcriptMinPx(this.shortViewport),
     });
-    this.listCollapsed = listYields(this.deckHeightPx, floorPx);
+    this.reconcileBoundaries();
     this.requestUpdate();
   }
 
@@ -761,7 +799,8 @@ export class SearchV2View extends JfElement {
     const deck = this.deckElement();
     if (deck) deck.style.removeProperty('flex');
     this.deckHeightPx = null;
-    this.listCollapsed = false;
+    this.listCollapsedByUser = false;
+    this.reconcileBoundaries();
     this.requestUpdate();
   }
 
@@ -775,22 +814,86 @@ export class SearchV2View extends JfElement {
     return rail === 'sessions' ? this.sessionRailPx : this.documentRailPx;
   }
 
+  /** The horizontal track — the box whose size decides every boundary (the controller observes it). */
+  boundaryBoxElement(): HTMLElement | null {
+    return (this.shadowRoot?.querySelector('.win') as HTMLElement | null) ?? null;
+  }
+
   /**
-   * L13 — a rail's clamps, computed AT GESTURE TIME from what the window is currently holding. The
+   * The width the three regions actually share: the track minus its chrome. The grips sit in the
+   * row and the track carries a gap between every pair of children, so a ceiling computed against
+   * the raw track width is generous by exactly that chrome — which is enough to let the centre
+   * column land under its own floor while every clamp agrees it is fine (§6c finding 13b).
+   */
+  private trackAvailableWidthPx(): number {
+    const win = this.boundaryBoxElement();
+    if (!win) return 0;
+    const grips = [...(this.shadowRoot?.querySelectorAll('button.vgrip') ?? [])];
+    const gripsPx = grips.reduce((sum, g) => sum + g.getBoundingClientRect().width, 0);
+    const gapPx = Number.parseFloat(getComputedStyle(win).columnGap || '0') || 0;
+    // One gap between each adjacent pair of flex children.
+    const childCount = win.children.length;
+    const gapsPx = childCount > 1 ? gapPx * (childCount - 1) : 0;
+    return win.getBoundingClientRect().width - gripsPx - gapsPx;
+  }
+
+  /**
+   * L13 — the ONE reconciliation call. Its three callers are the whole lifecycle of a boundary:
+   * MOUNT (a remembered width meets this window for the first time), RESIZE (the window moved under
+   * boundaries that were legal a moment ago) and GESTURE END (a new choice). §6c findings 3 and 7
+   * were both "the clamp existed but only a gesture ever ran it"; routing all three through one
+   * entry point is what makes that state unrepresentable rather than merely fixed.
+   */
+  reconcileBoundaries(): void {
+    const centre = this.shadowRoot?.querySelector('.centre') as HTMLElement | null;
+    const deck = this.deckElement();
+    if (!this.boundaryBoxElement() || !centre) return;
+    const next = reconcileBoundaries({
+      availableWidthPx: this.trackAvailableWidthPx(),
+      availableHeightPx: centre.getBoundingClientRect().height,
+      sessionRailChosenPx: this.sessionRailPx,
+      documentRailChosenPx: this.documentRailPx,
+      documentOpen: this.readingDocPath !== null,
+      deckChosenPx: this.deckHeightPx,
+      deckFloorPx: deck ? this.deckFloorPx(deck) : 0,
+      shortViewport: this.shortViewport,
+      hasList: true,
+      hasFeed: this.runOwned,
+    });
+    this.applyBoundaryState(next);
+  }
+
+  /** Adopt a reconciled state, re-rendering only when something actually moved. */
+  private applyBoundaryState(next: BoundaryState): void {
+    const prev = this.applied;
+    // The user's own collapse survives reconciliation: eviction may TAKE the list's rows away, but
+    // it may not hand them back to someone who put them away themselves.
+    const listCollapsed = this.listCollapsedByUser || next.eviction.listYields;
+    const changed =
+      prev.sessionRailPx !== next.sessionRailPx ||
+      prev.documentRailPx !== next.documentRailPx ||
+      prev.deckHeightPx !== next.deckHeightPx ||
+      prev.railCollapsed !== next.railCollapsed ||
+      prev.eviction.listYields !== next.eviction.listYields ||
+      prev.eviction.feedYields !== next.eviction.feedYields ||
+      this.listCollapsed !== listCollapsed ||
+      this.feedCollapsed !== next.eviction.feedYields;
+    this.applied = next;
+    this.railCollapsed = next.railCollapsed;
+    this.listCollapsed = listCollapsed;
+    this.feedCollapsed = next.eviction.feedYields;
+    if (changed) this.requestUpdate();
+  }
+
+  /**
+   * L13 — a rail's clamps for a GESTURE, computed from what the window is currently holding. The
    * ceiling is the OTHER side's minimum honest form: whatever leaves the centre column its reading
    * floor beside the region on the far side, which is why opening the document pane tightens what
    * the sessions rail may take without either boundary knowing about the other.
    */
   private railBounds(rail: RailId): { floorPx: number; ceilingPx: number } | null {
-    const win = this.shadowRoot?.querySelector('.win') as HTMLElement | null;
-    if (!win) return null;
-    // The grips themselves occupy the row, so the width the three regions actually share is the
-    // window minus them — otherwise the centre column's floor would be short by the chrome.
-    const gripsPx = [...(this.shadowRoot?.querySelectorAll('button.vgrip') ?? [])].reduce(
-      (sum, g) => sum + g.getBoundingClientRect().width,
-      0,
-    );
-    const availablePx = win.getBoundingClientRect().width - gripsPx;
+    if (!this.boundaryBoxElement()) return null;
+    const availablePx = this.trackAvailableWidthPx();
     const sessionsPx = this.railElement('sessions')?.getBoundingClientRect().width ?? 0;
     const documentPx = this.railElement('document')?.getBoundingClientRect().width ?? 0;
     return {
@@ -831,6 +934,10 @@ export class SearchV2View extends JfElement {
       width = clampRailWidth({ ...bounds, startWidthPx, deltaPx: (ev.clientX - startX) * grow });
       el.style.flex = `0 0 ${width}px`;
       if (rail === 'sessions') this.syncRailCollapsed(width);
+      // The gesture is live, so it is the one place the applied width is the gesture's own — keeping
+      // `applied` in step means a render mid-drag does not fight the inline style being written here.
+      if (rail === 'sessions') this.applied = { ...this.applied, sessionRailPx: width };
+      else this.applied = { ...this.applied, documentRailPx: width };
     };
     const up = (): void => {
       grip.removeEventListener('pointermove', move);
@@ -863,15 +970,17 @@ export class SearchV2View extends JfElement {
     this.adoptRailWidth(rail, width);
   }
 
-  /** L13 — a chosen width is adopted into view state AND remembered; the two are one act. */
+  /**
+   * L13 — a chosen width is adopted into view state AND remembered; the two are one act. What is
+   * stored is the user's CHOICE; what renders is that choice reconciled against the window, which
+   * is why this ends at the seam rather than writing an applied width straight to the DOM.
+   */
   private adoptRailWidth(rail: RailId, px: number): void {
-    if (rail === 'sessions') {
-      this.sessionRailPx = px;
-      this.syncRailCollapsed(px);
-    } else {
-      this.documentRailPx = px;
-    }
+    if (rail === 'sessions') this.sessionRailPx = px;
+    else this.documentRailPx = px;
     storeRailWidth(rail, px);
+    // GESTURE END — the third caller of the one reconciliation seam.
+    this.reconcileBoundaries();
     this.requestUpdate();
   }
 
@@ -889,13 +998,10 @@ export class SearchV2View extends JfElement {
    */
   private resetRailSize(rail: RailId): void {
     this.railElement(rail)?.style.removeProperty('flex');
-    if (rail === 'sessions') {
-      this.sessionRailPx = null;
-      this.railCollapsed = false;
-    } else {
-      this.documentRailPx = null;
-    }
+    if (rail === 'sessions') this.sessionRailPx = null;
+    else this.documentRailPx = null;
     forgetRailWidth(rail);
+    this.reconcileBoundaries();
     this.requestUpdate();
   }
 
@@ -1936,7 +2042,9 @@ export class SearchV2View extends JfElement {
             class="rail"
             data-testid="rail"
             aria-label="Sessions"
-            style=${this.sessionRailPx !== null ? `flex: 0 0 ${this.sessionRailPx}px` : nothing}
+            style=${this.applied.sessionRailPx !== null
+              ? `flex: 0 0 ${this.applied.sessionRailPx}px`
+              : nothing}
           >
             ${this.railCollapsed
               ? this.railStrip()
@@ -2095,7 +2203,9 @@ export class SearchV2View extends JfElement {
         class="reading"
         data-testid="reading-pane"
         aria-label="Document"
-        style=${this.documentRailPx !== null ? `flex: 0 0 ${this.documentRailPx}px` : nothing}
+        style=${this.applied.documentRailPx !== null
+          ? `flex: 0 0 ${this.applied.documentRailPx}px`
+          : nothing}
       >
         <jf-document-pane
           .docPath=${this.readingDocPath}
@@ -2271,7 +2381,9 @@ export class SearchV2View extends JfElement {
           ? 'sized'
           : ''}"
         data-testid="deck"
-        style=${this.deckHeightPx !== null ? `flex: 0 0 ${this.deckHeightPx}px` : nothing}
+        style=${this.applied.deckHeightPx !== null
+          ? `flex: 0 0 ${this.applied.deckHeightPx}px`
+          : nothing}
       >
         ${this.deckGrip()} ${this.scopeChips()}
         <div class="band" data-testid="input-band">
@@ -2490,9 +2602,16 @@ export class SearchV2View extends JfElement {
     return null;
   }
 
-  /** L7 — the list BODY is the one compressible occupant; nothing else in the deck collapses. */
+  /**
+   * L7 — the user's own collapse of the list body. Distinct from EVICTION, which the window decides
+   * when the column cannot hold everything: the two can both be true, and re-expanding here only
+   * withdraws the user's half. If the room genuinely is not there, the next reconcile keeps the list
+   * in its minimum honest form and the affordance says so, rather than promising rows that would be
+   * two pixels tall.
+   */
   private toggleList(): void {
-    this.listCollapsed = !this.listCollapsed;
+    this.listCollapsedByUser = !this.listCollapsed;
+    this.reconcileBoundaries();
     this.requestUpdate();
   }
 
@@ -2531,6 +2650,16 @@ export class SearchV2View extends JfElement {
    */
   private runFeed(ctrl: AgentSessionController): TemplateResult {
     const entries = ctrl.conversation.slice(this.runEntryStart);
+    // L7 (amended) — EVICTED: the column cannot hold the feed's body without starving something that
+    // may not yield, so the feed takes its own minimum honest form. It states what the run has done,
+    // derived from the same observed activity the receipt will carry (L6), rather than rendering a
+    // scroller too short to read. The CONTROLS beside it are untouched: a decision never yields.
+    if (this.feedCollapsed) {
+      const calls = this.observedToolCalls(ctrl);
+      return html`<p class="count" data-testid="run-feed-collapsed">
+        Run in progress · ${calls} tool ${calls === 1 ? 'call' : 'calls'} · steps hidden for room
+      </p>`;
+    }
     return html`
       <div class="feed" data-testid="run-feed" data-scrollable="true">
         ${entries.map((e) => this.runEntry(ctrl, e))}

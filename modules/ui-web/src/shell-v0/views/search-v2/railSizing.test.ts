@@ -14,6 +14,21 @@ import { describe, it, expect, beforeEach } from 'vitest';
 // The rendered-geometry authority these floors are derived from. Imported, not transcribed — the
 // point of the guard below is that the link cannot rot into a stale copy.
 import proportionBaseline from '../../../../../../governance/ui-proportion-baseline.v1.json';
+import { reconcileBoundaries, type BoundaryInput } from './boundaryReconciler.js';
+
+/** A measured, roomy window with both boundaries automatic — the base each case perturbs. */
+const RECONCILE_BASE: BoundaryInput = {
+  availableWidthPx: 1600,
+  availableHeightPx: 900,
+  sessionRailChosenPx: null,
+  documentRailChosenPx: null,
+  documentOpen: false,
+  deckChosenPx: null,
+  deckFloorPx: 120,
+  shortViewport: false,
+  hasList: true,
+  hasFeed: false,
+};
 import {
   CENTRE_MIN_PX,
   DOCUMENT_RAIL_FLOOR_PX,
@@ -129,12 +144,40 @@ describe('818 railSizing — rails REMEMBER, and forget when returned to automat
     expect(readStoredRailWidth('sessions')).toBeNull();
   });
 
-  it('a remembered width that today’s floors reject is discarded, never restored', () => {
-    // A width from a window whose floors no longer apply must not reopen a shape they forbid.
-    localStorage.setItem(storageKey('document'), '40');
-    expect(readStoredRailWidth('document')).toBeNull();
+  it('a corrupt entry is not a preference — there is nothing to clamp', () => {
     localStorage.setItem(storageKey('sessions'), 'not-a-number');
     expect(readStoredRailWidth('sessions')).toBeNull();
+    localStorage.setItem(storageKey('document'), '0');
+    expect(readStoredRailWidth('document')).toBeNull();
+  });
+
+  it('a width today’s window cannot honour is RESTORED, and clamped where it is applied', () => {
+    // Replaces the previous "…is discarded, never restored" contract, which was the shape of
+    // §6c finding 7: the reader judged a remembered width against a STATIC range, so it knew
+    // nothing about the window actually on screen and a 448px rail reopened at 448px on a narrow
+    // one. Discarding was also the wrong remedy even when it fired — it threw the preference away
+    // permanently, so widening the window never brought it back.
+    localStorage.setItem(storageKey('sessions'), '448');
+    expect(readStoredRailWidth('sessions')).toBe(448);
+
+    // On a window too narrow to honour it, the APPLIED width is clamped…
+    const narrow = reconcileBoundaries({
+      ...RECONCILE_BASE,
+      availableWidthPx: 700,
+      sessionRailChosenPx: 448,
+    });
+    expect(narrow.sessionRailPx).toBeLessThan(448);
+
+    // …the MEMORY is untouched, so the preference survives the narrow window…
+    expect(readStoredRailWidth('sessions')).toBe(448);
+
+    // …and comes back in full once there is room for it again.
+    const roomy = reconcileBoundaries({
+      ...RECONCILE_BASE,
+      availableWidthPx: 1600,
+      sessionRailChosenPx: 448,
+    });
+    expect(roomy.sessionRailPx).toBe(448);
   });
 
   it('no memory means automatic — the absence of a preference is itself the default', () => {

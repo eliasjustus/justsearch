@@ -184,6 +184,11 @@ async function mount(): Promise<Mounted> {
   return el;
 }
 
+/** Drive the reconciliation seam directly: happy-dom defines ResizeObserver but never fires it. */
+function reconcile(el: Mounted): void {
+  (el as unknown as { reconcileBoundaries(): void }).reconcileBoundaries();
+}
+
 function q(el: Mounted, testid: string): HTMLElement | null {
   return el.shadowRoot?.querySelector(`[data-testid="${testid}"]`) ?? null;
 }
@@ -416,12 +421,53 @@ describe('818 SearchV2View — the deck stack (L7)', () => {
     // The two BODIES are the scroll containers…
     expect(list?.getAttribute('data-scrollable')).toBe('true');
     expect(feed?.getAttribute('data-scrollable')).toBe('true');
-    // …and the decision lives outside both, so it cannot be scrolled off screen.
+    // …and the decision lives outside both, so it cannot be SCROLLED off screen.
     expect(list?.contains(gate as Node)).toBe(false);
     expect(feed?.contains(gate as Node)).toBe(false);
     expect(controls?.contains(gate as Node)).toBe(true);
     expect(gate?.closest('[data-scrollable="true"]')).toBeNull();
     expect(controls?.closest('[data-scrollable="true"]')).toBeNull();
+
+    // Being outside every scroller is only HALF of L7, and the half this test used to assert alone
+    // — which is why it stayed green through §6c finding 3, where the decision left the screen by
+    // being CLIPPED rather than scrolled. The other half is that when the column runs out of room
+    // it is a BODY that yields, never the decision. Asserted here on the same held gate, because a
+    // held decision is exactly the case where getting it wrong costs the most.
+    reconcile(el);
+    await el.updateComplete;
+    expect(q(el, 'run-controls'), 'the controls survive any amount of pressure').not.toBeNull();
+    expect(q(el, 'budget-gate'), 'so does the decision they carry').not.toBeNull();
+  });
+
+  /**
+   * L7 as amended (818 §6e.4) — the yield ORDER, at the view. `deckSizing.test.ts` owns the
+   * arithmetic; this owns the consequence: which elements are actually on screen once the column
+   * cannot hold everything. The decisions are absent from the list of things that can yield.
+   */
+  it('L7 — under pressure the BODIES take their minimum honest form and the decision does not', async () => {
+    const el = await mount();
+    await type(el, 'file the agreements');
+    await key(el, { key: 'Enter', metaKey: true });
+    ctrl.budgetGate = { tokensNeeded: 8_000, tokensRemaining: 1_200, totalTokensConsumed: 28_800 };
+    await runStarts(el);
+
+    // A column with no room at all: the most pressure the window can be under.
+    const centre = el.shadowRoot?.querySelector('.centre') as HTMLElement;
+    centre.getBoundingClientRect = (() => ({ width: 800, height: 200, top: 0, left: 0 })) as never;
+    reconcile(el);
+    await el.updateComplete;
+
+    // Both bodies have taken their minimum honest form — and each still STATES what it stands for
+    // rather than vanishing (L7: a minimum honest form may drop rows, never a fact).
+    expect(q(el, 'live-results'), 'the list body yields its rows').toBeNull();
+    expect(q(el, 'live-count'), 'and states its count instead').not.toBeNull();
+    expect(q(el, 'run-feed'), 'the feed body yields its steps').toBeNull();
+    expect(q(el, 'run-feed-collapsed'), 'and states what the run has done').not.toBeNull();
+
+    // The decision is untouched. This is the assertion finding 3 was made of.
+    expect(q(el, 'run-controls')).not.toBeNull();
+    expect(q(el, 'budget-gate')).not.toBeNull();
+    expect(q(el, 'run-halt')).not.toBeNull();
   });
 
   it('L7 — collapsing the ONE compressible occupant keeps the decision on screen', async () => {
