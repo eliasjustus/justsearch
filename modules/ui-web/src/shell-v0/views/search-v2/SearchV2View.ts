@@ -174,12 +174,14 @@ import {
   projectIndex,
   projectSessionName,
   projectTranscript,
+  recordsFromThread,
   refuseAnswer,
   type FrozenSearchRecord,
   type RunOutcome,
   type SearchCapture,
   type SessionRecord,
   type TranscriptAnswerItem,
+  type TranscriptForeignItem,
   type TranscriptFrozenItem,
   type TranscriptItem,
   type TranscriptRunItem,
@@ -213,6 +215,7 @@ import {
   type RailId,
 } from './railSizing.js';
 import { filterTrail, mergeRecents, readTrail, recordSubmittedQuery } from './queryTrail.js';
+import { fetchUnifiedThread } from '../unifiedThreadClient.js';
 import { subscribePinnedSearches, type SearchPin } from '../../state/pinnedSearchState.js';
 import type { DocumentLineRange } from '../../components/documentPane/DocumentPane.js';
 import type { CitationSelectDetail } from '../../components/chat/citationTypes.js';
@@ -321,6 +324,8 @@ export class SearchV2View extends JfElement {
    * clocked, and never part of an id — the projections stay exactly as they were.
    */
   private sessionEpoch = 0;
+  /** The session being fetched, so the rail can say so rather than looking inert. */
+  private loadingSessionId: string | null = null;
   /** L9/§6c finding 2 — why the last send was refused, or null. Drives the visible refusal. */
   private sendRefusal: { rung: 'ask' | 'agent'; reason: string } | null = null;
   /** L9 — set only by {@link refuseLocked}: a send the lock actually refused. */
@@ -1680,8 +1685,13 @@ export class SearchV2View extends JfElement {
         border-left: 3px solid var(--accent-tint-45);
         padding-left: var(--density-inner-pad-x);
       }
+      /* §6c finding 26 — the band rests as ONE line. The collapse control used to occupy a row of
+         its own above the card, which cost a full line of vertical space to say something the card's
+         own meta line is already the home for. */
       .listhead {
         display: flex;
+        justify-content: flex-end;
+        margin-bottom: -0.4rem;
       }
       button.quiet {
         background: transparent;
@@ -2168,6 +2178,40 @@ export class SearchV2View extends JfElement {
     this.requestUpdate();
   }
 
+  /**
+   * L8/L11 (818 §6i, §6c finding 27) — open a prior session.
+   *
+   * The rail has always known these sessions (it subscribes to the shared conversation list); what
+   * was missing was the load, and the row carried a comment saying so. The transcript is fetched
+   * through the SAME `fetchUnifiedThread` the shipped window uses — no second fetch authority — and
+   * mapped INTO `records`, so every projection reads a loaded session exactly as it reads a typed
+   * one and there is no parallel model to drift (which is the defect 818 exists to avoid).
+   *
+   * Loading is not searching: this issues nothing through the search seam, and the live deck is left
+   * exactly as the user left it. The epoch is bumped first, so an ask still streaming against the
+   * PREVIOUS session cannot land in this one (§6c finding 2's guard, doing its job on a new path).
+   */
+  private async openSession(id: string): Promise<void> {
+    this.sessionEpoch += 1;
+    const epoch = this.sessionEpoch;
+    this.askAbort?.abort();
+    this.askAbort = null;
+    this.streaming = null;
+    this.sendRefusal = null;
+    this.sessionId = id;
+    this.loadingSessionId = id;
+    this.requestUpdate();
+
+    const thread = await fetchUnifiedThread(this.apiBase, id);
+    // The user moved on (a new session, another row) while this was in flight.
+    if (this.sessionEpoch !== epoch) return;
+    this.loadingSessionId = null;
+    this.records = recordsFromThread(thread.events);
+    this.indexCursor = -1;
+    this.reconcileBoundaries();
+    this.requestUpdate();
+  }
+
   /** Back to the sessions sidebar — an explicit user intent, never a lifecycle side effect. */
   private clearRecords(): void {
     // The records array is about to be re-indexed from zero, so anything still in flight against the
@@ -2178,6 +2222,7 @@ export class SearchV2View extends JfElement {
     this.askAbort = null;
     this.streaming = null;
     this.sendRefusal = null;
+    this.loadingSessionId = null;
     this.records = NO_RECORDS;
     this.draft = '';
     this.flipped = false;
@@ -2386,18 +2431,25 @@ export class SearchV2View extends JfElement {
                 <h2 data-testid="session-bucket-label">${b.label}</h2>
                 <ul class="rowlist" data-testid="session-list">
                   ${/* L14 — the row RESTS at its identifying minimum (the title, which is what the
-                        user recognises it by) and its meta extends. The row is focusable so the
-                        elaboration is reachable from the keyboard as well as the pointer; it is
-                        deliberately not a button yet, because opening a prior session is not a thing
-                        this window can do until it can load one. */ ''}
+                        user recognises it by) and its meta extends. It is a BUTTON because it does
+                        something: it opens that session (818 §6i / §6c finding 27). */ ''}
                   ${b.rows.map(
-                    (s) => html`<li
-                      class="ext-row"
-                      tabindex="0"
-                      data-testid="session-row"
-                      data-session-id=${s.id}
-                    >
+                    (s) => html`<li class="ext-row">
+                      <button
+                        type="button"
+                        class="node"
+                        data-testid="session-row"
+                        data-session-id=${s.id}
+                        aria-label=${`Open session: ${s.label}`}
+                        aria-busy=${this.loadingSessionId === s.id ? 'true' : nothing}
+                        @click=${() => void this.openSession(s.id)}
+                      >
                       ${s.label}
+                      ${/* A fetch takes time; a row that looks inert while it runs is the
+                            dead-affordance reading this window keeps having to fix. */ ''}
+                      ${this.loadingSessionId === s.id
+                        ? html`<span class="meta" data-testid="session-row-loading">Opening…</span>`
+                        : nothing}
                       ${/* L14 (amended) — this is META: a fact about ANOTHER object (a prior
                             session), not about the set this surface is describing. It may extend.
                             It deliberately does NOT carry the `count` class, which now marks
@@ -2406,6 +2458,7 @@ export class SearchV2View extends JfElement {
                       <span class="meta ext" data-testid="session-row-meta"
                         >${messageCountLabel(s.messageCount)} · ${b.label}</span
                       >
+                      </button>
                     </li>`,
                   )}
                 </ul>
@@ -2500,6 +2553,7 @@ export class SearchV2View extends JfElement {
     }
     if (item.kind === 'answer') return this.answerBlock(item);
     if (item.kind === 'agent-run') return this.runReceipt(item);
+    if (item.kind === 'foreign') return this.foreignBlock(item);
     if (item.kind === 'refused-answer') {
       return html`<p
         class="pending"
@@ -2522,6 +2576,18 @@ export class SearchV2View extends JfElement {
           data-testid="pending-answer"
           data-record-id=${item.id}
         >${item.label}</p>`;
+  }
+
+  /**
+   * L8 — a loaded turn this window has no native record for. It is NAMED and its words are kept
+   * verbatim: dropping it would make a loaded transcript quietly shorter than the conversation it
+   * claims to be, and rendering it as one of this window's own record kinds would claim a structure
+   * it does not have.
+   */
+  private foreignBlock(item: TranscriptForeignItem): TemplateResult {
+    return html`<p class="turn" data-testid="foreign-record" data-record-id=${item.id}>
+      <span class="meta">${item.label}</span> ${item.text}
+    </p>`;
   }
 
   /**
@@ -2795,6 +2861,7 @@ export class SearchV2View extends JfElement {
           : html`<div class="list" data-testid="live-results" data-scrollable="true">
               <jf-results-card
                 variant="live"
+                elaboration="on-demand"
                 .snapshot=${live}
                 .facetSelections=${this.facetSelections}
                 .askAvailability=${null}
@@ -3187,6 +3254,11 @@ export class SearchV2View extends JfElement {
   private sendRefusalNote(): TemplateResult | typeof nothing {
     const refusal = this.sendRefusal;
     if (!refusal) return nothing;
+    // A refusal describes a gate that was holding at the moment of the attempt. When that gate
+    // lifts — the run ends, the answer lands — the sentence stops being true, and a notice that
+    // outlives its own condition is exactly the "visible at all times" complaint (§6c finding 26).
+    // Derived rather than cleared by hand, so there is no path that forgets to.
+    if (this.sendGate(refusal.rung) === null) return nothing;
     return html`<p class="count" role="status" data-testid="send-refused" data-rung=${refusal.rung}>
       ${refusal.reason} Your text is still in the search box.
     </p>`;

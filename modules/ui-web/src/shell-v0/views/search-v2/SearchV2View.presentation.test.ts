@@ -787,8 +787,12 @@ describe('818 SearchV2View — resting minimum, extension on hover AND focus (L1
     expect(meta.classList.contains('ext')).toBe(true);
     expect(meta.closest('.ext-row')).not.toBeNull();
     // Focus parity is structural: the row can hold focus, so the keyboard reaches the elaboration.
+    // Asserted as "natively focusable" rather than as tabindex="0" — the row is a BUTTON now that it
+    // opens the session (§6c finding 27), and a tabindex assertion would be checking the old
+    // implementation's spelling of a property the element satisfies by construction.
     const row = q(el, 'session-row') as HTMLElement;
-    expect(row.getAttribute('tabindex')).toBe('0');
+    expect(row.tagName).toBe('BUTTON');
+    expect(row.getAttribute('tabindex')).not.toBe('-1');
   });
 
   it('an index node rests as label + size and elaborates into the record’s detail', async () => {

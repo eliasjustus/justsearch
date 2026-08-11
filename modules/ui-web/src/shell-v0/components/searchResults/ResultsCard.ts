@@ -163,6 +163,11 @@ export class ResultsCard extends JfElement {
     // default). 'excerpt' — the inline expand-to-snapshot toggle.
     expanded: { state: true },
     excerptOpen: { state: true },
+    // Tempdoc 818 §6c finding 26 — how much of the meta band RESTS. 'always' (default) is the
+    // shipped behaviour, unchanged for every existing consumer; 'on-demand' rests the honesty facts
+    // and folds the rest behind one control. Additive by construction: a host opts in.
+    elaboration: { type: String },
+    detailsOpen: { state: true },
   };
 
   declare snapshot: CardSnapshot | null;
@@ -179,6 +184,20 @@ export class ResultsCard extends JfElement {
   declare provenance: SearchProvenance | null;
   declare expanded: boolean;
   declare excerptOpen: boolean;
+  /**
+   * L14 (818 §6h) — the rest/extend split for this card's meta band.
+   *
+   * 'always' keeps every consumer's current render. 'on-demand' rests ONLY what L14 forbids hiding:
+   * the count (L6's headline) and the pass's own provisionality. Timing, retrieval mode, the export
+   * actions and the facet chips fold behind one explicit control.
+   *
+   * An explicit control rather than the window's hover `.ext`, deliberately: the elaboration here is
+   * ACTED ON (you click an export, you toggle a facet), and a hover-revealed target that can
+   * collapse out from under the pointer is a worse affordance than a closed one. The hover
+   * convention stays where it belongs — elaboration you only READ.
+   */
+  declare elaboration: 'always' | 'on-demand';
+  declare detailsOpen: boolean;
 
   /** Shift-range anchor (ports SearchSurface's 508-followup §γ4 model into the one card). */
   private anchorIndex = -1;
@@ -205,6 +224,8 @@ export class ResultsCard extends JfElement {
     this.provenance = null;
     this.expanded = false;
     this.excerptOpen = false;
+    this.elaboration = 'always';
+    this.detailsOpen = false;
     // The one shared clipboard seam by default; plugin hosts may override with
     // their host.ui.copyToClipboard wrapper (same util underneath).
     this.copyText = (text: string) => copyToClipboard(text);
@@ -369,6 +390,28 @@ export class ResultsCard extends JfElement {
     return `${(ms / 1000).toFixed(2)}s`;
   }
 
+  /** Is the band's elaboration on screen right now? Always, unless the host asked otherwise. */
+  private metaExpanded(): boolean {
+    return this.elaboration !== 'on-demand' || this.detailsOpen;
+  }
+
+  /**
+   * L14 — the one control that opens the band. Rendered only for a host that asked for the compact
+   * rest state, so no existing consumer gains a control it did not have.
+   */
+  private renderDetailsToggle(): TemplateResult | typeof nothing {
+    if (this.elaboration !== 'on-demand') return nothing;
+    return html`<button
+      type="button"
+      class="copy-btn"
+      data-testid="card-details-toggle"
+      aria-expanded=${String(this.detailsOpen)}
+      @click=${() => {
+        this.detailsOpen = !this.detailsOpen;
+      }}
+    >${this.detailsOpen ? 'Less' : 'Details'}</button>`;
+  }
+
   private renderMeta(): TemplateResult {
     // Defensive projection — hosts can hand a partially-populated snapshot during
     // early boot (or tests can fixture one); every numeric/list read degrades to
@@ -400,11 +443,11 @@ export class ResultsCard extends JfElement {
                 (s.searchTrace as SearchTrace | null | undefined)?.effectiveMode === 'VECTOR',
                 s.totalHits,
                 s.facetsTruncated,
-              )}${s.processingTimeMs != null
+              )}${s.processingTimeMs != null && this.metaExpanded()
                 ? isAdvancedMode()
                   ? html` · ${ResultsCard.formatLatency(s.processingTimeMs)}`
                   : html` · found in ${ResultsCard.formatLatencyPlain(s.processingTimeMs)}`
-                : nothing}${this.renderRetrievalMode()}${s.isRefining
+                : nothing}${this.metaExpanded() ? this.renderRetrievalMode() : nothing}${s.isRefining
                 ? html` <span class="meta-refining" data-testid="meta-refining"
                     >${icon({ name: 'loader-2', size: 10, spin: true })} refining…</span
                   >`
@@ -415,8 +458,12 @@ export class ResultsCard extends JfElement {
                     : nothing}`
             : html`<span class="meta-empty">No matches for "${s.query}"</span>`}
       </div>
-      ${s.results.length > 0
+      ${s.results.length > 0 && this.elaboration === 'on-demand' && !this.detailsOpen
+        ? html`<div class="copy-actions">${this.renderDetailsToggle()}</div>`
+        : nothing}
+      ${s.results.length > 0 && this.metaExpanded()
         ? html`<div class="copy-actions" data-testid="copy-actions">
+            ${this.renderDetailsToggle()}
             ${this.renderCopyBtn('md', 'Copy as Markdown', 'MD')}
             ${this.renderCopyBtn('json', 'Copy as JSON', 'JSON')}
             ${this.renderCopyBtn('paths', 'Copy paths only', 'Paths')}
@@ -639,9 +686,11 @@ export class ResultsCard extends JfElement {
     if (!s || (!s.isSearching && results.length === 0 && !(s.query ?? '').trim())) return nothing;
     return html`
       ${this.renderMeta()}
-      ${renderFacetChips(s.facets as Parameters<typeof renderFacetChips>[0], this.facetSelections, {
-        onToggle: (field, value) => this.emitCard('card-facet-toggle', { field, value }),
-      })}
+      ${this.metaExpanded()
+        ? renderFacetChips(s.facets as Parameters<typeof renderFacetChips>[0], this.facetSelections, {
+            onToggle: (field, value) => this.emitCard('card-facet-toggle', { field, value }),
+          })
+        : nothing}
       ${results.length > 0
         ? html`<div class="results-list" role="list" id="search-results-list" aria-label="Search results">
             ${repeat(

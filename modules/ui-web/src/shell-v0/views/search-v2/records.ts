@@ -154,13 +154,29 @@ export interface AgentRunRecord {
   readonly endedAt: string | null;
 }
 
+/**
+ * L8/L11 (tempdoc 818 §6i) — a turn LOADED from a prior conversation that this window has no native
+ * record for. Chat-only shapes authored by the shipped window (handoffs, progress notes, tool
+ * activity) have no home in this model yet, and the alternative to naming them is dropping them,
+ * which would make a loaded transcript quietly shorter than the conversation it claims to be. It
+ * carries the originator's own words and says what kind of thing it was; it never guesses.
+ */
+export interface ForeignRecord {
+  readonly kind: 'foreign';
+  readonly id: string;
+  /** What the source called it, in the reader's terms. */
+  readonly label: string;
+  readonly text: string;
+}
+
 export type SessionRecord =
   | FrozenSearchRecord
   | UserTurnRecord
   | PendingAnswerRecord
   | AnswerRecord
   | RefusedAnswerRecord
-  | AgentRunRecord;
+  | AgentRunRecord
+  | ForeignRecord;
 
 /** The live-search facts a commit captures. Structurally satisfied by the store's `SearchHit`. */
 export interface SearchCapture {
@@ -384,6 +400,12 @@ export interface TranscriptRefusedItem {
   readonly detail: string;
   readonly label: string;
 }
+export interface TranscriptForeignItem {
+  readonly kind: 'foreign';
+  readonly id: string;
+  readonly label: string;
+  readonly text: string;
+}
 export interface TranscriptRunItem {
   readonly kind: 'agent-run';
   readonly id: string;
@@ -399,7 +421,8 @@ export type TranscriptItem =
   | TranscriptPendingItem
   | TranscriptAnswerItem
   | TranscriptRefusedItem
-  | TranscriptRunItem;
+  | TranscriptRunItem
+  | TranscriptForeignItem;
 
 /** How a run's outcome reads to the person who delegated it. */
 const RUN_OUTCOME_WORDING: Readonly<Record<RunOutcome, string>> = Object.freeze({
@@ -476,6 +499,9 @@ export function projectTranscript(records: readonly SessionRecord[]): readonly T
         endedAt: r.endedAt,
       };
     }
+    if (r.kind === 'foreign') {
+      return { kind: 'foreign', id: r.id, label: r.label, text: r.text };
+    }
     if (r.kind === 'refused-answer') {
       return {
         kind: 'refused-answer',
@@ -549,11 +575,13 @@ export function indexNodeDetail(r: SessionRecord, now: number): string | null {
   }
   if (r.kind === 'answer') return groundedSentencesLabel(r.grounding);
   if (r.kind === 'refused-answer') return r.detail || null;
+  if (r.kind === 'foreign') return r.label;
   return null;
 }
 
 /** The label a non-frozen record carries when it happens to OPEN a cluster (no commit before it). */
 function leadingNodeLabel(r: SessionRecord): string {
+  if (r.kind === 'foreign') return r.label;
   if (r.kind === 'user-turn') return r.text.trim() || 'Untitled turn';
   if (r.kind === 'answer' || r.kind === 'pending-answer') return 'Answer';
   if (r.kind === 'refused-answer') return 'Not asked';
@@ -623,4 +651,97 @@ export function projectSessionName(records: readonly SessionRecord[]): string {
     if (r.kind === 'user-turn' && r.text.trim()) return r.text.trim();
   }
   return UNNAMED_SESSION;
+}
+
+/** A thread event as this module needs it — structurally satisfied by the shared `ThreadEvent`. */
+export interface ThreadEventLike {
+  readonly kind: string;
+  readonly content: string;
+  readonly attributes?: Readonly<Record<string, unknown>>;
+}
+
+/** How a loaded event's kind reads to the person who opened the session. */
+const FOREIGN_WORDING: Readonly<Record<string, string>> = Object.freeze({
+  TOOL_ACTIVITY: 'Tool activity',
+  PROGRESS: 'Progress',
+  HANDOFF: 'Handoff',
+  ERROR: 'Error',
+  UNKNOWN: 'Unrecognised turn',
+});
+
+function attrString(attrs: Readonly<Record<string, unknown>> | undefined, key: string): string {
+  const v = attrs?.[key];
+  return typeof v === 'string' ? v : '';
+}
+
+/**
+ * L8/L4 (818 §6i) — a prior conversation, mapped INTO the one records array.
+ *
+ * The loaded transcript is not a second model held beside `records`; it BECOMES records, so every
+ * projection (transcript, index, session name) reads it exactly as it reads a session typed in this
+ * window. That is what keeps L11 true across the load path.
+ *
+ * Three mapping decisions, each stated because each could reasonably have gone another way:
+ *  - a loaded SEARCH arrives as a FROZEN record with an EMPTY hit set. The backend persists a
+ *    search's `docIds`, not its rows, so the rows genuinely are not recoverable — and the shared
+ *    results card already says exactly that on a snapshot with no results ("results not stored —
+ *    run again to see them"). Synthesising rows from ids would be a fabricated set (L4/L6).
+ *  - an ASSISTANT_MESSAGE arrives as an `answer` with NO citations and NO grounding, not as an
+ *    answer with zeroed stats: a turn whose grounding was never re-fetched must not read as a turn
+ *    that was measured and scored nothing (the same rule `groundedSentencesLabel` already applies).
+ *  - anything this window has no record for is NAMED and kept, never dropped (see {@link ForeignRecord}).
+ *
+ * Pure and id-deterministic, like every other constructor here: ids come from array position, so a
+ * loaded session is reproducible and testable.
+ */
+export function recordsFromThread(events: readonly ThreadEventLike[]): readonly SessionRecord[] {
+  const out: SessionRecord[] = [];
+  for (const e of events) {
+    const id = `r${out.length}`;
+    if (e.kind === 'USER_MESSAGE') {
+      out.push(Object.freeze({ kind: 'user-turn' as const, id, text: e.content }));
+      continue;
+    }
+    if (e.kind === 'ASSISTANT_MESSAGE') {
+      out.push(
+        Object.freeze({
+          kind: 'answer' as const,
+          id,
+          text: e.content,
+          claims: Object.freeze([]),
+          citations: Object.freeze([]),
+          sources: Object.freeze([]),
+          retrievalMode: null,
+          chunksUsed: null,
+          grounding: null,
+          promptTokens: null,
+        }),
+      );
+      continue;
+    }
+    if (e.kind === 'SEARCH') {
+      const query = attrString(e.attributes, 'query') || e.content;
+      out.push(
+        freezeSearch(id, {
+          query,
+          hits: [],
+          total: 0,
+          mode: 'unknown',
+          tookMs: null,
+          retrievalMode: 'UNKNOWN',
+          executedAt: attrString(e.attributes, 'occurredAt'),
+        }),
+      );
+      continue;
+    }
+    out.push(
+      Object.freeze({
+        kind: 'foreign' as const,
+        id,
+        label: FOREIGN_WORDING[e.kind] ?? 'Turn from another window',
+        text: e.content,
+      }),
+    );
+  }
+  return Object.freeze(out);
 }

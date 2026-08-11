@@ -270,7 +270,9 @@ owner-directed principles, formalised as laws:
     verdicts, LOCKED, grounding stay resting-visible; only elaboration extends. Focus
     parity is mandatory (hover-only fails accessibility); the shared results card
     already follows this principle and is not forked.
-    Hard boundary (amended 2026-08-11, §6e.4; implemented in §6g C5): honesty facts never hide
+    Hard boundary (amended 2026-08-11, §6e.4; implemented in §6g C5; **mechanism clause added in
+    §6i** — elaboration you ACT on folds behind a control instead of extending on hover): honesty
+    facts never hide
     behind hover, where an honesty fact is a claim **about the set this surface is currently
     describing** — its counts, its verdicts, its LOCKED state, its grounding. A fact about
     *another* object (a prior session's message tally) is meta, and meta may extend; so may a
@@ -1391,6 +1393,87 @@ the register's 384 floor with the pane still mounted, no stuck gesture, and ever
 afterwards. The window-bound delivery model holds under exactly the conditions that killed the
 grip-bound one.
 
+## 6i. Findings 26–27 — the resting band, and opening a prior session (2026-08-11)
+
+### F26 — the results meta band was always-on and too tall
+
+Stacked and unconditional whenever results existed: a notice line, the collapse toggle on its own
+row, the card's meta line with MD/JSON/Paths exports, and the Type/Format/Language facet rows. Two
+complaints in one — too much vertical space, and none of it conditional.
+
+The constraint is what makes this interesting: L6 says the card's meta line IS the headline count
+(no second count anywhere), and L14 forbids hiding honesty facts behind hover. So the answer cannot
+be "hide the band" — it has to be a rest/extend split with the honesty facts on the resting side.
+
+**The split, and the mechanism.** RESTS: the count, and the pass's own provisionality ("quick
+results" / "refining" — a caveat about whether these results are final is a fact about the current
+set, not decoration). FOLDS behind one explicit control: the export actions, the facet chips, the
+timing, the retrieval-mode note.
+
+The mechanism is an explicit control rather than the window's hover `.ext`, and that is a decision
+worth stating because the window's default is hover. **Elaboration you merely READ may extend on
+hover; elaboration you ACT ON must not.** A facet chip and an export button are things you move a
+pointer *to*, and a hover-revealed target that collapses when the pointer travels toward it is a
+worse affordance than a closed one. L14 is amended below to say so.
+
+**Scope.** The band lives in the shared `<jf-results-card>`, which the shipped window and the search
+surface also render, so the split arrives as an ADDITIVE opt-in: `elaboration="always"` (the
+default) is byte-identical behaviour for every existing consumer, and search-v2 passes
+`"on-demand"`. Witnessed in both directions — the third case asserts the default consumers gain no
+control they did not have.
+
+**The stale-notice half.** The owner's "visible at all times" also covered a notice that outlived its
+cause: `sendRefusal` was set on an attempt and cleared only by another attempt, so a refusal could
+survive the gate that produced it. It is now DERIVED — the note renders only while
+`sendGate(rung)` still holds — so there is no path that forgets to clear it.
+
+### F27 — opening a prior session
+
+`SearchV2View.ts` carried its own deferral in a comment: the session row was "deliberately not a
+button yet, because opening a prior session is not a thing this window can do until it can load
+one". That deferral is spent, and the comment is deleted rather than contradicted.
+
+**The design, because a mapping deserves one.** The rail already subscribed to the shared
+conversation list; what was missing was the load. The transcript comes from the SAME
+`fetchUnifiedThread` the shipped window uses (no second fetch authority) and is mapped INTO
+`records` by a pure `recordsFromThread` — it does not become a parallel model held beside the array,
+which is precisely the defect (three conversation representations) this window exists to avoid. Every
+projection then reads a loaded session exactly as it reads a typed one; they cannot tell the
+difference, which is the test.
+
+Three mapping decisions, each stated because each could have gone another way:
+
+| Loaded event | Becomes | Why not otherwise |
+|---|---|---|
+| `USER_MESSAGE` | `user-turn` | — |
+| `ASSISTANT_MESSAGE` | `answer` with **no** citations and **null** grounding | Zeroed stats would read as "measured and scored nothing"; the evidence was never re-fetched. Same rule `groundedSentencesLabel` already applies. |
+| `SEARCH` | `frozen-search` with an **empty** hit set | The backend persists `docIds`, not rows, so the rows are genuinely unrecoverable — and the shared card already says exactly that on an empty snapshot. Synthesising rows from ids would be a fabricated set (L4/L6). |
+| anything else | `foreign` — named, words kept verbatim | Dropping it would make a loaded transcript quietly shorter than the conversation it claims to be; rendering it as one of this window's kinds would claim a structure it does not have. |
+
+Loading is not searching: the path issues nothing through the search seam (witnessed). It bumps the
+session epoch first, so an ask still streaming against the previous session cannot land in this one
+— §6c finding 2's guard doing its job on a path that did not exist when it was written. Rows are
+real buttons with `aria-label`s, and carry a visible "Opening…" state while the fetch runs, because
+a control that looks inert while it works is the dead-affordance reading this window keeps having to
+fix.
+
+**Honest residual:** a loaded `SEARCH` renders its query and an empty result set. Re-running it is
+the card's own "Search again" (wired in C4), so the path from a loaded record back to live results
+exists — but the loaded record cannot show the rows it originally had, and says so rather than
+implying otherwise.
+
+### L14, amended (§6i)
+
+> Hard boundary: honesty facts never hide behind hover. An honesty fact is a claim **about the set
+> this surface is currently describing** — its counts, its verdicts, its LOCKED state, its
+> grounding, and whether the pass that produced it is final. A fact about *another* object, or a
+> timing, is meta and may extend.
+>
+> **The mechanism follows the interaction, not the region:** elaboration that is only READ may
+> extend on hover and focus; elaboration that is ACTED ON (an export, a filter chip) folds behind an
+> explicit control instead, because a hover-revealed target that collapses as the pointer travels
+> toward it is a worse affordance than a closed one.
+
 ### L13, amended
 
 > **L13** — every movable boundary is clamped by the minimum honest forms on both sides. A boundary
@@ -1634,3 +1717,21 @@ than stated — and four findings is what an unstated interaction model costs.
 - 2026-08-11 — **Owner ratified the interaction model** (§0b added): all core ideas
   confirmed correct, with particular agreement on the single-input/escalating-meaning
   design. Tempdoc brought current; merge decision on #404 still open.
+- 2026-08-11 — **F26/F27** (§6i). F26: the results meta band was always-on and cost four stacked
+  rows. Fixed as a rest/extend split rather than by hiding — L6 makes the count line the headline and
+  L14 forbids hiding honesty facts, so the count and the pass's provisionality REST while the
+  exports, facet chips, timing and mode fold behind one control. The band lives in the SHARED results
+  card, so the split ships as an additive `elaboration` prop: `'always'` is unchanged for every
+  existing consumer and search-v2 opts into `'on-demand'`, witnessed in both directions. L14 gains a
+  mechanism clause — elaboration you merely READ may extend on hover; elaboration you ACT ON must
+  fold behind an explicit control, because a hover target that collapses as the pointer travels
+  toward it is worse than a closed one. The owner's "visible at all times" also covered a notice that
+  outlived its cause: the send refusal is now DERIVED from its gate rather than cleared by hand.
+  F27: opening a prior session, a deferral this window carried in its own comment. The transcript is
+  fetched through the same `fetchUnifiedThread` the shipped window uses and mapped INTO records by a
+  pure `recordsFromThread`, so there is no parallel model and the projections cannot tell a loaded
+  session from a typed one. A restored answer reports NO grounding rather than a measured zero; a
+  restored search keeps an empty hit set because the backend persists ids, not rows; anything this
+  window cannot model is NAMED and kept verbatim rather than dropped. Loading issues no search
+  (witnessed) and bumps the session epoch, so finding 2's guard covers a path that did not exist when
+  it was written. Suite **4518**, typecheck clean.
