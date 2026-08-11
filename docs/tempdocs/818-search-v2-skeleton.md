@@ -27,6 +27,24 @@ and requires the sunset criterion in §5. Rationale for building beside rather t
 authored counts, state-gated affordances) — a copy would import the disease; a sibling
 window makes the comparison empirical.
 
+## 0b. What this window is, in plain language (owner-ratified 2026-08-11)
+
+One place where "looking for something in your files" can grow into "getting something
+done with your files" — without ever lying along the way. Two kinds of things exist on
+screen: **the present** (a live search that updates as you type — ephemeral by design,
+unnamed, unrecorded, living in the deck because it keeps changing) and **the past**
+(commitments — a frozen search, a question, an answer, a delegated run — immutable
+records that name the session and build its index). Reading leaves no record; delegating
+does. One input whose MEANING escalates instead of modes: plain words search, a question
+asks, a schema extracts, ⌘⏎ delegates — and the pill always shows where Enter goes, so
+the destination is never a surprise. Honesty is structural, not habitual: every number
+derives from the set it describes, a pending decision can never leave the screen, a
+locked session refuses loudly and keeps your text, and nothing operable-looking is inert.
+The owner ratified this model 2026-08-11, with particular emphasis on the
+single-input/escalating-meaning idea. Known trade, stated: the shipped window does more
+(branching, export, editing, compaction); this one does less until each capability can
+be added under the same rules — coverage later, coherence first.
+
 ## 1. The design (settled by the prototype; authority = 818-prototype/index3.html)
 
 One window, one input, meaning escalates. The core object is **one records array**;
@@ -1605,3 +1623,14 @@ than stated — and four findings is what an unstated interaction model costs.
   where the pointer would be. Final state: suite **4507**, full recipe + kernel gates green, and every
   boundary validated live — including a drag released outside the window, which clamps at the
   register's 384 floor and leaves no stuck gesture.
+- 2026-08-11 — **PR #404 CI-green and stopped at the owner's merge gate.** 12/12 checks,
+  mergeable clean. One first-run integration-tier failure was a backend spawn timeout in
+  the isolated-backend fixture, proven unrelated (zero Java/gradle files in the diff
+  since the same PR was previously 12/12) and green on targeted rerun. Total contents:
+  24 findings fixed across three sources (13 critical pass, 2 found during remediation,
+  9 owner/live rounds), 1 retracted; L7/L13/L14 amended; §5 sunset criterion replaced;
+  two testing-methodology rules recorded (proxy-assertion; pointer-gesture tests deliver
+  events where the pointer would be). Suite 4447 → 4507.
+- 2026-08-11 — **Owner ratified the interaction model** (§0b added): all core ideas
+  confirmed correct, with particular agreement on the single-input/escalating-meaning
+  design. Tempdoc brought current; merge decision on #404 still open.
