@@ -1346,15 +1346,32 @@ stored value meaningful rather than a number no state of the rail corresponds to
 collapse is also no longer a one-way door: dragging back out is a real escape, so the chevron is a
 convenience rather than the only rescue.
 
-**F25 — unresolved, and stated rather than guessed at.** The report places the strip's grip at
-x≈91–103 while the rail box extends to 136 and the centre begins at 148. Under flex layout the grip
-is a sibling that comes AFTER the rail's box, so it cannot render inside that span — which makes the
-measured element most likely the strip's own chevron ("Widen the sessions list") rather than the
-`rail-grip` vgrip. That would also independently explain F23's dead drag, since the chevron is a
-click affordance with no drag handler. With the collapsed container now sized to the strip, the grip
-is flush against it by construction. Round 3 should confirm which element was grabbed
-(`data-testid="rail-grip"` vs `rail-expand`) before anything is changed here — a fix aimed at the
-wrong element would be churn, and the geometry as reported is not reproducible from the layout.
+**F25 — RETRACTED (round 3), and the reasoning that retracted it is worth keeping.** The report
+placed the strip's grip at x≈91–103 while the rail box extended to 136. Under flex layout the grip is
+a sibling that comes AFTER the rail's box, so it cannot render inside that span — the geometry was
+not reproducible from the layout, so nothing was changed on the strength of it. Round 3 confirmed
+the cause: with exact testids, `rail-grip` sits flush at the rail's edge (x=136 on a 68..136 rail),
+and the element measured at x=91 was `rail-expand`, the chevron. The two controls' `aria-label`s both
+contain "sessions list", so a label-substring probe matches either.
+
+Two things this leaves behind. **For probes:** locate by `data-testid`, not by an accessible-name
+substring — names are written for humans and neighbouring controls legitimately share vocabulary.
+**For the arc:** the same misidentification would have independently explained F23's dead drag (the
+chevron has no drag handler), so "fix what was reported" would have aimed at the wrong element while
+the real defect — a gesture that dies when the pointer leaves the handle — survived untouched. The
+finding was still worth reporting; refusing to act on geometry that the layout cannot produce is what
+kept the fix honest.
+
+### Round 3 — all green under real input
+
+Every boundary behaviour validated with trusted CDP input: strip→expanded in one continuous drag
+(68 → 302 rendered, 286 stored); drag-collapse storing 52, the strip's renderable width; a remembered
+collapse escapable by drag and by chevron alike; the deck tracking the pointer exactly on a down-drag
+(89px → transcript 193→282, deck 486→397) and no-opping at its max clamp on an up-drag; the document
+boundary widening leftward (400→536, stored 520) and, when released OUTSIDE the window, clamping at
+the register's 384 floor with the pane still mounted, no stuck gesture, and every grip responsive
+afterwards. The window-bound delivery model holds under exactly the conditions that killed the
+grip-bound one.
 
 ### L13, amended
 
@@ -1574,3 +1591,17 @@ than stated — and four findings is what an unstated interaction model costs.
   and its tier, and every new witness must be shown red-before/green-after. The plan ends at a green PR;
   merging is explicitly the owner's gate. Models: sonnet for C0/C1 and C5's mechanical halves, opus for
   C2 (conditional 2b + register judgment), C3 and C4.
+- 2026-08-11 — **Boundary-interaction rounds closed** (§6h, findings 16–25). The owner drove the PR
+  build at real window sizes and found the boundaries badly wrong; three live validation rounds with
+  real CDP input followed. Nine findings fixed, **F25 retracted** as a probe error (both controls'
+  `aria-label`s carry "sessions list", so a name-substring match hit the chevron rather than the
+  grip — locate by `data-testid`). None of the nine was a bug in a clamp: the boundary's interaction
+  model had never been stated, so its **existence, placement, direction, live-clamp binding,
+  container sizing and memory** were authored per grip and drifted. They are L13 clauses now.
+  Two of the rounds changed how this work is TESTED rather than only what it does. F23 is the sharper
+  one: four green drag witnesses dispatched `pointermove` on a ~12px handle, so they asserted the
+  listener WIRING while the user's gesture was dead — and the round-2 capture hardening had made the
+  failure silent. A gesture belongs to the window, and a pointer-gesture test must deliver events
+  where the pointer would be. Final state: suite **4507**, full recipe + kernel gates green, and every
+  boundary validated live — including a drag released outside the window, which clamps at the
+  register's 384 floor and leaves no stuck gesture.
