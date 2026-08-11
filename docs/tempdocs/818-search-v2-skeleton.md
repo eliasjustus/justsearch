@@ -164,7 +164,8 @@ work lands, so clause (a) is a running obligation rather than a scramble at the 
 
 | Law | Tier | Witness |
 |---|---|---|
-| L7 — controls stay on screen mid-run | **measured-audit, one-time** (not gateable) | A fixtured run cannot be held in flight (§6g C0), so no camera can reach the state. The 2026-08-11 audit FOUND a violation here; re-run pending after the §6g C6 fix. |
+| L7 — controls stay on screen mid-run (normal regime) | **measured-audit, one-time** (not gateable) — **PASSING 2026-08-11** | A fixtured run cannot be held in flight (§6g C0), so no camera can reach the state. Live re-audit after the C6 fix: real run streaming at `innerHeight` 945, 6 samples at 700 ms, controls present and fully visible in every one, max bottom **851 ≤ 945**; Halt clicked mid-flight and honoured. Pre-fix baseline for contrast: **975 > 945** by t≈2.4 s. |
+| L7 — controls stay on screen mid-run (SHORT regime) | **unverified** | Fixture-unreachable for the same reason, and not separately exercised live either: `resize_window` did not change `innerHeight`, so the audit ran in the normal regime throughout. The row above is its nearest evidence, not a substitute — the short caps were never active during it. |
 | L7 — compression policy (deck bounded by the column) | unit | `boundaryReconciler.test.ts` — the deck's cap, incl. the normal regime |
 | L7 — the bodies yield and the decisions do not | unit (stylesheet) | `SearchV2View.presentation.test.ts` — flex-shrink on bodies vs controls |
 | L7 — eviction order | unit | `deckSizing.test.ts` — list before feed, decisions never |
@@ -1155,6 +1156,42 @@ Two consequences, and the second is better than the plan assumed:
   §6e.5(d) and the honor-system `ux-audit-closure` discipline.
 - Open the PR, take it to green, **stop**. Merging is the owner's call and is not part of this plan.
 
+### 6g.X — Execution record (2026-08-11)
+
+Seven chunks, serial, as planned. All thirteen §6c findings fixed; all ten §6e.6 orphans torn down
+in the chunk that made each dead. Baseline inherited: 4447 tests / 0 failures. Final: **4489 / 0**.
+
+| Chunk | Landed | Notes |
+|---|---|---|
+| C0 spike | `dc705e2f` | Branch B, decided statically — 814's own fixture docblock already recorded the limit |
+| C1 axis + witnesses | `f28f4521` | Both witnesses measured red on the pre-fix code first |
+| C2 enrollment | `6e3f27a1`, `17d662b4` | Two ui-shot steps, register rows, §5 rewritten, D3 citation corrected |
+| C3 Stream A | `cf7c7929` | One reconciliation seam; clamp-on-apply replaces discard |
+| C4 Stream B | `21f782a2` | One send predicate; serialised ask + session epoch |
+| C5 Stream C | `e0f91413` | Flip off Tab; Escape; scoped choreography; strip keeps its exit; L14 quantified |
+| C6 live + fix | `d73c992d` | The live audit found a real L7 violation the unit tier could not see |
+
+**What the process caught that the design did not.** Recorded because it is the reusable part:
+
+1. **The live audit earned its place.** C3 shipped with a full green suite and a green geometry
+   gate, and the first measured run still found the controls leaving the screen. The gap was that
+   eviction reasons about the bodies' MINIMUMS while the bodies render their MAXIMA — a distinction
+   no unit test in the plan was shaped to notice.
+2. **Anti-vacuity paid for itself twice, on this work's own artefacts.** The register's
+   missing-selector-is-an-ERROR rule caught a `.document-pane` row that could never have asserted
+   anything (it is a UnifiedChatView zone class, not the shared component's). And a mutation test
+   caught my own quantified L14 boundary passing vacuously, because committing flips the rail to the
+   index and the sidebar rows it polices are not rendered in that state at all.
+3. **Two design decisions were wrong until the tests said so.** Reconciling against an unmeasured
+   box clamped everything to its floor (11 failures, all correct); and an advisory capability caveat
+   was made to block dispatch, which contradicted the window's own deliberate posture (12 failures,
+   all correct).
+4. **Three plan items were corrected rather than executed.** The `sandbox-coverage` tier move (wrong
+   register — its trigger is genuinely the cutover), the `toBe('row')` axis assertion (would have
+   false-negatived the fix), and a vacuous backtick guard I wrote and then removed — it could only
+   run in the case where it had nothing to catch, which is the shape this tempdoc spent five
+   rewrites deleting.
+
 ### Post-PR, owner's call only (not in scope)
 
 The `proxy-assertion` postmortem handle and the unclaimed **#820** sketch ("geometry verification for
@@ -1313,6 +1350,23 @@ dev-gated surfaces") remain **proposals**. Neither is implemented by this plan.
   handle; "an exemption without an expiry is a deferral that compounds" as the core of the
   still-unclaimed #820 sketch; a shared ResizeObserver base and a shared-card affordance contract
   recognised but deliberately not built.
+- 2026-08-11 — **§6g executed, C0 through C6** (record + commit table in §6g.X). All thirteen §6c
+  findings fixed and all ten orphans torn down in the chunk that made each dead; suite 4447 → **4489,
+  0 failures**, typecheck clean, full ui-web recipe + kernel gates green, `ui-proportion-gate` clean
+  across 86 rows on fresh post-fix captures (axe 0, overflow none).
+  **The live pass found a fourteenth defect that no static tier could see**: at `innerHeight` 945 —
+  the NORMAL regime, so slice 4's short caps were inactive — the run controls were pushed past the
+  fold ~2.4 s into a real streaming run (bottom 975 > 945). The deck cannot shrink and its bodies
+  carried fixed rem caps, so the deck outgrew the centre column and `.centre` clipped. C3's eviction
+  was blind to it because **eviction reasons about the bodies' minimums, which fit; what did not fit
+  was what they rendered** — the amended L7's floor and manual clamp were built, its middle rung
+  (compression) was not. Fixed by bounding the deck to the column and making the bodies shrink while
+  the controls carry an explicit zero flex-shrink: being outside every scroller stopped them being
+  SCROLLED away, which was already true; this stops them being SQUEEZED away, which was not.
+  Re-audited green — 6 samples at 700 ms, controls fully visible throughout, max bottom 851 ≤ 945,
+  Halt honoured mid-flight. Recorded in §5's per-law tier table, together with the honest gap beside
+  it: the SHORT regime was never separately exercised live, because `resize_window` did not move
+  `innerHeight`, so that row stays **unverified** rather than borrowing this one's result.
 - 2026-08-11 — **Derisk pass** (§6f), pre-implementation, no feature work. Six uncertainties probed
   empirically; **three forced design revisions and one surfaced a risk the design had not seen**.
   (a) happy-dom DOES resolve the cascade through `adoptedStyleSheets` and **reproduces finding 1 in the
