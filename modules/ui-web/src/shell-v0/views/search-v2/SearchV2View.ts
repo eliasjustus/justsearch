@@ -380,6 +380,8 @@ export class SearchV2View extends JfElement {
   private historyOpen = false;
   /** Which trail row the keyboard walk is on; -1 means the input itself still holds focus. */
   private historyCursor = -1;
+  /** True only while this window is returning focus to the composer itself (§6c finding 9). */
+  private reopenSuppressed = false;
   /** The shared pinned-search projection — read, never copied. */
   private pins: readonly SearchPin[] = [];
   /** This window's own recents (the queries that ran but were never committed). */
@@ -393,6 +395,8 @@ export class SearchV2View extends JfElement {
   /** The last observed AI state, kept so the escalation affordances can project their availability. */
   private aiSnapshot: AiState | null = null;
   private choreographyTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The records the RUNNING choreography is about — the only ones it may animate (§6c finding 10). */
+  private committingIds: readonly string[] = [];
   private unsubscribePins: (() => void) | null = null;
   private unsubscribeSearch: (() => void) | null = null;
   private unsubscribeShortViewport: (() => void) | null = null;
@@ -629,6 +633,7 @@ export class SearchV2View extends JfElement {
     if (this.refuseSend('agent')) return;
     const ctrl = this.ensureAgentCtrl();
     this.records = appendUserTurn(this.records, text);
+    const committedIds = [this.records[this.records.length - 1]?.id ?? ''];
     this.runOwned = true;
     this.runEntryStart = ctrl.conversation.length;
     this.haltRequested = false;
@@ -636,7 +641,7 @@ export class SearchV2View extends JfElement {
     this.flipped = false;
     this.lockRefused = false;
     this.closeHistory();
-    this.beginCommitChoreography();
+    this.beginCommitChoreography(committedIds);
     this.requestUpdate();
     void dispatchRunControl(ctrl, { kind: 'initiate', prompt: text });
   }
@@ -696,11 +701,12 @@ export class SearchV2View extends JfElement {
    * same act of committing a turn, and a periphery that reordered itself on one but not the other
    * would be teaching two different causal stories.
    */
-  private beginCommitChoreography(): void {
+  private beginCommitChoreography(ids: readonly string[]): void {
     // Reduced motion is honoured twice: the CSS media block is the guarantee (it also covers a
     // preference changed while the class is applied), and this early return keeps the class off the
     // host entirely, so no consumer can read "committing" as a state that only some users enter.
     if (prefersReducedMotion()) return;
+    this.committingIds = ids;
     this.classList.add(COMMITTING_CLASS);
     if (this.choreographyTimer !== null) clearTimeout(this.choreographyTimer);
     this.choreographyTimer = setTimeout(() => this.endCommitChoreography(), COMMIT_CHOREOGRAPHY_MS);
@@ -713,6 +719,7 @@ export class SearchV2View extends JfElement {
       this.choreographyTimer = null;
     }
     this.classList.remove(COMMITTING_CLASS);
+    this.committingIds = [];
   }
 
   private onChoreographyEnd = (e: Event): void => {
@@ -1105,16 +1112,33 @@ export class SearchV2View extends JfElement {
 
   /** The trail opens on the focus of an EMPTY draft — a draft in progress is not a history search. */
   private onDraftFocus(): void {
+    // Focus we returned ourselves is not the user reaching for their history.
+    if (this.reopenSuppressed) return;
     if (this.draft.trim()) return;
     this.historyOpen = true;
     this.historyCursor = -1;
     this.requestUpdate();
   }
 
-  private closeHistory(): void {
+  /**
+   * Close the trail, optionally returning focus to the composer.
+   *
+   * The refocus has to live HERE because only this function knows the focus move is ours. Escape
+   * from inside the list used to close the trail and then call `input.focus()` from the key handler
+   * — which fired a real focus event, which `onDraftFocus` could not tell from the user clicking
+   * into an empty box, so it reopened the trail and the press did nothing (§6c finding 9). One
+   * place knows; one place suppresses.
+   */
+  private closeHistory(returnFocus = false): void {
     if (!this.historyOpen) return;
     this.historyOpen = false;
     this.historyCursor = -1;
+    if (returnFocus) {
+      this.reopenSuppressed = true;
+      const input = this.shadowRoot?.querySelector('[data-testid="draft"]') as HTMLInputElement | null;
+      input?.focus();
+      this.reopenSuppressed = false;
+    }
     this.requestUpdate();
   }
 
@@ -1152,8 +1176,7 @@ export class SearchV2View extends JfElement {
     const rows = this.trailFlat();
     if (e.key === 'Escape') {
       e.preventDefault();
-      this.closeHistory();
-      (this.shadowRoot?.querySelector('[data-testid="draft"]') as HTMLInputElement | null)?.focus();
+      this.closeHistory(true);
       return;
     }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -1408,7 +1431,8 @@ export class SearchV2View extends JfElement {
       .qhist h2 {
         padding: 0.3rem var(--density-inner-pad-x) 0.1rem;
       }
-      .count {
+      .count,
+      .meta {
         font-size: var(--font-size-xs);
         color: var(--text-muted);
         font-variant-numeric: tabular-nums;
@@ -1697,10 +1721,16 @@ export class SearchV2View extends JfElement {
           opacity: 1;
         }
       }
-      :host(.committing) .turn {
+      /* Scoped to what JUST landed, not to every element of its kind. Selecting on the .turn and
+         .frozen classes alone meant the Nth commit re-ran the entrance on all N records — settled
+         blocks dropped to opacity 0 (animation fill mode both) and faded back in, so the whole
+         transcript flashed on every commit (818 §6c finding 10). The choreography is about one
+         record arriving; anything it animates that did not just arrive says something untrue. */
+      :host(.committing) .committed .turn,
+      :host(.committing) .turn.committed {
         animation: sv2-cm-rise 0.2s ease both;
       }
-      :host(.committing) .frozen {
+      :host(.committing) .frozen.committed {
         animation: sv2-cm-land 0.5s ease 0.12s both;
       }
       :host(.committing) .deck {
@@ -1710,8 +1740,8 @@ export class SearchV2View extends JfElement {
       :host(.committing) .name {
         animation: sv2-cm-fade 0.3s ease 0.4s both;
       }
-      :host(.committing) .answer,
-      :host(.committing) .pending {
+      :host(.committing) .answer.committed,
+      :host(.committing) .pending.committed {
         animation: sv2-cm-answer 0.3s ease 0.55s both;
       }
       /* Reduced motion removes the whole sequence, not a softened version of it: the choreography
@@ -1724,7 +1754,8 @@ export class SearchV2View extends JfElement {
         :host(.committing) .rail,
         :host(.committing) .name,
         :host(.committing) .answer,
-        :host(.committing) .pending {
+        :host(.committing) .pending,
+        :host(.committing) .committed {
           animation: none;
         }
       }
@@ -1774,6 +1805,17 @@ export class SearchV2View extends JfElement {
     return { primary: lensed.primary, alt: lensed.alt, dimmed: false };
   }
 
+  /**
+   * L1 — apply or withdraw the one-shot lens. It stores nothing beyond this draft: a commit, a
+   * delegate or Escape all stop applying it, which is what keeps it a lens rather than a mode.
+   * An empty draft has no destination to swap, so there is nothing to flip.
+   */
+  private toggleFlip(): void {
+    if (route(this.draft, this.routeContext()).empty) return;
+    this.flipped = !this.flipped;
+    this.requestUpdate();
+  }
+
   private onInput(e: Event): void {
     this.draft = (e.target as HTMLInputElement).value;
     setQuery(this.draft);
@@ -1781,14 +1823,6 @@ export class SearchV2View extends JfElement {
   }
 
   private onKeydown(e: KeyboardEvent): void {
-    if (e.key === 'Tab') {
-      // The flip only exists while a draft does; an empty input keeps native focus movement.
-      if (route(this.draft, this.routeContext()).empty) return;
-      e.preventDefault();
-      this.flipped = !this.flipped;
-      this.requestUpdate();
-      return;
-    }
     // ↓ from the input steps into the trail — the list is a continuation of the field, not a
     // separate destination the user has to Tab to.
     if (e.key === 'ArrowDown' && this.historyOpen && this.trailFlat().length > 0) {
@@ -1870,7 +1904,8 @@ export class SearchV2View extends JfElement {
     this.flipped = false;
     this.lockRefused = false;
     this.closeHistory();
-    this.beginCommitChoreography();
+    // Exactly the three records this commit appended — the frozen scope, the turn, and the slot.
+    this.beginCommitChoreography(this.records.slice(before.length).map((r) => r.id));
     this.requestUpdate();
     void this.dispatchAsk(turnText, rawDraft, frozen, pendingId);
   }
@@ -2217,6 +2252,19 @@ export class SearchV2View extends JfElement {
     const noun = this.records.length === 0 ? 'earlier sessions' : 'entries';
     return html`
       <div class="strip" data-testid="rail-strip">
+        ${/* L7 (amended) — a minimum honest form may drop rows; it may never drop an ESCAPE HATCH.
+              The strip used to keep only the control that undoes the collapse, which left the
+              session's own exit — New session, or the way back to the list — reachable nowhere while
+              the rail was narrow. And the rail REMEMBERS, so one drag hid it in every future session
+              (§6c finding 11). §6's claim that this window kills the state-gated-New-chat defect
+              class only holds if the affordance survives every form the rail can take. */ ''}
+        <button
+          type="button"
+          class="quiet"
+          data-testid="strip-new-session"
+          aria-label=${this.records.length === 0 ? 'New session' : 'All sessions'}
+          @click=${this.clearRecords}
+        >${this.records.length === 0 ? '+' : '‹'}</button>
         <button
           type="button"
           class="quiet"
@@ -2267,7 +2315,12 @@ export class SearchV2View extends JfElement {
                       data-session-id=${s.id}
                     >
                       ${s.label}
-                      <span class="count ext" data-testid="session-row-meta"
+                      ${/* L14 (amended) — this is META: a fact about ANOTHER object (a prior
+                            session), not about the set this surface is describing. It may extend.
+                            It deliberately does NOT carry the `count` class, which now marks
+                            current-set honesty facts only, so the structural boundary test can tell
+                            the two apart by selector instead of by a hand-kept list of ids. */ ''}
+                      <span class="meta ext" data-testid="session-row-meta"
                         >${messageCountLabel(s.messageCount)} · ${b.label}</span
                       >
                     </li>`,
@@ -2305,7 +2358,7 @@ export class SearchV2View extends JfElement {
               >
                 <span>${n.label}</span> <span class="count">${n.size}</span>
                 ${n.detail
-                  ? html`<span class="count ext" data-testid="index-node-detail">${n.detail}</span>`
+                  ? html`<span class="meta ext" data-testid="index-node-detail">${n.detail}</span>`
                   : nothing}
               </button>
             </li>`,
@@ -2348,10 +2401,19 @@ export class SearchV2View extends JfElement {
     `;
   }
 
+  /** Is this record one the running choreography is about? Drives the scoped entrance. */
+  private isCommitting(id: string): boolean {
+    return this.committingIds.includes(id);
+  }
+
   private transcriptItem(item: TranscriptItem): TemplateResult {
     if (item.kind === 'frozen-search') return this.frozenBlock(item);
     if (item.kind === 'user-turn') {
-      return html`<p class="turn" data-testid="turn" data-record-id=${item.id}>${item.text}</p>`;
+      return html`<p
+        class="turn ${this.isCommitting(item.id) ? 'committed' : ''}"
+        data-testid="turn"
+        data-record-id=${item.id}
+      >${item.text}</p>`;
     }
     if (item.kind === 'answer') return this.answerBlock(item);
     if (item.kind === 'agent-run') return this.runReceipt(item);
@@ -2372,9 +2434,11 @@ export class SearchV2View extends JfElement {
       ? html`<p class="answer-text" data-testid="streaming-answer" data-record-id=${item.id}>
           ${streamingText}
         </p>`
-      : html`<p class="pending" data-testid="pending-answer" data-record-id=${item.id}>
-          ${item.label}
-        </p>`;
+      : html`<p
+          class="pending ${this.isCommitting(item.id) ? 'committed' : ''}"
+          data-testid="pending-answer"
+          data-record-id=${item.id}
+        >${item.label}</p>`;
   }
 
   /**
@@ -2394,7 +2458,7 @@ export class SearchV2View extends JfElement {
       ${/* L14 — the outcome and the counts REST (they are what the receipt is); when the run ended
             extends beside them. */ ''}
       ${item.endedAt
-        ? html`<span class="count ext" data-testid="agent-run-timing"
+        ? html`<span class="meta ext" data-testid="agent-run-timing"
             >${formatRelative(new Date(item.endedAt).getTime())}</span
           >`
         : nothing}
@@ -2433,12 +2497,16 @@ export class SearchV2View extends JfElement {
             already holds focusable controls, and `:focus-within` crosses the shadow boundary — so
             tabbing into the card reveals the elaboration without this wrapper adding a tab stop of
             its own. Focus parity comes from the focus that is already there. */ ''}
-      <div class="frozen ext-row" data-testid="frozen-block" data-record-id=${item.id}>
+      <div
+        class="frozen ext-row ${this.isCommitting(item.id) ? 'committed' : ''}"
+        data-testid="frozen-block"
+        data-record-id=${item.id}
+      >
         ${/* L14 — the card's header already states the query, the counts, the retrieval mode and
               when it ran, and every one of those rests visible. What extends is only what the
               header does NOT carry: how the pass ran and how long it took. */ ''}
         ${timing
-          ? html`<span class="count ext" data-testid="frozen-timing">${timing}</span>`
+          ? html`<span class="meta ext" data-testid="frozen-timing">${timing}</span>`
           : nothing}
         <jf-results-card
           variant="snapshot"
@@ -2462,7 +2530,11 @@ export class SearchV2View extends JfElement {
   private answerBlock(item: TranscriptAnswerItem): TemplateResult {
     const sources: RetrievalCitation[] = [...item.sources];
     return html`
-      <div class="answer" data-testid="answer" data-record-id=${item.id}>
+      <div
+        class="answer ${this.isCommitting(item.id) ? 'committed' : ''}"
+        data-testid="answer"
+        data-record-id=${item.id}
+      >
         <p class="answer-text" data-testid="answer-text">${item.text}</p>
         ${item.groundedSentencesLabel
           ? html`<p class="count" data-testid="grounding-line">${item.groundedSentencesLabel}</p>`
@@ -2539,7 +2611,15 @@ export class SearchV2View extends JfElement {
               : RUNGS[primary].label)}
             >${this.flipped && !dimmed ? '⇥ ' : ''}${RUNGS[primary].pill} ⏎</span
           >
-          <span
+          ${/* L1 — the FLIP's affordance. It used to be ⇥ alone, which made a window-level control
+                invisible AND trapped the keyboard: the handler swallowed Tab in BOTH directions
+                whenever a draft existed, so focus could not leave the composer at all (§6c finding
+                4, WCAG 2.1.2). The pill is where it belongs — L1 already says the pill is the thing
+                that tells you the truth about a destination, so the thing that tells you is the
+                thing you press. A native button carries focus, Enter/Space and an accessible name
+                for free, and ⇥ goes back to meaning what it means everywhere else. */ ''}
+          <button
+            type="button"
             class="rung-pill alt ${dimmed ? 'off' : ''} ${unavailableReason(
               this.rungAvailability(alt),
             )
@@ -2547,8 +2627,12 @@ export class SearchV2View extends JfElement {
               : ''}"
             data-testid="pill-alt"
             data-unavailable=${String(unavailableReason(this.rungAvailability(alt)) !== null)}
-            title=${unavailableReason(this.rungAvailability(alt)) ?? RUNGS[alt].label}
-            >${RUNGS[alt].pill} ${alt === 'steer' ? '⌘⏎' : '⇥'}</span
+            aria-disabled=${String(dimmed)}
+            aria-label=${dimmed
+              ? `${RUNGS[alt].pill} — nothing to send yet`
+              : `Send to ${RUNGS[alt].pill} instead: ${RUNGS[alt].label}`}
+            @click=${this.toggleFlip}
+            >${RUNGS[alt].pill} ${alt === 'steer' ? '⌘⏎' : '⇥'}</button
           >
           ${/* The send affordances stay OPERABLE whatever is refusing them, and that now includes the
                 LOCK. The reason it did not before is preserved here rather than deleted, because it

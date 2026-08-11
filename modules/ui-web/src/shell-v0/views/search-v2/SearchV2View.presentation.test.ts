@@ -810,11 +810,17 @@ describe('818 SearchV2View — resting minimum, extension on hover AND focus (L1
     await type(el, 'and after that?');
     await key(el, { key: 'Enter', shiftKey: true }); // the refusal path, which the lock catches
 
+    // QUANTIFIED, not enumerated. The previous form listed three ids and passed — while a count
+    // sat inside an .ext one selector away (the sidebar row's message tally), and while naming
+    // "grounding" in its own title without asserting it. A list cannot be outgrown by a new region;
+    // a universal selector can't be satisfied by picking different examples.
+    expect(extendedCounts(el), 'no current-set count may hide behind hover').toEqual([]);
+
+    // The three that must be on screen ARE, so the sweep above is not passing on an empty window.
     for (const id of ['index-count', 'index-foot', 'lock-refusal']) {
       const node = q(el, id);
       expect(node, `${id} is on screen`).not.toBeNull();
       expect(node?.closest('.ext'), `${id} rests visible`).toBeNull();
-      expect(node?.classList.contains('ext'), `${id} is not itself extended`).toBe(false);
     }
     // The one honesty fact the deck can hide (the collapsed list) still states its count.
     (q(el, 'list-collapse') as HTMLButtonElement).click();
@@ -822,6 +828,34 @@ describe('818 SearchV2View — resting minimum, extension on hover AND focus (L1
     expect(q(el, 'live-count')?.closest('.ext')).toBeNull();
   });
 
+});
+
+/** Every element that carries a CURRENT-SET honesty fact while sitting inside an extension. */
+function extendedCounts(el: Mounted): Array<string | undefined> {
+  return [...(el.shadowRoot?.querySelectorAll('.ext .count, .count.ext') ?? [])].map((n) =>
+    n.textContent?.trim(),
+  );
+}
+
+describe('818 SearchV2View — the hard boundary holds in BOTH rail modes (L14)', () => {
+  it('mode A — the sessions sidebar hides no current-set count behind hover', async () => {
+    // The sweep in the committed state cannot see this: committing flips the rail to the session
+    // INDEX, so the sidebar's rows are not rendered there at all and a violation among them would
+    // pass for absence. Mode A needs its own capture — the anti-vacuity companion, applied to a
+    // test rather than to a register row.
+    sessions = [
+      {
+        id: 'c1',
+        title: 'Supplier renewals',
+        lastActiveAt: Date.now(),
+        messageCount: 4,
+        firstUserMessage: '',
+      },
+    ];
+    const el = await mount();
+    expect(q(el, 'session-row-meta'), 'the row IS on screen, so this is not vacuous').not.toBeNull();
+    expect(extendedCounts(el)).toEqual([]);
+  });
 });
 
 describe('818 SearchV2View — the query trail lives in the input band (L12)', () => {
@@ -886,7 +920,7 @@ describe('818 SearchV2View — the query trail lives in the input band (L12)', (
     expect(q(el, 'query-trail')).toBeNull();
   });
 
-  it('keyboard: ↓ enters the list, Enter picks, Escape returns to the input', async () => {
+  it('keyboard: ↓ enters the list, Enter picks', async () => {
     pins = [{ id: 'p1', query: 'lease renewal' }, { id: 'p2', query: 'invoices 2025' }];
     const el = await mount();
     await focusDraft(el);
@@ -906,6 +940,32 @@ describe('818 SearchV2View — the query trail lives in the input band (L12)', (
 
     await focusDraft(el);
     expect(q(el, 'query-trail')).toBeNull(); // a non-empty draft does not reopen it
+  });
+
+  it('Escape from INSIDE the list closes it, in one press (§6c finding 9)', async () => {
+    // The case above is named "…Escape returns to the input" and never pressed Escape, so this path
+    // shipped broken: closing the trail returned focus to the composer, that fired a real focus
+    // event, and `onDraftFocus` could not tell it from the user clicking into an empty box — so it
+    // reopened the trail and the press appeared to do nothing. Two presses were needed, and the
+    // first silently undid itself.
+    pins = [{ id: 'p1', query: 'lease renewal' }, { id: 'p2', query: 'invoices 2025' }];
+    const el = await mount();
+    await focusDraft(el);
+    expect(q(el, 'query-trail')).not.toBeNull();
+
+    // Walk INTO the list — this is what makes the refocus real, and it is the state the old test
+    // never reached before pressing Escape.
+    await key(el, { key: 'ArrowDown' });
+    await el.updateComplete;
+    expect(all(el, 'trail-row')[0]?.getAttribute('aria-current')).toBe('true');
+
+    const list = q(el, 'query-trail') as HTMLElement;
+    list.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await el.updateComplete;
+
+    expect(q(el, 'query-trail'), 'ONE press closes it').toBeNull();
+    // …and the draft is untouched, so nothing was picked on the way out.
+    expect((q(el, 'draft') as HTMLInputElement).value).toBe('');
   });
 
   it('a submitted query joins the trail; a typed-and-abandoned one does not', async () => {
@@ -972,23 +1032,42 @@ describe('818 SearchV2View — the keyboard pass (slice 5)', () => {
     expect(q(el, 'reading-pane')).toBeNull();
 
     await type(el, 'northfield');
-    await key(el, { key: 'Tab' });
+    (q(el, 'pill-alt') as HTMLButtonElement).click();
+    await el.updateComplete;
     expect(q(el, 'pill')?.className).toContain('flip');
     await key(el, { key: 'Escape' });
     expect(q(el, 'pill')?.className).not.toContain('flip');
   });
 
-  it('every affordance in the window is reachable by Tab — grips included', async () => {
+  it('Tab is not swallowed — the composer is not a keyboard trap (§6c finding 4)', async () => {
+    // The case this replaces asserted DOM tab-order MEMBERSHIP — it queried for focusable elements
+    // and checked none carried tabindex="-1" — and passed all the way through the trap, because
+    // membership was never the problem. The composer's own handler called preventDefault() on Tab
+    // in BOTH directions whenever a draft existed, so focus could not leave the field at all
+    // (WCAG 2.1.2). Pressing the key is the only assertion that can tell the difference.
     const el = await mount();
     await commit(el, 'what changed?');
-    const focusable = [
-      ...(el.shadowRoot?.querySelectorAll('button, input, [tabindex]') ?? []),
-    ] as HTMLElement[];
-    // Nothing is removed from the tab order, and the two boundaries are in it like everything else.
-    expect(focusable.some((f) => f.getAttribute('data-testid') === 'rail-grip')).toBe(true);
-    expect(focusable.some((f) => f.getAttribute('data-testid') === 'deck-grip')).toBe(true);
-    expect(focusable.some((f) => f.getAttribute('data-testid') === 'index-node')).toBe(true);
-    expect(focusable.some((f) => f.getAttribute('data-testid') === 'draft')).toBe(true);
-    for (const f of focusable) expect(f.getAttribute('tabindex')).not.toBe('-1');
+    await type(el, 'a draft, which is what used to spring the trap');
+
+    for (const init of [{ key: 'Tab' }, { key: 'Tab', shiftKey: true }]) {
+      const input = q(el, 'draft') as HTMLInputElement;
+      const ev = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+      input.dispatchEvent(ev);
+      await el.updateComplete;
+      expect(
+        ev.defaultPrevented,
+        `${init.shiftKey ? 'Shift+Tab' : 'Tab'} must keep its native meaning`,
+      ).toBe(false);
+    }
+
+    // …and the flip it used to be bound to is still reachable, as a real control.
+    const alt = q(el, 'pill-alt') as HTMLButtonElement;
+    expect(alt.tagName).toBe('BUTTON');
+    expect(alt.getAttribute('aria-label')).toContain('instead');
+    // The boundaries stay in the tab order too — the original claim, kept as the companion it is.
+    for (const id of ['rail-grip', 'deck-grip', 'index-node', 'draft']) {
+      expect(q(el, id), id).not.toBeNull();
+      expect(q(el, id)?.getAttribute('tabindex')).not.toBe('-1');
+    }
   });
 });

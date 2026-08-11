@@ -228,9 +228,17 @@ owner-directed principles, formalised as laws:
     verdicts, LOCKED, grounding stay resting-visible; only elaboration extends. Focus
     parity is mandatory (hover-only fails accessibility); the shared results card
     already follows this principle and is not forked.
-    **→ the hard-boundary clause AMENDED 2026-08-11 (§6e.4): an honesty fact is a claim about
-    the set THIS surface describes; a fact about another object is meta and may extend. Read
-    §6e.4 as current.**
+    Hard boundary (amended 2026-08-11, §6e.4; implemented in §6g C5): honesty facts never hide
+    behind hover, where an honesty fact is a claim **about the set this surface is currently
+    describing** — its counts, its verdicts, its LOCKED state, its grounding. A fact about
+    *another* object (a prior session's message tally) is meta, and meta may extend; so may a
+    timing. The boundary's test is therefore **structural and universal, never a list of ids**,
+    which the implementation pays for by making the class carry the role: `.count` marks a
+    current-set fact and `.meta` marks elaboration, so `.ext .count` must be empty by
+    construction. The original clause said "counts … stay resting-visible" while L14's own
+    sidebar row designated meta as extended — a contradiction its test resolved by enumerating
+    three ids that happened to rest, and passing while a count sat inside an `.ext` one selector
+    away.
 
 Slice 4 (motion + vertical space): commit choreography (record lands first, periphery
 follows, ~700 ms, reduced-motion instant); deck grip with computed floor + collapse to
