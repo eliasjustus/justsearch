@@ -252,7 +252,10 @@ final class McpTierEquivalenceTest {
     List<Map<String, Object>> structuredResults = (List<Map<String, Object>>) structured.get("results");
     assertEquals(List.of("cavby8"), structuredResults.get(0).get("matchedTerms"));
     // FACETS
-    assertTrue(text.contains("Facets (use as filter values; counts are partial — scan capped):"), text);
+    assertTrue(
+        text.contains("Facets (use as filter values; counts are partial — the scan did not cover"
+            + " every match):"),
+        text);
     assertTrue(text.contains("meta_source: docs (3)"), text);
     Map<String, Object> structuredFacets = (Map<String, Object>) structured.get("facets");
     assertFalse(structuredFacets.isEmpty());
@@ -304,7 +307,7 @@ final class McpTierEquivalenceTest {
 
     // Facets block renders WITHOUT the truncation qualifier.
     assertTrue(text.contains("Facets (use as filter values):"), text);
-    assertFalse(text.contains("counts are partial — scan capped"), text);
+    assertFalse(text.contains("counts are partial — the scan did not cover every match"), text);
     assertEquals(Boolean.FALSE, structured.get("facetsTruncated"));
   }
 

@@ -85,13 +85,14 @@ public final class McpToolSurface {
           + "When the matching documents carry them, the response also returns top facet values "
           + "(sources, categories, authors, and person/organization/location entities) to use as "
           + "filters. "
-          // Tempdoc 821 §L.3: the facet scan caps at a document budget, so on a broad query the
-          // per-value counts (and even which values appear at all) can be a lower bound rather
-          // than exact — this clause and the response's facetsTruncated flag are what let an agent
-          // tell the two cases apart instead of trusting a capped count as exhaustive.
+          // Tempdoc 821 §L.3 (reworded cause-neutral per sibling branch worktree-agent-
+          // aec27f0e6dd7d66d7: facetsTruncated also fires on a mid-scan failure, not only the
+          // maxDocsScanned cap, so this clause names the effect — an incomplete scan — not a
+          // specific cause): on a broad query the per-value counts (and even which values appear
+          // at all) can be a lower bound rather than exact.
           + "Facet counts may be partial: when the response's facetsTruncated flag is true, the "
-          + "scan was capped before covering every match, so treat the returned values as a "
-          + "sample rather than an exhaustive list. "
+          + "scan did not cover every matching document, so treat the returned values and counts "
+          + "as a lower-bound sample rather than an exhaustive list. "
           + "Set query_syntax: \"lucene\" for exact-phrase (\"...\") and boolean (AND/OR/NOT) "
           + "queries; the default is plain-text search. "
           + "Set detail: true to also receive per-hit ranking provenance (stage participation and "
@@ -1181,12 +1182,14 @@ public final class McpToolSurface {
     if (content.facets() != null && !content.facets().isEmpty()) {
       sb.append("\n\nFacets (use as filter values");
       // Facets-truncation MCP relay (tempdoc 821 §L.3): the flag that never reached this tier
-      // before — the scan was capped before covering every match, so counts are a lower bound and
-      // some values may be missing entirely. Surfaced in the text tier too, not just
+      // before — the scan did not cover every match, so counts are a lower bound and some values
+      // may be missing entirely. Cause-neutral wording (facetsTruncated also fires on a mid-scan
+      // failure, not only the maxDocsScanned cap — sibling branch worktree-agent-aec27f0e6dd7d66d7)
+      // — the claim is the effect, not a specific cause. Surfaced in the text tier too, not just
       // structuredContent, so a text-only MCP client sees it (McpEvidenceProjection carries the
       // structured counterpart).
       if (content.facetsTruncated()) {
-        sb.append("; counts are partial — scan capped");
+        sb.append("; counts are partial — the scan did not cover every match");
       }
       sb.append("):\n");
       for (var entry : content.facets().entrySet()) {
