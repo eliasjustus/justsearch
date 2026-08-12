@@ -891,8 +891,18 @@ final class RagContextOps {
   /**
    * Builds a RuntimeSearchFilters from the proto request for threading through to chunk search.
    * Sets includeChunks=true since RAG searches chunks, not documents.
+   *
+   * <p>Tempdoc 821 §3-C2 — {@code collection} counts towards {@code hasFilters} (so a
+   * collection-only request produces a non-null filter record instead of falling into the "no
+   * filters" branch), but deliberately NOT towards {@link #hasDocLevelFilters}: the collection tag
+   * is written onto chunk documents too (tempdoc 811 item 3), so {@link
+   * QueryFilterBuilder#buildChunkFilterQuery} binds it directly on the chunk branch. Routing a
+   * collection-only request through the doc-level parent pre-filter would change {@code
+   * chunks_found} and the empty-response shape for no gain. An ABSENT collection still yields the
+   * pre-821 null-or-unchanged record, so the 811 D-1 default agent-history exclusion binds exactly
+   * as before.
    */
-  private static LuceneRuntimeTypes.RuntimeSearchFilters buildRagFilters(
+  static LuceneRuntimeTypes.RuntimeSearchFilters buildRagFilters(
       io.justsearch.ipc.RetrieveContextRequest request) {
     boolean hasFilters = !request.getPathPrefix().isEmpty()
         || request.getFileKindCount() > 0
@@ -903,7 +913,8 @@ final class RagContextOps {
         || request.getMetaSourceCount() > 0
         || request.getMetaAuthorCount() > 0
         || request.getMetaCategoryCount() > 0
-        || request.hasMetaPublishedAt();
+        || request.hasMetaPublishedAt()
+        || request.getCollectionCount() > 0;
 
     if (!hasFilters) {
       return null;
@@ -938,6 +949,7 @@ final class RagContextOps {
         .metaCategory(metaCat)
         .metaPublishedFromMs(metaPubFrom)
         .metaPublishedToMs(metaPubTo)
+        .collection(request.getCollectionList())
         .build();
   }
 
@@ -1598,8 +1610,14 @@ final class RagContextOps {
 
   // ==================== Two-stage filter helpers ====================
 
-  /** Returns true if the filters contain any document-level predicates (not stored on chunks). */
-  private static boolean hasDocLevelFilters(LuceneRuntimeTypes.RuntimeSearchFilters f) {
+  /**
+   * Returns true if the filters contain any document-level predicates (not stored on chunks).
+   *
+   * <p>Tempdoc 821 §3-C2: {@code collection} is deliberately NOT one of them — chunk documents
+   * carry their parent's collection tag (tempdoc 811 item 3), so the scope binds directly on the
+   * chunk branch and a collection-only request must not be routed through parent resolution.
+   */
+  static boolean hasDocLevelFilters(LuceneRuntimeTypes.RuntimeSearchFilters f) {
     if (f == null) return false;
     return nonEmpty(f.entityPersons()) || nonEmpty(f.entityOrganizations())
         || nonEmpty(f.entityLocations()) || nonEmpty(f.metaSource())

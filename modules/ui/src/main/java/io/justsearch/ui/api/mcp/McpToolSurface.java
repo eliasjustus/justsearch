@@ -275,7 +275,11 @@ public final class McpToolSurface {
                 "meta_category", propStringArray("Filter by category"),
                 "entity_persons", propStringArray("Filter by person entity"),
                 "entity_organizations", propStringArray("Filter by organization entity"),
-                "entity_locations", propStringArray("Filter by location entity")),
+                "entity_locations", propStringArray("Filter by location entity"),
+                // Tempdoc 821 §3-C2: the search-scope tag, now honoured on the ANSWER path too.
+                // Declared lean (F-016: schema complexity degrades small-model tool use) — one
+                // string array, one sentence, same style as the entity keys above.
+                "collection", propStringArray("Restrict to these collections (omit for default)")),
             List.of());
     // Keep the natural-language guidance the old opaque "object" prop carried (ADR-0015:
     // descriptions are load-bearing for small-model tool use) alongside the now-declared shape.
@@ -510,7 +514,9 @@ public final class McpToolSurface {
               toStringList(rawFilters, "meta_category"),
               RetrieveContextParams.TimeRange.UNSET,
               false,
-              List.of());
+              List.of(),
+              // Tempdoc 821 §3-C2 — the collection scope reaches the Lucene filter from here.
+              toStringList(rawFilters, "collection"));
 
       DocumentService.ContextResult result =
           facade

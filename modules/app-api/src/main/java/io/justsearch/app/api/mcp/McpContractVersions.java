@@ -95,8 +95,14 @@ public final class McpContractVersions {
    * affordances produced zero behavioral adoption at haiku across three campaigns
    * ({@code 735:471-474}) — against the cost of a full extra hybrid search per call, not by
    * reachability.
+   *
+   * <p>0.6.0 (tempdoc 821 §3-C2, RAG collection scoping): the shared {@code filters} input schema
+   * gains a {@code collection} string array, and {@code justsearch_answer} now honours it — the
+   * scope previously reached only the search path, so an agent asking a question could not restrict
+   * retrieval to a collection. Purely additive (a new optional input property; omitting it is the
+   * unchanged default scope), hence a SemVer MINOR with no removal and no deprecation window.
    */
-  public static final String TOOL_SURFACE_VERSION = "0.5.0";
+  public static final String TOOL_SURFACE_VERSION = "0.6.0";
 
   private McpContractVersions() {}
 }
