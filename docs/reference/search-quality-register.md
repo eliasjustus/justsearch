@@ -878,8 +878,15 @@ above)*
   the judge-blend branch by construction) the output is element-identical to the old loop — pinned by
   a legacy-equivalence test asserting against a verbatim copy of the pre-fix loop — so register
   baselines cannot move except on runs that actually hit a short list (where the old code was
-  truncating the result set). A live same-session A/B remains the closing verification (tempdoc 821
-  §L.3).
+  truncating the result set). A live same-session A/B was closed by the live measurement below.
+- **Live verification (2026-08-12):** measured on THIS branch (git `5977f043`) — beir/scifact,
+  hybrid, full enrichment, CE active in observed legs, `comparable: true`, `chunk_completeness:
+  chunk-free` (legitimate for the short-doc corpus): **nDCG@10 0.7543** (P@1 0.627, R@10 0.8876) vs
+  register baseline 0.7604 — `jseval relevance-gate` verdict **ok** (floor 0.7404); dead-on the 391
+  6-run median (0.754) and inside the documented single-run wobble band. Run
+  `scripts/jseval/tmp/eval-results/20260812T204136_scifact` (worktree, gitignored — summary values
+  quoted here are the durable record). Machine caveat: concurrent worker builds ran during
+  enrichment; the query phase was not contended.
 - **Trace caveat:** fill-pass-recovered candidates appear with `crossEncoderApplied=true` but no
   CROSS_ENCODER HitStage (they were never judged) — a consumer must not read stage presence as
   "every returned hit was scored."
