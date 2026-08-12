@@ -564,6 +564,23 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     }
   }
 
+  /**
+   * Whether an install run is in flight, as a cheap field read.
+   *
+   * <p>Exists so a caller that needs only this one bit does not pay for {@link #getStatus()}, which
+   * also runs the boot disk-recompute, the staleness reaper and the runtime-observation projection
+   * (tempdoc 824 §3.3c — that one can issue Worker RPCs on a cache miss). {@code
+   * RuntimeActivationService.isLikelyInFlightInstall} calls this from inside a per-directory loop on
+   * the {@code /api/ai/runtime/status} path; routing that through the full status read would put
+   * blocking RPC work behind a filesystem probe, and re-enter the very service the projection reads.
+   */
+  @Override
+  public boolean isInstallRunning() {
+    synchronized (lock) {
+      return "running".equals(status.state);
+    }
+  }
+
   public void cancel() {
     synchronized (lock) {
       status.cancelRequested = true;

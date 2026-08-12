@@ -2,7 +2,6 @@
 package io.justsearch.app.services.ai.runtime;
 
 import io.justsearch.app.api.AiInstallService;
-import io.justsearch.app.api.AiInstallStatus;
 import io.justsearch.app.api.AiRuntimeStatusResponse;
 import io.justsearch.app.api.AiRuntimeActivationStatus;
 import tools.jackson.databind.DeserializationFeature;
@@ -1372,8 +1371,10 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
   private boolean isLikelyInFlightInstall(Path dir) {
     if (aiInstallService != null) {
       try {
-        AiInstallStatus installStatus = aiInstallService.getStatus();
-        if (installStatus != null && "running".equals(installStatus.state)) {
+        // Tempdoc 824 §3.3c: the cheap field read, not the full status. getStatus() now also
+        // projects the runtime observation this very class derives — reading it here would re-enter
+        // RuntimeActivationService and put its Worker RPCs behind a per-directory filesystem probe.
+        if (aiInstallService.isInstallRunning()) {
           return true;
         }
       } catch (Exception ignored) {
