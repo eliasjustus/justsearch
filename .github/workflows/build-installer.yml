@@ -268,6 +268,12 @@ jobs:
           JUSTSEARCH_CODESIGN_TIMESTAMP_URL: ${{ secrets.JUSTSEARCH_CODESIGN_TIMESTAMP_URL }}
           JUSTSEARCH_CODESIGN_THUMBPRINT: ${{ secrets.JUSTSEARCH_CODESIGN_THUMBPRINT }}
           JUSTSEARCH_CODESIGN_COMMAND: ${{ secrets.JUSTSEARCH_CODESIGN_COMMAND }}
+          # CodeSignTool.bat resolves its bundled JRE and jar RELATIVE TO CWD unless
+          # CODE_SIGN_TOOL_PATH points at its install dir; sign-windows.ps1 runs the command
+          # template from the repo checkout, so without this the tool dies with "The system
+          # cannot find the path specified" (run 31603929359; reproduced locally against the
+          # same zip sha256). Inert for pfx/store modes and secrets-absent builds.
+          CODE_SIGN_TOOL_PATH: ${{ runner.temp }}\CodeSignTool
           # Compile-time gate read by updater.rs `sandbox_test_mode()` (option_env!). Empty on a
           # normal build, so the production trust pins stay non-overridable.
           JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE: ${{ inputs.sandboxTestMode && '1' || '' }}

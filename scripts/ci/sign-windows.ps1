@@ -329,7 +329,12 @@ switch ($mode) {
     $batch = Join-Path -Path $env:TEMP -ChildPath ("justsearch-codesign-cmd-" + [guid]::NewGuid().ToString("N") + ".cmd")
     try {
       [System.IO.File]::WriteAllText($batch, ("@echo off`r`n" + $rendered + "`r`n"), [System.Text.Encoding]::ASCII)
-      Info ("Signing (command): " + $rendered)
+      # NEVER log the rendered command: the template embeds vendor credentials, and once {file}
+      # is substituted the line no longer exactly matches the stored secret string, so CI
+      # secret-masking cannot redact it (credential leak observed in the on-failure log dump of
+      # run 31603929359). Log only the tool head and the target binary.
+      $commandHead = ($commandTemplate.TrimStart() -split '\s+', 2)[0]
+      Info ("Signing (command, tool '" + $commandHead + "'): " + $resolvedBinary)
       $cmdRes = Invoke-Native -Exe $batch
       $cmdExit = $cmdRes.ExitCode
     } finally {
