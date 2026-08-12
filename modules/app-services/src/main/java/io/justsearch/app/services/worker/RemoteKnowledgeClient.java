@@ -347,9 +347,13 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
      * Test seam (683): wires a prebuilt channel (e.g. in-process) into the search path so
      * {@link #search(io.justsearch.core.dto.Query)} runs without {@link ManagedChannelBuilder}
      * and without signal-bus port re-discovery. Production callers use {@link #connect(int)}.
+     *
+     * <p>Tempdoc 821 §3-C2 — the ingest stub is pinned too, so {@link #scanRoot} (and with it the
+     * watched-root scan arm's ScanRootRequest) is exercisable over an in-process server.
      */
     void connectForTesting(Channel channel) {
         searchStub = SearchServiceGrpc.newBlockingStub(channel);
+        ingestStub = IngestServiceGrpc.newBlockingStub(channel);
         testChannelPinned = true;
     }
 
@@ -1567,8 +1571,10 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
             java.util.function.Consumer<io.justsearch.ipc.ScanRootProgress> progressConsumer) {
         Objects.requireNonNull(rootPath, "rootPath");
         Objects.requireNonNull(progressConsumer, "progressConsumer");
-        ensureConnected();
-        reconnect();
+        if (!testChannelPinned) {
+            ensureConnected();
+            reconnect();
+        }
         io.justsearch.ipc.ScanRootRequest.Builder builder =
                 io.justsearch.ipc.ScanRootRequest.newBuilder()
                         .setRootPath(rootPath)

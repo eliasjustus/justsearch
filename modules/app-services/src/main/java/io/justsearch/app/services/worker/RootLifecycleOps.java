@@ -430,8 +430,8 @@ final class RootLifecycleOps {
             // backpressure. walkAndSubmit() handles batching, state marking, and persistence.
             walkExecutor.execute(() -> {
                 syncOps.pruneMissing(root.toString());
-                // No per-root label is available on the reindex path (tempdoc 821 §L.3 — the
-                // root→collection mapping is not persisted): default bucket, as today.
+                // No per-root label is available on either reindex path (tempdoc 821 §L.3 — the
+                // root→collection mapping is not persisted): leave the wire field unset, as today.
                 walkAndSubmit(root, null);
             });
         }
@@ -455,10 +455,12 @@ final class RootLifecycleOps {
         List<Path> rootsToReindex = List.copyOf(watchedRoots.keySet());
         for (Path root : rootsToReindex) {
             Path normalized = root.toAbsolutePath().normalize();
-            // Tempdoc 821 §L.3 — the root→collection mapping is not persisted, so a restart only
-            // has the literal "default" the watcher arm already uses; both arms stay symmetric.
+            // Tempdoc 821 §L.3 — the root→collection mapping is not persisted, so no label survives
+            // a restart. Pass null (leave the wire field unset) rather than inventing one: it keeps
+            // this path identical to reindexWatchedRoots and to its own pre-fix behaviour. The
+            // watcher arm's literal "default" is pre-existing and out of this fix's scope.
             startWatcherIfAvailable("default", normalized);
-            walkExecutor.execute(() -> walkAndSubmit(normalized, "default"));
+            walkExecutor.execute(() -> walkAndSubmit(normalized, null));
         }
         // Runs after all walks complete (single-thread executor serializes tasks).
         int count = rootsToReindex.size();
