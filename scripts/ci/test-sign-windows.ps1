@@ -14,6 +14,8 @@ $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $signScript = Join-Path -Path $scriptDir -ChildPath "sign-windows.ps1"
 if (-not (Test-Path -LiteralPath $signScript)) { throw "sign-windows.ps1 not found next to this test: $signScript" }
+# Same location sign-windows.ps1 resolves for its uninstaller signing receipt (case 7).
+$receiptPath = Join-Path -Path (Split-Path -Parent (Split-Path -Parent $scriptDir)) -ChildPath "dist\uninstaller-signing-receipt.json"
 
 $signEnvNames = @(
   "JUSTSEARCH_CODESIGN_MODE",
@@ -254,6 +256,65 @@ try {
   } else {
     Record "6. timestamp (DigiCert)" $true "SKIPPED (no signtool)"
   }
+
+  # --- Case 7: non-signable extension (the NSIS uninstaller shape) => shim path + receipt ---
+  # Reproduces `!uninstfinalize` handing over `...\nstXXXX.tmp`: the script must sign an .exe-named
+  # shim, write the signed bytes back over the .tmp, leave no shim behind, and drop the signing
+  # receipt package-installer-win.ps1 asserts on (round-16 F3 follow-up).
+  if ($signtool) {
+    $src = New-Target "uninst"
+    $tmpTarget = Join-Path -Path $tmpDir -ChildPath "uninstaller-nst1234.tmp"
+    Copy-Item -LiteralPath $src -Destination $tmpTarget -Force
+    if (Test-Path -LiteralPath $receiptPath) { Remove-Item -LiteralPath $receiptPath -Force }
+    $shimsBefore = @(Get-ChildItem -LiteralPath $env:TEMP -Filter "justsearch-codesign-shim-*.exe" -ErrorAction SilentlyContinue).Count
+    $r = Invoke-SignCase @{
+      JUSTSEARCH_CODESIGN_MODE = "pfx"
+      JUSTSEARCH_CODESIGN_PFX_PATH = $pfxPath
+      JUSTSEARCH_CODESIGN_PFX_PASSWORD = $pass
+      JUSTSEARCH_CODESIGN_TIMESTAMP_URL = $timestampUrl
+      JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED = "1"
+    } $tmpTarget
+    Write-Host $r.Output
+    # Get-AuthenticodeSignature dispatches on extension too, so check the written-back bytes
+    # through an .exe-named copy.
+    $writtenBack = Join-Path -Path $tmpDir -ChildPath "uninstaller-writtenback.exe"
+    Copy-Item -LiteralPath $tmpTarget -Destination $writtenBack -Force
+    $shimsAfter = @(Get-ChildItem -LiteralPath $env:TEMP -Filter "justsearch-codesign-shim-*.exe" -ErrorAction SilentlyContinue).Count
+    $receiptOk = $false
+    $receiptDetail = "receipt=missing"
+    if (Test-Path -LiteralPath $receiptPath) {
+      $receiptJson = Get-Content -Raw -LiteralPath $receiptPath | ConvertFrom-Json
+      $receiptOk = ($receiptJson.verified -eq $true) -and ([string]$receiptJson.target -eq $tmpTarget) -and
+        (-not [string]::IsNullOrWhiteSpace([string]$receiptJson.signedAtUtc))
+      $receiptDetail = "receipt verified=" + $receiptJson.verified + " targetMatch=" + ([string]$receiptJson.target -eq $tmpTarget)
+      Remove-Item -LiteralPath $receiptPath -Force
+    }
+    $noShimLeft = ($shimsAfter -le $shimsBefore)
+    Record "7. extension shim (.tmp) + receipt" `
+      (($r.ExitCode -eq 0) -and (Test-CaseSigned $writtenBack) -and $receiptOk -and $noShimLeft) `
+      ("exit=" + $r.ExitCode + " " + (Signed-Detail $writtenBack) + " " + $receiptDetail + " noShimLeft=" + $noShimLeft)
+  } else {
+    Record "7. extension shim (.tmp) + receipt" $true "SKIPPED (no signtool)"
+  }
+
+  # --- Case 8: terminating error after the shim exists => trap path still cleans the shim up ---
+  # A relative, missing PFX path makes Resolve-Path throw, which ONLY the top-of-file trap sees
+  # (no Fail call runs). Before the trap called Remove-ExtensionShim, this leaked a full copy of
+  # the binary into TEMP on every such failure.
+  $t = New-Target "trap"
+  $tmpTrapTarget = Join-Path -Path $tmpDir -ChildPath "trap-nst9999.tmp"
+  Copy-Item -LiteralPath $t -Destination $tmpTrapTarget -Force
+  $shimsBeforeTrap = @(Get-ChildItem -LiteralPath $env:TEMP -Filter "justsearch-codesign-shim-*.exe" -ErrorAction SilentlyContinue).Count
+  $r = Invoke-SignCase @{
+    JUSTSEARCH_CODESIGN_MODE = "pfx"
+    JUSTSEARCH_CODESIGN_PFX_PATH = "no-such-rehearsal-file.pfx"
+    JUSTSEARCH_CODESIGN_PFX_PASSWORD = "unused"
+    JUSTSEARCH_CODESIGN_TIMESTAMP_URL = $timestampUrl
+  } $tmpTrapTarget
+  $shimsAfterTrap = @(Get-ChildItem -LiteralPath $env:TEMP -Filter "justsearch-codesign-shim-*.exe" -ErrorAction SilentlyContinue).Count
+  $trapNoShim = ($shimsAfterTrap -le $shimsBeforeTrap)
+  Record "8. trap path cleans shim" (($r.ExitCode -eq 1) -and $trapNoShim) `
+    ("exit=" + $r.ExitCode + " (expected 1) shimsBefore=" + $shimsBeforeTrap + " shimsAfter=" + $shimsAfterTrap)
 
 } finally {
   # ALWAYS clean up: remove the throwaway cert from the store + delete temp files.

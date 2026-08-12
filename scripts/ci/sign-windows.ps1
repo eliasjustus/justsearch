@@ -41,8 +41,25 @@ $script:signLogPath = Join-Path $env:TEMP "justsearch-sign-windows.log"
 $script:originalBinary = $null
 $script:extensionShim = $null
 
+# Uninstaller-signing receipt (round-16 F3 follow-up). makensis does NOT check the exit code of a
+# `!uninstfinalize` command, so this script failing -- or never being invoked -- on the uninstaller
+# is completely silent and the bundle just ships one unsigned PE. The extension-shim path (the
+# uninstaller TEMP file is its only consumer) therefore drops a receipt AFTER verification, and
+# package-installer-win.ps1's signature_verify phase asserts it exists: absence covers both a
+# failed hook and a hook that never ran. Resolved against the repo root (scripts/ci -> repo root)
+# because the bundler invokes this script from an arbitrary working directory.
+$script:receiptPath = Join-Path -Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) -ChildPath "dist\uninstaller-signing-receipt.json"
+
 function Write-SignLog([string]$Message) {
   try { Add-Content -LiteralPath $script:signLogPath -Value ("[" + (Get-Date).ToString("HH:mm:ss") + "] " + $Message) } catch { }
+}
+
+# Defined ahead of the trap so EVERY exit path -- including a terminating error that only the trap
+# sees -- can drop a stray shim copy of the binary in TEMP.
+function Remove-ExtensionShim {
+  if ($script:extensionShim) {
+    try { Remove-Item -LiteralPath $script:extensionShim -Force -ErrorAction SilentlyContinue } catch { }
+  }
 }
 
 # Last-resort diagnosability: ANY terminating error that escapes normal handling gets tee'd with
@@ -51,14 +68,26 @@ function Write-SignLog([string]$Message) {
 trap {
   Write-SignLog ("TRAP terminating error: " + $_.Exception.GetType().Name + ": " + $_.Exception.Message +
     " at " + (([string]$_.InvocationInfo.PositionMessage) -replace "\r?\n", " "))
+  Remove-ExtensionShim
   Write-Error $_
   exit 1
 }
 
-function Remove-ExtensionShim {
-  if ($script:extensionShim) {
-    try { Remove-Item -LiteralPath $script:extensionShim -Force -ErrorAction SilentlyContinue } catch { }
+# Written ONLY on the fully-verified shim path: Assert-Signed passed and the signed bytes are back
+# on the path the caller named. Never records anything credential-bearing (paths + timestamp only).
+function Write-SigningReceipt {
+  $receiptDir = Split-Path -Parent $script:receiptPath
+  if (-not (Test-Path -LiteralPath $receiptDir)) {
+    New-Item -ItemType Directory -Force -Path $receiptDir | Out-Null
   }
+  $receipt = [pscustomobject]@{
+    target      = $script:originalBinary
+    shim        = $script:extensionShim
+    signedAtUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    verified    = $true
+  }
+  [System.IO.File]::WriteAllText($script:receiptPath, ($receipt | ConvertTo-Json -Depth 3), (New-Object System.Text.UTF8Encoding($false)))
+  Info ("Signing receipt written: " + $script:receiptPath)
 }
 
 function Fail([string]$Message) {
@@ -392,4 +421,5 @@ if ($script:extensionShim) {
   [System.IO.File]::Copy($script:extensionShim, $script:originalBinary, $true)
   Remove-ExtensionShim
   Info ("Signed shim written back to " + $script:originalBinary)
+  Write-SigningReceipt
 }
