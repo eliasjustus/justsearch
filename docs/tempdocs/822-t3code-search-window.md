@@ -258,6 +258,29 @@ are re-creatable from the log's descriptions.
   referents exist, settle when chips become real scope chips; (b) Sv3Empty tile glyph
   is a string prop rendering a hollow square — convert to icon() with a template-typed
   prop when empty states get final content.
+- 2026-08-12 — **SHELL COMPLETE (slices 1-4). Phase stop per §4.5**: owner inspection
+  + verdict on the donor copy, then the adaptation-seams conversation (result rows
+  with real densities, document pane, citations, honesty facts) BEFORE any
+  JustSearch-specific surface is designed. Serve: modules/ui-web `npx vite --port
+  5175`; deeplink #justsearch://surface/core.search-v3-surface (backendless boot
+  ~30s; hash needs a popstate re-dispatch after boot — see the deeplink observation).
+  [Restored 2026-08-13 — an A1 log edit accidentally consumed this entry.]
+- 2026-08-13 — **Slice A2 implemented + live-verified. PHASE A COMPLETE.**
+  `sv3-sessions.ts` (pure, window-local, IN-MEMORY by design — the Phase-D
+  records-substrate boundary stated in its header; no localStorage, no shared-store
+  writes): first submit creates, later submits update-in-place, prepend-once-never-
+  reorder, focus/new-session claim semantics, coarse render-time relative timestamps,
+  Today/Earlier calendar buckets (empty groups hidden; no Pinned bucket until pin
+  exists — dead scaffolding refused). One `runSearch` funnel for composer send AND
+  row re-run. Sidebar now presentation-only; donor-patterned "New search" header
+  control; fixtures SWEPT (SIDEBAR_GROUPS + FixtureSet machinery deleted; a test
+  forbids surviving references). Store subtlety pinned: re-query behind displayed
+  results sets `isRefining`, not `isSearching` (searchState.ts:611) — in-flight
+  mapping covers both. 4601 tests / 7 of 7 mutation probes / kernel gates pass.
+  Live: two sessions, claim moves, re-run renders (593 matches), in-motion ping only
+  on the running session. Session status is two-valued (no `broken` mapping for a
+  failed pass — Phase C item). Next: PHASE B (owner conversation) — evidence photos
+  live-3-results.png + sv3-a2-sessions.png.
 - 2026-08-12 — **Sidebar comparison findings** (owner-requested donor-vs-copy analysis;
   feed the adaptation phase): (1) ROW-HEIGHT REFERENT — our rows are 32px from §3.2's
   menu-button ladder, but the donor's SESSION rows are §6.1's slim 36px / card 78px;

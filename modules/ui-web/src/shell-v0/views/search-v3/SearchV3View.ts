@@ -7,7 +7,7 @@
  * A from-scratch window rebuilt on the T3 Code donor system: no presentation code is carried over
  * from `UnifiedChatView` or search-v2 — and no search client either, in the other direction: the
  * store this host subscribes to is the SHARED `state/searchState.ts` that both shipped windows read,
- * which is what "from-scratch components, shared authorities" means in practice. This host owns five
+ * which is what "from-scratch components, shared authorities" means in practice. This host owns six
  * things and delegates the rest:
  *
  *  1. **The token sheet.** `sv3Tokens` is applied HERE, on the window host — never on `:root`. Custom
@@ -29,6 +29,10 @@
  *     (`views/search-v2/SearchV2View.ts:998-999`), which is exactly ONE request: `submitSearch`
  *     supersedes the keystroke pass `setQuery` had scheduled. Reading back is the store subscription;
  *     what the region does with the snapshot is `sv3-results.ts`.
+ *  6. **The session list** (Phase A2). Window-local and in-memory by decision, not by omission —
+ *     `sv3-sessions.ts` carries the reasoning and the Phase-D boundary. The host holds the list and
+ *     routes the three things that change it (a send, a row click, New search) through the one
+ *     search issuance above; the sidebar renders the projection and issues nothing.
  *
  * Mounted as a hidden DEEPLINK surface, dev audience, no rail entry:
  * `#justsearch://surface/core.search-v3-surface`.
@@ -39,13 +43,7 @@ import { html, css, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
 import { sv3Tokens } from './sv3-tokens.css.js';
 import { sv3Shared } from './sv3-shared-styles.js';
-import {
-  COMPOSER_STATE_DEFAULT,
-  FIXTURE_SET_DEFAULT,
-  WINDOW_TITLE,
-  type Sv3ComposerState,
-  type Sv3FixtureSet,
-} from './fixtures.js';
+import { COMPOSER_STATE_DEFAULT, WINDOW_TITLE, type Sv3ComposerState } from './fixtures.js';
 import {
   setQuery,
   setSearchApiBase,
@@ -58,8 +56,22 @@ import {
   releaseSv3MorphSheet,
   runSv3ComposerMorph,
 } from './sv3-composer-morph.js';
-import { type Sv3ComposerStateRequest, type Sv3ComposerSubmit } from './Sv3Composer.js';
+import {
+  type Sv3Composer,
+  type Sv3ComposerStateRequest,
+  type Sv3ComposerSubmit,
+} from './Sv3Composer.js';
 import { projectSv3Results, type Sv3ResultsView } from './sv3-results.js';
+import { type Sv3SessionSelect } from './Sv3Sidebar.js';
+import {
+  focusSession,
+  projectSv3Sessions,
+  sessionById,
+  startNewSession,
+  submitInSession,
+  SV3_SESSIONS_EMPTY,
+  type Sv3SessionList,
+} from './sv3-sessions.js';
 import type { Sv3Palette } from './Sv3Palette.js';
 import './Sv3Topbar.js';
 import './Sv3Sidebar.js';
@@ -118,14 +130,13 @@ export class SearchV3View extends JfElement {
 
   static properties = {
     composerState: { type: String, reflect: true, attribute: COMPOSER_STATE_ATTR },
-    fixtureSet: { type: String, reflect: true, attribute: 'fixtures' },
     apiBase: { type: String, attribute: 'api-base' },
     searchSnapshot: { state: true },
     asked: { state: true },
+    sessions: { state: true },
   };
 
   declare composerState: Sv3ComposerState;
-  declare fixtureSet: Sv3FixtureSet;
   /** Set by the shell on every render of a mounted surface (`chrome/Shell.ts:2945-2949`). */
   declare apiBase: string;
   /** The latest store emission. Null only until the subscription's first (immediate) call. */
@@ -135,16 +146,21 @@ export class SearchV3View extends JfElement {
    * the window would render another surface's results as its own the moment it docked.
    */
   declare asked: boolean;
+  /**
+   * The window's own session list — in-memory, window-local, and NOT a store (see `sv3-sessions.ts`
+   * for why the authority question belongs to Phase D).
+   */
+  declare sessions: Sv3SessionList;
 
   private searchUnsubscribe: (() => void) | null = null;
 
   constructor() {
     super();
     this.composerState = COMPOSER_STATE_DEFAULT;
-    this.fixtureSet = FIXTURE_SET_DEFAULT;
     this.apiBase = '';
     this.searchSnapshot = null;
     this.asked = false;
+    this.sessions = SV3_SESSIONS_EMPTY;
   }
 
   override connectedCallback(): void {
@@ -255,20 +271,66 @@ export class SearchV3View extends JfElement {
    * region is already showing the pending state by the time the morph settles.
    */
   private onComposerSubmit(event: Event): void {
-    const query = ((event as CustomEvent<Sv3ComposerSubmit>).detail?.query ?? '').trim();
+    this.runSearch(((event as CustomEvent<Sv3ComposerSubmit>).detail?.query ?? '').trim());
+  }
+
+  /**
+   * The ONE path a search takes, whichever affordance asked: the composer's send, or a session row
+   * re-running what it already asked. A second issuance site is how the two would drift apart —
+   * a row click that bypassed this would leave the session list describing a search it never ran.
+   */
+  private runSearch(rawQuery: string): void {
+    const query = rawQuery.trim();
     if (query === '') return;
+    this.sessions = submitInSession(this.sessions, query, Date.now());
     this.asked = true;
     setQuery(query);
     submitSearch();
     void this.setComposerState('docked');
   }
 
+  private get composer(): Sv3Composer | null {
+    return this.shadowRoot?.querySelector('jf-sv3-composer') ?? null;
+  }
+
+  /** A row click re-runs THAT session's query: it claims the row first, so the re-run lands there. */
+  private onSessionSelect(event: Event): void {
+    const id = (event as CustomEvent<Sv3SessionSelect>).detail?.id ?? '';
+    const session = sessionById(this.sessions, id);
+    if (session === null) return;
+    this.sessions = focusSession(this.sessions, id);
+    this.runSearch(session.query);
+  }
+
+  /**
+   * New search: back to the hero with an empty draft and nothing claimed about the corpus. The
+   * sessions so far stay in the list — starting one is not ending the others.
+   */
+  private onSessionNew(): void {
+    this.sessions = startNewSession(this.sessions);
+    this.asked = false;
+    this.composer?.clearDraft();
+    void this.setComposerState('hero');
+  }
+
   render(): TemplateResult {
     const results: Sv3ResultsView = projectSv3Results(this.searchSnapshot, this.asked);
+    // Relative timestamps are computed HERE, on render, and never ticked: a sidebar that re-renders
+    // itself every second is continuous motion at rest, which the donor's duty-cycle law rules out.
+    // `isRefining` counts too: the store runs a re-query BEHIND displayed results quietly
+    // (`state/searchState.ts:611` — no skeleton, so the content surface keeps the old rows), and the
+    // row's dot is then the only thing on screen saying the session is running a pass.
+    const snapshot = this.searchSnapshot;
+    const sessionGroups = projectSv3Sessions(this.sessions, {
+      searching: this.asked && (snapshot?.isSearching === true || snapshot?.isRefining === true),
+      now: Date.now(),
+    });
     return html`
       <jf-sv3-sidebar
-        fixtures=${this.fixtureSet}
+        .groups=${sessionGroups}
         data-testid="sv3-sidebar"
+        @sv3-session-select=${this.onSessionSelect}
+        @sv3-session-new=${this.onSessionNew}
       ></jf-sv3-sidebar>
       <div
         class="column"

@@ -15,6 +15,8 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import './SearchV3View.js';
 import './Sv3Palette.js';
 import './Sv3Empty.js';
+import './Sv3Sidebar.js';
+import type { Sv3Sidebar } from './Sv3Sidebar.js';
 import type { SearchV3View } from './SearchV3View.js';
 import type { Sv3Palette } from './Sv3Palette.js';
 import type { Sv3Empty } from './Sv3Empty.js';
@@ -25,9 +27,8 @@ import { COMPONENT_TAGS } from '../../renderers/component-vocabulary.generated.j
 
 type Mounted = HTMLElement & { updateComplete: Promise<unknown> };
 
-async function mount(fixtures?: string): Promise<SearchV3View & Mounted> {
+async function mount(): Promise<SearchV3View & Mounted> {
   const el = document.createElement('jf-sv3-window') as SearchV3View & Mounted;
-  if (fixtures !== undefined) el.setAttribute('fixtures', fixtures);
   document.body.appendChild(el);
   await el.updateComplete;
   return el;
@@ -355,8 +356,10 @@ describe('selection and highlight are two different states', () => {
 
 /** Donor §6.6, applied twice from one element — the sidebar with no threads, the surface with none. */
 describe('the empty states are one donor pattern in two regions', () => {
-  it('renders the sidebar variant when the fixture set empties the groups', async () => {
-    const el = await mount('empty');
+  it('renders the sidebar variant before this window has searched anything', async () => {
+    // Phase A2: the sidebar's zero state is reached the real way — a window with no sessions yet —
+    // rather than through the retired `fixtures="empty"` dev handle.
+    const el = await mount();
     const sidebar = await region(el, 'jf-sv3-sidebar');
     const empty = sidebar.shadowRoot?.querySelector('[data-testid="sv3-sidebar-empty"]') as
       | (Sv3Empty & Mounted)
@@ -373,7 +376,7 @@ describe('the empty states are one donor pattern in two regions', () => {
   // a response can be given to it.
 
   it('builds the media as a fanned three-card stack, two of them hidden from assistive tech', async () => {
-    const el = await mount('empty');
+    const el = await mount();
     const sidebar = await region(el, 'jf-sv3-sidebar');
     const empty = sidebar.shadowRoot?.querySelector('jf-sv3-empty') as Sv3Empty & Mounted;
     await empty.updateComplete;
@@ -385,19 +388,35 @@ describe('the empty states are one donor pattern in two regions', () => {
       .toBeNull();
   });
 
-  it('leaves both regions untouched on the default fixture set', async () => {
+  it('yields to the rows the moment the panel has a session to show', async () => {
+    // The empty state is a zero state, not a background: one group is enough to retire it. The
+    // panel is driven directly here because what is under test is the panel's own either/or.
+    const sidebar = document.createElement('jf-sv3-sidebar') as Sv3Sidebar & Mounted;
+    document.body.appendChild(sidebar);
+    sidebar.groups = [
+      {
+        id: 'sv3-group-today',
+        label: 'Today',
+        rows: [
+          { id: 'sv3-session-1', label: 'northfield lease', status: 'resting', meta: 'now', active: true },
+        ],
+      },
+    ];
+    await sidebar.updateComplete;
+    expect(sidebar.shadowRoot?.querySelector('jf-sv3-empty')).toBeNull();
+    expect(sidebar.shadowRoot?.querySelectorAll('[data-testid="sv3-sidebar-row"]')).toHaveLength(1);
+
+    // The content surface docked without a search still claims nothing — no zero-results verdict.
     const el = await mount();
-    const sidebar = await region(el, 'jf-sv3-sidebar');
     const main = await region(el, 'jf-sv3-main');
     await el.setComposerState('docked');
     await main.updateComplete;
-    expect(sidebar.shadowRoot?.querySelector('jf-sv3-empty')).toBeNull();
     expect(main.shadowRoot?.querySelector('jf-sv3-empty')).toBeNull();
   });
 
   it('keeps the empty state out of the heading outline the shell already owns', async () => {
     // The shell's single-<h1> closure is a real gate; a zero state must not mint a second one.
-    const el = await mount('empty');
+    const el = await mount();
     const sidebar = await region(el, 'jf-sv3-sidebar');
     const empty = sidebar.shadowRoot?.querySelector('jf-sv3-empty') as Sv3Empty & Mounted;
     await empty.updateComplete;

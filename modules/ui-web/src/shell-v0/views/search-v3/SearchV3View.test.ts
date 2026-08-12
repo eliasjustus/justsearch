@@ -20,7 +20,7 @@ import { createCorePluginManifest } from '../../plugin-api/CorePlugin.js';
 import { isLazySurface } from '../lazySurfaceRegistry.js';
 import { COMPONENT_TAGS } from '../../renderers/component-vocabulary.generated.js';
 import { Sv3SessionRow } from './Sv3SessionRow.js';
-import { COMPOSER_SCOPES, HERO_HEADLINE, SIDEBAR_GROUPS, SIDEBAR_ROWS } from './fixtures.js';
+import { COMPOSER_SCOPES, HERO_HEADLINE } from './fixtures.js';
 import { SV3_MORPH_ROOT_ATTR, sv3MorphSheetAdopted } from './sv3-composer-morph.js';
 
 type Mounted = HTMLElement & { updateComplete: Promise<unknown> };
@@ -99,20 +99,14 @@ describe('the window mounts with its five regions', () => {
     ).toHaveLength(2);
   });
 
-  it('groups the fixture rows under static labels, in fixed order', async () => {
+  it('opens with an empty sidebar: no sessions until this window has searched', async () => {
+    // The fixture session list is gone (Phase A2) — the sidebar's zero state is now reached the real
+    // way. What the panel always offers is the way OUT of it: the New-search control.
     const el = await mount();
     const sidebar = await region(el, 'jf-sv3-sidebar');
-    const labels = [
-      ...(sidebar.shadowRoot?.querySelectorAll('[data-testid="sv3-sidebar-group-label"]') ?? []),
-    ].map((n) => n.textContent);
-    expect(labels).toEqual(SIDEBAR_GROUPS.map((g) => g.label));
-    const rows = sidebar.shadowRoot?.querySelectorAll('[data-testid="sv3-sidebar-row"]') ?? [];
-    expect(rows).toHaveLength(SIDEBAR_ROWS.length);
-    expect(rows).toHaveLength(10);
-    // Rendered order is the fixture order — activity never reorders the list.
-    expect([...rows].map((r) => (r as Sv3SessionRow).label)).toEqual(
-      SIDEBAR_ROWS.map((r) => r.label),
-    );
+    expect(sidebar.shadowRoot?.querySelectorAll('[data-testid="sv3-sidebar-row"]')).toHaveLength(0);
+    expect(sidebar.shadowRoot?.querySelector('[data-testid="sv3-sidebar-empty"]')).toBeTruthy();
+    expect(sidebar.shadowRoot?.querySelector('[data-testid="sv3-sidebar-new"]')).toBeTruthy();
   });
 
   it('claims nothing about the corpus when the window is docked without a search', async () => {
@@ -430,49 +424,44 @@ describe('the document-level morph sheet lives exactly as long as the window doe
  * fixture set actually puts on screen, and what it deliberately does not.
  */
 describe('the session rows render the donor anatomy', () => {
-  const rowsOf = async (el: Mounted): Promise<Sv3SessionRow[]> => {
-    const sidebar = await region(el, 'jf-sv3-sidebar');
-    const rows = [
-      ...(sidebar.shadowRoot?.querySelectorAll('jf-sv3-session-row') ?? []),
-    ] as Sv3SessionRow[];
-    await Promise.all(rows.map((r) => r.updateComplete));
-    return rows;
+  /**
+   * The row is exercised as a COMPONENT here, one instance per state. It used to be exercised through
+   * the sidebar's fixture list, which is gone (Phase A2): the sidebar now renders real sessions, and
+   * a real session is only ever resting or in-motion — so the two states it cannot produce would
+   * have lost their coverage if these cases had followed the fixtures out.
+   */
+  const rowWith = async (props: Partial<Sv3SessionRow>): Promise<Sv3SessionRow> => {
+    const row = new Sv3SessionRow();
+    Object.assign(row, props);
+    document.body.appendChild(row);
+    await row.updateComplete;
+    return row;
   };
 
-  it('spends a status colour on exactly the three non-resting rows', async () => {
-    const rows = await rowsOf(await mount());
-    const colored = rows.filter(
-      (r) => r.shadowRoot?.querySelector('[data-testid="sv3-session-row-status"]') !== null,
+  const statusOf = (row: Sv3SessionRow): Element | null =>
+    row.shadowRoot?.querySelector('[data-testid="sv3-session-row-status"]') ?? null;
+
+  it('spends a status colour on the three non-resting states and none on the resting one', async () => {
+    const colored = await Promise.all(
+      (['act-now', 'in-motion', 'broken'] as const).map((status) => rowWith({ status })),
     );
-    // The budget as a NEGATIVE assertion: seven of the ten rows are resting and must be silent.
-    expect(colored).toHaveLength(3);
-    expect(colored.map((r) => r.status).sort()).toEqual(['act-now', 'broken', 'in-motion']);
-    expect(rows.filter((r) => r.status === 'resting')).toHaveLength(7);
-    for (const row of rows.filter((r) => r.status === 'resting')) {
-      expect(row.shadowRoot?.querySelector('[data-testid="sv3-session-row-status"]')).toBeNull();
-      // A resting row's slot carries its timestamp instead — information, not colour.
-      expect(
-        row.shadowRoot?.querySelector('[data-testid="sv3-session-row-meta"]')?.textContent?.trim(),
-      ).toBe(row.meta);
-    }
+    for (const row of colored) expect(statusOf(row), `${row.status} has no dot`).not.toBeNull();
+
+    // The budget as a NEGATIVE assertion: a resting row must be silent, and say its age instead.
+    const resting = await rowWith({ status: 'resting', meta: '2m' });
+    expect(statusOf(resting)).toBeNull();
+    expect(
+      resting.shadowRoot?.querySelector('[data-testid="sv3-session-row-meta"]')?.textContent?.trim(),
+    ).toBe('2m');
   });
 
   it('runs the duty-cycled ping on the in-motion row only', async () => {
-    const rows = await rowsOf(await mount());
+    const rows = await Promise.all(
+      (['resting', 'act-now', 'in-motion', 'broken'] as const).map((status) => rowWith({ status })),
+    );
     const pinging = rows.filter((r) => r.shadowRoot?.querySelector('.sv3-anim-status-ping'));
     expect(pinging).toHaveLength(1);
     expect(pinging[0]?.status).toBe('in-motion');
-  });
-
-  it('covers every visual state across the fixture set', async () => {
-    const rows = await rowsOf(await mount());
-    expect(rows.filter((r) => r.active)).toHaveLength(1);
-    expect(rows.filter((r) => r.selected)).toHaveLength(1);
-    expect(rows.filter((r) => r.unread).length).toBeGreaterThanOrEqual(1);
-    expect(rows.filter((r) => r.receded).length).toBeGreaterThanOrEqual(1);
-    expect(rows.filter((r) => r.inflight)).toHaveLength(1);
-    // Active and selected are different rows, so the precedence is visible rather than theoretical.
-    expect(rows.find((r) => r.active)).not.toBe(rows.find((r) => r.selected));
   });
 
   it('puts every state on the HOST as an attribute, which is what the fills key off', () => {
@@ -495,30 +484,17 @@ describe('the session rows render the donor anatomy', () => {
     });
   });
 
-  it('makes each row a real button and marks the active one for assistive tech', async () => {
-    const rows = await rowsOf(await mount());
-    const buttons = rows.map((r) => r.shadowRoot?.querySelector('button'));
-    expect(buttons.every((b) => b?.tagName === 'BUTTON')).toBe(true);
-    expect(buttons.every((b) => b?.getAttribute('type') === 'button')).toBe(true);
-    const current = rows.filter(
-      (r) => r.shadowRoot?.querySelector('button')?.getAttribute('aria-current') === 'true',
-    );
-    expect(current).toHaveLength(1);
-    expect(current[0]?.active).toBe(true);
-  });
-
-  it('keeps the group labels out of the tab order', async () => {
-    const el = await mount();
-    const sidebar = await region(el, 'jf-sv3-sidebar');
-    const labels = [
-      ...(sidebar.shadowRoot?.querySelectorAll('[data-testid="sv3-sidebar-group-label"]') ?? []),
-    ];
-    expect(labels).toHaveLength(SIDEBAR_GROUPS.length);
-    for (const label of labels) {
-      expect(label.tagName).toBe('DIV');
-      expect(label.hasAttribute('tabindex')).toBe(false);
-      expect(label.querySelector('button, a, input')).toBeNull();
+  it('makes the row a real button and marks an active one for assistive tech', async () => {
+    const active = await rowWith({ active: true });
+    const resting = await rowWith({ active: false });
+    for (const row of [active, resting]) {
+      const button = row.shadowRoot?.querySelector('button');
+      expect(button?.tagName).toBe('BUTTON');
+      expect(button?.getAttribute('type')).toBe('button');
     }
+    expect(active.shadowRoot?.querySelector('button')?.getAttribute('aria-current')).toBe('true');
+    // ...and ONLY an active one: `aria-current` on every row would name no current row at all.
+    expect(resting.shadowRoot?.querySelector('button')?.hasAttribute('aria-current')).toBe(false);
   });
 });
 

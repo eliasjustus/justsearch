@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Fixture data and fixed copy for the Search v3 shell (tempdoc 822 slice 1; narrowed in Phase A1).
+ * Fixture data and fixed copy for the Search v3 shell (tempdoc 822 slice 1; narrowed in A1 and A2).
  *
  * The window was fixture-first on purpose: the shell's geometry had to clear the bar before any
- * backend was wired. Phase A1 moved the CONTENT SURFACE onto the shared search store, so the rows
- * here are the SIDEBAR's alone (sessions become real in A2); what remains besides them is fixed copy.
+ * backend was wired. Phase A1 moved the CONTENT SURFACE onto the shared search store and Phase A2
+ * moved the SIDEBAR onto real window-local sessions (`sv3-sessions.ts`), so the fixture sessions are
+ * gone. What remains is fixed copy, the row's status vocabulary, and the composer's placeholders.
  */
 import type { IconName } from '../../components/Icon.js';
 import { reasonFor } from '../../state/readinessNotice.js';
@@ -14,89 +15,6 @@ import { reasonFor } from '../../state/readinessNotice.js';
  * in-motion and broken. Every other row is `resting` and spends none of it.
  */
 export type Sv3RowStatus = 'resting' | 'in-motion' | 'act-now' | 'broken';
-
-export interface Sv3SidebarRow {
-  readonly id: string;
-  readonly label: string;
-  readonly status: Sv3RowStatus;
-  /** Shown in the status slot when the row spends no colour — a timestamp, tabular. */
-  readonly meta: string;
-  readonly active?: boolean;
-  readonly selected?: boolean;
-  readonly receded?: boolean;
-  readonly unread?: boolean;
-  /** Orthogonal to the fill ladder: the row's work is running, so the row dims until hovered. */
-  readonly inFlight?: boolean;
-}
-
-export interface Sv3SidebarGroup {
-  readonly id: string;
-  readonly label: string;
-  readonly rows: readonly Sv3SidebarRow[];
-}
-
-/**
- * Ten rows over three groups, covering each visual state once: active, selected, in-motion (with
- * in-flight dim), act-now, broken, unread, plain rest, and a receded tail with one title long
- * enough to prove the single-line ellipsis. The order is FIXED — activity never reorders the list.
- */
-export const SIDEBAR_GROUPS: readonly Sv3SidebarGroup[] = [
-  {
-    id: 'g-pinned',
-    label: 'Pinned',
-    rows: [
-      {
-        id: 'r1',
-        label: 'Northfield supplier agreement',
-        status: 'resting',
-        meta: '2m',
-        active: true,
-      },
-      { id: 'r2', label: 'Vendor risk register', status: 'resting', meta: '18m', selected: true },
-    ],
-  },
-  {
-    id: 'g-today',
-    label: 'Today',
-    rows: [
-      { id: 'r3', label: 'Q2 vendor review notes', status: 'in-motion', meta: '', inFlight: true },
-      { id: 'r4', label: 'Revised payment terms', status: 'act-now', meta: '', unread: true },
-      { id: 'r5', label: 'Warehouse lease — appendix C', status: 'broken', meta: '' },
-      { id: 'r6', label: 'Freight cost reconciliation', status: 'resting', meta: '1h', unread: true },
-      { id: 'r7', label: 'Insurance renewal correspondence', status: 'resting', meta: '4h' },
-    ],
-  },
-  {
-    id: 'g-earlier',
-    label: 'Earlier',
-    rows: [
-      {
-        id: 'r8',
-        label: 'Supplier onboarding checklist',
-        status: 'resting',
-        meta: 'Mar 4',
-        receded: true,
-      },
-      {
-        id: 'r9',
-        label: 'Site inspection photo index',
-        status: 'resting',
-        meta: 'Feb 27',
-        receded: true,
-      },
-      {
-        id: 'r10',
-        label: 'Annual supplier scorecard and remediation follow-up notes',
-        status: 'resting',
-        meta: 'Feb 12',
-        receded: true,
-      },
-    ],
-  },
-];
-
-/** Every row in render order — the flat projection the sidebar's tests count against. */
-export const SIDEBAR_ROWS: readonly Sv3SidebarRow[] = SIDEBAR_GROUPS.flatMap((g) => g.rows);
 
 export const WINDOW_TITLE = 'Search v3';
 
@@ -136,20 +54,13 @@ export const COMPOSER_SCOPES: readonly Sv3ComposerScope[] = [
   { id: 'scope-recency', label: 'Any time', glyph: 'clock' },
 ];
 
-/* ── Slice 4: the fixture SET, the palette, and the empty states ───────────────────────────── */
+/* ── Slice 4: the palette and the empty states ─────────────────────────────────────────────── */
 
 /**
- * Which fixture set the SIDEBAR renders. `empty` is the dev handle for its zero-state pass. The
- * content surface left this handle behind in Phase A1: its rows are the search response's, so its
- * zero state is a real empty result set rather than an emptied fixture list.
+ * The `fixtures` dev handle that used to switch the sidebar between a fixture list and its zero state
+ * is gone with the fixtures (Phase A2): both regions now reach their empty state the real way — the
+ * sidebar before the window's first search, the content surface on an empty result set.
  */
-export type Sv3FixtureSet = 'default' | 'empty';
-
-export const FIXTURE_SET_DEFAULT: Sv3FixtureSet = 'default';
-
-export const sidebarGroupsFor = (set: Sv3FixtureSet): readonly Sv3SidebarGroup[] =>
-  set === 'empty' ? [] : SIDEBAR_GROUPS;
-
 export interface Sv3EmptyCopy {
   readonly title: string;
   readonly description: string;

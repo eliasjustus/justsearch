@@ -409,6 +409,15 @@ export class Sv3Composer extends JfElement {
     }
   }
 
+  /**
+   * Empties the draft. The composer still OWNS it — this is the window asking for a documented state
+   * change (starting a new session returns the window to its empty form, and a leftover draft would
+   * be the previous session's text sitting in a fresh one), not the window reaching in to write it.
+   */
+  clearDraft(): void {
+    this.draft = '';
+  }
+
   /** The ONE origin of a send, whichever affordance asked. An empty draft is not a send. */
   private submit(): void {
     const query = this.draft.trim();
