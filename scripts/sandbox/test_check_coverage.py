@@ -24,6 +24,8 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from check_coverage import (  # noqa: E402
     BULK_FRAMES_DIRNAME,
     EVIDENCE_REVIEW_FILENAME,
+    FINDINGS_FILENAME,
+    FINDINGS_MIN_BYTES,
     MIN_SCREENSHOT_BYTES,
     MUSTWATCH_VERDICTS_FILENAME,
     MUTATING_PROBE_FILENAME,
@@ -36,6 +38,7 @@ from check_coverage import (  # noqa: E402
     MustTouchItem,
     _time_accounting_section,
     check_evidence_review,
+    check_findings,
     check_mustwatch_verdicts,
     check_mutating_probe,
     check_retrospective,
@@ -124,9 +127,31 @@ def _mutating_probe_json(status: str = "pass") -> str:
     return json.dumps({"schema": "mutating-probe.v1", "status": status, "detail": "POST 200"})
 
 
+SUBSTANTIAL_FINDINGS = """\
+# Round findings
+
+## F1 (HIGH, blocking) -- Install AI reports a missing component that is present
+
+Observed: `/api/ai/install/status` reports `installedFully: false` with one
+package permanently `failed`, while the Worker log shows the model loaded and
+serving real inference calls. Evidence: `42-brain-install-failed-state.png`,
+`api-install-status-5of7-failed.json`, worker log excerpt.
+Severity: HIGH -- the product invites a repair loop that can never succeed.
+Regression home: a unit/live-stack test on the install service's terminal
+state, re-verified next round by TRIGGERING a package failure.
+
+## F2 (MEDIUM) -- publisher string differs from the signing identity
+
+Observed: the uninstall registry entry's Publisher value is the lowercase
+bundle string, not the certificate CN. Evidence: screenshot of the Apps list.
+Regression home: the installer-execution-level check family.
+"""
+
+
 def _write_round_process_artifacts(evidence: Path, mustwatch_ids: Iterable[str] = ()) -> None:
-    """Plant the three artifacts tempdoc 808 made mandatory (mustWatch
-    verdicts, mutating-probe verdict, session self-analysis).
+    """Plant the artifacts tempdoc 808 made mandatory (mustWatch verdicts,
+    mutating-probe verdict, session self-analysis) plus the findings report
+    tempdoc 823 §4 added.
 
     Every pre-808 green-path main() fixture predates these files, so each one
     needs them planted to keep testing what it was written to test. Kept as
@@ -141,6 +166,7 @@ def _write_round_process_artifacts(evidence: Path, mustwatch_ids: Iterable[str] 
     (evidence / SESSION_ANALYSIS_FILENAME).write_text(
         SUBSTANTIAL_SESSION_ANALYSIS, encoding="utf-8"
     )
+    (evidence / FINDINGS_FILENAME).write_text(SUBSTANTIAL_FINDINGS, encoding="utf-8")
 
 
 class CheckRetrospectiveTests(unittest.TestCase):
@@ -396,6 +422,131 @@ class MainWiringTests(unittest.TestCase):
                 _empty_evidence_review_json(), encoding="utf-8"
             )
             _write_round_process_artifacts(evidence_dir)
+            rc = main(["--manifest", str(manifest_path), "--evidence-dir", str(evidence_dir)])
+            self.assertEqual(rc, 0)
+
+
+class CheckFindingsTests(unittest.TestCase):
+    """823 §4: round 16 filed five findings -- one blocking -- and left no
+    standalone findings file; they were scattered across three artifacts
+    written for other purposes. Same three states the retrospective gate
+    distinguishes, plus the explicit no-findings escape valve."""
+
+    def test_absent_file_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ok, reason = check_findings(tmp)
+            self.assertFalse(ok)
+            self.assertIn("not found", reason)
+
+    def test_no_evidence_dir_blocks(self):
+        ok, reason = check_findings(None)
+        self.assertFalse(ok)
+        self.assertIn("no --evidence-dir", reason)
+
+    def test_trivial_stub_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / FINDINGS_FILENAME).write_text("No findings.\n", encoding="utf-8")
+            ok, reason = check_findings(tmp)
+            self.assertFalse(ok)
+            self.assertIn("non-whitespace-trimmed byte", reason)
+
+    def test_long_but_missing_required_topic_blocks(self):
+        # Clears the byte floor and carries severity + evidence language, but
+        # never says where any finding is going -- the gap that makes a
+        # findings file un-actionable at convergence time.
+        body = (
+            "The Brain surface showed a HIGH severity disagreement with the API. "
+            "Evidence: 42-brain-install-failed-state.png and the api- snapshot beside it. "
+        ) * 5
+        self.assertGreaterEqual(len(body.strip()), FINDINGS_MIN_BYTES)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / FINDINGS_FILENAME).write_text(body, encoding="utf-8")
+            ok, reason = check_findings(tmp)
+            self.assertFalse(ok)
+            self.assertIn("regression home", reason)
+
+    def test_substantial_findings_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / FINDINGS_FILENAME).write_text(SUBSTANTIAL_FINDINGS, encoding="utf-8")
+            ok, reason = check_findings(tmp)
+            self.assertTrue(ok, reason)
+            self.assertIn("all required topics found", reason)
+
+    def test_explicit_no_findings_declaration_passes(self):
+        # The escape valve: a genuinely clean round is not forced to invent
+        # severities -- but it still has to clear the byte floor by saying
+        # what it exercised.
+        body = (
+            "# Round findings\n\n"
+            "No findings this round. Every must-touch surface in the brief was reached and "
+            "behaved as the charter's healthy signature describes: the install completed with "
+            "installedFully true on all seven packages, the escalation ladder disabled its "
+            "AI rungs honestly while AI was offline, the encryption ceremony completed and "
+            "survived a cold restart, and the warm-reinstall cycle preserved the index. "
+            "Nothing was observed that a user would experience as wrong, misleading or scary.\n"
+        )
+        self.assertGreaterEqual(len(body.strip()), FINDINGS_MIN_BYTES)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / FINDINGS_FILENAME).write_text(body, encoding="utf-8")
+            ok, reason = check_findings(tmp)
+            self.assertTrue(ok, reason)
+            self.assertIn("no-findings declaration", reason)
+
+    def test_no_findings_declaration_still_needs_substance(self):
+        # "No findings." alone is a stub, escape valve or not.
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / FINDINGS_FILENAME).write_text(
+                "no findings\n", encoding="utf-8"
+            )
+            ok, reason = check_findings(tmp)
+            self.assertFalse(ok)
+            self.assertIn("placeholder stub", reason)
+
+    def test_bom_prefixed_file_still_reads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = ("﻿" + SUBSTANTIAL_FINDINGS).encode("utf-8")
+            (Path(tmp) / FINDINGS_FILENAME).write_bytes(data)
+            ok, reason = check_findings(tmp)
+            self.assertTrue(ok, reason)
+
+
+class FindingsMainWiringTests(unittest.TestCase):
+    """The gate must BITE through main(): an otherwise-clean round with every
+    other required artifact present still fails when findings.md is the one
+    thing missing (and passes once it is there)."""
+
+    def _empty_manifest_path(self, tmp: Path) -> Path:
+        manifest = {"version": 1, "mustTouch": [], "coveredElsewhere": [], "exempt": []}
+        manifest_path = tmp / "coverage-manifest.json"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        return manifest_path
+
+    def _evidence_dir(self, tmp: Path) -> Path:
+        evidence_dir = tmp / "evidence"
+        evidence_dir.mkdir()
+        (evidence_dir / RETROSPECTIVE_FILENAME).write_text(
+            SUBSTANTIAL_RETROSPECTIVE, encoding="utf-8"
+        )
+        (evidence_dir / EVIDENCE_REVIEW_FILENAME).write_text(
+            _empty_evidence_review_json(), encoding="utf-8"
+        )
+        _write_round_process_artifacts(evidence_dir)
+        return evidence_dir
+
+    def test_missing_findings_fails_an_otherwise_clean_round(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            manifest_path = self._empty_manifest_path(tmp)
+            evidence_dir = self._evidence_dir(tmp)
+            (evidence_dir / FINDINGS_FILENAME).unlink()
+            rc = main(["--manifest", str(manifest_path), "--evidence-dir", str(evidence_dir)])
+            self.assertEqual(rc, 1)
+
+    def test_present_findings_passes_the_same_round(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            manifest_path = self._empty_manifest_path(tmp)
+            evidence_dir = self._evidence_dir(tmp)
             rc = main(["--manifest", str(manifest_path), "--evidence-dir", str(evidence_dir)])
             self.assertEqual(rc, 0)
 

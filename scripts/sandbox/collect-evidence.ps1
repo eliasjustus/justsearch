@@ -383,11 +383,13 @@ $uninstallRegFound = Test-Path -LiteralPath $uninstallRegKey
 # ever run against a persistent/reused environment) is evidence of a
 # genuinely stale install.
 $roundStartUtc = $null
+$roundStartUnreadableReason = ""
 try {
     $roundStartUtc = (Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
 }
 catch {
-    Write-Log "Could not read system boot time for the round-start-relative install fingerprint ($($_.Exception.Message)) -- falling back to the non-timestamped fingerprint."
+    $roundStartUnreadableReason = $_.Exception.Message
+    Write-Log "Could not read system boot time for the round-start-relative install fingerprint ($roundStartUnreadableReason) -- falling back to the non-timestamped fingerprint."
 }
 
 function Test-ArtifactPredatesRoundStart {
@@ -407,6 +409,28 @@ function Test-ArtifactPredatesRoundStart {
     }
     catch {
         return $true
+    }
+}
+
+function Get-ArtifactCreationTimeDisplay {
+    # Reporting companion to Test-ArtifactPredatesRoundStart (round 16,
+    # tempdoc 823 section 4): the predicate above collapses three very different
+    # states -- "created after boot", "created before boot", "could not read
+    # the timestamp at all" -- into one boolean, and the warning text below
+    # used to collapse them further into a single "predates this session's
+    # boot OR the boot time could not be read" sentence. A round on a
+    # genuinely clean machine could not tell the real finding from the
+    # unreadable-timestamp fallback. This returns the timestamp (or the
+    # reason it is unavailable) so the warning can PRINT what it compared.
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return "not present"
+    }
+    try {
+        return ((Get-Item -LiteralPath $Path -ErrorAction Stop).CreationTimeUtc.ToString("o") + " UTC")
+    }
+    catch {
+        return "UNREADABLE ($($_.Exception.Message))"
     }
 }
 
@@ -462,14 +486,47 @@ elseif ($installedExeFound -or $dataDirFound -or $uninstallRegFound) {
         Write-Log "Install signal(s) found, but post-dates this session's boot -- treated as this round's own install, not a defect."
     }
     else {
+        # Name the branch and print BOTH sides of the comparison (round 16,
+        # tempdoc 823 section 4). The two branches mean opposite things -- one is a
+        # real stale-install finding, the other is the harness admitting it
+        # could not read a clock -- and round 16 spent a detour on a false
+        # alarm because the single combined sentence could not be told apart
+        # from the real finding on a genuinely clean machine.
+        if (-not $roundStartUtc) {
+            $branchLabel = "BOOT-TIME-UNREADABLE (fallback branch -- NOT a demonstrated stale install)"
+            $bootDisplay = "UNREADABLE"
+            if ($roundStartUnreadableReason -ne "") {
+                $bootDisplay = "UNREADABLE ($roundStartUnreadableReason)"
+            }
+            # Never print "predates boot: False" when there is no boot time to
+            # compare against -- that reads as a checked negative.
+            $exePredatesDisplay = "not compared (no boot time)"
+            $dataDirPredatesDisplay = "not compared (no boot time)"
+        }
+        else {
+            $branchLabel = "ARTIFACT-PREDATES-BOOT (a timestamped artifact really is older than this session's boot)"
+            $bootDisplay = ($roundStartUtc.ToUniversalTime().ToString("o") + " UTC")
+            $exePredatesDisplay = $exePredatesRound
+            $dataDirPredatesDisplay = $dataDirPredatesRound
+        }
         $installStateLines += ("WARNING: JustSearch already appears to be installed on this system " +
-            "(at least one signal above is FOUND, and predates this session's boot or the boot time " +
-            "could not be read). Relaunching the installer over an " +
+            "(at least one signal above is FOUND). Branch that fired: $branchLabel.")
+        $installStateLines += ("  Session boot time (Win32_OperatingSystem.LastBootUpTime): $bootDisplay")
+        $installStateLines += ("  Installed exe creation time: " +
+            "$(Get-ArtifactCreationTimeDisplay -Path $installedExePath) (predates boot: $exePredatesDisplay)")
+        $installStateLines += ("  App data dir creation time: " +
+            "$(Get-ArtifactCreationTimeDisplay -Path $DataDir) (predates boot: $dataDirPredatesDisplay)")
+        $installStateLines += ("  (Uninstall registry key timestamps are not exposed by Get-Item for a " +
+            "registry path, so that signal is presence-only and never gates this branch.)")
+        $installStateLines += ("Relaunching the installer over an " +
             "existing install is a known round defect. If this round intends a fresh " +
             "install, uninstall first (or use a clean sandbox); if this round intends " +
             "to validate upgrade/repair/re-run behavior over an existing install, record " +
-            "that as the deliberate scenario instead of an oversight.")
-        Write-Log "WARNING: install-state fingerprint found an EXISTING install predating round start -- see elevation-check.txt"
+            "that as the deliberate scenario instead of an oversight. If the branch above " +
+            "is BOOT-TIME-UNREADABLE, this warning proves nothing about staleness on its " +
+            "own -- compare the artifact creation times printed above against when this " +
+            "round actually started before treating it as a finding.")
+        Write-Log "WARNING: install-state fingerprint fired the '$branchLabel' branch -- see elevation-check.txt"
     }
 }
 else {
@@ -1289,6 +1346,147 @@ if ((Test-Path -LiteralPath $goldenQueriesPath) -and (Test-Path -LiteralPath $go
     }
 }
 
+# Embedding-EP warm-session gate (round 16, tempdoc 823 section 3.1). Round 16's
+# parity check exited 1 on three queries losing golden #1 -- and the round's
+# own EP record explained it: at capture time
+# /api/ai/runtime/status's embed feature read executionProvider="cpu",
+# gpuFallback=true, fallbackReason="GPU session not yet initialized (lazy)"
+# (OrtCudaStatus.pending -- the initial state of every GPU-capable encoder
+# until the first inference batch). The query vectors were CPU-FP32 against a
+# GPU-FP16 baseline; the dense leg alone collapsed while SPLADE/text stayed
+# high, with shared-pair score deltas ~0.06-0.20 against a calibrated
+# sandbox<->sandbox dense envelope of 1.8e-4. That is an instrument artifact,
+# not a ranking regression -- and it is exactly what the observed-EP fields
+# shipped for. So: before capturing, require the embed session to be warm on
+# CUDA; if it is not, TRIGGER it (a vector-mode search runs the query encoder,
+# which is what promotes pending -> ready) and poll briefly. Still cold after
+# the budget => auto-skip with a note, the same mechanism as the corpus-ratio
+# pre-check above, rather than capturing evidence that will be misread as a
+# search-quality regression. The observed EP state is written to
+# golden-capture-ep.json either way, so finalize can always see the condition
+# the capture was taken under.
+$goldenEpMaxWaitSec = 180
+$goldenEpPollIntervalSec = 10
+$goldenEpObserved = New-Object PSObject -Property @{
+    executionProvider = "unknown"
+    gpuFallback       = $null
+    fallbackReason    = $null
+    status            = $null
+    modelActive       = $null
+    warm              = $false
+    readError         = ""
+}
+$goldenEpAttempts = 0
+$goldenEpWarmupTriggered = $false
+$goldenEpElapsedSec = 0
+
+function Get-EmbedEpState {
+    # Reads the embed feature out of GET /api/ai/runtime/status. NOTE the
+    # shape: onnxFeatures is an ARRAY of feature records keyed by `id`, not an
+    # object with an `embed` property -- reading it as `.onnxFeatures.embed`
+    # yields $null on every round and would make this gate silently inert.
+    param([Parameter(Mandatory = $true)][string]$BaseUrl)
+    $result = New-Object PSObject -Property @{
+        executionProvider = "unknown"
+        gpuFallback       = $null
+        fallbackReason    = $null
+        status            = $null
+        modelActive       = $null
+        warm              = $false
+        readError         = ""
+    }
+    $response = Invoke-ApiRequest -Url "$BaseUrl/api/ai/runtime/status" -Method "GET"
+    if (-not $response.Ok) {
+        $result.readError = "GET /api/ai/runtime/status -> $($response.StatusCode) $($response.Error)"
+        return $result
+    }
+    try {
+        $doc = $response.Body | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        $result.readError = "could not parse /api/ai/runtime/status body: $($_.Exception.Message)"
+        return $result
+    }
+    $embed = @($doc.onnxFeatures) | Where-Object { $_.id -eq "embed" } | Select-Object -First 1
+    if (-not $embed) {
+        $result.readError = "no onnxFeatures entry with id='embed' in /api/ai/runtime/status"
+        return $result
+    }
+    $result.executionProvider = $embed.executionProvider
+    $result.gpuFallback = $embed.gpuFallback
+    $result.fallbackReason = $embed.fallbackReason
+    $result.status = $embed.status
+    $result.modelActive = $embed.modelActive
+    $result.warm = (($embed.executionProvider -eq "cuda") -and ($embed.gpuFallback -ne $true))
+    return $result
+}
+
+if ((Test-Path -LiteralPath $goldenQueriesPath) -and (-not $goldenSkipReason)) {
+    $epStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $goldenEpObserved = Get-EmbedEpState -BaseUrl $base
+    $goldenEpAttempts = 1
+    if ($goldenEpObserved.readError -ne "") {
+        Write-Log ("Golden EP pre-check: could not read the embed execution provider " +
+            "($($goldenEpObserved.readError)) -- proceeding with capture, EP recorded as unknown.")
+    }
+    elseif ($goldenEpObserved.warm) {
+        Write-Log "Golden EP pre-check: embed executionProvider=cuda, gpuFallback=$($goldenEpObserved.gpuFallback) -- warm GPU session, capturing."
+    }
+    else {
+        Write-Log ("Golden EP pre-check: embed executionProvider=$($goldenEpObserved.executionProvider) " +
+            "gpuFallback=$($goldenEpObserved.gpuFallback) reason='$($goldenEpObserved.fallbackReason)' -- " +
+            "triggering a vector-mode warm-up search and polling up to ${goldenEpMaxWaitSec}s for a warm session.")
+        # Warm-up trigger: a vector-mode search runs the query encoder, which
+        # is what creates the lazy CUDA session. Uses the same session header
+        # the captures below use; a failure here is logged, not fatal (the
+        # poll simply runs out and the capture auto-skips with the recorded EP).
+        $warmupHeaders = @{}
+        if ($sessionToken -ne "") {
+            $warmupHeaders["X-JustSearch-Session"] = $sessionToken
+        }
+        $warmupBody = @{ query = "golden capture embedding warm-up"; limit = 1; mode = "vector" } | ConvertTo-Json
+        $warmupResponse = Invoke-ApiRequest -Url "$base/api/knowledge/search" -Method "POST" `
+            -Body $warmupBody -Headers $warmupHeaders
+        $goldenEpWarmupTriggered = $true
+        if (-not $warmupResponse.Ok) {
+            Write-Log ("Golden EP warm-up search returned $($warmupResponse.StatusCode) " +
+                "$($warmupResponse.Error) -- polling anyway (enrichment/ingest traffic can warm the session too).")
+        }
+        while (($epStopwatch.Elapsed.TotalSeconds -lt $goldenEpMaxWaitSec) -and (-not $goldenEpObserved.warm)) {
+            Start-Sleep -Seconds $goldenEpPollIntervalSec
+            $goldenEpObserved = Get-EmbedEpState -BaseUrl $base
+            $goldenEpAttempts++
+            if ($goldenEpObserved.readError -ne "") {
+                Write-Log "Golden EP poll $goldenEpAttempts : read error ($($goldenEpObserved.readError))"
+            }
+            else {
+                Write-Log ("Golden EP poll $goldenEpAttempts : executionProvider=$($goldenEpObserved.executionProvider) " +
+                    "gpuFallback=$($goldenEpObserved.gpuFallback)")
+            }
+        }
+        if ($goldenEpObserved.warm) {
+            Write-Log ("Golden EP gate: warm after $([math]::Round($epStopwatch.Elapsed.TotalSeconds, 1))s " +
+                "($goldenEpAttempts read(s)) -- capturing.")
+        }
+        elseif ($goldenEpObserved.readError -ne "") {
+            Write-Log ("Golden EP gate: still could not read the embed EP after " +
+                "$([math]::Round($epStopwatch.Elapsed.TotalSeconds, 1))s -- proceeding with capture, EP recorded as unknown.")
+        }
+        else {
+            $goldenSkipReason = "Golden-query capture AUTO-SKIPPED: the embedding execution provider was " +
+                "'$($goldenEpObserved.executionProvider)' (gpuFallback=$($goldenEpObserved.gpuFallback), " +
+                "reason='$($goldenEpObserved.fallbackReason)') after ${goldenEpMaxWaitSec}s of waiting plus a " +
+                "vector-mode warm-up search, not the 'cuda' the golden baseline was generated on. Capturing now " +
+                "would compare CPU-FP32 query vectors against a GPU-FP16 baseline and surface as a phantom " +
+                "ranking regression on the dense leg (round 16, tempdoc 823 section 3). Re-run collect-evidence.ps1 " +
+                "once the GPU embedding session is warm (any real search or enrichment batch warms it) to get " +
+                "a comparable capture. Observed EP state: evidence/golden-capture-ep.json."
+        }
+    }
+    $epStopwatch.Stop()
+    $goldenEpElapsedSec = [math]::Round($epStopwatch.Elapsed.TotalSeconds, 1)
+}
+
 if (-not (Test-Path -LiteralPath $goldenQueriesPath)) {
     $goldenSkipped = $true
     $goldenSkipReason = "Golden-query capture SKIPPED: golden-queries.json not found at $goldenQueriesPath -- " +
@@ -1379,6 +1577,37 @@ else {
     }
 }
 
+# The capture CONDITION, recorded next to the captures themselves (round 16,
+# tempdoc 823 section 3.1). Written on every run -- warm, cold-and-skipped, or
+# unreadable -- so a finalize reader never has to infer from a parity delta
+# what execution provider produced the query vectors. Round 16 could only
+# explain its own BLOCKING parity exit because a round happened to snapshot
+# /api/ai/runtime/status by hand at the right moment.
+$goldenEpRecord = New-Object PSObject -Property @{
+    schema             = "golden-capture-ep.v1"
+    timestamp          = (Get-Date).ToUniversalTime().ToString("o")
+    source             = "/api/ai/runtime/status onnxFeatures[id=embed]"
+    executionProvider  = $goldenEpObserved.executionProvider
+    gpuFallback        = $goldenEpObserved.gpuFallback
+    fallbackReason     = $goldenEpObserved.fallbackReason
+    featureStatus      = $goldenEpObserved.status
+    modelActive        = $goldenEpObserved.modelActive
+    warm               = $goldenEpObserved.warm
+    readError          = $goldenEpObserved.readError
+    reads              = $goldenEpAttempts
+    warmupTriggered    = $goldenEpWarmupTriggered
+    waitedSeconds      = $goldenEpElapsedSec
+    maxWaitSeconds     = $goldenEpMaxWaitSec
+    captureProceeded   = (-not $goldenSkipped)
+    capturedCount      = $goldenCapturedCount
+    legCapturedCount   = $goldenLegCapturedCount
+    skipReason         = $goldenSkipReason
+}
+($goldenEpRecord | ConvertTo-Json -Depth 5) |
+    Write-Utf8NoBom -Path (Join-Path -Path $EvidenceDir -ChildPath "golden-capture-ep.json")
+Write-Log ("Golden capture EP condition recorded to golden-capture-ep.json " +
+    "(executionProvider=$($goldenEpObserved.executionProvider), warm=$($goldenEpObserved.warm), captured=$(-not $goldenSkipped))")
+
 # ---------------------------------------------------------------------------
 # Step 4: Summary
 # ---------------------------------------------------------------------------
@@ -1440,9 +1669,13 @@ else {
 }
 $summaryLines += ""
 if ($goldenSkipped) {
+    $summaryLines += ("Golden capture embedding EP: $($goldenEpObserved.executionProvider) " +
+        "(gpuFallback=$($goldenEpObserved.gpuFallback), warm=$($goldenEpObserved.warm)) -- see golden-capture-ep.json")
     $summaryLines += "Golden-query search-parity capture: SKIPPED ($goldenSkipReason)"
 }
 else {
+    $summaryLines += ("Golden capture embedding EP: $($goldenEpObserved.executionProvider) " +
+        "(gpuFallback=$($goldenEpObserved.gpuFallback), warm=$($goldenEpObserved.warm)) -- see golden-capture-ep.json")
     $summaryLines += "Golden-query search-parity capture: $goldenCapturedCount captured, $goldenFailedCount failed -> golden/ (host-side check_golden_parity.py input)"
     $summaryLines += "Golden-query per-leg capture (vector/text/splade): $goldenLegCapturedCount captured, $goldenLegFailedCount failed -> golden/<id>.<mode>.json"
 }
