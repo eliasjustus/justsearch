@@ -1,0 +1,166 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+package io.justsearch.app.services.ai.install;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+/**
+ * Tempdoc 824 §3.4 — repair converges, or says why not.
+ *
+ * <p>{@code repair()} is literally {@code startInstall()}: round 16's user clicked it four times
+ * against the same 872-byte file, got the same BITS-then-curl pair each time, and was offered
+ * Repair a fifth. Nothing in the product could tell pass 4 from pass 1 because nothing survived a
+ * pass. These tests pin the memory that makes both escalation and a terminal verdict possible.
+ */
+final class InstallAttemptMemoryTest {
+
+  private static final String TARGET = "splade/naver-splade-v3/config.json";
+  private static final String URL = "https://example/splade-config.json";
+
+  @TempDir Path home;
+
+  /**
+   * Test 9 — three consecutive passes failing the same file at transport is terminal, and each pass
+   * before that escalates to a different transport tier.
+   */
+  @Test
+  @DisplayName("three failing repair passes: escalating tiers, then a terminal verdict")
+  void threeFailingPasses_escalateThenTerminate() {
+    assertEquals(0, InstallAttemptMemory.load(home).startTierFor(TARGET), "pass 1 uses today's transport");
+
+    for (int pass = 1; pass <= InstallAttemptMemory.MAX_FAILED_PASSES; pass++) {
+      InstallAttemptMemory memory = InstallAttemptMemory.load(home);
+      assertEquals(
+          pass - 1,
+          memory.startTierFor(TARGET),
+          "pass " + pass + " must meet a transport the earlier passes did not");
+      assertFalse(
+          memory.isTerminal(TARGET),
+          "pass " + pass + " has not happened yet — a verdict now would be premature");
+      memory.recordTransportFailure(TARGET, URL, 4, "Download failed for " + TARGET, pass - 1);
+    }
+
+    InstallAttemptMemory after = InstallAttemptMemory.load(home);
+    assertTrue(after.isTerminal(TARGET), "three passes of a retrying transport is no longer luck");
+    InstallAttemptMemory.Attempt a = after.get(TARGET);
+    assertNotNull(a);
+    assertEquals(12, a.attempts(), "the verdict states how many transports were actually spent");
+    assertEquals(3, a.failedPasses());
+    assertEquals(URL, a.url(), "the manual fallback needs the direct URL");
+    assertTrue(a.lastError().contains("Download failed for"), a.lastError());
+    assertTrue(a.lastAttemptEpochMs() > 0);
+  }
+
+  /** The tier ladder saturates — a fifth pass repeats the last rung rather than running off it. */
+  @Test
+  @DisplayName("the transport tier saturates at MAX_TIER")
+  void tierSaturates() {
+    assertEquals(0, TransportEscalation.startTier(0));
+    assertEquals(1, TransportEscalation.startTier(1));
+    assertEquals(TransportEscalation.MAX_TIER, TransportEscalation.startTier(TransportEscalation.MAX_TIER));
+    assertEquals(TransportEscalation.MAX_TIER, TransportEscalation.startTier(99));
+    assertEquals(0, TransportEscalation.startTier(-1), "a negative history is no history");
+  }
+
+  /** A file that finally transfers has spent its history: the next run starts clean. */
+  @Test
+  @DisplayName("success forgets the file's failure history")
+  void successResetsHistory() {
+    InstallAttemptMemory memory = InstallAttemptMemory.load(home);
+    memory.recordTransportFailure(TARGET, URL, 4, "Download failed for " + TARGET, 0);
+    memory.recordTransportFailure(TARGET, URL, 4, "Download failed for " + TARGET, 1);
+    memory.recordSuccess(TARGET);
+
+    InstallAttemptMemory reloaded = InstallAttemptMemory.load(home);
+    assertEquals(0, reloaded.startTierFor(TARGET));
+    assertFalse(reloaded.isTerminal(TARGET));
+  }
+
+  /**
+   * Only a TRANSPORT failure escalates. A SHA mismatch is an upstream/registry problem that a
+   * different transport will not fix, and spending 40 s of backoff on it is pure latency.
+   */
+  @Test
+  @DisplayName("a verification failure is not a transport failure")
+  void verificationFailureIsNotTransport() {
+    assertTrue(InstallAttemptMemory.isTransportFailure("Download failed for splade/config.json"));
+    assertFalse(InstallAttemptMemory.isTransportFailure("Verification failed: sha mismatch"));
+    assertFalse(InstallAttemptMemory.isTransportFailure("Failed to record resume state: disk full"));
+    assertFalse(InstallAttemptMemory.isTransportFailure("Cancelled."));
+    assertFalse(InstallAttemptMemory.isTransportFailure(null));
+  }
+
+  /**
+   * The classifier reads a message {@code ResumableFetch} produces, so it is pinned against a REAL
+   * outcome rather than against a copy of the literal. Rewording the failure would otherwise
+   * silently disable escalation and the terminal verdict with every test still green.
+   */
+  @Test
+  @DisplayName("the transport-failure prefix matches what ResumableFetch actually emits")
+  void prefixMatchesResumableFetchOutcome() {
+    ResumableFetch.Outcome outcome =
+        ResumableFetch.fetch(
+            new ResumableFetch.Request(
+                home.resolve("model.onnx.partial"), URL, 100L, "ABCD", "splade/model.onnx"),
+            (url, dest, decision, callback) -> false,
+            (bytes, total) -> {},
+            () -> false,
+            null,
+            null);
+
+    assertFalse(outcome.ok());
+    assertTrue(
+        InstallAttemptMemory.isTransportFailure(outcome.error()),
+        "a real transport failure must classify as one: " + outcome.error());
+  }
+
+  /**
+   * Degradation: a corrupt memory file must reproduce today's behaviour exactly (tier 0, never
+   * terminal, Repair always offered). Losing the memory must never lose the install.
+   */
+  @Test
+  @DisplayName("an unreadable memory degrades to no memory, never to a terminal verdict")
+  void corruptFileDegradesToNoMemory() throws Exception {
+    Files.writeString(home.resolve(InstallAttemptMemory.FILENAME), "{ not json");
+
+    InstallAttemptMemory memory = InstallAttemptMemory.load(home);
+
+    assertEquals(0, memory.startTierFor(TARGET));
+    assertFalse(memory.isTerminal(TARGET));
+    // …and it recovers: the next recorded failure rewrites the file rather than propagating.
+    memory.recordTransportFailure(TARGET, URL, 1, "Download failed for " + TARGET, 0);
+    assertEquals(1, InstallAttemptMemory.load(home).startTierFor(TARGET));
+  }
+
+  /**
+   * The memory lives under {@code homeDir}, NOT in the {@code DownloadResume} sidecar, because the
+   * sidecar cannot survive the event it would record: a connection-setup failure leaves no partial
+   * bytes, so the next pass decides FRESH and {@code DownloadResume.clear} deletes the sidecar.
+   * This pins the choice — if a future change moves the memory into the sidecar, the history it
+   * exists for disappears.
+   */
+  @Test
+  @DisplayName("the memory survives the DownloadResume.clear that a fresh-start decision performs")
+  void memorySurvivesSidecarClear() throws Exception {
+    Path partial = home.resolve("config.json.partial");
+    Files.writeString(partial, "x");
+    DownloadResume.write(partial, new DownloadResume.State(URL, 100L, "ABCD", null));
+    InstallAttemptMemory.load(home).recordTransportFailure(TARGET, URL, 2, "Download failed for x", 0);
+
+    DownloadResume.clear(partial);
+
+    assertFalse(Files.exists(DownloadResume.sidecarFor(partial)), "precondition: the sidecar is gone");
+    assertEquals(
+        1,
+        InstallAttemptMemory.load(home).get(TARGET).failedPasses(),
+        "the attempt history outlives the sidecar the same pass destroyed");
+  }
+}

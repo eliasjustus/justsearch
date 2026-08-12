@@ -100,15 +100,17 @@ $sacDisableCmd = @(
 
 ### INS-005: Install AI aborts on first asset failure (G30)
 - **Severity:** P2/Medium
-- **Status:** open
+- **Status:** fixed (verified 2026-08-12, tempdoc 824)
 - **Found:** 2026-04-06
-- **Component:** `modules/ui/src/main/java/.../AiInstallService.java`
+- **Component:** `modules/app-services/src/main/java/.../ai/install/AiInstallService.java`
 
-**Description:** The download pipeline aborts remaining assets after the first failure. For example, if the FP16 reranker download fails (404 or curl exit 22), subsequent assets like `citation-config.json` are left in `pending` state. 23/24 assets succeed but the overall state reports `failed`.
+**Description:** The download pipeline aborted remaining assets after the first failure. For example, if the FP16 reranker download failed (404 or curl exit 22), subsequent assets like `citation-config.json` were left in `pending` state. 23/24 assets succeeded but the overall state reported `failed`.
 
-**Impact:** Users see a failure status despite having all critical models downloaded. Non-critical asset failures prevent completion of remaining downloads.
+**Impact:** Users saw a failure status despite having all critical models downloaded. Non-critical asset failures prevented completion of remaining downloads.
 
-**Workaround:** Re-running Install AI will retry failed/pending assets.
+**Fix:** The download loop `continue`s per asset, and `applyCompletionState` reports `completed` with an honest count rather than `failed`. Round 16's install log confirms it in production (SPLADE continued through `tokenizer.json`, `vocab.txt`, `idf.json` and `config.json` after its model failed); `AiInstallServiceCompletionTruthTest.perAssetIsolation_oneFailedPackageOfThree` pins it.
+
+**Successor issue:** round 16's actual defect was terminal-state *truthfulness*, not asset isolation — a run with an optional-file casualty still asserted "a required component is missing". Tracked and fixed in tempdoc 824 §3.3.
 
 ---
 

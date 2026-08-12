@@ -270,7 +270,12 @@ while still supporting a one-click AI setup once the user opts in.
 
 Current scope: **24 assets, 9.08 GB total**, including ONNX `.onnx` files (embedding, reranker, citation, NER, SPLADE) and a GGUF LLM.
 
-**Known bug:** The download pipeline aborts remaining assets after the first failure, leaving items in `pending` state. For example, if an FP16 reranker download fails (404), subsequent assets like `citation-config.json` are never attempted, and the overall state reports `failed` despite 23/24 assets succeeding. See INS-005.
+Per-asset isolation holds: a failed asset fails only its own package and the loop continues to the
+next one (`AiInstallService`'s download loop `continue`s on failure), and a run with some failures
+still terminates as `completed` with an honest count ("AI installed (23/24 packages; 1 failed)").
+INS-005 described the opposite ("aborts remaining assets after the first failure") and is **fixed** —
+round 16's install log shows SPLADE continuing through four more assets after its model failed, and
+`AiInstallServiceCompletionTruthTest` pins the property so it cannot regress silently.
 
 ### 6.2 Worker receives embedding model path
 

@@ -54,6 +54,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -373,26 +374,75 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
 
   // --------------- ONNX feature status ---------------
 
+  /**
+   * What the runtime observes about each registry package's capability, keyed by the install
+   * package id — {@code "active"} | {@code "inactive"} | {@code "unknown"} (tempdoc 824 §3.3c).
+   *
+   * <p>A PROJECTION of {@link #resolveOnnxFeatureRows()}, the same derivation {@code GET
+   * /api/ai/runtime/status} publishes, so {@code GET /api/ai/install/status} cannot disagree with it
+   * about whether SPLADE is running. The package id comes off {@link EncoderRole#packageId()}
+   * rather than a second id→package table, so adding an encoder cannot leave the two out of step.
+   *
+   * <p>Tri-state on purpose: a feature the Worker has not answered for is {@code "unknown"}, never
+   * {@code "inactive"}. The install surface treats anything but {@code "active"} as "no observation
+   * softens the missing-file verdict", so an unknown fails CLOSED.
+   */
+  public Map<String, String> functionalStatusByPackage() {
+    Map<String, String> byPackage = new LinkedHashMap<>();
+    for (FeatureRow row : resolveOnnxFeatureRows()) {
+      String packageId = row.role().packageId();
+      String verdict = functionalVerdict(row.status());
+      // Two roles can share a package (EMBEDDING / BGE_M3): an active one wins, because the
+      // capability IS observably running whichever role delivered it.
+      if (!"active".equals(byPackage.get(packageId))) {
+        byPackage.put(packageId, verdict);
+      }
+    }
+    return byPackage;
+  }
+
+  private static String functionalVerdict(AiRuntimeStatusResponse.OnnxFeatureStatus f) {
+    if ("unknown".equals(f.status())) {
+      return "unknown";
+    }
+    return "active".equals(f.status()) && f.modelActive() ? "active" : "inactive";
+  }
+
+  /** One resolved ONNX feature together with the encoder role that produced it. */
+  private record FeatureRow(EncoderRole role, AiRuntimeStatusResponse.OnnxFeatureStatus status) {}
+
   private List<AiRuntimeStatusResponse.OnnxFeatureStatus> resolveOnnxFeatures() {
+    return resolveOnnxFeatureRows().stream().map(FeatureRow::status).toList();
+  }
+
+  private List<FeatureRow> resolveOnnxFeatureRows() {
     return List.of(
-        resolveOneOnnxFeature(
-            "reranker",
-            "Search reranking",
-            EnvRegistry.RERANK_ENABLED.envVar(),
-            EnvRegistry.RERANK_ENABLED.sysProp(),
-            EnvRegistry.RERANK_MODEL_PATH.envVar(),
-            EnvRegistry.RERANK_MODEL_PATH.sysProp(),
-            EncoderRole.RERANKER),
-        resolveOneOnnxFeature(
-            "citation_scorer",
-            "Citation scoring",
-            EnvRegistry.CITATION_SCORER_ENABLED.envVar(),
-            EnvRegistry.CITATION_SCORER_ENABLED.sysProp(),
-            EnvRegistry.CITATION_SCORER_MODEL_PATH.envVar(),
-            EnvRegistry.CITATION_SCORER_MODEL_PATH.sysProp(),
-            EncoderRole.CITATION),
-        resolveWorkerEncoderFeature("embed", "Semantic embedding", EncoderRole.EMBEDDING),
-        resolveWorkerEncoderFeature("splade", "Sparse expansion (SPLADE)", EncoderRole.SPLADE));
+        new FeatureRow(
+            EncoderRole.RERANKER,
+            resolveOneOnnxFeature(
+                "reranker",
+                "Search reranking",
+                EnvRegistry.RERANK_ENABLED.envVar(),
+                EnvRegistry.RERANK_ENABLED.sysProp(),
+                EnvRegistry.RERANK_MODEL_PATH.envVar(),
+                EnvRegistry.RERANK_MODEL_PATH.sysProp(),
+                EncoderRole.RERANKER)),
+        new FeatureRow(
+            EncoderRole.CITATION,
+            resolveOneOnnxFeature(
+                "citation_scorer",
+                "Citation scoring",
+                EnvRegistry.CITATION_SCORER_ENABLED.envVar(),
+                EnvRegistry.CITATION_SCORER_ENABLED.sysProp(),
+                EnvRegistry.CITATION_SCORER_MODEL_PATH.envVar(),
+                EnvRegistry.CITATION_SCORER_MODEL_PATH.sysProp(),
+                EncoderRole.CITATION)),
+        new FeatureRow(
+            EncoderRole.EMBEDDING,
+            resolveWorkerEncoderFeature("embed", "Semantic embedding", EncoderRole.EMBEDDING)),
+        new FeatureRow(
+            EncoderRole.SPLADE,
+            resolveWorkerEncoderFeature("splade", "Sparse expansion (SPLADE)", EncoderRole.SPLADE)));
   }
 
   /**
