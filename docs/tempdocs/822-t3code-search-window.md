@@ -108,6 +108,56 @@ self-judge geometry (BlindTest ~58.6%) — verification must be measurement, not
 6. Later (separate): real search wiring (shared authorities), 820-predicate alignment,
    promotion/sunset decision — none of it in this tempdoc's scope.
 
+## 4b. Continuation plan (authored 2026-08-12, post-shell; owner has not yet ratified)
+
+**Gate 0 — owner verdict on the shell** (pending). Go = the donor-copy strategy cleared
+the bar; no-go = record why, delete the window in one PR (818-style falsification),
+re-open the strategy question. Everything below assumes GO.
+
+**Phase A — real data in the donor shell** (functional spine; minimal design; each item
+the slices-1-4 loop: brief → opus worker → measure → commit):
+- A1. Live search via shared authorities: the shipped search client/stores feed the
+  existing placeholder rows; execution-surfaces registration the moment a SearchTrace
+  referencer appears; 36px session-row correction rides along; dev-stack lease for live
+  verification (coordinate via owner; leaseDurationSec for the campaign).
+- A2. Sessions become real: committed searches persist to the sidebar (recency grouping
+  stays until the B3 decision); deeplink boot-race workaround documented for dev use.
+- Rationale for A-before-B (recommendation, not law): 40 real results in the shell is
+  the highest-value input to the row-design conversation — real densities, real paths,
+  real latency. The alternative order (design first on fixtures) stays available.
+
+**Phase B — the adaptation design conversation** (owner-in-loop; the phase-stop item;
+output = a ratified adaptation spec agents then execute against):
+- B1. Result-row design from the donor 78px CARD variant (file-icon · path · pin ·
+  status + snippet body): which fields earn resting visibility; behavior at 50 results;
+  column/measure discipline (donor rule: main pane min 640 defines limits).
+- B2. Chrome-economy allocation — the direct fix for the founding 40%-chrome complaint:
+  a translation table for every shipped-window band/fact → its v3 form (resting pill /
+  slot-swap survivor / tooltip / palette / status strip / dropped), with the L14
+  boundary mapped to the donor's never-yields exception (their PR badge = our LOCKED
+  tier). Owner ratifies the table; it becomes the register a later gate can enforce.
+- B3. Remaining owner calls batched: grouping semantics (recency vs state shelves),
+  dark-mode fill separation, chip-box referent (24 vs 28), item line-height token.
+
+**Phase C — adaptation slices** (loop resumes under the ratified spec): result rows;
+document pane + citations (shared citationResolve/consumeShapeStream authorities);
+status→action slot swap with honesty exceptions; sidebar mechanics (drag-resize with
+the donor's max = viewport − pane-min rule; icon-collapse); 820 feel-predicate
+alignment (build against P1/P2/P3 budgets from the start — v3 is the natural first
+adopter of the 820 harness).
+
+**Phase D — reconciliation & cutover (SEPARATE tempdoc; owner-gated; not this arc):**
+three-window resolution — recommendation: v3 presentation + v2's records/laws substrate
+merge into ONE successor window, then a single sweep retires UnifiedChatView AND
+search-v2 per retire-with-a-sweep + 818 §5 mechanics (parity checklist, measured UX
+audit, auditor ≠ implementer). Also cutover-scope debts, all recorded earlier: shell
+chrome ownership (rail/topbar/status), the mod+k when-clause, the deeplink boot-race
+root fix, THIRD-PARTY-NOTICES generator input, theme-file integration.
+
+Cross-session continuity: this tempdoc is the contract; any new session resumes from
+§4b + the log. Serve recipe + measurement scripts live in the session scratchpad and
+are re-creatable from the log's descriptions.
+
 ## 5. Log
 
 - 2026-08-12 — Charter authored. Worktree `822-t3code-window` off local main @ 0063a8f4;
