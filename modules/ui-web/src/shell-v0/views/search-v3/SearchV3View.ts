@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SearchV3View — the Search v3 window host (tempdoc 822 slices 1 and 3).
+ * SearchV3View — the Search v3 window host (tempdoc 822 slices 1 and 3; wired in Phase A1).
  *
  * Derived from T3 Code (T3 Tools Inc., MIT) — see THIRD-PARTY-NOTICES.md in this directory.
  *
  * A from-scratch window rebuilt on the T3 Code donor system: no presentation code is carried over
- * from `UnifiedChatView` or search-v2. This host owns four things and delegates the rest:
+ * from `UnifiedChatView` or search-v2 — and no search client either, in the other direction: the
+ * store this host subscribes to is the SHARED `state/searchState.ts` that both shipped windows read,
+ * which is what "from-scratch components, shared authorities" means in practice. This host owns five
+ * things and delegates the rest:
  *
  *  1. **The token sheet.** `sv3Tokens` is applied HERE, on the window host — never on `:root`. Custom
  *     properties inherit down through every nested shadow root, so one host-scoped declaration
@@ -21,6 +24,11 @@
  *     through the same morph: the send control, `Escape` in the field, and the `composer-state`
  *     attribute (a dev-only handle for live measurement, which is why an external write is routed
  *     through the morph rather than applied straight).
+ *  5. **The one search issuance.** A send seeds the shared store's query and runs the explicit pass —
+ *     the same `setQuery` + `submitSearch` pair the shipped surface sends on an explicit submit
+ *     (`views/search-v2/SearchV2View.ts:998-999`), which is exactly ONE request: `submitSearch`
+ *     supersedes the keystroke pass `setQuery` had scheduled. Reading back is the store subscription;
+ *     what the region does with the snapshot is `sv3-results.ts`.
  *
  * Mounted as a hidden DEEPLINK surface, dev audience, no rail entry:
  * `#justsearch://surface/core.search-v3-surface`.
@@ -39,11 +47,19 @@ import {
   type Sv3FixtureSet,
 } from './fixtures.js';
 import {
+  setQuery,
+  setSearchApiBase,
+  submitSearch,
+  subscribeSearch,
+  type SearchState,
+} from '../../state/searchState.js';
+import {
   adoptSv3MorphSheet,
   releaseSv3MorphSheet,
   runSv3ComposerMorph,
 } from './sv3-composer-morph.js';
-import { type Sv3ComposerStateRequest } from './Sv3Composer.js';
+import { type Sv3ComposerStateRequest, type Sv3ComposerSubmit } from './Sv3Composer.js';
+import { projectSv3Results, type Sv3ResultsView } from './sv3-results.js';
 import type { Sv3Palette } from './Sv3Palette.js';
 import './Sv3Topbar.js';
 import './Sv3Sidebar.js';
@@ -103,20 +119,41 @@ export class SearchV3View extends JfElement {
   static properties = {
     composerState: { type: String, reflect: true, attribute: COMPOSER_STATE_ATTR },
     fixtureSet: { type: String, reflect: true, attribute: 'fixtures' },
+    apiBase: { type: String, attribute: 'api-base' },
+    searchSnapshot: { state: true },
+    asked: { state: true },
   };
 
   declare composerState: Sv3ComposerState;
   declare fixtureSet: Sv3FixtureSet;
+  /** Set by the shell on every render of a mounted surface (`chrome/Shell.ts:2945-2949`). */
+  declare apiBase: string;
+  /** The latest store emission. Null only until the subscription's first (immediate) call. */
+  declare searchSnapshot: SearchState | null;
+  /**
+   * Whether THIS window has sent anything. The store is a process-wide singleton, so without this
+   * the window would render another surface's results as its own the moment it docked.
+   */
+  declare asked: boolean;
+
+  private searchUnsubscribe: (() => void) | null = null;
 
   constructor() {
     super();
     this.composerState = COMPOSER_STATE_DEFAULT;
     this.fixtureSet = FIXTURE_SET_DEFAULT;
+    this.apiBase = '';
+    this.searchSnapshot = null;
+    this.asked = false;
   }
 
   override connectedCallback(): void {
     super.connectedCallback();
     adoptSv3MorphSheet();
+    setSearchApiBase(this.apiBase || '');
+    this.searchUnsubscribe = subscribeSearch((snapshot) => {
+      this.searchSnapshot = snapshot;
+    });
     // Scoped to the HOST, not to `window`. A host listener is only reached by events whose composed
     // path runs through this window, so a chord pressed anywhere else in the shipped app is invisible
     // here by construction — there is no "is the focus inside?" test to get wrong. Capture phase so
@@ -127,7 +164,17 @@ export class SearchV3View extends JfElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     releaseSv3MorphSheet();
+    this.searchUnsubscribe?.();
+    this.searchUnsubscribe = null;
     this.removeEventListener('keydown', this.onHostKeydown, true);
+  }
+
+  /**
+   * The shell re-sets `api-base` on a CACHED element rather than reconstructing it, so the base has
+   * to follow the attribute and not just the first connect.
+   */
+  protected override updated(changed: Map<string, unknown>): void {
+    if (changed.has('apiBase')) setSearchApiBase(this.apiBase || '');
   }
 
   private readonly onHostKeydown = (event: KeyboardEvent): void => {
@@ -203,7 +250,21 @@ export class SearchV3View extends JfElement {
     void this.setComposerState(detail.state);
   }
 
+  /**
+   * A send is one search and one morph, in that order: the request goes out in this tick, so the
+   * region is already showing the pending state by the time the morph settles.
+   */
+  private onComposerSubmit(event: Event): void {
+    const query = ((event as CustomEvent<Sv3ComposerSubmit>).detail?.query ?? '').trim();
+    if (query === '') return;
+    this.asked = true;
+    setQuery(query);
+    submitSearch();
+    void this.setComposerState('docked');
+  }
+
   render(): TemplateResult {
+    const results: Sv3ResultsView = projectSv3Results(this.searchSnapshot, this.asked);
     return html`
       <jf-sv3-sidebar
         fixtures=${this.fixtureSet}
@@ -213,12 +274,13 @@ export class SearchV3View extends JfElement {
         class="column"
         data-testid="sv3-column"
         @sv3-composer-state-request=${this.onStateRequest}
+        @sv3-composer-submit=${this.onComposerSubmit}
         @sv3-palette-request=${this.onPaletteRequest}
       >
         <jf-sv3-topbar window-title=${WINDOW_TITLE} data-testid="sv3-topbar"></jf-sv3-topbar>
         <jf-sv3-main
           state=${this.composerState}
-          fixtures=${this.fixtureSet}
+          .view=${results}
           data-testid="sv3-main"
         ></jf-sv3-main>
         <jf-sv3-composer state=${this.composerState} data-testid="sv3-composer"></jf-sv3-composer>

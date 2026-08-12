@@ -13,6 +13,10 @@
  * root cannot see a class on `<html>` (§8.3). Light casts a shadow down; dark removes the shadow and
  * catches light on its top edge instead.
  *
+ * The composer OWNS the draft and nothing else: sending announces the draft (Phase A1's
+ * `sv3-composer-submit`) and the window decides what that means. It does not dock itself and it does
+ * not know a search store exists — the alternative would put a second issuance site here.
+ *
  * ONE component in TWO states. HERO centres it in the main region under a headline (the empty
  * window); DOCKED returns it to the bottom band (the working window). Docking evaporates the scope-control
  * LABELS leftward into their glyphs (§5.9's signature compaction) and the window morphs the moving
@@ -37,6 +41,18 @@ export const SV3_COMPOSER_STATE_REQUEST = 'sv3-composer-state-request';
 
 export interface Sv3ComposerStateRequest {
   readonly state: Sv3ComposerState;
+}
+
+/**
+ * Raised when the draft is SENT (tempdoc 822 Phase A1). The composer holds the draft and therefore
+ * announces it; the window decides what a send means — issuing the search and docking are both its
+ * calls, made once, in one handler. Every affordance that sends (the control, Enter) goes through
+ * {@link Sv3Composer.submit}, so there is exactly one place a send can originate.
+ */
+export const SV3_COMPOSER_SUBMIT = 'sv3-composer-submit';
+
+export interface Sv3ComposerSubmit {
+  readonly query: string;
 }
 
 /** Donor `ComposerControlIcon` at its default optical size (`size-4`). */
@@ -382,7 +398,28 @@ export class Sv3Composer extends JfElement {
     if (event.key === 'Escape') {
       event.preventDefault();
       this.request('hero');
+      return;
     }
+    // Enter sends; Shift+Enter is the newline the multi-line field would otherwise have no way to
+    // take. An IME composing a character owns the key first (`isComposing`), or a Japanese or
+    // Chinese draft is sent halfway through being typed.
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      this.submit();
+    }
+  }
+
+  /** The ONE origin of a send, whichever affordance asked. An empty draft is not a send. */
+  private submit(): void {
+    const query = this.draft.trim();
+    if (query.length === 0) return;
+    this.dispatchEvent(
+      new CustomEvent<Sv3ComposerSubmit>(SV3_COMPOSER_SUBMIT, {
+        detail: { query },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   render(): TemplateResult {
@@ -438,7 +475,7 @@ export class Sv3Composer extends JfElement {
               aria-label="Search"
               ?disabled=${empty}
               data-testid="sv3-composer-send"
-              @click=${() => this.request('docked')}
+              @click=${this.submit}
             >
               &#8593;
             </button>

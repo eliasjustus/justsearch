@@ -4,10 +4,13 @@
  * The Search v3 shell (tempdoc 822 slice 1) — the window mounts, all five regions are present,
  * the scroll policy holds, and the surface is registered exactly the way a hidden dev route is.
  *
- * No stores are mocked because the slice-1 shell consumes none: it is fixture-first on purpose, so
- * these cases measure geometry and registration and nothing else.
+ * These cases measure geometry, structure and registration. The search wiring they now sit beside
+ * has its own file (`SearchV3View.search.test.ts`); what is needed here is only that no case can
+ * reach the network — the window subscribes to the real shared store, so the ONE exit that store
+ * has (the global fetch) is stubbed for every case.
  */
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { resetSearchState } from '../../state/searchState.js';
 import { SearchV3View } from './SearchV3View.js';
 import { Sv3Topbar } from './Sv3Topbar.js';
 import { Sv3Sidebar } from './Sv3Sidebar.js';
@@ -17,13 +20,7 @@ import { createCorePluginManifest } from '../../plugin-api/CorePlugin.js';
 import { isLazySurface } from '../lazySurfaceRegistry.js';
 import { COMPONENT_TAGS } from '../../renderers/component-vocabulary.generated.js';
 import { Sv3SessionRow } from './Sv3SessionRow.js';
-import {
-  COMPOSER_SCOPES,
-  HERO_HEADLINE,
-  MAIN_ROWS,
-  SIDEBAR_GROUPS,
-  SIDEBAR_ROWS,
-} from './fixtures.js';
+import { COMPOSER_SCOPES, HERO_HEADLINE, SIDEBAR_GROUPS, SIDEBAR_ROWS } from './fixtures.js';
 import { SV3_MORPH_ROOT_ATTR, sv3MorphSheetAdopted } from './sv3-composer-morph.js';
 
 type Mounted = HTMLElement & { updateComplete: Promise<unknown> };
@@ -45,6 +42,13 @@ async function mount(): Promise<Mounted> {
   return el;
 }
 
+beforeEach(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ results: [] }) }),
+  );
+});
+
 /**
  * Every case starts from a document holding no window: the morph sheet is ref-counted against
  * connected windows, so a window left mounted by an earlier case would mask the release.
@@ -53,6 +57,9 @@ afterEach(() => {
   for (const child of [...document.body.children]) child.remove();
   document.documentElement.removeAttribute(SV3_MORPH_ROOT_ATTR);
   delete (document as unknown as { startViewTransition?: unknown }).startViewTransition;
+  // The store is a module singleton; a search one case ran would otherwise be the next case's state.
+  resetSearchState();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -108,16 +115,16 @@ describe('the window mounts with its five regions', () => {
     );
   });
 
-  it('fills the content surface with enough rows to exercise the scroller, once docked', async () => {
+  it('claims nothing about the corpus when the window is docked without a search', async () => {
     const el = await mount();
-    // The window opens on the empty hero, so the results arrive with the docked state.
+    // The dev attribute handle docks WITHOUT sending anything. The region has no result set and no
+    // failure — so it must render neither rows nor a zero-results verdict nor a count.
     await (el as SearchV3View).setComposerState('docked');
     const main = await region(el, 'jf-sv3-main');
-    expect(main.shadowRoot?.querySelectorAll('[data-testid="sv3-main-row"]')).toHaveLength(
-      MAIN_ROWS.length,
-    );
-    expect(MAIN_ROWS.length).toBeGreaterThanOrEqual(12);
-    expect(main.shadowRoot?.querySelector('h2')?.textContent).toBe('Results');
+    expect(main.shadowRoot?.querySelectorAll('[data-testid="sv3-main-row"]')).toHaveLength(0);
+    expect(main.shadowRoot?.querySelector('[data-testid="sv3-main-empty"]')).toBeNull();
+    expect(main.shadowRoot?.querySelector('[data-testid="sv3-main-unreachable"]')).toBeNull();
+    expect(main.shadowRoot?.querySelector('[data-testid="sv3-main-count"]')).toBeNull();
   });
 
   it('gives the composer a field, scope controls and a send control', async () => {
@@ -161,10 +168,9 @@ describe('the composer has two anatomies and one way between them', () => {
     expect(composer.shadowRoot?.querySelectorAll('[data-testid="sv3-composer-scope"]')).toHaveLength(
       COMPOSER_SCOPES.length,
     );
-    const main = await region(el, 'jf-sv3-main');
-    expect(main.shadowRoot?.querySelectorAll('[data-testid="sv3-main-row"]')).toHaveLength(
-      MAIN_ROWS.length,
-    );
+    // The region the composer vacated is the results' — what it holds is the search's business
+    // (SearchV3View.search.test.ts), not the morph's.
+    expect(await region(el, 'jf-sv3-main')).toBeTruthy();
   });
 
   it('keeps the send control disabled until the field carries something to send', async () => {

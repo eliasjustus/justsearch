@@ -110,7 +110,9 @@ self-judge geometry (BlindTest ~58.6%) — verification must be measurement, not
 
 ## 4b. Continuation plan (authored 2026-08-12, post-shell; owner has not yet ratified)
 
-**Gate 0 — owner verdict on the shell** (pending). Go = the donor-copy strategy cleared
+**Gate 0 — owner verdict on the shell**: **GO** (owner, 2026-08-12: "the shell is fine
+for now. proceed as you see fit") — sequencing delegated; Phase A first per the
+recommendation below. Go = the donor-copy strategy cleared
 the bar; no-go = record why, delete the window in one PR (818-style falsification),
 re-open the strategy question. Everything below assumes GO.
 
@@ -274,7 +276,29 @@ are re-creatable from the log's descriptions.
   — adopt when file-type/domain hues appear. (6) Not yet ported: resize handle
   (min 208 / max viewport−640), 48px icon-collapse, multi-select, woke/unread-
   completion state machine.
-- 2026-08-12 — **SHELL COMPLETE (slices 1-4). Phase stop per §4.5**: owner inspection
+- 2026-08-13 — **Slice A1 implemented + live-verified against the real backend.**
+  Seam: the shared `searchState` store (`setQuery/submitSearch/subscribeSearch` — the
+  same authority both shipped windows consume; issuance mirrors SearchV2View's
+  explicit-submit pair; exactly one request, mutation-probed). Count via the shipped
+  `matchCountLabel`; unreachable copy via `readinessNotice` vocabulary. NO SearchTrace
+  referencer — execution-surfaces registration correctly not needed (gate green).
+  Four honest states (loading skeleton/ready/zero/unreachable-distinct-from-zero);
+  Enter-to-send added (Shift+Enter newline); 36px row correction landed. 4569/4570
+  (one unrelated wall-clock flake, observation filed); 5 mutation probes bite.
+  Worker also repaired ui-web node_modules corrupted by a Gradle/npm file-lock
+  collision (my parallel backend build — lesson: skipWebBuild when FE tooling is
+  live). LIVE: stack from this worktree's dist (runId aeb93837, docs/ corpus,
+  862 accepted), "worker lifecycle readiness" → "Top 50 of 325 matches", real rows,
+  skeleton observed at 0.7s, zero page errors. Observations: /api/status reports
+  indexedDocuments 0 / DEGRADED while search serves 325 hits (status-vs-serving
+  mismatch, 819-adjacent); OR-semantics makes true zero-results rare. THE PHASE-B
+  EVIDENCE PHOTO (live-3-results.png): real rows expose the row-design needs
+  (absolute-path redundancy, title↔path gulf, no snippets), and the shipped shell's
+  chrome re-materializes around the window with a live backend (indexing toast +
+  walkthrough toast + degraded pill + queue facts + rail badge, toasts overlapping
+  the window region) — the founding 40%-chrome complaint, photographed beside the
+  donor economy. Phase A2 (real sessions) next; Phase B conversation is now
+  evidence-armed. owner inspection
   + verdict on the donor copy, then the adaptation-seams conversation (result rows
   with real densities, document pane, citations, honesty facts) BEFORE any
   JustSearch-specific surface is designed. Serve: modules/ui-web `npx vite --port

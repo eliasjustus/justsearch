@@ -232,19 +232,22 @@ describe('the sized regions render at exactly their token, not the token plus tr
     expect(host).not.toContain('padding');
   });
 
-  it('the session row is 32px total, with both insets counting inward', () => {
+  // The donor's SESSION row is §6.1's slim 36px (h-9); the 32px this was built at came from §3.2's
+  // menu-button ladder — the wrong referent for a list of sessions (822 sidebar-comparison finding 1).
+  it('the session row is 36px total, with both insets counting inward', () => {
     const styles = styleTextOf(Sv3SessionRow);
     const start = styles.indexOf('button.row {');
     const rule = styles.slice(start, styles.indexOf('}', start));
-    expect(rule).toContain('height: var(--space-8)');
+    expect(rule).toContain('height: var(--space-9)');
+    expect(rule).not.toContain('height: var(--space-8)');
     expect(rule).toContain('padding-inline: var(--sidebar-row-content-inset)');
-    // Anything outside the box would push the row past the 32px the ladder claims.
+    // Anything outside the box would push the row past the 36px the ladder claims.
     expect(rule).not.toContain('margin');
     expect(rule).not.toContain('min-height');
     expect(rule).not.toContain('border-width');
     expect(rule).toContain('border: 0');
     // The intrinsic size a skipped row reports must equal the size it actually renders at.
-    expect(rule).toContain('contain-intrinsic-size: auto var(--space-8)');
+    expect(rule).toContain('contain-intrinsic-size: auto var(--space-9)');
     // The row host adds nothing around the button.
     const host = hostRuleOf(styles);
     expect(host).toContain('display: block');

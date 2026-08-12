@@ -43,7 +43,9 @@ export class Sv3SessionRow extends JfElement {
         align-items: center;
         gap: var(--sidebar-control-gap);
         width: 100%;
-        height: var(--space-8);
+        /* Donor §6.1's SLIM SESSION row (h-9), not §3.2's menu-button ladder: the sidebar-comparison
+           pass found the row had been built off the wrong referent, and these rows are sessions. */
+        height: var(--space-9);
         padding-inline: var(--sidebar-row-content-inset);
         padding-block: 0.375rem;
         border: 0;
@@ -60,7 +62,7 @@ export class Sv3SessionRow extends JfElement {
         /* A long session list stays cheap without a virtualizer: the browser skips rendering work
            for rows outside the viewport, and the intrinsic size keeps the scrollbar honest. */
         content-visibility: auto;
-        contain-intrinsic-size: auto var(--space-8);
+        contain-intrinsic-size: auto var(--space-9);
         transition:
           background-color var(--duration-sv3-micro) var(--ease-sv3-enter),
           opacity var(--duration-sv3-micro) var(--ease-sv3-enter);

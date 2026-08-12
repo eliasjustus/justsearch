@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Fixture data for the Search v3 shell (tempdoc 822 slice 1).
+ * Fixture data and fixed copy for the Search v3 shell (tempdoc 822 slice 1; narrowed in Phase A1).
  *
- * The window is fixture-first on purpose: the shell's geometry has to clear the bar before any
- * backend is wired, and fixtures keep the slice-1 components free of stores, so what the tests
- * measure is the geometry and nothing else. Slice 2+ replaces these with the shared authorities.
+ * The window was fixture-first on purpose: the shell's geometry had to clear the bar before any
+ * backend was wired. Phase A1 moved the CONTENT SURFACE onto the shared search store, so the rows
+ * here are the SIDEBAR's alone (sessions become real in A2); what remains besides them is fixed copy.
  */
 import type { IconName } from '../../components/Icon.js';
+import { reasonFor } from '../../state/readinessNotice.js';
 
 /**
  * The row's status, as the donor's 3-colour budget spends it: colour is reserved for act-now,
@@ -97,29 +98,6 @@ export const SIDEBAR_GROUPS: readonly Sv3SidebarGroup[] = [
 /** Every row in render order — the flat projection the sidebar's tests count against. */
 export const SIDEBAR_ROWS: readonly Sv3SidebarRow[] = SIDEBAR_GROUPS.flatMap((g) => g.rows);
 
-export const MAIN_HEADING = 'Results';
-
-export interface Sv3MainRow {
-  readonly id: string;
-  readonly title: string;
-  readonly path: string;
-}
-
-export const MAIN_ROWS: readonly Sv3MainRow[] = [
-  { id: 'm1', title: 'Northfield supplier agreement.pdf', path: 'Contracts/Northfield.pdf' },
-  { id: 'm2', title: 'Q2 vendor review notes.md', path: 'Ops/Reviews/Q2.md' },
-  { id: 'm3', title: 'RE: revised payment terms.eml', path: 'Archive/Mail/2025-03.eml' },
-  { id: 'm4', title: 'Warehouse lease appendix C.docx', path: 'Legal/Leases/AppendixC.docx' },
-  { id: 'm5', title: 'Insurance renewal 2026.pdf', path: 'Admin/Insurance/2026.pdf' },
-  { id: 'm6', title: 'Freight reconciliation Q1.xlsx', path: 'Finance/Freight/Q1.xlsx' },
-  { id: 'm7', title: 'Supplier onboarding checklist.md', path: 'Ops/Onboarding/Checklist.md' },
-  { id: 'm8', title: 'Northfield amendment 2.pdf', path: 'Contracts/Northfield-A2.pdf' },
-  { id: 'm9', title: 'Vendor risk register.xlsx', path: 'Risk/Vendors/Register.xlsx' },
-  { id: 'm10', title: 'Payment terms policy.md', path: 'Finance/Policy/Terms.md' },
-  { id: 'm11', title: 'Site inspection photos index.txt', path: 'Ops/Sites/Index.txt' },
-  { id: 'm12', title: 'Annual supplier scorecard.pdf', path: 'Ops/Reviews/Scorecard.pdf' },
-];
-
 export const WINDOW_TITLE = 'Search v3';
 
 export const COMPOSER_PLACEHOLDER = 'Ask or search…';
@@ -161,9 +139,9 @@ export const COMPOSER_SCOPES: readonly Sv3ComposerScope[] = [
 /* ── Slice 4: the fixture SET, the palette, and the empty states ───────────────────────────── */
 
 /**
- * Which fixture set the window renders. `empty` is the dev handle for the zero-state pass: it empties
- * BOTH collections at once, because the two empty states are one donor pattern applied twice and are
- * meant to be judged together.
+ * Which fixture set the SIDEBAR renders. `empty` is the dev handle for its zero-state pass. The
+ * content surface left this handle behind in Phase A1: its rows are the search response's, so its
+ * zero state is a real empty result set rather than an emptied fixture list.
  */
 export type Sv3FixtureSet = 'default' | 'empty';
 
@@ -171,9 +149,6 @@ export const FIXTURE_SET_DEFAULT: Sv3FixtureSet = 'default';
 
 export const sidebarGroupsFor = (set: Sv3FixtureSet): readonly Sv3SidebarGroup[] =>
   set === 'empty' ? [] : SIDEBAR_GROUPS;
-
-export const mainRowsFor = (set: Sv3FixtureSet): readonly Sv3MainRow[] =>
-  set === 'empty' ? [] : MAIN_ROWS;
 
 export interface Sv3EmptyCopy {
   readonly title: string;
@@ -188,6 +163,17 @@ export const SIDEBAR_EMPTY: Sv3EmptyCopy = {
 export const MAIN_EMPTY: Sv3EmptyCopy = {
   title: 'Nothing matched',
   description: 'Try fewer words, or widen the scope to all sources.',
+};
+
+/**
+ * The state {@link MAIN_EMPTY} must never be mistaken for: the search never reached the backend, so
+ * nothing is known about the corpus. Its description is the shipped wording for exactly this
+ * condition (`state/readinessNotice.ts` `binding.unreachable`), read through the one authority rather
+ * than re-phrased here — this window is a second consumer of that vocabulary, not a second author.
+ */
+export const MAIN_UNREACHABLE: Sv3EmptyCopy = {
+  title: 'Search backend unreachable',
+  description: reasonFor('binding.unreachable').wording,
 };
 
 export interface Sv3Command {

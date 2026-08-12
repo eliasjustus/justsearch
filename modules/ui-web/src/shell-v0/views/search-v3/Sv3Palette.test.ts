@@ -20,7 +20,7 @@ import type { Sv3Palette } from './Sv3Palette.js';
 import type { Sv3Empty } from './Sv3Empty.js';
 import { SV3_PALETTE_RUN } from './Sv3Palette.js';
 import { SV3_PALETTE_REQUEST } from './Sv3Topbar.js';
-import { COMMANDS, COMMAND_GROUPS, MAIN_EMPTY, SIDEBAR_EMPTY } from './fixtures.js';
+import { COMMANDS, COMMAND_GROUPS, SIDEBAR_EMPTY } from './fixtures.js';
 import { COMPONENT_TAGS } from '../../renderers/component-vocabulary.generated.js';
 
 type Mounted = HTMLElement & { updateComplete: Promise<unknown> };
@@ -368,28 +368,9 @@ describe('the empty states are one donor pattern in two regions', () => {
     expect(sidebar.shadowRoot?.querySelectorAll('[data-testid="sv3-sidebar-row"]')).toHaveLength(0);
   });
 
-  it('renders the zero-results variant only once something was actually asked', async () => {
-    const el = await mount('empty');
-    const main = await region(el, 'jf-sv3-main');
-    // The untouched window is the hero; its emptiness is the composer's to speak for, not a state.
-    expect(main.shadowRoot?.querySelector('[data-testid="sv3-main-empty"]')).toBeNull();
-
-    await el.setComposerState('docked');
-    await main.updateComplete;
-    const empty = main.shadowRoot?.querySelector('[data-testid="sv3-main-empty"]') as
-      | (Sv3Empty & Mounted)
-      | null;
-    expect(empty).toBeTruthy();
-    await empty!.updateComplete;
-    expect(empty!.shadowRoot?.querySelector('[data-testid="sv3-empty-title"]')?.textContent?.trim())
-      .toBe(MAIN_EMPTY.title);
-    expect(
-      empty!.shadowRoot?.querySelector('[data-testid="sv3-empty-description"]')?.textContent?.trim(),
-    ).toBe(MAIN_EMPTY.description);
-    // The roomier region gets the roomier padding, which is the donor's one breakpoint here.
-    expect(empty!.hasAttribute('roomy')).toBe(true);
-    expect(main.shadowRoot?.querySelectorAll('[data-testid="sv3-main-row"]')).toHaveLength(0);
-  });
+  // The content surface's twin of this case moved to `SearchV3View.search.test.ts` in Phase A1: its
+  // zero state is now a real empty RESULT SET, not an emptied fixture list, so it is asserted where
+  // a response can be given to it.
 
   it('builds the media as a fanned three-card stack, two of them hidden from assistive tech', async () => {
     const el = await mount('empty');
