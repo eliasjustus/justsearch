@@ -272,6 +272,11 @@ public final class SearchResponseBuilder {
         }
         responseBuilder.putFacets(entry.getKey(), counts.build());
       }
+    }
+    // Tempdoc 821 §L.3: the truncation flag describes the SCAN, not the key set — a scan that was
+    // capped or that failed still ran, so the flag must survive a result with no facetable keys.
+    // (Emitting it only inside the guard above hid it exactly when the counts were least complete.)
+    if (facetsResult != null) {
       responseBuilder.setFacetsTruncated(facetsResult.truncated());
     }
     return facetsResult;

@@ -3,6 +3,7 @@ package io.justsearch.indexerworker.services.input;
 
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
 import io.justsearch.indexerworker.disambiguation.EntityClusterSnapshot;
+import io.justsearch.ipc.SearchQuerySyntax;
 import io.justsearch.ipc.SearchRequest;
 import java.util.Map;
 import java.util.Objects;
@@ -44,7 +45,9 @@ public record SearchInputs(
 
   /**
    * The request's query syntax in runtime terms — the single projection of the wire
-   * {@code SearchQuerySyntax} enum onto {@link LuceneRuntimeTypes.QuerySyntax}.
+   * {@link SearchQuerySyntax} enum onto {@link LuceneRuntimeTypes.QuerySyntax} (two boolean gates
+   * still read the wire enum directly: {@code SearchInputCapture.java:125-126},
+   * {@code SearchPlanner.java:251} — both only ask "is it LUCENE?" to skip chunk-merge).
    *
    * <p>This is what the CLIENT asked for. It is the right source for a stage that parses the user's
    * query for retrieval (the sparse-only shortcut does), and the WRONG source for a stage that
@@ -53,7 +56,7 @@ public record SearchInputs(
    * from here (tempdoc 821 §L.3).
    */
   public LuceneRuntimeTypes.QuerySyntax runtimeSyntax() {
-    return request.getQuerySyntax() == io.justsearch.ipc.SearchQuerySyntax.SEARCH_QUERY_SYNTAX_LUCENE
+    return request.getQuerySyntax() == SearchQuerySyntax.SEARCH_QUERY_SYNTAX_LUCENE
         ? LuceneRuntimeTypes.QuerySyntax.LUCENE
         : LuceneRuntimeTypes.QuerySyntax.SIMPLE;
   }

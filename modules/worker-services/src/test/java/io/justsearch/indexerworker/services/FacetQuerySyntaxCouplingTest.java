@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.grpc.stub.StreamObserver;
 import io.justsearch.adapters.lucene.runtime.IndexSchema;
@@ -36,9 +38,20 @@ import org.junit.jupiter.api.Test;
  * same constant. Threading the REQUEST's syntax there instead would make a LUCENE-syntax request
  * report facets and a headline over a query it never actually ran ("Top 3 of 1 matches").
  *
- * <p>The pin is bidirectional: the query below parses to 3 docs under SIMPLE and 1 under LUCENE, and
- * the test asserts count == hits. It fails if the counts start honouring the request's syntax while
- * the leg does not, AND it fails if the leg starts honouring it while the counts do not.
+ * <p>The query below parses to 3 docs under SIMPLE and 1 under LUCENE, so a parse skew shows up as a
+ * number rather than a shape. Each test pins a different producer, because {@code matchCount} has
+ * two sources ({@code SearchResponseBuilder:170-176}):
+ *
+ * <ul>
+ *   <li><b>with facets</b> — {@code matchCount} binds to {@code facetsResult.matchedDocs()}, so
+ *       those cases pin the FACET SCAN's parse (the {@code :243} rebuild);
+ *   <li><b>without facets</b> — {@code matchCount} comes from {@code computeMatchCount}, so the
+ *       no-facets case is the only one that pins the {@code :308} rebuild.
+ * </ul>
+ *
+ * <p>Each pin is bidirectional: asserting count == hits fails if the counts start honouring the
+ * request's syntax while the leg does not, AND if the leg starts honouring it while the counts
+ * do not.
  */
 @DisplayName("Facet/matchCount parse is coupled to the retrieval leg's parse (tempdoc 821 §L.3)")
 final class FacetQuerySyntaxCouplingTest {
@@ -88,6 +101,49 @@ final class FacetQuerySyntaxCouplingTest {
           "the facet scan must tally the same 3 retrieved docs, not the LUCENE parse's 1");
       assertFalse(
           response.getFacetsTruncated(), "the tiny scan completed — truncated must stay false");
+    } finally {
+      restoreProperty("justsearch.config", prevConfig);
+    }
+  }
+
+  /**
+   * The facets cases above never reach {@code computeMatchCount} — with facets requested,
+   * {@code matchCount} binds to the facet scan's {@code matchedDocs}. Only a facet-less multi-leg
+   * request exercises the {@code computeMatchCount} rebuild, so only this test can catch a parse
+   * skew there.
+   */
+  @Test
+  @DisplayName("No-facets multi-leg LUCENE request: computeMatchCount tallies the leg's parse")
+  void luceneSyntaxMultiLegWithoutFacetsCountsTheRetrievedPopulation() throws Exception {
+    String prevConfig = System.getProperty("justsearch.config");
+    try (RunningRuntime lifecycle = newLifecycleWithPdfDocs(CORPUS)) {
+      GrpcSearchService service = new GrpcSearchService(lifecycle);
+      SearchRequest noFacets =
+          SearchRequest.newBuilder()
+              .setQuery(DIVERGING_QUERY)
+              .setLimit(10)
+              .setQuerySyntax(SearchQuerySyntax.SEARCH_QUERY_SYNTAX_LUCENE)
+              .setPipeline(
+                  PipelineConfig.newBuilder().setSparseEnabled(true).setDenseEnabled(true).build())
+              .build();
+      SearchResponse response = invokeSearch(service, noFacets);
+
+      assertEquals("TEXT", response.getSearchTrace().getEffectiveMode());
+      assertTrue(
+          response.getFacetsMap().isEmpty(),
+          "precondition: no facets requested, so matchCount must come from computeMatchCount");
+      assertEquals(
+          3L,
+          response.getTotalHits(),
+          "precondition: the BM25 leg retrieves with a SIMPLE parse, so all 3 docs match");
+      assertEquals(
+          response.getTotalHits(),
+          response.getMatchCount(),
+          "computeMatchCount must re-parse with the leg's syntax, not the request's LUCENE syntax");
+      assertNotEquals(
+          1L,
+          response.getMatchCount(),
+          "1 would mean computeMatchCount used the request's LUCENE parse");
     } finally {
       restoreProperty("justsearch.config", prevConfig);
     }
@@ -150,7 +206,7 @@ final class FacetQuerySyntaxCouplingTest {
           @Override
           public void onCompleted() {}
         });
-    assertFalse(errorRef.get() != null, () -> "search() errored: " + errorRef.get());
+    assertNull(errorRef.get(), () -> "search() errored: " + errorRef.get());
     SearchResponse response = responseRef.get();
     assertNotNull(response);
     return response;
@@ -164,7 +220,7 @@ final class FacetQuerySyntaxCouplingTest {
             + base.toString().replace("\\", "\\\\")
             + "\n"
             + "index:\n  collections:\n    - name: composable\n      roots: ['ignored']\n"
-            + "vector:\n  dimension: 4\n";
+            + "  vector:\n    dimension: 4\n";
     Path cfg = Files.createTempFile("justsearch-config-", ".yaml");
     Files.writeString(cfg, yaml);
     System.setProperty("justsearch.config", cfg.toString());

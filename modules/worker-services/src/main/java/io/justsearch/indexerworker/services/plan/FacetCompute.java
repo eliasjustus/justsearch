@@ -16,8 +16,8 @@ import java.util.Objects;
  * <p>{@code FromFreshBm25} builds a fresh BM25 query, omitting boost filters and
  * swallowing {@code ParseException} (legacy lines 678–705). It parses with
  * {@code TextQueryOps.MULTI_LEG_LEXICAL_SYNTAX} — the syntax the multi-leg BM25 leg
- * it describes retrieves with (SIMPLE today, whatever the request asked for) — so
- * the facet counts always tally the same population the hits came from
+ * it describes retrieves with, regardless of what the request asked for — so the
+ * facet counts always tally the same population the hits came from
  * (tempdoc 821 §L.3).
  *
  * <p>These are not duplicates and cannot be unified — both observable behaviours

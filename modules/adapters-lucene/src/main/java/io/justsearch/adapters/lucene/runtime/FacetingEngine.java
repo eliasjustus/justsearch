@@ -212,10 +212,10 @@ public final class FacetingEngine {
       // The scan FAILED — it did not complete, so `truncated=false` would be a lie about a partial
       // tally. Return what was accumulated, flagged truncated (tempdoc 821 §L.3).
       log.warn(
-          "Facet scan FAILED (not capped) after {} matched docs on segment ord {}{} — returning"
-              + " PARTIAL counts for {} marked truncated",
+          "Facet scan FAILED (not capped) after {} matched docs {}{} — returning PARTIAL counts"
+              + " for {} marked truncated",
           scanned,
-          leafOrd,
+          leafOrd < 0 ? "before segment iteration" : "on segment ord " + leafOrd,
           loadingField == null ? "" : " while loading DocValues for field '" + loadingField + "'",
           counts.keySet(),
           e);
