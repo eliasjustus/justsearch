@@ -41,4 +41,20 @@ public record SearchInputs(
     Objects.requireNonNull(commitMetadata, "commitMetadata");
     // activeGeneration may be null
   }
+
+  /**
+   * The request's query syntax in runtime terms — the single projection of the wire
+   * {@code SearchQuerySyntax} enum onto {@link LuceneRuntimeTypes.QuerySyntax}.
+   *
+   * <p>This is what the CLIENT asked for. It is the right source for a stage that parses the user's
+   * query for retrieval (the sparse-only shortcut does), and the WRONG source for a stage that
+   * re-derives counts over an already-retrieved population — those must mirror the parse their leg
+   * used ({@code TextQueryOps.MULTI_LEG_LEXICAL_SYNTAX}), which the multi-leg legs do not derive
+   * from here (tempdoc 821 §L.3).
+   */
+  public LuceneRuntimeTypes.QuerySyntax runtimeSyntax() {
+    return request.getQuerySyntax() == io.justsearch.ipc.SearchQuerySyntax.SEARCH_QUERY_SYNTAX_LUCENE
+        ? LuceneRuntimeTypes.QuerySyntax.LUCENE
+        : LuceneRuntimeTypes.QuerySyntax.SIMPLE;
+  }
 }
