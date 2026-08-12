@@ -20,6 +20,8 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
@@ -38,57 +40,72 @@ import org.junit.jupiter.api.io.TempDir;
  * progressConsumer) and the documents the initial scan admitted carried no {@code collection} at
  * all. The scan arm now takes the label too, and the assertions below are the positive inversion:
  * both arms must receive the SAME collection for the same root.
+ *
+ * <p>The rule these tests pin is uniform: a root's label reaches every arm, and an unlabeled or
+ * label-lost root maps to {@code IngestCollectionPolicy.DEFAULT_COLLECTION} everywhere — including
+ * the restart rewalk, so one root's documents never oscillate between tagged and untagged.
  */
 @DisplayName("watched-root scan — collection carriage")
 final class WatchedRootScanCollectionTest {
 
   @TempDir Path tempDir;
 
-  /** Captures what each arm received for one addWatchedRoot call. */
+  /** What each arm received for one root. */
   private record Arms(String watched, String scanned, String scannedRoot) {}
 
+  /** RootLifecycleOps wired so both arms record the collection they were handed. */
+  private final class Capture {
+    private final Map<Path, Instant> watchedRoots = new ConcurrentHashMap<>();
+    private final AtomicReference<String> watchedCollection = new AtomicReference<>();
+    private final AtomicReference<String> scannedCollection = new AtomicReference<>();
+    private final AtomicReference<String> scannedRoot = new AtomicReference<>();
+    private final ExecutorService walkExecutor = Executors.newSingleThreadExecutor();
+    private final WatchedRootsState state;
+    private final RootLifecycleOps ops;
+
+    Capture(String storeName) {
+      state =
+          new WatchedRootsState(
+              watchedRoots, new WatchedRootsStore(tempDir.resolve(storeName + ".json"), null));
+      ops =
+          new RootLifecycleOps(
+              watchedRoots,
+              state,
+              () -> ExcludeMatcher.empty(true),
+              (rootPath, collection, globs, progress) -> {
+                scannedRoot.set(rootPath);
+                scannedCollection.set(collection);
+                return null;
+              },
+              new RootLifecycleOps.WorkerWatchFn() {
+                @Override
+                public void watch(String rootPath, String collection) {
+                  watchedCollection.set(collection);
+                }
+
+                @Override
+                public void unwatch(String rootPath) {}
+              },
+              p -> null,
+              s -> null,
+              mock(SyncOps.class),
+              walkExecutor);
+    }
+
+    /** Drains the queued walk, then reports what each arm saw. */
+    Arms drain() throws Exception {
+      walkExecutor.shutdown();
+      assertTrue(
+          walkExecutor.awaitTermination(10, TimeUnit.SECONDS),
+          "the queued walk must finish before the assertions read what it dispatched");
+      return new Arms(watchedCollection.get(), scannedCollection.get(), scannedRoot.get());
+    }
+  }
+
   private Arms addRootAndCapture(String label, Path root) throws Exception {
-    Map<Path, Instant> watchedRoots = new ConcurrentHashMap<>();
-    WatchedRootsState state =
-        new WatchedRootsState(
-            watchedRoots, new WatchedRootsStore(tempDir.resolve(root.getFileName() + ".json"), null));
-
-    AtomicReference<String> watchedCollection = new AtomicReference<>();
-    AtomicReference<String> scannedCollection = new AtomicReference<>();
-    AtomicReference<String> scannedRoot = new AtomicReference<>();
-    java.util.concurrent.ExecutorService walkExecutor =
-        java.util.concurrent.Executors.newSingleThreadExecutor();
-
-    RootLifecycleOps ops =
-        new RootLifecycleOps(
-            watchedRoots,
-            state,
-            () -> ExcludeMatcher.empty(true),
-            (rootPath, collection, globs, progress) -> {
-              scannedRoot.set(rootPath);
-              scannedCollection.set(collection);
-              return null;
-            },
-            new RootLifecycleOps.WorkerWatchFn() {
-              @Override
-              public void watch(String rootPath, String collection) {
-                watchedCollection.set(collection);
-              }
-
-              @Override
-              public void unwatch(String rootPath) {}
-            },
-            p -> null,
-            s -> null,
-            mock(SyncOps.class),
-            walkExecutor);
-
-    ops.addWatchedRoot(label, root);
-    walkExecutor.shutdown();
-    assertTrue(
-        walkExecutor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS),
-        "the queued walk must finish before the assertions read what it dispatched");
-    return new Arms(watchedCollection.get(), scannedCollection.get(), scannedRoot.get());
+    Capture capture = new Capture(root.getFileName().toString());
+    capture.ops.addWatchedRoot(label, root);
+    return capture.drain();
   }
 
   @Test
@@ -119,6 +136,29 @@ final class WatchedRootScanCollectionTest {
     // happening to agree by both being null/blank.
     assertEquals("default", arms.watched(), "watcher arm sees the normalized label");
     assertEquals("default", arms.scanned(), "scan arm sees the same normalized label");
+  }
+
+  @Test
+  @DisplayName("a restart rewalk hands BOTH arms the same label the add path wrote")
+  void reindexPersistedRootsAgreesAcrossArmsAndWithTheAddPath() throws Exception {
+    Path root = Files.createDirectories(tempDir.resolve("persisted"));
+    Capture capture = new Capture("persisted-roots");
+    // Restart state: the root is known, its collection is not (821 §L.3 — not persisted).
+    capture.state.markNeverIndexed(root.toAbsolutePath().normalize());
+
+    capture.ops.reindexPersistedRoots();
+    Arms arms = capture.drain();
+
+    // One root must carry ONE label. A rewalk that disagrees with its own watcher — or with what
+    // addWatchedRoot wrote — makes the root's documents oscillate between tagged and untagged.
+    assertEquals(
+        arms.watched(),
+        arms.scanned(),
+        "the restart rewalk's two arms must agree with each other for the same root");
+    assertEquals(
+        "default",
+        arms.scanned(),
+        "and agree with the add path's normalization, so a restart does not retag the root");
   }
 
   /**

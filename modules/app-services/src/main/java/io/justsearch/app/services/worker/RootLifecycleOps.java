@@ -2,6 +2,7 @@
 package io.justsearch.app.services.worker;
 
 import io.justsearch.app.api.IndexingService;
+import io.justsearch.app.api.knowledge.IngestCollectionPolicy;
 import io.justsearch.ipc.DeleteByIdResponse;
 import io.justsearch.ipc.DeleteByPathResponse;
 import io.justsearch.ipc.ScanRootProgress;
@@ -188,9 +189,13 @@ final class RootLifecycleOps {
         Path normalized = path.toAbsolutePath().normalize();
         // Register root so walkAndSubmit()'s cancellation check doesn't abort the walk.
         watchedRootsState.markNeverIndexed(normalized);
-        // No collection label reaches this entry point (tempdoc 821 §L.3 — root→collection is not
-        // persisted, so callers that did not supply one have nothing to forward): default bucket.
-        walkExecutor.execute(() -> walkAndSubmit(normalized, null));
+        // No label reaches this entry point — the contract calls it "primary collection"
+        // (IndexingService#addWatchedPath), which is DEFAULT_COLLECTION. One root must carry ONE
+        // label across every arm and every restart, so this uses the same literal the add path
+        // normalizes to and the reindex paths re-send (tempdoc 821 §L.3 — real labels are still
+        // lost on restart because root→collection is not persisted; that is the deferred fix).
+        walkExecutor.execute(
+                () -> walkAndSubmit(normalized, IngestCollectionPolicy.DEFAULT_COLLECTION));
     }
 
     /**
@@ -268,7 +273,9 @@ final class RootLifecycleOps {
 
         Path normalized = path.toAbsolutePath().normalize();
         String collectionName =
-                (collection == null || collection.isBlank()) ? "default" : collection;
+                (collection == null || collection.isBlank())
+                        ? IngestCollectionPolicy.DEFAULT_COLLECTION
+                        : collection;
 
         // Tempdoc 608 — idempotency at the convergence point. A re-add of an already-watched root (whether
         // mid-walk or walk-complete) is a no-op: without this, the duplicate-submit the UI used to invite
@@ -430,9 +437,12 @@ final class RootLifecycleOps {
             // backpressure. walkAndSubmit() handles batching, state marking, and persistence.
             walkExecutor.execute(() -> {
                 syncOps.pruneMissing(root.toString());
-                // No per-root label is available on either reindex path (tempdoc 821 §L.3 — the
-                // root→collection mapping is not persisted): leave the wire field unset, as today.
-                walkAndSubmit(root, null);
+                // No per-root label survives here (tempdoc 821 §L.3 — root→collection is not
+                // persisted; recovering the real label is the deferred fix). Re-send the same
+                // default the root was admitted under rather than leaving the field unset: a
+                // rewalk that writes nothing where the add path wrote "default" would make one
+                // root's documents oscillate between tagged and untagged over time.
+                walkAndSubmit(root, IngestCollectionPolicy.DEFAULT_COLLECTION);
             });
         }
         watchedRootsState.persist();
@@ -456,11 +466,11 @@ final class RootLifecycleOps {
         for (Path root : rootsToReindex) {
             Path normalized = root.toAbsolutePath().normalize();
             // Tempdoc 821 §L.3 — the root→collection mapping is not persisted, so no label survives
-            // a restart. Pass null (leave the wire field unset) rather than inventing one: it keeps
-            // this path identical to reindexWatchedRoots and to its own pre-fix behaviour. The
-            // watcher arm's literal "default" is pre-existing and out of this fix's scope.
-            startWatcherIfAvailable("default", normalized);
-            walkExecutor.execute(() -> walkAndSubmit(normalized, null));
+            // a restart; recovering it is the deferred fix. Both arms must at least agree with each
+            // other and with what the add path wrote, so the scan re-sends the watcher's default.
+            startWatcherIfAvailable(IngestCollectionPolicy.DEFAULT_COLLECTION, normalized);
+            walkExecutor.execute(
+                () -> walkAndSubmit(normalized, IngestCollectionPolicy.DEFAULT_COLLECTION));
         }
         // Runs after all walks complete (single-thread executor serializes tasks).
         int count = rootsToReindex.size();
