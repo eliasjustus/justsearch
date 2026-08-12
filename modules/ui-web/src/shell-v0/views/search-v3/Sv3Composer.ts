@@ -14,8 +14,12 @@
  * catches light on its top edge instead.
  *
  * The composer OWNS the draft and nothing else: sending announces the draft (Phase A1's
- * `sv3-composer-submit`) and the window decides what that means. It does not dock itself and it does
- * not know a search store exists — the alternative would put a second issuance site here.
+ * `sv3-composer-submit`) and the window decides what that means — which is now ASKING the local
+ * model (Phase F1). It does not dock itself and it knows neither the search store nor the ask client
+ * — the alternative would put a second issuance site here.
+ *
+ * Its primary-action slot holds exactly ONE control (donor `chat/ComposerPrimaryActions.tsx:156-157`):
+ * Send, or Stop while a response streams. Never both, and never one disabled behind the other.
  *
  * ONE component in TWO states. HERO centres it in the main region under a headline (the empty
  * window); DOCKED returns it to the bottom band (the working window). Docking evaporates the scope-control
@@ -54,6 +58,12 @@ export const SV3_COMPOSER_SUBMIT = 'sv3-composer-submit';
 export interface Sv3ComposerSubmit {
   readonly query: string;
 }
+
+/**
+ * Raised when the reader halts a streaming response (tempdoc 822 Phase F1). The window holds the
+ * AbortController, so the composer announces the intent and nothing else.
+ */
+export const SV3_COMPOSER_STOP = 'sv3-composer-stop';
 
 /** Donor `ComposerControlIcon` at its default optical size (`size-4`). */
 const SCOPE_GLYPH_SIZE = 16;
@@ -113,6 +123,23 @@ export class Sv3Composer extends JfElement {
         letter-spacing: -0.025em;
         text-align: center;
         text-wrap: balance;
+      }
+
+      /* The donor stacks composer banners ABOVE the box, 8px clear of it, at the composer's own
+         radius ('chat/ComposerBannerStack.tsx:101,193' — 'mx-auto mb-2 max-w-3xl', and the same
+         rounded value the composer box carries, which is --radius-3xl here).
+         This window's one banner is the availability reason: the local model cannot answer, said
+         where the send would have happened. It is TEXT, not a disabled control's tooltip — the
+         availability authority's whole point is that the reason stays reachable ('state/availability.ts:18-20'). */
+      .notice {
+        margin-bottom: var(--space-2);
+        padding: var(--space-2) var(--space-4);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-3xl);
+        background: var(--muted);
+        color: var(--foreground);
+        font-size: var(--font-size-sv3-xs);
+        line-height: 1.5;
       }
 
       /* ── The glass: ONE node carrying the whole recipe ────────────────────
@@ -304,6 +331,14 @@ export class Sv3Composer extends JfElement {
         opacity: 0;
       }
 
+      /* ── The primary-action SLOT ──────────────────────────────────────────
+         The slot holds exactly ONE control: Send when the window is idle, Stop while a response
+         streams. That is the donor's own construction — an early 'return' renders the stop button
+         INSTEAD of the send control ('chat/ComposerPrimaryActions.tsx:156-157') — and it is what
+         makes double-firing structurally impossible rather than merely guarded: an unrendered Send
+         cannot be clicked. Both occupants are the same box with the same physics, so the geometry is
+         declared once for both; only the material differs below. */
+      button.stop,
       button.send {
         position: relative;
         isolation: isolate;
@@ -326,15 +361,31 @@ export class Sv3Composer extends JfElement {
         cursor: pointer;
         transition: all var(--duration-sv3-micro) var(--ease-sv3-enter);
       }
+      /* Donor 'bg-destructive/90' at rest, full strength on hover ('chat/ComposerPrimaryActions.tsx:88').
+         Halting a response is destructive-tier by the donor's own colour budget: it is act-now. */
+      button.stop {
+        background: color-mix(in srgb, var(--destructive) 90%, transparent);
+        color: var(--color-white);
+        box-shadow:
+          var(--control-inset-highlight),
+          0 1px 2px 0 color-mix(in srgb, var(--destructive) 24%, transparent);
+      }
+      button.stop:hover:not(:disabled),
       button.send:hover:not(:disabled) {
         background: var(--message-action-hover);
         transform: scale(1.05);
       }
+      /* Declared after the shared hover rule, or the slot's send material would win on a Stop. */
+      button.stop:hover:not(:disabled) {
+        background: var(--destructive);
+      }
       /* Pressing does three things at once: the highlight flips from top-light to top-dark and the
          drop shadow goes, so the control reads as pressed INTO the surface rather than merely dimmed. */
+      button.stop:active:not(:disabled),
       button.send:active:not(:disabled) {
         box-shadow: var(--control-inset-pressed);
       }
+      button.stop:focus-visible,
       button.send:focus-visible {
         outline: 2px solid var(--ring);
         outline-offset: 1px;
@@ -356,9 +407,11 @@ export class Sv3Composer extends JfElement {
           transform: none;
         }
         button.scope-control,
+        button.stop,
         button.send {
           transition: none;
         }
+        button.stop:hover:not(:disabled),
         button.send:hover:not(:disabled) {
           transform: none;
         }
@@ -368,15 +421,27 @@ export class Sv3Composer extends JfElement {
 
   static properties = {
     state: { type: String, reflect: true },
+    busy: { type: Boolean, reflect: true },
+    unavailableReason: { type: String, attribute: 'unavailable-reason' },
     draft: { state: true },
   };
 
   declare state: Sv3ComposerState;
+  /** A response is streaming, so the primary slot IS Stop. Set by the window, which owns the stream. */
+  declare busy: boolean;
+  /**
+   * Why the ask tier cannot be used right now, from the app's availability authority — empty means
+   * available. The composer refuses its OWN send on it rather than dispatching a send the window
+   * would have to un-do, which is what keeps the draft safe: a refused send never leaves here.
+   */
+  declare unavailableReason: string;
   declare draft: string;
 
   constructor() {
     super();
     this.state = COMPOSER_STATE_DEFAULT;
+    this.busy = false;
+    this.unavailableReason = '';
     this.draft = '';
   }
 
@@ -418,10 +483,18 @@ export class Sv3Composer extends JfElement {
     this.draft = '';
   }
 
-  /** The ONE origin of a send, whichever affordance asked. An empty draft is not a send. */
+  /**
+   * The ONE origin of a send, whichever affordance asked. An empty draft is not a send.
+   *
+   * A refusal — the model is unreachable, or a response is already streaming — returns without
+   * dispatching AND WITHOUT TOUCHING THE DRAFT. The reason is already on screen (the banner), so the
+   * refusal is legible rather than silent, and the text the reader typed survives to be sent when
+   * the model comes back. Clearing a draft the window never accepted would be destroying work.
+   */
   private submit(): void {
     const query = this.draft.trim();
     if (query.length === 0) return;
+    if (this.unavailableReason !== '' || this.busy) return;
     this.dispatchEvent(
       new CustomEvent<Sv3ComposerSubmit>(SV3_COMPOSER_SUBMIT, {
         detail: { query },
@@ -431,14 +504,27 @@ export class Sv3Composer extends JfElement {
     );
   }
 
+  /** Halt the streaming response. The window owns the stream; this only says the reader asked. */
+  private stop(): void {
+    this.dispatchEvent(new CustomEvent(SV3_COMPOSER_STOP, { bubbles: true, composed: true }));
+  }
+
   render(): TemplateResult {
     const empty = this.draft.trim().length === 0;
     const docked = this.state === 'docked';
+    // Soft, never `disabled`: the availability authority's contract is that the reason stays
+    // reachable, and a natively-disabled control is not even focusable (`state/availability.ts:6-20`).
+    const unavailable = this.unavailableReason !== '';
     return html`
       <div class="band" data-testid="sv3-composer-band">
         ${this.state === 'hero'
           ? html`<h1 class="headline" data-testid="sv3-composer-headline">${HERO_HEADLINE}</h1>`
           : nothing}
+        ${this.unavailableReason === ''
+          ? nothing
+          : html`<p class="notice" id="sv3-composer-notice" role="status" data-testid="sv3-composer-notice">
+              ${this.unavailableReason}
+            </p>`}
         <div class="glass" data-testid="sv3-composer-shell">
           <div class="field">
             <div class="editor">
@@ -478,16 +564,35 @@ export class Sv3Composer extends JfElement {
                 `,
               )}
             </div>
-            <button
-              type="button"
-              class="send"
-              aria-label="Search"
-              ?disabled=${empty}
-              data-testid="sv3-composer-send"
-              @click=${this.submit}
-            >
-              &#8593;
-            </button>
+            ${this.busy
+              ? html`
+                  <button
+                    type="button"
+                    class="stop"
+                    aria-label="Stop generating"
+                    data-testid="sv3-composer-stop"
+                    @click=${this.stop}
+                  >
+                    <!-- Donor's 12px square with a 1.5 radius (chat/ComposerPrimaryActions.tsx:96). -->
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+                      <rect x="2" y="2" width="8" height="8" rx="1.5"></rect>
+                    </svg>
+                  </button>
+                `
+              : html`
+                  <button
+                    type="button"
+                    class="send"
+                    aria-label="Send"
+                    ?disabled=${empty}
+                    data-unavailable=${String(unavailable)}
+                    aria-describedby=${unavailable ? 'sv3-composer-notice' : nothing}
+                    data-testid="sv3-composer-send"
+                    @click=${this.submit}
+                  >
+                    &#8593;
+                  </button>
+                `}
           </div>
         </div>
       </div>

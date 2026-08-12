@@ -22,7 +22,7 @@ import type { SearchV3View } from './SearchV3View.js';
 import type { Sv3Empty } from './Sv3Empty.js';
 import { resetSearchState } from '../../state/searchState.js';
 import { matchCountLabel } from '../../components/searchResults/matchCountLabel.js';
-import { MAIN_EMPTY, MAIN_UNREACHABLE } from './fixtures.js';
+import { MAIN_EMPTY, MAIN_UNREACHABLE, SV3_COMMAND_SEARCH_TEXT } from './fixtures.js';
 
 type Mounted = HTMLElement & { updateComplete: Promise<unknown> };
 
@@ -83,12 +83,22 @@ async function type(el: Mounted, draft: string): Promise<HTMLTextAreaElement> {
   return field;
 }
 
-/** Type a draft and press the send control — the affordance a user has, not an internal call. */
+/**
+ * Type a draft and run the palette's "Search this text" — the affordance a user has, not an internal
+ * call. Phase F1 moved the SEND control onto the ask tier, so this command is now the only way into
+ * the search seam (`SearchV3View.onPaletteRun`); everything below it is unchanged, which is the
+ * point: the seam still behaves exactly as A1 proved it did.
+ */
 async function send(el: Mounted, draft: string): Promise<void> {
   await type(el, draft);
-  const composer = await region(el, 'jf-sv3-composer');
-  composer.shadowRoot
-    ?.querySelector<HTMLButtonElement>('[data-testid="sv3-composer-send"]')
+  const palette = el.shadowRoot?.querySelector('jf-sv3-palette') as
+    | (HTMLElement & { show(i: HTMLElement | null): Promise<void>; updateComplete: Promise<unknown> })
+    | null;
+  if (!palette) throw new Error('no palette in the window');
+  await palette.show(null);
+  await palette.updateComplete;
+  palette.shadowRoot
+    ?.querySelector<HTMLElement>(`#sv3-palette-item-${SV3_COMMAND_SEARCH_TEXT}`)
     ?.click();
 }
 
@@ -136,31 +146,30 @@ describe('a send issues exactly one search, through the shared store', () => {
     expect(el.getAttribute('composer-state')).toBe('docked');
   });
 
-  it('sends on Enter and leaves Shift+Enter to the field', async () => {
-    vi.useFakeTimers();
-    const el = await mount();
-    const field = await type(el, 'vendor risk');
-    field.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }),
-    );
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(el.getAttribute('composer-state')).toBe('hero');
-
-    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(el.getAttribute('composer-state')).toBe('docked');
-  });
-
   it('never issues a search for an empty draft', async () => {
     vi.useFakeTimers();
     const el = await mount();
-    const field = await type(el, '   ');
-    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await send(el, '   ');
     await vi.advanceTimersByTimeAsync(2000);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(el.getAttribute('composer-state')).toBe('hero');
+  });
+
+  it('is NOT what a plain send does any more — the composer talks to the model', async () => {
+    // The course correction, asserted: the send control must not reach the search endpoint. It
+    // reaches the ask tier instead, which is refused here because no model has reported in — so the
+    // observable fact is that NOTHING was dispatched to the search store.
+    vi.useFakeTimers();
+    const el = await mount();
+    await type(el, 'northfield lease');
+    const composer = await region(el, 'jf-sv3-composer');
+    composer.shadowRoot
+      ?.querySelector<HTMLButtonElement>('[data-testid="sv3-composer-send"]')
+      ?.click();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/knowledge/search')),
+    ).toEqual([]);
   });
 });
 

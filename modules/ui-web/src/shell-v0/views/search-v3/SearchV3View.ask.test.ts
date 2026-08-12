@@ -1,0 +1,413 @@
+// @vitest-environment happy-dom
+
+/**
+ * Search v3's conversational core (tempdoc 822 Phase F1).
+ *
+ * Nothing here reaches the network: the global fetch is stubbed with a Response-shaped stub whose
+ * body is a real SSE stream, so `consumeShapeStream` is exercised for real (the parser, the terminal
+ * rule, the abort path) while the socket is imaginary. The stub honours the abort signal exactly as
+ * fetch does — its reader REJECTS once the signal aborts — because a stub that ignored the signal
+ * would let a broken Stop pass.
+ *
+ * The properties asserted as MECHANISMS rather than appearances:
+ *  - **One send, one dispatch.** A second issuance site would show up as a second fetch.
+ *  - **The slot holds exactly one control.** Both-rendered fails, not just "Stop is somewhere".
+ *  - **A refusal keeps the draft.** The text is read back character for character.
+ */
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import './SearchV3View.js';
+import type { SearchV3View } from './SearchV3View.js';
+import { resetSearchState } from '../../state/searchState.js';
+import {
+  __feedContactForTest,
+  __feedForTest,
+  __resetAiStateForTest,
+} from '../../state/aiStateStore.js';
+import type { StatusSnapshot } from '../../utils/statusPoll.js';
+import { reasonFor } from '../../state/readinessNotice.js';
+import { TURN_HALTED } from './fixtures.js';
+
+type Mounted = HTMLElement & { updateComplete: Promise<unknown> };
+
+let fetchMock: ReturnType<typeof vi.fn>;
+
+/** The observed state in which the ask tier is genuinely available — the window's own precondition. */
+function aiOnline(): void {
+  __feedForTest({
+    inference: { mode: 'online', available: true } as never,
+    status: { worker: { core: { indexedDocuments: 42 } } } as unknown as StatusSnapshot,
+  });
+  __feedContactForTest();
+}
+
+interface FakeStream {
+  emit(event: string, data: unknown): void;
+  end(): void;
+}
+
+/**
+ * Stub the dispatch with an SSE body the test drives frame by frame. `read()` waits when the queue
+ * is empty, so a streaming assertion can observe the half-finished answer instead of racing it.
+ */
+function stubStream(): FakeStream {
+  const encoder = new TextEncoder();
+  const queued: Array<{ done: boolean; value?: Uint8Array }> = [];
+  let wake: (() => void) | null = null;
+  let signal: AbortSignal | null = null;
+  const push = (frame: { done: boolean; value?: Uint8Array }): void => {
+    queued.push(frame);
+    wake?.();
+    wake = null;
+  };
+  fetchMock.mockImplementation(async (_url: unknown, init: { signal?: AbortSignal }) => {
+    signal = init?.signal ?? null;
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        getReader: () => ({
+          read: async () => {
+            while (queued.length === 0) {
+              if (signal?.aborted === true) throw new Error('The operation was aborted.');
+              await new Promise<void>((resolve) => {
+                wake = resolve;
+                signal?.addEventListener('abort', () => resolve(), { once: true });
+              });
+            }
+            return queued.shift();
+          },
+          releaseLock: () => {},
+        }),
+      },
+    };
+  });
+  return {
+    emit: (event, data) =>
+      push({ done: false, value: encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`) }),
+    end: () => push({ done: true }),
+  };
+}
+
+/** Fail the dispatch with an HTTP status, the shape `consumeShapeStream` stamps onto its error. */
+function stubStatus(status: number): void {
+  fetchMock.mockResolvedValue({
+    ok: false,
+    status,
+    text: () => Promise.resolve(''),
+    body: null,
+  });
+}
+
+beforeEach(() => {
+  fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({}) });
+  vi.stubGlobal('fetch', fetchMock);
+  __resetAiStateForTest();
+});
+
+afterEach(() => {
+  for (const child of [...document.body.children]) child.remove();
+  resetSearchState();
+  __resetAiStateForTest();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+async function mount(): Promise<SearchV3View & Mounted> {
+  const el = document.createElement('jf-sv3-window') as SearchV3View & Mounted;
+  el.setAttribute('api-base', 'http://127.0.0.1:9999');
+  document.body.appendChild(el);
+  await el.updateComplete;
+  return el;
+}
+
+async function region(el: Mounted, tag: string): Promise<Mounted> {
+  const found = el.shadowRoot?.querySelector(tag) as Mounted | null;
+  if (!found) throw new Error(`no <${tag}> in the window`);
+  await found.updateComplete;
+  return found;
+}
+
+const q = (host: Mounted, testid: string): HTMLElement | null =>
+  host.shadowRoot?.querySelector(`[data-testid="${testid}"]`) ?? null;
+
+async function fieldOf(el: Mounted): Promise<HTMLTextAreaElement> {
+  const composer = await region(el, 'jf-sv3-composer');
+  const field = composer.shadowRoot?.querySelector<HTMLTextAreaElement>(
+    '[data-testid="sv3-composer-input"]',
+  );
+  if (!field) throw new Error('no field in the composer');
+  return field;
+}
+
+async function type(el: Mounted, draft: string): Promise<HTMLTextAreaElement> {
+  const composer = await region(el, 'jf-sv3-composer');
+  const field = await fieldOf(el);
+  field.value = draft;
+  field.dispatchEvent(new Event('input'));
+  await composer.updateComplete;
+  return field;
+}
+
+/** Type and press the send control — the affordance a reader has, not an internal call. */
+async function ask(el: Mounted, draft: string): Promise<void> {
+  await type(el, draft);
+  const composer = await region(el, 'jf-sv3-composer');
+  (q(composer, 'sv3-composer-send') as HTMLButtonElement | null)?.click();
+  await settle(el);
+}
+
+/** Drain the microtask/macrotask turns the dispatch and the two renders need. */
+async function settle(el: Mounted): Promise<void> {
+  for (let turn = 0; turn < 6; turn += 1) await new Promise<void>((r) => setTimeout(r, 0));
+  await el.updateComplete;
+}
+
+const turnsOf = (main: Mounted): HTMLElement[] => [
+  ...(main.shadowRoot?.querySelectorAll<HTMLElement>('[data-testid="sv3-turn"]') ?? []),
+];
+
+const textIn = (turn: HTMLElement, testid: string): string =>
+  turn.querySelector(`[data-testid="${testid}"]`)?.textContent?.trim() ?? '';
+
+describe('the window has exactly ONE ask-issuance site', () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+
+  it('lets no file but sv3-ask.ts consume the shared shape stream', () => {
+    const offenders = readdirSync(here)
+      .filter((name) => name.endsWith('.ts'))
+      // This file names the symbol in order to forbid it — the one allowed mention.
+      .filter((name) => name !== 'sv3-ask.ts' && name !== 'SearchV3View.ask.test.ts')
+      .filter((name) => readFileSync(join(here, name), 'utf8').includes('consumeShapeStream'));
+    expect(offenders).toEqual([]);
+    // A second window's client is the other way this could go wrong: no import may cross into
+    // search-v2, whose askClient this module MINED rather than imported.
+    const crossImports = readdirSync(here)
+      .filter((name) => name.endsWith('.ts'))
+      .filter((name) => /from '\.\.\/search-v2\//.test(readFileSync(join(here, name), 'utf8')));
+    expect(crossImports).toEqual([]);
+  });
+});
+
+describe('a send asks the local model, once, through the one site', () => {
+  it('dispatches the shape with the question and this session as the conversation', async () => {
+    aiOnline();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'why did the renewal fail?');
+    stream.emit('chunk', { text: 'Because the lock held.' });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [unknown, { body: string }];
+    expect(String(url)).toContain('/api/chat/dispatch');
+    const body = JSON.parse(init.body);
+    expect(body.shapeId).toBe('core.rag-ask');
+    expect(body.question).toBe('why did the renewal fail?');
+    expect(body.conversationId).toBe('sv3-session-1');
+    // Open retrieval by construction: this window scopes an answer to no committed document set.
+    expect(body.docIds).toEqual([]);
+    // The send is an ask AND a state change, not one at the cost of the other.
+    expect(el.getAttribute('composer-state')).toBe('docked');
+  });
+
+  it('sends on Enter and leaves Shift+Enter to the field', async () => {
+    aiOnline();
+    stubStream();
+    const el = await mount();
+    const field = await type(el, 'vendor risk');
+    field.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }),
+    );
+    await settle(el);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(el.getAttribute('composer-state')).toBe('hero');
+
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await settle(el);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(el.getAttribute('composer-state')).toBe('docked');
+  });
+
+  it('empties the draft on a send that was accepted', async () => {
+    aiOnline();
+    stubStream();
+    const el = await mount();
+    await ask(el, 'what changed?');
+    expect((await fieldOf(el)).value).toBe('');
+  });
+});
+
+describe('the transcript is the session, in order', () => {
+  it('renders each turn as question-then-answer, oldest first, and appends deltas as they arrive', async () => {
+    aiOnline();
+    const first = stubStream();
+    const el = await mount();
+    await ask(el, 'first question');
+    const main = await region(el, 'jf-sv3-main');
+
+    // Mid-stream: the partial answer is on screen, not withheld until the terminal.
+    first.emit('chunk', { text: 'Partly ' });
+    await settle(el);
+    expect(textIn(turnsOf(main)[0] as HTMLElement, 'sv3-turn-answer')).toBe('Partly');
+    first.emit('chunk', { text: 'because of the lock.' });
+    await settle(el);
+    expect(textIn(turnsOf(main)[0] as HTMLElement, 'sv3-turn-answer')).toBe(
+      'Partly because of the lock.',
+    );
+    first.emit('rag.citations', { citations: [{ id: 'a' }, { id: 'b' }] });
+    first.emit('done', {});
+    first.end();
+    await settle(el);
+    expect(textIn(turnsOf(main)[0] as HTMLElement, 'sv3-turn-note')).toBe('2 sources');
+
+    const second = stubStream();
+    await ask(el, 'second question');
+    second.emit('chunk', { text: 'And so.' });
+    second.emit('done', {});
+    second.end();
+    await settle(el);
+
+    const turns = turnsOf(main);
+    expect(turns).toHaveLength(2);
+    expect(turns.map((t) => textIn(t, 'sv3-turn-question'))).toEqual([
+      'first question',
+      'second question',
+    ]);
+    expect(turns.map((t) => textIn(t, 'sv3-turn-answer'))).toEqual([
+      'Partly because of the lock.',
+      'And so.',
+    ]);
+    // The conversation owns the region: the search projection is not what is rendering here.
+    expect(q(main, 'sv3-main-count')).toBeNull();
+  });
+});
+
+describe('the primary slot renders exactly one of Send and Stop', () => {
+  it('is Send while idle and Stop while a response streams — never both', async () => {
+    aiOnline();
+    const stream = stubStream();
+    const el = await mount();
+    const composer = await region(el, 'jf-sv3-composer');
+    expect(q(composer, 'sv3-composer-send')).not.toBeNull();
+    expect(q(composer, 'sv3-composer-stop')).toBeNull();
+
+    await ask(el, 'a long one');
+    await composer.updateComplete;
+    // The mutation probe: a slot that RENDERED BOTH (or disabled Send behind Stop) fails here.
+    expect(q(composer, 'sv3-composer-stop')).not.toBeNull();
+    expect(q(composer, 'sv3-composer-send')).toBeNull();
+
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+    await composer.updateComplete;
+    expect(q(composer, 'sv3-composer-send')).not.toBeNull();
+    expect(q(composer, 'sv3-composer-stop')).toBeNull();
+  });
+
+  it('halts on Stop, keeps what streamed, and says the reader stopped it', async () => {
+    aiOnline();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'a long one');
+    stream.emit('chunk', { text: 'Half an ans' });
+    await settle(el);
+
+    const composer = await region(el, 'jf-sv3-composer');
+    (q(composer, 'sv3-composer-stop') as HTMLButtonElement).click();
+    await settle(el);
+
+    const main = await region(el, 'jf-sv3-main');
+    const turn = turnsOf(main)[0] as HTMLElement;
+    expect(turn.dataset.status).toBe('halted');
+    // What arrived was really received — a halt does not erase it.
+    expect(textIn(turn, 'sv3-turn-answer')).toBe('Half an ans');
+    expect(textIn(turn, 'sv3-turn-note')).toBe(TURN_HALTED);
+    // The slot is back to Send, so the next question is sendable.
+    await composer.updateComplete;
+    expect(q(composer, 'sv3-composer-send')).not.toBeNull();
+  });
+});
+
+describe('every terminal is distinct, and says only what happened', () => {
+  it('words the session lock through the shared vocabulary, not a local phrase', async () => {
+    aiOnline();
+    stubStatus(423);
+    const el = await mount();
+    await ask(el, 'what changed?');
+    const turn = turnsOf(await region(el, 'jf-sv3-main'))[0] as HTMLElement;
+    expect(turn.dataset.status).toBe('refused');
+    expect(textIn(turn, 'sv3-turn-note')).toBe(reasonFor('conversations.locked').wording);
+  });
+
+  it('reports a failure with the stream\'s own words, and never as a halt', async () => {
+    aiOnline();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'what changed?');
+    stream.emit('error', { error: 'model unloaded mid-answer' });
+    stream.end();
+    await settle(el);
+
+    const turn = turnsOf(await region(el, 'jf-sv3-main'))[0] as HTMLElement;
+    expect(turn.dataset.status).toBe('failed');
+    expect(textIn(turn, 'sv3-turn-note')).toContain('model unloaded mid-answer');
+    expect(textIn(turn, 'sv3-turn-note')).not.toBe(TURN_HALTED);
+  });
+
+  it('says an empty completed response is empty rather than leaving a blank slot', async () => {
+    aiOnline();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'anything?');
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+    const turn = turnsOf(await region(el, 'jf-sv3-main'))[0] as HTMLElement;
+    expect(turn.dataset.status).toBe('complete');
+    expect(turn.querySelector('[data-testid="sv3-turn-answer-empty"]')).not.toBeNull();
+  });
+});
+
+describe('an unreachable model refuses the send and keeps the draft', () => {
+  it('shows the availability authority\'s reason and dispatches nothing', async () => {
+    // No `aiOnline()`: the store has reported nothing, which is the honest "cannot answer" state
+    // a backend-less window is really in.
+    const el = await mount();
+    const composer = await region(el, 'jf-sv3-composer');
+    const notice = q(composer, 'sv3-composer-notice');
+    expect(notice?.textContent?.trim()).not.toBe('');
+
+    const draft = 'what changed in the renewal?';
+    await type(el, draft);
+    (q(composer, 'sv3-composer-send') as HTMLButtonElement).click();
+    await settle(el);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    // The draft is the reader's and nothing is holding it — back, character for character.
+    expect((await fieldOf(el)).value).toBe(draft);
+    // Still the empty window: a refused send is not a session.
+    expect(el.getAttribute('composer-state')).toBe('hero');
+    expect(turnsOf(await region(el, 'jf-sv3-main'))).toHaveLength(0);
+    // Soft, not disabled: the control stays focusable so its reason stays reachable.
+    const send = q(composer, 'sv3-composer-send') as HTMLButtonElement;
+    expect(send.disabled).toBe(false);
+    expect(send.dataset.unavailable).toBe('true');
+    expect(send.getAttribute('aria-describedby')).toBe(notice?.id);
+  });
+
+  it('drops the notice once the model is available', async () => {
+    const el = await mount();
+    const composer = await region(el, 'jf-sv3-composer');
+    expect(q(composer, 'sv3-composer-notice')).not.toBeNull();
+    aiOnline();
+    await settle(el);
+    await composer.updateComplete;
+    expect(q(composer, 'sv3-composer-notice')).toBeNull();
+  });
+});

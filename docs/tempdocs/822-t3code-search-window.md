@@ -308,6 +308,31 @@ are re-creatable from the log's descriptions.
   on the running session. Session status is two-valued (no `broken` mapping for a
   failed pass — Phase C item). Next: PHASE B (owner conversation) — evidence photos
   live-3-results.png + sv3-a2-sessions.png.
+- 2026-08-13 — **Slice F1 implemented + FULL-TIER live-verified (active GPU model).**
+  The conversational core per the course correction: `sv3-ask.ts` = sv3's single
+  ask-dispatch site on the SHARED authorities (`buildRequestBody('core.rag-ask')` +
+  `consumeShapeStream` + typed handlers — v2's askClient PATTERN mined, module not
+  imported; cross-window-import forbidden by test). Sessions hold turns
+  (append semantics; A2's re-run-update semantics superseded on the conversational
+  axis — row click claims only; `broken` now maps failed/refused). Transcript in
+  Sv3Main with donor anatomy mined from the t3code clone's own session view
+  (48rem column, 16px turn rhythm, user bubble max-80% rounded-2xl, response
+  plain-on-panel, meta hidden while streaming); bottom-follow with 24px re-arm
+  threshold. Slot rule STRUCTURAL: Stop renders INSTEAD of Send while streaming
+  (donor ComposerPrimaryActions early-return; mutation-probed both-rendered fails).
+  AI-offline: `projectAvailability` authority, refusal keeps draft, reachable
+  reason. Search seam preserved behind palette command `cmd-search-text` (no session
+  writes). 4622 tests / 9 probes bite / kernel gates pass. LIVE (stack restarted
+  after the 820-class `cuda12 variant not installed` on this fresh worktree —
+  remedy reapplied: junction modules/ui/native-bin/llama-server/variants/cuda12 →
+  main checkout copy [TEMPORARY SCAFFOLD — remove when arc closes], llm.modelPath
+  POST, ai_activate 22s): streamed answer with Stop slot at t+2s; settled 1,960-char
+  grounded answer correctly describing the three-process architecture with [n]
+  markers + Sources list + "5 sources"; session row titled by opening question;
+  zero page errors. Residuals: markdown rendering (asterisks visible — deliberate,
+  charter §9), citation resolving/panel (count only), issuance-register decision
+  (sv3 is now the SECOND window-local ask site — 818's residual is live; owner/
+  orchestrator call), streaming rebuilds session list per delta (fine at scale).
 - 2026-08-12 — **Sidebar comparison findings** (owner-requested donor-vs-copy analysis;
   feed the adaptation phase): (1) ROW-HEIGHT REFERENT — our rows are 32px from §3.2's
   menu-button ladder, but the donor's SESSION rows are §6.1's slim 36px / card 78px;

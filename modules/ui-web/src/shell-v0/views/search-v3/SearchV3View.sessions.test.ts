@@ -1,17 +1,19 @@
 // @vitest-environment happy-dom
 
 /**
- * Search v3's sidebar sessions (tempdoc 822 Phase A2) — the WINDOW-level consequences of
- * `sv3-sessions.ts`, whose value semantics are tested without a DOM in `sv3-sessions.test.ts`.
+ * Search v3's sidebar sessions (tempdoc 822 Phase A2; conversational since F1) — the WINDOW-level
+ * consequences of `sv3-sessions.ts`, whose value semantics are tested without a DOM in
+ * `sv3-sessions.test.ts`.
  *
- * The store is the real shared one, as in Phase A1; the only stub is its single exit, the global
- * fetch, which is also why no case here can reach the network. Two mechanisms are asserted rather
+ * A session is a CONVERSATION now, so these cases are driven by asks rather than by searches. The
+ * stores are the real shared ones; the only stub is their single exit, the global fetch, routed by
+ * URL so an ask and a (palette-only) search can both be in play. Two mechanisms are asserted rather
  * than appearances:
  *
- *  - **A row click is ONE search.** The click goes through the same issuance the composer's send
- *    uses, so a second path (or a duplicated dispatch) shows up as a second `fetch` call.
- *  - **The in-motion dot belongs to the session that asked.** The fetch is held open deliberately so
- *    the in-flight frame can be read, then released — a case that only looked at the settled frame
+ *  - **A row click claims, and issues nothing.** A click that dispatched anything shows up as a
+ *    fetch — which is exactly the A2 behaviour F1 had to retire.
+ *  - **The in-motion dot belongs to the session that is running.** The stream is held open
+ *    deliberately so the in-flight frame can be read; a case that only looked at the settled frame
  *    would pass with the indicator wired to nothing.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -19,6 +21,13 @@ import './SearchV3View.js';
 import type { SearchV3View } from './SearchV3View.js';
 import type { Sv3SessionRow } from './Sv3SessionRow.js';
 import { resetSearchState } from '../../state/searchState.js';
+import {
+  __feedContactForTest,
+  __feedForTest,
+  __resetAiStateForTest,
+} from '../../state/aiStateStore.js';
+import type { StatusSnapshot } from '../../utils/statusPoll.js';
+import { SV3_COMMAND_SEARCH_TEXT } from './fixtures.js';
 
 type Mounted = HTMLElement & { updateComplete: Promise<unknown> };
 
@@ -26,33 +35,97 @@ let fetchMock: ReturnType<typeof vi.fn>;
 
 const hit = (path: string): Record<string, unknown> => ({ id: `doc:${path}`, fields: { path } });
 
-const respond = (body: Record<string, unknown>): void => {
-  fetchMock.mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(body) });
-};
-
-/** Hold the response open, so the in-flight frame is observable instead of raced past. */
-function holdResponse(body: Record<string, unknown>): () => void {
-  let release = (): void => {};
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
+/** The observed state in which the ask tier is genuinely available. */
+function aiOnline(): void {
+  __feedForTest({
+    inference: { mode: 'online', available: true } as never,
+    status: { worker: { core: { indexedDocuments: 42 } } } as unknown as StatusSnapshot,
   });
-  fetchMock.mockImplementation(async () => {
-    await held;
-    return { ok: true, status: 200, json: () => Promise.resolve(body) };
-  });
-  return release;
+  __feedContactForTest();
 }
 
+interface Router {
+  /** Emit one SSE frame into the OPEN dispatch stream. */
+  emit(event: string, data: unknown): void;
+  /** Close the open dispatch stream (after a terminal frame). */
+  end(): void;
+  /** Answer the next search with this body, held until the returned release is called. */
+  holdSearch(body: Record<string, unknown>): () => void;
+}
+
+/** One fetch stub for both exits: the chat dispatch streams, the search store answers JSON. */
+function stubFetch(): Router {
+  const encoder = new TextEncoder();
+  const queued: Array<{ done: boolean; value?: Uint8Array }> = [];
+  let wake: (() => void) | null = null;
+  let searchBody: Record<string, unknown> = { results: [] };
+  let held: Promise<void> | null = null;
+  const push = (frame: { done: boolean; value?: Uint8Array }): void => {
+    queued.push(frame);
+    wake?.();
+    wake = null;
+  };
+  fetchMock.mockImplementation(async (url: unknown, init: { signal?: AbortSignal }) => {
+    if (String(url).includes('/api/chat/dispatch')) {
+      const signal = init?.signal ?? null;
+      return {
+        ok: true,
+        status: 200,
+        body: {
+          getReader: () => ({
+            read: async () => {
+              while (queued.length === 0) {
+                if (signal?.aborted === true) throw new Error('The operation was aborted.');
+                await new Promise<void>((resolve) => {
+                  wake = resolve;
+                  signal?.addEventListener('abort', () => resolve(), { once: true });
+                });
+              }
+              return queued.shift();
+            },
+            releaseLock: () => {},
+          }),
+        },
+      };
+    }
+    if (held) await held;
+    return { ok: true, status: 200, json: () => Promise.resolve(searchBody) };
+  });
+  return {
+    emit: (event, data) =>
+      push({
+        done: false,
+        value: encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+      }),
+    end: () => push({ done: true }),
+    holdSearch: (body) => {
+      searchBody = body;
+      let release = (): void => {};
+      held = new Promise<void>((resolve) => {
+        release = () => {
+          held = null;
+          resolve();
+        };
+      });
+      return release;
+    },
+  };
+}
+
+let router: Router;
+
 beforeEach(() => {
-  fetchMock = vi
-    .fn()
-    .mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({ results: [] }) });
+  fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
+  router = stubFetch();
+  __resetAiStateForTest();
+  aiOnline();
 });
 
 afterEach(() => {
   for (const child of [...document.body.children]) child.remove();
   resetSearchState();
+  __resetAiStateForTest();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -93,9 +166,19 @@ async function send(el: Mounted, draft: string): Promise<void> {
     ?.click();
 }
 
+/** Ask and let the answer finish, so the session comes to rest. */
+async function ask(el: Mounted, draft: string): Promise<void> {
+  await send(el, draft);
+  await settle(el);
+  router.emit('chunk', { text: 'An answer.' });
+  router.emit('done', {});
+  router.end();
+  await settle(el);
+}
+
 /** Settle the round trip and both renders (the window's, then the region's). */
 async function settle(el: Mounted): Promise<void> {
-  for (let turn = 0; turn < 4; turn += 1) await new Promise<void>((r) => setTimeout(r, 0));
+  for (let turn = 0; turn < 6; turn += 1) await new Promise<void>((r) => setTimeout(r, 0));
   await el.updateComplete;
 }
 
@@ -120,17 +203,23 @@ const clickRow = async (row: Sv3SessionRow): Promise<void> => {
   row.shadowRoot?.querySelector<HTMLButtonElement>('button')?.click();
 };
 
-async function newSearch(el: Mounted): Promise<void> {
+async function newSession(el: Mounted): Promise<void> {
   const sidebar = await region(el, 'jf-sv3-sidebar');
   sidebar.shadowRoot?.querySelector<HTMLButtonElement>('[data-testid="sv3-sidebar-new"]')?.click();
   await el.updateComplete;
 }
 
-describe('a submitted search becomes a session in the sidebar', () => {
-  it('creates exactly one session, titled with the query', async () => {
+const questionsOf = async (el: Mounted): Promise<string[]> => {
+  const main = await region(el, 'jf-sv3-main');
+  return [
+    ...(main.shadowRoot?.querySelectorAll('[data-testid="sv3-turn-question"]') ?? []),
+  ].map((n) => n.textContent?.trim() ?? '');
+};
+
+describe('a submitted question becomes a session in the sidebar', () => {
+  it('creates exactly one session, titled with the question', async () => {
     const el = await mount();
-    await send(el, 'northfield lease');
-    await settle(el);
+    await ask(el, 'northfield lease');
 
     const rows = await rowsOf(el);
     expect(rows).toHaveLength(1);
@@ -141,19 +230,20 @@ describe('a submitted search becomes a session in the sidebar', () => {
     expect(sidebar.shadowRoot?.querySelector('[data-testid="sv3-sidebar-empty"]')).toBeNull();
   });
 
-  it('UPDATES the same session on a second submit rather than adding a second row', async () => {
+  it('APPENDS a turn to the same session rather than adding a second row', async () => {
     const el = await mount();
-    await send(el, 'vendor risk');
-    await settle(el);
-    await send(el, 'vendor risk register');
-    await settle(el);
+    await ask(el, 'vendor risk');
+    await ask(el, 'and the register?');
 
     const rows = await rowsOf(el);
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.label).toBe('vendor risk register');
+    // The row keeps the OPENING question: a title that followed the latest turn would change the
+    // row's identity under the reader.
+    expect(rows[0]?.label).toBe('vendor risk');
+    expect(await questionsOf(el)).toEqual(['vendor risk', 'and the register?']);
   });
 
-  it('renders no group label at all before the first search', async () => {
+  it('renders no group label at all before the first question', async () => {
     const el = await mount();
     expect(await groupLabelsOf(el)).toEqual([]);
     expect(await rowsOf(el)).toHaveLength(0);
@@ -161,8 +251,7 @@ describe('a submitted search becomes a session in the sidebar', () => {
 
   it('keeps the group label out of the tab order once one exists', async () => {
     const el = await mount();
-    await send(el, 'freight');
-    await settle(el);
+    await ask(el, 'freight');
     const sidebar = await region(el, 'jf-sv3-sidebar');
     const labels = [
       ...(sidebar.shadowRoot?.querySelectorAll('[data-testid="sv3-sidebar-group-label"]') ?? []),
@@ -176,83 +265,80 @@ describe('a submitted search becomes a session in the sidebar', () => {
   });
 });
 
-describe('New search parks the session and returns the window to the hero', () => {
+describe('New session parks the conversation and returns the window to the hero', () => {
   it('empties the draft, un-docks, and keeps the session that was there', async () => {
     const el = await mount();
-    await send(el, 'first query');
-    await settle(el);
+    await ask(el, 'first question');
     expect(el.getAttribute('composer-state')).toBe('docked');
 
-    await newSearch(el);
+    await newSession(el);
     expect(el.getAttribute('composer-state')).toBe('hero');
     // A leftover draft would be the previous session's text sitting in a fresh one.
     expect((await fieldOf(el)).value).toBe('');
     // The previous session is parked, not dropped...
     const rows = await rowsOf(el);
-    expect(rows.map((r) => r.label)).toEqual(['first query']);
+    expect(rows.map((r) => r.label)).toEqual(['first question']);
     // ...and nothing is claimed, so no row is current.
     expect(rows.filter((r) => r.active)).toHaveLength(0);
   });
 
-  it('opens the NEXT submit as a second session, newest at the top', async () => {
+  it('opens the NEXT question as a second session, newest at the top', async () => {
     const el = await mount();
-    await send(el, 'first query');
-    await settle(el);
-    await newSearch(el);
-    await send(el, 'second query');
-    await settle(el);
+    await ask(el, 'first question');
+    await newSession(el);
+    await ask(el, 'second question');
 
     const rows = await rowsOf(el);
-    expect(rows.map((r) => r.label)).toEqual(['second query', 'first query']);
-    expect(rows.filter((r) => r.active).map((r) => r.label)).toEqual(['second query']);
+    expect(rows.map((r) => r.label)).toEqual(['second question', 'first question']);
+    expect(rows.filter((r) => r.active).map((r) => r.label)).toEqual(['second question']);
   });
 
-  it('claims nothing about the corpus again after returning to the hero', async () => {
-    respond({ results: [], totalHits: 0, matchCount: 0 });
+  it('leaves the region with no transcript at all, not the parked one', async () => {
     const el = await mount();
-    await send(el, 'nothing matches this');
+    await ask(el, 'first question');
+    expect(await questionsOf(el)).toEqual(['first question']);
+
+    await newSession(el);
+    // The parked session's turns belong to the parked session; the fresh one has asked nothing.
+    expect(await questionsOf(el)).toEqual([]);
+  });
+
+  it('halts an answer still streaming when the reader starts a new session', async () => {
+    const el = await mount();
+    await send(el, 'a long one');
+    await settle(el);
+    router.emit('chunk', { text: 'Half' });
+    await settle(el);
+
+    await newSession(el);
+    await settle(el);
+    // Back on the parked session, the turn reads as stopped rather than as forever-running.
+    await clickRow((await rowsOf(el))[0] as Sv3SessionRow);
     await settle(el);
     const main = await region(el, 'jf-sv3-main');
-    expect(main.shadowRoot?.querySelector('[data-testid="sv3-main-empty"]')).toBeTruthy();
-
-    await newSearch(el);
-    await region(el, 'jf-sv3-main');
-    // The zero-results verdict belonged to the parked session; the fresh one has asked nothing.
-    expect(main.shadowRoot?.querySelector('[data-testid="sv3-main-empty"]')).toBeNull();
+    expect(
+      (main.shadowRoot?.querySelector('[data-testid="sv3-turn"]') as HTMLElement).dataset.status,
+    ).toBe('halted');
   });
 });
 
-describe('clicking a session re-runs it', () => {
+describe('clicking a session claims it and shows its transcript', () => {
   const twoSessions = async (): Promise<SearchV3View & Mounted> => {
     const el = await mount();
-    await send(el, 'first query');
-    await settle(el);
-    await newSearch(el);
-    await send(el, 'second query');
-    await settle(el);
+    await ask(el, 'first question');
+    await newSession(el);
+    await ask(el, 'second question');
     return el;
   };
 
-  it('issues exactly ONE search, for that row’s query', async () => {
-    vi.useFakeTimers();
-    const el = await mount();
-    await send(el, 'first query');
-    await vi.advanceTimersByTimeAsync(2000);
-    await newSearch(el);
-    await send(el, 'second query');
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-
-    const older = (await rowsOf(el))[1];
-    expect(older?.label).toBe('first query');
-    await clickRow(older as Sv3SessionRow);
-    // Past the store's keystroke debounce AND its settle window: a re-run is one request, not the
-    // staged pair a keystroke path would schedule.
-    await vi.advanceTimersByTimeAsync(2000);
-
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    const [, init] = fetchMock.mock.calls[2] as [unknown, { body: string }];
-    expect(JSON.parse(init.body).query).toBe('first query');
+  it('issues NOTHING — a claim is not a re-ask', async () => {
+    const el = await twoSessions();
+    const before = fetchMock.mock.calls.length;
+    await clickRow((await rowsOf(el))[1] as Sv3SessionRow);
+    await settle(el);
+    expect(fetchMock.mock.calls.length).toBe(before);
+    // What it DOES do is show that conversation.
+    expect(await questionsOf(el)).toEqual(['first question']);
   });
 
   it('moves the claim to the clicked row, and moves aria-current with it', async () => {
@@ -260,31 +346,33 @@ describe('clicking a session re-runs it', () => {
     let rows = await rowsOf(el);
     const ariaOf = (row: Sv3SessionRow): string | null =>
       row.shadowRoot?.querySelector('button')?.getAttribute('aria-current') ?? null;
-    // The newest session is the top row and holds the claim, having just been searched.
-    expect(rows.map((r) => r.label)).toEqual(['second query', 'first query']);
+    // The newest session is the top row and holds the claim, having just been asked.
+    expect(rows.map((r) => r.label)).toEqual(['second question', 'first question']);
     expect(rows.map(ariaOf)).toEqual(['true', null]);
 
     // Click the OTHER row, so this is genuinely a move rather than a re-assertion.
     await clickRow(rows[1] as Sv3SessionRow);
     await settle(el);
     rows = await rowsOf(el);
-    expect(rows.map((r) => r.label)).toEqual(['second query', 'first query']);
+    expect(rows.map((r) => r.label)).toEqual(['second question', 'first question']);
     expect(rows.map(ariaOf)).toEqual([null, 'true']);
     expect(rows.filter((r) => r.active)).toHaveLength(1);
   });
 
   it('docks the window again when a row is clicked from the hero', async () => {
     const el = await twoSessions();
-    await newSearch(el);
+    await newSession(el);
     expect(el.getAttribute('composer-state')).toBe('hero');
 
     await clickRow((await rowsOf(el))[1] as Sv3SessionRow);
     await settle(el);
     expect(el.getAttribute('composer-state')).toBe('docked');
-    expect((await rowsOf(el)).filter((r) => r.active).map((r) => r.label)).toEqual(['first query']);
+    expect((await rowsOf(el)).filter((r) => r.active).map((r) => r.label)).toEqual([
+      'first question',
+    ]);
   });
 
-  it('re-runs in place: the list neither grows nor reorders', async () => {
+  it('claims in place: the list neither grows nor reorders', async () => {
     const el = await twoSessions();
     const before = (await rowsOf(el)).map((r) => r.label);
     await clickRow((await rowsOf(el))[1] as Sv3SessionRow);
@@ -297,65 +385,92 @@ describe('the in-motion dot belongs to the running session alone', () => {
   const pingingOf = (rows: Sv3SessionRow[]): Sv3SessionRow[] =>
     rows.filter((r) => r.shadowRoot?.querySelector('.sv3-anim-status-ping') !== null);
 
-  it('shows on the active session while the pass is in flight, and on no other row', async () => {
+  it('shows on the session whose answer is streaming, and on no other row', async () => {
     const el = await mount();
-    await send(el, 'first query');
-    await settle(el);
-    await newSearch(el);
+    await ask(el, 'first question');
+    await newSession(el);
 
-    const release = holdResponse({ results: [hit('a/1.md')], totalHits: 1, matchCount: 1 });
-    await send(el, 'second query');
-    await el.updateComplete;
+    await send(el, 'second question');
+    await settle(el);
     let rows = await rowsOf(el);
     expect(rows).toHaveLength(2);
     // Exactly one dot, on the session that asked — the parked one is resting and says its age.
-    expect(pingingOf(rows).map((r) => r.label)).toEqual(['second query']);
+    expect(pingingOf(rows).map((r) => r.label)).toEqual(['second question']);
     expect(rows[0]?.status).toBe('in-motion');
     expect(rows[1]?.status).toBe('resting');
     expect(rows[1]?.meta).toBe('now');
 
-    release();
+    router.emit('done', {});
+    router.end();
     await settle(el);
     rows = await rowsOf(el);
-    // ...and the colour is spent only while the pass runs: a settled session shows a timestamp.
+    // ...and the colour is spent only while the answer runs: a settled session shows a timestamp.
     expect(pingingOf(rows)).toHaveLength(0);
     expect(rows.map((r) => r.status)).toEqual(['resting', 'resting']);
     expect(rows[0]?.meta).toBe('now');
   });
 
-  it('still shows it for a re-query BEHIND displayed results, which the store refines quietly', async () => {
+  it('stays on the streaming session even after the reader claims another one', async () => {
+    const el = await mount();
+    await ask(el, 'first question');
+    await newSession(el);
+    await send(el, 'second question');
+    await settle(el);
+
+    // Claim the OLDER session mid-answer: the dot is a property of the running session, not of the
+    // claim, so it must not follow the pointer.
+    await clickRow((await rowsOf(el))[1] as Sv3SessionRow);
+    await settle(el);
+    const rows = await rowsOf(el);
+    expect(rows.filter((r) => r.active).map((r) => r.label)).toEqual(['first question']);
+    expect(pingingOf(rows).map((r) => r.label)).toEqual(['second question']);
+
+    router.emit('done', {});
+    router.end();
+    await settle(el);
+    expect(pingingOf(await rowsOf(el))).toHaveLength(0);
+  });
+
+  it('still shows it for a palette search that refines BEHIND displayed results', async () => {
     // The store suppresses `isSearching` for a refined pass that runs behind results
     // (`state/searchState.ts:611`), so a dot wired to `isSearching` alone would go dark for exactly
-    // the case a session most needs it: re-running a query whose old rows are still on screen.
-    respond({ results: [hit('a/1.md')], totalHits: 1, matchCount: 1 });
+    // the case a claimed session most needs it. The search axis is palette-only since F1, so this is
+    // driven through that command — the seam, and this subtlety, are still live.
     const el = await mount();
-    await send(el, 'first query');
+    await ask(el, 'first question');
+
+    let release = router.holdSearch({ results: [hit('a/1.md')], totalHits: 1, matchCount: 1 });
+    await searchByPalette(el, 'freight');
+    release();
     await settle(el);
 
-    const release = holdResponse({ results: [hit('a/2.md')], totalHits: 1, matchCount: 1 });
-    await clickRow((await rowsOf(el))[0] as Sv3SessionRow);
+    release = router.holdSearch({ results: [hit('a/2.md')], totalHits: 1, matchCount: 1 });
+    await searchByPalette(el, 'freight again');
     await el.updateComplete;
-    expect(pingingOf(await rowsOf(el)).map((r) => r.label)).toEqual(['first query']);
+    expect(pingingOf(await rowsOf(el)).map((r) => r.label)).toEqual(['first question']);
     release();
     await settle(el);
     expect(pingingOf(await rowsOf(el))).toHaveLength(0);
   });
 
-  it('moves the dot when the re-run belongs to a different session', async () => {
-    const el = await mount();
-    await send(el, 'first query');
-    await settle(el);
-    await newSearch(el);
-    await send(el, 'second query');
-    await settle(el);
-
-    const release = holdResponse({ results: [hit('b/2.md')], totalHits: 1, matchCount: 1 });
-    await clickRow((await rowsOf(el))[1] as Sv3SessionRow);
+  async function searchByPalette(el: Mounted, draft: string): Promise<void> {
+    const composer = await region(el, 'jf-sv3-composer');
+    const field = await fieldOf(el);
+    field.value = draft;
+    field.dispatchEvent(new Event('input'));
+    await composer.updateComplete;
+    const palette = el.shadowRoot?.querySelector('jf-sv3-palette') as
+      | (HTMLElement & {
+          show(i: HTMLElement | null): Promise<void>;
+          updateComplete: Promise<unknown>;
+        })
+      | null;
+    if (!palette) throw new Error('no palette in the window');
+    await palette.show(null);
+    await palette.updateComplete;
+    palette.shadowRoot
+      ?.querySelector<HTMLElement>(`#sv3-palette-item-${SV3_COMMAND_SEARCH_TEXT}`)
+      ?.click();
     await el.updateComplete;
-    const rows = await rowsOf(el);
-    expect(pingingOf(rows).map((r) => r.label)).toEqual(['first query']);
-    release();
-    await settle(el);
-    expect(pingingOf(await rowsOf(el))).toHaveLength(0);
-  });
+  }
 });

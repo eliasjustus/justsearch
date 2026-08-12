@@ -87,6 +87,20 @@ export const MAIN_UNREACHABLE: Sv3EmptyCopy = {
   description: reasonFor('binding.unreachable').wording,
 };
 
+/* ── Phase F1: the transcript's fixed copy ─────────────────────────────────────────────────── */
+
+/**
+ * The donor's own wording for a response that finished with nothing in it
+ * (`apps/web/src/components/chat/MessagesTimeline.tsx:1112`) — an empty slot would leave the reader
+ * unable to tell "finished with no text" from "still coming".
+ */
+export const TURN_EMPTY_ANSWER = '(empty response)';
+
+/** The reader's Stop. Said as the reader's own act, never as a failure the window suffered. */
+export const TURN_HALTED = 'Stopped by you.';
+
+export const TURN_FAILED = 'The answer failed.';
+
 export interface Sv3Command {
   readonly id: string;
   readonly label: string;
@@ -95,6 +109,9 @@ export interface Sv3Command {
   /** The CURRENT choice — distinct from the keyboard position, which the palette owns at runtime. */
   readonly selected?: boolean;
 }
+
+/** Named rather than inlined, because the window matches on it and a typo would silently do nothing. */
+export const SV3_COMMAND_SEARCH_TEXT = 'cmd-search-text';
 
 export interface Sv3CommandGroup {
   readonly id: string;
@@ -117,6 +134,12 @@ export const COMMAND_GROUPS: readonly Sv3CommandGroup[] = [
       { id: 'cmd-scope-recent', label: 'Scope to the last 7 days' },
       { id: 'cmd-similar', label: 'Find documents like this one' },
       { id: 'cmd-explain', label: 'Explain why this result ranked' },
+      /* The ONE live command among the placeholders, and a deliberately TEMPORARY one (tempdoc 822
+         Phase F1): plain submit now goes to the ask tier, so this is what keeps Phase A1's search
+         seam reachable and therefore demonstrable until the deferred search-integration
+         conversation decides where search belongs in this window. Handled in
+         `SearchV3View.onPaletteRun`. */
+      { id: SV3_COMMAND_SEARCH_TEXT, label: 'Search this text' },
     ],
   },
   {

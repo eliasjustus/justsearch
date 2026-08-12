@@ -130,6 +130,14 @@ export const sv3Tokens = css`
     --composer-outline: color-mix(in srgb, var(--color-white) 5%, transparent);
     --composer-shadow: none;
     --composer-highlight: inset 0 1px rgb(255 255 255 / 3%);
+    /* The USER message's fill (donor 'bg-message' / 'text-message-foreground'). Both are pure
+       indirections off tokens the light block already redefines, so the light theme inherits the
+       inversion without a second declaration — a light copy of an identical value would be a fork
+       waiting to drift. The response block deliberately has NO surface of its own: the donor gives
+       the assistant plain content on the panel, which is what makes the user's turn the only thing
+       with a fill and therefore readable as the punctuation of the transcript. */
+    --message-surface: var(--accent);
+    --message-foreground: var(--foreground);
     /* The primary action's material is one indirection off --primary, so a future accent change
        reaches the send button without touching it. */
     --message-action: var(--primary);
@@ -219,9 +227,11 @@ export const sv3Tokens = css`
     --space-10: 40px;
     --space-11: 44px;
     --space-12: 48px;
-    /* The donor's ladder is Tailwind's 0.25rem scale, which carries half-steps; the palette's density
-       spends both of them (item / input-row / group-label py-1.5, footer py-2.5). They are named
-       here rather than inlined so the ladder stays the one authority. */
+    /* The donor's ladder is Tailwind's 0.25rem scale, which carries half-steps; the window's densest
+       regions spend all three (palette item / input-row / group-label py-1.5 and footer py-2.5; the
+       transcript's response block py-0.5). They are named here rather than inlined so the ladder
+       stays the one authority. */
+    --space-0-5: 2px;
     --space-1-5: 6px;
     --space-2-5: 10px;
     /* Donor improvement: the 1px border is taken out of the padding ONCE, here, instead of being

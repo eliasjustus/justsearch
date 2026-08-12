@@ -11,6 +11,12 @@
  */
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { resetSearchState } from '../../state/searchState.js';
+import {
+  __feedContactForTest,
+  __feedForTest,
+  __resetAiStateForTest,
+} from '../../state/aiStateStore.js';
+import type { StatusSnapshot } from '../../utils/statusPoll.js';
 import { SearchV3View } from './SearchV3View.js';
 import { Sv3Topbar } from './Sv3Topbar.js';
 import { Sv3Sidebar } from './Sv3Sidebar.js';
@@ -47,6 +53,14 @@ beforeEach(() => {
     'fetch',
     vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ results: [] }) }),
   );
+  // The window these cases measure is the window with a working model behind it: an unreachable one
+  // honestly refuses a send and carries an extra banner (Phase F1), which is a state with its own
+  // file (`SearchV3View.ask.test.ts`), not the shape this file is about.
+  __feedForTest({
+    inference: { mode: 'online', available: true } as never,
+    status: { worker: { core: { indexedDocuments: 42 } } } as unknown as StatusSnapshot,
+  });
+  __feedContactForTest();
 });
 
 /**
@@ -57,8 +71,9 @@ afterEach(() => {
   for (const child of [...document.body.children]) child.remove();
   document.documentElement.removeAttribute(SV3_MORPH_ROOT_ATTR);
   delete (document as unknown as { startViewTransition?: unknown }).startViewTransition;
-  // The store is a module singleton; a search one case ran would otherwise be the next case's state.
+  // The stores are module singletons; a search one case ran would otherwise be the next case's state.
   resetSearchState();
+  __resetAiStateForTest();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });

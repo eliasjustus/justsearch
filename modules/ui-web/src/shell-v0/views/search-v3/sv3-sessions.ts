@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The Search v3 window's session list (tempdoc 822 Phase A2).
+ * The Search v3 window's session list (tempdoc 822 Phase A2; sessions became CONVERSATIONS in F1).
+ *
+ * A session holds an ordered list of turns — the T3 Code product shape the 822 course correction
+ * adopted: the composer talks to the local model, and a session is that conversation. The search
+ * axis A2 built this module for is still wired, but it no longer writes here.
  *
  * Derived from T3 Code (T3 Tools Inc., MIT) — see THIRD-PARTY-NOTICES.md in this directory.
  *
@@ -24,20 +28,53 @@
  */
 import type { Sv3RowStatus } from './fixtures.js';
 
-/** One search thread in this window: the latest query it ran, and how many times it has run. */
+/**
+ * How a turn's response ended, or that it has not ended yet. Four TERMINALS, all distinct, because
+ * they are four different things to have happened: `halted` is the reader's own Stop and must never
+ * be worded as a failure, and `refused` is the session lock declining the send — neither of them is
+ * an answer that went wrong (tempdoc 822 Phase F1; the terminals `sv3-ask.ts` reports).
+ */
+export type Sv3TurnStatus = 'streaming' | 'complete' | 'halted' | 'refused' | 'failed';
+
+/** One exchange: what was asked, and what came back. */
+export interface Sv3Turn {
+  readonly id: string;
+  readonly question: string;
+  /** Accumulated answer text. Whatever streamed before a halt is KEPT — it was really received. */
+  readonly answer: string;
+  readonly status: Sv3TurnStatus;
+  /**
+   * How many sources the backend said it grounded the answer in — `null` until it says so, which is
+   * not the same as zero. A turn that was never told cannot claim a number.
+   */
+  readonly citations: number | null;
+  /** The failure's own words, from the stream. Empty for every other status. */
+  readonly detail: string;
+  readonly askedAt: number;
+}
+
+/** One conversation in this window: what it was opened with, and every turn it has taken. */
 export interface Sv3Session {
   readonly id: string;
   /**
-   * The LATEST submitted text. Re-querying inside a session replaces it rather than opening a new
-   * session, so the row's title is what the session is currently about. No auto-titling: the query
-   * IS the title (the row's single-line ellipsis handles length).
+   * The OPENING question, fixed at creation. Phase F1 replaced A2's "latest query" title: a
+   * conversation's turns are a thread, so a row label that re-wrote itself on every turn would
+   * change identity under the reader — the same objection as the donor's never-reorder law, applied
+   * to the label instead of the position. No auto-titling: the opening question IS the title (the
+   * row's single-line ellipsis handles length).
    */
-  readonly query: string;
-  /** How many searches this session has issued — 1 at creation, +1 per re-query or re-run. */
-  readonly submits: number;
+  readonly title: string;
+  /** Oldest FIRST — the transcript's render order. */
+  readonly turns: readonly Sv3Turn[];
   readonly createdAt: number;
-  /** When the session last issued a search; the resting row's timestamp. */
+  /** When the session last submitted; the resting row's timestamp. */
   readonly updatedAt: number;
+}
+
+/** Addresses one turn inside one session, so a stream can only ever write to the turn it opened. */
+export interface Sv3TurnRef {
+  readonly sessionId: string;
+  readonly turnId: string;
 }
 
 export interface Sv3SessionList {
@@ -54,24 +91,38 @@ export const SV3_SESSIONS_EMPTY: Sv3SessionList = { sessions: [], activeId: null
 export const sessionById = (list: Sv3SessionList, id: string): Sv3Session | null =>
   list.sessions.find((session) => session.id === id) ?? null;
 
+/** Deterministic and position-based, so the caller can address a turn without the list handing back a tuple. */
+const turnIdFor = (sessionId: string, index: number): string => `${sessionId}#t${index + 1}`;
+
+const openTurn = (sessionId: string, index: number, question: string, now: number): Sv3Turn => ({
+  id: turnIdFor(sessionId, index),
+  question,
+  answer: '',
+  status: 'streaming',
+  citations: null,
+  detail: '',
+  askedAt: now,
+});
+
 /**
- * A submitted search: it CREATES a session when none is active, and UPDATES the active one otherwise.
- * The updated session keeps its position — re-querying is not a reason to move a row.
+ * A submitted question: it CREATES a session when none is active, and APPENDS a turn to the active
+ * one otherwise. The session keeps its position — a new turn is not a reason to move a row.
+ *
+ * Phase F1 replaced A2's update-in-place semantics (a re-query overwrote the session's single
+ * query). A conversation accumulates: overwriting would destroy the transcript the window now
+ * renders. The SEARCH axis, which A2's semantics were written for, no longer routes through the
+ * session list at all — it is a palette-only dev affordance (`SearchV3View.runSearch`).
  */
-export function submitInSession(
-  list: Sv3SessionList,
-  query: string,
-  now: number,
-): Sv3SessionList {
-  const text = query.trim();
+export function submitInSession(list: Sv3SessionList, question: string, now: number): Sv3SessionList {
+  const text = question.trim();
   if (text === '') return list;
   const active = list.activeId === null ? null : sessionById(list, list.activeId);
   if (active === null) {
     const id = `sv3-session-${list.minted + 1}`;
     const created: Sv3Session = {
       id,
-      query: text,
-      submits: 1,
+      title: text,
+      turns: [openTurn(id, 0, text, now)],
       createdAt: now,
       updatedAt: now,
     };
@@ -81,11 +132,73 @@ export function submitInSession(
     ...list,
     sessions: list.sessions.map((session) =>
       session.id === active.id
-        ? { ...session, query: text, submits: session.submits + 1, updatedAt: now }
+        ? {
+            ...session,
+            turns: [...session.turns, openTurn(session.id, session.turns.length, text, now)],
+            updatedAt: now,
+          }
         : session,
     ),
   };
 }
+
+/** The turn a just-returned {@link submitInSession} opened, or null if nothing is active. */
+export function latestTurnRef(list: Sv3SessionList): Sv3TurnRef | null {
+  const active = list.activeId === null ? null : sessionById(list, list.activeId);
+  const turn = active?.turns.at(-1);
+  if (active === undefined || active === null || turn === undefined) return null;
+  return { sessionId: active.id, turnId: turn.id };
+}
+
+/** The active session's transcript. An empty list is the window's "nothing asked here yet". */
+export function activeTurns(list: Sv3SessionList): readonly Sv3Turn[] {
+  const active = list.activeId === null ? null : sessionById(list, list.activeId);
+  return active?.turns ?? [];
+}
+
+/**
+ * The one way a turn changes. Addressed by REF rather than by "the active session", so a stream that
+ * started in one session cannot write into another one the reader has since claimed.
+ */
+function mapTurn(
+  list: Sv3SessionList,
+  ref: Sv3TurnRef,
+  change: (turn: Sv3Turn) => Sv3Turn,
+): Sv3SessionList {
+  const session = sessionById(list, ref.sessionId);
+  if (session === null || !session.turns.some((t) => t.id === ref.turnId)) return list;
+  return {
+    ...list,
+    sessions: list.sessions.map((s) =>
+      s.id === ref.sessionId
+        ? { ...s, turns: s.turns.map((t) => (t.id === ref.turnId ? change(t) : t)) }
+        : s,
+    ),
+  };
+}
+
+/** Streaming text lands here, delta by delta; a settled turn ignores late deltas rather than reopening. */
+export const appendTurnDelta = (list: Sv3SessionList, ref: Sv3TurnRef, delta: string): Sv3SessionList =>
+  mapTurn(list, ref, (turn) =>
+    turn.status === 'streaming' ? { ...turn, answer: turn.answer + delta } : turn,
+  );
+
+export const setTurnCitations = (list: Sv3SessionList, ref: Sv3TurnRef, count: number): Sv3SessionList =>
+  mapTurn(list, ref, (turn) => ({ ...turn, citations: count }));
+
+/**
+ * The turn reaches its ONE terminal. A turn that already settled stays settled: the stream reports
+ * exactly one terminal, and a second write could only be a bug re-wording the first.
+ */
+export const settleTurn = (
+  list: Sv3SessionList,
+  ref: Sv3TurnRef,
+  status: Exclude<Sv3TurnStatus, 'streaming'>,
+  detail = '',
+): Sv3SessionList =>
+  mapTurn(list, ref, (turn) =>
+    turn.status === 'streaming' ? { ...turn, status, detail } : turn,
+  );
 
 /**
  * The New-search affordance: the window returns to its empty state and the NEXT submit opens a new
@@ -165,13 +278,17 @@ export function projectSv3Sessions(
 ): readonly Sv3SessionGroup[] {
   const toRow = (session: Sv3Session): Sv3SessionRowView => {
     const active = session.id === list.activeId;
-    // In-motion is the ACTIVE session's alone: the store is process-wide, and only the session that
-    // issued the search is the one running. A resting row spends no colour and shows its age.
-    const running = active && searching;
+    const last = session.turns.at(-1);
+    // Two axes reach the same three colours. The CONVERSATIONAL one is the session's own: its last
+    // turn is streaming, or it broke — a property of THIS session, true whichever row is claimed.
+    // The SEARCH one is the process-wide store flag, which only the active session can own (the
+    // store cannot say who asked), and which A2's semantics already limited that way.
+    const running = last?.status === 'streaming' || (active && searching);
+    const broken = last?.status === 'failed' || last?.status === 'refused';
     return {
       id: session.id,
-      label: session.query,
-      status: running ? 'in-motion' : 'resting',
+      label: session.title,
+      status: running ? 'in-motion' : broken ? 'broken' : 'resting',
       meta: running ? '' : sv3RelativeTime(session.updatedAt, now),
       active,
     };

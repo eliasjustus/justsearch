@@ -24,15 +24,16 @@
  *     through the same morph: the send control, `Escape` in the field, and the `composer-state`
  *     attribute (a dev-only handle for live measurement, which is why an external write is routed
  *     through the morph rather than applied straight).
- *  5. **The one search issuance.** A send seeds the shared store's query and runs the explicit pass —
- *     the same `setQuery` + `submitSearch` pair the shipped surface sends on an explicit submit
- *     (`views/search-v2/SearchV2View.ts:998-999`), which is exactly ONE request: `submitSearch`
- *     supersedes the keystroke pass `setQuery` had scheduled. Reading back is the store subscription;
- *     what the region does with the snapshot is `sv3-results.ts`.
- *  6. **The session list** (Phase A2). Window-local and in-memory by decision, not by omission —
- *     `sv3-sessions.ts` carries the reasoning and the Phase-D boundary. The host holds the list and
- *     routes the three things that change it (a send, a row click, New search) through the one
- *     search issuance above; the sidebar renders the projection and issues nothing.
+ *  5. **The one ask.** A send opens a turn and dispatches it through `sv3-ask.ts`, the window's ONE
+ *     issuance site, holding the `AbortController` that Stop uses and settling the turn on whichever
+ *     terminal the stream reports. Phase A1's SEARCH issuance (`setQuery` + `submitSearch`, the pair
+ *     `views/search-v2/SearchV2View.ts:998-999` sends) is still here and still exactly one request,
+ *     but it is the SECONDARY axis now: only the palette's "Search this text" reaches it.
+ *  6. **The session list** (Phase A2; conversations since F1). Window-local and in-memory by
+ *     decision, not by omission — `sv3-sessions.ts` carries the reasoning and the Phase-D boundary.
+ *     The host holds the list and routes everything that changes it (a send, a row click, New
+ *     session, and every stream event) through the funnels above; the sidebar and the content
+ *     surface render projections and issue nothing.
  *
  * Mounted as a hidden DEEPLINK surface, dev audience, no rail entry:
  * `#justsearch://surface/core.search-v3-surface`.
@@ -64,14 +65,24 @@ import {
 import { projectSv3Results, type Sv3ResultsView } from './sv3-results.js';
 import { type Sv3SessionSelect } from './Sv3Sidebar.js';
 import {
+  activeTurns,
+  appendTurnDelta,
   focusSession,
+  latestTurnRef,
   projectSv3Sessions,
-  sessionById,
+  setTurnCitations,
+  settleTurn,
   startNewSession,
   submitInSession,
   SV3_SESSIONS_EMPTY,
   type Sv3SessionList,
 } from './sv3-sessions.js';
+import { sv3Ask } from './sv3-ask.js';
+import { subscribeAiState, type AiState } from '../../state/aiStateStore.js';
+import { projectAvailability } from '../../state/availability.js';
+import { reasonFor } from '../../state/readinessNotice.js';
+import { SV3_COMMAND_SEARCH_TEXT } from './fixtures.js';
+import { type Sv3PaletteRun } from './Sv3Palette.js';
 import type { Sv3Palette } from './Sv3Palette.js';
 import './Sv3Topbar.js';
 import './Sv3Sidebar.js';
@@ -134,6 +145,8 @@ export class SearchV3View extends JfElement {
     searchSnapshot: { state: true },
     asked: { state: true },
     sessions: { state: true },
+    aiSnapshot: { state: true },
+    streaming: { state: true },
   };
 
   declare composerState: Sv3ComposerState;
@@ -151,8 +164,15 @@ export class SearchV3View extends JfElement {
    * for why the authority question belongs to Phase D).
    */
   declare sessions: Sv3SessionList;
+  /** The observed-state authority's latest emission; the ONE input to this window's availability. */
+  declare aiSnapshot: AiState | null;
+  /** A response is in flight. Window-level, not session-level: the composer's slot is one slot. */
+  declare streaming: boolean;
 
   private searchUnsubscribe: (() => void) | null = null;
+  private aiUnsubscribe: (() => void) | null = null;
+  /** The in-flight ask's abort handle; null exactly when no response is streaming. */
+  private askAbort: AbortController | null = null;
 
   constructor() {
     super();
@@ -161,6 +181,8 @@ export class SearchV3View extends JfElement {
     this.searchSnapshot = null;
     this.asked = false;
     this.sessions = SV3_SESSIONS_EMPTY;
+    this.aiSnapshot = null;
+    this.streaming = false;
   }
 
   override connectedCallback(): void {
@@ -169,6 +191,9 @@ export class SearchV3View extends JfElement {
     setSearchApiBase(this.apiBase || '');
     this.searchUnsubscribe = subscribeSearch((snapshot) => {
       this.searchSnapshot = snapshot;
+    });
+    this.aiUnsubscribe = subscribeAiState((snapshot) => {
+      this.aiSnapshot = snapshot;
     });
     // Scoped to the HOST, not to `window`. A host listener is only reached by events whose composed
     // path runs through this window, so a chord pressed anywhere else in the shipped app is invisible
@@ -182,6 +207,11 @@ export class SearchV3View extends JfElement {
     releaseSv3MorphSheet();
     this.searchUnsubscribe?.();
     this.searchUnsubscribe = null;
+    this.aiUnsubscribe?.();
+    this.aiUnsubscribe = null;
+    // Lifecycle containment: an unmounted window's stream would keep a connection open against the
+    // shared channel budget and settle a turn nobody can see.
+    this.abortAsk();
     this.removeEventListener('keydown', this.onHostKeydown, true);
   }
 
@@ -267,46 +297,124 @@ export class SearchV3View extends JfElement {
   }
 
   /**
-   * A send is one search and one morph, in that order: the request goes out in this tick, so the
-   * region is already showing the pending state by the time the morph settles.
+   * A send is one ask and one morph, in that order: the request goes out in this tick, so the
+   * transcript is already showing the streaming turn by the time the morph settles.
    */
   private onComposerSubmit(event: Event): void {
-    this.runSearch(((event as CustomEvent<Sv3ComposerSubmit>).detail?.query ?? '').trim());
+    void this.runAsk(((event as CustomEvent<Sv3ComposerSubmit>).detail?.query ?? '').trim());
+  }
+
+  /** The composer's availability, projected from the ONE observed-state authority. */
+  private get askUnavailableReason(): string {
+    const availability = projectAvailability('documents', this.aiSnapshot);
+    return availability.kind === 'unavailable' ? availability.reason : '';
   }
 
   /**
-   * The ONE path a search takes, whichever affordance asked: the composer's send, or a session row
-   * re-running what it already asked. A second issuance site is how the two would drift apart —
-   * a row click that bypassed this would leave the session list describing a search it never ran.
+   * The ONE path a question takes. There is no second entry: the composer refuses an unavailable or
+   * busy send before it leaves, so this method is not a second gate re-deciding the same question —
+   * it opens the turn, dispatches through the window's single ask site, and settles that turn.
+   */
+  private async runAsk(rawQuestion: string): Promise<void> {
+    const question = rawQuestion.trim();
+    if (question === '') return;
+    this.sessions = submitInSession(this.sessions, question, Date.now());
+    const ref = latestTurnRef(this.sessions);
+    if (ref === null) return;
+    this.composer?.clearDraft();
+    void this.setComposerState('docked');
+
+    const abort = new AbortController();
+    this.askAbort = abort;
+    this.streaming = true;
+    // Every terminal below settles the SAME ref the dispatch opened, so a reader who claims another
+    // session mid-stream still gets the answer written where it was asked.
+    const settle = (
+      status: 'complete' | 'halted' | 'refused' | 'failed',
+      detail = '',
+    ): void => {
+      this.sessions = settleTurn(this.sessions, ref, status, detail);
+      // Only THIS dispatch's terminal may clear the window's busy state: a later ask has already
+      // installed its own controller, and clearing it here would strand a live stream with a Send
+      // control in the slot.
+      if (this.askAbort === abort) {
+        this.askAbort = null;
+        this.streaming = false;
+      }
+    };
+    await sv3Ask(
+      {
+        apiBase: this.apiBase,
+        question,
+        conversationId: ref.sessionId,
+        signal: abort.signal,
+      },
+      {
+        onDelta: (text) => {
+          this.sessions = appendTurnDelta(this.sessions, ref, text);
+        },
+        onCitations: (count) => {
+          this.sessions = setTurnCitations(this.sessions, ref, count);
+        },
+        onDone: () => settle('complete'),
+        // The lock's refusal is worded by the ONE reason vocabulary, not re-phrased here.
+        onRefused: () => settle('refused', reasonFor('conversations.locked').wording),
+        onHalted: () => settle('halted'),
+        onFailed: (message) => settle('failed', message),
+      },
+    );
+  }
+
+  /** Halting is always the reader's; the turn settles `halted` through the sink's own terminal. */
+  private abortAsk(): void {
+    this.askAbort?.abort();
+  }
+
+  /**
+   * The SECONDARY axis (822 §4b course correction). Phase A1's search seam stays wired and tested,
+   * but a plain submit no longer reaches it — it is called from the palette's "Search this text"
+   * command, which keeps the seam demonstrable until the deferred search-integration conversation
+   * decides what search means in a conversational window. It deliberately does NOT touch the session
+   * list: a search is not a turn, and recording it as one would fabricate a conversation.
    */
   private runSearch(rawQuery: string): void {
     const query = rawQuery.trim();
     if (query === '') return;
-    this.sessions = submitInSession(this.sessions, query, Date.now());
     this.asked = true;
     setQuery(query);
     submitSearch();
     void this.setComposerState('docked');
   }
 
+  private onPaletteRun(event: Event): void {
+    if ((event as CustomEvent<Sv3PaletteRun>).detail?.id !== SV3_COMMAND_SEARCH_TEXT) return;
+    this.runSearch(this.composer?.draft ?? '');
+  }
+
   private get composer(): Sv3Composer | null {
     return this.shadowRoot?.querySelector('jf-sv3-composer') ?? null;
   }
 
-  /** A row click re-runs THAT session's query: it claims the row first, so the re-run lands there. */
+  /**
+   * A row click CLAIMS that conversation and shows its transcript. It re-runs nothing: a session is
+   * a thread now, and re-issuing its opening question on a click would append a turn the reader
+   * never asked for (Phase F1 — A2's row click re-ran the search, which was right for a search list
+   * and is wrong for a conversation).
+   */
   private onSessionSelect(event: Event): void {
     const id = (event as CustomEvent<Sv3SessionSelect>).detail?.id ?? '';
-    const session = sessionById(this.sessions, id);
-    if (session === null) return;
     this.sessions = focusSession(this.sessions, id);
-    this.runSearch(session.query);
+    void this.setComposerState('docked');
   }
 
   /**
-   * New search: back to the hero with an empty draft and nothing claimed about the corpus. The
-   * sessions so far stay in the list — starting one is not ending the others.
+   * New session: back to the hero with an empty draft and nothing claimed about the corpus. The
+   * sessions so far stay in the list — starting one is not ending the others. An in-flight response
+   * IS ended, because its own session is no longer the one on screen and a stream nobody is watching
+   * still spends a connection.
    */
   private onSessionNew(): void {
+    this.abortAsk();
     this.sessions = startNewSession(this.sessions);
     this.asked = false;
     this.composer?.clearDraft();
@@ -337,19 +445,26 @@ export class SearchV3View extends JfElement {
         data-testid="sv3-column"
         @sv3-composer-state-request=${this.onStateRequest}
         @sv3-composer-submit=${this.onComposerSubmit}
+        @sv3-composer-stop=${this.abortAsk}
         @sv3-palette-request=${this.onPaletteRequest}
       >
         <jf-sv3-topbar window-title=${WINDOW_TITLE} data-testid="sv3-topbar"></jf-sv3-topbar>
         <jf-sv3-main
           state=${this.composerState}
           .view=${results}
+          .turns=${activeTurns(this.sessions)}
           data-testid="sv3-main"
         ></jf-sv3-main>
-        <jf-sv3-composer state=${this.composerState} data-testid="sv3-composer"></jf-sv3-composer>
+        <jf-sv3-composer
+          state=${this.composerState}
+          ?busy=${this.streaming}
+          unavailable-reason=${this.askUnavailableReason}
+          data-testid="sv3-composer"
+        ></jf-sv3-composer>
       </div>
       <!-- LAST in the shadow root on purpose: the palette and the hero composer share the overlay
            rung, so DOM order is what puts the palette on top. -->
-      <jf-sv3-palette data-testid="sv3-palette"></jf-sv3-palette>
+      <jf-sv3-palette data-testid="sv3-palette" @sv3-palette-run=${this.onPaletteRun}></jf-sv3-palette>
     `;
   }
 }
