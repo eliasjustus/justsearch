@@ -425,6 +425,48 @@ lands with its register/changeset obligations (`api-record` skill for
 `KnowledgeSearchResponse` fields; wire changesets for `contracts/wire`; buf gate for
 ipc proto).
 
+## §M Execution log (2026-08-12, same session; owner directive: work outside main, no PRs yet)
+
+Six implementation lanes + the pre-staged rescue, each in its own worktree branch,
+each implemented by a worker, adversarially reviewed by an independent agent
+(reviewer ≠ implementer), and re-fixed by the original worker where the review
+demanded. All branches green, committed, UNPUSHED, no PRs (owner hold).
+
+| lane | branch (`.claude/worktrees/…`) | state |
+|---|---|---|
+| 792 rescue (C5) | `agent-ae5ff73d418e280c3` (merge commit 3fb43908) | Pre-staged: merge of `worktree-792-stack-currency` into fresh main base; 1 shard conflict resolved data-preservingly; BUILD SUCCESSFUL; defect confirmed live on main. Decisive proof remains CI-side (next Dependabot run must produce a `[libraries]` PR). |
+| C1 FE truthfulness | `agent-a7925a2dea08c067b` (7 commits, latest 19070bee) | Moves 1-4 + 6 review fixes. One shared provisional-cause table (`provisionalCauseHeadline`) feeds verdictHeadline + folderStatus + Library/Browse/Health; `ledgerRead` gates on `hasFrame` (seq>0, contract-backed) not socket-open; `StabilityInput.reachableViaContact` required tri-state; register per-site `via:` scoping (gate weakening fixed), 10 sites/4 domains, bite-proven both directions. 399 files / 4,475 FE tests green. |
+| C1 BE staleness fill | `agent-a22be6e46206d73f8` (b11f98e0 + 968933f9) | `ReadinessComponentView.stale/stalenessMs/observedAt` populated per-dimension from the worker-contact fact; observedAt = last successful observation, omitted (not fabricated) when never observed; GPU reclassified worker-observed (mixed-input rule: oldest input governs); `health-readiness-contract.v1.md` swept + lost-contact sample added. 702 module tests green. |
+| C2 watched-root (scan arm) | `agent-a12398dd662e09b7d` (60290ad4 + 0ce7384d) | `ScanRootFn` carries collection; production lambda pinned by an in-process gRPC wire test with an EXECUTED failing-on-revert proof; baseline test inverted to positive pin + blank-label normalization case; reindex paths reconciled to `null`. Persistence/sync-arm/migration deferred per §L.3. |
+| C2 rerank count-drop | `agent-a04c9c04b89e7b0e4` (7e9b0a71 + 503f4129 + 5977f043) | `applyRerankOrder` count-preserving helper routes both CE branches + LambdaMART; legacy-equivalence test (verbatim pre-fix loop) = static half of the A/B; register F-045 + skills-sync committed in-branch. 8/8 tests. |
+| C2 facets→MCP relay | `agent-a58afac96dfa2dfb2` (961ce9f0) | `facetsTruncated` relayed to MCP structured + text tiers + tool description; tier-equivalence totality extended; goldens byte-identical. 699 module tests green. Orchestrator-reviewed (small diff). |
+| Demo-blemish batch | `agent-a83addf9fb5e46bcc` (7 commits, latest 3f725b0e) | Ctrl+L dual-handler root-cause-deleted; New-chat always rendered (disabled+title on empty); sessions-list dual-shape mapper + tests; installer-size item verified NOT-A-BUG (documented policy: README describes the published v0.1.0 asset until a cut lands — supersedes §4 item 4 and retires obs `unanchored-general-79`). 4,451 FE tests green. |
+
+Review-round value (why the independent pass is not optional): 9 mandated fixes
+across 4 branches, including two genuine wrong-gates green tests couldn't see
+(`ledgerRead` on socket-open re-entering the F9 defect; `projectedSymbols`
+de-fanging the gate on its one toothed site) and one untested defect site (the
+production scan lambda, revert-stays-green).
+
+Residuals and pending closure items:
+1. **Measured UX audit** (honor-system `ux-audit-closure`): the C1 FE work is
+   presentation-authority — needs an independent, measured (axe/contrast), live
+   whole-screen audit before closing. Requires dev stack.
+2. **Live A/B** for the count-drop fix (§L.3 / F-045) — static half done.
+3. **Settled-arm contact-loss gap** (new, logged to shard 2b31adc7): `folderStatus`
+   gates only the provisional arm; settled + contact-lost still renders "✓ fully
+   searchable" over a dead backend — behavioral decision, C1 class member.
+4. **NEEDS-LIVE lane** (28 conditions, Appendix B) — untouched, owner D3.
+5. **RAG collection scoping + facets deeper tiers** — design-gated (§L.3), not started.
+6. **Store maintenance pass** (§6 as amended) — per-occurrence verification before
+   any deletion; not started.
+7. **Merge-order note**: the two FE branches and local main each carry a
+   same-named observation shard (`docs/observations.d/776e10cd-….md`) with
+   different bodies — whichever merges later hits add/add; resolve by
+   concatenating bullets (all entries are append-only lines).
+8. 792's branch also carries the sole copies of tempdocs 793/794 — they land with
+   the rescue merge.
+
 ## Appendix A — 145 verified STILL-TRUE defect conditions
 
 (class-ordered: product, drift, tooling, governance; demo-relevant flagged Y)
