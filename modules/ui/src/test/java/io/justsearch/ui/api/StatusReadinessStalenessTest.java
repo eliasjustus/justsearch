@@ -61,11 +61,13 @@ final class StatusReadinessStalenessTest {
     m.put("chunkEmbedding", true);
     m.put("visualTextExtraction", true);
     m.put("visualDocumentUnderstanding", true);
+    // Head-local NVML sample, but its saturation-suppression gate reads the Worker's
+    // processingJobsCount — a fallback view zeroes that term and can produce a false DEGRADED.
+    m.put("gpu", true);
     m.put("workerControlPlane", false);
     m.put("ai", false);
     m.put("lambdamartModel", false);
     m.put("telemetry", false);
-    m.put("gpu", false);
     return m;
   }
 

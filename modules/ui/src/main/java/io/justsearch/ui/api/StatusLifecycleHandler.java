@@ -1346,6 +1346,10 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
         String reason;
 
         if (LifecycleReasonCode.WORKER_NOT_CONFIGURED.code().equals(workerReason)) {
+          // 821 §3-C1: this one branch derives head-side (the lifecycle snapshot's worker reason),
+          // yet the dimension is classified worker-observed as a whole, so it is marked stale here
+          // too. Deliberate: over-marking a NOT_CONFIGURED verdict is the safe direction, and
+          // splitting the classification per-branch would put the decision back inline.
           state = READINESS_NOT_CONFIGURED;
           reason = LifecycleReasonCode.WORKER_NOT_CONFIGURED.code();
         } else if (compatBlockedReason != null) {
@@ -1628,13 +1632,20 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
               // gate is visualEnrichmentNeededCount, a Worker count. A fallback view zeroes it and
               // the arm yields READY, so the dimension is classified by what it reads rather than
               // by its label; calling it head-local would ship an unobserved READY as fresh.
-              VISUAL_DOCUMENT_UNDERSTANDING ->
+              VISUAL_DOCUMENT_UNDERSTANDING,
+              // source: gpu_saturation_monitor — the NVML sample IS head-local and current, but
+              // the arm feeds computeGpuActivityGate(workerView), whose first term is the Worker's
+              // processingJobsCount. A fallback view zeroes that term, REMOVING a suppression
+              // signal, so a Worker outage can flip this dimension to DEGRADED/gpu.saturated on
+              // placeholder data. Since the unsafe direction is a false DEGRADED, the oldest input
+              // governs the freshness claim: classified worker-observed by the same
+              // what-it-reads standard as VDU above.
+              GPU ->
           true;
       case WORKER_CONTROL_PLANE, // source: lifecycle_snapshot — head-side workerCapability.health()
               AI, // source: lifecycle_inference — head-side inferenceCapability.health()
               LAMBDAMART_MODEL, // source: head_gpl_status
-              TELEMETRY, // source: telemetry_health
-              GPU -> // source: gpu_saturation_monitor
+              TELEMETRY -> // source: telemetry_health
           false;
     };
   }
@@ -1651,6 +1662,10 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
    * Worker observation instead, with {@code stalenessMs} measuring the gap to now. When the Worker
    * has never been reached in this Head process there is no observation to timestamp, so {@code
    * observedAt} is omitted rather than fabricated, and {@code stalenessMs} measures from Head start.
+   *
+   * <p>For a dimension that mixes head-local and Worker inputs (see {@code GPU} in {@link
+   * #workerObserved}), the OLDEST input governs: the timestamp under-claims the freshness of the
+   * head-local part rather than over-claiming the freshness of the Worker part.
    */
   private static ReadinessComponentView withContactProvenance(
       ReadinessDimension dim, ReadinessComponentView comp, WorkerContact contact) {
