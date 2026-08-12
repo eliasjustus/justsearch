@@ -188,7 +188,9 @@ public final class ResumableFetch {
             attempt + 1,
             retry.maxAttempts(),
             retry.tierForAttempt(attempt));
-        if (!retry.sleep(waitMs) || isCancelled(cancelRequested)) {
+        // Sliced, cancellation-polling wait: cancel() only raises a flag, so a wait that ignored it
+        // would keep the user staring at a cancelled install for up to the whole 27 s backoff.
+        if (!retry.sleep(waitMs, cancelRequested)) {
           return new Outcome(false, true, "Cancelled.", firstAction, transfers);
         }
         // Re-decide against disk: the failed attempt may have staged bytes worth resuming, and the
