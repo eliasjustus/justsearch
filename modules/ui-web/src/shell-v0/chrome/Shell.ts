@@ -2251,7 +2251,7 @@ export class Shell extends JfElement {
             this.copyUrlFeedback ? ` ${this.copyUrlFeedback}` : ''
           }`}
           aria-label="Copy current URL"
-          title="Copy URL (Ctrl+L)"
+          title="Copy URL"
           @click=${() => {
             void this.handleCopyUrlClick();
           }}
