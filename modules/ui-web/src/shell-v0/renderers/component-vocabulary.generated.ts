@@ -126,6 +126,11 @@ export type ComponentTag =
   | 'jf-status-dot'
   | 'jf-summarize-view'
   | 'jf-surface-tabs'
+  | 'jf-sv3-composer'
+  | 'jf-sv3-main'
+  | 'jf-sv3-sidebar'
+  | 'jf-sv3-topbar'
+  | 'jf-sv3-window'
   | 'jf-system-notice'
   | 'jf-system-self-view'
   | 'jf-system-surface'
@@ -260,6 +265,11 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-status-dot',
   'jf-summarize-view',
   'jf-surface-tabs',
+  'jf-sv3-composer',
+  'jf-sv3-main',
+  'jf-sv3-sidebar',
+  'jf-sv3-topbar',
+  'jf-sv3-window',
   'jf-system-notice',
   'jf-system-self-view',
   'jf-system-surface',

@@ -59,6 +59,10 @@ const LOADERS: ReadonlyMap<string, () => Promise<unknown>> = new Map<
   // entry (578: one task, one window); reachable only at #justsearch://surface/core.search-v2-surface
   // while the comparison against UnifiedChatView runs (818 §5 sunset criterion).
   ['jf-search-v2', () => import('./search-v2/SearchV2View.js')],
+  // Tempdoc 822 slice 1 — the Search v3 window, rebuilt on the T3 Code donor system.
+  // DEVELOPER/DEEPLINK, no rail entry; reachable only at
+  // #justsearch://surface/core.search-v3-surface while the donor-copy pipeline is calibrated.
+  ['jf-sv3-window', () => import('./search-v3/SearchV3View.js')],
 ]);
 
 /** In-flight (and resolved) loads, deduped by tag. Cleared on failure so a
