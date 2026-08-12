@@ -281,7 +281,8 @@ final class RagContextOps {
     if (request.getReturnFullDocuments()) {
       log.debug("RAG: return_full_documents=true, skipping chunk search");
       return buildFallbackWithVirtualChunks(
-          question, effectiveDocIds, topK, 0, "FULL_DOCUMENT_REQUESTED", "FULL_DOCUMENT");
+          question, effectiveDocIds, topK, 0, "FULL_DOCUMENT_REQUESTED", "FULL_DOCUMENT",
+          docLevelFilterFor(filters));
     }
 
     ChunkContextResult chunkContext =
@@ -313,7 +314,32 @@ final class RagContextOps {
     java.util.Set<String> fallbackDocIds =
         ChunkExclusionQuery.dropExcludedParents(effectiveDocIds, request.getExcludedChunksList());
     return buildFallbackWithVirtualChunks(
-        question, fallbackDocIds, topK, chunksFoundInSearch, fallbackReason, "FULLTEXT_FALLBACK");
+        question, fallbackDocIds, topK, chunksFoundInSearch, fallbackReason, "FULLTEXT_FALLBACK",
+        docLevelFilterFor(filters));
+  }
+
+  /**
+   * Tempdoc 821 §3-C2 — the doc-level filter for the two WHOLE-DOCUMENT legs
+   * ({@code FULL_DOCUMENT_REQUESTED} and {@code FULLTEXT_FALLBACK}). They were the only retrieval
+   * branches that applied no filter at all, so a scoped request whose chunk leg found nothing
+   * answered from OUTSIDE its scope, and {@code return_full_documents=true} — which skips the chunk
+   * leg entirely — made the collection scope a complete no-op.
+   *
+   * <p>Null-safe by construction: {@code null} filters mean the DEFAULT scope, and
+   * {@link QueryFilterBuilder#buildFilterQueryOnly} substitutes its empty-filter record, so these
+   * legs now also carry the 585-D4b agent-history {@code MUST_NOT} the chunk leg has carried since
+   * 811 D-1. That closure IS behavior-visible: an UNSCOPED request over explicitly-supplied
+   * agent-history docIds used to get their full text back here even though the chunk leg already
+   * refused them. The two legs agreeing is the point.
+   *
+   * <p>Also the union leg's filter ({@link #buildUnionCandidatesUnsafe}), which 811 D-1 had already
+   * built this exact way inline — the two share a reason to change (they are the doc-level filter
+   * for a whole-document candidate leg), so they are one expression rather than two.
+   */
+  private static org.apache.lucene.search.Query docLevelFilterFor(
+      LuceneRuntimeTypes.RuntimeSearchFilters filters) {
+    return QueryFilterBuilder.buildFilterQueryOnly(
+        filters == null ? null : withIncludeChunks(filters, false));
   }
 
   private RetrieveContextResponse buildChunkResponse(ChunkContextResult chunkContext) {
@@ -734,10 +760,7 @@ final class RagContextOps {
     // Tempdoc 811 D-1: with no user filters this leg used to run UNFILTERED — including over
     // agent-history parents. buildFilterQueryOnly(null) now yields the default scope (chunk
     // exclusion + agent-history MUST_NOT), which is what "no filters" has always meant.
-    org.apache.lucene.search.Query docFilter =
-        ragFilters == null
-            ? QueryFilterBuilder.buildFilterQueryOnly(null)
-            : QueryFilterBuilder.buildFilterQueryOnly(withIncludeChunks(ragFilters, false));
+    org.apache.lucene.search.Query docFilter = docLevelFilterFor(ragFilters);
     LuceneRuntimeTypes.SearchResult unionRaw =
         chunkSearchOps.searchDocLevelUnion(question, queryVector, docIds, limit, docFilter);
     if (unionRaw.hits().isEmpty()) {
@@ -901,6 +924,17 @@ final class RagContextOps {
    * chunks_found} and the empty-response shape for no gain. An ABSENT collection still yields the
    * pre-821 null-or-unchanged record, so the 811 D-1 default agent-history exclusion binds exactly
    * as before.
+   *
+   * <p>WHY that routing is safe, stated because it is NOT self-evident: a collection-only request
+   * stays on the chunk path only BECAUSE the Head's open-retrieval pre-search populates
+   * {@code doc_ids} before the request arrives ({@code RemoteDocumentService#preSearchForDocIds},
+   * scoped by the same collection since 821 §3-C2). Both hybrid chunk entry points
+   * ({@code ChunkSearchOps#searchChunksHybrid}) early-return EMPTY on an empty {@code docIds}, so
+   * under {@code useHybrid=true} a doc_ids-less request would retrieve nothing however well the
+   * collection filter is built — the BM25 leg's treat-empty-as-unscoped behaviour is what makes it
+   * look harmless in tests. If that pre-search is ever removed or left unscoped, this routing
+   * choice must be revisited, not just the filter. Pinned by
+   * {@code RagContextOpsHybridCollectionScopeTest}.
    */
   static LuceneRuntimeTypes.RuntimeSearchFilters buildRagFilters(
       io.justsearch.ipc.RetrieveContextRequest request) {
@@ -985,9 +1019,10 @@ final class RagContextOps {
    */
   private RetrieveContextResponse buildFallbackWithVirtualChunks(
       String question, Set<String> docIds, int topK,
-      long chunksFoundInSearch, String fallbackReason, String retrievalMode) {
+      long chunksFoundInSearch, String fallbackReason, String retrievalMode,
+      org.apache.lucene.search.Query docLevelFilter) {
     commitOps.maybeRefresh();
-    var result = chunkSearchOps.searchFullDocsForDocs(question, docIds, topK);
+    var result = chunkSearchOps.searchFullDocsForDocs(question, docIds, topK, docLevelFilter);
 
     if (result.hits().isEmpty()) {
       return RetrieveContextResponse.newBuilder()

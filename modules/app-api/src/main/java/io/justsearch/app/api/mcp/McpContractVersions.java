@@ -99,8 +99,14 @@ public final class McpContractVersions {
    * <p>0.6.0 (tempdoc 821 §3-C2, RAG collection scoping): the shared {@code filters} input schema
    * gains a {@code collection} string array, and {@code justsearch_answer} now honours it — the
    * scope previously reached only the search path, so an agent asking a question could not restrict
-   * retrieval to a collection. Purely additive (a new optional input property; omitting it is the
-   * unchanged default scope), hence a SemVer MINOR with no removal and no deprecation window.
+   * retrieval to a collection. Additive (a new optional input property; omitting it is the
+   * unchanged default scope), hence a SemVer MINOR with no removal and no deprecation window. One
+   * narrowing rides along and is NOT purely additive: declaring the property means the boundary
+   * validator now rejects a bare-string {@code collection} instead of coercing it. On
+   * {@code justsearch_answer} nothing could break (the key was neither declared nor read), but on
+   * {@code justsearch_search} the undeclared key WAS functional — {@code McpToolSurface#parseFilters}
+   * coerced a bare string via {@code toStringList} — so a client that discovered it out-of-band must
+   * now send an array.
    */
   public static final String TOOL_SURFACE_VERSION = "0.6.0";
 
