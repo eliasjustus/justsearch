@@ -332,21 +332,57 @@ The bundler signs **every** unsigned bundled PE — ~93 third-party (Tesseract +
 upstream pin bump** and re-host the signed archives, dropping per-release signings from ~100 to
 **~8**. Per pin bump:
 
-1. Run `scripts/release/sign-vendored-payload.ps1` (works across all credential modes — it invokes
-   `sign-windows.ps1` as a child): archive in → extract → sign every unsigned inner PE → deterministic
-   re-zip → sha256 out.
-2. Upload the resulting `-signed.zip` to the `justsearch-releases` repo and note its sha256.
-3. Commit the URL + sha256 pair into `packaging/signed-mirrors.v1.json` (`llama-cpu` and/or
-   `tesseract` entry). The build reads that file and applies the matching gradle override pair; the
-   pins are committed there — not in repo variables — so each bump is PR-reviewed supply-chain history.
-   The file ships EMPTY, so until a pair is committed the build is byte-identical to the default
-   pinned upstream download; a half-complete entry fails the build loudly.
+1. **Dispatch the `Sign Vendored Mirrors` workflow**
+   (`.github/workflows/sign-vendored-mirrors.yml` — `workflow_dispatch` only, because it *spends*
+   metered signings):
 
-**Tesseract has two extra obligations:**
-- Its manifest (`packaging/runtime/tesseract-windows.v1.json`) also pins **per-file** SHAs in
-  `files[]`, which signed inner PEs invalidate. There is **no generator** — regenerate those
-  hashes by hand-editing the manifest; the build fails with an explicit regeneration instruction if
-  an override is active and per-file hashes mismatch.
+   ```bash
+   gh workflow run sign-vendored-mirrors.yml --ref main -f signLlama=true -f signTesseract=true
+   ```
+
+   Both inputs default to `true`; set one to `false` to re-sign a single payload when only one pin
+   moved. The workflow reads the pins from their existing authorities rather than restating them
+   (llama from `modules/ui/build.gradle.kts`, Tesseract from
+   `packaging/runtime/tesseract-windows.v1.json`), sha256-verifies each upstream download before
+   signing anything, repacks the Tesseract self-extracting NSIS installer into a layout-preserving
+   zip, and runs `scripts/release/sign-vendored-payload.ps1` on each archive (extract → sign every
+   unsigned inner PE → deterministic re-zip → sha256 out). Budget ~9-12 s per PE: a full two-payload
+   run is ~20 min of signing. The same script can be run locally with the
+   `JUSTSEARCH_CODESIGN_*` env set, if you would rather not go through CI.
+2. **Download the run's `signed-vendored-mirrors` artifact** (`gh run download <run-id>`): the two
+   `-signed.zip` files and their `.sha256` sidecars. The sidecar lines are also printed near the end
+   of the run log, ready to paste.
+3. **Upload both `-signed.zip` files to the `justsearch-releases` repo** and note each URL.
+   (Tesseract has a licensing obligation here — see below.)
+4. **Regenerate the Tesseract per-file manifest pins** (Tesseract only). The override is
+   *archive*-level, but `packaging/runtime/tesseract-windows.v1.json` also pins each staged file by
+   sha256 + size in `files[]`, and signing rewrites those bytes:
+
+   ```bash
+   node scripts/release/regen-tesseract-manifest.mjs <tesseract-...-signed.zip>
+   # verify instead of write:
+   node scripts/release/regen-tesseract-manifest.mjs <tesseract-...-signed.zip> --check
+   ```
+
+   It rewrites only the affected `sha256`/`sizeBytes` values in place (key order and formatting are
+   preserved) and leaves the manifest's `sourceUrl`/`sourceSha256` — the *upstream* archive pin —
+   alone. Entries with their own `sourceUrl` (today `tessdata/eng.traineddata`) are skipped: they
+   are downloaded separately and copied over the extraction, so signing cannot have touched them.
+   Skipping this step is not silent — `verifyTesseractRuntime` fails with a pointer back to this
+   command.
+5. **Commit the URL + sha256 pairs into `packaging/signed-mirrors.v1.json`** (`llama-cpu` and/or
+   `tesseract` entry), together with the regenerated manifest, as one PR. The build reads that file
+   and applies the matching gradle override pair; the pins are committed there — not in repo
+   variables — so each bump is PR-reviewed supply-chain history. The file ships EMPTY, so until a
+   pair is committed the build is byte-identical to the default pinned upstream download; a
+   half-complete entry (url without sha256, or vice versa) fails the build loudly before it starts.
+
+**Notes:**
+- The Tesseract mirror is a **zip** even though the manifest's `sourceUrl` names a `.exe`: the build
+  saves whatever that URL returns under a fixed `...-setup-<ver>.exe` filename and runs `7z x` on
+  it, and 7-Zip picks its handler by content signature, so a zip under that name extracts to the
+  same layout. What must be preserved is the *extracted layout* — the `files[]` paths resolve
+  against the extraction root.
 - Hosting a signed Tesseract mirror on `justsearch-releases` **redistributes GPL-2.0-obligated
   binaries** from that repo — that repo's `THIRD_PARTY_NOTICES.txt` needs the corresponding GPL
   notice / source-offer treatment. **Flagged as a required step; do it before hosting** (not covered
