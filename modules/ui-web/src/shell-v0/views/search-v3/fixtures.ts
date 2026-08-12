@@ -7,22 +7,94 @@
  * measure is the geometry and nothing else. Slice 2+ replaces these with the shared authorities.
  */
 
-/** Sidebar group label + rows — six, enough to see the two-level inset and the hover pill. */
-export const SIDEBAR_GROUP_LABEL = 'Recent';
+/**
+ * The row's status, as the donor's 3-colour budget spends it: colour is reserved for act-now,
+ * in-motion and broken. Every other row is `resting` and spends none of it.
+ */
+export type Sv3RowStatus = 'resting' | 'in-motion' | 'act-now' | 'broken';
 
 export interface Sv3SidebarRow {
   readonly id: string;
   readonly label: string;
+  readonly status: Sv3RowStatus;
+  /** Shown in the status slot when the row spends no colour — a timestamp, tabular. */
+  readonly meta: string;
+  readonly active?: boolean;
+  readonly selected?: boolean;
+  readonly receded?: boolean;
+  readonly unread?: boolean;
+  /** Orthogonal to the fill ladder: the row's work is running, so the row dims until hovered. */
+  readonly inFlight?: boolean;
 }
 
-export const SIDEBAR_ROWS: readonly Sv3SidebarRow[] = [
-  { id: 'r1', label: 'Northfield supplier agreement' },
-  { id: 'r2', label: 'Q2 vendor review notes' },
-  { id: 'r3', label: 'Revised payment terms' },
-  { id: 'r4', label: 'Warehouse lease — appendix C' },
-  { id: 'r5', label: 'Insurance renewal correspondence' },
-  { id: 'r6', label: 'Freight cost reconciliation' },
+export interface Sv3SidebarGroup {
+  readonly id: string;
+  readonly label: string;
+  readonly rows: readonly Sv3SidebarRow[];
+}
+
+/**
+ * Ten rows over three groups, covering each visual state once: active, selected, in-motion (with
+ * in-flight dim), act-now, broken, unread, plain rest, and a receded tail with one title long
+ * enough to prove the single-line ellipsis. The order is FIXED — activity never reorders the list.
+ */
+export const SIDEBAR_GROUPS: readonly Sv3SidebarGroup[] = [
+  {
+    id: 'g-pinned',
+    label: 'Pinned',
+    rows: [
+      {
+        id: 'r1',
+        label: 'Northfield supplier agreement',
+        status: 'resting',
+        meta: '2m',
+        active: true,
+      },
+      { id: 'r2', label: 'Vendor risk register', status: 'resting', meta: '18m', selected: true },
+    ],
+  },
+  {
+    id: 'g-today',
+    label: 'Today',
+    rows: [
+      { id: 'r3', label: 'Q2 vendor review notes', status: 'in-motion', meta: '', inFlight: true },
+      { id: 'r4', label: 'Revised payment terms', status: 'act-now', meta: '', unread: true },
+      { id: 'r5', label: 'Warehouse lease — appendix C', status: 'broken', meta: '' },
+      { id: 'r6', label: 'Freight cost reconciliation', status: 'resting', meta: '1h', unread: true },
+      { id: 'r7', label: 'Insurance renewal correspondence', status: 'resting', meta: '4h' },
+    ],
+  },
+  {
+    id: 'g-earlier',
+    label: 'Earlier',
+    rows: [
+      {
+        id: 'r8',
+        label: 'Supplier onboarding checklist',
+        status: 'resting',
+        meta: 'Mar 4',
+        receded: true,
+      },
+      {
+        id: 'r9',
+        label: 'Site inspection photo index',
+        status: 'resting',
+        meta: 'Feb 27',
+        receded: true,
+      },
+      {
+        id: 'r10',
+        label: 'Annual supplier scorecard and remediation follow-up notes',
+        status: 'resting',
+        meta: 'Feb 12',
+        receded: true,
+      },
+    ],
+  },
 ];
+
+/** Every row in render order — the flat projection the sidebar's tests count against. */
+export const SIDEBAR_ROWS: readonly Sv3SidebarRow[] = SIDEBAR_GROUPS.flatMap((g) => g.rows);
 
 export const MAIN_HEADING = 'Results';
 

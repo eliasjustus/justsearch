@@ -128,6 +128,7 @@ export type ComponentTag =
   | 'jf-surface-tabs'
   | 'jf-sv3-composer'
   | 'jf-sv3-main'
+  | 'jf-sv3-session-row'
   | 'jf-sv3-sidebar'
   | 'jf-sv3-topbar'
   | 'jf-sv3-window'
@@ -267,6 +268,7 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-surface-tabs',
   'jf-sv3-composer',
   'jf-sv3-main',
+  'jf-sv3-session-row',
   'jf-sv3-sidebar',
   'jf-sv3-topbar',
   'jf-sv3-window',

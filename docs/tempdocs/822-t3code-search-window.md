@@ -136,3 +136,20 @@ self-judge geometry (BlindTest ~58.6%) — verification must be measurement, not
   cutover-scope question, not this arc's. Observation filed: deeplink hash not honored
   on backend-less boot (URLSource boot read loses the default-surface race; popstate
   re-dispatch works — likely affects search-v2 too).
+- 2026-08-12 — **Slice 2 implemented + verified** (fresh opus worker + live measurement,
+  zero remediation rounds). `jf-sv3-session-row` per donor §6.1/§6.2: 32px rows,
+  8+10 two-level inset (fill starts at 8, measured), --control-radius, glyph ladder
+  (rest .4 grayscale → full on hover/active), fill precedence active>selected>hover with
+  :not() guards (mutation-probed tests), 3-color status budget (act-now --success /
+  in-motion --warning+duty-cycled ping / broken --destructive; resting = timestamp, no
+  dot — donor's null-gray dot dropped per charter law 5), content ladder (unread w500
+  full fg / broken 95% / normal 90% / receded 75%+w400), single-line ellipsis,
+  content-visibility virtualization, aria-current on the one active row, 3×32px group
+  labels, static order. 4494 tests green; kernel gates pass; live-measured all spec
+  values exact (10 rows, 1 ping, 1 aria-current, hover fill appears). Worker corrected
+  the charter's slice-2 shorthand: 6%/9% fills are the command palette's pair (§3.3),
+  not the sidebar's — sidebar uses --sidebar-row-* tokens (§6.1). OWNER CALL PENDING:
+  donor dark mode makes hover/active/selected fills identical (all white@4%),
+  distinguishing states by content only — copied verbatim; diverging is one line.
+  Known cosmetic: fixture glyphs render as empty ghost squares (no real icons in
+  fixtures); resolves when real data lands.

@@ -14,6 +14,7 @@ import { sv3Shared } from './sv3-shared-styles.js';
 import { SearchV3View } from './SearchV3View.js';
 import { Sv3Topbar } from './Sv3Topbar.js';
 import { Sv3Sidebar } from './Sv3Sidebar.js';
+import { Sv3SessionRow } from './Sv3SessionRow.js';
 import { Sv3Main } from './Sv3Main.js';
 import { Sv3Composer } from './Sv3Composer.js';
 
@@ -138,12 +139,23 @@ describe('every region reads the tokens rather than re-hardcoding them', () => {
   });
 
   it('the sidebar row reads the control radius and the second-level inset', () => {
-    const styles = styleTextOf(Sv3Sidebar);
+    const styles = styleTextOf(Sv3SessionRow);
     expect(styles).toContain('border-radius: var(--control-radius)');
     expect(styles).toContain('padding-inline: var(--sidebar-row-content-inset)');
     expect(styles).toContain('background: var(--sidebar-row-hover)');
+    expect(styles).toContain('gap: var(--sidebar-control-gap)');
     // ...and the panel's own inset is the first level, so the fill reads as a pill.
-    expect(styles).toContain('padding: var(--sidebar-content-inset)');
+    expect(styleTextOf(Sv3Sidebar)).toContain('padding: var(--sidebar-content-inset)');
+  });
+
+  it('the group label row is the donor ladder read through tokens', () => {
+    const styles = styleTextOf(Sv3Sidebar);
+    const rule = styles.slice(styles.indexOf('.group-label {'), styles.indexOf('.groups {'));
+    expect(rule).toContain('height: var(--space-8)');
+    expect(rule).toContain('padding-inline: var(--space-2)');
+    expect(rule).toContain('font-size: var(--font-size-sv3-xs)');
+    expect(rule).toContain('font-weight: 500');
+    expect(rule).toContain('color: var(--sidebar-muted-foreground)');
   });
 
   it('the window sizes the sidebar from the token and does not let it flex', () => {
@@ -205,6 +217,26 @@ describe('the sized regions render at exactly their token, not the token plus tr
     expect(host).not.toContain('padding');
   });
 
+  it('the session row is 32px total, with both insets counting inward', () => {
+    const styles = styleTextOf(Sv3SessionRow);
+    const start = styles.indexOf('button.row {');
+    const rule = styles.slice(start, styles.indexOf('}', start));
+    expect(rule).toContain('height: var(--space-8)');
+    expect(rule).toContain('padding-inline: var(--sidebar-row-content-inset)');
+    // Anything outside the box would push the row past the 32px the ladder claims.
+    expect(rule).not.toContain('margin');
+    expect(rule).not.toContain('min-height');
+    expect(rule).not.toContain('border-width');
+    expect(rule).toContain('border: 0');
+    // The intrinsic size a skipped row reports must equal the size it actually renders at.
+    expect(rule).toContain('contain-intrinsic-size: auto var(--space-8)');
+    // The row host adds nothing around the button.
+    const host = hostRuleOf(styles);
+    expect(host).toContain('display: block');
+    expect(host).not.toContain('padding');
+    expect(host).not.toContain('margin');
+  });
+
   it('the topbar keeps its rule inside the 52px band', () => {
     const host = hostRuleOf(styleTextOf(Sv3Topbar));
     expect(host).toContain('height: var(--workspace-topbar-height)');
@@ -212,6 +244,113 @@ describe('the sized regions render at exactly their token, not the token plus tr
     expect(host).not.toContain('margin');
     // A max-height below the declared height would shrink the band instead.
     expect(host).not.toContain('max-height');
+  });
+});
+
+/**
+ * Donor §6.1/§6.2, as mechanism rather than appearance. happy-dom runs no cascade over adopted
+ * sheets, so these pin the SELECTORS that decide the outcome: a fill that wins because it was
+ * declared later is one edit away from stacking two fills, while a fill guarded by `:not()` cannot.
+ */
+describe('the session row spends one fill and three colours, by construction', () => {
+  const styles = styleTextOf(Sv3SessionRow);
+  /** The declaration block of the first rule whose selector starts with `sel`. */
+  const ruleFor = (sel: string): string => {
+    const at = styles.indexOf(sel);
+    expect(at, `no rule for ${sel}`).toBeGreaterThan(-1);
+    return styles.slice(at, styles.indexOf('}', at));
+  };
+
+  it('ranks active over selected over hover, each guarded out of the one above it', () => {
+    expect(ruleFor(':host([active]) button.row')).toContain(
+      'background: var(--sidebar-row-active)',
+    );
+    // Selected only applies where active does not — precedence lives in the selector.
+    expect(ruleFor(':host([selected]:not([active])) button.row')).toContain(
+      'background: var(--sidebar-row-selected)',
+    );
+    // ...and hover only where NEITHER claimed the row, so hover+selected cannot show two fills.
+    expect(ruleFor(':host(:not([active]):not([selected])) button.row:hover')).toContain(
+      'background: var(--sidebar-row-hover)',
+    );
+
+    // No hover rule anywhere in the row is UNguarded: an unguarded one would paint over the
+    // active fill the moment the pointer crossed the claimed row.
+    const hoverSelectors = [...styles.matchAll(/[^\n]*button\.row:hover[^\n]*/g)].map((m) => m[0]);
+    expect(hoverSelectors.length).toBeGreaterThanOrEqual(2);
+    for (const selector of hoverSelectors) {
+      expect(selector, `unguarded hover rule: ${selector.trim()}`).toContain(':not(');
+    }
+  });
+
+  it('keeps the in-flight dim orthogonal to the fill ladder and off the claimed row', () => {
+    expect(ruleFor(':host([inflight]:not([active]):not([selected])) button.row {')).toContain(
+      'opacity: 0.7',
+    );
+    expect(ruleFor(':host([inflight]:not([active]):not([selected])) button.row:hover')).toContain(
+      'opacity: 1',
+    );
+  });
+
+  it('spends colour on exactly the three status states, through semantic tokens', () => {
+    expect(ruleFor(":host([status='act-now']) .dot")).toContain('background: var(--success)');
+    expect(ruleFor(":host([status='in-motion']) .dot")).toContain('background: var(--warning)');
+    expect(ruleFor(":host([status='broken']) .dot")).toContain('background: var(--destructive)');
+    // A fourth status colour, or a literal instead of a token, is what this forbids.
+    expect(styles).not.toContain("[status='resting']");
+    expect(styles).not.toMatch(/#[0-9a-fA-F]{3}/);
+    for (const literal of ['rgb(', 'hsl(', 'oklch(']) {
+      expect(styles).not.toContain(literal);
+    }
+  });
+
+  it('carries emphasis as foreground alpha, never as a second hue', () => {
+    expect(ruleFor('.row-label {')).toContain(
+      'color: color-mix(in srgb, var(--foreground) 90%, transparent)',
+    );
+    expect(ruleFor(':host([unread]) .row-label')).toContain('color: var(--foreground)');
+    expect(ruleFor(":host([status='broken']) .row-label")).toContain(
+      'color: color-mix(in srgb, var(--foreground) 95%, transparent)',
+    );
+    expect(ruleFor(':host([receded]:not([active]):not([selected])) .row-label')).toContain(
+      'color: color-mix(in srgb, var(--sidebar-muted-foreground) 75%, transparent)',
+    );
+    // Truncation is the default for a row title (density §7).
+    expect(ruleFor('.row-label {')).toContain('text-overflow: ellipsis');
+    expect(ruleFor('.row-label {')).toContain('white-space: nowrap');
+  });
+
+  it('sizes the status dot and its ping off the spacing ladder', () => {
+    expect(ruleFor('.dot-box {')).toContain('inline-size: var(--space-3)');
+    expect(ruleFor('.dot {')).toContain('inline-size: var(--space-2)');
+    expect(ruleFor(":host([status='in-motion']) .ping")).toContain(
+      'background: color-mix(in srgb, var(--warning) 60%, transparent)',
+    );
+    // The slot reserves a floor so a row does not jitter when its contents change width.
+    expect(ruleFor('.status-slot {')).toContain('min-inline-size: var(--space-8)');
+  });
+});
+
+/**
+ * Keyframes resolve per shadow root: an `animation` naming a keyframe that is not in THIS
+ * component's own adopted sheets fails silently — the element simply never moves. So every
+ * animation the row can run is checked against the sheets the row actually adopts.
+ */
+describe('every animation the row can run resolves inside its own adopted sheets', () => {
+  const adopted = (Sv3SessionRow.styles as ReadonlyArray<{ cssText: string }>)
+    .map((s) => s.cssText)
+    .join('\n');
+
+  it('names only keyframes declared in the sheets the component adopts', () => {
+    const classes = [...adopted.matchAll(/sv3-anim-([a-z-]+)/g)].map((m) => m[1]);
+    // The row runs the in-motion ping; if it ever runs more, each one is checked here too.
+    expect(classes).toContain('status-ping');
+    const shorthand = [...adopted.matchAll(/animation:\s*([a-z-]+)\s/g)].map((m) => m[1]);
+    expect(shorthand.length).toBeGreaterThan(0);
+    for (const name of shorthand) {
+      if (name === 'none') continue;
+      expect(adopted).toContain(`@keyframes ${name}`);
+    }
   });
 });
 

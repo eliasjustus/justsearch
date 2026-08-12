@@ -9,14 +9,18 @@
  * and reads as a pill, not as a full-bleed band — which is the whole point of the second level.
  *
  * One surface model for every row: surface encodes INTERACTION (hover, selection), content encodes
- * status. Slice 2 specs the row's content; slice 1 fixes only its geometry.
+ * status — the row itself is <jf-sv3-session-row>; this panel owns only the grouping.
+ *
+ * Groups are VISUAL only and their order is fixed: activity never reorders the list, so a row does
+ * not move out from under the pointer while you are reading it.
  *
  * Side-effect registers <jf-sv3-sidebar>.
  */
 import { html, css, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
 import { sv3Shared } from './sv3-shared-styles.js';
-import { SIDEBAR_GROUP_LABEL, SIDEBAR_ROWS } from './fixtures.js';
+import './Sv3SessionRow.js';
+import { SIDEBAR_GROUPS } from './fixtures.js';
 
 export class Sv3Sidebar extends JfElement {
   static styles = [
@@ -42,62 +46,45 @@ export class Sv3Sidebar extends JfElement {
         font-weight: 500;
         color: var(--sidebar-muted-foreground);
       }
+      .groups {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
       .rows {
         display: flex;
         flex-direction: column;
         gap: var(--space-1);
         min-height: 0;
       }
-      button.row {
-        display: flex;
-        align-items: center;
-        gap: var(--sidebar-control-gap);
-        width: 100%;
-        height: var(--space-8);
-        padding-inline: var(--sidebar-row-content-inset);
-        padding-block: 0.375rem;
-        border: 0;
-        border-radius: var(--control-radius);
-        background: transparent;
-        color: var(--sidebar-foreground);
-        font-family: inherit;
-        font-size: var(--font-size-sv3-sm);
-        font-weight: 400;
-        text-align: left;
-        cursor: pointer;
-        overflow: hidden;
-        transition: background-color var(--duration-sv3-micro) var(--ease-sv3-enter);
-      }
-      button.row:hover {
-        background: var(--sidebar-row-hover);
-      }
-      button.row:focus-visible {
-        outline: 2px solid var(--ring);
-        outline-offset: -2px;
-      }
-      .row-label {
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      @media (prefers-reduced-motion: reduce) {
-        button.row {
-          transition: none;
-        }
-      }
     `,
   ];
 
   render(): TemplateResult {
     return html`
-      <div class="group-label" data-testid="sv3-sidebar-group-label">${SIDEBAR_GROUP_LABEL}</div>
-      <div class="rows">
-        ${SIDEBAR_ROWS.map(
-          (row) => html`
-            <button type="button" class="row" data-testid="sv3-sidebar-row">
-              <span class="row-label">${row.label}</span>
-            </button>
+      <div class="groups">
+        ${SIDEBAR_GROUPS.map(
+          (group) => html`
+            <div class="group" data-testid="sv3-sidebar-group">
+              <div class="group-label" data-testid="sv3-sidebar-group-label">${group.label}</div>
+              <div class="rows">
+                ${group.rows.map(
+                  (row) => html`
+                    <jf-sv3-session-row
+                      data-testid="sv3-sidebar-row"
+                      .label=${row.label}
+                      .meta=${row.meta}
+                      status=${row.status}
+                      ?active=${row.active ?? false}
+                      ?selected=${row.selected ?? false}
+                      ?receded=${row.receded ?? false}
+                      ?unread=${row.unread ?? false}
+                      ?inflight=${row.inFlight ?? false}
+                    ></jf-sv3-session-row>
+                  `,
+                )}
+              </div>
+            </div>
           `,
         )}
       </div>
