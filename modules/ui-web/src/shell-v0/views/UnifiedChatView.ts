@@ -2331,7 +2331,7 @@ export class UnifiedChatView extends JfElement {
           <button
             class="new-chat-btn"
             ?disabled=${this.thread.length === 0}
-            aria-disabled=${this.thread.length === 0 ? 'true' : 'false'}
+            title=${this.thread.length === 0 ? 'Already a new chat' : nothing}
             @click=${() => this.newConversation()}
           >New chat</button>
           ${this.thread.length > 0

@@ -566,7 +566,7 @@ describe('UnifiedChatView "New chat" control (tempdoc 821 §4)', () => {
     const btn = newChatButton(view);
     expect(btn).not.toBeNull();
     expect(btn!.disabled).toBe(true);
-    expect(btn!.getAttribute('aria-disabled')).toBe('true');
+    expect(btn!.title).toBe('Already a new chat');
   });
 
   it('renders New chat ENABLED once the thread has content', async () => {
@@ -581,7 +581,7 @@ describe('UnifiedChatView "New chat" control (tempdoc 821 §4)', () => {
     const btn = newChatButton(view);
     expect(btn).not.toBeNull();
     expect(btn!.disabled).toBe(false);
-    expect(btn!.getAttribute('aria-disabled')).toBe('false');
+    expect(btn!.title).toBe('');
   });
 });
 
