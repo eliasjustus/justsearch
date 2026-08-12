@@ -1,4 +1,13 @@
 {
   "$comment": "Signed-mirror pins for vendored installer payloads (tempdoc 760/772 §K sign-once). Each entry pairs a signed, re-hosted mirror URL with its sha256 for one vendored payload. Committed HERE (not in repo variables) so every pin change is PR-reviewed history, preserving the supply-chain audit trail the hardcoded gradle pins already provide. build-installer.yml reads this file and, for each COMPLETE entry, exports the matching gradle override property pair (ORG_GRADLE_PROJECT_<name>) for the packaging build; an absent entry or an empty 'mirrors' object sets nothing, so the build is byte-identical to the default pinned upstream download. A HALF-complete entry (url without sha256, or vice versa) fails the build loudly BEFORE it starts, mirroring the all-or-nothing pin enforcement in modules/ui/build.gradle.kts (a mirror URL paired with the default hash can never verify; the default URL paired with a mirror hash would reject the genuine pinned artifact). Entry shape -> gradle override pair: \"llama-cpu\": {\"url\": \"https://.../llama-<ver>-...-signed.zip\", \"sha256\": \"<hex>\"} -> llamaPrebuiltUrlOverride / llamaPrebuiltSha256Override; \"tesseract\": {\"url\": \"https://.../tesseract-<ver>-...-signed.zip\", \"sha256\": \"<hex>\"} -> tesseractSourceUrlOverride / tesseractSourceSha256Override. Ships EMPTY; populate per pin bump per the per-pin-bump procedure in docs/how-to/cut-a-release.md.",
-  "mirrors": {}
+  "mirrors": {
+    "llama-cpu": {
+      "url": "https://github.com/eliasjustus/justsearch-releases/releases/download/signed-mirrors-v1/llama-b8571-bin-win-cpu-x64-signed.zip",
+      "sha256": "2706D60E70B5F2F5C2DF8FB4483073B8928739BB60922E475D2F19822DFA518E"
+    },
+    "tesseract": {
+      "url": "https://github.com/eliasjustus/justsearch-releases/releases/download/signed-mirrors-v1/tesseract-ocr-w64-setup-5.5.0.20241111-signed.zip",
+      "sha256": "952D0F9F283F2D4CDF7F01C955AB6C92439BE283F4224F65CEFBC12FAD2E13E8"
+    }
+  }
 }
