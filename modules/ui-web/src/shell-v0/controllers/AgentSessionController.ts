@@ -174,6 +174,11 @@ export interface SessionListItem {
  * `s.startedAtEpochMs` truthiness). This normalizer derives the FE shape from the real backend
  * field names while still accepting `startedAtEpochMs`/`status` directly, so a payload already in
  * the FE shape (tests, a future/alternate backend) round-trips unchanged.
+ *
+ * Durable fix, out of scope here: `api/domains/agent.ts:172`'s `listAgentSessions()` already
+ * fetches this same endpoint through the generated, Zod-validated `agentSessionsResponseSchema`
+ * and returns the correctly-typed `AgentSessionSummary[]` — nothing calls it today. Wiring
+ * `loadSessions()` to that function would retire this shim entirely instead of translating around it.
  */
 function toSessionListItem(raw: Record<string, unknown>): SessionListItem {
   const startedAtEpochMs =
