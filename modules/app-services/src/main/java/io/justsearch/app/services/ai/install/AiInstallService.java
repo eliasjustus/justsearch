@@ -154,6 +154,23 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       Map::of;
 
   /**
+   * How long one functional-status projection is reused. The FE polls {@code GET
+   * /api/ai/install/status} at ~1 Hz for the whole length of an install, and the projection is not
+   * free — it resolves four encoder rows, two of which read the Worker's policy snapshot. Capability
+   * state changes on the scale of a runtime restart, so a 5 s window costs the surface nothing it
+   * can perceive and takes the fan-out off the poll path.
+   */
+  private static final long FUNCTIONAL_STATUS_TTL_NANOS = TimeUnit.SECONDS.toNanos(5);
+
+  /** One projection plus when it was taken; null until the first read. */
+  private record CachedFunctionalStatus(Map<String, String> value, long atNanos) {}
+
+  private volatile CachedFunctionalStatus functionalStatusCache;
+
+  /** Monotonic, so the TTL cannot be skewed by a wall-clock adjustment. */
+  private volatile java.util.function.LongSupplier nanoClock = System::nanoTime;
+
+  /**
    * Late-binds the runtime's observed per-package capability status. Called by {@code ServicePhase}
    * after {@code RuntimeActivationService} exists — it takes THIS service as a constructor
    * argument, so the dependency can only run in this direction.
@@ -161,6 +178,12 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   public void setFunctionalStatusSource(
       java.util.function.Supplier<Map<String, String>> source) {
     this.functionalStatusSource = source == null ? Map::of : source;
+    this.functionalStatusCache = null;
+  }
+
+  /** Test seam: ages the functional-status cache without spending five real seconds. */
+  void setNanoClockForTest(java.util.function.LongSupplier clock) {
+    this.nanoClock = clock == null ? System::nanoTime : clock;
   }
 
   public AiInstallService(
@@ -281,15 +304,27 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   /**
    * The runtime's observed per-package capability status, or an empty map when nothing is bound or
    * the source throws. Never lets a diagnostic projection break a status read.
+   *
+   * <p>Reused for {@link #FUNCTIONAL_STATUS_TTL_NANOS} so a 1 Hz install poll cannot fan the
+   * projection out per read. A failed projection is cached too — a throwing source is exactly the
+   * case where repeating it every poll costs the most and buys the least.
    */
   private Map<String, String> observedFunctionalStatus() {
+    long now = nanoClock.getAsLong();
+    CachedFunctionalStatus cached = functionalStatusCache;
+    if (cached != null && now - cached.atNanos() < FUNCTIONAL_STATUS_TTL_NANOS) {
+      return cached.value();
+    }
+    Map<String, String> fresh;
     try {
       Map<String, String> observed = functionalStatusSource.get();
-      return observed == null ? Map.of() : observed;
+      fresh = observed == null ? Map.of() : observed;
     } catch (Exception e) {
       log.debug("AiInstall functional-status projection unavailable (best-effort): {}", e.toString());
-      return Map.of();
+      fresh = Map.of();
     }
+    functionalStatusCache = new CachedFunctionalStatus(fresh, now);
+    return fresh;
   }
 
   /**
@@ -912,12 +947,38 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     // clean install. The download loop terminalizes every package today, so this is defense in depth.
     boolean fullyInstalled = countPackagesByState("installed") == totalCount;
 
-    if (failedCount > 0) {
-      long installed = totalCount - failedCount - skippedCount;
+    // The message must come from the SAME authority as installedFully, or the two contradict each
+    // other on the round-16 wedge: a package whose only casualty was an optional file is "failed" in
+    // the run's bookkeeping while disk says the install is complete. Counting it as failed in the
+    // message would deny the flag printed beside it. When disk cannot answer, the bookkeeping is the
+    // only authority for both, so they still agree.
+    long messageFailedCount = failedCount;
+    boolean optionalFilesMissing = false;
+    if (diskTruth != null) {
+      List<String> requiredGapPackages = diskTruth.packagesWithMissingRequiredFiles();
+      messageFailedCount =
+          status.packages.stream()
+              .filter(ps -> "failed".equals(ps.state))
+              .filter(ps -> requiredGapPackages.contains(ps.packageId))
+              .count();
+      optionalFilesMissing = !diskTruth.optionalGaps().isEmpty();
+    }
+    String optionalNote = optionalFilesMissing ? "; optional files missing" : "";
+
+    if (messageFailedCount > 0) {
+      long installed = totalCount - messageFailedCount - skippedCount;
       updateState(
           "completed",
           "done",
-          "AI installed (" + installed + "/" + totalCount + " packages; " + failedCount + " failed).");
+          "AI installed ("
+              + installed
+              + "/"
+              + totalCount
+              + " packages; "
+              + messageFailedCount
+              + " failed"
+              + optionalNote
+              + ").");
     } else if (skippedCount > 0) {
       // Partial-success path: state is still "completed" (Install AI ran to
       // termination), but installedFully is false so the Brain UI can show
@@ -930,6 +991,13 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
           "completed",
           "done",
           "Installed with limitations: " + skippedLabels + " skipped on this hardware.");
+    } else if (optionalFilesMissing) {
+      // Every package disk considers complete, and the gap is named rather than dressed up as a
+      // failed package (the phrasing that sat next to installedFully: true in round 16).
+      updateState(
+          "completed",
+          "done",
+          "AI installed (" + totalCount + "/" + totalCount + " packages" + optionalNote + ").");
     } else {
       updateState("completed", "done", "AI installed.");
     }

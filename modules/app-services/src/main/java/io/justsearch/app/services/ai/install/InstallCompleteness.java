@@ -201,6 +201,23 @@ public record InstallCompleteness(
   }
 
   /**
+   * Package ids (dedup, plan order) with at least one missing REQUIRED file — the packages disk
+   * considers genuinely incomplete.
+   *
+   * <p>The per-package form of {@link #repairNeeded()}, so the completion MESSAGE can be derived
+   * from the same authority as {@code installedFully} instead of from the run's own bookkeeping. A
+   * package whose only casualty was optional is absent here, and must not be counted as failed in a
+   * message that sits next to {@code installedFully: true}.
+   */
+  public List<String> packagesWithMissingRequiredFiles() {
+    Set<String> ids = new LinkedHashSet<>();
+    for (FileState f : missing()) {
+      ids.add(f.packageId());
+    }
+    return List.copyOf(ids);
+  }
+
+  /**
    * Optional files the registry declares that are absent from disk (tempdoc 824 §3.3b). Surfaced,
    * never alarming: no truth claim here counts them, and no repair prompt is owed for them.
    */

@@ -87,7 +87,9 @@ final class AiInstallServiceCompletionTruthTest {
 
   /**
    * Test 7 — the round-16 wedge. The only casualty is an OPTIONAL file, so the run's own package
-   * bookkeeping ("splade failed") must not become "a required component is missing".
+   * bookkeeping ("splade failed") must not become "a required component is missing" — and the
+   * MESSAGE printed beside {@code installedFully: true} must not contradict it by counting that
+   * package as failed. Flag and message have to come from the same authority or one of them lies.
    */
   @Test
   @DisplayName("round-16 wedge: an optional-only casualty reads installed, not repairable")
@@ -105,6 +107,13 @@ final class AiInstallServiceCompletionTruthTest {
         status.repairNeeded,
         "nothing any consumer requires is missing — offering Repair here is the round-16 defect");
     assertTrue(status.installedFully, "the install IS complete on every file that matters");
+    assertFalse(
+        status.message.contains("failed"),
+        "no package may be counted as failed beside installedFully: true — " + status.message);
+    assertTrue(status.message.contains("2/2 packages"), status.message);
+    assertTrue(
+        status.message.contains("optional files missing"),
+        "the gap is phrased, not hidden: " + status.message);
     assertEquals(1, status.optionalGaps.size(), "…and the gap is still named");
     assertEquals("splade", status.optionalGaps.get(0).packageId);
     assertEquals("config.json", status.optionalGaps.get(0).fileName);
