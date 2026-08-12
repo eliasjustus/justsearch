@@ -40,10 +40,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -955,7 +957,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     long messageFailedCount = failedCount;
     boolean optionalFilesMissing = false;
     if (diskTruth != null) {
-      List<String> requiredGapPackages = diskTruth.packagesWithMissingRequiredFiles();
+      // A HashSet, not the returned immutable List: this runs on the terminal-state path, and
+      // List.copyOf(...).contains(null) THROWS rather than answering false.
+      Set<String> requiredGapPackages = new HashSet<>(diskTruth.packagesWithMissingRequiredFiles());
       messageFailedCount =
           status.packages.stream()
               .filter(ps -> "failed".equals(ps.state))
