@@ -279,8 +279,9 @@ final class KnowledgeSearchEngine {
    * missing tail, so its returned order is always a full permutation of {@code 0..window-1}. The
    * default (judge-blend-off) branch has no such guarantee — it applies the Worker's
    * {@code sorted_indices} verbatim, and a list shorter than the window silently dropped the
-   * uncovered candidates from the result set entirely. This helper is the shared seam that makes
-   * both branches equally defensive.
+   * uncovered candidates from the result set entirely. The LambdaMART branch had the same gap
+   * against its own {@link io.justsearch.app.api.gpl.RerankerService} contract. This helper is the
+   * shared seam that makes all three reorder sites equally defensive.
    *
    * <p>The given order is authoritative for the window positions it covers; any in-window position
    * it omits is appended after that prefix in original (pre-rerank) order, and candidates beyond
@@ -289,6 +290,10 @@ final class KnowledgeSearchEngine {
    * names is already placed by one of the two passes. A well-formed order (a permutation already
    * covering the window, which includes every judge-blend output) reproduces the pre-821 result
    * element for element.
+   *
+   * <p>A candidate recovered by the fill pass carries no CROSS_ENCODER HitStage even though the
+   * response reports the cross-encoder as applied — correct, since the reranker never judged it,
+   * but a trace-coverage consumer should not read stage presence as "every hit was scored".
    *
    * @param results the pre-rerank candidates, in pre-rerank order.
    * @param order window positions in their reranked order; may be short, empty, or malformed.
@@ -898,9 +903,12 @@ final class KnowledgeSearchEngine {
         }
         List<Integer> order = lambdaMartReranker.rerank(sparseScores, vectors, spladeScores, n);
         if (order != null) {
-          List<SearchResult> reranked = new ArrayList<>(n);
-          for (int idx : order) reranked.add(results.get(idx));
-          results = reranked;
+          // Tempdoc 821 §L.3: same candidate-drop class as the cross-encoder branch below. The
+          // RerankerService contract promises only "indices in descending relevance order" — an
+          // implementation returning a short or out-of-range list would drop candidates or throw.
+          // applyRerankOrder keeps every candidate; n == results.size(), so nothing sits beyond
+          // the window and the whole list is the reorder scope.
+          results = applyRerankOrder(results, order, n);
           lambdaMartApplied = true;
           log.debug("LambdaMART reranked {} results", n);
         } else {

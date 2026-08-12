@@ -16,6 +16,10 @@ import org.junit.jupiter.api.Test;
  * the uncovered candidates from the result set; the count then depended on what the Worker happened
  * to return.
  *
+ * <p>The LambdaMART branch shares the class: {@code RerankerService.rerank} likewise promises only
+ * "indices in descending relevance order", so both reorder sites now route through
+ * {@code applyRerankOrder} and both are covered here.
+ *
  * <p>Exercised directly against the pure static helper, mirroring the testability pattern
  * {@code resolveBlendAlpha} / {@code shouldSkipCrossEncoder} already use in this class — the
  * decision under test is the order application, not the RPC around it.
@@ -86,11 +90,32 @@ class KnowledgeSearchEngineRerankOrderTest {
   @Test
   @DisplayName("window covering every candidate still returns all of them when the order is short")
   void shortOrder_windowEqualsResultCount() {
+    // The LambdaMART call shape: window == results.size(), so there is no beyond-window tail and
+    // a short RerankerService.rerank result must be recovered entirely by the fill pass.
     List<SearchResult> results = candidates(4);
 
     List<SearchResult> out = KnowledgeSearchEngine.applyRerankOrder(results, List.of(3), 4);
 
+    assertEquals(4, out.size());
     assertEquals(List.of("doc3", "doc0", "doc1", "doc2"), ids(out));
+  }
+
+  @Test
+  @DisplayName("window larger than the candidate list is clamped, not read out of bounds")
+  void windowLargerThanCandidateList_isClamped() {
+    // topK is normally Math.min(configWindow, results.size()) at the call site, but the helper
+    // must not depend on that: without the min() clamp this throws IndexOutOfBounds on the fill
+    // pass instead of returning the candidates.
+    List<SearchResult> results = candidates(3);
+
+    List<SearchResult> out = KnowledgeSearchEngine.applyRerankOrder(results, List.of(0), 10);
+
+    assertEquals(3, out.size());
+    assertEquals(List.of("doc0", "doc1", "doc2"), ids(out));
+
+    // The same guard from the other side: a non-positive window reorders nothing and still keeps
+    // every candidate, rather than sizing a negative array.
+    assertEquals(ids(results), ids(KnowledgeSearchEngine.applyRerankOrder(results, List.of(), -1)));
   }
 
   @Test
