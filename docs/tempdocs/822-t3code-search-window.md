@@ -112,7 +112,34 @@ self-judge geometry (BlindTest ~58.6%) — verification must be measurement, not
 
 **Gate 0 — owner verdict on the shell**: **GO** (owner, 2026-08-12: "the shell is fine
 for now. proceed as you see fit") — sequencing delegated; Phase A first per the
-recommendation below. Go = the donor-copy strategy cleared
+recommendation below.
+
+**COURSE CORRECTION (owner, 2026-08-13).** The owner's intent for the copy was
+T3 Code's PRODUCT FUNCTIONALITY ("simply copy t3code for the functionality of its
+product and not the search capability of justsearch"), not a search-first window in
+T3 Code's clothes. Phase A's search wiring was the orchestrator's interpretation —
+kept as a thin, tested, currently-secondary seam (it becomes the material for the
+separately-deferred search-integration conversation; do NOT delete it). The window's
+functional axis from here: composer → conversational/agent session with the local AI
+(T3 Code's product shape), sessions = conversations. The 818 escalating-input thesis
+remains the eventual synthesis point; not built until the deferred conversation.
+Phase B's result-row/economy conversation is postponed accordingly; the F-series
+below replaces the old Phase-B/C ordering.
+
+**Phase F — T3 Code's functionality on the shell (F-series slices):**
+- F1. The conversational core: composer submit routes to the shared ask tier
+  (grounded, cited, streamed — the seams search-v2 proved: `buildRequestBody` +
+  `consumeShapeStream` shared authorities; mine v2's askClient PATTERN, do not import
+  another dev window's module); Sv3Main gains a transcript (message anatomy mined
+  from the t3code clone's own session view); sessions hold turns; streaming state
+  with the donor's primary-action-slot rule (the slot IS Stop while running — 820 W2
+  pattern 2); honest AI-offline state via the availability authority.
+- F2. Agent-run hosting (delegate tier): shared AgentSessionController, run feed,
+  approvals/steer/halt — adopting 820 W2's mined patterns (two-axis run state,
+  optimistic-handoff predicate, settle/snooze shelves).
+- F3. Session lifecycle depth: shelves replace recency buckets (the sidebar
+  comparison finding 4 resolves toward the donor), broken-state mapping, unread/woke.
+- F4+. The deferred search-integration conversation (owner), then the 818 synthesis. Go = the donor-copy strategy cleared
 the bar; no-go = record why, delete the window in one PR (818-style falsification),
 re-open the strategy question. Everything below assumes GO.
 
