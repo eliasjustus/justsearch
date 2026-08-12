@@ -31,6 +31,13 @@ record McpSearchResponseContent(
     boolean truncated,
     List<HitContent> hits,
     Map<String, Map<String, Long>> facets,
+    // Facets-truncation MCP relay (tempdoc 821 §L.3): true when the engine's facet scan hit its
+    // maxDocsScanned cap before covering every match — per-value counts are then a lower bound and
+    // some values may be missing entirely (FacetingEngine omits, it does not undercount cleanly;
+    // see modules/ui-web/src/shell-v0/state/otherSources.ts for the same property on the FE side).
+    // Sourced from KnowledgeSearchResponse#facetsTruncated (a nullable Boolean upstream), collapsed
+    // to a primitive here the same way `truncated` above is — false unless the response says TRUE.
+    boolean facetsTruncated,
     List<String> hints,
     // Tempdoc 789 Phase 2 — the flag-gated delivery framings, carried as content-model facts for
     // the same reason every other fact here is: so the text renderer and the structured renderer

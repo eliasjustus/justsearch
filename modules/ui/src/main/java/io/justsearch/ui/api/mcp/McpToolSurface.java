@@ -85,6 +85,13 @@ public final class McpToolSurface {
           + "When the matching documents carry them, the response also returns top facet values "
           + "(sources, categories, authors, and person/organization/location entities) to use as "
           + "filters. "
+          // Tempdoc 821 §L.3: the facet scan caps at a document budget, so on a broad query the
+          // per-value counts (and even which values appear at all) can be a lower bound rather
+          // than exact — this clause and the response's facetsTruncated flag are what let an agent
+          // tell the two cases apart instead of trusting a capped count as exhaustive.
+          + "Facet counts may be partial: when the response's facetsTruncated flag is true, the "
+          + "scan was capped before covering every match, so treat the returned values as a "
+          + "sample rather than an exhaustive list. "
           + "Set query_syntax: \"lucene\" for exact-phrase (\"...\") and boolean (AND/OR/NOT) "
           + "queries; the default is plain-text search. "
           + "Set detail: true to also receive per-hit ranking provenance (stage participation and "
@@ -1005,6 +1012,9 @@ public final class McpToolSurface {
 
     int shownCount = resp.results() == null ? 0 : resp.results().size();
     boolean truncated = resp.totalHits() > shownCount;
+    // Facets-truncation MCP relay (tempdoc 821 §L.3): resp.facetsTruncated() is a nullable Boolean
+    // upstream (KnowledgeSearchResponse) — collapse null/false to false, same as `truncated` above.
+    boolean facetsTruncated = Boolean.TRUE.equals(resp.facetsTruncated());
 
     // Hints
     var hints = new ArrayList<String>();
@@ -1056,6 +1066,7 @@ public final class McpToolSurface {
         truncated,
         hits,
         resp.facets(),
+        facetsTruncated,
         hints,
         evidenceHeader,
         absenceNote);
@@ -1168,7 +1179,16 @@ public final class McpToolSurface {
 
     // Facets
     if (content.facets() != null && !content.facets().isEmpty()) {
-      sb.append("\n\nFacets (use as filter values):\n");
+      sb.append("\n\nFacets (use as filter values");
+      // Facets-truncation MCP relay (tempdoc 821 §L.3): the flag that never reached this tier
+      // before — the scan was capped before covering every match, so counts are a lower bound and
+      // some values may be missing entirely. Surfaced in the text tier too, not just
+      // structuredContent, so a text-only MCP client sees it (McpEvidenceProjection carries the
+      // structured counterpart).
+      if (content.facetsTruncated()) {
+        sb.append("; counts are partial — scan capped");
+      }
+      sb.append("):\n");
       for (var entry : content.facets().entrySet()) {
         String facetName = entry.getKey().replace("_raw", "");
         sb.append("  ").append(facetName).append(": ");
