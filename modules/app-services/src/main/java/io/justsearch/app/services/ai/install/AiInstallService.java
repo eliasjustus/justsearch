@@ -599,6 +599,10 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
     // Download files
     downloadExecutor = new DownloadExecutor(cancelFlag);
+    // Round 16: the environment reset ~40 % of new connections in bursts and the product answered
+    // with two attempts ~7 s apart, so the "fallback" landed inside the same degraded window.
+    // Spacing, not attempt count, is what makes a later attempt an independent trial.
+    final TransportRetryPolicy retryPolicy = TransportRetryPolicy.defaultPolicy();
     long downloadedSoFar = 0;
     // Per-package cumulative bytes from files that have already finished
     // downloading. Without this, multi-file packages had bytesDownloaded
@@ -645,11 +649,26 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
                 }
               },
               cancelFlag::get,
-              // Tempdoc 374 sandbox round 4 issue G: BITS leaves BIT*.tmp scratch files when its
-              // download fails; they would otherwise accumulate across retries. Only on a fresh
-              // start — a suspended BITS job we are about to resume still owns its scratch file.
-              () -> cleanupBitsTmpFiles(targetFile.getParent()),
-              () -> updatePackageState(dl.packageId(), "verifying"));
+              new ResumableFetch.Hooks(
+                  // Tempdoc 374 sandbox round 4 issue G: BITS leaves BIT*.tmp scratch files when
+                  // its download fails; they would otherwise accumulate across retries. Only on a
+                  // fresh start — a suspended BITS job we are about to resume still owns its
+                  // scratch file.
+                  () -> cleanupBitsTmpFiles(targetFile.getParent()),
+                  () -> updatePackageState(dl.packageId(), "verifying"),
+                  // A spaced retry can take ~40 s per file; without the attempt counter the UI
+                  // would look frozen exactly when it is doing the thing that saves the install.
+                  attempt ->
+                      updateState(
+                          "running",
+                          "download",
+                          "Downloading "
+                              + dl.targetPath()
+                              + "..."
+                              + (attempt > 1
+                                  ? " (attempt " + attempt + " of " + retryPolicy.maxAttempts() + ")"
+                                  : ""))),
+              retryPolicy);
 
       // Project the resume verdict onto the package so the UI can say the earlier progress was
       // kept. Sticky across a multi-file package: one resumed file makes the package resumed.
