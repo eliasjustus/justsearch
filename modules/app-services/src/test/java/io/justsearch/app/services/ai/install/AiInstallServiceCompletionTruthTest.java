@@ -149,6 +149,37 @@ final class AiInstallServiceCompletionTruthTest {
   }
 
   /**
+   * §3.4's terminal verdict reaches the WIRE. {@code InstallAttemptMemoryTest} proves the memory
+   * decides "three passes is terminal"; this proves the decision is projected onto the package the
+   * UI reads, with the URL and destination the manual fallback needs. A field nothing populates is
+   * invisible to the FE ({@code wire-emitter-elision}), and the FE test consumes exactly these four.
+   */
+  @Test
+  @DisplayName("the terminal verdict is projected onto the package, with the manual fallback")
+  void terminalVerdictReachesThePackageStatus() throws Exception {
+    AiInstallService svc = new AiInstallService(null, null, null, null, tmp);
+    AiInstallStatus status = statusOf(svc);
+    var splade = addPackage(status, "splade", "downloading");
+
+    java.lang.reflect.Method mark =
+        AiInstallService.class.getDeclaredMethod(
+            "markPackageTerminal", String.class, String.class, int.class, String.class, String.class);
+    mark.setAccessible(true);
+    mark.invoke(
+        svc,
+        "splade",
+        "TRANSPORT_UNAVAILABLE",
+        12,
+        "https://example/splade-config.json",
+        "C:\\models\\splade\\config.json");
+
+    assertEquals("TRANSPORT_UNAVAILABLE", splade.terminalReason);
+    assertEquals(12, splade.attempts);
+    assertEquals("https://example/splade-config.json", splade.url);
+    assertEquals("C:\\models\\splade\\config.json", splade.targetPath);
+  }
+
+  /**
    * The probe is best-effort: when it cannot answer, the package bookkeeping remains the only
    * authority and every pre-824 verdict stands. This is the branch every app-services test that
    * calls the no-arg {@code applyCompletionState()} actually takes (no registry on the classpath),
