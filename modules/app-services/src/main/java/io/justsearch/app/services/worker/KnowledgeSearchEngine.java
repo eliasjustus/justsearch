@@ -270,6 +270,50 @@ final class KnowledgeSearchEngine {
     return norm;
   }
 
+  /**
+   * Tempdoc 821 §L.3: applies a rerank order to the candidate list without ever changing how many
+   * candidates come out — count in equals count out, always.
+   *
+   * <p>The judge-blend branch defends against a short cross-encoder response by construction: it
+   * sizes its blend window at {@code window} (not {@code getScoresCount()}) and min-fills the
+   * missing tail, so its returned order is always a full permutation of {@code 0..window-1}. The
+   * default (judge-blend-off) branch has no such guarantee — it applies the Worker's
+   * {@code sorted_indices} verbatim, and a list shorter than the window silently dropped the
+   * uncovered candidates from the result set entirely. This helper is the shared seam that makes
+   * both branches equally defensive.
+   *
+   * <p>The given order is authoritative for the window positions it covers; any in-window position
+   * it omits is appended after that prefix in original (pre-rerank) order, and candidates beyond
+   * the window — which were never sent to the cross-encoder — follow in original order. An
+   * out-of-window or duplicate index is discarded rather than emitted twice, since the position it
+   * names is already placed by one of the two passes. A well-formed order (a permutation already
+   * covering the window, which includes every judge-blend output) reproduces the pre-821 result
+   * element for element.
+   *
+   * @param results the pre-rerank candidates, in pre-rerank order.
+   * @param order window positions in their reranked order; may be short, empty, or malformed.
+   * @param window the number of leading candidates that were offered to the cross-encoder.
+   * @return the reordered candidates — always exactly {@code results.size()} entries.
+   */
+  static List<SearchResult> applyRerankOrder(
+      List<SearchResult> results, List<Integer> order, int window) {
+    int w = Math.max(0, Math.min(window, results.size()));
+    List<SearchResult> reordered = new ArrayList<>(results.size());
+    boolean[] placed = new boolean[w];
+    for (int idx : order) {
+      if (idx < 0 || idx >= w || placed[idx]) continue;
+      placed[idx] = true;
+      reordered.add(results.get(idx));
+    }
+    for (int i = 0; i < w; i++) {
+      if (!placed[i]) reordered.add(results.get(i));
+    }
+    for (int i = w; i < results.size(); i++) {
+      reordered.add(results.get(i));
+    }
+    return reordered;
+  }
+
   /** Top-K doc-ids (within the CE window) at/below the given per-leg HitStage rank, for judge-arbitration
    * leg agreement (tempdoc 643 E1). Only counts a candidate whose stage rank is PRESENT (proto3 {@code
    * optional}) and {@code <= topK} — mirrors {@code HybridSearchOps.topKDocIds}'s rank-based selection. */
@@ -1000,18 +1044,15 @@ final class KnowledgeSearchEngine {
           orderToApply = blendPreRerankAndCrossEncoder(
               preRerankScores, crossEncoderScores, alphaToApply);
         } else {
+          // Tempdoc 821 §L.3: the Worker's sorted_indices are applied as-is for the window
+          // positions they cover, but a short list no longer drops the positions it omits —
+          // applyRerankOrder passes those through in original order, the same "fill, don't drop"
+          // defense the judge-blend branch above gets from its topK-sized window.
           orderToApply = reranked.getSortedIndicesList();
         }
-        // Reorder results based on the (possibly blended) order
-        List<SearchResult> rerankedResults = new ArrayList<>(results.size());
-        for (int idx : orderToApply) {
-          rerankedResults.add(results.get(idx));
-        }
-        // Append any results beyond topK that weren't reranked
-        for (int i = topK; i < results.size(); i++) {
-          rerankedResults.add(results.get(i));
-        }
-        results = rerankedResults;
+        // Reorder the CE window by the (possibly blended) order, then append the candidates
+        // beyond topK that were never reranked. Count in equals count out.
+        results = applyRerankOrder(results, orderToApply, topK);
         crossEncoderApplied = true;
         crossEncoderMs = reranked.getElapsedMs();
         log.debug("Reranked {} docs in {}ms (remote)", topK, reranked.getElapsedMs());
