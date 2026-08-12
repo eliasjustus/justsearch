@@ -206,6 +206,24 @@ self-judge geometry (BlindTest ~58.6%) — verification must be measurement, not
   referents exist, settle when chips become real scope chips; (b) Sv3Empty tile glyph
   is a string prop rendering a hollow square — convert to icon() with a template-typed
   prop when empty states get final content.
+- 2026-08-12 — **Sidebar comparison findings** (owner-requested donor-vs-copy analysis;
+  feed the adaptation phase): (1) ROW-HEIGHT REFERENT — our rows are 32px from §3.2's
+  menu-button ladder, but the donor's SESSION rows are §6.1's slim 36px / card 78px;
+  when rows become real search sessions, adopt 36px slim. (2) THE CARD VARIANT IS THE
+  RESULT-ROW SEED — the donor's 78px card (header: favicon·project·pin·status + body
+  line, contain-intrinsic-size 96px) maps directly onto a search result (file-icon ·
+  path · pin · status + snippet); start the result-row design there, not from scratch.
+  (3) STATUS→ACTION SLOT SWAP still unbuilt (no row actions yet) — when built, adopt
+  the donor's exception rule: their PR badge stays visible+clickable during hover
+  ("only the time label yields") = exactly L14's honesty-fact boundary; LOCKED etc.
+  take the PR-badge role. (4) GROUPING SEMANTICS OPEN — our Pinned/Today/Earlier
+  time buckets are fixture placeholders; the donor's real grouping is state shelves
+  (Active/Pinned/Settled/Snoozed, activity-blockers-override per 820 W2). Recency vs
+  state is a product decision for the owner. (5) Donor separates semantic
+  system-health tokens from raw-palette DOMAIN taxonomy colors (PR emerald/violet/red)
+  — adopt when file-type/domain hues appear. (6) Not yet ported: resize handle
+  (min 208 / max viewport−640), 48px icon-collapse, multi-select, woke/unread-
+  completion state machine.
 - 2026-08-12 — **SHELL COMPLETE (slices 1-4). Phase stop per §4.5**: owner inspection
   + verdict on the donor copy, then the adaptation-seams conversation (result rows
   with real densities, document pane, citations, honesty facts) BEFORE any
