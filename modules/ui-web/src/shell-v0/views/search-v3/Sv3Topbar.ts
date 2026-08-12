@@ -13,6 +13,9 @@ import { html, css, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
 import { sv3Shared } from './sv3-shared-styles.js';
 
+/** Asks the window to open the palette; the window owns it, because the palette covers the window. */
+export const SV3_PALETTE_REQUEST = 'sv3-palette-request';
+
 export class Sv3Topbar extends JfElement {
   static styles = [
     sv3Shared,
@@ -86,10 +89,27 @@ export class Sv3Topbar extends JfElement {
     this.windowTitle = '';
   }
 
+  /** Raised from the BUTTON, not the host: the window reads the invoker off the composed path and
+      focus has to come back to the control that was pressed, not to the band around it. */
+  private requestPalette(event: Event): void {
+    (event.currentTarget as HTMLElement).dispatchEvent(
+      new CustomEvent(SV3_PALETTE_REQUEST, { bubbles: true, composed: true }),
+    );
+  }
+
   render(): TemplateResult {
     return html`
       <span class="title" data-testid="sv3-topbar-title">${this.windowTitle}</span>
       <span class="controls">
+        <button
+          type="button"
+          class="icon"
+          aria-label="Open command palette"
+          data-testid="sv3-topbar-palette"
+          @click=${this.requestPalette}
+        >
+          &#8984;
+        </button>
         <button
           type="button"
           class="icon"

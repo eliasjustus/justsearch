@@ -108,6 +108,20 @@ export const sv3Tokens = css`
     --sidebar-row-active: var(--accent);
     --sidebar-row-selected: var(--muted);
     --sidebar-border: var(--border);
+    /* Dialog material (slice 4). The palette is the window's one dialog surface, and its glass is a
+       DIFFERENT recipe from the composer's: a dialog is the densest tint in the system and, unlike
+       every other dark surface, keeps its drop shadow — it has to separate from a live window behind
+       it, so it catches light on the top edge AND casts. The backdrop is one formula in both modes. */
+    --dialog-backdrop: color-mix(in srgb, var(--background) 60%, transparent);
+    --dialog-backdrop-blur: 4px;
+    --dialog-border: color-mix(in srgb, var(--color-white) 8%, transparent);
+    --dialog-shadow:
+      inset 0 1px rgb(255 255 255 / 4%), 0 24px 72px -20px rgb(0 0 0 / 90%);
+    /* The empty-state tile's edge is the elevation inversion at its smallest: a hairline BELOW the
+       tile in light, ABOVE it in dark. */
+    --empty-tile-shadow: none;
+    --empty-tile-edge: 0 -1px rgb(255 255 255 / 6%);
+
     /* Composer material. The donor expresses its dark mode as dark-class RULES on the component; a
        selector inside a shadow root cannot see a class on the document element, so the whole
        inversion is carried as tokens instead (donor §8.3's own recommendation). Dark catches light —
@@ -137,6 +151,13 @@ export const sv3Tokens = css`
     --sidebar-icon-color: color-mix(in srgb, var(--sidebar-muted-foreground) 60%, var(--sidebar));
     --command-shell-inset: 0.5rem;
     --command-content-inset: 1rem;
+    /* The palette popup's box (donor max-h-105 / max-w-xl). */
+    --command-popup-max-height: 26.25rem;
+    --command-popup-max-width: 36rem;
+    /* The donor's scroll-fade band is 2.5rem over a chat timeline and cut to 1.5rem for its one DENSE
+       list sitting directly under its own chrome, "so the fade stays while the controls start near
+       the chrome" — which is exactly the palette list. */
+    --command-scroll-fade-height: 1.5rem;
     --floating-content-inset: 0.75rem;
     --workspace-topbar-height: 52px;
     --workspace-controls-top: 0px;
@@ -191,6 +212,11 @@ export const sv3Tokens = css`
     --space-10: 40px;
     --space-11: 44px;
     --space-12: 48px;
+    /* The donor's ladder is Tailwind's 0.25rem scale, which carries half-steps; the palette's density
+       spends both of them (item / input-row / group-label py-1.5, footer py-2.5). They are named
+       here rather than inlined so the ladder stays the one authority. */
+    --space-1-5: 6px;
+    --space-2-5: 10px;
     /* Donor improvement: the 1px border is taken out of the padding ONCE, here, instead of being
        re-derived at every control size, so a control's visual inset equals the spacing step. */
     --control-pad-3: calc(0.75rem - 1px);
@@ -204,6 +230,7 @@ export const sv3Tokens = css`
     --font-size-sv3-sm: 0.875rem;
     --font-size-sv3-base: 1rem;
     --font-size-sv3-lg: 1.125rem;
+    --font-size-sv3-xl: 1.25rem;
     /* The hero headline is the ONE display size outside the four-size UI ramp, and the one place the
        desktop ramp steps UP rather than down. */
     --font-size-sv3-display: 1.875rem;
@@ -271,6 +298,10 @@ export const sv3Tokens = css`
     --composer-outline: rgb(0 0 0 / 8%);
     --composer-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
     --composer-highlight: none;
+    --dialog-border: color-mix(in srgb, var(--foreground) 10%, transparent);
+    --dialog-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%);
+    --empty-tile-shadow: 0 1px 2px 0 rgb(0 0 0 / 5%);
+    --empty-tile-edge: 0 1px rgb(0 0 0 / 4%);
 
     --glass-blur: 12px;
     --glass-saturation: 1.14;

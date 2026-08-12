@@ -31,19 +31,35 @@ import { html, css, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
 import { sv3Tokens } from './sv3-tokens.css.js';
 import { sv3Shared } from './sv3-shared-styles.js';
-import { COMPOSER_STATE_DEFAULT, WINDOW_TITLE, type Sv3ComposerState } from './fixtures.js';
+import {
+  COMPOSER_STATE_DEFAULT,
+  FIXTURE_SET_DEFAULT,
+  WINDOW_TITLE,
+  type Sv3ComposerState,
+  type Sv3FixtureSet,
+} from './fixtures.js';
 import {
   adoptSv3MorphSheet,
   releaseSv3MorphSheet,
   runSv3ComposerMorph,
 } from './sv3-composer-morph.js';
 import { type Sv3ComposerStateRequest } from './Sv3Composer.js';
+import type { Sv3Palette } from './Sv3Palette.js';
 import './Sv3Topbar.js';
 import './Sv3Sidebar.js';
 import './Sv3Main.js';
 import './Sv3Composer.js';
+import './Sv3Palette.js';
 
 const COMPOSER_STATE_ATTR = 'composer-state';
+
+/**
+ * The palette chord, matched only for events that reach THIS window. The shipped shell binds the same
+ * chord globally (`mod+k` → `shell.toggle-palette`), so the scope is the whole contract: a keystroke
+ * outside the window must never be seen here.
+ */
+const isPaletteChord = (event: KeyboardEvent): boolean =>
+  (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'k';
 
 const isComposerState = (value: string | null): value is Sv3ComposerState =>
   value === 'hero' || value === 'docked';
@@ -58,6 +74,9 @@ export class SearchV3View extends JfElement {
         height: 100%;
         min-height: 0;
         overflow: hidden;
+        /* The containing block for the palette overlay, which is why the palette can be window-scoped
+           at all: it is absolutely positioned against THIS box and cannot reach the shipped chrome. */
+        position: relative;
         background: var(--background);
         color: var(--foreground);
         font-family: var(--font-sans);
@@ -83,23 +102,58 @@ export class SearchV3View extends JfElement {
 
   static properties = {
     composerState: { type: String, reflect: true, attribute: COMPOSER_STATE_ATTR },
+    fixtureSet: { type: String, reflect: true, attribute: 'fixtures' },
   };
 
   declare composerState: Sv3ComposerState;
+  declare fixtureSet: Sv3FixtureSet;
 
   constructor() {
     super();
     this.composerState = COMPOSER_STATE_DEFAULT;
+    this.fixtureSet = FIXTURE_SET_DEFAULT;
   }
 
   override connectedCallback(): void {
     super.connectedCallback();
     adoptSv3MorphSheet();
+    // Scoped to the HOST, not to `window`. A host listener is only reached by events whose composed
+    // path runs through this window, so a chord pressed anywhere else in the shipped app is invisible
+    // here by construction — there is no "is the focus inside?" test to get wrong. Capture phase so
+    // the palette's own field cannot swallow the chord before the window sees it.
+    this.addEventListener('keydown', this.onHostKeydown, true);
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     releaseSv3MorphSheet();
+    this.removeEventListener('keydown', this.onHostKeydown, true);
+  }
+
+  private readonly onHostKeydown = (event: KeyboardEvent): void => {
+    if (!isPaletteChord(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    // The deepest node in the composed path is the real invoker; `document.activeElement` retargets
+    // to this host at the shadow boundary and would send focus back to a non-focusable element.
+    const invoker = (event.composedPath()[0] ?? null) as HTMLElement | null;
+    this.togglePalette(invoker);
+  };
+
+  private get palette(): Sv3Palette | null {
+    return this.shadowRoot?.querySelector('jf-sv3-palette') ?? null;
+  }
+
+  /** The one way the palette opens or closes, whichever affordance asked. */
+  togglePalette(invoker: HTMLElement | null): void {
+    const palette = this.palette;
+    if (palette === null) return;
+    if (palette.open) palette.hide();
+    else void palette.show(invoker);
+  }
+
+  private onPaletteRequest(event: Event): void {
+    this.togglePalette((event.composedPath()[0] ?? null) as HTMLElement | null);
   }
 
   override attributeChangedCallback(name: string, older: string | null, value: string | null): void {
@@ -151,16 +205,27 @@ export class SearchV3View extends JfElement {
 
   render(): TemplateResult {
     return html`
-      <jf-sv3-sidebar data-testid="sv3-sidebar"></jf-sv3-sidebar>
+      <jf-sv3-sidebar
+        fixtures=${this.fixtureSet}
+        data-testid="sv3-sidebar"
+      ></jf-sv3-sidebar>
       <div
         class="column"
         data-testid="sv3-column"
         @sv3-composer-state-request=${this.onStateRequest}
+        @sv3-palette-request=${this.onPaletteRequest}
       >
         <jf-sv3-topbar window-title=${WINDOW_TITLE} data-testid="sv3-topbar"></jf-sv3-topbar>
-        <jf-sv3-main state=${this.composerState} data-testid="sv3-main"></jf-sv3-main>
+        <jf-sv3-main
+          state=${this.composerState}
+          fixtures=${this.fixtureSet}
+          data-testid="sv3-main"
+        ></jf-sv3-main>
         <jf-sv3-composer state=${this.composerState} data-testid="sv3-composer"></jf-sv3-composer>
       </div>
+      <!-- LAST in the shadow root on purpose: the palette and the hero composer share the overlay
+           rung, so DOM order is what puts the palette on top. -->
+      <jf-sv3-palette data-testid="sv3-palette"></jf-sv3-palette>
     `;
   }
 }

@@ -17,6 +17,8 @@ import { Sv3Sidebar } from './Sv3Sidebar.js';
 import { Sv3SessionRow } from './Sv3SessionRow.js';
 import { Sv3Main } from './Sv3Main.js';
 import { Sv3Composer } from './Sv3Composer.js';
+import { Sv3Palette } from './Sv3Palette.js';
+import { Sv3Empty } from './Sv3Empty.js';
 import {
   SV3_HEADLINE_EXIT_MS,
   SV3_MORPH_DURATION_MS,
@@ -583,6 +585,249 @@ describe('the document-level morph sheet is pinned to the token budget and to it
     for (const name of named) {
       if (name === 'none') continue;
       expect(SV3_MORPH_SHEET_TEXT).toContain(`@keyframes ${name}`);
+    }
+  });
+});
+
+/**
+ * Donor §3.3 (slice 4), as mechanism. happy-dom runs no cascade over adopted sheets and no layout, so
+ * these pin the SELECTORS and the token references that decide the palette's outcome — the two insets
+ * that must stay different, the single-fill guard, the conditional corner, and the fact that the
+ * scroll fade is a mask rather than an overlay node.
+ */
+describe('the palette is built from the geometry tokens, not re-typed numbers', () => {
+  const palette = styleTextOf(Sv3Palette);
+  const ruleFor = (sel: string): string => {
+    const at = palette.indexOf(sel);
+    expect(at, `no rule for ${sel}`).toBeGreaterThan(-1);
+    return palette.slice(at, palette.indexOf('}', at));
+  };
+
+  it('declares the popup box and the two scroll-fade constants as tokens', () => {
+    for (const decl of [
+      '--command-popup-max-height: 26.25rem',
+      '--command-popup-max-width: 36rem',
+      '--command-scroll-fade-height: 1.5rem',
+      '--space-1-5: 6px',
+      '--space-2-5: 10px',
+      '--font-size-sv3-xl: 1.25rem',
+    ]) {
+      expect(tokens).toContain(decl);
+    }
+    const popup = ruleFor('.popup {');
+    expect(popup).toContain('max-inline-size: var(--command-popup-max-width)');
+    expect(popup).toContain('max-block-size: var(--command-popup-max-height)');
+    // The donor's 420 / 576 must not reappear as literals anywhere in the component.
+    expect(palette).not.toContain('26.25rem');
+    expect(palette).not.toContain('36rem');
+  });
+
+  it('spends the TIGHT inset on the input row and the WIDE one on the footer', () => {
+    // The whole point of §3.3(a): the field is tighter than the chrome around it. One token used for
+    // both would erase the effect while every screenshot still looked plausible.
+    expect(ruleFor('.shell {')).toContain('padding-inline: var(--command-shell-inset)');
+    expect(ruleFor('.shell {')).toContain('padding-block: var(--space-1-5)');
+    expect(ruleFor('.footer {')).toContain('padding-inline: var(--command-content-inset)');
+    expect(ruleFor('.footer {')).toContain('padding-block: var(--space-2-5)');
+    expect(ruleFor('.footer {')).not.toContain('var(--command-shell-inset)');
+    expect(ruleFor('.shell {')).not.toContain('var(--command-content-inset)');
+    // The search glyph hangs off the SHELL inset, so moving that one token moves both together.
+    expect(ruleFor('.field-glyph {')).toContain(
+      'inset-inline-start: calc(var(--command-shell-inset) + 1px)',
+    );
+    expect(ruleFor('input {')).toContain(
+      'padding-inline-start: calc(var(--command-shell-inset) + var(--space-6))',
+    );
+    // Live measurement caught this: the ambient `:focus-visible` sheet outranks a bare `input` rule,
+    // so without an equally specific override the field renders as a boxed control across the row.
+    expect(ruleFor('input:focus-visible {')).toContain('outline: none');
+  });
+
+  it('takes its stacking rung from the z-scale, never a literal', () => {
+    expect(ruleFor(':host([open]) {')).toContain('z-index: var(--z-overlay)');
+    const zIndexes = [...palette.matchAll(/z-index:\s*([^;]+);/g)].map((m) => (m[1] ?? '').trim());
+    expect(zIndexes.length).toBeGreaterThan(0);
+    for (const value of zIndexes) {
+      expect(value, `untokenized z-index: ${value}`).toMatch(/^var\(--z-/);
+    }
+    // Window-scoped by construction: a fixed layer would escape the window onto the shipped chrome.
+    expect(palette).not.toContain('position: fixed');
+    expect(ruleFor(':host([open]) {')).toContain('position: absolute');
+    expect(ruleFor(':host([open]) {')).toContain('inset: 0');
+    // ...and the host it covers is what gives it a containing block.
+    expect(styleTextOf(SearchV3View)).toContain('position: relative');
+  });
+
+  it('shows ONE fill: selected is guarded out of highlighted, in the selector', () => {
+    expect(ruleFor('.item[data-selected]:not([data-highlighted])')).toContain(
+      'background: color-mix(in srgb, var(--foreground) 6%, transparent)',
+    );
+    expect(ruleFor('.item[data-highlighted] {')).toContain(
+      'background: color-mix(in srgb, var(--foreground) 9%, transparent)',
+    );
+    expect(ruleFor('.item[data-highlighted] {')).toContain('color: var(--foreground)');
+
+    // Every selected-keyed fill is guarded — an unguarded one would stack 6% under the 9% the moment
+    // the keyboard landed on the current choice, which is exactly the two-fill state §3.3 forbids.
+    const selectedRules = [...palette.matchAll(/[^\n]*\[data-selected\][^\n]*/g)].map((m) => m[0]);
+    expect(selectedRules.length).toBeGreaterThanOrEqual(1);
+    for (const selector of selectedRules) {
+      expect(selector, `unguarded selected fill: ${selector.trim()}`).toContain(
+        ':not([data-highlighted])',
+      );
+    }
+    // And there is no THIRD fill: the pointer moves the highlight instead of painting its own hover.
+    expect(palette).not.toContain('.item:hover');
+  });
+
+  it('rounds the panel bottom off the FOOTER’s presence, not off a flag', () => {
+    const panel = ruleFor('.panel {');
+    expect(panel).toContain('border-start-start-radius: var(--radius-xl)');
+    expect(panel).toContain('border-start-end-radius: var(--radius-xl)');
+    // Unconditionally rounding the bottom here would make the conditional rule below unobservable.
+    expect(panel).not.toContain('border-end-start-radius');
+    expect(panel).not.toContain('border-end-end-radius');
+
+    const conditional = ruleFor('.panel:not(:has(+ .footer))');
+    expect(conditional).toContain('border-end-start-radius: var(--radius-2xl)');
+    expect(conditional).toContain('border-end-end-radius: var(--radius-2xl)');
+    // With a footer present, IT carries the outer corner minus the popup's own 1px border.
+    expect(ruleFor('.footer {')).toContain(
+      'border-end-start-radius: calc(var(--radius-2xl) - 1px)',
+    );
+    expect(ruleFor('.footer {')).toContain('border-end-end-radius: calc(var(--radius-2xl) - 1px)');
+  });
+
+  it('fades the list with a MASK, and carries no gradient overlay to do it with', () => {
+    const list = ruleFor('.list {');
+    expect(list).toContain('mask-image:');
+    expect(list).toContain('mask-repeat: no-repeat');
+    expect(list).toContain('100% var(--command-scroll-fade-height)');
+    expect(list).toContain('calc(100% - var(--command-scroll-fade-height))');
+    // The third layer holds the scrollbar column at full opacity (donor §1.5/§5.11).
+    expect(list).toContain('var(--app-scrollbar-width) 100%');
+    // Seven stops, an eased ramp rather than a linear one.
+    for (const stop of ['10%', '24%', '42%', '62%', '82%']) {
+      expect(list).toContain(stop);
+    }
+    // An overlay gradient is the form the donor explicitly rejected: it only works while the chrome
+    // and the content share a background, and this list sits on glass.
+    expect(palette).not.toMatch(/background(-image)?:\s*linear-gradient/);
+    expect(palette).not.toContain('.list::before');
+    expect(palette).not.toContain('.list::after');
+  });
+
+  it('keeps the palette on the item ladder: donor sizes, tokenized', () => {
+    const item = ruleFor('.item {');
+    expect(item).toContain('min-height: var(--space-7)');
+    expect(item).toContain('padding-inline: var(--space-2)');
+    expect(item).toContain('padding-block: var(--space-1-5)');
+    expect(item).toContain('border-radius: var(--radius-sm)');
+    expect(ruleFor('.list {')).toContain('padding: var(--space-2)');
+    expect(ruleFor('.list {')).toContain('scroll-padding-block: var(--space-2)');
+    expect(ruleFor('.empty {')).toContain('padding-block: var(--space-6)');
+    expect(ruleFor('.separator {')).toContain('margin-block: var(--space-2)');
+    expect(ruleFor('.group-label {')).toContain('padding-block: var(--space-1-5)');
+    // The one place the donor spends tracking in its whole app: the palette's keyboard hints.
+    expect(ruleFor('.shortcut {')).toContain('letter-spacing: 0.1em');
+    expect(ruleFor('.shortcut {')).toContain('font-size: var(--font-size-sv3-xs)');
+    expect(ruleFor('.shortcut {')).toContain('font-weight: 500');
+    expect(ruleFor('.shortcut {')).toContain('color: var(--secondary-label)');
+    expect(ruleFor('.key {')).toContain('background: color-mix(in srgb, var(--foreground) 8%');
+    expect(ruleFor('.footer {')).toContain(
+      'background: color-mix(in srgb, var(--foreground) 2.5%, transparent)',
+    );
+  });
+
+  it('puts the whole dialog material on ONE node, with the mandatory no-blur fallback', () => {
+    // Slice 3's remediation, applied ahead of the fact: a split silhouette reports no glass on
+    // whichever node carries the radius.
+    const start = palette.indexOf('.popup {');
+    const end = palette.indexOf('}', start);
+    const rule = palette.slice(start, end);
+    expect(rule).toContain('border-radius: var(--radius-2xl)');
+    expect(rule).toContain('var(--background) var(--glass-opacity)');
+    expect(rule).toContain('backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation))');
+    expect(rule).toContain('box-shadow: var(--dialog-shadow)');
+    expect(rule).toContain('border: 1px solid var(--dialog-border)');
+    const at = palette.indexOf('@supports not ((-webkit-backdrop-filter: blur(1px))');
+    expect(at).toBeGreaterThan(-1);
+    expect(palette.slice(at, at + 200)).toContain('background: var(--background)');
+    // The backdrop is the donor's own recipe, token-fed like every other material in the window.
+    expect(ruleFor('.backdrop {')).toContain('background: var(--dialog-backdrop)');
+    expect(ruleFor('.backdrop {')).toContain('blur(var(--dialog-backdrop-blur))');
+  });
+
+  it('inverts the dialog elevation in the token sheet, not in the component', () => {
+    const split = tokens.indexOf(":host([theme='light'])");
+    const dark = tokens.slice(0, split);
+    const light = tokens.slice(split);
+    // A dialog is the ONE dark surface that keeps its drop shadow: it must separate from a live
+    // window behind it, so it catches light on the top edge AND casts.
+    expect(dark).toContain('inset 0 1px rgb(255 255 255 / 4%), 0 24px 72px -20px rgb(0 0 0 / 90%)');
+    expect(dark).toContain('--dialog-border: color-mix(in srgb, var(--color-white) 8%, transparent)');
+    expect(light).toContain('--dialog-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%)');
+    expect(light).toContain('--dialog-border: color-mix(in srgb, var(--foreground) 10%, transparent)');
+    // One backdrop formula in both modes — it resolves against whichever --background is live.
+    expect(light).not.toContain('--dialog-backdrop:');
+    // The component spends no colour literal of its own; only the alpha stops of the fade mask do.
+    const withoutMask = palette.replace(/mask-image:[\s\S]*?;/g, '');
+    for (const literal of ['hsl(', 'oklch(', '#']) {
+      expect(withoutMask).not.toContain(literal);
+    }
+    expect(withoutMask).not.toContain('rgb(');
+  });
+});
+
+describe('the empty state is the donor anatomy, in tokens', () => {
+  const empty = styleTextOf(Sv3Empty);
+  const ruleFor = (sel: string): string => {
+    const at = empty.indexOf(sel);
+    expect(at, `no rule for ${sel}`).toBeGreaterThan(-1);
+    return empty.slice(at, empty.indexOf('}', at));
+  };
+
+  it('measures the header rather than boxing it, and spends the donor gaps', () => {
+    const host = empty.slice(empty.indexOf(':host {'), empty.indexOf('}', empty.indexOf(':host {')));
+    expect(host).toContain('gap: var(--space-6)');
+    expect(host).toContain('padding: var(--space-6)');
+    expect(host).toContain('justify-content: center');
+    expect(ruleFor('.header {')).toContain('max-inline-size: 24rem');
+    expect(ruleFor('.media {')).toContain('margin-bottom: var(--space-6)');
+    expect(ruleFor('.title + .description {')).toContain('margin-top: var(--space-1)');
+    // The roomier variant is the donor's single breakpoint on this component.
+    expect(empty).toContain('@media (min-width: 48rem)');
+    expect(empty).toContain('padding: var(--space-12)');
+  });
+
+  it('fans the three cards with individual transform properties, ghosts unshadowed', () => {
+    const tile = ruleFor('.tile {');
+    expect(tile).toContain('inline-size: var(--space-9)');
+    expect(tile).toContain('block-size: var(--space-9)');
+    expect(tile).toContain('border-radius: var(--radius-md)');
+    expect(tile).toContain('background: var(--card)');
+    expect(tile).toContain('box-shadow: var(--empty-tile-shadow)');
+    // The hairline edge is the elevation inversion at its smallest, and it is a TOKEN both ways.
+    expect(ruleFor('.tile::before {')).toContain('border-radius: calc(var(--radius-md) - 1px)');
+    expect(ruleFor('.tile::before {')).toContain('box-shadow: var(--empty-tile-edge)');
+    expect(ruleFor('.tile.ghost {')).toContain('scale: 0.84');
+    expect(ruleFor('.tile.ghost {')).toContain('box-shadow: none');
+    expect(ruleFor('.tile.ghost-start {')).toContain('rotate: -10deg');
+    expect(ruleFor('.tile.ghost-start {')).toContain('transform-origin: bottom left');
+    expect(ruleFor('.tile.ghost-end {')).toContain('rotate: 10deg');
+    expect(ruleFor('.tile.ghost-end {')).toContain('transform-origin: bottom right');
+    // A shorthand would order translate/rotate/scale by hand; the donor composes three properties.
+    expect(empty).not.toContain('transform:');
+  });
+
+  it('reads type and colour off the ramp, spending no literal of its own', () => {
+    expect(ruleFor('.title {')).toContain('font-size: var(--font-size-sv3-xl)');
+    expect(ruleFor('.title {')).toContain('font-weight: 600');
+    // Anchored on the line start: `.description {` also occurs inside `.title + .description {`.
+    expect(ruleFor('\n      .description {')).toContain('color: var(--muted-foreground)');
+    expect(ruleFor('\n      .description {')).toContain('font-size: var(--font-size-sv3-sm)');
+    for (const literal of ['rgb(', 'hsl(', 'oklch(', '#']) {
+      expect(empty).not.toContain(literal);
     }
   });
 });

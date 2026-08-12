@@ -175,3 +175,28 @@ self-judge geometry (BlindTest ~58.6%) — verification must be measurement, not
   22px node, zero page errors. Worker's clone-verified brief corrections: hero = same
   box centered + headline (not wider); send is bespoke rounded-full (not §6.3
   primary); label collapse instant by donor construction (VT crossfade covers it).
+- 2026-08-12 — **Slice 4 implemented + verified** (opus worker, self-live-measured;
+  orchestrator screenshot review; 1 defect the worker live-caught itself: ambient
+  :focus-visible sheet boxing the palette field — fixed with the donor's ring-0
+  equivalent). `jf-sv3-palette`: 576×420 donor spec exact (8/16 inset pair, item
+  fills 0.06/0.09 single-fill precedence, mask-based scroll fade, kbd footer,
+  corner-follows-footer), window-scoped overlay (--z-overlay, backdrop dims ONLY the
+  window region; deliberately no showModal — top layer would cover shipped chrome;
+  background not inert, recorded), Ctrl+K via host capture-phase listener (no global
+  listener, spied); `jf-sv3-empty` (tile-fan anatomy) for sidebar-empty +
+  zero-results. 4555 tests; 16/16 mutation probes; kernel gates pass.
+  Accepted deviations: tooltip §6.5 skipped (aria-labels instead); 10cqh replaces
+  10vh (window-scoped container); pointer moves highlight (donor hover would be a
+  third fill); item 33px vs donor 32 (no line-height token tier — introduce with a
+  type slice if wanted); donor --font-heading undefined in clone, not ported.
+  OPEN (cutover-scope, observation filed): Ctrl+K inside the window opens BOTH
+  palettes — the shipped mod+k dispatcher is a window-capture listener from Shell
+  boot (KeybindingRegistry.ts:178) and cannot be pre-empted from a surface; remedy
+  is a when-clause on the shipped binding or a surface-scoped binding tier, both
+  outside this arc's file scope.
+- 2026-08-12 — **SHELL COMPLETE (slices 1-4). Phase stop per §4.5**: owner inspection
+  + verdict on the donor copy, then the adaptation-seams conversation (result rows
+  with real densities, document pane, citations, honesty facts) BEFORE any
+  JustSearch-specific surface is designed. Serve: modules/ui-web `npx vite --port
+  5175`; deeplink #justsearch://surface/core.search-v3-surface (backendless boot
+  ~30s; hash needs a popstate re-dispatch after boot — see the deeplink observation).

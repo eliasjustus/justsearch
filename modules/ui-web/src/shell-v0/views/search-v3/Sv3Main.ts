@@ -16,8 +16,15 @@
 import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
 import { sv3Shared } from './sv3-shared-styles.js';
-import { COMPOSER_STATE_DEFAULT, MAIN_HEADING, MAIN_ROWS } from './fixtures.js';
-import type { Sv3ComposerState } from './fixtures.js';
+import './Sv3Empty.js';
+import {
+  COMPOSER_STATE_DEFAULT,
+  FIXTURE_SET_DEFAULT,
+  MAIN_EMPTY,
+  MAIN_HEADING,
+  mainRowsFor,
+} from './fixtures.js';
+import type { Sv3ComposerState, Sv3FixtureSet } from './fixtures.js';
 
 export class Sv3Main extends JfElement {
   static styles = [
@@ -77,23 +84,40 @@ export class Sv3Main extends JfElement {
 
   static properties = {
     state: { type: String, reflect: true },
+    fixtureSet: { type: String, attribute: 'fixtures', reflect: true },
   };
 
   declare state: Sv3ComposerState;
+  declare fixtureSet: Sv3FixtureSet;
 
   constructor() {
     super();
     this.state = COMPOSER_STATE_DEFAULT;
+    this.fixtureSet = FIXTURE_SET_DEFAULT;
   }
 
   render(): TemplateResult {
     const showResults = this.state === 'docked';
+    const rows = mainRowsFor(this.fixtureSet);
+    // Zero results is only a zero STATE once something was asked: an untouched window is the hero,
+    // whose emptiness the composer already speaks for.
+    if (showResults && rows.length === 0) {
+      return html`
+        <jf-sv3-empty
+          roomy
+          data-testid="sv3-main-empty"
+          glyph="&#9634;"
+          heading=${MAIN_EMPTY.title}
+          description=${MAIN_EMPTY.description}
+        ></jf-sv3-empty>
+      `;
+    }
     return html`
       <div class="scroller sv3-scroller" data-testid="sv3-main-scroller">
         ${showResults
           ? html`
               <h2>${MAIN_HEADING}</h2>
-              ${MAIN_ROWS.map(
+              ${rows.map(
                 (row) => html`
                   <div class="row" data-testid="sv3-main-row">
                     <span class="row-title">${row.title}</span>

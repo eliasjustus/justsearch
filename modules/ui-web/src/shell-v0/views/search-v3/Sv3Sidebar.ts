@@ -20,7 +20,13 @@ import { html, css, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
 import { sv3Shared } from './sv3-shared-styles.js';
 import './Sv3SessionRow.js';
-import { SIDEBAR_GROUPS } from './fixtures.js';
+import './Sv3Empty.js';
+import {
+  FIXTURE_SET_DEFAULT,
+  SIDEBAR_EMPTY,
+  sidebarGroupsFor,
+  type Sv3FixtureSet,
+} from './fixtures.js';
 
 export class Sv3Sidebar extends JfElement {
   static styles = [
@@ -60,10 +66,32 @@ export class Sv3Sidebar extends JfElement {
     `,
   ];
 
+  static properties = {
+    fixtureSet: { type: String, attribute: 'fixtures', reflect: true },
+  };
+
+  declare fixtureSet: Sv3FixtureSet;
+
+  constructor() {
+    super();
+    this.fixtureSet = FIXTURE_SET_DEFAULT;
+  }
+
   render(): TemplateResult {
+    const groups = sidebarGroupsFor(this.fixtureSet);
+    if (groups.length === 0) {
+      return html`
+        <jf-sv3-empty
+          data-testid="sv3-sidebar-empty"
+          glyph="&#9634;"
+          heading=${SIDEBAR_EMPTY.title}
+          description=${SIDEBAR_EMPTY.description}
+        ></jf-sv3-empty>
+      `;
+    }
     return html`
       <div class="groups">
-        ${SIDEBAR_GROUPS.map(
+        ${groups.map(
           (group) => html`
             <div class="group" data-testid="sv3-sidebar-group">
               <div class="group-label" data-testid="sv3-sidebar-group-label">${group.label}</div>

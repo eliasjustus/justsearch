@@ -150,3 +150,96 @@ export const COMPOSER_SCOPES: readonly Sv3ComposerScope[] = [
   { id: 'scope-sources', label: 'All sources' },
   { id: 'scope-recency', label: 'Any time' },
 ];
+
+/* ── Slice 4: the fixture SET, the palette, and the empty states ───────────────────────────── */
+
+/**
+ * Which fixture set the window renders. `empty` is the dev handle for the zero-state pass: it empties
+ * BOTH collections at once, because the two empty states are one donor pattern applied twice and are
+ * meant to be judged together.
+ */
+export type Sv3FixtureSet = 'default' | 'empty';
+
+export const FIXTURE_SET_DEFAULT: Sv3FixtureSet = 'default';
+
+export const sidebarGroupsFor = (set: Sv3FixtureSet): readonly Sv3SidebarGroup[] =>
+  set === 'empty' ? [] : SIDEBAR_GROUPS;
+
+export const mainRowsFor = (set: Sv3FixtureSet): readonly Sv3MainRow[] =>
+  set === 'empty' ? [] : MAIN_ROWS;
+
+export interface Sv3EmptyCopy {
+  readonly title: string;
+  readonly description: string;
+}
+
+export const SIDEBAR_EMPTY: Sv3EmptyCopy = {
+  title: 'No searches yet',
+  description: 'Ask something and the thread will be kept here.',
+};
+
+export const MAIN_EMPTY: Sv3EmptyCopy = {
+  title: 'Nothing matched',
+  description: 'Try fewer words, or widen the scope to all sources.',
+};
+
+export interface Sv3Command {
+  readonly id: string;
+  readonly label: string;
+  /** The keyboard hint rendered at the row's trailing edge; absent means the command has none. */
+  readonly shortcut?: string;
+  /** The CURRENT choice — distinct from the keyboard position, which the palette owns at runtime. */
+  readonly selected?: boolean;
+}
+
+export interface Sv3CommandGroup {
+  readonly id: string;
+  readonly label: string;
+  readonly commands: readonly Sv3Command[];
+}
+
+/**
+ * Eight commands over two groups, so the ONE separator between them is exercised. Exactly one command
+ * is `selected` — the palette's current choice — which is what makes the donor's two-state distinction
+ * visible: the highlight starts on the first row while the selection sits elsewhere.
+ */
+export const COMMAND_GROUPS: readonly Sv3CommandGroup[] = [
+  {
+    id: 'cg-search',
+    label: 'Search',
+    commands: [
+      { id: 'cmd-everything', label: 'Search everything', shortcut: 'Ctrl L' },
+      { id: 'cmd-scope-sources', label: 'Scope to all sources', selected: true },
+      { id: 'cmd-scope-recent', label: 'Scope to the last 7 days' },
+      { id: 'cmd-similar', label: 'Find documents like this one' },
+      { id: 'cmd-explain', label: 'Explain why this result ranked' },
+    ],
+  },
+  {
+    id: 'cg-workspace',
+    label: 'Workspace',
+    commands: [
+      { id: 'cmd-folders', label: 'Manage indexed folders' },
+      { id: 'cmd-reindex', label: 'Reindex this folder' },
+      { id: 'cmd-diagnostics', label: 'Open indexing diagnostics', shortcut: 'Ctrl D' },
+    ],
+  },
+];
+
+export const COMMANDS: readonly Sv3Command[] = COMMAND_GROUPS.flatMap((g) => g.commands);
+
+export const PALETTE_PLACEHOLDER = 'Type a command or search…';
+
+export const PALETTE_EMPTY = 'No matching commands';
+
+/** The donor's footer gutter: one hint per key group, navigate / act / dismiss. */
+export interface Sv3PaletteHint {
+  readonly keys: readonly string[];
+  readonly label: string;
+}
+
+export const PALETTE_HINTS: readonly Sv3PaletteHint[] = [
+  { keys: ['↑', '↓'], label: 'Navigate' },
+  { keys: ['Enter'], label: 'Run' },
+  { keys: ['Esc'], label: 'Close' },
+];
