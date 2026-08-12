@@ -108,6 +108,23 @@ export const sv3Tokens = css`
     --sidebar-row-active: var(--accent);
     --sidebar-row-selected: var(--muted);
     --sidebar-border: var(--border);
+    /* Composer material. The donor expresses its dark mode as dark-class RULES on the component; a
+       selector inside a shadow root cannot see a class on the document element, so the whole
+       inversion is carried as tokens instead (donor §8.3's own recommendation). Dark catches light —
+       a 1px inset top highlight and NO drop shadow; light casts one down. */
+    --composer-glass-surface: color-mix(in srgb, var(--background) 96%, var(--color-white));
+    --composer-outline: color-mix(in srgb, var(--color-white) 5%, transparent);
+    --composer-shadow: none;
+    --composer-highlight: inset 0 1px rgb(255 255 255 / 3%);
+    /* The primary action's material is one indirection off --primary, so a future accent change
+       reaches the send button without touching it. */
+    --message-action: var(--primary);
+    --message-action-foreground: var(--primary-foreground);
+    --message-action-hover: color-mix(in srgb, var(--primary) 90%, var(--background));
+    /* A filled control's press physics: a top highlight at rest that FLIPS dark while pressed, with
+       the drop shadow dropped at the same time, so the control presses INTO the surface. */
+    --control-inset-highlight: inset 0 1px rgb(255 255 255 / 16%);
+    --control-inset-pressed: inset 0 1px rgb(0 0 0 / 8%);
 
     /* ── T2 geometry / material ────────────────────────────────────────────
        Semantic on purpose: sidebar, palette, tooltip and toolbar controls cannot quietly drift
@@ -187,6 +204,9 @@ export const sv3Tokens = css`
     --font-size-sv3-sm: 0.875rem;
     --font-size-sv3-base: 1rem;
     --font-size-sv3-lg: 1.125rem;
+    /* The hero headline is the ONE display size outside the four-size UI ramp, and the one place the
+       desktop ramp steps UP rather than down. */
+    --font-size-sv3-display: 1.875rem;
 
     /* ── Motion budget ─────────────────────────────────────────────────────
        Effectively two values (micro / layout), with one reserved for the signature morph.
@@ -247,6 +267,10 @@ export const sv3Tokens = css`
     --sidebar-row-hover: var(--color-zinc-25);
     --sidebar-row-active: var(--color-white);
     --sidebar-row-selected: var(--color-white);
+    --composer-glass-surface: var(--card);
+    --composer-outline: rgb(0 0 0 / 8%);
+    --composer-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+    --composer-highlight: none;
 
     --glass-blur: 12px;
     --glass-saturation: 1.14;

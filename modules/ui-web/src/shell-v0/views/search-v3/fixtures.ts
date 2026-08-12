@@ -122,3 +122,31 @@ export const MAIN_ROWS: readonly Sv3MainRow[] = [
 export const WINDOW_TITLE = 'Search v3';
 
 export const COMPOSER_PLACEHOLDER = 'Ask or search…';
+
+/**
+ * The composer's two forms. HERO is the empty window — nothing has been asked yet, so the composer
+ * is the centred subject of the main region and carries its headline. DOCKED is the working window —
+ * results own the region and the composer recedes into the bottom band. They are one component in
+ * two states, not two components, because the morph between them animates a single moving box.
+ */
+export type Sv3ComposerState = 'hero' | 'docked';
+
+/** The window opens empty, so the morph is reachable from the default fixture. */
+export const COMPOSER_STATE_DEFAULT: Sv3ComposerState = 'hero';
+
+export const HERO_HEADLINE = 'What are you looking for?';
+
+export interface Sv3ComposerScope {
+  readonly id: string;
+  readonly label: string;
+}
+
+/**
+ * Placeholders for the scope controls a wired composer will carry (source set, recency). They exist in
+ * this slice for one reason: their labels are what the compaction morph evaporates when the composer
+ * docks, leaving the glyphs behind.
+ */
+export const COMPOSER_SCOPES: readonly Sv3ComposerScope[] = [
+  { id: 'scope-sources', label: 'All sources' },
+  { id: 'scope-recency', label: 'Any time' },
+];

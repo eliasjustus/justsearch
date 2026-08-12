@@ -7,12 +7,17 @@
  * The ONE scroller in the window. The host itself is clipped; only `.scroller` inside it scrolls,
  * so the window's frame (topbar, sidebar, composer) can never be scrolled out of reach.
  *
+ * The region is EMPTY in the composer's hero state (slice 3): nothing has been asked yet, so the
+ * hero composer is the region's only subject. Results arrive with the docked state. The region's
+ * empty-state treatment proper is slice 4.
+ *
  * Side-effect registers <jf-sv3-main>.
  */
-import { html, css, type TemplateResult } from 'lit';
+import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
 import { sv3Shared } from './sv3-shared-styles.js';
-import { MAIN_HEADING, MAIN_ROWS } from './fixtures.js';
+import { COMPOSER_STATE_DEFAULT, MAIN_HEADING, MAIN_ROWS } from './fixtures.js';
+import type { Sv3ComposerState } from './fixtures.js';
 
 export class Sv3Main extends JfElement {
   static styles = [
@@ -70,18 +75,34 @@ export class Sv3Main extends JfElement {
     `,
   ];
 
+  static properties = {
+    state: { type: String, reflect: true },
+  };
+
+  declare state: Sv3ComposerState;
+
+  constructor() {
+    super();
+    this.state = COMPOSER_STATE_DEFAULT;
+  }
+
   render(): TemplateResult {
+    const showResults = this.state === 'docked';
     return html`
       <div class="scroller sv3-scroller" data-testid="sv3-main-scroller">
-        <h2>${MAIN_HEADING}</h2>
-        ${MAIN_ROWS.map(
-          (row) => html`
-            <div class="row" data-testid="sv3-main-row">
-              <span class="row-title">${row.title}</span>
-              <span class="row-path">${row.path}</span>
-            </div>
-          `,
-        )}
+        ${showResults
+          ? html`
+              <h2>${MAIN_HEADING}</h2>
+              ${MAIN_ROWS.map(
+                (row) => html`
+                  <div class="row" data-testid="sv3-main-row">
+                    <span class="row-title">${row.title}</span>
+                    <span class="row-path">${row.path}</span>
+                  </div>
+                `,
+              )}
+            `
+          : nothing}
       </div>
     `;
   }

@@ -7,7 +7,7 @@
  * No stores are mocked because the slice-1 shell consumes none: it is fixture-first on purpose, so
  * these cases measure geometry and registration and nothing else.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { SearchV3View } from './SearchV3View.js';
 import { Sv3Topbar } from './Sv3Topbar.js';
 import { Sv3Sidebar } from './Sv3Sidebar.js';
@@ -17,9 +17,26 @@ import { createCorePluginManifest } from '../../plugin-api/CorePlugin.js';
 import { isLazySurface } from '../lazySurfaceRegistry.js';
 import { COMPONENT_TAGS } from '../../renderers/component-vocabulary.generated.js';
 import { Sv3SessionRow } from './Sv3SessionRow.js';
-import { MAIN_ROWS, SIDEBAR_GROUPS, SIDEBAR_ROWS } from './fixtures.js';
+import {
+  COMPOSER_SCOPES,
+  HERO_HEADLINE,
+  MAIN_ROWS,
+  SIDEBAR_GROUPS,
+  SIDEBAR_ROWS,
+} from './fixtures.js';
+import { SV3_MORPH_ROOT_ATTR, sv3MorphSheetAdopted } from './sv3-composer-morph.js';
 
 type Mounted = HTMLElement & { updateComplete: Promise<unknown> };
+
+/**
+ * happy-dom implements no View Transitions, so each case that exercises the animated path installs
+ * its own stub and the shared teardown removes it.
+ */
+type ViewTransitionStub = (cb: () => Promise<void> | void) => { finished: Promise<unknown> };
+
+const stubViewTransition = (impl: ViewTransitionStub): void => {
+  (document as unknown as Record<string, unknown>).startViewTransition = impl;
+};
 
 async function mount(): Promise<Mounted> {
   const el = document.createElement('jf-sv3-window') as Mounted;
@@ -27,6 +44,17 @@ async function mount(): Promise<Mounted> {
   await el.updateComplete;
   return el;
 }
+
+/**
+ * Every case starts from a document holding no window: the morph sheet is ref-counted against
+ * connected windows, so a window left mounted by an earlier case would mask the release.
+ */
+afterEach(() => {
+  for (const child of [...document.body.children]) child.remove();
+  document.documentElement.removeAttribute(SV3_MORPH_ROOT_ATTR);
+  delete (document as unknown as { startViewTransition?: unknown }).startViewTransition;
+  vi.restoreAllMocks();
+});
 
 /** A nested region renders into its OWN shadow root; settle it before reading. */
 async function region(el: Mounted, tag: string): Promise<Mounted> {
@@ -80,8 +108,10 @@ describe('the window mounts with its five regions', () => {
     );
   });
 
-  it('fills the content surface with enough rows to exercise the scroller', async () => {
+  it('fills the content surface with enough rows to exercise the scroller, once docked', async () => {
     const el = await mount();
+    // The window opens on the empty hero, so the results arrive with the docked state.
+    await (el as SearchV3View).setComposerState('docked');
     const main = await region(el, 'jf-sv3-main');
     expect(main.shadowRoot?.querySelectorAll('[data-testid="sv3-main-row"]')).toHaveLength(
       MAIN_ROWS.length,
@@ -90,11 +120,265 @@ describe('the window mounts with its five regions', () => {
     expect(main.shadowRoot?.querySelector('h2')?.textContent).toBe('Results');
   });
 
-  it('gives the composer a field and a send control, and nothing else yet', async () => {
+  it('gives the composer a field, scope controls and a send control', async () => {
     const el = await mount();
     const composer = await region(el, 'jf-sv3-composer');
     expect(composer.shadowRoot?.querySelector('[data-testid="sv3-composer-input"]')).toBeTruthy();
     expect(composer.shadowRoot?.querySelector('[data-testid="sv3-composer-send"]')).toBeTruthy();
+    expect(composer.shadowRoot?.querySelectorAll('[data-testid="sv3-composer-scope"]')).toHaveLength(
+      COMPOSER_SCOPES.length,
+    );
+  });
+});
+
+/**
+ * Donor §5.9 (slice 3): the composer's two forms and the morph between them. The state is the
+ * WINDOW's, not the composer's, because it decides what the content region holds.
+ */
+describe('the composer has two anatomies and one way between them', () => {
+  const composerOf = (el: Mounted): Promise<Mounted> => region(el, 'jf-sv3-composer');
+
+  it('opens on the empty hero: headline up, content region empty', async () => {
+    const el = await mount();
+    expect(el.getAttribute('composer-state')).toBe('hero');
+    const composer = await composerOf(el);
+    expect(composer.getAttribute('state')).toBe('hero');
+    expect(composer.shadowRoot?.querySelector('[data-testid="sv3-composer-headline"]')?.textContent)
+      .toBe(HERO_HEADLINE);
+    const main = await region(el, 'jf-sv3-main');
+    expect(main.shadowRoot?.querySelectorAll('[data-testid="sv3-main-row"]')).toHaveLength(0);
+  });
+
+  it('docks into the band, dropping the headline and revealing the results', async () => {
+    const el = await mount();
+    await (el as SearchV3View).setComposerState('docked');
+    const composer = await composerOf(el);
+    expect(el.getAttribute('composer-state')).toBe('docked');
+    expect(composer.getAttribute('state')).toBe('docked');
+    expect(composer.shadowRoot?.querySelector('[data-testid="sv3-composer-headline"]')).toBeNull();
+    // Both anatomies keep the field, the controls and the action — one component, two states.
+    expect(composer.shadowRoot?.querySelector('[data-testid="sv3-composer-input"]')).toBeTruthy();
+    expect(composer.shadowRoot?.querySelectorAll('[data-testid="sv3-composer-scope"]')).toHaveLength(
+      COMPOSER_SCOPES.length,
+    );
+    const main = await region(el, 'jf-sv3-main');
+    expect(main.shadowRoot?.querySelectorAll('[data-testid="sv3-main-row"]')).toHaveLength(
+      MAIN_ROWS.length,
+    );
+  });
+
+  it('keeps the send control disabled until the field carries something to send', async () => {
+    const el = await mount();
+    const composer = await composerOf(el);
+    const send = composer.shadowRoot?.querySelector<HTMLButtonElement>(
+      '[data-testid="sv3-composer-send"]',
+    );
+    expect(send?.disabled).toBe(true);
+    // ...and the placeholder is the overlaid element, shown for exactly the same condition.
+    expect(composer.shadowRoot?.querySelector('[data-testid="sv3-composer-placeholder"]'))
+      .toBeTruthy();
+
+    const field = composer.shadowRoot?.querySelector<HTMLTextAreaElement>(
+      '[data-testid="sv3-composer-input"]',
+    );
+    field!.value = '   ';
+    field!.dispatchEvent(new Event('input'));
+    await composer.updateComplete;
+    // Whitespace is not content: the control stays refused.
+    expect(
+      composer.shadowRoot?.querySelector<HTMLButtonElement>('[data-testid="sv3-composer-send"]')
+        ?.disabled,
+    ).toBe(true);
+
+    field!.value = 'northfield lease';
+    field!.dispatchEvent(new Event('input'));
+    await composer.updateComplete;
+    expect(
+      composer.shadowRoot?.querySelector<HTMLButtonElement>('[data-testid="sv3-composer-send"]')
+        ?.disabled,
+    ).toBe(false);
+    expect(composer.shadowRoot?.querySelector('[data-testid="sv3-composer-placeholder"]')).toBeNull();
+  });
+
+  it('docks on send and returns to the hero on Escape', async () => {
+    const el = await mount();
+    const composer = await composerOf(el);
+    const field = composer.shadowRoot?.querySelector<HTMLTextAreaElement>(
+      '[data-testid="sv3-composer-input"]',
+    );
+    field!.value = 'northfield lease';
+    field!.dispatchEvent(new Event('input'));
+    await composer.updateComplete;
+    composer.shadowRoot
+      ?.querySelector<HTMLButtonElement>('[data-testid="sv3-composer-send"]')
+      ?.click();
+    await el.updateComplete;
+    expect(el.getAttribute('composer-state')).toBe('docked');
+
+    field!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await el.updateComplete;
+    expect(el.getAttribute('composer-state')).toBe('hero');
+  });
+
+  it('routes an external write of the dev attribute through the same morph', async () => {
+    const el = await mount();
+    const seen: string[] = [];
+    stubViewTransition((cb) => {
+      seen.push('transition');
+      return { finished: Promise.resolve(cb()) };
+    });
+    el.setAttribute('composer-state', 'docked');
+    await el.updateComplete;
+    await new Promise<void>((r) => setTimeout(r, 0));
+    expect(seen).toEqual(['transition']);
+    expect((el as SearchV3View).composerState).toBe('docked');
+  });
+});
+
+/**
+ * The containment obligation, made observable. `::view-transition-*` rules are document-level and a
+ * sheet in `document.adoptedStyleSheets` outlives whoever added it, so the window's lifecycle — not
+ * good intentions — is what keeps this hidden dev surface from changing how the shipped app animates.
+ */
+describe('the document-level morph sheet lives exactly as long as the window does', () => {
+  it('adopts on connect and removes on the last disconnect', async () => {
+    expect(sv3MorphSheetAdopted()).toBe(false);
+    const first = await mount();
+    expect(sv3MorphSheetAdopted()).toBe(true);
+    // Ref-counted: a second window must not let the first one's teardown strip the sheet.
+    const second = await mount();
+    first.remove();
+    expect(sv3MorphSheetAdopted()).toBe(true);
+    second.remove();
+    expect(sv3MorphSheetAdopted()).toBe(false);
+  });
+
+  it('scopes the morph attribute to the transition and clears it afterwards', async () => {
+    const el = await mount();
+    const composer = await region(el, 'jf-sv3-composer');
+    const during: Array<boolean> = [];
+    stubViewTransition((cb) => {
+      during.push(
+        document.documentElement.getAttribute(SV3_MORPH_ROOT_ATTR) === 'true',
+        composer.hasAttribute('morphing'),
+      );
+      return { finished: Promise.resolve(cb()) };
+    });
+    await (el as SearchV3View).setComposerState('docked');
+    // Set for the transition...
+    expect(during).toEqual([true, true]);
+    // ...and gone after it, so no other transition in the app can be caught by these rules.
+    expect(document.documentElement.hasAttribute(SV3_MORPH_ROOT_ATTR)).toBe(false);
+    expect(composer.hasAttribute('morphing')).toBe(false);
+  });
+
+  it('never waits on a frame inside the transition callback, which the browser suspends', async () => {
+    // Live measurement caught this: the callback awaited a frame, the browser suspends rendering
+    // until the callback settles, so the frame never arrived and the transition hung to its ~4s
+    // callback timeout — morph skipped, flag held for four seconds. Reproduce the suspension by
+    // making frames unavailable for as long as the callback is pending.
+    const el = await mount();
+    const realRaf = globalThis.requestAnimationFrame;
+    stubViewTransition((cb) => {
+      globalThis.requestAnimationFrame = (() => 0) as typeof requestAnimationFrame;
+      const finished = Promise.resolve(cb()).finally(() => {
+        globalThis.requestAnimationFrame = realRaf;
+      });
+      return { finished };
+    });
+    const outcome = await Promise.race([
+      (el as SearchV3View).setComposerState('docked').then(() => 'settled'),
+      new Promise((resolve) => setTimeout(() => resolve('hung'), 500)),
+    ]);
+    globalThis.requestAnimationFrame = realRaf;
+    expect(outcome).toBe('settled');
+    expect(document.documentElement.hasAttribute(SV3_MORPH_ROOT_ATTR)).toBe(false);
+  });
+
+  it('clears the flag on EVERY path a state change can take', async () => {
+    // One escape leaves the shipped app's own transitions under this window's rules indefinitely,
+    // so each path is walked rather than argued about.
+    const paths: Array<[string, () => void]> = [
+      ['view transitions unsupported', () => {}],
+      [
+        'transition resolves',
+        () => stubViewTransition((cb) => ({ finished: Promise.resolve(cb()) })),
+      ],
+      [
+        'transition rejects mid-flight',
+        () =>
+          stubViewTransition((cb) => {
+            void cb();
+            return { finished: Promise.reject(new Error('skipped')) };
+          }),
+      ],
+      [
+        'transition throws before running the update',
+        () =>
+          stubViewTransition(() => {
+            throw new Error('no transition');
+          }),
+      ],
+      [
+        'reduced motion',
+        () => {
+          stubViewTransition((cb) => ({ finished: Promise.resolve(cb()) }));
+          vi.spyOn(window, 'matchMedia').mockImplementation(
+            (query: string) =>
+              ({
+                matches: query.includes('prefers-reduced-motion'),
+                media: query,
+                onchange: null,
+                addListener: () => {},
+                removeListener: () => {},
+                addEventListener: () => {},
+                removeEventListener: () => {},
+                dispatchEvent: () => false,
+              }) as unknown as MediaQueryList,
+          );
+        },
+      ],
+    ];
+    for (const [label, arrange] of paths) {
+      const el = await mount();
+      const composer = await region(el, 'jf-sv3-composer');
+      arrange();
+      await (el as SearchV3View).setComposerState('docked');
+      expect(document.documentElement.hasAttribute(SV3_MORPH_ROOT_ATTR), label).toBe(false);
+      expect(composer.hasAttribute('morphing'), label).toBe(false);
+      // The state change itself is never optional, whichever path ran.
+      expect((el as SearchV3View).composerState, label).toBe('docked');
+      el.remove();
+      vi.restoreAllMocks();
+      delete (document as unknown as { startViewTransition?: unknown }).startViewTransition;
+    }
+  });
+
+  it('swaps instantly under reduced motion, without reaching the API at all', async () => {
+    const el = await mount();
+    let started = 0;
+    stubViewTransition((cb) => {
+      started += 1;
+      return { finished: Promise.resolve(cb()) };
+    });
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query: string) =>
+        ({
+          matches: query.includes('prefers-reduced-motion'),
+          media: query,
+          onchange: null,
+          addListener: () => {},
+          removeListener: () => {},
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          dispatchEvent: () => false,
+        }) as unknown as MediaQueryList,
+    );
+    await (el as SearchV3View).setComposerState('docked');
+    expect(started).toBe(0);
+    // The state change is not optional — only its animation is.
+    expect((el as SearchV3View).composerState).toBe('docked');
+    expect(document.documentElement.hasAttribute(SV3_MORPH_ROOT_ATTR)).toBe(false);
   });
 });
 

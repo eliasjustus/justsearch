@@ -153,3 +153,25 @@ self-judge geometry (BlindTest ~58.6%) — verification must be measurement, not
   distinguishing states by content only — copied verbatim; diverging is one line.
   Known cosmetic: fixture glyphs render as empty ghost squares (no real icons in
   fixtures); resolves when real data lands.
+- 2026-08-12 — **Slice 3 implemented + verified** (opus worker + 1 remediation round,
+  both defects live-caught by orchestrator probes, fixes independently re-probed).
+  Composer anatomy per donor (768px glass box, --radius-3xl 22px, dark glass
+  mix@80%+blur16/sat1.08 with inset top highlight + no drop shadow — elevation
+  inversion; light set carries the donor's single composer shadow; @supports no-blur
+  fallback), field (min 70 / max 200, field-sizing: content, overlaid placeholder —
+  ::placeholder is ambient-gated), round 32px send (disabled-on-empty, hover
+  scale 1.05), two ghost scope-control chips (--control-pad-3), focus/invalid via
+  :has() + --ring. Hero↔docked morph on the donor §5.5 choreography (group 180ms,
+  sub-exit 130ms, holds 0-35/65-100), document-level VT sheet ref-counted onto
+  adoptedStyleSheets with lifecycle containment, doubly-disabled reduced motion.
+  REMEDIATION 1: morph flag leaked — rAF await inside the VT update callback
+  deadlocks (Chromium suspends rendering; callback hit the ~4s timeout, so the morph
+  also never animated); fixed with updateComplete awaits + unconditional finally +
+  sync-throw fallback (a second hole the new test caught). REMEDIATION 2: glass
+  reported backdrop:none — donor's node split (radius on one node, material on a
+  sibling pseudo) served only the excluded attachment tray; collapsed to ONE .glass
+  node, structural test forbids re-split. 4520 tests green; 10/10 mutation probes
+  caught; kernel gates pass; live: flag null at +3s, blur(16px) saturate(1.08) on the
+  22px node, zero page errors. Worker's clone-verified brief corrections: hero = same
+  box centered + headline (not wider); send is bespoke rounded-full (not §6.3
+  primary); label collapse instant by donor construction (VT crossfade covers it).
