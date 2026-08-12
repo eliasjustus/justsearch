@@ -37,7 +37,9 @@ node scripts/agent-analytics/observations-triage.mjs --probe    # janitor: re-ru
 ```
 
 Conditions are processed at the maintainer's periodic triage pass. Kinds route them onward —
-**defect** → `docs/reference/issues/` or the owning domain register; **environment** (facts about
+**defect** → the owning domain register (`docs/reference/search-quality-register.md`,
+`docs/reference/inference-runtime-register.md`) or its owning tempdoc — the standing
+`docs/reference/issues/` registers were retired in tempdoc 821 §7 D5; **environment** (facts about
 main/CI/machines that verification hits) → `scripts/agent-analytics/expected-state.v1.json`;
 **lesson** → the delivery pipeline (hooks / `agent-lessons.md` / postmortems), not prose that ages
 here; **follow-up** → its owning tempdoc or register. The store is a buffer, not a home: a
@@ -289,7 +291,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] LESSON (static-green != live-working, 2026-05-27): merging 138 commits of `main` into a long-lived branch (worktree-550-impl) compiled green and passed all unit + FE tests, but ALL 3 live E2E suites failed — `IsolatedBackendFixture`'s readiness probe string-matched `"worker":{"state":"READY"`, which tempdoc 548's lifecycle-enum collapse had silently changed to the proto-prefixed `"LIFECYCLE_STATE_READY"` on the wire. The worker booted fine (worker.log: models loaded + indexing, no errors) — ready-but-undetectable. Only the live tier caught it. Takeaway: a string-matching test fixture against a wire/serialization shape is brittle across a serialization change landed on another branch; after a big merge, re-run the LIVE tier, not just compile+unit. Probe now accepts both forms — `modules/system-tests/.../harness/IsolatedBackendFixture.java:296` (2026-05-27)
 
 ### obs:libraryview — ui-ux.md 'Key Files' + UIX-013/UIX-014 reference the retired React stack (`components/views/LibraryV
-`kind: defect?` `anchor: components/views/LibraryView.tsx` `seen: 1` `first: 2026-05-30` `last: 2026-05-30`
+`kind: defect?` `anchor: components/views/LibraryView.tsx` `seen: 1` `first: 2026-05-30` `last: 2026-05-30` `status: proposed-retire (subject file docs/reference/issues/ui-ux.md deleted with the whole register set, tempdoc 821 §7 D5, 2026-08-12; UIX-013 re-verified against the Lit path and re-logged here, UIX-014 was already resolved by tempdoc 638)`
 - [ ] ui-ux.md 'Key Files' + UIX-013/UIX-014 reference the retired React stack (`components/views/LibraryView.tsx`, `stores/`, `hooks/`); likely stale after the Lit shell-v0 rewrite — `docs/reference/issues/ui-ux.md:13` (2026-05-30)
 
 ### obs:tokens — `gen-token-names --check` is stale on main: `--surface-content-max-width` (added to styles/tokens.cs

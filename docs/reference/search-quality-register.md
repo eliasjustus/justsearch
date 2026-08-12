@@ -33,8 +33,11 @@ tempdoc agent must read this before starting and update it before closing.
   if you re-ran or validated a dataset
 
 **Replaces:** the former `search-quality.md` (SRQ-) and `retrieval-quality.md` (RAG-)
-issue files, which have been retired. Remaining open items from those files were
-triaged into this register's sections or retired to `decisions.md`.
+issue files, and — since tempdoc 821 §7 D5 (2026-08-12) — the rest of the
+`docs/reference/issues/` register set, which was retired wholesale. Open items were
+triaged into this register's sections or routed into `docs/observations.md`; promote a
+search-quality condition from there into a section below rather than re-creating a
+standalone issue file.
 
 ---
 

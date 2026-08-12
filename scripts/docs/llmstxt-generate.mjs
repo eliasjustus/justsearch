@@ -179,14 +179,9 @@ function main() {
     .filter(
       (d) =>
         d.rel.startsWith("reference/") &&
-        !d.rel.startsWith("reference/issues/") &&
         d.rel !== "reference/contributing/agent-guide.md"
     )
     .sort(byRelPath);
-
-  const issues = included
-    .filter((d) => d.rel.startsWith("reference/issues/"))
-    .sort(readmeFirstSort);
 
   const governance = included
     .filter((d) => d.rel.startsWith("governance/"))
@@ -219,9 +214,6 @@ function main() {
     "",
     "### Decisions (Architecture Decision Records)",
     ...decisions.map(formatEntry),
-    "",
-    "### Known Issues",
-    ...issues.map(formatEntry),
     "",
     MARKER_END,
   ].join("\n");
