@@ -35,6 +35,12 @@ function To-Bool([string]$Value) {
 # prints it in an if:failure() step.
 $script:signLogPath = Join-Path $env:TEMP "justsearch-sign-windows.log"
 
+# Extension-shim state (see the "NSIS extension shim" block below). Initialised here, ahead of
+# the trap and of Fail/Skip-Or-Fail, because Set-StrictMode -Version Latest makes reading an
+# unassigned variable a terminating error.
+$script:originalBinary = $null
+$script:extensionShim = $null
+
 function Write-SignLog([string]$Message) {
   try { Add-Content -LiteralPath $script:signLogPath -Value ("[" + (Get-Date).ToString("HH:mm:ss") + "] " + $Message) } catch { }
 }
@@ -49,8 +55,15 @@ trap {
   exit 1
 }
 
+function Remove-ExtensionShim {
+  if ($script:extensionShim) {
+    try { Remove-Item -LiteralPath $script:extensionShim -Force -ErrorAction SilentlyContinue } catch { }
+  }
+}
+
 function Fail([string]$Message) {
   Write-SignLog ("FAIL: " + $Message)
+  Remove-ExtensionShim
   Write-Error $Message
   exit 1
 }
@@ -156,6 +169,23 @@ if (-not (Test-Path -LiteralPath $resolvedBinary)) {
   Fail "Binary not found: $resolvedBinary"
 }
 
+# NSIS extension shim (round-16 F3). Tauri routes uninstaller signing through NSIS's
+# `!uninstfinalize`, which hands the freshly compiled uninstaller over as a TEMP file named
+# `...\nstXXXX.tmp`. SSL.com's CodeSignTool dispatches on the file EXTENSION and refuses it:
+# "Error: Unsupported file format for signing - tmp" (CI run 31606590694, tauri_build phase).
+# makensis does not check a finalize command's exit code, so that failure was invisible and the
+# bundle shipped exactly one unsigned PE -- the uninstaller. Sign an `.exe`-named copy instead,
+# then write the signed bytes back over the path NSIS embeds.
+$signableExtensions = @(".exe", ".dll", ".sys", ".ocx", ".msi", ".msix", ".appx", ".cab", ".cat", ".ps1")
+$binaryExtension = [System.IO.Path]::GetExtension($resolvedBinary).ToLowerInvariant()
+if ($signableExtensions -notcontains $binaryExtension) {
+  $script:originalBinary = $resolvedBinary
+  $script:extensionShim = Join-Path -Path $env:TEMP -ChildPath ("justsearch-codesign-shim-" + [guid]::NewGuid().ToString("N") + ".exe")
+  Copy-Item -LiteralPath $resolvedBinary -Destination $script:extensionShim -Force
+  Info ("Extension shim ('" + $binaryExtension + "' is not signable): " + $resolvedBinary + " -> " + $script:extensionShim)
+  $resolvedBinary = $script:extensionShim
+}
+
 function Find-SignTool {
   $cmd = Get-Command "signtool.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($cmd -and $cmd.Path) { return $cmd.Path }
@@ -190,6 +220,7 @@ function Skip-Or-Fail([string]$SkipMessage) {
     Fail ("Signing is required but inputs are missing. " + $SkipMessage)
   }
   Info $SkipMessage
+  Remove-ExtensionShim
   exit 0
 }
 
@@ -352,4 +383,13 @@ switch ($mode) {
   default {
     Fail "Unknown JUSTSEARCH_CODESIGN_MODE '$mode' (expected pfx | store | command)."
   }
+}
+
+# Only reached when the signature above verified: every failure path exits through Fail. Put the
+# signed bytes back on the path the caller named -- for `!uninstfinalize` that is the file makensis
+# compresses into the installer, so this write is what makes the shipped uninstaller signed.
+if ($script:extensionShim) {
+  [System.IO.File]::Copy($script:extensionShim, $script:originalBinary, $true)
+  Remove-ExtensionShim
+  Info ("Signed shim written back to " + $script:originalBinary)
 }
