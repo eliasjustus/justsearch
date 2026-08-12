@@ -4,6 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -52,6 +55,35 @@ final class TransportRetryPolicyTest {
         TransportRetryPolicy.defaultPolicy().withStartTier(99).startTier(),
         "an out-of-range repair pass number must not produce an unknown tier");
     assertEquals(0, TransportRetryPolicy.defaultPolicy().withStartTier(-3).startTier());
+  }
+
+  /**
+   * Cancel latency. Nothing interrupts the install thread on cancel, so the wait polls the flag
+   * between slices: a cancel two slices into a 27 s backoff costs 500 ms, not 27 s.
+   */
+  @Test
+  void aCancelDuringTheWaitIsSeenAfterOneSliceNotAfterTheWholeDelay() {
+    List<Long> slices = new ArrayList<>();
+    AtomicBoolean cancelled = new AtomicBoolean(false);
+    TransportRetryPolicy policy =
+        TransportRetryPolicy.defaultPolicy()
+            .withSleeper(
+                millis -> {
+                  slices.add(millis);
+                  if (slices.size() == 2) cancelled.set(true);
+                });
+
+    assertFalse(policy.sleep(27_000L, cancelled::get), "a cancelled wait must not report success");
+    assertEquals(List.of(250L, 250L), slices);
+  }
+
+  @Test
+  void anUncancelledWaitStillSpendsTheWholeDelayIncludingItsRemainder() {
+    List<Long> slices = new ArrayList<>();
+    TransportRetryPolicy policy = TransportRetryPolicy.defaultPolicy().withSleeper(slices::add);
+
+    assertTrue(policy.sleep(600L, () -> false));
+    assertEquals(List.of(250L, 250L, 100L), slices, "slicing must not shorten the backoff");
   }
 
   @Test

@@ -53,6 +53,12 @@ final class ResumableFetchTest {
     /** How many leading transport calls fail outright, reporting {@link #injectedFailure}. */
     private int failFirstAttempts;
 
+    /** Transport calls after this many succeed-or-serve calls fail, reporting {@link #injectedFailure}. */
+    private int failAfterAttempts = Integer.MAX_VALUE;
+
+    /** Run after every transport call returns, so a test can raise a cancel at that exact moment. */
+    private Runnable afterTransfer;
+
     private TransportFailure injectedFailure = TransportFailure.curlExit(52, "empty reply");
     private TransportFailure lastFailure;
 
@@ -79,11 +85,21 @@ final class ResumableFetchTest {
         DownloadResume.Decision decision,
         DownloadExecutor.ProgressCallback callback,
         int transportTier) {
+      boolean result = runTransfer(destPartial, decision, callback, transportTier);
+      if (afterTransfer != null) afterTransfer.run();
+      return result;
+    }
+
+    private boolean runTransfer(
+        Path destPartial,
+        DownloadResume.Decision decision,
+        DownloadExecutor.ProgressCallback callback,
+        int transportTier) {
       actions.add(decision.action());
       jobIds.add(decision.bitsJobId());
       tiers.add(transportTier);
       lastFailure = null;
-      if (actions.size() <= failFirstAttempts) {
+      if (actions.size() <= failFirstAttempts || actions.size() > failAfterAttempts) {
         lastFailure = injectedFailure;
         return false;
       }
@@ -150,10 +166,14 @@ final class ResumableFetchTest {
 
   /**
    * The default policy with its clock removed and its jitter pinned to the midpoint (draw 0.5 =>
-   * factor 1.0), so the delays a test observes are the nominal 3 s / 9 s / 27 s.
+   * factor 1.0), so the delays a test observes are the nominal 3 s / 9 s / 27 s. Unsliced, so each
+   * wait reaches the recording sleeper as one value; slicing has its own test below.
    */
   private TransportRetryPolicy testPolicy() {
-    return TransportRetryPolicy.defaultPolicy().withSleeper(sleeps::add).withRandom(() -> 0.5d);
+    return TransportRetryPolicy.defaultPolicy()
+        .withSleeper(sleeps::add)
+        .withRandom(() -> 0.5d)
+        .withUnslicedSleep();
   }
 
   private ResumableFetch.Outcome fetch(
@@ -561,13 +581,36 @@ final class ResumableFetchTest {
     assertTrue(out.error().contains("Empty reply from server"), out.error());
   }
 
-  /** Cancellation must be honoured between attempts, not only inside one. */
+  /** Cancellation raised before the wait starts must skip the backoff entirely. */
   @Test
   void cancellationBetweenAttemptsStopsTheRetryLoop() throws Exception {
     byte[] full = content(2048, 1);
     FakeTransfer transfer = new FakeTransfer(full);
     transfer.failFirstAttempts = 99;
     AtomicBoolean cancelFlag = new AtomicBoolean(false);
+    transfer.afterTransfer = () -> cancelFlag.set(true);
+
+    ResumableFetch.Outcome out =
+        fetch(request(partial(), full), transfer, cancelFlag, new ArrayList<>());
+
+    assertTrue(out.cancelled(), "a cancel between attempts must not start another wait");
+    assertEquals(1, out.transferAttempts());
+    assertEquals(List.of(), sleeps, "no backoff is spent once cancellation is already requested");
+  }
+
+  /**
+   * Cancel latency DURING the wait. {@code AiInstallService.cancel()} only raises a flag — it never
+   * interrupts the install thread — so the wait itself has to be cancellable. It is slept in slices
+   * with the flag polled between them; before that, a cancel one second into the 27 s backoff was
+   * unobserved until the whole wait had elapsed (~35 s worst case for the user).
+   */
+  @Test
+  void cancelDuringTheBackoffIsSeenWithinOneSliceNotAfterTheWholeWait() throws Exception {
+    byte[] full = content(2048, 1);
+    FakeTransfer transfer = new FakeTransfer(full);
+    transfer.failFirstAttempts = 99;
+    AtomicBoolean cancelFlag = new AtomicBoolean(false);
+    // The user clicks cancel while the first slice of the nominal 3 s backoff is elapsing.
     TransportRetryPolicy policy =
         TransportRetryPolicy.defaultPolicy()
             .withRandom(() -> 0.5d)
@@ -581,8 +624,46 @@ final class ResumableFetchTest {
         fetch(request(partial(), full), transfer, cancelFlag, new ArrayList<>(), policy);
 
     assertTrue(out.cancelled(), "a cancel during the backoff must not be slept through");
-    assertEquals(1, out.transferAttempts());
-    assertEquals(List.of(3000L), sleeps);
+    assertEquals(1, out.transferAttempts(), "no further transport attempt after the cancel");
+    assertEquals(
+        List.of(250L),
+        sleeps,
+        "the wait stopped after one 250 ms poll slice, not after the whole 3000 ms");
+  }
+
+  /**
+   * The compound worst case the two loops can produce for ONE asset: a resumed attempt fails
+   * integrity (restart from zero, 2 transfers in that attempt), the restarted transfer then hits a
+   * transient transport failure, and the policy spends its remaining attempts. This pins the actual
+   * number — the design's "the loops must not multiply" claim is only worth what a measured bound
+   * says. See {@link TransportRetryPolicy}'s javadoc for the theoretical cap.
+   */
+  @Test
+  void resumeRestartFollowedByTransportRetriesStaysWithinTheMeasuredTransferBound()
+      throws Exception {
+    byte[] expected = content(2048, 1);
+    byte[] wrong = content(2048, 2);
+    Files.write(partial(), java.util.Arrays.copyOf(wrong, 700));
+    DownloadResume.write(
+        partial(), new DownloadResume.State(URL, expected.length, sha256(expected), null));
+
+    FakeTransfer transfer = new FakeTransfer(wrong);
+    // Call 1 (the resume) serves bytes that will not verify; every later call is a transient drop.
+    transfer.failAfterAttempts = 1;
+    transfer.injectedFailure = TransportFailure.curlExit(52, "Empty reply from server");
+
+    ResumableFetch.Outcome out =
+        fetch(request(partial(), expected), transfer, new AtomicBoolean(false), new ArrayList<>());
+
+    assertFalse(out.ok());
+    assertFalse(out.cancelled());
+    assertEquals(
+        5,
+        out.transferAttempts(),
+        "attempt 1 costs 2 transfers (resume + restart-from-zero), attempts 2-4 one each");
+    assertEquals(DownloadResume.Action.RESUME_RANGE, out.firstAction());
+    assertEquals(List.of(3000L, 9000L, 27000L), sleeps, "one spaced wait per retry, no more");
+    assertTrue(out.error().contains("after 4 attempts"), out.error());
   }
 
   /**
