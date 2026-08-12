@@ -165,6 +165,44 @@ export interface SessionListItem {
 }
 
 /**
+ * Tempdoc 821 §4 — `GET /api/chat/sessions` rows arrive shaped like `AgentSessionSummary`
+ * (`modules/app-api/.../agent/AgentSessionSummary.java`, generated wire type
+ * `generated/schema-types/agent-sessions-response.ts`): an ISO-8601 `startedAt` string and a
+ * `state` enum string (e.g. `READY_FOR_LLM`). `loadSessions` used to cast the raw JSON straight to
+ * `SessionListItem[]`, which expects `startedAtEpochMs`/`status` — those keys are never present on
+ * the wire, so every row's timestamp rendered blank (`RetrospectivePanel.ts` gates on
+ * `s.startedAtEpochMs` truthiness). This normalizer derives the FE shape from the real backend
+ * field names while still accepting `startedAtEpochMs`/`status` directly, so a payload already in
+ * the FE shape (tests, a future/alternate backend) round-trips unchanged.
+ */
+function toSessionListItem(raw: Record<string, unknown>): SessionListItem {
+  const startedAtEpochMs =
+    typeof raw.startedAtEpochMs === 'number'
+      ? raw.startedAtEpochMs
+      : typeof raw.startedAt === 'string'
+        ? (() => {
+            const parsed = Date.parse(raw.startedAt as string);
+            return Number.isNaN(parsed) ? undefined : parsed;
+          })()
+        : undefined;
+  const status =
+    typeof raw.status === 'string'
+      ? raw.status
+      : typeof raw.state === 'string'
+        ? raw.state
+        : undefined;
+  return {
+    sessionId: raw.sessionId as string,
+    startedAtEpochMs,
+    status,
+    initialMessage: raw.initialMessage as string | undefined,
+    iterationsUsed: raw.iterationsUsed as number | undefined,
+    preview: raw.preview as string | undefined,
+    resumable: raw.resumable as boolean | null | undefined,
+  };
+}
+
+/**
  * Tempdoc 561 #4: a human label for an agent session — the first-user-message preview the backend
  * derives ({@code AgentRunStore.derivePreview}), never the raw session UUID. Falls back to a neutral
  * label when a run has no preview yet (e.g. before the first user turn persists).
@@ -1783,8 +1821,8 @@ export class AgentSessionController implements CoreAgentRunHandlers {
         ? await this.host_.data.fetch(`/api/chat/sessions?limit=${SESSIONS_LIMIT}`)
         : await authorizedFetch(`${this.apiBase}/api/chat/sessions?limit=${SESSIONS_LIMIT}`);
       if (!res.ok) return;
-      const data = (await res.json()) as { sessions?: SessionListItem[] };
-      this.sessions = data.sessions ?? [];
+      const data = (await res.json()) as { sessions?: Array<Record<string, unknown>> };
+      this.sessions = (data.sessions ?? []).map(toSessionListItem);
     } catch {
       // ignore
     }
