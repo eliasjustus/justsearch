@@ -482,6 +482,28 @@ Residuals and pending closure items:
 8. 792's branch also carries the sole copies of tempdocs 793/794 — they land with
    the rescue merge.
 
+## §N Wave 2 execution log (2026-08-12/13; owner: "proceed with everything aside from the frontend")
+
+Same discipline as §M: worker-implemented, independently reviewed (reviewer ≠
+implementer), re-fixed on review verdicts. All branches green, UNPUSHED, no PRs.
+
+| lane | branch / location | state |
+|---|---|---|
+| Store cleanup (defect stratum) | `agent-aca6d2da1713b04c6` (ea66fc83) | §6 row above — 92 per-occurrence-verified deletions, depth 498→406. |
+| D5 register retirement | `agent-aa70c939fd4d37e5b` (e576e570) | §7-D5 row above — 21+1 routed, 24 dead, 14-reference sweep. |
+| Count-drop live A/B | in-branch (05e052b5) | CLOSED: scifact hybrid **0.7543** on the fix branch, `relevance-gate` verdict ok (floor 0.7404), F-045 amended with the measurement. §M residual 2 done. |
+| Needs-live lane (D3) | shard notes (this session) | EXECUTED for the backend subset: `drift-9` resolved with mechanism (retrieval composite degraded by `lambdamart.not_configured` while the embedding dim reads READY off encoder-loaded semantics during a live REBUILD_IN_PROGRESS hybridFallback — a C1 double-defect, unfixed, now precisely charted); `general-28` CONFIRMED WORST-CASE live (fingerprint never persists; two consecutive restarts each reset the full re-embed, coverage 9%→0.2% — **raises merge priority of worktree 819-fingerprint-boot-race**); `localapiserver` CONFIRMED (POST /mcp accepts foreign Origin, GET 404); `missing-2` partially moot (CE cold 426ms no deadline miss; status key set restart-stable, `crossEncoderAvailable` field gone). FE-rendering + tooling one-off conditions stay parked (frontend excluded / not demo-relevant). |
+| C1-BE live verification | dev-stack `distFrom` session | §M residual on `static-green ≠ live-working` CLOSED: worker killed → embedding UNKNOWN/stale:true with monotone stalenessMs (3.2s→16.2s), indexServing NOT_READY/stale, reclassified GPU stale:true, head-local telemetry fresh; watchdog recovery to all-fresh at ~16s. |
+| RAG collection scoping (C2 wire tier) | `agent-a74053fa3a341af5a` (a07f5bc0 + 063b559d) | Backend+MCP only (FE selector excluded). Proto field 25 mirroring SearchFilters; full chain threaded; pre-search scoping (a discovery — without it the common ASK path was dead plumbing); MCP tool-surface 0.6.0. Review NEEDS-FIXES → all fixed with falsification-verified tests: FULLTEXT_FALLBACK/full-document legs now scope-carrying (closing an 811 D-1 residue), hybrid/pre-search coupling tested + documented, discriminating routing fixture. All five touched modules' suites green. |
+| Facets truthfulness (engine tiers) | `agent-aec27f0e6dd7d66d7` (16ff3bf4 + 8864dfe0) | Non-facetable fields OMITTED (key-absence ≠ zero matches); failed scans report truncated=true (never the truncated=false lie); swallowed catches raised to WARN. **§L.3 design reversal, measured:** the querySyntax-hardcode premise was INVERTED — every multi-leg BM25 path parses SIMPLE-only, so the literals were consistent; shipped one coupling symbol (`MULTI_LEG_LEXICAL_SYNTAX`) consumed by leg + both count sites, with a bidirectional coupling test (computeMatchCount arm pinned by a measured failing-on-revert). The REAL defect (multi-leg ignores `query_syntax=LUCENE`) is logged in the store — a search-quality lane, not chartered here. Review verified the inversion independently; all fixes applied; suites 567+967 green. |
+| Facets↔relay wording | `agent-a58afac96dfa2dfb2` (+ bdb8ce81) | Cross-branch interaction fixed in the relay's branch: `facetsTruncated` wording cause-neutral ("did not cover every match") since the flag now also fires on scan failure. Merge-order safe either way. |
+
+Remaining open (this charter): §M residuals 1 (measured UX audit) and 3 (settled-arm
+gap) — both frontend, owner-excluded; the facets/limit WIRE tier (response reason
+codes, 100-cap echo — changeset-gated); the non-defect store strata (30 retire
+proposals need per-occurrence rigor); C3 (enrichment completeness) and the remaining
+§3 classes not yet chartered into lanes; §7 D1/D4/D6 defaults stand unless redirected.
+
 ## Appendix A — 145 verified STILL-TRUE defect conditions
 
 (class-ordered: product, drift, tooling, governance; demo-relevant flagged Y)
