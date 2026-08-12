@@ -1,0 +1,320 @@
+name: Sign Vendored Mirrors
+
+# Sign-once-per-upstream-bump producer for the vendored third-party payload mirrors
+# (tempdoc 760/772 §K). The installer bundler re-signs EVERY unsigned bundled PE on every release
+# build (~93 third-party + ~8 own). Those ~93 are pin-stable, so they are signed ONCE here per
+# upstream pin bump; the resulting archives are re-hosted on `justsearch-releases` and pinned into
+# packaging/signed-mirrors.v1.json, after which release builds fetch already-signed payloads and
+# spend only ~8 signatures. Full operator procedure: docs/how-to/cut-a-release.md
+# §"Per-pin-bump signed-mirror procedure".
+#
+# workflow_dispatch ONLY, by design: this workflow SPENDS metered eSigner signings. It must never
+# be reachable from a push/PR/schedule.
+#
+# It deliberately does NOT publish anything. The two `-signed.zip` + `.sha256` pairs leave as
+# workflow artifacts; a human uploads them to `justsearch-releases` and PRs the url+sha256 pins.
+
+on:
+  workflow_dispatch:
+    inputs:
+      signLlama:
+        description: >-
+          Sign the pinned llama.cpp Windows CPU prebuilt zip (llamaPrebuiltUrl /
+          llamaPrebuiltSha256 in modules/ui/build.gradle.kts) and emit its signed mirror.
+        type: boolean
+        default: true
+      signTesseract:
+        description: >-
+          Sign the pinned Tesseract Windows runtime (the self-extracting NSIS installer pinned by
+          packaging/runtime/tesseract-windows.v1.json sourceUrl/sourceSha256) and emit its signed
+          mirror. Its per-file manifest hashes must be regenerated afterwards — see
+          scripts/release/regen-tesseract-manifest.mjs.
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# Two concurrent runs would spend double the metered signings for the same pins.
+concurrency:
+  group: sign-vendored-mirrors
+  cancel-in-progress: false
+
+jobs:
+  sign-mirrors:
+    name: Sign vendored payload mirrors
+    runs-on: windows-latest
+    # ~93 signatures at ~9-12 s each (docs/how-to/cut-a-release.md) is ~15-20 min of signing alone,
+    # plus downloads, extraction and re-zipping of a 21 MB NSIS installer and a 39 MB zip.
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Validate dispatch inputs
+        shell: pwsh
+        run: |
+          if ('${{ inputs.signLlama }}' -ne 'true' -and '${{ inputs.signTesseract }}' -ne 'true') {
+            throw "Nothing to do: both signLlama and signTesseract are false. Select at least one payload."
+          }
+          Write-Host ('signLlama=${{ inputs.signLlama }} signTesseract=${{ inputs.signTesseract }}')
+
+      # Fail BEFORE downloading ~60 MB if no credential can possibly sign. sign-vendored-payload.ps1
+      # is fail-closed, but it would only discover this after extracting and attempting the first
+      # signature. Only the PRESENCE of each secret is reported — never a value.
+      - name: Verify signing credentials are configured
+        shell: pwsh
+        env:
+          JUSTSEARCH_CODESIGN_MODE: ${{ secrets.JUSTSEARCH_CODESIGN_MODE }}
+          JUSTSEARCH_CODESIGN_PFX_B64: ${{ secrets.JUSTSEARCH_CODESIGN_PFX_B64 }}
+          JUSTSEARCH_CODESIGN_THUMBPRINT: ${{ secrets.JUSTSEARCH_CODESIGN_THUMBPRINT }}
+          JUSTSEARCH_CODESIGN_COMMAND: ${{ secrets.JUSTSEARCH_CODESIGN_COMMAND }}
+        run: |
+          $mode = if ($env:JUSTSEARCH_CODESIGN_MODE) { $env:JUSTSEARCH_CODESIGN_MODE.Trim().ToLowerInvariant() } else { 'pfx' }
+          $configured = switch ($mode) {
+            'pfx'     { [bool]($env:JUSTSEARCH_CODESIGN_PFX_B64    -and $env:JUSTSEARCH_CODESIGN_PFX_B64.Trim()) }
+            'store'   { [bool]($env:JUSTSEARCH_CODESIGN_THUMBPRINT -and $env:JUSTSEARCH_CODESIGN_THUMBPRINT.Trim()) }
+            'command' { [bool]($env:JUSTSEARCH_CODESIGN_COMMAND    -and $env:JUSTSEARCH_CODESIGN_COMMAND.Trim()) }
+            default   { $false }
+          }
+          if (-not $configured) {
+            throw "No signing credential configured for JUSTSEARCH_CODESIGN_MODE='$mode'. This workflow exists to SIGN; it must not produce an unsigned 'mirror'. Configure the mode's secret (see docs/how-to/cut-a-release.md 'Code signing')."
+          }
+          Write-Host "Signing credential present for mode '$mode'."
+
+      # Pins are PROJECTED from their existing authorities, never restated here: a second copy of a
+      # pinned URL/sha in this workflow would silently sign the wrong bytes after an upstream bump.
+      #  - llama: modules/ui/build.gradle.kts (llamaPrebuiltVersion/Asset/Url/Sha256)
+      #  - tesseract: packaging/runtime/tesseract-windows.v1.json (sourceUrl/sourceSha256); the
+      #    `#/dl.7z` fragment is a Scoop download hint that the build strips before fetching
+      #    (build.gradle.kts `.substringBefore("#")`), so it is stripped identically here.
+      - name: Resolve pinned upstream artifacts
+        id: pins
+        shell: pwsh
+        run: |
+          $gradlePath = 'modules/ui/build.gradle.kts'
+          $gradle = Get-Content -Raw -LiteralPath $gradlePath
+          function Get-GradleVal([string]$name) {
+            $pattern = '(?m)^\s*val\s+' + [regex]::Escape($name) + '\s*=\s*"([^"]*)"'
+            $m = [regex]::Match($script:gradle, $pattern)
+            if (-not $m.Success) {
+              # Multi-line form: `val x =` on one line, the string literal on the next.
+              $pattern = '(?m)^\s*val\s+' + [regex]::Escape($name) + '\s*=\s*\r?\n\s*"([^"]*)"'
+              $m = [regex]::Match($script:gradle, $pattern)
+            }
+            if (-not $m.Success) { throw "Could not parse 'val $name' from $gradlePath - the pin moved or was renamed." }
+            return $m.Groups[1].Value
+          }
+          $llamaVersion = Get-GradleVal 'llamaPrebuiltVersion'
+          $llamaAsset = (Get-GradleVal 'llamaPrebuiltAsset').Replace('$llamaPrebuiltVersion', $llamaVersion)
+          $llamaUrl = (Get-GradleVal 'llamaPrebuiltUrl').Replace('$llamaPrebuiltVersion', $llamaVersion).Replace('$llamaPrebuiltAsset', $llamaAsset)
+          $llamaSha = Get-GradleVal 'llamaPrebuiltSha256'
+          if ($llamaUrl -match '\$') { throw "Unexpanded interpolation left in the llama URL: $llamaUrl" }
+
+          $manifestPath = 'packaging/runtime/tesseract-windows.v1.json'
+          $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+          $tessUrl = ($manifest.sourceUrl -split '#')[0]
+          $tessSha = $manifest.sourceSha256
+          $tessFile = [System.IO.Path]::GetFileName($tessUrl)
+          if (-not $tessUrl -or -not $tessSha) { throw "sourceUrl/sourceSha256 missing from $manifestPath" }
+
+          Write-Host "llama     : $llamaAsset"
+          Write-Host "            $llamaUrl"
+          Write-Host "            sha256 $llamaSha"
+          Write-Host "tesseract : $tessFile (manifest version $($manifest.version))"
+          Write-Host "            $tessUrl"
+          Write-Host "            sha256 $tessSha"
+
+          "llamaAsset=$llamaAsset"   | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "llamaUrl=$llamaUrl"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "llamaSha=$llamaSha"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tessFile=$tessFile"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tessUrl=$tessUrl"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tessSha=$tessSha"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # Download + verify BEFORE any signing: signing the wrong bytes would burn the whole metered
+      # budget on an artifact that can never be pinned.
+      - name: Download and verify pinned upstream payloads
+        shell: pwsh
+        env:
+          LLAMA_URL: ${{ steps.pins.outputs.llamaUrl }}
+          LLAMA_ASSET: ${{ steps.pins.outputs.llamaAsset }}
+          LLAMA_SHA: ${{ steps.pins.outputs.llamaSha }}
+          TESS_URL: ${{ steps.pins.outputs.tessUrl }}
+          TESS_FILE: ${{ steps.pins.outputs.tessFile }}
+          TESS_SHA: ${{ steps.pins.outputs.tessSha }}
+        run: |
+          $inDir = Join-Path $env:GITHUB_WORKSPACE 'dist/vendored-input'
+          New-Item -ItemType Directory -Force -Path $inDir | Out-Null
+          function Get-Pinned([string]$Url, [string]$Target, [string]$ExpectedSha) {
+            Write-Host "Downloading $Url"
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri $Url -OutFile $Target -MaximumRedirection 5
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Target).Hash
+            if ($actual -ne $ExpectedSha.ToUpperInvariant()) {
+              Remove-Item -LiteralPath $Target -Force
+              throw "Pinned artifact hash mismatch for $Url : expected $ExpectedSha, got $actual. Refusing to sign unpinned bytes."
+            }
+            Write-Host ("  OK {0} ({1:N0} bytes) sha256 {2}" -f (Split-Path -Leaf $Target), (Get-Item $Target).Length, $actual)
+          }
+          if ('${{ inputs.signLlama }}' -eq 'true') {
+            Get-Pinned $env:LLAMA_URL (Join-Path $inDir $env:LLAMA_ASSET) $env:LLAMA_SHA
+          }
+          if ('${{ inputs.signTesseract }}' -eq 'true') {
+            Get-Pinned $env:TESS_URL (Join-Path $inDir $env:TESS_FILE) $env:TESS_SHA
+          }
+
+      # The Tesseract pin is a self-extracting NSIS installer (.exe), but the gradle consumption path
+      # is archive-level: downloadTesseractRuntimeArtifacts saves whatever the (overridden) sourceUrl
+      # returns under the FIXED name tesseract-ocr-w64-setup-<ver>.exe and stageTesseractRuntime runs
+      # `7z x` on it (modules/ui/build.gradle.kts:1251-1254, 1339-1342, 1364-1373). 7-Zip selects its
+      # handler by content signature, so a ZIP delivered under that .exe name extracts correctly
+      # (verified locally with 7-Zip 26.01: "Cannot open the file as [PE] archive / The file is open
+      # as [zip] archive", exit 0, layout preserved). What must be preserved is the EXTRACTED LAYOUT:
+      # the manifest's files[] paths are resolved relative to the extraction root
+      # (build.gradle.kts:1442). So the exe is extracted here and re-zipped by the producer script
+      # with its internal layout intact, including `$PLUGINSDIR` (which the build deletes at
+      # build.gradle.kts:1383) - a faithful re-zip, differing from upstream only in PE signatures.
+      - name: Convert the Tesseract installer to a layout-preserving zip
+        if: ${{ inputs.signTesseract }}
+        shell: pwsh
+        env:
+          TESS_FILE: ${{ steps.pins.outputs.tessFile }}
+        run: |
+          $inDir = Join-Path $env:GITHUB_WORKSPACE 'dist/vendored-input'
+          $exe = Join-Path $inDir $env:TESS_FILE
+          $work = Join-Path $env:RUNNER_TEMP 'tesseract-extract'
+          Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          & 7z x "-o$work" -y -- $exe | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "7z extraction of $exe failed (exit=$LASTEXITCODE)" }
+          if (-not (Test-Path -LiteralPath (Join-Path $work 'tesseract.exe'))) {
+            throw "Extraction root has no tesseract.exe - the installer layout changed; the manifest files[] paths resolve against this root (modules/ui/build.gradle.kts:1442)."
+          }
+          $zip = Join-Path $inDir ([System.IO.Path]::GetFileNameWithoutExtension($env:TESS_FILE) + '.zip')
+          Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
+          Push-Location $work
+          try { & 7z a -tzip -- $zip "*" | Out-Null; $zipExit = $LASTEXITCODE } finally { Pop-Location }
+          if ($zipExit -ne 0) { throw "7z re-zip failed (exit=$zipExit)" }
+          Write-Host ("Repacked to {0} ({1:N0} bytes)" -f (Split-Path -Leaf $zip), (Get-Item $zip).Length)
+          "TESSERACT_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # Adapted verbatim in intent from build-installer.yml's bootstrap: download SSL.com's
+      # CodeSignTool (ships its own JRE + production endpoint config) into $RUNNER_TEMP\CodeSignTool
+      # so a `command`-mode template referencing it can run. Secrets-absent or non-CodeSignTool
+      # templates skip this entirely.
+      - name: Install eSigner CodeSignTool (command mode only)
+        shell: pwsh
+        env:
+          JUSTSEARCH_CODESIGN_COMMAND: ${{ secrets.JUSTSEARCH_CODESIGN_COMMAND }}
+        run: |
+          if (-not ($env:JUSTSEARCH_CODESIGN_COMMAND -and $env:JUSTSEARCH_CODESIGN_COMMAND -match 'CodeSignTool')) {
+            Write-Host "CodeSignTool not referenced by the signing command template - skipping."
+            exit 0
+          }
+          $dest = Join-Path $env:RUNNER_TEMP "CodeSignTool"
+          $zip = Join-Path $env:RUNNER_TEMP "CodeSignTool.zip"
+          Invoke-WebRequest -Uri "https://www.ssl.com/download/codesigntool-for-windows/" -OutFile $zip
+          Write-Host ("CodeSignTool.zip sha256: " + (Get-FileHash -Algorithm SHA256 $zip).Hash)
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+          # The zip may nest a single top-level folder; normalize so CodeSignTool.bat sits at $dest.
+          $bat = Get-ChildItem -Path $dest -Recurse -Filter "CodeSignTool.bat" | Select-Object -First 1
+          if (-not $bat) { throw "CodeSignTool.bat not found after extraction" }
+          if ($bat.DirectoryName -ne $dest) {
+            Get-ChildItem -Path $bat.DirectoryName | Move-Item -Destination $dest -Force
+          }
+          Write-Host ("CodeSignTool ready at " + (Join-Path $dest "CodeSignTool.bat"))
+
+      # `shell: powershell` (Windows PowerShell 5.1), NOT pwsh: sign-vendored-payload.ps1 is
+      # `#Requires -Version 5.1` and calls Get-AuthenticodeSignature directly. Spawning 5.1 from a
+      # pwsh 7 parent leaks PS7's Core-edition PSModulePath into it, which breaks
+      # Microsoft.PowerShell.Security loading (the failure sign-windows.ps1:12-20 self-heals against;
+      # sign-vendored-payload.ps1 has no such guard). Running the step as 5.1 avoids it at the root.
+      - name: Sign llama.cpp CPU prebuilt
+        if: ${{ inputs.signLlama }}
+        shell: powershell
+        env:
+          LLAMA_ASSET: ${{ steps.pins.outputs.llamaAsset }}
+          # Signing secrets, hoisted exactly as build-installer.yml does. Absent secrets expand to
+          # empty strings; the credential preflight above already refused that case.
+          JUSTSEARCH_CODESIGN_MODE: ${{ secrets.JUSTSEARCH_CODESIGN_MODE }}
+          JUSTSEARCH_CODESIGN_PFX_B64: ${{ secrets.JUSTSEARCH_CODESIGN_PFX_B64 }}
+          JUSTSEARCH_CODESIGN_PFX_PASSWORD: ${{ secrets.JUSTSEARCH_CODESIGN_PFX_PASSWORD }}
+          JUSTSEARCH_CODESIGN_TIMESTAMP_URL: ${{ secrets.JUSTSEARCH_CODESIGN_TIMESTAMP_URL }}
+          JUSTSEARCH_CODESIGN_THUMBPRINT: ${{ secrets.JUSTSEARCH_CODESIGN_THUMBPRINT }}
+          JUSTSEARCH_CODESIGN_COMMAND: ${{ secrets.JUSTSEARCH_CODESIGN_COMMAND }}
+          # CodeSignTool.bat resolves its bundled JRE relative to CWD unless this points at its
+          # install dir. Inert for pfx/store modes.
+          CODE_SIGN_TOOL_PATH: ${{ runner.temp }}\CodeSignTool
+          # This workflow exists to sign, so the child signer must fail closed rather than skip.
+          JUSTSEARCH_REQUIRE_SIGNING: "true"
+          JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED: ${{ vars.JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED }}
+        run: |
+          $archive = Join-Path $env:GITHUB_WORKSPACE ('dist/vendored-input/' + $env:LLAMA_ASSET)
+          & .\scripts\release\sign-vendored-payload.ps1 -ArchivePath $archive -OutDir dist/signed-mirrors
+          if ($LASTEXITCODE -ne 0) { throw "sign-vendored-payload.ps1 failed for the llama.cpp prebuilt (exit=$LASTEXITCODE)" }
+
+      - name: Sign Tesseract runtime
+        if: ${{ inputs.signTesseract }}
+        shell: powershell
+        env:
+          JUSTSEARCH_CODESIGN_MODE: ${{ secrets.JUSTSEARCH_CODESIGN_MODE }}
+          JUSTSEARCH_CODESIGN_PFX_B64: ${{ secrets.JUSTSEARCH_CODESIGN_PFX_B64 }}
+          JUSTSEARCH_CODESIGN_PFX_PASSWORD: ${{ secrets.JUSTSEARCH_CODESIGN_PFX_PASSWORD }}
+          JUSTSEARCH_CODESIGN_TIMESTAMP_URL: ${{ secrets.JUSTSEARCH_CODESIGN_TIMESTAMP_URL }}
+          JUSTSEARCH_CODESIGN_THUMBPRINT: ${{ secrets.JUSTSEARCH_CODESIGN_THUMBPRINT }}
+          JUSTSEARCH_CODESIGN_COMMAND: ${{ secrets.JUSTSEARCH_CODESIGN_COMMAND }}
+          CODE_SIGN_TOOL_PATH: ${{ runner.temp }}\CodeSignTool
+          JUSTSEARCH_REQUIRE_SIGNING: "true"
+          JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED: ${{ vars.JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED }}
+        run: |
+          & .\scripts\release\sign-vendored-payload.ps1 -ArchivePath $env:TESSERACT_ZIP -OutDir dist/signed-mirrors
+          if ($LASTEXITCODE -ne 0) { throw "sign-vendored-payload.ps1 failed for the Tesseract runtime (exit=$LASTEXITCODE)" }
+
+      # Post-condition on the produced mirrors: the consumption paths resolve files out of the
+      # extracted archive (llama: zipTree include **/llama-server.exe, build.gradle.kts:851-861;
+      # tesseract: manifest files[] paths against the extraction root, build.gradle.kts:1442). An
+      # archive that lost its layout in the re-zip would only fail much later, mid-release.
+      - name: Verify signed mirror layout
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:GITHUB_WORKSPACE 'dist/signed-mirrors'
+          $expect = @{}
+          if ('${{ inputs.signLlama }}' -eq 'true') { $expect['llama'] = 'llama-server.exe' }
+          if ('${{ inputs.signTesseract }}' -eq 'true') { $expect['tesseract'] = 'tesseract.exe' }
+          foreach ($zip in Get-ChildItem -LiteralPath $out -Filter '*-signed.zip') {
+            $names = @(& 7z l -ba -slt -- $zip.FullName | Select-String '^Path = ' | ForEach-Object { $_.Line.Substring(7) })
+            $key = if ($zip.Name -like 'llama-*') { 'llama' } else { 'tesseract' }
+            $needle = $expect[$key]
+            if (-not $needle) { continue }
+            $hit = $names | Where-Object { ($_ -replace '\\', '/') -match ('(^|/)' + [regex]::Escape($needle) + '$') }
+            if (-not $hit) { throw "$($zip.Name) does not contain $needle - the re-zip lost the archive layout." }
+            Write-Host ("{0}: {1} entries, {2} present" -f $zip.Name, $names.Count, $needle)
+          }
+
+      # The sha256 sidecars are what gets pasted into packaging/signed-mirrors.v1.json, so print
+      # them in the log too - no secret material is involved.
+      - name: Print mirror pins for signed-mirrors.v1.json
+        shell: pwsh
+        run: |
+          Write-Host "Paste into packaging/signed-mirrors.v1.json after uploading to justsearch-releases:"
+          Get-ChildItem -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'dist/signed-mirrors') -Filter '*.sha256' |
+            ForEach-Object { Write-Host ("  " + (Get-Content -Raw -LiteralPath $_.FullName).Trim()) }
+
+      - name: Upload signed mirrors
+        uses: actions/upload-artifact@v7
+        with:
+          name: signed-vendored-mirrors
+          path: dist/signed-mirrors/*
+          if-no-files-found: error
+          # These are hand-carried to justsearch-releases within the same working session; a long
+          # retention would just park ~60 MB against the account artifact quota.
+          retention-days: 7
+
+      - name: Debug - sign-windows log (on failure)
+        if: failure()
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:TEMP "justsearch-sign-windows.log"
+          if (Test-Path $log) { Write-Host "=== sign-windows.ps1 log ==="; Get-Content $log } else { Write-Host "no sign-windows log at $log" }
