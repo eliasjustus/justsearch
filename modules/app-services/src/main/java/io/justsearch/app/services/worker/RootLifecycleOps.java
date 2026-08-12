@@ -96,11 +96,17 @@ final class RootLifecycleOps {
      * Tempdoc 418 Phase B — dispatch a Worker-side ScanRoot RPC. Implementations forward each
      * {@link ScanRootProgress} to {@code progressConsumer} and return the terminal event.
      * Production wiring uses {@code RemoteKnowledgeClient.scanRoot}.
+     *
+     * <p>Tempdoc 821 §3-C2 — {@code collection} is the label the scan's admitted documents carry,
+     * mirroring the watcher arm's {@link WorkerWatchFn#watch(String, String)}. A {@code null} or
+     * blank value means "no explicit label": the wire leaves {@code ScanRootRequest.collection}
+     * unset and the Worker files the documents in the default bucket.
      */
     @FunctionalInterface
     interface ScanRootFn {
         ScanRootProgress scan(
                 String rootPath,
+                String collection,
                 List<String> excludeGlobs,
                 java.util.function.Consumer<ScanRootProgress> progressConsumer);
     }
@@ -182,7 +188,9 @@ final class RootLifecycleOps {
         Path normalized = path.toAbsolutePath().normalize();
         // Register root so walkAndSubmit()'s cancellation check doesn't abort the walk.
         watchedRootsState.markNeverIndexed(normalized);
-        walkExecutor.execute(() -> walkAndSubmit(normalized));
+        // No collection label reaches this entry point (tempdoc 821 §L.3 — root→collection is not
+        // persisted, so callers that did not supply one have nothing to forward): default bucket.
+        walkExecutor.execute(() -> walkAndSubmit(normalized, null));
     }
 
     /**
@@ -192,8 +200,10 @@ final class RootLifecycleOps {
      * based on the terminal {@link ScanRootProgress}. A {@code CLIENT_CANCELLED} terminal reason
      * is recorded as a markWalkFailed reason just like any other non-empty terminal reason.
      *
+     * <p>Tempdoc 821 §3-C2 — {@code collection} labels the documents this scan admits; {@code null}
+     * or blank means the default bucket (the wire leaves the field unset).
      */
-    private void walkAndSubmit(Path normalized) {
+    private void walkAndSubmit(Path normalized, String collection) {
         if (!watchedRoots.containsKey(normalized)) {
             log.debug("Walk cancelled before start: root {} removed", normalized);
             return;
@@ -205,6 +215,7 @@ final class RootLifecycleOps {
             ScanRootProgress terminal =
                     scanRootFn.scan(
                             normalized.toString(),
+                            collection,
                             excludeGlobs,
                             progress -> admittedTotal[0] = progress.getFilesAdmitted());
 
@@ -280,8 +291,10 @@ final class RootLifecycleOps {
         startWatcherIfAvailable(collectionName, normalized);
 
         // 3. Queue async walk â€” batching, backpressure, and state persistence
-        //    are handled by walkAndSubmit() on the walk-bg thread.
-        walkExecutor.execute(() -> walkAndSubmit(normalized));
+        //    are handled by walkAndSubmit() on the walk-bg thread. Tempdoc 821 §3-C2 — the scan arm
+        //    carries the SAME label the watcher arm just got, so the root's own initial scan admits
+        //    documents under its collection instead of dropping the tag.
+        walkExecutor.execute(() -> walkAndSubmit(normalized, collectionName));
     }
 
     int deleteDocsByPathPrefix(Path pathPrefix) {
@@ -417,7 +430,9 @@ final class RootLifecycleOps {
             // backpressure. walkAndSubmit() handles batching, state marking, and persistence.
             walkExecutor.execute(() -> {
                 syncOps.pruneMissing(root.toString());
-                walkAndSubmit(root);
+                // No per-root label is available on the reindex path (tempdoc 821 §L.3 — the
+                // root→collection mapping is not persisted): default bucket, as today.
+                walkAndSubmit(root, null);
             });
         }
         watchedRootsState.persist();
@@ -440,8 +455,10 @@ final class RootLifecycleOps {
         List<Path> rootsToReindex = List.copyOf(watchedRoots.keySet());
         for (Path root : rootsToReindex) {
             Path normalized = root.toAbsolutePath().normalize();
+            // Tempdoc 821 §L.3 — the root→collection mapping is not persisted, so a restart only
+            // has the literal "default" the watcher arm already uses; both arms stay symmetric.
             startWatcherIfAvailable("default", normalized);
-            walkExecutor.execute(() -> walkAndSubmit(normalized));
+            walkExecutor.execute(() -> walkAndSubmit(normalized, "default"));
         }
         // Runs after all walks complete (single-thread executor serializes tasks).
         int count = rootsToReindex.size();
