@@ -502,6 +502,58 @@ class CheckFindingsTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertIn("placeholder stub", reason)
 
+    def test_mid_sentence_no_findings_phrase_is_still_topic_checked(self):
+        # The escape valve is a ROUND-LEVEL declaration, not any occurrence of
+        # the phrase. This report HAS findings and merely says one journey was
+        # clean -- matching the declaration anywhere in the text accepted it as
+        # a clean round and skipped the topic checks entirely (round-16 wave
+        # review, claim-4). It must still be held to the required topics.
+        body = (
+            "The install journey produced two HIGH severity problems, while there were "
+            "no findings in the search journey worth reporting. "
+            "Evidence: 42-brain-install-failed-state.png and the api- snapshot beside it. "
+        ) * 4
+        self.assertGreaterEqual(len(body.strip()), FINDINGS_MIN_BYTES)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / FINDINGS_FILENAME).write_text(body, encoding="utf-8")
+            ok, reason = check_findings(tmp)
+            self.assertFalse(ok, reason)
+            self.assertIn("regression home", reason)
+
+    def test_line_initial_but_scoped_phrase_is_still_topic_checked(self):
+        # Opening a line with the phrase is not enough either when the sentence
+        # scopes it to one journey -- the declaration has to close its clause.
+        body = (
+            "No findings in the search journey, but the install journey produced two "
+            "HIGH severity problems. Evidence: 42-brain-install-failed-state.png and "
+            "the api- snapshot beside it. "
+        ) * 4
+        self.assertGreaterEqual(len(body.strip()), FINDINGS_MIN_BYTES)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / FINDINGS_FILENAME).write_text(body, encoding="utf-8")
+            ok, reason = check_findings(tmp)
+            self.assertFalse(ok, reason)
+            self.assertIn("regression home", reason)
+
+    def test_decorated_no_findings_declaration_passes(self):
+        # Anchoring must not reject how a clean round actually writes it:
+        # a bold/heading-decorated declaration on its own line still counts.
+        body = (
+            "# Round findings\n\n"
+            "**No findings this round.**\n\n"
+            "Every must-touch surface in the brief was reached and behaved as the charter's "
+            "healthy signature describes: the install completed with installedFully true on "
+            "all seven packages, the escalation ladder disabled its AI rungs honestly while "
+            "AI was offline, the encryption ceremony completed and survived a cold restart, "
+            "and the warm-reinstall cycle preserved the index.\n"
+        )
+        self.assertGreaterEqual(len(body.strip()), FINDINGS_MIN_BYTES)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / FINDINGS_FILENAME).write_text(body, encoding="utf-8")
+            ok, reason = check_findings(tmp)
+            self.assertTrue(ok, reason)
+            self.assertIn("no-findings declaration", reason)
+
     def test_bom_prefixed_file_still_reads(self):
         with tempfile.TemporaryDirectory() as tmp:
             data = ("﻿" + SUBSTANTIAL_FINDINGS).encode("utf-8")

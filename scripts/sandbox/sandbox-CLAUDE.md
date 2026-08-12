@@ -369,12 +369,17 @@ requires `executionProvider: "cuda"` with `gpuFallback: false`. The CUDA session
 lazily on the first inference batch, so a capture taken too early runs CPU-FP32 query vectors
 against a GPU-FP16 baseline — exactly what made round 16's parity check exit 1 on three queries
 with the dense leg alone collapsing while SPLADE and text stayed high. If the session is cold the
-script triggers a vector-mode warm-up search and polls for up to 3 minutes; if it is still cold it
-**auto-skips the capture** with a note (same mechanism as the corpus-ratio floor above) rather than
-producing evidence that reads as a ranking regression. Either way the observed state is written to
-`evidence/golden-capture-ep.json`, so finalize can always see the condition the capture was taken
-under. A skip is a recorded gap: re-run `collect-evidence.ps1` after real search/enrichment traffic
-has warmed the session. If `staging-gaps.md` lists a missing golden-parity baseline for this
+script triggers a vector-mode warm-up search and polls for up to 3 minutes; if the session is still
+reported as fallen back to CPU (`gpuFallback: true`) it **auto-skips the capture** with a note (same
+mechanism as the corpus-ratio floor above) rather than producing evidence that reads as a ranking
+regression. A host that is genuinely CPU-only — `executionProvider: "cpu"` with no `gpuFallback` —
+has no GPU session to wait for, so the capture **proceeds** and is labelled
+`captureCondition: "cpu-native"` with the reasoning in `golden-capture-note.txt`; comparability is
+then host-side's call (`check_golden_parity.py` fails typed on the embedding-fingerprint mismatch,
+and such a host needs its own CPU-generated baseline). Either way the observed state, including
+`captureCondition`, is written to `evidence/golden-capture-ep.json`, so finalize can always see the
+condition the capture was taken under. A skip is a recorded gap: re-run `collect-evidence.ps1` after
+real search/enrichment traffic has warmed the session. If `staging-gaps.md` lists a missing golden-parity baseline for this
 candidate, record that as a round-level coverage gap (per the protocol above) rather than
 attempting to judge search quality yourself.
 
@@ -777,9 +782,12 @@ Write one entry per finding, each carrying:
 
 `evidence/findings.md` is checked at finalize and the round **fails closed** if it
 is missing or too thin. A round that genuinely found nothing still writes the file
-and **says so explicitly** ("no findings"), describing what it exercised to reach
-that conclusion — an explicit clean-round declaration satisfies the check; silence
-does not.
+and **says so explicitly at the start of a line** ("No findings this round."),
+describing what it exercised to reach that conclusion — an explicit clean-round
+declaration satisfies the check; silence does not. The declaration is matched
+line-anchored on purpose: a report that merely contains the phrase inside a scoped
+sentence ("no findings in the search journey, but …") is a report WITH findings and
+stays subject to the per-finding topic checks above.
 
 ### Evidence review (required — a reader, not just a filename, must confirm coverage)
 

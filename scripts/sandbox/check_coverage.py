@@ -289,8 +289,23 @@ FINDINGS_MIN_BYTES = 400
 FINDINGS_NO_FINDINGS_DECLARATIONS: tuple[str, ...] = (
     "no findings",
     "zero findings",
+    "no product findings",
     "no defects",
     "no blocking findings and no non-blocking findings",
+)
+
+# The declaration only counts as a ROUND-LEVEL one: it must OPEN a line
+# (markdown heading/bullet/emphasis decoration allowed), may carry a "this
+# round" qualifier, and must close its clause there. Matching the phrase
+# anywhere -- the original shape -- let a substantive report that merely says
+# "... no findings in the search journey, but the install journey ..." skip
+# the topic checks entirely (round-16 wave review, claim-4). Scoped statements
+# like that are a report ABOUT findings, so they stay topic-checked.
+FINDINGS_NO_FINDINGS_DECLARATION_RE = re.compile(
+    r"^[\s>#*_`~\-]*(?:"
+    + "|".join(re.escape(phrase) for phrase in FINDINGS_NO_FINDINGS_DECLARATIONS)
+    + r")(?:\s+(?:this|in this|for this)\s+round)?[\s*_`~]*(?:[.!;:]|$)",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 FINDINGS_REQUIRED_TOPICS: list[tuple[str, tuple[str, ...]]] = [
@@ -339,7 +354,7 @@ def check_findings(evidence_dir: str | None) -> tuple[bool, str]:
         )
 
     lowered = content.lower()
-    declared_clean = any(phrase in lowered for phrase in FINDINGS_NO_FINDINGS_DECLARATIONS)
+    declared_clean = FINDINGS_NO_FINDINGS_DECLARATION_RE.search(content) is not None
     if declared_clean:
         return True, (
             f"{FINDINGS_FILENAME} present ({len(stripped)} bytes) with an explicit no-findings "
@@ -356,7 +371,8 @@ def check_findings(evidence_dir: str | None) -> tuple[bool, str]:
             f"{FINDINGS_FILENAME} is missing required coverage of: {'; '.join(missing_topics)} "
             f"(no matching keyword found for the topic) -- each finding needs a severity, what "
             f"was observed with an evidence pointer, and its regression home. If the round "
-            f"genuinely found nothing, say so explicitly (e.g. 'no findings') and describe what "
+            f"genuinely found nothing, declare it at the START of a line (e.g. 'No findings this "
+            f"round.') -- the phrase inside a scoped sentence does not count -- and describe what "
             f"was exercised to reach that conclusion"
         )
 

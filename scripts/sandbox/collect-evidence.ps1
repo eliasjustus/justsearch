@@ -1379,6 +1379,10 @@ $goldenEpObserved = New-Object PSObject -Property @{
 $goldenEpAttempts = 0
 $goldenEpWarmupTriggered = $false
 $goldenEpElapsedSec = 0
+# Which condition the capture (or skip) happened under, recorded in golden-capture-ep.json so
+# finalize never has to infer it: gpu-warm | cpu-native | skipped-cold-gpu | ep-unknown |
+# skipped-no-golden-queries | unknown (EP gate never ran, e.g. an earlier pre-check skipped).
+$goldenCaptureCondition = "unknown"
 
 function Get-EmbedEpState {
     # Reads the embed feature out of GET /api/ai/runtime/status. NOTE the
@@ -1426,10 +1430,12 @@ if ((Test-Path -LiteralPath $goldenQueriesPath) -and (-not $goldenSkipReason)) {
     $goldenEpObserved = Get-EmbedEpState -BaseUrl $base
     $goldenEpAttempts = 1
     if ($goldenEpObserved.readError -ne "") {
+        $goldenCaptureCondition = "ep-unknown"
         Write-Log ("Golden EP pre-check: could not read the embed execution provider " +
             "($($goldenEpObserved.readError)) -- proceeding with capture, EP recorded as unknown.")
     }
     elseif ($goldenEpObserved.warm) {
+        $goldenCaptureCondition = "gpu-warm"
         Write-Log "Golden EP pre-check: embed executionProvider=cuda, gpuFallback=$($goldenEpObserved.gpuFallback) -- warm GPU session, capturing."
     }
     else {
@@ -1465,14 +1471,38 @@ if ((Test-Path -LiteralPath $goldenQueriesPath) -and (-not $goldenSkipReason)) {
             }
         }
         if ($goldenEpObserved.warm) {
+            $goldenCaptureCondition = "gpu-warm"
             Write-Log ("Golden EP gate: warm after $([math]::Round($epStopwatch.Elapsed.TotalSeconds, 1))s " +
                 "($goldenEpAttempts read(s)) -- capturing.")
         }
         elseif ($goldenEpObserved.readError -ne "") {
+            $goldenCaptureCondition = "ep-unknown"
             Write-Log ("Golden EP gate: still could not read the embed EP after " +
                 "$([math]::Round($epStopwatch.Elapsed.TotalSeconds, 1))s -- proceeding with capture, EP recorded as unknown.")
         }
+        elseif (($goldenEpObserved.executionProvider -eq "cpu") -and ($goldenEpObserved.gpuFallback -ne $true)) {
+            # A genuinely CPU-only host, NOT a cold/failed GPU session: the runtime reports cpu with
+            # no fallback. Skipping here would mean such a host can never produce a golden capture at
+            # all, which is a worse outcome than capturing under a labelled condition -- the round
+            # still gets its evidence, and whether it is comparable to the staged baseline is
+            # host-side's call (check_golden_parity.py already fails typed when the embedding
+            # fingerprint differs, which is exactly the CPU-FP32-vs-GPU-FP16 case). Refuter finding 7,
+            # round-16 wave review.
+            $goldenCaptureCondition = "cpu-native"
+            $goldenCpuNativeNote = "Golden-query capture PROCEEDED under captureCondition 'cpu-native': the embedding " +
+                "execution provider read 'cpu' with gpuFallback=$($goldenEpObserved.gpuFallback) " +
+                "(reason='$($goldenEpObserved.fallbackReason)') after ${goldenEpMaxWaitSec}s plus a vector-mode " +
+                "warm-up search -- i.e. this host has no GPU session to wait for, rather than a cold or failed one. " +
+                "The capture is real evidence of this host's behaviour, but it is only comparable to a baseline " +
+                "generated on the SAME embedding weights: a CPU round loads FP32 (model.onnx) where a GPU-generated " +
+                "baseline used FP16 (model_fp16.onnx). check_golden_parity.py fails typed on that fingerprint " +
+                "mismatch host-side; a CPU host needs its own CPU-generated golden baseline. Observed EP state: " +
+                "evidence/golden-capture-ep.json."
+            Write-Log $goldenCpuNativeNote
+            $goldenCpuNativeNote | Write-Utf8NoBom -Path (Join-Path -Path $EvidenceDir -ChildPath "golden-capture-note.txt")
+        }
         else {
+            $goldenCaptureCondition = "skipped-cold-gpu"
             $goldenSkipReason = "Golden-query capture AUTO-SKIPPED: the embedding execution provider was " +
                 "'$($goldenEpObserved.executionProvider)' (gpuFallback=$($goldenEpObserved.gpuFallback), " +
                 "reason='$($goldenEpObserved.fallbackReason)') after ${goldenEpMaxWaitSec}s of waiting plus a " +
@@ -1489,6 +1519,7 @@ if ((Test-Path -LiteralPath $goldenQueriesPath) -and (-not $goldenSkipReason)) {
 
 if (-not (Test-Path -LiteralPath $goldenQueriesPath)) {
     $goldenSkipped = $true
+    $goldenCaptureCondition = "skipped-no-golden-queries"
     $goldenSkipReason = "Golden-query capture SKIPPED: golden-queries.json not found at $goldenQueriesPath -- " +
             "no per-candidate search-parity baseline was staged for this round. Recorded as a gap, not a fatal error."
     Write-Log $goldenSkipReason
@@ -1593,6 +1624,7 @@ $goldenEpRecord = New-Object PSObject -Property @{
     featureStatus      = $goldenEpObserved.status
     modelActive        = $goldenEpObserved.modelActive
     warm               = $goldenEpObserved.warm
+    captureCondition   = $goldenCaptureCondition
     readError          = $goldenEpObserved.readError
     reads              = $goldenEpAttempts
     warmupTriggered    = $goldenEpWarmupTriggered
@@ -1606,7 +1638,8 @@ $goldenEpRecord = New-Object PSObject -Property @{
 ($goldenEpRecord | ConvertTo-Json -Depth 5) |
     Write-Utf8NoBom -Path (Join-Path -Path $EvidenceDir -ChildPath "golden-capture-ep.json")
 Write-Log ("Golden capture EP condition recorded to golden-capture-ep.json " +
-    "(executionProvider=$($goldenEpObserved.executionProvider), warm=$($goldenEpObserved.warm), captured=$(-not $goldenSkipped))")
+    "(executionProvider=$($goldenEpObserved.executionProvider), warm=$($goldenEpObserved.warm), " +
+    "captureCondition=$goldenCaptureCondition, captured=$(-not $goldenSkipped))")
 
 # ---------------------------------------------------------------------------
 # Step 4: Summary
@@ -1670,12 +1703,14 @@ else {
 $summaryLines += ""
 if ($goldenSkipped) {
     $summaryLines += ("Golden capture embedding EP: $($goldenEpObserved.executionProvider) " +
-        "(gpuFallback=$($goldenEpObserved.gpuFallback), warm=$($goldenEpObserved.warm)) -- see golden-capture-ep.json")
+        "(gpuFallback=$($goldenEpObserved.gpuFallback), warm=$($goldenEpObserved.warm), " +
+        "captureCondition=$goldenCaptureCondition) -- see golden-capture-ep.json")
     $summaryLines += "Golden-query search-parity capture: SKIPPED ($goldenSkipReason)"
 }
 else {
     $summaryLines += ("Golden capture embedding EP: $($goldenEpObserved.executionProvider) " +
-        "(gpuFallback=$($goldenEpObserved.gpuFallback), warm=$($goldenEpObserved.warm)) -- see golden-capture-ep.json")
+        "(gpuFallback=$($goldenEpObserved.gpuFallback), warm=$($goldenEpObserved.warm), " +
+        "captureCondition=$goldenCaptureCondition) -- see golden-capture-ep.json")
     $summaryLines += "Golden-query search-parity capture: $goldenCapturedCount captured, $goldenFailedCount failed -> golden/ (host-side check_golden_parity.py input)"
     $summaryLines += "Golden-query per-leg capture (vector/text/splade): $goldenLegCapturedCount captured, $goldenLegFailedCount failed -> golden/<id>.<mode>.json"
 }
