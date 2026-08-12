@@ -158,6 +158,13 @@ export const sv3Tokens = css`
        list sitting directly under its own chrome, "so the fade stays while the controls start near
        the chrome" — which is exactly the palette list. */
     --command-scroll-fade-height: 1.5rem;
+    /* The composer field's two floors. The donor ships ONE editor at 70px and swaps the whole block
+       out for a single truncating line when the composer is compact; the window keeps a typable field
+       in both forms, so the compact form is expressed as a one-LINE floor instead. The ceiling is
+       shared, which is what keeps a docked draft growing. */
+    --composer-field-min-hero: 4.375rem;
+    --composer-field-min-docked: 1lh;
+    --composer-field-max: 12.5rem;
     --floating-content-inset: 0.75rem;
     --workspace-topbar-height: 52px;
     --workspace-controls-top: 0px;

@@ -514,6 +514,72 @@ describe('the composer glass is token-fed material, so dark inverts without a co
     expect(reduced).toContain('transition: opacity var(--duration-sv3-morph)');
   });
 
+  /**
+   * The donor's two composer forms differ in INTERNAL layout, not only in position — its own
+   * view-transition comment gives that as the reason for the crossfade ("The expanded and compact
+   * composers have different internal layouts. Use a brief crossfade while their shared wrapper moves
+   * so the layout change does not read as a single-frame cut", `index.css:33-35`). A docked form that
+   * merely MOVED would keep hero proportions and the crossfade would cover nothing.
+   */
+  it('gives the docked form a genuinely smaller field floor than the hero form', () => {
+    expect(ruleFor('textarea {')).toContain('min-block-size: var(--composer-field-min-hero)');
+    expect(ruleFor(":host([state='docked']) textarea {")).toContain(
+      'min-block-size: var(--composer-field-min-docked)',
+    );
+    // Donor `min-h-17.5` on the one editor (ComposerPromptEditor.tsx:1757) against a compact form
+    // that is a single truncating line (ChatComposer.tsx:2808-2826). Compared as NUMBERS, so a token
+    // edit that made the two equal — or inverted them — fails here rather than merely looking odd.
+    const declared = (name: string): string => {
+      const at = tokens.indexOf(`${name}:`);
+      expect(at, `no ${name}`).toBeGreaterThan(-1);
+      return tokens.slice(at + name.length + 1, tokens.indexOf(';', at)).trim();
+    };
+    const hero = declared('--composer-field-min-hero');
+    const docked = declared('--composer-field-min-docked');
+    expect(hero).toBe('4.375rem');
+    expect(Number.parseFloat(hero) * 16).toBe(70);
+    // 1lh resolves against the field's own leading (1.625 x 14px), well under the 70px hero floor.
+    expect(docked).toBe('1lh');
+    expect(1.625 * 16 * Number.parseFloat(docked)).toBeLessThan(Number.parseFloat(hero) * 16);
+  });
+
+  it('moves only the FLOOR when docking, so a docked draft still grows', () => {
+    // The ceiling and the growth mode stay on the base rule. Pinning either of them in the docked
+    // rule would freeze the field at one line — compact, and unusable for a two-line query.
+    const base = ruleFor('textarea {');
+    expect(base).toContain('field-sizing: content');
+    expect(base).toContain('max-block-size: var(--composer-field-max)');
+    const dockedRule = ruleFor(":host([state='docked']) textarea {");
+    expect(dockedRule).not.toContain('max-block-size');
+    expect(dockedRule).not.toContain('field-sizing');
+    expect(dockedRule).not.toContain('height:');
+    expect(dockedRule).not.toContain('overflow');
+  });
+
+  it('tightens BOTH rows on docking, to the donor compact inset', () => {
+    // Donor compact row: `px-3 py-2` (ChatComposer.tsx:2808) against the expanded `px-4 pt-4 pb-2`
+    // (`:2854-2855`). A field floor that shrank while the padding stayed hero-sized would still
+    // render a tall, mostly-empty band.
+    expect(ruleFor('.field {')).toContain(
+      'padding: var(--space-4) var(--space-4) var(--space-2)',
+    );
+    expect(ruleFor(":host([state='docked']) .field {")).toContain(
+      'padding: var(--space-2) var(--space-3) var(--space-1)',
+    );
+    expect(ruleFor('.footer {')).toContain('padding: 0 var(--space-4) var(--space-4)');
+    expect(ruleFor(":host([state='docked']) .footer {")).toContain(
+      'padding: 0 var(--space-3) var(--space-2)',
+    );
+  });
+
+  it('leaves the scope glyph its own colour and no placeholder box', () => {
+    const glyph = ruleFor('.scope-glyph {');
+    expect(glyph).toContain('color: var(--control-icon-color)');
+    // The slice-3 placeholder was a filled swatch; a real stroke glyph must not keep its box.
+    expect(glyph).not.toContain('background');
+    expect(glyph).not.toContain('border-radius');
+  });
+
   it('spends only budgeted motion, by token name', () => {
     const values = [...composer.matchAll(/transition:\s*([^;]+);/g)].map((m) => m[1]);
     expect(values.length).toBeGreaterThanOrEqual(4);

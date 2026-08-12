@@ -22,6 +22,7 @@
  */
 import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
+import { icon } from '../../components/Icon.js';
 import { sv3Shared } from './sv3-shared-styles.js';
 import {
   COMPOSER_SCOPES,
@@ -37,6 +38,9 @@ export const SV3_COMPOSER_STATE_REQUEST = 'sv3-composer-state-request';
 export interface Sv3ComposerStateRequest {
   readonly state: Sv3ComposerState;
 }
+
+/** Donor `ComposerControlIcon` at its default optical size (`size-4`). */
+const SCOPE_GLYPH_SIZE = 16;
 
 export class Sv3Composer extends JfElement {
   static styles = [
@@ -153,6 +157,11 @@ export class Sv3Composer extends JfElement {
       .field {
         padding: var(--space-4) var(--space-4) var(--space-2);
       }
+      /* Donor compact row inset (px-3 py-2), split across our two rows: 8 above the field, 8 below
+         the controls, with a 4px seam where the donor has none because it has only one row. */
+      :host([state='docked']) .field {
+        padding: var(--space-2) var(--space-3) var(--space-1);
+      }
       .editor {
         position: relative;
       }
@@ -173,8 +182,15 @@ export class Sv3Composer extends JfElement {
         /* Grows with its content between the donor's floor and ceiling; past the ceiling the UA
            scrolls the field itself, which is the field's own overflow and not a window scroller. */
         field-sizing: content;
-        min-block-size: 4.375rem;
-        max-block-size: 12.5rem;
+        min-block-size: var(--composer-field-min-hero);
+        max-block-size: var(--composer-field-max);
+      }
+      /* The donor's compact composer is a SINGLE truncating line beside the send control, and its
+         expanded form is the 70px editor — the two forms differ in INTERNAL layout, not just in
+         position, which is the whole reason the morph crossfades rather than cutting. Only the FLOOR
+         moves: field-sizing and the ceiling stay on the base rule, so a docked draft still grows. */
+      :host([state='docked']) textarea {
+        min-block-size: var(--composer-field-min-docked);
       }
       /* The placeholder is a real overlaid element rather than the input pseudo-element: that pseudo
          is an ambient facet this window may not re-author, and the donor overlays an element too. */
@@ -195,6 +211,9 @@ export class Sv3Composer extends JfElement {
         gap: var(--space-2);
         min-width: 0;
         padding: 0 var(--space-4) var(--space-4);
+      }
+      :host([state='docked']) .footer {
+        padding: 0 var(--space-3) var(--space-2);
       }
       .scopes {
         display: flex;
@@ -230,13 +249,11 @@ export class Sv3Composer extends JfElement {
         outline: 2px solid var(--ring);
         outline-offset: 1px;
       }
+      /* A real glyph, not a placeholder swatch: the label evaporates on docking, so whatever is left
+         has to carry the control's meaning on its own. Lucide strokes read currentColor. */
       .scope-glyph {
         flex-shrink: 0;
-        inline-size: var(--space-3);
-        block-size: var(--space-3);
-        border-radius: 3px;
-        background: var(--control-icon-color);
-        opacity: 0.6;
+        color: var(--control-icon-color);
       }
 
       /* §5.9's compaction, in two elements: the outer carries the WIDTH (which collapses in one
@@ -370,6 +387,7 @@ export class Sv3Composer extends JfElement {
 
   render(): TemplateResult {
     const empty = this.draft.trim().length === 0;
+    const docked = this.state === 'docked';
     return html`
       <div class="band" data-testid="sv3-composer-band">
         ${this.state === 'hero'
@@ -400,8 +418,13 @@ export class Sv3Composer extends JfElement {
             <div class="scopes">
               ${COMPOSER_SCOPES.map(
                 (scope) => html`
-                  <button type="button" class="scope-control" data-testid="sv3-composer-scope">
-                    <span class="scope-glyph" aria-hidden="true"></span>
+                  <button
+                    type="button"
+                    class="scope-control"
+                    data-testid="sv3-composer-scope"
+                    aria-label=${docked ? scope.label : nothing}
+                  >
+                    ${icon({ name: scope.glyph, size: SCOPE_GLYPH_SIZE, className: 'scope-glyph' })}
                     <span class="scope-label"
                       ><span class="scope-label-motion">${scope.label}</span></span
                     >

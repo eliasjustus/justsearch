@@ -220,6 +220,43 @@ describe('the composer has two anatomies and one way between them', () => {
     expect(el.getAttribute('composer-state')).toBe('hero');
   });
 
+  /**
+   * The compaction is only half done if the label evaporates and leaves a blank box behind. The donor
+   * compacts a control INTO its glyph (`ComposerControlIcon`, `ComposerControl.tsx:37`), so the glyph
+   * has to be real, and the name the text was carrying has to move somewhere assistive tech can read.
+   */
+  it('compacts each scope control into a real glyph that keeps its name', async () => {
+    const el = await mount();
+    const composer = await region(el, 'jf-sv3-composer');
+    const chips = (): HTMLElement[] => [
+      ...(composer.shadowRoot?.querySelectorAll<HTMLElement>(
+        '[data-testid="sv3-composer-scope"]',
+      ) ?? []),
+    ];
+
+    // Hero: the visible text IS the accessible name, so an aria-label would only duplicate it.
+    expect(chips()).toHaveLength(COMPOSER_SCOPES.length);
+    for (const chip of chips()) expect(chip.hasAttribute('aria-label')).toBe(false);
+    for (const [i, chip] of chips().entries()) {
+      const glyph = chip.querySelector('svg.scope-glyph');
+      expect(glyph, `scope ${i} renders no glyph`).toBeTruthy();
+      // A real stroke glyph, not the placeholder swatch it replaced.
+      expect(glyph?.querySelector('path, circle, ellipse, polyline')).toBeTruthy();
+      expect(glyph?.getAttribute('stroke')).toBe('currentColor');
+      expect(chip.textContent?.trim()).toContain(COMPOSER_SCOPES[i]?.label);
+    }
+
+    await (el as SearchV3View).setComposerState('docked');
+    await composer.updateComplete;
+    // Docked: the text is width-collapsed, so the name moves onto the control itself.
+    for (const [i, chip] of chips().entries()) {
+      expect(chip.getAttribute('aria-label'), `scope ${i} lost its name when compacted`).toBe(
+        COMPOSER_SCOPES[i]?.label,
+      );
+      expect(chip.querySelector('svg.scope-glyph')).toBeTruthy();
+    }
+  });
+
   it('routes an external write of the dev attribute through the same morph', async () => {
     const el = await mount();
     const seen: string[] = [];

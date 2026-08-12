@@ -6,6 +6,7 @@
  * backend is wired, and fixtures keep the slice-1 components free of stores, so what the tests
  * measure is the geometry and nothing else. Slice 2+ replaces these with the shared authorities.
  */
+import type { IconName } from '../../components/Icon.js';
 
 /**
  * The row's status, as the donor's 3-colour budget spends it: colour is reserved for act-now,
@@ -139,6 +140,12 @@ export const HERO_HEADLINE = 'What are you looking for?';
 export interface Sv3ComposerScope {
   readonly id: string;
   readonly label: string;
+  /**
+   * The glyph the label compacts INTO when the composer docks — so a control that has lost its text
+   * still says what it is. Named out of the shared `icon()` registry, which is the same Lucide set
+   * the donor imports (`lucide-react`), so no icon dependency and no hand-drawn path.
+   */
+  readonly glyph: IconName;
 }
 
 /**
@@ -147,8 +154,8 @@ export interface Sv3ComposerScope {
  * docks, leaving the glyphs behind.
  */
 export const COMPOSER_SCOPES: readonly Sv3ComposerScope[] = [
-  { id: 'scope-sources', label: 'All sources' },
-  { id: 'scope-recency', label: 'Any time' },
+  { id: 'scope-sources', label: 'All sources', glyph: 'database' },
+  { id: 'scope-recency', label: 'Any time', glyph: 'clock' },
 ];
 
 /* ── Slice 4: the fixture SET, the palette, and the empty states ───────────────────────────── */

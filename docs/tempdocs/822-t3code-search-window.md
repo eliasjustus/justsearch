@@ -194,6 +194,18 @@ self-judge geometry (BlindTest ~58.6%) — verification must be measurement, not
   boot (KeybindingRegistry.ts:178) and cannot be pre-empted from a surface; remedy
   is a when-clause on the shipped binding or a surface-scoped binding tier, both
   outside this arc's file scope.
+- 2026-08-12 — **Polish pass** (orchestrator five-state visual tour findings, donor-
+  answerable subset): docked composer now COMPACTS per the donor's compact form
+  (band 142→75px, field floor 70px→1lh with growth + 200px ceiling preserved,
+  insets tightened to the donor's px-3 py-2 split; the donor's "single truncating
+  line" honestly ported as a one-line floor since our field stays typable); scope
+  chips got real 16px glyphs via the shared icon() helper (database/clock — the same
+  Lucide set the donor imports), names move to aria-label ONLY when compacted.
+  4560 tests; 9/9 new mutation probes. Open items recorded for the adaptation phase:
+  (a) chip box is slice-3's 24px vs the donor ComposerControl's h-7 28px — two donor
+  referents exist, settle when chips become real scope chips; (b) Sv3Empty tile glyph
+  is a string prop rendering a hollow square — convert to icon() with a template-typed
+  prop when empty states get final content.
 - 2026-08-12 — **SHELL COMPLETE (slices 1-4). Phase stop per §4.5**: owner inspection
   + verdict on the donor copy, then the adaptation-seams conversation (result rows
   with real densities, document pane, citations, honesty facts) BEFORE any
