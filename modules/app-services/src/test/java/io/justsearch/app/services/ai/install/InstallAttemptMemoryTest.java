@@ -59,15 +59,32 @@ final class InstallAttemptMemoryTest {
     assertTrue(a.lastAttemptEpochMs() > 0);
   }
 
-  /** The tier ladder saturates — a fifth pass repeats the last rung rather than running off it. */
+  /**
+   * The memory feeds §3.1's real ladder: the tier it asks for is the tier the policy runs, and a
+   * pass count past the top rung saturates instead of producing an unknown transport. Asserted
+   * against {@link TransportRetryPolicy} itself rather than a second local clamp, so the two
+   * cannot drift.
+   */
   @Test
-  @DisplayName("the transport tier saturates at MAX_TIER")
-  void tierSaturates() {
-    assertEquals(0, TransportEscalation.startTier(0));
-    assertEquals(1, TransportEscalation.startTier(1));
-    assertEquals(TransportEscalation.MAX_TIER, TransportEscalation.startTier(TransportEscalation.MAX_TIER));
-    assertEquals(TransportEscalation.MAX_TIER, TransportEscalation.startTier(99));
-    assertEquals(0, TransportEscalation.startTier(-1), "a negative history is no history");
+  @DisplayName("the pass count feeds TransportRetryPolicy's start tier, saturating at the top rung")
+  void passCountDrivesTheRealPolicyTier() {
+    TransportRetryPolicy base = TransportRetryPolicy.defaultPolicy();
+    assertEquals(0, base.withStartTier(0).startTier());
+    assertEquals(1, base.withStartTier(1).startTier());
+    assertEquals(
+        TransportRetryPolicy.MAX_TRANSPORT_TIER,
+        base.withStartTier(TransportRetryPolicy.MAX_TRANSPORT_TIER + 5).startTier(),
+        "an out-of-range repair-pass number must never produce an unknown tier");
+
+    InstallAttemptMemory memory = InstallAttemptMemory.load(home);
+    for (int i = 0; i < 5; i++) {
+      memory.recordTransportFailure(TARGET, URL, 1, "Download failed for " + TARGET, i);
+    }
+    assertEquals(5, memory.startTierFor(TARGET), "the memory counts passes; it does not clamp");
+    assertEquals(
+        TransportRetryPolicy.MAX_TRANSPORT_TIER,
+        base.withStartTier(memory.startTierFor(TARGET)).startTier(),
+        "…and the policy is the one authority that clamps");
   }
 
   /** A file that finally transfers has spent its history: the next run starts clean. */
@@ -110,11 +127,12 @@ final class InstallAttemptMemoryTest {
         ResumableFetch.fetch(
             new ResumableFetch.Request(
                 home.resolve("model.onnx.partial"), URL, 100L, "ABCD", "splade/model.onnx"),
-            (url, dest, decision, callback) -> false,
+            (url, dest, decision, callback, tier) -> false,
             (bytes, total) -> {},
             () -> false,
-            null,
-            null);
+            ResumableFetch.Hooks.none(),
+            // One attempt, no backoff: this test is about the message, not the ladder.
+            TransportRetryPolicy.defaultPolicy().withMaxAttempts(1).withSleeper(ms -> {}));
 
     assertFalse(outcome.ok());
     assertTrue(

@@ -100,17 +100,16 @@ $sacDisableCmd = @(
 
 ### INS-005: Install AI aborts on first asset failure (G30)
 - **Severity:** P2/Medium
-- **Status:** fixed (verified 2026-08-12, tempdoc 824)
+- **Status:** fixed
 - **Found:** 2026-04-06
-- **Component:** `modules/app-services/src/main/java/.../ai/install/AiInstallService.java`
+- **Fixed:** per-asset isolation shipped; re-confirmed on real data in sandbox round 16 (2026-08)
+- **Component:** `modules/app-services/src/main/java/io/justsearch/app/services/ai/install/AiInstallService.java`
 
-**Description:** The download pipeline aborted remaining assets after the first failure. For example, if the FP16 reranker download failed (404 or curl exit 22), subsequent assets like `citation-config.json` were left in `pending` state. 23/24 assets succeeded but the overall state reported `failed`.
+**Description (historical):** The download pipeline aborted remaining assets after the first failure. For example, if the FP16 reranker download failed (404 or curl exit 22), subsequent assets like `citation-config.json` were left in `pending` state. 23/24 assets succeeded but the overall state reported `failed`.
 
-**Impact:** Users saw a failure status despite having all critical models downloaded. Non-critical asset failures prevented completion of remaining downloads.
+**Current behaviour:** The loop fails only the owning package (`failPackage(...)`) and `continue`s to the next asset. Round 16's log shows splade continuing to `tokenizer.json`, `vocab.txt`, `idf.json` and `config.json` after `model_fp16.onnx` failed. A mid-flight `pending` in `/api/ai/install/status` means the sequential loop has not reached that package yet, not that it was abandoned.
 
-**Fix:** The download loop `continue`s per asset, and `applyCompletionState` reports `completed` with an honest count rather than `failed`. Round 16's install log confirms it in production (SPLADE continued through `tokenizer.json`, `vocab.txt`, `idf.json` and `config.json` after its model failed); `AiInstallServiceCompletionTruthTest.perAssetIsolation_oneFailedPackageOfThree` pins it.
-
-**Successor issue:** round 16's actual defect was terminal-state *truthfulness*, not asset isolation — a run with an optional-file casualty still asserted "a required component is missing". Tracked and fixed in tempdoc 824 §3.3.
+**Related:** the same round found the real cause of its 5-of-7 failure to be transport, not abort-on-first-failure — see tempdoc 823/824 (round-16 F1) and the spaced-retry behaviour in `docs/explanation/12-desktop-installer-and-sandbox-setup.md` §6.1.1.
 
 ---
 

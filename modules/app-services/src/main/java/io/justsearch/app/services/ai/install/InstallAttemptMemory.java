@@ -18,8 +18,8 @@ import tools.jackson.databind.json.JsonMapper;
  * memory of the last one: identical transport, identical odds, no way to tell a file that has now
  * failed three times from one failing for the first time. Round 16's user clicked Repair four times
  * on the same 872-byte file and was offered Repair a fifth. Two things need memory to be possible —
- * transport escalation ({@link TransportEscalation}) and a terminal "this will not converge"
- * verdict — and both are per FILE, across runs.
+ * transport escalation (§3.1's {@link TransportRetryPolicy} ladder, started a rung higher each
+ * pass) and a terminal "this will not converge" verdict — and both are per FILE, across runs.
  *
  * <p><b>Why a file under {@code homeDir} and not the {@code DownloadResume} sidecar.</b> The
  * sidecar is deliberately tied to the {@code .partial} it anchors: {@link DownloadResume#clear}
@@ -110,10 +110,17 @@ public final class InstallAttemptMemory {
     return files.get(targetPath);
   }
 
-  /** The transport tier the current pass should start at for {@code targetPath}. */
+  /**
+   * The transport tier the current pass should start at for {@code targetPath} — one rung per
+   * earlier failing pass, so pass <em>n</em> meets a transport that pass <em>n-1</em> did not.
+   *
+   * <p>Deliberately NOT clamped here: {@link TransportRetryPolicy#withStartTier} owns the
+   * {@code [0, MAX_TRANSPORT_TIER]} range, and a second clamp beside it is a fork that can drift
+   * from the ladder it is clamping to.
+   */
   public int startTierFor(String targetPath) {
     Attempt a = files.get(targetPath);
-    return TransportEscalation.startTier(a == null ? 0 : a.failedPasses());
+    return a == null ? 0 : Math.max(0, a.failedPasses());
   }
 
   /**

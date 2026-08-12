@@ -651,6 +651,10 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
     // Download files
     downloadExecutor = new DownloadExecutor(cancelFlag);
+    // Round 16: the environment reset ~40 % of new connections in bursts and the product answered
+    // with two attempts ~7 s apart, so the "fallback" landed inside the same degraded window.
+    // Spacing, not attempt count, is what makes a later attempt an independent trial.
+    final TransportRetryPolicy retryPolicy = TransportRetryPolicy.defaultPolicy();
     // Tempdoc 824 §3.4: the only thing that distinguishes repair pass 4 from pass 1 is what the
     // earlier passes learned. Loaded once per run; every mutation persists immediately, so a run
     // killed mid-flight still leaves the passes it completed on record.
@@ -683,9 +687,11 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       final long packageBaseBytes = packageCompletedBytes.getOrDefault(dl.packageId(), 0L);
       // Tempdoc 824 §3.4: pass n meets tier n. Computed here (not inside the transport) because
       // the escalation is a property of this FILE's history across runs, which only the memory
-      // knows. The tier is handed to ResumableFetch.fetch's `startTier` parameter once the §3.1
-      // transport-retry ladder lands; until then it is recorded and logged, never guessed twice.
+      // knows. §3.1's ladder retries WITHIN a pass from this rung; the memory is what makes the
+      // NEXT pass start somewhere else, which is the whole difference between round 16's four
+      // identical repairs and a converging one.
       final int startTier = attempts.startTierFor(dl.targetPath());
+      final TransportRetryPolicy filePolicy = retryPolicy.withStartTier(startTier);
       if (startTier > 0) {
         log.info(
             "Repair escalation for {}: starting at transport tier {} ({} earlier pass(es) failed it)",
@@ -713,11 +719,26 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
                 }
               },
               cancelFlag::get,
-              // Tempdoc 374 sandbox round 4 issue G: BITS leaves BIT*.tmp scratch files when its
-              // download fails; they would otherwise accumulate across retries. Only on a fresh
-              // start — a suspended BITS job we are about to resume still owns its scratch file.
-              () -> cleanupBitsTmpFiles(targetFile.getParent()),
-              () -> updatePackageState(dl.packageId(), "verifying"));
+              new ResumableFetch.Hooks(
+                  // Tempdoc 374 sandbox round 4 issue G: BITS leaves BIT*.tmp scratch files when
+                  // its download fails; they would otherwise accumulate across retries. Only on a
+                  // fresh start — a suspended BITS job we are about to resume still owns its
+                  // scratch file.
+                  () -> cleanupBitsTmpFiles(targetFile.getParent()),
+                  () -> updatePackageState(dl.packageId(), "verifying"),
+                  // A spaced retry can take ~40 s per file; without the attempt counter the UI
+                  // would look frozen exactly when it is doing the thing that saves the install.
+                  attempt ->
+                      updateState(
+                          "running",
+                          "download",
+                          "Downloading "
+                              + dl.targetPath()
+                              + "..."
+                              + (attempt > 1
+                                  ? " (attempt " + attempt + " of " + filePolicy.maxAttempts() + ")"
+                                  : ""))),
+              filePolicy);
 
       // Project the resume verdict onto the package so the UI can say the earlier progress was
       // kept. Sticky across a multi-file package: one resumed file makes the package resumed.

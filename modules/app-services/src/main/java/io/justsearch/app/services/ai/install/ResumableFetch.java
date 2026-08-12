@@ -4,6 +4,7 @@ package io.justsearch.app.services.ai.install;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.function.BooleanSupplier;
+import java.util.function.IntConsumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,6 +19,12 @@ import org.slf4j.LoggerFactory;
  * DownloadExecutor#verify} as a fresh one. When it fails, the partial is destroyed and the download
  * restarts from zero once; if the fresh attempt also fails verification the package fails. There is
  * no path on which unverified bytes are moved to the target.
+ *
+ * <p><b>Transport retry lives here, around that cycle.</b> A transport-transient failure (see {@link
+ * TransportFailure}) re-enters the whole decide-transfer-verify cycle after a spaced wait, at an
+ * escalated transport tier ({@link TransportRetryPolicy}). The two loops must not multiply: an
+ * integrity failure is permanent, so it ends the fetch after its single restart-from-zero rather
+ * than being re-attempted by the retry policy.
  */
 public final class ResumableFetch {
   private static final Logger log = LoggerFactory.getLogger(ResumableFetch.class);
@@ -29,12 +36,24 @@ public final class ResumableFetch {
     /**
      * Transfers {@code url} into {@code destPartial}, honouring {@code decision} (fresh, HTTP Range
      * resume, or BITS job resume). Returns true only when the whole file is on disk.
+     *
+     * @param transportTier which transport to use, see {@link TransportRetryPolicy}
      */
     boolean transfer(
         String url,
         Path destPartial,
         DownloadResume.Decision decision,
-        DownloadExecutor.ProgressCallback callback);
+        DownloadExecutor.ProgressCallback callback,
+        int transportTier);
+
+    /**
+     * Why the last {@link #transfer} returned false, or null when the transport cannot say. An
+     * unclassified failure is treated as permanent — the retry policy only ever spends time on a
+     * failure a transport explicitly calls transient.
+     */
+    default TransportFailure lastFailure() {
+      return null;
+    }
 
     /**
      * Id of a BITS job this transport suspended (rather than destroyed) on the last cancellation, so
@@ -84,23 +103,55 @@ public final class ResumableFetch {
       int transferAttempts) {}
 
   /**
-   * Runs the decide → transfer → verify cycle.
+   * Side-channel callbacks the fetch fires as it moves through its phases.
    *
    * @param onFreshStart invoked before a from-zero transfer (BITS scratch cleanup); must NOT run
    *     when resuming, because a suspended BITS job still owns its {@code BIT*.tmp} scratch
    * @param onVerifyStart invoked before each verification pass (package-state reporting)
+   * @param onAttempt invoked with the 1-based transport attempt number before each attempt, so the
+   *     user-visible phase message can name which of the policy's attempts is running
+   */
+  public record Hooks(Runnable onFreshStart, Runnable onVerifyStart, IntConsumer onAttempt) {
+
+    /** No-op hooks, for callers that only want the bytes. */
+    public static Hooks none() {
+      return new Hooks(null, null, null);
+    }
+
+    void freshStart() {
+      if (onFreshStart != null) onFreshStart.run();
+    }
+
+    void verifyStart() {
+      if (onVerifyStart != null) onVerifyStart.run();
+    }
+
+    void attempt(int attemptNumber) {
+      if (onAttempt != null) onAttempt.accept(attemptNumber);
+    }
+  }
+
+  /** One attempt's result, plus whether the retry policy is allowed to spend time on another. */
+  private record AttemptResult(
+      Outcome outcome, int transfers, boolean retryable, TransportFailure failure) {}
+
+  /**
+   * Runs the decide → transfer → verify cycle, re-attempting a transport-transient failure up to
+   * {@code policy}'s budget with spaced waits and an escalating transport tier.
    */
   public static Outcome fetch(
       Request request,
       Transfer transfer,
       DownloadExecutor.ProgressCallback progress,
       BooleanSupplier cancelRequested,
-      Runnable onFreshStart,
-      Runnable onVerifyStart) {
+      Hooks hooks,
+      TransportRetryPolicy policy) {
     Path partial = request.partialFile();
     String url = request.url();
     long expectedSize = request.expectedSize();
     String expectedSha = request.expectedSha256();
+    Hooks callbacks = hooks == null ? Hooks.none() : hooks;
+    TransportRetryPolicy retry = policy == null ? TransportRetryPolicy.defaultPolicy() : policy;
 
     DownloadResume.State recorded = DownloadResume.read(partial);
     DownloadResume.Decision decision =
@@ -122,45 +173,152 @@ public final class ResumableFetch {
       transfer.abandonResumeHandle(recorded.bitsJobId());
     }
 
-    int attempts = 0;
+    int transfers = 0;
+    TransportFailure lastFailure = null;
+    for (int attempt = 0; attempt < retry.maxAttempts(); attempt++) {
+      if (attempt > 0) {
+        if (isCancelled(cancelRequested)) {
+          return new Outcome(false, true, "Cancelled.", firstAction, transfers);
+        }
+        long waitMs = retry.delayMsBeforeAttempt(attempt);
+        log.info(
+            "Retrying {} in {} ms (attempt {} of {}, transport tier {})",
+            partial.getFileName(),
+            waitMs,
+            attempt + 1,
+            retry.maxAttempts(),
+            retry.tierForAttempt(attempt));
+        if (!retry.sleep(waitMs) || isCancelled(cancelRequested)) {
+          return new Outcome(false, true, "Cancelled.", firstAction, transfers);
+        }
+        // Re-decide against disk: the failed attempt may have staged bytes worth resuming, and the
+        // sidecar identity check is still what gates whether they are reusable.
+        decision =
+            DownloadResume.decide(
+                DownloadResume.partialSize(partial),
+                DownloadResume.read(partial),
+                url,
+                expectedSize,
+                expectedSha);
+      }
+      callbacks.attempt(attempt + 1);
+
+      AttemptResult result =
+          runAttempt(
+              request,
+              transfer,
+              decision,
+              firstAction,
+              retry.tierForAttempt(attempt),
+              progress,
+              cancelRequested,
+              callbacks,
+              transfers);
+      transfers = result.transfers();
+      lastFailure = result.failure();
+      if (result.outcome().ok() || result.outcome().cancelled() || !result.retryable()) {
+        return result.outcome();
+      }
+    }
+
+    return new Outcome(
+        false,
+        false,
+        "Download failed for "
+            + request.label()
+            + " after "
+            + retry.maxAttempts()
+            + " attempts"
+            + (lastFailure == null ? "" : " (" + lastFailure.summary() + ")"),
+        firstAction,
+        transfers);
+  }
+
+  /**
+   * One transport attempt: the historical two-pass loop (transfer, verify, and on an integrity
+   * failure of RESUMED bytes discard and restart from zero exactly once).
+   */
+  private static AttemptResult runAttempt(
+      Request request,
+      Transfer transfer,
+      DownloadResume.Decision startDecision,
+      DownloadResume.Action firstAction,
+      int transportTier,
+      DownloadExecutor.ProgressCallback progress,
+      BooleanSupplier cancelRequested,
+      Hooks hooks,
+      int transfersSoFar) {
+    Path partial = request.partialFile();
+    String url = request.url();
+    long expectedSize = request.expectedSize();
+    String expectedSha = request.expectedSha256();
+    DownloadResume.Decision decision = startDecision;
+
+    int transfers = transfersSoFar;
     for (int pass = 0; pass < 2; pass++) {
       if (decision.action() == DownloadResume.Action.FRESH) {
         DownloadResume.clear(partial);
-        if (onFreshStart != null) onFreshStart.run();
+        hooks.freshStart();
       }
       try {
         DownloadResume.write(partial, new DownloadResume.State(url, expectedSize, expectedSha, null));
       } catch (IOException e) {
-        return new Outcome(
-            false, false, "Failed to record resume state: " + e.getMessage(), firstAction, attempts);
+        return new AttemptResult(
+            new Outcome(
+                false,
+                false,
+                "Failed to record resume state: " + e.getMessage(),
+                firstAction,
+                transfers),
+            transfers,
+            false,
+            null);
       }
 
       if (decision.action() != DownloadResume.Action.VERIFY_ONLY) {
-        attempts++;
-        boolean transferred = transfer.transfer(url, partial, decision, progress);
+        transfers++;
+        boolean transferred = transfer.transfer(url, partial, decision, progress, transportTier);
         if (!transferred) {
           // Keep the partial: the sidecar identity check gates whether it is reusable next time.
           persistSuspendedJob(transfer, partial, url, expectedSize, expectedSha);
-          if (cancelRequested != null && cancelRequested.getAsBoolean()) {
-            return new Outcome(false, true, "Cancelled.", firstAction, attempts);
+          if (isCancelled(cancelRequested)) {
+            return new AttemptResult(
+                new Outcome(false, true, "Cancelled.", firstAction, transfers),
+                transfers,
+                false,
+                null);
           }
-          return new Outcome(
-              false, false, "Download failed for " + request.label(), firstAction, attempts);
+          TransportFailure failure = transfer.lastFailure();
+          String reason =
+              failure == null
+                  ? "Download failed for " + request.label()
+                  : "Download failed for " + request.label() + " (" + failure.summary() + ")";
+          return new AttemptResult(
+              new Outcome(false, false, reason, firstAction, transfers),
+              transfers,
+              failure != null && failure.retryable(),
+              failure);
         }
       }
 
-      if (onVerifyStart != null) onVerifyStart.run();
+      hooks.verifyStart();
       try {
         DownloadExecutor.verify(partial, expectedSize, expectedSha);
         DownloadResume.deleteSidecar(partial);
-        return new Outcome(true, false, null, firstAction, attempts);
+        return new AttemptResult(
+            new Outcome(true, false, null, firstAction, transfers), transfers, false, null);
       } catch (Exception e) {
         // The bytes are not what the manifest promises: upstream changed under the partial, the
-        // partial was stale, or the transfer corrupted it. Destroy, never accept.
+        // partial was stale, or the transfer corrupted it. Destroy, never accept. This is NOT a
+        // transport-transient failure, so the retry policy must not re-attempt it.
         DownloadResume.clear(partial);
         if (decision.action() == DownloadResume.Action.FRESH) {
-          return new Outcome(
-              false, false, "Verification failed: " + e.getMessage(), firstAction, attempts);
+          return new AttemptResult(
+              new Outcome(
+                  false, false, "Verification failed: " + e.getMessage(), firstAction, transfers),
+              transfers,
+              false,
+              null);
         }
         log.warn(
             "Resumed download of {} failed verification ({}); discarding and restarting from zero",
@@ -175,7 +333,15 @@ public final class ResumableFetch {
       }
     }
     // Unreachable: pass 0 either returns or downgrades to FRESH, and a FRESH pass always returns.
-    return new Outcome(false, false, "Verification failed after restart", firstAction, attempts);
+    return new AttemptResult(
+        new Outcome(false, false, "Verification failed after restart", firstAction, transfers),
+        transfers,
+        false,
+        null);
+  }
+
+  private static boolean isCancelled(BooleanSupplier cancelRequested) {
+    return cancelRequested != null && cancelRequested.getAsBoolean();
   }
 
   private static void persistSuspendedJob(

@@ -50,14 +50,26 @@ final class ResumableFetchTest {
     /** When >= 0, write only this many bytes total and report failure (a cancel mid-transfer). */
     private int stopAfterBytes = -1;
 
+    /** How many leading transport calls fail outright, reporting {@link #injectedFailure}. */
+    private int failFirstAttempts;
+
+    private TransportFailure injectedFailure = TransportFailure.curlExit(52, "empty reply");
+    private TransportFailure lastFailure;
+
     private String suspendedJobId;
     private final List<DownloadResume.Action> actions = new ArrayList<>();
     private final List<Long> resumeOffsets = new ArrayList<>();
     private final List<String> abandoned = new ArrayList<>();
     private final List<String> jobIds = new ArrayList<>();
+    private final List<Integer> tiers = new ArrayList<>();
 
     FakeTransfer(byte[] served) {
       this.served = served;
+    }
+
+    @Override
+    public TransportFailure lastFailure() {
+      return lastFailure;
     }
 
     @Override
@@ -65,9 +77,16 @@ final class ResumableFetchTest {
         String url,
         Path destPartial,
         DownloadResume.Decision decision,
-        DownloadExecutor.ProgressCallback callback) {
+        DownloadExecutor.ProgressCallback callback,
+        int transportTier) {
       actions.add(decision.action());
       jobIds.add(decision.bitsJobId());
+      tiers.add(transportTier);
+      lastFailure = null;
+      if (actions.size() <= failFirstAttempts) {
+        lastFailure = injectedFailure;
+        return false;
+      }
       long onDisk = DownloadResume.partialSize(destPartial);
       resumeOffsets.add(onDisk);
       int from = (int) onDisk;
@@ -124,18 +143,43 @@ final class ResumableFetchTest {
     return new ResumableFetch.Request(partial, URL, full.length, sha256(full), "gguf/model-q4.gguf");
   }
 
-  private static ResumableFetch.Outcome fetch(
+  /** Records every wait the policy asks for, so a retry test never spends real seconds. */
+  private final List<Long> sleeps = new ArrayList<>();
+
+  private final List<Integer> attemptsAnnounced = new ArrayList<>();
+
+  /**
+   * The default policy with its clock removed and its jitter pinned to the midpoint (draw 0.5 =>
+   * factor 1.0), so the delays a test observes are the nominal 3 s / 9 s / 27 s.
+   */
+  private TransportRetryPolicy testPolicy() {
+    return TransportRetryPolicy.defaultPolicy().withSleeper(sleeps::add).withRandom(() -> 0.5d);
+  }
+
+  private ResumableFetch.Outcome fetch(
       ResumableFetch.Request request,
       ResumableFetch.Transfer transfer,
       AtomicBoolean cancelFlag,
       List<String> events) {
+    return fetch(request, transfer, cancelFlag, events, testPolicy());
+  }
+
+  private ResumableFetch.Outcome fetch(
+      ResumableFetch.Request request,
+      ResumableFetch.Transfer transfer,
+      AtomicBoolean cancelFlag,
+      List<String> events,
+      TransportRetryPolicy policy) {
     return ResumableFetch.fetch(
         request,
         transfer,
         (bytes, total) -> {},
         cancelFlag::get,
-        () -> events.add("fresh-start"),
-        () -> events.add("verify-start"));
+        new ResumableFetch.Hooks(
+            () -> events.add("fresh-start"),
+            () -> events.add("verify-start"),
+            attemptsAnnounced::add),
+        policy);
   }
 
   // -- fresh path -------------------------------------------------------------
@@ -400,6 +444,167 @@ final class ResumableFetchTest {
     assertEquals("Download failed for gguf/model-q4.gguf", out.error());
     assertEquals(900L, Files.size(partial()), "a network drop keeps its progress too");
     assertNotNull(DownloadResume.read(partial()));
+  }
+
+  // -- transport retry (round 16 F1) --------------------------------------------
+
+  /**
+   * Round 16's actual shape: the connection is reset in a burst, so the first attempts fail with a
+   * transport-transient code and a later, SPACED attempt succeeds. Before the retry policy this
+   * fetch returned {@code ok=false} after one transport attempt taking milliseconds.
+   */
+  @Test
+  void transientTransportFailuresAreRetriedWithSpacedBackoffUntilOneSucceeds() throws Exception {
+    byte[] full = content(2048, 1);
+    FakeTransfer transfer = new FakeTransfer(full);
+    transfer.failFirstAttempts = 2;
+    transfer.injectedFailure = TransportFailure.curlExit(52, "Empty reply from server");
+
+    ResumableFetch.Outcome out =
+        fetch(request(partial(), full), transfer, new AtomicBoolean(false), new ArrayList<>());
+
+    assertTrue(out.ok(), out.error());
+    assertEquals(3, out.transferAttempts(), "two failed transports plus the one that worked");
+    assertEquals(List.of(3000L, 9000L), sleeps, "3 s then 9 s apart, not back-to-back");
+    assertEquals(
+        List.of(0, 1, 2),
+        transfer.tiers,
+        "a retry escalates transport instead of repeating the one that just failed");
+    assertEquals(List.of(1, 2, 3), attemptsAnnounced, "the UI can name which attempt is running");
+    assertArrayEquals(full, Files.readAllBytes(partial()));
+  }
+
+  /**
+   * The same scenario under the pre-fix budget (one attempt, no spacing) — the round-16 outcome, and
+   * the control that shows the test above passes because of the retry policy and not by accident.
+   */
+  @Test
+  void withoutRetriesTheSameTransientFailureLosesTheFile() throws Exception {
+    byte[] full = content(2048, 1);
+    FakeTransfer transfer = new FakeTransfer(full);
+    transfer.failFirstAttempts = 2;
+    transfer.injectedFailure = TransportFailure.curlExit(52, "Empty reply from server");
+
+    ResumableFetch.Outcome out =
+        fetch(
+            request(partial(), full),
+            transfer,
+            new AtomicBoolean(false),
+            new ArrayList<>(),
+            testPolicy().withMaxAttempts(1));
+
+    assertFalse(out.ok(), "one attempt against a bursty reset is what round 16 shipped");
+    assertEquals(1, out.transferAttempts());
+    assertEquals(List.of(), sleeps);
+  }
+
+  /**
+   * The mirror mistake the policy must not make: an HTTP 4xx (curl {@code --fail} exit 22) is
+   * deterministic, so re-attempting it for 40 s is pure latency.
+   */
+  @Test
+  void deterministicHttpFailureIsNotRetried() throws Exception {
+    byte[] full = content(2048, 1);
+    FakeTransfer transfer = new FakeTransfer(full);
+    transfer.failFirstAttempts = 99;
+    transfer.injectedFailure = TransportFailure.curlExit(22, "The requested URL returned error: 404");
+
+    ResumableFetch.Outcome out =
+        fetch(request(partial(), full), transfer, new AtomicBoolean(false), new ArrayList<>());
+
+    assertFalse(out.ok());
+    assertEquals(1, out.transferAttempts(), "a 404 must cost exactly one attempt");
+    assertEquals(List.of(), sleeps, "no backoff is spent on a deterministic failure");
+    assertTrue(out.error().contains("curl exit 22"), out.error());
+    assertTrue(out.error().contains("404"), "the exit code and its text reach the failure record");
+  }
+
+  /**
+   * The two loops must not multiply. Integrity failure keeps its discard-and-restart-once
+   * behaviour; the transport retry policy must not turn that into 4 x 2 = 8 transfers.
+   */
+  @Test
+  void verificationFailureStillRestartsExactlyOnceAndIsNotRetriedByThePolicy() throws Exception {
+    byte[] expected = content(2048, 1);
+    byte[] wrong = content(2048, 2);
+    Files.write(partial(), java.util.Arrays.copyOf(wrong, 700));
+    DownloadResume.write(
+        partial(), new DownloadResume.State(URL, expected.length, sha256(expected), null));
+
+    FakeTransfer transfer = new FakeTransfer(wrong);
+    ResumableFetch.Outcome out =
+        fetch(request(partial(), expected), transfer, new AtomicBoolean(false), new ArrayList<>());
+
+    assertFalse(out.ok(), "wrong bytes must never be accepted");
+    assertEquals(2, out.transferAttempts(), "one restart from zero, and no policy retries on top");
+    assertEquals(List.of(), sleeps, "an integrity failure is permanent, so no backoff is spent");
+    assertTrue(out.error().startsWith("Verification failed"), out.error());
+  }
+
+  @Test
+  void exhaustingEveryAttemptReportsTheAttemptCountAndTheTransportDiagnosis() throws Exception {
+    byte[] full = content(2048, 1);
+    FakeTransfer transfer = new FakeTransfer(full);
+    transfer.failFirstAttempts = 99;
+    transfer.injectedFailure = TransportFailure.curlExit(52, "Empty reply from server");
+
+    ResumableFetch.Outcome out =
+        fetch(request(partial(), full), transfer, new AtomicBoolean(false), new ArrayList<>());
+
+    assertFalse(out.ok());
+    assertFalse(out.cancelled());
+    assertEquals(4, out.transferAttempts());
+    assertEquals(List.of(3000L, 9000L, 27000L), sleeps);
+    assertEquals(List.of(0, 1, 2, 3), transfer.tiers, "the last tier saturates rather than growing");
+    assertTrue(out.error().contains("after 4 attempts"), out.error());
+    assertTrue(out.error().contains("curl exit 52"), out.error());
+    assertTrue(out.error().contains("Empty reply from server"), out.error());
+  }
+
+  /** Cancellation must be honoured between attempts, not only inside one. */
+  @Test
+  void cancellationBetweenAttemptsStopsTheRetryLoop() throws Exception {
+    byte[] full = content(2048, 1);
+    FakeTransfer transfer = new FakeTransfer(full);
+    transfer.failFirstAttempts = 99;
+    AtomicBoolean cancelFlag = new AtomicBoolean(false);
+    TransportRetryPolicy policy =
+        TransportRetryPolicy.defaultPolicy()
+            .withRandom(() -> 0.5d)
+            .withSleeper(
+                millis -> {
+                  sleeps.add(millis);
+                  cancelFlag.set(true);
+                });
+
+    ResumableFetch.Outcome out =
+        fetch(request(partial(), full), transfer, cancelFlag, new ArrayList<>(), policy);
+
+    assertTrue(out.cancelled(), "a cancel during the backoff must not be slept through");
+    assertEquals(1, out.transferAttempts());
+    assertEquals(List.of(3000L), sleeps);
+  }
+
+  /**
+   * The {@code startTier} seam a repair pass uses: pass 2 begins where pass 1's escalation ended
+   * instead of re-running the identical chain that already failed.
+   */
+  @Test
+  void startTierMovesTheWholeEscalationUp() throws Exception {
+    byte[] full = content(2048, 1);
+    FakeTransfer transfer = new FakeTransfer(full);
+    transfer.failFirstAttempts = 2;
+
+    ResumableFetch.Outcome out =
+        fetch(
+            request(partial(), full),
+            transfer,
+            new AtomicBoolean(false),
+            new ArrayList<>(),
+            testPolicy().withStartTier(1));
+
+    assertTrue(out.ok(), out.error());
+    assertEquals(List.of(1, 2, 3), transfer.tiers);
   }
 
   @Test
