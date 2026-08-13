@@ -34,6 +34,13 @@ export interface InstallStatus {
    * install history): round 11's machine had `installedFully` true and an unusable GPU at once.
    */
   repairNeeded?: boolean;
+  /**
+   * Tempdoc 824 §3.3b — registry files this profile declares that are absent from disk and that no
+   * consumer requires (`"required": false`). Deliberately NOT folded into `repairNeeded`: round 16
+   * lost one 872-byte `splade/config.json` and the product said "a required component is missing"
+   * while SPLADE was serving 1 660 inferences on CUDA. Shown, never alarming.
+   */
+  optionalGaps?: Array<{ packageId?: string; fileName?: string }>;
   message?: string;
   errorCode?: string;
   lastError?: string;
@@ -46,11 +53,31 @@ export interface InstallStatus {
     id?: string;
     state?: string;
     skipReason?: string;
+    /** Failure message for a `state: 'failed'` package (`AiInstallStatus.PackageStatus.error`). */
+    error?: string;
     bytesDownloaded?: number;
     bytesTotal?: number;
     /** True when this package continued an earlier (e.g. cancelled) run's bytes instead of
      *  restarting from zero — `AiInstallStatus.PackageStatus.resumed`. */
     resumed?: boolean;
+    /**
+     * Tempdoc 824 §3.3c — what the RUNTIME observes about this package's capability
+     * (`'active' | 'inactive' | 'unknown'`), projected from the same derivation
+     * `/api/ai/runtime/status` publishes. Bookkeeping ("a file is missing") and consequence ("the
+     * capability is down") are different claims; the alarming copy needs both.
+     */
+    functionalStatus?: string;
+    /**
+     * Tempdoc 824 §3.4 — `'TRANSPORT_UNAVAILABLE'` once three consecutive repair passes failed the
+     * same file at transport. Repair stays *needed*; it stops being the *remedy*.
+     */
+    terminalReason?: string;
+    /** Transport attempts spent on the still-missing file, across repair passes. */
+    attempts?: number;
+    /** Direct URL of the file that will not transfer — the manual fallback's source. */
+    url?: string;
+    /** Where that file has to land — the manual fallback's destination. */
+    targetPath?: string;
   }>;
   downloadedBytes?: number;
   totalBytes?: number;

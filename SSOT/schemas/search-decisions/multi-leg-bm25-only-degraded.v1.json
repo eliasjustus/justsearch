@@ -5,6 +5,7 @@
   "hybrid_fallback_reason" : "NO_EMBEDDING_SERVICE",
   "decision_kind" : "multi_leg",
   "chunk_merge_kind" : "eligible_apply",
+  "runtime_syntax" : "SIMPLE",
   "legs_detail" : {
     "kind" : "bm25_only",
     "effective_mode_label" : "TEXT",

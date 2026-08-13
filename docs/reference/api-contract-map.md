@@ -345,6 +345,7 @@ Request fields:
 - `query` (required)
 - `return_full_documents` (bool, proto field 23) — when true, skips chunk search and returns full document content (366)
 - Filter fields: same as search (entity + metadata filters scoped via two-stage parent-doc pre-filter) (362)
+- `filters.collection` (string array, proto field 25) — scope retrieval to Lucene collection tag(s), same wire key and semantics as the search endpoint's `filters.collection`. Non-empty = a positive include of exactly those collections; absent/empty = the default scope (the `agent-history` MUST_NOT exclusion of 585 D4b), never "match nothing". Applied on the chunk branch by `QueryFilterBuilder#buildChunkFilterQuery`, so a collection-only request does **not** route through the doc-level parent pre-filter (821 §3-C2)
 
 Response includes:
 
@@ -439,7 +440,11 @@ Source: tempdoc 500, ADR-0015, tempdoc 366.
 `POST /api/knowledge/search` accepts a JSON body with required `query` and optional fields:
 
 - `limit`, `mode`, `sort`, `cursor`
-- `querySyntax` (or `query_syntax` alias)
+- `querySyntax` (or `query_syntax` alias) — since tempdoc 821 §P / register F-046, `lucene` is
+  honoured on **every** retrieval path (previously only the sparse-only one; multi-leg legs escaped
+  the operators and retrieved a SIMPLE parse), so a malformed `lucene` query now fails the request
+  with HTTP `400` / `INVALID_REQUEST` (Worker gRPC `INVALID_ARGUMENT`) instead of being silently
+  parsed as plain text.
 - `projection[]`
 - `filters` (`mime`, `mimeBase`, `fileKind`, `language`, `pathPrefix`, `includeChunks`, `modifiedAt`)
 - Entity filter fields: `entityPersons`, `entityOrganizations`, `entityLocations` (repeated string) (362)
@@ -849,6 +854,38 @@ Other debug endpoints: `/api/debug/commit-metadata`, `/api/debug/effective-confi
 ### AI Runtime Status
 
 `GET /api/ai/runtime/status` returns ONNX feature status including a `modelActive: boolean` field per feature entry, derived from the actual ORT session state (not file discovery). This is the canonical source of truth for "is this model loaded and running". Both reranker (via `OrtCudaStatus`) and citation-scorer (via `CitationScorer.isAvailable()`) report runtime session state through this field. See [ADR-0023](../decisions/0023-api-responses-declare-runtime-context.md) for the general principle: endpoints whose behavior varies by runtime mode must declare that mode in the response.
+
+### AI install (`/api/ai/install/*`)
+
+**Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/routes/AiRoutes.java` (routes),
+`modules/ui/src/main/java/io/justsearch/ui/api/AiInstallController.java` (handlers),
+`modules/ui/src/test/java/io/justsearch/ui/api/AiInstallApiContractTest.java` (error-body contract).
+
+| Route | Method | Request | Success | Errors |
+|---|---|---|---|---|
+| `/api/ai/install/manifest` | GET | – | `ModelRegistry` | 500 `MANIFEST_UNAVAILABLE` |
+| `/api/ai/install/plan-preview` | GET | – | `InstallPlanPreview` | 500 `MANIFEST_UNAVAILABLE` |
+| `/api/ai/install/status` | GET | – | `AiInstallStatus` | – |
+| `/api/ai/install/start` | POST | `{"acceptTerms": true}` | `AiInstallStatus` | 400 `TERMS_REQUIRED`, 403 `DOWNLOADS_DISABLED`, 409 `INSTALL_ALREADY_RUNNING`, 500 `INSTALL_START_FAILED` |
+| `/api/ai/install/cancel` | POST | – | `AiInstallStatus` | 500 `INSTALL_CANCEL_FAILED` |
+| `/api/ai/install/repair` | POST | `{"acceptTerms": true}` | `AiInstallStatus` | same set as `start`, plus 500 `INSTALL_REPAIR_FAILED` |
+
+Every error body on this family is the project's standard envelope —
+`{"error": string, "errorCode": string, "errorClass": string, "retryable": boolean, "requestId"?: string}`
+(`ApiErrorHandler.toResponse`). A `400` here is **not** body-less: `AiInstallApiContractTest`
+asserts the raw bytes of a `POST … {}` carry `errorCode: "TERMS_REQUIRED"`.
+
+**`repair` IS `start`.** `AiInstallService.repair` delegates straight to `startInstall`: it re-plans
+against disk and downloads only what is missing, and it therefore requires `acceptTerms` exactly
+like a first install. Calling it with an empty body is the 400 above, not a server fault.
+
+`AiInstallStatus` carries two truth claims that answer different questions and must not be
+collapsed: `installedFully` (no **required** file is missing) and `repairNeeded` (a **required**
+file is missing). `optionalGaps: [{packageId, fileName}]` reports registry files marked
+`"required": false` that are absent — surfaced, never a reason to offer Repair. Per package,
+`functionalStatus` (`active` | `inactive` | `unknown`) projects what `GET /api/ai/runtime/status`
+observes, and `terminalReason: "TRANSPORT_UNAVAILABLE"` with `attempts`/`url`/`targetPath` says that
+automatic repair has stopped working and names the manual fallback.
 
 ### Install plan preview (tempdoc 657)
 

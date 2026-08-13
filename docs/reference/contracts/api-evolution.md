@@ -68,7 +68,16 @@ Contract tests are the authoritative source for API schema expectations:
 
 Proto files: `modules/ipc-common/src/main/proto/`
 Route definitions: `modules/ui/src/main/java/.../routes/*.java`
-Revapi baseline: `config/revapi/app-api-baseline.json` (self-referential until first public release; becomes actionable for real Java API surface comparison then)
+
+**Java API surface comparison is deliberately not performed.** A Revapi baseline was scaffolded
+here for that purpose and has been retired: the promised surfaces are the three wire-level
+constituents of the Runtime Contract (runtime manifest schema, health/status lifecycle subset, MCP
+endpoint + curated tools — see `docs/reference/runtime-contract.md`), and the Java API of
+`modules/app-api` is not among them. Breakage on the promised surfaces is caught by the contract
+tests above, the manifest schema-compatibility test, and constituent version pinning — the mechanism
+that in practice detected and versioned the Runtime Contract `0.2.0` break. Adding a Java-API
+comparator would guard an unpromised surface, and would additionally require publishing release
+artifacts for a baseline to compare against, which this project does not do.
 
 ## See Also
 
