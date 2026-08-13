@@ -10,10 +10,15 @@ import java.util.Objects;
  *
  * <p>{@code FromRetrievalQuery} reuses the already-boosted Lucene query produced
  * for the sparse-only request path (legacy lines 502–519) — honours the request's
- * syntax (LUCENE or SIMPLE), propagates {@code ParseException}.
+ * syntax (LUCENE or SIMPLE) because it IS the retrieval query, propagates
+ * {@code ParseException}.
  *
- * <p>{@code FromFreshBm25} builds a fresh SIMPLE-syntax BM25 query, omitting boost
- * filters and swallowing {@code ParseException} (legacy lines 678–705).
+ * <p>{@code FromFreshBm25} builds a fresh BM25 query, omitting boost filters and
+ * swallowing {@code ParseException} (legacy lines 678–705). It parses with
+ * {@code TextQueryOps.MULTI_LEG_LEXICAL_SYNTAX} — the syntax the multi-leg BM25 leg
+ * it describes retrieves with, regardless of what the request asked for — so the
+ * facet counts always tally the same population the hits came from
+ * (tempdoc 821 §L.3).
  *
  * <p>These are not duplicates and cannot be unified — both observable behaviours
  * are part of the wire contract. The discriminator lives on the decision variant

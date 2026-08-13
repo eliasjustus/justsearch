@@ -224,24 +224,39 @@ public final class SearchResponseBuilder {
         facetsResult =
             facetingEngine.computeFacets(outcome.queryForSpans(), f.fields(), f.maxDocsScanned());
       } catch (RuntimeException e) {
-        log.debug("Facet computation failed (sparse path): {}", e.getMessage());
+        log.warn(
+            "Facet computation failed (sparse path) — response carries NO facets for fields {}",
+            f.fields().keySet(),
+            e);
       }
     } else if (decision instanceof SearchDecision.MultiLegDecision ml
         && ml.facets().isPresent()) {
       var f = ml.facets().get();
+      // Tempdoc 821 §L.3: parse with the syntax the multi-leg BM25 leg actually retrieved with, NOT
+      // the request's syntax — the legs are SIMPLE-only (TextQueryOps#searchText /
+      // #searchTextWithFilter), so parsing the request's LUCENE syntax here would tally a different
+      // population than the hits being faceted. One symbol couples the two.
+      LuceneRuntimeTypes.QuerySyntax syntax = TextQueryOps.MULTI_LEG_LEXICAL_SYNTAX;
       try {
-        var facetQuery =
-            textQueryOps.buildTextQuery(
-                f.queryString(),
-                f.filters(),
-                LuceneRuntimeTypes.QuerySyntax.SIMPLE);
+        var facetQuery = textQueryOps.buildTextQuery(f.queryString(), f.filters(), syntax);
         if (facetQuery != null) {
           facetsResult = facetingEngine.computeFacets(facetQuery, f.fields(), f.maxDocsScanned());
         }
       } catch (org.apache.lucene.queryparser.classic.ParseException e) {
-        log.debug("Facet-only query parse failed (multi-leg path): {}", e.getMessage());
+        // Signal, don't throw: the facet rebuild degrades to "no facets" rather than failing the
+        // whole search (pinned by FacetRegressionMatrixTest (e)). It is still a real failure, so it
+        // is visible at WARN instead of hiding at debug.
+        log.warn(
+            "Facet-only query parse failed (multi-leg path, {} syntax) — response carries NO facets"
+                + " for fields {}",
+            syntax,
+            f.fields().keySet(),
+            e);
       } catch (RuntimeException e) {
-        log.debug("Facet computation failed (multi-leg path): {}", e.getMessage());
+        log.warn(
+            "Facet computation failed (multi-leg path) — response carries NO facets for fields {}",
+            f.fields().keySet(),
+            e);
       }
     }
 
@@ -257,6 +272,11 @@ public final class SearchResponseBuilder {
         }
         responseBuilder.putFacets(entry.getKey(), counts.build());
       }
+    }
+    // Tempdoc 821 §L.3: the truncation flag describes the SCAN, not the key set — a scan that was
+    // capped or that failed still ran, so the flag must survive a result with no facetable keys.
+    // (Emitting it only inside the guard above hid it exactly when the counts were least complete.)
+    if (facetsResult != null) {
       responseBuilder.setFacetsTruncated(facetsResult.truncated());
     }
     return facetsResult;
@@ -267,9 +287,15 @@ public final class SearchResponseBuilder {
    * Tempdoc 597: the true matched-document count, computed over the SAME chunk-excluded query the
    * facets scan so {@code matchCount >=} every facet value by construction. Sparse path reuses the
    * boosted {@code outcome.queryForSpans()} (the FromRetrievalQuery facet query); multi-leg rebuilds
-   * the fresh SIMPLE BM25 query from the request + runtime filters, omitting boost filters (the
-   * FromFreshBm25 facet query). Empty/blocked → 0. Independent of whether facets were requested, so
-   * the facet-less quick pass still carries a true count. Failure is non-fatal (returns 0).
+   * a fresh BM25 query from the request + runtime filters, omitting boost filters (the FromFreshBm25
+   * facet query). Empty/blocked → 0. Independent of whether facets were requested, so the facet-less
+   * quick pass still carries a true count. Failure is non-fatal (returns 0).
+   *
+   * <p>Tempdoc 821 §L.3: the multi-leg rebuild parses with {@link
+   * TextQueryOps#MULTI_LEG_LEXICAL_SYNTAX} — the syntax the BM25 leg it counts actually retrieved
+   * with — rather than an unexplained local {@code SIMPLE} literal or the request's own syntax. The
+   * request's syntax ({@link SearchInputs#runtimeSyntax()}) would be WRONG here while the legs stay
+   * SIMPLE-only: a LUCENE-parsed count beside SIMPLE-parsed hits contradicts the results it labels.
    */
   private int computeMatchCount(
       SearchDecision decision, SearchOutcome outcome, SearchInputs inputs) {
@@ -284,17 +310,20 @@ public final class SearchResponseBuilder {
               textQueryOps.buildTextQuery(
                   inputs.request().getQuery(),
                   inputs.runtimeFilters(),
-                  LuceneRuntimeTypes.QuerySyntax.SIMPLE);
+                  TextQueryOps.MULTI_LEG_LEXICAL_SYNTAX);
           yield q != null ? indexCountOps.countQuery(q) : 0;
         }
         case SearchDecision.EmptyQueryDecision e -> 0;
         case SearchDecision.BlockedDecision b -> 0;
       };
     } catch (org.apache.lucene.queryparser.classic.ParseException e) {
-      log.debug("matchCount query parse failed: {}", e.getMessage());
+      log.warn(
+          "matchCount query parse failed ({} syntax) — headline count falls back to 0",
+          TextQueryOps.MULTI_LEG_LEXICAL_SYNTAX,
+          e);
       return 0;
     } catch (RuntimeException e) {
-      log.debug("matchCount computation failed: {}", e.getMessage());
+      log.warn("matchCount computation failed — headline count falls back to 0", e);
       return 0;
     }
   }

@@ -59,6 +59,27 @@ public final class TextQueryOps {
   /** 306-B1: tie-breaker for DisjunctionMaxQuery — 10% of secondary field score added. */
   static final float TITLE_TIE_BREAKER = 0.1f;
 
+  /**
+   * The syntax the multi-leg lexical (BM25) leg parses user query text with — see {@link
+   * #searchText(String, int, RuntimeSearchFilters, RuntimeSearchFilters)} and {@link
+   * #searchTextWithFilter}, the legs behind every {@code MultiLegDecision} that runs BM25. Unlike
+   * the sparse-only shortcut (which parses with the request's own syntax), these legs are
+   * SIMPLE-only: a LUCENE-syntax request still retrieves via a SIMPLE parse.
+   *
+   * <p>Tempdoc 821 §L.3: anything that re-derives a COUNT over that leg's matched population —
+   * the facet scan and the headline match count in {@code SearchResponseBuilder} — must parse with
+   * THIS constant, not a copy of {@code SIMPLE} and not the request's syntax. Otherwise the counts
+   * describe a different query than the results they accompany (a LUCENE-parsed count next to
+   * SIMPLE-parsed hits reads as "Top 3 of 1 matches"). One symbol so the leg and its counts move
+   * together if the legs ever start honouring the request's syntax.
+   *
+   * <p>Deliberately NOT routed through this constant: {@code ChunkSearchOps#searchChunksText}
+   * escapes the query text and parses it against a single {@code chunk_content} field, so it has no
+   * multi-field/LUCENE branch to switch — flipping this constant cannot make it honour LUCENE, and
+   * pretending otherwise would be a false coupling.
+   */
+  public static final QuerySyntax MULTI_LEG_LEXICAL_SYNTAX = QuerySyntax.SIMPLE;
+
   /** 326: Entity text fields for BM25 matching (ICU-analyzed, populated by NER backfill). */
   private static final List<String> ENTITY_TEXT_FIELDS = List.of(
       SchemaFields.ENTITY_PERSONS_TEXT,
@@ -103,10 +124,19 @@ public final class TextQueryOps {
     }
 
     QuerySyntax effective = (syntax == null) ? QuerySyntax.SIMPLE : syntax;
+    return applyRuntimeFilters(buildMultiFieldQuery(queryText, effective), filters);
+  }
 
+  /**
+   * Builds the content+title+author+entity DisjunctionMaxQuery for {@code syntax}, without any
+   * filters. Shared by {@link #buildTextQuery} and {@link #searchTextWithFilter} so the two cannot
+   * drift on which fields participate or how each is parsed.
+   */
+  private Query buildMultiFieldQuery(String queryText, QuerySyntax syntax)
+      throws org.apache.lucene.queryparser.classic.ParseException {
     Query contentQuery;
     Query titleQuery;
-    if (effective == QuerySyntax.SIMPLE) {
+    if (syntax == QuerySyntax.SIMPLE) {
       contentQuery = buildSimpleContentQuery(queryText);
       titleQuery = buildFieldQuery(queryText, SchemaFields.TITLE, QuerySyntax.SIMPLE);
     } else {
@@ -116,17 +146,15 @@ public final class TextQueryOps {
 
     // 326: Build entity field queries (ICU-analyzed text fields populated by NER backfill).
     // Documents with NER-extracted entities matching query terms get a relevance boost.
-    List<Query> entityQueries = buildEntityFieldQueries(queryText, effective);
+    List<Query> entityQueries = buildEntityFieldQueries(queryText, syntax);
 
     // 326: Author/sender field query — matches on document author boost relevance.
-    Query authorQuery = buildFieldQuery(queryText, SchemaFields.AUTHOR, effective);
+    Query authorQuery = buildFieldQuery(queryText, SchemaFields.AUTHOR, syntax);
 
     // 306-B1 + 326: Multi-field search — query content, title, author, and entity fields using
     // DisjunctionMaxQuery (Elasticsearch best_fields pattern). Best field score drives ranking,
     // with tie-breaker from other fields. Documents without titles/author/entities are unaffected.
-    Query multiFieldQuery = combineMultiField(contentQuery, titleQuery, authorQuery, entityQueries);
-
-    return applyRuntimeFilters(multiFieldQuery, filters);
+    return combineMultiField(contentQuery, titleQuery, authorQuery, entityQueries);
   }
 
   /**
@@ -612,7 +640,7 @@ public final class TextQueryOps {
       return new SearchResult(List.of(), 0, 0, null);
     }
     try {
-      Query combined = buildTextQuery(queryText, filters);
+      Query combined = buildTextQuery(queryText, filters, MULTI_LEG_LEXICAL_SYNTAX);
       if (boostFilters != null && combined != null) {
         var qb = new BooleanQuery.Builder();
         qb.add(combined, BooleanClause.Occur.MUST);
@@ -631,10 +659,10 @@ public final class TextQueryOps {
   /**
    * Text search with a Lucene Query filter applied.
    *
-   * <p>Builds the full multi-field query (content + title + entity fields) in SIMPLE mode,
-   * then combines with the provided Lucene filter using a BooleanQuery. This ensures the
-   * 2-leg hybrid path (HybridSearchOps) gets the same title boost and entity boost as the
-   * direct text search path.
+   * <p>Builds the full multi-field query (content + title + entity fields) with
+   * {@link #MULTI_LEG_LEXICAL_SYNTAX}, then combines with the provided Lucene filter using a
+   * BooleanQuery. This ensures the 2-leg hybrid path (HybridSearchOps) gets the same title boost
+   * and entity boost as the direct text search path.
    *
    * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
    */
@@ -643,15 +671,11 @@ public final class TextQueryOps {
       return new SearchResult(List.of(), 0, 0, null);
     }
     try {
-      // 326: Use combineMultiField (content + title + entity) instead of content-only.
-      // The old code called buildSimpleContentQuery() which missed title boost (306-B1)
-      // and entity boost (326), causing the 2-leg hybrid path to rank differently from
+      // 326: Use the shared multi-field build (content + title + author + entity) instead of
+      // content-only. The old code called buildSimpleContentQuery() which missed title boost
+      // (306-B1) and entity boost (326), causing the 2-leg hybrid path to rank differently from
       // the direct text search and 3-way paths.
-      Query contentQuery = buildSimpleContentQuery(queryText);
-      Query titleQuery = buildFieldQuery(queryText, SchemaFields.TITLE, QuerySyntax.SIMPLE);
-      Query authorQuery = buildFieldQuery(queryText, SchemaFields.AUTHOR, QuerySyntax.SIMPLE);
-      List<Query> entityQueries = buildEntityFieldQueries(queryText, QuerySyntax.SIMPLE);
-      Query multiFieldQuery = combineMultiField(contentQuery, titleQuery, authorQuery, entityQueries);
+      Query multiFieldQuery = buildMultiFieldQuery(queryText, MULTI_LEG_LEXICAL_SYNTAX);
 
       BooleanQuery.Builder combined = new BooleanQuery.Builder();
       combined.add(multiFieldQuery, BooleanClause.Occur.MUST);

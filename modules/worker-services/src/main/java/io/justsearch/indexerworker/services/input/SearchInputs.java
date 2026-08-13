@@ -3,6 +3,7 @@ package io.justsearch.indexerworker.services.input;
 
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
 import io.justsearch.indexerworker.disambiguation.EntityClusterSnapshot;
+import io.justsearch.ipc.SearchQuerySyntax;
 import io.justsearch.ipc.SearchRequest;
 import java.util.Map;
 import java.util.Objects;
@@ -40,5 +41,23 @@ public record SearchInputs(
     // commitMetadata may be empty but not null
     Objects.requireNonNull(commitMetadata, "commitMetadata");
     // activeGeneration may be null
+  }
+
+  /**
+   * The request's query syntax in runtime terms — the single projection of the wire
+   * {@link SearchQuerySyntax} enum onto {@link LuceneRuntimeTypes.QuerySyntax} (two boolean gates
+   * still read the wire enum directly: {@code SearchInputCapture.java:125-126},
+   * {@code SearchPlanner.java:251} — both only ask "is it LUCENE?" to skip chunk-merge).
+   *
+   * <p>This is what the CLIENT asked for. It is the right source for a stage that parses the user's
+   * query for retrieval (the sparse-only shortcut does), and the WRONG source for a stage that
+   * re-derives counts over an already-retrieved population — those must mirror the parse their leg
+   * used ({@code TextQueryOps.MULTI_LEG_LEXICAL_SYNTAX}), which the multi-leg legs do not derive
+   * from here (tempdoc 821 §L.3).
+   */
+  public LuceneRuntimeTypes.QuerySyntax runtimeSyntax() {
+    return request.getQuerySyntax() == SearchQuerySyntax.SEARCH_QUERY_SYNTAX_LUCENE
+        ? LuceneRuntimeTypes.QuerySyntax.LUCENE
+        : LuceneRuntimeTypes.QuerySyntax.SIMPLE;
   }
 }
