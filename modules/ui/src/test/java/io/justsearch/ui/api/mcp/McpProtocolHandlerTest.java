@@ -380,7 +380,10 @@ class McpProtocolHandlerTest {
             "meta_category",
             "entity_persons",
             "entity_organizations",
-            "entity_locations"),
+            "entity_locations",
+            // Tempdoc 821 §3-C2 — the collection scope, declared last so the pre-821 order is
+            // untouched (clients that cached the earlier key order see an append, not a reshuffle).
+            "collection"),
         List.copyOf(searchFilterProps.keySet()),
         "filters schema properties must serialize in declared source order");
 
