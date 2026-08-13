@@ -1,0 +1,148 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+package io.justsearch.indexerworker.loop;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
+import io.justsearch.adapters.lucene.runtime.IndexCountOps;
+import io.justsearch.indexerworker.coordination.WorkerSignalBus;
+import io.justsearch.indexerworker.extract.ContentExtractor;
+import io.justsearch.indexerworker.extract.TimeboxedContentExtractor;
+import io.justsearch.indexerworker.loop.ops.BatchStats;
+import io.justsearch.indexerworker.loop.ops.IndexingDocumentOps;
+import io.justsearch.indexerworker.path.PathResolutionStore;
+import io.justsearch.indexerworker.queue.JobQueue;
+import io.justsearch.indexerworker.util.PathNormalizer;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+/**
+ * Tempdoc 821 §3-C3 — the behavioural half of "make force-reindex real".
+ *
+ * <p>The C3 class member this closes: a user's force-reindex could not repair a bad enrichment
+ * population, because the force flag never left the Head. The Worker admitted the same paths and
+ * this extractor took its UNCHANGED branch on every one of them, so nothing was re-extracted and
+ * nothing was re-enriched — an installed base with a degenerate chunk/vector population had no
+ * self-repair route at all.
+ *
+ * <p>These tests change NOTHING on disk between the two arms: the same file, the same mtime,
+ * {@code isUnmodified} genuinely true. The ONLY difference is whether the path is in the forced
+ * set that a {@code SCAN_MODE_FORCE_REINDEX} scan populates (proved end-to-end by
+ * {@code WorkerScanOpsTest#forceReindexScanMarksEveryAdmittedPathForced}). The forced key here is
+ * derived exactly as {@code WorkerScanOps} derives it, and the file is admitted through the REAL
+ * {@link WorkerIngestionAuthority}, so the key agreement between the two sides is under test too —
+ * a scan-side key that missed the envelope's would make the force a silent no-op.
+ */
+@DisplayName("JobBatchExtractor — a forced path bypasses the UNCHANGED branch")
+final class JobBatchExtractorForcedPathTest {
+
+  @TempDir Path tempDir;
+
+  /** Everything the extractor needs, with the forced set as the single variable under test. */
+  private record Harness(
+      JobBatchExtractor extractor,
+      DocumentFieldOps documentFieldOps,
+      TimeboxedContentExtractor contentExtractor,
+      IngestionOutcomeJournal journal,
+      BatchStats batchStats) {}
+
+  private Harness newHarness(Set<String> forcedPaths) throws Exception {
+    DocumentFieldOps documentFieldOps = mock(DocumentFieldOps.class);
+    // Nothing changed on disk — the index's view of this doc is current. This is the precondition
+    // that makes the UNCHANGED branch the DEFAULT outcome, so taking it is not the finding; NOT
+    // taking it is.
+    when(documentFieldOps.isUnmodified(anyString(), anyLong())).thenReturn(true);
+
+    IndexCountOps indexCountOps = mock(IndexCountOps.class);
+    // A non-empty index, so the `indexEmptyForBatch` short-circuit (312 item 10) is NOT what
+    // decides the branch — otherwise both arms would skip the unchanged-check for the wrong reason.
+    when(indexCountOps.docCount()).thenReturn(7L);
+
+    TimeboxedContentExtractor contentExtractor = mock(TimeboxedContentExtractor.class);
+    // Fail extraction deliberately: reaching extraction at all is the signal these tests read,
+    // and a terminal ExtractionException is a branch the extractor already handles cleanly.
+    when(contentExtractor.extractArtifact(any()))
+        .thenThrow(new ContentExtractor.ExtractionException("stubbed — reached extraction"));
+
+    IngestionOutcomeJournal journal = mock(IngestionOutcomeJournal.class);
+    BatchStats batchStats = mock(BatchStats.class);
+    StaleSnapshotResolver staleResolver = mock(StaleSnapshotResolver.class);
+
+    JobBatchExtractor extractor =
+        new JobBatchExtractor(
+            new WorkerIngestionAuthority(), // REAL: the envelope's normalizedPath is production's
+            journal,
+            mock(JobQueue.class),
+            contentExtractor,
+            documentFieldOps,
+            indexCountOps,
+            batchStats,
+            staleResolver,
+            mock(StaleSourceHandler.class),
+            mock(WorkerSignalBus.class),
+            new AtomicBoolean(true),
+            forcedPaths,
+            () -> mock(PathResolutionStore.class),
+            mock(IndexingDocumentOps.StageRecorder.class),
+            () -> false,
+            delta -> {});
+    return new Harness(extractor, documentFieldOps, contentExtractor, journal, batchStats);
+  }
+
+  /** The key {@code WorkerScanOps} writes for an admitted path. */
+  private static String forcedKey(Path file) {
+    return PathNormalizer.normalizePath(file.toAbsolutePath().normalize().toString());
+  }
+
+  @Test
+  @DisplayName("forced: an untouched file is re-extracted instead of skipped as UNCHANGED")
+  void forcedPathIsReExtractedEvenThoughNothingChanged() throws Exception {
+    Path file = Files.writeString(tempDir.resolve("doc.txt"), "unchanged content");
+    Set<String> forcedPaths = ConcurrentHashMap.newKeySet();
+    forcedPaths.add(forcedKey(file));
+    Harness h = newHarness(forcedPaths);
+
+    h.extractor().extractAll(List.of(new JobQueue.IndexJob(file, null)));
+
+    verify(h.contentExtractor()).extractArtifact(file);
+    verify(h.journal(), never()).recordOutcomeSafely(any(), eq("UNCHANGED"), any());
+    // The force short-circuits `!forceReindex && ...` before the mtime lookup, so the check is
+    // never even asked — a stronger assertion than "it was asked and ignored".
+    verify(h.documentFieldOps(), never()).isUnmodified(anyString(), anyLong());
+    assertTrue(forcedPaths.isEmpty(), "the mark is one-shot: consumed by this pass, not sticky");
+  }
+
+  @Test
+  @DisplayName("not forced: the same untouched file IS skipped as UNCHANGED")
+  void unforcedPathTakesTheUnchangedBranch() throws Exception {
+    Path file = Files.writeString(tempDir.resolve("doc.txt"), "unchanged content");
+    Harness h = newHarness(ConcurrentHashMap.newKeySet());
+
+    List<ExtractedJob> extracted =
+        h.extractor().extractAll(List.of(new JobQueue.IndexJob(file, null)));
+
+    // The inverse arm: identical file, identical mocks, empty forced set. Without this, the test
+    // above could pass because extraction always runs, proving nothing about the force.
+    assertEquals(List.of(), extracted, "an unchanged doc yields no extracted job");
+    verify(h.documentFieldOps()).isUnmodified(eq(forcedKey(file)), anyLong());
+    verify(h.contentExtractor(), never()).extractArtifact(any());
+    verify(h.journal()).recordOutcomeSafely(eq(file), eq("UNCHANGED"), any());
+    verify(h.batchStats()).recordSkipped();
+  }
+}

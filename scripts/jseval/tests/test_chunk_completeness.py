@@ -6,10 +6,15 @@ from __future__ import annotations
 import json
 
 from jseval.chunk_completeness import (
-    CHUNK_THRESHOLD_CHARS,
     chunk_completeness_verdict,
     expected_chunk_docs,
+    resolve_chunk_threshold_chars,
 )
+
+# An arbitrary threshold these tests act as the "backend" for. Deliberately NOT the Java
+# constant's current value: tempdoc 821 §3-C3 retired the jseval-side mirror, and a test that
+# hard-codes 2000 would quietly reinstate it. Any positive number must work identically.
+THRESHOLD = 1234
 
 
 def _write_corpus(tmp_path, docs):
@@ -20,65 +25,107 @@ def _write_corpus(tmp_path, docs):
     return p
 
 
+# --- resolve_chunk_threshold_chars -------------------------------------------
+
+
+class TestResolveChunkThresholdChars:
+    """Tempdoc 821 §3-C3: the threshold is READ from the backend, never mirrored locally."""
+
+    def test_reads_the_flattened_status_key(self):
+        # readiness.flatten_status lifts worker.enrichment's children to the top level, which is
+        # the shape run._compute_chunk_completeness hands in.
+        assert resolve_chunk_threshold_chars({"chunkMinChars": 2000}) == 2000
+
+    def test_reads_the_raw_nested_status_payload(self):
+        # The reachability probe fetches /api/status itself and never flattens.
+        payload = {"worker": {"enrichment": {"chunkMinChars": 512}}}
+        assert resolve_chunk_threshold_chars(payload) == 512
+
+    def test_absent_field_is_none_not_a_guessed_default(self):
+        # A backend predating 821 publishes nothing. Substituting a local default here is exactly
+        # the dual-source-of-truth defect this change removed.
+        assert resolve_chunk_threshold_chars({"worker": {"enrichment": {}}}) is None
+        assert resolve_chunk_threshold_chars({}) is None
+        assert resolve_chunk_threshold_chars(None) is None
+
+    def test_non_positive_or_non_int_values_are_rejected(self):
+        assert resolve_chunk_threshold_chars({"chunkMinChars": 0}) is None
+        assert resolve_chunk_threshold_chars({"chunkMinChars": -1}) is None
+        assert resolve_chunk_threshold_chars({"chunkMinChars": "2000"}) is None
+        # bool is an int subclass in Python — True must not read as "threshold 1".
+        assert resolve_chunk_threshold_chars({"chunkMinChars": True}) is None
+
+
 # --- expected_chunk_docs -----------------------------------------------------
 
 
 class TestExpectedChunkDocs:
     def test_long_doc_corpus_expects_chunks(self, tmp_path):
-        long_text = "x" * (CHUNK_THRESHOLD_CHARS + 500)
+        long_text = "x" * (THRESHOLD + 500)
         p = _write_corpus(tmp_path, [
             {"_id": "d1", "title": "", "text": long_text},
             {"_id": "d2", "title": "", "text": long_text},
         ])
-        assert expected_chunk_docs(p) == 2
+        assert expected_chunk_docs(p, THRESHOLD) == 2
 
     def test_short_doc_corpus_expects_no_chunks(self, tmp_path):
         p = _write_corpus(tmp_path, [
             {"_id": "d1", "title": "short", "text": "just a short doc"},
             {"_id": "d2", "title": "", "text": "also short"},
         ])
-        assert expected_chunk_docs(p) == 0
+        assert expected_chunk_docs(p, THRESHOLD) == 0
 
     def test_mixed_corpus_counts_only_long_docs(self, tmp_path):
-        long_text = "x" * (CHUNK_THRESHOLD_CHARS + 1)
+        long_text = "x" * (THRESHOLD + 1)
         p = _write_corpus(tmp_path, [
             {"_id": "d1", "title": "", "text": long_text},
             {"_id": "d2", "title": "", "text": "short"},
             {"_id": "d3", "title": "", "text": long_text},
         ])
-        assert expected_chunk_docs(p) == 2
+        assert expected_chunk_docs(p, THRESHOLD) == 2
 
     def test_boundary_exactly_at_threshold_counts(self, tmp_path):
-        text = "x" * CHUNK_THRESHOLD_CHARS  # len == threshold -> ChunkDocumentWriter chunks (>=)
+        text = "x" * THRESHOLD  # len == threshold -> ChunkDocumentWriter chunks (>=)
         p = _write_corpus(tmp_path, [{"_id": "d1", "title": "", "text": text}])
-        assert expected_chunk_docs(p) == 1
+        assert expected_chunk_docs(p, THRESHOLD) == 1
 
     def test_boundary_one_under_threshold_does_not_count(self, tmp_path):
-        text = "x" * (CHUNK_THRESHOLD_CHARS - 1)
+        text = "x" * (THRESHOLD - 1)
         p = _write_corpus(tmp_path, [{"_id": "d1", "title": "", "text": text}])
-        assert expected_chunk_docs(p) == 0
+        assert expected_chunk_docs(p, THRESHOLD) == 0
 
     def test_title_is_folded_into_content_length(self, tmp_path):
         # title + "\n\n" + text must reach the threshold together (materialize.py:57's format).
         title = "T" * 10
-        text = "x" * (CHUNK_THRESHOLD_CHARS - 8)  # alone: under threshold
+        text = "x" * (THRESHOLD - 8)  # alone: under threshold
         p = _write_corpus(tmp_path, [{"_id": "d1", "title": title, "text": text}])
         # len(title) + len("\n\n") + len(text) = 10 + 2 + (threshold - 8) = threshold + 4
-        assert expected_chunk_docs(p) == 1
+        assert expected_chunk_docs(p, THRESHOLD) == 1
 
     def test_missing_corpus_jsonl_returns_zero(self, tmp_path):
         # BEIR datasets have no local corpus.jsonl (materialized on the fly via ir_datasets) --
         # a missing file must degrade to 0, never raise.
-        assert expected_chunk_docs(tmp_path / "does-not-exist.jsonl") == 0
+        assert expected_chunk_docs(tmp_path / "does-not-exist.jsonl", THRESHOLD) == 0
 
     def test_blank_lines_are_skipped(self, tmp_path):
-        long_text = "x" * (CHUNK_THRESHOLD_CHARS + 1)
+        long_text = "x" * (THRESHOLD + 1)
         p = tmp_path / "corpus.jsonl"
         p.write_text(
             json.dumps({"_id": "d1", "title": "", "text": long_text}) + "\n\n\n",
             encoding="utf-8",
         )
-        assert expected_chunk_docs(p) == 1
+        assert expected_chunk_docs(p, THRESHOLD) == 1
+
+    def test_unavailable_threshold_expects_nothing_rather_than_guessing(self, tmp_path):
+        # Tempdoc 821 §3-C3 back-compat path: a backend that does not publish chunkMinChars gives
+        # this oracle no ground to gate on. It must degrade to the never-blocking "chunk-free"
+        # route (expected==0) -- NOT fall back to a hard-coded threshold, which is the mirror.
+        p = _write_corpus(tmp_path, [{"_id": "d1", "title": "", "text": "x" * (THRESHOLD + 500)}])
+        assert expected_chunk_docs(p, None) == 0
+        assert expected_chunk_docs(p, 0) == 0
+        # Same corpus WITH a threshold does expect chunks, so the 0 above is the missing
+        # threshold, not an unreadable corpus.
+        assert expected_chunk_docs(p, THRESHOLD) == 1
 
 
 # --- chunk_completeness_verdict ----------------------------------------------
