@@ -50,6 +50,12 @@ final class ApiSecurityFilters {
    * in {@link #setupCors}.
    */
   private static final String MCP_ENDPOINT_PATH = LocalApiServer.MCP_ENDPOINT_PATH;
+  /**
+   * The MCP session-token bootstrap path, guarded by the same Origin check as {@link
+   * #MCP_ENDPOINT_PATH} — see {@link #setupMcpOriginValidation} for why this second path is in
+   * scope.
+   */
+  private static final String MCP_TOKEN_PATH = LocalApiServer.MCP_TOKEN_PATH;
   /** Cap on the attacker-controlled Origin string reproduced in logs and the event buffer. */
   private static final int MAX_LOGGED_ORIGIN_CHARS = 128;
   private static final long SLOW_REQUEST_THRESHOLD_MS = 3000;
@@ -177,27 +183,49 @@ final class ApiSecurityFilters {
    *
    * <p>{@link #setupHostValidation} is the Host-header half of the same defense (tempdoc 633 §1a)
    * and already covers the whole API; this is the endpoint-scoped Origin half the MCP spec names
-   * explicitly, and it applies to every method served at {@code /mcp} (POST and DELETE today, any
-   * future GET/SSE by construction).
+   * explicitly, and it applies to every method served at {@code /mcp} — POST, DELETE, and the
+   * conformance GET — by construction, since the filter is bound to the path, not to a method.
    *
    * <p>An <b>absent</b> Origin is allowed: the spec conditions rejection on the header being
    * "present and invalid", and native MCP hosts (Claude Code, Claude Desktop, Cursor) are HTTP
    * clients, not browsers, so they send none. A browser-driven caller always supplies one — exactly
    * the caller class the clause addresses.
+   *
+   * <p><b>{@code /api/mcp/token} is guarded on the same terms.</b> That route is the bootstrap for
+   * the whole session-token scheme — it hands out, unauthenticated by construction, the credential
+   * that gates every mutating call — so it belongs to the MCP transport's attack surface even
+   * though it is not the JSON-RPC endpoint. Its callers are all non-browser (the MCPB bridge at
+   * {@code packaging/mcpb/server/index.js}, {@code scripts/prod/justsearch-mcp/discovery.mjs}, the
+   * sandbox/installer probes) and therefore send no Origin; the desktop shell does not call it at
+   * all (it reads {@code head.sessionToken} from the runtime manifest), and no {@code ui-web} code
+   * references it. So no legitimate caller supplies an Origin this check could reject — it is
+   * defense in depth over the Host allowlist and CORS, not a load-bearing gate, and its cost is a
+   * rejection where CORS would otherwise merely withhold the read grant.
    */
   private void setupMcpOriginValidation(Javalin app) {
-    app.before(
-        MCP_ENDPOINT_PATH,
-        ctx -> {
-          String originHeader = ctx.header("Origin");
-          if (isAllowedMcpOrigin(originHeader)) {
-            return;
-          }
-          maybeRecordMcpOriginDeny(ctx, originHeader);
-          ctx.status(403);
-          ctx.json(mcpForbiddenOriginBody());
-          throw new io.javalin.http.HttpResponseException(403, "Forbidden");
-        });
+    app.before(MCP_ENDPOINT_PATH, ctx -> enforceLoopbackOrigin(ctx, true));
+    app.before(MCP_TOKEN_PATH, ctx -> enforceLoopbackOrigin(ctx, false));
+  }
+
+  /**
+   * The shared deny path. {@code jsonRpcBody} selects the envelope: the JSON-RPC error the MCP spec
+   * allows for {@code /mcp}, or the repo's plain {@code {error, errorCode}} shape for the token
+   * route, which is an ordinary JSON endpoint and would be misdescribed by a JSON-RPC envelope.
+   */
+  private void enforceLoopbackOrigin(Context ctx, boolean jsonRpcBody) {
+    String originHeader = ctx.header("Origin");
+    if (isAllowedMcpOrigin(originHeader)) {
+      return;
+    }
+    maybeRecordMcpOriginDeny(ctx, originHeader);
+    ctx.status(403);
+    ctx.json(
+        jsonRpcBody
+            ? mcpForbiddenOriginBody()
+            : Map.of(
+                "error", "Request Origin is not an allowed loopback origin",
+                "errorCode", "MCP_ORIGIN_FORBIDDEN"));
+    throw new io.javalin.http.HttpResponseException(403, "Forbidden");
   }
 
   /**
@@ -280,14 +308,18 @@ final class ApiSecurityFilters {
     if (lastMcpOriginDenyAtMs.compareAndSet(lastAt, now)) {
       String origin = truncateForLog(originHeader);
       String method = ctx.method().name();
+      // ctx.path(), not a constant: the guard now covers two paths, and a deny record that named
+      // only one of them would misattribute half the denials.
+      String path = ctx.path();
       eventBuffer.warn(
           "LocalApiServer",
           "MCP_ORIGIN_DENY",
-          Map.of("path", MCP_ENDPOINT_PATH, "method", method, "origin", origin));
+          Map.of("path", path, "method", method, "origin", origin));
       log.warn(
-          "MCP request rejected: Origin {} is not an allowed loopback origin (method={})",
+          "MCP request rejected: Origin {} is not an allowed loopback origin (method={}, path={})",
           origin,
-          method);
+          method,
+          path);
     }
   }
 

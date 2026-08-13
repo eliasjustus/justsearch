@@ -1,6 +1,6 @@
 {
   "$schema": "https://ssot.justsearch/v1/schemas/route-manifest.json",
-  "count": 200,
+  "count": 201,
   "namespace": "meta-routes",
   "routes": [
     {
@@ -1060,6 +1060,14 @@
     },
     {
       "method": "DELETE",
+      "path": "/mcp",
+      "cohort": "mcp",
+      "owningModule": null,
+      "requiredCapabilities": [],
+      "responseSchema": null
+    },
+    {
+      "method": "GET",
       "path": "/mcp",
       "cohort": "mcp",
       "owningModule": null,
