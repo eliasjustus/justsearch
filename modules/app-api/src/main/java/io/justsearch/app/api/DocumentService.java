@@ -136,12 +136,18 @@ public interface DocumentService {
     return fetchBatch(List.copyOf(docIds))
         .thenApply(docs -> {
           StringBuilder sb = new StringBuilder();
+          // Mirrors ContextBudgeter.sectionHeader ("[n] label\n") — app-api cannot depend on
+          // :modules:indexing, the same constraint SECTION_SEPARATOR above is mirrored under. The
+          // 1-based ordinal is the one the prompt asks the model to cite (tempdoc 822 §3a).
+          int sectionNumber = 0;
           for (var entry : docs.entrySet()) {
             if (entry.getValue() != null && !entry.getValue().content().isBlank()) {
               if (sb.length() > 0) {
                 sb.append(SECTION_SEPARATOR);
               }
-              sb.append("[From: ").append(extractFilename(entry.getKey())).append("]\n");
+              sectionNumber++;
+              sb.append('[').append(sectionNumber).append("] ")
+                  .append(extractFilename(entry.getKey())).append('\n');
               sb.append(entry.getValue().content());
             }
           }

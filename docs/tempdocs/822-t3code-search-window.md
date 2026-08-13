@@ -401,6 +401,21 @@ are re-creatable from the log's descriptions.
   memory. Run ended by stack stop (dev throwaway). Residuals → F3: shelf model,
   presence/recovery, cross-surface slot honesty; issuance-register decision still
   open (owner/orchestrator).
+- 2026-08-13 — **Slice S1 implemented (backend, remediation series). The numbering
+  contract.** One canonical `sectionHeader(n, label)` formatter (invariant in its doc
+  comment); all emitters now render `[n] label` — including a FOURTH the design
+  missed (McpToolSurface concise mode re-renders the same sections; unnumbered it
+  would disagree with detailed mode about ordinals — fixed under the design's own
+  sweep reasoning, goldens correctly NOT rebaselined since they document a 0.3.1
+  byte-capture). Parser keys on the header's own number with running-ordinal
+  fallback. Invariant test on the real Lucene runtime with per-document ordinals
+  chosen so a chunkIndex-derived header cannot pass. No contract/persistence/wire
+  touches (design claim verified at source). Full Gradle suites green: indexing 78 /
+  app-inference 225 / app-services 1965 / worker-services 965 / ui 698 / app-api 150.
+  FE alignment holds by construction (label = refIdx+1); the in-range-unclaimed and
+  out-of-range mark states stay for the FE slices. LIVE VERIFICATION DEFERRED to
+  ride the S2/S3 round (one backend restart for all three). Two out-of-scope
+  findings filed (budget-stopped citation; truncation-after-emission).
 - 2026-08-13 — **Slice F11 implemented + measured. The one-line answer tail.**
   Per the f11 design + orchestrator resolutions: 24.0px single row (was 3 rows/103px),
   verdict·duration resting with elaboration in title+accessible name, bare "Sources"
