@@ -100,15 +100,16 @@ $sacDisableCmd = @(
 
 ### INS-005: Install AI aborts on first asset failure (G30)
 - **Severity:** P2/Medium
-- **Status:** open
+- **Status:** fixed
 - **Found:** 2026-04-06
-- **Component:** `modules/ui/src/main/java/.../AiInstallService.java`
+- **Fixed:** per-asset isolation shipped; re-confirmed on real data in sandbox round 16 (2026-08)
+- **Component:** `modules/app-services/src/main/java/io/justsearch/app/services/ai/install/AiInstallService.java`
 
-**Description:** The download pipeline aborts remaining assets after the first failure. For example, if the FP16 reranker download fails (404 or curl exit 22), subsequent assets like `citation-config.json` are left in `pending` state. 23/24 assets succeed but the overall state reports `failed`.
+**Description (historical):** The download pipeline aborted remaining assets after the first failure. For example, if the FP16 reranker download failed (404 or curl exit 22), subsequent assets like `citation-config.json` were left in `pending` state. 23/24 assets succeeded but the overall state reported `failed`.
 
-**Impact:** Users see a failure status despite having all critical models downloaded. Non-critical asset failures prevent completion of remaining downloads.
+**Current behaviour:** The loop fails only the owning package (`failPackage(...)`) and `continue`s to the next asset. Round 16's log shows splade continuing to `tokenizer.json`, `vocab.txt`, `idf.json` and `config.json` after `model_fp16.onnx` failed. A mid-flight `pending` in `/api/ai/install/status` means the sequential loop has not reached that package yet, not that it was abandoned.
 
-**Workaround:** Re-running Install AI will retry failed/pending assets.
+**Related:** the same round found the real cause of its 5-of-7 failure to be transport, not abort-on-first-failure — see tempdoc 823/824 (round-16 F1) and the spaced-retry behaviour in `docs/explanation/12-desktop-installer-and-sandbox-setup.md` §6.1.1.
 
 ---
 

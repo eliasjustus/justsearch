@@ -244,6 +244,92 @@ export function shouldHintRepairForGpuFallback(
   return anyFallback && installStatus?.repairNeeded === true;
 }
 
+/** A package automatic repair has provably stopped fixing, with what the user can do instead. */
+export interface ManualFallbackPackage {
+  packageId: string;
+  label: string;
+  attempts: number;
+  url: string;
+  targetPath: string;
+  error: string;
+}
+
+/**
+ * Which remedy — if any — the install state actually owes the user (tempdoc 824 §3.3c/§3.4).
+ *
+ * - `none` — nothing required is missing. Optional gaps live here too: an absent metadata sidecar
+ *   no consumer reads is not a repair prompt.
+ * - `repair` — a required file is missing AND no affected capability is observably running. The
+ *   full-strength copy, and the FAIL-CLOSED default: with nothing observed, this is what shows.
+ * - `repair-soft` — a required file is missing but every affected capability IS observably running.
+ *   Round 16's product said "a required component is missing" while SPLADE served 1 660 CUDA
+ *   inferences; the honest sentence names both halves.
+ * - `manual` — three consecutive repair passes failed the same file at transport. An affordance
+ *   that cannot succeed must not be presented as the remedy, so this one names the file, the URL
+ *   and the destination instead.
+ *
+ * This is the same two-signal shape `shouldHintRepairForGpuFallback` above already uses:
+ * bookkeeping alone never gets to assert a capability is broken.
+ */
+export type RepairRemedy =
+  | { kind: 'none' }
+  | { kind: 'repair' }
+  | { kind: 'repair-soft' }
+  | { kind: 'manual'; packages: ManualFallbackPackage[] };
+
+export function deriveRepairRemedy(installStatus: InstallStatus | null): RepairRemedy {
+  const packages = installStatus?.packages ?? [];
+  const stuck = packages.filter((p) => (p.terminalReason ?? '') !== '');
+  if (stuck.length > 0) {
+    return {
+      kind: 'manual',
+      packages: stuck.map((p) => ({
+        packageId: p.packageId ?? p.id ?? '',
+        label: p.label ?? p.packageId ?? p.id ?? '',
+        attempts: p.attempts ?? 0,
+        url: p.url ?? '',
+        targetPath: p.targetPath ?? '',
+        error: p.error ?? '',
+      })),
+    };
+  }
+  if (installStatus?.repairNeeded !== true) return { kind: 'none' };
+  // Only a package that actually failed can be attributed to the gap. When none did — the gap came
+  // from the disk recompute after a restart, which cannot say which capability it belongs to — no
+  // observation applies and the full-strength copy stands.
+  const affected = packages.filter((p) => p.state === 'failed');
+  const allRunning =
+    affected.length > 0 && affected.every((p) => p.functionalStatus === 'active');
+  return allRunning ? { kind: 'repair-soft' } : { kind: 'repair' };
+}
+
+/** Headline for the offline panel, given the remedy the install state owes. */
+export function repairRemedyHeadline(remedy: RepairRemedy): string | null {
+  switch (remedy.kind) {
+    case 'manual':
+      return 'Installed — needs a manual step';
+    case 'repair':
+    case 'repair-soft':
+      return 'Installed — repair available';
+    default:
+      return null;
+  }
+}
+
+/** Sub-text for the offline panel, given the remedy the install state owes. */
+export function repairRemedySub(remedy: RepairRemedy): string | null {
+  switch (remedy.kind) {
+    case 'manual':
+      return 'Automatic repair could not download a file — see AI install in Advanced for the direct link.';
+    case 'repair':
+      return 'A required component is missing — use Repair in Advanced.';
+    case 'repair-soft':
+      return 'Working, but an expected file is missing — Repair will restore it.';
+    default:
+      return null;
+  }
+}
+
 /** One row of the install consent dialog's terms list — a package the install will pull. */
 export interface InstallConsentPackage {
   id: string;
@@ -1276,6 +1362,7 @@ export class BrainSurface extends JfElement {
     const aiState = aiVerdict.kind;
     const downloadsDisabled = this.policy?.downloadsEnabled === false;
     const onlineDisabled = this.policy?.onlineAiEnabled === false;
+    const repairRemedy = deriveRepairRemedy(this.installStatus);
 
     const statusConfig: Record<string, { dot: string; label: string; sub: string }> = {
       not_installed: {
@@ -1313,16 +1400,15 @@ export class BrainSurface extends JfElement {
         // `installedFully` is a claim about install HISTORY — round 11 had the first true and the
         // second (correctly) also true, and the label said neither. When something is genuinely
         // missing, name the action; "Installed with limitations" alone tells a user nothing to do.
+        // Tempdoc 824 §3.3c/§3.4: which sentence is true also depends on whether the capability is
+        // observably running and on whether Repair can still succeed — `deriveRepairRemedy` is the
+        // one place that decides, so this panel and the Advanced one cannot name different remedies.
         label:
-          this.installStatus?.repairNeeded === true
-            ? 'Installed — repair available'
-            : this.installStatus?.installedFully === false
-              ? 'Installed with limitations'
-              : 'AI Offline',
-        sub:
-          this.installStatus?.repairNeeded === true
-            ? 'A required component is missing — use Repair in Advanced.'
-            : 'Start AI to enable chat and summaries.',
+          repairRemedyHeadline(repairRemedy) ??
+          (this.installStatus?.installedFully === false
+            ? 'Installed with limitations'
+            : 'AI Offline'),
+        sub: repairRemedySub(repairRemedy) ?? 'Start AI to enable chat and summaries.',
       },
       starting: {
         dot: 'starting',
@@ -2316,7 +2402,14 @@ export class BrainSurface extends JfElement {
     // :1310) while this panel offered Install as the primary CTA for the same condition — the user
     // was sent here for Repair and shown Install. When a required file is missing on disk, Repair is
     // the primary affordance here too; Install stays available (it is a superset), just not primary.
-    const repairNeeded = this.installStatus?.repairNeeded === true;
+    // Tempdoc 824 §3.3c/§3.4 — the same derivation the Simple panel reads, so "use Repair in
+    // Advanced" cannot land on a panel that has stopped believing Repair is the remedy. Repair is
+    // the primary affordance only while it can still succeed: once a file has failed three
+    // consecutive passes at transport, presenting Repair as THE action is the round-16 defect.
+    const repairRemedy = deriveRepairRemedy(this.installStatus);
+    const repairNeeded = repairRemedy.kind === 'repair' || repairRemedy.kind === 'repair-soft';
+    const manualFallback = repairRemedy.kind === 'manual' ? repairRemedy.packages : [];
+    const optionalGaps = this.installStatus?.optionalGaps ?? [];
     return html`
       <div class="section">
         <h3>${icon({ name: 'hard-drive', size: 12 })} AI install</h3>
@@ -2325,7 +2418,40 @@ export class BrainSurface extends JfElement {
               data-testid="install-repair-needed"
               style="font-size: var(--font-size-xs); color: var(--text-secondary); margin-bottom: 0.5rem"
             >
-              A required component is missing — use Repair.
+              ${repairRemedy.kind === 'repair-soft'
+                ? 'Working, but an expected file is missing — Repair will restore it.'
+                : 'A required component is missing — use Repair.'}
+            </div>`
+          : nothing}
+        ${manualFallback.length > 0
+          ? html`<div
+              data-testid="install-manual-fallback"
+              style="font-size: var(--font-size-xs); color: var(--text-secondary); margin-bottom: 0.5rem"
+            >
+              Automatic repair could not download these files. Download each one and save it to the
+              path shown, then restart AI.
+              ${manualFallback.map(
+                (p) => html`<div>
+                  <strong>${p.label}</strong> — ${p.attempts} attempts${p.error
+                    ? html` · ${p.error}`
+                    : nothing}
+                  <div><code>${p.url}</code></div>
+                  <div>→ <code>${p.targetPath}</code></div>
+                </div>`,
+              )}
+            </div>`
+          : nothing}
+        ${optionalGaps.length > 0
+          ? html`<div
+              data-testid="install-optional-gaps"
+              style="font-size: var(--font-size-xs); color: var(--text-secondary); margin-bottom: 0.5rem"
+            >
+              Optional files not installed (no capability depends on them):
+              <code
+                >${optionalGaps
+                  .map((g) => `${g.packageId ?? ''}/${g.fileName ?? ''}`)
+                  .join(', ')}</code
+              >
             </div>`
           : nothing}
         <div style="font-size: var(--font-size-xs); color: var(--text-secondary); margin-bottom: 0.5rem">
@@ -2347,7 +2473,7 @@ export class BrainSurface extends JfElement {
         </div>
         <div class="row">
           <jf-button
-            variant=${repairNeeded ? 'secondary' : 'primary'}
+            variant=${repairNeeded || manualFallback.length > 0 ? 'secondary' : 'primary'}
             label="Install"
             .availability=${installing
               ? unavailableBecause('Already installing.')

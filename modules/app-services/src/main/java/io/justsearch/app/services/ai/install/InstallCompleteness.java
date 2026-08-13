@@ -48,6 +48,16 @@ import java.util.Set;
  * <p>{@link #repairNeeded()} is deliberately independent of that classification: on a real upgraded
  * machine the missing ORT natives ARE registry additions, and repair must still be offered.
  * Contractedness decides only the {@code installedFully} truth claim and the additions list.
+ *
+ * <p><b>Required/optional axis (tempdoc 824 §3.3b).</b> A second, orthogonal axis runs beside
+ * contractedness: whether the capability needs the file at all ({@code
+ * InstallPlan.PlannedDownload.required}, carried from the registry). Round 16 lost an 872-byte
+ * {@code splade/config.json} — a file no required-file list names and no resolver call site reads —
+ * and the machine reported the same full-strength "a required component is missing" it would report
+ * for a missing 500 MB model, while SPLADE was demonstrably serving on CUDA. So both truth claims
+ * here count only REQUIRED files, and optional gaps get their own non-alarming list ({@link
+ * #optionalGaps()}). This is strictly a relaxation on files that were never consumed as
+ * requirements: for a required file every verdict is bit-for-bit what it was before.
  */
 public record InstallCompleteness(
     List<FileState> files, boolean anyPackageInstalled, boolean contractPresent) {
@@ -70,8 +80,23 @@ public record InstallCompleteness(
    *     package the plan reports fully installed while the contract enumerates no files for it —
    *     "present, filenames unknown to this computation". Never null for a missing file.
    * @param classification the verdict for this file
+   * @param required whether the package's capability needs this file (tempdoc 824 §3.3a). Always
+   *     true for a satisfied file — the axis only ever decides how a MISSING file is reported.
    */
-  public record FileState(String packageId, String fileName, Classification classification) {}
+  public record FileState(
+      String packageId, String fileName, Classification classification, boolean required) {
+
+    /** Backwards-compat constructor — a required file (the pre-824 shape). */
+    public FileState(String packageId, String fileName, Classification classification) {
+      this(packageId, fileName, classification, true);
+    }
+  }
+
+  /**
+   * One optional file the registry declares that is absent from disk. Reported so the surface can
+   * say what is missing without calling the capability broken.
+   */
+  public record OptionalGap(String packageId, String fileName) {}
 
   public InstallCompleteness {
     files = files == null ? List.of() : List.copyOf(files);
@@ -107,7 +132,8 @@ public record InstallCompleteness(
             new FileState(
                 dl.packageId(),
                 fileName,
-                claimed ? Classification.MISSING_CONTRACTED : Classification.MISSING_UNCONTRACTED));
+                claimed ? Classification.MISSING_CONTRACTED : Classification.MISSING_UNCONTRACTED,
+                dl.required()));
       }
     }
 
@@ -133,33 +159,73 @@ public record InstallCompleteness(
     return cut < 0 ? targetPath : targetPath.substring(cut + 1);
   }
 
+  /**
+   * Missing REQUIRED files — the only kind either truth claim counts (tempdoc 824 §3.3b). An
+   * optional file's absence is reported by {@link #optionalGaps()} and nowhere else.
+   */
   private List<FileState> missing() {
-    return files.stream().filter(f -> f.classification() != Classification.SATISFIED).toList();
+    return files.stream()
+        .filter(f -> f.classification() != Classification.SATISFIED && f.required())
+        .toList();
   }
 
   /**
    * Whether the installation this machine's contract recorded is complete.
    *
-   * <p>True when something is installed and no CONTRACTED file is missing. Without a contract the
-   * plan is the only authority, so any remaining download keeps this false — the pre-805 behaviour
-   * for a fresh/pre-contract machine, unchanged.
+   * <p>True when something is installed and no CONTRACTED required file is missing. Without a
+   * contract the plan is the only authority, so any remaining required download keeps this false —
+   * the pre-805 behaviour for a fresh/pre-contract machine, unchanged.
    */
   public boolean installedFully() {
     if (!anyPackageInstalled) return false;
     if (missing().isEmpty()) return true;
     if (!contractPresent) return false;
-    return files.stream().noneMatch(f -> f.classification() == Classification.MISSING_CONTRACTED);
+    return missing().stream().noneMatch(f -> f.classification() == Classification.MISSING_CONTRACTED);
   }
 
-  /** Package ids (dedup, plan order) whose missing files the contract never claimed. */
+  /**
+   * Package ids (dedup, plan order) whose missing REQUIRED files the contract never claimed.
+   *
+   * <p>Optional gaps are deliberately excluded (tempdoc 824 §3.3b): they have their own list, and
+   * reporting one here too would render it a second time as "new AI components are available — run
+   * Install to add them", which is not what an 872-byte metadata file that failed to download is.
+   */
   public List<String> pendingRegistryAdditions() {
     Set<String> ids = new LinkedHashSet<>();
     for (FileState f : files) {
-      if (f.classification() == Classification.MISSING_UNCONTRACTED) {
+      if (f.classification() == Classification.MISSING_UNCONTRACTED && f.required()) {
         ids.add(f.packageId());
       }
     }
     return List.copyOf(ids);
+  }
+
+  /**
+   * Package ids (dedup, plan order) with at least one missing REQUIRED file — the packages disk
+   * considers genuinely incomplete.
+   *
+   * <p>The per-package form of {@link #repairNeeded()}, so the completion MESSAGE can be derived
+   * from the same authority as {@code installedFully} instead of from the run's own bookkeeping. A
+   * package whose only casualty was optional is absent here, and must not be counted as failed in a
+   * message that sits next to {@code installedFully: true}.
+   */
+  public List<String> packagesWithMissingRequiredFiles() {
+    Set<String> ids = new LinkedHashSet<>();
+    for (FileState f : missing()) {
+      ids.add(f.packageId());
+    }
+    return List.copyOf(ids);
+  }
+
+  /**
+   * Optional files the registry declares that are absent from disk (tempdoc 824 §3.3b). Surfaced,
+   * never alarming: no truth claim here counts them, and no repair prompt is owed for them.
+   */
+  public List<OptionalGap> optionalGaps() {
+    return files.stream()
+        .filter(f -> f.classification() != Classification.SATISFIED && !f.required())
+        .map(f -> new OptionalGap(f.packageId(), f.fileName()))
+        .toList();
   }
 
   /**
