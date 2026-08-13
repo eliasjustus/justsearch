@@ -195,7 +195,7 @@ val integrationTest = tasks.register<Test>("integrationTest") {
     }
   }
 
-  // Time limit: 20 minutes default, 30 for agent tests, configurable for AI runs.
+  // Time limit: 22 minutes default, 30 for agent tests, configurable for AI runs.
   //
   // Tempdoc 821 P4 — this task timeout, not the 25-min job budget (ci.yml:529), is the binding
   // ceiling, and Gradle enforces it by killing the forked test JVM. That destroys the fixture's
@@ -204,16 +204,18 @@ val integrationTest = tasks.register<Test>("integrationTest") {
   //
   // Arithmetic: Develocity sets maxRetries=2 in CI (JvmBaseConventionsPlugin.kt:135), so a class
   // whose @BeforeAll stalls is booted 3 times -> 3 x ~250s fixture worst case (PORT_FILE 60s +
-  // HEALTH 90s + WORKER_READY 90s + HttpClient send overshoot) = ~12.5 min, on top of the ~8 min
-  // this tier already takes to run everything else. The old 10 min could not even hold the
-  // baseline plus one stalled boot. 20 min covers ~8 + ~12.5 with margin and still leaves ~3.5 min
-  // under the job budget once its ~1.5 min of checkout/setup/post steps are counted.
+  // HEALTH 90s + WORKER_READY 90s + HttpClient send overshoot) = ~12.5 min, on top of the ~8.5 min
+  // this tier already takes to run everything else (measured: the Gradle step of run 31716264505
+  // ran 8m28s). The old 10 min could not even hold the baseline plus one stalled boot, and 20 min
+  // still fell ~1 min short of 8.5 + 12.5. 22 min clears that worst case with ~1 min margin and,
+  // against the same run's measured 1m26s of checkout/setup/post steps, still lands ~1.5 min under
+  // the job budget.
   //
   // The AI and agent branches are already >= this and need no change.
   val integrationTestTimeoutMinutes = when {
     includeAiTests -> ragEvalTimeoutMinutes
     includeAgentTests -> 30
-    else -> 20
+    else -> 22
   }
   timeout.set(Duration.ofMinutes(integrationTestTimeoutMinutes.toLong()))
 
@@ -231,7 +233,7 @@ val integrationTest = tasks.register<Test>("integrationTest") {
   // annotated @Timeout(6, MINUTES) at the class, dying at exactly t0+30.000s.
   //
   // That cap is far SHORTER than the fixture's own layered boot budget (PORT_FILE 60s +
-  // HEALTH 90s + WORKER_READY 90s, IsolatedBackendFixture.java:65-72), so it always fired
+  // HEALTH 90s + WORKER_READY 90s, IsolatedBackendFixture.java:65-73), so it always fired
   // first and reported a bare java.util.concurrent.TimeoutException with no cause, discarding
   // the fixture's diagnostic message and backend log tail. Five such initializationError
   // failures landed across three PR runs inside one hour (runs 31716264505 / 31716771978),
