@@ -66,8 +66,14 @@ export const sv3Tokens = css`
     --surface-raised: var(--secondary);
     --muted: color-mix(in srgb, var(--color-white) 4%, transparent);
     --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
-    --accent: color-mix(in srgb, var(--color-white) 4%, transparent);
-    --accent-foreground: var(--color-neutral-100);
+    /* NAME, not just value: the shipped app's GLOBAL sheet defines '--accent' as a COLOUR
+       (styles/tokens.css:124 — 'var(--accent-tint)') and shipped components read it as one
+       (components/chat/ToolCallCard.ts:245 paints a link with it). A window-scoped sheet that
+       re-uses that name for a 4%-white FILL silently rewrites every nested shipped component that
+       reads it — the link would paint at 4% opacity. The window's hover material therefore carries
+       a name the shipped vocabulary does not use (tempdoc 822 Phase F9, audit DEFECT-6). */
+    --accent-surface: color-mix(in srgb, var(--color-white) 4%, transparent);
+    --accent-surface-foreground: var(--color-neutral-100);
     --primary: var(--color-teal-accent);
     --primary-foreground: var(--color-teal-accent-ink);
     /* Three named intents on one value: a future divergence is a one-line change, not a grep. */
@@ -82,7 +88,7 @@ export const sv3Tokens = css`
     --toolbar-border: var(--border);
     --toolbar-control: var(--popover);
     --toolbar-control-foreground: var(--foreground);
-    --toolbar-control-hover: var(--accent);
+    --toolbar-control-hover: var(--accent-surface);
     /* Status is a fixed five, each with a foreground and three with a surface tint. The tints are
        roughly double their light-mode strength: a low-alpha tint over near-black barely reads. */
     --error: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
@@ -104,8 +110,8 @@ export const sv3Tokens = css`
     --sidebar-foreground: var(--foreground);
     --sidebar-muted-foreground: var(--muted-foreground);
     --sidebar-control-surface: var(--muted);
-    --sidebar-row-hover: var(--accent);
-    --sidebar-row-active: var(--accent);
+    --sidebar-row-hover: var(--accent-surface);
+    --sidebar-row-active: var(--accent-surface);
     --sidebar-row-selected: var(--muted);
     --sidebar-border: var(--border);
     /* Dialog material (slice 4). The palette is the window's one dialog surface, and its glass is a
@@ -136,7 +142,7 @@ export const sv3Tokens = css`
        waiting to drift. The response block deliberately has NO surface of its own: the donor gives
        the assistant plain content on the panel, which is what makes the user's turn the only thing
        with a fill and therefore readable as the punctuation of the transcript. */
-    --message-surface: var(--accent);
+    --message-surface: var(--accent-surface);
     --message-foreground: var(--foreground);
     /* The primary action's material is one indirection off --primary, so a future accent change
        reaches the send button without touching it. */
@@ -288,8 +294,8 @@ export const sv3Tokens = css`
     --surface-raised: color-mix(in srgb, var(--card) 20%, transparent);
     --muted: var(--color-zinc-50);
     --muted-foreground: var(--color-zinc-500);
-    --accent: var(--color-zinc-100);
-    --accent-foreground: var(--color-zinc-900);
+    --accent-surface: var(--color-zinc-100);
+    --accent-surface-foreground: var(--color-zinc-900);
     --primary: oklch(45% 0.18 180);
     --primary-foreground: oklch(99% 0.01 180);
     --placeholder: var(--muted-foreground);
@@ -299,7 +305,7 @@ export const sv3Tokens = css`
     --input: var(--color-zinc-300);
     --ring: var(--primary);
     --toolbar-control: var(--popover);
-    --toolbar-control-hover: var(--accent);
+    --toolbar-control-hover: var(--accent-surface);
     --error: var(--color-red-500);
     --error-foreground: var(--color-red-700);
     --error-surface: color-mix(in srgb, var(--error) 8%, transparent);

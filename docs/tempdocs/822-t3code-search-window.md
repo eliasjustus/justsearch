@@ -88,6 +88,13 @@ self-judge geometry (BlindTest ~58.6%) — verification must be measurement, not
 - Verification per slice: typecheck + unit tests + ui-web gate recipe; /ui-check ui-shot
   with measured assertions vs donor numbers; refute-first critic ≤3 cycles; orchestrator
   critical-analysis pass. Agent eyes judge nothing — numbers and gates do.
+- **Import-bridge clause (F9 lesson, binding on every future brief):** any slice that
+  mounts a shipped component inside the window MUST map that component's consumed
+  custom properties onto sv3 host tokens in the same slice (the F4/F9 bridge pattern)
+  AND add computed-contrast assertions for its text/surface pairs. The fit audit
+  measured the drift: F4 bridged 2/2 imports, F7+F8 bridged 1/4 — the unbridged
+  remainder produced white-on-white inside the dark window. Predictable evasion:
+  "the component mostly looks fine" — legibility is measured, never eyeballed.
 
 ## 4. Slice plan
 
@@ -383,6 +390,27 @@ are re-creatable from the log's descriptions.
   memory. Run ended by stack stop (dev throwaway). Residuals → F3: shelf model,
   presence/recovery, cross-surface slot honesty; issuance-register decision still
   open (owner/orchestrator).
+- 2026-08-13 — **Fit audit + Slice F9 (fit pass).** Independent audit
+  (822-donor/f-series-fit-audit.md): the founding disease did NOT return — resting
+  interactive chrome 16/16/16 across hero/settled/run-holding (donor baseline 27),
+  transcript chrome share 18.8% vs the founding 40%, zero duplicate facts, all 13
+  honesty facts correctly tiered. BUT a second design system crept in via imports
+  (F4 bridged 2/2, F7+F8 only 1/4): 4 typefaces, two ramps, off-ladder radii, and two
+  measured contrast DEFECTS (white-on-white tool card; slate-on-dark reasoning). F9
+  fixed the fixable in-window: three F4-pattern bridges (tool-call-card /
+  reasoning-block / hover-card → sv3 tokens; audit's "unbridgeable statusAccent"
+  corrected — statusTone resolves var(--accent-<tone>) so host tokens reach it;
+  22 computed-contrast pairs now asserted from the real token graph, all ≥AA, live
+  measured 4.74:1-17.32:1); --accent collision renamed to --accent-surface (a shipped
+  color name is never redefined as a fill); Escape ladder = rename > pane > palette >
+  flip (rename wins by host declining, live-reproduced); sv3 palette closes on focus
+  departure (the double-palette collision now strands nothing — shipped palette's own
+  behavior stays deferred); two inert slice-1 topbar placeholders deleted (resting
+  chrome 16→14). 4883 tests (+13, probed-red-first). Import-bridge clause added to §3
+  as a binding brief requirement. OWNER-PENDING: the theme seam (audit #2; window
+  hard-dark vs app theme — recommendation: stay dark-only until cutover) and the
+  audit's 11 needs-decision items. NOTE: the live app's data-theme was DARK during F9
+  (audit measured light) — bridges are theme-independent.
 - 2026-08-13 — **Slice F7 implemented + model-tier verified. The honesty pack: 13/13.**
   E5+E4 (lock-elsewhere → transcript replaced by the locked view; tri-state derive;
   composer deliberately NOT gated on the stale poll — the 423 stays authority),

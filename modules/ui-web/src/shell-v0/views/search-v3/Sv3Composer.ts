@@ -350,7 +350,7 @@ export class Sv3Composer extends JfElement {
         transition: box-shadow var(--duration-sv3-micro) var(--ease-sv3-enter);
       }
       button.scope-control:hover {
-        background: var(--accent);
+        background: var(--accent-surface);
       }
       button.scope-control:focus-visible {
         outline: 2px solid var(--ring);

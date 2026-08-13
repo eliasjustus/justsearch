@@ -110,22 +110,6 @@ export class Sv3Topbar extends JfElement {
         >
           &#8984;
         </button>
-        <button
-          type="button"
-          class="icon"
-          aria-label="Window settings"
-          data-testid="sv3-topbar-control"
-        >
-          &#8942;
-        </button>
-        <button
-          type="button"
-          class="icon"
-          aria-label="Window layout"
-          data-testid="sv3-topbar-control"
-        >
-          &#9707;
-        </button>
       </span>
     `;
   }

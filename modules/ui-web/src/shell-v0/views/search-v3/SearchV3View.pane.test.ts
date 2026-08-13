@@ -13,7 +13,8 @@
  *  2. **Both boundaries leave the main column its 640.** The window-level half of
  *     `sv3-boundaries.test.ts`'s both-open probe: a real drag, against a measured box, with the pane
  *     open.
- *  3. **Escape order.** The pane closes first, and the palette that is also open stays open.
+ *  3. **Escape order** (rename > pane > palette > composer flip, Phase F9). The pane closes before
+ *     an open palette, and BOTH yield to an inline rename — the most local transient state wins.
  *  4. **Cited documents only.** Structural, because behaviour cannot prove an absence: the window has
  *     exactly one writer of the pane's document, and the pane has no attribute route into it.
  *
@@ -375,6 +376,46 @@ describe('Escape closes the pane FIRST', () => {
       );
     await el.updateComplete;
     expect(palette.open).toBe(false);
+  });
+
+  it('yields to a rename in progress — the edit is the most local transient state', async () => {
+    // The reproduced defect (F-series fit audit, §6.1): with the pane open, an Escape pressed
+    // INSIDE the rename field closed the pane and left the edit standing — the reader's cancel key
+    // silently destroyed a different region. The order is rename > pane, and the window serves it
+    // by DECLINING: the capture-phase listener must not consume a key the row's own handler owns.
+    const el = await mount();
+    await openPane(el);
+    const sidebar = await region(el, 'jf-sv3-sidebar');
+    const row = sidebar.shadowRoot?.querySelector(
+      '[data-testid="sv3-sidebar-row"]',
+    ) as (HTMLElement & { updateComplete: Promise<unknown>; renaming: boolean }) | null;
+    if (row === null) throw new Error('the answered ask left no session row to rename');
+    row.shadowRoot
+      ?.querySelector('[data-testid="sv3-session-row-button"]')
+      ?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, composed: true, cancelable: true }));
+    await el.updateComplete;
+    await sidebar.updateComplete;
+    await row.updateComplete;
+    expect(row.renaming, 'the double-click did not open the edit').toBe(true);
+
+    row.shadowRoot
+      ?.querySelector('[data-testid="sv3-session-row-rename-input"]')
+      ?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true, cancelable: true }),
+      );
+    await el.updateComplete;
+    await sidebar.updateComplete;
+
+    // The edit is what was cancelled; the document the reader was not looking at is still open.
+    expect(row.renaming).toBe(false);
+    expect(el.shadowRoot?.querySelector('jf-sv3-pane'), 'Escape closed the PANE mid-rename').not.toBeNull();
+
+    // And the next Escape, now that nothing more local owns it, reaches the pane.
+    el.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true, cancelable: true }),
+    );
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('jf-sv3-pane')).toBeNull();
   });
 
   it('does not eat Escape in the composer when no document is open', async () => {

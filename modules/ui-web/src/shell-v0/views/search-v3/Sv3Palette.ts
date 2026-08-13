@@ -387,6 +387,18 @@ export class Sv3Palette extends JfElement {
     if (invoker !== null && invoker.isConnected) invoker.focus();
   }
 
+  /**
+   * Close because focus has already LEFT the window (`SearchV3View.onHostFocusOut`). The difference
+   * from {@link hide} is the whole point: the reader did not dismiss this — something else took the
+   * keyboard — so restoring the invoker would take it back off whatever now holds it, which is the
+   * fight the shipped palette's Ctrl+K already starts.
+   */
+  dismiss(): void {
+    if (!this.open) return;
+    this.open = false;
+    this.invoker = null;
+  }
+
   private moveHighlight(delta: number): void {
     const count = this.visible.length;
     if (count === 0) return;

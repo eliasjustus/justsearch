@@ -294,6 +294,103 @@ export class Sv3Main extends JfElement {
         color: var(--secondary-label);
       }
 
+      /* ── The same clothes on the three remaining imports (Phase F9) ────────
+         Identical pattern to '.sv3-markdown' above and 'Sv3Pane.ts:78' — the shared components are
+         NOT forked; what they expose is the set of custom properties they read, and a property the
+         window does not re-point falls through to the shipped app's ':root', which is the LIGHT
+         palette (the window carries no theme attribute; the app does). Unbridged, that is not a
+         taste difference but a polarity inversion: the F-series fit audit measured this card
+         painting a near-white light-theme fill under a near-white tool name — white on white —
+         and the reasoning block painting light-theme slate text on the window's near-black.
+
+         Every pair below is computed against the window's own tokens in 'Sv3Main.imports.test.ts'
+         (>= 4.5:1), which is why the surface choices are not always the nearest name: a 4 %-white
+         wash NESTED inside another one leaves subdued text short of the floor, so a well inside a
+         raised card goes DOWN the ladder (to --background) rather than up. */
+
+      /* The agent run's tool call (components/chat/ToolCallCard.ts). */
+      jf-tool-call-card {
+        /* The card is the ONE raised surface here; its wells sit on it, and the quoted-output frame
+           (which the component draws with a 3px --border-strong rule) goes deeper instead. */
+        --surface-secondary: var(--card);
+        --surface-tertiary: var(--muted);
+        --surface-2: var(--background);
+        --text-primary: var(--foreground);
+        --text-secondary: var(--secondary-label);
+        --text-warning: var(--warning-foreground);
+        --border-subtle: var(--border);
+        --border-strong: var(--input);
+        /* Donor :1908 (the '.sv3-markdown' rule above, same reason) — a link is the info hue. This
+           is also the token whose NAME collided: sv3's hover material used to be called --accent,
+           so this link painted at 4 % opacity (audit DEFECT-6, fixed in sv3-tokens.css.ts). */
+        --accent: var(--info-foreground);
+        --accent-tint: var(--primary);
+        --accent-on-tint: var(--primary-foreground);
+        /* The risk tiers keep the donor's own 45 % edge grade, spent on the window's three-colour
+           budget (818 law 5: act-now / in-motion / broken, no fourth role). */
+        --accent-danger-45: color-mix(in srgb, var(--destructive) 45%, transparent);
+        --accent-warning-45: color-mix(in srgb, var(--warning) 45%, transparent);
+        /* The status word is written by an INLINE style (ToolCallCard.ts:354) off
+           utils/statusTone.ts:88-104, but what that authority returns is 'var(--accent-<tone>)' —
+           a custom property, so the inline colour resolves against these declarations like any
+           other. (The audit recorded it as unreachable from a host token; it is not.) */
+        --accent-success: var(--success-foreground);
+        --accent-warning: var(--warning-foreground);
+        --accent-danger: var(--error-foreground);
+        /* Law 10: one family. The component's 'display' face is the window's only sans. */
+        --font-display: var(--font-sans);
+        --font-size-sm: var(--font-size-sv3-sm);
+        --font-size-xs: var(--font-size-sv3-xs);
+        --duration-normal: var(--duration-sv3-layout);
+        --ease-standard: var(--ease-sv3-enter);
+      }
+
+      /* The model's thinking (components/chat/ReasoningBlock.ts). Its --text-muted is the resting
+         body and --text-secondary the emphasis it brightens to on hover, so the two map to
+         DIFFERENT rungs than the tool card's (which uses --text-secondary as its subdued rung) —
+         the shipped hierarchy is per-component, and a bridge carries meaning, not names. */
+      jf-reasoning-block {
+        --surface-subtle: var(--muted);
+        --text-muted: var(--secondary-label);
+        --text-secondary: var(--foreground);
+        --border-muted: var(--border);
+        --accent-primary: var(--ring);
+        /* Passed down to the nested <jf-markdown-block> the block renders its content into: it is
+           outside the '.sv3-markdown' class bridge, so its tokens arrive here or not at all. The
+           component re-points --text-primary to --text-muted itself (ReasoningBlock.ts:120-123),
+           which is why a code well on the already-washed container goes to --background. */
+        --surface-tertiary: var(--background);
+        --text-primary: var(--foreground);
+        --text-tint: var(--info-foreground);
+        --border-subtle: var(--border);
+        --accent-tint: var(--primary);
+        --accent-on-tint: var(--primary-foreground);
+        --accent-warning: var(--warning-foreground);
+        --font-size-sm: var(--font-size-sv3-sm);
+        --font-size-xs: var(--font-size-sv3-xs);
+        --duration-fast: var(--duration-sv3-micro);
+        --ease-standard: var(--ease-sv3-enter);
+      }
+
+      /* The citation preview (components/chat/CitationHoverCard.ts). It floats over the transcript,
+         so it takes the window's opaque raised surface: --popover would leave its dimmest line
+         (the match score) at exactly the 4.5:1 floor with no margin. Its own drop shadow is a
+         hard-coded literal the bridge cannot reach (recorded, not worked around: donor law 6 wants
+         no drop shadow in dark, and closing it is an edit inside the shared component). */
+      jf-citation-hover-card {
+        --surface-2: var(--card);
+        --text-primary: var(--foreground);
+        --text-secondary: var(--foreground);
+        --text-muted: var(--secondary-label);
+        --text-tint: var(--info-foreground);
+        --border-subtle: var(--border);
+        --font-size-sm: var(--font-size-sv3-sm);
+        --font-size-xs: var(--font-size-sv3-xs);
+        --z-modal: var(--z-tooltip);
+        --duration-fast: var(--duration-sv3-micro);
+        --ease-standard: var(--ease-sv3-enter);
+      }
+
       /* ── The honesty pack (tempdoc 822 Phase F7) ───────────────────────────
          Every line below is a FACT about the answer, so none of them is allowed to hide behind hover
          (818 §6b L14): only the action bar at the bottom of the turn yields, and it yields on its

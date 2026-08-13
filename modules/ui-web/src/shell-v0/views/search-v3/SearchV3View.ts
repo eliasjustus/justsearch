@@ -231,6 +231,19 @@ const isPaletteChord = (event: KeyboardEvent): boolean =>
 const isComposerState = (value: string | null): value is Sv3ComposerState =>
   value === 'hero' || value === 'docked';
 
+/**
+ * Is the keystroke coming out of a session row that is BEING RENAMED? The row is asked, not the
+ * DOM shape: `renaming` is the row's own public state, so the test cannot drift from the markup the
+ * edit happens to use. Open shadow roots put the real origin in the composed path (the same
+ * property the palette's invoker lookup relies on), so a capture-phase listener on the host can see
+ * an editor three shadow roots down.
+ */
+const renamingRowInPath = (event: KeyboardEvent): boolean =>
+  event.composedPath().some((node) => {
+    const el = node as Element & { renaming?: unknown };
+    return el.localName === 'jf-sv3-session-row' && el.renaming === true;
+  });
+
 export class SearchV3View extends JfElement {
   static styles = [
     sv3Tokens,
@@ -604,6 +617,7 @@ export class SearchV3View extends JfElement {
     // here by construction — there is no "is the focus inside?" test to get wrong. Capture phase so
     // the palette's own field cannot swallow the chord before the window sees it.
     this.addEventListener('keydown', this.onHostKeydown, true);
+    this.addEventListener('focusout', this.onHostFocusOut);
   }
 
   override disconnectedCallback(): void {
@@ -638,6 +652,7 @@ export class SearchV3View extends JfElement {
     this.boxObserver?.disconnect();
     this.boxObserver = null;
     this.removeEventListener('keydown', this.onHostKeydown, true);
+    this.removeEventListener('focusout', this.onHostFocusOut);
   }
 
   /**
@@ -1077,11 +1092,19 @@ export class SearchV3View extends JfElement {
   }
 
   private readonly onHostKeydown = (event: KeyboardEvent): void => {
-    // ESCAPE ORDER: the pane goes first. It is the region the reader most recently opened and the
-    // one occupying the most of the window, so an Escape while a document is open means "close the
-    // document" — and stopping the event here is what makes that true rather than approximately
-    // true: unstopped, the SAME keystroke would also hide the palette (`Sv3Palette.onKeydown`) or
-    // flip the composer back to its hero (`Sv3Composer.onKeydown`), closing two things at once.
+    // ESCAPE ORDER — rename > pane > palette > composer flip. The MOST LOCAL transient state wins:
+    // an Escape belongs to the smallest thing the reader is currently inside, and only after that
+    // to the regions around it. Stopping the event at the winner is what makes the order true
+    // rather than approximately true — unstopped, the SAME keystroke would also hide the palette
+    // (`Sv3Palette.onKeydown`) or flip the composer back to its hero (`Sv3Composer.onKeydown`),
+    // closing two things at once.
+    //
+    // Rename is FIRST and is served by yielding rather than by handling: an inline editor owns its
+    // own cancel key (`Sv3SessionRow.onRenameKeydown`), and this listener is on the CAPTURE phase,
+    // so the row's `stopPropagation` cannot defend it — the window has to decline. Without this,
+    // an Escape pressed while typing in the rename field closed the PANE, silently, in a region
+    // the reader was not looking at, and left the edit open (F-series fit audit, DEFECT-7).
+    if (event.key === 'Escape' && renamingRowInPath(event)) return;
     if (event.key === 'Escape' && this.paneDocPath !== null) {
       event.preventDefault();
       event.stopPropagation();
@@ -1096,6 +1119,44 @@ export class SearchV3View extends JfElement {
     const invoker = (event.composedPath()[0] ?? null) as HTMLElement | null;
     this.togglePalette(invoker);
   };
+
+  /**
+   * The palette may never be left OPEN with the keyboard somewhere else. Its own exits (Escape,
+   * backdrop click) both assume focus is still inside it; when something outside the window takes
+   * focus away — the shipped shell binds the same Ctrl+K and its palette steals the field
+   * (`KeybindingRegistry.ts:178`, the recorded cutover-scope duplicate) — the capture-phase Escape
+   * listener above is never reached again and the sv3 palette becomes visible-but-unreachable, a
+   * keyboard trap only a pointer could clear (F-series fit audit, DEFECT-8).
+   *
+   * `relatedTarget` is the test rather than `document.activeElement`, which during `focusout` still
+   * reports the OLD node. `null` (focus fell to `<body>`) and any node outside the window close it;
+   * focus moving anywhere inside — including into the palette's own field — leaves it open. Closing
+   * does NOT reclaim focus: the invoker restore in `hide()` would yank the caret back out of
+   * whatever legitimately took it, which is the fight the shipped Ctrl+K already starts.
+   */
+  private readonly onHostFocusOut = (event: FocusEvent): void => {
+    const palette = this.palette;
+    if (palette === null || !palette.open) return;
+    if (this.ownsNode(event.relatedTarget as Node | null)) return;
+    palette.dismiss();
+  };
+
+  /**
+   * Shadow-crossing containment. `contains` alone is not enough in either direction: a browser
+   * retargets `relatedTarget` to this host (which `contains` reports as inside, being inclusive),
+   * while a test DOM hands over the raw node three roots down — so the walk climbs host by host and
+   * both forms answer the same question.
+   */
+  private ownsNode(node: Node | null): boolean {
+    let current = node;
+    while (current !== null) {
+      if (this.contains(current)) return true;
+      const root = current.getRootNode();
+      if (!(root instanceof ShadowRoot)) return false;
+      current = root.host;
+    }
+    return false;
+  }
 
   private get palette(): Sv3Palette | null {
     return this.shadowRoot?.querySelector('jf-sv3-palette') ?? null;

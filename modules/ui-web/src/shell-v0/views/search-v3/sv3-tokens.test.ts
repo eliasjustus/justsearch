@@ -577,7 +577,7 @@ describe('the composer glass is token-fed material, so dark inverts without a co
     expect(control).toContain('font-size: var(--font-size-sv3-xs)');
     expect(control).toContain('border: 1px solid transparent');
     expect(control).toContain('--control-icon-color: var(--icon-muted)');
-    expect(ruleFor('button.scope-control:hover')).toContain('background: var(--accent)');
+    expect(ruleFor('button.scope-control:hover')).toContain('background: var(--accent-surface)');
     // A button eases its ELEVATION only; a hover fill is instant.
     expect(control).toContain('transition: box-shadow var(--duration-sv3-micro)');
   });

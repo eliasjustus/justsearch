@@ -216,6 +216,42 @@ describe('the open palette keeps the keyboard, and hands it back on close', () =
     expect(refocused(), 'focus did not return to the invoker').toBe(true);
   });
 
+  it('closes rather than stranding itself when something outside takes the keyboard', async () => {
+    // The shipped shell binds the SAME Ctrl+K and its palette steals the field
+    // (`KeybindingRegistry.ts:178`). Once focus is out of the window, this palette's own Escape
+    // never fires again — it would sit open, visible, and reachable only by pointer (F-series fit
+    // audit, DEFECT-8). Focus departure is therefore its third exit.
+    const el = await mount();
+    const { palette, trigger } = await openViaTopbar(el);
+    expect(palette.open).toBe(true);
+
+    // Something in the shipped shell (outside this window's tree) now holds the keyboard.
+    const thief = document.createElement('input');
+    document.body.appendChild(thief);
+    const reclaimed = watchFocus(trigger);
+    palette.shadowRoot
+      ?.querySelector('input')
+      ?.dispatchEvent(new FocusEvent('focusout', { bubbles: true, composed: true, relatedTarget: thief }));
+    await palette.updateComplete;
+
+    expect(palette.open, 'the palette was left open and keyboard-unreachable').toBe(false);
+    // And it does NOT yank the caret back out of whatever legitimately took it — the fight that
+    // makes the double-palette worse than a duplicate.
+    expect(reclaimed(), 'the palette pulled focus back off the new owner').toBe(false);
+    thief.remove();
+  });
+
+  it('stays open while focus moves WITHIN the window (the palette is inside it)', async () => {
+    const el = await mount();
+    const { palette } = await openViaTopbar(el);
+    // Focus crossing a shadow boundary inside the window retargets to the window host itself.
+    palette.shadowRoot
+      ?.querySelector('input')
+      ?.dispatchEvent(new FocusEvent('focusout', { bubbles: true, composed: true, relatedTarget: el }));
+    await palette.updateComplete;
+    expect(palette.open).toBe(true);
+  });
+
   it('closes on a backdrop click and still restores the invoker', async () => {
     const el = await mount();
     const { palette, trigger } = await openViaTopbar(el);

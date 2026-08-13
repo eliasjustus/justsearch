@@ -114,15 +114,22 @@ describe('the window mounts with its five regions', () => {
     expect(root?.querySelector('jf-sv3-composer')).toBeTruthy();
   });
 
-  it('names the window in the topbar and offers two control placeholders', async () => {
+  it('names the window in the topbar and carries ONLY controls that do something', async () => {
+    // Phase F9: the two slice-1 placeholders (`Window settings` / `Window layout`) are gone. They
+    // were 2 of the window's 16 resting interactive elements with no handler and no consumer, and
+    // an affordance the reader can press that answers nothing is chrome spent on a lie. The palette
+    // control is the topbar's one live act, so the band ends at one button.
     const el = await mount();
     const topbar = await region(el, 'jf-sv3-topbar');
     expect(topbar.shadowRoot?.querySelector('[data-testid="sv3-topbar-title"]')?.textContent).toBe(
       'Search v3',
     );
-    expect(
-      topbar.shadowRoot?.querySelectorAll('[data-testid="sv3-topbar-control"]'),
-    ).toHaveLength(2);
+    expect(topbar.shadowRoot?.querySelectorAll('[data-testid="sv3-topbar-control"]')).toHaveLength(
+      0,
+    );
+    const live = [...(topbar.shadowRoot?.querySelectorAll('button') ?? [])];
+    expect(live).toHaveLength(1);
+    expect(live[0]?.getAttribute('data-testid')).toBe('sv3-topbar-palette');
   });
 
   it('opens with an empty sidebar: no sessions until this window has searched', async () => {

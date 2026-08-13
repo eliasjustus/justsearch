@@ -81,7 +81,7 @@ export class Sv3Pane extends JfElement {
         overflow: hidden;
         --surface-1: var(--background);
         --surface-2: var(--muted);
-        --surface-hover: var(--accent);
+        --surface-hover: var(--accent-surface);
         --text-primary: var(--foreground);
         --text-secondary: var(--muted-foreground);
         --text-tertiary: var(--secondary-label);
