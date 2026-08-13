@@ -5,6 +5,7 @@
   },
   "plugins": {
     "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDREMTU3REI3QkEyMjE2MjcKUldRbkZpSzZ0MzBWVFZ3MGRvWTVTQnZ0N2pVcXJ2TWpqVVZLQ2Q0QUEvdFNWTGg0Q0lLZGhSUjEK",
       "windows": {
         "installMode": "basicUi"
       }

@@ -1931,9 +1931,12 @@ export class Shell extends JfElement {
       if (this.intentRouter) {
         void navigateForward(this.intentRouter.dispatch.bind(this.intentRouter));
       }
-    } else if (e.ctrlKey && e.key === 'l') {
-      e.preventDefault();
-      void this.handleCopyUrlClick();
+      // Tempdoc 821 §4 — the Ctrl+L branch that used to call handleCopyUrlClick() here was removed:
+      // Search Thread S2 reassigned mod+l to shell.focus-composer app-wide (registered with no `when`
+      // scoping at Shell.ts:935-940, "focus the bar from anywhere"), and this raw handler ran in
+      // parallel with that registered keybinding (neither call site calls stopPropagation), so every
+      // Ctrl+L press both dispatched an unconsumed jf-focus-composer event AND copied the URL. Copy
+      // URL now has no keyboard chord — click the button.
     } else if (e.ctrlKey && e.key === 'd') {
       e.preventDefault();
       this.handleBookmarkToggle();
@@ -2251,7 +2254,7 @@ export class Shell extends JfElement {
             this.copyUrlFeedback ? ` ${this.copyUrlFeedback}` : ''
           }`}
           aria-label="Copy current URL"
-          title="Copy URL (Ctrl+L)"
+          title="Copy URL"
           @click=${() => {
             void this.handleCopyUrlClick();
           }}

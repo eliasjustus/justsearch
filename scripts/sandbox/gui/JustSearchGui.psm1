@@ -25,6 +25,8 @@ namespace JustSearchGui {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int width, int height, bool repaint);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr h, out int pid);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, IntPtr e);
     public const uint LEFTDOWN = 0x0002;
@@ -70,18 +72,46 @@ function Connect-App {
   # input event") that SetForegroundWindow silently enforces. Only engages
   # when the first attempt fails, so the common case (focus succeeds
   # immediately) pays no extra delay.
-  [CmdletBinding()]
+  #
+  # -Hwnd addressing (round 16, tempdoc 823 section 4): the -ProcName lookup below
+  # can only reach a window that IS a process's MainWindowHandle, so it
+  # cannot address the shell **Properties** dialog (owned by a helper
+  # process) or the NSIS installer/uninstaller wizards -- and three of round
+  # 16's required must-watch captures lived in exactly those windows. That
+  # round rebuilt the whole "which window" step in an in-sandbox scratchpad
+  # script that was wiped with the sandbox. -Hwnd replaces ONLY the lookup:
+  # everything after it (restore, foreground, ALT-nudge retry, verification)
+  # is the same code path, so a caller gets the same fail-closed .Focused
+  # contract for an arbitrary top-level window. .Process is best-effort for
+  # this parameter set (resolved from the window's owning pid) and can be
+  # $null -- do not rely on it; .Handle/.Focused are the load-bearing fields.
+  [CmdletBinding(DefaultParameterSetName = "ByProcName")]
   param(
-    [string]$ProcName = "JustSearch",
+    [Parameter(ParameterSetName = "ByProcName")][string]$ProcName = "JustSearch",
+    [Parameter(ParameterSetName = "ByHwnd", Mandatory = $true)][IntPtr]$Hwnd,
     [int]$FocusDelayMs = 700,
     [int]$MaxFocusAttempts = 4
   )
-  $p = Get-Process -Name $ProcName -ErrorAction SilentlyContinue |
-    Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-  if (-not $p) {
-    return $null
+  $p = $null
+  if ($PSCmdlet.ParameterSetName -eq "ByHwnd") {
+    if (($Hwnd -eq [IntPtr]::Zero) -or (-not [JustSearchGui.Native]::IsWindow($Hwnd))) {
+      return $null
+    }
+    $h = $Hwnd
+    $ownerPid = 0
+    [void][JustSearchGui.Native]::GetWindowThreadProcessId($h, [ref]$ownerPid)
+    if ($ownerPid -ne 0) {
+      $p = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
+    }
   }
-  $h = $p.MainWindowHandle
+  else {
+    $p = Get-Process -Name $ProcName -ErrorAction SilentlyContinue |
+      Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+    if (-not $p) {
+      return $null
+    }
+    $h = $p.MainWindowHandle
+  }
   [void][JustSearchGui.Native]::ShowWindow($h, [JustSearchGui.Native]::SW_RESTORE)
   [void][JustSearchGui.Native]::SetForegroundWindow($h)
   Start-Sleep -Milliseconds $FocusDelayMs

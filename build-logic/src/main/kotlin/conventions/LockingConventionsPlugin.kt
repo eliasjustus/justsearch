@@ -16,7 +16,6 @@ class LockingConventionsPlugin : Plugin<Project> {
       "spotbugs", "spotbugsSlf4j", "spotbugsPlugins",
       "pmd",
       "jacocoAnt", "jacocoAgent",
-      "revapiAnt",
       "errorproneJavac",
       "protobufToolsLocator_grpc", "protobufToolsLocator_protoc",
   )
@@ -61,10 +60,8 @@ class LockingConventionsPlugin : Plugin<Project> {
               .matching { it.isCanBeResolved }
               .forEach { cfg ->
             // Skip configs that cannot be resolved in isolation:
-            // - revapiOld requires downloading baseline JAR from Maven Central
             // - DAGP (dependency-analysis) internal configs require cross-project resolution
-            val skip = cfg.name.equals("revapiOld", ignoreCase = true) ||
-                cfg.attributes.keySet().any { it.name == "dagp.internal.artifacts" }
+            val skip = cfg.attributes.keySet().any { it.name == "dagp.internal.artifacts" }
             if (skip) {
               logger.lifecycle("Locking: skipping $path:${cfg.name}")
               return@forEach
