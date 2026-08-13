@@ -138,6 +138,8 @@ public final class WorkerSpawner implements Closeable {
     private final AtomicLong lastSuccessfulStartTime = new AtomicLong(0);
     /** Consecutive gRPC-unhealthy polls while the process is alive (hang detection, tempdoc 627). */
     private final AtomicInteger consecutiveUnhealthy = new AtomicInteger(0);
+    /** Set once {@link SupervisionDecision.Action#GIVE_UP} fired — supervision's terminal verdict. */
+    private final AtomicBoolean supervisionGaveUp = new AtomicBoolean(false);
     /** Serializes the death-path and hang-path supervision onto one shared restart budget. */
     private final java.util.concurrent.locks.ReentrantLock superviseLock =
         new java.util.concurrent.locks.ReentrantLock();
@@ -312,6 +314,18 @@ public final class WorkerSpawner implements Closeable {
     public long getWorkerPid() {
         Process p = workerProcess.get();
         return p != null ? p.pid() : -1;
+    }
+
+    /**
+     * Whether {@link SupervisionPolicy} has taken over this spawner's process — at least one
+     * supervised restart has run, or supervision has given up terminally.
+     *
+     * <p>The restart budget belongs to the supervisor. A caller that owns a retry loop of its own
+     * (boot) must stand down once this is true, otherwise it multiplies the declared restart
+     * intensity and papers over the terminal {@code WORKER_RESTART_EXHAUSTED} verdict.
+     */
+    public boolean supervisionEngaged() {
+        return restartCount.get() > 0 || supervisionGaveUp.get();
     }
 
     /**
@@ -769,6 +783,7 @@ public final class WorkerSpawner implements Closeable {
                     int attempts = restartCount.get();
                     log.error("Worker restart limit exceeded ({} attempts), giving up", attempts);
                     running.set(false);
+                    supervisionGaveUp.set(true);
                     supervisionEvents.onGaveUp("restart cap exceeded after " + attempts + " attempts");
                 }
                 case RESTART_RESPAWN, RESTART_GRACEFUL -> {
@@ -867,6 +882,7 @@ public final class WorkerSpawner implements Closeable {
                 telemetry.recordShutdownTimeout();
                 p.destroyForcibly();
                 telemetry.recordForcibleKill();
+                awaitForcedExit(p);
                 return ShutdownOutcome.FORCED;
             }
             return ShutdownOutcome.GRACEFUL;
@@ -875,6 +891,24 @@ public final class WorkerSpawner implements Closeable {
             p.destroyForcibly();
             telemetry.recordForcibleKill();
             return ShutdownOutcome.FAILED;
+        }
+    }
+
+    /**
+     * Waits briefly for a force-killed worker to actually leave the process table.
+     *
+     * <p>{@code destroyForcibly()} only requests termination. Returning before the OS has reaped the
+     * process leaves its file handles — the Lucene {@code write.lock} and the jobs.db connection —
+     * open, so whatever respawns next (a supervised restart, or a boot retry) can collide with the
+     * corpse it just killed.
+     */
+    private static void awaitForcedExit(Process p) {
+        try {
+            if (!p.waitFor(1, TimeUnit.SECONDS)) {
+                log.warn("Force-killed worker (PID {}) still alive after 1s", p.pid());
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

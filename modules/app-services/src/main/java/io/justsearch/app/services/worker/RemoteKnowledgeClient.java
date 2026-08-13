@@ -469,10 +469,6 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         return ingestStub.withDeadlineAfter(deadline(category), TimeUnit.MILLISECONDS);
     }
 
-    private HealthServiceGrpc.HealthServiceBlockingStub healthStubWithDeadline(RpcDeadlineCategory category) {
-        return healthStub.withDeadlineAfter(deadline(category), TimeUnit.MILLISECONDS);
-    }
-
     private <T> T executeSearchRpc(
             String operation,
             RpcDeadlineCategory category,
@@ -497,9 +493,18 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
             String operation,
             RpcDeadlineCategory category,
             java.util.function.Function<HealthServiceGrpc.HealthServiceBlockingStub, T> rpc) {
+        return executeHealthRpc(operation, deadline(category), rpc);
+    }
+
+    private <T> T executeHealthRpc(
+            String operation,
+            long callDeadlineMs,
+            java.util.function.Function<HealthServiceGrpc.HealthServiceBlockingStub, T> rpc) {
         ensureConnected();
         reconnect();
-        return executeWithCircuitBreaker(operation, () -> rpc.apply(healthStubWithDeadline(category)));
+        return executeWithCircuitBreaker(
+            operation,
+            () -> rpc.apply(healthStub.withDeadlineAfter(callDeadlineMs, TimeUnit.MILLISECONDS)));
     }
 
     private DeleteByPathResponse executeDeleteByPath(Path normalizedPath) {
@@ -811,18 +816,14 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
     /**
      * Checks if the Knowledge Server is healthy.
      *
-     * <p>This method performs a gRPC health check on the existing connection.
-     * It does NOT re-read the signal bus (unlike most other methods) to avoid
-     * false negatives from transient signal bus read issues.
+     * <p>Like every health RPC this goes through {@link #executeHealthRpc}, which calls
+     * {@link #reconnect()} — a no-op unless the signal bus reports a DIFFERENT port, in which case
+     * the channel genuinely must be rebuilt. The existing connection is reused otherwise.
      *
      * @return true if serving
      */
     public boolean isHealthy() {
         try {
-            // Note: We intentionally do NOT call reconnect() here.
-            // If we're already connected, we should just check the existing connection.
-            // Re-reading the signal bus can cause false negatives due to timing issues
-            // with memory-mapped file visibility across processes on Windows.
             HealthCheckRequest request = HealthCheckRequest.newBuilder().build();
             HealthCheckResponse response = executeHealthRpc(
                 "isHealthy",
@@ -843,14 +844,28 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
      *
      * <p>Prefer this over {@link #isHealthy()} when you need details like {@code worker_state} or {@code pid}.
      *
-     * <p>This method performs a gRPC health check on the existing connection without
-     * re-reading the signal bus, to avoid false failures from timing issues.
+     * <p>Same connection handling as {@link #isHealthy()}: the shared health-RPC path re-reads the
+     * signal bus and rebuilds the channel only when the reported port has actually changed.
      */
     public HealthCheckResponse getHealthCheck() {
-        // Note: We intentionally do NOT call reconnect() here - same rationale as isHealthy().
+        return getHealthCheck(deadline(RpcDeadlineCategory.STANDARD));
+    }
+
+    /**
+     * Health check with an explicit per-call gRPC deadline, for callers that own a total budget and
+     * must be able to spend it over several attempts.
+     *
+     * <p>Boot-time PID validation is the motivating caller: its whole window equals the STANDARD
+     * deadline, so a single slow cold call (the worker-side check touches SQLite and Lucene, which
+     * are expensive on first contact) consumed the entire budget and its retry loop never iterated.
+     * Passing a per-attempt deadline keeps the retry loop a retry loop.
+     *
+     * @param callDeadlineMs the gRPC deadline for this one call, in milliseconds
+     */
+    public HealthCheckResponse getHealthCheck(long callDeadlineMs) {
         HealthCheckResponse response = executeHealthRpc(
             "getHealthCheck",
-            RpcDeadlineCategory.STANDARD,
+            callDeadlineMs,
             stub -> stub.check(HealthCheckRequest.newBuilder().build()));
         // Update last-known-good ONNX model cache from Worker's startup-time discovery (D-4).
         // executeHealthRpc never returns null — it throws on failure, so cache is only updated
@@ -883,8 +898,7 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
      */
     public String getVersion() {
         try {
-            // Note: We intentionally do NOT call reconnect() here - same rationale as isHealthy().
-            HealthCheckResponse response = executeHealthRpc(
+                HealthCheckResponse response = executeHealthRpc(
                 "getVersion",
                 RpcDeadlineCategory.STANDARD,
                 stub -> stub.check(HealthCheckRequest.newBuilder().build()));
