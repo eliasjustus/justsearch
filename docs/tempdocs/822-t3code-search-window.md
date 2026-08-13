@@ -126,6 +126,13 @@ remains the eventual synthesis point; not built until the deferred conversation.
 Phase B's result-row/economy conversation is postponed accordingly; the F-series
 below replaces the old Phase-B/C ordering.
 
+**STANDING DIRECTIVE (owner, 2026-08-13, post-F3):** search integration is deferred
+INDEFINITELY — it starts only on an explicit owner instruction ("until i explicitly
+tell you its time"). Until then the mission is copying T3 Code's AGENT functionality
+and UI/UX. Consequence: the §9/§4b exclusion of "chat markdown" as domain furniture is
+SUPERSEDED for the agent axis — response rendering IS the donor product's UX; markdown
+and citation rendering join the copyable backlog. Do not re-propose search work.
+
 **Phase F — T3 Code's functionality on the shell (F-series slices):**
 - F1. The conversational core: composer submit routes to the shared ask tier
   (grounded, cited, streamed — the seams search-v2 proved: `buildRequestBody` +
