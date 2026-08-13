@@ -98,6 +98,7 @@
         },
         {
           "filename": "config.json",
+          "required": false,
           "sha256": "CB70B5AAAFDEE8A95E82E9B3A3CFB6C78E2A95C4027D2BD3A74B58CC76478AF4",
           "sizeBytes": 872,
           "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/splade-config.json"
@@ -140,6 +141,7 @@
         },
         {
           "filename": "config.json",
+          "required": false,
           "sha256": "DFA5713436ECB4616EAA576795C8D3EFD1F03122031A1AD4973D0B6B7E7EDFD3",
           "sizeBytes": 1578,
           "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/reranker-config.json"
@@ -216,6 +218,7 @@
         },
         {
           "filename": "config.json",
+          "required": false,
           "sha256": "D827779A72D27AE68CF878A6FC2E954542663FE21CA515D9F4783FC96BE2D37E",
           "sizeBytes": 824,
           "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/models-v1/citation-config.json"

@@ -86,6 +86,31 @@ public final class AiInstallStatus {
    */
   public boolean repairNeeded;
 
+  /**
+   * Registry files this profile declares that are absent from disk and that no consumer requires
+   * (tempdoc 824 §3.3b) — {@code splade/config.json} and the other metadata sidecars carrying
+   * {@code "required": false}.
+   *
+   * <p>Its own list precisely because it must NOT feed {@link #repairNeeded}: round 16 lost one
+   * 872-byte optional file and the product said "a required component is missing" while SPLADE was
+   * serving 1 660 inferences on CUDA. Surfaced so nothing is hidden; never alarming, and never a
+   * reason to offer Repair.
+   */
+  public final List<OptionalGap> optionalGaps = new ArrayList<>();
+
+  /** One optional registry file absent from disk. */
+  public static final class OptionalGap {
+    public String packageId = "";
+    public String fileName = "";
+
+    public OptionalGap() {}
+
+    public OptionalGap(String packageId, String fileName) {
+      this.packageId = packageId == null ? "" : packageId;
+      this.fileName = fileName == null ? "" : fileName;
+    }
+  }
+
   // Per-package progress
   public final List<PackageStatus> packages = new ArrayList<>();
 
@@ -113,5 +138,38 @@ public final class AiInstallStatus {
      * is otherwise invisible.
      */
     public boolean resumed;
+
+    /**
+     * What the RUNTIME observes about this package's capability, projected from the same authority
+     * {@code GET /api/ai/runtime/status} publishes ({@code onnxFeatures[].status} ×
+     * {@code modelActive}, derived by {@code EncoderRuntimeExplainer}): {@code "active"} |
+     * {@code "inactive"} | {@code "unknown"} (tempdoc 824 §3.3c).
+     *
+     * <p>Bookkeeping ("a file is missing") and consequence ("the capability is down") are two
+     * different claims, and round 16 asserted the second using only the first. Defaults to
+     * {@code "unknown"} and degrades to it whenever nothing has observed the capability — never to
+     * a positive claim in either direction, so the alarming copy stays the fail-closed default.
+     */
+    public String functionalStatus = "unknown";
+
+    /**
+     * Why this package will not converge on its own (tempdoc 824 §3.4). {@code
+     * "TRANSPORT_UNAVAILABLE"} after {@link #attempts} spread over three consecutive repair passes
+     * all failed the same file at transport; empty while automatic repair is still worth offering.
+     *
+     * <p>An affordance that cannot succeed must not be presented as the remedy — that is round
+     * 16's user-facing defect, independent of the network. {@code repairNeeded} stays true (a
+     * required file IS missing); the REMEDY becomes the manual fallback below.
+     */
+    public String terminalReason = "";
+
+    /** Total transport attempts spent on this package's still-missing file, across repair passes. */
+    public int attempts;
+
+    /** Direct download URL of the file that will not transfer — the manual fallback's source. */
+    public String url = "";
+
+    /** Where that file has to land — the manual fallback's destination. */
+    public String targetPath = "";
   }
 }
