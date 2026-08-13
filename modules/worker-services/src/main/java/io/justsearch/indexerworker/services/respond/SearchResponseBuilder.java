@@ -232,11 +232,12 @@ public final class SearchResponseBuilder {
     } else if (decision instanceof SearchDecision.MultiLegDecision ml
         && ml.facets().isPresent()) {
       var f = ml.facets().get();
-      // Tempdoc 821 §L.3: parse with the syntax the multi-leg BM25 leg actually retrieved with, NOT
-      // the request's syntax — the legs are SIMPLE-only (TextQueryOps#searchText /
-      // #searchTextWithFilter), so parsing the request's LUCENE syntax here would tally a different
-      // population than the hits being faceted. One symbol couples the two.
-      LuceneRuntimeTypes.QuerySyntax syntax = TextQueryOps.MULTI_LEG_LEXICAL_SYNTAX;
+      // Tempdoc 821 §L.3 + §P: parse with the syntax the multi-leg BM25 leg actually retrieved
+      // with. Since §P that IS the request's syntax — but it must be read from the same decision
+      // component the leg read (SearchExecutor#runMultiLeg), not re-projected from the request here,
+      // so the two cannot drift. A count over a different parse than its hits reads as
+      // "Top 3 of 1 matches".
+      LuceneRuntimeTypes.QuerySyntax syntax = ml.runtimeSyntax();
       try {
         var facetQuery = textQueryOps.buildTextQuery(f.queryString(), f.filters(), syntax);
         if (facetQuery != null) {
@@ -291,14 +292,19 @@ public final class SearchResponseBuilder {
    * facet query). Empty/blocked → 0. Independent of whether facets were requested, so the facet-less
    * quick pass still carries a true count. Failure is non-fatal (returns 0).
    *
-   * <p>Tempdoc 821 §L.3: the multi-leg rebuild parses with {@link
-   * TextQueryOps#MULTI_LEG_LEXICAL_SYNTAX} — the syntax the BM25 leg it counts actually retrieved
-   * with — rather than an unexplained local {@code SIMPLE} literal or the request's own syntax. The
-   * request's syntax ({@link SearchInputs#runtimeSyntax()}) would be WRONG here while the legs stay
-   * SIMPLE-only: a LUCENE-parsed count beside SIMPLE-parsed hits contradicts the results it labels.
+   * <p>Tempdoc 821 §L.3 + §P: the multi-leg rebuild parses with {@code
+   * MultiLegDecision.runtimeSyntax()} — the syntax the BM25 leg it counts actually retrieved with —
+   * rather than an unexplained local {@code SIMPLE} literal or a second projection of the wire enum.
+   * Since §P the leg honours the request, so the two agree by construction; reading the decision
+   * (not {@link SearchInputs#runtimeSyntax()} again) is what keeps them agreeing if the leg's source
+   * ever changes: a LUCENE-parsed count beside SIMPLE-parsed hits contradicts the results it labels.
    */
   private int computeMatchCount(
       SearchDecision decision, SearchOutcome outcome, SearchInputs inputs) {
+    LuceneRuntimeTypes.QuerySyntax multiLegSyntax =
+        decision instanceof SearchDecision.MultiLegDecision m
+            ? m.runtimeSyntax()
+            : LuceneRuntimeTypes.QuerySyntax.SIMPLE;
     try {
       return switch (decision) {
         case SearchDecision.SparseShortcut s ->
@@ -308,9 +314,7 @@ public final class SearchResponseBuilder {
         case SearchDecision.MultiLegDecision m -> {
           org.apache.lucene.search.Query q =
               textQueryOps.buildTextQuery(
-                  inputs.request().getQuery(),
-                  inputs.runtimeFilters(),
-                  TextQueryOps.MULTI_LEG_LEXICAL_SYNTAX);
+                  inputs.request().getQuery(), inputs.runtimeFilters(), m.runtimeSyntax());
           yield q != null ? indexCountOps.countQuery(q) : 0;
         }
         case SearchDecision.EmptyQueryDecision e -> 0;
@@ -319,7 +323,7 @@ public final class SearchResponseBuilder {
     } catch (org.apache.lucene.queryparser.classic.ParseException e) {
       log.warn(
           "matchCount query parse failed ({} syntax) — headline count falls back to 0",
-          TextQueryOps.MULTI_LEG_LEXICAL_SYNTAX,
+          multiLegSyntax,
           e);
       return 0;
     } catch (RuntimeException e) {

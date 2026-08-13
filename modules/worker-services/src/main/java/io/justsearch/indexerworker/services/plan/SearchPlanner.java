@@ -185,7 +185,7 @@ public final class SearchPlanner {
         planChunkMerge(inputs, limit, queryString);
 
     return new SearchDecision.MultiLegDecision(
-        legs, hybridFallback, spladeSkip, facets, chunkMerge);
+        inputs.runtimeSyntax(), legs, hybridFallback, spladeSkip, facets, chunkMerge);
   }
 
   private static int clampLimit(int requested) {

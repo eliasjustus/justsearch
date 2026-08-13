@@ -49,11 +49,12 @@ public record SearchInputs(
    * still read the wire enum directly: {@code SearchInputCapture.java:125-126},
    * {@code SearchPlanner.java:251} — both only ask "is it LUCENE?" to skip chunk-merge).
    *
-   * <p>This is what the CLIENT asked for. It is the right source for a stage that parses the user's
-   * query for retrieval (the sparse-only shortcut does), and the WRONG source for a stage that
-   * re-derives counts over an already-retrieved population — those must mirror the parse their leg
-   * used ({@code TextQueryOps.MULTI_LEG_LEXICAL_SYNTAX}), which the multi-leg legs do not derive
-   * from here (tempdoc 821 §L.3).
+   * <p>This is what the CLIENT asked for, and (since tempdoc 821 §P) what every stage that parses the
+   * user's query for retrieval uses — the sparse-only shortcut directly, the multi-leg lexical leg
+   * via {@code SearchDecision.MultiLegDecision.runtimeSyntax()}. A stage that re-derives counts over
+   * an already-retrieved population must NOT re-project the wire enum here a second time; it reads
+   * the decision component its leg read, so the parse behind the hits and the parse behind the
+   * counts cannot drift (tempdoc 821 §L.3).
    */
   public LuceneRuntimeTypes.QuerySyntax runtimeSyntax() {
     return request.getQuerySyntax() == SearchQuerySyntax.SEARCH_QUERY_SYNTAX_LUCENE

@@ -887,9 +887,35 @@ public final class McpToolSurface {
       return McpDeliveryGovernor.govern(
           resp.results().size(), includeDetail, resolveDeliveryBudgetBytes(), MAPPER, view);
     } catch (Exception e) {
-      log.warn("MCP search failed", e);
+      // The AGENT-facing message (below) keeps the query — the agent sent it. This SERVER log does
+      // not: a rejected LUCENE-syntax search surfaces a Lucene ParseException whose message quotes
+      // the query verbatim, and the Head log is bundled into the diagnostics export. Full detail
+      // stays available at TRACE, matching SearchExecutor:160-168's deliberate split.
+      log.warn("MCP search failed: {}: {}", e.getClass().getSimpleName(), withoutQuotedQuery(e.getMessage()));
+      log.trace("MCP search failure detail", e);
       return errorContent(toolFailureMessage("Search", e));
     }
+  }
+
+  /**
+   * Strips the quoted user query out of an error message before it reaches a server-side log.
+   *
+   * <p>Lucene's {@code ParseException} renders as {@code Cannot parse '<query>': Encountered ...},
+   * which the Worker propagates as the {@code INVALID_ARGUMENT} description. Everything between the
+   * first and last quote is replaced (over-redacting is the safe direction) and the result is
+   * length-capped; the diagnostic shape survives. The agent's own copy is untouched.
+   */
+  static String withoutQuotedQuery(String message) {
+    if (message == null || message.isBlank()) {
+      return "(no message)";
+    }
+    int first = message.indexOf('\'');
+    int last = message.lastIndexOf('\'');
+    String out =
+        (first >= 0 && last > first)
+            ? message.substring(0, first + 1) + "[REDACTED]" + message.substring(last)
+            : message;
+    return out.length() > 200 ? out.substring(0, 200) + "..." : out;
   }
 
   /**
