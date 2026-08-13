@@ -9,9 +9,10 @@
  *   four acceptance criteria from §1.5. No eyeballing: every number comes from the captured
  *   streams.
  *
- *   Arms differ ONLY by one request-body flag (`answerShapeGrammar: false` = arm A, the control;
- *   absent = arm B, the shipped default). Same process, same corpus, same warm model for both
- *   arms — which is what makes the interleaving §1.5 mandates actually possible, and what a
+ *   Arms differ ONLY by one request-body flag: arm A (the control) sends nothing, which is the
+ *   shipped default while the fragment is provisional; arm B sends `answerShapeGrammar: true` to
+ *   opt into the candidate wording. Same process, same corpus, same warm model for both arms —
+ *   which is what makes the interleaving §1.5 mandates actually possible, and what a
  *   rebuild-per-arm switch cannot give.
  *
  * USAGE (orchestrator, phase 2)
@@ -133,7 +134,7 @@ async function cmdPlan(opts) {
     tempdoc: '822 §1.5',
     shapeId: SHAPE_ID,
     armSwitchKey: ARM_SWITCH_KEY,
-    arms: { A: `body.${ARM_SWITCH_KEY} = false (control)`, B: 'flag absent (shipped default)' },
+    arms: { A: 'flag absent (control = the shipped default)', B: `body.${ARM_SWITCH_KEY} = true` },
     repeats: REPEATS,
     prompts: DEFAULT_PROMPTS,
     schedule: buildSchedule(DEFAULT_PROMPTS),
@@ -184,7 +185,7 @@ async function corpusFingerprint(api) {
 /** One dispatch: POST /api/chat/dispatch, capture every SSE frame as a JSONL line. */
 async function dispatch(api, prompt, arm, conversationId) {
   const body = { shapeId: SHAPE_ID, question: prompt.text, docIds: [], conversationId };
-  if (arm === 'A') body[ARM_SWITCH_KEY] = false;
+  if (arm === 'B') body[ARM_SWITCH_KEY] = true;
 
   const res = await fetch(`${api}/api/chat/dispatch`, {
     method: 'POST',
