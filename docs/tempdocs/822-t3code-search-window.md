@@ -416,6 +416,15 @@ are re-creatable from the log's descriptions.
   out-of-range mark states stay for the FE slices. LIVE VERIFICATION DEFERRED to
   ride the S2/S3 round (one backend restart for all three). Two out-of-scope
   findings filed (budget-stopped citation; truncation-after-emission).
+- 2026-08-13 — **S1-S3 LIVE ROUND (orchestrator; backend rebuilt with S1+S3, model
+  active).** Real ask through v3: marks 3/5/4 — all in-range, all cite-grounded
+  (the 59-class mislabel gone live); underlined chars 0% on a partly-grounded
+  answer (the wall dead in production); raw brackets down to 1 (numbered sections
+  letting model ordinals resolve — 3 woven marks); mark-click → pane opened the
+  real cited doc; zero page errors. Caveat recorded: the live panel-index
+  cross-check used a fuzzy selector (consistent, not conclusive) — the conclusive
+  index-equality proof is S3's mutation probes, where it belongs. S1's deferred
+  live tier hereby closed.
 - 2026-08-13 — **Slice S2 implemented (shared-FE). Tier provenance + the ungrounded
   palette.** Claim.score split by producer (verifiedScore cross-encoder /
   lexicalScore word-overlap) across all four accumulators; the gate is one
