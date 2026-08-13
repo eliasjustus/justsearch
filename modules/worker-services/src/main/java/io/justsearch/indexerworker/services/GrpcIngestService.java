@@ -1845,7 +1845,12 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
         isCancelled = () -> false;
       }
       try {
-        new WorkerScanOps(jobQueue, queueDepth, isCancelled)
+        // Tempdoc 821 §3-C3 — a FORCE_REINDEX scan marks its admitted paths through the SAME
+        // forced-path set submitBatch's force_reindex flag feeds (see #submitBatch above).
+        // A lambda, not `indexingLoop::markForced`: a method reference dereferences its receiver
+        // when the sink is CREATED, which would make every ordinary scan depend on a field only
+        // the forced branch actually uses.
+        new WorkerScanOps(jobQueue, queueDepth, isCancelled, paths -> indexingLoop.markForced(paths))
             .scan(scanRequest, responseObserver::onNext);
         responseObserver.onCompleted();
       } catch (java.io.IOException e) {

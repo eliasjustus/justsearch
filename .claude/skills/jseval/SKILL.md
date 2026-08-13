@@ -126,9 +126,10 @@ measured case: 0.34 instead of a healthy 0.62), with no error anywhere. This is 
 reads the degenerate index (release scorecard, ratchets, a founder A/B) scores it as healthy.
 
 Every `run` embeds a `chunk_completeness` block in `summary.json` (sibling of `manifest` /
-`corpus_identity`): `{"expected": N, "observed": M, "verdict": "ok"|"chunk-free"|"degenerate",
-"reasons": [...]}`. `expected` is computed OFFLINE from the corpus's `corpus.jsonl` — a count of
-docs whose materialized content (`title + "\n\n" + text`) reaches the 2000-char chunk threshold —
+`corpus_identity`): `{"expected": N, "observed": M, "verdict":
+"ok"|"chunk-free"|"degenerate"|"unevaluable", "reasons": [...], "threshold_chars": T|null}`.
+`expected` is computed OFFLINE from the corpus's `corpus.jsonl` — a count of docs whose
+materialized content (`title + "\n\n" + text`) reaches the chunk threshold —
 before/independent of any ingest, so a degenerate enrichment pipeline can never move it (the
 anti-spoof property: a build that suppresses chunk-doc *creation* still can't fake the *offline*
 expectation). `observed` is `chunkDocCount`/`chunkVectorCoveragePercent` from the run-completion
@@ -136,6 +137,20 @@ expectation). `observed` is `chunkDocCount`/`chunkVectorCoveragePercent` from th
 `chunk-free` verdict (`expected == 0`, e.g. a short-doc BEIR/golden corpus) is a legitimate pass,
 distinguished from a `degenerate` verdict (`expected > 0` but the index shows none/incomplete
 chunk docs) — the two 0-chunk cases that are otherwise bit-identical at the pipeline-output layer.
+
+**Threshold provenance (tempdoc 821 §3-C3).** The threshold is no longer a jseval-side mirror of
+`ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS`; the worker's enrichment auditor OWNS it and publishes
+it on the wire as `worker.enrichment.chunkMinChars`, which `resolve_chunk_threshold_chars()` reads
+off the same `/api/status` snapshot the observed counts come from. There is deliberately **no local
+fallback constant** — a fallback would re-create the mirror. `threshold_chars` in the block records
+which value the expectation was computed against (`null` = the backend published none). A backend
+that predates the field reports `0` for it (proto3 scalar — never absent), which yields the fourth
+verdict, `unevaluable`: the expectation could not be computed at all. `unevaluable` is deliberately
+NOT collapsed into `chunk-free`, because `chunk-free` is the affirmative claim "no corpus doc
+reaches the threshold" — a fact that path never established, and one that is affirmatively wrong on
+a degenerate build. It does not gate (back-compat), but `assert_chunk_completeness` prints a loud
+stderr stand-down warning rather than passing silently, so a degenerate build measured against an
+old backend can no longer read as a clean pass.
 
 All four ratchet gates (`relevance-gate`, `perf-gate`, `leak-gate`, `union-recall-gate`) refuse an
 un-overridden `degenerate` run before evaluating anything, exit code 2:
@@ -149,12 +164,14 @@ Escape hatch (deliberate chunk-incomplete certification only): `--allow-chunk-in
 gate command, or `JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1` — mirrors `--allow-engine-mismatch` /
 `JUSTSEARCH_ALLOW_CROSS_CHECKOUT_JSEVAL`. A run predating the guard (no `chunk_completeness` block)
 is treated as `ok` — backward-compatible. Implementation: `jseval/chunk_completeness.py`
-(`expected_chunk_docs`, `chunk_completeness_verdict`) + `ratchet_kernel.assert_chunk_completeness`.
+(`resolve_chunk_threshold_chars`, `expected_chunk_docs`, `chunk_completeness_verdict`,
+`unevaluable_result`) + `ratchet_kernel.assert_chunk_completeness`.
 
-**Known dual-source-of-truth risk:** the 2000-char threshold is pinned in
-`jseval/chunk_completeness.py` as a mirror of `ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS`
-(Java) and will silently drift if the Java constant ever changes — see the follow-up observation
-proposing `/api/status` expose the threshold so the oracle reads it instead of mirroring it.
+**Dual-source-of-truth risk — closed (tempdoc 821 §3-C3).** The 2000-char mirror of
+`ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS` that tempdoc 718 flagged as drift-prone has been
+deleted; the oracle reads the backend's published `worker.enrichment.chunkMinChars` instead (see
+*Threshold provenance* above), and stands down loudly (`unevaluable`) rather than guessing when a
+backend does not publish it.
 
 ### Diagnostics
 

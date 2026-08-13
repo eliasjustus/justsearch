@@ -1219,24 +1219,21 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
     }
 
     // Assemble composites from dim.composite() grouping — no hardcoded lists.
-    // 821 §3-C1: composites carry NO staleness. ReadinessCompositeView is (state, reasonCodes)
-    // only, and this task fills the existing contract rather than extending it — a composite
-    // `stale` slot would be a new wire field. A consumer that needs "is any part of this
-    // composite unobserved" reads the member components' `stale`, or `meta.workerRpcStale`.
+    // 821 §P P1: a composite also aggregates its members' staleness, because the FE consumes
+    // composites (aiStateStore reads status.readiness.composites) and would otherwise never see
+    // the per-component freshness facts computed just above. The aggregate is a projection of the
+    // SAME component views — no second contact read — so the two can't disagree.
     Map<String, List<ReadinessDimension>> byComposite = new LinkedHashMap<>();
     for (ReadinessDimension dim : ReadinessDimension.values()) {
       byComposite.computeIfAbsent(dim.composite(), k -> new ArrayList<>()).add(dim);
     }
     Map<String, ReadinessCompositeView> composites = new LinkedHashMap<>();
     for (var entry : byComposite.entrySet()) {
-      List<String> states = new ArrayList<>();
-      List<String> reasonCodes = new ArrayList<>();
+      List<ReadinessComponentView> members = new ArrayList<>();
       for (ReadinessDimension dim : entry.getValue()) {
-        ReadinessComponentView c = computed.get(dim);
-        states.add(c.state());
-        reasonCodes.add(c.reasonCode());
+        members.add(computed.get(dim));
       }
-      composites.put(entry.getKey(), readinessComposite(states, reasonCodes));
+      composites.put(entry.getKey(), readinessComposite(members));
     }
 
     return new ReadinessEnvelopeView(1, observedAt, components, composites);
@@ -1727,15 +1724,28 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
         comp.state(), comp.reasonCode(), comp.source(), observedAt, true, contact.outOfContactMs());
   }
 
-  private static ReadinessCompositeView readinessComposite(
-      List<String> states, List<String> reasonCodes) {
+  /**
+   * Rolls member components up into one composite. State and reason codes combine as before; {@code
+   * stale} is true when ANY member is stale and {@code maxStalenessMs} is the oldest member's age,
+   * so a composite is exactly as fresh as its least-fresh part (tempdoc 821 §P P1).
+   */
+  private static ReadinessCompositeView readinessComposite(List<ReadinessComponentView> members) {
+    List<String> states = new ArrayList<>();
     List<String> reasons = new ArrayList<>();
-    for (String reasonCode : reasonCodes) {
+    boolean stale = false;
+    long maxStalenessMs = 0L;
+    for (ReadinessComponentView member : members) {
+      states.add(member.state());
+      String reasonCode = member.reasonCode();
       if (reasonCode != null && !reasonCode.isBlank()) {
         reasons.add(reasonCode);
       }
+      if (member.stale()) {
+        stale = true;
+        maxStalenessMs = Math.max(maxStalenessMs, member.stalenessMs());
+      }
     }
-    return new ReadinessCompositeView(combineReadinessState(states), reasons);
+    return new ReadinessCompositeView(combineReadinessState(states), reasons, stale, maxStalenessMs);
   }
 
   private static String combineReadinessState(List<String> states) {

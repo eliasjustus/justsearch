@@ -310,6 +310,41 @@ public final class LuceneRuntimeTypes {
   }
 
   /**
+   * One enrichment stage's completeness counts (tempdoc 821 §3-C3). Every component is counted
+   * over the SAME population — the documents in scope that carry the stage's status field — which
+   * is what makes them subtractable.
+   *
+   * @param expected documents in scope that carry the stage's status field at all — an absent
+   *     status field means the stage does not apply to that document (post-798), so it must not
+   *     sit in a denominator forever
+   * @param settledSuccess documents whose status holds a terminal SUCCESS value (FAILED excluded —
+   *     it is reported separately so a consumer can tell "not done yet" from "gave up")
+   * @param failed documents whose status holds the terminal FAILED value
+   * @param artifactPresent documents that carry the stage's actual artifact and are NOT failed;
+   *     {@code 0} for a stage whose artifact is not countable (SPLADE's feature field is
+   *     {@code docValues:false}; NER writes no per-document artifact). The FAILED exclusion is
+   *     load-bearing: a FAILED write can leave the vector in place, so without it {@code
+   *     artifactPresent} and {@code failed} would overlap and the remainder would understate the
+   *     repair backlog
+   */
+  public record StageCounts(int expected, int settledSuccess, int failed, int artifactPresent) {
+    public static final StageCounts EMPTY = new StageCounts(0, 0, 0, 0);
+  }
+
+  /**
+   * Index-wide per-stage completeness counts for the four enrichment stages (tempdoc 821 §3-C3).
+   * Computed in a single searcher acquisition so every stage's numbers — status counts and
+   * artifact counts alike — come from one reader snapshot; {@code embedding}/{@code splade}/{@code
+   * ner} are scoped to whole (non-chunk) documents, {@code chunkEmbedding} to chunk documents.
+   */
+  public record StageCompletenessCounts(
+      StageCounts embedding, StageCounts splade, StageCounts ner, StageCounts chunkEmbedding) {
+    public static final StageCompletenessCounts EMPTY =
+        new StageCompletenessCounts(
+            StageCounts.EMPTY, StageCounts.EMPTY, StageCounts.EMPTY, StageCounts.EMPTY);
+  }
+
+  /**
    * Counts of whole documents by embedding status (doc-level vector embeddings).
    *
    * @param total total number of whole (non-chunk) documents

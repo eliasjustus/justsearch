@@ -20,6 +20,7 @@ import io.justsearch.app.api.status.GpuDiagnosticsView;
 import io.justsearch.app.api.status.MigrationGenerationView;
 import io.justsearch.app.api.status.QueueDbStatusView;
 import io.justsearch.app.api.status.ReadinessComponentView;
+import io.justsearch.app.api.status.ReadinessCompositeView;
 import io.justsearch.app.api.status.ReadinessEnvelopeView;
 import io.justsearch.app.api.status.SearchConfigView;
 import io.justsearch.app.api.status.StatusResponse;
@@ -41,8 +42,10 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Tempdoc 821 §3-C1: {@code ReadinessComponentView.stale} / {@code stalenessMs} carry the Head's
- * Worker-contact fact per dimension. Assertions are on the emitted DTO ({@link StatusResponse} and
- * {@link ReadinessEnvelopeView}), not on the handler's internals.
+ * Worker-contact fact per dimension, and (§P P1) {@code ReadinessCompositeView.stale} /
+ * {@code maxStalenessMs} aggregate that fact for the composites the FE actually consumes.
+ * Assertions are on the emitted DTO ({@link StatusResponse} and {@link ReadinessEnvelopeView}), not
+ * on the handler's internals.
  */
 @DisplayName("Readiness per-dimension staleness")
 final class StatusReadinessStalenessTest {
@@ -192,6 +195,70 @@ final class StatusReadinessStalenessTest {
     assertTrue(
         afterFailure - observedAtMs >= indexServing.stalenessMs(),
         "staleness cannot exceed the elapsed gap");
+  }
+
+  @Test
+  @DisplayName("composites aggregate member staleness: any-stale, max-age, head-local stays fresh")
+  void compositesAggregateMemberStaleness() {
+    StatusLifecycleHandler handler = newHandler(null, Instant.now());
+    long now = System.currentTimeMillis();
+    ReadinessEnvelopeView env =
+        handler.buildReadinessEnvelope(
+            healthyWorkerView(),
+            readySnapshot(),
+            StatusLifecycleHandler.WorkerContact.lost(now - 5_000L, now, now - 60_000L));
+
+    for (var entry : env.composites().entrySet()) {
+      String composite = entry.getKey();
+      ReadinessCompositeView view = entry.getValue();
+
+      long expectedMax = 0L;
+      boolean expectedStale = false;
+      for (ReadinessDimension dim : ReadinessDimension.values()) {
+        if (!composite.equals(dim.composite())) {
+          continue;
+        }
+        ReadinessComponentView member = env.components().get(dim.key());
+        if (member.stale()) {
+          expectedStale = true;
+          expectedMax = Math.max(expectedMax, member.stalenessMs());
+        }
+      }
+
+      assertEquals(expectedStale, view.stale(), composite + " composite stale");
+      assertEquals(expectedMax, view.maxStalenessMs(), composite + " composite maxStalenessMs");
+    }
+
+    // The named cases the aggregate exists for, asserted directly rather than only against the
+    // loop's own derivation: retrieval has worker-observed members, telemetry has none.
+    ReadinessCompositeView retrieval = env.composites().get("retrieval");
+    assertTrue(retrieval.stale(), "retrieval has worker-observed members and contact is lost");
+    assertEquals(
+        env.components().get("indexServing").stalenessMs(),
+        retrieval.maxStalenessMs(),
+        "retrieval carries its worker-observed members' age");
+    assertTrue(retrieval.maxStalenessMs() > 0L, "a lost contact has a measurable age");
+
+    ReadinessCompositeView telemetry = env.composites().get("telemetry");
+    assertFalse(telemetry.stale(), "telemetry's only member is head-local — a Worker outage cannot"
+        + " make it stale");
+    assertEquals(0L, telemetry.maxStalenessMs(), "telemetry composite maxStalenessMs");
+  }
+
+  @Test
+  @DisplayName("a reachable Worker leaves every composite fresh")
+  void reachableWorkerLeavesEveryCompositeFresh(@TempDir Path indexBase) {
+    StatusLifecycleHandler handler = reachableHandler(indexBase, Instant.now().minusSeconds(60));
+
+    StatusResponse response = handler.buildStatusMap();
+
+    assertFalse(response.meta().workerRpcStale());
+    Map<String, ReadinessCompositeView> composites = response.readiness().composites();
+    assertTrue(composites.containsKey("retrieval"), "retrieval composite is emitted");
+    for (var entry : composites.entrySet()) {
+      assertFalse(entry.getValue().stale(), entry.getKey() + " should be fresh");
+      assertEquals(0L, entry.getValue().maxStalenessMs(), entry.getKey() + " maxStalenessMs");
+    }
   }
 
   // ---------------------------------------------------------------- helpers
