@@ -241,6 +241,55 @@ describe('a settled answer is rendered markdown, not the model\'s source text', 
     expect(text).not.toContain('- it is');
   });
 
+  it('renders the donor dialect as documents — headings, a table, a rule, task items', async () => {
+    // Tempdoc 822 §C2 slice S5. The gap report's decisive experiment, promoted to a fixture: the
+    // shape a model emits once the answer grammar asks for structure. Two claims are asserted
+    // together, because either alone would be satisfied by a broken window — the STRUCTURE reaches
+    // the DOM (a renderer that dropped a table would still show its cells as words), and the block
+    // WEARS the variant (the rules for that structure exist only under `:host([prose])`, so a turn
+    // that renders a table without the attribute renders a UA table with 1px cells).
+    aiOnline();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'what does the lease do?');
+
+    stream.emit('chunk', {
+      text: [
+        'The lease is renewed on every acquire.',
+        '',
+        '## The lock',
+        '',
+        '| Step | Result |',
+        '| --- | --- |',
+        '| acquire | held |',
+        '| release | free |',
+        '',
+        '---',
+        '',
+        '- [ ] renew the lease',
+        '- [x] release the lock',
+        '  - the nested note',
+      ].join('\n'),
+    });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+
+    const main = await region(el, 'jf-sv3-main');
+    const turn = firstTurn(main);
+    expect(blockIn(turn).hasAttribute('prose')).toBe(true);
+
+    const content = renderedIn(turn);
+    expect(content.querySelector('h2')?.textContent).toBe('The lock');
+    expect(content.querySelectorAll('table th')).toHaveLength(2);
+    expect(content.querySelectorAll('table td')).toHaveLength(4);
+    expect(content.querySelector('hr')).toBeTruthy();
+    expect(content.querySelectorAll('li input[type="checkbox"]')).toHaveLength(2);
+    expect(content.querySelectorAll('ul ul li')).toHaveLength(1);
+    // The raw-pipe probe, the table's equivalent of the raw-asterisk one above.
+    expect(content.textContent ?? '').not.toContain('|');
+  });
+
   it('renders through ONE block that survives the terminal, never a stream-then-swap', async () => {
     aiOnline();
     const stream = stubStream();

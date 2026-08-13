@@ -18,6 +18,21 @@
  *     move a pixel, and the test pins its exact value so it can never silently become a real one.
  *  3. **Call-site enumeration** — the ten shipped call sites, each with the test that covers it.
  *
+ * Slice S5 adds the other half of §C2 — the `:host([prose])` variant, which carries the rules that do
+ * not exist today (headings, tables, `hr`, `img`, task lists, the between-items rhythm). Its
+ * containment is the SELECTOR's, not a value's, so it is proved differently and the last three
+ * sections carry it:
+ *
+ *  4. **Selector gating** — no selector naming a variant element appears outside a `:host([prose])`
+ *     rule, and no default-path rule reads a variant-only token. A leaked rule on a selector the
+ *     fifteen tokens already touch (`blockquote`, `li`, `p`) additionally fails assertion 2 above.
+ *  5. **Frozen variant tokens** — the variant declares its OWN defaults (on `:host([prose])`, never
+ *     on `:host`, which would put declarations back on the default path), each pinned to the design
+ *     §2.3 value and each resolving to a token that is really defined, so a bare host with no sv3
+ *     sheet still renders a heading ramp rather than an unset one.
+ *  6. **Truncate/expand** — the donor's table rule (donor doc §9) as a pair: the clamped cell and its
+ *     complement, gated on a user-interaction pseudo-class.
+ *
  * These are source-level assertions on purpose: happy-dom does not compute cascaded shadow styles.
  * The live half of the proof was measured in a real browser against the running dev server (both
  * sides of one fixture, before and after the tokenization): the shipped-side probe — a bare
@@ -330,6 +345,23 @@ describe('the shipped consumer inventory is closed', () => {
       expect(text, `${file} re-points a geometry token`).not.toMatch(/--md-[\w-]+\s*:/);
     }
   });
+
+  it('has the ONE opted-in consumer set it at BOTH its call sites — the positive control', () => {
+    // Without this, the assertion above passes just as well against an attribute nobody sets and a
+    // variant nothing reaches: "no shipped surface opts in" only means something once some surface
+    // does. Search v3 is that surface (design §2.3/§2.4), at the settled answer and the agent-run
+    // text item — and NOT at the reasoning trace, which keeps the shipped geometry on purpose.
+    const sv3 = source('views/search-v3/Sv3Main.ts');
+    // Matched on the class the window dresses the renderer with, so the third `<jf-markdown-block`
+    // in that file — a mention inside a comment — is not counted as a call site.
+    const sites = sv3.match(/<jf-markdown-block[^>]*\sclass="sv3-markdown"/g)?.length ?? 0;
+    const opted = sv3.match(/<jf-markdown-block[^>]*\sprose/g)?.length ?? 0;
+    expect(sites).toBe(2);
+    expect(opted).toBe(2);
+    expect(source('components/chat/ReasoningBlock.ts')).not.toMatch(
+      /<jf-markdown-block[^>]*\sprose/,
+    );
+  });
 });
 
 describe('the ten shipped call sites render the block with no override of any kind', () => {
@@ -373,5 +405,261 @@ describe('the ten shipped call sites render the block with no override of any ki
     expect(block?.hasAttribute('prose')).toBe(false);
     expect(block?.className).toBe('');
     el.remove();
+  });
+});
+
+/* ── 4. Selector gating — the variant's containment (slice S5) ────────────────────────────────── */
+
+/** A selector naming an element the variant exists FOR: nothing outside the variant may style it. */
+const VARIANT_ELEMENT = /(^|[\s,>+~(])(h[1-6]|table|thead|tbody|tfoot|tr|th|td|hr|img)(?![\w-])/;
+
+const VARIANT_PREFIX = ':host([prose])';
+
+const variantRules = (): string[] => [...RULES.keys()].filter((s) => s.startsWith(VARIANT_PREFIX));
+const defaultRules = (): string[] => [...RULES.keys()].filter((s) => !s.startsWith(VARIANT_PREFIX));
+
+/** Every `--md-*` name the variant block declares. */
+const VARIANT_HOST = RULES.get(VARIANT_PREFIX) ?? new Map<string, string>();
+
+describe('the prose variant is reachable ONLY through the attribute', () => {
+  it('exists at all — a variant with no rules would pass every containment check below', () => {
+    expect(variantRules().length).toBeGreaterThan(15);
+  });
+
+  it('has a detector that really detects — the gate below is not vacuous', () => {
+    // `VARIANT_ELEMENT` is the whole force of the next assertion: if it matched nothing, "no leaked
+    // rule" would be true of every stylesheet ever written. So it is first shown to match the
+    // variant's own selectors (each of which WOULD be a leak if it lost its `:host([prose])`).
+    const matched = variantRules().filter((s) => VARIANT_ELEMENT.test(s));
+    for (const tag of ['h1', 'h2', 'h3', 'table', 'th, td', 'hr', 'img']) {
+      expect(
+        matched.some((s) => s.includes(tag)),
+        `nothing the detector matched mentions ${tag}`,
+      ).toBe(true);
+    }
+    expect(VARIANT_ELEMENT.test('.md-content h2')).toBe(true);
+    expect(VARIANT_ELEMENT.test('.md-content table')).toBe(true);
+    // …and does not fire on the default path's own selectors (`pre` is not `tr`, `code` is not `td`).
+    expect(VARIANT_ELEMENT.test('.md-content pre code')).toBe(false);
+    expect(VARIANT_ELEMENT.test('.md-content ul, .md-content ol')).toBe(false);
+    expect(VARIANT_ELEMENT.test('.md-content strong')).toBe(false);
+  });
+
+  it('styles no heading, table, hr or img outside a :host([prose]) rule', () => {
+    // The design's mechanism test: containment is a property of the SELECTOR, because a token cannot
+    // express "this rule exists" and any declared default would change shipped rendering the moment
+    // a model emits a heading. A consumer that never sets the attribute cannot be reached.
+    const leaked = defaultRules().filter((selector) => VARIANT_ELEMENT.test(selector));
+    expect(leaked, 'a variant element is styled on the default path').toEqual([]);
+  });
+
+  it('reads no variant-only token from a default-path rule', () => {
+    // The other direction of the same leak: a default rule reading `--md-h2-size` would inherit the
+    // variant's geometry through the back door, and the token's default lives in the variant block,
+    // so it would resolve to nothing at all on a shipped surface.
+    const variantOnly = [...VARIANT_HOST.keys()].filter((name) => name.startsWith('--md-'));
+    for (const selector of defaultRules()) {
+      const body = [...(RULES.get(selector) as Decls).values()].join(' ');
+      for (const name of variantOnly) {
+        expect(body, `${selector} reads the variant-only ${name}`).not.toContain(`var(${name})`);
+      }
+    }
+  });
+
+  it('declares the variant tokens on :host([prose]), never on :host', () => {
+    // On `:host` they would be declarations ADDED to the default path — exactly what S4 froze (and
+    // what the fifteen-name inventory assertion at the top of this file would fail on).
+    const onDefaultHost = [...HOST.keys()].filter((n) => n.startsWith('--md-'));
+    expect(onDefaultHost.sort()).toEqual(FROZEN_DEFAULTS.map(([name]) => name).sort());
+    expect([...VARIANT_HOST.keys()].every((n) => n.startsWith('--md-'))).toBe(true);
+  });
+});
+
+/* ── 5. The variant's own frozen defaults (design §2.3) ───────────────────────────────────────── */
+
+/** name → the value design §2.3 records for it, and what it is for. */
+const VARIANT_DEFAULTS: ReadonlyArray<readonly [string, string]> = [
+  ['--md-heading-weight', '600'],
+  ['--md-heading-line-height', '1.3'],
+  ['--md-heading-margin', '1.25rem 0 0.5rem'], //              asymmetric: a heading owns what follows
+  ['--md-table-size', 'var(--font-size-xs)'],
+  ['--md-table-cell-padding', '0.45rem 0.75rem'],
+  ['--md-table-rule', '1px solid var(--border-subtle)'],
+  ['--md-table-cell-max', '24rem'], //                         donor doc §9 truncation cap
+  ['--md-rule', '1px solid var(--border-subtle)'],
+  ['--md-item-adjacent-gap', '0.25rem'],
+];
+
+/** The shipped token sheet — the definition site the variant's defaults resolve through. */
+const TOKENS_CSS = readFileSync(join(HERE, '..', '..', '..', 'styles', 'tokens.css'), 'utf8');
+
+/**
+ * The donor dialect: every construct the variant exists for, in one answer. This is the gap report's
+ * decisive experiment (§C2/§5.3) promoted to a fixture — the shape a model emits once the answer
+ * grammar asks for structure, and the shape that renders as UA defaults without the variant.
+ */
+const DONOR_FIXTURE = [
+  // The lead paragraph is load-bearing for the ASSERTIONS, not for the fixture's realism: under
+  // happy-dom, DOMPurify's `<remove></remove>` prefix trick mis-parses and the sanitiser drops the
+  // FIRST element of every fragment (verified: `<h1>a</h1><h2>b</h2>` sanitizes to `a<h2>b</h2>`).
+  // A fixture opening with the heading would therefore assert against an artifact of the test DOM.
+  'The lease is renewed on every acquire.',
+  '',
+  '## The lock',
+  '',
+  '| Step | Result |',
+  '| --- | --- |',
+  '| acquire | held |',
+  '| release | free |',
+  '',
+  '---',
+  '',
+  '- [ ] renew the lease',
+  '- [x] release the lock',
+  '  - the nested note',
+  '',
+  '![the lease diagram](lease.png)',
+].join('\n');
+
+describe('the variant carries its own defaults, so it renders under any host', () => {
+  it('declares exactly the recorded set', () => {
+    expect([...VARIANT_HOST.keys()].sort()).toEqual(VARIANT_DEFAULTS.map(([n]) => n).sort());
+  });
+
+  it.each(VARIANT_DEFAULTS)('%s defaults to %s', (name, value) => {
+    expect(VARIANT_HOST.get(name)).toBe(value);
+  });
+
+  it('takes the heading scale from the SHIPPED type ramp, step for step', () => {
+    // The ramp is read DIRECTLY, not wrapped in a per-heading name: a second name for one value is
+    // a fork, and it is what made the style-literal ratchet (rightly) stop reading these as
+    // tokenized at all. A consumer retunes by re-pointing the ramp inside its own bridge — sv3's
+    // `--font-size-sv3-*` steps already equal the donor's heading scale, which is how the donor's
+    // numbers arrive without a single rem literal crossing into this component (§2.1).
+    const ramp: ReadonlyArray<readonly [string, string]> = [
+      ['h1', 'var(--font-size-xl)'],
+      ['h2', 'var(--font-size-lg)'],
+      ['h3', 'var(--font-size-md)'],
+    ];
+    for (const [tag, step] of ramp) {
+      const rule = RULES.get(`${VARIANT_PREFIX} .md-content ${tag}`) as Decls;
+      expect(rule, `no ${tag} rule`).toBeDefined();
+      expect(rule.get('font-size'), `${tag} size`).toBe(step);
+    }
+    const deep = RULES.get(`${VARIANT_PREFIX} .md-content :is(h4, h5, h6)`) as Decls;
+    expect(deep.get('font-size')).toBe('var(--font-size-sm)');
+    // …and no DECLARATION anywhere in the sheet names one window's private vocabulary (the comments
+    // may explain sv3's role; a value that referenced `--font-size-sv3-*` would BE the fork).
+    for (const [selector, decls] of RULES) {
+      for (const [prop, value] of decls) {
+        expect(`${selector} { ${prop}: ${value} }`).not.toContain('sv3');
+      }
+    }
+  });
+
+  it('resolves every token it references — no unset value under a host with no sheet of its own', () => {
+    // The failure this forbids is silent: an undefined custom property makes the whole declaration
+    // invalid-at-computed-value-time, so a heading would fall back to the UA's 21px/700 — the very
+    // rendering the variant exists to replace, and nothing would look broken enough to notice.
+    const referenced = new Set<string>();
+    for (const selector of [VARIANT_PREFIX, ...variantRules()]) {
+      for (const value of (RULES.get(selector) as Decls).values()) {
+        for (const m of value.matchAll(/var\((--[\w-]+)\)/g)) referenced.add(m[1] as string);
+      }
+    }
+    expect(referenced.size).toBeGreaterThan(0);
+    for (const name of referenced) {
+      const definedHere = HOST.has(name) || VARIANT_HOST.has(name);
+      const definedInTokens = new RegExp(`${name}\\s*:`).test(TOKENS_CSS);
+      expect(definedHere || definedInTokens, `${name} is referenced but defined nowhere`).toBe(true);
+    }
+  });
+
+  it('renders a heading, a table, a rule and a task list from the donor dialect', async () => {
+    // The rules above only mean something against markup that actually appears: `md.parse` + the
+    // sanitiser must emit each element, or the variant is styling nothing (the design's own reason
+    // for leaving footnotes and GFM alerts out — no markup, no rule).
+    const el = document.createElement('jf-markdown-block') as HTMLElement & { text: string };
+    el.setAttribute('prose', '');
+    el.text = DONOR_FIXTURE;
+    document.body.appendChild(el);
+    await settle(el);
+    const content = el.shadowRoot?.querySelector('.md-content') as HTMLElement;
+    expect(el.hasAttribute('prose')).toBe(true);
+    expect(content.querySelector('h2')?.textContent).toBe('The lock');
+    expect(content.querySelectorAll('table th')).toHaveLength(2);
+    expect(content.querySelectorAll('table td')).toHaveLength(4);
+    expect(content.querySelector('hr')).toBeTruthy();
+    expect(content.querySelectorAll('li input[type="checkbox"]')).toHaveLength(2);
+    expect(content.querySelectorAll('ul ul li')).toHaveLength(1);
+    el.remove();
+  });
+
+  it('renders the SAME markup without the attribute — the variant changes clothes, not structure', async () => {
+    const el = document.createElement('jf-markdown-block') as HTMLElement & { text: string };
+    el.text = DONOR_FIXTURE;
+    document.body.appendChild(el);
+    await settle(el);
+    const content = el.shadowRoot?.querySelector('.md-content') as HTMLElement;
+    expect(el.hasAttribute('prose')).toBe(false);
+    // Unstyled, not unrendered: the shipped surfaces have always emitted this markup and let the UA
+    // dress it. S5 does not change what a shipped consumer renders, only what a variant one wears.
+    expect(content.querySelector('h2')).toBeTruthy();
+    expect(content.querySelector('table')).toBeTruthy();
+    el.remove();
+  });
+});
+
+/* ── 6. The donor's table rule: truncate, and its complement (donor doc §9) ───────────────────── */
+
+const CELL = `${VARIANT_PREFIX} .md-content :is(th, td)`;
+const EXPANDED = `${VARIANT_PREFIX} .md-content tr:hover :is(th, td), ${VARIANT_PREFIX} .md-content tr:focus-within :is(th, td)`;
+
+describe('a table cell truncates by default and expands on demand', () => {
+  it('clamps the cell to one line at the recorded cap', () => {
+    const cell = RULES.get(CELL) as Decls;
+    expect(cell, 'the cell rule is not where the test expects it').toBeDefined();
+    expect(cell.get('max-inline-size')).toBe('var(--md-table-cell-max)');
+    expect(VARIANT_HOST.get('--md-table-cell-max')).toBe('24rem');
+    expect(cell.get('white-space')).toBe('nowrap');
+    expect(cell.get('overflow')).toBe('hidden');
+    expect(cell.get('text-overflow')).toBe('ellipsis');
+  });
+
+  it('restores word-boundary wrapping inside the cell, so a column’s floor is its longest word', () => {
+    // The second half of the donor note. Search v3 sets `word-break: break-word` on the block (an
+    // unbroken token in prose must not widen the measure) — inherited into a table that would let a
+    // column collapse mid-word. These two declarations are what stop that at the cell.
+    const cell = RULES.get(CELL) as Decls;
+    expect(cell.get('word-break')).toBe('normal');
+    expect(cell.get('overflow-wrap')).toBe('normal');
+  });
+
+  it('expands through a user-interaction pseudo-class, and undoes exactly what it clamped', () => {
+    // The donor's expand is a button on a table component we do not port (the design forbids DOM
+    // post-processing: `unsafeHTML` re-renders would fight it), so the affordance is the row. What
+    // this pins is that the pair is COMPLEMENTARY — every property the expanded rule sets is one the
+    // clamp set, to a different value. A rule that expanded without releasing the clamp, or that
+    // released it unconditionally, fails here.
+    const expanded = RULES.get(EXPANDED) as Decls;
+    expect(expanded, 'the expand rule is not where the test expects it').toBeDefined();
+    const cell = RULES.get(CELL) as Decls;
+    for (const [prop, value] of expanded) {
+      expect(cell.has(prop), `expanded sets ${prop}, which the clamp never set`).toBe(true);
+      expect(value, `expanded ${prop} repeats the clamped value`).not.toBe(cell.get(prop));
+    }
+    expect(expanded.get('white-space')).toBe('normal');
+    expect(EXPANDED).toContain(':hover');
+    expect(EXPANDED).toContain(':focus-within');
+  });
+
+  it('scrolls a table that is wider than the column instead of widening the column', () => {
+    // The bare `<table>` is its own scroll container (no wrapper is synthesized), so a wide table
+    // cannot push the answer past the reading measure.
+    const table = RULES.get(`${VARIANT_PREFIX} .md-content table`) as Decls;
+    expect(table.get('display')).toBe('block');
+    expect(table.get('overflow-x')).toBe('auto');
+    expect(table.get('max-inline-size')).toBe('100%');
+    expect(table.get('border-collapse')).toBe('collapse');
   });
 });

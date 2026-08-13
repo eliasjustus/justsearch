@@ -261,13 +261,16 @@ export class Sv3Main extends JfElement {
          re-mapping of those names onto sv3 tokens. Every mapping below cites the donor rule it
          carries (t3code@b73232b apps/web/src/index.css).
 
-         The recorded GAP's first half is CLOSED (tempdoc 822 §C2 slice S4): the renderer now names
-         its block geometry as '--md-*' on its own ':host' with byte-identical defaults, so donor
-         :1824 (block rhythm), :1970-1997 (the inline chip's edge + step-down, the pre chrome) and
-         :1933 (the quote rule) arrive from here as a re-mapping like every colour above. What is
-         still out of reach is the markup with NO rule at all — headings :1839-1855 and tables
-         :2101-2140 — because a token cannot express "this rule exists"; those land behind the
-         component's ':host([prose])' variant in slice S5, which this window then opts into. */
+         The recorded GAP is CLOSED (tempdoc 822 §C2, slices S4 + S5). Its first half: the renderer
+         names its block geometry as '--md-*' on its own ':host' with byte-identical defaults, so
+         donor :1824 (block rhythm), :1970-1997 (the inline chip's edge + step-down, the pre chrome)
+         and :1933 (the quote rule) arrive from here as a re-mapping like every colour above. Its
+         second half was the markup with NO rule at all — headings :1839-1855, tables :2101-2140, hr,
+         img, task lists — which no token can express, so it lives behind the renderer's
+         ':host([prose])' variant and this window OPTS IN at both transcript call sites (the settled
+         answer and the agent-run text item). The variant's own defaults are the shipped type ramp;
+         the heading re-points below are what makes them the donor's. The reasoning trace is
+         deliberately NOT opted in (§2.1): a compact trace should not adopt prose rhythm. */
       .sv3-markdown,
       .sv3-citations {
         /* Donor :1836 / :1972 — headings and code sit at full foreground. */
@@ -330,6 +333,21 @@ export class Sv3Main extends JfElement {
         /* Donor :1908 — a link is coloured, not underlined; the renderer's unconditional ':hover'
            rule restores the affordance under the pointer. */
         --md-link-decoration: none;
+
+        /* The prose variant's heading ramp (tempdoc 822 §2.3, slice S5). The variant reads the
+           SHIPPED type scale for h1/h2/h3 (and the already-re-pointed '--font-size-sm' for h4-h6),
+           so the donor's heading scale — :1839-1855, 1.25 / 1.125 / 1 / 0.875rem — arrives the same
+           way the two steps above do: as a re-point onto this window's own ramp, which already IS
+           that scale. Not one rem literal is copied (§2.1). Inside the renderer nothing else reads
+           these three steps, so re-pointing the ramp here retunes exactly the headings.
+           The variant's remaining defaults (weight 600, line-height 1.3, the asymmetric margin, the
+           table padding and rules, the 24rem truncation cap, the between-items gap) are already the
+           donor's numbers, or they read a colour/size token re-pointed above — so they are
+           deliberately NOT re-pointed; 'Sv3Main.imports.test.ts' carries that decision in writing,
+           name by name. */
+        --font-size-xl: var(--font-size-sv3-xl);
+        --font-size-lg: var(--font-size-sv3-lg);
+        --font-size-md: var(--font-size-sv3-base);
       }
       /* The expanded evidence sits under the TAIL ROW, not under the answer (Phase F11), so its
          rhythm is the row's own 8px. An outer-tree rule on the host beats the component's own :host
@@ -999,6 +1017,7 @@ export class Sv3Main extends JfElement {
                     >`
                   : html`<jf-markdown-block
                       class="sv3-markdown"
+                      prose
                       data-testid="sv3-turn-markdown"
                       .text=${turn.answer}
                       ?is-streaming=${streaming}
@@ -1313,7 +1332,7 @@ export class Sv3Main extends JfElement {
       // that showed raw asterisks beside a settled turn that did not would be two markdown policies
       // in one transcript. Never streaming — a feed entry arrives whole.
       return html`<div class="answer" data-testid="sv3-run-text">
-        <jf-markdown-block class="sv3-markdown" .text=${item.text}></jf-markdown-block>
+        <jf-markdown-block class="sv3-markdown" prose .text=${item.text}></jf-markdown-block>
       </div>`;
     }
     if (item.kind === 'tool') {

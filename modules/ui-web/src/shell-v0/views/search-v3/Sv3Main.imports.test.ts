@@ -243,6 +243,27 @@ const MD_GEOMETRY = [
   '--md-link-decoration',
 ] as const;
 
+/**
+ * The prose variant's own vocabulary (tempdoc 822 §2.3, slice S5) — declared on the renderer's
+ * `:host([prose])` rather than its `:host`, because these rules do not exist on the default path at
+ * all. Same closure discipline as above: this window OPTS IN at both transcript call sites, so every
+ * name here is either re-pointed or carries a written reason for keeping the variant's own default.
+ */
+const MD_PROSE = [
+  '--md-heading-weight',
+  '--md-heading-line-height',
+  '--md-heading-margin',
+  '--md-table-size',
+  '--md-table-cell-padding',
+  '--md-table-rule',
+  '--md-table-cell-max',
+  '--md-rule',
+  '--md-item-adjacent-gap',
+] as const;
+
+/** The shipped ramp steps the variant's headings read directly — h1/h2/h3 (h4-h6 take `-sm`). */
+const MD_PROSE_RAMP = ['--font-size-xl', '--font-size-lg', '--font-size-md'] as const;
+
 const reasons = (names: readonly string[], why: string): Record<string, string> =>
   Object.fromEntries(names.map((name) => [name, why]));
 
@@ -267,13 +288,23 @@ describe('the three imported components read NO token the window leaves unbridge
       'jf-reasoning-block',
       componentSource('ReasoningBlock.ts') + componentSource('MarkdownBlock.ts'),
       [],
-      reasons(
-        MD_GEOMETRY,
-        'the reasoning trace keeps the SHIPPED geometry (tempdoc 822 §2.1): a compact trace should ' +
-          'not adopt prose rhythm, and a :host declaration blocks inheritance, so this is the ' +
-          'outcome by construction — the remedy, if it is ever wanted, is a forwarding block in ' +
-          'ReasoningBlock.ts, not a re-point here.',
-      ),
+      {
+        ...reasons(
+          MD_GEOMETRY,
+          'the reasoning trace keeps the SHIPPED geometry (tempdoc 822 §2.1): a compact trace ' +
+            'should not adopt prose rhythm, and a :host declaration blocks inheritance, so this is ' +
+            'the outcome by construction — the remedy, if it is ever wanted, is a forwarding block ' +
+            'in ReasoningBlock.ts, not a re-point here.',
+        ),
+        ...reasons(
+          [...MD_PROSE, ...MD_PROSE_RAMP],
+          'the prose variant (tempdoc 822 §2.3, slice S5) is UNREACHABLE here: the reasoning block ' +
+            'never sets the `prose` attribute, so every rule reading these names — the variant ' +
+            'defaults on the renderer\'s own `:host([prose])`, and the ramp steps its headings read ' +
+            'directly — applies to no element in the trace. Re-pointing them from this bridge would ' +
+            'dress a surface that cannot render.',
+        ),
+      },
     );
   });
 
@@ -303,6 +334,51 @@ describe('the three imported components read NO token the window leaves unbridge
     expect(scope.get('--md-pre-radius')).toBe('var(--radius)');
     expect(scope.get('--md-link-decoration')).toBe('none');
   });
+
+  it('dresses the prose variant it opts into — the heading ramp re-pointed, the rest by decision', () => {
+    // Slice S5. The window sets `prose` on both transcript blocks, so the variant's names are LIVE
+    // here and the same closure rule applies: re-pointed, or written down. What is deliberately not
+    // re-pointed is the majority — because the variant's own defaults already ARE the donor's
+    // numbers, or they read a token this bridge has already re-pointed one line above.
+    const KEEPS_VARIANT: Readonly<Record<string, string>> = {
+      '--md-heading-weight': 'the variant default (600) is already the donor value (index.css:1839)',
+      '--md-heading-line-height': 'the variant default (1.3) is already the donor value',
+      '--md-heading-margin':
+        'the variant default (1.25rem 0 0.5rem) is already the donor asymmetric margin',
+      '--md-table-size':
+        'the variant reads --font-size-xs, which this bridge re-points to --font-size-sv3-xs ' +
+        '(12px, donor index.css:2107) — re-pointing it here would be a second authority for one value',
+      '--md-table-cell-padding': 'the variant default (0.45rem 0.75rem) is already the donor value',
+      '--md-table-rule':
+        'the variant reads --border-subtle, which this bridge re-points to the window --border',
+      '--md-rule': 'same as --md-table-rule: the rule hue arrives through the re-pointed --border-subtle',
+      '--md-table-cell-max': 'the variant default (24rem) is already the donor truncation cap',
+      '--md-item-adjacent-gap':
+        'the variant default (0.25rem) is already the donor li + li gap (index.css:1861)',
+    };
+    const scope = bridgeFor(MAIN, '\\.sv3-markdown');
+    const missing = MD_PROSE.filter((name) => !scope.has(name) && !(name in KEEPS_VARIANT));
+    expect(missing, 'the transcript prose reads a variant token the window never re-points').toEqual(
+      [],
+    );
+    for (const name of Object.keys(KEEPS_VARIANT)) {
+      expect(scope.has(name), `${name} is allow-listed but ALSO re-pointed`).toBe(false);
+    }
+    // What DOES move: the heading scale, re-pointed as the RAMP the variant reads directly — the
+    // same idiom as the two steps the bridge already carries for the inline chip and the code block.
+    // The donor's scale (index.css:1839-1855) IS this window's ramp, step for step, which is why no
+    // rem literal of the donor's is copied into the shared renderer (design §2.1).
+    expect(scope.get('--font-size-xl')).toBe('var(--font-size-sv3-xl)');
+    expect(scope.get('--font-size-lg')).toBe('var(--font-size-sv3-lg)');
+    expect(scope.get('--font-size-md')).toBe('var(--font-size-sv3-base)');
+    // h4-h6 need no fourth line: they read `--font-size-sm`, which the shared colour/size bridge
+    // one rule above already points at `--font-size-sv3-sm` (asserted there).
+    expect(TOKENS.get('--font-size-sv3-xl')).toBe('1.25rem'); //   donor h1
+    expect(TOKENS.get('--font-size-sv3-lg')).toBe('1.125rem'); //  donor h2
+    expect(TOKENS.get('--font-size-sv3-base')).toBe('1rem'); //    donor h3
+    expect(TOKENS.get('--font-size-sv3-sm')).toBe('0.875rem'); //  donor h4-h6 (= body)
+  });
+
 
   it('caps the answer column at the donor measure, on the window and not in the renderer', () => {
     // Tempdoc 822 §2.5 — the measure is the COLUMN's property; the shipped chat sets it on its own

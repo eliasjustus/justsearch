@@ -147,6 +147,7 @@ export class MarkdownBlock extends JfElement {
     format: { type: String, reflect: true },
     citations: { attribute: false },
     frame: { type: String, reflect: true },
+    prose: { type: Boolean, reflect: true },
   };
 
   declare text: string;
@@ -162,6 +163,13 @@ export class MarkdownBlock extends JfElement {
    * fabricated-citations defect). Default `grounded` is a no-op.
    */
   declare frame: AnswerFrame;
+  /**
+   * Tempdoc 822 §C2/§2.3 (slice S5) — the opt-in prose variant. Off is the shipped rendering, and a
+   * consumer that never sets it cannot be reached by a single variant rule (the containment is the
+   * selector's, not a value comparison). A surface sets it when its answers are DOCUMENTS —
+   * headings, tables, rules — rather than the compact chat/trace prose the defaults are cut for.
+   */
+  declare prose: boolean;
 
   private rafId: number | null = null;
   private pendingText: string | null = null;
@@ -175,6 +183,7 @@ export class MarkdownBlock extends JfElement {
     this.format = 'markdown';
     this.citations = [];
     this.frame = 'grounded';
+    this.prose = false;
   }
 
   private onCopy = (e: ClipboardEvent): void => {
@@ -400,6 +409,154 @@ export class MarkdownBlock extends JfElement {
       margin: var(--md-block-gap-wide) 0;
       color: var(--text-secondary);
     }
+
+    /* ── Tempdoc 822 §C2/§2.3 (slice S5) — the opt-in prose variant ─────────────────────────────
+       Everything below is markup this stylesheet declares NOTHING for today (headings, tables, hr,
+       img, task lists) or a rhythm the shipped surfaces deliberately do not have. A token cannot
+       express "this rule exists" and any declared default would change shipped rendering the moment
+       a model emits a heading — so containment here is a property of the SELECTOR, not of a value:
+       a consumer that does not set the attribute cannot be reached by ANY of it, and
+       'MarkdownBlock.geometry.test.ts' proves no heading/table/hr/img selector lives outside this
+       block. The variant's own tokens are declared on ':host([prose])' rather than ':host' for the
+       same reason — a ':host' declaration would add declarations to the default path, which is the
+       thing slice S4 froze. Values are the SHIPPED type ramp plus generic geometry; the donor's
+       numbers arrive only through a consumer's override (license containment, §2.1). */
+    :host([prose]) {
+      --md-heading-weight: 600;
+      --md-heading-line-height: 1.3;
+      /* Asymmetric on purpose — a heading belongs to what FOLLOWS it, so the space above is the
+         separation from the previous block and the space below is not. */
+      --md-heading-margin: 1.25rem 0 0.5rem;
+      --md-table-size: var(--font-size-xs);
+      --md-table-cell-padding: 0.45rem 0.75rem;
+      --md-table-rule: 1px solid var(--border-subtle);
+      /* The truncation cap (donor doc §9, 'index.css:2127-2140' — the rule that doc named worth
+         lifting): a single-line cell so arbitrary chat content cannot blow a column out. */
+      --md-table-cell-max: 24rem;
+      --md-rule: 1px solid var(--border-subtle);
+      /* The gap lives BETWEEN items, not around each one — pairs with a consumer setting
+         '--md-item-gap: 0' (the shipped default keeps its symmetric margins). */
+      --md-item-adjacent-gap: 0.25rem;
+    }
+    :host([prose]) .md-content :is(h1, h2, h3, h4, h5, h6) {
+      font-weight: var(--md-heading-weight);
+      line-height: var(--md-heading-line-height);
+      margin: var(--md-heading-margin);
+    }
+    /* The heading scale is the SHIPPED type ramp, step for step — the one typographic authority,
+       read directly rather than wrapped in a second name (which would be a fork, and which the
+       style-literal ratchet is right to distrust). A consumer retunes the ramp inside its own bridge:
+       sv3 points these three steps at its '--font-size-sv3-*' scale, which already equals the
+       donor's heading scale, so no rem literal of the donor's is copied here (§2.1). Nothing else in
+       this stylesheet reads xl/lg/md, so "the ramp step" and "the heading size" are the same knob. */
+    :host([prose]) .md-content h1 {
+      font-size: var(--font-size-xl);
+    }
+    :host([prose]) .md-content h2 {
+      font-size: var(--font-size-lg);
+    }
+    :host([prose]) .md-content h3 {
+      font-size: var(--font-size-md);
+    }
+    /* h4-h6 share the bottom step — the ramp bottoms out there, and so does the donor's: the
+       deepest headings sit at body size and are distinguished by weight alone. */
+    :host([prose]) .md-content :is(h4, h5, h6) {
+      font-size: var(--font-size-sm);
+    }
+    /* The deepest step recedes rather than shrinking further (there is no smaller step). */
+    :host([prose]) .md-content h6 {
+      color: var(--text-secondary);
+    }
+    :host([prose]) .md-content table {
+      width: 100%;
+      /* The renderer emits a BARE <table> — there is no wrapper element to scroll, and synthesising
+         one would fight 'unsafeHTML': every re-render rebuilds this subtree, so a post-processed
+         wrapper would have to be re-applied on each frame. A block-level table scrolls itself. */
+      display: block;
+      overflow-x: auto;
+      max-inline-size: 100%;
+      border-collapse: collapse;
+      font-size: var(--md-table-size);
+      margin: var(--md-block-gap-wide) 0;
+    }
+    :host([prose]) .md-content :is(th, td) {
+      padding: var(--md-table-cell-padding);
+      border-bottom: var(--md-table-rule);
+      /* Truncate: one line per cell, clipped at the cap, so a pasted path or a long sentence cannot
+         widen the column past the reading measure (donor doc §9). */
+      max-inline-size: var(--md-table-cell-max);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      /* The word-boundary restoration the same donor note calls for: a consumer that sets
+         'word-break: break-word' on the block (sv3 does, so an unbroken token in prose cannot widen
+         the measure) would otherwise let a table column collapse mid-word. Inside a cell the
+         minimum column width is the longest WORD. */
+      word-break: normal;
+      overflow-wrap: normal;
+    }
+    :host([prose]) .md-content th {
+      text-align: start;
+      font-weight: 600;
+    }
+    /* Expand: the donor's control is a button on a table component we do not port (no DOM
+       post-processing, see above), so the affordance is the row itself — pointing at or tabbing into
+       a truncated row releases the single-line clamp and the cells wrap to their full content. The
+       row, not the cell, because expanding one cell reflows the whole row anyway. */
+    :host([prose]) .md-content tr:hover :is(th, td),
+    :host([prose]) .md-content tr:focus-within :is(th, td) {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+    }
+    :host([prose]) .md-content hr {
+      border: 0;
+      border-top: var(--md-rule);
+      margin: var(--md-block-gap-wide) 0;
+    }
+    :host([prose]) .md-content img {
+      max-inline-size: 100%;
+      height: auto;
+      border-radius: var(--md-pre-radius);
+    }
+    /* GFM task lists: the checkbox replaces the marker and reclaims the list indent, so a checked
+       item lines up with the prose above it instead of hanging off a bullet. */
+    :host([prose]) .md-content li:has(> input[type='checkbox']) {
+      list-style: none;
+      margin-inline-start: calc(var(--md-list-indent) * -1);
+    }
+    :host([prose]) .md-content li > input[type='checkbox'] {
+      margin-inline-end: 0.4em;
+    }
+    :host([prose]) .md-content li + li {
+      margin-block-start: var(--md-item-adjacent-gap);
+    }
+    /* A nesting vocabulary: depth is readable from the marker alone. */
+    :host([prose]) .md-content ul ul {
+      list-style: circle;
+    }
+    :host([prose]) .md-content ul ul ul {
+      list-style: square;
+    }
+    :host([prose]) .md-content ol ol {
+      list-style: lower-alpha;
+    }
+    :host([prose]) .md-content ol ol ol {
+      list-style: lower-roman;
+    }
+    /* Four-sided, not just the left inset: a quote in prose rhythm is a block, not an indent. */
+    :host([prose]) .md-content blockquote {
+      padding: var(--md-quote-padding);
+    }
+    /* The block's own edges belong to the container, for EVERY block child — the default path zeroes
+       only 'p' (the only block it can be sure a shipped surface renders). */
+    :host([prose]) .md-content > :first-child {
+      margin-block-start: 0;
+    }
+    :host([prose]) .md-content > :last-child {
+      margin-block-end: 0;
+    }
+
     .cursor {
       display: inline-block;
       width: 0.5ch;
