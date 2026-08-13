@@ -131,6 +131,34 @@ function modulePathFor(root, filePath) {
   return buildIndex === -1 ? '<unknown>' : rel.slice(0, buildIndex);
 }
 
+// Develocity's test-retry extension re-executes a flaky test in place: the retried
+// attempt is written as ANOTHER <testcase> entry with the same classname+name inside the
+// SAME <testsuite> (the failed attempt carries a nested <failure>/<error>, the passing
+// retry is bare or self-closing). The suite's own `tests=` attribute counts every attempt,
+// so retries silently inflate totals/module/slowestSuites below unless the duplicate
+// testcase entries are parsed and grouped explicitly (tempdoc 829 F5/R5).
+function parseTestcases(text) {
+  const testcases = [];
+  const re = /<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g;
+  for (const match of text.matchAll(re)) {
+    const attrs = attrsFrom(match[1]);
+    const body = match[2] || '';
+    const failureTagMatch = /<(failure|error)\b([^>]*)>/.exec(body);
+    let failureMessage = null;
+    if (failureTagMatch) {
+      const tagAttrs = attrsFrom(failureTagMatch[2]);
+      failureMessage = tagAttrs.message || null;
+    }
+    testcases.push({
+      classname: attrs.classname || '',
+      name: attrs.name || '',
+      failed: failureTagMatch !== null,
+      failureMessage,
+    });
+  }
+  return testcases;
+}
+
 function parseSuite(root, filePath) {
   const text = fs.readFileSync(filePath, 'utf8');
   const suiteMatch = /<testsuite\b([^>]*)>/s.exec(text);
@@ -145,7 +173,46 @@ function parseSuite(root, filePath) {
     failures: asInt(attrs.failures),
     errors: asInt(attrs.errors),
     timeSeconds: asNumber(attrs.time),
+    testcases: parseTestcases(text),
   };
+}
+
+function truncate(text, maxLength) {
+  if (!text) return null;
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+}
+
+// Group testcase entries by (file, classname, name) — scoped to one suite file, since a
+// retry re-executes within the same JUnit XML run. N>1 entries with at least one
+// failed+one clean = flaky (self-recovered). N>1 entries that are ALL failed is a
+// genuinely failing test, not a flake, and is excluded.
+function detectFlakyTests(rawSuites) {
+  const groups = new Map();
+  for (const suite of rawSuites) {
+    for (const testcase of suite.testcases) {
+      const key = `${suite.file}::${testcase.classname}::${testcase.name}`;
+      const entries = groups.get(key) || [];
+      entries.push({ ...testcase, module: suite.module });
+      groups.set(key, entries);
+    }
+  }
+  const flakyTests = [];
+  for (const entries of groups.values()) {
+    if (entries.length < 2) continue;
+    const hasFailure = entries.some((entry) => entry.failed);
+    const hasClean = entries.some((entry) => !entry.failed);
+    if (!hasFailure || !hasClean) continue;
+    const firstFailure = entries.find((entry) => entry.failed);
+    flakyTests.push({
+      classname: entries[0].classname,
+      name: entries[0].name,
+      module: entries[0].module,
+      attempts: entries.length,
+      firstFailureMessage: truncate(firstFailure?.failureMessage, 200),
+    });
+  }
+  flakyTests.sort((a, b) => a.classname.localeCompare(b.classname) || a.name.localeCompare(b.name));
+  return flakyTests;
 }
 
 function runnerInfo(opts, env = process.env) {
@@ -164,9 +231,11 @@ function round3(n) {
 }
 
 export function buildReport({ root, lane = null, top = 20, runner = runnerInfo({}) }) {
-  const suites = walk(root)
+  const rawSuites = walk(root)
     .map((filePath) => parseSuite(root, filePath))
     .filter(Boolean);
+  const flakyTests = detectFlakyTests(rawSuites);
+  const suites = rawSuites.map(({ testcases: _testcases, ...suite }) => suite);
   const modules = new Map();
   const totals = {
     suites: suites.length,
@@ -215,6 +284,7 @@ export function buildReport({ root, lane = null, top = 20, runner = runnerInfo({
       .map(rounded)
       .sort((a, b) => b.timeSeconds - a.timeSeconds || a.name.localeCompare(b.name))
       .slice(0, top),
+    flakyTests,
   };
 }
 
@@ -244,6 +314,26 @@ export function renderMarkdown(report) {
   lines.push('', '| Slow suite | Module | Tests | Skipped | Failures | Errors | Time |', '|---|---|---:|---:|---:|---:|---:|');
   for (const suite of report.slowestSuites) {
     lines.push(`| ${suite.name} | ${suite.module} | ${suite.tests} | ${suite.skipped} | ${suite.failures} | ${suite.errors} | ${fmtSeconds(suite.timeSeconds)} |`);
+  }
+
+  const flakyTests = report.flakyTests || [];
+  lines.push('', `Flaky tests (self-recovered on Develocity retry): ${flakyTests.length}.`);
+  if (flakyTests.length > 0) {
+    lines.push(
+      '',
+      // Tempdoc 829 F5/R5: each flaky test below re-executed via the Develocity retry
+      // extension, and every attempt is counted in the `Total`/module/slow-suite figures
+      // above — those sums are inflated by the retried attempts, not just the flake count.
+      'Caution: retried executions inflate the timing/test-count totals above — every retry ' +
+        'attempt is a separate `<testcase>` entry that the totals sum over.',
+      '',
+      '| Test | Module | Attempts | First failure |',
+      '|---|---|---:|---|',
+    );
+    for (const flaky of flakyTests) {
+      const message = (flaky.firstFailureMessage || '').replaceAll('|', '\\|').replaceAll('\n', ' ');
+      lines.push(`| ${flaky.classname}.${flaky.name} | ${flaky.module} | ${flaky.attempts} | ${message} |`);
+    }
   }
   lines.push('');
   return `${lines.join('\n')}\n`;

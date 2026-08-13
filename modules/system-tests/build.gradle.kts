@@ -283,6 +283,41 @@ val integrationTest = tasks.register<Test>("integrationTest") {
       "justsearch.worker.lib.dir",
       project(":modules:indexer-worker").layout.buildDirectory
           .dir("install/indexer-worker/lib").get().asFile.absolutePath)
+
+  // Tempdoc 829 R3 — this lane is advisory (ci.yml `continue-on-error: true`) and absent
+  // from `required_status_checks.contexts`, so a self-recovered flake here cannot change
+  // mergeability; it only reddens the check and invites a pointless `gh run rerun --failed`
+  // (F1: 12 such reruns measured 2026-08-13, every attempt-1 already `success`). The
+  // convention plugin sets failOnPassedAfterRetry=true for every Test task, in CI, to keep
+  // flakes loud (JvmBaseConventionsPlugin.kt:119-143) — correct for required lanes, wrong
+  // here. Override it to false for THIS task only, using the same reflective pattern (the
+  // Develocity 4.x testRetry extension type is shaded, so it can't be referenced directly).
+  // maxRetries is left untouched, so retry itself still runs. This task-level configuration
+  // action is registered after the convention plugin's project-wide
+  // `tasks.withType<Test>().configureEach { ... }`, so it applies last and wins — the same
+  // ordering this file already relies on for other Test-wide convention overrides (e.g.
+  // `maxHeapSize` below for systemTest/soakTest vs. the convention's 384m default).
+  // Flake VISIBILITY does not disappear: it moves to the flaky-test extraction in
+  // unit-test attribution (tempdoc 829 R5, same PR). Revisit when this lane joins required
+  // contexts (tempdoc 825 §3 is that path).
+  val retryExt = extensions.findByName("develocity")?.let { devExt ->
+    try {
+      devExt.javaClass.getMethod("getTestRetry").invoke(devExt)
+    } catch (_: Exception) {
+      null
+    }
+  } ?: extensions.findByName("retry")
+  retryExt?.let { ext ->
+    try {
+      val failOnPassedProp = ext.javaClass.getMethod("getFailOnPassedAfterRetry").invoke(ext)
+      @Suppress("UNCHECKED_CAST")
+      (failOnPassedProp as org.gradle.api.provider.Property<Boolean>).set(false)
+    } catch (e: ReflectiveOperationException) {
+      logger.warn("Could not configure test retry via reflection: ${e.message}")
+    } catch (e: ClassCastException) {
+      logger.warn("Test retry extension has unexpected type: ${e.message}")
+    }
+  }
 }
 
 // System test task (Chaos Suite)
