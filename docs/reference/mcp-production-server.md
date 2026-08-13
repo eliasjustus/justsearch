@@ -129,7 +129,8 @@ same JVM as the Head process. No Node.js required.
 **Transport security.** The spec's Streamable-HTTP security clause ("Servers **MUST** validate the
 `Origin` header on all incoming connections to prevent DNS rebinding attacks... If the `Origin`
 header is present and invalid, servers **MUST** respond with HTTP 403 Forbidden") is enforced on
-every method served at `/mcp` by `ApiSecurityFilters.setupMcpOriginValidation`. The rules:
+every method served at `/mcp` — **and on `GET /api/mcp/token`**, the session-token bootstrap — by
+`ApiSecurityFilters.setupMcpOriginValidation`. The rules:
 
 | `Origin` on the request | Outcome |
 |---|---|
@@ -137,16 +138,29 @@ every method served at `/mcp` by `ApiSecurityFilters.setupMcpOriginValidation`. 
 | loopback (`http(s)://127.0.0.1`, `localhost`, `[::1]`, any port) | served |
 | desktop shell (`tauri://localhost`, `http(s)://tauri.localhost`) | served |
 | `null` (sandboxed/`file://` context) | **403** — no host to verify, and no MCP client produces it |
-| anything else | **403**, JSON-RPC error body with no `id` |
+| anything else | **403**, JSON-RPC error body with no `id` (plain `{error, errorCode}` on the token route, which is not a JSON-RPC endpoint) |
 
 The value is parsed as a URI and its **host component** compared for equality, so a lookalike such
 as `http://127.0.0.1.evil.com` is rejected. This composes with — and does not replace — the
 API-wide `Host`-header allowlist and the loopback bind; see
 [`security/threat-model.md`](security/threat-model.md).
 
-Not yet conformant: the spec also says the MCP endpoint MUST support `GET` (returning either
-`text/event-stream` or **405 Method Not Allowed** when the server offers no SSE stream there);
-`GET /mcp` returns 404 (live-verified against a running stack, 2026-08-12). Tracked as a follow-up.
+**Methods on `/mcp`.** The spec requires the single endpoint to support both `POST` and `GET`,
+answering a `GET` with either a `text/event-stream` SSE stream or **405 Method Not Allowed** when
+the server offers none:
+
+| Method | Response |
+|---|---|
+| `POST` | JSON-RPC request/response — the whole protocol surface |
+| `DELETE` | `204`, ends the session named by `Mcp-Session-Id` |
+| `GET` | **405** with `Allow: POST, DELETE` and a JSON-RPC error body (`MCP_METHOD_NOT_ALLOWED`) |
+
+JustSearch serves **no SSE stream** at `/mcp`: every response is the direct reply to a `POST`, and
+nothing pushes unsolicited JSON-RPC to a connected client. Adding one would need a per-session push
+channel plus the spec's resumability machinery (`Last-Event-ID`, event ids) — a **product**
+decision, not a conformance one. 405 is the spec's own answer for a server without such a stream,
+so the transport is conformant as it stands. (Before this, `GET /mcp` returned 404 — live-verified
+2026-08-12 — which told a probing client nothing about the endpoint.)
 
 Protocol version: `2025-11-25`. Capabilities: tools, resources,
 prompts. Curated tool-surface version (single-sourced from

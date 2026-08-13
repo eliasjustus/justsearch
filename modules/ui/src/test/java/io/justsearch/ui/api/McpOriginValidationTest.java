@@ -226,6 +226,109 @@ class McpOriginValidationTest {
         "A foreign origin still gets no CORS grant");
   }
 
+  // ---- GET /mcp: Streamable-HTTP conformance, and its interaction with the Origin guard ----
+
+  /**
+   * The spec requires the single endpoint to support GET, answering with either an SSE stream or
+   * 405. JustSearch offers no stream there, so 405 + {@code Allow} is the conformant answer; before
+   * this it 404'd, which tells a probing client nothing. The {@code Allow} header is asserted
+   * verbatim because a 405 without it is not a well-formed method-rejection (RFC 9110 §15.5.6 makes
+   * {@code Allow} mandatory on 405).
+   */
+  @Test
+  @DisplayName("Live: GET /mcp with no Origin is 405 + Allow — the spec's answer for a server with no SSE stream")
+  void liveGetWithoutOriginIsMethodNotAllowed() throws Exception {
+    startServerWithProductionFilters();
+    HttpResponse<String> resp = get(LocalApiServer.MCP_ENDPOINT_PATH, null);
+
+    assertEquals(405, resp.statusCode(), "Not 404: the endpoint exists and must say so");
+    assertEquals(
+        "POST, DELETE",
+        resp.headers().firstValue("Allow").orElse(null),
+        "405 MUST carry Allow naming the methods this endpoint does serve");
+    assertTrue(resp.body().contains("\"jsonrpc\":\"2.0\""), "Body should be JSON-RPC shaped: " + resp.body());
+    assertTrue(resp.body().contains("\"id\":null"), "JSON-RPC error must carry no request id: " + resp.body());
+    assertTrue(resp.body().contains("MCP_METHOD_NOT_ALLOWED"), "Body should name the error code: " + resp.body());
+  }
+
+  @Test
+  @DisplayName("Live: GET /mcp from a loopback Origin is 405 + Allow — the guard admits it, the method rejects it")
+  void liveGetFromLoopbackOriginIsMethodNotAllowed() throws Exception {
+    startServerWithProductionFilters();
+    HttpResponse<String> resp = get(LocalApiServer.MCP_ENDPOINT_PATH, "http://127.0.0.1:5173");
+
+    assertEquals(405, resp.statusCode());
+    assertEquals("POST, DELETE", resp.headers().firstValue("Allow").orElse(null));
+  }
+
+  /**
+   * Ordering matters: the Origin guard is a before-filter, so a foreign caller must be told 403
+   * (unauthorized) and never 405 (which would confirm the endpoint's method surface to an origin
+   * that has no business learning it). Asserting the absent {@code Allow} header is what
+   * distinguishes "the guard ran first" from "the guard happens to also 403 after the handler".
+   */
+  @Test
+  @DisplayName("Live: GET /mcp from a foreign Origin is 403 — the guard wins over the 405")
+  void liveGetFromForeignOriginIsForbiddenNotMethodNotAllowed() throws Exception {
+    startServerWithProductionFilters();
+    HttpResponse<String> resp = get(LocalApiServer.MCP_ENDPOINT_PATH, "http://evil.example.com");
+
+    assertEquals(403, resp.statusCode(), "The Origin guard must pre-empt the 405");
+    assertTrue(
+        resp.headers().firstValue("Allow").isEmpty(),
+        "A rejected origin must not learn the endpoint's method surface");
+    assertTrue(resp.body().contains("MCP_ORIGIN_FORBIDDEN"), "Body should name the guard's error code: " + resp.body());
+    assertFalse(resp.body().contains("MCP_METHOD_NOT_ALLOWED"), "The 405 handler must not have run");
+  }
+
+  // ---- GET /api/mcp/token: the session-token bootstrap, guarded on the same terms ----
+
+  /**
+   * The token route hands out — unauthenticated by construction — the credential that gates every
+   * mutating call, so it belongs to the MCP transport's attack surface. Every legitimate caller is
+   * a native process sending no Origin (the MCPB bridge, {@code justsearch-mcp/discovery.mjs}, the
+   * sandbox probes); the desktop shell reads the token from the runtime manifest instead, and no
+   * {@code ui-web} code calls it — so these two assertions together pin both that the guard bites
+   * and that it costs no real caller anything.
+   */
+  @Test
+  @DisplayName("Live: GET /api/mcp/token from a foreign Origin is 403 — the token never leaves")
+  void liveTokenFromForeignOriginIsForbidden() throws Exception {
+    startServerWithProductionFilters();
+    HttpResponse<String> resp = get(LocalApiServer.MCP_TOKEN_PATH, "http://evil.example.com");
+
+    assertEquals(403, resp.statusCode());
+    assertFalse(resp.body().contains("test-token"), "The token must not appear in a denied response: " + resp.body());
+    assertTrue(resp.body().contains("MCP_ORIGIN_FORBIDDEN"), "Body should name the error code: " + resp.body());
+    assertFalse(
+        resp.body().contains("\"jsonrpc\""),
+        "The token route is not JSON-RPC — its deny body uses the repo's {error, errorCode} shape: " + resp.body());
+  }
+
+  @Test
+  @DisplayName("Live: GET /api/mcp/token with absent or loopback Origin is served — no legitimate caller regresses")
+  void liveTokenFromLegitimateCallersIsServed() throws Exception {
+    startServerWithProductionFilters();
+
+    HttpResponse<String> nativeCaller = get(LocalApiServer.MCP_TOKEN_PATH, null);
+    assertEquals(200, nativeCaller.statusCode(), "Native MCP bridges send no Origin");
+    assertTrue(nativeCaller.body().contains("test-token"));
+
+    assertEquals(200, get(LocalApiServer.MCP_TOKEN_PATH, "http://127.0.0.1:5173").statusCode());
+    assertEquals(200, get(LocalApiServer.MCP_TOKEN_PATH, "tauri://localhost").statusCode());
+  }
+
+  private HttpResponse<String> get(String path, String origin) throws Exception {
+    var builder =
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+            .timeout(Duration.ofSeconds(3))
+            .GET();
+    if (origin != null) {
+      builder.header("Origin", origin);
+    }
+    return client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+  }
+
   private HttpResponse<String> post(String origin) throws Exception {
     var builder =
         HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/mcp"))
@@ -283,6 +386,12 @@ class McpOriginValidationTest {
 
     app.post(LocalApiServer.MCP_ENDPOINT_PATH, ctx -> ctx.json(Map.of("handled", true)));
     app.delete(LocalApiServer.MCP_ENDPOINT_PATH, ctx -> ctx.status(204));
+    // The PRODUCTION 405 handler, not a stand-in: it is static precisely so the conformance
+    // assertions below bind the shipped code path (see McpProtocolHandler#handleGet).
+    app.get(
+        LocalApiServer.MCP_ENDPOINT_PATH,
+        io.justsearch.ui.api.mcp.McpProtocolHandler::handleGet);
+    app.get(LocalApiServer.MCP_TOKEN_PATH, ctx -> ctx.json(Map.of("token", "test-token")));
     app.get("/api/status", ctx -> ctx.json(Map.of("status", "ok")));
 
     app.start("127.0.0.1", 0);
