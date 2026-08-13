@@ -396,7 +396,7 @@ Source: slices 491 (substrate), 496 (FreeChat + Extract), 497 (dynamic dispatch)
 
 **Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java`
 
-**Transport:** Streamable HTTP at `POST /mcp` on the existing Javalin server (loopback-only). Protocol version `2025-11-25` (single-sourced in `io.justsearch.app.api.mcp.McpContractVersions`). No separate process. The `/mcp` endpoint + curated tool set is one of the three **Runtime Contract** public surfaces (tempdoc 654); `serverInfo.version` carries the BUILD version and `serverInfo._meta["io.justsearch/toolSurfaceVersion"]` the SemVer tool-surface version — see [Runtime Contract](runtime-contract.md).
+**Transport:** Streamable HTTP at `/mcp` on the existing Javalin server (loopback-only) — `POST` carries the whole JSON-RPC surface, `DELETE` ends the session named by `Mcp-Session-Id`, and `GET` returns `405` with `Allow: POST, DELETE, OPTIONS` (no server-initiated SSE stream is offered; see [MCP production server](mcp-production-server.md#transport)). Protocol version `2025-11-25` (single-sourced in `io.justsearch.app.api.mcp.McpContractVersions`). No separate process. The `/mcp` endpoint + curated tool set is one of the three **Runtime Contract** public surfaces (tempdoc 654); `serverInfo.version` carries the BUILD version and `serverInfo._meta["io.justsearch/toolSurfaceVersion"]` the SemVer tool-surface version — see [Runtime Contract](runtime-contract.md).
 
 6-tool curated surface (tempdoc 500, adapted from eval-validated 4-tool TS server in tempdoc 366):
 
