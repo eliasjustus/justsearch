@@ -73,7 +73,7 @@ import {
   latestTurnRef,
   projectSv3Sessions,
   sessionById,
-  setTurnCitations,
+  setTurnEvidence,
   settleAgentTurn,
   settleTurn,
   startNewSession,
@@ -440,8 +440,8 @@ export class SearchV3View extends JfElement {
         onDelta: (text) => {
           this.sessions = appendTurnDelta(this.sessions, ref, text);
         },
-        onCitations: (count) => {
-          this.sessions = setTurnCitations(this.sessions, ref, count);
+        onEvidence: (evidence) => {
+          this.sessions = setTurnEvidence(this.sessions, ref, evidence);
         },
         onDone: () => settle('complete'),
         // The lock's refusal is worded by the ONE reason vocabulary, not re-phrased here.

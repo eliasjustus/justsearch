@@ -28,6 +28,13 @@ import './Sv3Empty.js';
 // registered mount site). A window-local tool card would be the second render path that register
 // exists to forbid, so the donor's own tool row is deliberately NOT ported.
 import '../../components/chat/ToolCallCard.js';
+// The product's ONE markdown renderer and ONE citations panel (tempdoc 822 Phase F4). A window-local
+// markdown pass would be a second parse of the same text with a second sanitiser behind it, and a
+// window-local source list a second evidence presentation — both are what these authorities exist to
+// prevent. The window supplies only the CLOTHES: the donor's `.chat-markdown` values, re-expressed on
+// sv3 tokens through the custom properties the two components read.
+import '../../components/chat/MarkdownBlock.js';
+import '../../components/chat/CitationsPanel.js';
 import {
   COMPOSER_STATE_DEFAULT,
   MAIN_EMPTY,
@@ -39,7 +46,7 @@ import {
 } from './fixtures.js';
 import type { Sv3ComposerState } from './fixtures.js';
 import { SV3_RESULTS_IDLE, type Sv3ResultsView } from './sv3-results.js';
-import type { Sv3Turn } from './sv3-sessions.js';
+import { sv3TurnSourceCount, type Sv3Turn } from './sv3-sessions.js';
 import { sv3RunReceiptLabel } from './sv3-run.js';
 import type { Sv3RunFeedItem, Sv3RunPrompt, Sv3RunView } from './sv3-run.js';
 
@@ -178,17 +185,72 @@ export class Sv3Main extends JfElement {
         overflow-wrap: anywhere;
       }
       /* The response has NO bubble and NO alignment — plain content on the panel, inset by the
-         donor's 'px-1 py-0.5' ('chat/MessagesTimeline.tsx:1117'). Phase F1 renders it as plain text
-         with line breaks preserved; rich rendering is the donor's '.chat-markdown', which the
-         charter excludes wholesale (§9) and which is a Phase-F residual, not an omission. */
+         donor's 'px-1 py-0.5' ('chat/MessagesTimeline.tsx:1117'). Phase F4 fills it with the shared
+         markdown renderer, so the block-level rhythm is the renderer's and this box no longer
+         preserves source whitespace (a 'pre-wrap' around block children would re-introduce the
+         template's own newlines as vertical space). */
       .answer {
         position: relative;
         min-width: 0;
         padding: var(--space-0-5) var(--space-1);
         font-size: var(--font-size-sv3-sm);
         line-height: 1.625;
-        white-space: pre-wrap;
         overflow-wrap: anywhere;
+      }
+
+      /* ── The donor's '.chat-markdown' clothes on the shared renderer ────────
+         The renderer is the product's (components/chat/MarkdownBlock.ts) and is NOT forked; what
+         it exposes is the set of custom properties it reads, so the donor's values arrive as a
+         re-mapping of those names onto sv3 tokens. Every mapping below cites the donor rule it
+         carries (t3code@b73232b apps/web/src/index.css).
+
+         GAP, recorded rather than worked around: the renderer hard-codes its block GEOMETRY (list
+         indent, paragraph/pre margins, pre radius + padding, blockquote rule), its mono face
+         ('monospace', not our --font-mono), and it declares nothing at all for headings or tables —
+         so donor :1824 (0.65rem block rhythm), :1839-1855 (heading scale), :1995-1997 (pre chrome)
+         and :2101-2140 (the table separators + truncate/expand rule) cannot be applied from here.
+         Closing it needs the shared component to expose a part or geometry tokens, which is a
+         change to an authority three surfaces render through — its own slice, not this one's. */
+      .sv3-markdown,
+      .sv3-citations {
+        /* Donor :1836 / :1972 — headings and code sit at full foreground. */
+        --text-primary: var(--foreground);
+        /* Donor :1858 / :1935 — the h6 + blockquote recession. */
+        --text-secondary: var(--muted-foreground);
+        /* Donor :1908 — a link is the info hue, not the brand accent. */
+        --text-tint: var(--info-foreground);
+        /* Donor :1970 / :1996 — inline code and code blocks share the muted fill. */
+        --surface-tertiary: var(--muted);
+        --surface-2: var(--muted);
+        --surface-3: var(--secondary);
+        /* Donor :1933 / :1994 — the blockquote rule and the code block's edge. */
+        --border-subtle: var(--border);
+        --accent-tint: var(--primary);
+        --accent-on-tint: var(--primary-foreground);
+        --accent-warning: var(--warning-foreground);
+        --text-warning: var(--warning-foreground);
+        --text-command: var(--foreground);
+        --font-size-sm: var(--font-size-sv3-sm);
+        /* Donor :1973 / :2004 / :2107 — inline code, block code and table text all step down. */
+        --font-size-xs: var(--font-size-sv3-xs);
+        /* The window's motion budget reaches the shared components too, so a transition inside
+           them cannot outlast one authored here. */
+        --duration-fast: var(--duration-sv3-micro);
+        --duration-normal: var(--duration-sv3-layout);
+        --ease-standard: var(--ease-sv3-enter);
+      }
+      .sv3-markdown {
+        display: block;
+        min-width: 0;
+        /* Donor :1806-1807 — an unbroken token in chat prose must not widen the measure. */
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+      /* Donor :1824 — the block rhythm the renderer's own margins cannot express, applied where it
+         still can be: between the answer and the evidence beneath it. */
+      .sv3-citations {
+        display: block;
+        margin-top: var(--space-2-5);
       }
       .answer-empty {
         color: var(--secondary-label);
@@ -424,12 +486,48 @@ export class Sv3Main extends JfElement {
                   ? html`<span class="answer-empty" data-testid="sv3-turn-answer-empty"
                       >${TURN_EMPTY_ANSWER}</span
                     >`
-                  : turn.answer}
+                  : html`<jf-markdown-block
+                      class="sv3-markdown"
+                      data-testid="sv3-turn-markdown"
+                      .text=${turn.answer}
+                      ?is-streaming=${streaming}
+                      .citations=${[...(turn.evidence?.marks ?? [])]}
+                    ></jf-markdown-block>`}
               </div>
+              ${this.citations(turn)}
             `}
         ${this.turnNote(turn)}
       </div>
     `;
+  }
+
+  /**
+   * Whether the shared panel has anything to render for this turn — the ONE test, asked by the
+   * renderer below AND by {@link turnNote}, so the note can never repeat a count the panel is
+   * already showing (`CitationsPanel.render` returns nothing when both sets are empty).
+   */
+  private panelSpeaks(turn: Sv3Turn): boolean {
+    if (turn.kind !== 'ask' || turn.status === 'streaming' || turn.evidence === null) return false;
+    return turn.evidence.sources.length > 0 || turn.evidence.matches.length > 0;
+  }
+
+  /**
+   * The answer's evidence, in the product's ONE citations panel — mounted per turn and collapsed by
+   * its own disclosure, exactly as search-v2 mounts it on a landed answer
+   * (`views/search-v2/SearchV2View.ts:2220-2229`). Its `citation-select` is deliberately NOT handled
+   * here: the Shell is the one listener for it (`chrome/Shell.ts:543-554`) and already pushes the
+   * cited line range onto the shared inspector selection, so a handler of this window's own would be
+   * a second answer to a question that has one.
+   */
+  private citations(turn: Sv3Turn): TemplateResult | typeof nothing {
+    if (!this.panelSpeaks(turn) || turn.evidence === null) return nothing;
+    return html`<jf-citations-panel
+      class="sv3-citations"
+      data-testid="sv3-turn-citations"
+      .citations=${[...turn.evidence.matches]}
+      .sources=${[...turn.evidence.sources]}
+      .retrievalMode=${turn.evidence.retrievalMode}
+    ></jf-citations-panel>`;
   }
 
   /**
@@ -459,7 +557,12 @@ export class Sv3Main extends JfElement {
 
   private runItem(item: Sv3RunFeedItem): TemplateResult {
     if (item.kind === 'text') {
-      return html`<p class="answer" data-testid="sv3-run-text">${item.text}</p>`;
+      // The agent's prose is the same kind of text as an answer and gets the same renderer: a feed
+      // that showed raw asterisks beside a settled turn that did not would be two markdown policies
+      // in one transcript. Never streaming — a feed entry arrives whole.
+      return html`<div class="answer" data-testid="sv3-run-text">
+        <jf-markdown-block class="sv3-markdown" .text=${item.text}></jf-markdown-block>
+      </div>`;
     }
     if (item.kind === 'tool') {
       return html`<jf-tool-call-card
@@ -564,6 +667,7 @@ export class Sv3Main extends JfElement {
         ${sv3RunReceiptLabel(turn.toolCalls, turn.status)}
       </p>`;
     }
+    const sources = sv3TurnSourceCount(turn);
     const note =
       turn.status === 'halted'
         ? TURN_HALTED
@@ -571,11 +675,12 @@ export class Sv3Main extends JfElement {
           ? turn.detail
           : turn.status === 'failed'
             ? `${TURN_FAILED} ${turn.detail}`.trim()
-            : // A citation count is the completed turn's only note, and only when the backend
-              // reported one: `null` means it never said, which is not "0 sources".
-              turn.citations === null
+            : // The completed turn's evidence line, and only when the panel is not already showing
+              // it: `null` means the backend never said, which is not "0 sources", and a panel with
+              // cards in it heads its own count — two of them would be one claim too many.
+              sources === null || this.panelSpeaks(turn)
               ? ''
-              : `${turn.citations} ${turn.citations === 1 ? 'source' : 'sources'}`;
+              : `${sources} ${sources === 1 ? 'source' : 'sources'}`;
     if (note === '') return nothing;
     return html`<p class="turn-note" data-testid="sv3-turn-note" data-broken=${String(broken)}>
       ${note}

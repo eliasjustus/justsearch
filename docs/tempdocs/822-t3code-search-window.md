@@ -383,6 +383,26 @@ are re-creatable from the log's descriptions.
   memory. Run ended by stack stop (dev throwaway). Residuals → F3: shelf model,
   presence/recovery, cross-surface slot honesty; issuance-register decision still
   open (owner/orchestrator).
+- 2026-08-13 — **Slice F4 implemented + full-tier verified.** Response rendering +
+  citations on SHARED authorities: `jf-markdown-block` mounted per turn (single
+  mount, streaming-first — the block's own mend+rAF path; a test forbids
+  stream-then-swap), donor `.chat-markdown` styling re-expressed as token
+  re-mappings on the exposed hooks; `jf-citations-panel` + `claimsToCitations`
+  populate from the turn's new EVIDENCE RECORD (sources/matches/marks/mode —
+  count now derived, cannot disagree with the panel; never-told ≠ zero, probed);
+  agent-feed text renders through the same block. PANE LANDING FREE: Shell's one
+  `citation-select` listener already routes the composed event to the shared
+  inspector state — sv3 adds no handler. Registers: execution-surfaces
+  (sv3-ask-client, sv3-turn-evidence carriers) + run-renderers (answerRenderer/
+  weaveSites). 4698 tests / 6 probes / gates green / deps untouched (bare-import
+  ban test added). LIVE (model active): mid-stream progressive render with zero
+  raw markup; settled answer 17 strong / 4 lists / 17 code spans, zero asterisks,
+  panel "▸ 5 sources", zero page errors. RECORDED GAP (its own future slice —
+  touches 3 shipped surfaces): MarkdownBlock hard-codes block geometry + mono
+  face and declares nothing for headings/tables, so donor heading scale +
+  table truncate/expand cannot be applied from sv3; needs the shared component
+  to expose parts/geometry tokens. Deviations: `.answer` pre-wrap removed
+  (block children own rhythm); in-window document pane remains residual.
 - 2026-08-13 — **F3 STACK-TIER VERIFIED (orchestrator, real run + active model).**
   The F2 named-finding scenario re-run for real: delegate → run holds (act-now,
   Active shelf, slot "waiting for your decision") → navigate away (window unmounts,

@@ -17,20 +17,43 @@ import {
   latestTurnRef,
   projectSv3Sessions,
   sessionById,
-  setTurnCitations,
+  setTurnEvidence,
   settleAgentTurn,
   settleTurn,
   startNewSession,
   submitInSession,
   sv3RelativeTime,
+  sv3TurnSourceCount,
   toggleSessionPin,
   SV3_SESSIONS_EMPTY,
   type Sv3SessionGroup,
   type Sv3SessionList,
   type Sv3SessionProjection,
   type Sv3SessionRowView,
+  type Sv3Turn,
+  type Sv3TurnEvidence,
   type Sv3TurnRef,
 } from './sv3-sessions.js';
+
+/** N retrieval sources, shaped as the backend mints them; the fields the panel reads are real. */
+const evidence = (count: number): Sv3TurnEvidence => ({
+  sources: Array.from({ length: count }, (_unused, i) => ({
+    parentDocId: `f:/docs/note-${i}.md`,
+    chunkIndex: i,
+    chunkTotal: count,
+    startChar: 0,
+    endChar: 40,
+    score: 0.8,
+    excerpt: `excerpt ${i}`,
+    startLine: 1,
+    endLine: 4,
+    headingText: 'Notes',
+    headingLevel: 2,
+  })),
+  matches: [],
+  marks: [],
+  retrievalMode: 'HYBRID',
+});
 
 /** Every row on screen, in shelf order — for the cases that are about a row, not about a shelf. */
 const flatRows = (groups: readonly Sv3SessionGroup[]): readonly Sv3SessionRowView[] =>
@@ -63,7 +86,7 @@ describe('a submit creates a session, or appends a turn to the active one', () =
     // A turn opens streaming with nothing claimed about its answer yet.
     expect(session?.turns[0]?.status).toBe('streaming');
     expect(session?.turns[0]?.answer).toBe('');
-    expect(session?.turns[0]?.citations).toBeNull();
+    expect(session?.turns[0]?.evidence).toBeNull();
     expect(session?.createdAt).toBe(T0);
     expect(session?.updatedAt).toBe(T0);
     expect(list.activeId).toBe(session?.id);
@@ -476,12 +499,22 @@ describe('a turn accumulates its answer and reaches exactly one terminal', () =>
     expect(twice.sessions[0]?.turns[0]?.detail).toBe('');
   });
 
-  it('records the citation count the stream reported, and leaves it unknown otherwise', () => {
+  it('stores the evidence the stream reported, and derives the count from it alone', () => {
     const { list, ref } = opened();
-    expect(list.sessions[0]?.turns[0]?.citations).toBeNull();
-    expect(setTurnCitations(list, ref, 3).sessions[0]?.turns[0]?.citations).toBe(3);
+    expect(list.sessions[0]?.turns[0]?.evidence).toBeNull();
+    // Never told is not "0 sources", and the derived count says so.
+    expect(sv3TurnSourceCount(list.sessions[0]?.turns[0] as Sv3Turn)).toBeNull();
+
+    const three = setTurnEvidence(list, ref, evidence(3));
+    const stored = three.sessions[0]?.turns[0] as Sv3Turn;
+    expect(stored.evidence?.sources).toHaveLength(3);
+    // The MUTATION PROBE for a re-forked count: the number is READ OFF the stored set, so a stored
+    // set of three can never be described as any other number.
+    expect(sv3TurnSourceCount(stored)).toBe(3);
+
     // Zero is a REPORTED zero, which is not the same claim as "never said".
-    expect(setTurnCitations(list, ref, 0).sessions[0]?.turns[0]?.citations).toBe(0);
+    const none = setTurnEvidence(list, ref, evidence(0));
+    expect(sv3TurnSourceCount(none.sessions[0]?.turns[0] as Sv3Turn)).toBe(0);
   });
 
   it('writes only through a ref that exists, so a stale stream cannot invent a turn', () => {

@@ -27,6 +27,25 @@
  *    session spends none of it and carries a coarse relative timestamp instead.
  */
 import type { Sv3RowStatus } from './fixtures.js';
+import type { CitationMatch, RetrievalCitation } from '../../components/chat/citationTypes.js';
+import type { Citation } from '../../components/chat/MarkdownBlock.js';
+
+/**
+ * What one answer stood on, as ONE record (tempdoc 822 Phase F4). Registered in
+ * `governance/execution-surfaces.v1.json` (`sv3-turn-evidence`) as an opaque carrier: the turn keeps
+ * the backend's evidence verbatim and projects no field of it. Every number the window says about an
+ * answer's sources is read off this record — there is no second count to disagree with it.
+ */
+export interface Sv3TurnEvidence {
+  /** The retrieval set the backend reported (`rag.citations`). */
+  readonly sources: readonly RetrievalCitation[];
+  /** The per-sentence grounding matches (`rag.citation_matches`), for the shared citations panel. */
+  readonly matches: readonly CitationMatch[];
+  /** The inline `[n]` marks, resolved by the SHARED `claimsToCitations` — never authored here. */
+  readonly marks: readonly Citation[];
+  /** The retrieval mode the panel needs to know whether it may grade the sources at all. */
+  readonly retrievalMode: string;
+}
 
 /**
  * How a turn's response ended, or that it has not ended yet. Four TERMINALS, all distinct, because
@@ -54,10 +73,10 @@ export interface Sv3Turn {
   readonly answer: string;
   readonly status: Sv3TurnStatus;
   /**
-   * How many sources the backend said it grounded the answer in — `null` until it says so, which is
-   * not the same as zero. A turn that was never told cannot claim a number.
+   * The evidence the backend minted for this answer — `null` until it reports any, which is not the
+   * same as an empty set. A turn that was never told cannot claim a number.
    */
-  readonly citations: number | null;
+  readonly evidence: Sv3TurnEvidence | null;
   /** The failure's own words, from the stream. Empty for every other status. */
   readonly detail: string;
   /**
@@ -140,7 +159,7 @@ const openTurn = (
   question,
   answer: '',
   status: 'streaming',
-  citations: null,
+  evidence: null,
   detail: '',
   toolCalls: 0,
   askedAt: now,
@@ -255,8 +274,19 @@ export const appendTurnDelta = (list: Sv3SessionList, ref: Sv3TurnRef, delta: st
     turn.status === 'streaming' ? { ...turn, answer: turn.answer + delta } : turn,
   );
 
-export const setTurnCitations = (list: Sv3SessionList, ref: Sv3TurnRef, count: number): Sv3SessionList =>
-  mapTurn(list, ref, (turn) => ({ ...turn, citations: count }));
+export const setTurnEvidence = (
+  list: Sv3SessionList,
+  ref: Sv3TurnRef,
+  evidence: Sv3TurnEvidence,
+): Sv3SessionList => mapTurn(list, ref, (turn) => ({ ...turn, evidence }));
+
+/**
+ * How many sources the answer stood on, DERIVED from the one evidence record — `null` when the
+ * backend never reported any, which is not "0 sources". Derived rather than stored so a count and
+ * the panel beside it cannot describe different sets (tempdoc 822 Phase F4).
+ */
+export const sv3TurnSourceCount = (turn: Sv3Turn): number | null =>
+  turn.evidence === null ? null : turn.evidence.sources.length;
 
 /**
  * A terminal is BOTH a turn write and a session write, done in one pass so they cannot arrive

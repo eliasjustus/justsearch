@@ -172,6 +172,41 @@ const turnsOf = (main: Mounted): HTMLElement[] => [
 const textIn = (turn: HTMLElement, testid: string): string =>
   turn.querySelector(`[data-testid="${testid}"]`)?.textContent?.trim() ?? '';
 
+/**
+ * The answer as RENDERED — read out of the shared markdown block's own root (Phase F4 moved the
+ * response one shadow level down), so what is asserted is the text a reader actually sees rather
+ * than the source string the window was handed.
+ */
+/** One retrieval source in the shape the backend mints (`rag.citations`). */
+const source = (i: number): Record<string, unknown> => ({
+  parentDocId: `f:/docs/note-${i}.md`,
+  chunkIndex: i,
+  chunkTotal: 2,
+  startChar: 0,
+  endChar: 40,
+  score: 0.8,
+  excerpt: `excerpt ${i}`,
+  startLine: 1,
+  endLine: 4,
+  headingText: 'Notes',
+  headingLevel: 2,
+});
+
+/** The shared panel's own header line — its count is the one the window shows. */
+const panelHeader = (turn: HTMLElement): string =>
+  (
+    turn
+      .querySelector('[data-testid="sv3-turn-citations"]')
+      ?.shadowRoot?.querySelector('.panel-header')?.textContent ?? ''
+  ).trim();
+
+const answerTextIn = (turn: HTMLElement): string =>
+  (
+    turn
+      .querySelector('[data-testid="sv3-turn-markdown"]')
+      ?.shadowRoot?.querySelector('.md-content')?.textContent ?? ''
+  ).trim();
+
 describe('the window has exactly ONE ask-issuance site', () => {
   const here = dirname(fileURLToPath(import.meta.url));
 
@@ -262,17 +297,18 @@ describe('the transcript is the session, in order', () => {
     // Mid-stream: the partial answer is on screen, not withheld until the terminal.
     first.emit('chunk', { text: 'Partly ' });
     await settle(el);
-    expect(textIn(turnsOf(main)[0] as HTMLElement, 'sv3-turn-answer')).toBe('Partly');
+    expect(answerTextIn(turnsOf(main)[0] as HTMLElement)).toBe('Partly');
     first.emit('chunk', { text: 'because of the lock.' });
     await settle(el);
-    expect(textIn(turnsOf(main)[0] as HTMLElement, 'sv3-turn-answer')).toBe(
-      'Partly because of the lock.',
-    );
-    first.emit('rag.citations', { citations: [{ id: 'a' }, { id: 'b' }] });
+    expect(answerTextIn(turnsOf(main)[0] as HTMLElement)).toBe('Partly because of the lock.');
+    first.emit('rag.citations', { citations: [source(0), source(1)] });
     first.emit('done', {});
     first.end();
     await settle(el);
-    expect(textIn(turnsOf(main)[0] as HTMLElement, 'sv3-turn-note')).toBe('2 sources');
+    // Phase F4 — the count moved to the panel that shows the sources; the note no longer repeats it.
+    const settled = turnsOf(main)[0] as HTMLElement;
+    expect(textIn(settled, 'sv3-turn-note')).toBe('');
+    expect(panelHeader(settled)).toContain('2');
 
     const second = stubStream();
     await ask(el, 'second question');
@@ -287,7 +323,7 @@ describe('the transcript is the session, in order', () => {
       'first question',
       'second question',
     ]);
-    expect(turns.map((t) => textIn(t, 'sv3-turn-answer'))).toEqual([
+    expect(turns.map((t) => answerTextIn(t))).toEqual([
       'Partly because of the lock.',
       'And so.',
     ]);
@@ -335,7 +371,7 @@ describe('the primary slot renders exactly one of Send and Stop', () => {
     const turn = turnsOf(main)[0] as HTMLElement;
     expect(turn.dataset.status).toBe('halted');
     // What arrived was really received — a halt does not erase it.
-    expect(textIn(turn, 'sv3-turn-answer')).toBe('Half an ans');
+    expect(answerTextIn(turn)).toBe('Half an ans');
     expect(textIn(turn, 'sv3-turn-note')).toBe(TURN_HALTED);
     // The slot is back to Send, so the next question is sendable.
     await composer.updateComplete;

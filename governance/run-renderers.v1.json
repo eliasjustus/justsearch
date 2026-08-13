@@ -41,12 +41,14 @@
       "modules/ui-web/src/shell-v0/views/UnifiedChatView.ts",
       "modules/ui-web/src/shell-v0/views/NavigateView.ts",
       "modules/ui-web/src/shell-v0/views/SummarizeView.ts",
-      "modules/ui-web/src/shell-v0/components/chat/ReasoningBlock.ts"
+      "modules/ui-web/src/shell-v0/components/chat/ReasoningBlock.ts",
+      "modules/ui-web/src/shell-v0/views/search-v3/Sv3Main.ts"
     ],
     "weaveSites": [
       "modules/ui-web/src/shell-v0/components/chat/citationResolve.ts",
       "modules/ui-web/src/shell-v0/views/UnifiedChatView.ts",
-      "modules/ui-web/src/shell-v0/views/SummarizeView.ts"
+      "modules/ui-web/src/shell-v0/views/SummarizeView.ts",
+      "modules/ui-web/src/shell-v0/views/search-v3/sv3-ask.ts"
     ]
   },
   "groundingSemantics": {
