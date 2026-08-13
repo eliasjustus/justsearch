@@ -125,6 +125,10 @@
       "spladeCoveragePercent" : 0.0,
       "pendingNerCount" : 0,
       "completedNerCount" : 0,
+      "failedNerCount" : 0,
+      "completeness" : [ ],
+      "chunkMinChars" : 0,
+      "vectorReadyPercent" : 0.0,
       "enrichmentCompleted" : { },
       "batchTiming" : {
         "batchCount" : { },

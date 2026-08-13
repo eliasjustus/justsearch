@@ -19,6 +19,7 @@ import io.justsearch.app.api.status.OrtCudaView;
 import io.justsearch.app.api.status.QueueDbStatusView;
 import io.justsearch.app.api.status.SearchConfigView;
 import io.justsearch.app.api.status.SignalBusView;
+import io.justsearch.app.api.status.StageCompletenessView;
 import io.justsearch.app.api.status.TelemetryMetricsView;
 import io.justsearch.app.api.status.VectorFormatView;
 import io.justsearch.app.api.status.VisualExtractionView;
@@ -160,6 +161,10 @@ final class WorkerStatusMapper {
                         .spladeCoveragePercent(enrichment.getSplade().getCoveragePercent())
                         .pendingNerCount(enrichment.getPendingNerCount())
                         .completedNerCount(enrichment.getCompletedNerCount())
+                        .failedNerCount(enrichment.getFailedNerCount())
+                        .completeness(mapCompleteness(enrichment))
+                        .chunkMinChars(enrichment.getChunkMinChars())
+                        .vectorReadyPercent(enrichment.getVectorReadyPercent())
                         .embeddingEnabled(enrichment.getEmbeddingEnabled())
                         .spladeEnabled(enrichment.getSpladeEnabled())
                         .nerEnabled(enrichment.getNerEnabled())
@@ -318,6 +323,24 @@ final class WorkerStatusMapper {
                     proto.getOrtP95Us(),
                     proto.getOrtP99Us())));
         return profiles;
+    }
+
+    /**
+     * Maps the Worker's per-stage completeness audit to the API view (tempdoc 821 §3-C3).
+     * Straight passthrough — the arithmetic (including {@code missing}) belongs to the Worker,
+     * which is the only side holding the reader the counts came from.
+     */
+    private static java.util.List<StageCompletenessView> mapCompleteness(
+            io.justsearch.ipc.EnrichmentCoverage enrichment) {
+        return enrichment.getCompletenessList().stream()
+                .map(s -> new StageCompletenessView(
+                        s.getStageId(),
+                        s.getTier(),
+                        s.getExpected(),
+                        s.getPresent(),
+                        s.getMissing(),
+                        s.getFailed()))
+                .toList();
     }
 
     /** Maps a Worker proto OrtCudaProbeResult to the API view. Straight passthrough. */
