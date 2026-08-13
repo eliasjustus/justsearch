@@ -10,6 +10,7 @@ import io.justsearch.app.api.OperationLeaseHandle;
 import io.justsearch.app.services.HeadAssembly;
 import io.justsearch.app.api.OperationLeaseService;
 import java.net.URI;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -41,6 +42,12 @@ final class ApiSecurityFilters {
   private static final String TAURI_WEBVIEW_HOST = "tauri.localhost";
   /** Methods that require the session token in prod mode. */
   private static final Set<String> TOKEN_REQUIRED_METHODS = Set.of("POST", "PUT", "DELETE");
+  /**
+   * The MCP Streamable-HTTP endpoint path. The spec's transport-security clause is endpoint-scoped,
+   * so the Origin check is registered on this path (all methods) rather than globally — the rest of
+   * the API keeps the browser-enforced CORS policy in {@link #setupCors}.
+   */
+  private static final String MCP_ENDPOINT_PATH = "/mcp";
   private static final long SLOW_REQUEST_THRESHOLD_MS = 3000;
   private static final long SLOW_DUMP_RATE_LIMIT_MS = 30_000;
   private static final String MUTATION_LEASE_ATTRIBUTE = "__upgrade_mutation_lease__";
@@ -57,6 +64,8 @@ final class ApiSecurityFilters {
   private final AtomicReference<String> lastCorsDenyUiReadyOrigin = new AtomicReference<>("");
   private final AtomicLong lastTokenDenyAtMs = new AtomicLong(0);
   private final AtomicLong lastHostDenyAtMs = new AtomicLong(0);
+  private final AtomicLong lastMcpOriginDenyAtMs = new AtomicLong(0);
+  private final AtomicReference<String> lastMcpOriginDenyOrigin = new AtomicReference<>("");
   private final AtomicLong lastSlowDumpAtMs = new AtomicLong(0);
 
   ApiSecurityFilters(
@@ -86,6 +95,7 @@ final class ApiSecurityFilters {
   /** Installs the Host-allowlist, CORS, session-token, and capability-gate before-filters on the app. */
   void install(Javalin app) {
     setupHostValidation(app);
+    setupMcpOriginValidation(app);
     setupCors(app, prodMode);
     setupSessionTokenEnforcement(app);
     setupOperationAdmission(app);
@@ -152,6 +162,133 @@ final class ApiSecurityFilters {
             throw new io.javalin.http.HttpResponseException(403, "Forbidden");
           }
         });
+  }
+
+  /**
+   * MCP Streamable-HTTP transport security. The spec (Transports §Streamable HTTP, Security
+   * Warning — identical in 2025-06-18 and 2025-11-25) states: "Servers <b>MUST</b> validate the
+   * {@code Origin} header on all incoming connections to prevent DNS rebinding attacks", and
+   * 2025-11-25 adds the remedy: "If the {@code Origin} header is present and invalid, servers
+   * <b>MUST</b> respond with HTTP 403 Forbidden. The HTTP response body <b>MAY</b> comprise a
+   * JSON-RPC <i>error response</i> that has no {@code id}."
+   *
+   * <p>{@link #setupHostValidation} is the Host-header half of the same defense (tempdoc 633 §1a)
+   * and already covers the whole API; this is the endpoint-scoped Origin half the MCP spec names
+   * explicitly, and it applies to every method served at {@code /mcp} (POST and DELETE today, any
+   * future GET/SSE by construction).
+   *
+   * <p>An <b>absent</b> Origin is allowed: the spec conditions rejection on the header being
+   * "present and invalid", and native MCP hosts (Claude Code, Claude Desktop, Cursor) are HTTP
+   * clients, not browsers, so they send none. A browser-driven caller always supplies one — exactly
+   * the caller class the clause addresses.
+   */
+  private void setupMcpOriginValidation(Javalin app) {
+    app.before(
+        MCP_ENDPOINT_PATH,
+        ctx -> {
+          String originHeader = ctx.header("Origin");
+          if (isAllowedMcpOrigin(originHeader)) {
+            return;
+          }
+          maybeRecordMcpOriginDeny(ctx, originHeader);
+          ctx.status(403);
+          ctx.json(mcpForbiddenOriginBody());
+          // Halted by skipping the remaining handlers rather than by throwing
+          // HttpResponseException: Javalin's mapper for that exception REPLACES the body with its
+          // own {title,status,type,details} envelope, which would discard the JSON-RPC error the
+          // spec asks for. `after` handlers (OTel span close, lease release) still run.
+          ctx.skipRemainingHandlers();
+        });
+  }
+
+  /**
+   * The 403 body for a rejected MCP Origin: a JSON-RPC error response with no request id, matching
+   * both the spec's allowance above and {@code McpProtocolHandler}'s own error framing. The repo's
+   * {@code errorCode} convention rides in the JSON-RPC {@code error.data} slot so the envelope stays
+   * a valid JSON-RPC error object.
+   */
+  private static Map<String, Object> mcpForbiddenOriginBody() {
+    var error = new LinkedHashMap<String, Object>();
+    error.put("code", -32600);
+    error.put("message", "Forbidden: request Origin is not an allowed loopback origin");
+    error.put("data", Map.of("errorCode", "MCP_ORIGIN_FORBIDDEN"));
+    var body = new LinkedHashMap<String, Object>();
+    body.put("jsonrpc", "2.0");
+    body.put("id", null);
+    body.put("error", error);
+    return body;
+  }
+
+  /**
+   * Returns true iff a request carrying {@code originHeader} may reach the MCP endpoint. Absent or
+   * blank → allowed (native, non-browser clients). Otherwise the value is parsed as a URI and its
+   * <b>host component</b> is compared for equality against the loopback set — never a substring or
+   * prefix match, so {@code http://127.0.0.1.evil.com} and {@code http://127.0.0.1@evil.com} both
+   * resolve to a foreign host and are rejected. The opaque {@code null} origin (sandboxed iframe,
+   * {@code file://}, some redirect chains) is rejected: it carries no host to verify, so it cannot
+   * be shown to be loopback, and no legitimate MCP client produces it.
+   *
+   * <p>Deliberately independent of {@code prodMode}, unlike {@link #resolveAllowedOrigin}: the MCP
+   * endpoint's caller set is local agents and their hosts, not the desktop webview, so a loopback
+   * origin is legitimate in both modes. Package-private for {@code McpOriginValidationTest}.
+   */
+  static boolean isAllowedMcpOrigin(String originHeader) {
+    if (originHeader == null || originHeader.isBlank()) {
+      return true;
+    }
+    String trimmed = originHeader.trim();
+    if ("null".equalsIgnoreCase(trimmed)) {
+      return false;
+    }
+    try {
+      URI origin = URI.create(trimmed);
+      String scheme = origin.getScheme();
+      String host = origin.getHost();
+      if (scheme == null || host == null) {
+        return false;
+      }
+      String normalizedScheme = scheme.toLowerCase(Locale.ROOT);
+      String normalizedHost = host.toLowerCase(Locale.ROOT);
+      // URI.getHost() keeps the brackets on an IPv6 literal ("[::1]"); LOOPBACK_HOSTS stores the
+      // bare address.
+      if (normalizedHost.startsWith("[") && normalizedHost.endsWith("]")) {
+        normalizedHost = normalizedHost.substring(1, normalizedHost.length() - 1);
+      }
+      if ("tauri".equals(normalizedScheme)) {
+        return LOOPBACK_HOSTS.contains(normalizedHost);
+      }
+      if (!"http".equals(normalizedScheme) && !"https".equals(normalizedScheme)) {
+        return false;
+      }
+      return LOOPBACK_HOSTS.contains(normalizedHost) || TAURI_WEBVIEW_HOST.equals(normalizedHost);
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  /**
+   * Rate-limited WARN for a rejected MCP Origin — keyed on the origin value (as {@link
+   * #maybeRecordCorsDenyUiReadyPreflight} is) so a second, different origin is never suppressed by
+   * the first one's window.
+   */
+  private void maybeRecordMcpOriginDeny(Context ctx, String originHeader) {
+    String normalized = originHeader == null ? "<absent>" : originHeader;
+    long now = System.currentTimeMillis();
+    long lastAt = lastMcpOriginDenyAtMs.get();
+    if ((now - lastAt) < 10_000 && normalized.equals(lastMcpOriginDenyOrigin.get())) {
+      return;
+    }
+    lastMcpOriginDenyOrigin.set(normalized);
+    lastMcpOriginDenyAtMs.set(now);
+    String method = ctx.method().name();
+    eventBuffer.warn(
+        "LocalApiServer",
+        "MCP_ORIGIN_DENY",
+        Map.of("path", MCP_ENDPOINT_PATH, "method", method, "origin", normalized));
+    log.warn(
+        "MCP request rejected: Origin {} is not an allowed loopback origin (method={})",
+        normalized,
+        method);
   }
 
   private void setupCors(Javalin app, boolean prod) {
