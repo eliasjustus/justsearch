@@ -195,11 +195,25 @@ val integrationTest = tasks.register<Test>("integrationTest") {
     }
   }
 
-  // Time limit: 10 minutes default, 30 for agent tests, configurable for AI runs.
+  // Time limit: 20 minutes default, 30 for agent tests, configurable for AI runs.
+  //
+  // Tempdoc 821 P4 — this task timeout, not the 25-min job budget (ci.yml:529), is the binding
+  // ceiling, and Gradle enforces it by killing the forked test JVM. That destroys the fixture's
+  // diagnostics exactly like the 30s @BeforeAll cap below did, so it has to clear the
+  // retry-amplified worst case rather than the happy-path wall.
+  //
+  // Arithmetic: Develocity sets maxRetries=2 in CI (JvmBaseConventionsPlugin.kt:135), so a class
+  // whose @BeforeAll stalls is booted 3 times -> 3 x ~250s fixture worst case (PORT_FILE 60s +
+  // HEALTH 90s + WORKER_READY 90s + HttpClient send overshoot) = ~12.5 min, on top of the ~8 min
+  // this tier already takes to run everything else. The old 10 min could not even hold the
+  // baseline plus one stalled boot. 20 min covers ~8 + ~12.5 with margin and still leaves ~3.5 min
+  // under the job budget once its ~1.5 min of checkout/setup/post steps are counted.
+  //
+  // The AI and agent branches are already >= this and need no change.
   val integrationTestTimeoutMinutes = when {
     includeAiTests -> ragEvalTimeoutMinutes
     includeAgentTests -> 30
-    else -> 10
+    else -> 20
   }
   timeout.set(Duration.ofMinutes(integrationTestTimeoutMinutes.toLong()))
 
