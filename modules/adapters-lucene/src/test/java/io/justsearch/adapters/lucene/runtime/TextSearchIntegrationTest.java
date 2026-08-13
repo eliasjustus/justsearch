@@ -3,6 +3,7 @@ package io.justsearch.adapters.lucene.runtime;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -630,5 +631,158 @@ class TextSearchIntegrationTest extends RuntimeTestBase {
         "Stored field value should match what was indexed");
 
     runtime.close();
+  }
+
+  /**
+   * Tempdoc 821 §P: the multi-field lexical leg parses the syntax the CALLER passes. Before §P it was
+   * SIMPLE-only, so a LUCENE-syntax request silently retrieved an escaped (token-OR) query.
+   *
+   * <p>Pins three things at leg level: LUCENE phrases are phrase-matched (order-sensitive), LUCENE
+   * boolean operators are honoured, and the SIMPLE default is byte-identical to the untyped
+   * overload that every non-request caller still uses.
+   */
+  @Test
+  void searchTextHonoursTheCallersQuerySyntax() throws Exception {
+    Path base = dataDir();
+    String yaml =
+        "app:\n  data_dir: "
+            + base.toString().replace("\\", "\\\\")
+            + "\n"
+            + "index:\n  collections:\n    - name: syntaxtest\n      roots: ['ignored']\n"
+            + "  vector:\n    dimension: 4\n";
+    Path cfg = writeConfig(yaml);
+    System.setProperty("justsearch.config", cfg.toString());
+
+    var runtime = createRuntimeWithDim(4);
+    indexContent(runtime, "doc-a", "alpha shared term");
+    indexContent(runtime, "doc-b", "beta shared term");
+    indexContent(runtime, "doc-c", "gamma shared term");
+    runtime.commitOps().commitAndTrack();
+    runtime.commitOps().maybeRefreshBlocking();
+
+    var textOps = runtime.textQueryOps();
+
+    // Boolean: required clauses select doc-a only under LUCENE; escaped under SIMPLE they OR.
+    assertEquals(
+        1,
+        textOps
+            .searchText("+shared +alpha", 10, null, null, LuceneRuntimeTypes.QuerySyntax.LUCENE)
+            .hits()
+            .size(),
+        "LUCENE must honour the required-clause operators");
+    assertEquals(
+        3,
+        textOps
+            .searchText("+shared +alpha", 10, null, null, LuceneRuntimeTypes.QuerySyntax.SIMPLE)
+            .hits()
+            .size(),
+        "SIMPLE must still escape the operators into a token OR");
+
+    // Phrase: order-sensitive under LUCENE, literal text under SIMPLE.
+    assertEquals(
+        1,
+        textOps
+            .searchText("\"alpha shared\"", 10, null, null, LuceneRuntimeTypes.QuerySyntax.LUCENE)
+            .hits()
+            .size(),
+        "the in-order phrase matches doc-a only");
+    assertEquals(
+        0,
+        textOps
+            .searchText("\"shared alpha\"", 10, null, null, LuceneRuntimeTypes.QuerySyntax.LUCENE)
+            .hits()
+            .size(),
+        "the reversed phrase matches nothing — a token OR would have matched all 3");
+
+    // SIMPLE-neutrality, pinned by CONTENT rather than by comparing two overloads that delegate to
+    // the same call (which would pass no matter what SIMPLE does). The SIMPLE branch must still
+    // produce its two distinguishing artifacts: prefix expansion on the last token, and escaped
+    // operators — and it must NOT collapse onto the LUCENE parse of the same text.
+    String simpleQuery =
+        textOps
+            .buildTextQuery("alpha shared", null, LuceneRuntimeTypes.QuerySyntax.SIMPLE)
+            .toString();
+    assertTrue(
+        simpleQuery.contains("shared*"),
+        "SIMPLE still prefix-expands the last token (a LUCENE parse does not): " + simpleQuery);
+    String simpleOperators =
+        textOps
+            .buildTextQuery("+shared +alpha", null, LuceneRuntimeTypes.QuerySyntax.SIMPLE)
+            .toString();
+    String luceneOperators =
+        textOps
+            .buildTextQuery("+shared +alpha", null, LuceneRuntimeTypes.QuerySyntax.LUCENE)
+            .toString();
+    assertNotEquals(
+        luceneOperators,
+        simpleOperators,
+        "SIMPLE escapes the operators into optional clauses; LUCENE builds required ones — if these"
+            + " ever match, one of the two branches stopped doing its job");
+    assertFalse(
+        simpleOperators.contains("+content:shared"),
+        "SIMPLE must not build a REQUIRED clause from the user's '+': " + simpleOperators);
+
+    // Malformed LUCENE never escapes the leg as an exception — the leg degrades to empty and the
+    // multi-leg executor is what signals INVALID_ARGUMENT (FacetQuerySyntaxCouplingTest).
+    SearchResult malformed =
+        assertDoesNotThrow(
+            () ->
+                textOps.searchText(
+                    "+shared +(alpha", 10, null, null, LuceneRuntimeTypes.QuerySyntax.LUCENE));
+    assertEquals(0, malformed.hits().size(), "a malformed LUCENE parse degrades to no hits here");
+
+    runtime.close();
+  }
+
+  /** Tempdoc 821 §P: the filtered 2-leg hybrid entry point honours the caller's syntax too. */
+  @Test
+  void searchTextWithFilterHonoursTheCallersQuerySyntax() throws Exception {
+    Path base = dataDir();
+    String yaml =
+        "app:\n  data_dir: "
+            + base.toString().replace("\\", "\\\\")
+            + "\n"
+            + "index:\n  collections:\n    - name: syntaxfiltertest\n      roots: ['ignored']\n"
+            + "  vector:\n    dimension: 4\n";
+    Path cfg = writeConfig(yaml);
+    System.setProperty("justsearch.config", cfg.toString());
+
+    var runtime = createRuntimeWithDim(4);
+    indexContent(runtime, "doc-a", "alpha shared term");
+    indexContent(runtime, "doc-b", "beta shared term");
+    runtime.commitOps().commitAndTrack();
+    runtime.commitOps().maybeRefreshBlocking();
+
+    var textOps = runtime.textQueryOps();
+    Query passThrough = new MatchAllDocsQuery();
+
+    assertEquals(
+        1,
+        textOps
+            .searchTextWithFilter(
+                "+shared +alpha", 10, passThrough, LuceneRuntimeTypes.QuerySyntax.LUCENE)
+            .hits()
+            .size(),
+        "LUCENE required clauses reach the filtered leg (the Bm25Dense hybrid path)");
+    assertEquals(
+        2,
+        textOps
+            .searchTextWithFilter(
+                "+shared +alpha", 10, passThrough, LuceneRuntimeTypes.QuerySyntax.SIMPLE)
+            .hits()
+            .size(),
+        "a SIMPLE caller is unchanged — both docs match the escaped token OR");
+
+    runtime.close();
+  }
+
+  private static void indexContent(RunningRuntime runtime, String docId, String content)
+      throws Exception {
+    runtime.indexingCoordinator().indexSingle(
+        new IndexDocument(
+            Map.of(
+                SchemaFields.DOC_ID, docId,
+                SchemaFields.DOC_UID, docId + "#0",
+                SchemaFields.CONTENT, content)));
   }
 }
