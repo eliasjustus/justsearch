@@ -2,7 +2,7 @@
 
 /**
  * The Search v3 sidebar's MECHANICS (tempdoc 822 Phase F5) — the window-level half of
- * `sv3-sidebar-sizing.ts`, whose arithmetic is decided without a DOM in its own file.
+ * `sv3-boundaries.ts`, whose arithmetic is decided without a DOM in its own file.
  *
  * What is asserted here is the wiring the arithmetic cannot see: that the clamp is fed the box
  * measured AT DRAG TIME rather than a constant, that a chosen width is remembered and a reset
@@ -28,10 +28,10 @@ import {
 import type { StatusSnapshot } from '../../utils/statusPoll.js';
 import { startNewSession, submitInSession, SV3_SESSIONS_EMPTY } from './sv3-sessions.js';
 import {
-  sv3SidebarStorageKeys,
+  sv3BoundaryStorageKeys,
   SV3_SIDEBAR_DEFAULT_PX,
   SV3_SIDEBAR_MIN_PX,
-} from './sv3-sidebar-sizing.js';
+} from './sv3-boundaries.js';
 import { __resetConversationListForTest } from '../../state/conversationListStore.js';
 import { __resetDraftProvidersForTest } from '../../controllers/draftPersistence.js';
 import { __resetDraftKeptForTest } from '../../controllers/draftKeptHint.js';
@@ -179,7 +179,7 @@ describe('the sidebar boundary drags, within the donor clamps', () => {
   it('does not clamp to the floor just because the window has not been laid out', async () => {
     // A box measured at 0 (pre-layout, or a headless host) is UNKNOWN, not tiny; letting it decide
     // would collapse a remembered width to the floor as a side effect of being unmeasurable.
-    localStorage.setItem(sv3SidebarStorageKeys.width, '400');
+    localStorage.setItem(sv3BoundaryStorageKeys.sidebarWidth, '400');
     const el = document.createElement('jf-sv3-window') as Mounted;
     document.body.appendChild(el);
     await el.updateComplete;
@@ -195,14 +195,14 @@ describe('the sidebar boundary drags, within the donor clamps', () => {
   it('remembers the chosen width, and a fresh window opens at it', async () => {
     const el = await mount();
     await drag(el, 60);
-    expect(localStorage.getItem(sv3SidebarStorageKeys.width)).toBe('316');
+    expect(localStorage.getItem(sv3BoundaryStorageKeys.sidebarWidth)).toBe('316');
     el.remove();
     const reopened = await mount();
     expect(widthPx(reopened)).toBe(316);
   });
 
   it('clamps a remembered width into a window that got narrower', async () => {
-    localStorage.setItem(sv3SidebarStorageKeys.width, '900');
+    localStorage.setItem(sv3BoundaryStorageKeys.sidebarWidth, '900');
     const el = await mount(1000);
     expect(widthPx(el)).toBe(360);
   });
@@ -210,11 +210,11 @@ describe('the sidebar boundary drags, within the donor clamps', () => {
   it('double-click returns the boundary to automatic AND forgets the choice (818 L13)', async () => {
     const el = await mount();
     await drag(el, 200);
-    expect(localStorage.getItem(sv3SidebarStorageKeys.width)).not.toBeNull();
+    expect(localStorage.getItem(sv3BoundaryStorageKeys.sidebarWidth)).not.toBeNull();
     q(el, 'sv3-sidebar-grip').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     await el.updateComplete;
     expect(widthPx(el)).toBe(SV3_SIDEBAR_DEFAULT_PX);
-    expect(localStorage.getItem(sv3SidebarStorageKeys.width)).toBeNull();
+    expect(localStorage.getItem(sv3BoundaryStorageKeys.sidebarWidth)).toBeNull();
   });
 });
 
@@ -241,7 +241,7 @@ describe('the boundary is operable without a pointer', () => {
     key(el, 'ArrowLeft');
     await el.updateComplete;
     expect(widthPx(el)).toBe(SV3_SIDEBAR_DEFAULT_PX - 24);
-    expect(localStorage.getItem(sv3SidebarStorageKeys.width)).toBe('232');
+    expect(localStorage.getItem(sv3BoundaryStorageKeys.sidebarWidth)).toBe('232');
   });
 
   it('nudges under the same clamp as the drag', async () => {
@@ -257,7 +257,7 @@ describe('the boundary is operable without a pointer', () => {
     key(el, 'Home');
     await el.updateComplete;
     expect(widthPx(el)).toBe(SV3_SIDEBAR_DEFAULT_PX);
-    expect(localStorage.getItem(sv3SidebarStorageKeys.width)).toBeNull();
+    expect(localStorage.getItem(sv3BoundaryStorageKeys.sidebarWidth)).toBeNull();
   });
 });
 
@@ -267,7 +267,7 @@ describe('the icon rail', () => {
     q(sidebar(el) as unknown as Mounted, 'sv3-sidebar-collapse').click();
     await el.updateComplete;
     expect(el.hasAttribute('sidebar-collapsed')).toBe(true);
-    expect(localStorage.getItem(sv3SidebarStorageKeys.collapsed)).toBe('1');
+    expect(localStorage.getItem(sv3BoundaryStorageKeys.sidebarCollapsed)).toBe('1');
     el.remove();
     const reopened = await mount();
     expect(reopened.hasAttribute('sidebar-collapsed')).toBe(true);

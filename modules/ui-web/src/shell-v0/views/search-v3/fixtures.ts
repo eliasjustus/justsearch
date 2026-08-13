@@ -252,3 +252,15 @@ export const TURN_COPY_DONE = 'Copied';
 /** How long the copy confirmation stands before the label returns. */
 export const TURN_COPY_FEEDBACK_MS = 1600;
 
+/**
+ * The citation pane's own words (tempdoc 822 Phase F8). The region is named for WHAT IT HOLDS — a
+ * cited document — rather than "Document", because the pane's scope guard is that it never holds
+ * anything else, and the landmark a screen reader announces should say so.
+ */
+export const PANE_LABEL = {
+  region: 'Cited document',
+  dismiss: 'Close the cited document',
+  /** The grip names all three of its gestures; only pointing is discoverable on its own. */
+  grip: 'Resize the cited document — arrow keys resize, Home returns to automatic, double-click resets',
+} as const;
+

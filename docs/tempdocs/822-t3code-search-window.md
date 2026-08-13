@@ -482,6 +482,52 @@ are re-creatable from the log's descriptions.
   NOT gated on `historyLocked` (the poll can be stale in both directions — the 423 stays the
   authority); a record-restored turn carries no frame line (the record has no receipt —
   honest never-told, F6's recorded gap).
+- 2026-08-13 — **Slice F8 implemented + live-verified. THE CITATION PANE.** New region
+  `jf-sv3-pane` (`Sv3Pane.ts`) — chosen over a bare `<aside>` so the window keeps one element
+  per region and the pane owns its own shadow root for the two presentations; it mounts the
+  product's ONE reading surface (`jf-document-pane`) by its OWN side-effect import, never via
+  search-v2. **The double-open guard**: `citation-select` is now handled panel/block-element-local
+  in `Sv3Main` (both producers — the citations panel and the inline `[n]` mark) and
+  `stopPropagation()`d there, so Shell's unguarded host listener (`Shell.ts:533-554`) never writes
+  the shared `inspectorState`; the window's own `sv3-citation-open` carries it to the host instead.
+  Probed both ways: the guarded click leaves `getInspectorState().selected` null with zero escapes,
+  and the SAME event from an unguarded node in the same window IS observed escaping to
+  `document.body` (the probe has teeth). **Boundary math**: `sv3-sidebar-sizing.ts` renamed to
+  `sv3-boundaries.ts` — the moment a second boundary appeared, one file holding the main column's
+  640 beat two files that would drift; both ceilings are cut from one `mainSafeRemainder(host,
+  other)`, pane default 540 / floor 360 / share 70% (donor), sidebar's ceiling now subtracts the
+  pane's OCCUPANCY (0 when overlaid or closed) and the pane's subtracts the sidebar's RENDERED
+  width (48 collapsed). Charter law 11 cited in-module: the donor has NO main-column clamp for its
+  right panel — we do. **Narrow**: below the donor's 980 the pane is a window-scoped overlay
+  (`--z-overlay`, backdrop dimming only the window box, donor sheet size `min(42%,28rem)`≥20rem,
+  200ms entry, reduced-motion instant) — driven by a reflected attribute from the window's own
+  measurement, NOT a `@container` query: the container would need `container-type` on the host,
+  whose layout containment would re-anchor F7's fixed-position hover card (the trap
+  `unifiedChatStyles.ts:207-212` already recorded). **Escape order**: pane first, capture-phase on
+  the host, probed with the palette open (pane closes, palette stays). Grip mirrors F5 (16px hit /
+  2px line, keyboard, double-click forgets, persisted on pointerup under
+  `justsearch.searchV3.pane.width.v1`) with two donor-faithful differences for THIS handle:
+  rAF-coalesced drag and pointercancel REVERTS; `Home` (not Escape) is its reset, because Escape
+  belongs to the pane. Scope guard: `docPath` is `attribute: false` and the window has exactly ONE
+  writer of it (structurally asserted) — arbitrary-path opening stays the deferred boundary.
+  4870 tests (+41 net, 415 files) / typecheck clean / vite build green / ui-web + kernel gates
+  green bar the same pre-existing reds (RecentsMenu ghosts, ActionLedgerView accents,
+  ActionLedger/RecentsMenu fallbacks, three kernel gates missing preflight inputs; `dead-code`
+  gains no new finding). **LIVE** (the running stack's own FE at 5173, read-only — no ask sent, a
+  fixture turn pinned onto the region and the citation followed by clicking the SHARED panel's
+  real source row): the pane opened on the real cited document at lines 20-34 with the shared
+  reader's own decay, `inspectorState` untouched, zero escapes. Measured at a 1568px window box:
+  sidebar 256 + main 772 + pane 540 = 1568 at the donor defaults; both boundaries pushed to their
+  ceilings → 208 + **640** + 720; sidebar collapsed → 48 + **640** + 880 — the main column's floor
+  holds exactly in both, measured from real rects. Escape closed the pane with the palette left
+  open; `Home` forgot the stored width. **The live pass earned its keep**: it caught a cascade
+  defect no DOM-less test could see — the host's `jf-sv3-pane { width: … }` track is outer-tree and
+  beat the pane's own `:host([overlay]) { inset: 0 }`, pinning the overlaid sheet 540px wide at the
+  LEFT edge; fixed by guarding the track on `:host(:not([pane-overlay]))` and pinned by a test.
+  Post-fix the overlay spans the window box exactly (793) with the sheet right-anchored at the
+  donor's 333 = min(42%,28rem). Screenshots: `sv3-f8-pane.png`, `sv3-f8-narrow.png` (scratchpad).
+  Residual: the pane grip swallows nothing, but while a document is open Escape is the pane's —
+  a session rename in progress would lose its cancel key (noted, not fixed: the brief's order).
 - 2026-08-13 — **Slice F5 implemented + live-verified (backendless — no stack tier
   needed for chrome mechanics).** Sidebar mechanics per donor: drag-resize
   (min 208 / default 256 / max = box − 640; 16px grip hit with 2px line — worker

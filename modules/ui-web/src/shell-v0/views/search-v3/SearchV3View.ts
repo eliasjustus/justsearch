@@ -43,7 +43,7 @@
  *
  * Side-effect registers <jf-sv3-window> and its four regions.
  */
-import { html, css, type TemplateResult } from 'lit';
+import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
 import { sv3Tokens } from './sv3-tokens.css.js';
 import { sv3Shared } from './sv3-shared-styles.js';
@@ -72,16 +72,25 @@ import {
   type Sv3SessionSelect,
 } from './Sv3Sidebar.js';
 import {
+  clampSv3PaneWidth,
   clampSv3SidebarWidth,
+  forgetSv3PaneWidth,
   forgetSv3SidebarWidth,
+  readStoredSv3PaneWidth,
   readStoredSv3SidebarCollapsed,
   readStoredSv3SidebarWidth,
+  resolveInitialSv3PaneWidth,
   resolveInitialSv3SidebarWidth,
+  storeSv3PaneWidth,
   storeSv3SidebarCollapsed,
   storeSv3SidebarWidth,
+  sv3PaneIsInline,
+  sv3PaneOccupiedWidth,
+  SV3_GRIP_KEY_STEP_PX,
+  SV3_PANE_DEFAULT_PX,
+  SV3_SIDEBAR_COLLAPSED_PX,
   SV3_SIDEBAR_DEFAULT_PX,
-  SV3_SIDEBAR_KEY_STEP_PX,
-} from './sv3-sidebar-sizing.js';
+} from './sv3-boundaries.js';
 import {
   activeTurns,
   adoptRunSession,
@@ -182,11 +191,13 @@ import {
   type Sv3RunTurnState,
   type Sv3RunView,
 } from './sv3-run.js';
-import { type Sv3RunDecision } from './Sv3Main.js';
+import { type Sv3CitationOpen, type Sv3RunDecision } from './Sv3Main.js';
+import type { DocumentLineRange } from '../../components/documentPane/DocumentPane.js';
 import { setAiActivity, subscribeAiState, type AiState } from '../../state/aiStateStore.js';
 import { projectAvailability } from '../../state/availability.js';
 import { reasonFor } from '../../state/readinessNotice.js';
 import {
+  PANE_LABEL,
   SV3_COMMAND_EXPORT_MARKDOWN,
   SV3_COMMAND_SEARCH_TEXT,
   SV3_DRAFT_KEY,
@@ -199,6 +210,9 @@ import './Sv3Sidebar.js';
 import './Sv3Main.js';
 import './Sv3Composer.js';
 import './Sv3Palette.js';
+// The window's citation-inspection region (tempdoc 822 Phase F8). It mounts the product's ONE reading
+// surface by its own side-effect import; this host owns only where it sits and how wide it may be.
+import './Sv3Pane.js';
 
 const COMPOSER_STATE_ATTR = 'composer-state';
 
@@ -318,6 +332,62 @@ export class SearchV3View extends JfElement {
            the content region. */
         position: relative;
       }
+      /* ── THE CITATION PANE (tempdoc 822 Phase F8) ──────────────────────────
+         The mirror image of the sidebar: a fixed track that does not flex, on the other side of the
+         main column. No open/close transition, which is the donor's own treatment of the INLINE
+         panel (a conditional render, ChatView.tsx:6520-6553 — only the narrow SHEET animates, and
+         that animation is the pane's own). In the overlay presentation the element takes itself out
+         of the flow, so no rule here has to undo the track. */
+      /* Guarded on the INLINE presentation, and the guard is load-bearing (found by live
+         measurement): a width declared here on the element beats the element's own :host rules —
+         outer-tree wins — so an unguarded track width left the overlaid pane 540px wide and anchored
+         to the LEFT edge, its own inset: 0 outvoted by a width it could not see. */
+      :host(:not([pane-overlay])) jf-sv3-pane {
+        flex: 0 0 var(--pane-width);
+        width: var(--pane-width);
+      }
+      /* THE PANE'S GRIP. The sidebar grip's anatomy exactly (a 16px hit area straddling the boundary
+         with a 2px line drawn at its centre, invisible until hover), mirrored to the other edge: the
+         donor's own right-panel handle is 8px wide with a 1px line
+         (RightPanelResizeHandle.tsx), and taking the sidebar's numbers instead is the deliberate
+         choice — one window may not have two differently-sized grips, and 16px is the accessible one
+         of the donor's two. col-resize IS the donor's cursor for this handle. */
+      button.pane-grip {
+        position: absolute;
+        inset-block: 0;
+        right: var(--pane-width);
+        transform: translateX(50%);
+        inline-size: var(--space-4);
+        padding: 0;
+        border: 0;
+        background: transparent;
+        cursor: col-resize;
+        z-index: var(--z-sticky);
+        touch-action: none;
+      }
+      button.pane-grip::after {
+        content: '';
+        position: absolute;
+        inset-block: 0;
+        left: 50%;
+        inline-size: 2px;
+        background: transparent;
+        transition: background-color var(--duration-sv3-micro) var(--ease-sv3-enter);
+      }
+      button.pane-grip:hover::after {
+        background: var(--sidebar-border);
+      }
+      button.pane-grip:focus-visible {
+        outline: none;
+      }
+      button.pane-grip:focus-visible::after {
+        background: var(--ring);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        button.pane-grip::after {
+          transition: none;
+        }
+      }
     `,
   ];
 
@@ -332,6 +402,10 @@ export class SearchV3View extends JfElement {
     sidebarWidthPx: { state: true },
     sidebarCollapsed: { type: Boolean, reflect: true, attribute: 'sidebar-collapsed' },
     resizing: { type: Boolean, reflect: true },
+    paneDocPath: { state: true },
+    paneRange: { state: true },
+    paneWidthPx: { state: true },
+    paneOverlay: { type: Boolean, reflect: true, attribute: 'pane-overlay' },
     renamingId: { state: true },
     recordNotice: { state: true },
     historyLocked: { state: true },
@@ -367,6 +441,19 @@ export class SearchV3View extends JfElement {
   declare sidebarCollapsed: boolean;
   /** A drag is in progress — the transitions stand down so the panel tracks the pointer exactly. */
   declare resizing: boolean;
+  /**
+   * The CITED document the pane is open on, or null for closed (tempdoc 822 Phase F8). The pane is
+   * mounted exactly while this is non-null, and this field has exactly ONE writer that sets it —
+   * {@link onCitationOpen}. That is the scope guard: no search result, no browse row and no typed
+   * path can reach the reading surface from this window, because nothing else assigns here.
+   */
+  declare paneDocPath: string | null;
+  /** The cited passage's line span, handed to the shared reader as its `highlightRange`. */
+  declare paneRange: DocumentLineRange | null;
+  /** The pane's chosen width. Held whether or not the pane is open, exactly as the sidebar's is. */
+  declare paneWidthPx: number;
+  /** The pane presents as a window-scoped overlay — the donor's 980px switch, asked of OUR box. */
+  declare paneOverlay: boolean;
   /** The session whose title is being edited, or null. */
   declare renamingId: string | null;
   /**
@@ -390,6 +477,8 @@ export class SearchV3View extends JfElement {
    */
   declare lockedRefusal: boolean;
 
+  /** Watches the window box so the pane's presentation follows it (Phase F8). */
+  private boxObserver: ResizeObserver | null = null;
   private searchUnsubscribe: (() => void) | null = null;
   private aiUnsubscribe: (() => void) | null = null;
   private agentUnsubscribe: (() => void) | null = null;
@@ -450,6 +539,10 @@ export class SearchV3View extends JfElement {
     this.sidebarWidthPx = SV3_SIDEBAR_DEFAULT_PX;
     this.sidebarCollapsed = false;
     this.resizing = false;
+    this.paneDocPath = null;
+    this.paneRange = null;
+    this.paneWidthPx = SV3_PANE_DEFAULT_PX;
+    this.paneOverlay = false;
     this.renamingId = null;
     this.recordNotice = false;
     this.historyLocked = false;
@@ -477,7 +570,8 @@ export class SearchV3View extends JfElement {
   override connectedCallback(): void {
     super.connectedCallback();
     adoptSv3MorphSheet();
-    this.restoreSidebarPreferences();
+    this.restoreBoundaryPreferences();
+    this.observeWindowBox();
     setSearchApiBase(this.apiBase || '');
     this.searchUnsubscribe = subscribeSearch((snapshot) => {
       this.searchSnapshot = snapshot;
@@ -541,7 +635,25 @@ export class SearchV3View extends JfElement {
     // The controller runs a 1s tick while the model is thinking; an unmounted window's tick would go
     // on requesting updates on a detached element forever.
     this.askReasoning.destroy();
+    this.boxObserver?.disconnect();
+    this.boxObserver = null;
     this.removeEventListener('keydown', this.onHostKeydown, true);
+  }
+
+  /**
+   * The window box, watched (Phase F8). The pane's presentation is a fact about how wide the WINDOW
+   * is, and the window is resized by things this surface never hears about — the shipped rail
+   * expanding, a split changing, the OS window itself. `ResizeObserver` is the repo's own answer to
+   * exactly this (`primitives/adaptiveDensity.ts`'s `DensityController`); a box that cannot be
+   * observed at all (a DOM without the API) simply keeps the inline presentation, which is the same
+   * "an unknown width is not a narrow width" rule the clamps use.
+   */
+  private observeWindowBox(): void {
+    if (typeof ResizeObserver !== 'function') return;
+    this.boxObserver = new ResizeObserver(() => {
+      this.paneOverlay = !sv3PaneIsInline(this.availableWidth());
+    });
+    this.boxObserver.observe(this);
   }
 
   /**
@@ -554,6 +666,7 @@ export class SearchV3View extends JfElement {
       setConversationApiBase(this.apiBase || '');
     }
     if (changed.has('sidebarWidthPx')) this.applySidebarWidth(this.sidebarWidthPx);
+    if (changed.has('paneWidthPx')) this.applyPaneWidth(this.paneWidthPx);
     // The restored draft reaches the composer on the first update that produced one. Once only: a
     // later re-application would clobber what the reader has typed since.
     if (this.draftSeedPending) {
@@ -696,6 +809,24 @@ export class SearchV3View extends JfElement {
     this.style.setProperty('--sidebar-width', `${px}px`);
   }
 
+  /** The pane's half of the same mechanism (Phase F8): one number, read by the track and the grip. */
+  private applyPaneWidth(px: number): void {
+    this.style.setProperty('--pane-width', `${px}px`);
+  }
+
+  /**
+   * What the OTHER movable region currently takes out of the shared box. Both clamps need it, and
+   * both need the RENDERED width rather than the chosen one: a collapsed sidebar occupies its 48px
+   * rail, and an overlaid pane occupies nothing at all.
+   */
+  private sidebarOccupiedWidth(): number {
+    return this.sidebarCollapsed ? SV3_SIDEBAR_COLLAPSED_PX : this.sidebarWidthPx;
+  }
+
+  private paneOccupiedWidth(available: number): number {
+    return sv3PaneOccupiedWidth(this.paneDocPath === null ? null : this.paneWidthPx, available);
+  }
+
   /**
    * The box the sidebar and the main region actually share — the donor's `wrapper`, not the viewport.
    *
@@ -709,19 +840,37 @@ export class SearchV3View extends JfElement {
     return measured > 0 ? measured : Number.POSITIVE_INFINITY;
   }
 
-  private restoreSidebarPreferences(): void {
+  /**
+   * Both boundaries, restored in the order their arithmetic depends on: the sidebar first (the pane
+   * is closed on a cold mount, so it occupies nothing), then the pane against the sidebar that
+   * restoring just settled.
+   */
+  private restoreBoundaryPreferences(): void {
+    const available = this.availableWidth();
     this.sidebarCollapsed = readStoredSv3SidebarCollapsed();
     this.sidebarWidthPx = resolveInitialSv3SidebarWidth(
       readStoredSv3SidebarWidth(),
-      this.availableWidth(),
+      available,
+      this.paneOccupiedWidth(available),
     );
     this.applySidebarWidth(this.sidebarWidthPx);
+    this.paneWidthPx = resolveInitialSv3PaneWidth(
+      readStoredSv3PaneWidth(),
+      available,
+      this.sidebarOccupiedWidth(),
+    );
+    this.applyPaneWidth(this.paneWidthPx);
   }
 
   /** A chosen width is adopted AND remembered; the two are one act (818 L13). */
   private adoptSidebarWidth(px: number): void {
     this.sidebarWidthPx = px;
     storeSv3SidebarWidth(px);
+  }
+
+  private adoptPaneWidth(px: number): void {
+    this.paneWidthPx = px;
+    storeSv3PaneWidth(px);
   }
 
   /**
@@ -731,7 +880,22 @@ export class SearchV3View extends JfElement {
    */
   private resetSidebarWidth(): void {
     forgetSv3SidebarWidth();
-    this.sidebarWidthPx = resolveInitialSv3SidebarWidth(null, this.availableWidth());
+    const available = this.availableWidth();
+    this.sidebarWidthPx = resolveInitialSv3SidebarWidth(
+      null,
+      available,
+      this.paneOccupiedWidth(available),
+    );
+  }
+
+  /** The pane's half of the same withdrawal (818 L13 / donor `resetSidebarWidth`). */
+  private resetPaneWidth(): void {
+    forgetSv3PaneWidth();
+    this.paneWidthPx = resolveInitialSv3PaneWidth(
+      null,
+      this.availableWidth(),
+      this.sidebarOccupiedWidth(),
+    );
   }
 
   /**
@@ -746,12 +910,13 @@ export class SearchV3View extends JfElement {
     const grip = event.currentTarget as HTMLElement;
     grip.setPointerCapture?.(event.pointerId);
     const available = this.availableWidth();
+    const occupied = this.paneOccupiedWidth(available);
     const startX = event.clientX;
     const startWidth = this.sidebarWidthPx;
     let width = startWidth;
     this.resizing = true;
     const move = (moved: PointerEvent): void => {
-      width = clampSv3SidebarWidth(startWidth + (moved.clientX - startX), available);
+      width = clampSv3SidebarWidth(startWidth + (moved.clientX - startX), available, occupied);
       this.applySidebarWidth(width);
     };
     const end = (): void => {
@@ -767,6 +932,76 @@ export class SearchV3View extends JfElement {
   }
 
   /**
+   * The pane's drag, mirrored (Phase F8). Three differences from the sidebar's, all of them the
+   * donor's own for THIS boundary (`useResizableWidth.ts:29-36`, `RightPanelResizeHandle.tsx`):
+   * the pane is right-anchored so leftward motion GROWS it (hence the negated delta); the width is
+   * written on the animation frame rather than on every move event (`rAF`-coalesced — a pointer
+   * emits faster than the compositor paints, and this boundary moves a whole document reader);
+   * and a CANCELLED gesture REVERTS to the width the drag started from instead of adopting where
+   * the pointer happened to be when the system took the capture away.
+   */
+  private onPaneGripPointerDown(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const grip = event.currentTarget as HTMLElement;
+    grip.setPointerCapture?.(event.pointerId);
+    const available = this.availableWidth();
+    const sidebar = this.sidebarOccupiedWidth();
+    const startX = event.clientX;
+    const startWidth = this.paneWidthPx;
+    let width = startWidth;
+    let frame = 0;
+    this.resizing = true;
+    const move = (moved: PointerEvent): void => {
+      width = clampSv3PaneWidth(startWidth - (moved.clientX - startX), available, sidebar);
+      if (frame !== 0) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        this.applyPaneWidth(width);
+      });
+    };
+    const stop = (): void => {
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', up);
+      grip.removeEventListener('pointercancel', cancel);
+      if (frame !== 0) cancelAnimationFrame(frame);
+      frame = 0;
+      this.resizing = false;
+    };
+    const up = (): void => {
+      stop();
+      this.adoptPaneWidth(width);
+    };
+    const cancel = (): void => {
+      stop();
+      this.applyPaneWidth(startWidth);
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up);
+    grip.addEventListener('pointercancel', cancel);
+  }
+
+  /**
+   * The pane grip's keyboard half. `Home` resets and `Escape` does NOT: while the pane is open,
+   * Escape belongs to the pane (it closes it), so the grip names Home and double-click as its two
+   * ways back to automatic rather than claiming a key the window has already spent.
+   */
+  private onPaneGripKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Home') {
+      event.preventDefault();
+      this.resetPaneWidth();
+      return;
+    }
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    // Right-anchored: LEFT grows the pane, the same direction the pointer drags it.
+    const step = event.key === 'ArrowLeft' ? SV3_GRIP_KEY_STEP_PX : -SV3_GRIP_KEY_STEP_PX;
+    this.adoptPaneWidth(
+      clampSv3PaneWidth(this.paneWidthPx + step, this.availableWidth(), this.sidebarOccupiedWidth()),
+    );
+  }
+
+  /**
    * The keyboard half of the SAME boundary — same clamp, same floor, one nudge at a time. The donor
    * has no equivalent (its rail is `tabIndex={-1}`); this is `views/search-v2`'s answer, and the
    * a11y contract's: a boundary a pointer can move must be movable without one.
@@ -779,9 +1014,14 @@ export class SearchV3View extends JfElement {
     }
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
-    const step = event.key === 'ArrowRight' ? SV3_SIDEBAR_KEY_STEP_PX : -SV3_SIDEBAR_KEY_STEP_PX;
+    const step = event.key === 'ArrowRight' ? SV3_GRIP_KEY_STEP_PX : -SV3_GRIP_KEY_STEP_PX;
+    const available = this.availableWidth();
     this.adoptSidebarWidth(
-      clampSv3SidebarWidth(this.sidebarWidthPx + step, this.availableWidth()),
+      clampSv3SidebarWidth(
+        this.sidebarWidthPx + step,
+        available,
+        this.paneOccupiedWidth(available),
+      ),
     );
   }
 
@@ -804,7 +1044,50 @@ export class SearchV3View extends JfElement {
     this.setSidebarCollapsed(!this.sidebarCollapsed);
   }
 
+  /* ── The citation pane (tempdoc 822 Phase F8) ─────────────────────────────────────────────── */
+
+  /**
+   * The citation landing, and the window's ONE writer of {@link paneDocPath}. The event is
+   * `Sv3Main`'s own — the shared `citation-select` is stopped at the element that produced it, so the
+   * Shell's unguarded host listener never writes this click onto the shared inspector selection and
+   * the shipped window's reading pane stays where it was.
+   *
+   * The pane's width is re-clamped ON OPEN rather than only on drag: the box may have changed since
+   * the width was chosen, and the sidebar may have moved since — a remembered 540 beside a sidebar
+   * dragged out to 900 would open the pane on top of the main column's 640.
+   */
+  private onCitationOpen(event: Event): void {
+    const detail = (event as CustomEvent<Sv3CitationOpen>).detail;
+    if (!detail?.docPath) return;
+    const available = this.availableWidth();
+    this.paneOverlay = !sv3PaneIsInline(available);
+    this.paneWidthPx = clampSv3PaneWidth(this.paneWidthPx, available, this.sidebarOccupiedWidth());
+    this.applyPaneWidth(this.paneWidthPx);
+    this.paneDocPath = detail.docPath;
+    this.paneRange = detail.range;
+  }
+
+  /**
+   * The pane's exits — its own close control (`pane-close`, re-raised by the region) and Escape. The
+   * chosen width is NOT forgotten here: closing a document is not withdrawing a boundary preference.
+   */
+  private closePane(): void {
+    this.paneDocPath = null;
+    this.paneRange = null;
+  }
+
   private readonly onHostKeydown = (event: KeyboardEvent): void => {
+    // ESCAPE ORDER: the pane goes first. It is the region the reader most recently opened and the
+    // one occupying the most of the window, so an Escape while a document is open means "close the
+    // document" — and stopping the event here is what makes that true rather than approximately
+    // true: unstopped, the SAME keystroke would also hide the palette (`Sv3Palette.onKeydown`) or
+    // flip the composer back to its hero (`Sv3Composer.onKeydown`), closing two things at once.
+    if (event.key === 'Escape' && this.paneDocPath !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.closePane();
+      return;
+    }
     if (!isPaletteChord(event)) return;
     event.preventDefault();
     event.stopPropagation();
@@ -1454,6 +1737,9 @@ export class SearchV3View extends JfElement {
     this.runLive = false;
     this.renamingId = null;
     this.recordNotice = false;
+    // The open document was a citation of THIS conversation's answer; it says nothing about the one
+    // being started, and a pane left open would attach another session's evidence to a blank hero.
+    this.closePane();
     this.sessions = startNewSession(this.sessions);
     this.asked = false;
     this.composer?.clearDraft();
@@ -1503,6 +1789,41 @@ export class SearchV3View extends JfElement {
       feed,
       prompts,
     };
+  }
+
+  /**
+   * The citation pane and the boundary that moves it — mounted ONLY while a cited document is open
+   * (Phase F8), so a closed pane is not an inert region holding a stale document, a focusable node
+   * and a second reader of the api base.
+   */
+  private pane(): TemplateResult | typeof nothing {
+    if (this.paneDocPath === null) return nothing;
+    // The grip is not rendered at all in the overlay presentation, rather than hidden: an overlaid
+    // sheet has no boundary to move, and a `display: none` button would still be a control the
+    // element tree carries around (and a tab stop the moment a rule stopped applying).
+    const grip = this.paneOverlay
+      ? nothing
+      : html`<button
+          type="button"
+          class="pane-grip"
+          data-testid="sv3-pane-grip"
+          aria-label=${PANE_LABEL.grip}
+          title=${PANE_LABEL.grip}
+          @pointerdown=${this.onPaneGripPointerDown}
+          @keydown=${this.onPaneGripKeydown}
+          @dblclick=${this.resetPaneWidth}
+        ></button>`;
+    return html`
+      ${grip}
+      <jf-sv3-pane
+        data-testid="sv3-pane"
+        .docPath=${this.paneDocPath}
+        .highlightRange=${this.paneRange}
+        ?overlay=${this.paneOverlay}
+        api-base=${this.apiBase}
+        @sv3-pane-close=${this.closePane}
+      ></jf-sv3-pane>
+    `;
   }
 
   render(): TemplateResult {
@@ -1565,6 +1886,7 @@ export class SearchV3View extends JfElement {
         @sv3-run-decision=${this.onRunDecision}
         @sv3-palette-request=${this.onPaletteRequest}
         @sv3-remedy=${this.onRemedy}
+        @sv3-citation-open=${this.onCitationOpen}
       >
         <jf-sv3-topbar window-title=${WINDOW_TITLE} data-testid="sv3-topbar"></jf-sv3-topbar>
         <jf-sv3-main
@@ -1589,8 +1911,11 @@ export class SearchV3View extends JfElement {
           data-testid="sv3-composer"
         ></jf-sv3-composer>
       </div>
+      ${this.pane()}
       <!-- LAST in the shadow root on purpose: the palette and the hero composer share the overlay
-           rung, so DOM order is what puts the palette on top. -->
+           rung, so DOM order is what puts the palette on top. The pane above shares that rung too
+           when it is overlaid, and is deliberately BEFORE the palette for the same reason: a command
+           palette invoked over an open document belongs on top of it. -->
       <jf-sv3-palette data-testid="sv3-palette" @sv3-palette-run=${this.onPaletteRun}></jf-sv3-palette>
     `;
   }

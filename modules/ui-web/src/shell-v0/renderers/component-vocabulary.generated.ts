@@ -130,6 +130,7 @@ export type ComponentTag =
   | 'jf-sv3-empty'
   | 'jf-sv3-main'
   | 'jf-sv3-palette'
+  | 'jf-sv3-pane'
   | 'jf-sv3-session-row'
   | 'jf-sv3-sidebar'
   | 'jf-sv3-topbar'
@@ -272,6 +273,7 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-sv3-empty',
   'jf-sv3-main',
   'jf-sv3-palette',
+  'jf-sv3-pane',
   'jf-sv3-session-row',
   'jf-sv3-sidebar',
   'jf-sv3-topbar',

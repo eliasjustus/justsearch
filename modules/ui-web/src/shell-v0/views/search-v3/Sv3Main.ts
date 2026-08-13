@@ -42,6 +42,7 @@ import '../../components/chat/CitationsPanel.js';
 import '../../components/chat/CitationHoverCard.js';
 import '../../components/chat/ReasoningBlock.js';
 import type { CitationHoverCard, CitationHoverData } from '../../components/chat/CitationHoverCard.js';
+import type { CitationSelectDetail } from '../../components/chat/citationTypes.js';
 import type { ReasoningController } from '../../controllers/ReasoningController.js';
 // The shared clipboard util (slice 486 G35) — permission-denied and API-absent already handled, so a
 // per-turn copy needs no error path of its own.
@@ -80,6 +81,19 @@ import type { Sv3RunFeedItem, Sv3RunPrompt, Sv3RunView } from './sv3-run.js';
  * ONE `dispatchRunControl` seam, because only the window may reach the run.
  */
 export const SV3_RUN_DECISION = 'sv3-run-decision';
+
+/**
+ * Raised when a citation is followed (tempdoc 822 Phase F8) — the window's own event, carrying only
+ * what the shared `citation-select` already knew. See {@link Sv3Main.onCitationSelect} for why the
+ * shared event does not leave this surface.
+ */
+export const SV3_CITATION_OPEN = 'sv3-citation-open';
+
+export interface Sv3CitationOpen {
+  readonly docPath: string;
+  /** The cited passage's 0-based inclusive line span, or null when the citation carried none. */
+  readonly range: { readonly startLine: number; readonly endLine: number } | null;
+}
 
 export type Sv3RunDecision =
   | { readonly kind: 'budget'; readonly decision: 'raise' | 'finalize' | 'stop' }
@@ -793,6 +807,7 @@ export class Sv3Main extends JfElement {
                       .text=${turn.answer}
                       ?is-streaming=${streaming}
                       .citations=${[...(turn.evidence?.marks ?? [])]}
+                      @citation-select=${this.onCitationSelect}
                     ></jf-markdown-block>`}
               </div>
               ${this.answerFrameLine(turn)}${this.citations(turn)}
@@ -922,10 +937,7 @@ export class Sv3Main extends JfElement {
   /**
    * The answer's evidence, in the product's ONE citations panel — mounted per turn and collapsed by
    * its own disclosure, exactly as search-v2 mounts it on a landed answer
-   * (`views/search-v2/SearchV2View.ts:2220-2229`). Its `citation-select` is deliberately NOT handled
-   * here: the Shell is the one listener for it (`chrome/Shell.ts:543-554`) and already pushes the
-   * cited line range onto the shared inspector selection, so a handler of this window's own would be
-   * a second answer to a question that has one.
+   * (`views/search-v2/SearchV2View.ts:2220-2229`).
    */
   private citations(turn: Sv3Turn): TemplateResult | typeof nothing {
     if (!this.panelSpeaks(turn) || turn.evidence === null) return nothing;
@@ -935,8 +947,43 @@ export class Sv3Main extends JfElement {
       .citations=${[...turn.evidence.matches]}
       .sources=${[...turn.evidence.sources]}
       .retrievalMode=${turn.evidence.retrievalMode}
+      @citation-select=${this.onCitationSelect}
     ></jf-citations-panel>`;
   }
+
+  /**
+   * THE IN-WINDOW CITATION LANDING (tempdoc 822 Phase F8), and the one line in it that matters is
+   * `stopPropagation`.
+   *
+   * `citation-select` is `bubbles: true, composed: true` from every producer (the panel above at
+   * `components/chat/CitationsPanel.ts:291-296`, the inline `[n]` mark at
+   * `components/chat/MarkdownBlock.ts:571-576`), and the Shell listens for it at the HOST with no
+   * guard at all — "the ONE listener" (`chrome/Shell.ts:533-554`), which writes the cited document
+   * onto the shared `state/inspectorState.ts` and thereby opens the SHIPPED window's reading pane.
+   * Until F8 nothing collided only because the stage mounts one surface at a time; that is an
+   * accident of the mount, not a guard. Stopping the event AT THE PRODUCING ELEMENT is the guard: an
+   * in-window citation click is answered in-window, and the shared selection is not touched.
+   *
+   * What leaves this surface instead is the window's own `sv3-citation-open` — the window owns the
+   * pane, because the pane is a region of the window grid whose width is clamped against the
+   * sidebar's.
+   */
+  private readonly onCitationSelect = (event: Event): void => {
+    event.stopPropagation();
+    const detail = (event as CustomEvent<CitationSelectDetail>).detail;
+    if (!detail?.parentDocId) return;
+    const range =
+      Number.isFinite(detail.startLine) && Number.isFinite(detail.endLine)
+        ? { startLine: detail.startLine, endLine: detail.endLine }
+        : null;
+    this.dispatchEvent(
+      new CustomEvent<Sv3CitationOpen>(SV3_CITATION_OPEN, {
+        detail: { docPath: detail.parentDocId, range },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  };
 
   /**
    * The live run: its feed, then the decisions it is parked on. Prompts come LAST and outside the

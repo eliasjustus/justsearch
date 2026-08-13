@@ -157,6 +157,11 @@ export const sv3Tokens = css`
        rather than a literal because the grip's position reads it too, and a boundary drawn somewhere
        other than where the panel ends is the one drift this file exists to prevent. */
     --sidebar-width-icon: 3rem;
+    /* The citation pane's width (tempdoc 822 Phase F8; donor PreviewPanelShell.tsx:12 — 540px). Its
+       own token for the sidebar's reason: the pane's grip is positioned from the same number the
+       region is sized by, and a boundary drawn somewhere other than where the region ends is the one
+       drift this file exists to prevent. The window writes a chosen width over it INLINE. */
+    --pane-width: 33.75rem;
     --sidebar-content-inset: 0.5rem;
     --sidebar-control-gap: 0.5rem;
     --sidebar-row-content-inset: 0.625rem;
