@@ -149,9 +149,14 @@ For a dimension mixing head-local and Worker inputs (`gpu`, `visualDocumentUnder
 oldest input governs the freshness claim: the timestamp under-claims the freshness of the head-local
 part rather than over-claiming the freshness of the Worker part.
 
-Composites carry no staleness — `ReadinessCompositeView` is `(state, reasonCodes)` only. A consumer
-that needs "is any part of this composite unobserved" reads the member components' `stale`, or the
-process-wide `meta.workerRpcStale`.
+Composites aggregate their members' freshness: `stale` is `true` when **any** member component is
+stale, and `maxStalenessMs` is the **maximum** `stalenessMs` over the stale members (`0` when
+`stale` is `false`). The aggregate is derived from the same member component views in the same
+response — it is a projection, not a second observation, so a composite can never disagree with its
+members. A composite whose members are all head-local (`telemetry`) therefore stays `stale=false`
+through a Worker outage, while `retrieval` and `aiFeatures` go stale as soon as one worker-observed
+member does. A consumer may still read the member components' `stale` for per-dimension detail, or
+the process-wide `meta.workerRpcStale` for the contact fact itself.
 
 Example of the same envelope after Worker contact is lost (components abbreviated):
 
@@ -161,6 +166,10 @@ Example of the same envelope after Worker contact is lost (components abbreviate
     "components": {
       "indexServing": { "state": "NOT_READY", "reasonCode": "worker.unavailable", "source": "worker_status", "observedAt": "2026-02-19T07:59:12Z", "stale": true, "stalenessMs": 48000 },
       "workerControlPlane": { "state": "NOT_READY", "reasonCode": "worker.spawn_failed", "source": "lifecycle_snapshot", "observedAt": "2026-02-19T08:00:00Z", "stale": false, "stalenessMs": 0 }
+    },
+    "composites": {
+      "retrieval": { "state": "NOT_READY", "reasonCodes": ["worker.unavailable", "worker.spawn_failed"], "stale": true, "maxStalenessMs": 48000 },
+      "telemetry": { "state": "READY", "reasonCodes": [], "stale": false, "maxStalenessMs": 0 }
     }
   },
   "meta": { "workerRpcAtMs": 1771488000000, "workerRpcStale": true }
