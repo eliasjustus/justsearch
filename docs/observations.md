@@ -37,7 +37,9 @@ node scripts/agent-analytics/observations-triage.mjs --probe    # janitor: re-ru
 ```
 
 Conditions are processed at the maintainer's periodic triage pass. Kinds route them onward —
-**defect** → `docs/reference/issues/` or the owning domain register; **environment** (facts about
+**defect** → the owning domain register (`docs/reference/search-quality-register.md`,
+`docs/reference/inference-runtime-register.md`) or its owning tempdoc — the standing
+`docs/reference/issues/` registers were retired in tempdoc 821 §7 D5; **environment** (facts about
 main/CI/machines that verification hits) → `scripts/agent-analytics/expected-state.v1.json`;
 **lesson** → the delivery pipeline (hooks / `agent-lessons.md` / postmortems), not prose that ages
 here; **follow-up** → its owning tempdoc or register. The store is a buffer, not a home: a
