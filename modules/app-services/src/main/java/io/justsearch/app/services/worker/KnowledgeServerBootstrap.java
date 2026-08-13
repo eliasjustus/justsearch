@@ -82,6 +82,30 @@ public final class KnowledgeServerBootstrap implements Closeable {
         new java.util.concurrent.atomic.AtomicLong(0);
     /** How long after a resume the transient "Catching up after sleep" notice stays up. */
     private static final long RESUME_NOTICE_WINDOW_MS = 30_000;
+
+    /** gRPC deadline for the FIRST PID-validation attempt; each further attempt doubles it. */
+    private static final long PID_VALIDATION_FIRST_ATTEMPT_MS = 1_000;
+    /** Budget below which a further PID-validation attempt is not worth issuing. */
+    private static final long PID_VALIDATION_MIN_ATTEMPT_MS = 250;
+    /** Budget below which stale-port recovery would overrun the window rather than rescue it. */
+    private static final long PID_VALIDATION_MISMATCH_RECOVERY_FLOOR_MS = 1_500;
+
+    /** Total boot-time {@link #start()} attempts, including the first. */
+    public static final int DEFAULT_START_ATTEMPTS = 3;
+    /** Pause between boot-time {@link #start()} attempts. */
+    public static final long DEFAULT_START_RETRY_BACKOFF_MS = 500;
+
+    /**
+     * Whether another {@link #start()} attempt will follow the one now failing. While true, the
+     * per-attempt DEGRADED/OFFLINE transitions are suppressed: a boot that ultimately succeeds must
+     * not narrate two worker-down occurrences on /api/health, and the capability stays PENDING —
+     * which is the honest reading of "still starting". The final outcome always transitions.
+     */
+    private volatile boolean retryPending;
+
+    /** Whether the last failed {@link #start()} left supervision holding the restart budget. */
+    private volatile boolean supervisionEngagedOnLastAttempt;
+
     private AppInstanceLock appLock;
     private IpcTelemetry ipcTelemetry;
 
@@ -233,10 +257,54 @@ public final class KnowledgeServerBootstrap implements Closeable {
             }
 
         } catch (Exception e) {
-            workerCapability.transition(CapabilityHealth.DEGRADED, workerDownReason("Start failed: " + e.getMessage()));
+            // Read supervision's verdict BEFORE close() drops the spawner that holds it.
+            supervisionEngagedOnLastAttempt = spawner != null && spawner.supervisionEngaged();
+            if (!retryPending) {
+                workerCapability.transition(
+                    CapabilityHealth.DEGRADED, workerDownReason("Start failed: " + e.getMessage()));
+            }
             log.error("Failed to start Knowledge Server integration", e);
             close();
             throw e;
+        }
+    }
+
+    /**
+     * Starts with a bounded retry, so a transient boot-time timing failure is not terminal.
+     *
+     * <p>{@link #start()} tears itself down via {@link #close()} on failure — which resets
+     * {@code started} and drops the spawner, client and signal bus — so a subsequent attempt
+     * respawns from a clean slate rather than leaking the previous worker. Only failures
+     * {@link WorkerStartFailures#isTransient(Throwable) classified as transient} are retried, and
+     * only while {@link WorkerSpawner#supervisionEngaged() supervision has not engaged}; everything
+     * else propagates from the first attempt with its original error.
+     */
+    public void startWithRetry() throws IOException, InterruptedException {
+        startWithRetry(DEFAULT_START_ATTEMPTS, DEFAULT_START_RETRY_BACKOFF_MS);
+    }
+
+    /** {@link #startWithRetry()} with an explicit attempt budget; visible for tests. */
+    public void startWithRetry(int maxAttempts, long backoffMs)
+            throws IOException, InterruptedException {
+        int[] attemptNo = {0};
+        supervisionEngagedOnLastAttempt = false;
+        try {
+            WorkerStartFailures.startWithRetry(
+                () -> {
+                    retryPending = ++attemptNo[0] < maxAttempts;
+                    start();
+                },
+                maxAttempts,
+                backoffMs,
+                () -> supervisionEngagedOnLastAttempt);
+        } catch (Exception e) {
+            // The per-attempt narration was suppressed; the final verdict lands exactly once, here.
+            retryPending = false;
+            workerCapability.transition(
+                CapabilityHealth.DEGRADED, workerDownReason("Start failed: " + e.getMessage()));
+            throw e;
+        } finally {
+            retryPending = false;
         }
     }
 
@@ -300,18 +368,72 @@ public final class KnowledgeServerBootstrap implements Closeable {
      * <p>This prevents connecting to a stale/zombie process that wrote its port
      * between zeroPort() and the new worker starting.
      *
+     * <p>Each attempt gets its own gRPC deadline, escalating from
+     * {@link #PID_VALIDATION_FIRST_ATTEMPT_MS} and always clamped to the budget left. Before that,
+     * every attempt inherited the STANDARD RPC deadline, which equals the whole validation window by
+     * default — so one slow cold health check (the worker-side check runs live SQLite and Lucene
+     * queries, expensive on first contact) consumed the entire budget and this loop never got a
+     * second iteration. That turned a warm-up race into a permanently worker-less Head.
+     *
      * @param expectedPid the PID of the spawned worker process
      * @param timeoutMs maximum time to retry PID validation
-     * @throws IllegalStateException if PID validation fails after timeout
+     * @throws PidValidationTimeoutException if PID validation fails after timeout
      */
     private void validateWorkerPid(long expectedPid, long timeoutMs) throws InterruptedException {
+        awaitWorkerPid(
+                expectedPid,
+                timeoutMs,
+                attemptDeadlineMs -> client.getHealthCheck(attemptDeadlineMs).getPid(),
+                remainingMs -> {
+                    ipcTelemetry.recordPidMismatch();
+                    // The reconnect is NOT covered by the per-attempt gRPC deadline: connect() closes
+                    // the old channel with its own 5s awaitTermination, so entering this arm on a
+                    // nearly-spent budget overruns the window for a recovery that cannot land anyway.
+                    if (remainingMs < PID_VALIDATION_MISMATCH_RECOVERY_FLOOR_MS) {
+                        log.warn("Skipping stale-port recovery: only {}ms of the validation window left",
+                                remainingMs);
+                        return;
+                    }
+                    // Zero the stale port and wait for the new worker to write its port.
+                    signalBus.zeroPort();
+                    Thread.sleep(100);
+                    long awaitTimeout = Math.min(1000, Math.max(100, remainingMs / 2));
+                    client.connect(signalBus.awaitPort(awaitTimeout, 100));
+                });
+    }
+
+    /** One PID-validation attempt, honouring a per-attempt gRPC deadline. */
+    @FunctionalInterface
+    interface PidProbe {
+        long reportedPid(long attemptDeadlineMs) throws Exception;
+    }
+
+    /** Re-points the client at a freshly spawned worker after a stale-port PID mismatch. */
+    @FunctionalInterface
+    interface StalePortRecovery {
+        void reconnect(long remainingMs) throws Exception;
+    }
+
+    /**
+     * The PID-validation retry loop, decoupled from its collaborators so the attempt schedule is
+     * directly testable. Package-private for {@code WorkerPidValidationTest}.
+     */
+    static void awaitWorkerPid(
+            long expectedPid, long timeoutMs, PidProbe probe, StalePortRecovery onMismatch)
+            throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutMs;
+        long attemptBudgetMs = PID_VALIDATION_FIRST_ATTEMPT_MS;
         int retryCount = 0;
 
-        while (System.currentTimeMillis() < deadline) {
+        while (true) {
+            long remainingMs = deadline - System.currentTimeMillis();
+            if (remainingMs < PID_VALIDATION_MIN_ATTEMPT_MS) {
+                break;
+            }
+            long attemptDeadlineMs = Math.min(remainingMs, attemptBudgetMs);
+            attemptBudgetMs = Math.min(attemptBudgetMs * 2, Math.max(timeoutMs, 1));
             try {
-                HealthCheckResponse response = client.getHealthCheck();
-                long actualPid = response.getPid();
+                long actualPid = probe.reportedPid(attemptDeadlineMs);
 
                 if (actualPid == expectedPid) {
                     log.info("Worker PID validated: {}", actualPid);
@@ -320,17 +442,7 @@ public final class KnowledgeServerBootstrap implements Closeable {
 
                 // PID mismatch - likely stale port from zombie process
                 log.warn("PID mismatch: expected {}, got {} (retry {})", expectedPid, actualPid, ++retryCount);
-                ipcTelemetry.recordPidMismatch();
-
-                // Zero the stale port and wait for new worker to write its port
-                signalBus.zeroPort();
-                Thread.sleep(100);
-
-                // Use remaining time, capped at 1 second per attempt
-                long remaining = deadline - System.currentTimeMillis();
-                long awaitTimeout = Math.min(1000, Math.max(100, remaining / 2));
-                int newPort = signalBus.awaitPort(awaitTimeout, 100);
-                client.connect(newPort);
+                onMismatch.reconnect(deadline - System.currentTimeMillis());
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -341,7 +453,7 @@ public final class KnowledgeServerBootstrap implements Closeable {
             }
         }
 
-        throw new IllegalStateException(
+        throw new PidValidationTimeoutException(
                 "PID validation timeout after " + timeoutMs + "ms: expected PID " + expectedPid);
     }
 
@@ -547,8 +659,17 @@ public final class KnowledgeServerBootstrap implements Closeable {
             appLock = null;
         }
 
-        workerCapability.transition(CapabilityHealth.OFFLINE, "Worker shut down");
-        started.set(false);
+        try {
+            // Suppressed between boot attempts: a retry would immediately re-enter PENDING, and the
+            // OFFLINE flap in between is narration of a state the Head was never actually in.
+            if (!retryPending) {
+                workerCapability.transition(CapabilityHealth.OFFLINE, "Worker shut down");
+            }
+        } finally {
+            // Must clear even if a capability listener throws: a stranded started=true would make
+            // the next start() throw "already started" and replace the real cause in the log.
+            started.set(false);
+        }
         log.info("Knowledge Server integration shutdown complete");
         return outcome;
     }

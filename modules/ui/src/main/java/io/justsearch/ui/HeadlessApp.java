@@ -921,7 +921,10 @@ public class HeadlessApp {
     try {
       log.info("Attempting to start Knowledge Server...");
       KnowledgeServerBootstrap bootstrap = new KnowledgeServerBootstrap(sharedWorkerCapability);
-      bootstrap.start();
+      // Retry transient boot-time timing failures. A single failed start used to be terminal: the
+      // catch below returned a null bootstrap, connectWorker() then pinned the worker capability
+      // DEGRADED and started no health monitor, so nothing recovered for the life of the process.
+      bootstrap.startWithRetry();
       // Tempdoc 374 alpha.23 R13-A defect #4: don't log "started successfully" if the
       // bootstrap landed in ERROR (round 13 cycle 2 evidence). The background health
       // monitor will attempt recovery and log when the worker reaches READY.
@@ -944,7 +947,9 @@ public class HeadlessApp {
       log.error("=== KNOWLEDGE SERVER FAILED TO START ===");
       log.error("Indexing and search features will be UNAVAILABLE.");
       log.error("Cause:", e);
-      log.error("To fix: Ensure the indexer-worker module is built (gradlew :modules:indexer-worker:installDist)");
+      log.error(
+          "To fix: {}",
+          io.justsearch.app.services.worker.WorkerStartFailures.operatorHint(e));
       log.error("Stack trace:", e);
       return new KnowledgeServerStartResult(null, summarizeStartError(e));
     }
