@@ -14,10 +14,10 @@ import io.justsearch.indexerworker.loop.IndexingLoop;
 import io.justsearch.indexerworker.metrics.BatchTimingKeys;
 import io.justsearch.indexerworker.metrics.OperationalMetrics;
 import io.justsearch.indexerworker.queue.JobQueue;
-import io.justsearch.indexerworker.rag.ChunkDocumentWriter;
 import io.justsearch.indexerworker.queue.SwitchBufferCapableQueue;
 import io.justsearch.indexerworker.extract.OcrRoutingConfig;
 import io.justsearch.indexerworker.extract.TikaOcrRuntime;
+import io.justsearch.indexerworker.rag.ChunkDocumentWriter;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.ipc.ChunkCoverage;
 import io.justsearch.ipc.CompatibilityStatus;
@@ -701,8 +701,6 @@ final class IndexStatusOps {
     // degrades this one surface instead of failing the whole StatusResponse.
     LuceneRuntimeTypes.StageCompletenessCounts stages =
         queried == null ? LuceneRuntimeTypes.StageCompletenessCounts.EMPTY : queried;
-    LuceneRuntimeTypes.VectorPresence docVec =
-        ingestCountOps != null ? ingestCountOps.queryVectorPresenceCount() : null;
 
     return EnrichmentCoverage.newBuilder()
         .setEmbedding(
@@ -735,34 +733,16 @@ final class IndexStatusOps {
         // oracles read them instead of mirroring the Java constants.
         .setChunkMinChars(ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS)
         .setVectorReadyPercent(VECTOR_READY_PERCENT)
+        // ARTIFACT tier: `present` is the artifact count, taken over the SAME status-carrying
+        // population as `expected` and with FAILED excluded, so the three buckets partition.
         .addCompleteness(
-            stageCompleteness(
-                BatchTimingKeys.EMBED,
-                TIER_ARTIFACT,
-                stages.embedding().expected(),
-                docVec == null ? 0 : docVec.vectorsPresent(),
-                stages.embedding().failed()))
+            stageCompleteness(BatchTimingKeys.EMBED, TIER_ARTIFACT, stages.embedding()))
         .addCompleteness(
-            stageCompleteness(
-                STAGE_CHUNK_EMBED,
-                TIER_ARTIFACT,
-                stages.chunkEmbedding().expected(),
-                chkVec == null ? 0 : chkVec.vectorsPresent(),
-                stages.chunkEmbedding().failed()))
-        .addCompleteness(
-            stageCompleteness(
-                BatchTimingKeys.SPLADE,
-                TIER_STATUS,
-                stages.splade().expected(),
-                stages.splade().settledSuccess(),
-                stages.splade().failed()))
-        .addCompleteness(
-            stageCompleteness(
-                BatchTimingKeys.NER,
-                TIER_STATUS,
-                stages.ner().expected(),
-                stages.ner().settledSuccess(),
-                stages.ner().failed()))
+            stageCompleteness(STAGE_CHUNK_EMBED, TIER_ARTIFACT, stages.chunkEmbedding()))
+        // STATUS tier: no artifact is countable, so `present` can only be the bookkeeping field's
+        // terminal-success count.
+        .addCompleteness(stageCompleteness(BatchTimingKeys.SPLADE, TIER_STATUS, stages.splade()))
+        .addCompleteness(stageCompleteness(BatchTimingKeys.NER, TIER_STATUS, stages.ner()))
         .setPendingNerCount(
             countPendingByStatus(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_PENDING))
         // NER's terminal-success vocabulary is two-valued: COMPLETED (entities found) and
@@ -793,19 +773,25 @@ final class IndexStatusOps {
 
   /**
    * Builds one {@link StageCompleteness} entry (tempdoc 821 §3-C3). {@code missing} is derived,
-   * never independently counted — it is exactly what {@code expected} does not account for. It is
-   * floored at 0 because the three inputs come from separate queries against the same reader and
-   * a stale-but-present artifact on a FAILED document could otherwise make the sum overshoot.
+   * never independently counted — it is exactly what {@code present} and {@code failed} do not
+   * account for.
+   *
+   * <p>Deliberately NOT floored at 0. {@link LuceneRuntimeTypes.StageCounts} guarantees the three
+   * buckets partition {@code expected} (one reader snapshot, one status-carrying population,
+   * single-valued status fields, FAILED excluded from the artifact count), so a floor could only
+   * ever hide a broken invariant — which is the class this whole surface exists to stop.
    */
   private static StageCompleteness stageCompleteness(
-      String stageId, String tier, long expected, long present, long failed) {
+      String stageId, String tier, LuceneRuntimeTypes.StageCounts counts) {
+    long present =
+        TIER_ARTIFACT.equals(tier) ? counts.artifactPresent() : counts.settledSuccess();
     return StageCompleteness.newBuilder()
         .setStageId(stageId)
         .setTier(tier)
-        .setExpected(expected)
+        .setExpected(counts.expected())
         .setPresent(present)
-        .setMissing(Math.max(0L, expected - present - failed))
-        .setFailed(failed)
+        .setMissing(counts.expected() - present - counts.failed())
+        .setFailed(counts.failed())
         .build();
   }
 

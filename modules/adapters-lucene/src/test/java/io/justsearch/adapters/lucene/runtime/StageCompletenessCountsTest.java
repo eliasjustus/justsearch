@@ -4,9 +4,9 @@ package io.justsearch.adapters.lucene.runtime;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.StageCompletenessCounts;
-import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.VectorPresence;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
 import java.io.File;
@@ -23,16 +23,20 @@ import org.junit.jupiter.api.io.TempDir;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * Tempdoc 821 §3-C3 — {@link IndexCountOps#queryVectorPresenceCount()} and {@link
- * IndexCountOps#queryStageCompletenessCounts()}, the two count primitives the enrichment
- * completeness auditor projects over.
+ * Tempdoc 821 §3-C3 — {@link IndexCountOps#queryStageCompletenessCounts()}, the count primitive
+ * the enrichment completeness auditor projects over.
  *
  * <p>Fixture: whole documents in mixed enrichment states, some carrying an actual {@code vector}
  * and some not, plus chunk documents — so the ARTIFACT tier (count the vector) and the STATUS tier
  * (count the bookkeeping field) can be shown to DISAGREE. That disagreement is the whole point:
  * the F-032 class is a status field reading COMPLETED while the artifact is absent.
+ *
+ * <p>The two adverse cases are the ones that make the numbers subtractable rather than merely
+ * present: an artifact carried by a doc with NO status field (would push present above expected on
+ * an installed-base index) and a terminal-FAILED doc that still carries its vector (would let one
+ * doc sit in two buckets and understate the repair backlog).
  */
-@DisplayName("enrichment stage completeness + doc-vector presence counts")
+@DisplayName("enrichment stage completeness counts")
 class StageCompletenessCountsTest {
 
   private static final String SEP = File.separator;
@@ -82,70 +86,113 @@ class StageCompletenessCountsTest {
     }
   }
 
-  // ---- queryVectorPresenceCount -------------------------------------------------
+  // ---- artifactPresent: the ARTIFACT-tier numerator --------------------------------
 
   @Test
-  @DisplayName("presence counts the artifact, not the status — and only on whole documents")
-  void vectorPresenceCountsTheArtifactOnWholeDocsOnly() {
-    VectorPresence presence = runtime.indexCountOps().queryVectorPresenceCount();
+  @DisplayName("artifactPresent counts the artifact, not the status — and over the SAME population")
+  void artifactPresentCountsTheArtifactOverTheStatusCarryingPopulation() {
+    StageCompletenessCounts stages = runtime.indexCountOps().queryStageCompletenessCounts();
 
-    // 4 parents seeded; only p1 and p2 actually carry a `vector`.
-    assertEquals(4, presence.totalDocs(), "chunk documents must not enter the whole-doc total");
-    assertEquals(2, presence.vectorsPresent());
-    // p3 reads embedding_status=COMPLETED with NO vector — the F-032 shape. If presence were
-    // status-derived it would read 3 here, which is exactly the lie this primitive exists to stop.
+    // 4 parents carry embedding_status; p1/p2 carry a vector, p3 claims COMPLETED without one,
+    // p4 is FAILED without one.
+    assertEquals(4, stages.embedding().expected());
+    assertEquals(2, stages.embedding().artifactPresent());
+    // p3 reads embedding_status=COMPLETED with NO vector — the F-032 shape. A status-derived
+    // numerator would read 3 here, which is exactly the lie this count exists to stop.
     assertEquals(
         3,
         runtime.indexCountOps().queryEmbeddingCounts().completed(),
         "the status field claims one more COMPLETED than there are vectors — the divergence is"
             + " the diagnostic signal, so these two must NOT agree on this fixture");
-    assertEquals(50.0, presence.coveragePercent(), 0.001);
+    // Chunk scope is separate and its vectors are a different field: the parents' vectors must
+    // not leak in, nor the chunks' out.
+    assertEquals(3, stages.chunkEmbedding().expected());
+    assertEquals(1, stages.chunkEmbedding().artifactPresent());
   }
 
   @Test
-  @DisplayName("a deleted-but-unmerged doc does not inflate presence")
-  void deletedDocsAreExcludedFromPresence() {
-    assertEquals(2, runtime.indexCountOps().queryVectorPresenceCount().vectorsPresent());
+  @DisplayName("adverse: an artifact WITHOUT the status field is outside the stage entirely")
+  void artifactWithoutStatusFieldIsNotCounted() {
+    // The installed-base shape: a document written before embedding_status existed still carries
+    // its vector. Counting it would make artifactPresent exceed expected — present 3 of 4 — and
+    // the remainder would floor to 0, hiding the real backlog behind a clamp.
+    index(parent("legacy-vec", ROOT + SEP + "legacy-vec.txt", null, null, null, true));
+    commit();
 
-    // No forceMerge: the KNN structures still hold the tombstoned doc's vector, so
-    // FloatVectorValues.size() would still count it. Only the per-doc liveDocs check does not.
+    StageCompletenessCounts stages = runtime.indexCountOps().queryStageCompletenessCounts();
+    assertEquals(4, stages.embedding().expected(), "no embedding_status ⇒ outside the stage");
+    assertEquals(
+        2,
+        stages.embedding().artifactPresent(),
+        "its vector must NOT be counted — numerator and denominator share one population");
+    assertPartitions(stages);
+  }
+
+  @Test
+  @DisplayName("adverse: a FAILED doc that still carries its vector is failed, not present")
+  void failedDocRetainingItsArtifactIsNotCountedPresent() {
+    // Reachable on disk: EmbeddingBackfillOps writes FAILED via an RMW that resets the status and
+    // LEAVES the vector. Counting such a doc in both buckets understates `missing` by one per
+    // overlap — the exact under-reporting this surface exists to prevent.
+    index(parent("failed-vec", ROOT + SEP + "failed-vec.txt", "FAILED", "FAILED", "FAILED", true));
+    commit();
+
+    StageCompletenessCounts stages = runtime.indexCountOps().queryStageCompletenessCounts();
+    assertEquals(5, stages.embedding().expected());
+    assertEquals(2, stages.embedding().failed(), "p4 + the new one");
+    assertEquals(
+        2,
+        stages.embedding().artifactPresent(),
+        "a FAILED doc is reported as failed even though its vector survived — never as present");
+    assertPartitions(stages);
+  }
+
+  @Test
+  @DisplayName("a deleted-but-unmerged doc does not inflate artifactPresent")
+  void deletedDocsAreExcluded() {
+    assertEquals(2, runtime.indexCountOps().queryStageCompletenessCounts()
+        .embedding().artifactPresent());
+
+    // No forceMerge: the KNN structures still hold the tombstoned doc's vector, so a raw
+    // FloatVectorValues walk would still count it. searcher.count intersects with liveDocs.
     runtime.indexingCoordinator().deleteById("p1");
-    runtime.commitOps().commitAndTrack();
-    runtime.commitOps().maybeRefreshBlocking();
+    commit();
 
-    VectorPresence after = runtime.indexCountOps().queryVectorPresenceCount();
-    assertEquals(1, after.vectorsPresent(), "the deleted doc's vector must not be counted");
-    assertEquals(3, after.totalDocs(), "and it leaves the denominator too");
+    StageCompletenessCounts after = runtime.indexCountOps().queryStageCompletenessCounts();
+    assertEquals(1, after.embedding().artifactPresent(), "the deleted doc must not be counted");
+    assertEquals(3, after.embedding().expected(), "and it leaves the denominator too");
+    assertPartitions(after);
   }
 
   @Test
-  @DisplayName("a segment that never indexed the field contributes zero, not an error")
+  @DisplayName("a segment that never indexed the vector field contributes zero, not an error")
   void segmentWithoutTheVectorFieldContributesZero() {
-    // A fresh segment holding only vectorless documents: getFloatVectorValues returns null for it,
-    // which must be a skip, not a throw and not a miscount of the other segment's vectors.
+    // A fresh segment holding only vectorless documents: FieldExistsQuery must match nothing
+    // there rather than throw or perturb the other segment's count.
     index(parent("p5", ROOT + SEP + "e.txt", "PENDING", "PENDING", "PENDING", false));
     index(parent("p6", ROOT + SEP + "f.txt", "PENDING", "PENDING", "PENDING", false));
-    runtime.commitOps().commitAndTrack();
-    runtime.commitOps().maybeRefreshBlocking();
+    commit();
 
-    VectorPresence after = runtime.indexCountOps().queryVectorPresenceCount();
-    assertEquals(2, after.vectorsPresent(), "the vectorless segment adds nothing");
-    assertEquals(6, after.totalDocs(), "but its documents still count in the denominator");
+    StageCompletenessCounts after = runtime.indexCountOps().queryStageCompletenessCounts();
+    assertEquals(2, after.embedding().artifactPresent(), "the vectorless segment adds nothing");
+    assertEquals(6, after.embedding().expected(), "but its documents do count in the denominator");
   }
 
   @Test
-  @DisplayName("presence is reader-version cached and invalidated by a commit")
-  void presenceIsCachedPerReaderVersion() {
-    VectorPresence first = runtime.indexCountOps().queryVectorPresenceCount();
-    assertSame(first, runtime.indexCountOps().queryVectorPresenceCount());
+  @DisplayName("counts are reader-version cached and invalidated by a commit")
+  void countsAreCachedPerReaderVersion() {
+    StageCompletenessCounts first = runtime.indexCountOps().queryStageCompletenessCounts();
+    assertSame(
+        first,
+        runtime.indexCountOps().queryStageCompletenessCounts(),
+        "the status path polls every couple of seconds — one reader version must serve one result");
 
     index(parent("p7", ROOT + SEP + "g.txt", "COMPLETED", "COMPLETED", "COMPLETED", true));
-    runtime.commitOps().commitAndTrack();
-    runtime.commitOps().maybeRefreshBlocking();
+    commit();
 
-    VectorPresence third = runtime.indexCountOps().queryVectorPresenceCount();
+    StageCompletenessCounts third = runtime.indexCountOps().queryStageCompletenessCounts();
     assertNotSame(third, first, "a new reader version must invalidate the cached instance");
-    assertEquals(3, third.vectorsPresent());
+    assertEquals(3, third.embedding().artifactPresent());
   }
 
   // ---- queryStageCompletenessCounts ---------------------------------------------
@@ -183,8 +230,7 @@ class StageCompletenessCountsTest {
     // Post-798: a document the backfill can never select (it selects by status VALUE) must not sit
     // in a denominator forever — otherwise `missing` never reaches zero and the auditor cries wolf.
     index(parent("legacy", ROOT + SEP + "legacy.txt", "COMPLETED", null, null, true));
-    runtime.commitOps().commitAndTrack();
-    runtime.commitOps().maybeRefreshBlocking();
+    commit();
 
     StageCompletenessCounts stages = runtime.indexCountOps().queryStageCompletenessCounts();
     assertEquals(5, stages.embedding().expected(), "it DOES carry embedding_status");
@@ -201,13 +247,31 @@ class StageCompletenessCountsTest {
 
     StageCompletenessCounts stages = runtime.indexCountOps().queryStageCompletenessCounts();
     assertEquals(0, stages.embedding().expected());
+    assertEquals(0, stages.embedding().artifactPresent());
     assertEquals(0, stages.chunkEmbedding().expected());
-    assertEquals(0, runtime.indexCountOps().queryVectorPresenceCount().totalDocs());
-    assertEquals(
-        0.0,
-        runtime.indexCountOps().queryVectorPresenceCount().coveragePercent(),
-        0.001,
-        "0/0 is 0%, never a vacuous 100%");
+    assertEquals(0, stages.chunkEmbedding().artifactPresent());
+    assertPartitions(stages);
+  }
+
+  /**
+   * The invariant the whole surface rests on: for every stage, the artifact/status numerator plus
+   * failures never exceeds the denominator, so the projection's {@code missing} needs no clamp.
+   */
+  private static void assertPartitions(StageCompletenessCounts stages) {
+    assertTrue(
+        stages.embedding().artifactPresent() + stages.embedding().failed()
+            <= stages.embedding().expected(),
+        "embedding: artifactPresent + failed must not exceed expected");
+    assertTrue(
+        stages.chunkEmbedding().artifactPresent() + stages.chunkEmbedding().failed()
+            <= stages.chunkEmbedding().expected(),
+        "chunk_embed: artifactPresent + failed must not exceed expected");
+    assertTrue(
+        stages.splade().settledSuccess() + stages.splade().failed() <= stages.splade().expected(),
+        "splade: settledSuccess + failed must not exceed expected");
+    assertTrue(
+        stages.ner().settledSuccess() + stages.ner().failed() <= stages.ner().expected(),
+        "ner: settledSuccess + failed must not exceed expected");
   }
 
   // ---- fixture ------------------------------------------------------------------
@@ -224,9 +288,11 @@ class StageCompletenessCountsTest {
     index(parent("p3", c, "COMPLETED", "PENDING", "COMPLETED", false));
     index(parent("p4", d, "FAILED", "FAILED", "FAILED", false));
 
-    index(chunk("c1", a, "COMPLETED"));
-    index(chunk("c2", a, "PENDING"));
-    index(chunk("c3", b, "FAILED"));
+    index(chunk("c1", a, "COMPLETED", true));
+    index(chunk("c2", a, "PENDING", false));
+    // A FAILED chunk whose vector survived the status reset — the overlap case, seeded here so
+    // every stage-count assertion in this file runs against it, not just the adverse test.
+    index(chunk("c3", b, "FAILED", true));
 
     runtime.commitOps().commitAndTrack();
     runtime.commitOps().maybeRefreshBlocking();
@@ -234,6 +300,11 @@ class StageCompletenessCountsTest {
 
   private void index(IndexDocument doc) {
     runtime.indexingCoordinator().indexSingle(doc);
+  }
+
+  private void commit() {
+    runtime.commitOps().commitAndTrack();
+    runtime.commitOps().maybeRefreshBlocking();
   }
 
   /** A {@code null} status omits the FIELD — the "this stage does not apply" shape (post-798). */
@@ -259,7 +330,8 @@ class StageCompletenessCountsTest {
     return new IndexDocument(fields);
   }
 
-  private static IndexDocument chunk(String id, String parentPath, String chunkEmbedding) {
+  private static IndexDocument chunk(
+      String id, String parentPath, String chunkEmbedding, boolean withVector) {
     Map<String, Object> fields = new HashMap<>();
     fields.put(SchemaFields.DOC_ID, id);
     fields.put(SchemaFields.DOC_UID, id + "#0");
@@ -267,6 +339,9 @@ class StageCompletenessCountsTest {
     fields.put(SchemaFields.IS_CHUNK, "true");
     fields.put(SchemaFields.CONTENT, "chunk of " + id);
     fields.put(SchemaFields.CHUNK_EMBEDDING_STATUS, chunkEmbedding);
+    if (withVector) {
+      fields.put(SchemaFields.CHUNK_VECTOR, VEC.clone());
+    }
     return new IndexDocument(fields);
   }
 
@@ -285,7 +360,8 @@ class StageCompletenessCountsTest {
               { "id": "chunk_embedding_status", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "splade_status", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
               { "id": "ner_status", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
-              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "roles": ["vector"], "rmwPolicy": "preserve-reread-or-reset:embedding_status", "vector": { "dimension": 4 } }
+              { "id": "vector", "type": "vector", "stored": false, "docValues": false, "roles": ["vector"], "rmwPolicy": "preserve-reread-or-reset:embedding_status", "vector": { "dimension": 4 } },
+              { "id": "chunk_vector", "type": "vector", "stored": false, "docValues": false, "roles": ["chunk_vector"], "rmwPolicy": "preserve-reread-or-reset:chunk_embedding_status", "vector": { "dimension": 4 } }
             ]
           }
           """;

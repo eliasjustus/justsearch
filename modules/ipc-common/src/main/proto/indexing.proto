@@ -796,8 +796,10 @@ message EnrichmentCoverage {
   int32 chunk_min_chars = 17;      // ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS
   double vector_ready_percent = 18; // the bar ChunkCoverage.vectors_ready is evaluated against
   // Documents whose ner_status is terminal-FAILED. The other three stages have carried a
-  // failed_count since 354; NER reported only pending/completed until 821 §3-C3.
-  int32 failed_ner_count = 19;
+  // failed_count since 354; NER reported only pending/completed until 821 §3-C3. int64 to match
+  // those siblings (FeatureCoverage.failed_count) and the app-api view, not the int32 the
+  // neighbouring pending/completed_ner_count fields happen to use.
+  int64 failed_ner_count = 19;
   // Next available field number: 20
 }
 

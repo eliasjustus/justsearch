@@ -452,13 +452,13 @@ class TestComputeChunkCompleteness:
         )
         assert block["verdict"] == "ok"
 
-    def test_missing_status_snapshot_cannot_be_gated_and_says_so(self, tmp_path):
+    def test_missing_status_snapshot_is_unevaluable_not_a_clean_pass(self, tmp_path):
         # Pre-821 this read `degenerate`, because a missing snapshot made observed=0 while the
         # expectation came from a jseval-side threshold mirror. With the mirror retired (821
         # §3-C3) the threshold comes from that same snapshot, so a run with NO snapshot has no
-        # expectation to compare against — it is not evidence of a chunk degeneracy, and gating
-        # on it would be gating on absent telemetry. The block must say WHY it stood down rather
-        # than reading as an ordinary short-corpus `chunk-free`.
+        # expectation to compare against. It must NOT borrow `chunk-free`: that verdict asserts
+        # "no corpus doc reaches the threshold", which this path never computed and which is
+        # affirmatively wrong here (the corpus has a 2500-char doc).
         long_text = "x" * 2500
         _write_golden_corpus(tmp_path, "golden/demo", [
             {"_id": "d1", "title": "", "text": long_text},
@@ -466,13 +466,17 @@ class TestComputeChunkCompleteness:
         block = _compute_chunk_completeness(
             "golden/demo", {"vector": _mode_result(["chunk_merge"])}, None, tmp_path,
         )
-        assert block["verdict"] == "chunk-free"
+        assert block["verdict"] == "unevaluable"
         assert block["observed"] == 0
         assert block["threshold_chars"] is None
-        assert any("chunkMinChars absent" in r for r in block["reasons"])
+        assert any("chunkMinChars" in r for r in block["reasons"])
+        # No stale reason survives alongside it: the stand-down REPLACES the reason list rather
+        # than prepending to a `chunk-free` explanation that was never computed.
+        assert not any("no corpus doc reaches" in r for r in block["reasons"])
 
-    def test_backend_without_published_threshold_stands_down(self, tmp_path):
-        # Same stand-down for a live-but-old backend: the snapshot exists, the threshold doesn't.
+    def test_backend_publishing_zero_threshold_stands_down(self, tmp_path):
+        # chunkMinChars is a proto3 scalar, so an old backend does not OMIT it — it reports 0.
+        # This is the real-world shape, and it must stand down exactly like an absent field.
         long_text = "x" * 2500
         _write_golden_corpus(tmp_path, "golden/demo", [
             {"_id": "d1", "title": "", "text": long_text},
@@ -480,10 +484,27 @@ class TestComputeChunkCompleteness:
         block = _compute_chunk_completeness(
             "golden/demo",
             {"vector": _mode_result(["dense"])},  # no chunk_merge -- would be degenerate if gated
+            _status_snapshot(0, 0.0, chunk_min_chars=0),
+            tmp_path,
+        )
+        assert block["verdict"] == "unevaluable"
+        assert block["threshold_chars"] is None
+        assert block["expected"] == 0
+
+    def test_backend_omitting_the_threshold_stands_down(self, tmp_path):
+        # Belt-and-braces for a payload that genuinely lacks the key (a hand-built snapshot, or a
+        # projection that drops zero-valued fields).
+        long_text = "x" * 2500
+        _write_golden_corpus(tmp_path, "golden/demo", [
+            {"_id": "d1", "title": "", "text": long_text},
+        ])
+        block = _compute_chunk_completeness(
+            "golden/demo",
+            {"vector": _mode_result(["dense"])},
             _status_snapshot(0, 0.0, chunk_min_chars=None),
             tmp_path,
         )
-        assert block["verdict"] == "chunk-free"
+        assert block["verdict"] == "unevaluable"
         assert block["threshold_chars"] is None
 
     def test_expectation_follows_the_published_threshold(self, tmp_path):

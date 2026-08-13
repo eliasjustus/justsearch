@@ -153,6 +153,49 @@ final class EnrichmentCompletenessProjectionTest {
   }
 
   @Test
+  @DisplayName("adverse: an artifact without the status field cannot push present above expected")
+  void artifactWithoutStatusFieldDoesNotInflatePresent() throws Exception {
+    runtime = open("legacyvec");
+    index(parent("p1", "COMPLETED", "COMPLETED", "COMPLETED", true));
+    index(parent("p2", "PENDING", "PENDING", "PENDING", false));
+    // The installed-base shape: written before embedding_status existed, still carrying its
+    // vector. If `present` were counted over a different population than `expected`, this index
+    // would report present=2 of expected=2 while p2 is genuinely unembedded — and `missing` would
+    // floor to 0, which is the floor hiding the bug rather than the bug being impossible.
+    index(parentWithoutStatuses("legacy-vec", true));
+    commit();
+
+    StageCompleteness embed = completenessByStage().get("embed");
+    assertEquals(2, embed.getExpected(), "the status-less doc is outside the stage entirely");
+    assertEquals(1, embed.getPresent(), "and its vector is not counted");
+    assertEquals(0, embed.getFailed());
+    assertEquals(1, embed.getMissing(), "p2 is the real backlog and must be reported as such");
+  }
+
+  @Test
+  @DisplayName("adverse: a FAILED doc that kept its vector is reported failed, never present")
+  void failedDocRetainingItsVectorIsNotDoubleCounted() throws Exception {
+    runtime = open("failedvec");
+    index(parent("p1", "COMPLETED", "COMPLETED", "COMPLETED", true));
+    index(parent("p2", "PENDING", "PENDING", "PENDING", false));
+    // Reachable on disk: EmbeddingBackfillOps writes FAILED through an RMW that resets the status
+    // and LEAVES the vector. Counting it in both present and failed would make missing read 0
+    // while p2 still needs work — one doc understating the backlog by one.
+    index(parent("p3", "FAILED", "FAILED", "FAILED", true));
+    commit();
+
+    StageCompleteness embed = completenessByStage().get("embed");
+    assertEquals(3, embed.getExpected());
+    assertEquals(1, embed.getPresent(), "the FAILED doc's surviving vector is not `present`");
+    assertEquals(1, embed.getFailed());
+    assertEquals(1, embed.getMissing(), "p2 — not 0, which the overlap would have produced");
+    assertEquals(
+        embed.getExpected(),
+        embed.getPresent() + embed.getMissing() + embed.getFailed(),
+        "the buckets partition exactly; no clamp is involved");
+  }
+
+  @Test
   @DisplayName("failedNerCount reaches the wire alongside the other three stages' failure counts")
   void nerFailuresAreReportedSymmetrically() throws Exception {
     runtime = open("nerfail");
@@ -275,6 +318,19 @@ final class EnrichmentCompletenessProjectionTest {
     fields.put(SchemaFields.EMBEDDING_STATUS, embedding);
     fields.put(SchemaFields.SPLADE_STATUS, splade);
     fields.put(SchemaFields.NER_STATUS, ner);
+    if (withVector) {
+      fields.put(SchemaFields.VECTOR, VEC.clone());
+    }
+    return new IndexDocument(fields);
+  }
+
+  /** A document carrying its vector but NO status field — the pre-status-field installed base. */
+  private static IndexDocument parentWithoutStatuses(String id, boolean withVector) {
+    Map<String, Object> fields = new HashMap<>();
+    fields.put(SchemaFields.DOC_ID, id);
+    fields.put(SchemaFields.DOC_UID, id + "#0");
+    fields.put(SchemaFields.PATH, "/lib/" + id + ".txt");
+    fields.put(SchemaFields.CONTENT, "content of " + id);
     if (withVector) {
       fields.put(SchemaFields.VECTOR, VEC.clone());
     }

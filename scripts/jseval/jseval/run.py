@@ -574,8 +574,9 @@ def _compute_chunk_completeness(
 
     The chunk threshold the expectation is computed against comes from the SAME status snapshot
     (tempdoc 821 §3-C3): the worker's enrichment auditor publishes `chunkMinChars`, so this
-    oracle no longer mirrors the Java constant. A backend that predates that field yields no
-    threshold, hence expected=0 and the never-gating `chunk-free` verdict.
+    oracle no longer mirrors the Java constant. A backend that predates that field reports 0 for
+    it (proto3 scalar — never absent), which yields the `unevaluable` verdict: non-gating, but
+    distinct from `chunk-free` and warned about at the gate seam.
     """
     dataset_dir = (base_dir or corpora._default_base_dir()) / dataset_name
 
@@ -618,25 +619,27 @@ def _compute_chunk_completeness(
     else:
         chunk_merge_observed = True
 
-    result = chunk_completeness_mod.chunk_completeness_verdict(
-        expected, observed_chunk_doc_count, observed_coverage_pct, chunk_merge_observed,
-    )
-    reasons = list(result.reasons)
     if threshold_chars is None:
-        # Say so out loud rather than letting the run read as a clean `chunk-free`: with no
-        # published threshold the offline expectation could not be computed at all, which is a
-        # different fact from "no corpus doc reaches the threshold". Non-blocking either way
-        # (821 §3-C3 back-compat for backends predating `chunkMinChars`), but legible.
-        reasons.insert(
-            0,
-            "worker.enrichment.chunkMinChars absent from the status snapshot — the offline "
-            "expectation could not be computed, so this run is not gated on chunk completeness",
+        # Stand down as its OWN verdict rather than borrowing `chunk-free`, whose reason asserts
+        # "no corpus doc reaches the chunk threshold" — a fact this path never computed and one
+        # that is affirmatively wrong on a degenerate build. `chunkMinChars` is a proto3 scalar,
+        # so an old backend does not omit it: it arrives as 0. Name the observed shape, not an
+        # absence. Non-blocking (821 §3-C3 back-compat), but ratchet_kernel warns on stderr.
+        result = chunk_completeness_mod.unevaluable_result(
+            observed_chunk_doc_count,
+            "worker.enrichment.chunkMinChars is missing or non-positive in the status snapshot "
+            "(a backend predating tempdoc 821 §3-C3 reports 0) — the offline chunk expectation "
+            "could not be computed, so this run is NOT gated on chunk completeness",
+        )
+    else:
+        result = chunk_completeness_mod.chunk_completeness_verdict(
+            expected, observed_chunk_doc_count, observed_coverage_pct, chunk_merge_observed,
         )
     return {
         "expected": result.expected,
         "observed": result.observed,
         "verdict": result.verdict,
-        "reasons": reasons,
+        "reasons": list(result.reasons),
         # Provenance: which threshold the expectation was computed against (null = none published).
         "threshold_chars": threshold_chars,
     }

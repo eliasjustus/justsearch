@@ -130,11 +130,19 @@ class ChunkCompletenessResult:
     """Verdict for the eval-time chunk-completeness validity guard (tempdoc 718).
 
     ``verdict`` is one of ``"ok"`` (expected>0, observed healthy), ``"chunk-free"``
-    (expected==0 -- legitimately nothing to chunk, not a degeneracy), or ``"degenerate"``
-    (expected>0 but the observed signals say the chunk sub-system didn't run). ``reasons`` is
-    NEVER boolean-only (matches :class:`jseval.types.ComparabilityResult` /
+    (expected==0 -- legitimately nothing to chunk, not a degeneracy), ``"degenerate"``
+    (expected>0 but the observed signals say the chunk sub-system didn't run), or
+    ``"unevaluable"`` (tempdoc 821 §3-C3 -- the backend published no chunk threshold, so the
+    offline expectation could not be computed at all). ``reasons`` is NEVER boolean-only
+    (matches :class:`jseval.types.ComparabilityResult` /
     :func:`jseval.ratchet_kernel.compare_engine_sets`) -- always a legible list, even on
     ``ok``/``chunk-free`` (documenting *why*, not just *that*).
+
+    ``unevaluable`` exists because ``chunk-free`` is an affirmative claim -- "no corpus doc
+    reaches the threshold" -- that a run with no threshold never established. Collapsing the
+    two would let a genuinely degenerate build on a threshold-less backend read as a clean pass;
+    :func:`jseval.ratchet_kernel.assert_chunk_completeness` treats this verdict as
+    pass-with-warning so the stand-down is at least LOUD.
     """
 
     expected: int
@@ -144,6 +152,25 @@ class ChunkCompletenessResult:
 
 
 DEFAULT_COVERAGE_FLOOR = 99.9
+
+
+def unevaluable_result(
+    observed_chunk_doc_count: int, reason: str
+) -> ChunkCompletenessResult:
+    """The stand-down result for a run whose chunk threshold could not be resolved (821 §3-C3).
+
+    A distinct constructor rather than a post-edit of
+    :func:`chunk_completeness_verdict`'s output: that function's ``chunk-free`` branch states
+    "no corpus doc reaches the chunk threshold", a fact this path never computed and which is
+    affirmatively wrong on a degenerate build. ``expected`` is 0 because nothing was expected --
+    not because nothing was expectable.
+    """
+    return ChunkCompletenessResult(
+        expected=0,
+        observed=observed_chunk_doc_count,
+        verdict="unevaluable",
+        reasons=[reason],
+    )
 
 
 def chunk_completeness_verdict(
