@@ -67,6 +67,13 @@ public class LocalApiServer {
   /** Header name for the desktop session token (used in prod mode to protect non-GET endpoints). */
   public static final String SESSION_TOKEN_HEADER = "X-JustSearch-Session";
 
+  /**
+   * The MCP Streamable-HTTP endpoint path. Shared with {@link
+   * ApiSecurityFilters#setupMcpOriginValidation} so the guarded path and the routed path cannot
+   * drift — moving the endpoint without moving the guard would silently unguard it.
+   */
+  public static final String MCP_ENDPOINT_PATH = "/mcp";
+
   // Tempdoc 374 alpha.21 Bug O: not final because the explicit-port-bind-failure
   // fallback rebuilds a fresh Javalin instance — Javalin/Jetty's lifecycle prohibits
   // re-starting a failed instance. Volatile for safe publication after constructor
@@ -615,8 +622,8 @@ public class LocalApiServer {
     }
     app.get("/api/mcp/token", this::handleMcpToken);
     if (convApi.mcpProtocolHandler() != null) {
-      app.post("/mcp", convApi.mcpProtocolHandler()::handlePost);
-      app.delete("/mcp", convApi.mcpProtocolHandler()::handleDelete);
+      app.post(MCP_ENDPOINT_PATH, convApi.mcpProtocolHandler()::handlePost);
+      app.delete(MCP_ENDPOINT_PATH, convApi.mcpProtocolHandler()::handleDelete);
     }
 
     // Tempdoc 374 alpha.17 R5: OpenAI-compatible surface. Proxies to the
