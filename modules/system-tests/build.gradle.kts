@@ -229,20 +229,24 @@ val integrationTest = tasks.register<Test>("integrationTest") {
   // `conventions.jvm-base` sets junit.jupiter.execution.timeout.default=30s for every Test
   // task (JvmBaseConventionsPlugin.kt:117). A class-level @Timeout covers *testable* methods
   // only, never lifecycle methods, so every IsolatedBackendFixture @BeforeAll ran under that
-  // 30s cap regardless of its class annotation — proven on 2026-08-13 by IngestStarvationE2ETest,
-  // annotated @Timeout(6, MINUTES) at the class, dying at exactly t0+30.000s.
+  // 30s cap regardless of its class annotation — proven on 2026-08-13 by IngestStarvationE2ETest
+  // ("Two-batch ingest starvation"), annotated @Timeout(6, MINUTES) at the class (:52) and dying
+  // at t0+30.10s in run 31726924465.
   //
   // That cap is far SHORTER than the fixture's own layered boot budget (PORT_FILE 60s +
   // HEALTH 90s + WORKER_READY 90s, IsolatedBackendFixture.java:65-73), so it always fired
-  // first and reported a bare java.util.concurrent.TimeoutException with no cause, discarding
-  // the fixture's diagnostic message and backend log tail. Five such initializationError
-  // failures landed across three PR runs inside one hour (runs 31716264505 / 31716771978),
-  // each green on rerun with no diff change.
+  // first and reported a bare java.util.concurrent.TimeoutException with no message or cause —
+  // the fixture never reaches the point of naming the budget it blew. Five such
+  // initializationError failures landed in five separate PR runs on 2026-08-13 (31718400614,
+  // 31719369201, 31724706479, 31726924465, 31727436857) across four test classes, every one of
+  // them passing on the automatic retry — red only because failOnPassedAfterRetry keeps flakes
+  // visible.
   //
-  // Headroom: measured boot-to-ready on windows-latest is min 4.97s / p50 ~7.2s / max 13.30s
-  // (22 samples, same runs) — the old cap left only ~2.3x over the observed max. 300s sits
-  // just above the fixture's ~250s worst case, so the fixture's own budgets are once again the
-  // binding constraint and a real hang fails with diagnostics instead of an opaque timeout.
+  // Headroom: measured boot-to-ready on windows-latest is min 6.54s / p50 7.17s / max 15.39s
+  // (48 samples across that day's 8 integration-tier runs) — the old cap left under 2x over the
+  // observed max. 300s sits just above the fixture's ~250s worst case, so the fixture's own
+  // budgets are once again the binding constraint and a real hang fails with diagnostics
+  // instead of an opaque timeout.
   // Cost ceiling: this tier runs ~8.5min wall against the job's 25-min budget (ci.yml:529),
   // so even a full 300s stall stays comfortably inside it.
   systemProperty("junit.jupiter.execution.timeout.beforeall.method.default", "300s")
