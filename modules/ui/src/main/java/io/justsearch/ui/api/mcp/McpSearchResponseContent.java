@@ -35,9 +35,9 @@ record McpSearchResponseContent(
     // cover every match — per-value counts are then a lower bound and some values may be missing
     // entirely (FacetingEngine omits, it does not undercount cleanly; see
     // modules/ui-web/src/shell-v0/state/otherSources.ts for the same property on the FE side).
-    // Cause-neutral deliberately: the flag fires both on the maxDocsScanned cap AND on a mid-scan
-    // failure (sibling branch worktree-agent-aec27f0e6dd7d66d7), so this fact names the effect, not
-    // a specific cause. Sourced from KnowledgeSearchResponse#facetsTruncated (a nullable Boolean
+    // Cause-neutral deliberately: the set of causes is not fixed — today the maxDocsScanned cap,
+    // and 821's facets-engine work extends the flag to a mid-scan failure too — so this fact names
+    // the effect, not a cause. Sourced from KnowledgeSearchResponse#facetsTruncated (a nullable Boolean
     // upstream), collapsed to a primitive here the same way `truncated` above is — false unless the
     // response says TRUE.
     boolean facetsTruncated,

@@ -126,9 +126,10 @@ public final class McpEvidenceProjection {
     // the RESULT-LIST truncation — totalHits > shownCount). This one is the facet SCAN's own
     // incompleteness (resp.facetsTruncated(), sourced via content.facetsTruncated() so both tiers
     // read the same computed fact per 735 G3) — true when per-value facet counts are a lower bound
-    // rather than exact. Cause-neutral: the flag fires both when the scan hit its maxDocsScanned
-    // cap AND when it failed mid-scan (sibling branch worktree-agent-aec27f0e6dd7d66d7), so this
-    // relay states the effect (incomplete scan), not a specific cause. Previously read nowhere in
+    // rather than exact. Cause-neutral deliberately: the set of causes is not fixed — today the
+    // maxDocsScanned cap, and 821's facets-engine work extends the flag to a mid-scan failure too —
+    // so this relay states the effect (incomplete scan), not a specific cause. Previously read
+    // nowhere in
     // the MCP layer even though the tool description tells the agent to trust facet counts for
     // filter discovery.
     out.put("facetsTruncated", content.facetsTruncated());

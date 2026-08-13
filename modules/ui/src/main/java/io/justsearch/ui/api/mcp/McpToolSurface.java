@@ -85,11 +85,11 @@ public final class McpToolSurface {
           + "When the matching documents carry them, the response also returns top facet values "
           + "(sources, categories, authors, and person/organization/location entities) to use as "
           + "filters. "
-          // Tempdoc 821 §L.3 (reworded cause-neutral per sibling branch worktree-agent-
-          // aec27f0e6dd7d66d7: facetsTruncated also fires on a mid-scan failure, not only the
-          // maxDocsScanned cap, so this clause names the effect — an incomplete scan — not a
-          // specific cause): on a broad query the per-value counts (and even which values appear
-          // at all) can be a lower bound rather than exact.
+          // Tempdoc 821 §L.3, worded cause-neutrally: facetsTruncated's causes are not fixed —
+          // today the maxDocsScanned cap, and 821's facets-engine work extends it to a mid-scan
+          // failure too — so this clause names the effect (an incomplete scan), not a specific
+          // cause. On a broad query the per-value counts (and even which values appear at all)
+          // can be a lower bound rather than exact.
           + "Facet counts may be partial: when the response's facetsTruncated flag is true, the "
           + "scan did not cover every matching document, so treat the returned values and counts "
           + "as a lower-bound sample rather than an exhaustive list. "
@@ -1183,8 +1183,8 @@ public final class McpToolSurface {
       sb.append("\n\nFacets (use as filter values");
       // Facets-truncation MCP relay (tempdoc 821 §L.3): the flag that never reached this tier
       // before — the scan did not cover every match, so counts are a lower bound and some values
-      // may be missing entirely. Cause-neutral wording (facetsTruncated also fires on a mid-scan
-      // failure, not only the maxDocsScanned cap — sibling branch worktree-agent-aec27f0e6dd7d66d7)
+      // may be missing entirely. Cause-neutral wording (the causes are not fixed — today the
+      // maxDocsScanned cap, and 821's facets-engine work extends it to a mid-scan failure too)
       // — the claim is the effect, not a specific cause. Surfaced in the text tier too, not just
       // structuredContent, so a text-only MCP client sees it (McpEvidenceProjection carries the
       // structured counterpart).
