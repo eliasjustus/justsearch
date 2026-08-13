@@ -1221,9 +1221,9 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
    * retrieval-degradation reason code, or {@code null} when retrieval is not compat-blocked.
    *
    * <p>Only the {@code BLOCKED_*} states map (a rebuild is genuinely required to restore the dense
-   * leg): {@code REBUILDING} is a transient owned by the 595 Stability axis (routing it here would
-   * double-represent a calm transition as an alarm), and {@code UNAVAILABLE}/{@code COMPATIBLE} are
-   * not retrieval-degradation causes. Schema is checked before embedding to mirror the worker's own
+   * leg): {@code REBUILDING} is owned by {@link #embeddingRebuildReason} (its remedy is to wait,
+   * not to reindex), and {@code UNAVAILABLE}/{@code COMPATIBLE} are not retrieval-degradation
+   * causes. Schema is checked before embedding to mirror the worker's own
    * {@code reindexRequiredReason} precedence. These reason codes are free strings on the readiness
    * composite (no enum/schema change) and are worded + given a remedy on the FE via
    * {@code readinessNotice.CAUSE_ROWS}.
@@ -1259,6 +1259,30 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
   }
 
   /**
+   * An in-place embedding rebuild is running: {@code embeddingCompatState=REBUILDING}, under which
+   * the Worker refuses dense queries ({@code hybridFallback=REBUILD_IN_PROGRESS}). Returns
+   * {@code index.embedding_rebuilding}, else {@code null}.
+   *
+   * <p>This is the one dense-leg outage nothing else observes. The 595 Stability axis sees only
+   * generation migrations, and {@link #compatBlockedReason}/{@link #denseUnavailableReason} both
+   * exclude {@code REBUILDING} by design (their remedies — reindex, or "no model" — are wrong
+   * here; the remedy is to wait), so readiness reported the embedding dimension READY off
+   * encoder-loaded semantics while queries were being served keyword-only.
+   *
+   * <p>{@code BLOCKED_*} and {@code REBUILDING} are mutually exclusive states of the same
+   * embedding-compat enum, so this never competes with {@link #compatBlockedReason}.
+   */
+  static String embeddingRebuildReason(WorkerOperationalView workerView) {
+    var compat = workerView.compatibility();
+    if (compat == null) {
+      return null;
+    }
+    return "REBUILDING".equals(compat.embeddingCompatState())
+        ? LifecycleReasonCode.INDEX_EMBEDDING_REBUILDING.code()
+        : null;
+  }
+
+  /**
    * Tempdoc 598 reopen (B-3): the dense/semantic leg cannot run for a reason a rebuild does NOT fix —
    * the embedding model is not loaded ({@code UNAVAILABLE} compat) or the embedder is unavailable on an
    * otherwise-{@code COMPATIBLE} index ({@code embeddingReady=false}). Returns
@@ -1269,9 +1293,9 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
    * — reconstructed here from {@code embeddingCompatState} + {@code embeddingReady} (which equals
    * {@code isAvailable()} on the Worker, GrpcHealthService) — so the search banner stops claiming "fully
    * semantic" while AUTO has degraded to keyword. It does NOT fire for {@code BLOCKED_*} (handled by
-   * {@link #compatBlockedReason} with the rebuild remedy), {@code REBUILDING} (owned by the 595 Stability
-   * axis), or an UNKNOWN/empty compat or {@code null} {@code embeddingReady} (we never alarm on "don't
-   * know" — only on a positively-known dense block).
+   * {@link #compatBlockedReason} with the rebuild remedy), {@code REBUILDING} (handled by
+   * {@link #embeddingRebuildReason}, whose remedy is to wait), or an UNKNOWN/empty compat or {@code null}
+   * {@code embeddingReady} (we never alarm on "don't know" — only on a positively-known dense block).
    */
   static String denseUnavailableReason(WorkerOperationalView workerView) {
     var compat = workerView.compatibility();
@@ -1315,6 +1339,7 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
         String workerReason = lifecycleSnapshot.components().worker().reason_code();
         String throughputReason = throughputReadinessReason(workerView);
         String compatBlockedReason = compatBlockedReason(workerView);
+        String embeddingRebuildReason = embeddingRebuildReason(workerView);
         String denseUnavailableReason = denseUnavailableReason(workerView);
         String state;
         String reason;
@@ -1330,6 +1355,14 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
           // retrieval-composite reason code so the ONE verdict authority (595) names the real cause.
           state = READINESS_DEGRADED;
           reason = compatBlockedReason;
+        } else if (indexHealthy && embeddingRebuildReason != null) {
+          // An in-place embedding rebuild: keyword serving is intact, but the Worker refuses dense
+          // queries until it finishes. Nothing else in readiness observes this window, so without
+          // this branch the composite claims full semantic retrieval while queries fall back to
+          // keyword. Ranked below compatBlockedReason only for symmetry — the two are mutually
+          // exclusive embedding-compat states.
+          state = READINESS_DEGRADED;
+          reason = embeddingRebuildReason;
         } else if (indexHealthy && denseUnavailableReason != null) {
           // Tempdoc 598 reopen (B-3): the index serves keyword fine, but the dense leg can't run for a
           // non-rebuild reason (no embedding model / embedder down). Degrade the `retrieval` composite so
@@ -1370,16 +1403,25 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
 
       case EMBEDDING -> {
         Boolean embReady = workerView.embeddingReady();
-        String state =
-            embReady == null
-                ? READINESS_UNKNOWN
-                : (Boolean.TRUE.equals(embReady) ? READINESS_READY : READINESS_NOT_READY);
-        String reason =
-            embReady == null
-                ? LifecycleReasonCode.WORKER_HEALTH_EMBEDDING_PROBE_MISSING.code()
-                : (Boolean.TRUE.equals(embReady)
-                    ? null
-                    : LifecycleReasonCode.WORKER_HEALTH_EMBEDDING_NOT_READY.code());
+        String rebuildReason = embeddingRebuildReason(workerView);
+        String state;
+        String reason;
+        if (embReady == null) {
+          state = READINESS_UNKNOWN;
+          reason = LifecycleReasonCode.WORKER_HEALTH_EMBEDDING_PROBE_MISSING.code();
+        } else if (!Boolean.TRUE.equals(embReady)) {
+          state = READINESS_NOT_READY;
+          reason = LifecycleReasonCode.WORKER_HEALTH_EMBEDDING_NOT_READY.code();
+        } else if (rebuildReason != null) {
+          // The probe means "the encoder is loaded", not "the corpus is embedded". During an
+          // in-place rebuild the encoder is up while queries cannot use embeddings, so a bare
+          // READY here would assert semantic retrieval the Worker is refusing to serve.
+          state = READINESS_DEGRADED;
+          reason = rebuildReason;
+        } else {
+          state = READINESS_READY;
+          reason = null;
+        }
         yield readinessComponent(state, reason, dim.source(), observedAt);
       }
 

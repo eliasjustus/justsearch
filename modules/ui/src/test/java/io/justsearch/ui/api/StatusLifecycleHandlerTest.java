@@ -94,7 +94,7 @@ final class StatusLifecycleHandlerTest {
   }
 
   @Test
-  @DisplayName("compatBlockedReason ignores transient REBUILDING (owned by the 595 Stability axis)")
+  @DisplayName("compatBlockedReason ignores REBUILDING (owned by embeddingRebuildReason — no reindex remedy)")
   void compatBlockedReasonIgnoresRebuilding() {
     WorkerOperationalView workerView =
         compatWorkerView(
@@ -200,7 +200,7 @@ final class StatusLifecycleHandlerTest {
   }
 
   @Test
-  @DisplayName("denseUnavailableReason does NOT fire for REBUILDING (owned by the 595 Stability axis)")
+  @DisplayName("denseUnavailableReason does NOT fire for REBUILDING (owned by embeddingRebuildReason)")
   void denseUnavailableReasonIgnoresRebuilding() {
     assertNull(
         StatusLifecycleHandler.denseUnavailableReason(
@@ -236,6 +236,61 @@ final class StatusLifecycleHandlerTest {
     assertEquals("DEGRADED", env.components().get("indexServing").state());
     assertEquals("index.dense_unavailable", env.components().get("indexServing").reasonCode());
     assertEquals("DEGRADED", env.composites().get("retrieval").state());
+  }
+
+  // ===== In-place embedding rebuild (embeddingCompatState=REBUILDING) is visible to readiness =====
+
+  @Test
+  @DisplayName("embeddingRebuildReason maps REBUILDING → index.embedding_rebuilding")
+  void embeddingRebuildReasonMapsRebuilding() {
+    WorkerOperationalView workerView =
+        compatWorkerView(
+            new CompatibilityStatusView("REBUILDING", "REBUILD_IN_PROGRESS", "", "", "", "", "COMPATIBLE", false, ""));
+    assertEquals(
+        "index.embedding_rebuilding", StatusLifecycleHandler.embeddingRebuildReason(workerView));
+  }
+
+  @Test
+  @DisplayName("embeddingRebuildReason returns null for COMPATIBLE, both BLOCKED_* states, and a null compat")
+  void embeddingRebuildReasonNullOutsideRebuilding() {
+    assertNull(
+        StatusLifecycleHandler.embeddingRebuildReason(
+            compatWorkerView(
+                new CompatibilityStatusView("COMPATIBLE", "FINGERPRINT_MATCH", "", "", "", "", "COMPATIBLE", false, ""))));
+    assertNull(
+        StatusLifecycleHandler.embeddingRebuildReason(
+            compatWorkerView(
+                new CompatibilityStatusView("BLOCKED_LEGACY", "LEGACY_INDEX_NO_FINGERPRINT", "", "", "", "", "COMPATIBLE", true, "embedding_legacy"))));
+    assertNull(
+        StatusLifecycleHandler.embeddingRebuildReason(
+            compatWorkerView(
+                new CompatibilityStatusView("BLOCKED_MISMATCH", "FINGERPRINT_MISMATCH", "", "", "", "", "COMPATIBLE", true, "embedding_mismatch"))));
+    assertNull(StatusLifecycleHandler.embeddingRebuildReason(compatWorkerView(null)));
+  }
+
+  @Test
+  @DisplayName("REBUILDING rolls up to indexServing + embedding DEGRADED and both composites carry index.embedding_rebuilding (end-to-end)")
+  void embeddingRebuildRollsUpToBothComposites() {
+    StatusLifecycleHandler handler = newHandler();
+    // The live-observed shape: the encoder is loaded (embeddingReady=true) while the Worker refuses
+    // dense queries because the embeddings are being rebuilt in place.
+    WorkerOperationalView view =
+        compatWorkerView(
+            new CompatibilityStatusView("REBUILDING", "REBUILD_IN_PROGRESS", "", "", "", "", "COMPATIBLE", false, ""),
+            true);
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
+
+    assertEquals("DEGRADED", env.components().get("indexServing").state());
+    assertEquals(
+        "index.embedding_rebuilding", env.components().get("indexServing").reasonCode());
+    // The encoder-loaded probe must no longer read READY while queries cannot use embeddings.
+    assertEquals("DEGRADED", env.components().get("embedding").state());
+    assertEquals("index.embedding_rebuilding", env.components().get("embedding").reasonCode());
+    assertEquals("DEGRADED", env.composites().get("retrieval").state());
+    assertTrue(
+        env.composites().get("retrieval").reasonCodes().contains("index.embedding_rebuilding"),
+        "the retrieval composite must name the rebuild so the verdict can word it");
+    assertEquals("DEGRADED", env.composites().get("aiFeatures").state());
   }
 
   // ===== Tempdoc 804 §D1: an EMPTY corpus is not a chunk-embedding degradation =====
