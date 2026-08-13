@@ -93,6 +93,15 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
   private final io.justsearch.app.services.lifecycle.InferenceCapability inferenceCapability;
   private volatile KnowledgeServerBootstrap knowledgeServer;
   private volatile String knowledgeServerStartError;
+
+  /**
+   * Tempdoc 333 §4 (deferred there, filled by 821 §3-C1): epoch-ms of the newest SUCCESSFUL Worker
+   * gRPC observation in this Head process, or {@code 0} when the Worker has never been reached.
+   *
+   * <p>Stamped from the timestamp taken immediately BEFORE the call, not after it — a conservative
+   * choice, so the age reported to consumers is never younger than the observation actually is.
+   */
+  private volatile long lastWorkerObservationAtMs;
   private final Path indexBasePath;
   private final Instant startTime;
   private final Supplier<String> diskPressureSupplier;
@@ -405,6 +414,7 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
         workerView = knowledgeServer.client().getWorkerOperationalView();
         indexAvailable = true;
         workerRpcStale = false;
+        lastWorkerObservationAtMs = workerRpcAtMs;
       } catch (Exception e) {
         log.debug(
             "Failed to fetch Knowledge Server status: {} - {}",
@@ -424,7 +434,16 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
     // Tempdoc 412 Phase 3: single inference status surface (replaces LlmStatusView + OnlineAiView).
     InferenceRuntimeView inference = buildInferenceView();
 
-    ReadinessEnvelopeView readiness = buildReadinessEnvelope(workerView, lifecycleSnapshot);
+    // 821 §3-C1: the per-dimension freshness fact, derived from the SAME worker-contact outcome
+    // that StatusMeta reports below — one authority, two projections (envelope + _meta).
+    WorkerContact workerContact =
+        workerRpcStale
+            ? WorkerContact.lost(
+                lastWorkerObservationAtMs, System.currentTimeMillis(), startTime.toEpochMilli())
+            : WorkerContact.observed(workerRpcAtMs);
+
+    ReadinessEnvelopeView readiness =
+        buildReadinessEnvelope(workerView, lifecycleSnapshot, workerContact);
 
     // Tempdoc 430 Phase 4: feed the readiness envelope into the HealthEvent substrate
     // tap. The tap reconciles each dim's (state, reasonCode) against ConditionStore and
@@ -1181,7 +1200,9 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
   // `retrieval` composite resolves to DEGRADED carrying the compat reason code — the chain the
   // unit test for `compatBlockedReason` alone does not cover.
   ReadinessEnvelopeView buildReadinessEnvelope(
-      WorkerOperationalView workerView, LifecycleSnapshotV1 lifecycleSnapshot) {
+      WorkerOperationalView workerView,
+      LifecycleSnapshotV1 lifecycleSnapshot,
+      WorkerContact workerContact) {
     String observedAt = lifecycleSnapshot.observed_at();
 
     // Compute all components via exhaustive switch — adding a new ReadinessDimension
@@ -1191,12 +1212,17 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
         new EnumMap<>(ReadinessDimension.class);
     for (ReadinessDimension dim : ReadinessDimension.values()) {
       ReadinessComponentView comp =
-          computeComponent(dim, workerView, lifecycleSnapshot, observedAt);
+          withContactProvenance(
+              dim, computeComponent(dim, workerView, lifecycleSnapshot, observedAt), workerContact);
       components.put(dim.key(), comp);
       computed.put(dim, comp);
     }
 
     // Assemble composites from dim.composite() grouping — no hardcoded lists.
+    // 821 §3-C1: composites carry NO staleness. ReadinessCompositeView is (state, reasonCodes)
+    // only, and this task fills the existing contract rather than extending it — a composite
+    // `stale` slot would be a new wire field. A consumer that needs "is any part of this
+    // composite unobserved" reads the member components' `stale`, or `meta.workerRpcStale`.
     Map<String, List<ReadinessDimension>> byComposite = new LinkedHashMap<>();
     for (ReadinessDimension dim : ReadinessDimension.values()) {
       byComposite.computeIfAbsent(dim.composite(), k -> new ArrayList<>()).add(dim);
@@ -1348,6 +1374,10 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
         String reason;
 
         if (LifecycleReasonCode.WORKER_NOT_CONFIGURED.code().equals(workerReason)) {
+          // 821 §3-C1: this one branch derives head-side (the lifecycle snapshot's worker reason),
+          // yet the dimension is classified worker-observed as a whole, so it is marked stale here
+          // too. Deliberate: over-marking a NOT_CONFIGURED verdict is the safe direction, and
+          // splitting the classification per-branch would put the decision back inline.
           state = READINESS_NOT_CONFIGURED;
           reason = LifecycleReasonCode.WORKER_NOT_CONFIGURED.code();
         } else if (compatBlockedReason != null) {
@@ -1588,9 +1618,113 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
     };
   }
 
+  /**
+   * Builds a component with response-build provenance ({@code stale=false}, {@code stalenessMs=0}).
+   * Worker-observed dimensions are re-stamped afterwards by {@link #withContactProvenance} when the
+   * Worker was not reached — this factory never decides freshness on its own.
+   */
   private static ReadinessComponentView readinessComponent(
       String state, String reasonCode, String source, String observedAt) {
     return new ReadinessComponentView(state, reasonCode, source, observedAt, false, 0);
+  }
+
+  /**
+   * The Head's contact state with the Worker for a single {@code /api/status} response — the fact
+   * {@link StatusMeta} already reports process-wide, projected onto individual dimensions.
+   *
+   * @param stale {@code true} when this response's Worker gRPC observation did not happen (the call
+   *     threw, or the worker capability was unavailable so no call was attempted)
+   * @param lastObservationAtMs epoch-ms of the newest successful Worker observation in this Head
+   *     process, or {@code 0} when the Worker has never been reached
+   * @param outOfContactMs how long the Head has been without a fresh Worker observation: measured
+   *     from {@code lastObservationAtMs}, or — when there has never been one — from Head start,
+   *     which is a true lower bound on the gap rather than an invented zero. Always {@code 0} while
+   *     contact holds.
+   */
+  record WorkerContact(boolean stale, long lastObservationAtMs, long outOfContactMs) {
+
+    /** The Worker answered during this response build. */
+    static WorkerContact observed(long observedAtMs) {
+      return new WorkerContact(false, observedAtMs, 0L);
+    }
+
+    /** The Worker could not be observed during this response build. */
+    static WorkerContact lost(long lastObservationAtMs, long nowMs, long headStartedAtMs) {
+      long since = lastObservationAtMs > 0 ? lastObservationAtMs : headStartedAtMs;
+      return new WorkerContact(true, lastObservationAtMs, Math.max(0L, nowMs - since));
+    }
+  }
+
+  /**
+   * Whether a dimension's verdict is read from the Worker's gRPC {@link WorkerOperationalView}.
+   *
+   * <p>This is the classification {@code ReadinessComponentView.stale} depends on, and it is an
+   * exhaustive switch on purpose: a new {@link ReadinessDimension} constant fails to compile until
+   * someone decides which side it falls on. Each arm names the dimension's declared {@code
+   * source()} so the mapping can be checked against the enum without leaving this method.
+   *
+   * <p>Worker-observed dimensions matter because when the RPC fails the handler substitutes {@link
+   * WorkerOperationalView#fallback}: their arms then answer from placeholder data, so their verdict
+   * is a derivation, not an observation. Head-local dimensions read head-side supervisor,
+   * capability, or monitor state that is genuinely current at response-build time — a Worker
+   * outage does not make them stale.
+   */
+  private static boolean workerObserved(ReadinessDimension dim) {
+    return switch (dim) {
+      case INDEX_SERVING, // source: worker_status
+              EMBEDDING, // source: worker_health_check
+              CHUNK_EMBEDDING, // source: worker_status
+              VISUAL_TEXT_EXTRACTION, // source: worker_status
+              // source: head_vdu_status — the blocked-reason overlay IS head-side, but this arm's
+              // gate is visualEnrichmentNeededCount, a Worker count. A fallback view zeroes it and
+              // the arm yields READY, so the dimension is classified by what it reads rather than
+              // by its label; calling it head-local would ship an unobserved READY as fresh.
+              VISUAL_DOCUMENT_UNDERSTANDING,
+              // source: gpu_saturation_monitor — the NVML sample IS head-local and current, but
+              // the arm feeds computeGpuActivityGate(workerView), whose first term is the Worker's
+              // processingJobsCount. A fallback view zeroes that term, REMOVING a suppression
+              // signal, so a Worker outage can flip this dimension to DEGRADED/gpu.saturated on
+              // placeholder data. Since the unsafe direction is a false DEGRADED, the oldest input
+              // governs the freshness claim: classified worker-observed by the same
+              // what-it-reads standard as VDU above.
+              GPU ->
+          true;
+      case WORKER_CONTROL_PLANE, // source: lifecycle_snapshot — head-side workerCapability.health()
+              AI, // source: lifecycle_inference — head-side inferenceCapability.health()
+              LAMBDAMART_MODEL, // source: head_gpl_status
+              TELEMETRY -> // source: telemetry_health
+          false;
+    };
+  }
+
+  /**
+   * Stamps a component with the Worker-contact freshness fact.
+   *
+   * <p>{@code observedAt} means "when the fact behind this component was last observed from its
+   * source". For head-local dimensions and for worker-observed ones while contact holds, that is
+   * this response's build time — they were observed just now — so the component passes through
+   * unchanged. For a worker-observed dimension after contact is lost, the response-build timestamp
+   * would be a false freshness claim: the verdict shown is fallback-derived and the last real
+   * observation is older. Those components therefore carry the epoch of the newest successful
+   * Worker observation instead, with {@code stalenessMs} measuring the gap to now. When the Worker
+   * has never been reached in this Head process there is no observation to timestamp, so {@code
+   * observedAt} is omitted rather than fabricated, and {@code stalenessMs} measures from Head start.
+   *
+   * <p>For a dimension that mixes head-local and Worker inputs (see {@code GPU} in {@link
+   * #workerObserved}), the OLDEST input governs: the timestamp under-claims the freshness of the
+   * head-local part rather than over-claiming the freshness of the Worker part.
+   */
+  private static ReadinessComponentView withContactProvenance(
+      ReadinessDimension dim, ReadinessComponentView comp, WorkerContact contact) {
+    if (!contact.stale() || !workerObserved(dim)) {
+      return comp;
+    }
+    String observedAt =
+        contact.lastObservationAtMs() > 0
+            ? Instant.ofEpochMilli(contact.lastObservationAtMs()).toString()
+            : null;
+    return new ReadinessComponentView(
+        comp.state(), comp.reasonCode(), comp.source(), observedAt, true, contact.outOfContactMs());
   }
 
   private static ReadinessCompositeView readinessComposite(

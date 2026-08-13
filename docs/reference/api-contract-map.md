@@ -345,6 +345,7 @@ Request fields:
 - `query` (required)
 - `return_full_documents` (bool, proto field 23) — when true, skips chunk search and returns full document content (366)
 - Filter fields: same as search (entity + metadata filters scoped via two-stage parent-doc pre-filter) (362)
+- `filters.collection` (string array, proto field 25) — scope retrieval to Lucene collection tag(s), same wire key and semantics as the search endpoint's `filters.collection`. Non-empty = a positive include of exactly those collections; absent/empty = the default scope (the `agent-history` MUST_NOT exclusion of 585 D4b), never "match nothing". Applied on the chunk branch by `QueryFilterBuilder#buildChunkFilterQuery`, so a collection-only request does **not** route through the doc-level parent pre-filter (821 §3-C2)
 
 Response includes:
 
