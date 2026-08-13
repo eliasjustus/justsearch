@@ -11,8 +11,10 @@ import io.justsearch.indexerworker.embed.EmbeddingCompatibilityController;
 import io.justsearch.indexerworker.index.IndexGenerationManager;
 import io.justsearch.indexerworker.index.MigrationProgressSnapshot;
 import io.justsearch.indexerworker.loop.IndexingLoop;
+import io.justsearch.indexerworker.metrics.BatchTimingKeys;
 import io.justsearch.indexerworker.metrics.OperationalMetrics;
 import io.justsearch.indexerworker.queue.JobQueue;
+import io.justsearch.indexerworker.rag.ChunkDocumentWriter;
 import io.justsearch.indexerworker.queue.SwitchBufferCapableQueue;
 import io.justsearch.indexerworker.extract.OcrRoutingConfig;
 import io.justsearch.indexerworker.extract.TikaOcrRuntime;
@@ -29,6 +31,7 @@ import io.justsearch.ipc.MigrationStatus;
 import io.justsearch.ipc.OrtCudaProbeResult;
 import io.justsearch.ipc.PipelineBatchTiming;
 import io.justsearch.ipc.QueueDbHealth;
+import io.justsearch.ipc.StageCompleteness;
 import io.justsearch.ipc.StatusResponse;
 import io.justsearch.ipc.TelemetryStatus;
 import io.justsearch.ipc.VectorQuantization;
@@ -59,6 +62,30 @@ import org.slf4j.LoggerFactory;
  */
 final class IndexStatusOps {
   private static final Logger log = LoggerFactory.getLogger(IndexStatusOps.class);
+
+  /**
+   * The bar {@code ChunkCoverage.vectors_ready} is evaluated against (the RAG hybrid threshold).
+   * Tempdoc 821 §3-C3 hoisted it out of the call site so the number published on the wire and the
+   * number the boolean is computed from cannot diverge.
+   */
+  private static final double VECTOR_READY_PERCENT = 95.0;
+
+  /** Presence was verified against the artifact itself, so a lying status field cannot inflate it. */
+  private static final String TIER_ARTIFACT = "ARTIFACT";
+
+  /**
+   * Presence is the bookkeeping status field only — declared honestly because no artifact proxy
+   * exists: the {@code splade} field is a postings/feature field with {@code docValues:false}
+   * ({@code fields.v1.json}), and NER writes no countable per-document artifact.
+   */
+  private static final String TIER_STATUS = "STATUS";
+
+  /**
+   * Chunk embedding's completeness stage id. Unlike the other three it has no
+   * {@link BatchTimingKeys} member, because it has no batch-timing stage of its own — it rides
+   * {@link BatchTimingKeys#EMBED} (every writer branches {@code isChunk ? CHUNK_VECTOR : VECTOR}).
+   */
+  private static final String STAGE_CHUNK_EMBED = "chunk_embed";
 
   private final JobQueue jobQueue;
   private final Path indexPath;
@@ -663,6 +690,19 @@ final class IndexStatusOps {
     // diagnostic signal.
     LuceneRuntimeTypes.ChunkVectorPresence chkVec =
         ingestCountOps != null ? ingestCountOps.queryChunkVectorPresenceCount() : null;
+    // Tempdoc 821 §3-C3: the auditor projection. `expected` is the field-carrying denominator
+    // (an absent status field means the stage does not apply, post-798), so a stage that lost a
+    // sub-population reads `missing > 0` instead of hiding inside a coverage percentage that
+    // divides by every document.
+    LuceneRuntimeTypes.StageCompletenessCounts queried =
+        ingestCountOps == null ? null : ingestCountOps.queryStageCompletenessCounts();
+    // Absence is the zero shape, never a NullPointerException on the status path — the same
+    // null-tolerance every count above already applies, so a count source that yields nothing
+    // degrades this one surface instead of failing the whole StatusResponse.
+    LuceneRuntimeTypes.StageCompletenessCounts stages =
+        queried == null ? LuceneRuntimeTypes.StageCompletenessCounts.EMPTY : queried;
+    LuceneRuntimeTypes.VectorPresence docVec =
+        ingestCountOps != null ? ingestCountOps.queryVectorPresenceCount() : null;
 
     return EnrichmentCoverage.newBuilder()
         .setEmbedding(
@@ -689,8 +729,40 @@ final class IndexStatusOps {
                 .setFailedCount(chk == null ? 0L : chk.failed())
                 // Presence-truthful coverage/readiness (tempdoc 717), not status-derived.
                 .setCoveragePercent(chkVec == null ? 0.0 : chkVec.coveragePercent())
-                .setVectorsReady(chkVec != null && chkVec.isReady(95.0))
+                .setVectorsReady(chkVec != null && chkVec.isReady(VECTOR_READY_PERCENT))
                 .build())
+        // Tempdoc 821 §3-C3 — the two thresholds the auditor owns, published so off-process
+        // oracles read them instead of mirroring the Java constants.
+        .setChunkMinChars(ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS)
+        .setVectorReadyPercent(VECTOR_READY_PERCENT)
+        .addCompleteness(
+            stageCompleteness(
+                BatchTimingKeys.EMBED,
+                TIER_ARTIFACT,
+                stages.embedding().expected(),
+                docVec == null ? 0 : docVec.vectorsPresent(),
+                stages.embedding().failed()))
+        .addCompleteness(
+            stageCompleteness(
+                STAGE_CHUNK_EMBED,
+                TIER_ARTIFACT,
+                stages.chunkEmbedding().expected(),
+                chkVec == null ? 0 : chkVec.vectorsPresent(),
+                stages.chunkEmbedding().failed()))
+        .addCompleteness(
+            stageCompleteness(
+                BatchTimingKeys.SPLADE,
+                TIER_STATUS,
+                stages.splade().expected(),
+                stages.splade().settledSuccess(),
+                stages.splade().failed()))
+        .addCompleteness(
+            stageCompleteness(
+                BatchTimingKeys.NER,
+                TIER_STATUS,
+                stages.ner().expected(),
+                stages.ner().settledSuccess(),
+                stages.ner().failed()))
         .setPendingNerCount(
             countPendingByStatus(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_PENDING))
         // NER's terminal-success vocabulary is two-valued: COMPLETED (entities found) and
@@ -701,6 +773,9 @@ final class IndexStatusOps {
             countPendingByStatus(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED)
                 + countPendingByStatus(
                     SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED_EMPTY))
+        // Tempdoc 821 §3-C3 — NER reported only pending/completed; the other three stages have
+        // carried a failed count since 354, so a stalled NER population was invisible here.
+        .setFailedNerCount(stages.ner().failed())
         .setEmbeddingEnabled(embeddingEnabled)
         .setSpladeEnabled(spladeEnabled)
         .setNerEnabled(nerEnabled)
@@ -713,6 +788,24 @@ final class IndexStatusOps {
         .putAllEncoderProfiles(buildEncoderProfilesProto())
         // Tempdoc 710 Move 2 item 4: which backfill pass ran last idle cycle.
         .setBackfillMode(metrics.getBackfillMode())
+        .build();
+  }
+
+  /**
+   * Builds one {@link StageCompleteness} entry (tempdoc 821 §3-C3). {@code missing} is derived,
+   * never independently counted — it is exactly what {@code expected} does not account for. It is
+   * floored at 0 because the three inputs come from separate queries against the same reader and
+   * a stale-but-present artifact on a FAILED document could otherwise make the sum overshoot.
+   */
+  private static StageCompleteness stageCompleteness(
+      String stageId, String tier, long expected, long present, long failed) {
+    return StageCompleteness.newBuilder()
+        .setStageId(stageId)
+        .setTier(tier)
+        .setExpected(expected)
+        .setPresent(present)
+        .setMissing(Math.max(0L, expected - present - failed))
+        .setFailed(failed)
         .build();
   }
 

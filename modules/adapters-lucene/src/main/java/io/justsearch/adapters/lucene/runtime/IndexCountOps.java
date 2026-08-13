@@ -6,6 +6,9 @@ import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.EmbeddingCounts;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.SpladeFeatureCounts;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.ChunkVectorPresence;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.RootCoverageCounts;
+import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.StageCompletenessCounts;
+import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.StageCounts;
+import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.VectorPresence;
 import io.justsearch.indexing.SchemaFields;
 import java.io.IOException;
 import java.util.Map;
@@ -52,6 +55,10 @@ public final class IndexCountOps {
   // profile so the per-query serve-time gate does not re-iterate vectors on every search.
   private volatile ChunkVectorPresence cachedChunkVectorPresence;
   private volatile long cachedChunkVectorPresenceVersion = -1L;
+  // Tempdoc 821 §3-C3: the parent-document twin of the chunk-vector presence count, cached
+  // identically so the auditor projection on the status path costs one vector walk per reader.
+  private volatile VectorPresence cachedVectorPresence;
+  private volatile long cachedVectorPresenceVersion = -1L;
   // Tempdoc 813 §13: per-root coverage is refreshed on the Library live tick (seconds), so it gets
   // the same reader-version cache as the corpus profile — keyed by prefix because there is one
   // entry per watched root. Bounded so a caller passing unbounded distinct prefixes (an ad-hoc
@@ -267,6 +274,70 @@ public final class IndexCountOps {
     } catch (IOException e) {
       log.debug("Failed to count chunk vector presence: {}", e.getMessage());
       return new ChunkVectorPresence(0, 0);
+    }
+  }
+
+  /**
+   * Counts live whole (non-chunk) documents that actually carry a {@code vector} value (tempdoc
+   * 821 §3-C3) — the parent-document twin of {@link #queryChunkVectorPresenceCount()}, and the
+   * artifact-truthful complement to {@link #queryEmbeddingCounts()}, which counts the {@code
+   * embedding_status} bookkeeping field and can therefore read COMPLETED while the vector is
+   * absent (the F-032 "status lies" class). Reader-version cached identically so the auditor
+   * projection on the status path does not re-walk vectors on every poll.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   */
+  public VectorPresence queryVectorPresenceCount() {
+    long currentVersion = getReaderVersion();
+    VectorPresence cached = cachedVectorPresence;
+    if (cached != null && cachedVectorPresenceVersion == currentVersion) {
+      return cached;
+    }
+    VectorPresence computed = computeVectorPresence();
+    cachedVectorPresence = computed;
+    cachedVectorPresenceVersion = currentVersion;
+    return computed;
+  }
+
+  /**
+   * Enumerates each leaf's {@code vector} {@link FloatVectorValues}, filtering deleted docs via
+   * {@code liveDocs}. The KNN structures are not purged of tombstones until merge, so {@code
+   * FloatVectorValues.size()} would overcount deleted-but-unmerged docs (tempdoc 717 §Derisk U2) —
+   * a per-doc {@code liveDocs} check is required. {@code vector} is written only on whole
+   * documents (every writer branches {@code isChunk ? CHUNK_VECTOR : VECTOR}), so a doc carrying
+   * it is a live non-chunk doc with a vector.
+   */
+  private VectorPresence computeVectorPresence() {
+    try {
+      return bridge.withSearcher(searcher -> {
+        Query wholeDocsQuery =
+            new BooleanQuery.Builder()
+                .add(new MatchAllDocsQuery(), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(SchemaFields.IS_CHUNK, "true")),
+                    BooleanClause.Occur.MUST_NOT)
+                .build();
+        int totalDocs = searcher.count(wholeDocsQuery);
+        int vectorsPresent = 0;
+        for (LeafReaderContext leaf : searcher.getIndexReader().leaves()) {
+          FloatVectorValues values = leaf.reader().getFloatVectorValues(SchemaFields.VECTOR);
+          if (values == null) {
+            continue; // this segment indexed no vector
+          }
+          Bits liveDocs = leaf.reader().getLiveDocs();
+          KnnVectorValues.DocIndexIterator iter = values.iterator();
+          for (int doc = iter.nextDoc();
+              doc != DocIdSetIterator.NO_MORE_DOCS;
+              doc = iter.nextDoc()) {
+            if (liveDocs == null || liveDocs.get(doc)) {
+              vectorsPresent++;
+            }
+          }
+        }
+        return new VectorPresence(totalDocs, vectorsPresent);
+      });
+    } catch (IOException e) {
+      log.debug("Failed to count vector presence: {}", e.getMessage());
+      return new VectorPresence(0, 0);
     }
   }
 
@@ -489,6 +560,71 @@ public final class IndexCountOps {
     } catch (IOException e) {
       log.debug("Failed to compute root coverage counts: {}", e.getMessage());
       return null;
+    }
+  }
+
+  /**
+   * Index-wide per-stage completeness denominators (tempdoc 821 §3-C3) — the whole-index
+   * counterpart of {@link #queryRootCoverageCounts(String)}'s per-root numbers, reusing the same
+   * {@link #countWithField}/{@link #countSettled} primitives so the two cannot drift.
+   *
+   * <p>The denominator is the documents that CARRY the stage's status field, not every document:
+   * an absent status field means the stage does not apply to that document (post-798), and a
+   * document the backfill can never select must not sit in a denominator forever. {@code
+   * settledSuccess} counts only terminal SUCCESS values — FAILED is returned separately so a
+   * consumer can distinguish "not done yet" from "gave up", which the single settled count
+   * {@code queryRootCoverageCounts} returns cannot.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   *
+   * @return the counts, or {@link StageCompletenessCounts#EMPTY} when the reader could not be read
+   */
+  public StageCompletenessCounts queryStageCompletenessCounts() {
+    try {
+      return bridge.withSearcher(searcher -> {
+        Query isChunk = new TermQuery(new Term(SchemaFields.IS_CHUNK, "true"));
+        Query parentDocs = new BooleanQuery.Builder()
+            .add(new MatchAllDocsQuery(), BooleanClause.Occur.FILTER)
+            .add(isChunk, BooleanClause.Occur.MUST_NOT)
+            .build();
+        Query chunkDocs = new BooleanQuery.Builder()
+            .add(new MatchAllDocsQuery(), BooleanClause.Occur.FILTER)
+            .add(isChunk, BooleanClause.Occur.FILTER)
+            .build();
+
+        // embedding_status has no COMPLETED_EMPTY member (SchemaFields declares PENDING /
+        // COMPLETED / FAILED only), so its terminal-success set is one-valued; splade_status and
+        // ner_status both add COMPLETED_EMPTY as a terminal success.
+        StageCounts embedding = new StageCounts(
+            countWithField(searcher, parentDocs, SchemaFields.EMBEDDING_STATUS),
+            countSettled(searcher, parentDocs, SchemaFields.EMBEDDING_STATUS,
+                SchemaFields.EMBEDDING_STATUS_COMPLETED),
+            countSettled(searcher, parentDocs, SchemaFields.EMBEDDING_STATUS,
+                SchemaFields.EMBEDDING_STATUS_FAILED));
+        StageCounts splade = new StageCounts(
+            countWithField(searcher, parentDocs, SchemaFields.SPLADE_STATUS),
+            countSettled(searcher, parentDocs, SchemaFields.SPLADE_STATUS,
+                SchemaFields.SPLADE_STATUS_COMPLETED, SchemaFields.SPLADE_STATUS_COMPLETED_EMPTY),
+            countSettled(searcher, parentDocs, SchemaFields.SPLADE_STATUS,
+                SchemaFields.SPLADE_STATUS_FAILED));
+        StageCounts ner = new StageCounts(
+            countWithField(searcher, parentDocs, SchemaFields.NER_STATUS),
+            countSettled(searcher, parentDocs, SchemaFields.NER_STATUS,
+                SchemaFields.NER_STATUS_COMPLETED, SchemaFields.NER_STATUS_COMPLETED_EMPTY),
+            countSettled(searcher, parentDocs, SchemaFields.NER_STATUS,
+                SchemaFields.NER_STATUS_FAILED));
+        StageCounts chunkEmbedding = new StageCounts(
+            countWithField(searcher, chunkDocs, SchemaFields.CHUNK_EMBEDDING_STATUS),
+            countSettled(searcher, chunkDocs, SchemaFields.CHUNK_EMBEDDING_STATUS,
+                SchemaFields.EMBEDDING_STATUS_COMPLETED),
+            countSettled(searcher, chunkDocs, SchemaFields.CHUNK_EMBEDDING_STATUS,
+                SchemaFields.EMBEDDING_STATUS_FAILED));
+
+        return new StageCompletenessCounts(embedding, splade, ner, chunkEmbedding);
+      });
+    } catch (IOException e) {
+      log.debug("Failed to compute stage completeness counts: {}", e.getMessage());
+      return StageCompletenessCounts.EMPTY;
     }
   }
 

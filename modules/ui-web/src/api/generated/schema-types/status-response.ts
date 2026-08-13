@@ -277,7 +277,16 @@ export interface StatusResponse {
         chunkVectorCoveragePercent?: number;
         chunkVectorsReady?: boolean;
       } | null;
+      chunkMinChars?: number;
       completedNerCount?: number;
+      completeness?: ({
+        expected?: number;
+        failed?: number;
+        missing?: number;
+        present?: number;
+        stageId?: string | null;
+        tier?: string | null;
+      })[] | null;
       embeddingCompletedCount?: number;
       embeddingCoveragePercent?: number;
       embeddingDocCount?: number;
@@ -294,6 +303,7 @@ export interface StatusResponse {
         phaseTotalUs?: Record<string, number> | null;
       }> | null;
       enrichmentCompleted?: Record<string, number> | null;
+      failedNerCount?: number;
       nerEnabled?: boolean;
       pendingNerCount?: number;
       spladeCompletedCount?: number;
@@ -302,6 +312,7 @@ export interface StatusResponse {
       spladeEnabled?: boolean;
       spladeFailedCount?: number;
       spladePendingCount?: number;
+      vectorReadyPercent?: number;
     };
     failure?: {
       failedByFileKind?: Record<string, number> | null;
@@ -606,7 +617,16 @@ export const statusResponseSchema = z.strictObject({
         "chunkVectorCoveragePercent": z.number().optional(),
         "chunkVectorsReady": z.boolean().optional(),
       }).nullable().optional(),
+      "chunkMinChars": z.number().int().optional(),
       "completedNerCount": z.number().int().optional(),
+      "completeness": z.array(z.strictObject({
+        "expected": z.number().int().optional(),
+        "failed": z.number().int().optional(),
+        "missing": z.number().int().optional(),
+        "present": z.number().int().optional(),
+        "stageId": z.string().nullable().optional(),
+        "tier": z.string().nullable().optional(),
+      })).nullable().optional(),
       "embeddingCompletedCount": z.number().int().optional(),
       "embeddingCoveragePercent": z.number().optional(),
       "embeddingDocCount": z.number().int().optional(),
@@ -623,6 +643,7 @@ export const statusResponseSchema = z.strictObject({
         "phaseTotalUs": z.record(z.string(), z.number().int()).nullable().optional(),
       })).nullable().optional(),
       "enrichmentCompleted": z.record(z.string(), z.number().int()).nullable().optional(),
+      "failedNerCount": z.number().int().optional(),
       "nerEnabled": z.boolean().optional(),
       "pendingNerCount": z.number().int().optional(),
       "spladeCompletedCount": z.number().int().optional(),
@@ -631,6 +652,7 @@ export const statusResponseSchema = z.strictObject({
       "spladeEnabled": z.boolean().optional(),
       "spladeFailedCount": z.number().int().optional(),
       "spladePendingCount": z.number().int().optional(),
+      "vectorReadyPercent": z.number().optional(),
     }).optional(),
     "failure": z.strictObject({
       "failedByFileKind": z.record(z.string(), z.number().int()).nullable().optional(),

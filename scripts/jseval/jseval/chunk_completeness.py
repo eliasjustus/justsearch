@@ -21,14 +21,43 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Mirrors ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS -- a document's extracted content only
-# produces chunk docs when its length is >= this many characters (modules/worker-services/src/
-# main/java/io/justsearch/indexerworker/rag/ChunkDocumentWriter.java:28, applied identically by
-# IndexingDocumentOps.java:352). DUAL-SOURCE-OF-TRUTH RISK (named in tempdoc 718 §Settled
-# design): this is a jseval-side mirror of a Java constant and will silently drift if the Java
-# value ever changes. Follow-up filed to expose the threshold via /api/status so this oracle
-# reads it instead of mirroring it (see docs/observations.d/).
-CHUNK_THRESHOLD_CHARS = 2000
+
+def resolve_chunk_threshold_chars(status_payload: dict | None) -> int | None:
+    """Read the chunk threshold the BACKEND published, or ``None`` when it did not publish one.
+
+    Tempdoc 821 §3-C3 closed the DUAL-SOURCE-OF-TRUTH risk tempdoc 718 named: this module used to
+    carry its own ``CHUNK_THRESHOLD_CHARS = 2000`` mirror of
+    ``ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS`` (applied identically by
+    ``IndexingDocumentOps.java:395``) and would have drifted silently the day the Java value
+    changed. The worker's enrichment auditor now OWNS the number and publishes it as
+    ``worker.enrichment.chunkMinChars``, so this oracle reads it instead of mirroring it -- and
+    there is deliberately NO local fallback constant, because a fallback is the mirror again.
+
+    Accepts either a raw ``/api/status`` payload or one already flattened by
+    ``jseval.readiness.flatten_status`` (the flattener lifts ``worker``'s sub-records to the top
+    level). ``None`` means "this backend does not publish the threshold" -- a payload predating
+    821, or no status snapshot at all. Callers must treat that as "nothing to expect", the same
+    never-blocks path a missing ``corpus.jsonl`` already takes; they must NOT substitute a guess.
+    """
+    if not isinstance(status_payload, dict):
+        return None
+    candidates = [status_payload]
+    worker = status_payload.get("worker")
+    if isinstance(worker, dict):
+        candidates.append(worker)
+        enrichment = worker.get("enrichment")
+        if isinstance(enrichment, dict):
+            candidates.append(enrichment)
+    enrichment_flat = status_payload.get("enrichment")
+    if isinstance(enrichment_flat, dict):
+        candidates.append(enrichment_flat)
+    for source in candidates:
+        value = source.get("chunkMinChars")
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int) and value > 0:
+            return value
+    return None
 
 
 @dataclass
@@ -75,22 +104,25 @@ def iter_corpus_docs(corpus_jsonl_path: Path | str) -> Iterator[CorpusDoc]:
         yield CorpusDoc(doc_id=doc_id, title=title, text=text, content=content, length=len(content))
 
 
-def expected_chunk_docs(corpus_jsonl_path: Path | str) -> int:
+def expected_chunk_docs(corpus_jsonl_path: Path | str, threshold_chars: int | None) -> int:
     """Offline (spoof-proof) count of corpus docs that SHOULD produce chunk docs.
 
-    A doc counts when ``len(content) >= CHUNK_THRESHOLD_CHARS`` (see :func:`iter_corpus_docs`
-    for the materialization rule). This is a pure read of the corpus TEXT, computed
-    before/independent of any ingest -- the enrichment pipeline's own failure can never move it.
+    A doc counts when ``len(content) >= threshold_chars`` (see :func:`iter_corpus_docs` for the
+    materialization rule). This is a pure read of the corpus TEXT, computed before/independent
+    of any ingest -- the enrichment pipeline's own failure can never move it.
     ``expected_chunk_docs() > 0`` means "this corpus SHOULD produce chunk docs."
 
-    Returns ``0`` when ``corpus_jsonl_path`` doesn't exist, matching :func:`iter_corpus_docs`'s
-    empty-iteration behavior: a corpus this function cannot read has nothing to expect chunks
-    from, so BEIR runs correctly get a ``chunk-free`` verdict (never gated) rather than a
+    ``threshold_chars`` comes from :func:`resolve_chunk_threshold_chars` -- the backend's own
+    published value, never a local mirror. ``None`` (a backend that does not publish it) returns
+    ``0``, the same "nothing to expect" outcome as a missing ``corpus.jsonl``: without the real
+    threshold this oracle has no ground to gate on, so it must not gate. Returns ``0`` when
+    ``corpus_jsonl_path`` doesn't exist too, matching :func:`iter_corpus_docs`'s empty-iteration
+    behavior -- BEIR runs correctly get a ``chunk-free`` verdict (never gated) rather than a
     spurious "0 expected."
     """
-    return sum(
-        1 for d in iter_corpus_docs(corpus_jsonl_path) if d.length >= CHUNK_THRESHOLD_CHARS
-    )
+    if threshold_chars is None or threshold_chars <= 0:
+        return 0
+    return sum(1 for d in iter_corpus_docs(corpus_jsonl_path) if d.length >= threshold_chars)
 
 
 @dataclass

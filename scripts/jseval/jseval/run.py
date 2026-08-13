@@ -571,9 +571,13 @@ def _compute_chunk_completeness(
     Offline expectation is read from the run's `corpus.jsonl` (golden/mixed self-demo corpora
     only — a BEIR dataset has no local corpus.jsonl, so `expected_chunk_docs` gracefully
     returns 0 and this resolves to the harmless `chunk-free` verdict, never gating a BEIR run).
+
+    The chunk threshold the expectation is computed against comes from the SAME status snapshot
+    (tempdoc 821 §3-C3): the worker's enrichment auditor publishes `chunkMinChars`, so this
+    oracle no longer mirrors the Java constant. A backend that predates that field yields no
+    threshold, hence expected=0 and the never-gating `chunk-free` verdict.
     """
     dataset_dir = (base_dir or corpora._default_base_dir()) / dataset_name
-    expected = chunk_completeness_mod.expected_chunk_docs(dataset_dir / "corpus.jsonl")
 
     # Observed: worker.enrichment.chunk.* from the run-completion /api/status snapshot
     # (readiness.py already reads this same nested path — flatten_status merges it to the
@@ -581,6 +585,11 @@ def _compute_chunk_completeness(
     flat_status = readiness.flatten_status(dict(status_snapshot)) if status_snapshot else {}
     observed_chunk_doc_count = flat_status.get("chunkDocCount", 0)
     observed_coverage_pct = flat_status.get("chunkVectorCoveragePercent")
+
+    threshold_chars = chunk_completeness_mod.resolve_chunk_threshold_chars(flat_status)
+    expected = chunk_completeness_mod.expected_chunk_docs(
+        dataset_dir / "corpus.jsonl", threshold_chars
+    )
 
     # chunk_merge corroborator: only meaningful when `vector` mode actually ran this run (it's
     # a query-time signal from vector-mode retrieval). A run that only exercises e.g. `lexical`
@@ -612,11 +621,24 @@ def _compute_chunk_completeness(
     result = chunk_completeness_mod.chunk_completeness_verdict(
         expected, observed_chunk_doc_count, observed_coverage_pct, chunk_merge_observed,
     )
+    reasons = list(result.reasons)
+    if threshold_chars is None:
+        # Say so out loud rather than letting the run read as a clean `chunk-free`: with no
+        # published threshold the offline expectation could not be computed at all, which is a
+        # different fact from "no corpus doc reaches the threshold". Non-blocking either way
+        # (821 §3-C3 back-compat for backends predating `chunkMinChars`), but legible.
+        reasons.insert(
+            0,
+            "worker.enrichment.chunkMinChars absent from the status snapshot — the offline "
+            "expectation could not be computed, so this run is not gated on chunk completeness",
+        )
     return {
         "expected": result.expected,
         "observed": result.observed,
         "verdict": result.verdict,
-        "reasons": result.reasons,
+        "reasons": reasons,
+        # Provenance: which threshold the expectation was computed against (null = none published).
+        "threshold_chars": threshold_chars,
     }
 
 

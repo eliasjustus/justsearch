@@ -304,6 +304,55 @@ public final class LuceneRuntimeTypes {
   }
 
   /**
+   * Live-artifact count of doc-level vectors actually present in the index (tempdoc 821 §3-C3) —
+   * the parent-document counterpart of {@link ChunkVectorPresence}, and the artifact-truthful
+   * complement to {@link EmbeddingCounts}, which counts the {@code embedding_status} bookkeeping
+   * field. Same F-032 "status lies" class: a document can read {@code embedding_status=COMPLETED}
+   * while its non-stored {@code vector} {@code KnnFloatVectorField} is absent.
+   *
+   * @param totalDocs live whole (non-chunk) documents
+   * @param vectorsPresent live whole documents that actually carry a {@code vector} value
+   */
+  public record VectorPresence(int totalDocs, int vectorsPresent) {
+    /** Presence coverage percentage (0-100), or 0 if no documents. */
+    public double coveragePercent() {
+      return totalDocs > 0 ? (vectorsPresent * 100.0) / totalDocs : 0.0;
+    }
+
+    /** True if presence coverage >= threshold. */
+    public boolean isReady(double thresholdPercent) {
+      return totalDocs > 0 && coveragePercent() >= thresholdPercent;
+    }
+  }
+
+  /**
+   * One enrichment stage's completeness denominators (tempdoc 821 §3-C3).
+   *
+   * @param expected documents in scope that carry the stage's status field at all — an absent
+   *     status field means the stage does not apply to that document (post-798), so it must not
+   *     sit in a denominator forever
+   * @param settledSuccess documents whose status holds a terminal SUCCESS value (FAILED excluded —
+   *     it is reported separately so a consumer can tell "not done yet" from "gave up")
+   * @param failed documents whose status holds the terminal FAILED value
+   */
+  public record StageCounts(int expected, int settledSuccess, int failed) {
+    public static final StageCounts EMPTY = new StageCounts(0, 0, 0);
+  }
+
+  /**
+   * Index-wide per-stage completeness denominators for the four enrichment stages (tempdoc 821
+   * §3-C3). Computed in a single searcher pass so every stage's numbers come from one reader
+   * snapshot; {@code embedding}/{@code splade}/{@code ner} are scoped to whole (non-chunk)
+   * documents, {@code chunkEmbedding} to chunk documents.
+   */
+  public record StageCompletenessCounts(
+      StageCounts embedding, StageCounts splade, StageCounts ner, StageCounts chunkEmbedding) {
+    public static final StageCompletenessCounts EMPTY =
+        new StageCompletenessCounts(
+            StageCounts.EMPTY, StageCounts.EMPTY, StageCounts.EMPTY, StageCounts.EMPTY);
+  }
+
+  /**
    * Counts of whole documents by embedding status (doc-level vector embeddings).
    *
    * @param total total number of whole (non-chunk) documents
