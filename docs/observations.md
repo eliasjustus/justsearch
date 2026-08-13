@@ -151,10 +151,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] test_run_utility_eval_resumes_a_multi_sample_full_completion fails under full-suite load when the worktree's git state changes mid-run (a commit landing between the two run_utility_eval invocations makes the source-identity sidecar's source_git_state differ) — passes in isolation; the resume test is sensitive to concurrent working-tree mutation — `scripts/jseval/jseval/agent_utility_inspect.py:2009` (2026-07-28)
 - [ ] v5 agent-utility Inspect logs do NOT persist search-result payloads visible to the agent (redacted to sha256/len/shape in _record_cell); attribution of gold-in-topk requires replay, not log inspection — `scripts/jseval/jseval/agent_utility_inspect.py:481-490,877-883` (2026-07-21)
 
-### obs:knowledgeapi — Pre-existing: modules/app-api/.../KnowledgeApi.java is a 1-byte empty stub (no package/class) — like
-`kind: environment?` `anchor: modules/app-api/src/main/java/io/justsearch/app/api/KnowledgeApi.java` `seen: 1` `first: 2026-06-23` `last: 2026-06-23`
-- [ ] Pre-existing: modules/app-api/.../KnowledgeApi.java is a 1-byte empty stub (no package/class) — likely a leftover; harmless but odd — `modules/app-api/src/main/java/io/justsearch/app/api/KnowledgeApi.java` (2026-06-23)
-
 ### obs:healtheventstreamcontroller — Health 'Recent events' SSE (/api/health/events/stream) delivered NOTHING across two fresh dev stacks
 `kind: environment?` `anchor: modules/ui/src/main/java/io/justsearch/ui/api/HealthEventStreamController.java` `seen: 1` `first: 2026-06-23` `last: 2026-06-23`
 - [ ] Health 'Recent events' SSE (/api/health/events/stream) delivered NOTHING across two fresh dev stacks — eventCount 0 for ALL conditions incl. at-rest.unprotected, while FDE=NOT_ENCRYPTED + encryption not_configured (conditions ARE asserted by the taps on /api/status). Broadens the logged aiStateStore frozen-status finding: the whole event-delivery layer (SSE + status poll) is flaky/broken in current dev sessions. App-wide, pre-existing, out of 629. — `modules/ui/src/main/java/io/justsearch/ui/api/HealthEventStreamController.java` (2026-06-23)
@@ -271,10 +267,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:selectioncontextinjector — SelectionContextInjector.java uses a raw `"\n\n---\n\n"` separator literal instead of a canonical co
 `kind: environment?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/SelectionContextInjector.java` `seen: 1` `first: 2026-06-03` `last: 2026-06-03`
 - [ ] SelectionContextInjector.java uses a raw `"\n\n---\n\n"` separator literal instead of a canonical constant (SeparatorConstantDrift test was red on main; allowlisted as the sanctioned escape during tempdoc 554 impl). Structural fix: hoist a shared SECTION_SEPARATOR constant to a module app-services can reach. — `modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/SelectionContextInjector.java:285` (2026-06-03)
-
-### obs:dev-server — **First-plugin onboarding broken: the scaffold `dev-server.js` won't run.** `modules/ui-web/dev-exam
-`kind: lesson?` `anchor: modules/ui-web/dev-examples/plugin-scaffold/dev-server.js` `seen: 1` `first: 2026-06-04` `last: 2026-06-04`
-- [ ] **First-plugin onboarding broken: the scaffold `dev-server.js` won't run.** `modules/ui-web/dev-examples/plugin-scaffold/dev-server.js` uses CommonJS `require`, but `modules/ui-web/package.json` is `"type": "module"`, so `node dev-server.js` throws `require is not defined in ES module scope`. This is the *documented first step* of 533's "Browser dev mode" first-plugin flow (README: "Run `node dev-server.js`"), so the canonical onboarding path is dead. Fix: rename to `dev-server.cjs` (and update the README) or rewrite with ESM imports. Workaround used in the 560 §20 de-risk: serve `plugin.js` same-origin via the app's Vite (`http://localhost:5174/dev-examples/plugin-scaffold/plugin.js`) — but note Vite *transforms* the module, which mangled the manifest id to `'unknown'` (so the plugin loaded + attenuated correctly but its surface didn't mount); a faithful load needs the raw source. — `modules/ui-web/dev-examples/plugin-scaffold/dev-server.js` (2026-06-04)
 
 ### obs:index-general — Packaged Tauri CSP likely blocks the `index.html` Google Fonts `<link href="https://fonts.googleapis
 `kind: defect?` `anchor: modules/ui-web/index.html` `seen: 2` `first: 2026-06-05` `last: 2026-08-06`
@@ -428,10 +420,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: follow-up?` `anchor: none` `seen: 1` `first: 2026-05-21` `last: 2026-05-21`
 - [ ] Tempdoc 501 §13 F3 (`@SensitiveField` ArchUnit enforcement) + F5 (per-component `LifecycleSnapshotBuilder` for the remaining duplicate-state surface) are documented blockers without reserved tempdoc IDs. F3 needs its own greenfield-annotation tempdoc; F5 lives under tempdoc 502 follow-up territory (capability layer needs a projection API). — `docs/tempdocs/501-runtime-manifest-design.md §11 'Phases 33–40 ... documented blockers'` (2026-05-21)
 
-### obs:unanchored-general-16 — Agent pitfall: piping source files through PowerShell 5.1 `Get-Content`/`Set-Content -Encoding utf8`
-`kind: lesson?` `anchor: none` `seen: 1` `first: 2026-05-26` `last: 2026-05-26`
-- [ ] Agent pitfall: piping source files through PowerShell 5.1 `Get-Content`/`Set-Content -Encoding utf8` corrupts non-ASCII (UTF-8 read as Windows-1252 → mojibake for §, em-dash, Greek). Use git-bash or Edit/Write tools for file content moves. (caught + fixed in 548 §4.2 host.ai extraction, commit 632490989) (2026-05-26)
-
 ### obs:unanchored-general-18 — Backend message catalog `registry-surface.en.properties` lacks entries for `token-editor-surface` an
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-05-29` `last: 2026-05-29`
 - [ ] Backend message catalog `registry-surface.en.properties` lacks entries for `token-editor-surface` and `command-palette`; both id-derive ("Token Editor"/"Command Palette"). Add authored label/description for a complete surface-label authority. (2026-05-29)
@@ -468,17 +456,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: environment?` `anchor: none` `seen: 1` `first: 2026-06-11` `last: 2026-06-11`
 - [ ] Index is in `BLOCKED_LEGACY` embedding state: `Embedding compatibility: BLOCKED_LEGACY (index has no embedding fingerprint…) — Embedding writes and vector/hybrid queries are blocked until a forced reindex` — semantic/vector + hybrid search is degraded until a forced reindex (`jseval run --reset`). Pre-existing index state, not caused by the run; contributes to the worker's unhealthy status. — `i.j.i.embed.EmbeddingCompatibilityController` (2026-06-11)
 
-### obs:unanchored-general-31 — The build's classpath-SSOT auto-sync (393 §3.6) rewrites `synonyms.{de,en}.v1.txt` to LF on every bu
-`kind: follow-up?` `anchor: none` `seen: 1` `first: 2026-06-11` `last: 2026-06-11`
-- [ ] The build's classpath-SSOT auto-sync (393 §3.6) rewrites `synonyms.{de,en}.v1.txt` to LF on every build, producing recurring working-tree churn (modified-but-not-mine) that has to be restored before each commit. Consider a `.gitattributes` `eol=lf` on the classpath SSOT copies so the sync is a no-op — `modules/adapters-lucene/src/main/resources/SSOT/catalogs/synonyms.*.v1.txt` (2026-06-11)
-
 ### obs:unanchored-general-35 — `@types/dompurify@^3.2.0` in ui-web devDeps is a redundant STUB — dompurify (now 3.4.10) ships its o
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-06-16` `last: 2026-06-16`
 - [ ] `@types/dompurify@^3.2.0` in ui-web devDeps is a redundant STUB — dompurify (now 3.4.10) ships its own type definitions; `npm install` warns "you do not need this installed". Removable from `modules/ui-web/package.json` (typecheck stays green without it). — `modules/ui-web/package.json:60` (2026-06-16)
-
-### obs:unanchored-general-36 — `deleteByPathPrefix` (SqliteJobQueue) uses `path LIKE ? || '%'` — `_`/`%` in a path act as LIKE wild
-`kind: environment?` `anchor: none` `seen: 1` `first: 2026-06-17` `last: 2026-06-17`
-- [ ] `deleteByPathPrefix` (SqliteJobQueue) uses `path LIKE ? || '%'` — `_`/`%` in a path act as LIKE wildcards (over-match); 599 Fix 2 switched the sibling `countByPathPrefix` to a range query but left delete (pre-existing, more dangerous since it deletes). Consider the same range fix. (2026-06-17)
 
 ### obs:unanchored-general-37 — a11y: critical `aria-valid-attr-value` on the search input (`jf-search-surface .q`) — an ARIA attrib
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-06-20` `last: 2026-06-20`
@@ -694,11 +674,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] governance/ui-a11y-baseline.v1.json declares $schema './ui-a11y-baseline.schema.json' but that file does not exist (the sibling ui-proportion-baseline.schema.json does) — the a11y register is schema-unvalidated — `governance/ui-a11y-baseline.v1.json:2` (2026-08-06)
 - [ ] governance/ui-a11y-baseline.v1.json declares \ './ui-a11y-baseline.schema.json' but that file does not exist (ui-proportion-baseline.schema.json's description also cites it as the mirrored shape) — dangling schema reference, no validation of the a11y register — `governance/ui-a11y-baseline.v1.json:2` (2026-08-06)
 
-### obs:llamaserveropscrashtelemetrytest — FLAKY test: LlamaServerOpsCrashTelemetryTest.java:111 ConcurrentModificationException failed main CI
-`kind: environment?` `anchor: LlamaServerOpsCrashTelemetryTest` `seen: 2` `first: 2026-07-12` `last: 2026-07-12`
-- [ ] FLAKY test: LlamaServerOpsCrashTelemetryTest.java:111 ConcurrentModificationException failed main CI run 29210412900 (merge 491412d6) but passed on PR #171 with identical content (app-inference module, unrelated to the FE-only per-sentence change). Concurrency race in the crash-telemetry test; candidate for a defensive copy / synchronized collection at line 111 or a stress-test. (2026-07-12)
-- [ ] LlamaServerOpsCrashTelemetryTest ('reaching MAX_CRASHES fires goOfflineFromMaxCrashes') FAILED on main-push CI run 29152742519 (2026-07-11, docs-only observations-fold diff, zero app-inference overlap; same lane green on PR #142 minutes earlier) — crash-telemetry timing-flake candidate; if it recurs, needs the flaky-IPC state-polling treatment — `modules/app-inference LlamaServerOpsCrashTelemetryTest` (recovered from dead-session worktree 691-takeover) (2026-07-12)
-
 ### obs:combinedenrichmentbackfillops — Comment over-attributes Lucene #15068 (an MMapDirectory mmap resource leak, not data loss) as a vect
 `kind: defect?` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java` `seen: 6` `first: 2026-07-11` `last: 2026-08-06`
 - [ ] Comment over-attributes Lucene #15068 (an MMapDirectory mmap resource leak, not data loss) as a vector-loss / commit-cadence rationale — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java:627-630` (found during 717 research; behavior fine, comment only) (2026-07-11)
@@ -734,16 +709,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] 709 resume gap: an interrupted CLERC raw fetch leaves an orphaned `.tmp-*` staging dir under the cache root (observed: ~6.3GB collection.doc.tsv.gz at scripts/jseval/tmp/dataset-fetch-cache/clerc-raw/.<key>.tmp-*); `store()` neither resumes nor GCs it, so the next fetch re-downloads the full 6.7GB — `scripts/jseval/jseval/dataset_cache.py:150` (2026-07-12)
 - [ ] 709/173 interaction: pinning _CLERC_REVISION changed the clerc-raw dataset-cache key, orphaning the completed 7.7GB resolve/main entry (7df857..) — next fetch re-downloads and now hits HF anonymous-download 403 (AccessDenied at CDN hop, resolver quota fine); migrated entry to pinned key 0f0aba86.. via hardlinks+signature.json this session (content signature a23d916b.. unchanged, HF API confirms main sha == pinned rev). Residual: no cache-key migration/GC story on revision bumps, and the orphaned 6.3GB .tmp-* staging dir from the 07-11 dead fetch still leaks — `scripts/jseval/jseval/dataset_cache.py:150` (2026-07-13)
 
-### obs:test-correction-probe — Pre-existing: scripts/jseval/tests/test_correction_probe.py default-manifest tests fail on main beca
-`kind: environment?` `anchor: test_correction_probe.py` `seen: 2` `first: 2026-07-13` `last: 2026-07-16`
-- [ ] Pre-existing: scripts/jseval/tests/test_correction_probe.py default-manifest tests fail on main because jseval/data/correction-eval-queries.v1.json was never committed (absent since v0.1.0) — full pytest suite is 2-red on a clean main checkout. Noted during 719 takeover; not caused by 719 branch. (2026-07-13)
-- [ ] tests/test_correction_probe.py::TestLoadManifest fails since v0.1.0: jseval/data/correction-eval-queries.v1.json was never committed (no jseval/data dir in history) — the full jseval pytest suite has never been green on the public repo; either commit the data file or skip-with-reason — `scripts/jseval/tests/test_correction_probe.py` (2026-07-16)
-
-### obs:llamaserveropscrashtelemetrytest-flake — Flaky test: LlamaServerOpsCrashTelemetryTest 'Brain give-up: reaching MAX_CRASHES fires goOfflineFro
-`kind: environment?` `anchor: modules/app-inference/src/test/java/.../LlamaServerOpsCrashTelemetryTest.java` `seen: 2` `first: 2026-07-14` `last: 2026-07-15`
-- [ ] Flaky test: LlamaServerOpsCrashTelemetryTest 'Brain give-up: reaching MAX_CRASHES fires goOfflineFromMaxCrashes' threw java.util.ConcurrentModificationException at line 111 on CI (PR #179 run 29311644690, unrelated Python-only diff) — test-internal race, likely iterating telemetry while crash loop appends — `modules/app-inference/src/test/java/.../LlamaServerOpsCrashTelemetryTest.java:111` (2026-07-14)
-- [ ] FLAKY (4th instance): LlamaServerOpsCrashTelemetryTest 'Brain give-up: reaching MAX_CRASHES fires goOfflineFromMaxCrashes' threw ConcurrentModificationException at line 111 on PR #200 CI (run 29416058201, agent-tooling diff = zero Java — hooks/rules/skills only). 221 tests, 1 failed. Recurring on unrelated diffs since 2026-07-11 (docs-only, Python-only, now hooks-only) — the test-internal race is real and re-run-masked every time; it has now cost 4 sessions a red-CI investigation. Worth the defensive-copy/synchronized-collection fix at line 111 — `modules/app-inference/src/test/java/io/justsearch/app/inference/LlamaServerOpsCrashTelemetryTest.java:111` (2026-07-15)
-
 ### obs:registryentry — Pre-existing: CI 'Build (no model blobs)' emits a MissingOverride annotation for modules/app-agent-a
 `kind: environment?` `anchor: RegistryEntry.java` `seen: 2` `first: 2026-07-13` `last: 2026-07-16`
 - [ ] Pre-existing: CI 'Build (no model blobs)' emits a MissingOverride annotation for modules/app-agent-api/src/main/java/io/justsearch/agent/api/registry/RegistryEntry.java#41 (id implements method in Declaration; expected @Override) — non-fatal, surfaces on every main push run. Noticed during 719 publish; no Java in that diff. (2026-07-13)
@@ -770,18 +735,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
 - [ ] Windows/git-bash 'system cannot find the path specified' recurring across many test names inside a CI coverage-check loop — producing script not identified by static search (checked check-*coverage*.mjs / check-*tier*.mjs, none use spawnSync/execFileSync per-test-name); needs live repro — found via tempdoc 727 friction mining (2026-07-14)
 
-### obs:check-always-loaded-budget — always-loaded-budget gate: .claude/rules/branch-safety.md and tier-register.md were ALREADY over the
-`kind: environment?` `anchor: check-always-loaded-budget` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
-- [ ] always-loaded-budget gate: .claude/rules/branch-safety.md and tier-register.md were ALREADY over their byte ceiling before tempdoc 727's session touched them (pre-existing debt from earlier tempdocs' additions, e.g. rows 38/39 + docs-ride-along section) — this session's own additions (2 new tier-register rows + 1 branch-safety.md section, both required by the prose-tier-register gate) made the pre-existing overage somewhat larger. Tension between two of this repo's own gates: prose-tier-register requires new anchored rules to be registered in tier-register.md; always-loaded-budget caps that same file's growth and never ratchets the ceiling up. Needs a real trim/reconciliation pass by whoever owns these files' content, not a cosmetic shrink of just the newest 2 rows out of step with the other ~40 — `node scripts/ci/check-always-loaded-budget.mjs` (2026-07-14)
-
-### obs:unanchored-gate-red — always-loaded-budget gate now also fails on CLAUDE.md (24260/22656 B) and .claude/rules/hooks-refere
-`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
-- [ ] always-loaded-budget gate now also fails on CLAUDE.md (24260/22656 B) and .claude/rules/hooks-reference.md (2839/2740 B), in addition to the already-logged branch-safety.md/tier-register.md overages — confirmed via `git diff origin/main` that neither file was touched by tempdoc 727's worktree, so this is separate pre-existing drift from other sessions landing on main, not caused by this work. See docs/tempdocs/727-session-transcript-friction-mining.md Fit-review closure section. (2026-07-14)
-
-### obs:unanchored-drift-3 — main checkout (F:\justsearch-public) is on branch 'mcpb-packaging' (a stale, unpushed feature branch
-`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
-- [ ] main checkout (F:\justsearch-public) is on branch 'mcpb-packaging' (a stale, unpushed feature branch, tip commit dated 2026-07-14 02:31, well before this session started) instead of 'main' — pre-existing anomaly, not caused by this session. bash-guard blocks 'git checkout <branch>' unconditionally in the main worktree, so this can't be fixed from inside a session without either explicit user action or a deliberate hook bypass. Flagged for the repo owner to decide whether/how to fix. (2026-07-14)
-
 ### obs:devmode — the ts-any governance gate (gates/ts-any/baseline.txt, tempdoc 530 sec2.5) is red on origin/main's a
 `kind: environment?` `anchor: devMode.ts` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
 - [ ] the ts-any governance gate (gates/ts-any/baseline.txt, tempdoc 530 sec2.5) is red on origin/main's actual HEAD (401c1ae) independent of any merge from today's session: modules/ui-web/src/api/devMode.ts and modules/ui-web/src/shell-v0/streaming/MultiplexedStream.ts each have an unregistered '(import.meta as any).env?.DEV' cast, present since commit daa74bd (tempdoc 683 PR #77) and a9694aa (tempdoc 662 PR #22) respectively -- neither was ever added to the baseline file, which has been untouched since the initial-release seed commit (29579e5). Confirmed this gate is NOT wired into the public .github/workflows/ci.yml (no match for 'governance'/'ts-any'), so main's actual public CI is unaffected and shows success (gh run list --branch main) -- this is a local/manual-governance-only finding, not a CI-red condition. Found via tempdoc 727's publish verification pass; not fixed here (unrelated pre-existing debt, out of this tempdoc's scope). (2026-07-14)
@@ -789,14 +742,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:unanchored-general-28 — Embedding fingerprint apparently not persisted across worker restarts: an index healthy in-session (
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
 - [ ] Embedding fingerprint apparently not persisted across worker restarts: an index healthy in-session (compat REBUILDING->complete, CHUNK_HYBRID serving) re-flags BLOCKED_LEGACY/LEGACY_INDEX_NO_FINGERPRINT on plain dev-stack restart, blocking the dense leg until full re-embed; reproduced twice during 725 live validation (worktree .dev-data and main .dev-data) — `modules/indexer-worker` compat/fingerprint persistence (2026-07-14)
-
-### obs:unanchored-error-2 — app-services:integrationTest crashes the forked test-worker JVM with java.io.EOFException before any
-`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
-- [ ] app-services:integrationTest crashes the forked test-worker JVM with java.io.EOFException before any test runs (no test-results XML updated) — unrelated to tempdoc 730 dev-runner/build.gradle.kts changes; likely environment/resource contention (GPU/native lib) on this machine — `modules/app-services/build.gradle.kts` (integrationTest task) (2026-07-14)
-
-### obs:unanchored-flake-2 — app-services:integrationTest fails reproducibly (isolated + full-build) with Gradle's own internal t
-`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
-- [ ] app-services:integrationTest fails reproducibly (isolated + full-build) with Gradle's own internal test-results binary I/O (java.io.EOFException / NoSuchFileException on in-progress-results-generic.bin), unrelated to module content — module never touched by tempdoc 731 I2 work; looks like environment/build-output infra flakiness on this machine, not a code defect — `modules/app-services/build.gradle.kts` (2026-07-14)
 
 ### obs:retrievecontextparams — Worktree .claude/worktrees/725-response-legibility had concurrent agent-session activity during this
 `kind: environment?` `anchor: RetrieveContextParams.java` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
@@ -806,10 +751,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: follow-up?` `anchor: McpToolSurface.java` `seen: 2` `first: 2026-07-14` `last: 2026-07-14`
 - [ ] resources/read path still uses raw multi-entry Map.of (salted wire key order) at McpToolSurface.java:1220,1233,1250,1269,1442 + the {type,text} content blocks — same JVM-salt class as the fixed resources/list; follow-up candidate — `McpToolSurface.java:1220` (2026-07-14)
 - [ ] Pre-existing latent: corpus newlines in preview/answer text can mimic column-0 response furniture (Found N results / Hints lines); mitigation sketch: indent continuation lines; LOW-MODERATE, unchanged by 732 — `McpToolSurface.java:738-785` (2026-07-14)
-
-### obs:exposure-contrast — Concurrent Chain A activity in the shared worktree 725-response-legibility swept my (Chain B, tempdo
-`kind: follow-up?` `anchor: exposure_contrast.py` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
-- [ ] Concurrent Chain A activity in the shared worktree 725-response-legibility swept my (Chain B, tempdoc 736) uncommitted exposure_contrast.py/utility_comparison.py/test edits into commit a86d05b, whose message is entirely about unrelated 736-733 tempdoc docs — a git add -A/commit boundary violation of branch-safety.md's 'stage your own files explicitly' guidance, not caused by me. Code content verified correct (full pytest green) regardless of which commit it lives in, but commit-message attribution is now misleading and the orchestrator should consider recomposing history before merge — `git show a86d05b --stat` (repo root). (2026-07-14)
 
 ### obs:knowledgeserver — tempdoc 730 A4: KnowledgeServer.maybeAutoStartEmbeddingRebuildAllPendingBestEffort's chunk-exclusion
 `kind: environment?` `anchor: modules/indexer-worker/src/main/java/io/justsearch/indexerworker/server/KnowledgeServer.java` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
@@ -854,21 +795,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-12` `last: 2026-07-12`
 - [ ] 624 agent-utility A/B pilot on fixed retrieval (2026-07-12, battlefield-en-scale-v1, haiku, n=12 paired): B(with JustSearch) uses -25.7% mean / -28.9% median context tokens vs A(grep), 95% CI [-13%,-41%] excludes 0 (robust); B acc 100% vs A 87.5% but McNemar p=1.0 (both near ceiling -> no headroom, the recurring problem 707's pillar-1 corpus targets); adoption 7.1% (grep suffices on this easy subset -> rational non-adoption). Token-efficiency robust; accuracy underpowered until grep genuinely struggles. Artifacts: scripts/jseval/624-pilot-2026-07-12/ (2026-07-12)
 
-### obs:check-tempdoc-numbers-general — Pre-existing cross-worktree tempdoc #720 collision: 720-memory-injector-plan.md (agent-a439b6b675c7d
-`kind: environment?` `anchor: check-tempdoc-numbers` `seen: 5` `first: 2026-07-14` `last: 2026-07-16`
-- [ ] Pre-existing cross-worktree tempdoc #720 collision: 720-memory-injector-plan.md (agent-a439b6b675c7d35e5) vs 720-p1a-context-prepend-plan.md (agent-adcdb24cb87068a9c) — check-tempdoc-numbers fails until one is renumbered (2026-07-14)
-- [ ] check-tempdoc-numbers exits 1 on two pre-existing cross-worktree collisions: #720 (agent worktrees) and #729 (725-response-legibility vs sandbox-validation) — neither introduced by the release-asset-set branch; owners of those worktrees need to renumber. (2026-07-14)
-- [ ] Tempdoc number collision on 729, live right now: '729-0.2.0-sandbox-convergence.md' (502 lines, uncommitted in the sandbox-validation worktree, authored 2026-07-14, exists NOWHERE in git) vs '729-java-formatting-not-enforced.md' (worktree 729-gjf-removal, another live session). Neither is on main, so check-tempdoc-numbers can't see the unbacked one — the cross-worktree collision check only compares what is committed. The sandbox doc is at risk of both loss and renumbering — `docs/tempdocs/729-*` (2026-07-15)
-- [ ] check-tempdoc-numbers reports pre-existing cross-worktree collisions: #720 (agent-a439b6b675c7d35e5 vs agent-adcdb24cb87068a9c) and #729 (729-gjf-removal vs sandbox-validation) — owners will hit the gate at merge; noted so it isn't a surprise (2026-07-16)
-- [ ] check-tempdoc-numbers reports live cross-worktree collisions at #729 (729-gjf-removal vs sandbox-validation) and #742 (742-gate-input-contract vs 742-residue-removal) — owners of those worktrees must renumber before merge; not this session's trees (2026-07-16)
-
-### obs:check-always-loaded-budget-gate-red — always-loaded-budget gate is RED on origin/main (pre-existing, not from this branch): 4 files over c
-`kind: environment?` `anchor: scripts/ci/check-always-loaded-budget.mjs` `seen: 4` `first: 2026-07-15` `last: 2026-07-17`
-- [ ] always-loaded-budget gate is RED on origin/main (pre-existing, not from this branch): 4 files over ceiling — CLAUDE.md +1604B, branch-safety.md +1892B, hooks-reference.md +99B, tier-register.md +1579B — `scripts/ci/check-always-loaded-budget.mjs` (2026-07-15)
-- [ ] always-loaded-budget ratchet fails on origin/main already: CLAUDE.md (+1604 B over), agent-lessons.md, branch-safety.md, hooks-reference.md, tier-register.md are all OVER their ceilings, and the check isn't wired into the public CI workflow so nothing catches the drift. The ratchet only bites the honest agent who runs it locally — the always-loaded set is ~1.6 KB past its own cap on main today — `scripts/ci/check-always-loaded-budget.mjs` (2026-07-15)
-- [ ] check-always-loaded-budget.mjs is red on main (5 files ~9KB over ceilings, predates 742 followups) AND wired to no CI lane or kernel gate — an unenforced ratchet accumulating debt silently; needs an owner editorial trim pass + a decision on wiring it (742-class: unevaluated assertion channel) — `scripts/ci/check-always-loaded-budget.mjs` (2026-07-16)
-- [ ] always-loaded-budget ratchet already failing pre-existing (CLAUDE.md, agent-lessons.md, branch-safety.md, tier-register.md all OVER ceiling before this session's edits) — worktree takeover-743, base commit a47cd644 — `scripts/ci/check-always-loaded-budget.mjs` (2026-07-17)
-
 ### obs:unanchored-general-56 — Skill-vs-CLAUDE.md contradiction (same class as tempdoc 739 F-3): `.claude/skills/publish/SKILL.md`
 `kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
 - [ ] Skill-vs-CLAUDE.md contradiction (same class as tempdoc 739 F-3): `.claude/skills/publish/SKILL.md` says 'strongly consider just delegating all of the mechanical/overview work of the PR/merge to a subagent', but CLAUDE.md's model-routing rule says 'Never delegate: ... merge/publish, irreversible actions, main-checkout writes'. An agent following the skill violates CLAUDE.md; following CLAUDE.md ignores the skill. Found live while running /publish. The skill is untracked/local-only, so the fix cannot ride along in-repo — same blast radius as 739 F-3. (2026-07-15)
@@ -880,10 +806,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:agenttoolsoperationcatalog — core.ingest-files (AgentToolsOperationCatalog.java:220-236) declares zero RequiredCapability and zer
 `kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/registry/operations/AgentToolsOperationCatalog.java` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
 - [ ] core.ingest-files (AgentToolsOperationCatalog.java:220-236) declares zero RequiredCapability and zero OperationAvailability despite IngestOperationHandler/IngestTool writing into the worker-backed index — unlike core.search-index it has no fallback availability gate either, so a worker-down dispatch reaches the handler raw instead of a clean CAPABILITY_UNAVAILABLE denial — `modules/app-services/src/main/java/io/justsearch/app/services/registry/operations/AgentToolsOperationCatalog.java:212-236` (2026-07-15)
-
-### obs:operation-v1 — Full governance kernel run (node scripts/governance/run.mjs --mode gate) shows pre-existing contract
-`kind: environment?` `anchor: SSOT/schemas/operation.v1.json` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
-- [ ] Full governance kernel run (node scripts/governance/run.mjs --mode gate) shows pre-existing contract-projection gate failure (schema-types-drift + buf-cli-missing) unrelated to the runtime-state register work — likely another in-flight tempdoc-737 chunk's uncommitted SSOT/schemas/operation.v1.json edit (IndexedRoot/GpuAvailable RequiredCapability removal, §12d) not yet regenerated — `SSOT/schemas/operation.v1.json` (2026-07-15)
 
 ### obs:status — Post-737-Phase4: /api/inference/mode REST (BrainRuntimeServiceImpl.switchInferenceMode) still switch
 `kind: follow-up?` `anchor: modules/ui-web/src/api/domains/status.ts` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
@@ -941,10 +863,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: modules/ui/src/main/java/io/justsearch/ui/api/ChatController.java` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
 - [ ] ChatController.handleCompact (loadHistory-based prefix build, :302) no longer 423s immediately on a locked session now that loadHistory degrades instead of throwing (tempdoc 727 conversation-lock fix) — it now attempts an LLM summarize() call over placeholder/opaque content before failing at the final compactContext() write (cipher.seal still throws KeyLockedException there). Not a correctness/security regression (the write is still blocked), just a wasted LLM call in an edge case (locked + reachable + compact attempted) that's out of scope for this fix — `modules/ui/src/main/java/io/justsearch/ui/api/ChatController.java:302` (2026-07-14)
 
-### obs:mcpprotocolhandlertest — MCP conformance defect (found live 2026-07-15 driving the shipped MCPB bridge against a dev stack):
-`kind: environment?` `anchor: McpProtocolHandlerTest` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
-- [ ] MCP conformance defect (found live 2026-07-15 driving the shipped MCPB bridge against a dev stack): POST /mcp answers the mandatory lifecycle NOTIFICATION 'notifications/initialized' with {"jsonrpc":"2.0","id":null,"error":{"code":-32601,"message":"Method not found: notifications/initialized"}}. TWO defects: (1) the method is unimplemented though the MCP lifecycle requires the client to send it after initialize; (2) JSON-RPC 2.0 forbids ANY response to a notification (no id) — responding with id:null is a protocol violation. Real-world bite: a spec-correct client that expects no reply desynchronizes its read loop (reproduced — it hung scripts/sandbox/mcp-typed-confirm.ps1). tools/call + initialize otherwise work and the TYPED_CONFIRM gate fires correctly. Owner: MCP conformance (655); regression home: McpProtocolHandlerTest (modules/ui/src/test/java/io/justsearch/ui/api/mcp/). (2026-07-14)
-
 ### obs:runtimeactivationservicetest — Stale tempdoc reference in test comment: RuntimeActivationServiceTest labels its WARN-suppression ca
 `kind: defect?` `anchor: modules/app-services/src/test/java/io/justsearch/app/services/ai/runtime/RuntimeActivationServiceTest.java` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
 - [ ] Stale tempdoc reference in test comment: RuntimeActivationServiceTest labels its WARN-suppression cases `// --------------- Tempdoc 727 F-3 ---------------` but 727's F-3 is the verify-worktree-base hook (unrelated); these cases belong to tempdoc 734's F-3 (false 'leftover from a previous build' WARN). Likely fallout from 734 being renumbered from 729. — `modules/app-services/src/test/java/io/justsearch/app/services/ai/runtime/RuntimeActivationServiceTest.java:232` (2026-07-15)
@@ -976,10 +894,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: modules/ui-web/src/shell-v0/views/BrainSurface.ts` `seen: 2` `first: 2026-07-15` `last: 2026-08-06`
 - [ ] MERGE-ORDER CONSTRAINT (release 0.2.0): PR #184 (worktree-release-asset-set) must merge to main BEFORE the 737 branch (worktree-737-ai-runtime). Both carry the A1 inference-mode band-aid (BrainSurface.ts, BrainSurface.indexing-escape.test.ts, aiStateStore.ts, aiVerdict.ts) in their shared base; 737 SUPERSEDES and deletes it. #184-first is clean (737's diff already accounts for A1 in its base and cleanly removes it); 737-first CONFLICTS (main would have the rewrite while #184 still re-adds the deleted test + A1-shaped BrainSurface). Owner chose two separate PRs + order-them (2026-07-15), not A1 surgery. Note: 'zero shared files' held BETWEEN the two branches but NOT relative to main. — `modules/ui-web/src/shell-v0/views/BrainSurface.ts` (2026-07-15)
 - [ ] BrainSurface compat callout's schema detail line still reads the flat 'Schema incompatible' for both BLOCKED_LEGACY and BLOCKED_MISMATCH, while the embedding arm distinguishes the two (fingerprint missing vs mismatch) — asymmetric technical detail — `modules/ui-web/src/shell-v0/views/BrainSurface.ts:1851` (2026-08-06)
-
-### obs:734-0-2-0-sandbox-convergence — PR #184 BODY must be corrected before merge (independent review 2026-07-15): (1) surface that #184 s
-`kind: environment?` `anchor: docs/tempdocs/734-0.2.0-sandbox-convergence.md` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
-- [ ] PR #184 BODY must be corrected before merge (independent review 2026-07-15): (1) surface that #184 ships the dead 'Resume Chat AI' button — the undotted A1 band-aid, live-verified non-functional, superseded by 737; (2) disambiguate the A.1/A1 naming trap — dotted 'A.1' (dense/hybrid retrieval) IS fixed and verified across rounds 3-4, undotted 'A1' (BrainSurface indexing→online button, CoreOperationCatalog:803 circular gate) is NOT, and the PR body's 'A.1 blocker fixed' line reads as covering both. A merger skimming the body could ship a prominent dead button believing all AI-runtime work is verified. Mitigation already in plan: no installer is cut in the #184→737 merge window, so the dead button never reaches a user; 737 removes it. — `docs/tempdocs/734-0.2.0-sandbox-convergence.md:744` (2026-07-15)
 
 ### obs:719-reproducible-public-agent-utility-benchmark — 719 source-identity prose is behind the implementation: #178 (725) added mcp_initialize_identity + s
 `kind: defect?` `anchor: docs/tempdocs/719-reproducible-public-agent-utility-benchmark.md` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
@@ -1027,10 +941,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:gen-liveness-constants — check-liveness-constants-regen fails on main: SPDX mass-commit (11c306af) stamped the generated Live
 `kind: environment?` `anchor: scripts/codegen/gen-liveness-constants.mjs` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
 - [ ] check-liveness-constants-regen fails on main: SPDX mass-commit (11c306af) stamped the generated LivenessWindows.java but gen-liveness-constants.mjs doesn't emit SPDX headers — regen check red since 2026-06-23, pre-existing, unrelated to 742 — `scripts/codegen/gen-liveness-constants.mjs` (2026-07-16)
-
-### obs:unanchored-general-66 — Sonnet subagent bulk-edit corrupted UTF-8 in 47 Java files (cp1252 round-trip mojibake) during the 7
-`kind: lesson?` `anchor: none` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
-- [ ] Sonnet subagent bulk-edit corrupted UTF-8 in 47 Java files (cp1252 round-trip mojibake) during the 742 IndexDocument rename — only 3 tests caught it (language-detection assertions); repaired by regenerating from HEAD with a node UTF-8-safe transform + asserting zero added non-ASCII diff lines. Candidate agent-lessons rule: subagent bulk file edits on Windows must use UTF-8-safe tooling (node/Edit tool), never PowerShell Get/Set-Content defaults — `scripts/agent-analytics/hooks/` (2026-07-16)
 
 ### obs:enforcer-test — Pre-existing test failure: operation-surface enforcer.test.mjs 'no forbidden file present -> pass' g
 `kind: environment?` `anchor: scripts/governance/gates/operation-surface/enforcer.test.mjs` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
@@ -1149,10 +1059,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: scripts/dev/run-gh.mjs` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
 - [ ] run-gh.mjs checks-wait races a just-pushed catch-up commit: it matches the PREVIOUS commit's green run and exits 0 while the new run is still pending — observed twice in one merge session (PRs 237, 239); it should key on the head-SHA's runs, not the PR's latest completed run — `scripts/dev/run-gh.mjs` (2026-07-17)
 
-### obs:test-utility-evidence — test_historical_fixture_semantic_digest_repinned_after_624_itt_change RED on confirmatory-campaign —
-`kind: environment?` `anchor: scripts/jseval/tests/test_utility_evidence.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
-- [ ] test_historical_fixture_semantic_digest_repinned_after_624_itt_change RED on confirmatory-campaign — pre-existing WIP activation of utility-claim-policy.v1.json (draft->active, populated required_strata) changes the fixture claim_verdict/semantic_digest; digest needs re-pinning by the policy-activation author — `scripts/jseval/tests/test_utility_evidence.py:356` (2026-07-17)
-
 ### obs:agent-utility-inspect-drift — corpus-root review nit (follow-up): root mode ATTESTS the staged corpus-dir hash (corpus_dir_files_s
 `kind: follow-up?` `anchor: scripts/jseval/jseval/agent_utility_inspect.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
 - [ ] corpus-root review nit (follow-up): root mode ATTESTS the staged corpus-dir hash (corpus_dir_files_signature) but never enforces corpus-dir ≡ corpus.jsonl derivation — a stale explosion would pass all checks while agents search divergent text; add a fail-closed derivation check (count + sampled-content or a derivation signature) to root mode — `scripts/jseval/jseval/agent_utility_inspect.py:1143` (2026-07-17)
@@ -1201,10 +1107,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: docs/tempdocs/732-response-surface-residuals.md` `seen: 1` `first: 2026-07-21` `last: 2026-07-21`
 - [ ] 732's concise-default decision attributes the halved Reads-per-search to the text-tier Preview line, but delivery-tier measurement only began at campaign V (725:1714) and shows 98.9% structured-json — the Preview line is not delivered to structured-preferring clients, so the D->T->U Reads-halving (725:1492) may be attributable to structuredContent excerpts instead. 732's "no measurement changes it" conclusion may rest on an undelivered component — `docs/tempdocs/732-response-surface-residuals.md:126` (2026-07-21)
 
-### obs:test-delivery-tier-735 — RESOLVED — NOT a flake. jseval `test_delivery_tier_735.py::test_delivered_fields_on_answer_fixture_t
-`kind: environment?` `anchor: scripts/jseval/tests/test_delivery_tier_735.py` `seen: 1` `first: 2026-07-21` `last: 2026-07-21`
-- [x] RESOLVED — NOT a flake. jseval `test_delivery_tier_735.py::test_delivered_fields_on_answer_fixture_top_level_only` failed once in a full-suite run, then passed everywhere. Cause: a concurrent-edit race inside one worktree, not test-order dependence. The orchestrator re-captured the recorded fixture (answer `facets` removed at surface 0.5.0) at **17:37:24** and updated that test's assertion (`facets: True` → `False`) at **17:38:17** — a **53-second window** in which the fixture on disk and the assertion disagreed. A subagent's full-suite run started inside that window and hit exactly that test. Lesson (orchestration, mine): do not run a live fixture refresh in a worktree while a delegated agent is running the suite there — two agents mutating one worktree concurrently produces exactly this phantom. The subagent was right to refuse to wave it through; it simply could not see the concurrent edits. No code defect; nothing to fix — `scripts/jseval/tests/test_delivery_tier_735.py:81` (2026-07-21)
-
 ### obs:delivery-tier-probe-735 — delivery_tier_probe_735.py's `_LOCAL_PATH_RE` redaction only matches drive-letter paths (`X:\...`) —
 `kind: defect?` `anchor: scripts/jseval/experiments/delivery_tier_probe_735.py` `seen: 1` `first: 2026-07-21` `last: 2026-07-21`
 - [ ] delivery_tier_probe_735.py's `_LOCAL_PATH_RE` redaction only matches drive-letter paths (`X:\...`) — a UNC capture (`\server\share`) would survive into a committed fixture. Not hit by any current capture; found during the 770 pre-push scan — `scripts/jseval/experiments/delivery_tier_probe_735.py` (2026-07-21)
@@ -1216,10 +1118,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:unanchored-general-81 — jseval debt from the 767-771 arc: known-RED correction-probe pair (restore data file or retire); per
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
 - [ ] jseval debt from the 767-771 arc: known-RED correction-probe pair (restore data file or retire); per-query eval artifacts capped at depth-10 (analyses wanted k>=20 — make depth configurable); no per-call cost invoicing (spend figures are cap-bounded estimates); index-cache entries not reusable across commits for certification-shaped flows (2026-07-22)
-
-### obs:unanchored-general-82 — platform lessons from the 767 certification arc for agent-lessons.md rider: tracked background tasks
-`kind: lesson?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
-- [ ] platform lessons from the 767 certification arc for agent-lessons.md rider: tracked background tasks killed at ~60min and TaskStop does not kill child bash loops (detached Start-Process driver + self-terminating <590s polls is the working pattern); subagents park mid-campaign to 'wait for monitors' unless briefed to wait in-turn — two stalls this arc (2026-07-22)
 
 ### obs:unanchored-drift-18 — Head and Worker classpaths ship 4 same-library-different-version jar pairs (jackson-core/databind 3.
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
@@ -1245,10 +1143,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:unanchored-general-85 — jseval debt from the 767-771 arc: known-RED correction-probe pair (restore data file or retire); per
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
 - [ ] jseval debt from the 767-771 arc: known-RED correction-probe pair (restore data file or retire); per-query eval artifacts capped at depth-10 (analyses wanted k>=20 — make depth configurable); no per-call cost invoicing (spend figures are cap-bounded estimates); index-cache entries not reusable across commits for certification-shaped flows (2026-07-22)
-
-### obs:unanchored-general-86 — platform lessons from the 767 certification arc for agent-lessons.md rider: tracked background tasks
-`kind: lesson?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
-- [ ] platform lessons from the 767 certification arc for agent-lessons.md rider: tracked background tasks killed at ~60min and TaskStop does not kill child bash loops (detached Start-Process driver + self-terminating <590s polls is the working pattern); subagents park mid-campaign to 'wait for monitors' unless briefed to wait in-turn — two stalls this arc (2026-07-22)
 
 ### obs:unanchored-general-87 — A LOCKED agent worktree (agent-ace19997b9499c758) was removed mid-run by an external cleanup, wiping
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
@@ -1326,10 +1220,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:judge-overlay — Reconcile: stats-analysis worker (tmp/hero-arc-analysis/stats) reported validating 120/120 vs commit
 `kind: defect?` `anchor: judge-overlay.json` `seen: 1` `first: 2026-07-28` `last: 2026-07-28`
 - [ ] Reconcile: stats-analysis worker (tmp/hero-arc-analysis/stats) reported validating 120/120 vs committed records using RAW substring EM via read_inspect_observations WITHOUT overlay, but PR #322 established finalize_logs auto-applies judge-overlay.json and 5 w2 cells flip (legal A|q5 x3, B|0|q8; enron B|2|q1) — both claims cannot be exactly true; re-check which reader the matrix actually used before trusting per-cell em_correct at the flipped cells (2026-07-28)
-
-### obs:unanchored-general-92 — RESOLVED (follow-up to the raw-EM-vs-overlay reconciliation note): PR #328's control verified the st
-`kind: follow-up?` `anchor: none` `seen: 1` `first: 2026-07-28` `last: 2026-07-28`
-- [ ] RESOLVED (follow-up to the raw-EM-vs-overlay reconciliation note): PR #328's control verified the stats-analysis matrix used raw EM while committed records are judge-overlaid; flip counts (1/0/4) explain all diffs exactly. Question-level understatement holds under both scorings (~2x on p). Also: reconciliation with the 795-lane agent agreed — #328 is the base; their gate_evaluation declaration + preflight retirement layer on top; stats owned by 791. (2026-07-28)
 
 ### obs:unanchored-general-94 — Hard Invariant #1 enforcement claim vs lockfile fact: tier-register row 1 states 'Lucene types are n
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-28` `last: 2026-07-28`
@@ -1432,10 +1322,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:check-ui-step-coverage — check-ui-step-coverage.mjs and check-layout-purity.mjs both document themselves as wired into ci.yml
 `kind: defect?` `anchor: scripts/ci/check-ui-step-coverage.mjs` `seen: 1` `first: 2026-07-31` `last: 2026-07-31`
 - [ ] check-ui-step-coverage.mjs and check-layout-purity.mjs both document themselves as wired into ci.yml but appear in no workflow (799 class-1: assertion channel whose docs assert an evaluator it lacks) — `scripts/ci/check-ui-step-coverage.mjs:26` (2026-07-31)
-
-### obs:selectioncontextinjectortest — Pre-existing worktree changes (ConversationContext.java, ExtractShape.java, SelectionContextInjector
-`kind: environment?` `anchor: modules/app-services/src/test/java/io/justsearch/app/services/conversation/spi/SelectionContextInjectorTest.java` `seen: 1` `first: 2026-07-31` `last: 2026-07-31`
-- [ ] Pre-existing worktree changes (ConversationContext.java, ExtractShape.java, SelectionContextInjector.java, EngineConversationContext.java) fail app-services tests SelectionContextInjectorTest and ConversationShapeFixtureGenTest — unrelated to 798 atRestCard/DiskEncryptionProbe work, not investigated/fixed — `modules/app-services/src/test/java/io/justsearch/app/services/conversation/spi/SelectionContextInjectorTest.java:53` (2026-07-31)
 
 ### obs:unanchored-general-98 — mixed/legal-clerc-200 retrieval changed SYSTEMATICALLY between two sessions at different commits, sa
 `kind: defect?` `anchor: none` `seen: 1`
