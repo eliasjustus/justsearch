@@ -248,7 +248,8 @@ final class WorkerScanOpsTest {
             file -> false,
             queueDepth,
             () -> false,
-            waiter);
+            waiter,
+            paths -> {});
 
     ScanRootProgress terminal =
         ops.scan(
@@ -291,7 +292,8 @@ final class WorkerScanOpsTest {
             file -> false,
             () -> 0L,
             isCancelled,
-            millis -> true);
+            millis -> true,
+            paths -> {});
 
     ScanRootProgress terminal =
         ops.scan(
@@ -458,6 +460,66 @@ final class WorkerScanOpsTest {
         new WorkerScanOps.ScanRequest(
             tempDir, "docs", WorkerScanOps.ScanMode.INITIAL, List.of("*.tmp"));
     assertEquals("", legacy.scanId(), "Back-compat constructor must default scanId to \"\"");
+  }
+
+  // ===== Tempdoc 821 §3-C3 — FORCE_REINDEX marks the paths it admits =====
+  //
+  // Before this, every scan reached the Worker as SCAN_MODE_INITIAL and `request.mode()` was read
+  // only to build the DTO. Nothing downstream consulted it, so a user's force-reindex admitted the
+  // same paths and JobBatchExtractor took its UNCHANGED branch on all of them. The companion
+  // JobBatchExtractorForcedPathTest proves the other half: that a path in this set actually
+  // bypasses that branch.
+
+  @Test
+  void forceReindexScanMarksEveryAdmittedPathForced() throws Exception {
+    Path root = tempDir.resolve("forced");
+    Files.createDirectories(root.resolve("nested"));
+    Path a = Files.writeString(root.resolve("a.txt"), "alpha");
+    Path b = Files.writeString(root.resolve("nested").resolve("b.txt"), "beta");
+    RecordingQueue queue = new RecordingQueue();
+    List<String> forced = new ArrayList<>();
+    WorkerScanOps ops = new WorkerScanOps(queue, () -> 0L, () -> false, forced::addAll);
+
+    ops.scan(
+        new WorkerScanOps.ScanRequest(
+            root, null, WorkerScanOps.ScanMode.FORCE_REINDEX, List.of(), "scan-force"),
+        p -> {});
+
+    // The key must be EXACTLY what FileFreshnessSnapshot.capture writes into the envelope
+    // (toAbsolutePath().normalize(), then PathNormalizer) — the extractor looks the path up by
+    // that string, so a key differing by separator, case, or a `..` segment would silently no-op.
+    assertEquals(
+        Set.of(normalizedKey(a), normalizedKey(b)),
+        Set.copyOf(forced),
+        "every path a FORCE_REINDEX scan admits must be marked forced, keyed as the envelope is");
+  }
+
+  @Test
+  void ordinaryScansMarkNothingForced() throws Exception {
+    Path root = tempDir.resolve("unforced");
+    Files.createDirectories(root);
+    Files.writeString(root.resolve("a.txt"), "alpha");
+
+    for (WorkerScanOps.ScanMode mode :
+        List.of(WorkerScanOps.ScanMode.INITIAL, WorkerScanOps.ScanMode.RESCAN)) {
+      RecordingQueue queue = new RecordingQueue();
+      List<String> forced = new ArrayList<>();
+      WorkerScanOps ops = new WorkerScanOps(queue, () -> 0L, () -> false, forced::addAll);
+
+      ScanRootProgress terminal =
+          ops.scan(
+              new WorkerScanOps.ScanRequest(root, null, mode, List.of(), "scan-" + mode), p -> {});
+
+      // Precision: the walk DID admit the file, so an empty `forced` is the mode gate firing —
+      // not a scan that silently admitted nothing.
+      assertEquals(1L, terminal.getFilesAdmitted(), mode + " must still admit the file");
+      assertTrue(forced.isEmpty(), mode + " must not mark anything forced");
+    }
+  }
+
+  private static String normalizedKey(Path p) {
+    return io.justsearch.indexerworker.util.PathNormalizer.normalizePath(
+        p.toAbsolutePath().normalize().toString());
   }
 
   private static final class RecordingQueue implements JobQueue {

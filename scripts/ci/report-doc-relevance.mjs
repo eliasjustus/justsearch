@@ -117,7 +117,6 @@ function frontmatterStatus(doc) {
 }
 function classifyDead(doc) {
   if (doc.startsWith('docs/decisions/')) return 'decision (human archival)';
-  if (doc.startsWith('docs/reference/issues/')) return 'issue log (situational)';
   if (doc.startsWith('docs/reference/contributing/')) return 'contributing/process (situational)';
   if (doc.startsWith('docs/how-to/')) return 'how-to (situational)';
   if (isGenerated(doc)) return 'generated (projection)';

@@ -220,6 +220,12 @@ public final class LuceneRuntimeTypes {
    * population the facet values are tallied from). It is the true result-count "M" the headline binds
    * to — every per-value facet count is {@code <= matchedDocs} by construction, so the headline can
    * never read below a facet chip. Capped at the scan's {@code maxDocsScanned} (then {@code truncated}).
+   *
+   * <p>Tempdoc 821 §L.3 — two honesty contracts the producer
+   * ({@link FacetingEngine#computeFacets}) upholds: a requested field the schema cannot facet is
+   * ABSENT from {@code facets} (a present key with no counts means "faceted, matched nothing"), and
+   * {@code truncated} is {@code true} for a scan that was capped OR that failed partway (partial
+   * counts, flagged) — {@code false} means the scan genuinely completed.
    */
   public record FacetsResult(
       Map<String, Map<String, Long>> facets, boolean truncated, long matchedDocs) {}
@@ -301,6 +307,41 @@ public final class LuceneRuntimeTypes {
     public boolean isReady(double thresholdPercent) {
       return totalChunks > 0 && coveragePercent() >= thresholdPercent;
     }
+  }
+
+  /**
+   * One enrichment stage's completeness counts (tempdoc 821 §3-C3). Every component is counted
+   * over the SAME population — the documents in scope that carry the stage's status field — which
+   * is what makes them subtractable.
+   *
+   * @param expected documents in scope that carry the stage's status field at all — an absent
+   *     status field means the stage does not apply to that document (post-798), so it must not
+   *     sit in a denominator forever
+   * @param settledSuccess documents whose status holds a terminal SUCCESS value (FAILED excluded —
+   *     it is reported separately so a consumer can tell "not done yet" from "gave up")
+   * @param failed documents whose status holds the terminal FAILED value
+   * @param artifactPresent documents that carry the stage's actual artifact and are NOT failed;
+   *     {@code 0} for a stage whose artifact is not countable (SPLADE's feature field is
+   *     {@code docValues:false}; NER writes no per-document artifact). The FAILED exclusion is
+   *     load-bearing: a FAILED write can leave the vector in place, so without it {@code
+   *     artifactPresent} and {@code failed} would overlap and the remainder would understate the
+   *     repair backlog
+   */
+  public record StageCounts(int expected, int settledSuccess, int failed, int artifactPresent) {
+    public static final StageCounts EMPTY = new StageCounts(0, 0, 0, 0);
+  }
+
+  /**
+   * Index-wide per-stage completeness counts for the four enrichment stages (tempdoc 821 §3-C3).
+   * Computed in a single searcher acquisition so every stage's numbers — status counts and
+   * artifact counts alike — come from one reader snapshot; {@code embedding}/{@code splade}/{@code
+   * ner} are scoped to whole (non-chunk) documents, {@code chunkEmbedding} to chunk documents.
+   */
+  public record StageCompletenessCounts(
+      StageCounts embedding, StageCounts splade, StageCounts ner, StageCounts chunkEmbedding) {
+    public static final StageCompletenessCounts EMPTY =
+        new StageCompletenessCounts(
+            StageCounts.EMPTY, StageCounts.EMPTY, StageCounts.EMPTY, StageCounts.EMPTY);
   }
 
   /**

@@ -199,7 +199,12 @@ public class IndexingLoop implements Closeable {
   // Slice 4d (W6) — owns idle-branch backfill orchestration + interleaved-SPLADE timing.
   private final BackfillScheduler backfillScheduler;
 
-  // Force reindex tracking - paths that should bypass "unchanged" check
+  // Force reindex tracking - paths that should bypass "unchanged" check.
+  // Unbounded by construction: entries are removed only when the extractor reaches that exact
+  // path (JobBatchExtractor#extractJob) or on a profiling reset. A forced path the queue never
+  // delivers — dropped enqueue, deleted file, cancelled scan — is retained for the process
+  // lifetime. Tempdoc 821 §3-C3 made whole-root force-reindex scans a routine producer here
+  // (previously only explicit submitBatch calls were), so the residue now scales with root size.
   private final Set<String> forcedPaths = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
   // Tempdoc 798: memoization for the pending-ingest probe (see PENDING_INGEST_PROBE_TTL_MS).

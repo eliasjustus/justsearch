@@ -472,9 +472,15 @@ Residuals and pending closure items:
    `worktree-agent-aca6d2da1713b04c6` commit ea66fc83; store depth 498 → 406,
    whole-block deletions only), 18 KEEP with named live occurrences + 1 UNCLEAR
    retained. The per-occurrence protocol caught 19 conditions the census would have
-   wrongly deleted (17% of candidates). Remaining store work: the non-defect routing
-   proposals (53 register / 30 retire / 35 park) were LIGHT-triaged only — the 30
-   retire proposals need the same per-occurrence rigor before deletion; not started.
+   wrongly deleted (17% of candidates). **Non-defect stratum EXECUTED (2026-08-13,
+   commit 46b369a7):** the 30 retire proposals were put through the same
+   per-occurrence rigor — 26 deleted, 4 kept with live occurrences. Branch total
+   118 deletions (92 + 26), 23 kept. Published after reconciliation against main's
+   intervening folds (see §N): 114 of the 118 applied, 4 revived because main's fold
+   added occurrence lines postdating the verification (`searchstate`, `tokens`,
+   `token-names-generated`, `component-vocabulary-generated`); final depth 401.
+   Remaining store work: the 53 register / 35 park routing proposals stay
+   LIGHT-triaged only.
 7. **Merge-order note**: the two FE branches and local main each carry a
    same-named observation shard (`docs/observations.d/776e10cd-….md`) with
    different bodies — whichever merges later hits add/add; resolve by
@@ -489,7 +495,7 @@ implementer), re-fixed on review verdicts. All branches green, UNPUSHED, no PRs.
 
 | lane | branch / location | state |
 |---|---|---|
-| Store cleanup (defect stratum) | `agent-aca6d2da1713b04c6` (ea66fc83) | §6 row above — 92 per-occurrence-verified deletions, depth 498→406. |
+| Store cleanup (both strata) | `agent-aca6d2da1713b04c6` (ea66fc83, 46b369a7) | §6 row above — 118 per-occurrence-verified deletions (92 defect + 26 non-defect), 23 kept. Reconciled against main's folds at publication: 114 applied, 4 revived by new occurrence lines, final depth 401. |
 | D5 register retirement | `agent-aa70c939fd4d37e5b` (e576e570) | §7-D5 row above — 21+1 routed, 24 dead, 14-reference sweep. |
 | Count-drop live A/B | in-branch (05e052b5) | CLOSED: scifact hybrid **0.7543** on the fix branch, `relevance-gate` verdict ok (floor 0.7404), F-045 amended with the measurement. §M residual 2 done. |
 | Needs-live lane (D3) | shard notes (this session) | EXECUTED for the backend subset: `drift-9` resolved with mechanism (retrieval composite degraded by `lambdamart.not_configured` while the embedding dim reads READY off encoder-loaded semantics during a live REBUILD_IN_PROGRESS hybridFallback — a C1 double-defect, unfixed, now precisely charted); `general-28` CONFIRMED WORST-CASE live (fingerprint never persists; two consecutive restarts each reset the full re-embed, coverage 9%→0.2% — **raises merge priority of worktree 819-fingerprint-boot-race**); `localapiserver` CONFIRMED (POST /mcp accepts foreign Origin, GET 404); `missing-2` partially moot (CE cold 426ms no deadline miss; status key set restart-stable, `crossEncoderAvailable` field gone). FE-rendering + tooling one-off conditions stay parked (frontend excluded / not demo-relevant). |
@@ -632,14 +638,19 @@ code-verified by a read-only investigator, then narrowed by the first-ever captu
 
 Shipped in-window: PR #434 (failure-log artifact upload + budget cascade; budgets are
 provisional pending measured values — for the terminal-DEGRADED mode they are neutral
-on outcome). Diagnostics PR (in flight at write time): preserve the *correct* Head log
-(`logs/headless-backend.log`, not the never-written `app.log`), surface the last non-200
-body in the timeout message, fail fast on `worker.spawn-failed`. **Chartered follow-up
-(needs its own tempdoc + review cycle): make transient bootstrap failure non-terminal**
-— retry `bootstrap.start()` (legal: `closeForUpgrade()` resets `started=false`), or run
-a recovery monitor when `knowledgeServer == null`; at minimum do not tear down a live
-worker on PID-validation timeout. H1 hardening (per-attempt RPC deadline inside the
-validation window) rides with that fix once a captured Head log confirms the throwing step.
+on outcome) and PR #436 (preserve the *correct* Head log — sweep `<dataDir>/logs/*.log{,.gz}`,
+not the never-written `app.log` — and surface the last non-200 status+body in the
+timeout message). #436 deliberately **omitted** fail-fast on `worker.spawn.failed`:
+that reason code covers both this terminal path and genuinely recoverable
+slow-worker paths (`KnowledgeServerBootstrap.java:230`/`:502`,
+`KnowledgeServerHealthMonitor.java:111` — monitor does converge back to READY),
+so failing fast would hard-fail the recoverable case; the reason-code ambiguity is
+itself logged as a state-truthfulness observation. Fix lane (in flight at write time,
+after H1 confirmation): per-attempt RPC deadline inside the validation window so
+retries actually iterate, bounded retry of `bootstrap.start()` (legal:
+`closeForUpgrade()` resets `started=false`), and cause-honest routing of the
+"module not built" hint. Still chartered for a future PR: recovery monitor for the
+`knowledgeServer == null` state + `worker.spawn.failed` reason-code disambiguation.
 
 ## §P Wave 3 execution log (2026-08-13; owner: "proceed with the remaining chartered work")
 

@@ -40,7 +40,7 @@ from pathlib import Path
 
 import httpx
 
-from jseval.chunk_completeness import CHUNK_THRESHOLD_CHARS, iter_corpus_docs
+from jseval.chunk_completeness import iter_corpus_docs, resolve_chunk_threshold_chars
 from jseval.utility_calibrate import assert_watched_roots_scoped, base_url_from_mcp_config
 
 log = logging.getLogger(__name__)
@@ -275,6 +275,7 @@ def rag_reachability_probe(
     api_base_or_session: str | httpx.Client = _DEFAULT_BASE_URL,
     n: int = 10,
     top_k: int = 5,
+    threshold_chars: int | None = None,
 ) -> dict:
     """Fail-closed check of the retrieval-completeness invariant (tempdoc 749): every
     sub-threshold (chunkless-by-construction) doc must still be reachable via the PRIMARY
@@ -282,7 +283,7 @@ def rag_reachability_probe(
 
     Samples the ``n`` shortest docs in ``corpus_path`` (a BEIR-format ``corpus.jsonl`` --
     see :func:`jseval.chunk_completeness.iter_corpus_docs`) whose materialized content length
-    is < :data:`jseval.chunk_completeness.CHUNK_THRESHOLD_CHARS` -- these are the docs
+    is < the backend's published chunk threshold -- these are the docs
     ``ChunkDocumentWriter`` writes zero chunk documents for (tempdoc 749's root cause), so a
     silent regression of the doc-level-union fix would make them invisible to
     ``/api/knowledge/retrieve-context`` again. Sample order is deterministic: ascending
@@ -304,29 +305,51 @@ def rag_reachability_probe(
     (e.g. ``run_retrieval_eval`` passing its own client so the probe doesn't open a second
     connection) -- the caller-supplied client is never closed here.
 
+    ``threshold_chars`` is the chunk threshold to classify against. ``None`` (the default) reads
+    it live from the backend's ``/api/status`` via the same client -- tempdoc 821 §3-C3 made the
+    worker's enrichment auditor publish ``chunkMinChars``, retiring the jseval-side mirror of
+    ``ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS``. There is deliberately no local fallback
+    constant (a fallback is the mirror again): a backend that does not publish it yields
+    ``"not-applicable"``, the same never-blocking path an unreadable corpus takes.
+
     Returns ``{"sampled": int, "passed": int, "failed": [docid, ...], "verdict": "ok"|"fail"|
-    "not-applicable"}``. ``"not-applicable"`` (not a failure) means the corpus has no
-    sub-threshold doc to check -- either ``corpus_path`` doesn't exist/is unreadable (mirrors
+    "not-applicable"}``. ``"not-applicable"`` (not a failure) means there is no sub-threshold doc
+    to check -- either ``corpus_path`` doesn't exist/is unreadable (mirrors
     :func:`jseval.chunk_completeness.expected_chunk_docs`'s graceful degradation for corpora
-    with no local ``corpus.jsonl``, e.g. BEIR datasets materialized via ``ir_datasets``) or
-    every doc in it reaches the chunk threshold on its own.
+    with no local ``corpus.jsonl``, e.g. BEIR datasets materialized via ``ir_datasets``), every
+    doc in it reaches the chunk threshold on its own, or the threshold itself is unavailable.
     """
-    docs = list(iter_corpus_docs(corpus_path))
-    chunkless = sorted(
-        (d for d in docs if d.length < CHUNK_THRESHOLD_CHARS),
-        key=lambda d: (d.length, d.doc_id),
-    )
-    if not chunkless:
-        return {"sampled": 0, "passed": 0, "failed": [], "verdict": "not-applicable"}
-
-    sample = chunkless[:n]
-
     owns_client = isinstance(api_base_or_session, str)
     client: httpx.Client = (
         httpx.Client(base_url=api_base_or_session, timeout=30.0)
         if owns_client
         else api_base_or_session
     )
+
+    if threshold_chars is None:
+        try:
+            status_resp = client.get("/api/status")
+            status_resp.raise_for_status()
+            threshold_chars = resolve_chunk_threshold_chars(status_resp.json())
+        except Exception as e:
+            log.warning("rag_reachability_probe: could not read /api/status: %s", e)
+            threshold_chars = None
+
+    docs = list(iter_corpus_docs(corpus_path))
+    chunkless = (
+        sorted(
+            (d for d in docs if d.length < threshold_chars),
+            key=lambda d: (d.length, d.doc_id),
+        )
+        if threshold_chars
+        else []
+    )
+    if not chunkless:
+        if owns_client:
+            client.close()
+        return {"sampled": 0, "passed": 0, "failed": [], "verdict": "not-applicable"}
+
+    sample = chunkless[:n]
 
     failed: list[str] = []
     passed = 0
