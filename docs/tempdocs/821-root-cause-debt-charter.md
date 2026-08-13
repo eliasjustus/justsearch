@@ -649,8 +649,16 @@ itself logged as a state-truthfulness observation. Fix lane (in flight at write 
 after H1 confirmation): per-attempt RPC deadline inside the validation window so
 retries actually iterate, bounded retry of `bootstrap.start()` (legal:
 `closeForUpgrade()` resets `started=false`), and cause-honest routing of the
-"module not built" hint. Still chartered for a future PR: recovery monitor for the
-`knowledgeServer == null` state + `worker.spawn.failed` reason-code disambiguation.
+"module not built" hint. Fix lane SHIPPED as PR #439 (2026-08-13) after a FIX-FIRST
+independent refute-first review and a 9-finding fix round (supervision-budget veto —
+boot retry defers to `SupervisionPolicy` once supervision engages, spawn ceiling 6
+documented; re-`start()` safety regression test; rotated-log hint; minimal RECOVERING
+narration; `started` reset in `finally`; specific-first hint routing; forced-exit reap;
+budget-bounded mismatch reconnect). Honest scope per the review: the trigger is ~3x
+rarer, the outcome is NOT yet recoverable — the sole `KnowledgeServerHealthMonitor`
+construction site remains gated on `knowledgeServer != null`. Still chartered for a
+future PR: recovery monitor for the `knowledgeServer == null` state +
+`worker.spawn.failed` reason-code disambiguation.
 
 ## §P Wave 3 execution log (2026-08-13; owner: "proceed with the remaining chartered work")
 
