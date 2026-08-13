@@ -16,19 +16,21 @@ This project follows **organic development**: issues and rough edges are capture
 | Tier | Location | Friction | Lifetime | When to use |
 |------|----------|----------|----------|-------------|
 | Observations | `docs/observations.md` (grouped conditions; per-session shards in `docs/observations.d/`) | Low (one line, write-blind) | Until routed, retired, or parked at a triage pass | Notice something mid-task |
-| Formal issues | `docs/reference/issues/` | High (ID, severity, evidence) | Until resolved or decided | Verified bugs, known trade-offs, tracked risks |
+| Domain registers | `docs/reference/search-quality-register.md`, `docs/reference/inference-runtime-register.md` | High (ID, evidence, verification date) | Until the finding is superseded by shipped work | Empirical findings and standing trade-offs in a register's domain |
 
-Conditions are processed at the maintainer's periodic triage pass (`node scripts/agent-analytics/observations-triage.mjs` is the read-model; `--probe` re-runs each condition's probe — exit 0 means the condition is gone and writes a *proposed* retirement). Kinds route conditions onward: **defect** → `docs/reference/issues/` or a domain register; **environment** (facts about main/CI/machines that verification hits) → `scripts/agent-analytics/expected-state.v1.json`, delivered by the `known-state-hint` hook; **lesson** → hooks / `agent-lessons.md` / postmortems; **follow-up** → its owning tempdoc or register. Resolved conditions are **deleted** when fixed — the commit (or tempdoc) that made the fix is the permanent record — and deletion is always a human act; automation only proposes.
+The standing per-domain issue registers under `docs/reference/issues/` were **retired** (tempdoc 821 §7 D5, 2026-08-12) — most had not been stamped since 2026-02/04 and real tracking had already migrated to the observations store, the two domain registers, and tempdocs. Live entries were routed into the store at retirement; the deleted files' content is recoverable from git history.
 
-Architectural trade-offs and conscious design tensions are tracked as formal issues with `accepted-trade-off` status in the appropriate issue file. Intentionally closed items (won't-fix, deferred, accepted) move to `docs/reference/issues/decisions.md` with rationale preserved.
+Conditions are processed at the maintainer's periodic triage pass (`node scripts/agent-analytics/observations-triage.mjs` is the read-model; `--probe` re-runs each condition's probe — exit 0 means the condition is gone and writes a *proposed* retirement). Kinds route conditions onward: **defect** → the owning domain register, or its owning tempdoc when a fix is being planned; **environment** (facts about main/CI/machines that verification hits) → `scripts/agent-analytics/expected-state.v1.json`, delivered by the `known-state-hint` hook; **lesson** → hooks / `agent-lessons.md` / postmortems; **follow-up** → its owning tempdoc or register. Resolved conditions are **deleted** when fixed — the commit (or tempdoc) that made the fix is the permanent record — and deletion is always a human act; automation only proposes.
+
+Architectural trade-offs and conscious design tensions belong in an ADR (`docs/decisions/`) when the "why not X?" answer is worth preserving, or as a register entry with its revisit trigger. A trade-off that is neither is a condition in the store with `status: parked (<reason>)`.
 
 **Tempdocs** (`docs/tempdocs/`) are for active implementation work — investigation logs, planning docs, and session-scoped notes. They are not part of the issue tracking system.
 
 ## Issue lifecycle rules
 
-- Resolved issues are **deleted** from the issue file, not marked closed.
-- Items evaluated and intentionally closed (won't-fix, deferred, accepted) move to `docs/reference/issues/decisions.md` with rationale preserved.
-- Issue files must contain only actionable items. If it's not something to fix, it doesn't belong there.
+- A fixed finding is **deleted** from its register or the store, not marked closed — the commit that fixed it is the permanent record.
+- An item evaluated and intentionally closed (won't-fix, deferred, accepted) needs a durable home for its rationale: an ADR, a register entry with a revisit trigger, or a parked condition. Do not leave closed items sitting in an active list.
+- Registers and the store hold only items someone could act on. If it is not something to fix or revisit, it belongs in an ADR or nowhere.
 
 ## Softness portfolio
 

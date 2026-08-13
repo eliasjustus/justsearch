@@ -270,6 +270,55 @@ final class KnowledgeSearchEngine {
     return norm;
   }
 
+  /**
+   * Tempdoc 821 §L.3: applies a rerank order to the candidate list without ever changing how many
+   * candidates come out — count in equals count out, always.
+   *
+   * <p>The judge-blend branch defends against a short cross-encoder response by construction: it
+   * sizes its blend window at {@code window} (not {@code getScoresCount()}) and min-fills the
+   * missing tail, so its returned order is always a full permutation of {@code 0..window-1}. The
+   * default (judge-blend-off) branch has no such guarantee — it applies the Worker's
+   * {@code sorted_indices} verbatim, and a list shorter than the window silently dropped the
+   * uncovered candidates from the result set entirely. The LambdaMART branch had the same gap
+   * against its own {@link io.justsearch.app.api.gpl.RerankerService} contract. This helper is the
+   * shared seam that makes all three reorder sites equally defensive.
+   *
+   * <p>The given order is authoritative for the window positions it covers; any in-window position
+   * it omits is appended after that prefix in original (pre-rerank) order, and candidates beyond
+   * the window — which were never sent to the cross-encoder — follow in original order. An
+   * out-of-window or duplicate index is discarded rather than emitted twice, since the position it
+   * names is already placed by one of the two passes. A well-formed order (a permutation already
+   * covering the window, which includes every judge-blend output) reproduces the pre-821 result
+   * element for element.
+   *
+   * <p>A candidate recovered by the fill pass carries no CROSS_ENCODER HitStage even though the
+   * response reports the cross-encoder as applied — correct, since the reranker never judged it,
+   * but a trace-coverage consumer should not read stage presence as "every hit was scored".
+   *
+   * @param results the pre-rerank candidates, in pre-rerank order.
+   * @param order window positions in their reranked order; may be short, empty, or malformed.
+   * @param window the number of leading candidates that were offered to the cross-encoder.
+   * @return the reordered candidates — always exactly {@code results.size()} entries.
+   */
+  static List<SearchResult> applyRerankOrder(
+      List<SearchResult> results, List<Integer> order, int window) {
+    int w = Math.max(0, Math.min(window, results.size()));
+    List<SearchResult> reordered = new ArrayList<>(results.size());
+    boolean[] placed = new boolean[w];
+    for (int idx : order) {
+      if (idx < 0 || idx >= w || placed[idx]) continue;
+      placed[idx] = true;
+      reordered.add(results.get(idx));
+    }
+    for (int i = 0; i < w; i++) {
+      if (!placed[i]) reordered.add(results.get(i));
+    }
+    for (int i = w; i < results.size(); i++) {
+      reordered.add(results.get(i));
+    }
+    return reordered;
+  }
+
   /** Top-K doc-ids (within the CE window) at/below the given per-leg HitStage rank, for judge-arbitration
    * leg agreement (tempdoc 643 E1). Only counts a candidate whose stage rank is PRESENT (proto3 {@code
    * optional}) and {@code <= topK} — mirrors {@code HybridSearchOps.topKDocIds}'s rank-based selection. */
@@ -809,6 +858,17 @@ final class KnowledgeSearchEngine {
         } catch (ExecutionException e) {
           expansionSkipReason = "FAILED";
           log.debug("LLM expansion failed: {}", e.getCause().getMessage());
+        } catch (RuntimeException e) {
+          // The expansion re-search is an OPTIONAL enhancement over an answer we already hold, and
+          // this block's contract (line 779) is "falls back to base results on timeout or error".
+          // Only the checked failures were caught, so a failing re-search took the whole search
+          // down with it. Reachable since tempdoc 821 §P: the multi-leg path now honours this
+          // request's LUCENE syntax and rejects a malformed parse with INVALID_ARGUMENT (as the
+          // sparse-only path always did) — and `expandedQuery` embeds the RAW user query text, so
+          // any Lucene metacharacter the user typed can produce one. `resp` still holds the base
+          // response here, so the fallback is simply not overwriting it.
+          expansionSkipReason = "FAILED";
+          log.warn("LLM expansion re-search failed, using base results: {}", e.getMessage());
         }
       } else {
         expansionFuture.cancel(true);
@@ -854,9 +914,12 @@ final class KnowledgeSearchEngine {
         }
         List<Integer> order = lambdaMartReranker.rerank(sparseScores, vectors, spladeScores, n);
         if (order != null) {
-          List<SearchResult> reranked = new ArrayList<>(n);
-          for (int idx : order) reranked.add(results.get(idx));
-          results = reranked;
+          // Tempdoc 821 §L.3: same candidate-drop class as the cross-encoder branch below. The
+          // RerankerService contract promises only "indices in descending relevance order" — an
+          // implementation returning a short or out-of-range list would drop candidates or throw.
+          // applyRerankOrder keeps every candidate; n == results.size(), so nothing sits beyond
+          // the window and the whole list is the reorder scope.
+          results = applyRerankOrder(results, order, n);
           lambdaMartApplied = true;
           log.debug("LambdaMART reranked {} results", n);
         } else {
@@ -1000,18 +1063,15 @@ final class KnowledgeSearchEngine {
           orderToApply = blendPreRerankAndCrossEncoder(
               preRerankScores, crossEncoderScores, alphaToApply);
         } else {
+          // Tempdoc 821 §L.3: the Worker's sorted_indices are applied as-is for the window
+          // positions they cover, but a short list no longer drops the positions it omits —
+          // applyRerankOrder passes those through in original order, the same "fill, don't drop"
+          // defense the judge-blend branch above gets from its topK-sized window.
           orderToApply = reranked.getSortedIndicesList();
         }
-        // Reorder results based on the (possibly blended) order
-        List<SearchResult> rerankedResults = new ArrayList<>(results.size());
-        for (int idx : orderToApply) {
-          rerankedResults.add(results.get(idx));
-        }
-        // Append any results beyond topK that weren't reranked
-        for (int i = topK; i < results.size(); i++) {
-          rerankedResults.add(results.get(i));
-        }
-        results = rerankedResults;
+        // Reorder the CE window by the (possibly blended) order, then append the candidates
+        // beyond topK that were never reranked. Count in equals count out.
+        results = applyRerankOrder(results, orderToApply, topK);
         crossEncoderApplied = true;
         crossEncoderMs = reranked.getElapsedMs();
         log.debug("Reranked {} docs in {}ms (remote)", topK, reranked.getElapsedMs());
@@ -1211,6 +1271,14 @@ final class KnowledgeSearchEngine {
    * rejects if any remaining token is non-alphabetic (hallucination guard), or if no new terms
    * were added. Truncating rather than rejecting handles the common case where the model produces
    * valid morphological variants for each word but exceeds the cap due to the 5-form system prompt.
+   *
+   * <p>The merged string is re-issued as a LUCENE-syntax request (the {@code ^0.3} boosts have to
+   * parse), but expansion only runs for SIMPLE requests ({@code :644-645}) — users who never asked
+   * for Lucene semantics. So the user's half is ESCAPED here: without it, {@code covid -vaccine}
+   * would silently invert to a NOT and {@code error:timeout} would become a query against a
+   * non-existent field, with {@code expansionApplied=true} and no degradation signal. The escape
+   * set is exactly the one the SIMPLE path applies before parsing, so the user's half means what it
+   * would have meant unexpanded; only the appended (alphabetic-guarded) variants carry syntax.
    */
   static String mergeExpansion(String originalQuery, String expansionText) {
     if (expansionText == null || expansionText.isBlank()) {
@@ -1236,7 +1304,7 @@ final class KnowledgeSearchEngine {
     for (String t : origTokens) {
       seen.add(t.toLowerCase(Locale.ROOT));
     }
-    StringBuilder sb = new StringBuilder(originalQuery.strip());
+    StringBuilder sb = new StringBuilder(escapeLuceneSyntax(originalQuery.strip()));
     boolean added = false;
     for (String t : expandTokens) {
       if (seen.add(t.toLowerCase(Locale.ROOT))) {
@@ -1245,6 +1313,46 @@ final class KnowledgeSearchEngine {
       }
     }
     return added ? sb.toString() : null;
+  }
+
+  /**
+   * Escapes the Lucene query-syntax metacharacters, so text a user typed as plain words stays plain
+   * words when it is embedded in a LUCENE-syntax request ({@link #mergeExpansion}).
+   *
+   * <p>The character set is restated rather than imported: the Head never touches Lucene (hard
+   * invariant 1) and lucene-core is {@code runtimeOnly} in this module. It is the same set the
+   * Worker's SIMPLE path escapes before parsing, which is what makes the escaped half equivalent to
+   * an unexpanded SIMPLE query. Expansion variants are appended AFTER this call because their
+   * {@code ^0.3} boost must survive as syntax.
+   */
+  static String escapeLuceneSyntax(String text) {
+    StringBuilder out = new StringBuilder(text.length() + 8);
+    for (int i = 0; i < text.length(); i++) {
+      char c = text.charAt(i);
+      if (c == '\\'
+          || c == '+'
+          || c == '-'
+          || c == '!'
+          || c == '('
+          || c == ')'
+          || c == ':'
+          || c == '^'
+          || c == '['
+          || c == ']'
+          || c == '"'
+          || c == '{'
+          || c == '}'
+          || c == '~'
+          || c == '*'
+          || c == '?'
+          || c == '|'
+          || c == '&'
+          || c == '/') {
+        out.append('\\');
+      }
+      out.append(c);
+    }
+    return out.toString();
   }
 
   // Tempdoc 549 Phase E2: the leg-keyed per-hit HitProvenance (and its head-side
