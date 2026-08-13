@@ -51,7 +51,7 @@ final class WatchedRootScanCollectionTest {
   @TempDir Path tempDir;
 
   /** What each arm received for one root. */
-  private record Arms(String watched, String scanned, String scannedRoot) {}
+  private record Arms(String watched, String scanned, String scannedRoot, ScanMode scannedMode) {}
 
   /** RootLifecycleOps wired so both arms record the collection they were handed. */
   private final class Capture {
@@ -59,6 +59,7 @@ final class WatchedRootScanCollectionTest {
     private final AtomicReference<String> watchedCollection = new AtomicReference<>();
     private final AtomicReference<String> scannedCollection = new AtomicReference<>();
     private final AtomicReference<String> scannedRoot = new AtomicReference<>();
+    private final AtomicReference<ScanMode> scannedMode = new AtomicReference<>();
     private final ExecutorService walkExecutor = Executors.newSingleThreadExecutor();
     private final WatchedRootsState state;
     private final RootLifecycleOps ops;
@@ -72,9 +73,10 @@ final class WatchedRootScanCollectionTest {
               watchedRoots,
               state,
               () -> ExcludeMatcher.empty(true),
-              (rootPath, collection, globs, progress) -> {
+              (rootPath, collection, mode, globs, progress) -> {
                 scannedRoot.set(rootPath);
                 scannedCollection.set(collection);
+                scannedMode.set(mode);
                 return null;
               },
               new RootLifecycleOps.WorkerWatchFn() {
@@ -98,7 +100,11 @@ final class WatchedRootScanCollectionTest {
       assertTrue(
           walkExecutor.awaitTermination(10, TimeUnit.SECONDS),
           "the queued walk must finish before the assertions read what it dispatched");
-      return new Arms(watchedCollection.get(), scannedCollection.get(), scannedRoot.get());
+      return new Arms(
+          watchedCollection.get(),
+          scannedCollection.get(),
+          scannedRoot.get(),
+          scannedMode.get());
     }
   }
 
