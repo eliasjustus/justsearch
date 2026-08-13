@@ -152,7 +152,7 @@ Protocol version: `2025-11-25`. Capabilities: tools, resources,
 prompts. Curated tool-surface version (single-sourced from
 `McpContractVersions.TOOL_SURFACE_VERSION`, reported as
 `serverInfo._meta["io.justsearch/toolSurfaceVersion"]` and as the runtime
-manifest's `mcpToolSurfaceVersion`): `0.5.0`. MCP `serverInfo.version` is the
+manifest's `mcpToolSurfaceVersion`): `0.6.0`. MCP `serverInfo.version` is the
 **build** version (bound to `EnvRegistry.APP_VERSION`) — a host that logs or
 gates on server version must see this build's number, not the tool surface's.
 
