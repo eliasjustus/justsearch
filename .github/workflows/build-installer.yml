@@ -201,12 +201,27 @@ jobs:
         env:
           METADATA_PRIVATE_KEY_PEM: ${{ secrets.JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PEM }}
           METADATA_PUBLIC_KEY_PEM: ${{ vars.JUSTSEARCH_RELEASE_METADATA_PUBLIC_KEY_PEM }}
+          RELEASE_DESCRIPTOR_URL: ${{ vars.JUSTSEARCH_RELEASE_DESCRIPTOR_URL }}
         run: |
           if (-not $env:METADATA_PRIVATE_KEY_PEM) {
             throw "JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PEM is required for a tag release."
           }
           if (-not $env:METADATA_PUBLIC_KEY_PEM) {
             throw "JUSTSEARCH_RELEASE_METADATA_PUBLIC_KEY_PEM is required for a tag release."
+          }
+          # The descriptor URL is a compile-time option_env! pin (updater.rs pinned_release_value):
+          # unset, the build stays GREEN while every update check in the shipped app fails at
+          # runtime (tempdoc 801 D14.a item 2 — the one silent member of the trust-input set;
+          # provisioning audit 2026-08-13, trap b). Assert it here, in the same guard as the keys,
+          # with the same shape rules updater.rs enforces (ensure_https + release.v1.json suffix).
+          if (-not $env:RELEASE_DESCRIPTOR_URL) {
+            throw "JUSTSEARCH_RELEASE_DESCRIPTOR_URL is required for a tag release (compile-pinned; unset = runtime-dead updater in the shipped app)."
+          }
+          if (-not $env:RELEASE_DESCRIPTOR_URL.StartsWith("https://")) {
+            throw "JUSTSEARCH_RELEASE_DESCRIPTOR_URL must be HTTPS (updater.rs ensure_https rejects it at runtime otherwise)."
+          }
+          if (-not $env:RELEASE_DESCRIPTOR_URL.EndsWith("release.v1.json")) {
+            throw "JUSTSEARCH_RELEASE_DESCRIPTOR_URL must end with release.v1.json (updater.rs derives latest.json from that suffix)."
           }
           $utf8 = New-Object System.Text.UTF8Encoding($false)
           $privatePath = Join-Path $env:RUNNER_TEMP "justsearch-release-metadata-private.pem"
@@ -427,6 +442,12 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          # The round-trip verify below passes these two to app-release-assets.mjs. They were
+          # previously step-scoped env on "Build installer" ONLY, so here they were unset and the
+          # first stable tag would have died at "Downloaded authenticated updater set failed
+          # verification" AFTER the draft Release existed (provisioning audit 2026-08-13, trap c).
+          JUSTSEARCH_RELEASE_METADATA_ROOT_PUBLIC_KEY: ${{ vars.JUSTSEARCH_RELEASE_METADATA_ROOT_PUBLIC_KEY }}
+          JUSTSEARCH_RELEASE_METADATA_ROOT_KEY_ID: ${{ vars.JUSTSEARCH_RELEASE_METADATA_ROOT_KEY_ID }}
         run: |
           $tag = $env:GITHUB_REF.Substring('refs/tags/'.Length)
           $notes = Join-Path $env:RUNNER_TEMP "release-notes.md"

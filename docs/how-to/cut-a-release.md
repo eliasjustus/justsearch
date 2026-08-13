@@ -229,6 +229,15 @@ Owner-only steps (require repo permissions):
 5. Dispatch `build-installer.yml` against the tag ref. It builds, runs
    `build-release-assets.ps1`, round-trip verifies the draft asset set, and publishes the Release
    only after verification succeeds.
+
+   > **Standing constraint — never rename, move, or delete-and-recreate
+   > `build-installer.yml`.** The release sequence shipped inside `release.v1.json` is
+   > `GITHUB_RUN_NUMBER`, which GitHub scopes to the workflow *file*: recreating the file resets
+   > the counter to 1, and every shipped client that ever accepted a release permanently refuses
+   > all later ones (`updater.rs` persists `highest_accepted_sequence` and rejects anything
+   > lower), with no in-client recovery. This locked in with the first stable tag (v0.2.0,
+   > 2026-08-13; tempdoc 801 D14.b). Replacing the sequence source with a workflow-independent
+   > one is the prerequisite for ever restructuring the workflow file.
 6. Set the repo homepage, enable Discussions if desired, and take/replace hero screenshots
    (see `docs/m1-operator-checklist.md`).
 7. **Post-cut — update the README to the published asset.** `README.md`'s installer size + SHA-256
