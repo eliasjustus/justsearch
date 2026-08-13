@@ -114,14 +114,14 @@ final class RemoteDocumentServiceContextBudgetTest {
     String context = result.context();
     assertEquals(MAX_CONTEXT_CHARS, context.length(), "Context must be strictly capped to maxChars");
 
-    assertTrue(context.startsWith("[From: doc-1]\n"), "Should include header for doc-1");
+    assertTrue(context.startsWith("[1] doc-1\n"), "Should include numbered header for doc-1");
     assertTrue(context.contains(ContextBudgeter.SECTION_SEPARATOR), "Should include section separator");
-    assertTrue(context.contains("[From: doc-2]\n"), "Should include header for doc-2");
+    assertTrue(context.contains("[2] doc-2\n"), "Should include numbered header for doc-2");
     assertTrue(context.endsWith("B"), "Final truncated content should end with doc-2 content");
 
     // Verify the truncation math is strict and counts overhead.
-    String header1 = "[From: doc-1]\n";
-    String header2 = "[From: doc-2]\n";
+    String header1 = ContextBudgeter.sectionHeader(1, "doc-1");
+    String header2 = ContextBudgeter.sectionHeader(2, "doc-2");
     String sep = ContextBudgeter.SECTION_SEPARATOR;
     String a = "A".repeat(100_000);
     String b = "B".repeat(150_000);

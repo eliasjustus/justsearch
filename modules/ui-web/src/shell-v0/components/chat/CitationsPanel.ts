@@ -53,7 +53,8 @@ export class CitationsPanel extends JfElement {
     sources: { type: Array, attribute: false },
     retrievalMode: { type: String, attribute: false },
     showWeak: { state: true },
-    sourcesExpanded: { state: true },
+    sourcesExpanded: { type: Boolean, attribute: false },
+    externalDisclosure: { type: Boolean, attribute: false },
   };
 
   declare citations: CitationMatch[];
@@ -63,7 +64,21 @@ export class CitationsPanel extends JfElement {
   // Tempdoc 559 Authority IV (C-1): sources are disclosed on demand, not
   // expanded by default — a short answer stays short (the ReasoningBlock
   // disclosure pattern). The header is the toggle; the body renders only when open.
+  //
+  // Promoted from `state: true` to a public property by tempdoc 822 Phase F11 so an
+  // `externalDisclosure` host can drive it. Default and reactivity are unchanged.
   declare sourcesExpanded: boolean;
+  /**
+   * The HOST owns the disclosure, so this panel renders BODY ONLY (tempdoc 822 Phase F11).
+   *
+   * Default `false` — every shipped consumer (`views/search-v2/SearchV2View.ts`,
+   * `views/SummarizeView.ts`) is byte-identical to before. Search v3 sets it because its answer tail
+   * is ONE 24px row: a component-owned header on its own line makes that two rows, and the panel's
+   * uppercase `▸ N SOURCES` is a second disclosure dialect for an act the window already declares.
+   * When true, ALL THREE header paths are suppressed and ALL THREE bodies are gated on
+   * {@link sourcesExpanded} — a host that hides the toggle must not leave a body permanently open.
+   */
+  declare externalDisclosure: boolean;
 
   constructor() {
     super();
@@ -72,6 +87,7 @@ export class CitationsPanel extends JfElement {
     this.retrievalMode = '';
     this.showWeak = false;
     this.sourcesExpanded = false;
+    this.externalDisclosure = false;
   }
 
   static styles = css`
@@ -377,21 +393,34 @@ export class CitationsPanel extends JfElement {
 
     // Fallback: citation-match-only rendering (no retrieval-time sources)
     return html`
-      <div class="panel-header">
-        ${this.citations.length}
-        ${this.citations.length === 1 ? 'citation' : 'citations'}
-      </div>
-      <div class="citations">
-        ${this.citations.map(
-          (c) => html`
-            <div class="citation">
-              <div class="header">${this.renderScore(evidenceScore(c.similarity))}</div>
-              <div class="sentence">${c.sentenceText}</div>
-            </div>
-          `,
-        )}
-      </div>
+      ${this.externalDisclosure
+        ? nothing
+        : html`<div class="panel-header">
+            ${this.citations.length}
+            ${this.citations.length === 1 ? 'citation' : 'citations'}
+          </div>`}
+      ${this.bodyOpen
+        ? html`<div class="citations">
+            ${this.citations.map(
+              (c) => html`
+                <div class="citation">
+                  <div class="header">${this.renderScore(evidenceScore(c.similarity))}</div>
+                  <div class="sentence">${c.sentenceText}</div>
+                </div>
+              `,
+            )}
+          </div>`
+        : nothing}
     `;
+  }
+
+  /**
+   * Whether the BODY renders. Only an `externalDisclosure` host can close the two always-open
+   * paths — with the panel's own header present, the header IS the toggle and the body follows it,
+   * exactly as before.
+   */
+  private get bodyOpen(): boolean {
+    return !this.externalDisclosure || this.sourcesExpanded;
   }
 
   /**
@@ -401,13 +430,17 @@ export class CitationsPanel extends JfElement {
    */
   private renderFlatSources(): TemplateResult {
     return html`
-      <div class="panel-header">
-        ${this.sources.length}
-        ${this.sources.length === 1 ? 'source retrieved' : 'sources retrieved'}
-      </div>
-      <div class="citations">
-        ${this.sources.map((s) => this.renderSourceCard(s, null))}
-      </div>
+      ${this.externalDisclosure
+        ? nothing
+        : html`<div class="panel-header">
+            ${this.sources.length}
+            ${this.sources.length === 1 ? 'source retrieved' : 'sources retrieved'}
+          </div>`}
+      ${this.bodyOpen
+        ? html`<div class="citations">
+            ${this.sources.map((s) => this.renderSourceCard(s, null))}
+          </div>`
+        : nothing}
     `;
   }
 
@@ -455,16 +488,18 @@ export class CitationsPanel extends JfElement {
     };
 
     return html`
-      <button
-        class="panel-header"
-        aria-expanded=${this.sourcesExpanded ? 'true' : 'false'}
-        aria-controls="citations-body"
-        @click=${() => (this.sourcesExpanded = !this.sourcesExpanded)}
-      >
-        <span class="disclosure-chevron ${this.sourcesExpanded ? 'open' : ''}">▸</span>
-        ${this.sources.length}
-        ${this.sources.length === 1 ? 'source' : 'sources'}
-      </button>
+      ${this.externalDisclosure
+        ? nothing
+        : html`<button
+            class="panel-header"
+            aria-expanded=${this.sourcesExpanded ? 'true' : 'false'}
+            aria-controls="citations-body"
+            @click=${() => (this.sourcesExpanded = !this.sourcesExpanded)}
+          >
+            <span class="disclosure-chevron ${this.sourcesExpanded ? 'open' : ''}">▸</span>
+            ${this.sources.length}
+            ${this.sources.length === 1 ? 'source' : 'sources'}
+          </button>`}
       ${this.sourcesExpanded
         ? html`<div class="citations" id="citations-body">
         ${high.length > 0

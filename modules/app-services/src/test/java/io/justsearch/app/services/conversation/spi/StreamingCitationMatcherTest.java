@@ -1,6 +1,7 @@
 package io.justsearch.app.services.conversation.spi;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -126,6 +127,34 @@ final class StreamingCitationMatcherTest {
       assertEquals("rag.citation_matches", r.events().get(0).name());
     }
 
+    /** Tempdoc 822 §3b — the match payload publishes the contract's name, on both channels. */
+    @Test
+    @DisplayName("the matches payload carries sourceIndex, never chunkIndex")
+    void matchPayloadUsesSourceIndex() {
+      var matchResult = new CitationMatchResult(
+          List.of(new CitationMatchEntry(0, "Sentence.", 2, 0.9, "doc-1")),
+          1, 1, 10L);
+      var matcher = new StreamingCitationMatcher(stubDocs(matchResult));
+      var ctx = ctxWithCitations(List.of(citation("doc-1", 41, "excerpt")));
+
+      var r = matcher.onDone("Sentence.", ctx);
+
+      @SuppressWarnings("unchecked")
+      var matches =
+          (List<Map<String, Object>>) r.events().get(0).payload().get("matches");
+      assertEquals(1, matches.size());
+      assertEquals(2, matches.get(0).get("sourceIndex"), "the entry's positional index");
+      assertFalse(matches.get(0).containsKey("chunkIndex"));
+      // The same payload is what gets PERSISTED on the record (claimMatches), so a reloaded
+      // conversation reads the contract's name too.
+      @SuppressWarnings("unchecked")
+      var persisted =
+          (Map<String, Object>) r.donePayloadEntries().get("claimMatches");
+      @SuppressWarnings("unchecked")
+      var persistedMatches = (List<Map<String, Object>>) persisted.get("matches");
+      assertEquals(2, persistedMatches.get(0).get("sourceIndex"));
+    }
+
     @Test
     @DisplayName("returns empty when fullText is blank")
     void blankText() {
@@ -210,6 +239,53 @@ final class StreamingCitationMatcherTest {
       var matches = StreamingCitationMatcher.matchSentenceLexical(
           "Any sentence here.", citations);
       assertTrue(matches.isEmpty());
+    }
+
+    /**
+     * Tempdoc 822 §3b — THE numbering contract. The emitted index is the source's POSITION in this
+     * turn's citations array, never the chunk's ordinal inside its parent document. The ordinals
+     * here (7, 3, 19) deliberately differ from the positions (0, 1, 2): the pre-fix code passed
+     * only because fixtures used ordinal == position.
+     */
+    @Test
+    @DisplayName("emits the citations-array POSITION, not the document-relative chunk ordinal")
+    void emitsArrayPositionNotChunkOrdinal() {
+      var citations = List.of(
+          citation("doc-1", 7, "JustSearch indexes your files locally"),
+          citation("doc-2", 3, "quantum physics entanglement theory"),
+          citation("doc-3", 19, "JustSearch indexes your files locally"));
+
+      var matches = StreamingCitationMatcher.matchSentenceLexical(
+          "JustSearch indexes files on your machine locally.", citations);
+
+      assertEquals(2, matches.size(), "positions 0 and 2 overlap; position 1 does not");
+      assertEquals(0, matches.get(0).get("sourceIndex"), "first match is at ARRAY POSITION 0");
+      assertEquals(2, matches.get(1).get("sourceIndex"), "second match is at ARRAY POSITION 2");
+      for (var m : matches) {
+        assertFalse(
+            m.containsKey("chunkIndex"),
+            "the document-relative ordinal must not travel on a match at all");
+      }
+    }
+
+    @Test
+    @DisplayName("a 59-ordinal chunk in a 5-source turn emits a position < 5 (the gap-report defect)")
+    void misNumberingFixture() {
+      var citations = new java.util.ArrayList<ContextCitation>();
+      for (int i = 0; i < 5; i++) {
+        citations.add(citation("doc-" + i, 55 + i, "JustSearch indexes your files locally"));
+      }
+
+      var matches = StreamingCitationMatcher.matchSentenceLexical(
+          "JustSearch indexes files on your machine locally.", citations);
+
+      assertEquals(5, matches.size());
+      for (var m : matches) {
+        int emitted = (int) m.get("sourceIndex");
+        assertTrue(
+            emitted >= 0 && emitted < citations.size(),
+            "every emitted index addresses a real source (was 55..59 against 5 sources)");
+      }
     }
   }
 

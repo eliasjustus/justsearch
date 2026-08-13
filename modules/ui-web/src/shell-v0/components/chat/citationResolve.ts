@@ -7,8 +7,15 @@
  * `SummarizeView` render that through the one `MarkdownBlock` weave, so the claim→`Citation` mapping
  * lives here once (not forked across the two views). Mirrors the retired `cite-ref-click` source-index
  * lookup, so RAG marks gain the deep-link + cross-surface selection key the flat-text block lacked.
- * Ungrounded sentences (`sourceRefs` empty) get no mark — neutral prose (the §15.B medium-appropriate
+ * Ungrounded sentences (no verified ref) get no mark — neutral prose (the §15.B medium-appropriate
  * take on the flat-text dimming; the §15.A cutoff already filtered to grounded sentences).
+ *
+ * Tempdoc 822 §3d — the PROVENANCE GATE lives here, because this is the one place a `Claim` becomes a
+ * `Citation` and `Citation.similarity` is what every downstream tier read (`groundingClass` for the
+ * mark + the sentence underline, `groundingCoverage` for the grounded/weak counts) consumes. A claim
+ * the cross-encoder never verified yields NO citation, so a lexical word-overlap ratio has no path to
+ * a threshold calibrated on the cross-encoder cutoff. The gate is structural, not a check: there is
+ * no field on `Citation` a lexical score could be written into.
  */
 import type { Claim, RetrievalCitation } from './citationTypes.js';
 import type { Citation } from './MarkdownBlock.js';
@@ -25,14 +32,28 @@ export function claimsToCitations(
   if (claims.length === 0 || sources.length === 0) return [];
   const out: Citation[] = [];
   for (const cl of claims) {
-    if (cl.sourceRefs.length === 0) continue;
-    const refIdx = cl.sourceRefs[0] ?? 0;
-    const s = sources[refIdx] ?? sources[0];
+    // 822 §3d — the SCORE gate. Only a cross-encoder-verified claim can mint a mark; a lexical-only
+    // claim is dropped whole rather than being handed over with a score on the wrong scale. The
+    // check is `typeof number`, not `!== null`: an untyped/legacy claim object carries no verified
+    // score at all, and a missing score must fail closed (no mark) exactly like an explicit null.
+    if (typeof cl.verifiedScore !== 'number') continue;
+    // 822 §3b — the REF gate, and the honest failure that replaced `sources[refIdx] ?? sources[0]`.
+    // A claim resolves ONLY through a ref the authoritative matcher supplied (`lexicalRefs` are the
+    // streaming guess and may not target a mark), and an index that addresses no source mints NO
+    // citation. There is therefore no path from an unresolvable index to a `Citation`, so no
+    // `.cite-ref` can carry another source's `parentDocId` — the wrong-target deep link is not
+    // fixed here, it is unconstructible. The dropped claim is visible: coverage counts what
+    // renders, so the frame degrades to `partially-grounded` because the evidence degraded.
+    // Fails CLOSED on a claim with no verified ref list at all (a legacy/untyped object), exactly as
+    // the score gate above does: a missing producer is not a verified one.
+    const refIdx = Array.isArray(cl.verifiedRefs) ? cl.verifiedRefs[0] : undefined;
+    if (refIdx === undefined) continue;
+    const s = sources[refIdx];
     if (!s) continue;
     out.push({
       sentenceText: cl.sentenceText,
-      similarity: cl.score,
-      sourceRefs: cl.sourceRefs,
+      similarity: cl.verifiedScore,
+      sourceRefs: cl.verifiedRefs,
       label: refIdx + 1,
       detail: {
         parentDocId: s.parentDocId,

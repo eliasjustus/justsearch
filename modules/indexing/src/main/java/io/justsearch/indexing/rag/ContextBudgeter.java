@@ -10,7 +10,7 @@ import java.util.List;
  * Builds a multi-section context string with a strict character budget.
  *
  * <p>Important: the budget counts <b>all</b> output characters, including section separators and
- * headers (e.g. {@code [From: file.pdf]}), so callers get deterministic caps.
+ * headers (e.g. {@code [1] file.pdf}), so callers get deterministic caps.
  */
 public final class ContextBudgeter {
 
@@ -19,6 +19,23 @@ public final class ContextBudgeter {
 
   /** Default label used when a section label is missing. */
   public static final String DEFAULT_SOURCE_LABEL = "unknown";
+
+  /**
+   * Renders one section header as {@code "[n] label\n"}.
+   *
+   * <p>{@code oneBasedIndex} is the number the model is asked to cite — the prompt demands
+   * {@code [1]}, {@code [2]} and the FE labels source <i>i</i> as {@code i + 1}. Section <i>i</i>
+   * ⇔ {@code rag.citations[i]} ⇔ the FE's {@code sources[i]} holds by construction (the worker's
+   * budget loop appends to the used-hit list and to {@link #sections()} in one iteration), so the
+   * printed ordinal resolves to a source that actually exists. An unnumbered header is what made
+   * the model invent ordinals (tempdoc 822 §3a).
+   *
+   * <p>Mirrored — not shared — by {@code DocumentService}'s default context assembly: app-api
+   * cannot depend on :modules:indexing (same constraint as {@code SECTION_SEPARATOR}).
+   */
+  public static String sectionHeader(int oneBasedIndex, String label) {
+    return "[" + oneBasedIndex + "] " + label + "\n";
+  }
 
   /** Outcome of trying to append a section. */
   public enum AppendResult {
@@ -78,7 +95,7 @@ public final class ContextBudgeter {
    * Appends one section as:
    *
    * <pre>
-   * [From: label]
+   * [n] label
    * content
    * </pre>
    *
@@ -92,7 +109,7 @@ public final class ContextBudgeter {
     }
 
     String label = (sourceLabel == null || sourceLabel.isBlank()) ? DEFAULT_SOURCE_LABEL : sourceLabel;
-    String header = "[From: " + label + "]\n";
+    String header = sectionHeader(sections.size() + 1, label);
     String sep = first ? "" : SECTION_SEPARATOR;
 
     int remaining = maxChars - sb.length();

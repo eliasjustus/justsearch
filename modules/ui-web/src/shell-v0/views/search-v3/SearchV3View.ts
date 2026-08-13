@@ -1,0 +1,2053 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * SearchV3View — the Search v3 window host (tempdoc 822 slices 1 and 3; wired in Phase A1).
+ *
+ * Derived from a third-party design system (MIT) — see THIRD-PARTY-NOTICES.md in this directory.
+ *
+ * A from-scratch window rebuilt on a new design system: no presentation code is carried over
+ * from `UnifiedChatView` or search-v2 — and no search client either, in the other direction: the
+ * store this host subscribes to is the SHARED `state/searchState.ts` that both shipped windows read,
+ * which is what "from-scratch components, shared authorities" means in practice. This host owns six
+ * things and delegates the rest:
+ *
+ *  1. **The token sheet.** `sv3Tokens` is applied HERE, on the window host — never on `:root`. Custom
+ *     properties inherit down through every nested shadow root, so one host-scoped declaration
+ *     reaches the whole window while the shipped app's palette stays untouched.
+ *  2. **The window grid.** A fixed `--sidebar-width` panel that does not flex, beside a main column
+ *     of topbar → content surface → composer band.
+ *  3. **The scroll policy.** The window region never scrolls: this host and the main column are
+ *     clipped, and the ONE scroller is the content surface's inner scroller. Chrome therefore
+ *     cannot be scrolled out of reach, and there is no scroller nested inside another.
+ *  4. **The composer state, and the morph between its two forms** (slice 3). The state lives here
+ *     rather than in the composer because it is a WINDOW layout: hero means the composer owns the
+ *     content region and there are no results; docked means the results do. Three ways in, all
+ *     through the same morph: the send control, `Escape` in the field, and the `composer-state`
+ *     attribute (a dev-only handle for live measurement, which is why an external write is routed
+ *     through the morph rather than applied straight).
+ *  5. **The one ask.** A send opens a turn and dispatches it through `sv3-ask.ts`, the window's ONE
+ *     issuance site, holding the `AbortController` that Stop uses and settling the turn on whichever
+ *     terminal the stream reports. Phase A1's SEARCH issuance (`setQuery` + `submitSearch`, the pair
+ *     `views/search-v2/SearchV2View.ts:998-999` sends) is still here and still exactly one request,
+ *     but it is the SECONDARY axis now: only the palette's "Search this text" reaches it.
+ *  6. **The session list, as a PROJECTION of the product's record** (Phase A2; conversations since
+ *     F1; on the record since F6). A session IS a conversation: its identity and its listing come
+ *     from `state/conversationListStore.ts`, and its transcript from the canonical
+ *     `GET /api/thread/{id}` record via `sv3-record.ts`. The host holds the projected list and routes
+ *     everything that changes it (a send, a row click, New session, every stream event, and each
+ *     record refresh) through the funnels above; the sidebar and the content surface render
+ *     projections and issue nothing. What is still window-local — the pin and the unread bit — and
+ *     why, is stated in `sv3-sessions.ts`'s persistence-boundary note.
+ *
+ * Mounted as a hidden DEEPLINK surface, dev audience, no rail entry:
+ * `#justsearch://surface/core.search-v3-surface`.
+ *
+ * Side-effect registers <jf-sv3-window> and its four regions.
+ */
+import { html, css, nothing, type TemplateResult } from 'lit';
+import { JfElement } from '../../primitives/JfElement.js';
+import { sv3Tokens } from './sv3-tokens.css.js';
+import { sv3Shared } from './sv3-shared-styles.js';
+import { COMPOSER_STATE_DEFAULT, WINDOW_TITLE, type Sv3ComposerState } from './fixtures.js';
+import {
+  setQuery,
+  setSearchApiBase,
+  submitSearch,
+  subscribeSearch,
+  type SearchState,
+} from '../../state/searchState.js';
+import {
+  adoptSv3MorphSheet,
+  releaseSv3MorphSheet,
+  runSv3ComposerMorph,
+} from './sv3-composer-morph.js';
+import {
+  type Sv3Composer,
+  type Sv3ComposerStateRequest,
+  type Sv3ComposerSubmit,
+  type Sv3EffortChange,
+} from './Sv3Composer.js';
+import { projectSv3Results, type Sv3ResultsView } from './sv3-results.js';
+import {
+  type Sv3SessionPin,
+  type Sv3SessionRename,
+  type Sv3SessionSelect,
+} from './Sv3Sidebar.js';
+import {
+  clampSv3PaneWidth,
+  clampSv3SidebarWidth,
+  forgetSv3PaneWidth,
+  forgetSv3SidebarWidth,
+  readStoredSv3PaneWidth,
+  readStoredSv3SidebarCollapsed,
+  readStoredSv3SidebarWidth,
+  resolveInitialSv3PaneWidth,
+  resolveInitialSv3SidebarWidth,
+  storeSv3PaneWidth,
+  storeSv3SidebarCollapsed,
+  storeSv3SidebarWidth,
+  sv3PaneIsInline,
+  sv3PaneOccupiedWidth,
+  SV3_GRIP_KEY_STEP_PX,
+  SV3_PANE_DEFAULT_PX,
+  SV3_SIDEBAR_COLLAPSED_PX,
+  SV3_SIDEBAR_DEFAULT_PX,
+} from './sv3-boundaries.js';
+import {
+  activeTurns,
+  adoptRunSession,
+  appendTurnDelta,
+  applySv3Record,
+  focusSession,
+  mergeStoreConversations,
+  renameSession,
+  toggleSessionPin,
+  latestTurnRef,
+  projectSv3Sessions,
+  sessionById,
+  setTurnEvidence,
+  setTurnReasoning,
+  setTurnRewrite,
+  settleAgentTurn,
+  settleTurn,
+  startNewSession,
+  submitInSession,
+  sv3ShouldGenerateTitle,
+  SV3_SESSIONS_EMPTY,
+  type Sv3SessionList,
+} from './sv3-sessions.js';
+// The window's honesty derivations (tempdoc 822 Phase F7): the lock, the corpus, and the ONE remedy
+// channel every region's fix-it control leaves through.
+import {
+  deriveSv3HistoryLocked,
+  projectSv3Corpus,
+  type Sv3RemedyDetail,
+} from './sv3-honesty.js';
+// The product's ONE reasoning model (inventory C9). The window holds it for the turn that is
+// streaming and hands the finalized blocks to that turn at its terminal; nothing here parses a
+// thinking payload.
+import { ReasoningController } from '../../controllers/ReasoningController.js';
+// Tempdoc 596 §11.4 — the shared remedy navigation, reached from exactly one place in this window.
+import { requestSurfaceNavigation } from '../../controllers/navigateRequest.js';
+import { projectSv3RecordTurns } from './sv3-record.js';
+import {
+  SV3_ASK_SHAPE_ID,
+  SV3_EFFORT_DEFAULT,
+  isSv3Effort,
+  sv3Ask,
+  type Sv3Effort,
+} from './sv3-ask.js';
+// The app-wide CONVERSATION authority (tempdoc 510 Design D; inventory A1). A v3 session IS a
+// conversation, so identity, existence, title and its markdown export come from here — this window
+// mints none of them.
+import {
+  createConversationId,
+  exportConversationMarkdown,
+  generateConversationTitle,
+  loadConversations,
+  setActiveConversation,
+  setConversationApiBase,
+  setConversationTitle,
+  subscribeConversationList,
+} from '../../state/conversationListStore.js';
+// The shared clipboard util — the export's destination, the same one the shipped window uses.
+import { copyToClipboard } from '../../utils/clipboardCopy.js';
+// The canonical thread RECORD (tempdoc 561 P-A; inventory D1) — the shared fetch, already consumed
+// by the shipped window AND by search-v2. The shared PROJECTOR is reached through 'sv3-record.ts',
+// this window's registered run-projection site (governance/run-renderers.v1.json), never from here.
+import { fetchUnifiedThread } from '../unifiedThreadClient.js';
+// The shared per-raise step (565 run-control seam), so the button's label and the directive it
+// dispatches cannot promise different numbers.
+import { RAISE_BUDGET_STEP_TOKENS } from '../unifiedChatRequest.js';
+// Tempdoc 609 Phase 3 — the ONE per-tab pointer (sessionStorage): a reload restores the thread THIS
+// tab was reading, not the globally-most-recent one.
+import {
+  clearLastViewedConversation,
+  readLastViewedConversation,
+  setLastViewedConversation,
+} from '../../controllers/lastViewedConversation.js';
+// Tempdoc 609 §R — the shared reload-durable draft controller (T2.1) and its one-shot leave hint (T1.4).
+import { DraftPersistence } from '../../controllers/draftPersistence.js';
+import { notifyDraftKeptOnce } from '../../controllers/draftKeptHint.js';
+// Tempdoc 577 Root I (#1d) — the shared cross-tab live-run pointer, read on a cold load.
+import { readActiveRun } from '../../controllers/activeRunPointer.js';
+import {
+  getAgentSessionController,
+  peekAgentSessionController,
+  subscribeAgentSession,
+} from '../../state/agentSessionStore.js';
+import type { AgentSessionController } from '../../controllers/AgentSessionController.js';
+import {
+  directiveAvailable,
+  dispatchRunControl,
+  type RunControlRefusal,
+} from '../../controllers/runControlIntent.js';
+import {
+  deriveSv3RunPhase,
+  hasServerAcknowledgedLocalDispatch,
+  projectSv3RunFeed,
+  projectSv3RunPrompts,
+  sv3PrimaryAction,
+  sv3RunNeedsPresence,
+  sv3RunOutcome,
+  sv3RunPresenceStart,
+  sv3RunPresenceTitle,
+  sv3RunSessionStatus,
+  SV3_RUN_FEED_EMPTY,
+  type Sv3RunFeed,
+  type Sv3RunLocal,
+  type Sv3RunTurnState,
+  type Sv3RunView,
+} from './sv3-run.js';
+import { type Sv3CitationOpen, type Sv3RunDecision } from './Sv3Main.js';
+import type { DocumentLineRange } from '../../components/documentPane/DocumentPane.js';
+import { setAiActivity, subscribeAiState, type AiState } from '../../state/aiStateStore.js';
+import { projectAvailability } from '../../state/availability.js';
+import { reasonFor } from '../../state/readinessNotice.js';
+import {
+  PANE_LABEL,
+  SV3_COMMAND_EXPORT_MARKDOWN,
+  SV3_COMMAND_SEARCH_TEXT,
+  SV3_DRAFT_KEY,
+  SV3_SURFACE_KEY,
+} from './fixtures.js';
+import { type Sv3PaletteRun } from './Sv3Palette.js';
+import type { Sv3Palette } from './Sv3Palette.js';
+import './Sv3Topbar.js';
+import './Sv3Sidebar.js';
+import './Sv3Main.js';
+import './Sv3Composer.js';
+import './Sv3Palette.js';
+// The window's citation-inspection region (tempdoc 822 Phase F8). It mounts the product's ONE reading
+// surface by its own side-effect import; this host owns only where it sits and how wide it may be.
+import './Sv3Pane.js';
+
+const COMPOSER_STATE_ATTR = 'composer-state';
+
+/** The grip names all three of its gestures, because two of them are not discoverable by pointing. */
+const SIDEBAR_GRIP_LABEL =
+  'Resize the sidebar — arrow keys resize, Home returns to automatic, double-click resets';
+
+/**
+ * The palette chord, matched only for events that reach THIS window. The shipped shell binds the same
+ * chord globally (`mod+k` → `shell.toggle-palette`), so the scope is the whole contract: a keystroke
+ * outside the window must never be seen here.
+ */
+const isPaletteChord = (event: KeyboardEvent): boolean =>
+  (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'k';
+
+const isComposerState = (value: string | null): value is Sv3ComposerState =>
+  value === 'hero' || value === 'docked';
+
+/**
+ * Is the keystroke coming out of a session row that is BEING RENAMED? The row is asked, not the
+ * DOM shape: `renaming` is the row's own public state, so the test cannot drift from the markup the
+ * edit happens to use. Open shadow roots put the real origin in the composed path (the same
+ * property the palette's invoker lookup relies on), so a capture-phase listener on the host can see
+ * an editor three shadow roots down.
+ */
+const renamingRowInPath = (event: KeyboardEvent): boolean =>
+  event.composedPath().some((node) => {
+    const el = node as Element & { renaming?: unknown };
+    return el.localName === 'jf-sv3-session-row' && el.renaming === true;
+  });
+
+/**
+ * Is the keystroke coming out of a composer whose control MENU is open (tempdoc 822 Phase F10)? The
+ * same question as the rename above, asked of the same kind of state, and answered the same way:
+ * the element is asked for its own public flag rather than the DOM being pattern-matched.
+ */
+const openControlMenuInPath = (event: KeyboardEvent): boolean =>
+  event.composedPath().some((node) => {
+    const el = node as Element & { effortMenuOpen?: unknown };
+    return el.localName === 'jf-sv3-composer' && el.effortMenuOpen === true;
+  });
+
+export class SearchV3View extends JfElement {
+  static styles = [
+    sv3Tokens,
+    sv3Shared,
+    css`
+      :host {
+        display: flex;
+        height: 100%;
+        min-height: 0;
+        overflow: hidden;
+        /* The containing block for the palette overlay, which is why the palette can be window-scoped
+           at all: it is absolutely positioned against THIS box and cannot reach the shipped chrome. */
+        position: relative;
+        background: var(--background);
+        color: var(--foreground);
+        font-family: var(--font-sans);
+        font-size: var(--font-size-sv3-sm);
+      }
+      jf-sv3-sidebar {
+        flex: 0 0 var(--sidebar-width);
+        width: var(--sidebar-width);
+        /* The spec's own collapse animation (transition-[width] duration-200
+           ease-linear). Suppressed during a drag below, for the spec's reason: an eased width lags
+           a pointer that is setting it directly. */
+        transition:
+          flex-basis var(--duration-sv3-layout) var(--ease-sv3-linear),
+          width var(--duration-sv3-layout) var(--ease-sv3-linear);
+      }
+      :host([sidebar-collapsed]) jf-sv3-sidebar {
+        flex-basis: var(--sidebar-width-icon);
+        width: var(--sidebar-width-icon);
+      }
+      :host([resizing]) jf-sv3-sidebar {
+        transition: none;
+      }
+      /* THE GRIP (tempdoc 822 Phase F5). The spec's anatomy exactly: a w-4
+         (16px) hit area straddling the boundary (-translate-x-1/2) with a 2px LINE drawn by ::after
+         at its centre, invisible until hover. A native button rather than the spec's tabIndex={-1}
+         rail, so the keyboard half of the boundary exists at all — the same construction
+         views/search-v2/SearchV2View.ts:1937-1957 uses for the same job. */
+      button.sidebar-grip {
+        position: absolute;
+        inset-block: 0;
+        left: var(--sidebar-width);
+        transform: translateX(-50%);
+        inline-size: var(--space-4);
+        padding: 0;
+        border: 0;
+        background: transparent;
+        cursor: w-resize;
+        z-index: var(--z-sticky);
+        /* A drag must not be interpreted as a page scroll/pan gesture mid-gesture. */
+        touch-action: none;
+        transition: left var(--duration-sv3-layout) var(--ease-sv3-linear);
+      }
+      :host([sidebar-collapsed]) button.sidebar-grip {
+        left: var(--sidebar-width-icon);
+        cursor: e-resize;
+      }
+      :host([resizing]) button.sidebar-grip {
+        transition: none;
+      }
+      button.sidebar-grip::after {
+        content: '';
+        position: absolute;
+        inset-block: 0;
+        left: 50%;
+        inline-size: 2px;
+        background: transparent;
+        transition: background-color var(--duration-sv3-micro) var(--ease-sv3-enter);
+      }
+      button.sidebar-grip:hover::after {
+        background: var(--sidebar-border);
+      }
+      /* Focus lights the LINE rather than drawing a ring: an outline around a 16px-wide, full-height
+         hit area reads as a second boundary beside the first. The ring colour is used so the
+         indicator is unmistakably a focus state and not the hover treatment. */
+      button.sidebar-grip:focus-visible {
+        outline: none;
+      }
+      button.sidebar-grip:focus-visible::after {
+        background: var(--ring);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        jf-sv3-sidebar,
+        button.sidebar-grip,
+        button.sidebar-grip::after {
+          transition: none;
+        }
+      }
+      .column {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        /* The containing block for the hero composer, which leaves the flow to centre itself over
+           the content region. */
+        position: relative;
+      }
+      /* ── THE CITATION PANE (tempdoc 822 Phase F8) ──────────────────────────
+         The mirror image of the sidebar: a fixed track that does not flex, on the other side of the
+         main column. No open/close transition, which is the spec's own treatment of the INLINE
+         panel (a conditional render — only the narrow SHEET animates, and
+         that animation is the pane's own). In the overlay presentation the element takes itself out
+         of the flow, so no rule here has to undo the track. */
+      /* Guarded on the INLINE presentation, and the guard is load-bearing (found by live
+         measurement): a width declared here on the element beats the element's own :host rules —
+         outer-tree wins — so an unguarded track width left the overlaid pane 540px wide and anchored
+         to the LEFT edge, its own inset: 0 outvoted by a width it could not see. */
+      :host(:not([pane-overlay])) jf-sv3-pane {
+        flex: 0 0 var(--pane-width);
+        width: var(--pane-width);
+      }
+      /* THE PANE'S GRIP. The sidebar grip's anatomy exactly (a 16px hit area straddling the boundary
+         with a 2px line drawn at its centre, invisible until hover), mirrored to the other edge: the
+         spec's own right-panel handle is 8px wide with a 1px line,
+         and taking the sidebar's numbers instead is the deliberate
+         choice — one window may not have two differently-sized grips, and 16px is the accessible one
+         of the spec's two. col-resize IS the spec's cursor for this handle. */
+      button.pane-grip {
+        position: absolute;
+        inset-block: 0;
+        right: var(--pane-width);
+        transform: translateX(50%);
+        inline-size: var(--space-4);
+        padding: 0;
+        border: 0;
+        background: transparent;
+        cursor: col-resize;
+        z-index: var(--z-sticky);
+        touch-action: none;
+      }
+      button.pane-grip::after {
+        content: '';
+        position: absolute;
+        inset-block: 0;
+        left: 50%;
+        inline-size: 2px;
+        background: transparent;
+        transition: background-color var(--duration-sv3-micro) var(--ease-sv3-enter);
+      }
+      button.pane-grip:hover::after {
+        background: var(--sidebar-border);
+      }
+      button.pane-grip:focus-visible {
+        outline: none;
+      }
+      button.pane-grip:focus-visible::after {
+        background: var(--ring);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        button.pane-grip::after {
+          transition: none;
+        }
+      }
+    `,
+  ];
+
+  static properties = {
+    composerState: { type: String, reflect: true, attribute: COMPOSER_STATE_ATTR },
+    apiBase: { type: String, attribute: 'api-base' },
+    searchSnapshot: { state: true },
+    asked: { state: true },
+    sessions: { state: true },
+    aiSnapshot: { state: true },
+    streaming: { state: true },
+    sidebarWidthPx: { state: true },
+    sidebarCollapsed: { type: Boolean, reflect: true, attribute: 'sidebar-collapsed' },
+    resizing: { type: Boolean, reflect: true },
+    paneDocPath: { state: true },
+    paneRange: { state: true },
+    paneWidthPx: { state: true },
+    paneOverlay: { type: Boolean, reflect: true, attribute: 'pane-overlay' },
+    renamingId: { state: true },
+    recordNotice: { state: true },
+    historyLocked: { state: true },
+    lockedRefusal: { state: true },
+    effort: { state: true },
+  };
+
+  declare composerState: Sv3ComposerState;
+  /** Set by the shell on every render of a mounted surface (`chrome/Shell.ts:2945-2949`). */
+  declare apiBase: string;
+  /** The latest store emission. Null only until the subscription's first (immediate) call. */
+  declare searchSnapshot: SearchState | null;
+  /**
+   * Whether THIS window has sent anything. The store is a process-wide singleton, so without this
+   * the window would render another surface's results as its own the moment it docked.
+   */
+  declare asked: boolean;
+  /**
+   * The window's session list — a PROJECTION and a per-render cache of the app-wide conversation
+   * store plus the canonical thread record, not an authority of its own (Phase F6; the exact split
+   * between what the store owns and what stays window-local is in `sv3-sessions.ts`).
+   */
+  declare sessions: Sv3SessionList;
+  /** The observed-state authority's latest emission; the ONE input to this window's availability. */
+  declare aiSnapshot: AiState | null;
+  /** A response is in flight. Window-level, not session-level: the composer's slot is one slot. */
+  declare streaming: boolean;
+  /**
+   * The sidebar's chosen width (tempdoc 822 Phase F5). Kept EXPANDED-only: collapsing renders the
+   * icon rail without touching this number, which is what makes "expand restores the width I chose"
+   * true by construction rather than by saving and re-applying it.
+   */
+  declare sidebarWidthPx: number;
+  declare sidebarCollapsed: boolean;
+  /** A drag is in progress — the transitions stand down so the panel tracks the pointer exactly. */
+  declare resizing: boolean;
+  /**
+   * The CITED document the pane is open on, or null for closed (tempdoc 822 Phase F8). The pane is
+   * mounted exactly while this is non-null, and this field has exactly ONE writer that sets it —
+   * {@link onCitationOpen}. That is the scope guard: no search result, no browse row and no typed
+   * path can reach the reading surface from this window, because nothing else assigns here.
+   */
+  declare paneDocPath: string | null;
+  /** The cited passage's line span, handed to the shared reader as its `highlightRange`. */
+  declare paneRange: DocumentLineRange | null;
+  /** The pane's chosen width. Held whether or not the pane is open, exactly as the sidebar's is. */
+  declare paneWidthPx: number;
+  /** The pane presents as a window-scoped overlay — the spec's 980px switch, asked of OUR box. */
+  declare paneOverlay: boolean;
+  /** The session whose title is being edited, or null. */
+  declare renamingId: string | null;
+  /**
+   * The claimed conversation's canonical record could not be read (tempdoc 822 Phase F6; inventory
+   * D2 / tempdoc 727 F-8). Distinct from "the conversation is empty": a failed refresh leaves the
+   * live state on screen by `fetchUnifiedThread`'s contract, and this is what stops that being silent.
+   */
+  declare recordNotice: boolean;
+  /**
+   * The conversation store is encrypted and locked (tempdoc 629; inventory E4/E5). Derived from EVERY
+   * observed-state snapshot rather than written once from a 423, which is the half tempdoc 734 had to
+   * add later: before it, a lock taken elsewhere — an idle auto-lock, another tab — left the
+   * transcript readable forever. The derivation itself is `deriveSv3HistoryLocked`, and it is
+   * tri-state, so a snapshot that does not mention the lock changes nothing.
+   */
+  declare historyLocked: boolean;
+  /**
+   * A send this window made was refused by that lock (tempdoc 734 round-14 F4). It is what lets the
+   * locked view say what became of the message, and it is cleared the moment the lock lifts — a
+   * notice about a lock that is gone would be describing a refusal that can no longer happen.
+   */
+  declare lockedRefusal: boolean;
+  /**
+   * How much work the next question asks for (tempdoc 822 Phase F10). WINDOW-LOCAL and in-memory by
+   * decision, not by omission: there is no shared per-conversation preference seam to hold it —
+   * `conversationListStore` carries identity, title and protection, and nothing per-conversation the
+   * FE may add to — and minting a `localStorage` key would make an ask-time parameter into a
+   * persisted chrome preference like the sidebar width, which is a different kind of thing. So the
+   * control describes THIS window's next send, which is exactly what it says.
+   */
+  declare effort: Sv3Effort;
+
+  /** Watches the window box so the pane's presentation follows it (Phase F8). */
+  private boxObserver: ResizeObserver | null = null;
+  private searchUnsubscribe: (() => void) | null = null;
+  private aiUnsubscribe: (() => void) | null = null;
+  private agentUnsubscribe: (() => void) | null = null;
+  private convListUnsubscribe: (() => void) | null = null;
+  /** The in-flight record fetch, so a claim that supersedes another cannot land out of order. */
+  private recordAbort: AbortController | null = null;
+  /**
+   * One-shot, mirroring the shipped window's `reattachChecked` (`views/UnifiedChatView.ts:3496`): a
+   * cold load asks the shared controller to reattach to a live run ONCE. Re-asking on every render
+   * would re-attach a run the reader has since halted.
+   */
+  private reattachChecked = false;
+  /**
+   * The draft restored from storage before the composer existed to receive it. `DraftPersistence`
+   * rehydrates during `hostConnected`, which is BEFORE the first render, so the value is parked here
+   * and applied on the update that first creates the composer.
+   */
+  private draftSeed = '';
+  private draftSeedPending = false;
+  /** The in-flight ask's abort handle; null exactly when no response is streaming. */
+  private askAbort: AbortController | null = null;
+  /**
+   * What this window remembers about the delegated run it dispatched — including the explicit turn
+   * ref that is its `activeTurnId`. Not reactive state: it is mutated in place by the controller's
+   * notifications (a latch and two flags), and every one of those paths already re-renders.
+   */
+  private run: Sv3RunLocal | null = null;
+  /** Whether the run was observed LIVE, so its terminal is an EDGE rather than a repeated verdict. */
+  private runLive = false;
+  /**
+   * Controller run ids this window has already given a session (Phase F3 presence). Adoption happens
+   * once per run: without the latch, the same live run would be re-adopted on the next notification
+   * after its turn settled, and the sidebar would grow a row per frame.
+   */
+  private readonly adoptedRunIds = new Set<string>();
+  /**
+   * Conversations this window has already asked the model to name (inventory A11). Once per
+   * conversation: the title is the row's label forever, so a second generation would rename a row
+   * the reader has already learned to recognise.
+   */
+  private readonly titledSessionIds = new Set<string>();
+  /**
+   * The SHARED reasoning model for the ask that is streaming (inventory C9). One controller, reset
+   * per ask, exactly as the shipped window holds it (`views/UnifiedChatView.ts:645`) — its blocks are
+   * handed to the turn at the terminal, which is what makes a past turn's thinking survive the reset.
+   */
+  private readonly askReasoning = new ReasoningController(() => this.requestUpdate());
+
+  constructor() {
+    super();
+    this.composerState = COMPOSER_STATE_DEFAULT;
+    this.apiBase = '';
+    this.searchSnapshot = null;
+    this.asked = false;
+    this.sessions = SV3_SESSIONS_EMPTY;
+    this.aiSnapshot = null;
+    this.streaming = false;
+    this.sidebarWidthPx = SV3_SIDEBAR_DEFAULT_PX;
+    this.sidebarCollapsed = false;
+    this.resizing = false;
+    this.paneDocPath = null;
+    this.paneRange = null;
+    this.paneWidthPx = SV3_PANE_DEFAULT_PX;
+    this.paneOverlay = false;
+    this.renamingId = null;
+    this.recordNotice = false;
+    this.historyLocked = false;
+    this.lockedRefusal = false;
+    this.effort = SV3_EFFORT_DEFAULT;
+    // Constructed HERE rather than on connect: a Lit controller added before connection still gets
+    // its `hostConnected`, and adding it inside `connectedCallback` would add a second one on every
+    // re-attach of this retained instance.
+    new DraftPersistence(
+      this,
+      SV3_DRAFT_KEY,
+      () => this.currentDraft(),
+      (value) => {
+        this.draftSeed = value;
+        this.draftSeedPending = true;
+        this.requestUpdate();
+      },
+    );
+  }
+
+  /** The draft as it stands, wherever it currently lives — the composer owns it once it exists. */
+  private currentDraft(): string {
+    return this.composer?.draft ?? this.draftSeed;
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    adoptSv3MorphSheet();
+    this.restoreBoundaryPreferences();
+    this.observeWindowBox();
+    setSearchApiBase(this.apiBase || '');
+    this.searchUnsubscribe = subscribeSearch((snapshot) => {
+      this.searchSnapshot = snapshot;
+    });
+    this.aiUnsubscribe = subscribeAiState((snapshot) => {
+      this.aiSnapshot = snapshot;
+      this.applyLockState(snapshot);
+    });
+    // Subscribing does NOT create a controller (the read below is a `peek`), so a window that never
+    // delegates never starts the agent controller's polling as a side effect of being mounted.
+    this.agentUnsubscribe = subscribeAgentSession(this.onAgentUpdate);
+    // ── The conversation record (tempdoc 822 Phase F6) ─────────────────────────────────────────
+    // A session is a conversation, so the app-wide store is where the list comes from. The
+    // subscription fires immediately with whatever is already loaded; the fetch refreshes it.
+    setConversationApiBase(this.apiBase || '');
+    this.convListUnsubscribe = subscribeConversationList((state) => {
+      this.sessions = mergeStoreConversations(this.sessions, state.conversations);
+    });
+    void loadConversations();
+    this.restoreLastViewed();
+    // Cold-load reattach BEFORE the first presence look: a run recovered from the shared pointer is
+    // then already on the controller when `syncRunPresence` asks it what is live.
+    this.reattachLiveRun();
+    // The window may be mounting BESIDE a run that is already going (a surface switch, a re-mount).
+    // The store notifies on change only, so the first look has to be taken here — see
+    // `syncRunPresence` for why an unrepresented live run is this window's problem to state.
+    this.syncRunPresence();
+    // Scoped to the HOST, not to `window`. A host listener is only reached by events whose composed
+    // path runs through this window, so a chord pressed anywhere else in the shipped app is invisible
+    // here by construction — there is no "is the focus inside?" test to get wrong. Capture phase so
+    // the palette's own field cannot swallow the chord before the window sees it.
+    this.addEventListener('keydown', this.onHostKeydown, true);
+    this.addEventListener('focusout', this.onHostFocusOut);
+  }
+
+  override disconnectedCallback(): void {
+    // BEFORE `super`, which is what tears the shadow tree's controllers down: the reassurance has to
+    // read the draft while the composer still holds it (tempdoc 609 §R T1.4 — instance retention
+    // keeps the draft, and this is what makes that invisible guarantee legible, once per session).
+    notifyDraftKeptOnce(SV3_SURFACE_KEY, this.currentDraft().trim().length > 0);
+    // Tempdoc 609 Phase 4 (inventory G11) — a torn-down stream is no longer live, so the app-wide
+    // activity indicator must not be left claiming this window's work is still going.
+    if (this.streaming) this.settleAiActivity();
+    super.disconnectedCallback();
+    releaseSv3MorphSheet();
+    this.convListUnsubscribe?.();
+    this.convListUnsubscribe = null;
+    this.recordAbort?.abort();
+    this.recordAbort = null;
+    this.searchUnsubscribe?.();
+    this.searchUnsubscribe = null;
+    this.aiUnsubscribe?.();
+    this.aiUnsubscribe = null;
+    // The RUN is not cancelled here. Unlike the ask stream (which this window owns), a delegated run
+    // is hosted by the product-wide controller and may be watched from another surface; tearing it
+    // down because this dev window unmounted would be this window deciding for the whole product.
+    this.agentUnsubscribe?.();
+    this.agentUnsubscribe = null;
+    // Lifecycle containment: an unmounted window's stream would keep a connection open against the
+    // shared channel budget and settle a turn nobody can see.
+    this.abortAsk();
+    // The controller runs a 1s tick while the model is thinking; an unmounted window's tick would go
+    // on requesting updates on a detached element forever.
+    this.askReasoning.destroy();
+    this.boxObserver?.disconnect();
+    this.boxObserver = null;
+    this.removeEventListener('keydown', this.onHostKeydown, true);
+    this.removeEventListener('focusout', this.onHostFocusOut);
+  }
+
+  /**
+   * The window box, watched (Phase F8). The pane's presentation is a fact about how wide the WINDOW
+   * is, and the window is resized by things this surface never hears about — the shipped rail
+   * expanding, a split changing, the OS window itself. `ResizeObserver` is the repo's own answer to
+   * exactly this (`primitives/adaptiveDensity.ts`'s `DensityController`); a box that cannot be
+   * observed at all (a DOM without the API) simply keeps the inline presentation, which is the same
+   * "an unknown width is not a narrow width" rule the clamps use.
+   */
+  private observeWindowBox(): void {
+    if (typeof ResizeObserver !== 'function') return;
+    this.boxObserver = new ResizeObserver(() => {
+      this.paneOverlay = !sv3PaneIsInline(this.availableWidth());
+    });
+    this.boxObserver.observe(this);
+  }
+
+  /**
+   * The shell re-sets `api-base` on a CACHED element rather than reconstructing it, so the base has
+   * to follow the attribute and not just the first connect.
+   */
+  protected override updated(changed: Map<string, unknown>): void {
+    if (changed.has('apiBase')) {
+      setSearchApiBase(this.apiBase || '');
+      setConversationApiBase(this.apiBase || '');
+    }
+    if (changed.has('sidebarWidthPx')) this.applySidebarWidth(this.sidebarWidthPx);
+    if (changed.has('paneWidthPx')) this.applyPaneWidth(this.paneWidthPx);
+    // The restored draft reaches the composer on the first update that produced one. Once only: a
+    // later re-application would clobber what the reader has typed since.
+    if (this.draftSeedPending) {
+      const composer = this.composer;
+      if (composer !== null) {
+        this.draftSeedPending = false;
+        composer.draft = this.draftSeed;
+      }
+    }
+  }
+
+  /* ── The conversation record (tempdoc 822 Phase F6) ───────────────────────────────────────── */
+
+  /**
+   * A3 (tempdoc 609 Phase 3) — restore the conversation THIS TAB was reading. The pointer is per-tab
+   * `sessionStorage`, deliberately not the globally-most-recent conversation: a second tab must land
+   * cold rather than adopt what another tab had open.
+   *
+   * The session is created from the pointer alone, before the store list arrives, so the claim can
+   * happen in this tick; {@link mergeStoreConversations} fills its real title when the list lands and
+   * the record fetch fills its transcript. A pointer to a conversation that no longer exists resolves
+   * to an empty record, which leaves the placeholder row and says nothing false.
+   */
+  private restoreLastViewed(): void {
+    const id = readLastViewedConversation();
+    if (id === null || sessionById(this.sessions, id) !== null) return;
+    const now = Date.now();
+    this.sessions = mergeStoreConversations(this.sessions, [
+      { id, title: null, firstUserMessage: '', createdAt: now, lastActiveAt: now },
+    ]);
+    this.sessions = focusSession(this.sessions, id, now);
+    setActiveConversation(id);
+    void this.setComposerState('docked');
+    void this.refreshRecord(id);
+  }
+
+  /**
+   * D1 — project the conversation from its canonical record. The window is not the authority: the
+   * turns it renders for a settled conversation are `GET /api/thread/{id}` projected through the two
+   * SHARED authorities, so a run's history outlives the controller that produced it and survives a
+   * reload the controller singleton does not.
+   *
+   * D2 (tempdoc 727 F-8) — a failed fetch returns EMPTY by contract precisely so it cannot wipe the
+   * caller's live state, which is right and was also completely silent. `onFailure` is the out-of-band
+   * signal; the notice is raised and the merge is SKIPPED, so a failure never re-renders the thread.
+   */
+  private async refreshRecord(conversationId: string): Promise<void> {
+    this.recordAbort?.abort();
+    const abort = new AbortController();
+    this.recordAbort = abort;
+    let failed = false;
+    const record = await fetchUnifiedThread(this.apiBase, conversationId, abort.signal, () => {
+      failed = true;
+    });
+    // A superseded claim's response must not land on the conversation the reader moved to.
+    if (abort.signal.aborted) return;
+    if (this.recordAbort === abort) this.recordAbort = null;
+    this.recordNotice = failed;
+    if (failed) return;
+    this.sessions = applySv3Record(
+      this.sessions,
+      conversationId,
+      projectSv3RecordTurns(record.events),
+    );
+  }
+
+  /**
+   * D3 — the COLD-LOAD half of run recovery. F3 closed the same-instance half (presence adopts a run
+   * the shared controller still holds); this closes the half a full page load opens, where the
+   * controller singleton is gone with the tab that made it. The shared cross-tab pointer
+   * (`controllers/activeRunPointer.ts`) is what survives, and the controller's own
+   * `reattachActiveRunOnLoad` is what acts on it — this window asks, once, and then lets presence
+   * synthesise the session exactly as it does for a run it found already running.
+   *
+   * Conditional on the pointer EXISTING, so the F2 law holds: a window with no live run to recover
+   * still constructs no controller and starts no polling by being mounted.
+   */
+  private reattachLiveRun(): void {
+    if (this.reattachChecked) return;
+    this.reattachChecked = true;
+    if (readActiveRun() === null) return;
+    const ctrl = getAgentSessionController(this.apiBase);
+    void ctrl.reattachActiveRunOnLoad();
+  }
+
+  /* ── The lock (tempdoc 822 Phase F7; inventory E4/E5) ─────────────────────────────────────── */
+
+  /**
+   * Adopt whatever the observed-state authority says about the conversation store's lock.
+   *
+   * This is the whole of E5: the lock is not a fact about this window's own sends, it is a fact about
+   * the STORE, and it can be taken anywhere — an idle auto-lock, the Security surface, another tab.
+   * Reading it from every snapshot is what makes a lock taken elsewhere reach this transcript, at the
+   * poll's own ~10s bound. An UNLOCK also clears the refusal, because that notice describes a lock
+   * that is gone (tempdoc 734 round-14 F4, the same clear at `views/UnifiedChatView.ts:1047`).
+   */
+  private applyLockState(snapshot: AiState | null): void {
+    const locked = deriveSv3HistoryLocked(this.historyLocked, snapshot);
+    if (locked === this.historyLocked) return;
+    this.historyLocked = locked;
+    if (!locked) this.lockedRefusal = false;
+  }
+
+  /**
+   * The 423 path's own half. The poll is up to ~10s behind, and a refusal is the SERVER saying the
+   * store is locked right now — so the window adopts it immediately rather than leaving the
+   * transcript readable until the next poll agrees.
+   */
+  private noteRefusedWhileLocked(): void {
+    this.historyLocked = true;
+    this.lockedRefusal = true;
+  }
+
+  /** The ONE remedy exit (inventory E1's remedy nav, E10's, and the locked view's). */
+  private onRemedy(event: Event): void {
+    const target = (event as CustomEvent<Sv3RemedyDetail>).detail?.target ?? '';
+    if (target === '') return;
+    requestSurfaceNavigation(target);
+  }
+
+  /** The app-wide activity indicator, settled (tempdoc 609 Phase 4 / inventory G11). */
+  private settleAiActivity(): void {
+    setAiActivity({
+      state: 'idle',
+      shapeId: null,
+      startedAtMs: null,
+      canCancel: false,
+      cancel: null,
+    });
+  }
+
+  /**
+   * `--sidebar-width` is written as an INLINE custom property on the host — the spec's own mechanism,
+   * which is why the panel, the grip's
+   * position and the collapse animation all read one number instead of three. Inline beats the token
+   * sheet's `:host` declaration, so the 16rem default stays the value the window opens at when
+   * nothing has been chosen.
+   */
+  private applySidebarWidth(px: number): void {
+    this.style.setProperty('--sidebar-width', `${px}px`);
+  }
+
+  /** The pane's half of the same mechanism (Phase F8): one number, read by the track and the grip. */
+  private applyPaneWidth(px: number): void {
+    this.style.setProperty('--pane-width', `${px}px`);
+  }
+
+  /**
+   * What the OTHER movable region currently takes out of the shared box. Both clamps need it, and
+   * both need the RENDERED width rather than the chosen one: a collapsed sidebar occupies its 48px
+   * rail, and an overlaid pane occupies nothing at all.
+   */
+  private sidebarOccupiedWidth(): number {
+    return this.sidebarCollapsed ? SV3_SIDEBAR_COLLAPSED_PX : this.sidebarWidthPx;
+  }
+
+  private paneOccupiedWidth(available: number): number {
+    return sv3PaneOccupiedWidth(this.paneDocPath === null ? null : this.paneWidthPx, available);
+  }
+
+  /**
+   * The box the sidebar and the main region actually share — the spec's `wrapper`, not the viewport.
+   *
+   * An UNMEASURABLE box (0, i.e. not laid out yet) yields no ceiling rather than a tiny one: an
+   * unknown width is not a narrow width, and treating it as one would collapse a remembered
+   * preference to the floor as a side effect of the window not having been painted. The FLOOR still
+   * applies — `clampSv3SidebarWidth` keeps it on the outside — so nothing illegal gets through.
+   */
+  private availableWidth(): number {
+    const measured = this.getBoundingClientRect().width;
+    return measured > 0 ? measured : Number.POSITIVE_INFINITY;
+  }
+
+  /**
+   * Both boundaries, restored in the order their arithmetic depends on: the sidebar first (the pane
+   * is closed on a cold mount, so it occupies nothing), then the pane against the sidebar that
+   * restoring just settled.
+   */
+  private restoreBoundaryPreferences(): void {
+    const available = this.availableWidth();
+    this.sidebarCollapsed = readStoredSv3SidebarCollapsed();
+    this.sidebarWidthPx = resolveInitialSv3SidebarWidth(
+      readStoredSv3SidebarWidth(),
+      available,
+      this.paneOccupiedWidth(available),
+    );
+    this.applySidebarWidth(this.sidebarWidthPx);
+    this.paneWidthPx = resolveInitialSv3PaneWidth(
+      readStoredSv3PaneWidth(),
+      available,
+      this.sidebarOccupiedWidth(),
+    );
+    this.applyPaneWidth(this.paneWidthPx);
+  }
+
+  /** A chosen width is adopted AND remembered; the two are one act (818 L13). */
+  private adoptSidebarWidth(px: number): void {
+    this.sidebarWidthPx = px;
+    storeSv3SidebarWidth(px);
+  }
+
+  private adoptPaneWidth(px: number): void {
+    this.paneWidthPx = px;
+    storeSv3PaneWidth(px);
+  }
+
+  /**
+   * L13 / the spec's `resetSidebarWidth`: returning the boundary to
+   * automatic FORGETS the remembered width rather than storing the default over it — the reader
+   * withdrew a choice, and a window that stored "256" would reopen at 256 even after the default moved.
+   */
+  private resetSidebarWidth(): void {
+    forgetSv3SidebarWidth();
+    const available = this.availableWidth();
+    this.sidebarWidthPx = resolveInitialSv3SidebarWidth(
+      null,
+      available,
+      this.paneOccupiedWidth(available),
+    );
+  }
+
+  /** The pane's half of the same withdrawal (818 L13 / the spec's `resetSidebarWidth`). */
+  private resetPaneWidth(): void {
+    forgetSv3PaneWidth();
+    this.paneWidthPx = resolveInitialSv3PaneWidth(
+      null,
+      this.availableWidth(),
+      this.sidebarOccupiedWidth(),
+    );
+  }
+
+  /**
+   * The spec's drag, ported: pointer capture so the gesture survives the
+   * pointer outrunning the 16px handle, the width written DIRECTLY during the move (a re-render per
+   * frame would re-project every session row), the clamp taken from the box measured AT DRAG TIME,
+   * and the chosen width adopted once at the end.
+   */
+  private onGripPointerDown(event: PointerEvent): void {
+    if (event.button !== 0 || this.sidebarCollapsed) return;
+    event.preventDefault();
+    const grip = event.currentTarget as HTMLElement;
+    grip.setPointerCapture?.(event.pointerId);
+    const available = this.availableWidth();
+    const occupied = this.paneOccupiedWidth(available);
+    const startX = event.clientX;
+    const startWidth = this.sidebarWidthPx;
+    let width = startWidth;
+    this.resizing = true;
+    const move = (moved: PointerEvent): void => {
+      width = clampSv3SidebarWidth(startWidth + (moved.clientX - startX), available, occupied);
+      this.applySidebarWidth(width);
+    };
+    const end = (): void => {
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', end);
+      grip.removeEventListener('pointercancel', end);
+      this.resizing = false;
+      this.adoptSidebarWidth(width);
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
+  }
+
+  /**
+   * The pane's drag, mirrored (Phase F8). Three differences from the sidebar's, all of them the
+   * spec's own for THIS boundary:
+   * the pane is right-anchored so leftward motion GROWS it (hence the negated delta); the width is
+   * written on the animation frame rather than on every move event (`rAF`-coalesced — a pointer
+   * emits faster than the compositor paints, and this boundary moves a whole document reader);
+   * and a CANCELLED gesture REVERTS to the width the drag started from instead of adopting where
+   * the pointer happened to be when the system took the capture away.
+   */
+  private onPaneGripPointerDown(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const grip = event.currentTarget as HTMLElement;
+    grip.setPointerCapture?.(event.pointerId);
+    const available = this.availableWidth();
+    const sidebar = this.sidebarOccupiedWidth();
+    const startX = event.clientX;
+    const startWidth = this.paneWidthPx;
+    let width = startWidth;
+    let frame = 0;
+    this.resizing = true;
+    const move = (moved: PointerEvent): void => {
+      width = clampSv3PaneWidth(startWidth - (moved.clientX - startX), available, sidebar);
+      if (frame !== 0) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        this.applyPaneWidth(width);
+      });
+    };
+    const stop = (): void => {
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', up);
+      grip.removeEventListener('pointercancel', cancel);
+      if (frame !== 0) cancelAnimationFrame(frame);
+      frame = 0;
+      this.resizing = false;
+    };
+    const up = (): void => {
+      stop();
+      this.adoptPaneWidth(width);
+    };
+    const cancel = (): void => {
+      stop();
+      this.applyPaneWidth(startWidth);
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up);
+    grip.addEventListener('pointercancel', cancel);
+  }
+
+  /**
+   * The pane grip's keyboard half. `Home` resets and `Escape` does NOT: while the pane is open,
+   * Escape belongs to the pane (it closes it), so the grip names Home and double-click as its two
+   * ways back to automatic rather than claiming a key the window has already spent.
+   */
+  private onPaneGripKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Home') {
+      event.preventDefault();
+      this.resetPaneWidth();
+      return;
+    }
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    // Right-anchored: LEFT grows the pane, the same direction the pointer drags it.
+    const step = event.key === 'ArrowLeft' ? SV3_GRIP_KEY_STEP_PX : -SV3_GRIP_KEY_STEP_PX;
+    this.adoptPaneWidth(
+      clampSv3PaneWidth(this.paneWidthPx + step, this.availableWidth(), this.sidebarOccupiedWidth()),
+    );
+  }
+
+  /**
+   * The keyboard half of the SAME boundary — same clamp, same floor, one nudge at a time. The spec
+   * has no equivalent (its rail is `tabIndex={-1}`); this is `views/search-v2`'s answer, and the
+   * a11y contract's: a boundary a pointer can move must be movable without one.
+   */
+  private onGripKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Home' || event.key === 'Escape') {
+      event.preventDefault();
+      this.resetSidebarWidth();
+      return;
+    }
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const step = event.key === 'ArrowRight' ? SV3_GRIP_KEY_STEP_PX : -SV3_GRIP_KEY_STEP_PX;
+    const available = this.availableWidth();
+    this.adoptSidebarWidth(
+      clampSv3SidebarWidth(
+        this.sidebarWidthPx + step,
+        available,
+        this.paneOccupiedWidth(available),
+      ),
+    );
+  }
+
+  /**
+   * A click on the grip EXPANDS a collapsed panel and otherwise does nothing — the spec's own rule
+   * (the rail toggles exactly when it cannot resize). No drag-suppression
+   * latch is needed on this side of it, because a collapsed panel is the only state in which the
+   * click does anything and {@link onGripPointerDown} refuses to start a drag there.
+   */
+  private onGripClick(): void {
+    if (this.sidebarCollapsed) this.setSidebarCollapsed(false);
+  }
+
+  private setSidebarCollapsed(collapsed: boolean): void {
+    this.sidebarCollapsed = collapsed;
+    storeSv3SidebarCollapsed(collapsed);
+  }
+
+  private onSidebarToggle(): void {
+    this.setSidebarCollapsed(!this.sidebarCollapsed);
+  }
+
+  /* ── The citation pane (tempdoc 822 Phase F8) ─────────────────────────────────────────────── */
+
+  /**
+   * The citation landing, and the window's ONE writer of {@link paneDocPath}. The event is
+   * `Sv3Main`'s own — the shared `citation-select` is stopped at the element that produced it, so the
+   * Shell's unguarded host listener never writes this click onto the shared inspector selection and
+   * the shipped window's reading pane stays where it was.
+   *
+   * The pane's width is re-clamped ON OPEN rather than only on drag: the box may have changed since
+   * the width was chosen, and the sidebar may have moved since — a remembered 540 beside a sidebar
+   * dragged out to 900 would open the pane on top of the main column's 640.
+   */
+  private onCitationOpen(event: Event): void {
+    const detail = (event as CustomEvent<Sv3CitationOpen>).detail;
+    if (!detail?.docPath) return;
+    const available = this.availableWidth();
+    this.paneOverlay = !sv3PaneIsInline(available);
+    this.paneWidthPx = clampSv3PaneWidth(this.paneWidthPx, available, this.sidebarOccupiedWidth());
+    this.applyPaneWidth(this.paneWidthPx);
+    this.paneDocPath = detail.docPath;
+    this.paneRange = detail.range;
+  }
+
+  /**
+   * The pane's exits — its own close control (`pane-close`, re-raised by the region) and Escape. The
+   * chosen width is NOT forgotten here: closing a document is not withdrawing a boundary preference.
+   */
+  private closePane(): void {
+    this.paneDocPath = null;
+    this.paneRange = null;
+  }
+
+  private readonly onHostKeydown = (event: KeyboardEvent): void => {
+    // ESCAPE ORDER — rename > pane > palette > composer flip. The MOST LOCAL transient state wins:
+    // an Escape belongs to the smallest thing the reader is currently inside, and only after that
+    // to the regions around it. Stopping the event at the winner is what makes the order true
+    // rather than approximately true — unstopped, the SAME keystroke would also hide the palette
+    // (`Sv3Palette.onKeydown`) or flip the composer back to its hero (`Sv3Composer.onKeydown`),
+    // closing two things at once.
+    //
+    // Rename is FIRST and is served by yielding rather than by handling: an inline editor owns its
+    // own cancel key (`Sv3SessionRow.onRenameKeydown`), and this listener is on the CAPTURE phase,
+    // so the row's `stopPropagation` cannot defend it — the window has to decline. Without this,
+    // an Escape pressed while typing in the rename field closed the PANE, silently, in a region
+    // the reader was not looking at, and left the edit open (F-series fit audit, DEFECT-7).
+    if (event.key === 'Escape' && renamingRowInPath(event)) return;
+    // An open control menu is served the same way and for the same reason: it is the most local
+    // transient the reader is inside, it closes itself (`Sv3Composer.onMenuKeydown`), and without
+    // this yield the same keystroke would close the PANE behind it (F9's DEFECT-7, one control on).
+    if (event.key === 'Escape' && openControlMenuInPath(event)) return;
+    if (event.key === 'Escape' && this.paneDocPath !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.closePane();
+      return;
+    }
+    if (!isPaletteChord(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    // The deepest node in the composed path is the real invoker; `document.activeElement` retargets
+    // to this host at the shadow boundary and would send focus back to a non-focusable element.
+    const invoker = (event.composedPath()[0] ?? null) as HTMLElement | null;
+    this.togglePalette(invoker);
+  };
+
+  /**
+   * The palette may never be left OPEN with the keyboard somewhere else. Its own exits (Escape,
+   * backdrop click) both assume focus is still inside it; when something outside the window takes
+   * focus away — the shipped shell binds the same Ctrl+K and its palette steals the field
+   * (`KeybindingRegistry.ts:178`, the recorded cutover-scope duplicate) — the capture-phase Escape
+   * listener above is never reached again and the sv3 palette becomes visible-but-unreachable, a
+   * keyboard trap only a pointer could clear (F-series fit audit, DEFECT-8).
+   *
+   * `relatedTarget` is the test rather than `document.activeElement`, which during `focusout` still
+   * reports the OLD node. `null` (focus fell to `<body>`) and any node outside the window close it;
+   * focus moving anywhere inside — including into the palette's own field — leaves it open. Closing
+   * does NOT reclaim focus: the invoker restore in `hide()` would yank the caret back out of
+   * whatever legitimately took it, which is the fight the shipped Ctrl+K already starts.
+   */
+  private readonly onHostFocusOut = (event: FocusEvent): void => {
+    const palette = this.palette;
+    if (palette === null || !palette.open) return;
+    if (this.ownsNode(event.relatedTarget as Node | null)) return;
+    palette.dismiss();
+  };
+
+  /**
+   * Shadow-crossing containment. `contains` alone is not enough in either direction: a browser
+   * retargets `relatedTarget` to this host (which `contains` reports as inside, being inclusive),
+   * while a test DOM hands over the raw node three roots down — so the walk climbs host by host and
+   * both forms answer the same question.
+   */
+  private ownsNode(node: Node | null): boolean {
+    let current = node;
+    while (current !== null) {
+      if (this.contains(current)) return true;
+      const root = current.getRootNode();
+      if (!(root instanceof ShadowRoot)) return false;
+      current = root.host;
+    }
+    return false;
+  }
+
+  private get palette(): Sv3Palette | null {
+    return this.shadowRoot?.querySelector('jf-sv3-palette') ?? null;
+  }
+
+  /** The one way the palette opens or closes, whichever affordance asked. */
+  togglePalette(invoker: HTMLElement | null): void {
+    const palette = this.palette;
+    if (palette === null) return;
+    if (palette.open) palette.hide();
+    else void palette.show(invoker);
+  }
+
+  private onPaletteRequest(event: Event): void {
+    this.togglePalette((event.composedPath()[0] ?? null) as HTMLElement | null);
+  }
+
+  override attributeChangedCallback(name: string, older: string | null, value: string | null): void {
+    // An external write of the dev handle animates like every other route into the state. Lit's own
+    // reflection also lands here, but by then the property already holds the value, so it falls
+    // through to the default path and cannot loop.
+    if (
+      name === COMPOSER_STATE_ATTR &&
+      isComposerState(value) &&
+      this.hasUpdated &&
+      value !== this.composerState
+    ) {
+      void this.setComposerState(value);
+      return;
+    }
+    super.attributeChangedCallback(name, older, value);
+  }
+
+  /** The one way the state changes: applied inside the scoped view transition. */
+  async setComposerState(next: Sv3ComposerState): Promise<void> {
+    if (next === this.composerState) return;
+    const composer = this.shadowRoot?.querySelector('jf-sv3-composer');
+    const apply = async (): Promise<void> => {
+      this.composerState = next;
+      await this.updateComplete;
+      // The regions schedule their OWN updates off this render, and the API captures the "after"
+      // state when this callback resolves. Waiting on a FRAME here would deadlock: the browser
+      // suspends rendering until the callback settles, so a requested frame is never serviced and
+      // the transition is skipped at the ~4s callback timeout (measured). Their update promises are
+      // microtask-backed and settle regardless.
+      await Promise.all(
+        [...(this.shadowRoot?.querySelectorAll('jf-sv3-main, jf-sv3-composer') ?? [])].map(
+          (region) => (region as HTMLElement & { updateComplete: Promise<unknown> }).updateComplete,
+        ),
+      );
+    };
+    if (composer === null || composer === undefined) {
+      await apply();
+      return;
+    }
+    await runSv3ComposerMorph(composer, apply);
+  }
+
+  private onStateRequest(event: Event): void {
+    const detail = (event as CustomEvent<Sv3ComposerStateRequest>).detail;
+    if (!isComposerState(detail?.state ?? null)) return;
+    void this.setComposerState(detail.state);
+  }
+
+  /**
+   * A send is one ask and one morph, in that order: the request goes out in this tick, so the
+   * transcript is already showing the streaming turn by the time the morph settles.
+   *
+   * THREE destinations, decided here and nowhere else (the composer announces a draft and a tier; it
+   * does not know what a run is). The mid-run case comes FIRST and overrides the tier: a submit while
+   * a delegated run is live JOINS that run as a steering directive — it is not an interrupt and it is
+   * not a second commitment, so pressing Ctrl+Enter mid-run cannot start a competing run.
+   */
+  private onComposerSubmit(event: Event): void {
+    const detail = (event as CustomEvent<Sv3ComposerSubmit>).detail;
+    const text = (detail?.query ?? '').trim();
+    if (text === '') return;
+    if (this.steerableRun !== null) {
+      this.steerLiveRun(text);
+      return;
+    }
+    if (detail?.tier === 'delegate') {
+      this.delegate(text);
+      return;
+    }
+    void this.runAsk(text);
+  }
+
+  /** The composer's availability, projected from the ONE observed-state authority. */
+  private get askUnavailableReason(): string {
+    const availability = projectAvailability('documents', this.aiSnapshot);
+    return availability.kind === 'unavailable' ? availability.reason : '';
+  }
+
+  /**
+   * The DELEGATE tier's own gate, from the same authority. It is a strict SUPERSET of the ask tier's:
+   * both need a live backend and a loaded model, but only the ask tier additionally needs an indexed
+   * document to ground an answer in. Reading one reason for both would therefore refuse a delegation
+   * the agent could have served — the two tiers get two projections rather than one shared guess.
+   */
+  private get delegateUnavailableReason(): string {
+    const availability = projectAvailability('agent', this.aiSnapshot);
+    return availability.kind === 'unavailable' ? availability.reason : '';
+  }
+
+  /**
+   * The ONE path a question takes. There is no second entry: the composer refuses an unavailable or
+   * busy send before it leaves, so this method is not a second gate re-deciding the same question —
+   * it opens the turn, dispatches through the window's single ask site, and settles that turn.
+   */
+  private async runAsk(rawQuestion: string): Promise<void> {
+    const question = rawQuestion.trim();
+    if (question === '') return;
+    this.sessions = submitInSession(this.sessions, question, Date.now(), 'ask', createConversationId());
+    const ref = latestTurnRef(this.sessions);
+    if (ref === null) return;
+    this.claimConversation(ref.sessionId);
+    this.composer?.clearDraft();
+    void this.setComposerState('docked');
+
+    const abort = new AbortController();
+    this.askAbort = abort;
+    this.streaming = true;
+    // The controller is per-ASK, not per-turn: it accumulates and times one stream's thinking, and
+    // the blocks it finalizes are written onto the turn below. Resetting here is what stops the
+    // previous answer's thinking appearing under this one.
+    this.askReasoning.reset();
+    // The app-wide activity indicator, raised for the duration and settled at the terminal below
+    // (inventory G11). Cancelling through the SAME abort handle Stop uses, so there is one way to
+    // stop this stream however the reader reaches it.
+    setAiActivity({
+      state: 'streaming',
+      shapeId: SV3_ASK_SHAPE_ID,
+      startedAtMs: Date.now(),
+      canCancel: true,
+      cancel: () => abort.abort(),
+    });
+    // Every terminal below settles the SAME ref the dispatch opened, so a reader who claims another
+    // session mid-stream still gets the answer written where it was asked.
+    const settle = (
+      status: 'complete' | 'halted' | 'refused' | 'failed',
+      detail = '',
+    ): void => {
+      // The thinking is closed out and RECORDED on the turn at every terminal, including a halt: what
+      // the model thought before the reader stopped it was really produced, and dropping it would
+      // lose evidence the window actually received (inventory C9).
+      this.askReasoning.finalize();
+      this.sessions = setTurnReasoning(this.sessions, ref, [...this.askReasoning.reasoningBlocks]);
+      this.sessions = settleTurn(
+        this.sessions,
+        ref,
+        status,
+        Date.now(),
+        detail,
+        // The model AS OF THIS TERMINAL (inventory C1). Recorded rather than read at render, so a
+        // transcript re-read after a model swap still names the one that wrote each answer.
+        this.currentModelLabel,
+      );
+      // Only THIS dispatch's terminal may clear the window's busy state: a later ask has already
+      // installed its own controller, and clearing it here would strand a live stream with a Send
+      // control in the slot.
+      if (this.askAbort === abort) {
+        this.askAbort = null;
+        this.streaming = false;
+        this.settleAiActivity();
+      }
+    };
+    await sv3Ask(
+      {
+        apiBase: this.apiBase,
+        question,
+        conversationId: ref.sessionId,
+        // The rung AS OF THIS SEND (tempdoc 822 Phase F10). Read here rather than inside the ask
+        // client, so the one place a question is dispatched is also the one place its parameters
+        // are decided — and a rung changed mid-stream cannot rewrite a request already in flight.
+        effort: this.effort,
+        signal: abort.signal,
+      },
+      {
+        onDelta: (text) => {
+          this.sessions = appendTurnDelta(this.sessions, ref, text);
+        },
+        onEvidence: (evidence) => {
+          this.sessions = setTurnEvidence(this.sessions, ref, evidence);
+        },
+        onReasoning: (payload) => {
+          this.askReasoning.handleReasoningChunk(payload);
+        },
+        onRewrite: (standalone) => {
+          this.sessions = setTurnRewrite(this.sessions, ref, standalone);
+        },
+        onDone: () => {
+          // The answer has arrived, so the thinking that preceded it is over — the shipped window
+          // ends it on the first content chunk; ending it at the terminal is the same edge for a
+          // window whose transcript renders the block beside the answer rather than instead of it.
+          settle('complete');
+          // The record now holds this turn; the store now holds the conversation. Both refreshed so
+          // a reload projects exactly what is on screen (inventory A1 + D1).
+          void loadConversations();
+          void this.refreshRecord(ref.sessionId);
+          void this.maybeGenerateTitle(ref.sessionId);
+        },
+        // The lock's refusal is worded by the ONE reason vocabulary, not re-phrased here.
+        onRefused: () => {
+          settle('refused', reasonFor('conversations.locked').wording);
+          // The SERVER just said the store is locked, which is newer than any poll (inventory E4/E5).
+          this.noteRefusedWhileLocked();
+        },
+        onHalted: () => settle('halted'),
+        onFailed: (message) => settle('failed', message),
+      },
+    );
+  }
+
+  /**
+   * The composer announced a new effort rung (tempdoc 822 Phase F10). The window keeps it, and the
+   * NEXT dispatch carries it — an in-flight stream is never re-parameterised, because its request
+   * has already left.
+   */
+  private onEffortChange(event: Event): void {
+    const effort = (event as CustomEvent<Sv3EffortChange>).detail?.effort;
+    if (!isSv3Effort(effort)) return;
+    this.effort = effort;
+  }
+
+  /** Halting is always the reader's; the turn settles `halted` through the sink's own terminal. */
+  private abortAsk(): void {
+    this.askAbort?.abort();
+  }
+
+  /**
+   * A11 — ask the model to name the conversation, through the store's own authority
+   * (`generateConversationTitle`, which dispatches a throwaway free-chat turn, cleans it up, and
+   * writes the result to `setConversationTitle`). The window neither prompts nor parses: it decides
+   * WHETHER, and `sv3-sessions.ts`'s `sv3ShouldGenerateTitle` is where that decision lives.
+   *
+   * ONCE per conversation, and never over a rename. The second guard runs AFTER the call returns as
+   * well: naming takes a model round-trip, and a reader who renamed the row while it was in flight
+   * has answered the same question better — so their title is written back rather than lost to a
+   * result that was already stale when it landed.
+   */
+  private async maybeGenerateTitle(sessionId: string): Promise<void> {
+    if (this.titledSessionIds.has(sessionId)) return;
+    const session = sessionById(this.sessions, sessionId);
+    if (session === null || !sv3ShouldGenerateTitle(session)) return;
+    this.titledSessionIds.add(sessionId);
+    const turn = session.turns.find((t) => t.kind === 'ask' && t.status === 'complete');
+    if (turn === undefined) return;
+    const generated = await generateConversationTitle(sessionId, turn.question, turn.answer);
+    if (generated === null) return;
+    const after = sessionById(this.sessions, sessionId);
+    if (after !== null && after.renamed) setConversationTitle(sessionId, after.title);
+  }
+
+  /**
+   * A10 — the conversation as Markdown, on the clipboard. Both halves are the product's:
+   * `exportConversationMarkdown` is the ONE serialisation (the shipped window's export writes the
+   * same bytes) and `copyToClipboard` is the ONE write. It lives in the PALETTE rather than in a
+   * per-conversation control, which is the spec's economy for a real capability with no resting
+   * chrome to spend on it.
+   */
+  private exportActiveConversation(): void {
+    const active = this.sessions.activeId;
+    const session = active === null ? null : sessionById(this.sessions, active);
+    if (session === null || session.turns.length === 0) return;
+    // A turn that has not settled is NOT exported as an answer: whatever is on screen mid-stream is a
+    // fragment, and a markdown file that recorded it as the assistant's reply would be a record of
+    // something that never finished being said.
+    const thread = session.turns
+      .filter((turn) => turn.status !== 'streaming')
+      .flatMap((turn) => [
+        { role: 'user', content: turn.question },
+        { role: 'assistant', content: turn.answer },
+      ]);
+    if (thread.length === 0) return;
+    void copyToClipboard(exportConversationMarkdown(thread, session.title));
+  }
+
+  /* ── The delegate tier (tempdoc 822 Phase F2) ─────────────────────────────────────────────── */
+
+  /**
+   * The shared run controller as a READ. `peek` never constructs one, so "is a run live?" can be
+   * asked on every render without this window creating a controller — and starting its polling — as
+   * a side effect of being looked at.
+   */
+  private agentController(): AgentSessionController | null {
+    return peekAgentSessionController();
+  }
+
+  /**
+   * The live run this window owns AND that accepts a steer, or null. Both halves matter: the
+   * controller is product-wide, so a run this window did not dispatch is not this window's to
+   * redirect, and only an `agent` run has an interject channel at all (a workflow or background run
+   * does not) — the seam's own lifecycle predicate decides the rest.
+   */
+  private get steerableRun(): AgentSessionController | null {
+    const ctrl = this.agentController();
+    if (ctrl === null || this.run === null) return null;
+    if (ctrl.runKind !== 'agent') return null;
+    return directiveAvailable(ctrl, { kind: 'interject', text: '' }) ? ctrl : null;
+  }
+
+  /**
+   * The DELEGATE path: the draft becomes an agent task. The causal order mirrors the ask — the turn
+   * is opened first, then the run is dispatched — so the transcript already shows what was committed
+   * before anything can come back, and the run has a turn to be written to from its very first frame.
+   *
+   * The run is HOSTED, never re-implemented: the shared `AgentSessionController` runs it and every
+   * directive leaves through the ONE `dispatchRunControl` seam (`governance/steering-surfaces.v1.json`).
+   */
+  private delegate(text: string): void {
+    // Defence in depth, not a second gate: the composer already refuses an unavailable delegate and
+    // keeps the draft. This exists because `delegate` is reachable from the window's own routing.
+    if (this.delegateUnavailableReason !== '') return;
+    this.sessions = submitInSession(this.sessions, text, Date.now(), 'agent', createConversationId());
+    const ref = latestTurnRef(this.sessions);
+    if (ref === null) return;
+    this.claimConversation(ref.sessionId);
+    this.composer?.clearDraft();
+    void this.setComposerState('docked');
+
+    const ctrl = getAgentSessionController(this.apiBase);
+    // The run's thread events are stamped with THIS window's session, so a delegated run lands under
+    // the conversation that asked for it rather than under whatever the controller ran last.
+    ctrl.conversationId = ref.sessionId;
+    this.run = {
+      sessionId: ref.sessionId,
+      turnId: ref.turnId,
+      // The window's slice of a product-wide conversation: everything before this belongs to someone
+      // else's run and must never be counted into this one's receipt.
+      entryStart: ctrl.conversation.length,
+      sessionIdAtDispatch: ctrl.sessionId,
+      acknowledged: false,
+      haltRequested: false,
+      haltDispatched: false,
+    };
+    this.runLive = false;
+    this.requestUpdate();
+    void dispatchRunControl(ctrl, { kind: 'initiate', prompt: text });
+  }
+
+  /**
+   * A mid-run submit JOINS the live turn. Through the seam, like every other per-run directive.
+   *
+   * Named `steerLiveRun` and not `steer` on purpose: the steering register bans a bare `.steer(` call
+   * anywhere but the seam, and `this.steer(` would read as exactly that to the gate's scan. A method
+   * whose name makes a correct call look like the forbidden one is a trap for the next reader too.
+   */
+  private steerLiveRun(text: string): void {
+    const ctrl = this.steerableRun;
+    if (ctrl === null) return;
+    this.composer?.clearDraft();
+    void dispatchRunControl(ctrl, { kind: 'interject', text });
+  }
+
+  /**
+   * The reader's stop. Recorded FIRST and dispatched second, because the record of the decision is
+   * what makes `halted` an honest receipt outcome — and because a stop pressed before the stream
+   * opened cannot be delivered yet (the seam's predicate refuses a halt on a run with no abort handle
+   * yet). Remembering it means the next update delivers it, instead of the decision being dropped.
+   */
+  private haltRun(): void {
+    const local = this.run;
+    if (local === null) return;
+    local.haltRequested = true;
+    this.deliverHalt();
+    this.requestUpdate();
+  }
+
+  private deliverHalt(): void {
+    const ctrl = this.agentController();
+    const local = this.run;
+    if (ctrl === null || local === null || local.haltDispatched) return;
+    void dispatchRunControl(ctrl, { kind: 'halt' }).then((result) => {
+      // Only an ACCEPTED halt closes the door; a lifecycle refusal leaves the request pending so the
+      // next update can try again, and does so without a retry storm.
+      if ((result as RunControlRefusal | undefined)?.refused !== true) local.haltDispatched = true;
+    });
+  }
+
+  /**
+   * The shared controller moved. Three things happen: the optimistic handoff latches the first time
+   * the SERVER says anything, a pending halt is delivered once the run can honour it, and the run's
+   * TERMINAL edge is detected so exactly one receipt lands.
+   */
+  /**
+   * Does this window have an OPEN turn standing for a run? A settled turn stands for nothing: its
+   * receipt is written and a later run is not the same run.
+   */
+  private get runRepresented(): boolean {
+    const local = this.run;
+    if (local === null) return false;
+    const turn = sessionById(this.sessions, local.sessionId)?.turns.find(
+      (t) => t.id === local.turnId,
+    );
+    return turn?.status === 'streaming';
+  }
+
+  /**
+   * PRESENCE (tempdoc 822 Phase F3) — the fix for F2's named finding: *window-local in-memory
+   * sessions orphan a live run on reload*. A fresh window showed zero sessions while the run went on
+   * holding server-side, so the window was silently disagreeing with the product about what was
+   * happening.
+   *
+   * The rule this establishes: the SHARED CONTROLLER is the authority on whether a run is live, and
+   * this window's memory is not. When the controller reports a live or holding run that no session
+   * here accounts for, the window synthesises one — titled with the run's own task text, carrying an
+   * open agent turn, landing on the Active shelf — and adopts it as the run it renders. `entryStart`
+   * is 0 because this window dispatched nothing: the whole conversation the controller holds is that
+   * run's. `acknowledged` is true for the same reason — there is no optimistic local echo to yield;
+   * every frame of it came from the server already.
+   *
+   * It reads through `peek`, so a window that never delegates still constructs no controller and
+   * starts no polling by being mounted (the F2 law). And it does not CLAIM the adopted session: the
+   * run is news, not a navigation.
+   */
+  private syncRunPresence(): void {
+    const ctrl = this.agentController();
+    if (ctrl === null) return;
+    // The controller's conversation accumulates across runs, so the LIVE run's slice starts at the
+    // task it was given — not at 0, which would read a finished run's steps as this one's.
+    const start = sv3RunPresenceStart(ctrl);
+    const feed = projectSv3RunFeed(ctrl, start);
+    const probe = {
+      status: sv3RunSessionStatus(ctrl, feed),
+      represented: this.runRepresented,
+      runId: ctrl.sessionId,
+      adoptedRunIds: this.adoptedRunIds,
+    };
+    if (!sv3RunNeedsPresence(probe)) return;
+    // The controller's own conversationId when it has one (a run dispatched from another surface
+    // carries the conversation it belongs to), so the adopted session IS that conversation rather
+    // than a second row for it. Only a run with no conversation gets a freshly minted id.
+    const { list, ref } = adoptRunSession(
+      this.sessions,
+      sv3RunPresenceTitle(ctrl),
+      Date.now(),
+      ctrl.conversationId ?? createConversationId(),
+    );
+    this.sessions = list;
+    this.run = {
+      sessionId: ref.sessionId,
+      turnId: ref.turnId,
+      entryStart: start,
+      sessionIdAtDispatch: null,
+      acknowledged: true,
+      haltRequested: false,
+      haltDispatched: false,
+    };
+    // Observed live at adoption, so the run's terminal is an EDGE for this window too and the
+    // adopted turn gets its one receipt instead of streaming forever.
+    this.runLive = true;
+    if (ctrl.sessionId !== null) this.adoptedRunIds.add(ctrl.sessionId);
+  }
+
+  private readonly onAgentUpdate = (): void => {
+    // Presence first: a run this window has no session for gets one before the frame is read, so the
+    // rest of this method has something to write the run's progress into.
+    this.syncRunPresence();
+    const ctrl = this.agentController();
+    const local = this.run;
+    if (ctrl !== null && local !== null) {
+      // Latched once and never read again: a run whose evidence later disappears cannot push this
+      // window back into claiming it is still sending.
+      if (!local.acknowledged && hasServerAcknowledgedLocalDispatch(local, ctrl)) {
+        local.acknowledged = true;
+      }
+      // A run this window is already rendering is a run it must never ALSO adopt as presence — the
+      // id is only knowable once the server names it, which is here rather than at dispatch.
+      if (ctrl.sessionId !== null) this.adoptedRunIds.add(ctrl.sessionId);
+      const feed = projectSv3RunFeed(ctrl, local.entryStart);
+      const status = sv3RunSessionStatus(ctrl, feed);
+      if (status === 'live' || status === 'holding') {
+        this.runLive = true;
+        if (local.haltRequested) this.deliverHalt();
+      } else if (this.runLive) {
+        this.runLive = false;
+        this.concludeRun(local, feed);
+      }
+    }
+    this.requestUpdate();
+  };
+
+  /**
+   * The run's terminal: exactly ONE receipt, written to the turn the dispatch opened. The count comes
+   * from the SAME feed projection the cards were rendered from, so the receipt can never disagree
+   * with what the reader watched — and it is addressed by ref, so a later run started from another
+   * surface cannot write its numbers into this window's turn.
+   */
+  private concludeRun(local: Sv3RunLocal, feed: Sv3RunFeed): void {
+    this.sessions = settleAgentTurn(
+      this.sessions,
+      { sessionId: local.sessionId, turnId: local.turnId },
+      sv3RunOutcome(feed, local.haltRequested),
+      feed.toolCallCount,
+      Date.now(),
+    );
+    // The live feed was ATTENTION; the record is what survives it. Refreshing at the terminal is what
+    // makes the yield happen (inventory D1): the settled turn re-renders from the canonical record's
+    // interleaved items instead of vanishing with the controller that produced them.
+    void this.refreshRecord(local.sessionId);
+  }
+
+  /** A typed prompt resolved by its OWN control — never by anything typed into the composer. */
+  private onRunDecision(event: Event): void {
+    const ctrl = this.agentController();
+    const detail = (event as CustomEvent<Sv3RunDecision>).detail;
+    if (ctrl === null || detail === undefined) return;
+    if (detail.kind === 'budget') {
+      // B8 — RAISE is a different directive, not a third value of the gate's decision: the gate is
+      // resolved by finalize/stop, whereas raising extends the run's allowance and leaves the gate to
+      // clear itself (tempdoc 577 Ext III, `views/UnifiedChatView.ts:3748-3755`). Same seam either
+      // way — `dispatchRunControl` is the only way a directive leaves this window.
+      if (detail.decision === 'raise') {
+        void dispatchRunControl(ctrl, {
+          kind: 'raise-budget',
+          addTokens: RAISE_BUDGET_STEP_TOKENS,
+        });
+        return;
+      }
+      if (detail.decision === 'stop') this.markHaltRequested();
+      void dispatchRunControl(ctrl, { kind: 'budget-decision', decision: detail.decision });
+      return;
+    }
+    if (detail.decision === 'stop') this.markHaltRequested();
+    void dispatchRunControl(ctrl, { kind: 'context-decision', decision: detail.decision });
+  }
+
+  /** A gate resolved with "stop" IS the reader halting, so the receipt must say so. */
+  private markHaltRequested(): void {
+    if (this.run !== null) this.run.haltRequested = true;
+  }
+
+  /**
+   * The `answer` rung of the primary slot. The composer cannot resolve a typed prompt, so the control
+   * does the one honest thing available to it: it takes the reader to the decision.
+   */
+  private onComposerAnswer(): void {
+    const main = this.shadowRoot?.querySelector('jf-sv3-main');
+    const prompt = main?.shadowRoot?.querySelector<HTMLElement>('[data-testid="sv3-run-prompt"]');
+    if (prompt === null || prompt === undefined) return;
+    prompt.scrollIntoView({ block: 'nearest' });
+    prompt.querySelector('button')?.focus();
+  }
+
+  /**
+   * The SECONDARY axis (822 §4b course correction). Phase A1's search seam stays wired and tested,
+   * but a plain submit no longer reaches it — it is called from the palette's "Search this text"
+   * command, which keeps the seam demonstrable until the deferred search-integration conversation
+   * decides what search means in a conversational window. It deliberately does NOT touch the session
+   * list: a search is not a turn, and recording it as one would fabricate a conversation.
+   */
+  private runSearch(rawQuery: string): void {
+    const query = rawQuery.trim();
+    if (query === '') return;
+    this.asked = true;
+    setQuery(query);
+    submitSearch();
+    void this.setComposerState('docked');
+  }
+
+  private onPaletteRun(event: Event): void {
+    const id = (event as CustomEvent<Sv3PaletteRun>).detail?.id ?? '';
+    if (id === SV3_COMMAND_SEARCH_TEXT) {
+      this.runSearch(this.composer?.draft ?? '');
+      return;
+    }
+    if (id === SV3_COMMAND_EXPORT_MARKDOWN) this.exportActiveConversation();
+  }
+
+  private get composer(): Sv3Composer | null {
+    return this.shadowRoot?.querySelector('jf-sv3-composer') ?? null;
+  }
+
+  /**
+   * WHICH MODEL WOULD ANSWER RIGHT NOW, read from the observed-state authority (tempdoc 822 Phase
+   * F11). ONE expression, used in all three places it is needed — the composer's fact, the stamp a
+   * terminal writes onto a turn, and the comparison the tail makes between the two — so "the current
+   * model" cannot come to mean two different things in the same window.
+   */
+  private get currentModelLabel(): string | null {
+    return this.aiSnapshot?.runtime.modelLabel ?? null;
+  }
+
+  /**
+   * A row click CLAIMS that conversation and shows its transcript. It re-runs nothing: a session is
+   * a thread now, and re-issuing its opening question on a click would append a turn the reader
+   * never asked for (Phase F1 — A2's row click re-ran the search, which was right for a search list
+   * and is wrong for a conversation).
+   */
+  private onSessionSelect(event: Event): void {
+    const id = (event as CustomEvent<Sv3SessionSelect>).detail?.id ?? '';
+    // An edit in another row is DROPPED rather than committed, the spec's rule:
+    // navigating away must not write text the reader walked away from.
+    this.renamingId = null;
+    const before = this.sessions;
+    this.sessions = focusSession(this.sessions, id, Date.now());
+    if (this.sessions === before) return; // unknown id — nothing was claimed, so nothing to record
+    this.claimConversation(id);
+    // The RECORD is what the reader is being shown, so it is fetched on the claim rather than trusted
+    // from whatever this window happened to still hold (inventory D1).
+    void this.refreshRecord(id);
+    void this.setComposerState('docked');
+  }
+
+  /**
+   * The two pointers a claim moves, both shared authorities: the store's active conversation (what
+   * the product thinks is open) and the per-tab reload pointer (what THIS tab was reading — 609
+   * Phase 3, and per-tab on purpose, so a second tab lands cold rather than adopting this one's thread).
+   */
+  private claimConversation(id: string): void {
+    setActiveConversation(id);
+    setLastViewedConversation(id);
+  }
+
+  /**
+   * The reader names a conversation (tempdoc 822 Phase F5). The three phases meet here because the
+   * window owns the list: the row raises intent, the panel says which row, and only this decides.
+   * `commit` routes through `renameSession`, so an empty title reverts by the pure module's rule
+   * rather than by a check duplicated at the view.
+   */
+  private onSessionRename(event: Event): void {
+    const detail = (event as CustomEvent<Sv3SessionRename>).detail;
+    if (detail === undefined) return;
+    if (detail.phase === 'start') {
+      this.renamingId = detail.id;
+      return;
+    }
+    this.renamingId = null;
+    if (detail.phase !== 'commit') return;
+    const before = sessionById(this.sessions, detail.id)?.title ?? '';
+    this.sessions = renameSession(this.sessions, detail.id, detail.title ?? '');
+    const after = sessionById(this.sessions, detail.id)?.title ?? '';
+    // WRITTEN THROUGH to the conversation store, which persists titles (`conversationListStore.ts:184`
+    // → `jf-conversation-titles`) — so the name survives the process and every surface listing this
+    // conversation shows the one the reader chose. Derived from the pure module's OUTCOME rather than
+    // re-deciding here: `resolveSv3Rename` stays the one place an empty or unchanged title is judged.
+    if (after !== before) setConversationTitle(detail.id, after);
+  }
+
+  /**
+   * The reader parks a conversation on the Pinned shelf, or takes it off. It is a list write and
+   * nothing else — pinning does not claim the conversation, does not reorder anything, and does not
+   * move a run off the Active shelf (a blocked run cannot be hidden; `projectSv3Sessions` owns that).
+   */
+  private onSessionPin(event: Event): void {
+    const id = (event as CustomEvent<Sv3SessionPin>).detail?.id ?? '';
+    this.sessions = toggleSessionPin(this.sessions, id);
+  }
+
+  /**
+   * New session: back to the hero with an empty draft and nothing claimed about the corpus. The
+   * sessions so far stay in the list — starting one is not ending the others. An in-flight response
+   * IS ended, because its own session is no longer the one on screen and a stream nobody is watching
+   * still spends a connection.
+   */
+  private onSessionNew(): void {
+    this.abortAsk();
+    // DETACHED, not halted (Slice 516 FIX-T1's rule, applied to the run half). A delegated run is
+    // hosted by the product-wide controller and may be watched elsewhere, so this window stops
+    // RENDERING it and never stops it. Dropping the local handle is also what keeps the composer's
+    // slot honest: Send belongs in a fresh conversation, not a Stop for a run that is not in it.
+    this.run = null;
+    this.runLive = false;
+    this.renamingId = null;
+    this.recordNotice = false;
+    // The open document was a citation of THIS conversation's answer; it says nothing about the one
+    // being started, and a pane left open would attach another session's evidence to a blank hero.
+    this.closePane();
+    this.sessions = startNewSession(this.sessions);
+    this.asked = false;
+    this.composer?.clearDraft();
+    // New conversation means "do not restore the one I just left" (tempdoc 609 Phase 3).
+    setActiveConversation(null);
+    clearLastViewedConversation();
+    void this.setComposerState('hero');
+  }
+
+  /**
+   * The Stop slot serves BOTH streams, because there is one slot. Which one it halts is decided here,
+   * by which one is actually running — the composer says the reader pressed Stop and nothing more.
+   */
+  private onComposerStop(): void {
+    if (this.streaming) {
+      this.abortAsk();
+      return;
+    }
+    this.haltRun();
+  }
+
+  /**
+   * TWO AXES, ONE PHASE. The SESSION axis is what the shared controller says; the
+   * TURN axis is what this window's own turn is doing — including the optimistic window before the
+   * server has acknowledged the dispatch, which no controller field can report because the controller
+   * is optimistic too. `deriveSv3RunPhase` collapses them into the one value everything renders from,
+   * so the slot, the feed, the sidebar colour and the receipt cannot each decide separately.
+   */
+  private projectRun(): Sv3RunView | null {
+    const local = this.run;
+    if (local === null) return null;
+    const ctrl = this.agentController();
+    const feed = ctrl === null ? SV3_RUN_FEED_EMPTY : projectSv3RunFeed(ctrl, local.entryStart);
+    const prompts = ctrl === null ? [] : projectSv3RunPrompts(ctrl, feed);
+    const turn = sessionById(this.sessions, local.sessionId)?.turns.find(
+      (t) => t.id === local.turnId,
+    );
+    const turnState: Sv3RunTurnState =
+      turn === undefined || turn.status !== 'streaming'
+        ? 'settled'
+        : local.acknowledged
+          ? 'open'
+          : 'dispatching';
+    return {
+      turnId: local.turnId,
+      phase: deriveSv3RunPhase({ session: sv3RunSessionStatus(ctrl, feed), turn: turnState }),
+      feed,
+      prompts,
+    };
+  }
+
+  /**
+   * The citation pane and the boundary that moves it — mounted ONLY while a cited document is open
+   * (Phase F8), so a closed pane is not an inert region holding a stale document, a focusable node
+   * and a second reader of the api base.
+   */
+  private pane(): TemplateResult | typeof nothing {
+    if (this.paneDocPath === null) return nothing;
+    // The grip is not rendered at all in the overlay presentation, rather than hidden: an overlaid
+    // sheet has no boundary to move, and a `display: none` button would still be a control the
+    // element tree carries around (and a tab stop the moment a rule stopped applying).
+    const grip = this.paneOverlay
+      ? nothing
+      : html`<button
+          type="button"
+          class="pane-grip"
+          data-testid="sv3-pane-grip"
+          aria-label=${PANE_LABEL.grip}
+          title=${PANE_LABEL.grip}
+          @pointerdown=${this.onPaneGripPointerDown}
+          @keydown=${this.onPaneGripKeydown}
+          @dblclick=${this.resetPaneWidth}
+        ></button>`;
+    return html`
+      ${grip}
+      <jf-sv3-pane
+        data-testid="sv3-pane"
+        .docPath=${this.paneDocPath}
+        .highlightRange=${this.paneRange}
+        ?overlay=${this.paneOverlay}
+        api-base=${this.apiBase}
+        @sv3-pane-close=${this.closePane}
+      ></jf-sv3-pane>
+    `;
+  }
+
+  render(): TemplateResult {
+    const results: Sv3ResultsView = projectSv3Results(this.searchSnapshot, this.asked);
+    // Relative timestamps are computed HERE, on render, and never ticked: a sidebar that re-renders
+    // itself every second is continuous motion at rest, which the spec's duty-cycle law rules out.
+    // `isRefining` counts too: the store runs a re-query BEHIND displayed results quietly
+    // (`state/searchState.ts:611` — no skeleton, so the content surface keeps the old rows), and the
+    // row's dot is then the only thing on screen saying the session is running a pass.
+    const snapshot = this.searchSnapshot;
+    const run = this.projectRun();
+    const turns = activeTurns(this.sessions);
+    const pendingPrompt = run !== null && run.prompts.length > 0;
+    const slot = sv3PrimaryAction({
+      pendingPrompt,
+      running:
+        this.streaming ||
+        run?.phase === 'dispatching' ||
+        run?.phase === 'running' ||
+        run?.phase === 'holding',
+      followUp: turns.length > 0,
+    });
+    const sessionGroups = projectSv3Sessions(this.sessions, {
+      searching: this.asked && (snapshot?.isSearching === true || snapshot?.isRefining === true),
+      // Named by session, not by flag: only the conversation that OPENED the parked run may wear the
+      // act-now colour, whichever row the reader happens to be looking at.
+      awaitingDecisionIn: pendingPrompt && this.run !== null ? this.run.sessionId : null,
+      now: Date.now(),
+    });
+    return html`
+      <jf-sv3-sidebar
+        .groups=${sessionGroups}
+        .renamingId=${this.renamingId}
+        ?collapsed=${this.sidebarCollapsed}
+        data-testid="sv3-sidebar"
+        @sv3-session-select=${this.onSessionSelect}
+        @sv3-session-pin=${this.onSessionPin}
+        @sv3-session-new=${this.onSessionNew}
+        @sv3-session-rename=${this.onSessionRename}
+        @sv3-sidebar-toggle=${this.onSidebarToggle}
+      ></jf-sv3-sidebar>
+      <button
+        type="button"
+        class="sidebar-grip"
+        data-testid="sv3-sidebar-grip"
+        aria-label=${SIDEBAR_GRIP_LABEL}
+        title=${SIDEBAR_GRIP_LABEL}
+        @pointerdown=${this.onGripPointerDown}
+        @keydown=${this.onGripKeydown}
+        @click=${this.onGripClick}
+        @dblclick=${this.resetSidebarWidth}
+      ></button>
+      <div
+        class="column"
+        data-testid="sv3-column"
+        @sv3-composer-state-request=${this.onStateRequest}
+        @sv3-composer-submit=${this.onComposerSubmit}
+        @sv3-composer-stop=${this.onComposerStop}
+        @sv3-composer-answer=${this.onComposerAnswer}
+        @sv3-effort-change=${this.onEffortChange}
+        @sv3-run-decision=${this.onRunDecision}
+        @sv3-palette-request=${this.onPaletteRequest}
+        @sv3-remedy=${this.onRemedy}
+        @sv3-citation-open=${this.onCitationOpen}
+      >
+        <jf-sv3-topbar window-title=${WINDOW_TITLE} data-testid="sv3-topbar"></jf-sv3-topbar>
+        <jf-sv3-main
+          state=${this.composerState}
+          .view=${results}
+          .turns=${turns}
+          .run=${run}
+          ?record-notice=${this.recordNotice}
+          ?history-locked=${this.historyLocked}
+          ?locked-refusal=${this.lockedRefusal}
+          .reasoning=${this.streaming ? this.askReasoning : null}
+          .currentModelLabel=${this.currentModelLabel}
+          data-testid="sv3-main"
+        ></jf-sv3-main>
+        <jf-sv3-composer
+          state=${this.composerState}
+          slot-kind=${slot.kind}
+          slot-reason=${slot.reason}
+          ?steerable=${this.steerableRun !== null}
+          unavailable-reason=${this.askUnavailableReason}
+          delegate-unavailable-reason=${this.delegateUnavailableReason}
+          .corpus=${projectSv3Corpus(this.aiSnapshot)}
+          effort=${this.effort}
+          model-label=${this.currentModelLabel ?? ''}
+          data-testid="sv3-composer"
+        ></jf-sv3-composer>
+      </div>
+      ${this.pane()}
+      <!-- LAST in the shadow root on purpose: the palette and the hero composer share the overlay
+           rung, so DOM order is what puts the palette on top. The pane above shares that rung too
+           when it is overlaid, and is deliberately BEFORE the palette for the same reason: a command
+           palette invoked over an open document belongs on top of it. -->
+      <jf-sv3-palette data-testid="sv3-palette" @sv3-palette-run=${this.onPaletteRun}></jf-sv3-palette>
+    `;
+  }
+}
+
+customElements.define('jf-sv3-window', SearchV3View);
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'jf-sv3-window': SearchV3View;
+  }
+}

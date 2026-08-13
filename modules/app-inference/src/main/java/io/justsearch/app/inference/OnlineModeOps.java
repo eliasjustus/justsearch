@@ -967,26 +967,43 @@ final class OnlineModeOps {
   }
 
 
+  /**
+   * Re-tags the assembled RAG context as {@code <passage id="n" source="label">} blocks for the
+   * online path.
+   *
+   * <p>The passage id is the number the context header already carries ({@code "[n] label\n"},
+   * ContextBudgeter.sectionHeader), not a running counter of this loop: that ordinal is what the
+   * prompt asks the model to cite and what the FE resolves against {@code sources[n - 1]}, so a
+   * second, independently-derived numbering here could silently disagree with it (tempdoc 822
+   * §3a). A section whose header does not parse falls back to the running counter.
+   */
   static String formatContextAsNumberedPassages(String rawContext) {
     if (rawContext == null || rawContext.isBlank()) {
       return "";
     }
     String[] sections = rawContext.split(DocumentService.SECTION_SEPARATOR);
     StringBuilder sb = new StringBuilder();
-    int passageNum = 0;
+    int sectionOrdinal = 0;
     for (String section : sections) {
       String trimmed = section.trim();
       if (trimmed.isEmpty()) {
         continue;
       }
-      passageNum++;
+      sectionOrdinal++;
+      int passageNum = sectionOrdinal;
       String source = "unknown";
       String content = trimmed;
-      if (trimmed.startsWith("[From: ")) {
-        int end = trimmed.indexOf("]\n");
-        if (end > 7) {
-          source = trimmed.substring(7, end);
-          content = trimmed.substring(end + 2);
+      int headerEnd = trimmed.indexOf('\n');
+      if (trimmed.startsWith("[") && headerEnd > 0) {
+        int close = trimmed.indexOf("] ");
+        if (close > 1 && close < headerEnd) {
+          String digits = trimmed.substring(1, close);
+          int parsed = parsePositiveIntOrZero(digits);
+          if (parsed > 0) {
+            passageNum = parsed;
+            source = trimmed.substring(close + 2, headerEnd);
+            content = trimmed.substring(headerEnd + 1);
+          }
         }
       }
       if (sb.length() > 0) {
@@ -1001,6 +1018,19 @@ final class OnlineModeOps {
       sb.append("\n</passage>");
     }
     return sb.toString();
+  }
+
+  /** Returns the value of an all-digit string, or 0 when it is empty, non-numeric or overflows. */
+  private static int parsePositiveIntOrZero(String digits) {
+    if (digits.isEmpty() || digits.length() > 9) {
+      return 0;
+    }
+    for (int i = 0; i < digits.length(); i++) {
+      if (digits.charAt(i) < '0' || digits.charAt(i) > '9') {
+        return 0;
+      }
+    }
+    return Integer.parseInt(digits);
   }
 
   /**

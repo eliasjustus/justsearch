@@ -25,6 +25,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class OnlineModeOpsTest {
@@ -111,7 +112,7 @@ class OnlineModeOpsTest {
 
   @Test
   void formatContextAsNumberedPassages_singlePassageWithSource() {
-    String input = "[From: doc.pdf]\nSome content";
+    String input = "[1] doc.pdf\nSome content";
     String result = OnlineModeOps.formatContextAsNumberedPassages(input);
     assertEquals("<passage id=\"1\" source=\"doc.pdf\">\nSome content\n</passage>", result);
   }
@@ -119,15 +120,61 @@ class OnlineModeOpsTest {
   @Test
   void formatContextAsNumberedPassages_multiplePassages() {
     String input =
-        "[From: first.pdf]\nFirst content"
+        "[1] first.pdf\nFirst content"
             + DocumentService.SECTION_SEPARATOR
-            + "[From: second.txt]\nSecond content";
+            + "[2] second.txt\nSecond content";
     String result = OnlineModeOps.formatContextAsNumberedPassages(input);
     String expected =
         "<passage id=\"1\" source=\"first.pdf\">\nFirst content\n</passage>"
             + "\n\n"
             + "<passage id=\"2\" source=\"second.txt\">\nSecond content\n</passage>";
     assertEquals(expected, result);
+  }
+
+  @Test
+  @DisplayName("passage id is the header's number, not this loop's running counter")
+  void formatContextAsNumberedPassages_keysPassageIdToHeaderNumber() {
+    // Non-sequential ordinals are the only way to tell the two apart: a running counter would
+    // renumber these 1 and 2 and silently break the model's [n] -> sources[n-1] mapping
+    // (tempdoc 822 §3a). ContextBudgeterTest pins the emitter side of the same "[n] label\n"
+    // shape — app-api/app-inference cannot depend on :modules:indexing, so it is mirrored, as
+    // SECTION_SEPARATOR already is.
+    String input =
+        "[3] third.pdf\nThird content"
+            + DocumentService.SECTION_SEPARATOR
+            + "[7] seventh.txt\nSeventh content";
+
+    String result = OnlineModeOps.formatContextAsNumberedPassages(input);
+
+    assertEquals(
+        "<passage id=\"3\" source=\"third.pdf\">\nThird content\n</passage>"
+            + "\n\n"
+            + "<passage id=\"7\" source=\"seventh.txt\">\nSeventh content\n</passage>",
+        result);
+  }
+
+  @Test
+  @DisplayName("a label containing brackets or a dash survives the header parse")
+  void formatContextAsNumberedPassages_labelWithPunctuation() {
+    String label = "TechCrunch — \"Twitch [ends] 70/30 split\"";
+    String result =
+        OnlineModeOps.formatContextAsNumberedPassages("[2] " + label + "\nBody text");
+    assertEquals("<passage id=\"2\" source=\"" + label + "\">\nBody text\n</passage>", result);
+  }
+
+  @Test
+  @DisplayName("a section whose header does not parse falls back to the running ordinal")
+  void formatContextAsNumberedPassages_unparseableHeaderFallsBack() {
+    String input =
+        "[1] doc.pdf\nFirst content"
+            + DocumentService.SECTION_SEPARATOR
+            + "no header at all";
+    String result = OnlineModeOps.formatContextAsNumberedPassages(input);
+    assertEquals(
+        "<passage id=\"1\" source=\"doc.pdf\">\nFirst content\n</passage>"
+            + "\n\n"
+            + "<passage id=\"2\" source=\"unknown\">\nno header at all\n</passage>",
+        result);
   }
 
   // ==================== extractUsageFromChatChunk ====================

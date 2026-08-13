@@ -252,6 +252,22 @@
       "note": "Tempdoc 818 slice 2 — the Search v2 window's ONE ask issuance site (core.rag-ask via the shared consumeShapeStream). Accumulates the `rag.citations` / `rag.citation_matches` payloads into the turn outcome without deriving anything from a citation's fields."
     },
     {
+      "id": "sv3-ask-client",
+      "kind": "carrier",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/views/search-v3/sv3-ask.ts",
+      "guard": "exempt:opaque carrier — hands the backend's citation set to its caller unchanged, projects no field of it",
+      "note": "Tempdoc 822 Phase F4 — the Search v3 window's ONE ask issuance site. Accumulates the `rag.citations` / `rag.citation_matches` payloads into one evidence record and resolves the inline marks through the SHARED `claimsToCitations` (evidence-fe-claim-resolver), deriving nothing from a citation's fields itself."
+    },
+    {
+      "id": "sv3-turn-evidence",
+      "kind": "carrier",
+      "lang": "ts",
+      "path": "modules/ui-web/src/shell-v0/views/search-v3/sv3-sessions.ts",
+      "guard": "exempt:opaque carrier — the turn stores the citation set verbatim; it projects no field of it",
+      "note": "Tempdoc 822 Phase F4 — the Search v3 window's in-memory turn list. A turn holds the RetrievalCitation evidence its answer stood on so the transcript keeps it; the only derivation is the SOURCE COUNT (`sv3TurnSourceCount`, length of the stored set), which exists precisely so no second count can disagree with the panel. Rendering happens in Sv3Main via the shared jf-citations-panel."
+    },
+    {
       "id": "eval-provenance",
       "kind": "consumer",
       "lang": "python",

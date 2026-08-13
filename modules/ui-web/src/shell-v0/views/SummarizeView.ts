@@ -348,7 +348,7 @@ export class SummarizeView extends JfElement {
         const p = payload as {
           sentenceIndex?: number;
           sentenceText?: string;
-          citations?: Array<{ parentDocId: string; chunkIndex: number; score: number }>;
+          citations?: Array<{ parentDocId: string; sourceIndex: number; score: number }>;
         } | null;
         if (p && Array.isArray(p.citations) && typeof p.sentenceText === 'string') {
           const bestScore = Math.max(...p.citations.map((c) => c.score), 0);
@@ -358,8 +358,17 @@ export class SummarizeView extends JfElement {
               {
                 sentenceIndex: p.sentenceIndex ?? 0,
                 sentenceText: p.sentenceText,
-                score: bestScore,
-                sourceRefs: p.citations.map((c) => c.chunkIndex),
+                // Tempdoc 822 §3d — `core.summarize` declares `rag.citation_delta` and NO
+                // `rag.citation_matches` (`SummarizeShape.java:47`), so every claim this surface holds
+                // is scored by the streaming LEXICAL matcher. Under the provenance gate those claims
+                // mint no marks here: word overlap is not grounding evidence, and this tier has no
+                // cross-encoder pass to promote it. Adding one is a backend question, not a render fix.
+                verifiedScore: null,
+                lexicalScore: bestScore,
+                // Tempdoc 822 §3b — same producer, same standing: a delta's refs are the streaming
+                // guess, so they land on the lexical side and mint no mark here either.
+                verifiedRefs: [],
+                lexicalRefs: p.citations.map((c) => c.sourceIndex),
               },
             ];
           }
