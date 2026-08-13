@@ -211,7 +211,9 @@ export interface StatusResponse {
       state?: string;
     }> | null;
     composites?: Record<string, {
+      maxStalenessMs?: number;
       reasonCodes?: string[] | null;
+      stale?: boolean;
       state?: string | null;
     }> | null;
     observedAt?: string | null;
@@ -551,7 +553,9 @@ export const statusResponseSchema = z.strictObject({
       "state": z.string().optional(),
     })).nullable().optional(),
     "composites": z.record(z.string(), z.strictObject({
+      "maxStalenessMs": z.number().int().optional(),
       "reasonCodes": z.array(z.string()).nullable().optional(),
+      "stale": z.boolean().optional(),
       "state": z.string().nullable().optional(),
     })).nullable().optional(),
     "observedAt": z.string().nullable().optional(),

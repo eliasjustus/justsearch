@@ -517,11 +517,17 @@
           "additionalProperties" : {
             "type" : "object",
             "properties" : {
+              "maxStalenessMs" : {
+                "type" : "integer"
+              },
               "reasonCodes" : {
                 "type" : [ "array", "null" ],
                 "items" : {
                   "type" : "string"
                 }
+              },
+              "stale" : {
+                "type" : "boolean"
               },
               "state" : {
                 "type" : [ "string", "null" ]

@@ -408,6 +408,8 @@ message ReadinessComponentView {
 message ReadinessCompositeView {
   string state = 1;
   repeated string reason_codes = 2 [json_name = "reasonCodes"];
+  bool stale = 3;
+  int64 max_staleness_ms = 4 [json_name = "maxStalenessMs"];
 }
 
 message EmbeddingStatusGroup {
