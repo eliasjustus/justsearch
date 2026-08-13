@@ -306,9 +306,17 @@ The census produced everything the store's own §Resolving flow needs:
   Single supervised campaign, or verify opportunistically per class?
 - **D4 — Demo-blemish timing**: before the installer freeze (they're what testers see)
   or into the risky phase? Items 1/2/4 arguably belong IN the first installer.
-- **D5 — Dead registers**: retire `docs/reference/issues/*` with a sweep (routing open
-  items into domain registers + store), or revive them as the defect home the store
-  routes into? (This census routed 53 items "to register" — the answer decides where.)
+- **D5 — Dead registers**: ~~retire or revive?~~ **EXECUTED (2026-08-12, owner-authorized
+  default, branch `worktree-agent-aa70c939fd4d37e5b` commit e576e570):** all eight
+  `docs/reference/issues/*` files retired with a 14-reference sweep (regens + link
+  checks green). 21 live entries + 1 consolidated decisions stub routed into the
+  observations store (BKD-012 tagged with class C3/C4 — promote from the store at the
+  next fold if wanted as a first-class item); 24 entries verified dead, 5 of those
+  verified FIXED in source (BKD-011/021, INS-002/003/006). Non-defect census items
+  routed "to register" now route to the store + the two domain registers. OPEN
+  residue for the owner: the decisions.md rationales with no other home (GPU-012
+  DLL thresholds, EXC-002 methvin revisit trigger, UIX-015 first-run-help-docs fact,
+  UIX-010/011/012 as expected-state rows) — listed in the retirement worker's report.
 - **D6 — Class ownership overlaps**: C3-long-doc and C7 straddle this direction and
   differentiators; C1/C4 FE surfaces straddle the frontend rework. Proposed split
   drawn above; confirm or redraw.
@@ -458,8 +466,15 @@ Residuals and pending closure items:
    searchable" over a dead backend — behavioral decision, C1 class member.
 4. **NEEDS-LIVE lane** (28 conditions, Appendix B) — untouched, owner D3.
 5. **RAG collection scoping + facets deeper tiers** — design-gated (§L.3), not started.
-6. **Store maintenance pass** (§6 as amended) — per-occurrence verification before
-   any deletion; not started.
+6. **Store maintenance pass** (§6 as amended) — **EXECUTED for the defect stratum
+   (2026-08-12):** all 111 FIXED/STALE candidates re-verified per-OCCURRENCE (3
+   workers); 92 confirmed fully resolved and deleted (branch
+   `worktree-agent-aca6d2da1713b04c6` commit ea66fc83; store depth 498 → 406,
+   whole-block deletions only), 18 KEEP with named live occurrences + 1 UNCLEAR
+   retained. The per-occurrence protocol caught 19 conditions the census would have
+   wrongly deleted (17% of candidates). Remaining store work: the non-defect routing
+   proposals (53 register / 30 retire / 35 park) were LIGHT-triaged only — the 30
+   retire proposals need the same per-occurrence rigor before deletion; not started.
 7. **Merge-order note**: the two FE branches and local main each carry a
    same-named observation shard (`docs/observations.d/776e10cd-….md`) with
    different bodies — whichever merges later hits add/add; resolve by
