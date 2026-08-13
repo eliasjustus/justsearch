@@ -549,7 +549,25 @@ too. Note: `EmbeddingFingerprintDurabilityTest` seeds an unconditional supplier 
 no re-mark. Why 730's shipped remediation didn't help: it acts at certification/
 COMPATIBLE — the last mile of a path this index never walks.
 
-### §O.2 Readiness truthfulness double defect — implementation chartered
+### §O.2 Readiness truthfulness double defect — IMPLEMENTED + REVIEWED (2026-08-13)
+
+Branch `worktree-agent-a1772b240fdd73bd0` (6c2fac76 Defect A, 6c4a18bc Defect B,
+6762439e review nits + disclosure). Review verdict MERGEABLE-AS-IS: wrong-gate trace
+clean (no shadowing; fallback worker view yields no fabricated rebuild alarm;
+fall-throughs all worse-or-equal), composite math verified, both arms independently
+pinned with the composite assertion de-vacuumed (all four sibling retrieval dims
+asserted READY so the DEGRADED verdict is attributable). Gates: readiness-reason-codes
+48/42 green; FE suite 4,452. Wire-visible disclosure for the PR body: the legacy
+`embeddingReady` alias now reads false during a rebuild (contract-consistent).
+**MERGE-ORDER (silent semantic blocker):** the wave-1 staleness branch
+(`agent-a22be6e46206d73f8`) changed `buildReadinessEnvelope` to 3-arg with NO overload
+— whichever merges second, StatusLifecycleHandlerTest will NOT COMPILE with zero
+conflict markers; the second merger adds the contact argument to this branch's three
+new call sites. Also: several branches wrote the SAME observation shard file (worker
+session-id resolution collapses to the orchestrator's — meta-observation logged);
+expect add/add shard conflicts, resolve by union.
+
+(original charter note follows)
 
 Design (implementation-ready, worker running): (A) LambdaMART unconfigured →
 READY-with-informational-note (matches four sibling absent-by-design precedents; the
@@ -562,9 +580,26 @@ show a warn-tier true cause for their duration. Interaction-walked, no new false
 states; merge after the wave-1 staleness branch (signature-level, not semantic,
 conflicts).
 
-### §O.3 MCP Origin validation — investigate-then-implement worker running (spec
-normative language, client Origin census, host-parsed allowlist, lookalike-robust
-tests; GET/SSE conformance scoped as follow-up).
+### §O.3 MCP Origin validation — IMPLEMENTED + ADVERSARIALLY REVIEWED (2026-08-13)
+
+Branch `worktree-agent-a9392a68dde8ec2cd` (a3619093 + 6a2e444c, 15/15 tests). Spec
+MUST implemented: host-equality allowlist (absent Origin allowed per the spec's
+"present and invalid" clause; loopback + tauri shell origins allowed; `null` and all
+else 403 with a JSON-RPC-shaped body), reusing the 633 Host-guard infrastructure; the
+review's parser-attack and bypass hunt found no hole in the decision logic. The review
+DID find two blockers in the halt mechanism — `skipRemainingHandlers()` proven (via
+decompiled Javalin 6.7.0 bytecode) to destroy the after-handler queue, an
+attacker-triggerable OTel-scope + inflight-gauge leak; and the justifying measurement
+proven a hermetic-test artifact (production's HttpResponseException mapper preserves
+bodies) — both fixed: sibling throw pattern restored, the regression test empirically
+falsified in-repo, deny-logging made flood-proof (time-window + 128-char truncation),
+the guarded path and routed path unified on one shared constant, and the wrong shard
+claim retracted with an explicit CORRECTED marker. Documented follow-up: `GET /mcp`
+must return 405 (not 404) per spec — carries a route-manifest regen tail. Bonus
+pre-existing findings logged: `GET /api/mcp/token` token-exempt and not
+Origin-guarded (worth separate review); `resolveAllowedOrigin` rejects `[::1]`
+origins (bracket handling); LocalApiHostValidationTest mirrors its filter instead of
+exercising install().
 
 ## Appendix A — 145 verified STILL-TRUE defect conditions
 
