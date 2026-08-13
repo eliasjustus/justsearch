@@ -74,6 +74,23 @@ export interface Sv3Turn {
 export interface Sv3Session {
   readonly id: string;
   /**
+   * The reader parked this conversation on the Pinned shelf (tempdoc 822 Phase F3). A flag on the
+   * session rather than a separate list, because a pin is a PROPERTY of the conversation: a second
+   * list would be a second ordering to keep in step with this one.
+   */
+  readonly pinned: boolean;
+  /**
+   * When something in this session last reached a terminal, or null if nothing has. Half of the
+   * unread bit (820 W2's `completedAt` vs `lastVisitedAt`): a run or an answer that finished is
+   * something to read, and the session says so until the reader has been back.
+   */
+  readonly completedAt: number | null;
+  /**
+   * When the reader last had this conversation on screen. `0` means never — an adopted run
+   * ({@link adoptRunSession}) is on screen nowhere until it is claimed.
+   */
+  readonly lastVisitedAt: number;
+  /**
    * The OPENING question, fixed at creation. Phase F1 replaced A2's "latest query" title: a
    * conversation's turns are a thread, so a row label that re-wrote itself on every turn would
    * change identity under the reader — the same objection as the donor's never-reorder law, applied
@@ -130,6 +147,31 @@ const openTurn = (
 });
 
 /**
+ * The ONE construction of a session, shared by a submit and by an adopted run, so a session can
+ * never exist in two shapes. `visitedAt` is the caller's: a submit is made by a reader who is
+ * looking at the window, an adopted run is not.
+ */
+function openSession(
+  list: Sv3SessionList,
+  title: string,
+  now: number,
+  kind: Sv3TurnKind,
+  visitedAt: number,
+): Sv3Session {
+  const id = `sv3-session-${list.minted + 1}`;
+  return {
+    id,
+    title,
+    turns: [openTurn(id, 0, title, now, kind)],
+    createdAt: now,
+    updatedAt: now,
+    pinned: false,
+    completedAt: null,
+    lastVisitedAt: visitedAt,
+  };
+}
+
+/**
  * A submitted question: it CREATES a session when none is active, and APPENDS a turn to the active
  * one otherwise. The session keeps its position — a new turn is not a reason to move a row.
  *
@@ -148,15 +190,12 @@ export function submitInSession(
   if (text === '') return list;
   const active = list.activeId === null ? null : sessionById(list, list.activeId);
   if (active === null) {
-    const id = `sv3-session-${list.minted + 1}`;
-    const created: Sv3Session = {
-      id,
-      title: text,
-      turns: [openTurn(id, 0, text, now, kind)],
-      createdAt: now,
-      updatedAt: now,
+    const created = openSession(list, text, now, kind, now);
+    return {
+      sessions: [created, ...list.sessions],
+      activeId: created.id,
+      minted: list.minted + 1,
     };
-    return { sessions: [created, ...list.sessions], activeId: id, minted: list.minted + 1 };
   }
   return {
     ...list,
@@ -166,6 +205,9 @@ export function submitInSession(
             ...session,
             turns: [...session.turns, openTurn(session.id, session.turns.length, text, now, kind)],
             updatedAt: now,
+            // Asking in a conversation IS visiting it, so a follow-up cannot leave the session
+            // holding an unread bit against a reader who is sitting in it.
+            lastVisitedAt: now,
           }
         : session,
     ),
@@ -217,6 +259,46 @@ export const setTurnCitations = (list: Sv3SessionList, ref: Sv3TurnRef, count: n
   mapTurn(list, ref, (turn) => ({ ...turn, citations: count }));
 
 /**
+ * A terminal is BOTH a turn write and a session write, done in one pass so they cannot arrive
+ * separately: the turn takes its outcome, and the session records that something finished in it.
+ *
+ * The unread bit is decided HERE, by whether the session was the claimed one at the moment it
+ * finished — a reader who was looking at the conversation has already seen the answer, so its
+ * `lastVisitedAt` moves with the completion and the bit never rises (820 W2's unread-completion
+ * rule). A turn that already settled is left alone: one terminal per turn.
+ *
+ * A HALT records no completion at all: the reader stopped it themselves (or left the conversation,
+ * which stops it for them), so nothing arrived in their absence and a row that woke up over it would
+ * be calling their own decision news.
+ */
+function settleWith(
+  list: Sv3SessionList,
+  ref: Sv3TurnRef,
+  now: number,
+  status: Exclude<Sv3TurnStatus, 'streaming'>,
+  change: (turn: Sv3Turn) => Sv3Turn,
+): Sv3SessionList {
+  const session = sessionById(list, ref.sessionId);
+  const turn = session?.turns.find((t) => t.id === ref.turnId);
+  if (session === null || turn === undefined || turn.status !== 'streaming') return list;
+  const claimed = session.id === list.activeId;
+  const completed = status !== 'halted';
+  return {
+    ...list,
+    sessions: list.sessions.map((s) =>
+      s.id === ref.sessionId
+        ? {
+            ...s,
+            turns: s.turns.map((t) => (t.id === ref.turnId ? change(t) : t)),
+            completedAt: completed ? now : s.completedAt,
+            lastVisitedAt: completed && claimed ? now : s.lastVisitedAt,
+          }
+        : s,
+    ),
+  };
+}
+
+/**
  * The turn reaches its ONE terminal. A turn that already settled stays settled: the stream reports
  * exactly one terminal, and a second write could only be a bug re-wording the first.
  */
@@ -224,11 +306,9 @@ export const settleTurn = (
   list: Sv3SessionList,
   ref: Sv3TurnRef,
   status: Exclude<Sv3TurnStatus, 'streaming'>,
+  now: number,
   detail = '',
-): Sv3SessionList =>
-  mapTurn(list, ref, (turn) =>
-    turn.status === 'streaming' ? { ...turn, status, detail } : turn,
-  );
+): Sv3SessionList => settleWith(list, ref, now, status, (turn) => ({ ...turn, status, detail }));
 
 /**
  * The agent run's terminal (tempdoc 822 Phase F2): the turn settles AND becomes its own receipt in
@@ -241,11 +321,48 @@ export const settleAgentTurn = (
   ref: Sv3TurnRef,
   status: Exclude<Sv3TurnStatus, 'streaming'>,
   toolCalls: number,
+  now: number,
   detail = '',
 ): Sv3SessionList =>
-  mapTurn(list, ref, (turn) =>
-    turn.status === 'streaming' ? { ...turn, status, detail, toolCalls } : turn,
-  );
+  settleWith(list, ref, now, status, (turn) => ({ ...turn, status, detail, toolCalls }));
+
+/**
+ * A run this window did NOT dispatch, given a session so it can be seen (tempdoc 822 Phase F3).
+ *
+ * The named F2 finding: window-local in-memory sessions orphan a live run on reload — a fresh window
+ * showed nothing while the run went on holding server-side. The shared controller, not this window's
+ * memory, is the authority on what is running, so a window that finds a live run with no session
+ * SYNTHESISES one rather than rendering an empty sidebar next to a working agent.
+ *
+ * It does NOT claim the session: an adopted run is news, not a navigation, and yanking the reader
+ * out of the conversation they are in would be the window deciding where they should be looking.
+ * `lastVisitedAt: 0` follows from that — nobody has seen it, so its completion raises the unread bit.
+ */
+export interface Sv3Adoption {
+  readonly list: Sv3SessionList;
+  readonly ref: Sv3TurnRef;
+}
+
+export function adoptRunSession(list: Sv3SessionList, title: string, now: number): Sv3Adoption {
+  const session = openSession(list, title.trim(), now, 'agent', 0);
+  return {
+    list: { ...list, sessions: [session, ...list.sessions], minted: list.minted + 1 },
+    ref: { sessionId: session.id, turnId: turnIdFor(session.id, 0) },
+  };
+}
+
+/**
+ * The reader parks a conversation on the Pinned shelf, or takes it off. Order is untouched by
+ * construction: pinning moves a row between SHELVES and never within one, so a row cannot slide
+ * out from under the pointer as a consequence of being pinned.
+ */
+export function toggleSessionPin(list: Sv3SessionList, id: string): Sv3SessionList {
+  if (sessionById(list, id) === null) return list;
+  return {
+    ...list,
+    sessions: list.sessions.map((s) => (s.id === id ? { ...s, pinned: !s.pinned } : s)),
+  };
+}
 
 /**
  * The New-search affordance: the window returns to its empty state and the NEXT submit opens a new
@@ -256,10 +373,19 @@ export const startNewSession = (list: Sv3SessionList): Sv3SessionList => ({
   activeId: null,
 });
 
-/** Clicking a row claims it; an unknown id changes nothing rather than clearing the claim. */
-export function focusSession(list: Sv3SessionList, id: string): Sv3SessionList {
+/**
+ * Clicking a row claims it; an unknown id changes nothing rather than clearing the claim.
+ *
+ * A claim IS the visit that clears the unread bit — the reader now has the conversation on screen,
+ * so a bit that survived the click would be claiming they had not seen what they are looking at.
+ */
+export function focusSession(list: Sv3SessionList, id: string, now: number): Sv3SessionList {
   if (sessionById(list, id) === null) return list;
-  return { ...list, activeId: id };
+  return {
+    ...list,
+    activeId: id,
+    sessions: list.sessions.map((s) => (s.id === id ? { ...s, lastVisitedAt: now } : s)),
+  };
 }
 
 const MINUTE = 60_000;
@@ -287,6 +413,9 @@ export interface Sv3SessionRowView {
   readonly status: Sv3RowStatus;
   readonly meta: string;
   readonly active: boolean;
+  readonly pinned: boolean;
+  /** Something finished here while the reader was elsewhere, and they have not been back since. */
+  readonly unread: boolean;
 }
 
 export interface Sv3SessionGroup {
@@ -295,15 +424,25 @@ export interface Sv3SessionGroup {
   readonly rows: readonly Sv3SessionRowView[];
 }
 
-const isSameDay = (a: number, b: number): boolean => {
-  const left = new Date(a);
-  const right = new Date(b);
-  return (
-    left.getFullYear() === right.getFullYear() &&
-    left.getMonth() === right.getMonth() &&
-    left.getDate() === right.getDate()
-  );
-};
+/**
+ * The three shelves, in render order (tempdoc 822 Phase F3). ACTIVE first because it is the shelf
+ * that can be waiting on the reader; Pinned is where they parked things; Recent is the tail.
+ *
+ * "Recent" rather than the donor's "Settled": a settled RUN is a lifecycle word for something that
+ * was working and stopped, and most rows here are conversations that simply ended — "Recent" says
+ * the true thing about the shelf (it is the tail in creation order) without implying a run.
+ *
+ * Snooze is deliberately absent: it needs a menu and a wake timer (820 W2's "raise a hand on fresh
+ * blockage"), and a shelf nothing can put a row on would be scaffolding.
+ */
+type Sv3Shelf = 'active' | 'pinned' | 'recent';
+
+const SHELVES: readonly { readonly shelf: Sv3Shelf; readonly id: string; readonly label: string }[] =
+  [
+    { shelf: 'active', id: 'sv3-shelf-active', label: 'Active' },
+    { shelf: 'pinned', id: 'sv3-shelf-pinned', label: 'Pinned' },
+    { shelf: 'recent', id: 'sv3-shelf-recent', label: 'Recent' },
+  ];
 
 export interface Sv3SessionProjection {
   /** The shared store's in-flight flag: the ACTIVE session is the one that asked. */
@@ -318,12 +457,19 @@ export interface Sv3SessionProjection {
 }
 
 /**
- * Sessions → sidebar groups. A group is rendered only when it holds rows, so a window whose sessions
- * are all from this visit shows ONE label ("Today") rather than a shelf of empty headings.
+ * Sessions → sidebar SHELVES (tempdoc 822 Phase F3; replaces A2's Today/Earlier recency buckets —
+ * the donor's real grouping is state, and the sidebar-comparison finding 4 resolves toward it).
+ * A shelf is rendered only when it holds rows, so a window with one running conversation shows one
+ * heading rather than a column of empty ones.
  *
- * There is no "Pinned" group: nothing in this window can pin a session yet. The donor's pin lives in
- * the row's action slot, which arrives with the status→action slot swap (Phase C) — a group keyed on
- * a flag nothing can set would be scaffolding, not grouping.
+ * Two rules the shelves must not break:
+ *
+ *  - **A run that is working, or blocked on the reader, is on ACTIVE regardless of pin state.** This
+ *    is 820 W2's activity-blockers-override: a run waiting on your decision cannot be tucked away on
+ *    the shelf where you once parked it. Pin is the reader's intent about a resting conversation; it
+ *    does not get to hide a live one.
+ *  - **A shelf move is never a reorder.** Rows keep the list's fixed creation order inside every
+ *    shelf, so pinning a row changes which heading it sits under and nothing else.
  */
 export function projectSv3Sessions(
   list: Sv3SessionList,
@@ -347,12 +493,29 @@ export function projectSv3Sessions(
       status: awaiting ? 'act-now' : running ? 'in-motion' : broken ? 'broken' : 'resting',
       meta: awaiting || running ? '' : sv3RelativeTime(session.updatedAt, now),
       active,
+      pinned: session.pinned,
+      // Unread is a comparison, not a flag anything sets: something finished after the last visit.
+      unread: session.completedAt !== null && session.completedAt > session.lastVisitedAt,
     };
   };
-  const today = list.sessions.filter((s) => isSameDay(s.createdAt, now)).map(toRow);
-  const earlier = list.sessions.filter((s) => !isSameDay(s.createdAt, now)).map(toRow);
-  const groups: Sv3SessionGroup[] = [];
-  if (today.length > 0) groups.push({ id: 'sv3-group-today', label: 'Today', rows: today });
-  if (earlier.length > 0) groups.push({ id: 'sv3-group-earlier', label: 'Earlier', rows: earlier });
-  return groups;
+  const shelfOf = (session: Sv3Session, row: Sv3SessionRowView): Sv3Shelf => {
+    // The colour budget already decided this: act-now means the run is blocked on the reader and
+    // in-motion means it is working. Both are ACTIVE, and both outrank the pin (blockers-override).
+    if (row.status === 'act-now' || row.status === 'in-motion') return 'active';
+    return session.pinned ? 'pinned' : 'recent';
+  };
+  const rows = new Map<Sv3Shelf, Sv3SessionRowView[]>([
+    ['active', []],
+    ['pinned', []],
+    ['recent', []],
+  ]);
+  for (const session of list.sessions) {
+    const row = toRow(session);
+    rows.get(shelfOf(session, row))?.push(row);
+  }
+  return SHELVES.filter((shelf) => (rows.get(shelf.shelf)?.length ?? 0) > 0).map((shelf) => ({
+    id: shelf.id,
+    label: shelf.label,
+    rows: rows.get(shelf.shelf) ?? [],
+  }));
 }

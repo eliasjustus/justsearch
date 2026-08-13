@@ -20,10 +20,14 @@ import {
   projectSv3RunFeed,
   projectSv3RunPrompts,
   sv3PrimaryAction,
+  sv3RunNeedsPresence,
   sv3RunOutcome,
+  sv3RunPresenceStart,
+  sv3RunPresenceTitle,
   sv3RunReceiptLabel,
   sv3RunSessionStatus,
   SV3_RUN_FEED_EMPTY,
+  SV3_RUN_PRESENCE_TITLE,
   type Sv3RunLocal,
   type Sv3RunSource,
 } from './sv3-run.js';
@@ -66,6 +70,86 @@ const local = (over: Partial<Sv3RunLocal> = {}): Sv3RunLocal => ({
   haltRequested: false,
   haltDispatched: false,
   ...over,
+});
+
+describe('presence: when a live run needs a session it does not have (Phase F3)', () => {
+  const probe = (over: Partial<Parameters<typeof sv3RunNeedsPresence>[0]> = {}) => ({
+    status: 'live' as const,
+    represented: false,
+    runId: 'run-1',
+    adoptedRunIds: new Set<string>(),
+    ...over,
+  });
+
+  it('adopts a live or holding run that nothing in the window stands for', () => {
+    expect(sv3RunNeedsPresence(probe())).toBe(true);
+    expect(sv3RunNeedsPresence(probe({ status: 'holding' }))).toBe(true);
+    // A run named by nothing yet is still a live run — the id latch cannot be a precondition.
+    expect(sv3RunNeedsPresence(probe({ runId: null }))).toBe(true);
+  });
+
+  it('adopts nothing when there is no run, or the window already stands for one', () => {
+    expect(sv3RunNeedsPresence(probe({ status: 'settled' }))).toBe(false);
+    expect(sv3RunNeedsPresence(probe({ status: 'absent' }))).toBe(false);
+    // An OPEN turn already renders this run; adopting again would double it in the sidebar.
+    expect(sv3RunNeedsPresence(probe({ represented: true }))).toBe(false);
+  });
+
+  it('adopts one run ONCE, so a settled turn does not re-adopt the same run every frame', () => {
+    expect(sv3RunNeedsPresence(probe({ adoptedRunIds: new Set(['run-1']) }))).toBe(false);
+    // A DIFFERENT run started elsewhere is still news.
+    expect(sv3RunNeedsPresence(probe({ runId: 'run-2', adoptedRunIds: new Set(['run-1']) }))).toBe(true);
+  });
+
+  it('starts the adopted run at the LIVE run\'s task, not at the conversation\'s beginning', () => {
+    // The controller appends across runs (`send()` never clears the conversation) and `user` is
+    // written only at a run's start, so the LAST one begins the run that is live now. Starting at 0
+    // would count a finished run's tool calls into this run's receipt.
+    const conversation = [
+      entry({ type: 'user', content: 'a run that already ended' }),
+      entry({ type: 'tool-call-group', callIds: ['old'] }),
+      entry({ type: 'user', content: 'the live task' }),
+      entry({ type: 'tool-call-group', callIds: ['mine'] }),
+    ];
+    expect(sv3RunPresenceStart(source({ conversation }))).toBe(2);
+    // With nothing to exclude, the slice is the whole conversation.
+    expect(sv3RunPresenceStart(source())).toBe(0);
+    expect(
+      sv3RunPresenceStart(source({ conversation: [entry({ type: 'assistant-text' })] })),
+    ).toBe(0);
+    // The feed taken from that start holds only the live run's card.
+    const feed = projectSv3RunFeed(
+      source({ conversation, toolCalls: { old: call({ callId: 'old' }), mine: call({ callId: 'mine' }) } }),
+      sv3RunPresenceStart(source({ conversation })),
+    );
+    expect(feed.toolCallCount).toBe(1);
+    expect(feed.items.map((item) => item.id)).toEqual(['mine']);
+  });
+
+  it('titles the adopted session with the run\'s own task text, and claims nothing otherwise', () => {
+    expect(
+      sv3RunPresenceTitle(source({ conversation: [entry({ type: 'user', content: 'index the vendor folder' })] })),
+    ).toBe('index the vendor folder');
+    // The task of the run that is LIVE — an earlier run's prompt is not this row's label.
+    expect(
+      sv3RunPresenceTitle(
+        source({
+          conversation: [
+            entry({ type: 'user', content: 'the previous task' }),
+            entry({ type: 'assistant-text', content: 'done' }),
+            entry({ type: 'user', content: 'the live task' }),
+          ],
+        }),
+      ),
+    ).toBe('the live task');
+    // One line only — a 36px row cannot show a paragraph, and a truncated middle would misquote it.
+    expect(sv3RunPresenceTitle(source({ conversation: [entry({ type: 'user', content: 'first\nsecond' })] })))
+      .toBe('first');
+    // With nothing the reader would recognise, the row says only that a run is in progress.
+    expect(sv3RunPresenceTitle(source())).toBe(SV3_RUN_PRESENCE_TITLE);
+    expect(sv3RunPresenceTitle(source({ conversation: [entry({ type: 'user', content: '  ' })] })))
+      .toBe(SV3_RUN_PRESENCE_TITLE);
+  });
 });
 
 describe('two axes derive ONE phase', () => {

@@ -63,11 +63,13 @@ import {
   type Sv3ComposerSubmit,
 } from './Sv3Composer.js';
 import { projectSv3Results, type Sv3ResultsView } from './sv3-results.js';
-import { type Sv3SessionSelect } from './Sv3Sidebar.js';
+import { type Sv3SessionPin, type Sv3SessionSelect } from './Sv3Sidebar.js';
 import {
   activeTurns,
+  adoptRunSession,
   appendTurnDelta,
   focusSession,
+  toggleSessionPin,
   latestTurnRef,
   projectSv3Sessions,
   sessionById,
@@ -97,7 +99,10 @@ import {
   projectSv3RunFeed,
   projectSv3RunPrompts,
   sv3PrimaryAction,
+  sv3RunNeedsPresence,
   sv3RunOutcome,
+  sv3RunPresenceStart,
+  sv3RunPresenceTitle,
   sv3RunSessionStatus,
   SV3_RUN_FEED_EMPTY,
   type Sv3RunFeed,
@@ -210,6 +215,12 @@ export class SearchV3View extends JfElement {
   private run: Sv3RunLocal | null = null;
   /** Whether the run was observed LIVE, so its terminal is an EDGE rather than a repeated verdict. */
   private runLive = false;
+  /**
+   * Controller run ids this window has already given a session (Phase F3 presence). Adoption happens
+   * once per run: without the latch, the same live run would be re-adopted on the next notification
+   * after its turn settled, and the sidebar would grow a row per frame.
+   */
+  private readonly adoptedRunIds = new Set<string>();
 
   constructor() {
     super();
@@ -235,6 +246,10 @@ export class SearchV3View extends JfElement {
     // Subscribing does NOT create a controller (the read below is a `peek`), so a window that never
     // delegates never starts the agent controller's polling as a side effect of being mounted.
     this.agentUnsubscribe = subscribeAgentSession(this.onAgentUpdate);
+    // The window may be mounting BESIDE a run that is already going (a surface switch, a re-mount).
+    // The store notifies on change only, so the first look has to be taken here — see
+    // `syncRunPresence` for why an unrepresented live run is this window's problem to state.
+    this.syncRunPresence();
     // Scoped to the HOST, not to `window`. A host listener is only reached by events whose composed
     // path runs through this window, so a chord pressed anywhere else in the shipped app is invisible
     // here by construction — there is no "is the focus inside?" test to get wrong. Capture phase so
@@ -405,7 +420,7 @@ export class SearchV3View extends JfElement {
       status: 'complete' | 'halted' | 'refused' | 'failed',
       detail = '',
     ): void => {
-      this.sessions = settleTurn(this.sessions, ref, status, detail);
+      this.sessions = settleTurn(this.sessions, ref, status, Date.now(), detail);
       // Only THIS dispatch's terminal may clear the window's busy state: a later ask has already
       // installed its own controller, and clearing it here would strand a live stream with a Send
       // control in the slot.
@@ -548,7 +563,72 @@ export class SearchV3View extends JfElement {
    * the SERVER says anything, a pending halt is delivered once the run can honour it, and the run's
    * TERMINAL edge is detected so exactly one receipt lands.
    */
+  /**
+   * Does this window have an OPEN turn standing for a run? A settled turn stands for nothing: its
+   * receipt is written and a later run is not the same run.
+   */
+  private get runRepresented(): boolean {
+    const local = this.run;
+    if (local === null) return false;
+    const turn = sessionById(this.sessions, local.sessionId)?.turns.find(
+      (t) => t.id === local.turnId,
+    );
+    return turn?.status === 'streaming';
+  }
+
+  /**
+   * PRESENCE (tempdoc 822 Phase F3) — the fix for F2's named finding: *window-local in-memory
+   * sessions orphan a live run on reload*. A fresh window showed zero sessions while the run went on
+   * holding server-side, so the window was silently disagreeing with the product about what was
+   * happening.
+   *
+   * The rule this establishes: the SHARED CONTROLLER is the authority on whether a run is live, and
+   * this window's memory is not. When the controller reports a live or holding run that no session
+   * here accounts for, the window synthesises one — titled with the run's own task text, carrying an
+   * open agent turn, landing on the Active shelf — and adopts it as the run it renders. `entryStart`
+   * is 0 because this window dispatched nothing: the whole conversation the controller holds is that
+   * run's. `acknowledged` is true for the same reason — there is no optimistic local echo to yield;
+   * every frame of it came from the server already.
+   *
+   * It reads through `peek`, so a window that never delegates still constructs no controller and
+   * starts no polling by being mounted (the F2 law). And it does not CLAIM the adopted session: the
+   * run is news, not a navigation.
+   */
+  private syncRunPresence(): void {
+    const ctrl = this.agentController();
+    if (ctrl === null) return;
+    // The controller's conversation accumulates across runs, so the LIVE run's slice starts at the
+    // task it was given — not at 0, which would read a finished run's steps as this one's.
+    const start = sv3RunPresenceStart(ctrl);
+    const feed = projectSv3RunFeed(ctrl, start);
+    const probe = {
+      status: sv3RunSessionStatus(ctrl, feed),
+      represented: this.runRepresented,
+      runId: ctrl.sessionId,
+      adoptedRunIds: this.adoptedRunIds,
+    };
+    if (!sv3RunNeedsPresence(probe)) return;
+    const { list, ref } = adoptRunSession(this.sessions, sv3RunPresenceTitle(ctrl), Date.now());
+    this.sessions = list;
+    this.run = {
+      sessionId: ref.sessionId,
+      turnId: ref.turnId,
+      entryStart: start,
+      sessionIdAtDispatch: null,
+      acknowledged: true,
+      haltRequested: false,
+      haltDispatched: false,
+    };
+    // Observed live at adoption, so the run's terminal is an EDGE for this window too and the
+    // adopted turn gets its one receipt instead of streaming forever.
+    this.runLive = true;
+    if (ctrl.sessionId !== null) this.adoptedRunIds.add(ctrl.sessionId);
+  }
+
   private readonly onAgentUpdate = (): void => {
+    // Presence first: a run this window has no session for gets one before the frame is read, so the
+    // rest of this method has something to write the run's progress into.
+    this.syncRunPresence();
     const ctrl = this.agentController();
     const local = this.run;
     if (ctrl !== null && local !== null) {
@@ -557,6 +637,9 @@ export class SearchV3View extends JfElement {
       if (!local.acknowledged && hasServerAcknowledgedLocalDispatch(local, ctrl)) {
         local.acknowledged = true;
       }
+      // A run this window is already rendering is a run it must never ALSO adopt as presence — the
+      // id is only knowable once the server names it, which is here rather than at dispatch.
+      if (ctrl.sessionId !== null) this.adoptedRunIds.add(ctrl.sessionId);
       const feed = projectSv3RunFeed(ctrl, local.entryStart);
       const status = sv3RunSessionStatus(ctrl, feed);
       if (status === 'live' || status === 'holding') {
@@ -582,6 +665,7 @@ export class SearchV3View extends JfElement {
       { sessionId: local.sessionId, turnId: local.turnId },
       sv3RunOutcome(feed, local.haltRequested),
       feed.toolCallCount,
+      Date.now(),
     );
   }
 
@@ -649,8 +733,18 @@ export class SearchV3View extends JfElement {
    */
   private onSessionSelect(event: Event): void {
     const id = (event as CustomEvent<Sv3SessionSelect>).detail?.id ?? '';
-    this.sessions = focusSession(this.sessions, id);
+    this.sessions = focusSession(this.sessions, id, Date.now());
     void this.setComposerState('docked');
+  }
+
+  /**
+   * The reader parks a conversation on the Pinned shelf, or takes it off. It is a list write and
+   * nothing else — pinning does not claim the conversation, does not reorder anything, and does not
+   * move a run off the Active shelf (a blocked run cannot be hidden; `projectSv3Sessions` owns that).
+   */
+  private onSessionPin(event: Event): void {
+    const id = (event as CustomEvent<Sv3SessionPin>).detail?.id ?? '';
+    this.sessions = toggleSessionPin(this.sessions, id);
   }
 
   /**
@@ -741,6 +835,7 @@ export class SearchV3View extends JfElement {
         .groups=${sessionGroups}
         data-testid="sv3-sidebar"
         @sv3-session-select=${this.onSessionSelect}
+        @sv3-session-pin=${this.onSessionPin}
         @sv3-session-new=${this.onSessionNew}
       ></jf-sv3-sidebar>
       <div

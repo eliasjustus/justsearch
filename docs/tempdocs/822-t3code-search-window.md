@@ -360,6 +360,53 @@ are re-creatable from the log's descriptions.
   memory. Run ended by stack stop (dev throwaway). Residuals → F3: shelf model,
   presence/recovery, cross-surface slot honesty; issuance-register decision still
   open (owner/orchestrator).
+- 2026-08-13 — **F3 STACK-TIER VERIFIED (orchestrator, real run + active model).**
+  The F2 named-finding scenario re-run for real: delegate → run holds (act-now,
+  Active shelf, slot "waiting for your decision") → navigate away (window unmounts,
+  in-memory sessions destroyed) → navigate back → session ADOPTED from the shared
+  controller (run's own task as title, act-now preserved, slot honest in an instance
+  that never dispatched it — cross-surface residual closed) → run settles → Recent
+  shelf, resting, Send restored. Zero page errors. Remaining true-reload survival
+  is the shared controller's server-reattach question (Phase D / backend), not sv3's.
+- 2026-08-13 — **Slice F3 implemented + backendless-live-verified.** Session-lifecycle depth:
+  (A) SHELVES replace A2's Today/Earlier recency buckets — `projectSv3Sessions` now yields
+  **Active ▸ Pinned ▸ Recent** ("Recent" kept over the donor's "Settled": most rows are
+  conversations at rest, not stopped runs), empty shelves hidden, static order INSIDE a shelf
+  (a pin moves a row between shelves, never within one). Blockers-override (820 W2) is
+  structural: act-now/in-motion outrank the pin, so a run blocked on the reader cannot sit on
+  the shelf they parked it on. Snooze OUT of scope (needs menu + wake timer) → residual.
+  (B) PIN via the donor §6.1 SLOT SWAP: status at rest → pin action on row hover OR keyboard
+  focus, hidden state out of flow, `min-inline-size` floor, and THE NEVER-YIELDS EXCEPTION —
+  an act-now or broken status keeps its place (the donor's PR-badge counterpoint = L14's honesty
+  boundary) with the pin appearing beside it in a gutter reserved AT REST. Pin is a sibling
+  button (no button-in-button), `aria-pressed`, pin state in the pure module.
+  (C) PRESENCE closes F2's named finding: on connect and on every controller snapshot, a
+  live/holding run no session represents is ADOPTED as a session (title = the run's own task,
+  Active shelf, unclaimed — news, not navigation); the composer slot is honest about a run this
+  window never dispatched; claiming it renders the F2 feed. Adoption is once per run id.
+  (D) UNREAD/WOKE bit: `completedAt` vs `lastVisitedAt` (both in the pure module) drive the
+  existing w500/full-foreground rung; completing while claimed never sets it, a visit clears it,
+  and a HALT records no completion at all (the reader stopped it themselves).
+  4691 tests (+32) / 12 of 12 mutation probes bite / typecheck clean / vite build green /
+  controls-a11y + a11y-closure + steering-arbitration + presentation-purity + layout-purity +
+  ambient-purity + style-literal + atom-fork all green (4 pre-existing reds in untouched files:
+  theme-token-closure + accent-as-text + strip-token-fallbacks on RecentsMenu/ActionLedgerView,
+  stale token-names.generated; kernel dead-code is red dir-wide against a stale knip baseline —
+  observation filed). **LIVE (backendless serve + Chromium, sessions handed in as data):** three
+  shelves render with correct membership; the swap fires by mouse AND by Tab, with the slot box
+  measured at **32px in every state** (no jitter); the broken row keeps its dot visible with the
+  pin 4px beside it; mouse pin-click pins without claiming; Enter on a focused pin unpins and the
+  empty shelf disappears; zero page errors. **Two defects the live tier caught that the unit tier
+  could not:** (1) `:host(:has(:focus-visible))` is a Chrome SYNTAX ERROR and killed the whole
+  selector list — the swap did nothing in the browser while the CSS-text tests were green
+  (`static-green ≠ live-working`); rewritten as separate rules + a test banning the nesting.
+  (2) critical-analysis pass: the shared controller APPENDS across runs, so presence starting at
+  entry 0 would have put a finished run's cards in the adopted run's feed and receipt —
+  `sv3RunPresenceStart` now starts at the live run's own task entry.
+  Residuals → later: snooze shelf + wake rules; presence recovers only what the SHARED CONTROLLER
+  still holds, so a full page reload (which drops the controller singleton) still needs the
+  controller's own server reattach — the window adopts whatever it reports; in-motion still yields
+  on hover (only act-now/broken are the never-yields set).
 - 2026-08-12 — **Sidebar comparison findings** (owner-requested donor-vs-copy analysis;
   feed the adaptation phase): (1) ROW-HEIGHT REFERENT — our rows are 32px from §3.2's
   menu-button ladder, but the donor's SESSION rows are §6.1's slim 36px / card 78px;

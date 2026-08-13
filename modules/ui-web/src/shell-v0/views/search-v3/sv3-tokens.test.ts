@@ -347,6 +347,66 @@ describe('the session row spends one fill and three colours, by construction', (
     // The slot reserves a floor so a row does not jitter when its contents change width.
     expect(ruleFor('.status-slot {')).toContain('min-inline-size: var(--space-8)');
   });
+
+  /**
+   * The status→action slot swap (Phase F3, donor §6.1) as MECHANISM: happy-dom runs no cascade and
+   * no hover, so the properties pinned here are the ones that decide the outcome — the hidden state
+   * leaving the flow, the width floor that makes the swap jitter-free, and the guards that carry the
+   * donor's never-yields exception.
+   */
+  it('swaps the status for the action on hover AND on keyboard focus, out of flow', () => {
+    const yielders = [...styles.matchAll(/[^\n]*\.slot-content[^\n]*/g)]
+      .map((m) => m[0] ?? '')
+      .filter((selector) => selector.includes(':host('));
+    // Two ways in: the pointer and the keyboard. A hover-only swap is unreachable by keyboard.
+    expect(yielders.some((s) => s.includes(':hover'))).toBe(true);
+    expect(yielders.some((s) => s.includes(':focus-visible'))).toBe(true);
+    for (const selector of yielders) {
+      // THE NEVER-YIELDS EXCEPTION: an act-now or broken status is the donor's PR badge — it stays
+      // visible while the row is hovered. An unguarded yield rule would hide exactly the two facts
+      // the reader most needs, and only while they are pointing at the row.
+      expect(selector, `unguarded yield rule: ${selector.trim()}`).toContain(
+        ":not([status='act-now']):not([status='broken'])",
+      );
+    }
+    // The hidden state leaves the FLOW, which is what lets the title reclaim the width.
+    const yielded = ruleFor(":host(:hover:not([status='act-now'])");
+    expect(yielded).toContain('position: absolute');
+    expect(yielded).toContain('opacity: 0');
+  });
+
+  it('nests no :has() inside :host() — Chrome rejects it and drops the whole selector list', () => {
+    // Live-measured defect (822 F3): `:host(:has(:focus-visible)) …` is a SyntaxError in Chrome, and
+    // an invalid member invalidates its entire selector list — so the sibling `:host(:hover)` rule
+    // died with it and the swap did nothing in the browser while this file's CSS-text cases stayed
+    // green. The shape is banned here because the text assertions above cannot see it.
+    expect(styleTextOf(Sv3SessionRow)).not.toContain(':host(:has(');
+    expect(sv3Shared.cssText).not.toContain(':host(:has(');
+  });
+
+  it('reserves the pin gutter at REST for the statuses that never yield', () => {
+    // Reserved at rest, not on hover: a gutter that appeared under the pointer would move the dot,
+    // which is the jitter the slot floor exists to prevent.
+    const reserved = ruleFor(":host([status='act-now']) .status-slot");
+    expect(reserved).toContain('padding-inline-end: var(--space-7)');
+    expect(styles).toContain(":host([status='broken']) .status-slot");
+  });
+
+  it('keeps the pin action out of the pointer\'s way at rest, but never out of the tab order', () => {
+    const pin = ruleFor('button.pin {');
+    expect(pin).toContain('opacity: 0');
+    // `pointer-events: none` and not `display: none` / `visibility: hidden`: those two would take
+    // the control out of the tab order, and the swap has to be reachable by keyboard.
+    expect(pin).toContain('pointer-events: none');
+    expect(pin).not.toContain('display: none');
+    expect(pin).not.toContain('visibility: hidden');
+    expect(ruleFor(':host(:hover) button.pin')).toContain('opacity: 1');
+    // Keyboard reveal, in two halves — the row focused, and the action itself focused.
+    expect(styles).toContain('button.row:focus-visible ~ button.pin');
+    expect(styles).toContain('button.pin:focus-visible');
+    // Its pressed state is foreground weight, not a fourth colour.
+    expect(ruleFor(':host([pinned]) button.pin')).toContain('color: var(--sidebar-foreground)');
+  });
 });
 
 /**

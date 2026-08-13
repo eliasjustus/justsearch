@@ -352,6 +352,71 @@ export function hasServerAcknowledgedLocalDispatch(
   return source.sessionId !== null && source.sessionId !== local.sessionIdAtDispatch;
 }
 
+/* ── Presence: a run this window did not dispatch (tempdoc 822 Phase F3) ─────────────────────── */
+
+/** What an adopted run is called when the controller holds no text the reader would recognise. */
+export const SV3_RUN_PRESENCE_TITLE = 'Agent run in progress';
+
+/**
+ * Where the LIVE run's slice of the shared conversation begins.
+ *
+ * The controller APPENDS across runs — `send()` and `runWorkflow()` push a `user` entry onto the
+ * existing conversation and never clear it (`AgentSessionController.ts:1350-1353` / `:1454-1462`),
+ * and those two are the only writers of that entry type (a steer is a `steer-directive`). So the LAST
+ * user entry is where the run that is live now was asked for, and everything before it belongs to a
+ * run that already ended. Starting an adopted run at 0 instead would put a finished run's steps in
+ * this one's feed and its tool calls in this one's receipt — the wrong-origin class this module's
+ * `activeTurnId` exists to prevent, arriving through the back door.
+ */
+export function sv3RunPresenceStart(source: Sv3RunSource): number {
+  for (let index = source.conversation.length - 1; index >= 0; index -= 1) {
+    if (source.conversation[index]?.type === 'user') return index;
+  }
+  return 0;
+}
+
+/**
+ * The run's own words, for the session row it is about to get: the task the LIVE run was given
+ * ({@link sv3RunPresenceStart}), first line only — what a 36px row can show. Nothing is invented:
+ * with no user entry to read, the row says only that a run is in progress.
+ */
+export function sv3RunPresenceTitle(source: Sv3RunSource): string {
+  const start = source.conversation[sv3RunPresenceStart(source)];
+  const line =
+    start?.type === 'user' ? ((start.content ?? '').trim().split('\n')[0]?.trim() ?? '') : '';
+  return line === '' ? SV3_RUN_PRESENCE_TITLE : line;
+}
+
+export interface Sv3PresenceProbe {
+  /** Axis 1 — what the shared controller says right now. */
+  readonly status: Sv3RunSessionStatus;
+  /** This window already has an OPEN turn standing for a run; a settled turn stands for nothing. */
+  readonly represented: boolean;
+  /** The controller's run id, or null before the server has named one. */
+  readonly runId: string | null;
+  /** Run ids this window has already given a session, so one run is adopted at most once. */
+  readonly adoptedRunIds: ReadonlySet<string>;
+}
+
+/**
+ * Should the window synthesise a session for the controller's run?
+ *
+ * The F2 named finding in predicate form: the shared controller is the authority on whether a run is
+ * live, so a window whose in-memory list cannot account for a live run must say the run is there
+ * rather than render an empty sidebar beside a working agent. Adoption is once per run id — without
+ * the latch, the same run would be adopted again on the next notification after its turn settled.
+ */
+export function sv3RunNeedsPresence({
+  status,
+  represented,
+  runId,
+  adoptedRunIds,
+}: Sv3PresenceProbe): boolean {
+  if (status !== 'live' && status !== 'holding') return false;
+  if (represented) return false;
+  return runId === null || !adoptedRunIds.has(runId);
+}
+
 /* ── The receipt's outcome ───────────────────────────────────────────────────────────────────── */
 
 /** The three honest ends of a run. `halted` is the reader's own act and is never worded as a failure. */

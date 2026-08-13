@@ -11,8 +11,9 @@
  * One surface model for every row: surface encodes INTERACTION (hover, selection), content encodes
  * status — the row itself is <jf-sv3-session-row>; this panel owns only the grouping.
  *
- * Groups are VISUAL only and their order is fixed: activity never reorders the list, so a row does
- * not move out from under the pointer while you are reading it.
+ * Groups are the SHELVES the window projected (Active / Pinned / Recent — tempdoc 822 Phase F3) and
+ * their order is fixed: activity never reorders rows inside a shelf, so a row does not move out from
+ * under the pointer while you are reading it.
  *
  * The panel renders what it is GIVEN (`groups`) and decides nothing: the sessions are the window's
  * (`sv3-sessions.ts`), and a click is announced upward rather than acted on here — the window owns
@@ -33,6 +34,13 @@ import type { Sv3SessionGroup } from './sv3-sessions.js';
 export const SV3_SESSION_SELECT = 'sv3-session-select';
 
 export interface Sv3SessionSelect {
+  readonly id: string;
+}
+
+/** Asks the window to pin or unpin a session — the row raises it, the panel says which row. */
+export const SV3_SESSION_PIN = 'sv3-session-pin';
+
+export interface Sv3SessionPin {
   readonly id: string;
 }
 
@@ -148,6 +156,18 @@ export class Sv3Sidebar extends JfElement {
     );
   }
 
+  /** The row's pin request, named. The panel decides nothing about it — the list is the window's. */
+  private pin(id: string, event: Event): void {
+    event.stopPropagation();
+    this.dispatchEvent(
+      new CustomEvent<Sv3SessionPin>(SV3_SESSION_PIN, {
+        detail: { id },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
   render(): TemplateResult {
     return html`
       <button
@@ -185,7 +205,10 @@ export class Sv3Sidebar extends JfElement {
                             .meta=${row.meta}
                             status=${row.status}
                             ?active=${row.active}
+                            ?pinned=${row.pinned}
+                            ?unread=${row.unread}
                             @click=${() => this.select(row.id)}
+                            @sv3-session-pin-toggle=${(event: Event) => this.pin(row.id, event)}
                           ></jf-sv3-session-row>
                         `,
                       )}

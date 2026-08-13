@@ -558,6 +558,158 @@ describe('the sidebar spends act-now only while a typed prompt is pending', () =
   });
 });
 
+describe('presence: a live run this window never dispatched (tempdoc 822 Phase F3)', () => {
+  /**
+   * The REGRESSION for F2's named finding — *window-local in-memory sessions orphan a live run on
+   * reload*: a fresh window instance showed zero sessions while the run went on holding server-side.
+   * The window is re-mounted here next to a controller that is already running, which is exactly the
+   * shape of that incident, and the assertions are the three things the reader lost: the run is
+   * VISIBLE, the composer slot is HONEST about it, and claiming it shows the feed.
+   */
+  const alreadyRunning = (over: Partial<FakeCtrl> = {}): void => {
+    ctrlExists = true;
+    Object.assign(ctrl, {
+      runInFlight: true,
+      runKind: 'agent',
+      sessionId: 'run-42',
+      conversation: [
+        { id: 'u1', type: 'user', content: 'index the vendor folder', timestamp: 0 },
+        { id: 'a1', type: 'assistant-text', content: 'Reading it now.', timestamp: 0 },
+        groupEntry('g1', ['c1']),
+      ] as ConversationEntry[],
+      toolCalls: { c1: toolCall('c1') },
+      ...over,
+    });
+  };
+
+  const rowsOf = async (el: Mounted): Promise<HTMLElement[]> => {
+    const sidebar = await region(el, 'jf-sv3-sidebar');
+    return [...(sidebar.shadowRoot?.querySelectorAll<HTMLElement>('jf-sv3-session-row') ?? [])];
+  };
+
+  it('gives the run a session on the Active shelf, titled with its own task', async () => {
+    aiOnline();
+    alreadyRunning();
+    const el = await mount();
+    await settle(el);
+
+    const rows = await rowsOf(el);
+    expect(rows.map((r) => (r as HTMLElement & { label: string }).label)).toEqual([
+      'index the vendor folder',
+    ]);
+    const sidebar = await region(el, 'jf-sv3-sidebar');
+    expect(
+      [...(sidebar.shadowRoot?.querySelectorAll('[data-testid="sv3-sidebar-group-label"]') ?? [])].map(
+        (n) => n.textContent?.trim(),
+      ),
+    ).toEqual(['Active']);
+    // It is not CLAIMED: the reader was not moved into a conversation they did not open.
+    expect((rows[0] as HTMLElement & { active: boolean }).active).toBe(false);
+  });
+
+  it('keeps the composer slot honest about a run the local list did not start', async () => {
+    aiOnline();
+    alreadyRunning();
+    const el = await mount();
+    await settle(el);
+    const composer = await region(el, 'jf-sv3-composer');
+    // Stop, not Send — the window cannot offer to start something while the product is running one.
+    expect(q(composer, 'sv3-composer-stop')).not.toBeNull();
+    expect(q(composer, 'sv3-composer-send')).toBeNull();
+
+    // ...and a HELD run reaches the answer rung from presence just as it does from a local dispatch.
+    await frame(el, { toolCalls: { c1: toolCall('c1', { status: 'pending' }) } });
+    expect(q(composer, 'sv3-composer-answer')).not.toBeNull();
+    expect(q(composer, 'sv3-composer-stop')).toBeNull();
+    expect((await rowsOf(el))[0]?.getAttribute('status')).toBe('act-now');
+  });
+
+  it('shows the run FEED once the reader claims the adopted session', async () => {
+    aiOnline();
+    alreadyRunning();
+    const el = await mount();
+    await settle(el);
+    const main = await region(el, 'jf-sv3-main');
+    // Nothing is claimed yet, so the transcript shows nothing — the sidebar is the only witness.
+    expect(all(main, 'sv3-turn')).toHaveLength(0);
+
+    (await rowsOf(el))[0]?.shadowRoot?.querySelector<HTMLButtonElement>('button')?.click();
+    await settle(el);
+    await main.updateComplete;
+    expect(all(main, 'sv3-turn')).toHaveLength(1);
+    expect(q(main, 'sv3-run-feed')).not.toBeNull();
+    // The feed is the controller's own conversation, rendered through the ONE tool-call primitive.
+    expect(main.shadowRoot?.querySelectorAll('jf-tool-call-card')).toHaveLength(1);
+  });
+
+  it('adopts the LIVE run only — a finished run in the same conversation is not its feed', async () => {
+    aiOnline();
+    // The controller appends across runs, so its conversation still holds a run that ended. The
+    // adopted session must be titled by the live task and show only the live run's cards, or the
+    // receipt would count a run the reader never watched here.
+    alreadyRunning({
+      conversation: [
+        { id: 'u0', type: 'user', content: 'a run that already ended', timestamp: 0 },
+        groupEntry('g0', ['old1', 'old2']),
+        { id: 'u1', type: 'user', content: 'index the vendor folder', timestamp: 0 },
+        groupEntry('g1', ['c1']),
+      ] as ConversationEntry[],
+      toolCalls: { old1: toolCall('old1'), old2: toolCall('old2'), c1: toolCall('c1') },
+    });
+    const el = await mount();
+    await settle(el);
+    const rows = await rowsOf(el);
+    expect(rows.map((r) => (r as HTMLElement & { label: string }).label)).toEqual([
+      'index the vendor folder',
+    ]);
+
+    rows[0]?.shadowRoot?.querySelector<HTMLButtonElement>('button')?.click();
+    await settle(el);
+    const main = await region(el, 'jf-sv3-main');
+    await main.updateComplete;
+    expect(main.shadowRoot?.querySelectorAll('jf-tool-call-card')).toHaveLength(1);
+
+    // ...and the receipt counts that one card, not the three in the controller's whole conversation.
+    await frame(el, { runInFlight: false, isStreaming: false });
+    expect(q(main, 'sv3-run-receipt')?.textContent).toContain('1 tool call');
+  });
+
+  it('adopts a run ONCE and adopts nothing when the controller is idle', async () => {
+    aiOnline();
+    alreadyRunning();
+    const el = await mount();
+    await settle(el);
+    // Several notifications later there is still exactly one row — the OPEN turn already stands for
+    // this run, so a second adoption would be the same run twice in the sidebar.
+    await frame(el, { streamingText: 'still going' });
+    await frame(el, { streamingText: 'and going' });
+    expect(await rowsOf(el)).toHaveLength(1);
+
+    // The run ends: the adopted turn takes its receipt instead of streaming forever...
+    await frame(el, { runInFlight: false, isStreaming: false, streamingText: '' });
+    expect(await rowsOf(el)).toHaveLength(1);
+    const composer = await region(el, 'jf-sv3-composer');
+    expect(q(composer, 'sv3-composer-stop')).toBeNull();
+    // ...and the settled run is not re-adopted by the next notification.
+    await frame(el, {});
+    expect(await rowsOf(el)).toHaveLength(1);
+
+    // The case the ID LATCH is for: the SAME run reports itself live again after this window has
+    // already concluded its turn (a flicker between frames). Without the latch that reads as a run
+    // with no session, and the sidebar grows a duplicate of a run the reader already has.
+    await frame(el, { runInFlight: true, sessionId: 'run-42' });
+    expect(await rowsOf(el)).toHaveLength(1);
+  });
+
+  it('adopts nothing at all when no controller exists — a mounted window starts no polling', async () => {
+    aiOnline();
+    const el = await mount();
+    await settle(el);
+    expect(await rowsOf(el)).toHaveLength(0);
+    expect(getCtrl).not.toHaveBeenCalled();
+  });
+});
+
 describe('the window hosts the run — it does not re-implement one', () => {
   const here = dirname(fileURLToPath(import.meta.url));
 

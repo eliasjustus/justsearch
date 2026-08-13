@@ -224,7 +224,8 @@ describe('a submitted question becomes a session in the sidebar', () => {
     const rows = await rowsOf(el);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.label).toBe('northfield lease');
-    expect(await groupLabelsOf(el)).toEqual(['Today']);
+    // The answer settled, so the conversation rests on the Recent shelf (Phase F3 state shelves).
+    expect(await groupLabelsOf(el)).toEqual(['Recent']);
     // The empty state is gone the moment there is a session to show.
     const sidebar = await region(el, 'jf-sv3-sidebar');
     expect(sidebar.shadowRoot?.querySelector('[data-testid="sv3-sidebar-empty"]')).toBeNull();
@@ -473,4 +474,128 @@ describe('the in-motion dot belongs to the running session alone', () => {
       ?.click();
     await el.updateComplete;
   }
+});
+
+describe('shelves and the pin action (tempdoc 822 Phase F3)', () => {
+  const shelfRows = async (el: Mounted): Promise<Record<string, string[]>> => {
+    const sidebar = await region(el, 'jf-sv3-sidebar');
+    const shelves: Record<string, string[]> = {};
+    for (const group of sidebar.shadowRoot?.querySelectorAll('[data-testid="sv3-sidebar-group"]') ??
+      []) {
+      const label =
+        group.querySelector('[data-testid="sv3-sidebar-group-label"]')?.textContent?.trim() ?? '';
+      shelves[label] = [...group.querySelectorAll('jf-sv3-session-row')].map(
+        (row) => (row as Sv3SessionRow).label,
+      );
+    }
+    return shelves;
+  };
+
+  const pinOf = (row: Sv3SessionRow): HTMLButtonElement => {
+    const button = row.shadowRoot?.querySelector<HTMLButtonElement>(
+      '[data-testid="sv3-session-row-pin"]',
+    );
+    if (!button) throw new Error('no pin action in the row');
+    return button;
+  };
+
+  it('opens Active while an answer streams and Recent once it settles', async () => {
+    const el = await mount();
+    await ask(el, 'first question');
+    expect(await shelfRows(el)).toEqual({ Recent: ['first question'] });
+
+    await newSession(el);
+    await send(el, 'second question');
+    await settle(el);
+    // A streaming conversation is on ACTIVE; the settled one keeps its place on Recent.
+    expect(await shelfRows(el)).toEqual({
+      Active: ['second question'],
+      Recent: ['first question'],
+    });
+
+    router.emit('done', {});
+    router.end();
+    await settle(el);
+    // The shelf empties rather than persisting as a heading over nothing.
+    expect(await shelfRows(el)).toEqual({ Recent: ['second question', 'first question'] });
+  });
+
+  it('pins a conversation onto the Pinned shelf WITHOUT claiming it', async () => {
+    const el = await mount();
+    await ask(el, 'first question');
+    await newSession(el);
+    await ask(el, 'second question');
+
+    const rows = await rowsOf(el);
+    const older = rows[1] as Sv3SessionRow;
+    expect(older.active).toBe(false);
+    const fetches = fetchMock.mock.calls.length;
+
+    pinOf(older).click();
+    await settle(el);
+    expect(await shelfRows(el)).toEqual({
+      Pinned: ['first question'],
+      Recent: ['second question'],
+    });
+    // Pinning is not navigation and not an issuance: the claim did not move and nothing was sent.
+    const after = await rowsOf(el);
+    expect(after.filter((r) => r.active).map((r) => r.label)).toEqual(['second question']);
+    expect(fetchMock.mock.calls.length).toBe(fetches);
+
+    // The control announces its own state, and a second press puts the row back where it was.
+    const pinned = after.find((r) => r.label === 'first question') as Sv3SessionRow;
+    expect(pinOf(pinned).getAttribute('aria-pressed')).toBe('true');
+    pinOf(pinned).click();
+    await settle(el);
+    expect(await shelfRows(el)).toEqual({ Recent: ['second question', 'first question'] });
+    expect(pinOf((await rowsOf(el))[1] as Sv3SessionRow).getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('keeps a pinned conversation on Active while it is running (blockers override)', async () => {
+    const el = await mount();
+    await ask(el, 'first question');
+    pinOf((await rowsOf(el))[0] as Sv3SessionRow).click();
+    await settle(el);
+    expect(await shelfRows(el)).toEqual({ Pinned: ['first question'] });
+
+    // The SAME conversation, now streaming a follow-up: a pin is the reader's intent about a
+    // RESTING conversation and does not get to hide a working one.
+    await send(el, 'and then?');
+    await settle(el);
+    expect(await shelfRows(el)).toEqual({ Active: ['first question'] });
+    router.emit('done', {});
+    router.end();
+    await settle(el);
+    expect(await shelfRows(el)).toEqual({ Pinned: ['first question'] });
+  });
+
+  it('marks a conversation unread when its answer lands while the reader is elsewhere', async () => {
+    const el = await mount();
+    await ask(el, 'the early one');
+    await newSession(el);
+    await send(el, 'the slow one');
+    await settle(el);
+    // Claim the OTHER conversation, leaving this one streaming behind the reader's back. (A row
+    // click claims and abandons nothing — New session would have STOPPED the stream instead.)
+    await clickRow((await rowsOf(el))[1] as Sv3SessionRow);
+    await settle(el);
+
+    let rows = await rowsOf(el);
+    expect(rows.find((r) => r.label === 'the slow one')?.unread).toBe(false);
+
+    router.emit('done', {});
+    router.end();
+    await settle(el);
+    rows = await rowsOf(el);
+    const slow = rows.find((r) => r.label === 'the slow one') as Sv3SessionRow;
+    expect(slow.unread).toBe(true);
+    expect(slow.hasAttribute('unread')).toBe(true);
+    // The conversation the reader was IN never wakes: they watched that one finish.
+    expect(rows.find((r) => r.label === 'the early one')?.unread).toBe(false);
+
+    // Visiting is what clears it.
+    await clickRow(slow);
+    await settle(el);
+    expect((await rowsOf(el)).find((r) => r.label === 'the slow one')?.unread).toBe(false);
+  });
 });

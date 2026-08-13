@@ -395,10 +395,18 @@ describe('the empty states are one donor pattern in two regions', () => {
     document.body.appendChild(sidebar);
     sidebar.groups = [
       {
-        id: 'sv3-group-today',
-        label: 'Today',
+        id: 'sv3-shelf-recent',
+        label: 'Recent',
         rows: [
-          { id: 'sv3-session-1', label: 'northfield lease', status: 'resting', meta: 'now', active: true },
+          {
+            id: 'sv3-session-1',
+            label: 'northfield lease',
+            status: 'resting',
+            meta: 'now',
+            active: true,
+            pinned: false,
+            unread: false,
+          },
         ],
       },
     ];
