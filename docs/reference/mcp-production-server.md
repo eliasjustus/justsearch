@@ -126,6 +126,28 @@ Streamable HTTP on the existing Javalin server (loopback-only,
 `127.0.0.1`). No separate process — the MCP endpoint runs in the
 same JVM as the Head process. No Node.js required.
 
+**Transport security.** The spec's Streamable-HTTP security clause ("Servers **MUST** validate the
+`Origin` header on all incoming connections to prevent DNS rebinding attacks... If the `Origin`
+header is present and invalid, servers **MUST** respond with HTTP 403 Forbidden") is enforced on
+every method served at `/mcp` by `ApiSecurityFilters.setupMcpOriginValidation`. The rules:
+
+| `Origin` on the request | Outcome |
+|---|---|
+| absent | served — native MCP hosts (Claude Code, Claude Desktop, Cursor) are HTTP clients, not browsers, and send none |
+| loopback (`http(s)://127.0.0.1`, `localhost`, `[::1]`, any port) | served |
+| desktop shell (`tauri://localhost`, `http(s)://tauri.localhost`) | served |
+| `null` (sandboxed/`file://` context) | **403** — no host to verify, and no MCP client produces it |
+| anything else | **403**, JSON-RPC error body with no `id` |
+
+The value is parsed as a URI and its **host component** compared for equality, so a lookalike such
+as `http://127.0.0.1.evil.com` is rejected. This composes with — and does not replace — the
+API-wide `Host`-header allowlist and the loopback bind; see
+[`security/threat-model.md`](security/threat-model.md).
+
+Not yet conformant: the spec also says the MCP endpoint MUST support `GET` (returning either
+`text/event-stream` or **405 Method Not Allowed** when the server offers no SSE stream there);
+`GET /mcp` returns 404 (live-verified against a running stack, 2026-08-12). Tracked as a follow-up.
+
 Protocol version: `2025-11-25`. Capabilities: tools, resources,
 prompts. Curated tool-surface version (single-sourced from
 `McpContractVersions.TOOL_SURFACE_VERSION`, reported as

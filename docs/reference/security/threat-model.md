@@ -75,11 +75,13 @@ internet*; it does **not** by itself mean *isolated from other local software*.
 |---|---|---|
 | **Host-header allowlist** (`isAllowedHost` / `setupHostValidation`) | DNS rebinding. After rebinding the request is *same-origin* with the attacker domain, so CORS no longer applies — but the server still sees the attacker's domain in the `Host` header and returns **403**. Only loopback hosts (`127.0.0.1`/`localhost`/`::1`) are accepted. | The canonical DNS-rebinding defense; applies to **all** methods, incl. token-exempt GET reads. |
 | **CORS Origin allowlist** (`resolveAllowedOrigin`) | A normal cross-origin page from reading API responses. In prod, only the desktop origins (`tauri://localhost`, `http(s)://tauri.localhost`) are allowed. | Protects response-reading; insufficient alone vs. rebinding (hence the Host check). |
+| **MCP endpoint Origin check** (`isAllowedMcpOrigin` / `setupMcpOriginValidation`) | A request to `/mcp` carrying a non-loopback `Origin` — rejected with **403** and a JSON-RPC error body, on every method the endpoint serves. Absent `Origin` is allowed (native MCP hosts are not browsers); the value is parsed as a URI and its **host component** compared for equality, so lookalikes like `http://127.0.0.1.evil.com` do not pass. | The MCP Streamable-HTTP spec's own MUST ("Servers MUST validate the `Origin` header on all incoming connections to prevent DNS rebinding attacks"). Distinct from the CORS row: CORS only withholds a response-reading grant, whereas the spec requires an explicit rejection. |
 | **Session token on mutations** (`setupSessionTokenEnforcement`) | A foreign caller from performing `POST`/`PUT`/`DELETE` in prod. The token is generated **per Head boot** (`HeadlessApp.java:364`) and delivered to the UI via the Tauri bridge — a web origin cannot obtain it. A backend restart mints a **new** token, so a client still holding the previous one fails **closed** (401), never open. | Covers `POST`/`DELETE /mcp` tool calls (`LocalApiServer.java:561-562`) and `justsearch_ingest`. |
 | **Loopback bind** (Hard Invariant #2) | Remote network access entirely — the API binds `127.0.0.1`, never `0.0.0.0`. | Necessary baseline; not sufficient alone. |
 
 Together: mutations and the MCP retrieval backend (`POST /mcp`) are token-protected; token-exempt GET
-reads are protected by the Host-allowlist; remote access is barred by the loopback bind.
+reads are protected by the Host-allowlist; `/mcp` additionally enforces the MCP spec's Origin check
+on every method; remote access is barred by the loopback bind.
 
 **This token is deliberately independent of the trust lattice's per-action consent gate (tempdoc
 655) — a different axis, not a substitute.** The session token answers "is this caller allowed to
