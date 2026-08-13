@@ -198,6 +198,15 @@ jobs:
       - name: Registered Tauri plugins have a base config block
         run: node scripts/ci/check-tauri-plugin-config.mjs
 
+      # Round 16 (tempdoc 823/824 F4) hit a 400 from POST /api/ai/install/repair with nowhere to
+      # look: the whole /api/ai/install/* family had shipped since alpha without ever appearing in
+      # the API contract map. Nothing compared bound routes against documented ones.
+      - name: Test the install-API contract-doc gate
+        run: node scripts/ci/check-install-api-contract.test.mjs
+
+      - name: Install API routes are documented
+        run: node scripts/ci/check-install-api-contract.mjs
+
       - name: Verify frontend-stack claims
         run: node scripts/docs/check-frontend-stack-claims.mjs
 

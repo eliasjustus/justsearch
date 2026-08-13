@@ -275,4 +275,75 @@ final class InstallCompletenessTest {
     assertFalse(result.installedFully(), "an empty registry/plan must not read as a complete install");
     assertFalse(result.repairNeeded(), "…but nothing is missing either");
   }
+
+  // ── Required/optional axis (tempdoc 824 §3.3b) ────────────────────────────────────────────────
+
+  private static InstallPlan.PlannedDownload optionalFile(String packageId, String targetPath) {
+    return new InstallPlan.PlannedDownload(
+        packageId, "https://example/" + targetPath, targetPath, "sha", 100L, false, false, false);
+  }
+
+  /**
+   * Round 16's wedge, at file granularity: the ONLY thing missing is {@code splade/config.json},
+   * which carries {@code "required": false} because no required-file list names it and no resolver
+   * call site reads it. Before the axis this produced the same verdict as a missing 500 MB model.
+   */
+  @Test
+  @DisplayName("round-16: an optional-only gap is not a repair, and completeness survives it")
+  void optionalOnlyGap_isNotAGap() {
+    InstallContract contract =
+        contract(installed("splade", "model_fp16.onnx", "tokenizer.json", "vocab.txt", "idf.json"));
+    InstallPlan plan =
+        plan(List.of(optionalFile("splade", "splade/naver-splade-v3/config.json")), "embedding");
+
+    InstallCompleteness result = InstallCompleteness.compute(plan, contract);
+
+    assertFalse(result.repairNeeded(), "no required file is missing — nothing to repair");
+    assertTrue(result.installedFully(), "an optional metadata sidecar is not an incomplete install");
+    assertEquals(
+        List.of(new InstallCompleteness.OptionalGap("splade", "config.json")),
+        result.optionalGaps(),
+        "…and it is still REPORTED, just not as an alarm");
+    assertTrue(
+        result.pendingRegistryAdditions().isEmpty(),
+        "an optional gap must not be re-reported as 'new AI components are available'");
+  }
+
+  /** The axis must never soften a REQUIRED gap — every pre-824 verdict is bit-for-bit unchanged. */
+  @Test
+  @DisplayName("a required gap beside an optional one still repairs, and still reads incomplete")
+  void requiredGapBesideOptional_isStillAGap() {
+    InstallContract contract = contract(installed("splade", "model_fp16.onnx", "vocab.txt"));
+    InstallPlan plan =
+        plan(
+            List.of(
+                file("splade", "splade/naver-splade-v3/vocab.txt"),
+                optionalFile("splade", "splade/naver-splade-v3/config.json")),
+            "embedding");
+
+    InstallCompleteness result = InstallCompleteness.compute(plan, contract);
+
+    assertTrue(result.repairNeeded(), "the contracted required file IS missing");
+    assertFalse(result.installedFully());
+    assertEquals(
+        List.of(new InstallCompleteness.OptionalGap("splade", "config.json")),
+        result.optionalGaps(),
+        "the optional gap is reported alongside, not instead");
+  }
+
+  /**
+   * Fail-closed default: a plan whose downloads never declared the axis (every pre-824 construction
+   * path, and every registry entry without an explicit {@code "required"}) is REQUIRED.
+   */
+  @Test
+  @DisplayName("an unclassified file is required — the default fails closed")
+  void unclassifiedFileIsRequired() {
+    InstallPlan.PlannedDownload legacy =
+        new InstallPlan.PlannedDownload("ner", "https://example/c", "onnx/ner/config.json", "sha", 1L, false);
+
+    assertTrue(legacy.required(), "the compat constructor must not silently make a file optional");
+    InstallCompleteness result = InstallCompleteness.compute(plan(List.of(legacy), "embedding"), null);
+    assertTrue(result.repairNeeded());
+    assertTrue(result.optionalGaps().isEmpty());
+  }
 }
