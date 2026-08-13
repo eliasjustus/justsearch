@@ -872,6 +872,131 @@ above)*
   refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
   was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
 
+### F-046: every multi-leg retrieval path silently ignored the request's `query_syntax` — a `lucene` request retrieved a SIMPLE (escaped) parse on hybrid/BM25+SPLADE/3-way; fixed and coupled to the counts, SIMPLE-default retrieval unchanged (tempdoc 821 §P, 2026-08-13; the real defect behind 821 §N's facets inversion)
+
+- **Defect:** only the sparse-only shortcut honoured `query_syntax`
+  (`SearchExecutor.java:147`, `decision.runtimeSyntax()`). Every other retrieval path — `Bm25Only`,
+  `Bm25Splade`, `ThreeWay` via `TextQueryOps#searchText`, and `Bm25Dense`/hybrid via
+  `#searchTextWithFilter` — parsed with a hardcoded SIMPLE, so a `query_syntax: "lucene"` request
+  had its operators ESCAPED and retrieved a token-OR of its own syntax. Exact phrases and
+  AND/OR/NOT are advertised to agents in the MCP tool description, so the advertised capability was
+  inert on the default (hybrid) pipeline: the only requests that ever got Lucene parsing were
+  sparse-only ones. 821 §L.3 had measured the inversion of its own premise (the facet/count rebuild
+  sites were CONSISTENT with the legs, both SIMPLE) and shipped a coupling constant
+  (`MULTI_LEG_LEXICAL_SYNTAX`) plus a bidirectional test pinning "counts follow the leg"; this
+  finding is the leg half it deliberately deferred.
+- **Fix (821 §P):** the request's syntax is carried on `SearchDecision.MultiLegDecision.runtimeSyntax()`
+  (projected once, by `SearchInputs#runtimeSyntax`) and threaded into every lexical leg
+  (`TextQueryOps#searchText` / `#searchTextWithFilter`, `HybridSearchOps#searchHybrid*`). The
+  **same** decision component is read by the two count rebuilds in `SearchResponseBuilder` (facet
+  scan + `computeMatchCount`), so 821's coupling invariant survives in its per-request form ("same
+  value per request" instead of "same constant") and the constant itself was deleted — it had no
+  consumers left, and its javadoc claim ("these legs are SIMPLE-only") had become false.
+  A malformed LUCENE query now mirrors the sparse shortcut's `INVALID_ARGUMENT` signal instead of
+  answering 0 hits: the parse is probed once in `runMultiLeg`, gated on `LegSet#hasLexicalLeg`, so
+  legs inside fusion futures never throw and SIMPLE requests take no extra parse.
+  The chunk leg (`ChunkSearchOps#searchChunksText`) stays escape-based **by reachability, not
+  omission**: the planner skips chunk merge outright for LUCENE requests
+  (`SearchPlanner#planChunkMerge` → `SKIPPED_QUERY_SYNTAX`), and chunk merge is its only caller — a
+  parse branch there would be unreachable code pretending to be a feature (documented at the method).
+- **SIMPLE-neutrality (the load-bearing no-regression argument):** SIMPLE is the default on the wire
+  and the default of every syntax-less entry point, and for `syntax == SIMPLE` the leg takes the
+  untouched SIMPLE branch of `buildMultiFieldQuery` with the same enum value the deleted constant
+  held — the diff moves where that value comes from, not what it is. Pinned in
+  `TextSearchIntegrationTest#searchTextHonoursTheCallersQuerySyntax`: the SIMPLE-built `Query` still
+  carries the SIMPLE-only prefix expansion (`alpha*`) and still differs from the LUCENE-built one for
+  the same text (a divergence pin, which a tautological "both overloads agree" comparison would not
+  give). **Every number in this register is a SIMPLE-syntax number:** jseval's retriever sends no
+  `querySyntax` (`scripts/jseval/jseval/retriever.py`), so nothing measured here changes parse. The
+  only LUCENE sender in jseval is `metadata_eval.py`'s `*:*` facet probe, which sends no pipeline and
+  so rides whatever the Head's default preset resolves to — on any multi-leg resolution that probe
+  was matching the literal string `\*\:\*` before this fix (unverified for the sparse-only
+  resolution, where it always worked).
+- **NOT syntax-neutral, and outside every eval:** the Head re-issues a **LUCENE** request when LLM
+  query expansion fires, and expansion runs only for SIMPLE requests
+  (`KnowledgeSearchEngine.java:644-645`). So expansion-path retrieval genuinely CHANGES for every
+  expanded query: the `^0.3` variant boosts, previously escaped into literal text, now apply as
+  intended. That path needs the LLM, so the AI-off evals above do not cover it and no number here
+  measures it. The user's half of that merged query is now escaped
+  (`KnowledgeSearchEngine#escapeLuceneSyntax`), so a typed `-` or `:` stays literal instead of
+  silently becoming a NOT / field query once the legs honour syntax.
+- **Measured (gate):** `jseval run --dataset scifact --modes hybrid --pipeline --start-backend
+  --clean --json` on the fix worktree (`git_sha 66898d70`, full enrichment: embed/chunk/ner/splade
+  all `stage_complete` before querying; observed legs `cross_encoder+dense+hybrid+
+  query_classification`; 300/300 queries) → **nDCG@10 0.7543** (P@1 0.627, R@10 0.888, RR@10 0.716).
+  Run `scripts/jseval/tmp/eval-results/20260813T132736_scifact` (worktree, gitignored — the
+  `summary.json` values quoted here are the durable record; `comparable: true`,
+  `comparability_reasons: []`, `ann_proof_status: PASS`, `error_count: 0`).
+  `jseval relevance-gate --data-dir tmp --dataset beir/scifact` → **exit 0**, `ndcg10-no-regression:
+  ok` (baseline 0.7604, floor 0.7404). Δ vs the 775 §I baseline is **−0.0061**, inside the ratchet's
+  ±0.02 tolerance and within the documented single-run wobble band — **no cause established**. (An
+  earlier draft of this entry attributed it to a CPU cross-encoder after a `reranker_cpu_only`
+  startup capability warning; the run's own `summary.json` contradicts that — `models.reranker_gpu:
+  true`, `comparability_reasons: []` — so the attribution was withdrawn rather than kept as a
+  plausible-sounding cause.) **Interpretation, stated honestly:** the eval CONFIRMS the structural claim rather than
+  carrying it. For `syntax == SIMPLE` the leg passes the identical enum value the deleted constant
+  held into the identical `buildTextQuery`/`buildMultiFieldQuery` call, so the SIMPLE query object is
+  unchanged by construction (byte-asserted in the adapters-lucene test); a −0.006 delta on a rerun is
+  not attributable to this diff, and a delta that WAS attributable would have to appear on a path the
+  diff touches — none of which a SIMPLE request enters differently.
+- **Unmeasured, named:** LUCENE-syntax retrieval QUALITY. No LUCENE-syntax eval corpus or query set
+  exists (see Q-020) — this finding establishes that a LUCENE request now retrieves what it asked
+  for, NOT that asking in Lucene syntax retrieves better. Do not read it as a quality claim.
+- **Rode along (both halves of the same defect):** the Head's LLM query-expansion re-search sets
+  LUCENE syntax on a query that embedded the RAW user text (`KnowledgeSearchEngine.java:788-796`).
+  Honouring syntax on the legs makes that reachable in two ways, and both are fixed here:
+  **(a) misparse** — `covid -vaccine` would silently invert to an exclusion and `error:timeout`
+  would become a query against a non-existent field, `expansionApplied=true`, no degradation
+  signal; the user's half is now escaped in `mergeExpansion` via `#escapeLuceneSyntax`, with
+  `-term` / `field:value` / `c++ (crash)` regression tests. **(b) crash** — a malformed parse now
+  returns `INVALID_ARGUMENT`, and the block's documented contract ("falls back to base results on
+  timeout or error") caught only the checked exceptions, so it would have failed the whole search;
+  now caught and degraded to the base response with `expansionSkipReason=FAILED`.
+- **Evidence:** tempdoc 821 §P (investigation, threading design, merge-order notes);
+  `SearchDecision.MultiLegDecision.runtimeSyntax()` + `SearchPlanner` (set-site) +
+  `SearchExecutor` (leg dispatch) + `TextQueryOps#searchText`/`#searchTextWithFilter` +
+  `HybridSearchOps` (per-hit provenance pin) + `FacetCompute.FromFreshBm25` /
+  `SearchResponseBuilder` (count-site coupling) + `KnowledgeSearchEngine#mergeExpansion` /
+  `#escapeLuceneSyntax`. Tests: `TextSearchIntegrationTest` (syntax honoured, quoted phrase
+  phrase-matched not token-OR'd), `HybridSearchIntegrationTest#hybridEntryPointsForwardQuerySyntax
+  ToTheTextLeg`, `FacetQuerySyntaxCouplingTest` (bidirectional counts-follow-the-leg, malformed
+  fail-fast for every multi-leg shape incl. no-lexical-leg), `KnowledgeHttpApiAdapterExpansionTest`
+  (escape + `-term`/`field:value`/`c++ (crash)` + every metacharacter), and the four
+  `SSOT/schemas/search-decisions/multi-leg-*.v1.json` approval fixtures (`runtime_syntax` pinned).
+  Caller-visible contract recorded in `docs/reference/api-contract-map.md` (Knowledge Search API,
+  `querySyntax`).
+
+### F-045: the default rerank branch silently DROPPED candidates on a short cross-encoder sorted-indices list — fixed count-preserving; well-formed runs bit-identical (tempdoc 821 §L.3, 2026-08-12)
+
+- **Answer:** In `KnowledgeSearchEngine`, the default (judge-blend-off) rerank application emitted
+  exactly `sortedIndices.size()` window hits and re-appended only indices >= topK — a Worker response
+  with fewer sorted indices than topK silently shrank the result set (the exact hazard the
+  judge-blend branch's own comment defends against; the two branches are now unified). Fixed by
+  routing BOTH CE branches AND the LambdaMART reorder through one pure count-preserving helper
+  `applyRerankOrder` (order-covered prefix, omitted in-window fill in original pre-rerank order,
+  beyond-window tail unchanged); malformed (duplicate / out-of-range) indices no longer throw or
+  drop — previously an out-of-range index threw `IndexOutOfBoundsException` straight out of
+  `doSearch`.
+- **Baseline relevance:** for a well-formed full-window permutation (the normal Worker response, and
+  the judge-blend branch by construction) the output is element-identical to the old loop — pinned by
+  a legacy-equivalence test asserting against a verbatim copy of the pre-fix loop — so register
+  baselines cannot move except on runs that actually hit a short list (where the old code was
+  truncating the result set). A live same-session A/B was closed by the live measurement below.
+- **Live verification (2026-08-12):** measured on THIS branch (git `5977f043`) — beir/scifact,
+  hybrid, full enrichment, CE active in observed legs, `comparable: true`, `chunk_completeness:
+  chunk-free` (legitimate for the short-doc corpus): **nDCG@10 0.7543** (P@1 0.627, R@10 0.8876) vs
+  register baseline 0.7604 — `jseval relevance-gate` verdict **ok** (floor 0.7404); dead-on the 391
+  6-run median (0.754) and inside the documented single-run wobble band. Run
+  `scripts/jseval/tmp/eval-results/20260812T204136_scifact` (worktree, gitignored — summary values
+  quoted here are the durable record). Machine caveat: concurrent worker builds ran during
+  enrichment; the query phase was not contended.
+- **Trace caveat:** fill-pass-recovered candidates appear with `crossEncoderApplied=true` but no
+  CROSS_ENCODER HitStage (they were never judged) — a consumer must not read stage presence as
+  "every returned hit was scored."
+- **Evidence:** tempdoc 821 §L.3; `KnowledgeSearchEngine.applyRerankOrder` (:273-320) +
+  `KnowledgeSearchEngineRerankOrderTest` (8 cases incl. legacy equivalence + window clamp), commits
+  7e9b0a71 + 503f4129.
+
 ### F-044: paraphrase bridging is a steep step function of isolated pair cosine (knee ≈0.65) and the generator's own synonym pools straddle it; the lexical control bridges 0/180 pairs; the hero's `reactor` anchor does NOT fail at the descriptor level (tempdoc 796, 2026-07-29; the standing metric 788 §3.B.10 asked for)
 
 - **Answer:** a reusable offline suite (`scripts/jseval/experiments/paraphrase_bridge_suite.py`)
@@ -2446,6 +2571,27 @@ above)*
   suite scores three query forms (`question` / `descriptor` / `keyword`, all derived from the pair
   register) against the same cached document encodings, so the shape comparison is nearly free once
   the corpus is encoded, and encoding is block-checkpointed and resumable.
+
+### Q-020: What is LUCENE-syntax retrieval QUALITY? (opened by F-046, 2026-08-13)
+
+- **Question:** F-046 made `query_syntax: "lucene"` actually reach every retrieval leg (it was
+  silently downgraded to SIMPLE on all multi-leg paths). Every number in this register — every
+  baseline, every finding — was measured with the DEFAULT (SIMPLE) syntax, because jseval's
+  retriever sends no `querySyntax` (`scripts/jseval/jseval/retriever.py`; the only LUCENE sender is
+  `metadata_eval.py`'s `*:*` facet probe). So the retrieval quality of the LUCENE path is
+  **unmeasured**: we know it now parses what the caller asked for, not whether phrase/boolean
+  queries retrieve better or worse than the SIMPLE parse of the same intent.
+- **Why it matters:** the MCP tool description advertises exact phrases and AND/OR/NOT to agents,
+  so an agent's syntax choice is a live retrieval-quality decision with no evidence behind it. It is
+  also the one operator-facing lever that bypasses the prefix expansion and operator-escaping the
+  SIMPLE path applies, so it can plausibly beat SIMPLE on precision and lose on recall.
+- **Prior art / do not re-run:** F-046 (the plumbing + the SIMPLE-neutrality gate). No LUCENE-syntax
+  query set exists for any corpus in the Dataset Catalog — that missing artifact, not a missing run,
+  is what blocks this.
+- **Suggested approach:** derive a LUCENE-syntax variant of an existing qrelled query set (e.g.
+  scifact: quote the multi-word key phrase, require the rare term) and score it against the same
+  qrels as the SIMPLE original, so the comparison is syntax-only. Needs a jseval flag to send
+  `querySyntax` per query — it has none today.
 
 ---
 

@@ -345,6 +345,7 @@ Request fields:
 - `query` (required)
 - `return_full_documents` (bool, proto field 23) — when true, skips chunk search and returns full document content (366)
 - Filter fields: same as search (entity + metadata filters scoped via two-stage parent-doc pre-filter) (362)
+- `filters.collection` (string array, proto field 25) — scope retrieval to Lucene collection tag(s), same wire key and semantics as the search endpoint's `filters.collection`. Non-empty = a positive include of exactly those collections; absent/empty = the default scope (the `agent-history` MUST_NOT exclusion of 585 D4b), never "match nothing". Applied on the chunk branch by `QueryFilterBuilder#buildChunkFilterQuery`, so a collection-only request does **not** route through the doc-level parent pre-filter (821 §3-C2)
 
 Response includes:
 
@@ -439,7 +440,11 @@ Source: tempdoc 500, ADR-0015, tempdoc 366.
 `POST /api/knowledge/search` accepts a JSON body with required `query` and optional fields:
 
 - `limit`, `mode`, `sort`, `cursor`
-- `querySyntax` (or `query_syntax` alias)
+- `querySyntax` (or `query_syntax` alias) — since tempdoc 821 §P / register F-046, `lucene` is
+  honoured on **every** retrieval path (previously only the sparse-only one; multi-leg legs escaped
+  the operators and retrieved a SIMPLE parse), so a malformed `lucene` query now fails the request
+  with HTTP `400` / `INVALID_REQUEST` (Worker gRPC `INVALID_ARGUMENT`) instead of being silently
+  parsed as plain text.
 - `projection[]`
 - `filters` (`mime`, `mimeBase`, `fileKind`, `language`, `pathPrefix`, `includeChunks`, `modifiedAt`)
 - Entity filter fields: `entityPersons`, `entityOrganizations`, `entityLocations` (repeated string) (362)

@@ -14,6 +14,7 @@ import io.justsearch.app.api.DocumentService.ContextCitation;
 import io.justsearch.app.api.DocumentService.ContextResult;
 import io.justsearch.app.api.DocumentService.ContextSection;
 import io.justsearch.app.api.DocumentService.DocumentRecord;
+import io.justsearch.app.api.RetrieveContextParams;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -326,6 +327,48 @@ final class RAGContextTest {
     assertEquals(RAGContext.DEFAULT_TOP_K, docs.lastTopK);
   }
 
+  // --- tempdoc 821 §3-C2: the chat SPI carries the caller's collection scope to retrieval.
+  // The RAG path had no way to express a scope at all, so an ASK always ran under the default one.
+
+  @Test
+  @DisplayName("821 3-C2: a body collection scope reaches the scoped-retrieval params")
+  void collectionScopeReachesScopedRetrieval() {
+    var docs = new CapturingParamsDocs();
+    new RAGContext(docs)
+        .inject(stubCtx(Map.of(
+            "question", "what did the agent do?",
+            "docIds", List.of("d:/agent/session-1.md"),
+            "collection", List.of("agent-history"))));
+
+    assertNotNull(docs.lastParams, "retrieveContext(params) must be the path taken");
+    assertEquals(List.of("agent-history"), docs.lastParams.collection());
+  }
+
+  @Test
+  @DisplayName("821 3-C2: the scope also reaches the open-retrieval (empty docIds) path")
+  void collectionScopeReachesOpenRetrieval() {
+    var docs = new CapturingParamsDocs();
+    new RAGContext(docs)
+        .inject(stubCtx(Map.of(
+            "question", "what did the agent do?", "collection", List.of("agent-history"))));
+
+    assertNotNull(docs.lastParams);
+    assertEquals(List.of("agent-history"), docs.lastParams.collection());
+  }
+
+  @Test
+  @DisplayName("821 3-C2: an absent collection is an empty scope, i.e. unchanged behavior")
+  void absentCollectionIsEmptyScope() {
+    var docs = new CapturingParamsDocs();
+    new RAGContext(docs).inject(stubCtx(Map.of("question", "what?", "docIds", List.of("a"))));
+
+    assertNotNull(docs.lastParams);
+    assertEquals(
+        List.of(),
+        docs.lastParams.collection(),
+        "empty is the DEFAULT scope on the Worker side, never a match-nothing filter");
+  }
+
   private static ConversationContext stubCtx(Map<String, Object> body) {
     return new ConversationContext() {
       private final Map<String, Object> a = new HashMap<>();
@@ -420,6 +463,39 @@ final class RAGContextTest {
       retrieveCalls++;
       lastTopK = topK;
       return CompletableFuture.completedFuture(retrieveResult);
+    }
+  }
+
+  /**
+   * Tempdoc 821 §3-C2 — captures the rich {@link RetrieveContextParams} the injector builds.
+   * {@link TrackingDocs} cannot serve this: it implements only the positional overload, so the
+   * interface default drops every filter component before the assertion could see it.
+   */
+  private static final class CapturingParamsDocs implements DocumentService {
+    RetrieveContextParams lastParams;
+
+    @Override
+    public CompletionStage<DocumentRecord> fetch(String docId) {
+      return CompletableFuture.completedFuture(null);
+    }
+
+    @Override
+    public CompletionStage<Map<String, DocumentRecord>> fetchBatch(List<String> docIds) {
+      return CompletableFuture.completedFuture(Map.of());
+    }
+
+    @Override
+    public CompletionStage<ContextResult> retrieveContextWithMeta(
+        String question, Set<String> docIds, int topK, int maxContextTokens) {
+      return CompletableFuture.completedFuture(
+          new ContextResult("", 0, 0, 0, List.of(), "BM25", "", false, List.of()));
+    }
+
+    @Override
+    public CompletionStage<ContextResult> retrieveContext(RetrieveContextParams params) {
+      lastParams = params;
+      return CompletableFuture.completedFuture(
+          new ContextResult("text", 1, 1, 1, List.of(), "BM25", "ok", false, List.of()));
     }
   }
 
