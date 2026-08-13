@@ -14,6 +14,9 @@ Gates enforced by main() (all fail-closed unless noted):
   - round retrospective (D1): presence, substance, required topic coverage,
     AND a TBS time-accounting section (Session-Based Test Management, Bach &
     Bach, STQE 2000 -- adapted; tempdoc 750 Part B)
+  - round findings (823 §4): presence, substance, required topic coverage --
+    severity, observation with an evidence pointer, regression home; an
+    explicit no-findings declaration satisfies the topics for a clean round
   - evidence review (735-followup): a reader must examine every credit-
     eligible screenshot
   - mustWatch verdict record (808 I1a): every mode-included mustWatch id
@@ -246,6 +249,135 @@ def check_retrospective(evidence_dir: str | None) -> tuple[bool, str]:
     return True, (
         f"{RETROSPECTIVE_FILENAME} present ({len(stripped)} bytes, all required topics found, "
         "TBS time-accounting section present with all required groups)"
+    )
+
+
+# --------------------------------------------------------------------------
+# Round findings check (round 16, tempdoc 823 §4): the round's DEFECT report,
+# as its own artifact.
+#
+# Round 16 produced five findings -- one blocking -- and wrote no standalone
+# findings file: they were scattered across mustwatch-verdicts.v1.json,
+# retrospective.md and session-analysis.md, and reassembling them cost the
+# host-side reader a pass over three artifacts written for three other
+# purposes. Nothing checked for it, because until now the convention lived
+# only in prose ("Report findings by journey" in sandbox-CLAUDE.md's *Writing
+# results*).
+#
+# Modeled directly on check_retrospective above: presence, a deliberately dumb
+# byte floor, keyword topic groups, a clear PRESENT/BLOCKING report, AND-ed
+# into the same fail-closed exit in main(). It cannot judge whether the
+# findings are RIGHT -- only that the round wrote them down somewhere a reader
+# can find them.
+#
+# Escape valve (the same shape check_mustwatch_verdicts gives 'unobservable':
+# an honest answer is acceptable when it says so explicitly): a round that
+# genuinely found nothing satisfies the topic groups with an explicit
+# no-findings declaration. The byte floor still applies -- "no findings" as a
+# one-line file is a stub, and a clean round still has to say what it
+# exercised to reach that conclusion.
+# --------------------------------------------------------------------------
+
+FINDINGS_FILENAME = "findings.md"
+
+FINDINGS_MIN_BYTES = 400
+
+# An explicit no-findings declaration satisfies the topic groups below. Kept
+# separate (not folded in as extra alternatives) so the pass reason can SAY
+# which of the two shapes was accepted -- a clean round and a round with
+# findings should not read identically in the finalize report.
+FINDINGS_NO_FINDINGS_DECLARATIONS: tuple[str, ...] = (
+    "no findings",
+    "zero findings",
+    "no product findings",
+    "no defects",
+    "no blocking findings and no non-blocking findings",
+)
+
+# The declaration only counts as a ROUND-LEVEL one: it must OPEN a line
+# (markdown heading/bullet/emphasis decoration allowed), may carry a "this
+# round" qualifier, and must close its clause there. Matching the phrase
+# anywhere -- the original shape -- let a substantive report that merely says
+# "... no findings in the search journey, but the install journey ..." skip
+# the topic checks entirely (round-16 wave review, claim-4). Scoped statements
+# like that are a report ABOUT findings, so they stay topic-checked.
+FINDINGS_NO_FINDINGS_DECLARATION_RE = re.compile(
+    r"^[\s>#*_`~\-]*(?:"
+    + "|".join(re.escape(phrase) for phrase in FINDINGS_NO_FINDINGS_DECLARATIONS)
+    + r")(?:\s+(?:this|in this|for this)\s+round)?[\s*_`~]*(?:[.!;:]|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+FINDINGS_REQUIRED_TOPICS: list[tuple[str, tuple[str, ...]]] = [
+    (
+        "each finding's severity/classification",
+        ("severity", "blocking", "high", "medium", "low", "critical"),
+    ),
+    (
+        "what was observed (evidence pointer)",
+        ("evidence", "screenshot", ".png", "api-", "log", "traces", "repro"),
+    ),
+    (
+        "each finding's regression home / routing",
+        ("regression home", "routing", "route", "must-watch", "mustwatch", "gate", "test", "tempdoc"),
+    ),
+]
+
+
+def check_findings(evidence_dir: str | None) -> tuple[bool, str]:
+    """Check evidence/findings.md is present and substantial (823 §4).
+
+    Returns (ok, reason). Does not raise on I/O errors -- a missing/unreadable
+    file is reported as a normal failure reason, matching check_retrospective's
+    style.
+    """
+    if not evidence_dir:
+        return False, f"no --evidence-dir given; cannot check for evidence/{FINDINGS_FILENAME}"
+
+    path = os.path.join(evidence_dir, FINDINGS_FILENAME)
+    if not os.path.isfile(path):
+        return False, f"{FINDINGS_FILENAME} not found in evidence dir {evidence_dir!r}"
+
+    try:
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            content = fh.read()
+    except OSError as exc:
+        return False, f"{FINDINGS_FILENAME} could not be read: {exc}"
+
+    stripped = content.strip()
+    if len(stripped) < FINDINGS_MIN_BYTES:
+        return False, (
+            f"{FINDINGS_FILENAME} is only {len(stripped)} non-whitespace-trimmed byte(s) "
+            f"(minimum {FINDINGS_MIN_BYTES}) -- reads like an empty or placeholder stub, not a "
+            f"real findings report (a round that genuinely found nothing still has to say what "
+            f"it exercised to reach that conclusion)"
+        )
+
+    lowered = content.lower()
+    declared_clean = FINDINGS_NO_FINDINGS_DECLARATION_RE.search(content) is not None
+    if declared_clean:
+        return True, (
+            f"{FINDINGS_FILENAME} present ({len(stripped)} bytes) with an explicit no-findings "
+            "declaration -- accepted as a clean-round report"
+        )
+
+    missing_topics = [
+        label
+        for label, alternatives in FINDINGS_REQUIRED_TOPICS
+        if not any(alt in lowered for alt in alternatives)
+    ]
+    if missing_topics:
+        return False, (
+            f"{FINDINGS_FILENAME} is missing required coverage of: {'; '.join(missing_topics)} "
+            f"(no matching keyword found for the topic) -- each finding needs a severity, what "
+            f"was observed with an evidence pointer, and its regression home. If the round "
+            f"genuinely found nothing, declare it at the START of a line (e.g. 'No findings this "
+            f"round.') -- the phrase inside a scoped sentence does not count -- and describe what "
+            f"was exercised to reach that conclusion"
+        )
+
+    return True, (
+        f"{FINDINGS_FILENAME} present ({len(stripped)} bytes, all required topics found)"
     )
 
 
@@ -1416,6 +1548,25 @@ def main(argv: list[str] | None = None) -> int:
         )
         print("=" * 72)
 
+    findings_ok, findings_reason = check_findings(args.evidence_dir)
+    print("=" * 72)
+    print("Round findings check (823 §4 -- the defect report as its own artifact)")
+    print("=" * 72)
+    print(f"[{'PRESENT' if findings_ok else 'MISSING/TRIVIAL'}] evidence/{FINDINGS_FILENAME}")
+    print(f"    reason: {findings_reason}")
+    if not findings_ok:
+        print("=" * 72)
+        print(f"BLOCKING: evidence/{FINDINGS_FILENAME} is required and must be substantial.")
+        print(
+            "Round 16 wrote five findings -- one blocking -- and no findings file: they were "
+            "scattered across mustwatch-verdicts.v1.json, retrospective.md and "
+            "session-analysis.md. Write each finding with a severity, what was observed (with an "
+            "evidence pointer) and its regression home; a round that genuinely found nothing "
+            "says so explicitly. See scripts/sandbox/sandbox-CLAUDE.md 'Writing results' -> "
+            "'Findings'."
+        )
+        print("=" * 72)
+
     evidence_review_ok, evidence_review_reason = check_evidence_review(args.evidence_dir, screenshots)
     print("=" * 72)
     print("Evidence review check (735-followup -- a reader gate, filenames are claims not proof)")
@@ -1512,6 +1663,7 @@ def main(argv: list[str] | None = None) -> int:
         if (
             all_covered
             and retrospective_ok
+            and findings_ok
             and evidence_review_ok
             and mustwatch_ok
             and mutating_ok

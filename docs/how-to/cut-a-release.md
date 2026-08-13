@@ -67,6 +67,14 @@ A release **candidate** is qualified before its number is finalized:
    reported the item a clean pass and moved on. Name the class the criterion is really standing
    in for ("any shipped-UI control whose mutating call 401s", not "401 on search") so a round
    generalizes past the one instance that happened to be tested last time.
+   **Watch items are written for the success path — say what happens when the install
+   itself fails.** Round 16 (2026-08-12) specified healthy and broken enrichment signatures
+   in careful detail and had no branch for "Install AI does not complete"; when 5 of 7
+   packages failed, the round held precise expectations for strings that could not yet exist
+   and no guidance on whether to treat the failure as blocking, retry, or environmental, so it
+   had to decide the round's shape itself. That is the right call to leave to the round — the
+   charter should *say* so: add one line stating that if the install does not complete, the
+   round's shape is the round's call, and the failure itself is the finding to characterise.
    Round modes cover the supported **arrival states**, not only the empty
    machine: first and final qualifying rounds run `fresh-install`, and the qualifying set must
    include at least one `upgrade-from-release` round (previous public release installed first,
@@ -92,10 +100,14 @@ A release **candidate** is qualified before its number is finalized:
    `python scripts/sandbox/check_coverage.py --manifest <share>/coverage-manifest.json --traces
    <share>/evidence/traces.ndjson --evidence-dir <share>/evidence` — a non-zero exit means a
    required surface was not exercised.
-   **A qualifying round must also leave five process artifacts in the evidence dir**, each
+   **A qualifying round must also leave six process artifacts in the evidence dir**, each
    separately fail-closed by that same check: `retrospective.md` (the round-vs-charter debrief,
    with its time-accounting section), `evidence-review.v1.json` (a reader examined every
-   credit-eligible screenshot), and — added 2026-08-05, tempdoc 808 — `mustwatch-verdicts.v1.json`
+   credit-eligible screenshot), `findings.md` (added 2026-08-12, tempdoc 823 — the round's defect
+   report as its own artifact, each finding carrying a severity, an evidence pointer and a
+   regression home; round 16 filed five findings and left no findings file, scattering them
+   across three artifacts written for other purposes, and a round that genuinely found nothing
+   says so explicitly), and — added 2026-08-05, tempdoc 808 — `mustwatch-verdicts.v1.json`
    (a verdict for every must-watch id in the round's brief; `unobservable` needs a reason,
    `observed-fail` prints loudly but routes through findings rather than flipping the exit),
    `session-analysis.md` (what the harness/charter made hard, what was off-charter and why, what
