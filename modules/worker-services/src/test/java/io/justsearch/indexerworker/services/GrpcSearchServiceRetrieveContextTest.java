@@ -8,6 +8,7 @@ import io.justsearch.adapters.lucene.runtime.IndexSchema;
 import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
+import io.justsearch.indexing.rag.ContextBudgeter;
 import io.justsearch.ipc.ChunkRef;
 import io.justsearch.ipc.ContextFormat;
 import io.justsearch.ipc.RetrieveContextRequest;
@@ -676,14 +677,104 @@ class GrpcSearchServiceRetrieveContextTest {
   }
 
   @Nested
+  @DisplayName("Tempdoc 822 §3a: the numbering contract (section n <=> citations[n-1])")
+  class NumberingContract {
+
+    private void indexChunk(String parentDocId, int idx, String text) throws Exception {
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+          SchemaFields.DOC_ID, "chunk:" + parentDocId + "-" + idx,
+          SchemaFields.DOC_UID, "chunk:" + parentDocId + "-" + idx + "#0",
+          SchemaFields.PATH, parentDocId,
+          SchemaFields.PARENT_DOC_ID, parentDocId,
+          SchemaFields.IS_CHUNK, "true",
+          SchemaFields.CHUNK_INDEX, String.valueOf(idx),
+          SchemaFields.CHUNK_TOTAL, "9",
+          SchemaFields.CHUNK_CONTENT, text,
+          SchemaFields.CHUNK_START_CHAR, String.valueOf(idx * 100),
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(idx * 100 + text.length()))));
+    }
+
+    /**
+     * The invariant the printed {@code [n]} rests on: the header's 1-based number, the section's
+     * position, and the position of the citation the FE renders as {@code sources[n - 1]} are the
+     * SAME number. It holds by construction today — the budget loop appends to the used-hit list
+     * and to the section list in one iteration — which is exactly why a future reorder (a filter
+     * applied to one list, a sort of the other) could break it silently. This test makes that
+     * loud.
+     *
+     * <p>Note the per-document ordinal is deliberately NOT the ordinal in play: the fixtures index
+     * chunks 5/6/7 of their parents, so a header numbered from {@code chunkIndex} would print
+     * {@code [6]} where the contract requires {@code [1]}.
+     */
+    @Test
+    @DisplayName("header number n <=> sections[n-1] <=> chunks[n-1], and never the chunk's own ordinal")
+    void headerNumberMatchesSectionAndCitationPosition() throws Exception {
+      String docA = "d:/docs/alpha.txt";
+      String docB = "d:/docs/bravo.txt";
+      for (String parent : new String[] {docA, docB}) {
+        lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+            SchemaFields.DOC_ID, parent,
+            SchemaFields.DOC_UID, parent + "#0",
+            SchemaFields.PATH, parent,
+            SchemaFields.CONTENT, "Machine learning and neural networks, at length.",
+            SchemaFields.MIME, "text/plain")));
+      }
+      indexChunk(docA, 5, "Machine learning is a subset of artificial intelligence.");
+      indexChunk(docA, 6, "Machine learning models are trained on labelled examples.");
+      indexChunk(docB, 7, "Machine learning pipelines run on neural network accelerators.");
+
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+
+      var response = callRetrieveContext(RetrieveContextRequest.newBuilder()
+          .setQuestion("What is machine learning?")
+          .addDocIds(docA)
+          .addDocIds(docB)
+          .setTopK(5)
+          .build());
+
+      assertTrue(response.getUsedChunks(), "Should use chunks when they exist");
+      assertEquals(3, response.getSectionsCount(), "all three chunks fit the 200K budget");
+      assertEquals(
+          response.getSectionsCount(),
+          response.getChunksCount(),
+          "one citation per rendered section — the FE's sources array is this list");
+
+      String[] rendered = response.getContext().split(ContextBudgeter.SECTION_SEPARATOR);
+      assertEquals(response.getSectionsCount(), rendered.length, "one rendered block per section");
+
+      for (int i = 0; i < response.getSectionsCount(); i++) {
+        var section = response.getSections(i);
+        assertEquals(i, section.getSectionIndex(), "section " + i + " keeps its 0-based position");
+        assertEquals(i, section.getChunkIndex(), "section " + i + " points at citation " + i);
+        assertEquals(
+            ContextBudgeter.sectionHeader(i + 1, section.getSourceLabel()) + section.getContent(),
+            rendered[i],
+            "rendered block " + i + " must be section " + i + " under the 1-based header "
+                + (i + 1));
+        assertEquals(
+            section.getContent(),
+            response.getChunks(i).getExcerpt(),
+            "citation " + i + " must be the chunk section " + i + " rendered");
+      }
+
+      // The per-document ordinals are 5/6/7, so a header derived from them could not read [1..3].
+      assertTrue(
+          response.getChunksList().stream().noneMatch(c -> c.getChunkIndex() < 5),
+          "fixture must keep per-document ordinals distinct from positions: "
+              + response.getChunksList());
+    }
+  }
+
+  @Nested
   @DisplayName("Tempdoc 725 W2b: contextFormat is a genuine no-op end-to-end (LABELED always renders)")
   class ContextFormatIsIgnored {
 
     /**
      * Ground-truth regression for the W2b format wrong-gate fix: {@code RagContextOps} never
      * reads {@code request.getContextFormat()} (grep-verified: no call site in the module), and
-     * {@link io.justsearch.indexing.rag.ContextBudgeter} has only one rendering — {@code "[From:
-     * label]\n" + content} (LABELED) — with no XML/PLAIN branch at all. This test drives the REAL
+     * {@link io.justsearch.indexing.rag.ContextBudgeter} has only one rendering — {@code "[n]
+     * label\n" + content} (LABELED) — with no XML/PLAIN branch at all. This test drives the REAL
      * production path (this class's {@code GrpcSearchService}, backed by a real Lucene runtime,
      * exactly as {@link ChunkVsFallback#returnsChunkContextWhenChunksExist()} above) and proves
      * that requesting {@code CONTEXT_FORMAT_XML} on the wire still yields LABELED-shaped output —
@@ -691,7 +782,7 @@ class GrpcSearchServiceRetrieveContextTest {
      * (tempdoc 725 orphan #5) in the actual renderer, not just in a mocked call site.
      */
     @Test
-    @DisplayName("requesting CONTEXT_FORMAT_XML still renders LABELED \"[From: ...]\" sections")
+    @DisplayName("requesting CONTEXT_FORMAT_XML still renders LABELED \"[n] label\" sections")
     void xmlFormatRequestStillRendersLabeled() throws Exception {
       String parentDocId = "d:/docs/report.pdf";
 
@@ -730,7 +821,7 @@ class GrpcSearchServiceRetrieveContextTest {
 
       assertTrue(response.getUsedChunks(), "Should use chunks when they exist");
       assertTrue(
-          response.getContext().contains("[From: "),
+          response.getContext().startsWith("[1] "),
           "LABELED is the only format ContextBudgeter renders, regardless of what was requested: "
               + response.getContext());
       assertFalse(
