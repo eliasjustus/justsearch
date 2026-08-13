@@ -78,6 +78,7 @@ final class SearchTraceProjectorTest {
   void bm25OnlyLeg() {
     var decision =
         new SearchDecision.MultiLegDecision(
+            LuceneRuntimeTypes.QuerySyntax.SIMPLE,
             new LegSet.Bm25Only(10),
             Optional.empty(),
             Optional.empty(),
@@ -123,6 +124,7 @@ final class SearchTraceProjectorTest {
             7L, 0L, 0L, 0L, false, 9_000_000L);
     var decision =
         new SearchDecision.MultiLegDecision(
+            LuceneRuntimeTypes.QuerySyntax.SIMPLE,
             new LegSet.Bm25Only(10),
             Optional.empty(),
             Optional.empty(),

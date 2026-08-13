@@ -220,6 +220,12 @@ public final class LuceneRuntimeTypes {
    * population the facet values are tallied from). It is the true result-count "M" the headline binds
    * to — every per-value facet count is {@code <= matchedDocs} by construction, so the headline can
    * never read below a facet chip. Capped at the scan's {@code maxDocsScanned} (then {@code truncated}).
+   *
+   * <p>Tempdoc 821 §L.3 — two honesty contracts the producer
+   * ({@link FacetingEngine#computeFacets}) upholds: a requested field the schema cannot facet is
+   * ABSENT from {@code facets} (a present key with no counts means "faceted, matched nothing"), and
+   * {@code truncated} is {@code true} for a scan that was capped OR that failed partway (partial
+   * counts, flagged) — {@code false} means the scan genuinely completed.
    */
   public record FacetsResult(
       Map<String, Map<String, Long>> facets, boolean truncated, long matchedDocs) {}

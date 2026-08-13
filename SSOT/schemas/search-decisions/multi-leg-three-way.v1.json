@@ -4,6 +4,7 @@
   "effective_mode" : "HYBRID",
   "legs" : "three_way",
   "chunk_merge_kind" : "eligible_apply",
+  "runtime_syntax" : "SIMPLE",
   "legs_detail" : {
     "kind" : "three_way",
     "effective_mode_label" : "HYBRID",

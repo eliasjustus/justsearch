@@ -161,7 +161,12 @@ codeql-action@v4, rust-cache@v2 all at latest major. Three majors sitting unmerg
 `contributor-assistant/github-action` is at latest, but upstream's last release was 2024-09-26 — a
 lightly-maintained dependency on the CLA path.
 
-## 6. Python (jseval)
+## 6. Python (jseval) — **CLOSED 2026-07-29**
+
+> **Shipped independently of this lane.** PR #326 (`e78a0415`) landed
+> `scripts/jseval/requirements.lock.txt` pinning the base transitive closure, plus
+> `scripts/ci/check-jseval-lock.mjs` as a drift gate wired into CI — citing this section by number.
+> The finding below stands as the diagnosis; the remedy is done and is removed from §33's sequence.
 
 `scripts/jseval/pyproject.toml` declares `requires-python = ">=3.11"` and floor-only constraints
 with **no upper bounds and no lockfile**; CI pins 3.13, the local interpreter is 3.14.4. This is not
@@ -721,6 +726,79 @@ investigated further (out of scope per `log-pre-existing-issues`).
   introduction.
 - §25's firing condition has an existing guard to conform to.
 - Part I §2's root cause is re-ranked but not closed; it remains separable as #793.
+
+---
+
+# Part VI — Direction (settled 2026-07-28)
+
+Two decisions were open after Part V. Both are now taken, and they make the work **smaller** than
+Part II implied. This part supersedes §15's sequence.
+
+## 30. Decision 1 — detect-then-attribute, not measure-then-merge
+
+**Part II's implicit choice is reversed.** Part IV §21 named the alternative; Part V's evidence
+settles it, because the two halves of the original design moved in opposite directions:
+
+| Half | Part II assumed | Part V measured |
+|---|---|---|
+| *Record* what stack ran | new mechanism to build | **already shipped for one axis** (623 U7), flowing to a release artifact and the public benchmark |
+| *Gate* each bump by class | derivable from the build graph | **derivation yields one bit**, not four tiers — the retrieval/inference split must be hand-declared and hand-maintained |
+
+Investing in the cheap, half-built, universally-useful half and skipping the expensive,
+weakly-grounded half is the same conclusion from both directions. So:
+
+- **Build:** stack identity, and the identity-slice declaration it forces (§10).
+- **Do not build:** the reachability register and the per-bump evidence gate (§11's four-way tiering).
+- **Detection** comes from a standing evaluation on a cadence; **attribution** comes retrospectively
+  from `bisection.py` plus the stack axis, which is precisely what that axis makes possible.
+
+The one bit R6 *did* yield is kept, because it is free and it identifies the batch case: coordinates
+that appear only on test/build configurations cannot reach a measured number, and the existing suite
+is already their measurement.
+
+**What would falsify this.** If, once the axis exists, a metric shift is repeatedly traced to a bump
+that a pre-merge class check would plainly have caught, the gating half was worth building after all
+and §11 should be revived. Recorded so the reversal is testable rather than merely asserted.
+
+## 31. Decision 2 — currency posture: deliberate lag, except at the untrusted-input boundary
+
+Part I treats "behind" as a defect uniformly. Part IV §22/§23 challenged that, and the challenge is
+accepted.
+
+This application is local-first and loopback-only: for most of the dependency surface there is no
+attacker in the threat model, which is why the audit's raw counts overstate urgency. The genuine
+exception is the layer that consumes **bytes the user did not author** — document extraction and
+parsing, image codecs, the PDF path, and the OCR runtime. That is where lag is exposure rather than
+an untidy number.
+
+**Posture:** stay current at the untrusted-input boundary; lag deliberately elsewhere, updating on
+value (a fix we want, a migration that gets more expensive with time) rather than on staleness.
+
+This re-sorts Part I's backlog by something real, and it retires the implicit obligation to drive 32
+counters to zero.
+
+## 32. What leaves this tempdoc
+
+- **llama.cpp (§4).** Under §31 this is not hygiene debt. Upstream moves quickly on inference
+  throughput and quality, so the bump is a *product improvement* that should be prioritised against
+  other product work, not ranked by staleness inside a dependency audit. It leaves 792 and belongs
+  wherever inference quality is owned.
+- **The routine backlog sweep.** Ordinary PRs. It does not need a tempdoc.
+
+## 33. Lanes chartered from here
+
+Following the pattern 788 established days earlier (theorization → separately-numbered chartered
+lanes), 792 stops here as the **audit and design of record** and fissions:
+
+| Lane | Scope | Why separate |
+|---|---|---|
+| **#793** | Discriminate why Dependabot never bumps a Java library | Small, self-contained, and it gates the value of everything else — until libraries move there is nothing to measure |
+| **#794** | Stack identity + identity slices + the migration hazards (R4/R5) | The substrate work, and the only part carrying real correctness risk |
+
+**Ordering.** #793 first — it is cheap and unblocking. Then the test/build-only batch (free, proves
+the flow end-to-end). Then #794. **ONNX Runtime, Lucene and llama.cpp are held back deliberately**:
+they are the validation set for whether the axis works, and bumping them before it exists spends the
+only three signals we are confident are non-null.
 
 ---
 
