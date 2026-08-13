@@ -63,7 +63,26 @@ import java.util.stream.Stream;
 public final class IsolatedBackendFixture {
 
   private static final long PORT_FILE_TIMEOUT_MS = 60_000L;
-  private static final long HEALTH_TIMEOUT_MS = 30_000L;
+  // Tempdoc 821 P4 set this to 90s against a measured port-file->health delta of
+  // min 2.45s / p50 2.74s / max 7.02s (48 samples, windows-latest, 2026-08-13). Later the
+  // same day 90s proved marginal anyway: three integration-lane failures raised THIS
+  // budget's own error ("/api/health did not return 200 within 90000ms") rather than the
+  // JUnit cap, so the excursion is real and larger than 90s —
+  //   - run 31730197618 (PR #429): OperationPreviewE2ETest exhausted all 3 attempts,
+  //     ~100s apart; a full rerun of the same lane was green.
+  //   - run 31732439890 (PR #430): IngestStarvationE2ETest failed once and passed on the
+  //     in-run retry ~40s later.
+  //   - run 31732439890 (rerun): IndexingLedgerCoherenceTest failed once and passed on the
+  //     in-run retry ~50s later.
+  // The retry passes prove the backend does boot on those runners, so the first attempt was
+  // losing a race against a contended 4-vCPU host, not hitting a dead backend. How far past
+  // 90s the excursion actually goes is still unmeasured — the fixture is killed at the
+  // budget, so the tail is censored. 240s is therefore a headroom choice, not a measured
+  // one; the preserved boot logs this change ships to CI artifacts are what will replace it
+  // with a measured value. A genuinely dead backend still fails fast via the
+  // process.isAlive() check below, and the enclosing budgets
+  // (modules/system-tests/build.gradle.kts) are sized to keep this one binding.
+  private static final long HEALTH_TIMEOUT_MS = 240_000L;
   private static final long WORKER_READY_TIMEOUT_MS = 90_000L;
   private static final long POLL_INTERVAL_MS = 200L;
   private static final long STOP_GRACE_MS = 5_000L;
@@ -74,11 +93,14 @@ public final class IsolatedBackendFixture {
   private final HttpClient httpClient =
       HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(5)).build();
 
+  private final String ownerLabel = resolveOwnerLabel();
+
   private Path dataDir;
   private Path runtimeDir;
   private Path backendLog;
   private Process process;
   private int port = -1;
+  private boolean logsPreserved;
 
   /** Spawns the backend and blocks until {@code /api/health} returns 200. */
   public void start() throws IOException, InterruptedException {
@@ -171,7 +193,7 @@ public final class IsolatedBackendFixture {
         Thread.currentThread().interrupt();
       }
     }
-    if (Boolean.getBoolean("isolatedBackend.preserveLogs")) {
+    if (!logsPreserved && Boolean.getBoolean("isolatedBackend.preserveLogs")) {
       preserveLogOnFailure();
     }
     deleteDataDirWithRetry();
@@ -394,26 +416,78 @@ public final class IsolatedBackendFixture {
   }
 
   private void preserveLogOnFailure() {
-    Path tmp = Path.of(System.getProperty("java.io.tmpdir"));
-    copyIfPresent(backendLog, tmp.resolve("isolated-backend-failure.log"));
+    logsPreserved = true;
+    Path dest = resolveFailureLogDir();
+    copyIfPresent(backendLog, dest.resolve("backend.log"));
     if (dataDir != null) {
-      copyIfPresent(
-          dataDir.resolve("logs").resolve("app.log"),
-          tmp.resolve("isolated-backend-app.log"));
-      copyIfPresent(
-          dataDir.resolve("logs").resolve("worker.log"),
-          tmp.resolve("isolated-backend-worker.log"));
+      copyIfPresent(dataDir.resolve("logs").resolve("app.log"), dest.resolve("app.log"));
+      copyIfPresent(dataDir.resolve("logs").resolve("worker.log"), dest.resolve("worker.log"));
       Path crashesDir = dataDir.resolve("crashes");
       if (Files.exists(crashesDir)) {
         try (Stream<Path> walk = Files.walk(crashesDir)) {
           walk.filter(Files::isRegularFile)
-              .forEach(
-                  p -> copyIfPresent(p, tmp.resolve("isolated-backend-" + p.getFileName())));
+              .forEach(p -> copyIfPresent(p, dest.resolve("crash-" + p.getFileName())));
         } catch (IOException io) {
           System.err.println(
               "[IsolatedBackendFixture] failed to walk crashes dir: " + io);
         }
       }
+    }
+  }
+
+  /**
+   * Resolves the directory failure logs are copied into.
+   *
+   * <p>Prefers the workspace-relative directory the Gradle task hands down via
+   * {@code isolatedBackend.failureLogDir}, because that is the only location a hosted CI
+   * runner can upload as a build artifact — logs written under {@code java.io.tmpdir} die
+   * with the runner, which is why the 2026-08-13 boot flakes (runs 31730197618 and
+   * 31732439890) could not be diagnosed remotely. Falls back to the tempdir when the
+   * property is absent, so the fixture still behaves for ad-hoc local runs.
+   *
+   * <p>Each failure gets its own timestamped, class-labelled subdirectory: a stalled
+   * {@code @BeforeAll} is retried twice more in CI, and a flat destination would leave only
+   * the last attempt's logs behind — exactly the evidence loss that made the 3/3 stall in
+   * run 31730197618 unreadable.
+   */
+  private Path resolveFailureLogDir() {
+    String configured = System.getProperty("isolatedBackend.failureLogDir");
+    Path base =
+        configured == null || configured.isBlank()
+            ? Path.of(System.getProperty("java.io.tmpdir"))
+            : Path.of(configured);
+    String stamp =
+        java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss.SSS")
+            .withZone(java.time.ZoneOffset.UTC)
+            .format(java.time.Instant.now());
+    Path dir = base.resolve(stamp + "-" + ownerLabel);
+    try {
+      return Files.createDirectories(dir);
+    } catch (IOException io) {
+      System.err.println("[IsolatedBackendFixture] failed to create " + dir + ": " + io);
+      return base;
+    }
+  }
+
+  /**
+   * Best-effort simple name of the class that constructed this fixture, used to label the
+   * preserved-log directory so an artifact bundle says which E2E class stalled without
+   * having to correlate timestamps against the JUnit XML.
+   */
+  private static String resolveOwnerLabel() {
+    try {
+      return StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE)
+          .walk(
+              frames ->
+                  frames
+                      .map(StackWalker.StackFrame::getDeclaringClass)
+                      .filter(c -> c != IsolatedBackendFixture.class)
+                      .findFirst()
+                      .map(Class::getSimpleName)
+                      .filter(name -> !name.isBlank())
+                      .orElse("unknown"));
+    } catch (RuntimeException re) {
+      return "unknown";
     }
   }
 

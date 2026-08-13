@@ -272,6 +272,11 @@ final class SearchRpcOps {
         if (!params.fileKind().isEmpty()) {
             builder.addAllFileKind(params.fileKind());
         }
+        // Tempdoc 821 §3-C2 — the collection scope. Only set when non-empty: an empty repeated field
+        // on the wire IS the default scope, so the absent case stays byte-identical to pre-821.
+        if (!params.collection().isEmpty()) {
+            builder.addAllCollection(params.collection());
+        }
 
         // Metadata filters
         if (!params.metaSource().isEmpty()) {

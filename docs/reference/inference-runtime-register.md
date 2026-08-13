@@ -27,10 +27,12 @@ update it before closing.
   `NativeSessionHandle` or `SessionHandle` are one trigger point for this
   opt-in verification.
 
-**Replaces:** Relevant items from `docs/reference/issues/gpu-detection.md`
-(GPU-) and inference-related items from `retrieval-quality.md` (RAG-001,
-RAG-009). Remaining open items from those files should be triaged into
-this register's sections or retired to `decisions.md`.
+**Replaces:** the GPU- and inference-related items of the former
+`docs/reference/issues/` registers (`gpu-detection.md`, `retrieval-quality.md`
+RAG-001/RAG-009). That whole register set was retired in tempdoc 821 §7 D5
+(2026-08-12); its still-live entries were routed into `docs/observations.md`,
+and anything belonging to this domain should be promoted from there into the
+sections below rather than re-created as a standalone issue file.
 
 ---
 

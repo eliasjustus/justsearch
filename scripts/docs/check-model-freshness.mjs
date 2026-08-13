@@ -18,7 +18,6 @@
  * Trees scanned (canonical corpus + public surface), mirroring the frontend gate:
  *   docs/explanation/  docs/reference/  docs/how-to/  docs/business/  + root README.md
  * Excluded:
- *   - docs/reference/issues/             (historical bug/decision logs)
  *   - docs/reference/model-inventory.md  (the model-tracking ledger — it legitimately
  *     names old<->new artifacts in its reconciliation tables; it is self-policing)
  *
@@ -97,8 +96,7 @@ function main() {
   const extraFiles = [path.join(repoRoot, "README.md")];
   const files = [...dirs.flatMap((d) => walk(d)), ...extraFiles.filter((f) => fs.existsSync(f))]
     .filter((p) => p.toLowerCase().endsWith(".md"))
-    // Historical logs + the model-tracking ledger legitimately name retired artifacts.
-    .filter((p) => !normalizeRel(p).includes("/reference/issues/"))
+    // The model-tracking ledger legitimately names retired artifacts.
     .filter((p) => !normalizeRel(p).endsWith("/reference/model-inventory.md"));
 
   const errors = [];

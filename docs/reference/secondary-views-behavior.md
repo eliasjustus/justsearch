@@ -555,4 +555,4 @@ All views use a consistent card pattern: `rounded-2xl bg-[var(--glass-surface)] 
 ## Related
 
 - [`search-ui-behavior.md`](search-ui-behavior.md) — Search UI behavioral reference (Zones A, C, D, E)
-- [`issues/search-accessibility.md`](issues/search-accessibility.md) — Accessibility issue tracker
+- [`../observations.md`](../observations.md) — where accessibility findings are tracked now (the `issues/search-accessibility.md` register was retired, tempdoc 821 §7 D5)

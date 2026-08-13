@@ -249,7 +249,7 @@ The content extraction pipeline is hardened against real-world file system edge 
 *   **MMapDirectory unmap safety:** Worker JVM flags include `--add-opens=java.base/java.nio=ALL-UNNAMED` so Lucene's `MMapDirectory` can unmap byte buffers deterministically. Without this, index files remain locked until GC collects the buffers, causing "pending deleted files" errors on Windows.
 *   **Encoding resilience:** Tika 3.x correctly auto-detects and decodes UTF-8 (with/without BOM), UTF-16 LE/BE, Windows-1252, ISO-8859-1, and Shift-JIS. Verified by 8 encoding tests in `ContentExtractorTest`. Correctly-decoded non-ASCII text passes `TextQualityAnalyzer` without false positives.
 
-For deprioritized extraction gaps (exclude patterns during walk, junction deduplication, unindexable file feedback), see `docs/reference/issues/backend-tech-debt.md`.
+Three extraction gaps are known and deliberately deprioritized: user-configured exclude patterns are applied post-indexing rather than during the walk, Windows junction points can produce duplicate documents under different paths, and a file that cannot be extracted is indexed with placeholder content with no user-visible signal. They are tracked as conditions in `docs/observations.md` (routed there when the `docs/reference/issues/` registers were retired, tempdoc 821 §7 D5).
 
 ## Embedding Strategy
 
