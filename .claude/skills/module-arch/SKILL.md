@@ -246,7 +246,7 @@ Located in `build-logic/`:
 - **Verification:** `gradle/verification-metadata.xml` (SHA256 checksums)
 - **Convergence:** root `build.gradle.kts` resolution strategies force version alignment
 
-**Dependency locking scope:** The `conventions.locking` plugin activates Gradle dependency locking on production and test classpath configurations only. Tool-only configurations (SpotBugs, PMD, JaCoCo, Revapi, Error Prone, protobuf locators) are excluded via exact-match set. Auxiliary PMD classpath configs (`mainPmdAuxClasspath`, etc.) mirror the app classpath and remain locked.
+**Dependency locking scope:** The `conventions.locking` plugin activates Gradle dependency locking on production and test classpath configurations only. Tool-only configurations (SpotBugs, PMD, JaCoCo, Error Prone, protobuf locators) are excluded via exact-match set. Auxiliary PMD classpath configs (`mainPmdAuxClasspath`, etc.) mirror the app classpath and remain locked.
 
 **Resolution strategies:** The root `allprojects` block forces version convergence to eliminate lockfile skew. Coordinated-release groups (`org.slf4j`, `org.ow2.asm`, `org.apache.logging.log4j`) use group-level forces. Independent libraries (commons-io, commons-codec, etc.) use per-artifact forces.
 

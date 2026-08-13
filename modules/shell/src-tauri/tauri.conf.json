@@ -13,6 +13,7 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "Elias Justus",
     "copyright": "JustSearch 0.2.0 - Copyright (c) JustSearch",
     "targets": [
       "nsis"

@@ -850,6 +850,38 @@ Other debug endpoints: `/api/debug/commit-metadata`, `/api/debug/effective-confi
 
 `GET /api/ai/runtime/status` returns ONNX feature status including a `modelActive: boolean` field per feature entry, derived from the actual ORT session state (not file discovery). This is the canonical source of truth for "is this model loaded and running". Both reranker (via `OrtCudaStatus`) and citation-scorer (via `CitationScorer.isAvailable()`) report runtime session state through this field. See [ADR-0023](../decisions/0023-api-responses-declare-runtime-context.md) for the general principle: endpoints whose behavior varies by runtime mode must declare that mode in the response.
 
+### AI install (`/api/ai/install/*`)
+
+**Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/routes/AiRoutes.java` (routes),
+`modules/ui/src/main/java/io/justsearch/ui/api/AiInstallController.java` (handlers),
+`modules/ui/src/test/java/io/justsearch/ui/api/AiInstallApiContractTest.java` (error-body contract).
+
+| Route | Method | Request | Success | Errors |
+|---|---|---|---|---|
+| `/api/ai/install/manifest` | GET | – | `ModelRegistry` | 500 `MANIFEST_UNAVAILABLE` |
+| `/api/ai/install/plan-preview` | GET | – | `InstallPlanPreview` | 500 `MANIFEST_UNAVAILABLE` |
+| `/api/ai/install/status` | GET | – | `AiInstallStatus` | – |
+| `/api/ai/install/start` | POST | `{"acceptTerms": true}` | `AiInstallStatus` | 400 `TERMS_REQUIRED`, 403 `DOWNLOADS_DISABLED`, 409 `INSTALL_ALREADY_RUNNING`, 500 `INSTALL_START_FAILED` |
+| `/api/ai/install/cancel` | POST | – | `AiInstallStatus` | 500 `INSTALL_CANCEL_FAILED` |
+| `/api/ai/install/repair` | POST | `{"acceptTerms": true}` | `AiInstallStatus` | same set as `start`, plus 500 `INSTALL_REPAIR_FAILED` |
+
+Every error body on this family is the project's standard envelope —
+`{"error": string, "errorCode": string, "errorClass": string, "retryable": boolean, "requestId"?: string}`
+(`ApiErrorHandler.toResponse`). A `400` here is **not** body-less: `AiInstallApiContractTest`
+asserts the raw bytes of a `POST … {}` carry `errorCode: "TERMS_REQUIRED"`.
+
+**`repair` IS `start`.** `AiInstallService.repair` delegates straight to `startInstall`: it re-plans
+against disk and downloads only what is missing, and it therefore requires `acceptTerms` exactly
+like a first install. Calling it with an empty body is the 400 above, not a server fault.
+
+`AiInstallStatus` carries two truth claims that answer different questions and must not be
+collapsed: `installedFully` (no **required** file is missing) and `repairNeeded` (a **required**
+file is missing). `optionalGaps: [{packageId, fileName}]` reports registry files marked
+`"required": false` that are absent — surfaced, never a reason to offer Repair. Per package,
+`functionalStatus` (`active` | `inactive` | `unknown`) projects what `GET /api/ai/runtime/status`
+observes, and `terminalReason: "TRANSPORT_UNAVAILABLE"` with `attempts`/`url`/`targetPath` says that
+automatic repair has stopped working and names the manual fallback.
+
 ### Install plan preview (tempdoc 657)
 
 `GET /api/ai/install/plan-preview` returns a **side-effect-free** projection of the download plan grouped by capability tier, for the current hardware and install intent — the honest first-run weight breakdown shown before the user commits (realizes tempdoc 381 §F). Shape: `{ intent, downloadProfile, totalDownloadBytes, tiers: [{ tier, label, includedByIntent, totalBytes, downloadBytes }] }`. Computing it runs no downloads (reuses the pure `InstallPlanner`). The install/runtime **mode** itself is reported on the runtime manifest (`GET /api/runtime/manifest#mode`, with `intent` + coarse `realized`) per the tempdoc 501 closure rule.

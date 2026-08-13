@@ -67,6 +67,10 @@ public record InstallPlan(
    *     large for the NSIS installer, so they ship as a downloaded + extracted archive instead.
    *     The archive is kept on disk so the planner's {@code isAlreadyInstalled} check skips
    *     re-download on subsequent installs.
+   * @param required whether the package's capability needs this file (tempdoc 824 §3.3a). Carried
+   *     through from {@code SupportingFile.required}; a model variant is always required. This is
+   *     the axis {@code InstallCompleteness} reads to keep an optional metadata gap out of the
+   *     "a required component is missing" verdict. Defaults to true everywhere it is unstated.
    */
   public record PlannedDownload(
       String packageId,
@@ -75,9 +79,10 @@ public record InstallPlan(
       String sha256,
       long sizeBytes,
       boolean isModelVariant,
-      boolean extract) {
+      boolean extract,
+      boolean required) {
 
-    /** Backwards-compat constructor — non-extracted file (existing behavior). */
+    /** Backwards-compat constructor — non-extracted, required file (existing behavior). */
     public PlannedDownload(
         String packageId,
         String url,
@@ -85,7 +90,19 @@ public record InstallPlan(
         String sha256,
         long sizeBytes,
         boolean isModelVariant) {
-      this(packageId, url, targetPath, sha256, sizeBytes, isModelVariant, false);
+      this(packageId, url, targetPath, sha256, sizeBytes, isModelVariant, false, true);
+    }
+
+    /** Backwards-compat constructor — required file with an explicit extract flag. */
+    public PlannedDownload(
+        String packageId,
+        String url,
+        String targetPath,
+        String sha256,
+        long sizeBytes,
+        boolean isModelVariant,
+        boolean extract) {
+      this(packageId, url, targetPath, sha256, sizeBytes, isModelVariant, extract, true);
     }
   }
 
