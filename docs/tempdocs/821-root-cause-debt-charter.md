@@ -472,9 +472,15 @@ Residuals and pending closure items:
    `worktree-agent-aca6d2da1713b04c6` commit ea66fc83; store depth 498 → 406,
    whole-block deletions only), 18 KEEP with named live occurrences + 1 UNCLEAR
    retained. The per-occurrence protocol caught 19 conditions the census would have
-   wrongly deleted (17% of candidates). Remaining store work: the non-defect routing
-   proposals (53 register / 30 retire / 35 park) were LIGHT-triaged only — the 30
-   retire proposals need the same per-occurrence rigor before deletion; not started.
+   wrongly deleted (17% of candidates). **Non-defect stratum EXECUTED (2026-08-13,
+   commit 46b369a7):** the 30 retire proposals were put through the same
+   per-occurrence rigor — 26 deleted, 4 kept with live occurrences. Branch total
+   118 deletions (92 + 26), 23 kept. Published after reconciliation against main's
+   intervening folds (see §N): 114 of the 118 applied, 4 revived because main's fold
+   added occurrence lines postdating the verification (`searchstate`, `tokens`,
+   `token-names-generated`, `component-vocabulary-generated`); final depth 401.
+   Remaining store work: the 53 register / 35 park routing proposals stay
+   LIGHT-triaged only.
 7. **Merge-order note**: the two FE branches and local main each carry a
    same-named observation shard (`docs/observations.d/776e10cd-….md`) with
    different bodies — whichever merges later hits add/add; resolve by
@@ -489,7 +495,7 @@ implementer), re-fixed on review verdicts. All branches green, UNPUSHED, no PRs.
 
 | lane | branch / location | state |
 |---|---|---|
-| Store cleanup (defect stratum) | `agent-aca6d2da1713b04c6` (ea66fc83) | §6 row above — 92 per-occurrence-verified deletions, depth 498→406. |
+| Store cleanup (both strata) | `agent-aca6d2da1713b04c6` (ea66fc83, 46b369a7) | §6 row above — 118 per-occurrence-verified deletions (92 defect + 26 non-defect), 23 kept. Reconciled against main's folds at publication: 114 applied, 4 revived by new occurrence lines, final depth 401. |
 | D5 register retirement | `agent-aa70c939fd4d37e5b` (e576e570) | §7-D5 row above — 21+1 routed, 24 dead, 14-reference sweep. |
 | Count-drop live A/B | in-branch (05e052b5) | CLOSED: scifact hybrid **0.7543** on the fix branch, `relevance-gate` verdict ok (floor 0.7404), F-045 amended with the measurement. §M residual 2 done. |
 | Needs-live lane (D3) | shard notes (this session) | EXECUTED for the backend subset: `drift-9` resolved with mechanism (retrieval composite degraded by `lambdamart.not_configured` while the embedding dim reads READY off encoder-loaded semantics during a live REBUILD_IN_PROGRESS hybridFallback — a C1 double-defect, unfixed, now precisely charted); `general-28` CONFIRMED WORST-CASE live (fingerprint never persists; two consecutive restarts each reset the full re-embed, coverage 9%→0.2% — **raises merge priority of worktree 819-fingerprint-boot-race**); `localapiserver` CONFIRMED (POST /mcp accepts foreign Origin, GET 404); `missing-2` partially moot (CE cold 426ms no deadline miss; status key set restart-stable, `crossEncoderAvailable` field gone). FE-rendering + tooling one-off conditions stay parked (frontend excluded / not demo-relevant). |
