@@ -2,6 +2,7 @@
 package io.justsearch.indexerworker.loop;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -105,9 +106,17 @@ final class JobBatchExtractorForcedPathTest {
     return new Harness(extractor, documentFieldOps, contentExtractor, journal, batchStats);
   }
 
-  /** The key {@code WorkerScanOps} writes for an admitted path. */
+  /** The key every marker writes for an admitted path — production's own derivation. */
   private static String forcedKey(Path file) {
-    return PathNormalizer.normalizePath(file.toAbsolutePath().normalize().toString());
+    return PathNormalizer.normalizeKey(file);
+  }
+
+  /**
+   * The derivation {@code GrpcIngestService#submitBatch} used before tempdoc 821 §P/P3: absolutize
+   * but never {@link Path#normalize()}. Kept here ONLY as the negative control below.
+   */
+  private static String preP3Key(Path file) {
+    return PathNormalizer.normalizePath(file.toAbsolutePath().toString());
   }
 
   @Test
@@ -144,5 +153,67 @@ final class JobBatchExtractorForcedPathTest {
     verify(h.contentExtractor(), never()).extractArtifact(any());
     verify(h.journal()).recordOutcomeSafely(eq(file), eq("UNCHANGED"), any());
     verify(h.batchStats()).recordSkipped();
+  }
+
+  /**
+   * A path shape that the two derivations disagree about: the same file reached through one
+   * redundant {@code ..} hop. {@code PathNormalizer.normalizePath} never resolves that segment, so
+   * the pre-P3 key is one segment off the envelope's — marked, never looked up.
+   */
+  private Path viaRedundantParentHop(Path dir, String fileName) {
+    return dir.resolve("..").resolve(dir.getFileName()).resolve(fileName);
+  }
+
+  @Test
+  @DisplayName("forced: the mark still lands when the marker's path is not lexically normalized")
+  void forcedKeySurvivesANonNormalizedPathShape() throws Exception {
+    Path dir = Files.createDirectories(tempDir.resolve("sub"));
+    Files.writeString(dir.resolve("doc.txt"), "unchanged content");
+    Path submitted = viaRedundantParentHop(dir, "doc.txt");
+
+    // Precision: the shape is genuinely discriminating, so the arms below cannot both pass because
+    // the two derivations happen to agree on this input.
+    assertNotEquals(
+        preP3Key(submitted),
+        forcedKey(submitted),
+        "this shape must separate the two derivations, or it proves nothing");
+    assertEquals(
+        FileFreshnessSnapshot.capture(submitted).normalizedPath(),
+        forcedKey(submitted),
+        "the shared derivation must reproduce the envelope's key byte-for-byte");
+
+    Set<String> forcedPaths = ConcurrentHashMap.newKeySet();
+    forcedPaths.add(forcedKey(submitted));
+    Harness h = newHarness(forcedPaths);
+
+    h.extractor().extractAll(List.of(new JobQueue.IndexJob(submitted, null)));
+
+    verify(h.contentExtractor()).extractArtifact(submitted);
+    verify(h.journal(), never()).recordOutcomeSafely(any(), eq("UNCHANGED"), any());
+    verify(h.documentFieldOps(), never()).isUnmodified(anyString(), anyLong());
+    assertTrue(forcedPaths.isEmpty(), "the envelope's lookup consumed the mark");
+  }
+
+  @Test
+  @DisplayName("the pre-P3 key for that same shape is inert: marked, never looked up")
+  void preP3KeyForTheSameShapeSilentlyFailsToForce() throws Exception {
+    Path dir = Files.createDirectories(tempDir.resolve("sub"));
+    Files.writeString(dir.resolve("doc.txt"), "unchanged content");
+    Path submitted = viaRedundantParentHop(dir, "doc.txt");
+
+    Set<String> forcedPaths = ConcurrentHashMap.newKeySet();
+    forcedPaths.add(preP3Key(submitted));
+    Harness h = newHarness(forcedPaths);
+
+    h.extractor().extractAll(List.of(new JobQueue.IndexJob(submitted, null)));
+
+    // This is the failure mode P3 removes, pinned as a standing negative control: reverting any
+    // marker to the pre-P3 derivation makes the test above fail with exactly this behaviour.
+    verify(h.contentExtractor(), never()).extractArtifact(any());
+    verify(h.journal()).recordOutcomeSafely(any(), eq("UNCHANGED"), any());
+    assertEquals(
+        Set.of(preP3Key(submitted)),
+        forcedPaths,
+        "nothing consumed the mark — the force was silent");
   }
 }

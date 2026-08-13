@@ -269,15 +269,11 @@ final class WorkerScanOps {
       // Mark per batch rather than once at the end: a long walk's early batches are already
       // being extracted while later directories are still being visited, so a deferred mark
       // would arrive after the extractor had skipped them as UNCHANGED.
-      // The key MUST be byte-identical to FileFreshnessSnapshot.capture's — it normalizes
-      // `toAbsolutePath().normalize()` before handing the string to PathNormalizer (which only
-      // fixes separators/case, never resolves `..`). A key that differs by one `.` segment would
-      // make `forcedPaths.remove(normalizedPath)` miss and the force silently do nothing.
+      // The key MUST be byte-identical to FileFreshnessSnapshot.capture's, so both sides derive it
+      // through the one shared PathNormalizer#normalizeKey: a key that differs by one `..` segment
+      // would make `forcedPaths.remove(normalizedPath)` miss and the force silently do nothing.
       forcedPathSink.markForced(
-          batch.stream()
-              .map(e ->
-                  PathNormalizer.normalizePath(e.path().toAbsolutePath().normalize().toString()))
-              .toList());
+          batch.stream().map(e -> PathNormalizer.normalizeKey(e.path())).toList());
     }
     batch.clear();
   }
