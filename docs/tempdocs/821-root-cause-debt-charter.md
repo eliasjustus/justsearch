@@ -601,6 +601,46 @@ Origin-guarded (worth separate review); `resolveAllowedOrigin` rejects `[::1]`
 origins (bracket handling); LocalApiHostValidationTest mirrors its filter instead of
 exercising install().
 
+### §O.4 Head bricks itself on transient bootstrap failure — ROOT-CAUSED (2026-08-13, publication-window find)
+
+Found *during* the publish queue: the recurring CI isolated-backend `initializationError`
+flake turned out to be a **production bug** in the C1 dark-ship class. Chain (all
+code-verified by a read-only investigator, then narrowed by the first-ever captured
+`worker.log` from PR #434's failure-log upload, run 31735720225):
+
+- A transient `KnowledgeServerBootstrap.start()` failure hits the catch at
+  `KnowledgeServerBootstrap.java:235` → tears down the **healthy** worker (sole
+  production writer of the MMF shutdown byte: `MainSignalBus.writeShutdown()` via
+  `WorkerSpawner.close()` teardown path) → `HeadlessApp.java:447-453` pins the worker
+  capability DEGRADED and **no `KnowledgeServerHealthMonitor` is started** (only created
+  when `knowledgeServer != null`, `:434-438`) → lifecycle projects ERROR →
+  `/api/health` 503s **forever** while Javalin keeps serving. No in-process path recovers.
+- Trigger **H1 CONFIRMED** (2026-08-13, first `headless-backend.log` captured by the
+  diagnostics PR #436 sweep, run 31742266298): verbatim `IllegalStateException: PID
+  validation timeout after 5000ms: expected PID 8556` at
+  `KnowledgeServerBootstrap.validateWorkerPid:344` ← `start:201` ←
+  `HeadlessApp.tryStartKnowledgeServer:924`, followed by "Wrote shutdown signal to
+  signal bus" against a healthy worker and permanent lifecycle ERROR. Mechanism: the
+  5000ms window (`KnowledgeServerConfig.java:68`) is consumed by a single cold RPC
+  carrying a 5s STANDARD deadline (`RemoteKnowledgeClient.java:845-850`), so the retry
+  loop never iterates; the worker-side health RPC is a deep check (live SQLite +
+  Lucene) with cold-start cost on a contended 4-vCPU runner. Bonus defect: the boot
+  failure prints "Ensure the indexer-worker module is built" — wrong guidance for this
+  cause.
+- "Elevated today" is partly re-labelling: pre-#429 this died at the silent 30s JUnit
+  cap with a different signature. No boot-path change landed on main since 2026-08-06.
+
+Shipped in-window: PR #434 (failure-log artifact upload + budget cascade; budgets are
+provisional pending measured values — for the terminal-DEGRADED mode they are neutral
+on outcome). Diagnostics PR (in flight at write time): preserve the *correct* Head log
+(`logs/headless-backend.log`, not the never-written `app.log`), surface the last non-200
+body in the timeout message, fail fast on `worker.spawn-failed`. **Chartered follow-up
+(needs its own tempdoc + review cycle): make transient bootstrap failure non-terminal**
+— retry `bootstrap.start()` (legal: `closeForUpgrade()` resets `started=false`), or run
+a recovery monitor when `knowledgeServer == null`; at minimum do not tear down a live
+worker on PID-validation timeout. H1 hardening (per-attempt RPC deadline inside the
+validation window) rides with that fix once a captured Head log confirms the throwing step.
+
 ## §P Wave 3 execution log (2026-08-13; owner: "proceed with the remaining chartered work")
 
 Same discipline (implement → independent refute-first review → fix round). All
