@@ -1,7 +1,7 @@
 ---
 title: "829 — Publish-workflow velocity & Develocity analysis (measured, 2026-08-13 campaign)"
 type: tempdocs
-status: "ANALYSIS COMPLETE (2026-08-14) — findings F1-F7 measured, recommendations R1-R8 ranked, NOT implemented (owner decision pending). Evidence: two read-only workers over the 24-merge campaign day; methods + run IDs inline."
+status: "ANALYSIS + DERISK COMPLETE (2026-08-14) — findings F1-F7 measured, recommendations R1-R8 ranked; derisk pass corrected two premises (F2 mechanism = daemon locks not tar path; R4 unimplementable on a user-owned repo) and root-caused F7 (missing opentelemetry module). Implementation wave started for R1/R2+R7/R3/R5/R8; R4/R6 held as owner decisions."
 created: 2026-08-14
 author: agent session 776e10cd-eef9-4873-a027-1fc2887a334d (Fable orchestration; 2 opus evidence workers)
 category: infra / CI / agent-economics
@@ -86,14 +86,25 @@ defeating the inner layer's purpose while re-executing ~80 passing tests per rol
 
 ### F2 — The Windows Gradle cache has never been saved; 54% of CI time runs cold. (HIGH)
 
-Every Windows lane logs `gradle cache is not found` → 0 FROM-CACHE →
-`##[warning]Failed to save: "C:\Program … tar.exe' failed with exit code 2` (the
-unquoted-`Program Files` tar path bug). A warning, so lanes stay green and it has
-never been seen. 32.5h of the day's 59.9h runner-time ran fully cold; Linux lanes
-get modest reuse (15/119 tasks FROM-CACHE). Compounding: the repo's own
-walltime-attribution shows 40-58% of unit-lane wall-clock is framework overhead —
-exactly the fraction a working cache attacks — and **all budgets/baselines are
-calibrated against the broken-cache timings**.
+Every Windows lane logs `gradle cache is not found` → 0 FROM-CACHE → a save
+failure warning, so lanes stay green and it has never been seen. 32.5h of the
+day's 59.9h runner-time ran fully cold; Linux lanes get modest reuse (15/119
+tasks FROM-CACHE). Compounding: the repo's own walltime-attribution shows 40-58%
+of unit-lane wall-clock is framework overhead — exactly the fraction a working
+cache attacks — and **all budgets/baselines are calibrated against the
+broken-cache timings**.
+
+**Mechanism (CORRECTED by the 2026-08-14 derisk pass — the first-pass "unquoted
+`Program Files` tar path bug" diagnosis was wrong; that error text is a cosmetic
+truncation artifact in @actions/cache's error formatter):** the Gradle daemon
+(`org.gradle.daemon=true`, 30-min idle timeout) is still alive at post-job
+cache-save time and holds mandatory Windows file locks on six
+`~/.gradle/caches/**/*.lock` files; GNU tar hits `EBUSY` on each and exits 2
+(run 31750644388 job 94615370233 L1926-1934 — the same tar binary *succeeds* at
+restore at L231-232 in the same job). Windows-only because POSIX locks are
+advisory. Upstream: `actions/setup-java#633` — same diagnosis, closed 2024 as
+workaround-only (stop the daemon); setup-java's own README now points at
+`gradle/actions/setup-gradle` instead (`#588`/PR `#972`).
 
 ### F3 — The re-CI tax is structural and the observed 1.82× multiplier is the lucky case. (MEDIUM-HIGH)
 
@@ -159,28 +170,52 @@ genuinely good — it just measures a broken-cache baseline and lacks retry awar
   — treat `UNSTABLE` with only advisory lanes red as mergeable; never
   `gh run rerun --failed` a lane that cannot change mergeability. Encode in the
   publish skill + `run-gh.mjs checks-wait` (add a `--required-only` mode).
-- **R2 (kills F2):** fix the Windows cache save (native tar on PATH or explicit
-  `actions/cache` with forward-slash paths); assert `FROM-CACHE > 0` in a Windows
-  lane and promote `Failed to save` to a failure so silent cache death cannot recur.
-  Recalibrate walltime budgets after.
+- **R2 (kills F2; derisked 2026-08-14, fix direction corrected):** replace
+  `actions/setup-java`'s `cache: gradle` with `gradle/actions/setup-gradle@v6`
+  (which stops daemons in its post-action specifically to avoid the Windows
+  lock failure, and whose default cache policy — only main writes, branches
+  read — also delivers R7 with zero inputs). Sweep all three workflow files
+  (`ci.yml` ×5 sites, `build-installer.yml`, `onramp-smoke.yml`); `cache:` must
+  be REMOVED, not supplemented (documented incompatibility). Pre-clean the 7
+  dead `refs/pull/*/merge` cache entries (5.79 GB) before first run. Verify:
+  `FROM-CACHE > 0` in a Windows lane across two consecutive runs; recalibrate
+  walltime budgets after. Six residual live-only unknowns are listed in the
+  derisk record (nifty-baking-sunset plan + U3/U4 worker report).
 - **R3 (completes F1):** while the integration lane stays advisory, set
   `failOnPassedAfterRetry = false` for `integrationTest` only (keep it true for
   required lanes) — an advisory lane that reddens on self-recovered flakes generates
   pure rerun-bait. Revisit when the lane joins required contexts (825 §3 is the
   path there).
-- **R4 (kills F3):** enable GitHub merge queue for `main`; retire the manual
-  catch-up/update-branch conveyor. This also deletes most of F4's wait cycles.
+- **R4 (kills F3) — UNIMPLEMENTABLE AS WRITTEN (derisk 2026-08-14):** GitHub
+  merge queue is available only to *organization*-owned repos; this repo is
+  user-owned (`owner_type: User`, live API fact; docs reusable
+  `gated-features/merge-queue.md`). R4 therefore reframes as an OWNER DECISION:
+  transfer the repo to an organization (which moves ownership, CLA storage,
+  secrets, and the URL) — after which the wiring is small and fully mapped
+  (add `merge_group` to ci.yml + workflow-signal-policy; a merge_group no-op
+  job named `cla-assistant`; set queue merge method = squash; one live PR to
+  confirm the PR_TITLE/PR_BODY squash contract, which rests on a staff comment,
+  not docs). Until then, F3's mitigations are R1 (fewer wait cycles) and
+  batching PRs.
 - **R5 (cheap Develocity value without a server):** teach
   `report-unit-test-attribution.mjs` to parse repeated `<testcase>` entries and emit
   a `flakyTests` list + dedupe rerun phantom records — the flake signal from data CI
   already uploads.
-- **R6 (Develocity decision):** either wire a real Develocity instance (server +
-  access key + remote build cache — the cache alone attacks the measured 40-58%
-  framework overhead) or set `publishing.onlyIf { buildFailed }` and stop shipping
-  ~600 unread green scans/day to a public service. The current middle state has the
-  costs of both and the benefits of neither.
-- **R7:** `cache-read-only` for PR-branch Gradle caches (only main writes) to stop
-  the 820 MB/PR write-only eviction pressure; prune the over-cap store.
+- **R6 (Develocity decision; facts gathered 2026-08-14):** a real Develocity
+  instance is quote-only per-committer commercial licensing with no solo-dev tier
+  (self-hosting does not avoid the license; the OSS-sponsorship program is a
+  discretionary application, not a plan). Free scans.gradle.com scans are
+  link-public, permanent once viewed, with no read API. The REAL option set is
+  therefore: (a) stop publishing scans entirely, or (b)
+  `publishing.onlyIf { buildFailed }` — accepting each failure scan as a permanent
+  link-public artifact carrying environment detail. Owner decides; either is a
+  one-line settings change. The remote-build-cache benefit is unreachable at this
+  scale.
+- **R7 (folds into R2, derisked):** `gradle/actions/setup-gradle`'s default is
+  exactly the read-only-PR policy (only the default branch writes); GitHub's
+  cache-scoping docs confirm `refs/pull/*/merge` saves are readable only by
+  re-runs of the same PR, so the policy loses zero legitimate reuse. Prune the
+  over-cap store at migration time.
 - **R8 (meta):** liveness alarm for the OTel sink (fail-loud SessionStart notice
   when :4318 is down); 828-A fixes the shard contention.
 
