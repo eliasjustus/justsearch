@@ -43,11 +43,15 @@ final class ApiSecurityFilters {
   /** Methods that require the session token in prod mode. */
   private static final Set<String> TOKEN_REQUIRED_METHODS = Set.of("POST", "PUT", "DELETE");
   /**
-   * The MCP Streamable-HTTP endpoint path. The spec's transport-security clause is endpoint-scoped,
-   * so the Origin check is registered on this path (all methods) rather than globally — the rest of
-   * the API keeps the browser-enforced CORS policy in {@link #setupCors}.
+   * The MCP Streamable-HTTP endpoint path, shared with the route registration in {@link
+   * LocalApiServer} so the guarded path and the routed path cannot drift. The spec's
+   * transport-security clause is endpoint-scoped, so the Origin check is registered on this path
+   * (all methods) rather than globally — the rest of the API keeps the browser-enforced CORS policy
+   * in {@link #setupCors}.
    */
-  private static final String MCP_ENDPOINT_PATH = "/mcp";
+  private static final String MCP_ENDPOINT_PATH = LocalApiServer.MCP_ENDPOINT_PATH;
+  /** Cap on the attacker-controlled Origin string reproduced in logs and the event buffer. */
+  private static final int MAX_LOGGED_ORIGIN_CHARS = 128;
   private static final long SLOW_REQUEST_THRESHOLD_MS = 3000;
   private static final long SLOW_DUMP_RATE_LIMIT_MS = 30_000;
   private static final String MUTATION_LEASE_ATTRIBUTE = "__upgrade_mutation_lease__";
@@ -65,7 +69,6 @@ final class ApiSecurityFilters {
   private final AtomicLong lastTokenDenyAtMs = new AtomicLong(0);
   private final AtomicLong lastHostDenyAtMs = new AtomicLong(0);
   private final AtomicLong lastMcpOriginDenyAtMs = new AtomicLong(0);
-  private final AtomicReference<String> lastMcpOriginDenyOrigin = new AtomicReference<>("");
   private final AtomicLong lastSlowDumpAtMs = new AtomicLong(0);
 
   ApiSecurityFilters(
@@ -193,11 +196,7 @@ final class ApiSecurityFilters {
           maybeRecordMcpOriginDeny(ctx, originHeader);
           ctx.status(403);
           ctx.json(mcpForbiddenOriginBody());
-          // Halted by skipping the remaining handlers rather than by throwing
-          // HttpResponseException: Javalin's mapper for that exception REPLACES the body with its
-          // own {title,status,type,details} envelope, which would discard the JSON-RPC error the
-          // spec asks for. `after` handlers (OTel span close, lease release) still run.
-          ctx.skipRemainingHandlers();
+          throw new io.javalin.http.HttpResponseException(403, "Forbidden");
         });
   }
 
@@ -267,28 +266,40 @@ final class ApiSecurityFilters {
   }
 
   /**
-   * Rate-limited WARN for a rejected MCP Origin — keyed on the origin value (as {@link
-   * #maybeRecordCorsDenyUiReadyPreflight} is) so a second, different origin is never suppressed by
-   * the first one's window.
+   * Rate-limited WARN for a rejected MCP Origin. Deliberately a pure 10s time window (the {@link
+   * #maybeRecordHostDeny} pattern) rather than per-origin dedup: the origin is attacker-chosen, so
+   * keying suppression on its value lets a rotating-Origin caller emit an unbounded stream of log
+   * and event-buffer entries. The value is also truncated, since it is reproduced verbatim.
    */
   private void maybeRecordMcpOriginDeny(Context ctx, String originHeader) {
-    String normalized = originHeader == null ? "<absent>" : originHeader;
     long now = System.currentTimeMillis();
     long lastAt = lastMcpOriginDenyAtMs.get();
-    if ((now - lastAt) < 10_000 && normalized.equals(lastMcpOriginDenyOrigin.get())) {
+    if ((now - lastAt) < 10_000) {
       return;
     }
-    lastMcpOriginDenyOrigin.set(normalized);
-    lastMcpOriginDenyAtMs.set(now);
-    String method = ctx.method().name();
-    eventBuffer.warn(
-        "LocalApiServer",
-        "MCP_ORIGIN_DENY",
-        Map.of("path", MCP_ENDPOINT_PATH, "method", method, "origin", normalized));
-    log.warn(
-        "MCP request rejected: Origin {} is not an allowed loopback origin (method={})",
-        normalized,
-        method);
+    if (lastMcpOriginDenyAtMs.compareAndSet(lastAt, now)) {
+      String origin = truncateForLog(originHeader);
+      String method = ctx.method().name();
+      eventBuffer.warn(
+          "LocalApiServer",
+          "MCP_ORIGIN_DENY",
+          Map.of("path", MCP_ENDPOINT_PATH, "method", method, "origin", origin));
+      log.warn(
+          "MCP request rejected: Origin {} is not an allowed loopback origin (method={})",
+          origin,
+          method);
+    }
+  }
+
+  /**
+   * Caps an untrusted header value reproduced in logs. Never called with null: the only caller runs
+   * after {@link #isAllowedMcpOrigin} has already admitted every absent/blank Origin.
+   * Package-private for its regression test.
+   */
+  static String truncateForLog(String value) {
+    return value.length() <= MAX_LOGGED_ORIGIN_CHARS
+        ? value
+        : value.substring(0, MAX_LOGGED_ORIGIN_CHARS) + "...[truncated]";
   }
 
   private void setupCors(Javalin app, boolean prod) {

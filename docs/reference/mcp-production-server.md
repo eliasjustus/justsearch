@@ -146,7 +146,7 @@ API-wide `Host`-header allowlist and the loopback bind; see
 
 Not yet conformant: the spec also says the MCP endpoint MUST support `GET` (returning either
 `text/event-stream` or **405 Method Not Allowed** when the server offers no SSE stream there);
-`GET /mcp` currently returns 404. Tracked as a follow-up.
+`GET /mcp` returns 404 (live-verified against a running stack, 2026-08-12). Tracked as a follow-up.
 
 Protocol version: `2025-11-25`. Capabilities: tools, resources,
 prompts. Curated tool-surface version (single-sourced from

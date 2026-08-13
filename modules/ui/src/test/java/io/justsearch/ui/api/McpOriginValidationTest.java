@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -32,6 +33,9 @@ class McpOriginValidationTest {
   private Javalin app;
   private ExecutorService executor;
   private int port;
+  /** Mirrors LocalApiServer's inflight counter: incremented in a before-hook, decremented after. */
+  private final AtomicInteger inflight = new AtomicInteger();
+  private final AtomicInteger afterHandlerRuns = new AtomicInteger();
 
   @BeforeEach
   void setup() {
@@ -155,6 +159,39 @@ class McpOriginValidationTest {
     assertFalse(resp.body().contains("\"handled\""), "The handler must not have run");
   }
 
+  /**
+   * The deny path must halt the handler chain WITHOUT discarding the already-queued after-tasks:
+   * in production those close the OTel {@code Scope} on a pooled Jetty thread and decrement
+   * {@code inflightRequests}. A halt that cleared them would leak a context per denied request and
+   * strand the inflight gauge — attacker-triggerable and unbounded. Asserted together with the body
+   * so a future halt-mechanism change cannot trade one for the other silently.
+   */
+  @Test
+  @DisplayName("Live: a denied request still runs after-handlers (no scope/inflight leak) and keeps its body")
+  void liveDenyRunsAfterHandlersAndKeepsBody() throws Exception {
+    startServerWithProductionFilters();
+    afterHandlerRuns.set(0);
+    inflight.set(0);
+
+    HttpResponse<String> resp = post("http://evil.example.com");
+
+    assertEquals(403, resp.statusCode());
+    assertEquals(1, afterHandlerRuns.get(), "after-handlers must run on the deny path");
+    assertEquals(0, inflight.get(), "before/after must stay balanced — a leaked inflight never returns to 0");
+    assertTrue(resp.body().contains("\"jsonrpc\":\"2.0\""), "The JSON-RPC body must survive the exception mapper: " + resp.body());
+    assertTrue(resp.body().contains("MCP_ORIGIN_FORBIDDEN"), "Body should name the error code: " + resp.body());
+  }
+
+  @Test
+  @DisplayName("An over-long Origin is truncated before it reaches logs and the event buffer")
+  void truncatesOverlongOriginForLogging() {
+    assertEquals("http://127.0.0.1", ApiSecurityFilters.truncateForLog("http://127.0.0.1"));
+    String overlong = "http://" + "a".repeat(500) + ".evil.com";
+    String truncated = ApiSecurityFilters.truncateForLog(overlong);
+    assertTrue(truncated.length() < overlong.length(), "An over-long origin must be capped");
+    assertTrue(truncated.endsWith("...[truncated]"), "Truncation must be visible: " + truncated);
+  }
+
   @Test
   @DisplayName("Live: POST /mcp from a loopback-lookalike Origin is 403")
   void livePostFromLookalikeOriginIsForbidden() throws Exception {
@@ -213,9 +250,16 @@ class McpOriginValidationTest {
   }
 
   /**
-   * Starts a hermetic app whose filters are installed by the production {@link
-   * ApiSecurityFilters#install} (dev mode: no session token, no lease service, no capability gates),
-   * plus stand-ins for the two methods {@code LocalApiServer} registers at {@code /mcp}.
+   * Starts a hermetic app that mirrors the production wiring order in {@code LocalApiServer}: the
+   * {@code HttpResponseException} mapper that preserves a handler-set body while propagating the
+   * status (`LocalApiServer.java:397-399`), then the paired before/after lifecycle hooks (inflight
+   * counter + OTel scope, registered at `:489-550` BEFORE `securityFilters.install`), then the
+   * production {@link ApiSecurityFilters#install} (dev mode: no session token, no lease service, no
+   * capability gates), then stand-ins for the two methods registered at {@code /mcp}.
+   *
+   * <p>The mapper and the hook ordering are load-bearing, not decoration: without the mapper the
+   * app 403s with Javalin's default envelope instead of the body the filter wrote, and the
+   * before/after pairing is what a halt mechanism that discarded queued after-tasks would break.
    */
   private void startServerWithProductionFilters() {
     app =
@@ -225,11 +269,20 @@ class McpOriginValidationTest {
               cfg.jsonMapper(new io.justsearch.ui.json.Jackson3JsonMapper());
             });
 
+    app.exception(io.javalin.http.HttpResponseException.class, (e, ctx) -> ctx.status(e.getStatus()));
+
+    app.before(ctx -> inflight.incrementAndGet());
+    app.after(
+        ctx -> {
+          afterHandlerRuns.incrementAndGet();
+          inflight.decrementAndGet();
+        });
+
     executor = Executors.newSingleThreadExecutor();
     new ApiSecurityFilters(false, null, new EventBuffer(), executor, null).install(app);
 
-    app.post("/mcp", ctx -> ctx.json(Map.of("handled", true)));
-    app.delete("/mcp", ctx -> ctx.status(204));
+    app.post(LocalApiServer.MCP_ENDPOINT_PATH, ctx -> ctx.json(Map.of("handled", true)));
+    app.delete(LocalApiServer.MCP_ENDPOINT_PATH, ctx -> ctx.status(204));
     app.get("/api/status", ctx -> ctx.json(Map.of("status", "ok")));
 
     app.start("127.0.0.1", 0);
