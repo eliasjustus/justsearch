@@ -2322,9 +2322,20 @@ export class UnifiedChatView extends JfElement {
                 Export worst of all, since a Delegate run is the costliest artifact the product makes.
                 The remaining gate (`thread.length > 0`) is state, not rung: it holds identically on
                 every rung, so it cannot make the set differ between them. */ ''}
+          ${/* Tempdoc 821 §4 — `thread.length > 0` still hid New chat ENTIRELY on a fresh/empty chat,
+                leaving no visible entry point for a control that is exactly the affordance a user
+                reaches for on a fresh surface. New chat now always renders and is disabled (not
+                removed) when there is nothing to reset, matching the .ver-nav disabled idiom. Export
+                stays gated on thread state — with an empty thread there is genuinely nothing to
+                export, unlike New chat which is meaningful UI chrome regardless of state. */ ''}
+          <button
+            class="new-chat-btn"
+            ?disabled=${this.thread.length === 0}
+            title=${this.thread.length === 0 ? 'Already a new chat' : nothing}
+            @click=${() => this.newConversation()}
+          >New chat</button>
           ${this.thread.length > 0
-            ? html`<button class="new-chat-btn" @click=${() => this.newConversation()}>New chat</button>
-                   <button class="new-chat-btn" @click=${() => this.exportMarkdown()}>Export</button>`
+            ? html`<button class="new-chat-btn" @click=${() => this.exportMarkdown()}>Export</button>`
             : nothing}
         </div>
         <span class="shape-indicator">${

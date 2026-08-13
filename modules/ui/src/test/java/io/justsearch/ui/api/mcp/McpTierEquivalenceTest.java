@@ -83,6 +83,9 @@ final class McpTierEquivalenceTest {
     TRUNCATED("truncated"),
     HITS("hits"),
     FACETS("facets"),
+    // Tempdoc 821 §L.3: the facet-scan truncation flag — distinct from TRUNCATED (result-list
+    // truncation) above. Exercised by the kitchen-sink fixture with facetsTruncated=TRUE.
+    FACETS_TRUNCATED("facetsTruncated"),
     HINTS("hints"),
     // Tempdoc 789 Phase 2 — flag-gated framings, off by default, so (like ENRICHMENT_HINT and
     // ZERO_RESULT_HINT) they have their own triggering condition and their own dual-tier coverage:
@@ -211,9 +214,10 @@ final class McpTierEquivalenceTest {
     Map<String, Long> sourceFacet = new LinkedHashMap<>();
     sourceFacet.put("docs", 3L);
     facets.put("meta_source", sourceFacet);
+    // facetsTruncated=TRUE (7th positional arg) exercises FACETS_TRUNCATED below, alongside FACETS.
     KnowledgeSearchResponse canned =
         new KnowledgeSearchResponse(
-            37L, 37L, 15L, hits, null, facets, null, null, null, null, null, null, null);
+            37L, 37L, 15L, hits, null, facets, Boolean.TRUE, null, null, null, null, null, null);
 
     KnowledgeHttpApiAdapter adapter = mock(KnowledgeHttpApiAdapter.class);
     when(adapter.search(any())).thenReturn(canned);
@@ -248,17 +252,63 @@ final class McpTierEquivalenceTest {
     List<Map<String, Object>> structuredResults = (List<Map<String, Object>>) structured.get("results");
     assertEquals(List.of("cavby8"), structuredResults.get(0).get("matchedTerms"));
     // FACETS
-    assertTrue(text.contains("Facets (use as filter values):"), text);
+    assertTrue(
+        text.contains("Facets (use as filter values; counts are partial — the scan did not cover"
+            + " every match):"),
+        text);
     assertTrue(text.contains("meta_source: docs (3)"), text);
     Map<String, Object> structuredFacets = (Map<String, Object>) structured.get("facets");
     assertFalse(structuredFacets.isEmpty());
     assertEquals(Map.of("docs", 3L), structuredFacets.get("meta_source"));
+    // FACETS_TRUNCATED
+    assertEquals(Boolean.TRUE, structured.get("facetsTruncated"));
     // HINTS
     assertTrue(text.contains("Hints:"), text);
     assertTrue(text.contains("Searched the index in one call."), text);
     List<String> structuredHints = (List<String>) structured.get("hints");
     assertFalse(structuredHints.isEmpty());
     assertTrue(structuredHints.get(0).startsWith("Searched the index in one call."));
+  }
+
+  @Test
+  @DisplayName(
+      "search: facetsTruncated=false adds no qualifier to either tier — same facets block as"
+          + " before the tempdoc 821 §L.3 relay, on both the text tier and structuredContent")
+  void searchFacetsTruncatedFalseAddsNothing() {
+    Hit hit =
+        new Hit(
+            "doc-1", 0.5d, Map.of("title", "Doc 1", "path", "docs/doc-1.md"),
+            List.of(), List.of(), List.of(), null);
+    Map<String, Map<String, Long>> facets = new LinkedHashMap<>();
+    Map<String, Long> sourceFacet = new LinkedHashMap<>();
+    sourceFacet.put("docs", 3L);
+    facets.put("meta_source", sourceFacet);
+    // facetsTruncated=FALSE (7th positional arg) — the untruncated case.
+    KnowledgeSearchResponse canned =
+        new KnowledgeSearchResponse(
+            1L, 1L, 5L, List.of(hit), null, facets, Boolean.FALSE, null, null, null, null, null,
+            null);
+
+    KnowledgeHttpApiAdapter adapter = mock(KnowledgeHttpApiAdapter.class);
+    when(adapter.search(any())).thenReturn(canned);
+    KnowledgeSearchController ctrl = mock(KnowledgeSearchController.class);
+    when(ctrl.getAdapter()).thenReturn(adapter);
+    McpToolSurface surface =
+        new McpToolSurface(
+            List.of(OperationCatalog.of("core", List.of())),
+            mock(OperationDispatcher.class),
+            () -> ctrl,
+            () -> null,
+            FIXED_CLOCK);
+    Map<String, Object> result = surface.callTool("justsearch_search", Map.of("query", "widget"), "s1");
+
+    String text = textOf(result);
+    Map<String, Object> structured = structuredOf(result);
+
+    // Facets block renders WITHOUT the truncation qualifier.
+    assertTrue(text.contains("Facets (use as filter values):"), text);
+    assertFalse(text.contains("counts are partial — the scan did not cover every match"), text);
+    assertEquals(Boolean.FALSE, structured.get("facetsTruncated"));
   }
 
   @Test
