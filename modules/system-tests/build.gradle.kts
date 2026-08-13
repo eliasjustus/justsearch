@@ -208,6 +208,29 @@ val integrationTest = tasks.register<Test>("integrationTest") {
     showStandardStreams = true
   }
 
+  // Tempdoc 821 P4 — hosted-runner init-timeout flakes.
+  //
+  // `conventions.jvm-base` sets junit.jupiter.execution.timeout.default=30s for every Test
+  // task (JvmBaseConventionsPlugin.kt:117). A class-level @Timeout covers *testable* methods
+  // only, never lifecycle methods, so every IsolatedBackendFixture @BeforeAll ran under that
+  // 30s cap regardless of its class annotation — proven on 2026-08-13 by IngestStarvationE2ETest,
+  // annotated @Timeout(6, MINUTES) at the class, dying at exactly t0+30.000s.
+  //
+  // That cap is far SHORTER than the fixture's own layered boot budget (PORT_FILE 60s +
+  // HEALTH 90s + WORKER_READY 90s, IsolatedBackendFixture.java:65-72), so it always fired
+  // first and reported a bare java.util.concurrent.TimeoutException with no cause, discarding
+  // the fixture's diagnostic message and backend log tail. Five such initializationError
+  // failures landed across three PR runs inside one hour (runs 31716264505 / 31716771978),
+  // each green on rerun with no diff change.
+  //
+  // Headroom: measured boot-to-ready on windows-latest is min 4.97s / p50 ~7.2s / max 13.30s
+  // (22 samples, same runs) — the old cap left only ~2.3x over the observed max. 300s sits
+  // just above the fixture's ~250s worst case, so the fixture's own budgets are once again the
+  // binding constraint and a real hang fails with diagnostics instead of an opaque timeout.
+  // Cost ceiling: this tier runs ~8.5min wall against the job's 25-min budget (ci.yml:529),
+  // so even a full 300s stall stays comfortably inside it.
+  systemProperty("junit.jupiter.execution.timeout.beforeall.method.default", "300s")
+
   // Forward API port system property for HTTP tests
   System.getProperty("justsearch.api.port")?.let { systemProperty("justsearch.api.port", it) }
 
