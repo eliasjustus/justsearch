@@ -83,6 +83,10 @@ if ($AssembleUpdaterAssets.IsPresent) {
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent (Split-Path -Parent $scriptDir) # scripts/ci -> scripts -> repo root
 
+# Receipt dropped by scripts/ci/sign-windows.ps1 after it signs AND verifies the uninstaller.
+# Path must stay in sync with that script's $script:receiptPath.
+$uninstallerReceiptPath = Join-Path -Path $repoRoot -ChildPath "dist\uninstaller-signing-receipt.json"
+
 $evidenceEnabled = -not $NoEvidence.IsPresent
 $summaryDir = Join-Path -Path $repoRoot -ChildPath "tmp\\agent-evidence\\_summaries"
 $null = New-Item -ItemType Directory -Force -Path $summaryDir
@@ -134,6 +138,33 @@ function Skip-Phase {
   Write-Host "`n=== $Name ===" -ForegroundColor Cyan
   $msg = if ($Reason) { "[SKIPPED - $Reason]" } else { "[SKIPPED]" }
   Write-Host ("  " + $msg) -ForegroundColor Yellow
+}
+
+# Round-16 F3 follow-up: makensis ignores the exit code of its `!uninstfinalize` command, so
+# sign-windows.ps1 failing on the uninstaller -- or never being invoked at all -- ships an unsigned
+# uninstaller with no error anywhere. Signing the setup exe cannot detect that: the uninstaller is
+# compressed INSIDE it. The receipt is the only signal, and sign-windows.ps1 writes it strictly
+# after Assert-Signed passed and the signed bytes were written back, so absence covers both a
+# failed hook and one that never ran.
+function Assert-UninstallerSigningReceipt {
+  param([Parameter(Mandatory = $true)][string]$ReceiptPath)
+  $diagnosis = "Diagnose with the sign log the bundler writes: %TEMP%\justsearch-sign-windows.log. " +
+    "If Tauri/NSIS changed how the uninstaller is handed to the sign hook (e.g. it now arrives " +
+    "with a signable extension, bypassing the extension-shim path), update the receipt write in " +
+    "scripts/ci/sign-windows.ps1 -- do not drop this check."
+  if (-not (Test-Path -LiteralPath $ReceiptPath)) {
+    throw ("Uninstaller signing receipt missing: " + $ReceiptPath + "`n" +
+      "The NSIS uninstaller sign hook did not complete, so this bundle would ship an UNSIGNED uninstaller.`n" +
+      $diagnosis)
+  }
+  $receipt = Get-Content -Raw -LiteralPath $ReceiptPath | ConvertFrom-Json
+  $verifiedProp = $receipt.PSObject.Properties['verified']
+  if (-not $verifiedProp -or $verifiedProp.Value -ne $true) {
+    throw ("Uninstaller signing receipt is not verified: " + $ReceiptPath + "`n" + $diagnosis)
+  }
+  $target = if ($receipt.PSObject.Properties['target']) { [string]$receipt.target } else { "(unknown)" }
+  $signedAt = if ($receipt.PSObject.Properties['signedAtUtc']) { [string]$receipt.signedAtUtc } else { "(unknown)" }
+  Write-Host ("  uninstaller signing receipt OK (target=" + $target + ", signedAtUtc=" + $signedAt + ")")
 }
 
 if ($evidenceEnabled) {
@@ -273,6 +304,11 @@ try {
   # -Sign (implied by -Release): require signing during bundling (Tauri signCommand reads this).
   if ($doSign) {
     $env:JUSTSEARCH_REQUIRE_SIGNING = "true"
+    # Drop any receipt left by an earlier run so the signature_verify assert below can only be
+    # satisfied by THIS build's sign hook.
+    if (Test-Path -LiteralPath $uninstallerReceiptPath) {
+      Remove-Item -LiteralPath $uninstallerReceiptPath -Force
+    }
   }
 
   if (-not $SkipBuild.IsPresent) {
@@ -342,6 +378,11 @@ try {
     Measure-Phase "signature_verify" {
       & powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ci\verify-windows-signature.ps1 $SetupExePath
       if ($LASTEXITCODE -ne 0) { throw "verify-windows-signature.ps1 failed (exit=$LASTEXITCODE)" }
+      if ($SkipBuild.IsPresent) {
+        Write-Host "  uninstaller signing receipt: not asserted (-SkipBuild: the NSIS sign hook did not run in this invocation)" -ForegroundColor Yellow
+      } else {
+        Assert-UninstallerSigningReceipt -ReceiptPath $uninstallerReceiptPath
+      }
     }
   } else {
     Skip-Phase "signature_verify" "not a signing build"
