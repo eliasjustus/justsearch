@@ -133,6 +133,22 @@ and UI/UX. Consequence: the §9/§4b exclusion of "chat markdown" as domain furn
 SUPERSEDED for the agent axis — response rendering IS the donor product's UX; markdown
 and citation rendering join the copyable backlog. Do not re-propose search work.
 
+**BACKLOG TRIAGE (owner, 2026-08-13, post-F3):**
+- PROCEED (autonomous): F4 response rendering (markdown via the SHARED MarkdownBlock
+  authority, styled per donor) + citations panel (shared jf-citations-panel +
+  citationResolve, v2-proven); F5 sidebar mechanics (drag-resize with the donor's
+  max = viewport − pane-min rule, icon-collapse, session rename).
+- ADAPTATION RATIFIED: the donor's per-session provider picker maps to an
+  effort/mode control (one local model — no provider concept); build when the
+  composer control row is next touched.
+- DEFERRED (documented, not important now): real palette commands + {key,command,when}
+  keybinding registry (also the double-palette fix), snooze shelf + wake rules,
+  banner stack, dark-fill separation, issuance register.
+- REJECTED: parallel concurrent runs — "will most likely never happen, considering
+  its all local" (owner). Do not scaffold for it.
+- BACKEND WORK NOT NEEDED NOW: controller server-reattach (true reload survival),
+  status-vs-serving mismatch fix — observations stand, no slices.
+
 **Phase F — T3 Code's functionality on the shell (F-series slices):**
 - F1. The conversational core: composer submit routes to the shared ask tier
   (grounded, cited, streamed — the seams search-v2 proved: `buildRequestBody` +
