@@ -70,6 +70,23 @@ final class WorkerStartFailuresTest {
     assertTrue(
         timeoutHint.contains("pid_validation_timeout_ms"),
         "it must name the knob that widens the window");
+    assertTrue(
+        timeoutHint.contains("worker.log.1"),
+        "worker.log is rotated on every spawn, so a retried boot leaves earlier attempts in the"
+            + " rotated generations — the hint must send the operator there: " + timeoutHint);
+  }
+
+  @Test
+  @DisplayName("hint routing prefers the specific classification over the broad IOException match")
+  void specificClassificationWinsOverBroadOne() {
+    // An unstartable-worker IOException wrapping a PID-validation timeout: the timeout is the
+    // precise diagnosis, so it must not be masked by the any-IOException-in-the-chain match.
+    Throwable both = new IOException("io while tearing down", transientFailure());
+    assertTrue(WorkerStartFailures.isTransient(both));
+    assertTrue(WorkerStartFailures.isLikelyUnstartableWorker(both));
+    assertFalse(
+        WorkerStartFailures.operatorHint(both).contains(BUILD_HINT_FRAGMENT),
+        "the specific timeout diagnosis must win");
   }
 
   @Test
@@ -136,6 +153,51 @@ final class WorkerStartFailuresTest {
                 0));
 
     assertEquals(3, attempts[0]);
+  }
+
+  @Test
+  @DisplayName("supervision engaging vetoes the boot retry, so SupervisionPolicy keeps the budget")
+  void supervisionEngagedVetoesRetry() {
+    int[] attempts = {0};
+    boolean[] supervisionEngaged = {false};
+
+    assertThrows(
+        PidValidationTimeoutException.class,
+        () ->
+            WorkerStartFailures.startWithRetry(
+                () -> {
+                  attempts[0]++;
+                  // The spawner supervised a restart during this attempt.
+                  supervisionEngaged[0] = true;
+                  throw transientFailure();
+                },
+                3,
+                0,
+                () -> supervisionEngaged[0]));
+
+    assertEquals(
+        1,
+        attempts[0],
+        "once the supervisor has restarted the worker, the boot loop must stand down instead of"
+            + " multiplying the declared restart intensity (3 attempts x 3 restarts = 9 spawns)");
+  }
+
+  @Test
+  @DisplayName("a transient failure without supervision still retries")
+  void noSupervisionStillRetries() throws Exception {
+    int[] attempts = {0};
+
+    WorkerStartFailures.startWithRetry(
+        () -> {
+          if (++attempts[0] == 1) {
+            throw transientFailure();
+          }
+        },
+        3,
+        0,
+        () -> false);
+
+    assertEquals(2, attempts[0]);
   }
 
   @Test

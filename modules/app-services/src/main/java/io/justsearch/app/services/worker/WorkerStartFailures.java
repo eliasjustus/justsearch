@@ -2,6 +2,7 @@
 package io.justsearch.app.services.worker;
 
 import java.io.IOException;
+import java.util.function.BooleanSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,6 +26,18 @@ public final class WorkerStartFailures {
 
     /** Bound on cause-chain walks, so a self-referential or cyclic chain cannot spin. */
     private static final int MAX_CAUSE_DEPTH = 16;
+
+    /**
+     * Where the operator finds the worker's own account of the failure.
+     *
+     * <p>Names the rotated generations deliberately: {@code WorkerSpawner} rotates worker.log on
+     * EVERY spawn and keeps two extra generations, so after an exhausted 3-attempt boot retry
+     * worker.log holds only the LAST attempt — the first two are in worker.log.1 and worker.log.2.
+     * A hint naming only worker.log would send the operator to the least interesting of the three.
+     */
+    private static final String WORKER_LOG_HINT =
+        "<dataDir>/logs/worker.log (each boot attempt rotates it — earlier attempts are in"
+            + " worker.log.1 / worker.log.2)";
 
     /** A single start attempt — {@code KnowledgeServerBootstrap::start} in production. */
     @FunctionalInterface
@@ -63,34 +76,55 @@ public final class WorkerStartFailures {
      * for timing failures — the module was built and the worker had booted fine.
      */
     public static String operatorHint(Throwable failure) {
+        // Specific classification first: PidValidationTimeoutException is an exact type, whereas
+        // isLikelyUnstartableWorker matches any IOException anywhere in the chain.
+        if (isTransient(failure)) {
+            return "The worker process started but did not confirm its identity within the"
+                + " validation window — usually transient machine load. Read the worker's own startup"
+                + " outcome in " + WORKER_LOG_HINT + " and if it booted cleanly, raise"
+                + " justsearch.worker.pid_validation_timeout_ms.";
+        }
         if (isLikelyUnstartableWorker(failure)) {
             return "Ensure the indexer-worker module is built"
                 + " (gradlew :modules:indexer-worker:installDist)";
         }
-        if (isTransient(failure)) {
-            return "The worker process started but did not confirm its identity within the"
-                + " validation window — usually transient machine load. Check <dataDir>/logs/worker.log"
-                + " for the worker's own startup outcome; if the worker booted cleanly, raise"
-                + " justsearch.worker.pid_validation_timeout_ms.";
-        }
-        return "Check <dataDir>/logs/worker.log for the worker's own startup outcome. If the worker"
+        return "Read " + WORKER_LOG_HINT + " for the worker's own startup outcome. If the worker"
             + " never started, ensure the indexer-worker module is built"
             + " (gradlew :modules:indexer-worker:installDist).";
     }
 
+    /** {@link #startWithRetry(StartAttempt, int, long, BooleanSupplier)} with no supervision veto. */
+    public static void startWithRetry(StartAttempt attempt, int maxAttempts, long backoffMs)
+            throws IOException, InterruptedException {
+        startWithRetry(attempt, maxAttempts, backoffMs, () -> false);
+    }
+
     /**
      * Runs {@code attempt} up to {@code maxAttempts} times, retrying only {@linkplain
-     * #isTransient(Throwable) transient} failures.
+     * #isTransient(Throwable) transient} failures that {@code supervisionEngaged} does not veto.
      *
      * <p>A non-transient failure is rethrown from the first attempt, so genuinely broken
      * installations still fail with their original error and without added boot latency. An
      * interrupt is never retried.
      *
+     * <p>The veto keeps {@link SupervisionPolicy} the single restart authority. Once the failed
+     * attempt's spawner has performed a supervised restart (or given up), the restart budget is
+     * supervision's, and retrying would both multiply the declared restart intensity and let a fresh
+     * attempt silently supersede a terminal {@code WORKER_RESTART_EXHAUSTED} verdict.
+     *
+     * <p>Resulting spawn ceiling with the production 3 attempts and a 3-restart policy: attempts
+     * that fail WITHOUT supervision engaging cost exactly one spawn each, and the first attempt in
+     * which supervision engages is the last — so at most {@code (maxAttempts - 1)} plain spawns plus
+     * one supervised attempt's {@code 1 + maxRestartAttempts}, i.e. 6, never the 9 an ungated loop
+     * would allow.
+     *
      * @param attempt the start action; each retry re-runs it from scratch
      * @param maxAttempts total attempts including the first (must be >= 1)
      * @param backoffMs pause between attempts; 0 disables the pause
+     * @param supervisionEngaged evaluated after a failed attempt; true vetoes any further attempt
      */
-    public static void startWithRetry(StartAttempt attempt, int maxAttempts, long backoffMs)
+    public static void startWithRetry(
+            StartAttempt attempt, int maxAttempts, long backoffMs, BooleanSupplier supervisionEngaged)
             throws IOException, InterruptedException {
         if (maxAttempts < 1) {
             throw new IllegalArgumentException("maxAttempts must be >= 1, got " + maxAttempts);
@@ -106,6 +140,13 @@ public final class WorkerStartFailures {
                 throw e;
             } catch (IOException | RuntimeException e) {
                 if (n >= maxAttempts || !isTransient(e)) {
+                    throw e;
+                }
+                if (supervisionEngaged.getAsBoolean()) {
+                    log.warn(
+                        "Knowledge Server start attempt {}/{} failed after the supervisor already"
+                            + " restarted the worker; standing down so SupervisionPolicy keeps the"
+                            + " restart budget", n, maxAttempts);
                     throw e;
                 }
                 log.warn(

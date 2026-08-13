@@ -816,18 +816,14 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
     /**
      * Checks if the Knowledge Server is healthy.
      *
-     * <p>This method performs a gRPC health check on the existing connection.
-     * It does NOT re-read the signal bus (unlike most other methods) to avoid
-     * false negatives from transient signal bus read issues.
+     * <p>Like every health RPC this goes through {@link #executeHealthRpc}, which calls
+     * {@link #reconnect()} — a no-op unless the signal bus reports a DIFFERENT port, in which case
+     * the channel genuinely must be rebuilt. The existing connection is reused otherwise.
      *
      * @return true if serving
      */
     public boolean isHealthy() {
         try {
-            // Note: We intentionally do NOT call reconnect() here.
-            // If we're already connected, we should just check the existing connection.
-            // Re-reading the signal bus can cause false negatives due to timing issues
-            // with memory-mapped file visibility across processes on Windows.
             HealthCheckRequest request = HealthCheckRequest.newBuilder().build();
             HealthCheckResponse response = executeHealthRpc(
                 "isHealthy",
@@ -848,8 +844,8 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
      *
      * <p>Prefer this over {@link #isHealthy()} when you need details like {@code worker_state} or {@code pid}.
      *
-     * <p>This method performs a gRPC health check on the existing connection without
-     * re-reading the signal bus, to avoid false failures from timing issues.
+     * <p>Same connection handling as {@link #isHealthy()}: the shared health-RPC path re-reads the
+     * signal bus and rebuilds the channel only when the reported port has actually changed.
      */
     public HealthCheckResponse getHealthCheck() {
         return getHealthCheck(deadline(RpcDeadlineCategory.STANDARD));
@@ -867,7 +863,6 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
      * @param callDeadlineMs the gRPC deadline for this one call, in milliseconds
      */
     public HealthCheckResponse getHealthCheck(long callDeadlineMs) {
-        // Note: We intentionally do NOT call reconnect() here - same rationale as isHealthy().
         HealthCheckResponse response = executeHealthRpc(
             "getHealthCheck",
             callDeadlineMs,
@@ -903,8 +898,7 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
      */
     public String getVersion() {
         try {
-            // Note: We intentionally do NOT call reconnect() here - same rationale as isHealthy().
-            HealthCheckResponse response = executeHealthRpc(
+                HealthCheckResponse response = executeHealthRpc(
                 "getVersion",
                 RpcDeadlineCategory.STANDARD,
                 stub -> stub.check(HealthCheckRequest.newBuilder().build()));

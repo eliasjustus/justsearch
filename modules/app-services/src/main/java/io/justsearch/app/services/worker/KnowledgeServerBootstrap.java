@@ -87,11 +87,24 @@ public final class KnowledgeServerBootstrap implements Closeable {
     private static final long PID_VALIDATION_FIRST_ATTEMPT_MS = 1_000;
     /** Budget below which a further PID-validation attempt is not worth issuing. */
     private static final long PID_VALIDATION_MIN_ATTEMPT_MS = 250;
+    /** Budget below which stale-port recovery would overrun the window rather than rescue it. */
+    private static final long PID_VALIDATION_MISMATCH_RECOVERY_FLOOR_MS = 1_500;
 
     /** Total boot-time {@link #start()} attempts, including the first. */
     public static final int DEFAULT_START_ATTEMPTS = 3;
     /** Pause between boot-time {@link #start()} attempts. */
     public static final long DEFAULT_START_RETRY_BACKOFF_MS = 500;
+
+    /**
+     * Whether another {@link #start()} attempt will follow the one now failing. While true, the
+     * per-attempt DEGRADED/OFFLINE transitions are suppressed: a boot that ultimately succeeds must
+     * not narrate two worker-down occurrences on /api/health, and the capability stays PENDING —
+     * which is the honest reading of "still starting". The final outcome always transitions.
+     */
+    private volatile boolean retryPending;
+
+    /** Whether the last failed {@link #start()} left supervision holding the restart budget. */
+    private volatile boolean supervisionEngagedOnLastAttempt;
 
     private AppInstanceLock appLock;
     private IpcTelemetry ipcTelemetry;
@@ -244,7 +257,12 @@ public final class KnowledgeServerBootstrap implements Closeable {
             }
 
         } catch (Exception e) {
-            workerCapability.transition(CapabilityHealth.DEGRADED, workerDownReason("Start failed: " + e.getMessage()));
+            // Read supervision's verdict BEFORE close() drops the spawner that holds it.
+            supervisionEngagedOnLastAttempt = spawner != null && spawner.supervisionEngaged();
+            if (!retryPending) {
+                workerCapability.transition(
+                    CapabilityHealth.DEGRADED, workerDownReason("Start failed: " + e.getMessage()));
+            }
             log.error("Failed to start Knowledge Server integration", e);
             close();
             throw e;
@@ -257,8 +275,9 @@ public final class KnowledgeServerBootstrap implements Closeable {
      * <p>{@link #start()} tears itself down via {@link #close()} on failure — which resets
      * {@code started} and drops the spawner, client and signal bus — so a subsequent attempt
      * respawns from a clean slate rather than leaking the previous worker. Only failures
-     * {@link WorkerStartFailures#isTransient(Throwable) classified as transient} are retried;
-     * everything else propagates from the first attempt with its original error.
+     * {@link WorkerStartFailures#isTransient(Throwable) classified as transient} are retried, and
+     * only while {@link WorkerSpawner#supervisionEngaged() supervision has not engaged}; everything
+     * else propagates from the first attempt with its original error.
      */
     public void startWithRetry() throws IOException, InterruptedException {
         startWithRetry(DEFAULT_START_ATTEMPTS, DEFAULT_START_RETRY_BACKOFF_MS);
@@ -267,7 +286,26 @@ public final class KnowledgeServerBootstrap implements Closeable {
     /** {@link #startWithRetry()} with an explicit attempt budget; visible for tests. */
     public void startWithRetry(int maxAttempts, long backoffMs)
             throws IOException, InterruptedException {
-        WorkerStartFailures.startWithRetry(this::start, maxAttempts, backoffMs);
+        int[] attemptNo = {0};
+        supervisionEngagedOnLastAttempt = false;
+        try {
+            WorkerStartFailures.startWithRetry(
+                () -> {
+                    retryPending = ++attemptNo[0] < maxAttempts;
+                    start();
+                },
+                maxAttempts,
+                backoffMs,
+                () -> supervisionEngagedOnLastAttempt);
+        } catch (Exception e) {
+            // The per-attempt narration was suppressed; the final verdict lands exactly once, here.
+            retryPending = false;
+            workerCapability.transition(
+                CapabilityHealth.DEGRADED, workerDownReason("Start failed: " + e.getMessage()));
+            throw e;
+        } finally {
+            retryPending = false;
+        }
     }
 
     /**
@@ -348,6 +386,14 @@ public final class KnowledgeServerBootstrap implements Closeable {
                 attemptDeadlineMs -> client.getHealthCheck(attemptDeadlineMs).getPid(),
                 remainingMs -> {
                     ipcTelemetry.recordPidMismatch();
+                    // The reconnect is NOT covered by the per-attempt gRPC deadline: connect() closes
+                    // the old channel with its own 5s awaitTermination, so entering this arm on a
+                    // nearly-spent budget overruns the window for a recovery that cannot land anyway.
+                    if (remainingMs < PID_VALIDATION_MISMATCH_RECOVERY_FLOOR_MS) {
+                        log.warn("Skipping stale-port recovery: only {}ms of the validation window left",
+                                remainingMs);
+                        return;
+                    }
                     // Zero the stale port and wait for the new worker to write its port.
                     signalBus.zeroPort();
                     Thread.sleep(100);
@@ -613,8 +659,17 @@ public final class KnowledgeServerBootstrap implements Closeable {
             appLock = null;
         }
 
-        workerCapability.transition(CapabilityHealth.OFFLINE, "Worker shut down");
-        started.set(false);
+        try {
+            // Suppressed between boot attempts: a retry would immediately re-enter PENDING, and the
+            // OFFLINE flap in between is narration of a state the Head was never actually in.
+            if (!retryPending) {
+                workerCapability.transition(CapabilityHealth.OFFLINE, "Worker shut down");
+            }
+        } finally {
+            // Must clear even if a capability listener throws: a stranded started=true would make
+            // the next start() throw "already started" and replace the real cause in the log.
+            started.set(false);
+        }
         log.info("Knowledge Server integration shutdown complete");
         return outcome;
     }
