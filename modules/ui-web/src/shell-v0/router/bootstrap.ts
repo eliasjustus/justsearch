@@ -52,6 +52,7 @@ import {
   type RawSurfaceStateSchema,
 } from './surfaceSchemas.js';
 import type { StateSnapshot } from './types.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 
 interface SurfaceCatalogEnvelope {
   entries?: Array<{
@@ -90,7 +91,7 @@ export async function fetchAndRegisterSurfaceSchemas(apiBase: string): Promise<v
   const url = (apiBase || '') + '/api/registry/surfaces';
   let envelope: SurfaceCatalogEnvelope;
   try {
-    const res = await fetch(url);
+    const res = await authorizedFetch(url);
     if (!res.ok) {
       // eslint-disable-next-line no-console
       console.warn(

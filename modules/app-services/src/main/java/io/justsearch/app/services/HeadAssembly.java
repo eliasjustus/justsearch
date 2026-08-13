@@ -1281,6 +1281,15 @@ public final class HeadAssembly implements AutoCloseable {
         log.warn("Failed to close AsyncInferenceTransitionLog", e);
       }
     }
+    // Tempdoc 812 D2: stop the scan-rollup quiescence sweeper (symmetric with its construction in
+    // OperationSubstrateInit — a substrate-owned thread is torn down with the substrate).
+    if (substrateOut != null && substrateOut.operationOut() != null) {
+      try {
+        substrateOut.operationOut().scanRollupLedger().close();
+      } catch (RuntimeException e) {
+        log.warn("Failed to close ScanRollupLedger", e);
+      }
+    }
     io.justsearch.app.services.bootstrap.OrchestrationHandles handles = this.orchestration;
     if (handles != null) handles.close();
   }

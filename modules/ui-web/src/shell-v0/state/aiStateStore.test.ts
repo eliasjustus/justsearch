@@ -23,7 +23,9 @@ import {
 } from './aiStateStore.js';
 import type { StatusSnapshot } from '../utils/statusPoll.js';
 import type { InferenceSnapshot } from '../utils/inferencePoll.js';
-import { known } from './known.js';
+import { known, UNKNOWN } from './known.js';
+import { selectIndexingProgress } from './indexingProgress.js';
+import { verdictHeadline, verdictTone } from './verdict.js';
 
 const microtask = () => new Promise<void>((r) => queueMicrotask(() => r()));
 
@@ -286,12 +288,15 @@ describe('aiStateStore — system-health verdict (595)', () => {
       active?: string;
       docs?: number;
       sizeBytes?: number;
+      /** 811 C-4 — omitted means the backend does NOT report the field (the pre-811 shape). */
+      searchable?: number;
     } = {},
   ): StatusSnapshot {
     return {
       worker: {
         core: {
           indexedDocuments: over.docs ?? 5,
+          ...(over.searchable === undefined ? {} : { searchableDocuments: over.searchable }),
           indexSizeBytes: over.sizeBytes ?? 1024,
           pendingJobs: 0,
           indexState: over.indexState ?? 'IDLE',
@@ -372,6 +377,32 @@ describe('aiStateStore — system-health verdict (595)', () => {
     expect(s.stability).toEqual({ kind: 'settled' });
   });
 
+  /**
+   * Tempdoc 806 B.2 (round-12: "a dark-red dot beside 'Online' on Health", reproduced with no skin).
+   * The dot (`statusTone`) and the words beside it (`statusLabel`) are ONE indicator — `LivenessReadout`
+   * renders them together on the Health Connection card. Pre-fix the tone branch listed `degraded` and
+   * the label branch did not, so the dot reported the system verdict while the text reported the AI
+   * engine. This pins the derivation parity, not one wording.
+   */
+  it('806: for a degraded verdict the dot tone and the label beside it come from the SAME verdict', () => {
+    for (const codes of [
+      ['worker.health.embedding_not_ready'], // impairing -> warning dot
+      ['lambdamart.not_configured'], // cosmetic -> calm info dot
+    ]) {
+      __resetAiStateForTest();
+      feed(statusWith('DEGRADED', codes));
+      // An ONLINE AI engine is what made the label say "Online" over a degraded system.
+      __feedForTest({
+        inference: { mode: 'online', starting: false, available: true } as unknown as InferenceSnapshot,
+      });
+      const s = getAiState();
+      expect(s.verdict.kind).toBe('degraded');
+      expect(s.statusTone).toBe(verdictTone(s.verdict.severity));
+      expect(s.statusLabel).toBe(verdictHeadline(s.verdict));
+      expect(s.statusLabel.startsWith('Online')).toBe(false);
+    }
+  });
+
   // 649 scope guard — the tone fix is CONNECTION-only; non-connection states keep their pre-649 tone.
   it('649: AI activity does NOT flatten statusTone — it follows the underlying health', () => {
     feed(statusWith('READY'));
@@ -418,19 +449,23 @@ describe('aiStateStore — system-health verdict (595)', () => {
 
   it('E2: a settled poll stamps lastSettledIndex; a provisional poll keeps it', () => {
     feed(statusWith('READY', [], { docs: 1234, sizeBytes: 4096 }));
-    expect(getAiState().lastSettledIndex).toEqual({ documentCount: 1234, indexSizeBytes: 4096 });
+    expect(getAiState().lastSettledIndex).toEqual({ documentCount: 1234, searchableDocumentCount: null, indexSizeBytes: 4096 });
     // Worker restarts: a *successful* poll returns the fallback (0 docs / UNAVAILABLE). The
     // retained settled value must NOT be overwritten by that transient zero.
     feed(statusWith('UNKNOWN', [], { indexState: 'UNAVAILABLE', docs: 0, sizeBytes: 0 }));
     const s = getAiState();
     expect(s.stability.kind).toBe('provisional');
-    expect(s.lastSettledIndex).toEqual({ documentCount: 1234, indexSizeBytes: 4096 });
+    expect(s.lastSettledIndex).toEqual({ documentCount: 1234, searchableDocumentCount: null, indexSizeBytes: 4096 });
   });
 
   it('E2: a later settled poll refreshes lastSettledIndex', () => {
     feed(statusWith('READY', [], { docs: 10, sizeBytes: 100 }));
     feed(statusWith('READY', [], { docs: 20, sizeBytes: 200 }));
-    expect(getAiState().lastSettledIndex).toEqual({ documentCount: 20, indexSizeBytes: 200 });
+    expect(getAiState().lastSettledIndex).toEqual({
+      documentCount: 20,
+      searchableDocumentCount: null,
+      indexSizeBytes: 200,
+    });
   });
 
   it('E2: a settled poll with a doc count but NO size stamps indexSizeBytes=null (honesty)', () => {
@@ -442,7 +477,186 @@ describe('aiStateStore — system-health verdict (595)', () => {
       },
       readiness: { composites: { retrieval: { state: 'READY', reasonCodes: [] } } },
     } as unknown as StatusSnapshot);
-    expect(getAiState().lastSettledIndex).toEqual({ documentCount: 77, indexSizeBytes: null });
+    expect(getAiState().lastSettledIndex).toEqual({
+      documentCount: 77,
+      searchableDocumentCount: null,
+      indexSizeBytes: null,
+    });
+  });
+
+  // Tempdoc 811 C-4 — the default-search-scope population, distinct from the whole-index count.
+  it('C-4: index.searchableDocumentCount is UNKNOWN when the backend omits the field', () => {
+    feed(statusWith('READY', [], { docs: 40 }));
+    const index = getAiState().index;
+    expect(index.documentCount).toEqual(known(40));
+    expect(index.searchableDocumentCount).toBe(UNKNOWN);
+  });
+
+  it('C-4: index.searchableDocumentCount carries the reported value, including a real 0', () => {
+    feed(statusWith('READY', [], { docs: 40, searchable: 31 }));
+    expect(getAiState().index.searchableDocumentCount).toEqual(known(31));
+    // A default scope that excludes EVERY indexed document reports 0 — a known value, not absence.
+    feed(statusWith('READY', [], { docs: 40, searchable: 0 }));
+    expect(getAiState().index.searchableDocumentCount).toEqual(known(0));
+  });
+
+  it('C-4: a settled poll retains searchableDocumentCount; 0 is retained as 0, not as null', () => {
+    feed(statusWith('READY', [], { docs: 40, sizeBytes: 4096, searchable: 31 }));
+    expect(getAiState().lastSettledIndex).toEqual({
+      documentCount: 40,
+      searchableDocumentCount: 31,
+      indexSizeBytes: 4096,
+    });
+    feed(statusWith('READY', [], { docs: 40, sizeBytes: 4096, searchable: 0 }));
+    expect(getAiState().lastSettledIndex?.searchableDocumentCount).toBe(0);
+  });
+
+  // 813 §19 (W2) — the drain episode's high-water backlog. Mirrors the E2 cases above: an
+  // imperative stamp on the poll callback, guarded against the hard-zeroed fallback snapshot.
+  function withPendingJobs(pendingJobs: number, indexState = 'INDEXING'): StatusSnapshot {
+    return {
+      worker: {
+        core: { indexedDocuments: 5, indexState, indexHealthy: true, pendingJobs },
+        migration: {
+          migrationState: 'IDLE',
+          activeGenerationId: 'g1',
+          buildingGenerationId: '',
+          servingSearchGenerationId: 'g1',
+          servingIngestGenerationId: 'g1',
+        },
+      },
+    } as unknown as StatusSnapshot;
+  }
+
+  it('W2: episodeMaxPendingJobs is 0 before any poll', () => {
+    expect(getAiState().episodeMaxPendingJobs).toBe(0);
+  });
+
+  it('W2: it rises to the episode PEAK and holds it while the queue drains', () => {
+    feed(withPendingJobs(400));
+    expect(getAiState().episodeMaxPendingJobs).toBe(400);
+    feed(withPendingJobs(1600));
+    expect(getAiState().episodeMaxPendingJobs).toBe(1600);
+    // Draining must NOT lower the mark — it is the denominator the position is measured against.
+    feed(withPendingJobs(900));
+    expect(getAiState().episodeMaxPendingJobs).toBe(1600);
+  });
+
+  it('W2: a genuine drain to 0 ENDS the episode, so the next spike measures itself', () => {
+    feed(withPendingJobs(1600));
+    feed(withPendingJobs(0, 'IDLE'));
+    expect(getAiState().episodeMaxPendingJobs).toBe(0);
+    feed(withPendingJobs(50));
+    expect(getAiState().episodeMaxPendingJobs).toBe(50);
+  });
+
+  it('W2: a hard-zeroed fallback snapshot is absence, not a drain — the mark survives it', () => {
+    feed(withPendingJobs(1600));
+    // Worker restart: a *successful* poll returns the fallback block (UNAVAILABLE + zeroed counts).
+    // Reading its `pendingJobs: 0` as a drain would reset the denominator mid-episode.
+    feed(withPendingJobs(0, 'UNAVAILABLE'));
+    expect(getAiState().episodeMaxPendingJobs).toBe(1600);
+  });
+
+  // 813 §20 — the ENRICHMENT episode's settle trail, the second cross-poll memory. Same shape as
+  // W2 above: an imperative stamp on the poll callback, cleared when the episode ends.
+  function withEnrichment(pendingCount: number, docCount = 1000): StatusSnapshot {
+    return {
+      worker: {
+        core: { indexedDocuments: 5, indexState: 'IDLE', indexHealthy: true, pendingJobs: 0 },
+        enrichment: {
+          backfillMode: 'running',
+          embeddingDocCount: docCount,
+          embeddingPendingCount: pendingCount,
+          embeddingEnabled: true,
+        },
+        migration: {
+          migrationState: 'IDLE',
+          activeGenerationId: 'g1',
+          buildingGenerationId: '',
+          servingSearchGenerationId: 'g1',
+          servingIngestGenerationId: 'g1',
+        },
+      },
+    } as unknown as StatusSnapshot;
+  }
+
+  it('§20: the settle trail is empty before any poll', () => {
+    expect(getAiState().enrichSettleSamples).toEqual([]);
+  });
+
+  it('§20: an enriching poll stamps the blend SETTLED sum against the wall clock', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    feed(withEnrichment(300));
+    vi.setSystemTime(11_000);
+    feed(withEnrichment(200));
+    // 1,000 documents, 300 then 200 pending ⟹ 700 then 800 settled — the same quantity
+    // `enrichingPercent` divides, not a private count.
+    expect(getAiState().enrichSettleSamples).toEqual([
+      { t: 1_000, settled: 700 },
+      { t: 11_000, settled: 800 },
+    ]);
+    vi.useRealTimers();
+  });
+
+  it('§20: the trail is bounded — only the most recent samples are kept', () => {
+    vi.useFakeTimers();
+    for (let i = 0; i < 9; i += 1) {
+      vi.setSystemTime((i + 1) * 10_000);
+      feed(withEnrichment(300 - i * 10));
+    }
+    const samples = getAiState().enrichSettleSamples;
+    expect(samples.length).toBe(6);
+    // The window slid: the oldest sample is the 4th poll, not the 1st.
+    expect(samples[0]).toEqual({ t: 40_000, settled: 730 });
+    expect(samples[5]).toEqual({ t: 90_000, settled: 780 });
+    vi.useRealTimers();
+  });
+
+  it('§20: leaving the enriching phase CLEARS the trail — a fresh episode measures itself', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    feed(withEnrichment(300));
+    vi.setSystemTime(11_000);
+    feed(withEnrichment(200));
+    expect(getAiState().enrichSettleSamples.length).toBe(2);
+
+    // Ingest resumes ⟹ the phase is `indexing`, and intervals spanning the two regimes would
+    // compare rates nobody measured together.
+    vi.setSystemTime(21_000);
+    feed(withPendingJobs(400));
+    expect(getAiState().enrichSettleSamples).toEqual([]);
+
+    vi.setSystemTime(31_000);
+    feed(withEnrichment(150));
+    expect(getAiState().enrichSettleSamples).toEqual([{ t: 31_000, settled: 850 }]);
+    vi.useRealTimers();
+  });
+
+  it('§20: a hard-zeroed fallback snapshot clears the trail rather than stamping its zeros', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    feed(withEnrichment(300));
+    vi.setSystemTime(11_000);
+    feed(withPendingJobs(0, 'UNAVAILABLE'));
+    expect(getAiState().enrichSettleSamples).toEqual([]);
+    vi.useRealTimers();
+  });
+
+  it('§20: four stamped polls are enough for the selector to render an estimate', () => {
+    vi.useFakeTimers();
+    // 100 documents settled per 10 s poll ⟹ 10/s; 0 pending would end the phase, so stop at 200.
+    [300, 200, 100, 50].forEach((pending, i) => {
+      vi.setSystemTime((i + 1) * 10_000);
+      feed(withEnrichment(pending, 1000));
+    });
+    const s = getAiState();
+    const p = selectIndexingProgress(s.status, true, s.episodeMaxPendingJobs, s.enrichSettleSamples);
+    expect(p.phase).toBe('enriching');
+    // Rates 10/s, 10/s, 5/s ⟹ median 10/s over 50 pending ⟹ 5 s.
+    expect(p.enrichingEtaSeconds).toBe(5);
+    vi.useRealTimers();
   });
 });
 

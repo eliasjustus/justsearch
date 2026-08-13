@@ -11,6 +11,9 @@ import {
   QUICK_PIPELINE,
   recordInspectorOpen,
   recordInspectorClose,
+  buildCollectionFacetProbe,
+  fetchCollectionFacet,
+  COLLECTION_FACET_FIELD,
 } from './searchState.js';
 import {
   setFilterRange,
@@ -54,7 +57,7 @@ describe('searchState (slice 463)', () => {
     unsub();
   });
 
-  it('debounce: setQuery does not fire fetch immediately', () => {
+  it('debounce: setQuery does not fire fetch immediately', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ results: [], totalHits: 0 }),
@@ -62,22 +65,24 @@ describe('searchState (slice 463)', () => {
     vi.stubGlobal('fetch', fetchMock);
     setQuery('test');
     expect(fetchMock).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(250);
-    // fetch fires after debounce; we don't wait for the promise here.
+    // 804 B3: the search POST now goes through `authorizedFetch`, which awaits session-token
+    // resolution BEFORE issuing the request — so the network call lands one microtask after the
+    // debounce timer, not in the same tick. Async timer advance flushes that tick.
+    await vi.advanceTimersByTimeAsync(250);
     expect(fetchMock).toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 
   // Slice 486 G36-widening (filter-snapshot) — filter plumbing in the request body.
 
-  it('omits filters key when no active filter (quick pass carries the cheap pipeline)', () => {
+  it('omits filters key when no active filter (quick pass carries the cheap pipeline)', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ results: [], totalHits: 0 }),
     });
     vi.stubGlobal('fetch', fetchMock);
     setQuery('test');
-    vi.advanceTimersByTime(250);
+    await vi.advanceTimersByTimeAsync(250);
     const body = JSON.parse(fetchMock.mock.calls[0]![1].body);
     // 577 Phase 5: the keystroke path issues the QUICK pass first.
     expect(body).toEqual({ query: 'test', limit: 50, mode: 'text', pipeline: QUICK_PIPELINE });
@@ -85,7 +90,7 @@ describe('searchState (slice 463)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('includes filters.modifiedAt when both bounds set', () => {
+  it('includes filters.modifiedAt when both bounds set', async () => {
     setFilterRange(1000, 2000);
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -93,13 +98,13 @@ describe('searchState (slice 463)', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     setQuery('test');
-    vi.advanceTimersByTime(250);
+    await vi.advanceTimersByTimeAsync(250);
     const body = JSON.parse(fetchMock.mock.calls[0]![1].body);
     expect(body.filters).toEqual({ modifiedAt: { fromMs: 1000, toMs: 2000 } });
     vi.unstubAllGlobals();
   });
 
-  it('includes only the set bound when one is undefined', () => {
+  it('includes only the set bound when one is undefined', async () => {
     setFilterRange(1000, undefined);
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -107,13 +112,13 @@ describe('searchState (slice 463)', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     setQuery('test');
-    vi.advanceTimersByTime(250);
+    await vi.advanceTimersByTimeAsync(250);
     const body = JSON.parse(fetchMock.mock.calls[0]![1].body);
     expect(body.filters).toEqual({ modifiedAt: { fromMs: 1000 } });
     vi.unstubAllGlobals();
   });
 
-  it('clearing filters omits the field on subsequent search', () => {
+  it('clearing filters omits the field on subsequent search', async () => {
     setFilterRange(1000, 2000);
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -121,10 +126,10 @@ describe('searchState (slice 463)', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     setQuery('test');
-    vi.advanceTimersByTime(250);
+    await vi.advanceTimersByTimeAsync(250);
     setFilterRange(undefined, undefined);
     setQuery('test2');
-    vi.advanceTimersByTime(250);
+    await vi.advanceTimersByTimeAsync(250);
     const body = JSON.parse(fetchMock.mock.calls[1]![1].body);
     expect(body.filters).toBeUndefined();
     vi.unstubAllGlobals();
@@ -159,6 +164,29 @@ describe('searchState (slice 463)', () => {
     expect(getSearchState().searchTrace).toEqual(
       searchTraceSchema.parse(searchTrace),
     );
+    vi.unstubAllGlobals();
+  });
+
+  // Tempdoc 811 (C-1a) — the corpus marker's input: `fields.collection` must reach the hit, or the
+  // row pill can never render regardless of how the card is written.
+  it('carries fields.collection onto the hit (and leaves it undefined when the wire omits it)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          results: [
+            { id: 'h', fields: { path: '/help.md', collection: 'justsearch-help' } },
+            { id: 'u', fields: { path: '/mine.md' } },
+          ],
+          totalHits: 2,
+        }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    setQuery('help');
+    await vi.runAllTimersAsync();
+    const results = getSearchState().results;
+    expect(results.find((r) => r.id === 'h')?.collection).toBe('justsearch-help');
+    expect(results.find((r) => r.id === 'u')?.collection).toBeUndefined();
     vi.unstubAllGlobals();
   });
 
@@ -476,5 +504,72 @@ describe('searchState — DWELLED (tempdoc 580 §17 P3)', () => {
     recordInspectorOpen('not-a-result'); // e.g. a deep-link open — no join key
     await vi.advanceTimersByTimeAsync(3100);
     expect(dwellPosts(fetchMock)).toHaveLength(0);
+  });
+});
+
+/**
+ * Tempdoc 811 C-2a — the collection enumeration probe. It is issued from this module because this
+ * is the ONE `/api/knowledge/search` site (577 Ext II / the `search-issuance` gate); it is an
+ * aggregation rather than a user query, so it does NOT go through `buildSearchIntent`.
+ */
+describe('collection enumeration probe (811 C-2a)', () => {
+  const probe = () =>
+    buildCollectionFacetProbe(120_000) as {
+      query: string;
+      querySyntax: string;
+      limit: number;
+      pipeline: { sparseEnabled: boolean; denseEnabled: boolean; expansionEnabled: boolean };
+      facets: { include: boolean; maxDocsScanned: number; fields: Array<{ field: string }> };
+    };
+
+  it('asks for the collection facet over a NON-BLANK corpus-wide query', () => {
+    // SearchPlanner.plan short-circuits a blank query to EmptyQueryDecision BEFORE any facet is
+    // planned, so a blank query would silently answer with no facets at all.
+    const body = probe();
+    expect(body.query.trim().length).toBeGreaterThan(0);
+    expect(body.querySyntax).toBe('lucene');
+    expect(body.facets.include).toBe(true);
+    expect(body.facets.fields).toEqual([{ field: COLLECTION_FACET_FIELD, size: 100 }]);
+    expect(body.facets.maxDocsScanned).toBe(120_000);
+  });
+
+  it('runs the cheap sparse-only pipeline — no dense leg, no expansion', () => {
+    const body = probe();
+    expect(body.pipeline).toEqual(QUICK_PIPELINE);
+    expect(body.limit).toBe(1);
+  });
+
+  it('POSTs to the one search endpoint and returns the parsed body', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ facets: { collection: { 'mcp-ingest': 4 } } }),
+    })) as unknown as typeof globalThis.fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const payload = await fetchCollectionFacet(50_000, 'http://test');
+      expect(payload).toEqual({ facets: { collection: { 'mcp-ingest': 4 } } });
+      const [url, init] = (fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [
+        string,
+        { method: string; body: string },
+      ];
+      expect(url).toBe('http://test/api/knowledge/search');
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body)).toEqual(buildCollectionFacetProbe(50_000));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('throws on a non-2xx rather than reporting an empty corpus', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 503 })) as unknown as typeof globalThis.fetch,
+    );
+    try {
+      await expect(fetchCollectionFacet(50_000, 'http://test')).rejects.toThrow('HTTP 503');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

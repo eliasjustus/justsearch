@@ -33,8 +33,9 @@ function minSeparation(sizeA: number, sizeB: number, gap: number): number {
  *  - empty / single / `trackPx <= 0` (unmeasured: jsdom, first paint) → returns `idealPx` unchanged,
  *    mirroring the sibling primitives' "honour the input until measured" contract.
  *  - over-capacity (the required separations sum to more than the track — only a 50+-node run) → the
- *    result is compressed to fit the track (residual crowding only at that extreme; true aggregation is
- *    a future extension).
+ *    result is compressed to fit the track (residual crowding only at that extreme). {@link clusterAdjacent}
+ *    is the AGGREGATION half this doc-comment used to defer as "a future extension" (tempdoc 814 §D4):
+ *    spacing keeps markers legible, clustering keeps their COUNT bounded by structure.
  */
 export function computeSpacedPositions(
   idealPx: readonly number[],
@@ -112,4 +113,54 @@ export function computeSpacedPositions(
 /** The min centre separation for a pair — exported for the spine + tests to assert the invariant. */
 export function requiredSeparation(sizeA: number, sizeB: number, gapPx = 2): number {
   return minSeparation(sizeA, sizeB, gapPx);
+}
+
+/**
+ * One placed marker group along the track: a single marker (`indices.length === 1`) or an AGGREGATED
+ * cluster of adjacent mergeable markers rendered as one counted badge.
+ */
+export interface PlacedGroup {
+  /** The group's centre position in px along the track. */
+  readonly positionPx: number;
+  /** The input indices this group stands for, in order. A single-element group is not a cluster. */
+  readonly indices: readonly number[];
+}
+
+/**
+ * The AGGREGATION facet (tempdoc 814 §D4, the extension {@link computeSpacedPositions} deferred):
+ * collapse runs of adjacent MERGEABLE markers that still sit closer than `minGapPx` after spacing into
+ * ONE group, so marker density is bounded by the track (≈ `trackPx / minGapPx`) rather than by event
+ * count — a 200-step run cannot degrade the minimap into a solid line.
+ *
+ * `mergeable[i] === false` marks a LANDMARK (a user/assistant turn, a workflow-node boundary, a human
+ * steering directive): it is always its own group and also BREAKS a run, so a cluster never swallows a
+ * structural index entry. Positions must be non-decreasing (they are, post-PAVA); a group's position is
+ * the mean of its members'.
+ */
+export function clusterAdjacent(
+  positionsPx: readonly number[],
+  mergeable: readonly boolean[],
+  minGapPx: number,
+): PlacedGroup[] {
+  const groups: PlacedGroup[] = [];
+  let member: number[] = [];
+  const flush = (): void => {
+    if (member.length === 0) return;
+    let sum = 0;
+    for (const i of member) sum += positionsPx[i] as number;
+    groups.push({ positionPx: sum / member.length, indices: member });
+    member = [];
+  };
+  for (let i = 0; i < positionsPx.length; i++) {
+    if (mergeable[i] !== true) {
+      flush();
+      groups.push({ positionPx: positionsPx[i] as number, indices: [i] });
+      continue;
+    }
+    const prev = member.length > 0 ? (positionsPx[member[member.length - 1] as number] as number) : null;
+    if (prev !== null && (positionsPx[i] as number) - prev >= minGapPx) flush();
+    member.push(i);
+  }
+  flush();
+  return groups;
 }

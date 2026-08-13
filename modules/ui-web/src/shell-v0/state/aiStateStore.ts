@@ -50,6 +50,15 @@ import {
   type PackImportStatus,
 } from '../utils/aiInstallPoll.js';
 import { type Maybe, known, UNKNOWN, mapKnown } from './known.js';
+// 813 §19 (W2) — the projection's own admission test, reused (not re-implemented) by the high-water
+// stamp below so the store and the selector agree on what counts as a worker-reported snapshot.
+import {
+  ENRICH_SETTLE_SAMPLE_CAP,
+  enrichSettledSum,
+  isWorkerReportedIndex,
+  selectIndexingPhase,
+  type EnrichSettleSample,
+} from './indexingProgress.js';
 import { humanizeSeconds, elapsedSecondsSince } from './startupEstimate.js';
 // Tempdoc 649 — the ONE reachability authority (positive contact across ANY channel), registered as
 // the `connection` liveness domain. `aiStateStore` is its sole render site (imports `isOriginReachable`).
@@ -133,6 +142,15 @@ export interface AiActivity {
 
 export interface AiIndex {
   documentCount: Maybe<number>;
+  /**
+   * Tempdoc 811 C-4 — the population a DEFAULT-scope search can actually return: `documentCount`
+   * minus the collections the default scope excludes (today `agent-history`). `documentCount` still
+   * describes the whole non-chunk index, which is the right number for Health's "Files"; a
+   * user-facing "Searching N documents" string must read THIS one, because it is the only one of
+   * the two the user could enumerate. UNKNOWN on a backend that predates the field — a consumer
+   * falls back to `documentCount` there, but a KNOWN `0` is a real value and must be shown as 0.
+   */
+  searchableDocumentCount: Maybe<number>;
   pendingJobs: Maybe<number>;
   embeddingPending: Maybe<number>;
   embeddingBlocked: Maybe<boolean>;
@@ -222,6 +240,14 @@ export interface AiState {
    */
   verdict: SystemHealthVerdict;
   /**
+   * Tempdoc 807 A.3 — is the retained snapshot still a LIVE observation, or only a past
+   * measurement? Projected ONCE from contact reachability by {@link isSnapshotLive}; every surface that
+   * renders raw snapshot fields (progress, coverage, queue counts, capability counts, the CONN dot)
+   * consults this instead of inventing its own staleness heuristic. `false` ⟹ degrade rather than
+   * assert: stop animating, say "last known", make live-backend-preconditioned controls unavailable.
+   */
+  snapshotLive: boolean;
+  /**
    * The last-known raw poll snapshots (B7). Consumers that need fields beyond
    * the projection above (GPU, memory ceiling, uptime, index state, inference
    * queues) read these instead of running a SECOND status/inference poll — the
@@ -237,8 +263,43 @@ export interface AiState {
    * show this dimmed "last known" value instead of collapsing to `…`, so a healthy rebuild
    * stops reading as data loss. `null` until the first settled poll. Stamped imperatively in
    * `onStatusUpdate` (the poll callback), never written by a `computed`, so the graph is acyclic.
+   *
+   * <p>811 C-4: `searchableDocumentCount` is the default-search-scope population (see
+   * {@link AiIndex}); `null` means the backend did not report it, NOT "zero searchable documents" —
+   * a consumer falls back to `documentCount` on `null` and shows a real `0` as `0`.
    */
-  lastSettledIndex: { documentCount: number; indexSizeBytes: number | null } | null;
+  lastSettledIndex: {
+    documentCount: number;
+    searchableDocumentCount: number | null;
+    indexSizeBytes: number | null;
+  } | null;
+  /**
+   * 813 §19 (W2) — the largest job backlog observed during the CURRENT drain episode, and the ONLY
+   * cross-poll memory the indexing surfaces have. `selectIndexingProgress` is a pure function of a
+   * single snapshot, so it cannot know that a backlog of 400 was 1,600 two polls ago; without a
+   * remembered maximum the indexing affordance can only ever be indeterminate. Stamped imperatively
+   * in `onStatusUpdate` (the poll callback), never written by a `computed`, so the graph is acyclic
+   * — the same discipline as {@link lastSettledIndex} above.
+   *
+   * <p>Only WORKER-REPORTED snapshots are admitted (`isWorkerReportedIndex`): the fallback block's
+   * `pendingJobs: 0` is absence, not a drained queue, and reading it as a drain would reset the
+   * denominator mid-episode. A genuine drain to 0 DOES reset it, so the next episode measures itself
+   * instead of inheriting a stale ceiling.
+   */
+  episodeMaxPendingJobs: number;
+  /**
+   * 813 §20 — the ENRICHMENT half's cross-poll memory: a short trail of the enrichment blend's
+   * settled sum, each stamped with the wall-clock instant it was observed. The wire carries no
+   * enrichment-throughput gauge (`core.recentDocsPerSec` measures the INDEXING pipeline), so an
+   * enrichment estimate has no basis at all without remembering how much settled between polls.
+   *
+   * Stamped imperatively in `onStatusUpdate` through the ONE settled-sum authority
+   * (`enrichSettledSum`), never written by a `computed` — the same discipline as
+   * {@link episodeMaxPendingJobs} above. CLEARED whenever the derived phase is not `enriching`: a
+   * fresh enrichment episode must measure itself rather than inherit a rate from an hour ago, and
+   * intervals spanning a phase change would compare two different regimes.
+   */
+  enrichSettleSamples: readonly EnrichSettleSample[];
   /**
    * 663 Stage 3 — the last-known install/runtime/pack snapshots, fed by the shared, always-on
    * `aiInstallPoll` (mirrors `status`/`inference` above: `null` until the first successful poll,
@@ -283,7 +344,18 @@ const runtimeStatusSig = signal<AiRuntimeStatus | null>(null);
 const packStatusSig = signal<PackImportStatus | null>(null);
 // 595 §15.3 (E2) — retained last-settled index counts. Written ONLY by the poll
 // callback (`onStatusUpdate`), read by `buildSnapshot`; no computed writes it.
-const lastSettledIndexSig = signal<{ documentCount: number; indexSizeBytes: number | null } | null>(null);
+const lastSettledIndexSig = signal<{
+  documentCount: number;
+  searchableDocumentCount: number | null;
+  indexSizeBytes: number | null;
+} | null>(null);
+// 813 §19 (W2) — the drain episode's high-water backlog. Written ONLY by the poll
+// callback (`onStatusUpdate`), read by `buildSnapshot`; no computed writes it.
+const episodeMaxPendingJobsSig = signal(0);
+// 813 §20 — the enrichment episode's settle trail. Written ONLY by the poll
+// callback (`onStatusUpdate`), read by `buildSnapshot`; no computed writes it.
+const NO_ENRICH_SAMPLES: readonly EnrichSettleSample[] = [];
+const enrichSettleSamplesSig = signal<readonly EnrichSettleSample[]>(NO_ENRICH_SAMPLES);
 // Time is not reactive; the staleness timer bumps this when reachability
 // would flip, so the `connection` derivation re-evaluates.
 const clockTickSig = signal(0);
@@ -446,6 +518,62 @@ function computeRuntime(): AiRuntime {
   };
 }
 
+/**
+ * Tempdoc 806 B.2 (round-12 finding) — the ONE predicate for "does the system verdict own the status
+ * readout, or does the AI-engine verdict?". `computeStatusLabel` and `computeStatusTone` MUST agree
+ * here, because they are rendered as a SINGLE indicator: the liveness dot and the words beside it
+ * (`LivenessReadout`, `core.retrieval` on the Health Connection card) and the status-bar pill.
+ *
+ * Round 12 photographed them disagreeing — a danger-red dot beside the word "Online" — because
+ * `degraded` was listed in the tone branch (tempdoc 649) and never added to the label branch, so the
+ * dot reported the system verdict while the text beside it reported the AI engine. The label was the
+ * wrong half: `computeStatusLabel`'s own doc comment already claims "the bar can no longer say
+ * 'Online' while Health says 'Service degraded'" — the Health badge projects `verdictHeadline` for
+ * every kind, including `degraded`, and the bar did not.
+ */
+function verdictOwnsStatus(verdict: SystemHealthVerdict): boolean {
+  return (
+    verdict.kind === 'connecting' ||
+    verdict.kind === 'unreachable' ||
+    verdict.kind === 'transitioning' ||
+    verdict.kind === 'degraded'
+  );
+}
+
+/**
+ * Tempdoc 807 A.3 (round-13 R13-F2) — the ONE liveness predicate: "is what we last observed still a
+ * LIVE observation, or only a past measurement?". Sibling of {@link verdictOwnsStatus}: both are pure
+ * projections of the SAME verdict authority, so a surface can never invent a second detection
+ * mechanism (that divergence is how the status label and the CONN dot drifted apart, 806 W2).
+ *
+ * `verdictOwnsStatus` governs the status line's own WORDING and TONE. This governs everything the
+ * status line does not: the surfaces that render fields off the retained snapshot. Round 13
+ * photographed an animating "Building semantic search 2.0% · 5,084 pending", "4/4 active" and a green
+ * CONN dot with BOTH java processes dead — the values were right, their TENSE was not.
+ *
+ * THE RULE: liveness is a CONTACT fact, never a verdict-kind classification. The snapshot is live
+ * exactly while the origin is reachable — `computeReachability()`, the same `reachableViaContact`
+ * `computeVerdict` itself consumes. The first cut of this predicate read the verdict KIND instead
+ * and claimed the two non-live kinds were "exactly the two `computeVerdict` mints when
+ * `reachableViaContact` is false". That was false at source (round-13 review): `computeStability`
+ * returns from SIX higher-precedence branches before it can reach the `phase === 'stale'` one, and
+ * every one of them reads a RETAINED snapshot field — `indexState: UNAVAILABLE` (worker-restart),
+ * `migrationState` SWITCHING/MIGRATING, a building≠active generation, serving-search≠serving-ingest,
+ * `catchingUp`. `statusSig` is retained on a failed poll, so with the Worker dying first (the
+ * ordinary case: the backend writes `indexState: UNAVAILABLE`, then the Head dies) the verdict
+ * stayed `transitioning`/`worker-restart` FOREVER, never `channel-stale`, and the whole fix was
+ * silently disabled. Contact cannot be retained: it is a stamp of when we last heard anything.
+ *
+ * AGE is already accounted for and needs no new threshold or second authority: reachability is
+ * earned by positive contact within `STREAM_WATCHDOG_STALE_MS` (`originContact.isOriginReachable`,
+ * the generated 40s stream-watchdog window = >2× the 15s heartbeat), and before the first contact
+ * the boot grace window applies (`computeReachability`, mirroring `neverConnected`) so startup is
+ * live, not a false alarm.
+ */
+export function isSnapshotLive(connection: Pick<AiConnection, 'reachable'>): boolean {
+  return connection.reachable;
+}
+
 function computeStatusLabel(
   verdict: SystemHealthVerdict,
   runtime: AiRuntime,
@@ -472,11 +600,9 @@ function computeStatusLabel(
   // while connecting/reconnecting/transitioning). Backend-connectivity problems
   // outrank AI-install state — nothing AI-related is actionable if the backend
   // itself is unreachable, so this check stays first, unchanged (Design pass 3 §V).
-  if (
-    verdict.kind === 'connecting' ||
-    verdict.kind === 'unreachable' ||
-    verdict.kind === 'transitioning'
-  ) {
+  // Tempdoc 806 B.2: `degraded` joined this set via `verdictOwnsStatus` — the tone branch already had
+  // it, so the pair rendered a warning/danger dot next to the AI engine's "Online".
+  if (verdictOwnsStatus(verdict)) {
     return verdictHeadline(verdict);
   }
   // Design pass 3 — the AI-specific label now comes from the ONE AI-engine presentation
@@ -495,6 +621,28 @@ function computeStatusLabel(
   return aiEngine.kind === 'online' && runtime.modelLabel ? `Online — ${runtime.modelLabel}` : headline;
 }
 
+/**
+ * Tempdoc 814 §D5 (one authority, one pointer) — the status readout WITHOUT the verdict flavour.
+ *
+ * The status-bar chip and the chat surface's degradation banner are two projections of the same
+ * `verdict`. When the banner is the persistent authority for that fact on the active surface, the
+ * chip yields its degradation flavour and reports the AI mode instead. "The AI mode" is not a second
+ * derivation: it is exactly what {@link computeStatusLabel}/{@link computeStatusTone} already produce
+ * when {@link verdictOwnsStatus} is false, so this runs the SAME two functions with a neutral verdict
+ * rather than forking their fallback chain (which carries the activity overlay and the `starting`
+ * elapsed clock). One authority, two call sites.
+ */
+const NEUTRAL_VERDICT: SystemHealthVerdict = { kind: 'operational', severity: 'ok', reasons: [] };
+
+export function statusWithoutVerdictFlavor(
+  s: Pick<AiState, 'runtime' | 'activity' | 'aiEngine'>,
+): { label: string; tone: NoticeTone } {
+  return {
+    label: computeStatusLabel(NEUTRAL_VERDICT, s.runtime, s.activity, s.aiEngine),
+    tone: computeStatusTone(NEUTRAL_VERDICT, s.runtime, s.aiEngine),
+  };
+}
+
 function computeIndex(): AiIndex {
   const status = statusSig.get();
   const inference = inferenceSig.get();
@@ -504,6 +652,7 @@ function computeIndex(): AiIndex {
     inference === null || v === undefined || v === null ? UNKNOWN : known(v);
   return {
     documentCount: fromStatus(status?.worker?.core?.indexedDocuments),
+    searchableDocumentCount: fromStatus(status?.worker?.core?.searchableDocuments),
     pendingJobs: fromStatus(status?.worker?.core?.pendingJobs),
     embeddingPending: fromStatus(status?.embedding?.pendingCount),
     embeddingBlocked:
@@ -593,12 +742,7 @@ function computeStatusTone(
 ): NoticeTone {
   // Verdict-driven kinds (mirror computeStatusLabel's verdictHeadline branch): tone from the ONE
   // verdict-tone authority — calm `busy` → info, `warn` → warning, `unreachable` (error) → error.
-  if (
-    verdict.kind === 'connecting' ||
-    verdict.kind === 'unreachable' ||
-    verdict.kind === 'transitioning' ||
-    verdict.kind === 'degraded'
-  ) {
+  if (verdictOwnsStatus(verdict)) {
     return verdictTone(verdict.severity);
   }
   // Design pass 3 — the AI-specific tone now comes from the ONE AI-engine presentation projection
@@ -674,6 +818,11 @@ function buildSnapshot(): AiState {
   });
   const installStatus = installStatusSig.get();
   const runtimeStatus = runtimeStatusSig.get();
+  // Tempdoc 807 — the ONE liveness answer, computed here from the SAME contact reachability the
+  // verdict above consumes, and threaded BOTH into the engine verdict (so it cannot claim a live
+  // engine off a dead snapshot) and onto the state (so snapshot-rendering surfaces re-tense the same
+  // way, at the same moment).
+  const snapshotLive = isSnapshotLive(connection);
   // Tempdoc 663 Design pass 2 - the AI-engine rollup, computed the same way stability/verdict are
   // (purely observed signals; no surface-local UI intent). Computed BEFORE statusLabel/statusTone
   // (Design pass 3) since those now project their AI-specific wording/tone from this value.
@@ -682,6 +831,9 @@ function buildSnapshot(): AiState {
     runtimeStatus,
     runtime,
     reachable: connection.reachable,
+    // Tempdoc 807 Part A (round-13 R13-F2) — W1's predicate, threaded in rather than re-derived inside
+    // the verdict function: a retained `engineState: 'Healthy'` must not mint a settled green "Online".
+    snapshotLive,
     // Tempdoc 737 §12b/§12c — the runtime-authority engine axis (preferred over runtime.mode when present).
     engineState: status?.inference?.engineState,
     chatEnabledSpec: status?.inference?.chatEnabledSpec,
@@ -705,9 +857,13 @@ function buildSnapshot(): AiState {
     statusTone,
     stability,
     verdict,
+    // Tempdoc 807 A.3 — projected once, here, from the verdict just computed above.
+    snapshotLive,
     status,
     inference: inferenceSig.get(),
     lastSettledIndex: lastSettledIndexSig.get(),
+    episodeMaxPendingJobs: episodeMaxPendingJobsSig.get(),
+    enrichSettleSamples: enrichSettleSamplesSig.get(),
     installStatus,
     runtimeStatus,
     packStatus: packStatusSig.get(),
@@ -792,6 +948,8 @@ function onStatusUpdate(snap: StatusSnapshot | null): void {
     statusSig.set(snap);
     lastStatusSuccessSig.set(Date.now());
     stampSettledIndex(snap);
+    stampEpisodeMaxPendingJobs(snap);
+    stampEnrichSettleSamples(snap);
   } else {
     clockTickSig.set(clockTickSig.get() + 1);
   }
@@ -840,10 +998,50 @@ function stampSettledIndex(snap: StatusSnapshot): void {
   if (documentCount == null) return;
   lastSettledIndexSig.set({
     documentCount,
+    // 811 C-4: `null` = the backend never reported it (fall back to documentCount); a reported 0 is
+    // a real "the default scope searches nothing" and is retained as 0.
+    searchableDocumentCount: snap.worker?.core?.searchableDocuments ?? null,
     // Honesty: a size that was never observed stays `null` (renderers show "…" for Size, not
     // a confident "0 B"). Files retention is gated on documentCount above, the primary path.
     indexSizeBytes: snap.worker?.core?.indexSizeBytes ?? null,
   });
+}
+
+/**
+ * 813 §19 (W2) — track the drain episode's high-water backlog (see
+ * {@link AiState.episodeMaxPendingJobs}). Mirrors {@link stampSettledIndex}: imperative-on-input,
+ * guarded against the hard-zeroed fallback snapshot, never written from a `computed`. A reported
+ * backlog of 0 ENDS the episode, so the next spike starts from a fresh denominator rather than
+ * measuring itself against a ceiling from an hour ago.
+ */
+function stampEpisodeMaxPendingJobs(snap: StatusSnapshot): void {
+  if (!isWorkerReportedIndex(snap)) return;
+  const pending = snap.worker?.core?.pendingJobs;
+  if (typeof pending !== 'number' || !Number.isFinite(pending) || pending <= 0) {
+    episodeMaxPendingJobsSig.set(0);
+    return;
+  }
+  if (pending > episodeMaxPendingJobsSig.get()) episodeMaxPendingJobsSig.set(pending);
+}
+
+/**
+ * 813 §20 — track the enrichment episode's settle trail (see {@link AiState.enrichSettleSamples}).
+ * Mirrors {@link stampEpisodeMaxPendingJobs}: imperative-on-input, never written from a `computed`,
+ * and phase-gated through the ONE progress authority rather than a private phase re-derivation.
+ *
+ * The settled sum comes from `enrichSettledSum`, the same stage set `selectIndexingProgress` blends
+ * into the percent — so the estimate this trail backs cannot describe a different quantity than the
+ * bar it is rendered beside. The empty-array reset is guarded on length because a fresh `[]` is
+ * never `Object.is`-equal to the old one, and an unconditional write would invalidate the memoized
+ * snapshot on every idle poll.
+ */
+function stampEnrichSettleSamples(snap: StatusSnapshot): void {
+  if (selectIndexingPhase(snap) !== 'enriching') {
+    if (enrichSettleSamplesSig.get().length > 0) enrichSettleSamplesSig.set(NO_ENRICH_SAMPLES);
+    return;
+  }
+  const next = [...enrichSettleSamplesSig.get(), { t: Date.now(), settled: enrichSettledSum(snap) }];
+  enrichSettleSamplesSig.set(next.slice(-ENRICH_SETTLE_SAMPLE_CAP));
 }
 
 function checkStaleness(): void {
@@ -937,6 +1135,8 @@ export function __feedForTest(opts: {
     if (opts.status) {
       lastStatusSuccessSig.set(Date.now());
       stampSettledIndex(opts.status); // E2 — mirror the production poll-callback stamp.
+      stampEpisodeMaxPendingJobs(opts.status); // 813 §19 W2 — same mirror, same reason.
+      stampEnrichSettleSamples(opts.status); // 813 §20 — same mirror, same reason.
     }
   }
   if (opts.inference !== undefined) {
@@ -974,6 +1174,8 @@ export function __resetAiStateForTest(): void {
   runtimeStatusSig.set(null);
   packStatusSig.set(null);
   lastSettledIndexSig.set(null);
+  episodeMaxPendingJobsSig.set(0);
+  enrichSettleSamplesSig.set(NO_ENRICH_SAMPLES);
   clockTickSig.set(0);
   loadStartedAtSig.set(null);
   __resetOriginContactForTest();

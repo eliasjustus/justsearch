@@ -54,6 +54,13 @@ import {
   subscribeSeenCursor,
 } from '../substrates/recall/recallCursor.js';
 
+/**
+ * Tempdoc 806 B.2 (round-12 F4 / round-7 B6-8) — how long the digest stays on screen for ONE piece
+ * of activity before it collapses. Long enough to read a sentence and reach "Undo all AI actions";
+ * short enough that it cannot become the ~10-minute header occlusion round 12 recorded.
+ */
+export const AUTO_HIDE_MS = 20_000;
+
 export class AiActivityDigest extends JfElement {
   static properties = {
     apiBase: { type: String, attribute: 'api-base' },
@@ -62,6 +69,8 @@ export class AiActivityDigest extends JfElement {
     multiplex: { attribute: false },
     digest: { state: true },
     pendingAgent: { state: true },
+    // Tempdoc 806 B.2 — see AUTO_HIDE_MS. Reactive so expiry re-renders the collapsed state.
+    autoHidden: { state: true },
     // 543-fwd #8 — entries staged for the mass-undo confirm preview; empty = not confirming.
     undoPreview: { state: true },
   };
@@ -71,6 +80,7 @@ export class AiActivityDigest extends JfElement {
   declare digest: AgentRecallDigest;
   declare pendingAgent: number;
   declare undoPreview: ReadonlyArray<JournalEntry>;
+  declare autoHidden: boolean;
 
   /** Injected only by tests; production uses the real EventSource via openActionLedgerStream. */
   eventSourceFactory?: (url: string) => EventSource;
@@ -78,6 +88,9 @@ export class AiActivityDigest extends JfElement {
   // Tempdoc 577 §2.14 Root I (#20) — the latest unified-ledger rows (the ONE log), held so the
   // digest projects from the same stream History/Timeline render, not the FE journal alone.
   private entries: ReadonlyArray<UnifiedActionEntry> = [];
+  private autoHideTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The digest content the current auto-hide window was armed for; a change re-shows the digest. */
+  private shownFor = '';
   private stopStream: (() => void) | null = null;
   private unsubJournal: (() => void) | null = null;
   private unsubPending: (() => void) | null = null;
@@ -89,6 +102,7 @@ export class AiActivityDigest extends JfElement {
     this.digest = summarizeAgentRecall(this.entries, getSeenCursor());
     this.pendingAgent = this.countAgentPending();
     this.undoPreview = [];
+    this.autoHidden = false;
   }
 
   connectedCallback(): void {
@@ -124,6 +138,7 @@ export class AiActivityDigest extends JfElement {
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    this.clearAutoHideTimer();
     this.stopStream?.();
     this.stopStream = null;
     this.unsubJournal?.();
@@ -141,6 +156,14 @@ export class AiActivityDigest extends JfElement {
   private refresh(): void {
     this.digest = summarizeAgentRecall(this.entries, getSeenCursor());
     this.pendingAgent = this.countAgentPending();
+    // Tempdoc 806 B.2 — an auto-hide is about THIS content having had its turn on screen. When the
+    // assistant does something new, that is new information and the digest earns a fresh window.
+    const signature = `${this.digest.total}|${this.digest.latestIso}|${this.pendingAgent}`;
+    if (signature !== this.shownFor) {
+      this.shownFor = signature;
+      this.autoHidden = false;
+      this.clearAutoHideTimer();
+    }
   }
 
   static styles = css`
@@ -229,8 +252,39 @@ export class AiActivityDigest extends JfElement {
 
   updated(): void {
     const empty = this.digest.total === 0 && this.pendingAgent === 0;
-    if (empty) this.setAttribute('data-empty', '');
+    // Tempdoc 806 B.2 — a digest that never expires is not chrome, it is occlusion: round 12 had it
+    // covering the header for ~10 minutes across every surface, and round 7's B6-8 already asked for
+    // a bounded lifetime (798 line 974: "Toasts also do not auto-dismiss"). Hidden here means hidden
+    // ONLY — the shared seen-cursor is untouched, so nothing is marked read on the user's behalf and
+    // every recall surface still shows the same activity. New activity re-shows it (see `shownFor`).
+    if (empty || this.autoHidden) this.setAttribute('data-empty', '');
     else this.removeAttribute('data-empty');
+    this.armAutoHide(empty);
+  }
+
+  /**
+   * Arms (or re-arms) the auto-hide window. Held open while the mass-undo confirm preview is
+   * staged — collapsing a dialog the user is reading would be a worse defect than the one this
+   * fixes.
+   */
+  private armAutoHide(empty: boolean): void {
+    if (empty || this.autoHidden || this.undoPreview.length > 0) {
+      this.clearAutoHideTimer();
+      return;
+    }
+    if (this.autoHideTimer !== null) return;
+    this.autoHideTimer = setTimeout(() => {
+      this.autoHideTimer = null;
+      // Re-check: a confirm preview may have opened inside the window.
+      if (this.undoPreview.length === 0) this.autoHidden = true;
+    }, AUTO_HIDE_MS);
+  }
+
+  private clearAutoHideTimer(): void {
+    if (this.autoHideTimer !== null) {
+      clearTimeout(this.autoHideTimer);
+      this.autoHideTimer = null;
+    }
   }
 
   // 543-fwd #8 — first click stages a confirm preview instead of undoing

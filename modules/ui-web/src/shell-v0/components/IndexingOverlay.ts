@@ -24,6 +24,7 @@ import {
   type AiState,
 } from '../state/aiStateStore.js';
 import { orElse } from '../state/known.js';
+import { selectIndexingProgress } from '../state/indexingProgress.js';
 
 const NUM = new Intl.NumberFormat();
 
@@ -333,14 +334,43 @@ export class IndexingOverlayHost extends JfElement {
   override render(): TemplateResult | typeof nothing {
     const ai = this.aiState;
     if (!ai) return nothing;
+    // Tempdoc 807 A.3 — this overlay asserts "indexing is happening right now, here is the queue",
+    // entirely from the retained snapshot. With the backend gone that is a past measurement in the
+    // present tense, and its "Go online" button would POST into the void. There is no honest
+    // last-known form of a live-work overlay, so it withdraws; the "Backend disconnected." banner
+    // and the CONN dot carry the real state.
+    if (!ai.snapshotLive) return nothing;
     if (ai.runtime.mode !== 'indexing') return nothing;
-    const queueTotal = orElse(ai.index.embeddingQueueSize, 0) + orElse(ai.index.vduQueueSize, 0);
-    if (queueTotal === 0) return nothing;
+    // Tempdoc 813 §10.6 — the overlay's private two-row queue readout is retired. Both of its numbers
+    // are the SAME worker counts `/api/status` already carries (`enrichment.embedding.pendingCount`
+    // and `core.pendingVduCount`); `ai.index.embeddingQueueSize` / `vduQueueSize` reached them through
+    // the SECOND transport (`/api/inference/status` → `countPendingEmbeddings`/`countPendingVdu`),
+    // which is the §1a "one subject, two transports" divergence class. The numbers now come from the
+    // ONE projection; the inference-poll counts remain only as the degraded input on the projection's
+    // `unknown` arm (no status snapshot ⇒ the projection cannot speak, and inventing a zero would
+    // silently withdraw a live overlay).
+    const progress = selectIndexingProgress(
+      ai.status,
+      ai.snapshotLive,
+      ai.episodeMaxPendingJobs,
+      ai.enrichSettleSamples,
+    );
+    // The status authority says everything is settled ⇒ a non-zero queue reading is residue, not
+    // work; the overlay must not claim active batch processing against it (the 727 F-2 class).
+    if (progress.phase === 'ready') return nothing;
+    // Round-15 F1 — same rule for the unreachable case: with the embedding stage absent, its pending
+    // count is a standing backlog no batch will ever process, so an overlay claiming live embedding
+    // work off it is the 727 F-2 class again (the Brain surface's install CTA is the real remedy).
+    if (progress.phase === 'blocked') return nothing;
+    const speaks = progress.phase !== 'unknown';
+    const embeddingQueue = speaks ? progress.embeddingPending : orElse(ai.index.embeddingQueueSize, 0);
+    const vduQueue = speaks ? progress.vduPending : orElse(ai.index.vduQueueSize, 0);
+    if (embeddingQueue + vduQueue === 0) return nothing;
     if (this.userDismissed) return nothing;
     return html`
       <jf-indexing-overlay
-        embedding-queue-size=${orElse(ai.index.embeddingQueueSize, 0)}
-        vdu-queue-size=${orElse(ai.index.vduQueueSize, 0)}
+        embedding-queue-size=${embeddingQueue}
+        vdu-queue-size=${vduQueue}
         ?switching=${this.switching}
         @go-online=${() => void this.handleGoOnline()}
         @dismiss=${() => (this.userDismissed = true)}

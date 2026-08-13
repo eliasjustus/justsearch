@@ -13,6 +13,8 @@ import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanContext;
 import io.justsearch.ipc.BatchRequest;
 import io.justsearch.ipc.BatchResponse;
+import io.justsearch.ipc.DeleteByCollectionRequest;
+import io.justsearch.ipc.DeleteByCollectionResponse;
 import io.justsearch.ipc.DeleteByIdRequest;
 import io.justsearch.ipc.DeleteByIdResponse;
 import io.justsearch.ipc.DeleteByPathRequest;
@@ -49,6 +51,8 @@ import io.justsearch.ipc.RecoverVduProcessingRequest;
 import io.justsearch.ipc.RecoverVduProcessingResponse;
 import io.justsearch.ipc.UpdatePathsRequest;
 import io.justsearch.ipc.UpdatePathsResponse;
+import io.justsearch.ipc.UpgradeQuiescenceRequest;
+import io.justsearch.ipc.UpgradeQuiescenceResponse;
 import io.justsearch.ipc.PathMapping;
 import io.justsearch.ipc.PruneRequest;
 import io.justsearch.ipc.PruneResponse;
@@ -123,6 +127,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   private final SyncDirectoryOps syncOps;
   private final IngestSwitchBufferOps switchBufferOps;
   private final MigrationControlOps migrationOps;
+  private final WorkerUpgradeQuiescence upgradeQuiescence;
   private RootWatcherRegistry rootWatcherRegistry = new RootWatcherRegistry();
 
   // Tempdoc 419 / T5.3 (ADR-0028): scoped reverse-lookup store. Defaults to NOOP so any
@@ -163,6 +168,8 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
     this.ingestLifecycle = ingestLifecycle;
     this.indexGenerationManager = indexBasePath == null ? null : new IndexGenerationManager(indexBasePath);
     this.migrationOps = new MigrationControlOps(this.indexGenerationManager, restartWorkerCallback);
+    this.upgradeQuiescence =
+        new WorkerUpgradeQuiescence(jobQueue, indexingLoop, this.indexGenerationManager);
     io.justsearch.adapters.lucene.runtime.IndexCountOps ingestCountOps =
         ingestLifecycle != null ? ingestLifecycle.indexCountOps() : null;
     io.justsearch.adapters.lucene.runtime.IndexCountOps searchCountOps =
@@ -192,6 +199,47 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
         signalBus);
     this.switchBufferOps =
         new IngestSwitchBufferOps(jobQueue, this.indexGenerationManager, metrics);
+  }
+
+  @Override
+  public void prepareUpgrade(
+      UpgradeQuiescenceRequest request,
+      StreamObserver<UpgradeQuiescenceResponse> responseObserver) {
+    respondUpgrade(
+        responseObserver,
+        () -> upgradeQuiescence.prepare(request == null ? "" : request.getPreparationId()));
+  }
+
+  @Override
+  public void upgradeStatus(
+      UpgradeQuiescenceRequest request,
+      StreamObserver<UpgradeQuiescenceResponse> responseObserver) {
+    respondUpgrade(
+        responseObserver,
+        () -> upgradeQuiescence.status(request == null ? "" : request.getPreparationId()));
+  }
+
+  @Override
+  public void cancelUpgrade(
+      UpgradeQuiescenceRequest request,
+      StreamObserver<UpgradeQuiescenceResponse> responseObserver) {
+    respondUpgrade(
+        responseObserver,
+        () -> upgradeQuiescence.cancel(request == null ? "" : request.getPreparationId()));
+  }
+
+  private static void respondUpgrade(
+      StreamObserver<UpgradeQuiescenceResponse> responseObserver,
+      java.util.function.Supplier<UpgradeQuiescenceResponse> action) {
+    try {
+      responseObserver.onNext(action.get());
+      responseObserver.onCompleted();
+    } catch (RuntimeException e) {
+      responseObserver.onError(
+          io.grpc.Status.FAILED_PRECONDITION
+              .withDescription(e.getMessage())
+              .asRuntimeException());
+    }
   }
 
   /**
@@ -499,7 +547,11 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
         if (collection != null && collection.isBlank()) {
           collection = null;
         }
-        int accepted = jobQueue.enqueue(validPaths, collection);
+        // 813 Slice B: stat each admitted path for its byte size. A stat failure degrades that
+        // entry to unknown size (NULL) — it never rejects the enqueue.
+        int accepted =
+            jobQueue.enqueueEntries(
+                validPaths.stream().map(JobQueue.EnqueueEntry::stat).toList(), collection);
 
         // Mark paths for force reindex if requested (bypasses "unchanged" check)
         if (request.getForceReindex() && accepted > 0) {
@@ -876,6 +928,55 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
       responseObserver.onNext(deleteByPathResponse(-1, e.getMessage()));
       responseObserver.onCompleted();
     }
+    }
+  }
+
+  /**
+   * Tempdoc 811 (C-2a) — the removal route for collection-tagged ad-hoc ingests. {@link
+   * #deleteByPath} is watched-root-prefix driven and can never reach a document ingested from a path
+   * under no watched root; this deletes by the {@code collection} term instead.
+   *
+   * <p>WHICH collections are deletable is decided by ONE Head-side authority ({@code
+   * IngestCollectionPolicy#isDeletable} — refuses the reserved app-internal corpora and the untagged
+   * default bucket). The worker deliberately does not fork that list; it only refuses a blank value.
+   */
+  @Override
+  public void deleteByCollection(
+      DeleteByCollectionRequest request, StreamObserver<DeleteByCollectionResponse> responseObserver) {
+    try (var ignored = openRequestMdc()) {
+      String collection = request.getCollection();
+      log.info("deleteByCollection RPC called for collection: {}", collection);
+
+      if (replyIfBlank(
+          collection, responseObserver, deleteByCollectionResponse(-1, "Collection is required"))) {
+        return;
+      }
+      if (replyIfIndexRuntimeUnavailable(
+          "deleteByCollection",
+          responseObserver,
+          deleteByCollectionResponse(-1, "Index runtime not available"))) {
+        return;
+      }
+
+      try {
+        if (switchBufferOps.isSwitching()) {
+          // Fail closed rather than buffer: a collection-scoped bulk delete replayed against a
+          // freshly-switched index could race the migration's own document set.
+          IngestSwitchBufferOps.replySwitchingUnavailable(responseObserver);
+          return;
+        }
+
+        int deleted = ingestLifecycle.indexingCoordinator().deleteByCollection(collection);
+        ingestLifecycle.commitOps().commitAndTrack(CommitReason.GRPC_DELETE_BY_COLLECTION);
+
+        log.info("deleteByCollection complete: {} documents deleted for {}", deleted, collection);
+        responseObserver.onNext(deleteByCollectionResponse(deleted, ""));
+        responseObserver.onCompleted();
+      } catch (Exception e) {
+        log.error("deleteByCollection failed for collection: {}", collection, e);
+        responseObserver.onNext(deleteByCollectionResponse(-1, e.getMessage()));
+        responseObserver.onCompleted();
+      }
     }
   }
 
@@ -1439,8 +1540,42 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
               .setFailedCount(counts.failedCount())
               .build();
       responseObserver.onNext(
-          io.justsearch.ipc.CountJobsByPathPrefixResponse.newBuilder().setCounts(wire).build());
+          io.justsearch.ipc.CountJobsByPathPrefixResponse.newBuilder()
+              .setCounts(wire)
+              .setCoverage(rootCoverage(request.getPathPrefix()))
+              .build());
       responseObserver.onCompleted();
+    }
+  }
+
+  /**
+   * Per-root enrichment coverage for {@link #countJobsByPathPrefix} (tempdoc 813 §1c). The queue
+   * counts above come from SQLite and are always available; these come from the Lucene index, so
+   * an absent index runtime degrades this leg to all-zero rather than failing the whole response —
+   * the Library row still gets its truthful in-flight/failed numbers.
+   */
+  private io.justsearch.ipc.RootCoverageCounts rootCoverage(String pathPrefix) {
+    io.justsearch.adapters.lucene.runtime.IndexCountOps countOps =
+        ingestLifecycle == null ? null : ingestLifecycle.indexCountOps();
+    if (countOps == null) {
+      return io.justsearch.ipc.RootCoverageCounts.getDefaultInstance();
+    }
+    try {
+      io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.RootCoverageCounts c =
+          countOps.queryRootCoverageCounts(pathPrefix);
+      return io.justsearch.ipc.RootCoverageCounts.newBuilder()
+          .setParentDocsTotalEmbedding(c.parentDocsTotalEmbedding())
+          .setParentDocsSettledEmbedding(c.parentDocsSettledEmbedding())
+          .setParentDocsTotalSplade(c.parentDocsTotalSplade())
+          .setParentDocsSettledSplade(c.parentDocsSettledSplade())
+          .setParentDocsTotalNer(c.parentDocsTotalNer())
+          .setParentDocsSettledNer(c.parentDocsSettledNer())
+          .setChunkDocsTotal(c.chunkDocsTotal())
+          .setChunkDocsSettled(c.chunkDocsSettled())
+          .build();
+    } catch (RuntimeException e) {
+      log.warn("countJobsByPathPrefix: root coverage unavailable: {}", e.getMessage());
+      return io.justsearch.ipc.RootCoverageCounts.getDefaultInstance();
     }
   }
 
@@ -2001,7 +2136,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
         return;
       }
       Path path = Path.of(pathStr);
-      int enqueued = jobQueue.enqueue(List.of(path));
+      int enqueued = jobQueue.enqueueEntries(List.of(JobQueue.EnqueueEntry.stat(path)));
       if (enqueued == 0) {
         responseObserver.onNext(
             io.justsearch.ipc.RetryIndexingJobResponse.newBuilder()
@@ -2034,6 +2169,8 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
         .setErrorMessage(row.errorMessage() == null ? "" : row.errorMessage())
         .setRetryAfterMs(row.retryAfterMs())
         .setCollection(row.collection())
+        // Tempdoc 812 D2 — the rollup key: which directory scan enqueued this job (empty when none).
+        .setScanId(row.scanId())
         .build();
   }
 

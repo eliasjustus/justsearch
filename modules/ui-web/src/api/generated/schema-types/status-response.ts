@@ -252,11 +252,14 @@ export interface StatusResponse {
       indexSizeBytes?: number;
       indexState?: string | null;
       indexedDocuments?: number;
+      pendingBytes?: number;
       pendingJobs?: number;
+      pendingUnknownSizeJobs?: number;
       pendingVduCount?: number;
       recentDocsPerSec?: number[] | null;
       recentJobQueueDepth?: number[] | null;
       refreshLagMs?: number;
+      searchableDocuments?: number;
       writerPendingDocs?: number;
       writerQueueDepth?: number;
     };
@@ -578,11 +581,14 @@ export const statusResponseSchema = z.strictObject({
       "indexSizeBytes": z.number().int().optional(),
       "indexState": z.string().nullable().optional(),
       "indexedDocuments": z.number().int().optional(),
+      "pendingBytes": z.number().int().optional(),
       "pendingJobs": z.number().int().optional(),
+      "pendingUnknownSizeJobs": z.number().int().optional(),
       "pendingVduCount": z.number().int().optional(),
       "recentDocsPerSec": z.array(z.number()).nullable().optional(),
       "recentJobQueueDepth": z.array(z.number().int()).nullable().optional(),
       "refreshLagMs": z.number().int().optional(),
+      "searchableDocuments": z.number().int().optional(),
       "writerPendingDocs": z.number().int().optional(),
       "writerQueueDepth": z.number().int().optional(),
     }).optional(),

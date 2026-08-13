@@ -25,7 +25,16 @@ import { icon } from './Icon.js';
 import './StatusBadge.js';
 import { type NoticeTone } from '../utils/statusTone.js';
 import { LIFECYCLE } from '../../api/lifecycleState.js';
-import { subscribeAiState, type AiState } from '../state/aiStateStore.js';
+import {
+  subscribeAiState,
+  statusWithoutVerdictFlavor,
+  type AiState,
+} from '../state/aiStateStore.js';
+// Tempdoc 814 §D5 / §B.7 — the chip's yield rule reads the SAME banner-presence authority the chat
+// surface's banner does, and the SAME activeSurface Shell already publishes on every navigation.
+// No new signal, no state fork.
+import { readinessNotice, warrantsSearchDegradationBanner } from '../state/readinessNotice.js';
+import { getShellContext, subscribeShellContext } from '../state/shellContextState.js';
 import { presentVerdict, type VerdictKind } from '../state/verdict.js';
 import { presentAiEngineVerdict, type AiEngineKind } from '../state/aiVerdict.js';
 import { emitEphemeralToast } from './advisory/ephemeralToast.js';
@@ -48,6 +57,7 @@ import { projectFact } from '../display/facts.js';
 import { formatBytes, formatCount } from '../display/format.js';
 import './Control.js';
 import { subscribeTasks, listRunningTasks, type Task } from '../substrates/tasks/index.js';
+import { selectIndexingProgress } from '../state/indexingProgress.js';
 import { requestSurfaceNavigation } from '../controllers/navigateRequest.js';
 
 // Tempdoc 508 §4.3 — core items register via the same contribution
@@ -103,6 +113,13 @@ function ensureCoreStatusItemsRegistered(): void {
 
 const NUM = new Intl.NumberFormat();
 
+/**
+ * Tempdoc 814 §D5 — the surface that renders its OWN degradation banner, i.e. the one the chip
+ * yields the degradation fact to. Declared in `plugin-api/CorePlugin.ts` (`CORE_SURFACES`); mirrored
+ * here the same way `chrome/Shell.ts` mirrors it as `INTERACTION_SURFACE_ID`.
+ */
+const BANNER_OWNING_SURFACE_ID = 'core.unified-chat-surface';
+
 export class StatusDeck extends JfElement {
   static properties = {
     apiBase: { type: String, attribute: 'api-base' },
@@ -125,7 +142,9 @@ export class StatusDeck extends JfElement {
   private readonly overflow = new OverflowController(this, {
     items: () => Array.from(this.renderRoot.querySelectorAll('.adaptive-bar .item')) as HTMLElement[],
     container: () => this.renderRoot.querySelector('.adaptive-bar'),
-    signature: () => this.leftItemIds().join('|') + ':' + (this.aiState?.statusLabel ?? ''),
+    // 814 §D5 — the measured signature is the label actually RENDERED (which the yield rule can
+    // change without `statusLabel` moving), so the adaptive bar re-measures when the chip yields.
+    signature: () => this.leftItemIds().join('|') + ':' + this.inferenceChipReadout().label,
     reserve: 40,
     // 559 Authority VI per-item policy — same DOM query/order as items(), so the
     // pinned flags align index-for-index with the measured `.item` elements.
@@ -143,6 +162,8 @@ export class StatusDeck extends JfElement {
 
   private unsubAi: (() => void) | null = null;
   private unsubStatusBar: (() => void) | null = null;
+  // Tempdoc 814 §D5 — the active-surface half of the chip's yield rule.
+  private unsubShellContext: (() => void) | null = null;
   // 595 §15.3 N1 — true once a `transitioning` verdict has been seen since the last
   // `operational`, so the one-shot completion toast fires even when recovery passes
   // through an intermediate `checking` (settled-but-readiness-unknown) before settling
@@ -279,6 +300,9 @@ export class StatusDeck extends JfElement {
     this.unsubTasks = subscribeTasks(() => {
       this.runningTasks = listRunningTasks();
     });
+    // Tempdoc 814 §D5 — re-render when the active surface changes: whether the chip yields the
+    // degradation fact to a surface banner depends on WHERE the user is, not only on the verdict.
+    this.unsubShellContext = subscribeShellContext(() => this.requestUpdate());
   }
 
   override disconnectedCallback(): void {
@@ -286,6 +310,7 @@ export class StatusDeck extends JfElement {
     this.unsubAi?.();
     this.unsubStatusBar?.();
     this.unsubTasks?.();
+    this.unsubShellContext?.();
   }
 
   /**
@@ -375,13 +400,29 @@ export class StatusDeck extends JfElement {
     );
   }
 
-  private connDotClass(): string {
-    if (!this.status) return 'muted';
+  /**
+   * The CONN dot: tone + its accessible name, together (they are one indicator, so they cannot
+   * be derived in two places — 806 W2's lesson).
+   *
+   * Tempdoc 807 A.3 — REACHABILITY comes first. `components.head/worker.state` are fields off the
+   * RETAINED snapshot: they said READY/READY forever after both java processes died, so the dot stayed
+   * green beside a "Backend disconnected." banner (round 13, R13-F2). The lifecycle fields answer "what
+   * were the components doing when we last heard", never "are we still hearing" — so the one liveness
+   * predicate gates them rather than a second, dot-local staleness heuristic.
+   */
+  private connDot(): { cls: string; name: string } {
+    // No snapshot at all (pre-first-poll) ⇒ nothing to re-tense and nothing to claim: the honest dot
+    // is the muted "unknown", not a red "disconnected" (round-13 review — liveness is now a CONTACT
+    // fact, and before the shell has looked even once there is no contact either).
+    if (!this.status) return { cls: 'muted', name: 'unknown' };
+    if (this.aiState && !this.aiState.snapshotLive) return { cls: 'error', name: 'disconnected' };
     const head = this.status.components?.head?.state;
     const worker = this.status.components?.worker?.state;
-    if (head === LIFECYCLE.READY && worker === LIFECYCLE.READY) return 'healthy';
-    if (head === LIFECYCLE.STARTING || worker === LIFECYCLE.STARTING) return 'warn';
-    return 'error';
+    if (head === LIFECYCLE.READY && worker === LIFECYCLE.READY)
+      return { cls: 'healthy', name: 'connected' };
+    if (head === LIFECYCLE.STARTING || worker === LIFECYCLE.STARTING)
+      return { cls: 'warn', name: 'starting' };
+    return { cls: 'error', name: 'error' };
   }
 
   private memoryDotClass(): string {
@@ -399,6 +440,43 @@ export class StatusDeck extends JfElement {
     // (the ONE verdict-derived tone), NOT a parallel `statusTier` mapping. This is what makes the calm
     // "Catching up…" (`busy`) render calm (`info`/tint) here instead of amber, matching the Health badge.
     return this.aiState?.statusTone ?? 'neutral';
+  }
+
+  /**
+   * Tempdoc 814 §D5 / §B.7 — does the chip YIELD the capability-degradation fact to a surface banner?
+   *
+   * The measured duplication: "Reduced capability" / "Service degraded" rendered twice, ~660px apart,
+   * in two components neither of which could see the other. The rule: on a surface that renders its
+   * own degradation banner, the banner is the persistent authority (it carries the 600 wording AND the
+   * remedy); the chip drops the degradation flavour there and stays the AI-mode readout. On every
+   * other surface the chip remains the global indicator — nothing is suppressed system-wide.
+   *
+   * No new signal (§B.7): the banner-presence half is the SAME predicate pair the banner itself gates
+   * on (`warrantsSearchDegradationBanner` + a non-null `readinessNotice`, UnifiedChatView.ts
+   * ~2290-2292 — post-finding-9 an info-tier verdict is bannerless, so verdict-degraded ≠ banner
+   * shown), and the surface half is the `activeSurface` Shell already publishes into
+   * `shellContextState` on every navigation.
+   *
+   * Scoped to `degraded` deliberately. `unreachable` also warrants a banner, but it is a CONNECTION
+   * fact, not the capability-degradation fact this register row names — yielding it would make the bar
+   * report the AI engine's "Online" while the backend is gone, which is the truthfulness regression
+   * this rule exists to prevent, not an instance of it.
+   */
+  private yieldsDegradationToBanner(): boolean {
+    const verdict = this.aiState?.verdict;
+    if (!verdict || verdict.kind !== 'degraded') return false;
+    if (getShellContext().activeSurface !== BANNER_OWNING_SURFACE_ID) return false;
+    return warrantsSearchDegradationBanner(verdict) && readinessNotice(verdict) !== null;
+  }
+
+  /**
+   * Tempdoc 814 §D5 — the chip's effective label + tone: the verdict projection normally, the
+   * verdict-free AI-mode projection while yielding to a surface banner.
+   */
+  private inferenceChipReadout(): { label: string; tone: NoticeTone } {
+    const s = this.aiState;
+    if (s && this.yieldsDegradationToBanner()) return statusWithoutVerdictFlavor(s);
+    return { label: s?.statusLabel ?? 'offline', tone: this.inferencePillTone() };
   }
 
   /**
@@ -434,26 +512,39 @@ export class StatusDeck extends JfElement {
         : '…'
       : projectFact('core.size', this.aiState).value ?? '—';
     const memUsedDisp = provisional ? '…' : projectFact('core.memory', this.aiState).value ?? '—';
-    const queue = idx ? orElse(idx.pendingJobs, 0) : 0;
-    const embed =
-      idx && orElse(idx.embeddingBlocked, false)
-        ? 0
-        : idx
-          ? orElse(idx.embeddingPending, 0)
-          : 0;
-    const mode = this.aiState?.statusLabel ?? 'offline';
+    // Tempdoc 813 §3b — the queue chip's NUMBERS come from the ONE indexing-progress projection, not
+    // from a private read of whichever count field this component could reach. `embeddingBlocked`
+    // still zeroes the enrichment tier: a blocked embedding stage has no backlog to work off, so
+    // showing one would claim progress that cannot happen.
+    const progress = selectIndexingProgress(
+      this.status,
+      this.aiState?.snapshotLive ?? false,
+      this.aiState?.episodeMaxPendingJobs ?? 0,
+      this.aiState?.enrichSettleSamples ?? [],
+    );
+    // Round-15 F1 — the projection's own `blocked` arm joins the compat-state flag: an embedding
+    // stage that is ABSENT (no model) has just as little backlog to work off as one that is
+    // fingerprint-blocked, and rendering "embed: 5,189" against it claims a queue that cannot drain.
+    const embeddingBlocked =
+      progress.phase === 'blocked' || (idx ? orElse(idx.embeddingBlocked, false) : false);
+    const queue = progress.jobsPending;
+    const enriching = !embeddingBlocked && progress.phase === 'enriching';
+    const enrichingPercent = enriching ? progress.enrichingPercent : null;
+    // 813 review objection 2: the fallback count under the "embed" label must be the EMBEDDING
+    // stage's own pending count, not `enrichingPending` — that sum counts a document once per
+    // pending stage plus its chunks (~10x the embedding number on a chunked corpus), so rendering
+    // it as "embed: N" was a mislabel, not a bigger truth.
+    const embed = embeddingBlocked ? 0 : progress.embeddingPending;
+    // Tempdoc 814 §D5 — the chip's readout yields its degradation flavour to the surface banner that
+    // owns that fact (see `yieldsDegradationToBanner`); everywhere else it is the verdict projection.
+    const chip = this.inferenceChipReadout();
+    const mode = chip.label;
     // 559 Authority V — each status metric carries an accessible NAME (a bare
     // span's aria-label is ignored by AT, so the cluster is role="img" + label).
     // The NAME projects from the StatusBarItem registry via present({kind:'metric'})
     // — `${name}: ${liveValue}` — so the English is declared once on the registry
     // entry, not hand-stamped here (the declaration-deepening, 559 Authority V).
     const name = present({ kind: 'metric', id }).label;
-    const connName: Record<string, string> = {
-      healthy: 'connected',
-      warn: 'starting',
-      error: 'error',
-      muted: 'unknown',
-    };
     switch (id) {
       case 'core.running-job': {
         // Tempdoc 609 §R (T1.3) — the running-job chip: hidden when idle; when work runs it shows the
@@ -476,15 +567,13 @@ export class StatusDeck extends JfElement {
           <span aria-hidden="true">⟳</span><span class="val">${count}</span>
         </jf-control>`;
       }
-      case 'core.conn':
-        return html`<span
-          class="group"
-          role="img"
-          aria-label="${name}: ${connName[this.connDotClass()] ?? 'unknown'}"
-        >
-          <span class="dot ${this.connDotClass()}"></span>
+      case 'core.conn': {
+        const conn = this.connDot();
+        return html`<span class="group" role="img" aria-label="${name}: ${conn.name}">
+          <span class="dot ${conn.cls}"></span>
           <span class="key">conn</span>
         </span>`;
+      }
       case 'core.files':
         return html`<span
           class="group"
@@ -519,7 +608,12 @@ export class StatusDeck extends JfElement {
         // Health cannot act on), route to the AI Brain surface instead — the ONE state where Health
         // is not the right destination for this pill.
         const aiEngineKind = this.aiState?.aiEngine.kind;
-        const needsBrain = aiEngineKind === 'not_installed' || aiEngineKind === 'install_failed';
+        const needsBrain =
+          aiEngineKind === 'not_installed' ||
+          aiEngineKind === 'install_failed' ||
+          // `paused` is the same shape of state: the actionable next step is "resume the download",
+          // which lives on the Brain surface, not on Health.
+          aiEngineKind === 'paused';
         const actionLabel = needsBrain ? 'Open AI Brain.' : 'Open Health.';
         return html`<jf-control
           class="status-pill group"
@@ -527,7 +621,7 @@ export class StatusDeck extends JfElement {
           .onActivate=${() =>
             needsBrain ? requestSurfaceNavigation('core.brain-surface') : this.openHealth()}
         >
-          <jf-status-badge tone=${this.inferencePillTone()}>${mode}</jf-status-badge>
+          <jf-status-badge tone=${chip.tone}>${mode}</jf-status-badge>
         </jf-control>`;
       }
       case 'core.queue': {
@@ -548,16 +642,29 @@ export class StatusDeck extends JfElement {
             <span class="val">queue: ${NUM.format(queue)} · paused</span>
           </span>`;
         }
+        // 813 §4 — during the enrichment window the honest second number is the COVERAGE fraction,
+        // not a raw backlog count: the files are already indexed, the semantic layers are catching
+        // up. Falls back to the count only when the projection has no faithful denominator.
+        const enrichSuffix =
+          enrichingPercent !== null
+            ? `enriching: ${enrichingPercent}%`
+            : embed > 0
+              ? `embed: ${NUM.format(embed)}`
+              : '';
+        const enrichAria =
+          enrichingPercent !== null
+            ? `, enriching ${enrichingPercent}%`
+            : embed > 0
+              ? `, ${NUM.format(embed)} embedding`
+              : '';
         return html`<span
           class="group"
           role="img"
-          aria-label="${name}: ${NUM.format(queue)} job(s) queued${
-            embed > 0 ? `, ${NUM.format(embed)} embedding` : ''
-          }"
+          aria-label="${name}: ${NUM.format(queue)} job(s) queued${enrichAria}"
         >
           ${icon({ name: 'zap', size: 11 })}
           <span class="val">queue: ${NUM.format(queue)}${
-            embed > 0 ? html` · embed: ${NUM.format(embed)}` : nothing
+            enrichSuffix ? html` · ${enrichSuffix}` : nothing
           }</span>
         </span>`;
       }

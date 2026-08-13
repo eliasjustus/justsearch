@@ -16,9 +16,12 @@ package io.justsearch.app.api.mcp;
  *   <li>{@link #TOOL_SURFACE_VERSION} — JustSearch's OWN version for its curated tool surface,
  *       which the MCP protocol version says nothing about. MCP has no shipped tool-surface
  *       versioning yet (SEP-986 / SEP-1575 point at per-tool SemVer), so JustSearch versions it
- *       here, SemVer-shaped, pre-aligned to that direction. Reported as MCP {@code
- *       serverInfo.version} (the MCP-native slot) and as the runtime contract's
+ *       here, SemVer-shaped, pre-aligned to that direction. Reported as {@code
+ *       serverInfo._meta["io.justsearch/toolSurfaceVersion"]} and as the runtime contract's
  *       {@code mcpToolSurfaceVersion} constituent. Starts pre-1.0 per the under-promise stance.
+ *       NOT {@code serverInfo.version} — that slot is the server implementation's (build) version;
+ *       reporting the tool surface there showed {@code 0.5.0} on a {@code 0.2.0} build (tempdoc 804
+ *       §B9, round-10 F12).
  * </ul>
  */
 public final class McpContractVersions {
@@ -35,7 +38,7 @@ public final class McpContractVersions {
    * machine-readable {@code structuredContent} retrieval-evidence payload on search/answer and an
    * opt-in {@code detail} argument (658) — material, agent-visible additions to the surface, so the
    * SemVer minor bumps. Single-sourced here, it projects by construction into MCP
-   * {@code serverInfo.version} and the runtime manifest's {@code mcpToolSurfaceVersion}.
+   * {@code serverInfo._meta} and the runtime manifest's {@code mcpToolSurfaceVersion}.
    *
    * <p>0.3.0 (tempdoc 725, increments W1-W3): {@code justsearch_search} responses gained
    * match-anchored previews and rationale/degradation/coverage lines; {@code justsearch_answer}

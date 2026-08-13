@@ -39,7 +39,16 @@
  */
 import type { AiState } from './aiStateStore.js';
 import { isKnown } from './known.js';
-import { reasonFor, type NoticeRemedy } from './readinessNotice.js';
+import {
+  classifyConsequence,
+  reasonFor,
+  KEYWORD_FALLBACK_CAVEAT,
+  PASSAGE_REDUCED_CAVEAT,
+  OPTIONAL_CAPABILITY_CAVEAT,
+  AI_UNAVAILABLE_CAVEAT,
+  OPEN_HEALTH,
+  type NoticeRemedy,
+} from './readinessNotice.js';
 import { formatStartupEstimate } from './startupEstimate.js';
 
 export type { NoticeRemedy };
@@ -90,6 +99,23 @@ export function projectAvailability(
     return unavailableFor('inference.starting', true);
   }
 
+  // Tempdoc 807 A.3 — every capability gate below reads the RETAINED snapshot (`capabilities.chat`
+  // comes from the last inference poll, which keeps saying `online` after the backend dies). A
+  // control whose precondition is a live backend must therefore consult liveness FIRST, or it stays
+  // clickable and fails on activation. `binding.unreachable` is the same reason code the verdict
+  // mints and the "Backend disconnected." banner words, so the control and the banner cannot drift.
+  //
+  // NOT transient (round-13 review). `transient` is not a synonym for "will clear eventually" — in
+  // `Control.activate` it QUEUES the intent and auto-fires it on the next render where the control is
+  // operable. That promise fits a BOUNDED wait (the boot window, an in-flight refresh, a model load);
+  // a not-live snapshot is by construction ≥40s with zero contact on any channel — the backend is
+  // gone, for an unbounded time — so queueing would convert a click made during an outage into a
+  // command firing minutes later, unwatched, and several clicks into a burst. The boot window is
+  // unaffected: the `phase === 'connecting'` arm above answers first and stays transient.
+  if (!s.snapshotLive) {
+    return unavailableFor('binding.unreachable', false);
+  }
+
   // Tempdoc 601 — the local AI model is actively LOADING (runtime.mode==='starting'): a TRANSIENT,
   // forward-looking gap distinct from the settled "offline" below. Keyed on the load state, not the
   // FE connect phase (which is the transport window above). Attach the time-estimate from the last
@@ -129,16 +155,35 @@ export function projectAvailability(
     // but retrieval ranking is degraded (e.g. an optional re-ranker is off). We DEGRADE, never block —
     // CONSUMING the ONE 595 verdict (`computeVerdict` emits `kind:'degraded'` exactly for retrieval
     // degradation), NOT re-deriving it from `readiness.retrieval` (that would fork the verdict authority,
-    // the §4.2 single-derivation rule the `verdict-derivation` gate enforces). The verdict's severity
-    // calibrates tone: `info` (optional/cosmetic) words calmly; `warn`/`error` words the keyword fallback.
+    // the §4.2 single-derivation rule the `verdict-derivation` gate enforces).
+    //
+    // Tempdoc 805 §G.2 — the CAVEAT is licensed by the one consequence classifier, not by the
+    // verdict's SEVERITY: round 11 measured a warn verdict whose only retrieval cause was a passage
+    // gap, and this projection (like the banner) claimed a keyword fallback over a trace showing dense
+    // retrieval + reranking executing. Severity says how loud, never what happened. The wordings are
+    // IMPORTED (not re-authored here) so the claim exists in exactly one module.
+    //
+    // Round-14 finding 8 — the caveat NAMES its feature and ROUTES to the detail. Pre-fix, the
+    // `cosmetic` arm said "an optional ranking model" (a reader with full API access resolved that to
+    // the wrong model) and carried no remedy, so the calm tier was the only one with no way to reach
+    // the per-encoder detail the warn tier reaches. `ai-unavailable` gets its OWN wording rather than
+    // borrowing the re-ranking one — same discipline, opposite direction.
     const verdict = s.verdict;
     if (verdict !== undefined && verdict.kind === 'degraded') {
-      const calm = verdict.severity === 'info';
+      const consequence = classifyConsequence(verdict.reasons);
       return {
         kind: 'degraded',
-        caveat: calm
-          ? 'An optional ranking model is unavailable — results are complete, ranking may be simpler'
-          : 'Showing keyword-ranked results — semantic ranking is degraded',
+        caveat:
+          consequence === 'passage-reduced'
+            ? PASSAGE_REDUCED_CAVEAT
+            : consequence === 'ai-unavailable'
+              ? AI_UNAVAILABLE_CAVEAT
+              : consequence === 'cosmetic'
+                ? OPTIONAL_CAPABILITY_CAVEAT
+                : // `retrieval-impaired` and the conservative `unknown` (an unclassifiable code is not
+                  // evidence that retrieval is fine — the classifier's own doctrine).
+                  KEYWORD_FALLBACK_CAVEAT,
+        remedy: OPEN_HEALTH,
       };
     }
   }

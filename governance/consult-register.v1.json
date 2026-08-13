@@ -24,9 +24,9 @@
       "region": "the ui-web frontend (pre-merge gate set)",
       "docs": [],
       "recipe": [
-        "Any modules/ui-web/src/** edit — run the ui-web gate set before merge (node scripts/ci/<name>.mjs): check-presentation-purity, check-observed-state-collapse, check-theme-token-closure, gen-token-names --check, gen-component-vocabulary --check, strip-token-fallbacks --check modules/ui-web/src, check-color-tokens, check-a11y-closure, check-controls-a11y, check-adaptive-closure, check-layout-purity, check-surface-composition, check-message-single-model, check-run-renderers, check-inflight-liveness, check-composition-surfaces, check-declared-surfaces, check-live-channels, check-contrast-matrix, check-accent-as-text.",
+        "Any modules/ui-web/src/** edit — run the ui-web gate set before merge (node scripts/ci/<name>.mjs): check-presentation-purity, check-observed-state-collapse, check-theme-token-closure, gen-token-names --check, gen-component-vocabulary --check, strip-token-fallbacks --check modules/ui-web/src, check-color-tokens, check-a11y-closure, check-controls-a11y, check-adaptive-closure, check-layout-purity, check-surface-composition, check-message-single-model, check-run-renderers, check-inflight-liveness, check-composition-surfaces, check-declared-surfaces, check-live-channels, check-contrast-matrix, check-accent-as-text, check-offline-single-sense.",
         "Plus the kernel gates: node scripts/governance/run.mjs --gate ambient-purity,style-literal-ratchet,atom-fork-ratchet,modality-contract,transient-arbitration,modal-arbitration --mode gate.",
-        "modules/ui-web/src/shell-v0/** edits additionally: check-steering-arbitration, check-search-issuance, check-verdict-derivation, check-ai-verdict-derivation, check-message-classes, check-capability-availability, check-realized-capability.",
+        "modules/ui-web/src/shell-v0/** edits additionally: check-steering-arbitration, check-search-issuance, check-verdict-derivation, check-ai-verdict-derivation, check-message-classes, check-capability-availability, check-realized-capability, check-consequence-classification, check-folder-status-derivation.",
         "shell-v0/views/** edits additionally: check-surface-task-state-retention, check-thread-event-kinds.",
         "Frontend typecheck + unit tests: cd modules/ui-web && npm run typecheck && npm run test:unit:run. (Relocated from the CLAUDE.md Pre-merge table — tempdoc 681; check-premerge-table validates these refs here.)"
       ]
@@ -116,6 +116,7 @@
         "Expose it via a ResolvedConfig record field.",
         "Document it in docs/reference/configuration/environment-variables.md.",
         "Verify: ./gradlew.bat :modules:configuration:test",
+        "Regrowth ratchet (tempdoc 799 K.4): a NET-NEW key fails the config-surface gate. Run `node scripts/docs/generate-runtime-config-matrix.mjs` then `node scripts/governance/run.mjs --gate config-surface --mode gate`. Growth is allowed but must be DECLARED — add a changeset under gates/config-surface/.changesets/ classified `declared-growth` with a tempdoc/adr justification. Before declaring, check the knob is not already shadowed by a hardcoded constant: tempdoc 754 found 28 that were (a documented knob that does nothing is worse than no knob).",
         "Full reference: docs/reference/contributing/common-workflows.md (Add a configuration key)."
       ]
     },
@@ -132,6 +133,39 @@
         "Update docs/explanation/22-agent-system-architecture.md.",
         "Verify: ./gradlew.bat :modules:app-agent:test :modules:app-services:test",
         "Full reference: docs/reference/contributing/common-workflows.md (Add an agent tool)."
+      ]
+    },
+    {
+      "id": "model-blobs",
+      "pathIncludes": ["models/"],
+      "region": "the models/ tree (weights are never tracked in this repo)",
+      "docs": [],
+      "recipe": [
+        "This public repo NEVER tracks model blobs — 0 .onnx in its history; CI builds without them.",
+        "models/.gitignore excludes the weights so `git add -A` cannot stage ~2.6 GB via the *.onnx LFS filter. Do not 'fix' that ignore rule.",
+        "The PRIVATE repo LFS-tracks them, so the inherited rule 'do not gitignore model files' applies THERE and was carried here at v0.1.0 despite never being true of this repo (inherited-authority drift — tempdoc 799 §C.4)."
+      ]
+    },
+    {
+      "id": "index-rebuild-after-field-change",
+      "pathIncludes": ["SSOT/catalogs/fields.v1.json", "IndexingDocumentOps"],
+      "region": "the index field schema / document extraction path",
+      "docs": [],
+      "recipe": [
+        "Adding a field to fields.v1.json or changing extraction in IndexingDocumentOps does NOT update existing documents.",
+        "Existing indices must be REBUILT: `jseval run --reset` (eval mode) or `jseval run --start-backend --clean`.",
+        "Test corpora indexed before your change will silently lack the new fields — a green run over a stale corpus proves nothing about the new field."
+      ]
+    },
+    {
+      "id": "dev-stack-stale-jar",
+      "pathIncludes": ["modules/app-services/", "modules/app-agent-api/"],
+      "region": "Java on the head-process classpath (dev-stack freshness)",
+      "docs": [],
+      "recipe": [
+        "The MCP justsearch_dev_start does not always re-install the worker dist when upstream Gradle tasks report UP-TO-DATE.",
+        "After editing Java here (or in any module on the head-process classpath), run `./gradlew.bat :modules:ui:installDist` explicitly BEFORE dev_start / restart, so the jar in modules/ui/build/install/ui/lib/ is fresh.",
+        "Symptom if skipped: the wire payload reflects the PREVIOUS build despite a successful `gradlew build`. Discovered tempdoc 511-followup Track E live-verify."
       ]
     }
   ]

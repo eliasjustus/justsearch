@@ -139,7 +139,7 @@ final class ChunkDocumentWriterTest {
             parentDocId,
             content,
             new ChunkDocumentWriter.ParentChunkMetadata(
-                "text/markdown", "text/markdown", "markdown", "en", parentTokenCount));
+                "text/markdown", "text/markdown", "markdown", "en", parentTokenCount, null));
     assertTrue(regenerated > 0);
     lifecycle.commitOps().commitAndTrack();
     lifecycle.commitOps().maybeRefreshBlocking();
@@ -151,6 +151,73 @@ final class ChunkDocumentWriterTest {
           String.valueOf(parentTokenCount),
           hit.fields().get(SchemaFields.PARENT_TOKEN_COUNT),
           "chunks must inherit parent_token_count from the supplied metadata");
+    }
+  }
+
+  @Test
+  @DisplayName("chunks inherit the parent's collection tag (tempdoc 811 item 3)")
+  void chunksInheritParentCollection() throws Exception {
+    // Without this, the default agent-history exclusion cannot bind on the chunk branch at all:
+    // QueryFilterBuilder.buildChunkFilterQuery filters on `collection`, and a chunk that carries
+    // no tag is invisible to that clause.
+    String parentDocId = "d:/agent/session-1.md";
+    String content = repeat("session transcript line ", 500);
+
+    int regenerated =
+        ChunkDocumentWriter.regenerateChunks(
+            lifecycle.documentFieldOps(),
+            lifecycle.indexingCoordinator(),
+            parentDocId,
+            content,
+            new ChunkDocumentWriter.ParentChunkMetadata(
+                "text/markdown", "text/markdown", "markdown", "en", null,
+                SchemaFields.AGENT_HISTORY_COLLECTION));
+    assertTrue(regenerated > 0);
+    lifecycle.commitOps().commitAndTrack();
+    lifecycle.commitOps().maybeRefreshBlocking();
+
+    List<LuceneRuntimeTypes.SearchHit> hits = findChunks(parentDocId);
+    assertFalse(hits.isEmpty());
+    for (LuceneRuntimeTypes.SearchHit hit : hits) {
+      assertEquals(
+          SchemaFields.AGENT_HISTORY_COLLECTION,
+          hit.fields().get(SchemaFields.COLLECTION),
+          "every chunk must carry its parent's collection tag");
+    }
+  }
+
+  @Test
+  @DisplayName("regenerateChunksFromExistingParent reads the collection off the parent document")
+  void regenerateChunksFromExistingParentInheritsCollection() throws Exception {
+    String parentDocId = "d:/agent/session-2.md";
+    String content = repeat("session transcript line ", 500);
+
+    lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+        SchemaFields.DOC_ID, parentDocId,
+        SchemaFields.DOC_UID, parentDocId + "#0",
+        SchemaFields.PATH, parentDocId,
+        SchemaFields.CONTENT, content,
+        SchemaFields.MIME, "text/markdown",
+        SchemaFields.FILE_KIND, "markdown",
+        SchemaFields.COLLECTION, SchemaFields.AGENT_HISTORY_COLLECTION
+    )));
+    lifecycle.commitOps().commitAndTrack();
+    lifecycle.commitOps().maybeRefreshBlocking();
+
+    int regenerated =
+        ChunkDocumentWriter.regenerateChunksFromExistingParent(
+            lifecycle.documentFieldOps(), lifecycle.indexingCoordinator(), parentDocId, content);
+    assertTrue(regenerated > 0);
+    lifecycle.commitOps().commitAndTrack();
+    lifecycle.commitOps().maybeRefreshBlocking();
+
+    List<LuceneRuntimeTypes.SearchHit> hits = findChunks(parentDocId);
+    assertFalse(hits.isEmpty());
+    for (LuceneRuntimeTypes.SearchHit hit : hits) {
+      assertEquals(
+          SchemaFields.AGENT_HISTORY_COLLECTION,
+          hit.fields().get(SchemaFields.COLLECTION),
+          "the VDU/replay path must inherit the tag from the existing parent document");
     }
   }
 
@@ -172,6 +239,7 @@ final class ChunkDocumentWriterTest {
             SchemaFields.MIME_BASE,
             SchemaFields.FILE_KIND,
             SchemaFields.LANGUAGE,
+            SchemaFields.COLLECTION,
             SchemaFields.PARENT_TOKEN_COUNT);
 
     var result = lifecycle.readPathOps().search(q, 10_000, projection, LuceneRuntimeTypes.RuntimeSearchSort.RELEVANCE, null);

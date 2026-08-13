@@ -1,10 +1,19 @@
 package io.justsearch.ui.api;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import io.javalin.http.Context;
+import io.justsearch.app.api.BrainRuntimeService;
+import io.justsearch.app.api.ModeTransitionOutcome;
+import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 @DisplayName("InferenceHandlers unit tests")
 final class InferenceHandlersTest {
@@ -72,6 +81,82 @@ final class InferenceHandlersTest {
       assertEquals("gpu_12gb_plus", InferenceHandlers.computeHardwareTier(12_884_901_888L, true, true));
       assertEquals("gpu_8gb", InferenceHandlers.computeHardwareTier(8_589_934_592L, true, false));
       assertEquals("gpu_lt_8gb", InferenceHandlers.computeHardwareTier(4_294_967_296L, false, true));
+    }
+  }
+
+  /**
+   * Tempdoc 804 §B6: {@code POST /api/inference/mode} answers with the transition's outcome. The
+   * intent write is asynchronous, so the live {@code mode} in the payload can still be the previous
+   * one — round 10 measured {@code {"success":true,"mode":"indexing"}} for a request to go ONLINE
+   * and had no way to tell that apart from a completed switch.
+   */
+  @Nested
+  @DisplayName("POST /api/inference/mode response shape")
+  class SetInferenceModeResponseShape {
+
+    @Test
+    @DisplayName("live mode still lagging => state=recorded, requested echoed")
+    void reportsRecordedWhileEngineHasNotConverged() {
+      Map<String, Object> payload = invokeSetMode("online", "indexing");
+
+      assertEquals(Boolean.TRUE, payload.get("success"), "the intent write itself succeeded");
+      assertEquals("online", payload.get("requested"));
+      assertEquals("indexing", payload.get("mode"), "mode stays the LIVE mode");
+      assertEquals(
+          "recorded",
+          payload.get("state"),
+          "a live mode that differs from the requested one must not read as a completed switch");
+    }
+
+    @Test
+    @DisplayName("live mode already at target => state=converged")
+    void reportsConvergedWhenLiveModeMatches() {
+      Map<String, Object> payload = invokeSetMode("online", "online");
+
+      assertEquals("online", payload.get("requested"));
+      assertEquals("online", payload.get("mode"));
+      assertEquals("converged", payload.get("state"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> invokeSetMode(String requested, String liveMode) {
+      Context ctx = mock(Context.class);
+      when(ctx.status(any(int.class))).thenReturn(ctx);
+      when(ctx.json(any())).thenReturn(ctx);
+      when(ctx.bodyAsClass(Map.class)).thenReturn(Map.of("mode", requested));
+
+      InferenceHandlers handlers =
+          new InferenceHandlers(
+              null, null, null, null, null, null, null, new StubBrainRuntime(liveMode));
+      handlers.handleSetInferenceMode(ctx);
+
+      ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+      verify(ctx).json(captor.capture());
+      return captor.getValue();
+    }
+  }
+
+  /** Returns a fixed live mode so the outcome's converged/recorded branch is deterministic. */
+  private static final class StubBrainRuntime implements BrainRuntimeService {
+    private final String liveMode;
+
+    StubBrainRuntime(String liveMode) {
+      this.liveMode = liveMode;
+    }
+
+    @Override
+    public String reloadInference() {
+      throw new UnsupportedOperationException("not used by this test");
+    }
+
+    @Override
+    public ModeTransitionOutcome switchInferenceMode(String mode) {
+      return ModeTransitionOutcome.of(mode, liveMode);
+    }
+
+    @Override
+    public void triggerOfflineProcessing() {
+      throw new UnsupportedOperationException("not used by this test");
     }
   }
 }

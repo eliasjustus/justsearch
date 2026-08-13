@@ -2,7 +2,7 @@
 title: "Troubleshooting: Reindex doesn't run (schema mismatch)"
 type: reference
 status: stable
-updated: 2025-12-16
+updated: 2026-08-03
 description: 'Diagnosing "reindex doesn''t run" due to schema mismatch.'
 ---
 
@@ -49,7 +49,7 @@ We added a **schema compatibility check at Lucene runtime startup**:
 
 What happens next is **explicitly policy-controlled** via `index.schema_mismatch.policy`:
 
-- `FAIL_CLOSED` (recommended in production): fail startup and surface a deterministic “schema mismatch / migration required” error via `/api/status` (Head carries the Worker start error string).
+- `FAIL_CLOSED`: fail startup and surface a deterministic “schema mismatch / migration required” error via `/api/status` (Head carries the Worker start error string). This is the resolved default in a production profile (`ResolvedConfigBuilder.normalizeSchemaMismatchPolicy`), but see [What is actually enforced today](#what-is-actually-enforced-today-2026-08) — the *fingerprint* detector that would hand it a mismatch is disabled in every shipped run, so in practice this policy only ever sees the `FieldInfos` check below.
 - `REBUILD_BACKUP_FIRST` (convenient in dev): rename the index directory to a `.bak-*` backup and rebuild a fresh empty index (backup-first, guarded).
 - `BLUE_GREEN_MIGRATE` (availability-first): start Blue (existing active generation) in **read-only** mode for search, build Green in a fresh generation directory, then cut over by swapping `state.json` and restarting the Worker.
 
@@ -71,23 +71,33 @@ What happens next is **explicitly policy-controlled** via `index.schema_mismatch
   - `syncDirectory(force=true)` is buffered as `SYNC_ROOT(root, force)`
   - These are stored durably in `jobs.db` (`switch_buffer`) and replayed after the Worker restarts on the new active generation.
 
+## What is actually enforced today (2026-08)
+
+This section records the difference between the design above and the shipped runtime. Verified at source while investigating sandbox round 10 (tempdoc 804 §D1).
+
+- **The commit-metadata parity guard never enforces.** `HeadlessApp.java:267` (`setupInfra`) and `HeadlessApp.java:607` (the sidecar entry) both set `justsearch.index.parity.allow_mismatch=true` **unconditionally** — no dev/prod condition — and `WorkerSpawner` forwards `INDEX_PARITY_ALLOW_MISMATCH` into the Worker JVM. So `IndexMetadataParityGuard.checkOnOpen()` logs `Parity mismatch detected but justsearch.index.parity.allow_mismatch=true; continuing in WARN mode.` and returns. The `SCHEMA_MISMATCH` it would otherwise raise on a rebuild-requiring key (`analyzer_fp` / `schema_ver` / `index_schema_fp`, `ParityDiagnostics.REBUILD_REQUIRING_KEYS`) is never raised, so `index.schema_mismatch.policy` never acts on a fingerprint mismatch. Treat “`FAIL_CLOSED` is shipped production enforcement” as **false** for the fingerprint path.
+- **Still live**: the `FieldInfos` inspection in `ComponentsFactory` (an index that genuinely cannot accept writes under the current field mapping) raises `SCHEMA_MISMATCH` on its own and *is* routed through the policy. That is the detector this document’s “Problem” section is about.
+- **The schema fingerprint is advisory, not a search gate.** `index_schema_fp` is the SHA-256 of the canonical `SSOT/catalogs/fields.v1.json` (`SsotCommitMetadataSource.java:81-93`, plus a vector-dimension override when set), compared in `IndexStatusOps.safeSchemaCompatState()`. Nothing on the query path reads the schema compat state: the dense leg is gated by the **embedding** fingerprint (`EmbeddingCompatibilityController.allowQueryEmbeddings()`, consumed at `SearchPlanner.java:87`). An index can report `schema BLOCKED_MISMATCH` and serve fully hybrid (semantic + keyword) results — round 10 reproduced exactly that.
+- **The fingerprint over-triggers.** Because it is a content hash of the whole catalog file, *any* byte edit flips it — including annotation-only edits with no physical index consequence. The three post-v0.1.0 catalog edits (one dead-field deletion, three `rmwPolicy` annotations) each flipped `index_schema_fp` for a v0.1.0 index that was, physically, still perfectly compatible.
+- **Do not “fix” this by enabling the guard.** Turning `allow_mismatch` off (or forcing `FAIL_CLOSED`) with today’s fingerprint would have refused to start on a fully working index. The truthful fix is a fingerprint over *physical* schema (or per-field consequence classes), which is not implemented; until then the schema state must be presented as advisory. The UI treats it that way as of tempdoc 804 (`index.schema_mismatch` is `info`-severity and is not in the frontend’s reindex-cause bucket).
+
 ## Tradeoffs of the current fix
 
-- **Fail-closed can reduce availability**: `FAIL_CLOSED` means the Worker may not start (search downtime) unless you opt into rebuild or blue/green migration.
+- **Fail-closed can reduce availability**: `FAIL_CLOSED` means the Worker may not start (search downtime) unless you opt into rebuild or blue/green migration. With today’s content-hash fingerprint that downtime would also be *unjustified* on the common case (see above), which is why the parity detector is currently in WARN mode.
 - **Backup-first rebuild is still destructive to the active index** (but preserves a backup): rebuild time can be large.
 - **Blue/green migrate increases complexity**: it relies on generation state (`state.json`) and a cutover step; during migration search can be briefly stale (Blue) while writes go to Green.
 - **Partial coverage**: this check targets the class of failures we saw (keyword index options / docvalues mismatches). Other incompatibilities may still require additional guards or fingerprint parity to catch earlier.
 
 ## Additional codebase nuance
 
-- **Commit-metadata parity now runs (but is still not the only migration signal)**:
+- **Commit-metadata parity is wired but currently warn-only in every run**:
   - The parity guard wiring/ordering has been fixed so it checks the effective on-disk index path.
-  - Parity mismatches can be configured as warn-only (`justsearch.index.parity.allow_mismatch=true`) for dev/demo runs.
+  - Parity mismatches are warn-only whenever `justsearch.index.parity.allow_mismatch=true` — which the Head sets unconditionally today (`HeadlessApp.java:267` / `:607`), so this is the shipped behavior, not a dev/demo opt-in. See [What is actually enforced today](#what-is-actually-enforced-today-2026-08).
   - Legacy indexes may still require the `FieldInfos` inspection fallback when commit metadata is missing.
 - **`/api/status` no longer probes Lucene files in the Head process**:
   - Index availability and failures are surfaced via Worker-reported status + explicit Worker startup error capture.
 - **Dev defaults matter**:
-  - Production should default to `index.schema_mismatch.policy=FAIL_CLOSED`.
+  - A production profile resolves `index.schema_mismatch.policy=FAIL_CLOSED` by default — but only the `FieldInfos` detector can reach it today (the fingerprint detector is warn-only, above).
   - Dev/demo can use `REBUILD_BACKUP_FIRST` when you prefer “self-heal” over strictness.
   - If you want “no search downtime on mismatch”, use `BLUE_GREEN_MIGRATE`.
 

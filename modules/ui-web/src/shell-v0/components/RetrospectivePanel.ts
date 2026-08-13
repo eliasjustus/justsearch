@@ -22,6 +22,8 @@ import {
   isRetrospectiveOpen,
   setRetrospectiveOpen,
   subscribeRetrospective,
+  takeRequestedTab,
+  type RetrospectiveTab,
 } from '../state/retrospectiveDrawer.js';
 import { sessionLabel, type SessionListItem } from '../controllers/AgentSessionController.js';
 // Tempdoc 577 Move 1 — per-run directives (resume included) dispatch ONLY through the control seam.
@@ -36,12 +38,44 @@ import type { PluginHostApi } from '../plugin-api/plugin-types.js';
 
 // Tempdoc 565 §26.D — the Inbox tab folds the Memory surface's presence/activity half into the one
 // window's retrospective drawer (the durable-facts half stays the peer `core.memory-surface`).
-type RetroTab = 'sessions' | 'timeline' | 'history' | 'inbox';
+// Tempdoc 814 (finding 7) — the tab identities now live in the drawer store (a cross-component
+// pointer must be able to name a tab without importing this panel); the internal alias is kept so
+// the id vocabulary reads the same at every use site here.
+type RetroTab = RetrospectiveTab;
 const TAB_KEYS: Record<string, RetroTab> = {
   '1': 'sessions',
   '2': 'timeline',
   '3': 'history',
   '4': 'inbox',
+};
+
+/**
+ * Tempdoc 814 (finding 7) — each tab named by the QUESTION it answers, with the SCOPE of the data
+ * that answers it, verified at the controller's fetch site (AgentSessionController):
+ *
+ *  - `sessions`  → `GET /api/chat/sessions?limit=N` — the roster of agent runs this instance holds.
+ *  - `timeline`  → `GET /api/action-ledger` (unfiltered) folded with the FE-local Effect Journal
+ *                  (`ActionLedgerClient.unifiedActivity`) — machine-wide, every originator/kind.
+ *  - `history`   → `GET /api/action-ledger?originator=agent&correlationId=<sessionId>`, kept to
+ *                  `kind === 'operation'` — the ACTIVE RUN's own operations. NOT `/api/thread` and
+ *                  not conversation-scoped: the filter key is the agent session id, which a fork
+ *                  resets, so "This run" is the honest name (design's assumption corrected here).
+ *  - `inbox`     → `GET /api/presence` — background runs, across conversations.
+ *
+ * "Timeline"/"History" were near-synonyms answering different questions at different scopes; the
+ * labels and the descriptors under each tab's content are what make the difference legible.
+ */
+const TAB_LABEL: Record<RetroTab, string> = {
+  sessions: 'Sessions',
+  timeline: 'System activity',
+  history: 'This run',
+  inbox: 'Background runs',
+};
+const TAB_SCOPE: Record<RetroTab, string> = {
+  sessions: 'Every agent run this instance still holds — resume or replay one.',
+  timeline: 'Everything that happened in this workspace, newest first.',
+  history: 'What the agent did in the run open right now.',
+  inbox: 'Runs working in the background, across every conversation.',
 };
 
 export class RetrospectivePanel extends JfElement {
@@ -91,8 +125,13 @@ export class RetrospectivePanel extends JfElement {
       subscribeRetrospective(() => {
         const next = isRetrospectiveOpen();
         const opening = next && !this.open;
+        // Tempdoc 814 (finding 7) — a pointer that opened the drawer AT a tab (the thread's
+        // background-run reference) selects it here; consuming the request clears it, so a later
+        // plain open lands on whatever tab the user last chose.
+        const requested = takeRequestedTab();
+        if (requested) this.activeTab = requested;
         this.open = next;
-        if (opening) void this.loadActive();
+        if (next && (opening || requested)) void this.loadActive();
         this.requestUpdate();
       }),
     ];
@@ -123,10 +162,14 @@ export class RetrospectivePanel extends JfElement {
 
   private async loadActive(): Promise<void> {
     const c = this.ctrl();
+    // Tempdoc 814 (finding 7) — the Background-runs COUNT rides on the tab itself, so it is visible
+    // from every tab and its data loads on every tab. An unloaded badge would render "0" while runs
+    // exist: a false zero, which is the opposite of the legible zero the badge exists to give.
+    const presence = c.loadPresence();
     if (this.activeTab === 'sessions') await c.loadSessions();
     else if (this.activeTab === 'timeline') await c.loadTimeline();
-    else if (this.activeTab === 'inbox') await c.loadPresence();
-    else await c.loadHistory();
+    else if (this.activeTab === 'history') await c.loadHistory();
+    await presence;
   }
 
   private onKeydown = (ev: KeyboardEvent): void => {
@@ -262,6 +305,27 @@ export class RetrospectivePanel extends JfElement {
       background: var(--accent-command-16);
       color: var(--text-command);
     }
+    /* Tempdoc 814 (finding 7) — the Background-runs count badge: an empty inbox reads as a legible
+       zero instead of a tab you have to open to learn it holds nothing. */
+    .tab-count {
+      display: inline-block;
+      margin-left: 0.3rem;
+      padding: 0 0.3rem;
+      border-radius: 0.6rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+    }
+    .tabs button.active .tab-count {
+      background: var(--surface-1);
+    }
+    /* Tempdoc 814 (finding 7) — the per-tab scope descriptor: which record answers this tab. */
+    .scope-note {
+      margin: 0 0 0.25rem;
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+    }
     .scroll {
       flex: 1;
       overflow-y: auto;
@@ -390,26 +454,28 @@ export class RetrospectivePanel extends JfElement {
         @keydown=${this.onKeydown}
       >
         <div class="head">
-          <span class="title">History</span>
+          ${/* Tempdoc 814 (finding 7) — the drawer titled "History" over a tab named "History" was
+                half of the collision this rename resolves. It is titled by what OPENS it (the
+                header's "Activity" control), and the tabs now each name their own question. */ ''}
+          <span class="title">Activity</span>
           <jf-button class="close" size="sm" label="Close" .onActivate=${() => setRetrospectiveOpen(false)}>Close</jf-button>
         </div>
         <div class="tabs" role="tablist">
-          ${(
-            [
-              ['sessions', 'Sessions'],
-              ['timeline', 'Timeline'],
-              ['history', 'History'],
-              ['inbox', 'Inbox'],
-            ] as Array<[RetroTab, string]>
-          ).map(
-            ([id, label]) => html`
+          ${(['sessions', 'timeline', 'history', 'inbox'] as RetroTab[]).map(
+            (id) => html`
               <button
                 role="tab"
+                data-tab=${id}
                 aria-selected=${this.activeTab === id ? 'true' : 'false'}
                 class=${this.activeTab === id ? 'active' : ''}
+                title=${TAB_SCOPE[id]}
                 @click=${() => this.setTab(id)}
               >
-                ${label}
+                ${TAB_LABEL[id]}${id === 'inbox'
+                  ? html`<span class="tab-count" data-testid="background-runs-count"
+                      >${this.ctrl().presence.length}</span
+                    >`
+                  : nothing}
               </button>
             `,
           )}
@@ -477,8 +543,11 @@ export class RetrospectivePanel extends JfElement {
     );
     return html`
       <div class="scroll">
+        ${this.renderScope('inbox')}
         ${runs.length === 0
-          ? html`<div class="empty-state">No background runs since you last looked.</div>`
+          ? html`<div class="empty-state">
+              Runs you launch in the background appear here — none are running or finished yet.
+            </div>`
           : orderedBuckets.map(
               ([key, group]) => html`
                 <div class="inbox-group" data-status=${key}>
@@ -538,6 +607,7 @@ export class RetrospectivePanel extends JfElement {
     const sessions = this.ctrl().sessions;
     return html`
       <div class="scroll">
+        ${this.renderScope('sessions')}
         <div class="shared-replay">
           <label for="share-replay-input">Load a shared replay:</label>
           <input
@@ -551,7 +621,9 @@ export class RetrospectivePanel extends JfElement {
             : nothing}
         </div>
         ${sessions.length === 0
-          ? html`<div class="empty-state">No sessions yet.</div>`
+          ? html`<div class="empty-state">
+              Agent runs appear here once you start one — resume or replay them from this list.
+            </div>`
           : sessions.map((s) => {
               // Tempdoc 577 Move 1 — the Resume affordance is a projection of the session's
               // declared lifecycle: a non-resumable (finished/evicted) session renders a plain
@@ -626,8 +698,12 @@ export class RetrospectivePanel extends JfElement {
     // project it through the ONE shared row (who · label · outcome · source · time).
     return html`
       <div class="scroll">
+        ${this.renderScope('timeline')}
         ${rows.length === 0
-          ? html`<div class="empty-state">No workspace activity yet.</div>`
+          ? html`<div class="empty-state">
+              Actions taken anywhere in this workspace — yours or the agent's — appear here as they
+              happen.
+            </div>`
           : rows.map((e) => renderEventRow(e))}
       </div>
     `;
@@ -639,11 +715,23 @@ export class RetrospectivePanel extends JfElement {
     // surface shows; render it through the ONE shared row instead of a re-derived HistoryEntry markup.
     return html`
       <div class="scroll">
+        ${this.renderScope('history')}
         ${history.length === 0
-          ? html`<div class="empty-state">No tool call history.</div>`
+          ? html`<div class="empty-state">
+              Each tool the agent uses in the current run is listed here — the run has used none yet.
+            </div>`
           : history.map((e) => renderEventRow(e))}
       </div>
     `;
+  }
+
+  /**
+   * Tempdoc 814 (finding 7) — the one-line scope descriptor under a tab's content header. Renamed
+   * tabs answer different questions; the descriptor states WHICH RECORD answers this one, so
+   * "System activity" and "This run" cannot be read as two copies of the same list.
+   */
+  private renderScope(tab: RetroTab): TemplateResult {
+    return html`<p class="scope-note" data-testid="scope-${tab}">${TAB_SCOPE[tab]}</p>`;
   }
 }
 

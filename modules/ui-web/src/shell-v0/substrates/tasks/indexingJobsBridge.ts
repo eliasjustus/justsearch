@@ -30,7 +30,7 @@
  * not re-derived; the bridge owns only the items→Task projection.
  */
 
-import { subscribePooled } from '../../streaming/EnvelopeStreamPool.js';
+import { subscribePooled, nudgePooledStream } from '../../streaming/EnvelopeStreamPool.js';
 import type { MultiplexedStream } from '../../streaming/MultiplexedStream.js';
 import { SHELL_EVENT_STREAM_IDS } from '../../streaming/shellEventStreamIds.js';
 import {
@@ -45,7 +45,9 @@ import {
   type TaskStatus,
 } from './index.js';
 import { isInFlightLive } from './inFlightLiveness.js';
-import { resolvePathLazy } from '../../hooks/resolvePathLazy.js';
+// tempdoc 812 D4 — the row-altitude path formatter moved beside the resolver when the Activity
+// ledger became its second consumer; ONE display rule for a resolved hash.
+import { resolvePathLazy, friendlyPathName } from '../../hooks/resolvePathLazy.js';
 
 /** The Resource id whose `privacy.resolver` (core.resolve-path-hash) resolves a job pathHash. */
 const INDEXING_JOBS_RESOURCE = 'core.indexing-jobs';
@@ -110,18 +112,6 @@ export function __resetResolvedLabelsForTest(): void {
   resolvingHashes.clear();
 }
 
-/** "C:\a\b\report.pdf" → "b/report.pdf" — the file plus its parent folder for context. */
-function friendlyName(path: string): string {
-  const parts = path
-    .replace(/\\/g, '/')
-    .replace(/\/+$/, '')
-    .split('/')
-    .filter(Boolean);
-  if (parts.length === 0) return path;
-  const file = parts[parts.length - 1]!;
-  const parent = parts.length >= 2 ? parts[parts.length - 2] : '';
-  return parent ? `${parent}/${file}` : file;
-}
 
 function labelFor(job: IndexingJobRow): string {
   const friendly = resolvedLabel.get(job.pathHash);
@@ -142,7 +132,7 @@ function ensureResolvedLabel(pathHash: string): void {
   void resolveHashFn(INDEXING_JOBS_RESOURCE, pathHash)
     .then((path) => {
       if (path) {
-        resolvedLabel.set(pathHash, friendlyName(path));
+        resolvedLabel.set(pathHash, friendlyPathName(path));
         reproject?.();
       }
     })
@@ -174,8 +164,37 @@ const RE_EVAL_INTERVAL_MS = 15_000;
  */
 const STALE_FEED_MS = 45_000;
 
+/**
+ * Minimum spacing between stall-triggered reconnect nudges (tempdoc 798 B4).
+ *
+ * The stall re-evaluates on every `RE_EVAL_INTERVAL_MS` tick and `isFeedStalled` STAYS true while
+ * the feed is dead, so the actuator is driven off the tick's value rather than only its false→true
+ * edge: an edge-triggered actuator fires exactly once and then gives up forever if the first
+ * reconnect does not revive the channel. Driving it off the tick makes rate-limiting mandatory —
+ * without it a genuinely-offline backend would be torn down and reopened every 15s, and each
+ * nudge's `start()` short-circuits `EnvelopeStream`'s own capped exponential backoff.
+ *
+ * 60s is above both the stall window (45s) and the tick (15s), so at most one nudge per minute:
+ * prompt enough to clear a wedged channel well inside a user's patience, cheap enough that an
+ * offline backend costs ~1 extra connect attempt per minute on top of the transport's own backoff.
+ */
+const FEED_STALL_NUDGE_MIN_INTERVAL_MS = 60_000;
+
 let lastFrameAtMs = 0;
+/**
+ * Seq of the last GENUINE frame (tempdoc 798 B4). Both transports invoke a stream's listeners for
+ * connection-state changes as well as data — `EnvelopeStream.notify` on open/error/watchdog expiry,
+ * `MultiplexedStream.broadcastConnectionChange` on every shared-transport transition — and those
+ * carry the entry's UNCHANGED seq. Treating a listener invocation as proof of a frame let a mere
+ * reconnect stamp liveness and clear the stall without one byte of new job data arriving. That was
+ * benign-looking before there was an actuator; with one it is a live oscillator (nudge → broadcast
+ * → "recovered" → 45s → stalled → nudge), and it would also reset the rate-limit reasoning each
+ * cycle. Starts at 0 — the strategy's `initialState.catalogVersion`, so the connection broadcasts
+ * that precede the first real frame (backend seq starts at 1) are correctly not counted.
+ */
+let lastFrameSeq = 0;
 let _feedStalled = false;
+let lastFeedNudgeAtMs = 0;
 const _feedListeners = new Set<(stalled: boolean) => void>();
 
 /**
@@ -224,8 +243,27 @@ export function subscribeFeedStalled(cb: (stalled: boolean) => void): () => void
 /** Test-only reset of the feed-liveness state. */
 export function __resetFeedHealthForTest(): void {
   lastFrameAtMs = 0;
+  lastFrameSeq = 0;
   _feedStalled = false;
+  lastFeedNudgeAtMs = 0;
   _feedListeners.clear();
+}
+
+/**
+ * Rate-limited actuator for an observed stall (tempdoc 798 B4). Pre-798 the stall detector's only
+ * effect was flipping a boolean the Tasks panel renders as "Live updates paused — reconnecting…" —
+ * a message announcing an action no code performed. Field symptom: the panel froze at "5184 QUEUED
+ * / reconnecting…" for ~25 minutes against a READY/IDLE backend whose status bar (an independent
+ * REST poll) correctly read "queue: 0", recoverable only by restarting the app.
+ *
+ * The stamp advances only when a reconnect actually happened, so a transport that declines the
+ * nudge (not started / not pooled) does not consume the window.
+ */
+function nudgeFeedTransport(nudge: () => boolean, now: number): void {
+  if (now - lastFeedNudgeAtMs < FEED_STALL_NUDGE_MIN_INTERVAL_MS) return;
+  if (nudge()) {
+    lastFeedNudgeAtMs = now;
+  }
 }
 
 /**
@@ -354,15 +392,23 @@ export function startIndexingJobsBridge(
   // 602 R5 — a late pathHash resolve relabels in place by re-projecting the
   // latest rows (so the task keeps its CURRENT status, not a stale captured one).
   reproject = () => projectJobsToTasks(latestItems);
-  const onSnapshot = (snap: { payload: StrategyState<TabularData<IndexingJobRow>> }): void => {
+  const onSnapshot = (snap: {
+    payload: StrategyState<TabularData<IndexingJobRow>>;
+    seq: number;
+  }): void => {
     latestItems = snap.payload.data.items;
-    // 595 §4.4: a fresh frame stamps liveness and clears any stall.
-    lastFrameAtMs = Date.now();
-    setFeedStalled(false);
+    // 595 §4.4: a fresh frame stamps liveness and clears any stall. 798 B4: only a GENUINE frame
+    // does — a connection-state broadcast re-delivers the same seq (see `lastFrameSeq`).
+    if (snap.seq !== lastFrameSeq) {
+      lastFrameSeq = snap.seq;
+      lastFrameAtMs = Date.now();
+      setFeedStalled(false);
+    }
     projectJobsToTasks(latestItems);
   };
-  const stopSub = opts.multiplex
-    ? opts.multiplex.subscribe<StrategyState<TabularData<IndexingJobRow>>>(
+  const multiplex = opts.multiplex;
+  const stopSub = multiplex
+    ? multiplex.subscribe<StrategyState<TabularData<IndexingJobRow>>>(
         SHELL_EVENT_STREAM_IDS.INDEXING_JOBS,
         () => {
           const strat = tabularStrategy<IndexingJobRow>(PRIMARY_KEY);
@@ -390,11 +436,24 @@ export function startIndexingJobsBridge(
   // `running` forever; re-projecting the last known rows lets it cross the
   // freshness window and demote to `queued` without a new frame. Cheap when idle
   // (empty item set → no-op).
+  // Tempdoc 798 B4 — the reconnect ACTUATOR the stall message promises. On the multiplexed
+  // transport this is load-bearing: a wedged `surface:indexing-jobs` channel is invisible to the
+  // shared connection's watchdog because the OTHER channels keep re-arming it. On the pooled
+  // fallback the stream's own watchdog normally gets there first; wiring both keeps the recovery
+  // action present on whichever transport the bridge is running on.
+  const nudgeTransport: () => boolean = multiplex
+    ? () => multiplex.nudgeReconnect()
+    : () => nudgePooledStream(url);
   const tick = setInterval(() => {
     projectJobsToTasks(latestItems);
     // 595 §4.4: the same tick re-evaluates feed-staleness — if in-flight work
     // exists but no frame has arrived within the window, mark the feed stalled.
-    setFeedStalled(isFeedStalled(lastFrameAtMs, Date.now(), latestItems));
+    const now = Date.now();
+    const stalled = isFeedStalled(lastFrameAtMs, now, latestItems);
+    setFeedStalled(stalled);
+    if (stalled) {
+      nudgeFeedTransport(nudgeTransport, now);
+    }
   }, RE_EVAL_INTERVAL_MS);
   return () => {
     clearInterval(tick);

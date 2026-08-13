@@ -1390,10 +1390,17 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
         double chunkCoverage = workerView.enrichment().chunk().chunkVectorCoveragePercent();
         String state;
         String reason;
-        // When the worker is in fallback, chunkVectorsReady is false and coverage is 0.
-        if (!chunkReady && chunkCoverage == 0.0 && workerView.enrichment().chunk().chunkDocCount() == 0) {
-          state = READINESS_DEGRADED;
-          reason = LifecycleReasonCode.CHUNK_EMBEDDING_NOT_READY.code();
+        // Tempdoc 804 §D1 — an EMPTY corpus is not degradation. No chunk passages exist AND no
+        // documents are indexed ⇒ there is nothing to embed yet, so "passage embeddings are not
+        // ready" is a claim about work that does not exist, and it made the degradation banner the
+        // default first-run experience on every fresh install. Both counts are required: indexed
+        // documents with no chunks is genuinely pending work (keep NOT_READY), and chunks without
+        // parents is an inconsistency we must not hide. Mirrors VISUAL_TEXT_EXTRACTION below, which
+        // already reports READY when its needed-count is zero.
+        if (workerView.enrichment().chunk().chunkDocCount() == 0
+            && workerView.core().indexedDocuments() == 0) {
+          state = READINESS_READY;
+          reason = null;
         } else if (chunkReady) {
           state = READINESS_READY;
           reason = null;

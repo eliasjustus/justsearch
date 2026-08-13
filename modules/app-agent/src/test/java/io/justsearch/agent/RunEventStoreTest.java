@@ -2,8 +2,12 @@
 package io.justsearch.agent;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.UnsupportedStoreVersionException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -23,6 +27,30 @@ import tools.jackson.databind.ObjectMapper;
 class RunEventStoreTest {
 
   @TempDir Path tempDir;
+
+  @Test
+  void writesVersionedEventsAndRefusesFutureRecordsWithoutChangingBytes() throws Exception {
+    var store = new RunEventStore(tempDir.resolve("runs"));
+    store.appendEvent("s1", "agent_run", "started", Map.of());
+    String current = Files.readString(store.eventsPath("s1"));
+    assertTrue(current.contains("\"schemaVersion\":1"));
+
+    String future =
+        "{\"schemaVersion\":99,\"timestamp\":\"2020-01-01T00:00:00Z\","
+            + "\"shapeId\":\"agent_run\",\"eventType\":\"future\",\"payload\":{}}\n";
+    Files.writeString(store.eventsPath("s1"), future);
+    assertThrows(UnsupportedStoreVersionException.class, () -> store.readEvents("s1"));
+    assertEquals(future, Files.readString(store.eventsPath("s1")));
+  }
+
+  @Test
+  void appendFailureIsObservableInsteadOfLookingLikeASuccessfulEmptyWrite() throws Exception {
+    var store = new RunEventStore(tempDir.resolve("runs"));
+    Files.createDirectories(store.eventsPath("s1"));
+    assertThrows(
+        CorruptDurableStoreException.class,
+        () -> store.appendEvent("s1", "agent_run", "started", Map.of()));
+  }
 
   @Test
   void appendRawEventsPreservesTimestampsAndTypes() {

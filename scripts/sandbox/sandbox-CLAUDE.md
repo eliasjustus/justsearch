@@ -16,7 +16,8 @@ Five staged files govern this round. Read them before launching JustSearch:
    is the authority for *what to cover*; it cannot silently omit a newly-shipped
    surface. If a surface is on it and you cannot reach it, that is a finding.
 2. **`validation-mode.md`** — the model mode for this instance (`fresh-install`
-   vs `pre-staged-models` vs `upgrade-from-release`). Overrides any static
+   vs `pre-staged-models` vs `upgrade-from-release` vs
+   `in-app-update-from-release`). Overrides any static
    wording about host models.
    **Round-mode policy:** a release's FIRST round and its FINAL qualifying round
    MUST run `fresh-install` (the only mode that covers the real download path);
@@ -27,12 +28,33 @@ Five staged files govern this round. Read them before launching JustSearch:
    over it) — real users arrive from the previous version, not only from a clean
    machine, and the strongest defect repro this harness ever produced came from a
    non-fresh arrival state (tempdoc 734 A.1, round 2). Tempdoc 750 Part C.
+   For `in-app-update-from-release`, also follow
+   `updater-qualification.md`: the installed source is a previous-source
+   Sandbox build with the updater test gate, the target is served from the
+   authenticated loopback closed set, and `collect-updater-evidence.ps1`
+   captures the durable recovery oracle before interruption and after restart.
 3. **`charter.md`** — this round's pre-registration (SBTM's *charter*, adapted —
    see *Retrospective / debrief* below): what the round is FOR, each open
    blocker's needs-round vs. needs-dig classification, the chosen mode and why,
    and expectations. Written before the round runs; the debrief is read against
    it. A round asked to verify something the charter classifies needs-dig should
    flag that, not silently spend itself on it.
+   **A watch item that names only a broken signature is under-specified — do not
+   file a finding on the signature alone.** Charters must state what the signal
+   looks like when the build is HEALTHY as well as when it is broken (the rule
+   lives in `docs/how-to/cut-a-release.md` step 2, addressed to whoever writes
+   the charter). When one does not, establish the discriminator yourself before
+   calling anything a defect, and record the charter's imprecision as a
+   harness finding. Worked example (round 8, 2026-07-31): the charter said
+   `Combined backfill: docs=N (embed=0,splade=0,chunks=0)` "repeating at high
+   frequency … is the livelock; it must not appear." It appeared **143 times,
+   six within 142 ms — and was not the livelock**: the lines carried real
+   progress, the run terminated on its own, enrichment completed, and a
+   60-second idle window afterwards produced zero new lines. Healthy backfill
+   emits that exact signature. The defect is **non-termination** — the
+   signature still firing while every coverage counter is static and ingest
+   jobs are starved. Following that charter literally would have produced a
+   false HIGH against a working build.
 4. **`sandbox-environment.md`** — directory layout, what is staged, environment
    characteristics.
 5. **`staging-gaps.md`** — assets the host failed to stage this round (e.g. the
@@ -46,8 +68,11 @@ Five staged files govern this round. Read them before launching JustSearch:
    verify, not as a substitute for verifying it: check every claim it makes
    against the running candidate, don't just cite the tempdoc's own words back.
 
-The final validation summary must state the mode explicitly and report coverage
-against `coverage-brief.md`.
+The final validation summary must state the mode explicitly, report coverage
+against `coverage-brief.md`, and quote `candidate-provenance.md` (the staged
+record of the installer's filename, SHA-256 and — when the build made it
+derivable — its commit) so the archived evidence identifies the build it came
+from without host-side archaeology afterwards.
 
 ## Mission (durable)
 
@@ -117,14 +142,29 @@ so an untouched required surface fails the round rather than being forgotten.
 JustSearch serves a production **MCP endpoint** at `POST /mcp` (loopback), the
 "private retrieval backend for agents" the README advertises. This is a *product*
 surface, distinct from the developer MCP dev-tools that are absent in the sandbox.
-Verify a real external MCP client can reach it on a clean install using the
-official MCP Inspector CLI (MIT, run via `npx`, nothing to vendor):
+**The documented Inspector CLI reachability check now FAILS on this build** (round
+10, tempdoc 734/804): the packaged candidate boots `prod=true` (see *Key API
+endpoints* below), `POST /mcp` enforces the session token like every other
+mutating route, and a plain `npx @modelcontextprotocol/inspector --cli
+"http://127.0.0.1:<port>/mcp" --transport http --method tools/list` 401s with no
+`WWW-Authenticate` header — the Inspector CLI infers OAuth from the bare 401 and
+demands an interactive TTY it cannot get in a round. **Verify reachability with a
+raw `POST /mcp` JSON-RPC `tools/list` call carrying the session token instead**
+(fetch it from `GET /api/mcp/token` — see *Key API endpoints* below for the
+token-fetch pattern):
 
 ```powershell
-npx @modelcontextprotocol/inspector --cli "http://127.0.0.1:<port>/mcp" --transport http --method tools/list
+$port = (Get-Content "$env:APPDATA\io.justsearch.shell\runtime\manifest.json" | ConvertFrom-Json).head.apiPort
+$token = (Invoke-RestMethod -UseBasicParsing "http://127.0.0.1:$port/api/mcp/token").token
+Invoke-RestMethod -UseBasicParsing -Method Post -Uri "http://127.0.0.1:$port/mcp" `
+  -Headers @{ "X-JustSearch-Session" = $token } -ContentType "application/json" `
+  -Body '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-Expect the tool set to come back. If `npx`/node is not installed, record that MCP
+Expect the tool set to come back. If you must use the Inspector CLI itself, it has
+no flag for a custom auth header on this build, so it is not currently a working
+substitute — record the limitation and use the raw-POST workaround above. If
+`node` is not installed at all (for the mutating-tool step below), record that MCP
 was not exercised and why (a gap to close), rather than skipping silently.
 Protocol conformance itself is owned by a host integration test; the Sandbox's
 unique job is proving clean-install reachability and discoverability.
@@ -211,7 +251,12 @@ Two staged tools make rounds repeatable and make coverage fail closed:
   backend port from the runtime manifest, hits the API sanity ladder, exercises
   `/mcp` via the Inspector CLI, and saves raw snapshots into `evidence/`. Run it
   early and after each major step. It *captures*; the honesty/scary-UI judgment
-  stays with you.
+  stays with you. Re-running it is now **non-destructive**: each invocation also
+  copies its ladder snapshots into `evidence/api-history/<UTC timestamp>/` and
+  appends a line to `evidence/collect-runs.ndjson`, so the product's progression
+  through install/enrichment survives (the fixed-name snapshots at the evidence
+  root are still overwritten in place — they are the "latest" copies other tools
+  read by name).
 - **Endpoint tracing** — launch JustSearch with `JUSTSEARCH_HEAD_TRACING_LEVEL=detailed`
   so every API request is recorded to `%APPDATA%\io.justsearch.shell\telemetry\traces.ndjson`.
   This is the empirical record of which endpoints the round actually exercised.
@@ -224,6 +269,16 @@ Two staged tools make rounds repeatable and make coverage fail closed:
   identifiable (e.g. `NN-security-panel.png`, `NN-rag-ask-answer.png`); **surface
   coverage is credited from screenshots only** (image files), never from the API-JSON
   snapshots the harness also writes there.
+  **The match is a literal substring of the filename against a per-surface
+  `evidenceToken`, not a semantic check** — for the chat/search escalation-ladder
+  surface (`core.unified-chat-surface`), the required token is `unified-chat`
+  (derived mechanically from the surface id: strip `core.` and `-surface`).
+  Round 15 screenshotted that surface heavily under names like `09-tour-step2.png`
+  and never once used the literal substring `unified-chat`, so a genuinely
+  well-covered surface read as uncovered at finalize. **Every chat-surface capture's
+  filename must contain `unified-chat`** (e.g. `12-unified-chat-search.png`,
+  `13-unified-chat-ask-answer.png`) — do not rely on a looser word like "chat" or
+  "search" alone to satisfy this token.
 - **At finalize (host-side)**, the round's coverage is asserted by diffing the
   must-touch set against the exercised endpoints + screenshots. Because the sandbox
   has no Python, this runs on the **host** against the persisted evidence dir after the
@@ -242,6 +297,58 @@ Two staged tools make rounds repeatable and make coverage fail closed:
   claims a surface; it cannot prove the PIXELS show it, so a reader pass over
   every credited screenshot is a required, separately fail-closed gate, not an
   optional judgment call.
+  Four further artifacts are required by the same check, each separately
+  fail-closed (all under *Writing results* below): **`findings.md`** (this round's
+  defect report as its own artifact — see *Findings* below),
+  **`mustwatch-verdicts.v1.json`**
+  (a verdict for every must-watch id in this round's brief),
+  **`session-analysis.md`** (the session-vs-harness debrief), and
+  **`mutating-probe.v1.json`** (written for you by `collect-evidence.ps1` — a
+  `status: "fail"` there means the product's whole mutating surface was dead while
+  every GET rung read green, and it now fails the round instead of only printing).
+- **Token health (host-side, tempdoc 805 Part G.4)** -- the same `traces.ndjson`
+  is also checked for round 11's discriminator: any POST/PUT/DELETE span
+  answered 401 in under 5ms is the auth-filter-rejection fingerprint (a
+  missing/stale session token reaching the webview), promoted from prose to a
+  mechanical, fail-closed gate:
+  ```
+  python scripts/sandbox/check_token_health.py tmp/sandbox/share/evidence/traces.ndjson
+  ```
+  Allowlisted: a fast 401 on `/mcp` immediately followed (within 60s) by a 200
+  on `/mcp` -- an external MCP client probing once without a token and then
+  retrying with one is expected, not a defect. A blocking finding here means a
+  webview call fired without (or with a stale) session token during the round.
+- **`traces.ndjson` cannot be parsed line-by-line as JSON — two traps, both
+  already hit once (round 12, tempdoc 806 W3 item 2).** (1) The HTTP
+  attribute container in each span is **`attrs`**, not `attributes`. (2)
+  Span `attrs` embed document excerpts containing **CRLFs**, so a "line" of
+  the NDJSON is often not a complete JSON document -- `Get-Content |
+  ConvertFrom-Json` throws on many lines. Round 12's first in-round self-check
+  reported **"mutating spans: 0; of those 401: 0"** from exactly this bug --
+  a **false clean pass** on the token-health discriminator above, caught only
+  because the round applied *"absence of signal is not evidence of
+  absence"* and re-derived the field names before trusting the answer. The
+  working method is **regex over raw text, never JSON parsing**:
+  ```powershell
+  # discover the real attribute keys first
+  Select-String -Path $tr -Pattern '"(http\.[a-z_.]+)"' -AllMatches |
+    ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value } |
+    Group-Object | Sort-Object Count -Descending
+  # then the token-health discriminator
+  $hits = Select-String -Path $tr -Pattern '"http\.method":"(POST|PUT|DELETE)"' -AllMatches
+  $hits | Where-Object { $_.Line -match '"http\.status_code":"?401' }
+  ```
+  This is already staged as **`analyze-traces.ps1`** (next to `oracle.ps1` /
+  `chat-ask.ps1` / `redact.ps1`) -- run it against a live round's traces
+  file before trusting a manual re-derivation:
+  ```powershell
+  .\analyze-traces.ps1 -TracesPath "$env:APPDATA\io.justsearch.shell\telemetry\traces.ndjson"
+  ```
+  It prints the discovered `http.*` attribute keys with counts, the
+  mutating-span count, and any mutating span answered 401 -- the same
+  numbers `check_token_health.py` asserts on host-side at finalize, so a
+  round can catch a real blocker (or confirm a clean build) itself instead
+  of waiting for the host-side re-run.
 
 ### Search parity (golden queries)
 
@@ -253,7 +360,26 @@ capture step, already wired into `collect-evidence.ps1` — if `golden-queries.j
 to it, the script POSTs each query to `/api/knowledge/search` (hybrid, limit 10) against your
 running candidate and saves the raw responses to `evidence/golden/<queryId>.json`. No judgment is
 required from you here; the tolerance comparison against the baseline runs host-side at finalize
-via `check_golden_parity.py`. If `staging-gaps.md` lists a missing golden-parity baseline for this
+via `check_golden_parity.py`.
+
+**The capture is gated on a warm GPU embedding session (round 16, tempdoc 823 §3).** Before
+capturing, `collect-evidence.ps1` reads the `embed` entry of `/api/ai/runtime/status`'s
+`onnxFeatures` array (note: an ARRAY keyed by `id`, not an object with an `embed` property) and
+requires `executionProvider: "cuda"` with `gpuFallback: false`. The CUDA session is created
+lazily on the first inference batch, so a capture taken too early runs CPU-FP32 query vectors
+against a GPU-FP16 baseline — exactly what made round 16's parity check exit 1 on three queries
+with the dense leg alone collapsing while SPLADE and text stayed high. If the session is cold the
+script triggers a vector-mode warm-up search and polls for up to 3 minutes; if the session is still
+reported as fallen back to CPU (`gpuFallback: true`) it **auto-skips the capture** with a note (same
+mechanism as the corpus-ratio floor above) rather than producing evidence that reads as a ranking
+regression. A host that is genuinely CPU-only — `executionProvider: "cpu"` with no `gpuFallback` —
+has no GPU session to wait for, so the capture **proceeds** and is labelled
+`captureCondition: "cpu-native"` with the reasoning in `golden-capture-note.txt`; comparability is
+then host-side's call (`check_golden_parity.py` fails typed on the embedding-fingerprint mismatch,
+and such a host needs its own CPU-generated baseline). Either way the observed state, including
+`captureCondition`, is written to `evidence/golden-capture-ep.json`, so finalize can always see the
+condition the capture was taken under. A skip is a recorded gap: re-run `collect-evidence.ps1` after
+real search/enrichment traffic has warmed the session. If `staging-gaps.md` lists a missing golden-parity baseline for this
 candidate, record that as a round-level coverage gap (per the protocol above) rather than
 attempting to judge search quality yourself.
 
@@ -300,6 +426,16 @@ as a **finding to explain, not** noise to wave through; the check's report now
 carries typed reasons and per-leg attribution so the explanation can start
 host-side instead of costing another round.
 
+**Policy status (owner decision 2026-07-30, tempdoc 798 B7 / 750 option A4):** a
+sub-7 overlap is **DESCRIPTIVE — reported in full, but it does not block the
+round**. The floor was calibrated only on the same-machine dev-rebuild
+population; a dev to Sandbox comparison crosses a boundary that calibration never
+sampled, so a sub-floor overlap there is an uncalibrated measurement rather than a
+demonstrated ranking regression. The **blocking** assertion is the
+environment-robust one: golden #1 within the captured top-3. This is a demotion of
+what the number decides, not of what is measured or reported — explaining a
+sub-floor overlap is still expected of the round.
+
 ## Required validation phases
 
 1. **Installer launch and security prompts** — run the installer from the mapped
@@ -316,17 +452,45 @@ host-side instead of costing another round.
    not need to prove this. Your one residual job: **if any elevation prompt
    appears during the JustSearch install, that is a finding** — note the
    publisher shown and report it.
-   **Run this round non-elevated.** UAC renders on the secure desktop, so
-   screenshots can't capture it, and an already-elevated session is never
-   re-prompted (an elevated process tree cannot observe a UAC prompt at all,
-   regardless of what the installer requests). But that is not the reason to
-   run non-elevated: an elevated round does not reproduce a normal user's
-   environment and can mask permission defects a real user would hit — a pass
-   that depends on an environment precondition is not a pass (this repo's
-   `green-masked-destructive` principle). If this session's own terminal is
-   already elevated (`collect-evidence.ps1` self-checks this at Step 0 and
-   writes `evidence/elevation-check.txt`), say so in the round's summary —
-   an elevation prompt was structurally impossible to observe this round.
+   **Elevation posture: every round in this image runs ELEVATED, and no round
+   can observe a UAC prompt. This is a property of the image, not of the
+   round.** The Windows Sandbox image has `EnableLUA=0`, so Windows issues no
+   filtered/split token at all: `explorer.exe` itself runs elevated, every
+   process inherits that, and the de-elevation tricks (relaunch via Explorer,
+   `runas /trustlevel`) have no non-elevated token to inherit. Round 16
+   established this to root cause; the evidence is
+   `evidence/elevation-check.txt` from that round (2026-08-12), and
+   `collect-evidence.ps1` re-writes that file at Step 0 every round.
+   Consequences you must record rather than work around:
+   - **Any UAC-observation item is `unobservable` with this reason**, never a
+     pass and never silence. UAC also renders on the secure desktop, which
+     screenshots cannot capture — but the elevated process tree is the binding
+     constraint: it is never re-prompted in the first place.
+   - **The round does not reproduce a normal user's integrity level** and can
+     therefore mask permission defects a real user would hit — a pass that
+     depends on an environment precondition is not a pass (this repo's
+     `green-masked-destructive` principle). Say so in the round's summary.
+   - The earlier instruction here ("Run this round non-elevated") was
+     **unfollowable as written** and cost round 16 a real detour. It is
+     removed rather than softened.
+   **Posture decision PENDING (owner):** either `generate_wsb` sets
+   `EnableLUA=1` (costs one reboot inside sandbox boot; restores a normal
+   user's integrity level and makes the trust prompts reproducible), or the
+   Sandbox tier drops the non-elevated expectation and accepts the blind spot
+   explicitly. Until that is decided, the `.wsb` posture is unchanged and this
+   text states the fact — do not treat the blind spot as closed.
+   **Launch the installer DETACHED, never with `-Wait` (round 12, tempdoc 806
+   W3 item 5).** The candidate installer is interactive and parks on a wizard
+   page — `Start-Process -FilePath ... -Wait` blocks until the process exits,
+   which never happens until you click through it, and the tool call's own
+   10-minute timeout then kills the whole process tree (round 12 lost ~12
+   minutes this way; the machine stayed cleanly at the prior version, but the
+   round still had to redo the launch). Launch detached and drive the wizard
+   from separate calls, one page per tool call:
+   ```powershell
+   $p = Start-Process -FilePath ".\JustSearch_0.2.0_x64-setup.exe" -PassThru   # NO -Wait
+   # then: capture -> crop -> read -> click.ps1, one wizard page per tool call
+   ```
 2. **First app launch** — does `%LOCALAPPDATA%\JustSearch\JustSearch.exe` start
    and render? Save `evidence/NN-first-paint.png`.
 3. **Backend health** — read the runtime manifest, then save raw `/api/health`,
@@ -339,6 +503,14 @@ host-side instead of costing another round.
 6. **Install AI** — in `fresh-install` mode, validate the full model + GPU-runtime
    download through the UI, backed by `/api/ai/install/status` snapshots. In
    `pre-staged-models` mode, label the evidence shortcut-only.
+   **On ANY package download failure, run the staged manual-fetch control
+   BEFORE forming a hypothesis** (round 16, tempdoc 823 §4): `.\probe-download.ps1
+   -Url <the failing URL from the manifest> [-ExpectedSha256 <digest>]`. It
+   fetches with the same `curl.exe` flag set the product falls back to and prints
+   the BITS service state, HTTP status, bytes, elapsed time and SHA-256 — one
+   command that partitions environment-vs-product. Round 16's wedged package
+   fetched by hand in 0.41 s with a matching digest, which reframed the whole
+   finding (and refuted the round's leading root-cause hypothesis).
 7. **Library / indexing journey** — add a folder through the UI where possible;
    for the full corpus, ingest `Desktop\JustSearchTest\scifact\`. Verify
    per-folder row state, Tasks panel live updates, and `/api/knowledge/status`
@@ -397,7 +569,26 @@ request shapes against a server that was telling it exactly what was wrong
 the whole time. Wrap mutating calls in `try/catch` and print the body on
 failure before concluding the endpoint is broken.
 
-Key API endpoints (no auth needed, `prod=false`):
+**The packaged candidate boots `prod=true` — every mutating call needs the session
+token.** This is NOT the dev stack: a Sandbox candidate is the SHIPPED package,
+and `ApiSecurityFilters` enforces the session token on every `POST`/`PUT`/`DELETE`
+globally, with no path exemption (it applies to `/mcp` too). `GET`/`OPTIONS` need
+no token. Fetch the token once from `GET /api/mcp/token` (itself unauthenticated by
+design — the desktop UI/shipped MCPB bridge use exactly this pattern) and attach it
+as the `X-JustSearch-Session` header on every mutating call; omit it and you get a
+`401` with `{"error":"Missing or invalid session token","errorCode":"UI_TOKEN_REQUIRED"}`,
+not the endpoint's normal response. Worked example:
+
+```powershell
+$port = (Get-Content "$env:APPDATA\io.justsearch.shell\runtime\manifest.json" | ConvertFrom-Json).head.apiPort
+$token = (Invoke-RestMethod -UseBasicParsing "http://127.0.0.1:$port/api/mcp/token").token
+$headers = @{ "X-JustSearch-Session" = $token }
+Invoke-RestMethod -UseBasicParsing -Method Post -Uri "http://127.0.0.1:$port/api/knowledge/search" `
+  -Headers $headers -ContentType "application/json" -Body '{"query":"test","limit":5}'
+```
+
+Key API endpoints (`GET` needs no token; every other method needs the
+`X-JustSearch-Session` header above):
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
@@ -406,13 +597,14 @@ Key API endpoints (no auth needed, `prod=false`):
 | `/api/knowledge/search` | POST | Search (`{"query":"...","limit":5}`) |
 | `/api/knowledge/ingest` | POST | Ingest (`{"paths":["..."]}` — directory inputs return `scanId`) |
 | `/api/knowledge/status` | GET | Index/enrichment progress |
+| `/api/indexing/roots` | POST | Add a folder to the library (`{"path":"...","collection"?:"..."}` — `path` must be an existing directory; 400 names the offending field) |
 | `/api/chat/ask` | POST | RAG Q&A (`{"question":"..."}` — NOT `query`). **Response is an SSE stream, not JSON** — see below. |
 | `/api/ai/install/start` | POST | Start model download (`{"acceptTerms":true}`) |
 | `/api/ai/install/status` | GET | Download progress. Top-level `state: "completed"` does NOT mean all packages installed; check `installedFully: true` and per-package `state`. |
 | `/api/ai/runtime/status` | GET | Per-feature runtime status (NVML VRAM, ONNX `modelActive` flags) |
 | `/api/inference/status` | GET | LLM runtime state |
-| `POST /mcp` | POST | **Production MCP endpoint** (Streamable HTTP) — the agent-facing retrieval backend. Verify via the Inspector CLI, not raw curl. |
-| `/api/mcp/token` | GET | MCP session-token issuance |
+| `POST /mcp` | POST | **Production MCP endpoint** (Streamable HTTP) — the agent-facing retrieval backend. Needs the session token like any other POST; see *The `/mcp` product endpoint* above for the current verification procedure. |
+| `/api/mcp/token` | GET | Session-token issuance (unauthenticated by design — this is how a legitimate client gets the token in the first place) |
 
 Full body shapes for every endpoint live in `docs/reference/api-contract-map.md` (staged under `docs/`).
 
@@ -446,6 +638,19 @@ depth (PENDING+PROCESSING) despite its name. `worker.migration.pendingJobsCount`
 PROCESSING — always check its sibling `processingJobsCount` (same payload, also in
 `/api/debug/state`) before concluding the queue is idle.
 
+**A 401 renders as zero results in any client that doesn't check status.** The
+packaged candidate boots `prod=true` (see *Key API endpoints* above); a `POST`
+issued without the `X-JustSearch-Session` header 401s, and a client that only
+inspects the parsed response shape — not the HTTP status code — sees
+`{"error":"...","errorCode":"UI_TOKEN_REQUIRED"}` shaped exactly like an empty
+result set. Round 10 nearly filed a catastrophic false HIGH finding ("the
+upgrade emptied the index") for exactly this reason: a post-upgrade oracle run
+read `hits: 0` on every query purely because its POSTs were 401ing, and only
+the visible `UI_TOKEN_REQUIRED` error body caught it before the round wrote
+the finding. Before concluding an index is empty or a search found nothing,
+check the HTTP status code and error body first — never trust an empty-looking
+result shape on its own.
+
 **Absence of signal is not evidence of absence.** A wrong field name, a genuine
 negative result, a silent no-op click, and a surface that never backfills all
 render as "empty" — and they are indistinguishable from each other until you
@@ -453,9 +658,67 @@ check which one you're looking at. Before filing any negative finding ("X not
 indexed", "Y not shown", "Z never fired"), confirm you are reading the right
 field/endpoint/surface at all — ideally by first proving the positive control
 works (a query you know should return hits, a WARN you know already fired).
-The three traps above (hidden error bodies, the SSE-vs-JSON mismatch, `id` vs
-`path`) are concrete instances of this; treat it as the general case, not just
-those three.
+The four traps above (hidden error bodies, the SSE-vs-JSON mismatch, `id` vs
+`path`, and a 401 rendering as zero results) are concrete instances of this;
+treat it as the general case, not just those four.
+
+## Named diagnostic techniques
+
+### Renamed-aside data dir
+
+Used twice (round 9 and round 10, tempdoc 734) to reclassify a blocker as
+**build-level** (reproduces on a pristine install, nothing to do with the
+upgrade) vs **upgrade-specific** (only reproduces against carried-over user
+state): stop all four processes (see *Restart cycles* above — the Tauri shell,
+Head `javaw.exe`, Worker `java.exe`, and `llama-server.exe` if active), **first
+copy the current `%APPDATA%\io.justsearch.shell\telemetry\traces.ndjson` to a
+timestamped safe name under `evidence\`** (e.g.
+`Copy-Item "$env:APPDATA\io.justsearch.shell\telemetry\traces.ndjson"
+"evidence\traces-pre-rename-$(Get-Date -Format 'yyyyMMddTHHmmssZ').ndjson"`
+— skip silently if the file does not exist yet), rename
+`%APPDATA%\io.justsearch.shell` aside (e.g. to `io.justsearch.shell.bak` —
+rename, do not delete, so the original round's data is recoverable), relaunch
+the candidate against the now-pristine (non-existent) data dir, and re-test the
+failing behaviour. If it still reproduces against a fresh data dir, the defect
+is build-level, not an upgrade artifact — restore the renamed-aside directory
+afterwards to resume the original round on its real data. This is what turned
+round 10's F7 ("upgrade defect?") into "shipped-UI blocker, reproduced on a
+pristine data dir" — that round's single highest-value diagnostic act.
+
+**Why the explicit copy matters (round 15, tempdoc 817 finding 5):** the
+pristine instance launched against the renamed-aside (non-existent) data dir
+writes its OWN fresh, short `traces.ndjson` from scratch. `collect-evidence.ps1`
+now auto-archives the evidence-root copy to `evidence\api-history\` before an
+overwrite when the existing copy's first span predates the new file's first
+span (so a plain re-run after restoring the real data dir will not silently
+lose the earlier record) — but the round's own explicit copy above is still the
+first line of defence, taken at the moment of highest risk (right before the
+rename), not after the fact. Round 15's F1 reproduction skipped this and a
+subsequent `collect-evidence.ps1` run copied the pristine instance's ~7-minute-
+short trace over the round's full trace record; the finalize coverage check
+then reported four false "uncovered" items because the real spans were gone.
+**After restoring the renamed-aside directory, run the host-side coverage
+check against the UNION of `evidence\traces.ndjson`, any
+`evidence\traces-pre-rename-*.ndjson` you saved, and anything
+`collect-evidence.ps1` auto-archived under `evidence\api-history\` —
+not against the root file alone.**
+
+### Verify-the-active-surface-before-clicking (GUI capture)
+
+The DEFAULT loop for every GUI action, not an occasional precaution: **capture**
+a fresh screenshot → **crop** the tab-strip/header region (`crop.ps1`, see
+`gui/README.md`) so you can read which surface is actually active without
+burning context on the full image → **confirm** the active surface matches
+what you expect → **click**. Pixel-coordinate automation has no notion of "did
+my click land on the surface I think is showing," and a screenshot taken even
+one step earlier can be stale by the time the click fires — round 10 lost four
+captures to exactly this coordinate drift (a click landed on the wrong tab
+because the active surface had moved since the last capture). Do not click from
+a screenshot older than the immediately-preceding capture, and do not treat a
+zero exit code as proof the click landed on the intended surface — confirm from
+the crop, then re-capture afterward to verify the action registered (`click.ps1`
+already fails closed on a foreground-focus mismatch; `Assert-AppSurface` in
+`gui/README.md` is the API-side confirmation for the same problem).
 
 ## Convergence — every finding gets a regression home
 
@@ -487,6 +750,44 @@ Files written to the mapped folder
 the sandbox closes. Anywhere else (`C:\`, the user profile) is wiped on shutdown.
 Report findings by journey with screenshot filenames and raw API/log evidence, and
 state the coverage result against `coverage-brief.md`.
+
+**Any tool you build during the round is saved under the mapped share, not the
+sandbox-side scratchpad.** The scratchpad is wiped with the sandbox like
+everything else outside the mapped folder. Round 16 built four working
+instruments in it — `hwnd-drive.ps1`, `nav.ps1`, `ui-search.ps1`,
+`pick-folder.ps1` — and all four were lost at shutdown; only their prose
+descriptions in the retrospective survived, and re-deriving them costs the next
+round the same time again. Write in-round tooling to
+`Desktop\JustSearchTest\round-tools\` (any name; the directory is not
+credit-eligible evidence and is excluded from nothing — it is simply
+persisted), and name it in the retrospective so the harness can promote what
+earned its keep into `scripts/sandbox/`.
+
+### Findings (required — the defect report as its own artifact)
+
+Every round must write `evidence/findings.md`. Round 16 filed five findings, one
+of them blocking, and wrote no findings file: they lived scattered across
+`mustwatch-verdicts.v1.json`, `retrospective.md` and `session-analysis.md`, so
+reassembling the round's actual defect list meant reading three artifacts written
+for three other purposes. The convention existed only as the "report findings by
+journey" sentence above; it is now checked.
+
+Write one entry per finding, each carrying:
+
+- **A severity** — blocking/HIGH/MEDIUM/LOW, and what the severity is grounded in.
+- **What was observed, with an evidence pointer** — the screenshot filename, the
+  API snapshot, the log line. A finding a reader cannot re-open is a claim.
+- **Its regression home** — a gate/test in its natural tier, or a
+  `sandbox-must-watch` entry (see *Convergence* above). One of the two, named.
+
+`evidence/findings.md` is checked at finalize and the round **fails closed** if it
+is missing or too thin. A round that genuinely found nothing still writes the file
+and **says so explicitly at the start of a line** ("No findings this round."),
+describing what it exercised to reach that conclusion — an explicit clean-round
+declaration satisfies the check; silence does not. The declaration is matched
+line-anchored on purpose: a report that merely contains the phrase inside a scoped
+sentence ("no findings in the search journey, but …") is a report WITH findings and
+stays subject to the per-finding topic checks above.
 
 ### Evidence review (required — a reader, not just a filename, must confirm coverage)
 
@@ -531,6 +832,46 @@ multiple passes/agents and **reconcile into one `evidence-review.v1.json`**
 before finalize (union the `examined` lists, concatenate `mismatches` and
 `uncertain`) — do not finalize on an unreconciled partial shard.
 
+**Bulk/periodic capture frames go in `evidence/raw-frames/`, not the evidence
+root (round 12, tempdoc 806 W3 item 1).** A driver that watches a long
+install/upgrade by saving a screenshot every ~1.5s can produce hundreds of
+near-identical frames in a single run (round 12: 947) — every one clears the
+size floor, so at the evidence root each one becomes credit-eligible and this
+required reader pass would have to open all of them, which is structurally
+impossible against the ~90-image budget above. Write periodic/bulk frames
+into a subdirectory literally named `raw-frames/` (direct child of
+`evidence/`) instead: `check_coverage.py` still counts them as present
+evidence (nothing is hidden or deleted) but excludes them from the
+credit-eligible set — they are NOT required in `examined`, and they can NOT
+by themselves satisfy a `mustTouch` surface/shape token. If one particular
+bulk frame turns out to genuinely evidence a requirement (e.g. it caught the
+one moment a dialog appeared), copy or rename that ONE frame out to the
+evidence root with a real, claim-bearing name — it is then a normal
+screenshot, credit-eligible and required in `examined` like any other.
+De-duplicating at capture time (only write on visible change, not on a fixed
+interval) is the better fix when a driver can do it; `raw-frames/` is the
+fallback for drivers that can't or didn't.
+
+**Investigation that happens AFTER finalize writes screenshots/notes into
+`evidence/post-round/`, not the evidence root (round 15, tempdoc 817).** A
+round's evidence review is complete and correct at the moment the round
+finalizes — but the same mapped share can outlive that finalize, and a later
+same-share investigation session (e.g. following up on a filed finding) can
+add new screenshots into the same evidence dir. Round 15's finalized review
+was already complete when a post-finalize investigation added ~52 new
+screenshots, and re-running `check_coverage.py` afterward failed the
+already-correct, already-finalized review as incomplete, because none of the
+new files could have been (or needed to be) in that review's `examined` list.
+Same treatment as `raw-frames/` above: write post-finalize investigation
+output into a subdirectory literally named `post-round/` (direct child of
+`evidence/`) — `check_coverage.py` still counts it as present evidence
+(nothing hidden or deleted) but excludes it from the credit-eligible set: not
+required in `examined`, and it cannot satisfy a `mustTouch` surface/shape
+token by itself. If a post-round capture turns out to genuinely matter to the
+original round's coverage, that is itself a sign the original review should
+be revisited, not silently patched by dropping a new file into the old
+evidence dir.
+
 `evidence/evidence-review.v1.json` is checked at finalize (see *Coverage &
 evidence* above) and the round **fails closed** if it is missing, malformed,
 omits a credit-eligible screenshot, or reports a mismatch.
@@ -569,9 +910,99 @@ Cover, at minimum, four things:
   end that cost real time.
 - **What you would change** — the concrete fix, not just the complaint.
 
+**Every friction item gets an explicit disposition before it becomes a harness
+note: harness defect OR candidate product finding.** Write the disposition next to
+the item, in one clause. The two are not alternatives you pick by where the pain
+landed — the same event is routinely both, and a friction item filed only as
+process cost silently discards the product half.
+
+The discriminator: **friction you resolved by consulting ground truth a real user
+does not have is a discoverability finding, not just process cost.** Reading a
+head log, an API field, a tempdoc or the source of a staged helper are all things
+you can do and a first-time user cannot. If that is what unstuck you, the surface
+did not tell the user what it told you.
+
+Worked example, round 14 (2026-08-05). Chat is OFF by default after a successful
+Install AI: with `installedFully: true` on all seven packages and a fully enriched
+index, inference sat at `mode=offline, available=false`, `/api/chat/ask` returned
+`AI_OFFLINE` without attempting startup, and a cold restart did not change it. The
+round was ~2 minutes from a false HIGH; what saved it was **reading the Head log**,
+where one INFO line explains everything ("AI auto-start not configured; engine
+follows the persisted runtime spec"). It cost ~20 minutes and was routed entirely
+to harness docs — "put this in CLAUDE.md and the do-not-refile list" — which is
+correct and insufficient. A user who installs 10 GB and finds chat dead has no head
+log; the product's own answer (Brain → "AI Offline → Start AI") was one surface away
+and nothing pointed there. That is a **product discoverability finding** as well as
+a harness gap, and only the harness half was recorded.
+
 `evidence/retrospective.md` is checked at finalize (see *Coverage & evidence*
 above) and the round **fails closed** if it is missing or too thin to be a real
-retrospective — a stub file does not satisfy this.
+retrospective — a stub file does not satisfy this. The dispositions are not
+mechanically graded; like the rest of this artifact, they are graded by being
+written down at all.
+
+### Session self-analysis (required — separate from the retrospective, on purpose)
+
+Every round must also write `evidence/session-analysis.md`. The retrospective
+above debriefs **the round against its charter**; this one debriefs **the session
+against the harness**. They are not the same artifact and merging them loses the
+second one every time the first is long enough to feel done.
+
+This exists because it already happened once, unasked: round 12 wrote a
+session-level self-analysis nobody requested, and it produced roughly **11 adopted
+harness fixes** — the single highest-yield artifact of the whole campaign — while
+nothing in the harness collected it, so it happened exactly once. Write it in that
+shape:
+
+- **What the harness, charter, or instructions made HARD** — not just wrong (that
+  is the retrospective's first bullet), but *expensive*: the step that took four
+  attempts, the thing you had to re-derive because no staged file carried it, the
+  instruction that was technically followable but pointed the wrong way first.
+- **What you did off-charter, and why** — off-charter pursuit of something
+  important you stumbled into is sanctioned. Name it and say what made it worth
+  the detour; an unrecorded detour looks like drift afterwards.
+- **What the NEXT round should do differently** — concrete, addressed to the next
+  agent, not to the harness authors.
+
+`evidence/session-analysis.md` is checked at finalize and the round **fails
+closed** if it is missing or a stub. Its content is **not graded** — no keyword
+check, no topic list, no quality judgment (the finalize check cannot judge quality
+and does not pretend to). The value is that the artifact exists at all.
+
+### Must-watch verdicts (required — a watch nobody recorded is a watch nobody did)
+
+`coverage-brief.md` lists this round's **must-watch** items with their
+`validateHow` notes. Until now nothing checked them: a round could observe
+**nothing** on every single one and still exit 0 — a recorded claim nothing
+verifies, which is the exact defect class this campaign exists to find, sitting in
+the harness itself.
+
+Before finalize, write `evidence/mustwatch-verdicts.v1.json`:
+
+```json
+{ "schema": "mustwatch-verdicts.v1",
+  "items": [ { "id": "<must-watch id, exactly as in coverage-brief.md>",
+               "verdict": "observed-pass | observed-fail | unobservable",
+               "note": "what was actually seen / why unobservable",
+               "evidence": ["optional artifact filenames"] } ] }
+```
+
+- **Every must-watch id in this round's brief needs an entry.** The finalize check
+  fails closed on any omission. An item nobody got to is `unobservable` **with a
+  note**, not a missing row.
+- **`unobservable` requires a non-empty `note`** saying *why* — the same honesty
+  rule the register itself applies to `install-trust-prompts` (its
+  `observability: blocked-by-posture` carries the reason the prompts cannot fire
+  under the current sandbox posture). "Not observable this round" is an acceptable
+  answer only when it says why.
+- **`observed-fail` does NOT fail the round by itself.** It prints prominently in
+  the finalize report and then goes through the findings process like any other
+  defect — what a failed watch *means* is your call and the owner's, not a byte
+  count's. But an observed-fail with no corresponding finding write-up is an
+  unfinished round.
+
+What is graded is the **recording**, never the outcome: the check exists to make
+the *claim of observation* verifiable, not to decide what you saw.
 
 ## Independence invariant (durable — do not "streamline" this away)
 

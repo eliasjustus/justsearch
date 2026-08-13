@@ -34,6 +34,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # The config-surface gate (added below, tempdoc 799) resolves a baseline ref to detect a
+          # relaxed pin, so it needs real history. The kernel fails CLOSED on a shallow clone
+          # rather than reporting a false green — correct, but it means this job cannot run on the
+          # default depth-1 checkout.
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -62,6 +68,21 @@ jobs:
         # happens to pick that day. `-c` only pins packages pyproject.toml already
         # requires; it can't force-install anything extra.
         run: python -m pip install -e scripts/jseval -c scripts/jseval/requirements.lock.txt
+
+      - name: Test release composition (Python)
+        # tempdoc 802. `scripts/jseval/tests/` (132 files) runs in CI NOWHERE — the same
+        # orphaned-layer class as the ~26 node files D6 wired above, and the reason a test
+        # added alongside a fix here would have been a claim rather than a guarantee.
+        # Scoped deliberately to the ONE file guarding release composition rather than the
+        # whole suite: the rest has never been run under CI's locked env, so enabling it
+        # wholesale would turn `main` red on failures this change does not own. The broader
+        # gap is logged for its own pass.
+        # pytest/hypothesis are not in requirements.lock.txt, so `-c` leaves them unpinned;
+        # that is why this installs the `dev` extra separately instead of widening the
+        # canonical install above (which the lock-drift guard keys on).
+        run: |
+          python -m pip install --quiet "pytest>=7.0" "pyyaml>=6.0"
+          python -m pytest scripts/jseval/tests/test_release.py -q
 
       - name: Test sandbox validation harness (Python)
         # Pillow backs plant_defects.py's mislabeled-capture re-encode (a SHA-unique
@@ -103,6 +124,26 @@ jobs:
       - name: Root README entrypoint guard
         run: node scripts/ci/check-root-readme.mjs
 
+      # Tempdoc 799 L.1: the ratchet shipped in 620 Move 3 but was wired to nothing,
+      # so the always-loaded set drifted 18.5% past its ceiling across four sessions
+      # that each logged it. Growth is still allowed — it just has to be declared
+      # (`--bump <file> --reason "<why>"`), which is what an unrun check can't ask for.
+      - name: Always-loaded agent-doc budget ratchet
+        run: node scripts/ci/check-always-loaded-budget.mjs
+
+      - name: Test dead-config scanner (config-surface gate)
+        run: node scripts/ci/test-config-surface-dead-config.mjs
+
+      # Tempdoc 799 Q. An adversarial review found the gate itself ran NOWHERE -- the step above
+      # tests the scanner, but nothing invoked the gate on a PR. That is the same "shipped but
+      # wired to nothing" shape L.1 documents for the always-loaded ratchet, reproduced in the
+      # branch that documents it. Scoped to this one gate: other kernel gates need inputs (knip,
+      # npm audit, a Gradle run) this fast job does not build.
+      - name: Config-surface gate (dead settings + surface ratchet)
+        run: |
+          node scripts/docs/generate-runtime-config-matrix.mjs
+          node scripts/governance/run.mjs --gate config-surface --mode gate
+
       - name: README benchmark numbers match the canonical release
         run: node scripts/ci/check-readme-benchmark-numbers.mjs
 
@@ -126,6 +167,45 @@ jobs:
 
       - name: Verify agent-utility publication and projections
         run: node scripts/ci/check-public-agent-utility.mjs
+
+      - name: Test the update-preserves-models gate
+        run: node scripts/ci/check-update-preserves-models.test.mjs
+
+      # Tempdoc 617 D2 made "an update never touches models" a condition of choosing monolithic
+      # full-installer updates, and §7.1 asserts it as fact. Nothing enforced it, so it held only
+      # by accident of how the payload happened to be assembled. A monolithic update is
+      # uninstall-then-install over a live install, so one recursive delete in an uninstall hook,
+      # or one models glob in the bundle, destroys ~9 GB of user assets on first upgrade.
+      - name: Update never ships or deletes models
+        run: node scripts/ci/check-update-preserves-models.mjs
+
+      - name: Test the installer-branding gate
+        run: node scripts/ci/check-installer-branding.test.mjs
+
+      # Three sandbox rounds reported an NSIS wizard naming no version anywhere. Tempdoc 806 routed
+      # it through bundle.copyright -> BrandingText; round 13 found that covered only the interior
+      # pages, because MUI's Welcome and Finish pages draw no strip (tempdoc 807 R13-F1). Both
+      # halves live outside any build the repo can run, so both can regress with every test green.
+      - name: Installer wizard names the version it installs
+        run: node scripts/ci/check-installer-branding.mjs
+
+      # Sandbox round 9 F1 (BLOCKER): lib.rs registered tauri_plugin_updater unconditionally
+      # while plugins.updater lived only in the tag-build overlay, so every non-tag candidate's
+      # shell panicked at startup (PluginInitialization, exit 101) before any window or log.
+      # The overlay was also missing the serde-required `pubkey`, so the first tag build would
+      # have panicked identically. A registered plugin with a required config must have a valid
+      # block in the BASE config.
+      - name: Registered Tauri plugins have a base config block
+        run: node scripts/ci/check-tauri-plugin-config.mjs
+
+      # Round 16 (tempdoc 823/824 F4) hit a 400 from POST /api/ai/install/repair with nowhere to
+      # look: the whole /api/ai/install/* family had shipped since alpha without ever appearing in
+      # the API contract map. Nothing compared bound routes against documented ones.
+      - name: Test the install-API contract-doc gate
+        run: node scripts/ci/check-install-api-contract.test.mjs
+
+      - name: Install API routes are documented
+        run: node scripts/ci/check-install-api-contract.mjs
 
       - name: Verify frontend-stack claims
         run: node scripts/docs/check-frontend-stack-claims.mjs
@@ -368,6 +448,114 @@ jobs:
       - name: Windows-only tests (@Tag windows) for the Linux-migrated modules
         run: ./gradlew.bat :modules:app-util:test :modules:app-agent:test :modules:app-services:test :modules:adapters-lucene:test :modules:app-inference:test -PwindowsOnly=true --console=plain
 
+  # The `shell` crate ran in NO lane until now. The only `cargo` invocation anywhere in CI was
+  # `dump-cargo-licenses.mjs` (this file, "License and notices"), which compiles nothing. So
+  # `modules/shell/src-tauri/src/updater.rs` — the durable upgrade-intent state machine,
+  # shutdown-receipt validation, installer-launch witness, and restart reconciliation — had its
+  # unit tests run only on an author's machine and cited as implementation evidence, with nothing
+  # re-running them. A regression there lands in the one code path whose failure mode is a
+  # bricked user install.
+  #
+  # Not hypothetical: this lane was added while fixing a defect it would have caught — restart
+  # reconciliation validated the Head shutdown receipt against the receipt's *own* PID field,
+  # making the check tautological on exactly the path where the live process witness is gone
+  # (tempdoc 617). The regression test now lives beside it.
+  #
+  # Windows, not ubuntu: the crate is Windows-specific (ShellExecuteExW installer handoff,
+  # webview2, NSIS hooks). It has never been built on Linux; moving it there is a separate
+  # exercise with its own evidence, not an assumption to make here.
+  #
+  # The placeholder step: tauri.conf.json bundles `resources/headless/**/*`, which is produced by
+  # `:modules:ui:bundleSidecarResources` (a jlink runtime image plus jars, several minutes), and
+  # tauri_build fails the build script outright when that glob matches nothing. Without the
+  # placeholder, a pure-logic unit-test lane would have to build the entire sidecar payload to
+  # compile. The directory is gitignored and packaging is unaffected: build-installer.yml stages
+  # the real bundle before it packages anything.
+  shell-rust-tests:
+    name: Shell crate tests (Rust)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Rust (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: modules/shell/src-tauri
+
+      - name: Stage bundle-resource placeholder
+        shell: pwsh
+        run: |
+          $dir = 'modules/shell/src-tauri/resources/headless'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Set-Content -Path "$dir/.ci-placeholder" -Encoding utf8 `
+            -Value 'Resolves the tauri bundle resource glob for the unit-test lane. Not a payload.'
+
+      - name: Cargo test
+        working-directory: modules/shell/src-tauri
+        run: cargo test --lib --locked
+
+  # `:modules:system-tests:integrationTest` ran in NO lane until now: ci.yml ran only
+  # `:modules:system-tests:test`, and the module's `check` depends on `test` alone
+  # (modules/system-tests/build.gradle.kts:297). The tier rotted unobserved as a result —
+  # every IsolatedBackendFixture class was failing at @BeforeAll with
+  # `ClassNotFoundException: io.justsearch.ui.HeadlessApp` and nobody noticed, because
+  # nothing ran it. This job closes that blind spot.
+  #
+  # Own job, not folded into windows-native-tests: that lane is deliberately "@Tag(windows)
+  # only, small + fast", and this file's header requires each job be named after the fact it
+  # proves rather than becoming "one opaque Windows bucket".
+  #
+  # Windows, not ubuntu: the tier spawns a real Head child JVM (HeadlessApp), which in turn
+  # spawns the Worker from `:modules:indexer-worker:installDist` — process spawn, argfile
+  # classpath quoting, and worker-lib path resolution are exactly the surfaces that differ per
+  # OS, and Windows is the OS the product ships on. The tier has never been validated on Linux;
+  # moving it there is a separate exercise with its own evidence, not an assumption to make here.
+  #
+  # ADVISORY (continue-on-error + deliberately absent from workflow-signal-policy.v1.json's
+  # requiredStatusChecks, same pattern as `ci-walltime`): the HeadlessApp classpath rot above is
+  # still open on `main`, so a blocking lane would red-wall every PR on a known, unrelated
+  # failure. Advisory already closes the blind spot the tier had — it now runs on every PR and
+  # its results are visible and archived, so rot cannot be silent again. Flip
+  # `continue-on-error` off and add "Integration tests (system-tests tier)" to
+  # requiredStatusChecks once the tier is green.
+  integration-tests:
+    name: Integration tests (system-tests tier)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            21
+            ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      # No model blobs on a public checkout, so the model-dependent cases self-skip via their
+      # own assumeTrue guards; the Golden Corpus cases use frozen vectors and need no model.
+      - name: Integration tier (Golden Corpus, relevance, isolated-backend E2E)
+        run: ./gradlew.bat :modules:system-tests:integrationTest -PskipWebBuild=true --console=plain
+
+      - name: Upload integration-test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-test-results
+          path: |
+            modules/system-tests/build/test-results/integrationTest/TEST-*.xml
+            modules/system-tests/build/reports/tests/integrationTest/**
+          if-no-files-found: warn
+
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest
@@ -392,7 +580,7 @@ jobs:
     name: CI wall-clock attribution
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [public-claims, license-and-notices, build, unit-tests, secret-scan]
+    needs: [public-claims, license-and-notices, build, unit-tests, integration-tests, secret-scan]
     if: always()
     steps:
       - name: Checkout

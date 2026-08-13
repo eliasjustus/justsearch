@@ -30,6 +30,11 @@ tauri-plugin-deep-link = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-notification = "2"
+tauri-plugin-updater = "=2.10.1"
+base64 = "0.22"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
+ring = "0.17"
+sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time"] }
@@ -37,11 +42,19 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time"]
 open = "5"
 uuid = { version = "1", features = ["v4"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [profile.release]
 opt-level = "s"    # Optimize for size — Tauri shell is a thin wrapper, not compute-heavy
 strip = true       # Remove symbol tables from binary
 
 [dev-dependencies]
 tempfile = "3"
-
-

@@ -3,6 +3,35 @@
 ; This is wired via `bundle.windows.nsis.installerHooks` in `tauri.conf.json`.
 ; The goal is to keep install/uninstall deterministic by terminating any running
 ; JustSearch processes that would otherwise hold file locks (e.g., bundled Java backend).
+;
+; This file is also the ONLY point at which this repo can influence Tauri's generated
+; `installer.nsi` without forking it: the template `!include`s it near the top, before it
+; declares the wizard's pages.
+
+; ---------------------------------------------------------------------------------------
+; Wizard branding on the two MUI full pages (Welcome, Finish) -- tempdoc 807 R13-F1.
+;
+; Tempdoc 806 put the version on the wizard via `bundle.copyright`, which the generated
+; template renders as `BrandingText "${COPYRIGHT}"`. That draws the bottom strip on the
+; interior pages and the uninstaller, but MUI's Welcome and Finish pages are full-window
+; and draw NO strip -- so round 13 found those two pages carrying no version at all.
+;
+; MUI takes both page texts through `MUI_DEFAULT` (an `!ifndef`, see
+; `Contrib/Modern UI 2/Pages/Welcome.nsh:72` and `Pages/Finish.nsh:156`), so a define made
+; here wins over MUI's default. `${COPYRIGHT}` is declared by the template AFTER this file
+; is included, which does NOT prevent this: NSIS expands a nested `${...}` inside a define
+; when the define is USED, not when it is written, and both pages are declared after the
+; template's `!define COPYRIGHT` (verified with makensis, tempdoc 807 Part C). The 806-era
+; note that "hooks cannot name the version" holds only for IMMEDIATE uses at include time.
+;
+; The localized MUI text is kept and the branding line appended, so non-English installers
+; do not lose their wording. `MUI_FINISHPAGE_TEXT_LARGE` buys the finish page's text box the
+; extra rows the appended line needs (40u -> 60u, `Pages/Finish.nsh:287-291`); without it the
+; appended line is clipped by the Run / Create-shortcut checkboxes.
+!define MUI_WELCOMEPAGE_TEXT "$(MUI_TEXT_WELCOME_INFO_TEXT)$\r$\n$\r$\n${COPYRIGHT}"
+!define MUI_FINISHPAGE_TEXT_LARGE
+!define MUI_FINISHPAGE_TEXT "$(MUI_TEXT_FINISH_INFO_TEXT)$\r$\n$\r$\n${COPYRIGHT}"
+; ---------------------------------------------------------------------------------------
 
 !macro JustSearch_KillProcesses_BestEffort
   ; Kill processes that are part of this installation, scoped by:

@@ -24,12 +24,18 @@ public record IndexingJobView(
     long lastUpdatedMs,
     String errorMessage,
     long retryAfterMs,
-    String collection) {
+    String collection,
+    String scanId) {
 
   public IndexingJobView {
     Objects.requireNonNull(pathHash, "pathHash");
     Objects.requireNonNull(state, "state");
     Objects.requireNonNull(collection, "collection");
     errorMessage = errorMessage == null ? "" : errorMessage;
+    // Tempdoc 812 D2 — the directory scan that enqueued this job (the same id
+    // {@code POST /api/knowledge/ingest} returns and {@code GET /api/scans/{scanId}/progress}
+    // streams). Empty when the job came from a single-file ingest, the watcher, or a row
+    // written before the worker's {@code scan_id} column existed.
+    scanId = scanId == null ? "" : scanId;
   }
 }

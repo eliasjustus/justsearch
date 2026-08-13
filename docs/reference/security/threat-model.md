@@ -75,7 +75,7 @@ internet*; it does **not** by itself mean *isolated from other local software*.
 |---|---|---|
 | **Host-header allowlist** (`isAllowedHost` / `setupHostValidation`) | DNS rebinding. After rebinding the request is *same-origin* with the attacker domain, so CORS no longer applies — but the server still sees the attacker's domain in the `Host` header and returns **403**. Only loopback hosts (`127.0.0.1`/`localhost`/`::1`) are accepted. | The canonical DNS-rebinding defense; applies to **all** methods, incl. token-exempt GET reads. |
 | **CORS Origin allowlist** (`resolveAllowedOrigin`) | A normal cross-origin page from reading API responses. In prod, only the desktop origins (`tauri://localhost`, `http(s)://tauri.localhost`) are allowed. | Protects response-reading; insufficient alone vs. rebinding (hence the Host check). |
-| **Session token on mutations** (`setupSessionTokenEnforcement`) | A foreign caller from performing `POST`/`PUT`/`DELETE` in prod. The token is generated at startup and delivered to the UI via the Tauri bridge — a web origin cannot obtain it. | Covers `POST`/`DELETE /mcp` tool calls (`LocalApiServer.java:561-562`) and `justsearch_ingest`. |
+| **Session token on mutations** (`setupSessionTokenEnforcement`) | A foreign caller from performing `POST`/`PUT`/`DELETE` in prod. The token is generated **per Head boot** (`HeadlessApp.java:364`) and delivered to the UI via the Tauri bridge — a web origin cannot obtain it. A backend restart mints a **new** token, so a client still holding the previous one fails **closed** (401), never open. | Covers `POST`/`DELETE /mcp` tool calls (`LocalApiServer.java:561-562`) and `justsearch_ingest`. |
 | **Loopback bind** (Hard Invariant #2) | Remote network access entirely — the API binds `127.0.0.1`, never `0.0.0.0`. | Necessary baseline; not sufficient alone. |
 
 Together: mutations and the MCP retrieval backend (`POST /mcp`) are token-protected; token-exempt GET
@@ -91,6 +91,24 @@ independent layers an attacker (or a misbehaving MCP client) must clear, by desi
 
 ### Repudiation
 Single-user local app; no multi-tenant identity. Out of scope — there is no shared server to repudiate to.
+
+### Information disclosure at rest — the action-ledger audit journal
+The action-ledger audit journal (grant, gate and operation records — including operation subjects and
+scan roots) persists **as plaintext at rest** under the data dir. This is an accepted, dated owner
+decision (2026-08-06, tempdoc 812): accept-and-document, not an oversight.
+
+Two facts bound what that exposure is. First, the journal holds **metadata, not content** — which
+folders were scanned, which grant was given, which gate fired and when; it does not carry document
+text. A reader with disk access learns *what you pointed the app at*, not *what is in those files*.
+Second, the encrypted-store catalog **deliberately excludes it**: a catalog entry without a real
+cipher behind it would be a false claim of sealing, and this model would rather name an unsealed
+store than list one that only looks sealed. Neither fact is a defence against the threat the model
+already declines to cover — a malicious local user with disk access (see *What this model
+deliberately does not claim*).
+
+Revisit this if audit rows ever start carrying **content** rather than metadata — for example a query
+string, a snippet, a document title, or an answer excerpt. At that point the decision changes
+category, because the "metadata, not content" bound is the whole reason plaintext is acceptable here.
 
 ### Denial of service
 A local process could spam the loopback API; impact is confined to the user's own machine (no remote

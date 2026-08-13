@@ -30,6 +30,7 @@ import org.slf4j.LoggerFactory;
 public final class EntityClusterStore implements Closeable {
   private static final Logger log = LoggerFactory.getLogger(EntityClusterStore.class);
   private static final int BUSY_TIMEOUT_MS = 5000;
+  private static final int CURRENT_SCHEMA_VERSION = 1;
 
   private final Path dbPath;
   private final ReentrantLock lock = new ReentrantLock();
@@ -61,11 +62,33 @@ public final class EntityClusterStore implements Closeable {
   }
 
   private void initSchema() throws SQLException {
+    int version;
+    try (Statement stmt = connection.createStatement();
+        ResultSet rs = stmt.executeQuery("PRAGMA user_version")) {
+      version = rs.next() ? rs.getInt(1) : 0;
+    }
+    if (version > CURRENT_SCHEMA_VERSION) {
+      throw new SQLException(
+          "entity-clusters.db schema version "
+              + version
+              + " is newer than supported version "
+              + CURRENT_SCHEMA_VERSION);
+    }
+
+    boolean previousAutoCommit = connection.getAutoCommit();
+    connection.setAutoCommit(false);
     try (Statement stmt = connection.createStatement()) {
       stmt.execute(EntityClusterSchema.CREATE_CLUSTERS_TABLE);
       stmt.execute(EntityClusterSchema.CREATE_CLUSTER_ID_INDEX);
       stmt.execute(EntityClusterSchema.CREATE_CANONICAL_INDEX);
       stmt.execute(EntityClusterSchema.CREATE_OVERRIDES_TABLE);
+      stmt.execute("PRAGMA user_version = " + CURRENT_SCHEMA_VERSION);
+      connection.commit();
+    } catch (SQLException failure) {
+      connection.rollback();
+      throw failure;
+    } finally {
+      connection.setAutoCommit(previousAutoCommit);
     }
   }
 

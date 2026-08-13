@@ -4,12 +4,10 @@ package io.justsearch.ui.api;
 import io.javalin.http.Context;
 import io.justsearch.app.api.inference.EncoderRuntimeResponse;
 import io.justsearch.app.api.inference.EncoderRuntimeView;
-import io.justsearch.app.api.status.OrtCudaView;
 import io.justsearch.app.services.observability.EncoderRuntimeExplainer;
 import io.justsearch.app.services.worker.RemoteKnowledgeClient;
 import io.justsearch.ort.EncoderRole;
 import java.util.LinkedHashMap;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -77,42 +75,16 @@ public final class EncoderRuntimeController {
       return new EncoderRuntimeResponse(Map.of(), "policy-unavailable");
     }
 
-    Map<EncoderRole, OrtCudaView> views = current.getEncoderOrtCudaViews();
+    // Tempdoc 805 G.3: the policy × probe correlation moved into the explainer so
+    // /api/ai/runtime/status's observed-EP fields project the SAME derivation instead of
+    // re-implementing it. This controller keeps only its own reachability reporting.
+    Map<EncoderRole, EncoderRuntimeView> derived =
+        EncoderRuntimeExplainer.explainAll(policies, current.getEncoderOrtCudaViews());
     Map<String, EncoderRuntimeView> encoders = new LinkedHashMap<>();
-
-    for (Map.Entry<?, ?> entry : modelsMap.entrySet()) {
-      Object roleKey = entry.getKey();
-      Object policyValue = entry.getValue();
-      if (roleKey == null) continue;
-      EncoderRole role = parseRole(roleKey.toString());
-      if (role == null) continue;
-      Map<String, Object> policySubMap = coercePolicy(policyValue);
-      OrtCudaView view = views.getOrDefault(role, OrtCudaView.notConfigured());
-      EncoderRuntimeView runtime = EncoderRuntimeExplainer.explain(role, view, policySubMap);
-      encoders.put(role.consumerName(), runtime);
+    for (Map.Entry<EncoderRole, EncoderRuntimeView> entry : derived.entrySet()) {
+      encoders.put(entry.getKey().consumerName(), entry.getValue());
     }
 
     return new EncoderRuntimeResponse(encoders, "ok");
-  }
-
-  /**
-   * Maps the JSON policy key (uppercase enum-name shape per
-   * {@code GrpcIngestService.getSessionPolicies}) to its {@link EncoderRole}; returns {@code null}
-   * if the key isn't a known role (defensive — shouldn't happen given Worker's serialiser).
-   */
-  private static EncoderRole parseRole(String key) {
-    try {
-      return EncoderRole.valueOf(key.toUpperCase(Locale.ROOT));
-    } catch (IllegalArgumentException e) {
-      return null;
-    }
-  }
-
-  @SuppressWarnings("unchecked")
-  private static Map<String, Object> coercePolicy(Object node) {
-    if (node instanceof Map<?, ?>) {
-      return (Map<String, Object>) node;
-    }
-    return Map.of();
   }
 }

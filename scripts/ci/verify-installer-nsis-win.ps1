@@ -43,7 +43,18 @@ param(
   [string]$EvidenceInclude = "",
 
   # Where to write EvidenceBundle v1 output (defaults to <EvidenceDir>/agent-evidence).
-  [string]$EvidenceBundleOutRoot
+  [string]$EvidenceBundleOutRoot,
+
+  # Skip the restart leg (tempdoc 805 G.4 leg 2): kill + relaunch the payload against the SAME
+  # data dir and assert the manifest instanceId changes + stale-token rejection (the R11-F2
+  # catcher). Runs by default.
+  [switch]$SkipRestartLeg,
+
+  # Include the upgrade-arrival leg (tempdoc 805 G.4 leg 3): boot against a checked-in fixture
+  # data dir shaped like a v0.1.0 install. OFF by default -- it asserts an install-status field
+  # (repairNeeded) that lands in a separate in-flight bundle (W-TRUTH); it must stay dormant
+  # until that field exists.
+  [switch]$IncludeUpgradeArrival
 )
 
 Set-StrictMode -Version Latest
@@ -157,6 +168,27 @@ function Send-Options {
   }
 }
 
+function Send-JsonPost {
+  # POSTs a JSON body and returns the status/body WITHOUT throwing on non-2xx
+  # (same HttpClient shape as Get-HttpBody/Send-Options). A 401 has to be
+  # ASSERTABLE here -- Invoke-WebRequest's throw-on-non-2xx would turn the
+  # token-enforcement assertions into catch-and-hope.
+  param(
+    [Parameter(Mandatory = $true)][System.Net.Http.HttpClient]$Client,
+    [Parameter(Mandatory = $true)][string]$Uri,
+    [Parameter(Mandatory = $true)][string]$Json,
+    [string]$SessionToken
+  )
+  $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Post, $Uri)
+  $req.Content = New-Object System.Net.Http.StringContent($Json, [System.Text.Encoding]::UTF8, "application/json")
+  if (-not [string]::IsNullOrEmpty($SessionToken)) {
+    $null = $req.Headers.TryAddWithoutValidation("X-JustSearch-Session", $SessionToken)
+  }
+  $resp = $Client.SendAsync($req).Result
+  $body = $resp.Content.ReadAsStringAsync().Result
+  return [pscustomobject]@{ StatusCode = [int]$resp.StatusCode; Body = $body; Headers = $resp.Headers }
+}
+
 function Get-HeaderValuesOrEmpty {
   param(
     [Parameter(Mandatory = $true)]$Headers,
@@ -219,7 +251,16 @@ function Wait-ForBackendReady {
       continue
     }
 
-    $state = [string]$lastStatusJson.indexState
+    # indexState moved from the top level into worker.core in the current /api/status shape;
+    # read whichever is present (StrictMode-safe) — an absent field is "not knowable yet", not fatal.
+    $state = ""
+    if ($lastStatusJson.PSObject.Properties['indexState']) {
+      $state = [string]$lastStatusJson.indexState
+    } elseif ($lastStatusJson.PSObject.Properties['worker'] -and
+              $lastStatusJson.worker.PSObject.Properties['core'] -and
+              $lastStatusJson.worker.core.PSObject.Properties['indexState']) {
+      $state = [string]$lastStatusJson.worker.core.indexState
+    }
     if ($state -eq "ERROR") {
       Add-Content -LiteralPath $EvidenceFile -Value ("ERROR: /api/status reported indexState=ERROR. Full body: " + $lastStatus.Body)
       throw "Backend reported indexState=ERROR. Evidence=$EvidenceFile"
@@ -254,8 +295,9 @@ function Wait-ForBackendReady {
       }
     } catch { $workerStatus = "" }
 
-    # Accept both "UP" (legacy) and "READY" (new format) as valid worker states
-    if ($workerStatus -eq "UP" -or $workerStatus -eq "READY") {
+    # Accept "UP" (legacy), "READY" (transitional), and "LIFECYCLE_STATE_READY" (current
+    # lifecycle-enum shape — the value the shipped payload actually reports, 2026-08-04).
+    if ($workerStatus -eq "UP" -or $workerStatus -eq "READY" -or $workerStatus -eq "LIFECYCLE_STATE_READY") {
       return [pscustomobject]@{
         StatusRaw = $lastStatus
         StatusJson = $lastStatusJson
@@ -271,6 +313,110 @@ function Wait-ForBackendReady {
   if ($lastStatus) { Add-Content -LiteralPath $EvidenceFile -Value ("ERROR: Last /api/status (" + $lastStatus.StatusCode + "): " + $lastStatus.Body) }
   if ($lastHealth) { Add-Content -LiteralPath $EvidenceFile -Value ("ERROR: Last /api/health (" + $lastHealth.StatusCode + "): " + $lastHealth.Body) }
   throw "Timed out waiting for backend readiness within ${TimeoutSec}s. Evidence=$EvidenceFile"
+}
+
+function Start-HeadlessBackend {
+  # Launches the installed payload's bundled JRE and blocks until the JUSTSEARCH_API_PORT stdout
+  # sentinel is observed (or the process exits / the timeout elapses). Factored out of the
+  # original inline fresh-boot block so the restart leg (tempdoc 805 G.4 leg 2) can relaunch the
+  # SAME payload against the SAME data dir without duplicating the sentinel-parse loop.
+  param(
+    [Parameter(Mandatory = $true)][string]$JavaBin,
+    [Parameter(Mandatory = $true)][string]$HeadlessDir,
+    [Parameter(Mandatory = $true)][string[]]$JavaArgs,
+    [Parameter(Mandatory = $true)][string]$EvidenceDir,
+    [Parameter(Mandatory = $true)][string]$EvidenceFile,
+    [Parameter(Mandatory = $true)][hashtable]$Det,
+    [Parameter(Mandatory = $true)][int]$PortTimeoutSec,
+    [string]$LogTag = "headless-backend"
+  )
+
+  $stamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
+  $stdout = Join-Path -Path $EvidenceDir -ChildPath ("$LogTag-$stamp.stdout.log")
+  $stderr = Join-Path -Path $EvidenceDir -ChildPath ("$LogTag-$stamp.stderr.log")
+  $argString = $JavaArgs -join " "
+  Add-Content -LiteralPath $EvidenceFile -Value ("INFO: Starting headless backend: " + $JavaBin + " " + $argString)
+  Add-Content -LiteralPath $EvidenceFile -Value ("INFO: Headless stdout -> " + $stdout)
+  Add-Content -LiteralPath $EvidenceFile -Value ("INFO: Headless stderr -> " + $stderr)
+
+  $proc = Start-Process `
+    -FilePath $JavaBin `
+    -WorkingDirectory $HeadlessDir `
+    -ArgumentList $JavaArgs `
+    -PassThru `
+    -NoNewWindow `
+    -RedirectStandardOutput $stdout `
+    -RedirectStandardError $stderr
+
+  $deadline = [DateTime]::UtcNow.AddSeconds($PortTimeoutSec)
+  $port = 0
+  while ([DateTime]::UtcNow -lt $deadline) {
+    Add-StdoutSentinelParse -Det $Det
+    # Scan only the tail to avoid rereading large logs.
+    $tail = @()
+    if (Test-Path -LiteralPath $stdout) {
+      $tail = Get-Content -LiteralPath $stdout -Tail 200 -ErrorAction SilentlyContinue
+    }
+    foreach ($line in $tail) {
+      if ($line -match '^JUSTSEARCH_API_PORT=(\d+)$') {
+        $port = [int]$Matches[1]
+      }
+    }
+    if ($port -gt 0) { break }
+    if ($proc -and $proc.HasExited) { break }
+    Add-BackoffSleep -Det $Det -Reason "wait_for_port_sentinel" -Ms 200
+  }
+
+  if ($port -le 0) {
+    Add-Content -LiteralPath $EvidenceFile -Value ("ERROR: Did not observe JUSTSEARCH_API_PORT within ${PortTimeoutSec}s.")
+    try {
+      if (Test-Path -LiteralPath $stdout) {
+        Add-Content -LiteralPath $EvidenceFile -Value "---- headless stdout (tail 200) ----"
+        Add-Content -LiteralPath $EvidenceFile -Value (Get-Content -LiteralPath $stdout -Tail 200 -ErrorAction SilentlyContinue)
+      }
+      if (Test-Path -LiteralPath $stderr) {
+        Add-Content -LiteralPath $EvidenceFile -Value "---- headless stderr (tail 200) ----"
+        Add-Content -LiteralPath $EvidenceFile -Value (Get-Content -LiteralPath $stderr -Tail 200 -ErrorAction SilentlyContinue)
+      }
+    } catch { }
+    # Kill the orphaned process from HERE, before throwing: this process handle is local to
+    # this function, so a caller-side `finally` teardown keyed on ITS OWN process variable
+    # (which never gets assigned when this function throws before returning) cannot reach it.
+    # Losing that cleanup would leak a java.exe on the runner every time this path fires.
+    if ($proc -and -not $proc.HasExited) {
+      try { & taskkill /PID $proc.Id /T /F | Out-Null } catch {}
+      try { $proc.Kill() } catch {}
+    }
+    throw "Headless backend did not emit JUSTSEARCH_API_PORT within ${PortTimeoutSec}s. Evidence=$EvidenceFile"
+  }
+
+  return [pscustomobject]@{
+    Process = $proc
+    Port = $port
+    StdoutPath = $stdout
+    StderrPath = $stderr
+  }
+}
+
+function Stop-HeadlessBackendAndWait {
+  # Kills the Head process tree and blocks until the OS reports it exited (used by the restart
+  # leg, which needs a clean exit before relaunching against the same data dir -- a still-alive
+  # old process would otherwise hold the manifest/port and make the "did instanceId change"
+  # assertion meaningless).
+  param(
+    [Parameter(Mandatory = $true)]$Process,
+    [Parameter(Mandatory = $true)][hashtable]$Det,
+    [int]$TimeoutSec = 30
+  )
+  if ($Process -and -not $Process.HasExited) {
+    try { & taskkill /PID $Process.Id /T /F | Out-Null } catch {}
+    try { $Process.Kill() } catch {}
+  }
+  $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
+  while ($Process -and -not $Process.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+    Add-BackoffSleep -Det $Det -Reason "wait_for_headless_exit" -Ms 200
+  }
+  return ($Process -and $Process.HasExited)
 }
 
 $resolvedEvidenceDir = Resolve-PathRelative -Path $EvidenceDir
@@ -417,7 +563,15 @@ try {
   Assert ($workerJarCount -ge 50) "Worker classpath dir has only $workerJarCount JARs at $workerLibDir (expected >= 50 -- installDist layout per tempdoc 226)"
   Assert (Test-Path -LiteralPath $configPath) "Missing config/application.yaml in bundle: $configPath"
   Assert (Test-Path -LiteralPath $manifestPath) "Missing SSOT/manifest.v1.json in bundle: $manifestPath"
-  Assert (Test-Path -LiteralPath $pluginsManifest) "Missing plugins manifest in bundle: $pluginsManifest"
+  # The plugins manifest has NEVER shipped in the NSIS bundle (verified against the round-8,
+  # round-10 and round-11 candidates, 2026-08-04) and the packaged shell passes the same
+  # dangling path to the Head unconditionally (lib.rs:712-769), which the Head tolerates.
+  # Mirror the shipped behavior: warn, don't fail. Whether pipeline-stage plugins SHOULD ship
+  # is an open product question tracked in the observations inbox — if they ever do ship,
+  # restore this to a hard Assert.
+  if (-not (Test-Path -LiteralPath $pluginsManifest)) {
+    Write-Host "WARN: plugins manifest absent from bundle (expected today; Head tolerates): $pluginsManifest"
+  }
 
   # Optional: sanity check config keeps AI disabled by default.
   try {
@@ -456,56 +610,11 @@ try {
     $cp,
     "io.justsearch.ui.HeadlessApp"
   )
-  $argString = $javaArgs -join " "
-
-  $headlessStdout = Join-Path -Path $resolvedEvidenceDir -ChildPath ("headless-backend-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".stdout.log")
-  $headlessStderr = Join-Path -Path $resolvedEvidenceDir -ChildPath ("headless-backend-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".stderr.log")
-  Add-Content -LiteralPath $evidenceFile -Value ("INFO: Starting headless backend: " + $javaBin + " " + $argString)
-  Add-Content -LiteralPath $evidenceFile -Value ("INFO: Headless stdout -> " + $headlessStdout)
-  Add-Content -LiteralPath $evidenceFile -Value ("INFO: Headless stderr -> " + $headlessStderr)
-
-  $headlessProc = Start-Process `
-    -FilePath $javaBin `
-    -WorkingDirectory $headlessDir `
-    -ArgumentList $javaArgs `
-    -PassThru `
-    -NoNewWindow `
-    -RedirectStandardOutput $headlessStdout `
-    -RedirectStandardError $headlessStderr
-
-  $deadline = [DateTime]::UtcNow.AddSeconds($PortTimeoutSec)
-  $port = 0
-  while ([DateTime]::UtcNow -lt $deadline) {
-    Add-StdoutSentinelParse -Det $det
-    # Scan only the tail to avoid rereading large logs.
-    $tail = @()
-    if (Test-Path -LiteralPath $headlessStdout) {
-      $tail = Get-Content -LiteralPath $headlessStdout -Tail 200 -ErrorAction SilentlyContinue
-    }
-    foreach ($line in $tail) {
-      if ($line -match '^JUSTSEARCH_API_PORT=(\d+)$') {
-        $port = [int]$Matches[1]
-      }
-    }
-    if ($port -gt 0) { break }
-    if ($headlessProc -and $headlessProc.HasExited) { break }
-    Add-BackoffSleep -Det $det -Reason "wait_for_port_sentinel" -Ms 200
-  }
-
-  if ($port -le 0) {
-    Add-Content -LiteralPath $evidenceFile -Value ("ERROR: Did not observe JUSTSEARCH_API_PORT within ${PortTimeoutSec}s.")
-    try {
-      if (Test-Path -LiteralPath $headlessStdout) {
-        Add-Content -LiteralPath $evidenceFile -Value "---- headless stdout (tail 200) ----"
-        Add-Content -LiteralPath $evidenceFile -Value (Get-Content -LiteralPath $headlessStdout -Tail 200 -ErrorAction SilentlyContinue)
-      }
-      if (Test-Path -LiteralPath $headlessStderr) {
-        Add-Content -LiteralPath $evidenceFile -Value "---- headless stderr (tail 200) ----"
-        Add-Content -LiteralPath $evidenceFile -Value (Get-Content -LiteralPath $headlessStderr -Tail 200 -ErrorAction SilentlyContinue)
-      }
-    } catch { }
-    throw "Headless backend did not emit JUSTSEARCH_API_PORT within ${PortTimeoutSec}s. Evidence=$evidenceFile"
-  }
+  $boot = Start-HeadlessBackend -JavaBin $javaBin -HeadlessDir $headlessDir -JavaArgs $javaArgs -EvidenceDir $resolvedEvidenceDir -EvidenceFile $evidenceFile -Det $det -PortTimeoutSec $PortTimeoutSec -LogTag "headless-backend"
+  $headlessProc = $boot.Process
+  $port = $boot.Port
+  $headlessStdout = $boot.StdoutPath
+  $headlessStderr = $boot.StderrPath
 
   Write-Host "Backend port: $port"
 
@@ -542,7 +651,222 @@ try {
     Assert ($acaos.Count -eq 0) ("Expected no Access-Control-Allow-Origin header for blocked origin $blockedOrigin, got: " + ($acaos -join ", "))
   }
 
-  Write-Host "PASS: NSIS installer payload boots and backend readiness checks passed."
+  # ---------------------------------------------------------------------------
+  # 6) Session-token enforcement on the MUTATING surface (tempdoc 804 §B4.3)
+  # ---------------------------------------------------------------------------
+  # Sandbox round 10's F7 class: every readiness/CORS check above is a GET, so a
+  # payload whose entire non-GET surface answers 401 still scored green. The
+  # installed payload boots with -Djustsearch.prod=true, so HeadlessApp
+  # generates a session token and ApiSecurityFilters.setupSessionTokenEnforcement
+  # arms 401-on-missing/invalid for POST/PUT/DELETE. Assert all three legs --
+  # the deny, the allow, AND the wrong-token deny. Without the third leg a 200
+  # in (b) could equally mean enforcement was never armed at all.
+  $searchUri = "http://127.0.0.1:$port/api/knowledge/search"
+  $searchBody = '{"query":"test","limit":1}'
+
+  # (a) No session header -> 401 (enforcement is really armed).
+  $searchNoToken = Send-JsonPost -Client $client -Uri $searchUri -Json $searchBody
+  Add-Content -LiteralPath $evidenceFile -Value ("INFO: POST /api/knowledge/search without session header -> " + $searchNoToken.StatusCode)
+  Assert ($searchNoToken.StatusCode -eq 401) ("Expected POST /api/knowledge/search WITHOUT a session token to be rejected with 401 in prod mode, got $($searchNoToken.StatusCode). Body=$($searchNoToken.Body)")
+
+  # (b) GET /api/mcp/token, then POST with that token -> 200 (server half of the chain works).
+  $tokenResp = Get-HttpBody -Client $client -Uri ("http://127.0.0.1:$port/api/mcp/token")
+  Assert ($tokenResp.StatusCode -eq 200) "Expected GET /api/mcp/token to return 200, got $($tokenResp.StatusCode). Body=$($tokenResp.Body)"
+  $sessionToken = $null
+  try {
+    $sessionToken = [string]($tokenResp.Body | ConvertFrom-Json).token
+  } catch {
+    throw "GET /api/mcp/token returned unparsable JSON: $($tokenResp.Body)"
+  }
+  Assert (-not [string]::IsNullOrWhiteSpace($sessionToken)) ("Expected GET /api/mcp/token to carry a non-empty token in prod mode (empty means token enforcement is DISABLED). Body=" + $tokenResp.Body)
+  Add-Content -LiteralPath $evidenceFile -Value ("INFO: GET /api/mcp/token returned a token of length " + $sessionToken.Length)
+
+  $searchWithToken = Send-JsonPost -Client $client -Uri $searchUri -Json $searchBody -SessionToken $sessionToken
+  Add-Content -LiteralPath $evidenceFile -Value ("INFO: POST /api/knowledge/search with the real session token -> " + $searchWithToken.StatusCode)
+  Assert ($searchWithToken.StatusCode -eq 200) ("Expected POST /api/knowledge/search WITH the session token from /api/mcp/token to return 200, got $($searchWithToken.StatusCode). Body=$($searchWithToken.Body)")
+
+  # (c) Deliberately wrong token -> 401 (proves (b)'s 200 came from the RIGHT token, not from enforcement being off).
+  $wrongToken = "not-the-session-token-0000000000000000000000"
+  Assert ($wrongToken -ne $sessionToken) "Wrong-token fixture collided with the real session token -- pick a different fixture."
+  $searchWrongToken = Send-JsonPost -Client $client -Uri $searchUri -Json $searchBody -SessionToken $wrongToken
+  Add-Content -LiteralPath $evidenceFile -Value ("INFO: POST /api/knowledge/search with a deliberately wrong session token -> " + $searchWrongToken.StatusCode)
+  Assert ($searchWrongToken.StatusCode -eq 401) ("Expected POST /api/knowledge/search with a WRONG session token to be rejected with 401, got $($searchWrongToken.StatusCode) -- the 200 above did not depend on the token, i.e. enforcement is not armed. Body=$($searchWrongToken.Body)")
+
+  Add-Content -LiteralPath $evidenceFile -Value "INFO: Session-token enforcement verified on the mutating surface (401 no-token / 200 right-token / 401 wrong-token)."
+
+  Write-Host "PASS: NSIS installer payload boots, backend readiness checks passed, and session-token enforcement holds on the mutating surface."
+
+  # ---------------------------------------------------------------------------
+  # 7) Restart leg (tempdoc 805 G.4 leg 2) -- the R11-F2 catcher at the payload tier.
+  # ---------------------------------------------------------------------------
+  # Round 11's blocker (a stale session token surviving a backend restart) was findable on the
+  # host in minutes -- this lane just never restarted the payload. Kill the Head this script
+  # started, relaunch the SAME payload against the SAME data dir, and assert: the manifest
+  # instanceId changed (a fresh boot identity, not stale residue), a freshly-fetched token is
+  # accepted, and the OLD boot's token is now rejected.
+  if (-not $SkipRestartLeg.IsPresent) {
+    $manifestPath = Join-Path -Path $dataDir -ChildPath "runtime\\manifest.json"
+    Assert (Test-Path -LiteralPath $manifestPath) "Restart leg precondition FAILED: expected runtime manifest at $manifestPath before restart."
+    $oldManifestJson = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $oldInstanceId = [string]$oldManifestJson.instanceId
+    Assert (-not [string]::IsNullOrWhiteSpace($oldInstanceId)) "Restart leg precondition FAILED: expected a non-empty top-level instanceId in the manifest before restart. Manifest=$manifestPath"
+    $oldSessionToken = $sessionToken
+    Add-Content -LiteralPath $evidenceFile -Value ("INFO: Restart leg -- pre-restart instanceId=" + $oldInstanceId)
+
+    $exited = Stop-HeadlessBackendAndWait -Process $headlessProc -Det $det -TimeoutSec 30
+    Assert $exited "Restart leg FAILED: the Head process this script started did not exit within 30s after being killed."
+    Add-Content -LiteralPath $evidenceFile -Value "INFO: Restart leg -- Head process exited; relaunching against the same data dir."
+
+    $restartBoot = Start-HeadlessBackend -JavaBin $javaBin -HeadlessDir $headlessDir -JavaArgs $javaArgs -EvidenceDir $resolvedEvidenceDir -EvidenceFile $evidenceFile -Det $det -PortTimeoutSec $PortTimeoutSec -LogTag "headless-backend-restart"
+    $headlessProc = $restartBoot.Process
+    $port = $restartBoot.Port
+    $headlessStdout = $restartBoot.StdoutPath
+    $headlessStderr = $restartBoot.StderrPath
+    Write-Host "Restart leg -- backend port: $port"
+
+    $null = Wait-ForBackendReady -Det $det -Client $client -Port $port -TimeoutSec $ReadyTimeoutSec -EvidenceFile $evidenceFile
+
+    Assert (Test-Path -LiteralPath $manifestPath) "Restart leg FAILED: expected runtime manifest at $manifestPath after restart."
+    $newManifestJson = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $newInstanceId = [string]$newManifestJson.instanceId
+    Assert (-not [string]::IsNullOrWhiteSpace($newInstanceId)) "Restart leg FAILED: expected a non-empty top-level instanceId in the manifest after restart. Manifest=$manifestPath"
+    Assert ($newInstanceId -ne $oldInstanceId) "Restart leg FAILED: manifest instanceId did NOT change across restart (old=$oldInstanceId new=$newInstanceId). This is R11-F2's exact precondition -- stale instance identity surviving a restart. Manifest=$manifestPath"
+    Add-Content -LiteralPath $evidenceFile -Value ("INFO: Restart leg -- post-restart instanceId=" + $newInstanceId + " (changed from " + $oldInstanceId + ")")
+
+    $tokenResp2 = Get-HttpBody -Client $client -Uri ("http://127.0.0.1:$port/api/mcp/token")
+    Assert ($tokenResp2.StatusCode -eq 200) "Restart leg FAILED: GET /api/mcp/token returned $($tokenResp2.StatusCode) after restart, expected 200. Body=$($tokenResp2.Body)"
+    $newSessionToken = $null
+    try {
+      $newSessionToken = [string]($tokenResp2.Body | ConvertFrom-Json).token
+    } catch {
+      throw "Restart leg FAILED: GET /api/mcp/token returned unparsable JSON after restart: $($tokenResp2.Body)"
+    }
+    Assert (-not [string]::IsNullOrWhiteSpace($newSessionToken)) "Restart leg FAILED: GET /api/mcp/token returned an empty token after restart (empty means enforcement is DISABLED). Body=$($tokenResp2.Body)"
+
+    $searchWithNewToken = Send-JsonPost -Client $client -Uri $searchUri -Json $searchBody -SessionToken $newSessionToken
+    Assert ($searchWithNewToken.StatusCode -eq 200) "Restart leg FAILED: POST /api/knowledge/search with the FRESH post-restart token returned $($searchWithNewToken.StatusCode), expected 200. Body=$($searchWithNewToken.Body)"
+    Add-Content -LiteralPath $evidenceFile -Value "INFO: Restart leg -- fresh post-restart token accepted (200)."
+
+    $searchWithOldToken = Send-JsonPost -Client $client -Uri $searchUri -Json $searchBody -SessionToken $oldSessionToken
+    Assert ($searchWithOldToken.StatusCode -eq 401) "Restart leg FAILED: POST /api/knowledge/search with the OLD PRE-RESTART token returned $($searchWithOldToken.StatusCode), expected 401 -- this IS round 11's blocker: a stale session token surviving a backend restart. Body=$($searchWithOldToken.Body)"
+    Add-Content -LiteralPath $evidenceFile -Value "INFO: Restart leg -- stale pre-restart token correctly rejected (401)."
+
+    $sessionToken = $newSessionToken
+
+    Write-Host "PASS: Restart leg -- manifest instanceId changed across restart, fresh token accepted, stale pre-restart token rejected."
+  } else {
+    Add-Content -LiteralPath $evidenceFile -Value "INFO: Restart leg skipped (-SkipRestartLeg)."
+  }
+
+  # ---------------------------------------------------------------------------
+  # 8) Upgrade-arrival leg (tempdoc 805 G.4 leg 3) -- DEFAULT OFF.
+  # ---------------------------------------------------------------------------
+  # Boots the payload against a checked-in fixture data dir shaped like a v0.1.0 install
+  # (scripts/ci/fixtures/upgrade-arrival-v010) and asserts the round-10/11-class regressions
+  # don't recur: settings persist instead of 409ing, the install-status shape carries the
+  # observed-outcome fields tempdoc 805 W-TRUTH adds, and activation never regresses to
+  # MODEL_PATH_REQUIRED for an install the contract actually covers. Dormant by design (see the
+  # -IncludeUpgradeArrival param doc) until W-TRUTH lands repairNeeded.
+  if ($IncludeUpgradeArrival.IsPresent) {
+    $fixtureDir = Join-Path -Path $repoRoot -ChildPath "scripts\\ci\\fixtures\\upgrade-arrival-v010"
+    Assert (Test-Path -LiteralPath $fixtureDir) "Upgrade-arrival leg FAILED: fixture directory missing: $fixtureDir"
+    $fixtureContract = Join-Path -Path $fixtureDir -ChildPath "install-contract.v2.json"
+    Assert (Test-Path -LiteralPath $fixtureContract) "Upgrade-arrival leg FAILED: fixture contract missing: $fixtureContract"
+
+    $upgradeDataDir = New-TempDirNoSpaces -Prefix "JustSearch-upgrade-arrival"
+    Copy-Item -LiteralPath $fixtureContract -Destination (Join-Path -Path $upgradeDataDir -ChildPath "install-contract.v2.json") -Force
+    Assert (-not (Test-Path -LiteralPath (Join-Path -Path $upgradeDataDir -ChildPath "ui\\settings.json"))) "Upgrade-arrival leg precondition FAILED: a settings file exists in the fresh copy before boot."
+
+    # Deliberately NO -Djustsearch.ui.settings.mode override here (unlike the fresh/restart legs
+    # above, which force IN_MEMORY for isolation): the whole point of this leg is that settings
+    # persistence behaves the way the packaged shell ACTUALLY launches -- prod=true and nothing
+    # else -- so persistence must default to READ_WRITE (tempdoc 804 sec B4.2's round-10 regression).
+    $upgradeJavaArgs = @(
+      "-Djustsearch.prod=true",
+      "-Djustsearch.data.dir=$upgradeDataDir",
+      "-Djustsearch.home=$upgradeDataDir",
+      "-Djustsearch.config=$configPath",
+      "-Djustsearch.repo.root=$headlessDir",
+      "-Djustsearch.ssot.path=$ssotPath",
+      "-Djustsearch.plugins.manifest=$pluginsManifest",
+      "-cp",
+      $cp,
+      "io.justsearch.ui.HeadlessApp"
+    )
+
+    $upgradeProc = $null
+    try {
+      $upgradeBoot = Start-HeadlessBackend -JavaBin $javaBin -HeadlessDir $headlessDir -JavaArgs $upgradeJavaArgs -EvidenceDir $resolvedEvidenceDir -EvidenceFile $evidenceFile -Det $det -PortTimeoutSec $PortTimeoutSec -LogTag "headless-backend-upgrade-arrival"
+      $upgradeProc = $upgradeBoot.Process
+      $upgradePort = $upgradeBoot.Port
+      Write-Host "Upgrade-arrival leg -- backend port: $upgradePort"
+
+      $null = Wait-ForBackendReady -Det $det -Client $client -Port $upgradePort -TimeoutSec $ReadyTimeoutSec -EvidenceFile $evidenceFile
+
+      $upgradeTokenResp = Get-HttpBody -Client $client -Uri ("http://127.0.0.1:$upgradePort/api/mcp/token")
+      Assert ($upgradeTokenResp.StatusCode -eq 200) "Upgrade-arrival leg FAILED: GET /api/mcp/token returned $($upgradeTokenResp.StatusCode), expected 200. Body=$($upgradeTokenResp.Body)"
+      $upgradeToken = $null
+      try {
+        $upgradeToken = [string]($upgradeTokenResp.Body | ConvertFrom-Json).token
+      } catch {
+        throw "Upgrade-arrival leg FAILED: GET /api/mcp/token returned unparsable JSON: $($upgradeTokenResp.Body)"
+      }
+      Assert (-not [string]::IsNullOrWhiteSpace($upgradeToken)) "Upgrade-arrival leg FAILED: GET /api/mcp/token returned an empty token. Body=$($upgradeTokenResp.Body)"
+
+      # (1) Settings persist -- tempdoc 804 sec B4.2's exact round-10 regression: prod=true must not
+      # silently switch UiSettingsStore to in-memory just because no settings file exists yet.
+      $settingsResp = Send-JsonPost -Client $client -Uri ("http://127.0.0.1:$upgradePort/api/settings/v2") -Json "{}" -SessionToken $upgradeToken
+      Assert ($settingsResp.StatusCode -eq 200) "Upgrade-arrival leg FAILED: POST /api/settings/v2 on a v0.1.0-shaped data dir (no settings file yet) returned $($settingsResp.StatusCode), expected 200 -- a 409 here means prod=true silently disabled settings persistence again (round 10's regression). Body=$($settingsResp.Body)"
+      Add-Content -LiteralPath $evidenceFile -Value "INFO: Upgrade-arrival leg -- POST /api/settings/v2 persisted (200, not 409)."
+
+      # (2) Install-status shape carries the observed-outcome fields tempdoc 805 Part G.3
+      # (W-TRUTH) adds. TODO(tempdoc 805 W-TRUTH): once repairNeeded's semantics land, tighten
+      # this from a shape-only check to asserting the VALUE this fixture should produce
+      # (repair-needed, since the contract's own cuda-runtime entry is recorded skipped -- U3).
+      $installStatusResp = Get-HttpBody -Client $client -Uri ("http://127.0.0.1:$upgradePort/api/ai/install/status")
+      Assert ($installStatusResp.StatusCode -eq 200) "Upgrade-arrival leg FAILED: GET /api/ai/install/status returned $($installStatusResp.StatusCode), expected 200. Body=$($installStatusResp.Body)"
+      $installStatusJson = $installStatusResp.Body | ConvertFrom-Json
+      Assert ($null -ne $installStatusJson.PSObject.Properties['installedFully']) "Upgrade-arrival leg FAILED: /api/ai/install/status is missing 'installedFully'. Body=$($installStatusResp.Body)"
+      Assert ($null -ne $installStatusJson.PSObject.Properties['pendingRegistryAdditions']) "Upgrade-arrival leg FAILED: /api/ai/install/status is missing 'pendingRegistryAdditions'. Body=$($installStatusResp.Body)"
+      Assert ($null -ne $installStatusJson.PSObject.Properties['repairNeeded']) "Upgrade-arrival leg FAILED: /api/ai/install/status is missing 'repairNeeded' -- tempdoc 805 W-TRUTH's repair-needed consequence has not landed yet, so this leg must stay behind -IncludeUpgradeArrival until it does. Body=$($installStatusResp.Body)"
+      Add-Content -LiteralPath $evidenceFile -Value "INFO: Upgrade-arrival leg -- /api/ai/install/status carries installedFully/pendingRegistryAdditions/repairNeeded."
+
+      # (3) Activation must not regress to MODEL_PATH_REQUIRED -- the fixture contract covers
+      # 'chat', so a model PATH always resolves via the contract fallback (resolveChatModelFromInstallContract).
+      # Whatever OTHER error activation hits (missing variant exe, missing model bytes -- this
+      # fixture ships no real model bytes on purpose) is acceptable; MODEL_PATH_REQUIRED specifically is not.
+      $activateResp = Send-JsonPost -Client $client -Uri ("http://127.0.0.1:$upgradePort/api/ai/runtime/activate") -Json '{"variantId":"cuda12"}' -SessionToken $upgradeToken
+      Assert ($activateResp.StatusCode -eq 200) "Upgrade-arrival leg FAILED: POST /api/ai/runtime/activate returned $($activateResp.StatusCode), expected 200. Body=$($activateResp.Body)"
+
+      $activationDeadline = [DateTime]::UtcNow.AddSeconds(30)
+      $activationState = $null
+      $activationErrorCode = $null
+      while ([DateTime]::UtcNow -lt $activationDeadline) {
+        $runtimeStatusResp = Get-HttpBody -Client $client -Uri ("http://127.0.0.1:$upgradePort/api/ai/runtime/status")
+        if ($runtimeStatusResp.StatusCode -eq 200) {
+          $runtimeStatusJson = $runtimeStatusResp.Body | ConvertFrom-Json
+          if ($runtimeStatusJson.activation) {
+            $activationState = [string]$runtimeStatusJson.activation.state
+            $activationErrorCode = [string]$runtimeStatusJson.activation.errorCode
+            if ($activationState -ne "running" -and $activationState -ne "idle") { break }
+          }
+        }
+        Add-BackoffSleep -Det $det -Reason "wait_for_activation_settle" -Ms 250
+      }
+      Assert ($activationErrorCode -ne "MODEL_PATH_REQUIRED") "Upgrade-arrival leg FAILED: activation errorCode is MODEL_PATH_REQUIRED -- this is round 11's regression class: the install contract covers 'chat', so a model path must resolve via the contract fallback even without real model bytes on disk. state=$activationState errorCode=$activationErrorCode"
+      Add-Content -LiteralPath $evidenceFile -Value ("INFO: Upgrade-arrival leg -- activation settled state=" + $activationState + " errorCode=" + $activationErrorCode + " (not MODEL_PATH_REQUIRED, as expected).")
+
+      Write-Host "PASS: Upgrade-arrival leg -- settings persisted, install-status shape present, activation did not regress to MODEL_PATH_REQUIRED."
+    } finally {
+      if ($upgradeProc -and -not $upgradeProc.HasExited) {
+        try { & taskkill /PID $upgradeProc.Id /T /F | Out-Null } catch {}
+        try { $upgradeProc.Kill() } catch {}
+      }
+      try { Remove-Item -LiteralPath $upgradeDataDir -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+    }
+  } else {
+    Add-Content -LiteralPath $evidenceFile -Value "INFO: Upgrade-arrival leg skipped (pass -IncludeUpgradeArrival to run; dormant until tempdoc 805 W-TRUTH lands repairNeeded)."
+  }
 
 } catch {
   $mainError = $_
@@ -578,10 +902,11 @@ try {
         $captureArgs += "--include=$EvidenceInclude"
       }
 
-      if ($enforceDet) {
-        $captureArgs += "--enforce-determinism=true"
-      }
-
+      # NOTE: capture-evidence-bundle.mjs has no --enforce-determinism/--merge-determinism
+      # options (passing either makes it print usage and exit 1 -- caught by the first CI run
+      # of the installer_verify lane, 2026-08-04). Determinism enforcement happens via the
+      # separate validate-determinism-budget-v1.mjs step below, gated by $enforceDet; the
+      # harness determinism snapshot rides along as a plain attachment.
       foreach ($p in @($evidenceFile, $headlessStdout, $headlessStderr)) {
         if ($p -and (Test-Path -LiteralPath $p)) {
           $captureArgs += "--attach-file=$p"
@@ -589,7 +914,6 @@ try {
       }
       if ($detFile -and (Test-Path -LiteralPath $detFile)) {
         $captureArgs += "--attach-file=$detFile"
-        $captureArgs += "--merge-determinism=$detFile"
       }
 
       if ($mainError) {
@@ -601,7 +925,10 @@ try {
       Add-Content -LiteralPath $evidenceFile -Value ("INFO: Capturing EvidenceBundle v1 (scenario=$EvidenceScenario) ...")
       $bundlePathRaw = & node @captureArgs
       $capExit = $LASTEXITCODE
-      $bundlePath = ([string]$bundlePathRaw).Trim()
+      # stdout may carry more than one line (node warnings precede the path); the bundle path
+      # is the last non-empty line. @() guards the single-line (non-array) case.
+      $bundlePath = [string](@($bundlePathRaw) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Last 1)
+      $bundlePath = $bundlePath.Trim()
       Add-Content -LiteralPath $evidenceFile -Value ("INFO: EvidenceBundle dir: " + $bundlePath)
       if ([string]::IsNullOrWhiteSpace($bundlePath)) {
         throw "EvidenceBundle capture produced no bundle path (exit=$capExit)."

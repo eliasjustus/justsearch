@@ -664,6 +664,70 @@ public final class OnnxEmbeddingEncoder implements Closeable {
     return results;
   }
 
+  /**
+   * How many sliding windows {@code text} needs (round-15 post-round finding). Tokenize-only — no
+   * inference — so a caller can partition a batch into "one forward pass" and "needs resuming"
+   * lanes before spending any GPU.
+   *
+   * <p>The {@code text.length() <= maxSeqLen} short-circuit is exact, not a heuristic: the
+   * tokenizer never emits more tokens than the input has characters, so a text that short cannot
+   * exceed the context window. It keeps the ordinary short-document batch path free of a second
+   * tokenization.
+   */
+  public int windowCount(String text) {
+    if (text == null || text.isEmpty() || text.length() <= maxSeqLen) {
+      return 1;
+    }
+    Encoding encoding = tokenizer.encode(text);
+    long[] ids = encoding.getIds();
+    if (ids.length <= maxSeqLen) {
+      return 1;
+    }
+    return createChunks(ids, encoding.getAttentionMask(), encoding.getTypeIds()).size();
+  }
+
+  /**
+   * Embeds windows {@code [fromWindow, fromWindow + maxWindows)} of {@code text} (round-15
+   * post-round finding), returning the RAW per-window vectors — the caller pools them.
+   *
+   * <p>Windowing is the same {@link #createChunks} sliding window {@link #embed} and {@link
+   * #embedBatchWithChunking} use, so resuming a document window-by-window produces the same window
+   * set (and therefore the same pooled vector) a single whole-document call would have produced.
+   *
+   * @return one vector per embedded window, in window order; empty when {@code fromWindow} is past
+   *     the end
+   */
+  public WindowSliceResult embedWindows(String text, int fromWindow, int maxWindows)
+      throws OrtException {
+    List<long[][]> windows = windowsOf(text);
+    if (fromWindow >= windows.size() || maxWindows <= 0) {
+      return new WindowSliceResult(List.of(), windows.size());
+    }
+    int end = Math.min(fromWindow + maxWindows, windows.size());
+    return new WindowSliceResult(
+        embedPreTokenizedBatch(windows.subList(fromWindow, end)), windows.size());
+  }
+
+  /**
+   * One {@link #embedWindows} slice plus the document's total window count — returned together so a
+   * resuming caller learns its bound from the same tokenization that produced the vectors, instead
+   * of paying a second full tokenization per slice on a multi-hundred-KB document.
+   */
+  public record WindowSliceResult(List<float[]> vectors, int totalWindows) {}
+
+  private List<long[][]> windowsOf(String text) {
+    Encoding encoding = tokenizer.encode(text);
+    long[] ids = encoding.getIds();
+    long[] mask = encoding.getAttentionMask();
+    long[] typeIds = encoding.getTypeIds();
+    if (ids.length <= maxSeqLen) {
+      List<long[][]> single = new ArrayList<>(1);
+      single.add(new long[][] {ids, mask, typeIds});
+      return single;
+    }
+    return createChunks(ids, mask, typeIds);
+  }
+
   /** Returns the embedding dimension (detected from first inference, or 0 if not yet known). */
   public int embeddingDimension() {
     return embeddingDimension;

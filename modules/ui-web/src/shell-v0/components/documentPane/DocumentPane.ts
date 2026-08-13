@@ -48,6 +48,7 @@ import { JfElement } from '../../primitives/JfElement.js';
 import { markdownBlockMap, type MarkdownBlockDescriptor } from './markdownBlockMap.js';
 import { formatDisplayPath, formatLocationBreadcrumb } from '../searchResults/resultRowPresentation.js';
 import { isAdvancedMode, subscribeUiMode } from '../../state/uiModeState.js';
+import { authorizedFetch } from '../../api/authorizedFetch.js';
 import '../ErrorAlert.js';
 import '../Button.js';
 import { icon } from '../Icon.js';
@@ -274,7 +275,7 @@ export class DocumentPane extends JfElement {
     this.loading = true;
     this.error = null;
     try {
-      const res = await fetch(
+      const res = await authorizedFetch(
         this.base() + `/api/preview?docId=${encodeURIComponent(path)}&offsetChars=0&maxChars=5000`,
       );
       if (token !== this.loadToken) return; // a newer docPath superseded this request

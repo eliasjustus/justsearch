@@ -11,28 +11,44 @@
 import { z } from 'zod';
 
 export interface IndexedRootView {
-  pathHash?: string;
+  chunkDocsSettled?: number;
+  chunkDocsTotal?: number;
   collection?: string;
-  fileCount?: number;
-  lastIndexedIsoTime?: string;
-  status?: string;
-  walkError?: string;
-  inFlightCount?: number;
-  failedCount?: number;
-  walkCompleted?: boolean;
   deleteDetectionUnverified?: boolean;
+  failedCount?: number;
+  fileCount?: number;
+  inFlightCount?: number;
+  lastIndexedIsoTime?: string;
   lastVerifiedIsoTime?: string;
+  parentDocsSettledEmbedding?: number;
+  parentDocsSettledNer?: number;
+  parentDocsSettledSplade?: number;
+  parentDocsTotalEmbedding?: number;
+  parentDocsTotalNer?: number;
+  parentDocsTotalSplade?: number;
+  pathHash?: string;
+  status?: string;
+  walkCompleted?: boolean;
+  walkError?: string;
 }
 export const indexedRootViewSchema = z.strictObject({
-  "pathHash": z.string().optional(),
+  "chunkDocsSettled": z.number().int().optional(),
+  "chunkDocsTotal": z.number().int().optional(),
   "collection": z.string().optional(),
-  "fileCount": z.number().int().optional(),
-  "lastIndexedIsoTime": z.string().optional(),
-  "status": z.string().optional(),
-  "walkError": z.string().optional(),
-  "inFlightCount": z.number().int().optional(),
-  "failedCount": z.number().int().optional(),
-  "walkCompleted": z.boolean().optional(),
   "deleteDetectionUnverified": z.boolean().optional(),
+  "failedCount": z.number().int().optional(),
+  "fileCount": z.number().int().optional(),
+  "inFlightCount": z.number().int().optional(),
+  "lastIndexedIsoTime": z.string().optional(),
   "lastVerifiedIsoTime": z.string().optional(),
+  "parentDocsSettledEmbedding": z.number().int().optional(),
+  "parentDocsSettledNer": z.number().int().optional(),
+  "parentDocsSettledSplade": z.number().int().optional(),
+  "parentDocsTotalEmbedding": z.number().int().optional(),
+  "parentDocsTotalNer": z.number().int().optional(),
+  "parentDocsTotalSplade": z.number().int().optional(),
+  "pathHash": z.string().optional(),
+  "status": z.string().optional(),
+  "walkCompleted": z.boolean().optional(),
+  "walkError": z.string().optional(),
 });

@@ -24,42 +24,51 @@ import { JfElement } from '../primitives/JfElement.js';
 import { surfaceLayoutStyles } from '../primitives/surfaceLayout.js';
 import { subscribeTasks, listTasks, type Task } from '../substrates/tasks/index.js';
 import { subscribeAiState, type AiState } from '../state/aiStateStore.js';
-import { isKnown, type Maybe } from '../state/known.js';
+import { selectIndexingProgress, type IndexingProgress } from '../state/indexingProgress.js';
+import { ENRICHMENT_BODY } from '../state/enrichmentCoverage.js';
 import {
   subscribeInstallStatus,
   getInstallLiveStatus,
   setInstallStatusApiBase,
 } from '../substrates/ai/aiInstallBridge.js';
 
-function knownPositive(value: Maybe<number>): number {
-  return isKnown(value) && value.value > 0 ? value.value : 0;
+/**
+ * Tempdoc 727 F-2 — the "Now" strip kept claiming "Processing 10 items / running" for minutes after
+ * `worker.core.indexState` had already gone IDLE (10 = embeddingPending(2) + embeddingQueueSize(3)
+ * + vduQueueSize(5) from `/api/inference/status`; no single API field ever held the literal 10).
+ * F-2 cured that by suppressing the counters on IDLE; 813 §4 narrowed the suppression so the real
+ * enrichment window (also IDLE) could speak again.
+ *
+ * The remediation of 813 finishes the job by removing the SECOND derivation instead of tuning it.
+ * The strip's indexing row now counts the job queue from the ONE projection
+ * ({@link selectIndexingProgress}) — the same jobs table the Health Queue card reads — and the
+ * enrichment backlog is described exactly once, by the Enrichment row ({@link enrichingLabel}).
+ * Before this, a snapshot whose `indexState` was neither IDLE nor job-backed (an ERROR worker, or
+ * INDEXING with the jobs already drained) rendered BOTH rows off two different subsystems: a
+ * "Processing 10 items" line from the inference counters beside an "Enriching — 64%" line from the
+ * status poll, two numbers for one backlog. F-2's stale-residue defect is now unrepresentable
+ * rather than suppressed: there is no cross-subsystem counter left to go stale.
+ *
+ * Returns `null` (no row) unless the projection reports actual job-queue work; `unknown` (the
+ * worker did not report) and a stale snapshot never assert activity — 807 A.3, the same gate
+ * {@link enrichingLabel} applies.
+ */
+export function visibleIndexQueueCount(progress: IndexingProgress): number | null {
+  if (!progress.live || progress.phase === 'unknown') return null;
+  return progress.jobsPending > 0 ? progress.jobsPending : null;
 }
 
 /**
- * Tempdoc 727 F-2 — the embedding/VDU queue counters are a heuristic fallback for background work
- * that has no explicit job row (`pendingJobs`). They are polled from a DIFFERENT subsystem
- * (`/api/inference/status`) than the worker's own job queue, so they can independently retain a
- * stale positive residue after the worker itself has settled — the observed defect: the "Now" strip
- * kept claiming "Processing 10 items / running" for minutes after `worker.core.indexState` had
- * already gone IDLE (10 = embeddingPending(2) + embeddingQueueSize(3) + vduQueueSize(5) in the
- * captured repro; no single API field ever held the literal value 10). The worker's `indexState` is
- * the SAME authoritative truth the "Index state" row and the Queue card already trust (HealthSurface
- * §renderConnection / §renderStats) — once it has authoritatively settled to IDLE, a residual counter
- * from the other subsystem is stale, not live, so it must not override that truth.
+ * Tempdoc 813 §4 — the strip's enrichment row. Present only while the projection says the backfill
+ * is genuinely working (`phase === 'enriching'`); `ready` (idle residue), `indexing` (the task rows
+ * already say it) and `unknown` (nothing observed — never assert work off a dead snapshot, 807 A.3)
+ * all yield `null`, so the confident "System idle" close is preserved everywhere it was true.
  */
-export function visibleIndexQueueCount(
-  aiState: (Pick<AiState, 'index'> & Partial<Pick<AiState, 'status'>>) | null,
-): number | null {
-  if (aiState === null) return null;
-  const index = aiState.index;
-  const pendingJobs = knownPositive(index.pendingJobs);
-  if (pendingJobs > 0) return pendingJobs;
-  if (aiState.status?.worker?.core?.indexState === 'IDLE') return null;
-  const queued =
-    knownPositive(index.embeddingPending) +
-    knownPositive(index.embeddingQueueSize) +
-    knownPositive(index.vduQueueSize);
-  return queued > 0 ? queued : null;
+export function enrichingLabel(progress: IndexingProgress): string | null {
+  if (!progress.live || progress.phase !== 'enriching') return null;
+  return progress.enrichingPercent === null
+    ? `Enriching — ${ENRICHMENT_BODY}`
+    : `Enriching — ${progress.enrichingPercent}% · ${ENRICHMENT_BODY}`;
 }
 
 export class SystemSelfView extends JfElement {
@@ -188,14 +197,35 @@ export class SystemSelfView extends JfElement {
 
   override render(): TemplateResult {
     const tasks = this.liveTasks();
-    const running = tasks.filter((t) => t.status === 'running').length;
-    const queued = tasks.length - running;
     const aiLabel = this.aiActivityLabel();
     const install = getInstallLiveStatus();
     const installRunning = install?.state === 'running';
-    const indexQueueCount = visibleIndexQueueCount(this.aiState);
+    // Tempdoc 813 §3b — ONE derivation for the headline numbers. The task rows below stay the
+    // per-job LABEL list (their own transport, the jobs SSE mirror), but "N running · M queued" is
+    // now read off the same jobs-table projection the Health Queue card reads, so the two surfaces
+    // can no longer contradict each other the way §1a's "0 running · 1218 queued" vs "queue 0" did.
+    const progress = selectIndexingProgress(
+      this.aiState?.status,
+      this.aiState?.snapshotLive ?? false,
+      this.aiState?.episodeMaxPendingJobs ?? 0,
+      this.aiState?.enrichSettleSamples ?? [],
+    );
+    // On the projection's `unknown` arm the worker reported nothing, so there is no honest split to
+    // show — the section keeps its label and drops the numbers rather than rendering a fabricated
+    // "0 running · 0 queued" beside a list of task rows.
+    const indexingHeadline =
+      progress.phase === 'unknown'
+        ? 'Indexing'
+        : `Indexing — ${progress.jobsRunning} running · ${progress.jobsQueued} queued`;
+    const enriching = enrichingLabel(progress);
+    const indexQueueCount = visibleIndexQueueCount(progress);
     const indexQueueBusy = indexQueueCount !== null && tasks.length === 0;
-    const idle = tasks.length === 0 && aiLabel === null && !installRunning && !indexQueueBusy;
+    const idle =
+      tasks.length === 0 &&
+      aiLabel === null &&
+      !installRunning &&
+      !indexQueueBusy &&
+      enriching === null;
     const strip = this.variant === 'strip';
 
     return html`
@@ -233,7 +263,7 @@ export class SystemSelfView extends JfElement {
         ${tasks.length > 0
           ? html`
               <div class="section-label">
-                Indexing — ${running} running · ${queued} queued
+                ${indexingHeadline}
               </div>
               ${tasks.slice(0, 8).map(
                 (t) => html`
@@ -253,6 +283,15 @@ export class SystemSelfView extends JfElement {
               <div class="section-label">Indexing</div>
               <div class="row" data-testid="self-view-index-queue">
                 <span class="label">Processing ${indexQueueCount.toLocaleString()} items</span>
+                <span class="badge badge-running">running</span>
+              </div>
+            `
+          : nothing}
+        ${enriching !== null
+          ? html`
+              <div class="section-label">Enrichment</div>
+              <div class="row" data-testid="self-view-enriching">
+                <span class="label">${enriching}</span>
                 <span class="badge badge-running">running</span>
               </div>
             `

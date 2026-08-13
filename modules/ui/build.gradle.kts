@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.gradle.internal.os.OperatingSystem
 import org.gradle.jvm.application.tasks.CreateStartScripts
 import org.gradle.api.tasks.Exec
+import org.gradle.language.jvm.tasks.ProcessResources
 import org.gradle.api.tasks.testing.Test
 import org.gradle.testing.jacoco.tasks.JacocoCoverageVerification
 import org.gradle.testing.jacoco.tasks.JacocoReport
@@ -225,13 +226,16 @@ val copyWebResources by tasks.registering(Sync::class) {
   into(uiWebResourcesDir)
 }
 
-tasks.named("processResources") {
+tasks.named<ProcessResources>("processResources") {
   if (!skipWebBuild) {
   dependsOn(copyWebResources)
   } else {
     logger.lifecycle("Skipping ui-web build/copy (skipWebBuild=true).")
   }
   dependsOn(tasks.named("syncSsotSchemas"))
+  from(rootProject.file("governance/store-recoverability.v1.json")) {
+    into("governance")
+  }
 }
 
 // Slice 3a.1.9 §A.6a: SchemaController serves classpath copies of SSOT/schemas/*.v1.json.
@@ -1223,11 +1227,10 @@ val tesseractRuntimeStageDir = layout.buildDirectory.dir("runtime/tesseract-wind
 // self-extracting Tesseract installer overrides BOTH the manifest `sourceUrl` and `sourceSha256`.
 // Providing exactly one FAILS the build (defeating the archive pin). SCOPE LIMIT: this covers only
 // the archive-level pin. The manifest ALSO pins per-file SHAs (`files[]`, verified by
-// verifyTesseractRuntime) which signed inner PEs invalidate; regenerating those is a manual manifest
-// edit (there is no in-repo generator for packaging/runtime/tesseract-windows.v1.json — it is
-// hand-authored from the Scoop manifest), so verifyTesseractRuntime is made to fail with an explicit
-// regeneration instruction when the override is active and per-file hashes mismatch, rather than
-// silently skipping per-file verification.
+// verifyTesseractRuntime) which signed inner PEs invalidate; those are regenerated from the signed
+// archive by `scripts/release/regen-tesseract-manifest.mjs`, so verifyTesseractRuntime is made to
+// fail with an explicit regeneration instruction when the override is active and per-file hashes
+// mismatch, rather than silently skipping per-file verification.
 val tesseractSourceUrlOverride = providers.gradleProperty("tesseractSourceUrlOverride").orNull
 val tesseractSourceSha256Override = providers.gradleProperty("tesseractSourceSha256Override").orNull
 if ((tesseractSourceUrlOverride == null) != (tesseractSourceSha256Override == null)) {
@@ -1415,16 +1418,15 @@ val verifyTesseractRuntime by tasks.registering {
     }
     // When a signed mirror is active, a per-file hash/size mismatch is EXPECTED (signing rewrites the
     // inner PEs) and the manifest's files[] pins must be regenerated before the release can be cut.
-    // Point the operator at that manual step instead of failing with a bare pin mismatch. There is no
-    // in-repo generator for this manifest; it is hand-authored (Scoop-derived).
+    // Point the operator at that step instead of failing with a bare pin mismatch.
     fun mismatchHint(detail: String): String =
         if (overrideActive) {
           "$detail\n" +
               "A tesseractSourceUrl/Sha256 signed-mirror override is ACTIVE, so this per-file mismatch " +
               "is expected: signing rewrites the inner PE bytes and invalidates the files[] pins in " +
-              "packaging/runtime/tesseract-windows.v1.json. Regenerate those files[] sha256+sizeBytes " +
-              "from the signed, extracted runtime (hand-edit the manifest — there is no in-repo " +
-              "generator) before cutting the release, then re-run this task. Per-file verification is " +
+              "packaging/runtime/tesseract-windows.v1.json. Regenerate them from the signed archive " +
+              "with `node scripts/release/regen-tesseract-manifest.mjs <tesseract-...-signed.zip>` " +
+              "before cutting the release, then re-run this task. Per-file verification is " +
               "NOT skipped for signed mirrors."
         } else {
           detail

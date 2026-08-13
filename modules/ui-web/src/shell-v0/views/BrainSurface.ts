@@ -21,6 +21,7 @@ import { activateOnKey } from '../utils/keyboardHandler.js';
 import '../components/SurfaceTabs.js';
 import type { SurfaceTabItem } from '../components/SurfaceTabs.js';
 import { getSurface } from '../../api/registry/SurfaceCatalogClient.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import { present } from '../display/present.js';
 import { formatBytes } from '../display/format.js';
 import { projectFact } from '../display/facts.js';
@@ -42,6 +43,7 @@ import {
 // Tempdoc 657 — pre-install per-tier weight breakdown (GET /api/ai/install/plan-preview).
 import type { InstallPlanPreview } from '../utils/aiInstallPoll.js';
 import {
+  aiEngineBody,
   aiEngineHeadline,
   aiEngineTone,
   applyLocalIntent,
@@ -52,14 +54,24 @@ import { unavailableBecause, AVAILABLE } from '../state/availability.js';
 // Tempdoc 613 — coherence: the compat callout words its cause from the ONE canonical reindex
 // vocabulary (the same `reasonFor`/CAUSE_ROWS the Chat degradation banner + 595 verdict use),
 // so the same condition cannot be worded differently across surfaces.
-import { isReindexCause, reasonFor } from '../state/readinessNotice.js';
+import { INDEX_SCHEMA_MISMATCH, isReindexCause, reasonFor } from '../state/readinessNotice.js';
+import { ENRICHMENT_IN_PROGRESS_LABEL } from '../state/enrichmentCoverage.js';
+import { selectIndexingProgress } from '../state/indexingProgress.js';
 import { formatStartupEstimate, humanizeSeconds, elapsedSecondsSince } from '../state/startupEstimate.js';
 import { isAiInstallLive } from '../substrates/ai/aiInstallLiveness.js';
 import { icon } from '../components/Icon.js';
 // Tempdoc 586 §F-1a — reuse the existing pulse-dots primitive for the first-paint skeleton.
 import '../components/chat/PulseDots.js';
 import { confirmAsync } from '../components/ConfirmDialog.js';
+import { ModalController } from '../primitives/modalController.js';
 import type { PluginHostApi } from '../plugin-api/plugin-types.js';
+// Sandbox round 7 — the install consent dialog names the real packages, licences and terms links
+// from the registry the backend will actually install from, instead of the hardcoded "several GB".
+import {
+  getAiInstallManifest,
+  type AiInstallManifest,
+  type AiInstallModelPackage,
+} from '../../api/domains/packs.js';
 // Tempdoc 564 Phase B (4b): EffectivePolicy is the single generated wire-contract projection.
 import type { EffectivePolicy } from '../../api/generated/schema-types/effective-policy.js';
 
@@ -124,6 +136,18 @@ interface LlmSettings {
 
 const NUM = new Intl.NumberFormat();
 
+/**
+ * Round-15 scope-mismatch fix — the enrichment card's SCOPE, stated on the card itself.
+ *
+ * The finding was not only that this surface showed the wrong number; it was that neither surface
+ * declared which quantity it meant while both said "semantic search". The number is now the shared
+ * index-wide blend, and this says so, so a reader can tell what the percent is a percent OF.
+ *
+ * A local literal on purpose (the `STAGE_LABELS` precedent in `TaskList.ts`): one consumer, and a
+ * shared constant with no second consumer is a fork waiting to happen.
+ */
+const ENRICHMENT_SCOPE_NOTE = 'Overall enrichment across all stages';
+
 // Tempdoc 663 — the local `friendlyModel()` formatter (model-label cleanup) was removed; its one call
 // site now projects `core.ai.model` via `projectFact`, which reads `aiState.runtime.modelLabel` — the
 // SAME friendly-formatting `aiStateStore.ts`'s own `friendlyModel()` already applies at the source, so
@@ -182,6 +206,215 @@ export function isGpuReadingProvisional(stability: AiStability | undefined): boo
   );
 }
 
+/** The ONNX-feature shape this surface renders (a row of `AiRuntimeStatus.onnxFeatures`). */
+type OnnxFeatureRow = NonNullable<AiRuntimeStatus['onnxFeatures']>[number];
+
+/**
+ * The observed execution provider for one ONNX feature, as one short right-hand label (tempdoc 805
+ * G.3). Renders what the ORT session ACTUALLY runs on beside the intent-derived row, because
+ * `status:'active'` + `modelActive:true` were both true on round 11's machine while every encoder
+ * had silently fallen back to CPU.
+ *
+ * Unknown renders as the pre-805 intent wording — an absent observation is never a claim.
+ */
+export function observedEpLabel(f: OnnxFeatureRow): string {
+  const ep = f.executionProvider;
+  if (f.gpuFallback) {
+    return f.fallbackReason ? `CPU (fallback: ${f.fallbackReason})` : 'CPU (GPU fallback)';
+  }
+  if (ep === 'cuda') return 'CUDA';
+  if (ep === 'cpu') return 'CPU';
+  // Tempdoc 806 B.2: the Worker-owned encoder rows (embed, splade) can be status:'unknown' before
+  // the policy snapshot lands. "inactive" would be a confident negative about a state we cannot see.
+  if (f.status === 'unknown') return 'unknown';
+  return f.modelActive ? 'active' : 'inactive';
+}
+
+/**
+ * Whether the Brain SIMPLE view owes the user a repair hint: an ONNX feature is observably running
+ * on CPU after a GPU was configured AND the install status says a required file is missing. Both
+ * halves are required — a fallback with nothing missing is not repairable by downloading, and a
+ * missing file with no observed consequence is already covered by the pending-additions surface.
+ */
+export function shouldHintRepairForGpuFallback(
+  runtimeStatus: AiRuntimeStatus | null,
+  installStatus: InstallStatus | null,
+): boolean {
+  const anyFallback = runtimeStatus?.onnxFeatures?.some((f) => f.gpuFallback === true) ?? false;
+  return anyFallback && installStatus?.repairNeeded === true;
+}
+
+/** A package automatic repair has provably stopped fixing, with what the user can do instead. */
+export interface ManualFallbackPackage {
+  packageId: string;
+  label: string;
+  attempts: number;
+  url: string;
+  targetPath: string;
+  error: string;
+}
+
+/**
+ * Which remedy — if any — the install state actually owes the user (tempdoc 824 §3.3c/§3.4).
+ *
+ * - `none` — nothing required is missing. Optional gaps live here too: an absent metadata sidecar
+ *   no consumer reads is not a repair prompt.
+ * - `repair` — a required file is missing AND no affected capability is observably running. The
+ *   full-strength copy, and the FAIL-CLOSED default: with nothing observed, this is what shows.
+ * - `repair-soft` — a required file is missing but every affected capability IS observably running.
+ *   Round 16's product said "a required component is missing" while SPLADE served 1 660 CUDA
+ *   inferences; the honest sentence names both halves.
+ * - `manual` — three consecutive repair passes failed the same file at transport. An affordance
+ *   that cannot succeed must not be presented as the remedy, so this one names the file, the URL
+ *   and the destination instead.
+ *
+ * This is the same two-signal shape `shouldHintRepairForGpuFallback` above already uses:
+ * bookkeeping alone never gets to assert a capability is broken.
+ */
+export type RepairRemedy =
+  | { kind: 'none' }
+  | { kind: 'repair' }
+  | { kind: 'repair-soft' }
+  | { kind: 'manual'; packages: ManualFallbackPackage[] };
+
+export function deriveRepairRemedy(installStatus: InstallStatus | null): RepairRemedy {
+  const packages = installStatus?.packages ?? [];
+  const stuck = packages.filter((p) => (p.terminalReason ?? '') !== '');
+  if (stuck.length > 0) {
+    return {
+      kind: 'manual',
+      packages: stuck.map((p) => ({
+        packageId: p.packageId ?? p.id ?? '',
+        label: p.label ?? p.packageId ?? p.id ?? '',
+        attempts: p.attempts ?? 0,
+        url: p.url ?? '',
+        targetPath: p.targetPath ?? '',
+        error: p.error ?? '',
+      })),
+    };
+  }
+  if (installStatus?.repairNeeded !== true) return { kind: 'none' };
+  // Only a package that actually failed can be attributed to the gap. When none did — the gap came
+  // from the disk recompute after a restart, which cannot say which capability it belongs to — no
+  // observation applies and the full-strength copy stands.
+  const affected = packages.filter((p) => p.state === 'failed');
+  const allRunning =
+    affected.length > 0 && affected.every((p) => p.functionalStatus === 'active');
+  return allRunning ? { kind: 'repair-soft' } : { kind: 'repair' };
+}
+
+/** Headline for the offline panel, given the remedy the install state owes. */
+export function repairRemedyHeadline(remedy: RepairRemedy): string | null {
+  switch (remedy.kind) {
+    case 'manual':
+      return 'Installed — needs a manual step';
+    case 'repair':
+    case 'repair-soft':
+      return 'Installed — repair available';
+    default:
+      return null;
+  }
+}
+
+/** Sub-text for the offline panel, given the remedy the install state owes. */
+export function repairRemedySub(remedy: RepairRemedy): string | null {
+  switch (remedy.kind) {
+    case 'manual':
+      return 'Automatic repair could not download a file — see AI install in Advanced for the direct link.';
+    case 'repair':
+      return 'A required component is missing — use Repair in Advanced.';
+    case 'repair-soft':
+      return 'Working, but an expected file is missing — Repair will restore it.';
+    default:
+      return null;
+  }
+}
+
+/** One row of the install consent dialog's terms list — a package the install will pull. */
+export interface InstallConsentPackage {
+  id: string;
+  label: string;
+  /** SPDX identifier, or null when the registry declares none. */
+  license: string | null;
+  /** Upstream terms page, or null when the registry declares none. */
+  termsUrl: string | null;
+}
+
+/** Everything the consent dialog states, derived only from data the app already has. */
+export interface InstallConsentContent {
+  /**
+   * Formatted total the install will download, or null when the plan preview has not resolved yet
+   * (`refreshAll()` is fire-and-forget from `connectedCallback`, so the dialog can open first).
+   */
+  downloadTotal: string | null;
+  /**
+   * Sandbox round 8 — formatted bytes an interrupted earlier download left on disk, which this
+   * install resumes rather than re-fetches. `null` when there is no paused download (the common
+   * first-run case) or the preview has not resolved. `downloadTotal` already EXCLUDES these bytes,
+   * so the two numbers add up to the full model footprint rather than double-counting it.
+   */
+  resumedTotal: string | null;
+  packages: InstallConsentPackage[];
+  /** True when the manifest has not resolved (or declares no packages) — nothing to show. */
+  termsUnavailable: boolean;
+}
+
+/** Registry tier ids are kebab-case (`retrieval-core`); the manifest serializes the enum constant
+ *  (`RETRIEVAL_CORE`). One normalization so the two can be compared without a wire-shape assumption. */
+function normalizeTierId(tier: string | null | undefined): string | null {
+  if (!tier) return null;
+  return tier.toLowerCase().replace(/_/g, '-');
+}
+
+/**
+ * Sandbox round 7 — composes the "Download AI models?" consent from the registry manifest
+ * (`GET /api/ai/install/manifest`) plus the plan preview (`GET /api/ai/install/plan-preview`),
+ * replacing the hardcoded "several GB" prose and the unshown "you must accept the upstream model
+ * terms".
+ *
+ * Degradation is deliberate and asymmetric: a missing preview yields `downloadTotal: null` (the
+ * caller says the size is still being computed rather than printing a wrong number), while a
+ * package whose tier the active intent excludes is dropped only when the preview says so
+ * explicitly — an unknown tier, an untagged package, or a missing preview all keep the package
+ * listed. Terms are never hidden by a fallback; only over-listed.
+ */
+export function composeInstallConsent(
+  manifest: AiInstallManifest | null | undefined,
+  preview: InstallPlanPreview | null | undefined,
+): InstallConsentContent {
+  const totalBytes = preview?.totalDownloadBytes;
+  const downloadTotal =
+    typeof totalBytes === 'number' && totalBytes > 0 ? formatBytes(totalBytes) : null;
+
+  // Sandbox round 8 — the pause dialog promises the already-downloaded bytes stay and the next
+  // install resumes from them; this dialog then quoted the FULL footprint as if they were gone.
+  // The planner now reports them (`InstallPlan.resumableBytes`), so the consent states them too.
+  const resumedBytes = preview?.resumableBytes;
+  const resumedTotal =
+    typeof resumedBytes === 'number' && resumedBytes > 0 ? formatBytes(resumedBytes) : null;
+
+  const excludedTiers = new Set(
+    (preview?.tiers ?? [])
+      .filter((t) => t.includedByIntent === false)
+      .map((t) => normalizeTierId(t.tier))
+      .filter((t): t is string => t !== null),
+  );
+
+  const packages: InstallConsentPackage[] = (manifest?.packages ?? [])
+    .filter((p: AiInstallModelPackage) => {
+      const tier = normalizeTierId(p.tier);
+      return tier === null || !excludedTiers.has(tier);
+    })
+    .map((p: AiInstallModelPackage) => ({
+      id: p.id,
+      label: p.label || p.id,
+      license: p.license ?? null,
+      termsUrl: p.termsUrl ?? null,
+    }));
+
+  return { downloadTotal, resumedTotal, packages, termsUnavailable: packages.length === 0 };
+}
+
 /**
  * 574 A3 — map the legacy `.status-dot.<state>` class word onto the `jf-status-dot`
  * atom's (tone, live) projection. The bespoke per-state dot CSS (online glow / starting
@@ -221,6 +454,8 @@ export class BrainSurface extends JfElement {
     inference: { state: true },
     installStatus: { state: true },
     planPreview: { state: true },
+    manifest: { state: true },
+    installConsentOpen: { state: true },
     runtimeStatus: { state: true },
     policy: { state: true },
     packStatus: { state: true },
@@ -254,6 +489,9 @@ export class BrainSurface extends JfElement {
   declare inference: UnifiedAiState['inference'];
   declare installStatus: InstallStatus | null;
   declare planPreview: InstallPlanPreview | null;
+  /** Registry manifest behind the consent dialog's package/licence/terms list. */
+  declare manifest: AiInstallManifest | null;
+  declare installConsentOpen: boolean;
   declare runtimeStatus: AiRuntimeStatus | null;
   declare policy: EffectivePolicy | null;
   declare packStatus: PackImportStatus | null;
@@ -269,6 +507,17 @@ export class BrainSurface extends JfElement {
   declare recentSpans: TraceSpan[];
   declare tracesAvailable: boolean;
 
+  /** 574 §22.G — the full modal contract (native `<dialog>` + scroll-lock + focus-restore) for the
+   *  install consent dialog, composed rather than hand-wired. */
+  private readonly consentModal = new ModalController(this, {
+    dialog: () => this.shadowRoot?.querySelector<HTMLDialogElement>('dialog.consent'),
+    onOpened: () => {
+      requestAnimationFrame(() => {
+        (this.shadowRoot?.querySelector('jf-button.consent-confirm') as HTMLElement | null)?.focus();
+      });
+    },
+  });
+
   private clientRef: OperationClient | null = null;
   private _unifiedAiState: UnifiedAiState | null = null;
   private unsubAi: (() => void) | null = null;
@@ -283,6 +532,8 @@ export class BrainSurface extends JfElement {
     this.inference = null;
     this.installStatus = null;
     this.planPreview = null;
+    this.manifest = null;
+    this.installConsentOpen = false;
     this.runtimeStatus = null;
     this.policy = null;
     this.packStatus = null;
@@ -501,6 +752,72 @@ export class BrainSurface extends JfElement {
       padding: 0.125rem 0.25rem;
       border-radius: 0.25rem;
     }
+    /* Install consent dialog — native <dialog> (browser inert + focus-trap + Top Layer), driven by
+       ModalController so the scroll-lock/focus-restore half cannot be forgotten. */
+    dialog.consent {
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.75rem;
+      max-width: 32rem;
+      width: 100%;
+      padding: 0;
+      background: var(--surface-1);
+      color: var(--text-primary);
+    }
+    dialog.consent::backdrop {
+      background: rgba(0, 0, 0, 0.55);
+    }
+    .consent-card {
+      padding: 1.25rem;
+    }
+    .consent-title {
+      font-size: var(--font-size-md);
+      font-weight: 600;
+      margin: 0 0 0.75rem 0;
+    }
+    .consent-lede {
+      margin: 0 0 0.75rem 0;
+      font-size: var(--font-size-sm);
+      line-height: 1.5;
+      color: var(--text-secondary);
+    }
+    .consent-terms {
+      list-style: none;
+      margin: 0 0 1rem 0;
+      padding: 0;
+      max-height: 15rem;
+      overflow-y: auto;
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.375rem;
+    }
+    .consent-terms li {
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+      padding: 0.4rem 0.625rem;
+      font-size: var(--font-size-sm);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .consent-terms li:last-child {
+      border-bottom: none;
+    }
+    .consent-pkg {
+      flex: 1;
+      min-width: 0;
+    }
+    .consent-license {
+      font-family: monospace;
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+    }
+    .consent-terms a {
+      color: var(--text-tint);
+      white-space: nowrap;
+    }
+    .consent-actions {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: flex-end;
+    }
   `,
   ];
 
@@ -547,6 +864,17 @@ export class BrainSurface extends JfElement {
     this.refreshing = false;
     this.runtimeError = null;
     this.busy = {};
+    // An un-answered consent prompt is transient too: a surface hidden mid-question must not come
+    // back holding a modal (nor leak its scroll-lock).
+    this.installConsentOpen = false;
+  }
+
+  /** 574 §22.G — drive the modal contract from the declarative `installConsentOpen` state. */
+  protected override updated(changed: Map<string, unknown>): void {
+    super.updated(changed);
+    if (!changed.has('installConsentOpen')) return;
+    if (this.installConsentOpen) this.consentModal.open();
+    else this.consentModal.close();
   }
 
   override disconnectedCallback(): void {
@@ -576,7 +904,7 @@ export class BrainSurface extends JfElement {
 
   private async fetchJson<T>(path: string, init?: RequestInit): Promise<T | null> {
     try {
-      const res = await fetch(this.base() + path, init);
+      const res = await authorizedFetch(this.base() + path, init);
       if (!res.ok) return null;
       return (await res.json()) as T;
     } catch {
@@ -592,11 +920,15 @@ export class BrainSurface extends JfElement {
       // are NOT fetched here; all five come from the shared aiStateStore subscription
       // (connectedCallback), which is always-on and self-healing. Only settings/policy — which have
       // no shared poller and are genuinely one-shot facts — are fetched on mount.
-      const [settings, policy, preview] = await Promise.all([
+      const [settings, policy, preview, manifest] = await Promise.all([
         this.fetchJson<{ ui?: UiSettings; llm?: LlmSettings }>('/api/settings/v2'),
         this.fetchJson<EffectivePolicy>('/api/policy/effective'),
         // Tempdoc 657 — honest per-tier download weight, computed side-effect-free by the planner.
         this.fetchJson<InstallPlanPreview>('/api/ai/install/plan-preview'),
+        // Sandbox round 7 — the registry the install runs from: package labels, SPDX licences and
+        // upstream terms URLs for the consent dialog. Same swallow-and-degrade contract as the rest
+        // of this mount fetch (the dialog states the terms are unavailable rather than inventing them).
+        getAiInstallManifest(this.base()).catch(() => null),
       ]);
       if (settings) {
         this.settings = settings.ui ?? {};
@@ -604,6 +936,7 @@ export class BrainSurface extends JfElement {
       }
       if (policy) this.policy = policy;
       if (preview) this.planPreview = preview;
+      if (manifest) this.manifest = manifest;
     } finally {
       this.refreshing = false;
     }
@@ -647,8 +980,8 @@ export class BrainSurface extends JfElement {
         this.transitions = t.transitions;
       }
       // Tempdoc 518 Appendix G Wave D.1 — recent spans for the trace explorer panel.
-      // Best-effort: the endpoint returns tracesAvailable=false when HEAD_TRACING_LEVEL=none
-      // (the default), in which case we suppress the panel below.
+      // Best-effort: the endpoint reports tracesAvailable=false when no traces.ndjson exists on
+      // disk (a file check, NOT a tracing-level check), in which case we suppress the panel below.
       const traces = await this.fetchJson<TraceExplorerResponse>(
         '/api/diagnostics/traces?limit=10',
       );
@@ -758,7 +1091,7 @@ export class BrainSurface extends JfElement {
   private async setMode(mode: 'simple' | 'advanced'): Promise<void> {
     await this.withBusy('mode', async () => {
       this.settings = { ...this.settings, mode };
-      await fetch(this.base() + '/api/settings/v2', {
+      await authorizedFetch(this.base() + '/api/settings/v2', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ui: { mode } }),
@@ -768,15 +1101,33 @@ export class BrainSurface extends JfElement {
 
   // ---------- Install actions ----------
 
+  /**
+   * Sandbox round 7 — the consent is rendered by this surface (see {@link renderInstallConsent})
+   * rather than passed as a `message` string, because it carries the real package list, their SPDX
+   * licences and CLICKABLE upstream terms links. `showConfirmDialog`'s message is `string`-typed all
+   * the way up through the plugin-api host contract, so enriching it would change a capability
+   * interface; `AdvisoryInboxDrawer`'s in-template anchors are the precedent followed here.
+   */
   private async startInstall(): Promise<void> {
-    const ok = await this.hostConfirm({
-      title: 'Download AI models?',
-      message:
-        'This will download the recommended model files into AI Home. These files can be several GB. You must accept the upstream model terms before downloading.',
-      variant: 'info',
-      confirmLabel: 'I Accept & Download',
-    });
-    if (!ok) return;
+    // Sandbox round 8 — `planPreview` is a MOUNT-time value: `refreshAll()` runs from
+    // `connectedCallback`, the manual refresh, and one op-success handler, and nothing else re-asked.
+    // Between mount and this click a download can finish files or be paused with bytes retained, both
+    // of which change the total the dialog is about to state. Re-ask first rather than quoting a
+    // number the backend has already superseded; if the re-ask fails, the last-known preview (or the
+    // "still being calculated" fallback) stands, exactly as before.
+    await this.refreshInstallPlanPreview();
+    this.installConsentOpen = true;
+  }
+
+  /** Re-reads the plan preview alone — the one consent input whose value goes stale while mounted. */
+  private async refreshInstallPlanPreview(): Promise<void> {
+    if (!this.apiBase && this.apiBase !== '') return;
+    const preview = await this.fetchJson<InstallPlanPreview>('/api/ai/install/plan-preview');
+    if (preview) this.planPreview = preview;
+  }
+
+  private async confirmInstall(): Promise<void> {
+    this.installConsentOpen = false;
     await this.withBusy('install-start', async () => {
       this.runtimeError = null;
       const data = (await this.invokeOp('core.start-ai-install', { acceptTerms: true })) as InstallStatus;
@@ -784,7 +1135,22 @@ export class BrainSurface extends JfElement {
     });
   }
 
+  /**
+   * Cancelling used to destroy every downloaded byte, so it (wrongly) needed no gate to be honest.
+   * `DownloadExecutor.cancel()` now SUSPENDS the BITS job instead of removing it and `ResumableFetch`
+   * keeps the `.partial` plus its identity sidecar, so the next install resumes via BITS or an HTTP
+   * `Range` request (integrity-verified either way). The confirmation states that — pause, not discard.
+   */
   private async cancelInstall(): Promise<void> {
+    const ok = await this.hostConfirm({
+      title: 'Pause the download?',
+      message:
+        'Cancelling pauses the download. Everything already downloaded stays on disk and the next install resumes from where it stopped instead of starting over. Files that finished downloading stay installed.',
+      variant: 'warning',
+      confirmLabel: 'Pause download',
+      cancelLabel: 'Keep downloading',
+    });
+    if (!ok) return;
     await this.withBusy('install-cancel', async () => {
       const data = (await this.invokeOp('core.cancel-ai-install', {})) as InstallStatus;
       if (data) this.installStatus = data;
@@ -891,7 +1257,7 @@ export class BrainSurface extends JfElement {
 
   private async patchLlm(updates: Partial<LlmSettings>): Promise<void> {
     this.llm = { ...this.llm, ...updates };
-    await fetch(this.base() + '/api/settings/v2', {
+    await authorizedFetch(this.base() + '/api/settings/v2', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ llm: updates }),
@@ -996,12 +1362,22 @@ export class BrainSurface extends JfElement {
     const aiState = aiVerdict.kind;
     const downloadsDisabled = this.policy?.downloadsEnabled === false;
     const onlineDisabled = this.policy?.onlineAiEnabled === false;
+    const repairRemedy = deriveRepairRemedy(this.installStatus);
 
     const statusConfig: Record<string, { dot: string; label: string; sub: string }> = {
       not_installed: {
         dot: 'notinstalled',
         label: 'Not Installed',
         sub: 'Install AI models to get started.',
+      },
+      // Sandbox round 8 — this row exists because the one above was rendered over 1.2 GB of retained
+      // download. Label and sub PROJECT `aiEngineHeadline`/`aiEngineBody` (the one authority, which
+      // carries the byte count) rather than restating them here; that is the fork discipline the
+      // `online`/`indexing` rows below already follow.
+      paused: {
+        dot: 'notinstalled',
+        label: aiEngineHeadline(aiVerdict),
+        sub: aiEngineBody(aiVerdict),
       },
       installing: {
         dot: 'installing',
@@ -1020,8 +1396,19 @@ export class BrainSurface extends JfElement {
       },
       offline: {
         dot: 'offline',
-        label: this.installStatus?.installedFully === false ? 'Installed with limitations' : 'AI Offline',
-        sub: 'Start AI to enable chat and summaries.',
+        // Tempdoc 805 G.3: `repairNeeded` is a claim about DISK (a required file is missing), while
+        // `installedFully` is a claim about install HISTORY — round 11 had the first true and the
+        // second (correctly) also true, and the label said neither. When something is genuinely
+        // missing, name the action; "Installed with limitations" alone tells a user nothing to do.
+        // Tempdoc 824 §3.3c/§3.4: which sentence is true also depends on whether the capability is
+        // observably running and on whether Repair can still succeed — `deriveRepairRemedy` is the
+        // one place that decides, so this panel and the Advanced one cannot name different remedies.
+        label:
+          repairRemedyHeadline(repairRemedy) ??
+          (this.installStatus?.installedFully === false
+            ? 'Installed with limitations'
+            : 'AI Offline'),
+        sub: repairRemedySub(repairRemedy) ?? 'Start AI to enable chat and summaries.',
       },
       starting: {
         dot: 'starting',
@@ -1074,10 +1461,13 @@ export class BrainSurface extends JfElement {
     // "wait" to show).
     const primaryAction = (() => {
       switch (aiState) {
+        // `paused` shares the install action but not its label: "Install AI" over a half-downloaded
+        // 10 GB reads as "start over", which is the very fear the pause dialog set out to remove.
+        case 'paused':
         case 'not_installed':
         case 'install_failed':
           return {
-            label: 'Install AI',
+            label: aiState === 'paused' ? 'Resume Download' : 'Install AI',
             iconName: 'hard-drive' as const,
             onClick: () => void this.startInstall(),
             availability: downloadsDisabled
@@ -1202,6 +1592,13 @@ export class BrainSurface extends JfElement {
                   <span>${this.installStatus?.phase?.replace(/_/g, ' ') ?? 'preparing'}</span>
                   <span>${formatBytes(bytesDone)} / ${formatBytes(bytesTotal)}</span>
                 </div>
+                ${this.installStatus?.packages?.some((p) => p.resumed)
+                  ? html`<div
+                      style="margin-top: 0.25rem; font-size: var(--font-size-xs); color: var(--text-secondary)"
+                    >
+                      Resumed from your earlier download — the bytes already on disk were kept.
+                    </div>`
+                  : nothing}
               </div>
             `
           : nothing}
@@ -1258,9 +1655,15 @@ export class BrainSurface extends JfElement {
               >Install failed: ${aiVerdict.installFailure}</jf-error-alert
             >`
           : nothing}
-
-        ${this.renderTransitionTimeline()}
-        ${this.renderTraceExplorer()}
+        ${shouldHintRepairForGpuFallback(this.runtimeStatus, this.installStatus)
+          ? html`<jf-error-alert
+              tone="warning"
+              data-testid="brain-gpu-fallback-hint"
+              style="margin-top: 0.75rem"
+              >Search features are running on CPU: a GPU component is missing from disk. Use Repair
+              in Advanced to download it.</jf-error-alert
+            >`
+          : nothing}
       </div>
     `;
   }
@@ -1325,7 +1728,12 @@ export class BrainSurface extends JfElement {
         data-testid="brain-generation-sparkline"
         style="margin-top: 0.75rem; display: flex; align-items: center; gap: 0.5rem; font-size: var(--font-size-xs)"
       >
-        <span style="color: var(--text-secondary)">gen:</span>
+        ${/* Round-14 finding 10 — "gen" was unqualified and collided with a DIFFERENT in-product
+              "generation": /api/inference/status `generation` is an int engine-instance counter,
+              while /api/knowledge/status `servingSearchGenerationId` is a string index id. Beside a
+              model filename the abbreviation also read as "1st-generation model" (a version claim).
+              Naming the axis is the whole fix — the value is unchanged. */ ''}
+        <span style="color: var(--text-secondary)">engine generation:</span>
         <span style="font-weight: 600; font-variant-numeric: tabular-nums">${currentGen}</span>
         <svg width="${W}" height="${H}" style="display: block">
           <polyline
@@ -1361,8 +1769,11 @@ export class BrainSurface extends JfElement {
         data-testid="brain-transitions-timeline"
         style="margin-top: 0.875rem; font-size: var(--font-size-xs)"
       >
+        ${/* Round-14 finding 10 — "mode" is ambiguous on this very window: the same panel carries a
+              Simple | Detailed disclosure mode and the search surface has rungs. These rows are the
+              INFERENCE state machine's transitions; say so. */ ''}
         <summary style="cursor: pointer; color: var(--text-secondary)">
-          Recent mode transitions (${rows.length})
+          Recent inference transitions (${rows.length})
         </summary>
         <ul
           style="margin: 0.5rem 0 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.25rem"
@@ -1400,8 +1811,11 @@ export class BrainSurface extends JfElement {
 
   /**
    * Tempdoc 518 Appendix G Wave D.1 — in-product trace explorer panel.
-   * Lists the 10 most recent spans from /api/diagnostics/traces. Hidden when tracing is off
-   * (HEAD_TRACING_LEVEL=none, the default — endpoint reports tracesAvailable=false).
+   * Lists the 10 most recent spans from /api/diagnostics/traces. Hidden when the endpoint reports
+   * `tracesAvailable: false` — which DiagnosticsController derives purely from whether
+   * `<dataDir>/telemetry/traces.ndjson` is a regular file, NOT from the tracing level: with
+   * JUSTSEARCH_HEAD_TRACING_LEVEL=none but a leftover traces file on disk, the panel still renders
+   * (verified empirically). Advanced-mode-only for that reason among others.
    * Clicking a row copies its trace_id to the clipboard so it can be looked up in
    * otel-desktop-viewer or grep'd against traces.ndjson.
    */
@@ -1472,8 +1886,17 @@ export class BrainSurface extends JfElement {
     const embeddingBlocked =
       emb?.compatState === 'BLOCKED_LEGACY' || emb?.compatState === 'BLOCKED_MISMATCH';
     const isLegacy = emb?.compatState === 'BLOCKED_LEGACY';
-    const schemaIncompat = schema?.compatState === 'INCOMPATIBLE';
-    if (!embeddingBlocked && !schemaIncompat) return nothing;
+    // Review 2026-08 (FE review-fix bundle, item 1): this read `=== 'INCOMPATIBLE'`, a literal the
+    // producer never emits — `IndexStatusOps.safeSchemaCompatState()` (worker-services) returns only
+    // COMPATIBLE / BLOCKED_LEGACY / BLOCKED_MISMATCH / UNAVAILABLE, and `indexing.proto`'s
+    // `CompatibilityStatus.schema_compat_state` documents exactly that vocabulary (plus REBUILDING).
+    // The gate was therefore dead, and with it the §D1 schema-mismatch remedy this callout carries.
+    // Gate on the same blocked pair the backend maps to reason codes in
+    // `StatusLifecycleHandler.compatBlockedReason` (BLOCKED_MISMATCH → `index.schema_mismatch`,
+    // BLOCKED_LEGACY → `index.blocked_legacy`), so surface and wire agree by construction.
+    const schemaBlocked =
+      schema?.compatState === 'BLOCKED_LEGACY' || schema?.compatState === 'BLOCKED_MISMATCH';
+    if (!embeddingBlocked && !schemaBlocked) return nothing;
     // Tempdoc 613 — coherence. The user-facing CAUSE wording projects the ONE canonical reindex
     // vocabulary (`reasonFor`/CAUSE_ROWS — identical to the Chat degradation banner and the 595
     // verdict), so the same condition can no longer read three different ways across surfaces. The
@@ -1481,8 +1904,16 @@ export class BrainSurface extends JfElement {
     // backend derived them onto `retrieval.reasonCodes`), so there is NO FE compatState→code remap to
     // drift. The legacy/mismatch distinction, fingerprint hashes, and schema reason stay as
     // config-altitude technical DETAIL beneath the canonical lead.
+    // Tempdoc 804 §D1: `index.schema_mismatch` left the degrading REINDEX_CAUSE_CODES bucket (it is
+    // advisory — zero query-path consumers), but this callout still renders for a schema BLOCKED_*
+    // state, so it must keep projecting that code's canonical wording rather than falling through to
+    // the generic "Rebuild the index to restore full search." lead, which would over-claim here.
     const reindexCauses = [
-      ...new Set((this._unifiedAiState?.verdict?.reasons ?? []).filter(isReindexCause)),
+      ...new Set(
+        (this._unifiedAiState?.verdict?.reasons ?? []).filter(
+          (code: string) => isReindexCause(code) || code === INDEX_SCHEMA_MISMATCH,
+        ),
+      ),
     ];
     const canonicalWordings = reindexCauses.map((code) => reasonFor(code).wording);
     return html`
@@ -1517,7 +1948,7 @@ export class BrainSurface extends JfElement {
                     : nothing}
                 `
               : nothing}
-            ${schemaIncompat
+            ${schemaBlocked
               ? html`
                   <div style="font-size: var(--font-size-sm); color: var(--text-secondary); margin-top: 0.375rem">
                     Schema incompatible${schema?.reindexRequiredReason
@@ -1542,41 +1973,113 @@ export class BrainSurface extends JfElement {
     `;
   }
 
-  private renderEmbeddingProgress(): TemplateResult | typeof nothing {
+  /**
+   * The enrichment progress card — round-15 scope-mismatch fix.
+   *
+   * IT USED TO READ ONE SIGNAL. `systemStatus.embedding` is DOCUMENT-level semantic-vector coverage:
+   * 1 of the 4 signals enrichment actually consists of. The round photographed the consequence in a
+   * single frame — this card at 96.8% while the Tasks card read 19%, its subtitle promising "chunk
+   * embeddings" beside a number ~67 points away from actual chunk coverage, and then the card
+   * VANISHING at 100% of its one signal while overall enrichment sat at 46%, leaving the surface
+   * dedicated to AI status reading fully idle mid-run.
+   *
+   * IT NOW READS THE SHARED PROJECTION (813 §3b), the same `selectIndexingProgress` the Tasks card
+   * and the status-bar chip render from — chosen over keeping a stage-scoped bar because two numbers
+   * both called "semantic search" is the defect itself, and §3b already names one derivation
+   * authority for index-wide progress. Consequences that are the point: the percent is the
+   * unit-weighted blend over every applicable stage, so it cannot disagree with the other surfaces;
+   * and the card persists until the WHOLE blend settles, so a per-stage 100% can no longer read as
+   * done. The per-stage breakdown stays available in the Tasks card's disclosure (§20's two layers).
+   */
+  private renderEnrichmentProgress(): TemplateResult | typeof nothing {
     const emb = this.systemStatus?.embedding;
-    const pending = emb?.pendingCount ?? 0;
-    const completed = emb?.completedCount ?? 0;
-    const total = emb?.docCount ?? completed + pending;
-    if (pending === 0 || total === 0) return nothing;
+    // The compat callout above owns the BLOCKED_* states (it carries the reindex remedy); a second
+    // card about the same condition would be two voices on one fact.
     if (emb?.compatState?.startsWith('BLOCKED')) return nothing;
-    // Use the canonical coveragePercent from the wire when present;
-    // fall back to completed/total when absent.
-    const pct =
-      emb?.coveragePercent != null
-        ? emb.coveragePercent
-        : total > 0
-          ? (completed / total) * 100
-          : 0;
+    const live = !this._unifiedAiState || this._unifiedAiState.snapshotLive;
+    const progress = selectIndexingProgress(
+      this.systemStatus,
+      live,
+      this._unifiedAiState?.episodeMaxPendingJobs ?? 0,
+      this._unifiedAiState?.enrichSettleSamples ?? [],
+    );
+    // Only the enrichment phase is this card's subject: `indexing` is the Tasks card's countdown,
+    // `blocked` is the install CTA's business (nothing is progressing, so a progress bar would be a
+    // fabrication), and `ready`/`unknown` have no progress to report.
+    if (progress.phase !== 'enriching') return nothing;
+    const pending = progress.enrichingPending;
+    // Never a fabricated number: the projection withholds the percent when it has no faithful
+    // denominator, and the bar is withheld with it rather than rendered at a made-up 0.
+    const pct = progress.enrichingPercent;
+    // Tempdoc 807 A.3 — these are fields off the RETAINED snapshot. With the backend gone they kept
+    // animating a confident "Building semantic search 2.0% · 5,084 pending" (round 13, R13-F2): the
+    // numbers were right, the present tense was not. Not live ⟹ stop asserting progress — no spinner,
+    // no live-work colouring, every figure explicitly labelled as the last observation.
+    if (!live) {
+      return html`
+        <div class="section" data-testid="brain-enrichment-progress">
+          <div style="display: flex; gap: 0.625rem; align-items: flex-start">
+            ${icon({ name: 'zap', size: 18 })}
+            <div style="flex: 1">
+              <div style="font-weight: 600; color: var(--text-secondary)">
+                Semantic search build — last known
+              </div>
+              <div style="font-size: var(--font-size-sm); color: var(--text-secondary); margin-top: 0.25rem">
+                ${reasonFor('binding.unreachable').wording} — these figures are the last observed
+                values, not live progress.
+              </div>
+            </div>
+            ${pct === null
+              ? nothing
+              : html`<div
+                  style="font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-muted)"
+                >
+                  ${pct}%
+                </div>`}
+          </div>
+          ${pct === null
+            ? nothing
+            : html`<div class="progress" style="margin-top: 0.625rem">
+                <div class="progress-bar" style="width: ${pct}%; background: var(--text-muted)"></div>
+              </div>`}
+          <div style="font-size: var(--font-size-xs); color: var(--text-muted); margin-top: 0.5rem">
+            ${ENRICHMENT_SCOPE_NOTE} · ${NUM.format(pending)} pending when last observed
+          </div>
+        </div>
+      `;
+    }
     return html`
-      <div class="section" style="border-color: var(--accent-warning-30); background: var(--accent-warning-08)">
+      <div
+        class="section"
+        data-testid="brain-enrichment-progress"
+        style="border-color: var(--accent-warning-30); background: var(--accent-warning-08)"
+      >
         <div style="display: flex; gap: 0.625rem; align-items: flex-start">
           ${icon({ name: 'zap', size: 18 })}
           <div style="flex: 1">
             <div style="font-weight: 600; color: var(--text-warning)">
-              Building semantic search
+              ${ENRICHMENT_IN_PROGRESS_LABEL}
             </div>
+            <!-- The subtitle names the SCOPE of the number above it. Before this it promised chunk
+                 embeddings while the figure measured document vectors — one stage's number under
+                 another stage's sentence. -->
             <div style="font-size: var(--font-size-sm); color: var(--text-secondary); margin-top: 0.25rem">
-              Generating chunk embeddings for improved Q&amp;A retrieval.
+              ${ENRICHMENT_SCOPE_NOTE}: semantic vectors, passage vectors, keyword expansion and
+              entity recognition.
             </div>
           </div>
-          <div style="font-weight: 600; font-variant-numeric: tabular-nums">${pct.toFixed(1)}%</div>
+          ${pct === null
+            ? nothing
+            : html`<div style="font-weight: 600; font-variant-numeric: tabular-nums">${pct}%</div>`}
         </div>
-        <div class="progress" style="margin-top: 0.625rem">
-          <div class="progress-bar" style="width: ${pct}%; background: var(--accent-warning)"></div>
-        </div>
+        ${pct === null
+          ? nothing
+          : html`<div class="progress" style="margin-top: 0.625rem">
+              <div class="progress-bar" style="width: ${pct}%; background: var(--accent-warning)"></div>
+            </div>`}
         <div style="font-size: var(--font-size-xs); color: var(--text-secondary); margin-top: 0.5rem; display: flex; align-items: center; gap: 0.375rem">
           ${icon({ name: 'loader-2', size: 12, spin: true })}
-          ${NUM.format(pending)} pending
+          ${NUM.format(pending)} pending across all stages
         </div>
       </div>
     `;
@@ -1620,12 +2123,18 @@ export class BrainSurface extends JfElement {
   private renderSearchQualityFeatures(): TemplateResult {
     const features = this.runtimeStatus?.onnxFeatures ?? [];
     const activeCount = features.filter((f) => f.modelActive).length;
+    // Tempdoc 807 A.3 — "N/N active" is a PRESENT-tense claim read off the retained runtime snapshot;
+    // round 13 photographed "4/4 active" with the backend dead. Not live ⟹ the count is history, and
+    // the per-feature green dot (which asserts "running right now") drops to neutral.
+    const live = !this._unifiedAiState || this._unifiedAiState.snapshotLive;
     return this.renderAccordion(
       'search-quality',
       'Search Quality Features',
       features.length > 0
         ? activeCount > 0
-          ? `${activeCount}/${features.length} active`
+          ? live
+            ? `${activeCount}/${features.length} active`
+            : `${activeCount}/${features.length} when last observed`
           : 'optional'
         : null,
       () => html`
@@ -1639,13 +2148,19 @@ export class BrainSurface extends JfElement {
                   <div class="data-row">
                     <span>
                       <jf-status-dot
-                        tone=${f.modelActive ? 'success' : 'neutral'}
+                        tone=${!live
+                          ? 'neutral'
+                          : f.gpuFallback
+                            ? 'warning'
+                            : f.modelActive
+                              ? 'success'
+                              : 'neutral'}
                         style="margin-right: 0.5rem; vertical-align: middle"
                       ></jf-status-dot>
-                      ${f.feature}
+                      ${f.label ?? f.id ?? 'feature'}
                     </span>
                     <span style="color: var(--text-secondary); font-family: monospace; font-size: var(--font-size-xs)"
-                      >${f.modelDescription ?? (f.modelActive ? 'active' : 'inactive')}</span
+                      >${observedEpLabel(f)}</span
                     >
                   </div>
                 `,
@@ -1691,10 +2206,12 @@ export class BrainSurface extends JfElement {
   private renderModels(): TemplateResult {
     const features = this.runtimeStatus?.onnxFeatures ?? [];
     const active = features.filter((f) => f.modelActive).length;
+    // Tempdoc 807 A.3 — "N loaded" is the same present-tense claim as the Search Quality count.
+    const live = !this._unifiedAiState || this._unifiedAiState.snapshotLive;
     return this.renderAccordion(
       'models',
       'Models',
-      active > 0 ? `${active} loaded` : null,
+      active > 0 ? (live ? `${active} loaded` : `${active} when last observed`) : null,
       () => html`
         <div style="margin-top: 0.625rem; font-size: var(--font-size-sm)">
           ${this.renderTierBreakdown()}
@@ -1727,6 +2244,96 @@ export class BrainSurface extends JfElement {
         </div>
       `,
     );
+  }
+
+  // ---------- Render: install consent ----------
+
+  /**
+   * Sandbox round 7 — the consent screen states what the app already knows: the exact total from the
+   * plan preview, and every package it will install with its SPDX licence and a clickable link to the
+   * upstream terms the copy asks you to accept.
+   *
+   * Sandbox round 8 — the preview is re-read on the way in ({@link startInstall}) rather than trusted
+   * from mount, and when an earlier download was paused the retained bytes get their own line. The
+   * quoted total is what the network will TRANSFER (retained bytes excluded); the progress screen's
+   * denominator is the file-size total those bytes count up to, so the two differ by exactly the
+   * resumed amount this dialog now names.
+   *
+   * The manifest still arrives from the fire-and-forget `refreshAll()`, so it can be missing when
+   * the dialog opens. Neither gap is papered over with a plausible-looking number or an empty list:
+   * an unresolved preview says the size is still being computed, and an unresolved manifest says the
+   * terms could not be listed (and that continuing still accepts them) rather than implying there
+   * are none.
+   */
+  private renderInstallConsent(): TemplateResult {
+    const consent = composeInstallConsent(this.manifest, this.planPreview);
+    return html`
+      <dialog
+        class="consent"
+        aria-labelledby="install-consent-title"
+        @cancel=${(e: Event) => {
+          e.preventDefault();
+          this.installConsentOpen = false;
+        }}
+        @click=${(e: Event) => {
+          if (e.target === e.currentTarget) this.installConsentOpen = false;
+        }}
+      >
+        <div class="consent-card">
+          <h3 id="install-consent-title" class="consent-title">Download AI models?</h3>
+          <p class="consent-lede">
+            ${consent.downloadTotal
+              ? html`This downloads <strong>${consent.downloadTotal}</strong> of model files into AI
+                  Home.`
+              : html`This downloads the recommended model files into AI Home. The exact size is still
+                  being calculated — it is shown on the progress screen once the download starts.`}
+          </p>
+          ${consent.resumedTotal
+            ? html`<p class="consent-lede">
+                <strong>${consent.resumedTotal}</strong> from your earlier paused download is still on
+                disk and will be resumed, not downloaded again.
+              </p>`
+            : nothing}
+          <p class="consent-lede">
+            ${consent.termsUnavailable
+              ? 'The upstream model terms could not be listed right now. Downloading still accepts the licence each package is published under; reopen this dialog once the connection is back to read them first.'
+              : 'Each package below is published by its upstream author under the licence shown. Downloading accepts those terms.'}
+          </p>
+          ${consent.termsUnavailable
+            ? nothing
+            : html`
+                <ul class="consent-terms">
+                  ${consent.packages.map(
+                    (p) => html`
+                      <li>
+                        <span class="consent-pkg">${p.label}</span>
+                        <span class="consent-license">${p.license ?? 'licence not declared'}</span>
+                        ${p.termsUrl
+                          ? html`<a href=${p.termsUrl} target="_blank" rel="noopener noreferrer"
+                              >Terms ↗</a
+                            >`
+                          : nothing}
+                      </li>
+                    `,
+                  )}
+                </ul>
+              `}
+          <div class="consent-actions">
+            <jf-button label="Cancel" .onActivate=${() => (this.installConsentOpen = false)}>
+              Cancel
+            </jf-button>
+            <jf-button
+              class="consent-confirm"
+              variant="primary"
+              label="Accept and download"
+              .onActivate=${() => void this.confirmInstall()}
+            >
+              Accept and download
+            </jf-button>
+          </div>
+        </div>
+      </dialog>
+    `;
   }
 
   // ---------- Render: pack import (Tauri-only advanced) ----------
@@ -1790,9 +2397,63 @@ export class BrainSurface extends JfElement {
     // directly (the ai-verdict-derivation gate). Also picks up the instant `busy['install-start']`
     // feedback the Simple panel already gets, closing the same gap here.
     const installing = this.deriveAiEngineVerdict().kind === 'installing';
+    // Tempdoc 806 B.2 (round-12): ONE condition, ONE named remedy. The SIMPLE panel points at this
+    // panel by name for `repairNeeded` ("A required component is missing — use Repair in Advanced",
+    // :1310) while this panel offered Install as the primary CTA for the same condition — the user
+    // was sent here for Repair and shown Install. When a required file is missing on disk, Repair is
+    // the primary affordance here too; Install stays available (it is a superset), just not primary.
+    // Tempdoc 824 §3.3c/§3.4 — the same derivation the Simple panel reads, so "use Repair in
+    // Advanced" cannot land on a panel that has stopped believing Repair is the remedy. Repair is
+    // the primary affordance only while it can still succeed: once a file has failed three
+    // consecutive passes at transport, presenting Repair as THE action is the round-16 defect.
+    const repairRemedy = deriveRepairRemedy(this.installStatus);
+    const repairNeeded = repairRemedy.kind === 'repair' || repairRemedy.kind === 'repair-soft';
+    const manualFallback = repairRemedy.kind === 'manual' ? repairRemedy.packages : [];
+    const optionalGaps = this.installStatus?.optionalGaps ?? [];
     return html`
       <div class="section">
         <h3>${icon({ name: 'hard-drive', size: 12 })} AI install</h3>
+        ${repairNeeded
+          ? html`<div
+              data-testid="install-repair-needed"
+              style="font-size: var(--font-size-xs); color: var(--text-secondary); margin-bottom: 0.5rem"
+            >
+              ${repairRemedy.kind === 'repair-soft'
+                ? 'Working, but an expected file is missing — Repair will restore it.'
+                : 'A required component is missing — use Repair.'}
+            </div>`
+          : nothing}
+        ${manualFallback.length > 0
+          ? html`<div
+              data-testid="install-manual-fallback"
+              style="font-size: var(--font-size-xs); color: var(--text-secondary); margin-bottom: 0.5rem"
+            >
+              Automatic repair could not download these files. Download each one and save it to the
+              path shown, then restart AI.
+              ${manualFallback.map(
+                (p) => html`<div>
+                  <strong>${p.label}</strong> — ${p.attempts} attempts${p.error
+                    ? html` · ${p.error}`
+                    : nothing}
+                  <div><code>${p.url}</code></div>
+                  <div>→ <code>${p.targetPath}</code></div>
+                </div>`,
+              )}
+            </div>`
+          : nothing}
+        ${optionalGaps.length > 0
+          ? html`<div
+              data-testid="install-optional-gaps"
+              style="font-size: var(--font-size-xs); color: var(--text-secondary); margin-bottom: 0.5rem"
+            >
+              Optional files not installed (no capability depends on them):
+              <code
+                >${optionalGaps
+                  .map((g) => `${g.packageId ?? ''}/${g.fileName ?? ''}`)
+                  .join(', ')}</code
+              >
+            </div>`
+          : nothing}
         <div style="font-size: var(--font-size-xs); color: var(--text-secondary); margin-bottom: 0.5rem">
           State: <code>${this.installStatus?.state ?? 'idle'}</code>${this.installStatus?.phase
             ? html` · phase: <code>${this.installStatus.phase}</code>`
@@ -1800,10 +2461,19 @@ export class BrainSurface extends JfElement {
           ${this.installStatus?.installedFully !== undefined
             ? html` · installedFully: <code>${String(this.installStatus.installedFully)}</code>`
             : nothing}
+          ${/* Tempdoc 804 §B8 — a newer version's added artifacts are their own state ("extra AI
+                components are available"), not a retroactive un-install of a complete one. */ ''}
+          ${this.installStatus?.pendingRegistryAdditions?.length
+            ? html`<div data-testid="install-pending-registry-additions">
+                New AI components are available since this install:
+                <code>${this.installStatus.pendingRegistryAdditions.join(', ')}</code> — run Install
+                to add them.
+              </div>`
+            : nothing}
         </div>
         <div class="row">
           <jf-button
-            variant="primary"
+            variant=${repairNeeded || manualFallback.length > 0 ? 'secondary' : 'primary'}
             label="Install"
             .availability=${installing
               ? unavailableBecause('Already installing.')
@@ -1824,6 +2494,7 @@ export class BrainSurface extends JfElement {
             Cancel
           </jf-button>
           <jf-button
+            variant=${repairNeeded ? 'primary' : 'secondary'}
             label="Repair"
             .availability=${installing
               ? unavailableBecause('Already installing.')
@@ -1849,14 +2520,33 @@ export class BrainSurface extends JfElement {
     const actState = this.runtimeStatus?.activation?.state ?? 'idle';
     const activating = actState === 'running' || !!this.busy['variant'];
     const provisional = isGpuReadingProvisional(this._unifiedAiState?.aiEngine.stability);
+    // Tempdoc 807 A.3 — the whole Runtime card is a readout of the retained snapshot (CUDA, VRAM,
+    // tier, which variant is active), and every control in it POSTs to a backend that must be alive.
+    // Not live ⟹ the readout is labelled as history and the controls become unavailable-with-a-reason
+    // (the 596 soft block: focusable, reason reachable) rather than silently clickable-and-failing.
+    const live = !this._unifiedAiState || this._unifiedAiState.snapshotLive;
+    // The reason is IMPORTED from the one cause vocabulary (`binding.unreachable` — the same row the
+    // verdict and the disconnection banner word themselves from), never re-authored here.
+    // NOT transient (round-13 review): `transient` makes `jf-control` QUEUE the intent and auto-fire
+    // it on reconnect, so an offline click on Online/Indexing/Reload/Activate/Deactivate would land a
+    // burst of conflicting RUNTIME MUTATIONS the moment the backend returns. These controls must be
+    // refused with their reason now, not deferred — the user can re-click once the card is live again.
+    const offlineGate = unavailableBecause(reasonFor('binding.unreachable').wording);
 
     return html`
       <div class="section">
         <h3>${icon({ name: 'hard-drive', size: 12 })} Runtime</h3>
 
+        ${live
+          ? nothing
+          : html`<div style="font-size: var(--font-size-xs); color: var(--text-muted); margin-bottom: 0.5rem">
+              ${reasonFor('binding.unreachable').wording} — the values below are the last observed
+              readings, not live.
+            </div>`}
+
         ${this.inference?.gpu
           ? html`
-              <div class="grid" style="margin-bottom: 0.75rem; ${provisional ? 'opacity: 0.6' : ''}">
+              <div class="grid" style="margin-bottom: 0.75rem; ${provisional || !live ? 'opacity: 0.6' : ''}">
                 <span class="key">CUDA</span
                 ><span class="val">${this.inference.gpu.cudaAvailable ? 'available' : 'no'}</span>
                 ${(() => {
@@ -1898,7 +2588,11 @@ export class BrainSurface extends JfElement {
                     ${v.id === activeId
                       ? html`<jf-button
                           label="Deactivate"
-                          ?disabled=${activating}
+                          .availability=${!live
+                            ? offlineGate
+                            : activating
+                              ? { kind: 'blocked' }
+                              : AVAILABLE}
                           .onActivate=${() => void this.deactivateVariant()}
                         >
                           Deactivate
@@ -1906,7 +2600,11 @@ export class BrainSurface extends JfElement {
                       : html`<jf-button
                           variant="primary"
                           label="Activate"
-                          ?disabled=${activating || v.available === false}
+                          .availability=${!live
+                            ? offlineGate
+                            : activating || v.available === false
+                              ? { kind: 'blocked' }
+                              : AVAILABLE}
                           .onActivate=${() => void this.activateVariant(v.id)}
                         >
                           Activate
@@ -1933,11 +2631,13 @@ export class BrainSurface extends JfElement {
             <jf-button
               variant=${this.inference?.mode === 'online' ? 'primary' : 'secondary'}
               label="Online"
-              .availability=${this.policy?.onlineAiEnabled === false
-                ? unavailableBecause('Online AI is disabled by administrator policy.')
-                : this.busy['inference-switch']
-                  ? { kind: 'blocked' }
-                  : AVAILABLE}
+              .availability=${!live
+                ? offlineGate
+                : this.policy?.onlineAiEnabled === false
+                  ? unavailableBecause('Online AI is disabled by administrator policy.')
+                  : this.busy['inference-switch']
+                    ? { kind: 'blocked' }
+                    : AVAILABLE}
               .onActivate=${() => void this.setChatEnabled(true)}
             >
               Online
@@ -1945,14 +2645,22 @@ export class BrainSurface extends JfElement {
             <jf-button
               variant=${this.inference?.mode === 'indexing' ? 'primary' : 'secondary'}
               label="Indexing"
-              ?disabled=${!!this.busy['inference-switch']}
+              .availability=${!live
+                ? offlineGate
+                : this.busy['inference-switch']
+                  ? { kind: 'blocked' }
+                  : AVAILABLE}
               .onActivate=${() => void this.setChatEnabled(false)}
             >
               Indexing
             </jf-button>
             <jf-button
               label="Reload"
-              ?disabled=${!!this.busy['inference-switch']}
+              .availability=${!live
+                ? offlineGate
+                : this.busy['inference-switch']
+                  ? { kind: 'blocked' }
+                  : AVAILABLE}
               .onActivate=${() =>
                 this.withBusy('inference-switch', () => this.invokeOp('core.reload-inference'))}
             >
@@ -1964,6 +2672,7 @@ export class BrainSurface extends JfElement {
                   ${this.inference.vduQueueSize !== undefined
                     ? html` · VDU queue: ${NUM.format(this.inference.vduQueueSize)}`
                     : nothing}
+                  ${live ? nothing : html` (last observed)`}
                 </span>`
               : nothing}
           </div>
@@ -2111,7 +2820,7 @@ export class BrainSurface extends JfElement {
                 Simple view
               </button>
               ${this.renderCompatibilityCallouts()}
-              ${this.renderEmbeddingProgress()}
+              ${this.renderEnrichmentProgress()}
               ${this.renderAccordion(
                 'install',
                 'Install AI',
@@ -2128,8 +2837,14 @@ export class BrainSurface extends JfElement {
               )}
               ${this.renderModels()}
               ${this.renderPackImport()}
+              <!-- Developer telemetry: Advanced-only. Both panels expose runtime internals (mode
+                   transitions, span/trace IDs) that have no meaning on the first-run Simple panel,
+                   where they previously rendered. -->
+              ${this.renderTransitionTimeline()}
+              ${this.renderTraceExplorer()}
             `
           : nothing}
+        ${this.renderInstallConsent()}
       </div>
     `;
   }

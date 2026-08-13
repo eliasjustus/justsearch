@@ -137,6 +137,7 @@ public final class SubstrateGraphAssembler {
             operationOut.consentCapsuleService(),
             operationOut.authorizationOutcomeStore(),
             operationOut.actionLedgerChangeRegistry(),
+            operationOut.scanRollupLedger(),
             operationOut.globalHardStop(),
             operationOut.intentGateEvaluator(),
             operationOut.durableGrantStore(),

@@ -309,6 +309,17 @@ public enum ApiErrorCode {
     /** Q&A generation failed. */
     QA_FAILED(ErrorClass.PERMANENT),
 
+    /**
+     * Tempdoc 806 B.2 — retrieval exceeded its budget, so nothing was searched. TRANSIENT because a
+     * retry is exactly the right response (round 12's cold reranker answered in ~9.5s on the retry);
+     * distinct from {@code NO_CONTENT}, which is a claim ABOUT the corpus and must never be reported
+     * for a retrieval that did not complete.
+     */
+    RETRIEVAL_TIMEOUT(ErrorClass.TRANSIENT),
+
+    /** Tempdoc 806 B.2 — retrieval could not run at all; likewise not a claim about the corpus. */
+    RETRIEVAL_FAILED(ErrorClass.TRANSIENT),
+
     /** Operation was interrupted (e.g. by user cancellation). Not retryable — user chose to stop. */
     INTERRUPTED(ErrorClass.PERMANENT),
 
@@ -404,6 +415,17 @@ public enum ApiErrorCode {
 
     /** UI authentication token is required. */
     UI_TOKEN_REQUIRED(ErrorClass.POLICY),
+
+    // ── Encrypted-at-rest stores ───────────────────────────────────────────
+
+    /**
+     * Tempdoc 806 W1 — an AUTHORED store is encrypted at rest and its data key is LOCKED, so the
+     * request cannot be served: reads would answer empty (indistinguishable from "nothing there") and
+     * writes cannot be sealed. Carried on HTTP 423 Locked alongside {@code "locked": true}, matching
+     * the tempdoc-629 global {@code KeyLockedException} mapping the shell already consumes. The remedy
+     * is the user's, not a retry: unlock on the Security surface.
+     */
+    STORE_LOCKED(ErrorClass.POLICY),
 
     // ── Intent layer (slice 487 §4.4 trust lattice) ────────────────────────
 

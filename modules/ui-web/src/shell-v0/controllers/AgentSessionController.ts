@@ -13,6 +13,7 @@
  */
 
 import { consumeShapeStream } from '../../api/streams.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import { LivenessWatchdog } from '../streaming/LivenessWatchdog.js';
 import { STREAM_WATCHDOG_STALE_MS } from '../../api/generated/stream-liveness-constants.js';
 import { friendlyStreamError } from '../utils/streamError.js';
@@ -364,7 +365,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
 
   private async pushAutonomy(level: string): Promise<void> {
     try {
-      await fetch(`${this.apiBase}/api/chat/agent/autonomy`, {
+      await authorizedFetch(`${this.apiBase}/api/chat/agent/autonomy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: this.sessionId, level }),
@@ -383,7 +384,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
   async raiseBudget(addTokens: number): Promise<boolean> {
     if (!this.sessionId || !Number.isFinite(addTokens) || addTokens <= 0) return false;
     try {
-      const res = await fetch(`${this.apiBase}/api/chat/agent/budget`, {
+      const res = await authorizedFetch(`${this.apiBase}/api/chat/agent/budget`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: this.sessionId, addTokens }),
@@ -405,7 +406,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     const trimmed = text.trim();
     if (!trimmed || !this.sessionId) return false;
     try {
-      const res = await fetch(`${this.apiBase}/api/chat/agent/steer`, {
+      const res = await authorizedFetch(`${this.apiBase}/api/chat/agent/steer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: this.sessionId, text: trimmed }),
@@ -584,7 +585,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     sessionId: string,
   ): Promise<Array<{ eventType: string; payload: unknown }>> {
     try {
-      const res = await fetch(
+      const res = await authorizedFetch(
         `${this.apiBase}/api/chat/sessions/${encodeURIComponent(sessionId)}/events`,
       );
       if (!res.ok) return [];
@@ -924,7 +925,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
   async resolveBudgetGate(decision: 'finalize' | 'stop'): Promise<boolean> {
     if (!this.sessionId) return false;
     try {
-      const res = await fetch(`${this.apiBase}/api/chat/agent/budget-decision`, {
+      const res = await authorizedFetch(`${this.apiBase}/api/chat/agent/budget-decision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: this.sessionId, decision }),
@@ -962,7 +963,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
   async resolveContextGate(decision: 'continue' | 'summarize' | 'stop'): Promise<boolean> {
     if (!this.sessionId) return false;
     try {
-      const res = await fetch(`${this.apiBase}/api/chat/agent/context-decision`, {
+      const res = await authorizedFetch(`${this.apiBase}/api/chat/agent/context-decision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: this.sessionId, decision }),
@@ -1505,7 +1506,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     // verdict to the matching backend gate (agent gate by sessionId+callId, else the workflow gate by
     // callId). The FE no longer branches the URL by run shape ("a run is a run" all the way down).
     try {
-      const res = await fetch(`${this.apiBase}/api/chat/approve`, {
+      const res = await authorizedFetch(`${this.apiBase}/api/chat/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId, callId }),
@@ -1530,7 +1531,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     const sessionId = runId ?? this.sessionId;
     if (!sessionId) return;
     try {
-      const res = await fetch(`${this.apiBase}/api/chat/reject`, {
+      const res = await authorizedFetch(`${this.apiBase}/api/chat/reject`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId, callId, reason }),
@@ -1574,7 +1575,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     this.abortController?.abort();
     if (this.sessionId) {
       try {
-        await fetch(
+        await authorizedFetch(
           `${this.apiBase}/api/chat/sessions/${encodeURIComponent(this.sessionId)}`,
           { method: 'DELETE' },
         );
@@ -1755,7 +1756,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
 
   async checkAvailability(): Promise<void> {
     try {
-      const res = await fetch(`${this.apiBase}/api/chat/agent/tools`);
+      const res = await authorizedFetch(`${this.apiBase}/api/chat/agent/tools`);
       if (!res.ok) {
         this.available = false;
         this.tools = [];
@@ -1780,7 +1781,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
       // with mount paths that don't inject host_.
       const res = this.host_
         ? await this.host_.data.fetch(`/api/chat/sessions?limit=${SESSIONS_LIMIT}`)
-        : await fetch(`${this.apiBase}/api/chat/sessions?limit=${SESSIONS_LIMIT}`);
+        : await authorizedFetch(`${this.apiBase}/api/chat/sessions?limit=${SESSIONS_LIMIT}`);
       if (!res.ok) return;
       const data = (await res.json()) as { sessions?: SessionListItem[] };
       this.sessions = data.sessions ?? [];
@@ -1823,7 +1824,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
       return;
     }
     try {
-      const res = await fetch(
+      const res = await authorizedFetch(
         `${this.apiBase}/api/action-ledger?originator=agent&correlationId=${encodeURIComponent(
           this.sessionId,
         )}`,
@@ -1851,7 +1852,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
    */
   async loadPresence(): Promise<void> {
     try {
-      const res = await fetch(`${this.apiBase}/api/presence`);
+      const res = await authorizedFetch(`${this.apiBase}/api/presence`);
       if (!res.ok) return;
       const data = (await res.json()) as { runs?: PresenceRun[] };
       this.presence = Array.isArray(data.runs) ? data.runs : [];
@@ -1919,7 +1920,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     const trimmed = prompt.trim();
     if (!trimmed) return;
     try {
-      await fetch(`${this.apiBase}/api/presence/run`, {
+      await authorizedFetch(`${this.apiBase}/api/presence/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

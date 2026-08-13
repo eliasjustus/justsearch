@@ -5,6 +5,7 @@ import io.justsearch.app.api.AiPackImportStatus;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.justsearch.app.api.OnlineAiService;
+import io.justsearch.app.services.lease.RecordingOperationLeaseService;
 import io.justsearch.app.services.policy.EnterprisePolicyServiceImpl;
 import io.justsearch.app.services.settings.UiSettingsStore;
 import java.io.BufferedOutputStream;
@@ -15,6 +16,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.zip.ZipEntry;
@@ -33,6 +35,31 @@ class AiPackImportServiceTest {
   void cleanup() {
     if (prevHome == null) System.clearProperty("justsearch.home");
     else System.setProperty("justsearch.home", prevHome);
+  }
+
+  @Test
+  void stalePersistedImportStatusResetsToIdleOnStartup() throws Exception {
+    setHome(tmp);
+    Files.writeString(
+        tmp.resolve("pack-import-state.json"),
+        """
+        {"state":"running","phase":"install","message":"stale","errorCode":"",
+         "bytesTotal":100,"bytesDone":40,"startedAtEpochMs":1,"updatedAtEpochMs":2}
+        """);
+
+    AiPackImportService service =
+        new AiPackImportService(
+            OnlineAiService.unavailable(),
+            new UiSettingsStore(UiSettingsStore.PersistenceMode.READ_WRITE),
+            null,
+            new EnterprisePolicyServiceImpl(),
+            new PackAllowlistService(Set.of()));
+
+    AiPackImportStatus status = service.getStatus();
+    assertEquals("idle", status.state);
+    assertEquals("", status.phase);
+    assertEquals(0, status.bytesDone);
+    assertTrue(Files.readString(tmp.resolve("pack-import-state.json")).contains("\"state\" : \"idle\""));
   }
 
   @Test
@@ -74,6 +101,11 @@ class AiPackImportServiceTest {
     entries.put("payload/models/embed.gguf", embedBytes);
     writeZip(zip, entries);
 
+    byte[] userOwnedBytes = "user-owned-model".getBytes(StandardCharsets.UTF_8);
+    Path userOwnedModel = tmp.resolve("models").resolve("user-owned.gguf");
+    Files.createDirectories(userOwnedModel.getParent());
+    Files.write(userOwnedModel, userOwnedBytes);
+
     AiPackImportService svc =
         new AiPackImportService(
             OnlineAiService.unavailable(),
@@ -88,6 +120,7 @@ class AiPackImportServiceTest {
 
     assertTrue(Files.isRegularFile(tmp.resolve("models").resolve("chat.gguf")));
     assertTrue(Files.isRegularFile(tmp.resolve("models").resolve("embed.gguf")));
+    assertArrayEquals(userOwnedBytes, Files.readAllBytes(userOwnedModel));
     assertTrue(Files.isRegularFile(tmp.resolve("installed-packs.v1.json")));
 
     var record = svc.getInstalledPacks();
@@ -598,6 +631,60 @@ class AiPackImportServiceTest {
     }
     fail("Timed out waiting for pack import to finish");
     return svc.getStatus();
+  }
+
+  /**
+   * Tempdoc 617: a pack import writes multi-GB assets on a background thread that outlives its HTTP
+   * request, so the request-scoped mutation lease is already released while the write is running.
+   * The import must hold an op-lease of its own for the thread's whole lifetime, or upgrade prepare
+   * reports no blocker and the installer can launch mid-write.
+   *
+   * <p>Two properties are pinned separately because they fail in different ways:
+   *
+   * <ul>
+   *   <li><b>registered synchronously</b> — the lease exists before {@code startImport} returns. If
+   *       it were registered inside the thread instead, a prepare landing in that window would see
+   *       no blocker.
+   *   <li><b>released on the import thread</b> — proves the lease spans the background work rather
+   *       than being released by the caller as soon as the thread was spawned.
+   * </ul>
+   */
+  @Test
+  void packImportHoldsAnOperationLeaseForTheImportThreadLifetime() throws Exception {
+    setHome(tmp);
+
+    RecordingOperationLeaseService leases = new RecordingOperationLeaseService();
+
+    AiPackImportService service =
+        new AiPackImportService(
+            OnlineAiService.unavailable(),
+            new UiSettingsStore(UiSettingsStore.PersistenceMode.READ_WRITE),
+            null,
+            new EnterprisePolicyServiceImpl(),
+            new PackAllowlistService(Set.of()));
+    service.setOperationLeaseService(leases);
+
+    // Any pack path is fine: the lease contract must hold whether the import succeeds or fails.
+    Path pack = tmp.resolve("nonexistent-pack.zip");
+    service.startImport(pack, false);
+
+    assertEquals(
+        Thread.currentThread().getName(),
+        leases.registerThread(),
+        "lease must be registered on the calling thread, before the import thread starts");
+
+    awaitDone(service);
+    service.awaitThreadCompletion(5_000);
+
+    assertEquals(2, leases.events().size(), "lease must be released exactly once: " + leases.events());
+    assertTrue(
+        leases.events().get(1).startsWith("release:"),
+        "second event must be the release: " + leases.events());
+    assertNotEquals(
+        Thread.currentThread().getName(),
+        leases.releaseThread(),
+        "lease must be released by the import thread, not the caller — releasing on the caller "
+            + "would end the lease while the background write is still in flight");
   }
 
 }

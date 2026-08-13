@@ -8,6 +8,7 @@ import io.justsearch.agent.tools.IngestTool;
 import io.justsearch.agent.tools.SearchTool;
 import io.justsearch.app.api.IndexingService;
 import io.justsearch.app.api.OnlineAiService;
+import io.justsearch.app.api.knowledge.IngestCollectionPolicy;
 import io.justsearch.app.services.gpl.LambdaMartReranker;
 import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
@@ -74,9 +75,27 @@ public final class AgentToolFactory {
     IngestTool ingestTool =
         new IngestTool(
             agentSearchAdapter::ingest,
-            (rootPath, excludeGlobs) -> agentSearchAdapter.scanRoot(rootPath, null, excludeGlobs),
-            rootsSupplier);
+            agentSearchAdapter::scanRoot,
+            rootsSupplier,
+            () -> rootBindings(indexingService));
     return new Output(
         agentSearchAdapter, fileOperationLog, fileOperationsTool, searchTool, browseTool, ingestTool);
+  }
+
+  /**
+   * Tempdoc 811 (C-2a) — projects the watched-root registry into the ingest-tagging authority so an
+   * agent/MCP ingest of an in-root path inherits that root's collection instead of writing an
+   * unlabeled document. Best-effort: a Worker-unavailable lookup yields an empty list, which makes
+   * every path resolve out-of-root (`mcp-ingest`).
+   */
+  static List<IngestCollectionPolicy.RootBinding> rootBindings(IndexingService indexingService) {
+    try {
+      return indexingService.getWatchedRoots().stream()
+          .filter(r -> r != null && r.path() != null)
+          .map(r -> new IngestCollectionPolicy.RootBinding(r.path(), r.collection()))
+          .toList();
+    } catch (RuntimeException e) {
+      return List.of();
+    }
   }
 }

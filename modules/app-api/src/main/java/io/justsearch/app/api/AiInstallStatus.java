@@ -37,6 +37,18 @@ public final class AiInstallStatus {
   public long downloadedBytes;
 
   /**
+   * Bytes an interrupted earlier run left staged in {@code .partial} files that a resume will keep.
+   *
+   * <p>Deliberately NOT derived from this object's own {@code state}: {@code state == "cancelled"}
+   * is session-ephemeral (see the class note above) and reads {@code "idle"} again after a restart,
+   * so a UI keyed on it would tell a returning user their multi-GB progress is gone. This field is
+   * recomputed from DISK by {@code InstallPlanner} (which probes the {@code .partial} staging paths)
+   * whenever the plan is re-derived — at boot, on cancellation, and on every plan preview — so it
+   * survives a restart the way the bytes themselves do.
+   */
+  public long resumableBytes;
+
+  /**
    * True only when state == "completed" AND no packages were skipped/failed
    * AND all required runtime config keys were written. Distinguishes
    * "installed cleanly" from "installed with limitations" without breaking
@@ -46,6 +58,58 @@ public final class AiInstallStatus {
    * limitations apply (e.g. "Installed with limitations: chat (no CUDA).").
    */
   public boolean installedFully;
+
+  /**
+   * Package ids the CURRENT registry declares but the install contract that recorded this
+   * installation never covered — i.e. artifacts a NEWER app version added after the user installed
+   * (tempdoc 804 §B8, round-10 F2: one new cuda-runtime package made a complete 16 GB installation
+   * read {@code installedFully: false, packages: []} until a full re-run).
+   *
+   * <p>Completeness is a claim about the contract that installed it, so a registry addition is a
+   * distinct state — "extra AI components are available" — not retroactive non-installation.
+   * Empty whenever the plan has nothing left to download (the ordinary complete install) and after
+   * any install run terminates.
+   */
+  public final List<String> pendingRegistryAdditions = new ArrayList<>();
+
+  /**
+   * True when ANY file the current registry requires for the selected profile is missing from disk
+   * — deliberately independent of whether the install contract claimed it (tempdoc 805 G.3 W-TRUTH,
+   * derisk U3 amendment).
+   *
+   * <p>Round 11's upgraded machine is why the two axes are separate: the ORT CUDA natives PR #276
+   * added were a registry addition (so {@code installedFully} stays truthfully true and {@code
+   * pendingRegistryAdditions} names the package), yet their absence had a real consequence — every
+   * ONNX encoder silently ran on CPU. Completeness is a claim about history; this is a claim about
+   * consequence, and the UI routes it to the existing Repair flow (which collects terms acceptance —
+   * no auto-download).
+   */
+  public boolean repairNeeded;
+
+  /**
+   * Registry files this profile declares that are absent from disk and that no consumer requires
+   * (tempdoc 824 §3.3b) — {@code splade/config.json} and the other metadata sidecars carrying
+   * {@code "required": false}.
+   *
+   * <p>Its own list precisely because it must NOT feed {@link #repairNeeded}: round 16 lost one
+   * 872-byte optional file and the product said "a required component is missing" while SPLADE was
+   * serving 1 660 inferences on CUDA. Surfaced so nothing is hidden; never alarming, and never a
+   * reason to offer Repair.
+   */
+  public final List<OptionalGap> optionalGaps = new ArrayList<>();
+
+  /** One optional registry file absent from disk. */
+  public static final class OptionalGap {
+    public String packageId = "";
+    public String fileName = "";
+
+    public OptionalGap() {}
+
+    public OptionalGap(String packageId, String fileName) {
+      this.packageId = packageId == null ? "" : packageId;
+      this.fileName = fileName == null ? "" : fileName;
+    }
+  }
 
   // Per-package progress
   public final List<PackageStatus> packages = new ArrayList<>();
@@ -65,5 +129,47 @@ public final class AiInstallStatus {
     public long bytesTotal;
     public String skipReason = "";
     public String error = "";
+
+    /**
+     * True when at least one of this package's files continued a download an earlier run had left
+     * on disk (an HTTP {@code Range} resume or a resumed BITS job) rather than starting from byte
+     * zero. Projects {@code ResumableFetch.Outcome.firstAction} so the UI can tell a returning user
+     * their cancelled progress was kept — the reassurance the resumable-cancel work earns but which
+     * is otherwise invisible.
+     */
+    public boolean resumed;
+
+    /**
+     * What the RUNTIME observes about this package's capability, projected from the same authority
+     * {@code GET /api/ai/runtime/status} publishes ({@code onnxFeatures[].status} ×
+     * {@code modelActive}, derived by {@code EncoderRuntimeExplainer}): {@code "active"} |
+     * {@code "inactive"} | {@code "unknown"} (tempdoc 824 §3.3c).
+     *
+     * <p>Bookkeeping ("a file is missing") and consequence ("the capability is down") are two
+     * different claims, and round 16 asserted the second using only the first. Defaults to
+     * {@code "unknown"} and degrades to it whenever nothing has observed the capability — never to
+     * a positive claim in either direction, so the alarming copy stays the fail-closed default.
+     */
+    public String functionalStatus = "unknown";
+
+    /**
+     * Why this package will not converge on its own (tempdoc 824 §3.4). {@code
+     * "TRANSPORT_UNAVAILABLE"} after {@link #attempts} spread over three consecutive repair passes
+     * all failed the same file at transport; empty while automatic repair is still worth offering.
+     *
+     * <p>An affordance that cannot succeed must not be presented as the remedy — that is round
+     * 16's user-facing defect, independent of the network. {@code repairNeeded} stays true (a
+     * required file IS missing); the REMEDY becomes the manual fallback below.
+     */
+    public String terminalReason = "";
+
+    /** Total transport attempts spent on this package's still-missing file, across repair passes. */
+    public int attempts;
+
+    /** Direct download URL of the file that will not transfer — the manual fallback's source. */
+    public String url = "";
+
+    /** Where that file has to land — the manual fallback's destination. */
+    public String targetPath = "";
   }
 }

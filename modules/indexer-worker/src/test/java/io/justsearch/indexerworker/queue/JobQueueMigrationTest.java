@@ -3,6 +3,7 @@ package io.justsearch.indexerworker.queue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -30,6 +31,42 @@ import org.junit.jupiter.api.io.TempDir;
 final class JobQueueMigrationTest {
 
   @TempDir Path tempDir;
+
+  @Test
+  void futureSchemaIsRefusedBeforeDdlAndDatabaseBytesRemainUnchanged() throws Exception {
+    Path dbPath = tempDir.resolve("future.db");
+    String jdbcUrl = "jdbc:sqlite:" + dbPath.toAbsolutePath();
+    try (Connection conn = DriverManager.getConnection(jdbcUrl);
+        Statement stmt = conn.createStatement()) {
+      stmt.execute("CREATE TABLE future_owned (value TEXT NOT NULL)");
+      stmt.execute("INSERT INTO future_owned(value) VALUES ('preserve-me')");
+      stmt.execute("PRAGMA user_version = " + (SqliteSchema.TARGET_VERSION + 1));
+    }
+    byte[] before = Files.readAllBytes(dbPath);
+
+    SqliteJobQueue queue = new SqliteJobQueue(dbPath);
+    Exception thrown = null;
+    try {
+      queue.open();
+    } catch (Exception error) {
+      thrown = error;
+    } finally {
+      queue.close();
+    }
+
+    assertNotNull(thrown, "a future database must be refused");
+    assertTrue(
+        thrown.getMessage().contains("Unsupported jobs database schema version")
+            || (thrown.getCause() != null
+                && thrown
+                    .getCause()
+                    .getMessage()
+                    .contains("Unsupported jobs database schema version")),
+        "future-version refusal must be observable: " + thrown);
+    assertTrue(
+        java.util.Arrays.equals(before, Files.readAllBytes(dbPath)),
+        "refusal must happen before DDL or other database mutation");
+  }
 
   /**
    * Test that opening SqliteJobQueue on a V1 database correctly upgrades it to V2.
@@ -567,6 +604,122 @@ final class JobQueueMigrationTest {
       }
     } finally {
       jobQueue.close();
+    }
+  }
+
+  /**
+   * V7 to V8 (tempdoc 813 Slice B): the nullable {@code size_bytes} column is added and existing
+   * rows keep their state, collection and a NULL size — a pre-V8 row's byte weight is genuinely
+   * unknown and must not be backfilled with a fabricated 0.
+   *
+   * <p>V8 to V9 (tempdoc 812 D2) is asserted in the SAME walk on purpose. The two slices were
+   * developed in parallel and both originally authored a "V7 to V8" step; the merge that renumbered
+   * 812's to V9 could just as easily have left one rung shadowing the other, and a database stuck at
+   * {@code user_version = 8} with a missing column is silent until a query fails in production.
+   * Asserting BOTH columns after one ladder walk is what makes that class of collision loud.
+   */
+  @Test
+  void migratesV7ThroughV9AddingBothSizeBytesAndScanIdAndPreservingRows() throws Exception {
+    Path dbPath = tempDir.resolve("v7.db");
+    String jdbcUrl = "jdbc:sqlite:" + dbPath.toAbsolutePath();
+
+    try (Connection conn = DriverManager.getConnection(jdbcUrl);
+         Statement stmt = conn.createStatement()) {
+      stmt.execute("""
+          CREATE TABLE jobs (
+            path TEXT PRIMARY KEY,
+            state TEXT NOT NULL DEFAULT 'PENDING',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_updated INTEGER NOT NULL,
+            error_message TEXT,
+            retry_after INTEGER,
+            collection TEXT DEFAULT NULL,
+            last_outcome_class TEXT,
+            last_reason_code TEXT,
+            last_retry_policy TEXT,
+            last_diagnostic_summary TEXT,
+            last_outcome_at INTEGER
+          )
+          """);
+      stmt.execute("CREATE INDEX idx_jobs_state ON jobs(state)");
+      stmt.execute("CREATE INDEX idx_jobs_state_updated ON jobs(state, last_updated)");
+      stmt.execute("""
+          CREATE TABLE switch_buffer (
+            key TEXT PRIMARY KEY,
+            op TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            last_updated INTEGER NOT NULL
+          )
+          """);
+      stmt.execute("CREATE INDEX idx_switch_buffer_updated ON switch_buffer(last_updated)");
+      stmt.execute("""
+          CREATE TABLE ingestion_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path_hash TEXT NOT NULL,
+            collection TEXT,
+            outcome_class TEXT NOT NULL,
+            reason_code TEXT NOT NULL,
+            retry_policy TEXT NOT NULL,
+            diagnostic_summary TEXT,
+            observed_at INTEGER NOT NULL,
+            source_size_bytes INTEGER,
+            source_modified_at INTEGER,
+            source_kind TEXT,
+            artifact_status TEXT,
+            policy_id TEXT,
+            parser_id TEXT
+          )
+          """);
+      stmt.execute("""
+          CREATE TABLE path_resolution (
+            path_hash TEXT PRIMARY KEY,
+            normalized_path TEXT NOT NULL,
+            last_seen_at INTEGER NOT NULL,
+            removed_at INTEGER
+          )
+          """);
+      stmt.execute("PRAGMA user_version = 7");
+      stmt.execute("""
+          INSERT INTO jobs (path, state, attempts, last_updated, collection)
+          VALUES ('/v7/file.txt', 'PENDING', 0, 1234567890, 'docs')
+          """);
+    }
+
+    SqliteJobQueue jobQueue = new SqliteJobQueue(dbPath);
+    jobQueue.open();
+
+    try (Connection conn = DriverManager.getConnection(jdbcUrl);
+         Statement stmt = conn.createStatement()) {
+      try (ResultSet rs = stmt.executeQuery("PRAGMA user_version")) {
+        assertTrue(rs.next());
+        assertEquals(SqliteSchema.TARGET_VERSION, rs.getInt(1));
+      }
+      assertTrue(hasColumn(stmt, "size_bytes"), "V8 should add the size_bytes column");
+      assertTrue(hasColumn(stmt, "scan_id"), "V9 should add the scan_id column");
+      try (ResultSet rs =
+          stmt.executeQuery(
+              "SELECT state, collection, size_bytes, scan_id FROM jobs"
+                  + " WHERE path = '/v7/file.txt'")) {
+        assertTrue(rs.next());
+        assertEquals("PENDING", rs.getString("state"));
+        assertEquals("docs", rs.getString("collection"));
+        rs.getLong("size_bytes");
+        assertTrue(rs.wasNull(), "A pre-V8 row's size is unknown (NULL), not 0");
+        assertNull(rs.getString("scan_id"), "A pre-V9 row belongs to no known scan");
+      }
+    } finally {
+      jobQueue.close();
+    }
+
+    // A migrated unknown-size row is counted, not summed as zero bytes.
+    SqliteJobQueue reopened = new SqliteJobQueue(dbPath);
+    reopened.open();
+    try {
+      JobQueue.PendingBytes bytes = reopened.pendingBytes();
+      assertEquals(0L, bytes.knownBytes());
+      assertEquals(1L, bytes.unknownSizeJobs());
+    } finally {
+      reopened.close();
     }
   }
 

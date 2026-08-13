@@ -20,8 +20,15 @@ import org.junit.jupiter.api.Test;
 final class IndexingJobsBridgeWiringTest {
 
   private static IndexingJobView job(String pathHash, String state, int attempts, String err) {
-    // IndexingJobView(pathHash, state, attempts, lastUpdatedMs, errorMessage, retryAfterMs, collection)
-    return new IndexingJobView(pathHash, state, attempts, 1_700_000_000_000L, err, 0L, "default");
+    return job(pathHash, state, attempts, err, "");
+  }
+
+  private static IndexingJobView job(
+      String pathHash, String state, int attempts, String err, String scanId) {
+    // IndexingJobView(pathHash, state, attempts, lastUpdatedMs, errorMessage, retryAfterMs,
+    // collection, scanId)
+    return new IndexingJobView(
+        pathHash, state, attempts, 1_700_000_000_000L, err, 0L, "default", scanId);
   }
 
   @Test
@@ -54,6 +61,18 @@ final class IndexingJobsBridgeWiringTest {
     assertTrue(IndexingJobsBridgeWiring.terminalIndexEvent(job("h3", "PENDING", 0, "")).isEmpty());
     assertTrue(
         IndexingJobsBridgeWiring.terminalIndexEvent(job("h4", "PROCESSING", 0, "")).isEmpty());
+  }
+
+  @Test
+  @DisplayName("tempdoc 812 D2 — the scan key rides the terminal event; absent stays empty")
+  void carriesScanId() {
+    ActionEvent.Index tagged =
+        (ActionEvent.Index)
+            IndexingJobsBridgeWiring.terminalIndexEvent(job("h7", "DONE", 0, "", "scan-42")).get();
+    assertEquals("scan-42", tagged.scanId());
+    ActionEvent.Index keyless =
+        (ActionEvent.Index) IndexingJobsBridgeWiring.terminalIndexEvent(job("h8", "DONE", 0, "")).get();
+    assertEquals("", keyless.scanId());
   }
 
   @Test

@@ -37,6 +37,9 @@ For the decision rationale (NSIS over MSI/WiX, per-user install, download-on-dem
   - Spawns the Java backend sidecar and captures its port.
   - Provides a Tauri command for the UI to read the backend port (`api_port`).
   - Enforces deterministic single-instance behavior (via `tauri-plugin-single-instance`).
+  - Checks the authenticated application-release feed, coordinates an orderly
+    Head/Worker shutdown, and launches a verified NSIS update only after
+    explicit user consent.
 
 Entry point: `modules/shell/src-tauri/src/lib.rs`
 
@@ -163,6 +166,43 @@ See:
 - UI resolver: `modules/ui-web/src/api/http.ts`
 - Tauri command: `modules/shell/src-tauri/src/lib.rs` (`#[tauri::command] api_port`)
 
+### 4.4 Application update sequence
+
+The application updater is a coordinated replacement of the installed app,
+not a component updater. AI Home models remain outside the NSIS artifact and
+are reused in place.
+
+1. The shell fetches `release.v1.json` and its detached Ed25519 signature from
+   the compile-time-pinned HTTPS release endpoint.
+2. The shell verifies release identity, monotonic sequence, durable-store
+   compatibility, and closed-set agreement with Tauri's `latest.json`.
+3. Tauri verifies the installer signature while downloading. The shell then
+   independently checks byte count, SHA-256, and executable shape.
+4. Head closes mutating admission and reports active operation-lease blockers.
+   Worker stops ingest admission, drains accepted work, and checkpoints its
+   SQLite queue.
+5. Head performs ordered shutdown and atomically writes a nonce-bound
+   `upgrade/head-shutdown-receipt.v1.json`. The shell accepts `HEAD_STOPPED`
+   only after the original child exits and the receipt proves a clean,
+   graceful shutdown.
+6. The shell rehashes the staged installer, launches it with
+   `ShellExecuteExW`, and persists the returned process witness before exiting.
+7. The next shell start reconciles the durable intent. A witnessed launch on
+   the target version becomes `COMMITTED`; pre-launch source state becomes
+   `CANCELLED`; missing or contradictory proof becomes `REPAIR_REQUIRED`.
+
+The frontend never authenticates releases. `appUpdateState.ts` projects
+shell-owned status into Settings and the global update banner. The background
+path checks only; install requires the user to activate the Settings action.
+
+Primary implementation:
+
+- `modules/shell/src-tauri/src/updater.rs`
+- `modules/ui/src/main/java/io/justsearch/ui/api/UpgradeController.java`
+- `modules/ui/src/main/java/io/justsearch/ui/HeadShutdownCoordinator.java`
+- `modules/worker-services/src/main/java/io/justsearch/indexerworker/services/WorkerUpgradeQuiescence.java`
+- `governance/store-recoverability.v1.json`
+
 ## 5. Local API network posture (loopback-only + CORS)
 
 ### 5.1 Loopback-only bind
@@ -200,7 +240,9 @@ while still supporting a one-click AI setup once the user opts in.
 
 Current scope: **24 assets, 9.08 GB total**, including ONNX `.onnx` files (embedding, reranker, citation, NER, SPLADE) and a GGUF LLM.
 
-**Known bug:** The download pipeline aborts remaining assets after the first failure, leaving items in `pending` state. For example, if an FP16 reranker download fails (404), subsequent assets like `citation-config.json` are never attempted, and the overall state reports `failed` despite 23/24 assets succeeding. See INS-005.
+**Per-asset failure isolation (INS-005 is fixed).** A failed asset fails only its own package: the download loop calls `failPackage(...)` and `continue`s to the next asset (`modules/app-services/src/main/java/io/justsearch/app/services/ai/install/AiInstallService.java`). Sandbox round 16 confirms it on real data — after `splade/model_fp16.onnx` failed, the same run went on to fetch that package's `tokenizer.json`, `vocab.txt`, `idf.json` and `config.json`. A package that has failed stays failed for the run (`updatePackageState` refuses to leave `failed`), so `installedFully` cannot lie, and the overall state completes with a counting message ("AI installed (6/7 packages; 1 failed)").
+
+**Transport reliability.** Each asset gets up to 4 transport attempts, spaced ~3 s / 9 s / 27 s with jitter and escalating transport (BITS→curl, then curl, then curl on HTTP/1.1). Only transport-transient failures are retried — an HTTP 4xx (curl exit 22) or a SHA/size mismatch fails immediately. Round 16 measured why the spacing matters: connection resets arrived in bursts, and the old BITS→curl fallback fired within ~0.8 s of the failure it was answering, so it failed 82 % of the time. See tempdoc 823/824 (round-16 F1).
 
 ### 6.2 Worker receives embedding model path
 
@@ -236,6 +278,30 @@ Current behavior:
 - Generates a `.wsb` file with **16 GB RAM** allocation that maps `tmp/sandbox/share/` to `Desktop\JustSearchTest` inside the sandbox and (optionally) maps the host `models/` directory to `Desktop\JustSearchModels`.
 - LogonCommand opens an Explorer window at the mapped folder. Nothing else runs automatically — Git, Claude Code, and JustSearch are installed manually by the user inside the sandbox (see `scripts/sandbox/sandbox-CLAUDE.md` for the exact commands).
 - Drop any host-pre-staged installers (e.g. Git for Windows) into `tmp/sandbox/share/tools/` before launch; they appear inside the sandbox at `Desktop\JustSearchTest\tools\`.
+- `--upgrade-from <installer>` stages the exact previous published installer
+  for an installer-over-release arrival test.
+- `--in-app-updater-assets <dir> --metadata-public-key <pem>` adds an
+  authenticated loopback release set and recovery-evidence helpers. This mode
+  also requires an updater-capable `--upgrade-from` source build compiled with
+  `JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE=1`; production binaries reject runtime
+  trust overrides and non-HTTPS endpoints by design.
+
+  Build that candidate with the `Build Installer` workflow's `sandboxTestMode`
+  input (`candidateVersion` produces the source/target pair an N→N+1 round
+  needs). The workflow refuses that input on a `v*` tag: a published binary
+  honouring runtime trust overrides would hand the update channel to anything
+  able to set an environment variable.
+
+  Inside the sandbox, `start-in-app-update-test.ps1 -Autorun` drives check and
+  install with no operator input, so the apply machinery — prepare, freeze,
+  witnessed shutdown, installer launch, restart reconciliation — is qualified
+  unattended. The verdict appears as `autorunVerdict` in
+  `collect-updater-evidence.ps1` output, written by the **second** boot, because
+  a successful apply exits the process that started it.
+
+  `-Autorun` does not replace the operator round. That the user is asked before
+  anything is applied, and that the apply machinery is correct, fail
+  independently; run both.
 
 In addition, `scripts/ci/package-installer-win.ps1` keeps the Sandbox share “fresh” by staging the newest installer under a
 stable alias plus a unique alias:
@@ -261,5 +327,4 @@ The Sandbox is used as a clean, ephemeral environment to validate:
 
 - **Worker config snapshot invalidation:** If `runtime/worker-config-snapshot.json` persists from a previous run with different model paths, the Worker uses stale config on first boot. This can cause GPU session failures and quality regressions. Fix: clean the data directory before a fresh install, or invalidate the snapshot on version change. (374 G26)
 - **`isProd` gate fix:** `resolveWorkerLibDir()` now checks the bundled layout unconditionally (not gated on `isProd`), fixing Worker spawn failures on installed apps where Tauri passes `isProd=false`. (375 G27)
-
 

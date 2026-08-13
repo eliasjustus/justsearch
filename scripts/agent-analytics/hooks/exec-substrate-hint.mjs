@@ -10,7 +10,7 @@
  * on Windows silently falls back to cp1252, mangling non-ASCII output. Both wrappers exist;
  * a wrapper nobody is redirected to is a suggestion, not a paved path (mirrors bash-guard's
  * cat→Read and dataset-cache-hint's corpus-fetch redirect — the established pattern for this
- * repo, per `.claude/rules/tier-register.md` row 2).
+ * repo, per `docs/reference/contributing/tier-register.md` row 2).
  *
  * Three trigger classes (see `classifyExecSubstrate` + exec-substrate-hint.test.mjs's precision
  * corpus):

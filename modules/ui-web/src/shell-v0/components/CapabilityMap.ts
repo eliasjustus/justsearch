@@ -17,12 +17,14 @@ import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
 import './Control.js';
 import {
+  AVAILABLE,
   projectAvailability,
+  unavailableBecause,
   type Availability,
   type CapabilityAffordance,
 } from '../state/availability.js';
 import type { AiState } from '../state/aiStateStore.js';
-import type { NoticeRemedy } from '../state/readinessNotice.js';
+import { reasonFor, type NoticeRemedy } from '../state/readinessNotice.js';
 
 /** The capability affordances, in the order a user reasons about them, with human labels. */
 const AFFORDANCES: ReadonlyArray<{ affordance: CapabilityAffordance; label: string }> = [
@@ -96,8 +98,26 @@ export class CapabilityMap extends JfElement {
   `;
 
   private rows(): Row[] {
-    // Keyword search needs no AI model — it is always available; the AI affordances project from state.
-    const rows: Row[] = [{ label: 'Search (keyword)', availability: { kind: 'available' } }];
+    // Keyword search needs no AI MODEL — but it does need the backend that answers the query.
+    //
+    // Tempdoc 807 §E.4: this row used to be a hardcoded `{ kind: 'available' }` that consulted
+    // nothing, so with the backend gone the map asserted "Search (keyword) — Available" beside rows
+    // reading "the connection to the search backend was lost" (round 14 named it the most misleading
+    // instance of the retained-snapshot class). Gated on the SAME `snapshotLive` contact fact
+    // `projectAvailability` consults, worded from the SAME `binding.unreachable` row the verdict and
+    // the disconnection banner word themselves from — one authority, no re-authored string.
+    //
+    // Positive evidence only: a null store (the pre-first-poll boot window) is UNKNOWN, not lost —
+    // mirroring `projectAvailability`, whose transient boot arm answers before its liveness gate.
+    const rows: Row[] = [
+      {
+        label: 'Search (keyword)',
+        availability:
+          this.aiState?.snapshotLive === false
+            ? unavailableBecause(reasonFor('binding.unreachable').wording)
+            : AVAILABLE,
+      },
+    ];
     for (const a of AFFORDANCES) {
       rows.push({ label: a.label, availability: projectAvailability(a.affordance, this.aiState) });
     }

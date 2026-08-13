@@ -165,4 +165,59 @@ describe('resolvePathLazy', () => {
     });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
+
+  // Tempdoc 804 §B9 (round-10 F8): a FAILED invocation must stay retryable. It used to be memoized
+  // as a permanent null, so one 401 (or any transport hiccup) left every Library folder row showing
+  // its path hash for the rest of the session, even after the cause cleared.
+  it('does NOT memoize a failed invocation — a later call retries and can succeed', async () => {
+    seedResourceCatalog(catalogOf(tabularResource()));
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({ error: 'unauthorized' }),
+        headers: new Headers(),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({ success: true, structuredData: { found: true, path: '/recovered.txt' } }),
+        headers: new Headers(),
+      });
+
+    const first = await resolvePathLazy('core.indexing-jobs', 'h5', {
+      apiBase: 'http://localhost',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    expect(first).toBeNull();
+
+    const second = await resolvePathLazy('core.indexing-jobs', 'h5', {
+      apiBase: 'http://localhost',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    expect(second).toBe('/recovered.txt');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  // The other half of the same rule: a DEFINITIVE `found: false` is still memoized (no retry storm).
+  it('memoizes a definitive "found: false"', async () => {
+    seedResourceCatalog(catalogOf(tabularResource()));
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, structuredData: { found: false } }),
+      headers: new Headers(),
+    });
+    await resolvePathLazy('core.indexing-jobs', 'h6', {
+      apiBase: 'http://localhost',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await resolvePathLazy('core.indexing-jobs', 'h6', {
+      apiBase: 'http://localhost',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
 });

@@ -100,6 +100,20 @@ fires. The pattern is named-question, not generic-dashboard (419 C3 explicit non
   onlineAi.isAvailable()) at 0. Frontend `deriveHealthEvents.ts` emits `gpu-saturated`;
   the existing `gpu.recentUtilizationPercent` sparkline renders next to it.
 
+**Corpus counts — two distinct numbers (post tempdoc 811 C-4, 2026-08-06):**
+- `worker.core.indexedDocuments: long` — every non-chunk document in the index (total docs minus
+  chunk docs). Describes the INDEX. Consumed by Health (`core.files`), jseval readiness, and
+  sandbox evidence; its meaning is unchanged and must stay unchanged.
+- `worker.core.searchableDocuments: long` — the population a DEFAULT-scope search can actually
+  return: `indexedDocuments` minus the collections the default scope excludes (today exactly
+  `agent-history`). Derived in `IndexStatusOps#countDefaultScopeDocs` from
+  `QueryFilterBuilder.buildFilterQueryOnly(null)` — the production default-scope filter itself, so
+  it cannot drift from what search does. Bundled help docs and `mcp-ingest` documents ARE counted:
+  a default search returns them. **Any user-facing "Searching N documents" string must read this
+  field, not `indexedDocuments`** — the latter counts a corpus the user can neither see nor
+  enumerate. A consumer must treat an ABSENT field (older backend) as "fall back to
+  `indexedDocuments`" and a reported `0` as a real value.
+
 Each metric-backed field declares `surfacedAt(StatusEndpoint, fieldName)` on its
 `MetricDefinition`; `MetricSurfaceContractTest` (worker-services) and
 `HeadMetricSurfaceContractTest` (app-services) fail CI if the catalog declaration drifts
@@ -223,18 +237,20 @@ The five faces of one agent action — Authorize, Outcome, Preview — over one 
 - `modules/ui/src/main/java/io/justsearch/ui/api/AuthorizationController.java` (Authorize face: capsule mint + durable allow-always grant)
 - `modules/ui/src/main/java/io/justsearch/ui/api/HardStopController.java` (Global Hard Stop operator control)
 - `modules/ui/src/main/java/io/justsearch/ui/api/OperationHistoryController.java` (per-kind Outcome read-view; the sibling `GET /api/navigation-history` snapshot endpoint was torn down — tempdoc 689 — superseded by `GET /api/action-ledger` kind:'navigation', which reads the same `NavigationHistoryStore` in-process via `ActionLedgerProjection`)
-- `modules/app-observability/src/main/java/io/justsearch/app/observability/ledger/{ActionEvent,ActionEventStore,ActionLedgerProjection}.java` (the one log + projection)
+- `modules/app-observability/src/main/java/io/justsearch/app/observability/ledger/{ActionEvent,ActionEventStore,ActionEventJournal,ActionLedgerProjection}.java` (the one log + its durable audit journal + projection)
 - `modules/app-services/src/main/java/io/justsearch/app/services/intent/{IntentGateEvaluator,ConsentCapsuleService,DurableGrantStore,Grant}.java` (one verdict + one grant model)
 
 Endpoints:
 
-- `GET /api/action-ledger` — Snapshot of the one action-event log (Outcome face, Slice C1). Returns `{entries: ActionLedgerRow[]}` projected by `ActionLedgerProjection.toWireRow`. Each row: `id` (deterministic, stable across snapshot + stream), `kind` (`operation` | `navigation` | `gate` | `grant` | `effect`), `occurredAt`, plus kind-specific fields — operation: `operationId`/`outcome`/`executionId`; navigation: `targetSurface`/`sourceId`; gate: `operationId`/`disposition`/`gateBehavior`/`sourceTier`/`outcome`; grant: `grantId`/`action`/`subject`/`outcome`; effect: `effectKind`/`subject`. Receipt, timeline, undo, and trust-audit are projections over this one feed, never re-joins.
+- `GET /api/action-ledger` — Snapshot of the one action-event log (Outcome face, Slice C1). Returns `{entries: ActionLedgerRow[]}` projected by `ActionLedgerProjection.toWireRow`. Each row: `id` (deterministic, stable across snapshot + stream), `kind` (`operation` | `navigation` | `gate` | `grant` | `effect` | `index`), `occurredAt`, plus kind-specific fields — operation: `operationId`/`outcome`/`executionId`; navigation: `targetSurface`/`sourceId`; gate: `operationId`/`disposition`/`gateBehavior`/`sourceTier`/`outcome`; grant: `grantId`/`action`/`subject`/`outcome`; effect: `effectKind`/`subject`; index: `pathHash`/`collection`/`state`/`outcome`/`attempts`/`errorMessage?`. Receipt, timeline, undo, and trust-audit are projections over this one feed, never re-joins.
+  - **Retention (tempdoc 812 D1).** Two tiers with different guarantees. `grant`, `gate` and `operation` rows are **durable**: they are written synchronously to an append-only JSONL audit journal under `<dataDir>/audit/action-ledger.jsonl` (rotated at 4 MB × 8 generations, oldest dropped) as they fan into the log, so they survive a Head restart. `navigation`, `effect` and `index` rows are **ring-only ephemera** — process-lifetime telemetry, deliberately not journaled (the authoritative live indexing view is the indexing-jobs Resource, and a 5k-document ingest would otherwise write 5k audit lines). This endpoint serves the in-memory ring **∪** the journal's tail, deduped by `id`; before 812 the whole feed was ring-only and Activity started empty after every restart. The journal is a write-behind copy for audit reads — the per-kind stores stay authoritative (550:468's rejection of re-sourcing the rail stands). Deep history beyond the served tail is the journal files themselves; there is no cursor pagination (deliberately deferred, 812 §D3).
+  - **Query params (all optional and additive — a request with none behaves exactly as before).** `?correlationId=<id>` (561 P-B1) keeps rows carrying that loop/session join key; `?originator=<user|agent|system>` keeps that attribution; `?kind=<kind>` (repeatable, 812 D3) keeps only the named kinds; `?limit=<n>` (812 D3) returns the **newest** `n` rows after filtering — default 500, capped at 2000, with an unparseable or non-positive value falling back to the default. Sources: `ActionLedgerController.handleGet` + `ActionEventJournal`.
 - `GET /api/action-ledger/stream` (SSE) — Live read-view of the same projection (G3/G4/G5). Stream-only (no journal fold); rows dedup by `id`. "Snapshot" and "stream" are two reads of one projection, never two code paths. **Tempdoc 662: also reachable multiplexed via `/api/shell-events/stream` below** — the FE shell subscribes there by default; this dedicated endpoint stays live for direct/tooling consumers.
 - `POST /api/action-ledger/events` — Process-spanning ingest (thesis I): the FE folds local effects into the ONE log. Idempotent by event `id` (re-ingest on reload does not duplicate). Body: an effect event (`id`, `effectKind`, `subject`, `occurredAt`).
 - `GET /api/shell-events/stream` (SSE, tempdoc 662) — **The managed connection budget's multiplexer.** Aggregates 7 of the shell's previously-independent always-on streams onto ONE physical connection: `/api/intent/stream`, `/api/advisory/operation-completed/stream`, `/api/advisory/health-recoverable/stream`, `/api/advisory/authorization-pending/stream` (tempdoc 655's long-term design pass — a `REQUIRES_ACK`-classed advisory for a pending MCP/UI approval, complementing the direct ceremony dialog below with a discoverable inbox/toast signal for when the user wasn't looking), `/api/action-ledger/stream`, `/api/indexing-jobs/stream`, and (tempdoc 655) the pending-authorization announcement channel (`system:pending-authorizations` — routing info only: `pendingId`/`operationId`/`sourceTier`/`riskTier`/`gateBehavior`; no args-derived content, see `GET /api/authorizations/pending/{id}` above) — collapsing the browser's HTTP/1.1 ~6-per-host connection-pool consumption that previously starved the cheap `/api/status`/`/api/inference/status` polls under load (tempdoc 649). Every forwarded frame still carries its origin `streamId` (the universal `SseEnvelope` discriminator, unchanged); the FE `MultiplexedStream` demuxes by `streamId` to each consumer's existing reducer. Resume is a **bundle** of the per-channel `?since=<streamId:seq>` tokens (existing `ResumeTokenCodec`), comma-joined — no new resume protocol. The individual endpoints above stay live for non-shell consumers (tooling, direct API use); see `MultiplexedSseWriter.java` / `ShellEventsStreamController.java` (backend) and `streaming/MultiplexedStream.ts` (FE). Governed by `governance/live-channels.v1.json` + `check-live-channels.mjs` (the connection-budget register/gate).
 - `GET /api/operations/{id}/preview` — Preview face (Slice F2). Returns evaluated `availability` (capability-derived, structural) + `risk` + the predicted gate behavior, computed from the SAME `IntentGateEvaluator` instance the enforcement chokepoint uses — including the live Global Hard Stop (S2/F1). Args-bound consent-capsule verification is correctly deferred to dispatch (the preview has no args/token), so the preview is the structural-prediction read of the one verdict. Unknown operation id → 404.
 - `POST /api/authorizations/approve` — Authorize face (Slice A1). On a user approval of a backend-gated action, mints a single-use, args-bound consent capsule (the max-attenuated Grant). Body: `{pendingId: string, allowAlways?: boolean, execute?: boolean}`. When `allowAlways` is true (thesis IV), also records a durable allow-always grant in `DurableGrantStore` keyed `(operationId, sourceTier)`, so future invocations of that op from that tier auto-approve without re-prompting. Both grant lifecycles are recorded as `grant` ActionEvents (ISSUED/CONSUMED/REVOKED, GRANTED_ALWAYS/REVOKED) in the one log → one audit, one revocation path. Tempdoc 655: `execute: true` additionally dispatches the pending's operation server-side, immediately, using its own stored args — for an approval whose origin (e.g. an MCP tool call) never gave the browser the full args to replay itself.
-- `GET /api/authorizations/pending/{id}` — Tempdoc 655 fix pass. Point-to-point fetch of a pending's decision content (`operationId`, `argsSummary`, `sourceTier`, `riskTier`, `gateBehavior`, `rationale`, and — tempdoc 655's long-term design pass — an optional `requestedBy`: the calling MCP client's self-reported `clientInfo.name`, present only when the gate fired via MCP and the client supplied it; display-only, never a trust input per ADR-0030's hint-vs-enforced-policy line) by id, non-mutating (`peek`, not `consume`). Exists because the pending-authorization SSE broadcast (below) deliberately carries none of this content — a privacy boundary (tempdoc 444b): args-derived content is scoped to a point-to-point response to the one human deciding that one action, never to a multicast channel. 404 for an unknown/expired/already-consumed id.
+- `GET /api/authorizations/pending/{id}` — Tempdoc 655 fix pass. Point-to-point fetch of a pending's decision content (`operationId`, `argsSummary`, `sourceTier`, `riskTier`, `gateBehavior`, `rationale`, and — tempdoc 655's long-term design pass — an optional `requestedBy`: the calling MCP client's self-reported `clientInfo.name`, present only when the gate fired via MCP and the client supplied it; display-only, never a trust input per ADR-0030's hint-vs-enforced-policy line) plus — tempdoc 807 item 3 — `expiresAt` (ISO-8601 UTC; pendings carry a 5-minute TTL and are refused after it, but until 807 no surface said when, so no client could tell the user how long the request stays valid and no sandbox round could induce or verify expiry) by id, non-mutating (`peek`, not `consume`). Exists because the pending-authorization SSE broadcast (below) deliberately carries none of this content — a privacy boundary (tempdoc 444b): args-derived content is scoped to a point-to-point response to the one human deciding that one action, never to a multicast channel. 404 for an unknown/expired/already-consumed id.
 - `GET /api/agent/hard-stop` — Global Hard Stop state (E2). <!-- drift-allow:/api/agent -->
 - `POST /api/agent/hard-stop` — Engage/disengage the Global Hard Stop. Engaging is a global revocation over all NON-USER (UNTRUSTED) grants — it revokes non-user capsules + durable grants and makes the lattice deny-all-non-user; a user-mediated approval (MEDIUM/TRUSTED) survives an emergency stop, matching the gate's hard-stop scope. <!-- drift-allow:/api/agent -->
 - `GET /api/operation-history` + `GET /api/operation-history/stream` (SSE) — Operation Outcome read-view snapshot + append stream (Slice 444b).
@@ -379,7 +395,7 @@ Source: slices 491 (substrate), 496 (FreeChat + Extract), 497 (dynamic dispatch)
 
 **Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java`
 
-**Transport:** Streamable HTTP at `POST /mcp` on the existing Javalin server (loopback-only). Protocol version `2025-11-25` (single-sourced in `io.justsearch.app.api.mcp.McpContractVersions`). No separate process. The `/mcp` endpoint + curated tool set is one of the three **Runtime Contract** public surfaces (tempdoc 654); `serverInfo.version` carries the SemVer tool-surface version — see [Runtime Contract](runtime-contract.md).
+**Transport:** Streamable HTTP at `POST /mcp` on the existing Javalin server (loopback-only). Protocol version `2025-11-25` (single-sourced in `io.justsearch.app.api.mcp.McpContractVersions`). No separate process. The `/mcp` endpoint + curated tool set is one of the three **Runtime Contract** public surfaces (tempdoc 654); `serverInfo.version` carries the BUILD version and `serverInfo._meta["io.justsearch/toolSurfaceVersion"]` the SemVer tool-surface version — see [Runtime Contract](runtime-contract.md).
 
 6-tool curated surface (tempdoc 500, adapted from eval-validated 4-tool TS server in tempdoc 366):
 
@@ -388,9 +404,17 @@ Source: slices 491 (substrate), 496 (FreeChat + Extract), 497 (dynamic dispatch)
 | 1 | `justsearch_answer` | RAG retrieval — assembled passages | `DocumentService.retrieveContext()` (in-process) |
 | 2 | `justsearch_search` | Exploratory search with facets | `KnowledgeHttpApiAdapter.search()` |
 | 3 | `justsearch_browse` | Folder structure exploration | `core.browse-folders` Operation |
-| 4 | `justsearch_ingest` | File indexing | `core.ingest-files` Operation |
+| 4 | `justsearch_ingest` | File indexing (`paths[]`, optional `collection` — tempdoc 811 C-2a) | `core.ingest-files` Operation |
 | 5 | `justsearch_status` | Index health + enrichment | `KnowledgeHttpApiAdapter.status()` |
 | 6 | `justsearch_runtime_manifest` | Redacted runtime manifest for identity-aware caching | `RuntimeManifestPublisher` |
+
+`justsearch_search`'s `structuredContent` evidence tier (projected by `McpEvidenceProjection`)
+carries the same `appliedFilters` echo the REST response does — see
+[Knowledge Search API](#knowledge-search-api) for its shape. It is present only when the request
+carried filters, is emitted on both evidence overloads, and survives the delivery governor's
+tail truncation. As on REST, it echoes the filters the request **sent**; since the tempdoc-811 D-1
+null-scope fix a null/empty filter set runs the same code path as an explicit one, so the engine
+applies the requested filters verbatim and the echo is not a claim about anything else.
 
 MCP Prompts: 3 onboarding templates (`search_files`, `answer_question`, `index_folder`) with live system context.
 
@@ -430,7 +454,15 @@ Source: tempdoc 500, ADR-0015, tempdoc 366.
 
 Response fields (additive/optional-by-presence):
 
-- `totalHits`, `tookMs`, `results[]`
+- `totalHits`, `matchCount`, `tookMs`, `results[]`
+  - `matchCount` is the **true matched-document total** — an exact, filter-respecting
+    `IndexSearcher.count` over the same chunk-excluded query the facets scan (tempdoc 597). The FE
+    headline binds to this ("Top N of M matches").
+  - `totalHits` is exact on the single-leg sparse path, but on the multi-leg (HYBRID/VECTOR) path it
+    is the **cardinality of the bounded fused candidate union**, not a match count. It is therefore
+    not monotonic under filtering — narrowing the corpus makes each leg dig deeper, so the legs'
+    top-K lists overlap less and the union can grow. Treat it as telemetry, not as "how many
+    documents matched"; use `matchCount` for that.
 - `nextCursor` (TEXT mode pagination)
 - `facets`, `facetsTruncated`
 - `entityFacetVariants`
@@ -445,7 +477,11 @@ Response fields (additive/optional-by-presence):
   **Subsumes and replaces** the retired `effectiveMode`/`vectorBlocked`/`hybridFallback`/
   `chunkMerge*`/`correction*`/`splade*`/qpp flat fields (E5), `pipelineExecution`/`ComponentTiming`
   (E3), and `introspection`/`SearchIntrospection` (E4).
-- `appliedFilters` (object, echoed when filters active) — mirrors the filters/boostFilters sent in the request (366)
+- `appliedFilters` (object, echoed when filters active) — mirrors the filters/boostFilters sent in the
+  request (366). Shape: `{ "filters"?: <Filters>, "boostFilters"?: <Filters> }`; each half is present
+  only when that half carried at least one value, and each `Filters` object omits its unset members
+  (no empty arrays). Absent entirely when the request carried no filters. This echoes the REQUEST —
+  it says which filters were sent, not which index fields every retrieval leg can enforce them on.
 - `indexCapabilities` — index-level capability flags (362)
 
 Current hit shape in `results[]`:
@@ -490,9 +526,17 @@ Frontend compatibility note: `modules/ui-web/src/api/domains/search.ts` maps thi
 
 `POST /api/knowledge/ingest`:
 
-- Request body: `paths[]` (required root/file paths)
-- Controller expands directories to readable files (respecting configured excludes), then submits batch ingest.
+- Request body: `paths[]` (required root/file paths), `collection` (optional string).
+- Directory inputs dispatch to the Worker's `ScanRoot` RPC (the Worker owns the walk); regular-file inputs go through `submitBatch`.
+- **Collection tagging (tempdoc 811 C-2a).** Every ingest carries an addressable collection, resolved by `IngestCollectionPolicy` (`modules/app-api/.../knowledge/IngestCollectionPolicy.java`): an explicit `collection` wins; otherwise a path under a registered watched root inherits that root's collection; otherwise the path is out-of-root and gets `mcp-ingest`. A supplied `collection` must be a non-empty string and must not be one of the reserved app-internal collections (`justsearch-help`, `agent-history`) — either violation is a `400`. One request may mix in-root and out-of-root paths; single files are grouped by resolved collection. Pre-811 documents ingested here carry no `collection` field and are not backfilled; they acquire a tag on re-index.
 - Response: `accepted` (count accepted by Worker queue), `error` (best-effort error message), `scanId` (worker-allocated UUID for the scan; empty when no progress was emitted, e.g. inputs that weren't directories). Use the `scanId` to subscribe to live progress via the SSE endpoint below (tempdoc 419 / T4).
+
+`DELETE /api/indexing/collections`:
+
+- Request body: `collection` (required string). Removal route for collection-tagged ad-hoc ingests — `removeWatchedRoot` and `PruneOps.pruneByPathPrefix` are both watched-root-prefix driven, so before 811 an out-of-root ingest had no removal route at all.
+- Deletes every parent and chunk document carrying the collection term (Worker RPC `IngestService.DeleteByCollection`), then commits.
+- Refuses (`400`) the reserved app-internal collections (`justsearch-help`, `agent-history`) and the untagged `default` bucket — the latter would be a whole-index wipe wearing a collection's clothes.
+- Response: `status: "ok"`, `collection`, `deletedDocs` (documents matched and submitted for deletion).
 
 ### Live Scan Progress (SSE)
 
@@ -570,6 +614,27 @@ Coverage invariant: `HealthEventEmitCoverageTest` (in `modules/app-services` tes
 
 - Request body: `folderPath` (required), `limit` (optional), `projection[]` (optional)
 - Response: `files[]` (`docId`, `fields` map), `totalCount`, `tookMs`
+
+### Watched Roots API
+
+**Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/IndexingController.java` (`handleListRoots`, `handleAddRoot` at IndexingController.java:156-175, `handleRemoveRoot`) + `modules/ui/src/main/java/io/justsearch/ui/api/routes/IndexingRoutes.java` (route registration)
+
+`GET /api/indexing/roots` lists the Library's watched roots.
+
+- Query parameter: `counts=true` -- includes a per-root bounded file count (capped scan, `-1` if the count itself failed).
+- Response: `{"roots": [{collection, path, fileCount, lastIndexed?}]}` -- `collection` defaults to `"default"` when the root was added without one; `lastIndexed` is omitted (not empty-string) when the root has never completed a scan.
+
+`POST /api/indexing/roots` adds a folder to the Library.
+
+- Request body: `{"path": string, "collection"?: string}` -- `path` is required and must resolve (after `Path.of(path).toAbsolutePath().normalize()`) to an **existing directory**; `collection` is optional and defaults to `"default"` when omitted.
+- **400** when `path` is missing/blank: `{"error": "path is required", "errorCode": "INVALID_REQUEST", ...}`.
+- **400** when `path` does not exist or is not a directory: `{"error": "Path does not exist or is not a directory: <resolved path>", "errorCode": "INVALID_PATH", ...}`.
+- Response (success): `{"status": "ok"}` (200). The root is registered and indexing begins asynchronously -- this call does not itself return a `scanId`; watch `/api/knowledge/status` or the per-root `fileCount` above for progress.
+
+`DELETE /api/indexing/roots` removes a watched root and its indexed documents.
+
+- Request body: `{"path": string, "collection"?: string}` -- same shape and the same **400** `path is required` (`INVALID_REQUEST`) validation as the POST above; no directory-existence check (the root may already be gone from disk).
+- Response: `{"status": "ok", "deletedJobs": <count>}` (200) -- `deletedJobs` is the number of queued/failed jobs purged for the removed root.
 
 ### Indexing Excludes API
 
@@ -784,6 +849,38 @@ Other debug endpoints: `/api/debug/commit-metadata`, `/api/debug/effective-confi
 ### AI Runtime Status
 
 `GET /api/ai/runtime/status` returns ONNX feature status including a `modelActive: boolean` field per feature entry, derived from the actual ORT session state (not file discovery). This is the canonical source of truth for "is this model loaded and running". Both reranker (via `OrtCudaStatus`) and citation-scorer (via `CitationScorer.isAvailable()`) report runtime session state through this field. See [ADR-0023](../decisions/0023-api-responses-declare-runtime-context.md) for the general principle: endpoints whose behavior varies by runtime mode must declare that mode in the response.
+
+### AI install (`/api/ai/install/*`)
+
+**Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/routes/AiRoutes.java` (routes),
+`modules/ui/src/main/java/io/justsearch/ui/api/AiInstallController.java` (handlers),
+`modules/ui/src/test/java/io/justsearch/ui/api/AiInstallApiContractTest.java` (error-body contract).
+
+| Route | Method | Request | Success | Errors |
+|---|---|---|---|---|
+| `/api/ai/install/manifest` | GET | – | `ModelRegistry` | 500 `MANIFEST_UNAVAILABLE` |
+| `/api/ai/install/plan-preview` | GET | – | `InstallPlanPreview` | 500 `MANIFEST_UNAVAILABLE` |
+| `/api/ai/install/status` | GET | – | `AiInstallStatus` | – |
+| `/api/ai/install/start` | POST | `{"acceptTerms": true}` | `AiInstallStatus` | 400 `TERMS_REQUIRED`, 403 `DOWNLOADS_DISABLED`, 409 `INSTALL_ALREADY_RUNNING`, 500 `INSTALL_START_FAILED` |
+| `/api/ai/install/cancel` | POST | – | `AiInstallStatus` | 500 `INSTALL_CANCEL_FAILED` |
+| `/api/ai/install/repair` | POST | `{"acceptTerms": true}` | `AiInstallStatus` | same set as `start`, plus 500 `INSTALL_REPAIR_FAILED` |
+
+Every error body on this family is the project's standard envelope —
+`{"error": string, "errorCode": string, "errorClass": string, "retryable": boolean, "requestId"?: string}`
+(`ApiErrorHandler.toResponse`). A `400` here is **not** body-less: `AiInstallApiContractTest`
+asserts the raw bytes of a `POST … {}` carry `errorCode: "TERMS_REQUIRED"`.
+
+**`repair` IS `start`.** `AiInstallService.repair` delegates straight to `startInstall`: it re-plans
+against disk and downloads only what is missing, and it therefore requires `acceptTerms` exactly
+like a first install. Calling it with an empty body is the 400 above, not a server fault.
+
+`AiInstallStatus` carries two truth claims that answer different questions and must not be
+collapsed: `installedFully` (no **required** file is missing) and `repairNeeded` (a **required**
+file is missing). `optionalGaps: [{packageId, fileName}]` reports registry files marked
+`"required": false` that are absent — surfaced, never a reason to offer Repair. Per package,
+`functionalStatus` (`active` | `inactive` | `unknown`) projects what `GET /api/ai/runtime/status`
+observes, and `terminalReason: "TRANSPORT_UNAVAILABLE"` with `attempts`/`url`/`targetPath` says that
+automatic repair has stopped working and names the manual fallback.
 
 ### Install plan preview (tempdoc 657)
 

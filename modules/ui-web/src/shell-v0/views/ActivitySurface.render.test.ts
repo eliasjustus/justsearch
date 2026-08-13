@@ -42,6 +42,13 @@ beforeAll(() => {
       return new NoopEventSource(url) as unknown as EventSource;
     },
   );
+  // Tempdoc 804 §B9 (F9): <jf-action-ledger> also READS `GET /api/action-ledger` (so an undelivered
+  // stream frame can no longer render as a false "No activity yet"). Stub it — this test is about
+  // api-base forwarding, not the ledger, and an unstubbed read would hit a non-existent backend.
+  vi.stubGlobal(
+    'fetch',
+    async () => ({ ok: true, status: 200, json: async () => ({ entries: [] }) }) as unknown as Response,
+  );
 });
 
 import './ActivitySurface.js';

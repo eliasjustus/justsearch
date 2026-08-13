@@ -1,8 +1,11 @@
 // @vitest-environment happy-dom
 
 import { describe, expect, it, beforeEach } from 'vitest';
+import { nothing } from 'lit';
 import './IndexingOverlay.js';
 import type { IndexingOverlay } from './IndexingOverlay.js';
+import type { AiState } from '../state/aiStateStore.js';
+import { known } from '../state/known.js';
 
 function make(): IndexingOverlay {
   const el = document.createElement('jf-indexing-overlay') as IndexingOverlay;
@@ -73,5 +76,100 @@ describe('IndexingOverlay (slice 460)', () => {
     el.dismissible = false;
     await el.updateComplete;
     expect(el.shadowRoot?.querySelector('button.close')).toBeNull();
+  });
+});
+
+/**
+ * Tempdoc 807 A.3 (round-13 R13-F2) — the HOST decides whether the overlay may assert "indexing is
+ * happening right now". Its inputs are fields off the retained snapshot, so with the backend dead it
+ * kept asserting live work (and offered a "Go online" button that would POST into the void).
+ */
+describe('IndexingOverlayHost — snapshot liveness (807)', () => {
+  interface HostHarness {
+    aiState: AiState | null;
+    render(): unknown;
+  }
+  /** Detached (never appended) ⇒ no connectedCallback ⇒ the store subscription can't overwrite the fixture. */
+  const host = (snapshotLive: boolean): HostHarness => {
+    const el = document.createElement('jf-indexing-overlay-host') as unknown as HostHarness;
+    el.aiState = {
+      runtime: { mode: 'indexing' },
+      index: { embeddingQueueSize: known(4789), vduQueueSize: known(0) },
+      snapshotLive,
+      // 813 §20 — the store's cross-poll memories are non-optional on AiState; a fixture that omits
+      // them is not a smaller AiState, it is an impossible one.
+      episodeMaxPendingJobs: 0,
+      enrichSettleSamples: [],
+    } as unknown as AiState;
+    return el;
+  };
+
+  it('withdraws when the snapshot is no longer a live observation', () => {
+    expect(host(false).render()).toBe(nothing);
+  });
+
+  it('ANTI-REGRESSION: still renders while the snapshot IS live', () => {
+    expect(host(true).render()).not.toBe(nothing);
+  });
+});
+
+/**
+ * Tempdoc 813 §10.6 — the overlay's private two-row queue readout is retired. Both numbers are the
+ * same worker counts `/api/status` carries; reaching them through `/api/inference/status` was the
+ * §1a "one subject, two transports" divergence class.
+ */
+describe('IndexingOverlayHost — numbers come from the one projection (813)', () => {
+  interface HostHarness {
+    aiState: AiState | null;
+    render(): unknown;
+  }
+  const host = (status: unknown): HostHarness => {
+    const el = document.createElement('jf-indexing-overlay-host') as unknown as HostHarness;
+    el.aiState = {
+      runtime: { mode: 'indexing' },
+      // Deliberately divergent inference-poll residue: if these still fed the rows, the assertions
+      // below would read 999/999.
+      index: { embeddingQueueSize: known(999), vduQueueSize: known(999) },
+      snapshotLive: true,
+      status,
+      // 813 §20 — see above: both store memories are part of the shape this fixture claims to be.
+      episodeMaxPendingJobs: 0,
+      enrichSettleSamples: [],
+    } as unknown as AiState;
+    return el;
+  };
+
+  it('renders the status-poll pending counts, not the inference-poll queue residue', () => {
+    const out = host({
+      worker: {
+        core: { indexState: 'IDLE', pendingJobs: 0, pendingVduCount: 7 },
+        enrichment: {
+          backfillMode: 'combined',
+          embeddingEnabled: true,
+          embeddingDocCount: 100,
+          embeddingPendingCount: 12,
+        },
+      },
+    }).render();
+    // The template's interpolations, in source order: embedding-queue-size, vdu-queue-size, …
+    const values = (out as { values: unknown[] }).values;
+    expect(values[0]).toBe(12);
+    expect(values[1]).toBe(7);
+  });
+
+  it('withdraws when the status authority says everything is settled (stale residue, not work)', () => {
+    expect(
+      host({
+        worker: {
+          core: { indexState: 'IDLE', pendingJobs: 0, pendingVduCount: 0 },
+          enrichment: {
+            backfillMode: 'idle',
+            embeddingEnabled: true,
+            embeddingDocCount: 100,
+            embeddingPendingCount: 0,
+          },
+        },
+      }).render(),
+    ).toBe(nothing);
   });
 });

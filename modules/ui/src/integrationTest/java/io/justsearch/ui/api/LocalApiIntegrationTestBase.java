@@ -42,6 +42,7 @@ abstract class LocalApiIntegrationTestBase {
   private String prevDataDir;
   private String prevApiPort;
   private String prevLlmModelPath;
+  private final Map<String, String> extraProps = new LinkedHashMap<>();
 
   @BeforeEach
   void startServer() throws Exception {
@@ -63,11 +64,18 @@ abstract class LocalApiIntegrationTestBase {
     // Ensure machine policy (if any) starts absent between tests (only in the sandboxed PROGRAMDATA).
     cleanupMachinePolicySandboxBestEffort();
 
-    UiSettingsStore settingsStore = new UiSettingsStore(UiSettingsStore.PersistenceMode.READ_WRITE);
+    // Subclass seam: sysprops + on-disk state that must be in place BEFORE the Head boots (the data
+    // dir is already resolved to `aiHome` at this point). Tempdoc 804 §B4.2.
+    beforeServerStart();
+
+    // Resolved the way the shipped Head resolves it — the persistence mode is part of the
+    // configuration under test, not a harness constant (tempdoc 804 §B1/§B4.2). With no override
+    // set this is READ_WRITE, exactly as before.
+    UiSettingsStore settingsStore = new UiSettingsStore(UiSettingsStore.PersistenceMode.resolveMode());
     Path indexBase = tmp.resolve("index");
     Files.createDirectories(indexBase);
 
-    server = LocalApiServer.builder(settingsStore, indexBase).build();
+    server = configureServer(LocalApiServer.builder(settingsStore, indexBase)).build();
     baseUrl = "http://127.0.0.1:" + server.getPort();
     client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
   }
@@ -91,6 +99,30 @@ abstract class LocalApiIntegrationTestBase {
     restoreProp("justsearch.data.dir", prevDataDir);
     restoreProp("justsearch.api.port", prevApiPort);
     restoreProp("justsearch.llm.model_path", prevLlmModelPath);
+    extraProps.forEach(LocalApiIntegrationTestBase::restoreProp);
+    extraProps.clear();
+  }
+
+  /**
+   * Hook for subclasses that need sysprops or seeded on-disk state in place BEFORE the Head boots
+   * (the persistence mode and the prod trust boundary are both read during boot). Set properties
+   * with {@link #setPropForTest} so they are restored in teardown.
+   */
+  protected void beforeServerStart() throws Exception {}
+
+  /** Hook for subclasses that need to customize the server under test (e.g. a session token). */
+  protected LocalApiServer.Builder configureServer(LocalApiServer.Builder builder) {
+    return builder;
+  }
+
+  /** Sets a system property for the duration of the test, recording the previous value. */
+  protected void setPropForTest(String key, String value) {
+    extraProps.putIfAbsent(key, System.getProperty(key));
+    if (value == null) {
+      System.clearProperty(key);
+    } else {
+      System.setProperty(key, value);
+    }
   }
 
   protected record HttpJsonResponse(int statusCode, JsonNode json, String body) {}
@@ -107,15 +139,20 @@ abstract class LocalApiIntegrationTestBase {
   }
 
   protected HttpJsonResponse postJson(String path, Object body) throws Exception {
+    return postJson(path, body, Map.of());
+  }
+
+  /** POST with extra request headers (e.g. the prod-mode session token). */
+  protected HttpJsonResponse postJson(String path, Object body, Map<String, String> headers)
+      throws Exception {
     String json = body instanceof String s ? s : MAPPER.writeValueAsString(body);
-    HttpResponse<String> resp =
-        client.send(
-            HttpRequest.newBuilder(URI.create(baseUrl + path))
-                .timeout(Duration.ofSeconds(30))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(json))
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
+    HttpRequest.Builder request =
+        HttpRequest.newBuilder(URI.create(baseUrl + path))
+            .timeout(Duration.ofSeconds(30))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(json));
+    headers.forEach(request::header);
+    HttpResponse<String> resp = client.send(request.build(), HttpResponse.BodyHandlers.ofString());
     return new HttpJsonResponse(resp.statusCode(), parseJsonBestEffort(resp.body()), resp.body());
   }
 

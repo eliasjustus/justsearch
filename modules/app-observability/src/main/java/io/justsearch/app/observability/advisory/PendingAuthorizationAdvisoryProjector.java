@@ -70,6 +70,12 @@ public final class PendingAuthorizationAdvisoryProjector
     extras.put("operationId", event.operationId());
     extras.put("riskTier", event.riskTier().name());
     extras.put("gateBehavior", event.gateBehavior().name());
+    // Tempdoc 807 item 3: when this approval request stops being valid. Routing/timing, the same
+    // class as createdAt below — not argument- or identity-derived content, so it sits inside this
+    // event's deliberate privacy boundary. Without it no subscriber could tell the user how long
+    // they have, and no round could induce or verify expiry (sandbox round 13 F3 named the
+    // expired-pending ceremony UNPERFORMABLE for exactly this reason). ISO-8601 UTC.
+    extras.put("expiresAt", event.expiresAt().toString());
     return Optional.of(
         new AdvisoryProjection(
             event.createdAt(),

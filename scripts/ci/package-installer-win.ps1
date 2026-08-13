@@ -41,6 +41,18 @@ param(
   # server.json's version + asset URL match the gradle.properties version being cut.
   [switch]$AssembleReleaseAssets,
 
+  # Produce Tauri updater signatures and the authenticated release descriptor/feed.
+  # Requires -AssembleReleaseAssets and the release key/sequence parameters below.
+  [switch]$AssembleUpdaterAssets,
+
+  [long]$ReleaseSequence = 0,
+  [string]$InstallerUrl,
+  [string]$ArtifactKeyId,
+  [string]$ArtifactPublicKey,
+  [string]$MetadataKeyId,
+  [string]$MetadataPrivateKeyPath,
+  [string]$MetadataPublicKeyPath,
+
   # If set (independent of -Release/signing), verify server.json version + asset URL match the
   # gradle.properties version during asset assembly. The release workflow passes this on v* tag
   # refs so a real release cut cannot ship a stale server.json version/URL. (Tempdoc 726 review.)
@@ -50,8 +62,30 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+if ($AssembleUpdaterAssets.IsPresent -and -not $AssembleReleaseAssets.IsPresent) {
+  throw "-AssembleUpdaterAssets requires -AssembleReleaseAssets."
+}
+if ($Release.IsPresent -and $env:JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE) {
+  throw "Production -Release builds must not enable JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE."
+}
+if ($AssembleUpdaterAssets.IsPresent) {
+  foreach ($name in @(
+      "JUSTSEARCH_RELEASE_DESCRIPTOR_URL",
+      "JUSTSEARCH_RELEASE_METADATA_ROOT_PUBLIC_KEY",
+      "JUSTSEARCH_RELEASE_METADATA_ROOT_KEY_ID")) {
+    $value = [Environment]::GetEnvironmentVariable($name)
+    if ([string]::IsNullOrWhiteSpace($value)) {
+      throw "-AssembleUpdaterAssets requires compile-time release input $name."
+    }
+  }
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent (Split-Path -Parent $scriptDir) # scripts/ci -> scripts -> repo root
+
+# Receipt dropped by scripts/ci/sign-windows.ps1 after it signs AND verifies the uninstaller.
+# Path must stay in sync with that script's $script:receiptPath.
+$uninstallerReceiptPath = Join-Path -Path $repoRoot -ChildPath "dist\uninstaller-signing-receipt.json"
 
 $evidenceEnabled = -not $NoEvidence.IsPresent
 $summaryDir = Join-Path -Path $repoRoot -ChildPath "tmp\\agent-evidence\\_summaries"
@@ -104,6 +138,33 @@ function Skip-Phase {
   Write-Host "`n=== $Name ===" -ForegroundColor Cyan
   $msg = if ($Reason) { "[SKIPPED - $Reason]" } else { "[SKIPPED]" }
   Write-Host ("  " + $msg) -ForegroundColor Yellow
+}
+
+# Round-16 F3 follow-up: makensis ignores the exit code of its `!uninstfinalize` command, so
+# sign-windows.ps1 failing on the uninstaller -- or never being invoked at all -- ships an unsigned
+# uninstaller with no error anywhere. Signing the setup exe cannot detect that: the uninstaller is
+# compressed INSIDE it. The receipt is the only signal, and sign-windows.ps1 writes it strictly
+# after Assert-Signed passed and the signed bytes were written back, so absence covers both a
+# failed hook and one that never ran.
+function Assert-UninstallerSigningReceipt {
+  param([Parameter(Mandatory = $true)][string]$ReceiptPath)
+  $diagnosis = "Diagnose with the sign log the bundler writes: %TEMP%\justsearch-sign-windows.log. " +
+    "If Tauri/NSIS changed how the uninstaller is handed to the sign hook (e.g. it now arrives " +
+    "with a signable extension, bypassing the extension-shim path), update the receipt write in " +
+    "scripts/ci/sign-windows.ps1 -- do not drop this check."
+  if (-not (Test-Path -LiteralPath $ReceiptPath)) {
+    throw ("Uninstaller signing receipt missing: " + $ReceiptPath + "`n" +
+      "The NSIS uninstaller sign hook did not complete, so this bundle would ship an UNSIGNED uninstaller.`n" +
+      $diagnosis)
+  }
+  $receipt = Get-Content -Raw -LiteralPath $ReceiptPath | ConvertFrom-Json
+  $verifiedProp = $receipt.PSObject.Properties['verified']
+  if (-not $verifiedProp -or $verifiedProp.Value -ne $true) {
+    throw ("Uninstaller signing receipt is not verified: " + $ReceiptPath + "`n" + $diagnosis)
+  }
+  $target = if ($receipt.PSObject.Properties['target']) { [string]$receipt.target } else { "(unknown)" }
+  $signedAt = if ($receipt.PSObject.Properties['signedAtUtc']) { [string]$receipt.signedAtUtc } else { "(unknown)" }
+  Write-Host ("  uninstaller signing receipt OK (target=" + $target + ", signedAtUtc=" + $signedAt + ")")
 }
 
 if ($evidenceEnabled) {
@@ -243,6 +304,11 @@ try {
   # -Sign (implied by -Release): require signing during bundling (Tauri signCommand reads this).
   if ($doSign) {
     $env:JUSTSEARCH_REQUIRE_SIGNING = "true"
+    # Drop any receipt left by an earlier run so the signature_verify assert below can only be
+    # satisfied by THIS build's sign hook.
+    if (Test-Path -LiteralPath $uninstallerReceiptPath) {
+      Remove-Item -LiteralPath $uninstallerReceiptPath -Force
+    }
   }
 
   if (-not $SkipBuild.IsPresent) {
@@ -250,13 +316,30 @@ try {
 
     Measure-Phase "tauri_build" {
       # Build NSIS installer (tauri.conf.json enforces ui-web build + bundleSidecar via hooks).
-      if ($doSign) {
-        # Signing build (-Sign/-Release): enable signing config overlay; fail later if signing inputs are missing (JUSTSEARCH_REQUIRE_SIGNING=true).
-        & npm --prefix .\modules\shell run tauri -- build --bundles nsis --config .\src-tauri\tauri.signing.conf.json
+      $tauriArgs = @("--prefix", ".\modules\shell", "run", "tauri", "--", "build", "--bundles", "nsis")
+      if ($AssembleUpdaterAssets.IsPresent) {
+        if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+          throw "-AssembleUpdaterAssets requires TAURI_SIGNING_PRIVATE_KEY so Tauri emits a verifiable NSIS signature."
+        }
+        $updaterConfig = ".\src-tauri\tauri.updater.conf.json"
+        if ($doSign) {
+          # Tauri accepts one config overlay. Compose the release-only updater overlay with the
+          # independent Authenticode signCommand overlay in memory so neither concern leaks into
+          # the base development config.
+          $merged = Get-Content -Raw -LiteralPath ".\modules\shell\src-tauri\tauri.updater.conf.json" | ConvertFrom-Json
+          $signing = Get-Content -Raw -LiteralPath ".\modules\shell\src-tauri\tauri.signing.conf.json" | ConvertFrom-Json
+          $merged.bundle | Add-Member -MemberType NoteProperty -Name windows -Value $signing.bundle.windows -Force
+          $tauriArgs += @("--config", ($merged | ConvertTo-Json -Depth 20 -Compress))
+        } else {
+          $tauriArgs += @("--config", $updaterConfig)
+        }
+      } elseif ($doSign) {
+        $tauriArgs += @("--config", ".\src-tauri\tauri.signing.conf.json")
       } else {
-        # Dev/CI smoke: avoid requiring Windows SDK SignTool.
-        & npm --prefix .\modules\shell run tauri -- build --bundles nsis --no-sign
+        # Dev/CI smoke: avoid requiring updater signing or Windows SDK SignTool.
+        $tauriArgs += "--no-sign"
       }
+      & npm @tauriArgs
       if ($LASTEXITCODE -ne 0) { throw "tauri build failed (exit=$LASTEXITCODE)" }
     }
   } else {
@@ -295,14 +378,59 @@ try {
     Measure-Phase "signature_verify" {
       & powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ci\verify-windows-signature.ps1 $SetupExePath
       if ($LASTEXITCODE -ne 0) { throw "verify-windows-signature.ps1 failed (exit=$LASTEXITCODE)" }
+      if ($SkipBuild.IsPresent) {
+        Write-Host "  uninstaller signing receipt: not asserted (-SkipBuild: the NSIS sign hook did not run in this invocation)" -ForegroundColor Yellow
+      } else {
+        Assert-UninstallerSigningReceipt -ReceiptPath $uninstallerReceiptPath
+      }
     }
   } else {
     Skip-Phase "signature_verify" "not a signing build"
   }
 
+  $sourceInstallerHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $SetupExePath).Hash.ToLowerInvariant()
+  $sourceInstallerSize = (Get-Item -LiteralPath $SetupExePath).Length
   $dest = Join-Path -Path $outDirPath -ChildPath ([System.IO.Path]::GetFileName($SetupExePath))
   if (-not [string]::Equals($SetupExePath, $dest, [System.StringComparison]::OrdinalIgnoreCase)) {
-    Copy-Item -LiteralPath $SetupExePath -Destination $dest -Force
+    $stagedDest = "$dest.staging-$PID"
+    try {
+      Copy-Item -LiteralPath $SetupExePath -Destination $stagedDest -Force
+      $stagedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $stagedDest).Hash.ToLowerInvariant()
+      $stagedSize = (Get-Item -LiteralPath $stagedDest).Length
+      if ($stagedHash -ne $sourceInstallerHash -or $stagedSize -ne $sourceInstallerSize) {
+        throw "Staged installer failed post-copy digest/size verification."
+      }
+      Move-Item -LiteralPath $stagedDest -Destination $dest -Force
+    } finally {
+      if (Test-Path -LiteralPath $stagedDest) {
+        Remove-Item -LiteralPath $stagedDest -Force -ErrorAction SilentlyContinue
+      }
+    }
+  }
+  $destHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $dest).Hash.ToLowerInvariant()
+  $destSize = (Get-Item -LiteralPath $dest).Length
+  if ($destHash -ne $sourceInstallerHash -or $destSize -ne $sourceInstallerSize) {
+    throw "Published installer staging failed digest/size verification."
+  }
+
+  if ($AssembleUpdaterAssets.IsPresent) {
+    $sourceSignature = "$SetupExePath.sig"
+    if (-not (Test-Path -LiteralPath $sourceSignature -PathType Leaf)) {
+      throw "Tauri updater signature not found beside NSIS installer: $sourceSignature"
+    }
+    $destSignature = "$dest.sig"
+    if (-not [string]::Equals($sourceSignature, $destSignature, [System.StringComparison]::OrdinalIgnoreCase)) {
+      $signatureBytes = [System.IO.File]::ReadAllBytes($sourceSignature)
+      [System.IO.File]::WriteAllBytes($destSignature, $signatureBytes)
+      $stagedSignatureBytes = [System.IO.File]::ReadAllBytes($destSignature)
+      if (
+        $signatureBytes.Length -ne $stagedSignatureBytes.Length -or
+        (Get-FileHash -Algorithm SHA256 -LiteralPath $sourceSignature).Hash -ne
+          (Get-FileHash -Algorithm SHA256 -LiteralPath $destSignature).Hash
+      ) {
+        throw "Published updater signature failed byte-for-byte staging verification."
+      }
+    }
   }
   $installerSizeBytes = (Get-Item -LiteralPath $dest).Length
   $installerSizeMB = [math]::Round($installerSizeBytes / 1MB, 1)
@@ -379,6 +507,23 @@ try {
     Measure-Phase "release_assets" {
       $assetArgs = @("-OutDir", $outDirPath)
       if ($Release.IsPresent -or $VerifyReleaseVersion.IsPresent) { $assetArgs += "-VerifyReleaseVersion" }
+      if ($AssembleUpdaterAssets.IsPresent) {
+        if ([string]::IsNullOrWhiteSpace($InstallerUrl)) {
+          throw "-AssembleUpdaterAssets requires -InstallerUrl (use {filename} as an optional placeholder)."
+        }
+        $resolvedInstallerUrl = $InstallerUrl.Replace(
+          "{filename}",
+          [Uri]::EscapeDataString([System.IO.Path]::GetFileName($dest)))
+        $assetArgs += @(
+          "-AssembleUpdaterAssets",
+          "-ReleaseSequence", $ReleaseSequence,
+          "-InstallerUrl", $resolvedInstallerUrl,
+          "-ArtifactKeyId", $ArtifactKeyId,
+          "-ArtifactPublicKey", $ArtifactPublicKey,
+          "-MetadataKeyId", $MetadataKeyId,
+          "-MetadataPrivateKeyPath", $MetadataPrivateKeyPath,
+          "-MetadataPublicKeyPath", $MetadataPublicKeyPath)
+      }
       & powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ci\build-release-assets.ps1 @assetArgs
       if ($LASTEXITCODE -ne 0) { throw "build-release-assets.ps1 failed (exit=$LASTEXITCODE)" }
     }

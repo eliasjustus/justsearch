@@ -43,6 +43,25 @@ import {
 } from '../../api/generated/schema-types/indexed-root-view.js';
 // Tempdoc 599 §9.1 — the ONE per-folder status derivation; the row glyph + meta line project from it.
 import { folderStatus } from '../state/folderStatus.js';
+// Tempdoc 813 §4 — the index-wide progress authority supplies enrichment-stage applicability, which
+// the per-root wire row cannot carry (counts only, no enabled flags).
+import {
+  selectIndexingProgress,
+  type EnrichmentApplicability,
+} from '../state/indexingProgress.js';
+import { enrichmentProgress } from '../state/enrichmentCoverage.js';
+// Tempdoc 811 C-2a — the non-root (ad-hoc / MCP) sources the folder rows cannot describe.
+import {
+  deriveOtherSources,
+  facetScanCapFor,
+  EMPTY_OTHER_SOURCES,
+  type OtherSource,
+  type OtherSourcesSnapshot,
+} from '../state/otherSources.js';
+// The ONE `/api/knowledge/search` issuance site (577 Ext II / the `search-issuance` gate) — the
+// enumeration probe is issued there, not re-shaped here.
+import { fetchCollectionFacet } from '../state/searchState.js';
+import { UNKNOWN, type Maybe } from '../state/known.js';
 // Tempdoc 599 §16/B1 — the clickable "N failed" chip opens the per-folder failed-files drawer.
 import { openFailedJobs } from '../state/failedJobsDrawer.js';
 // Tempdoc 599 §9.4 — gate the Add button with a reachable reason (596 operability authority).
@@ -66,6 +85,33 @@ const listResponseSchema = z
     count: z.number().optional(),
   })
   .loose();
+
+/**
+ * Tempdoc 804 §B9 (round-10 F8) — how a watched-folder row NAMES itself.
+ *
+ * The row used to render `[b5ec60937d1a…]` — the raw path hash — whenever the lazy resolver had
+ * not answered, next to a Remove button: the only offered action on an unidentifiable row was the
+ * destructive one. The wire is hash-only by construction (ADR-0028 + `LibraryResolveHashOnlyCallerPin`
+ * keep raw paths off it), so the fix is not "put the path on the wire": it is that an UNRESOLVED row
+ * says so in words, and a resolved one shows its folder name with the full path on hover.
+ *
+ * Returns the visible `label` and the `title` (hover/assistive text). The hash stays the row's
+ * identity for Remove/failed-jobs intents — it is just never the user-visible name.
+ */
+export function folderRowLabel(
+  pathHash: string,
+  resolvedPath: string | undefined,
+): { label: string; title: string } {
+  if (resolvedPath && resolvedPath.length > 0) {
+    const name = resolvedPath.split(/[\\/]/).filter((s) => s.length > 0).pop() ?? resolvedPath;
+    return { label: name, title: resolvedPath };
+  }
+  return {
+    label: 'Folder (path unavailable)',
+    // The short hash is diagnostic detail, not the name — reachable on hover, never the label.
+    title: pathHash ? `Path could not be resolved (id ${pathHash.slice(0, 12)}…)` : 'Path could not be resolved',
+  };
+}
 
 const RESOURCE_ID = 'core.indexed-roots';
 const ENDPOINT = '/api/indexing-roots/substrate';
@@ -94,6 +140,10 @@ export class LibrarySurface extends JfElement {
     isTauri: { state: true },
     activeTab: { state: true },
     provisional: { state: true },
+    enrichmentStages: { state: true },
+    enrichmentPending: { state: true },
+    enrichmentBlocked: { state: true },
+    otherSources: { state: true },
   };
 
   declare apiBase: string;
@@ -118,8 +168,40 @@ export class LibrarySurface extends JfElement {
    * catastrophe-reading empty state. Projected from the one `Stability` axis.
    */
   declare provisional: boolean;
+  /**
+   * Tempdoc 813 §4 — which enrichment stages apply, from the ONE index-wide progress derivation.
+   * Passed into `folderStatus` so a row's second tier (the catching-up caveat + this root's percent
+   * → "fully searchable") is computed from applicable stages only. `null` until the first poll
+   * snapshot arrives, which the seam reads as "coverage unknown" (no percent).
+   */
+  declare enrichmentStages: EnrichmentApplicability | null;
+  /**
+   * 809 finding 1 — the enrichment backfill still owes work, so a drained folder is keyword-searchable
+   * but not yet semantically searchable. Projected from the one `enrichmentProgress` derivation and
+   * handed to `folderStatus`, which decides whether the row may make the terminal "✓ indexed" claim.
+   */
+  declare enrichmentPending: boolean;
+  /**
+   * Round-15 F1b — the semantic enrichment stage cannot run at all (no embedding service), so a
+   * drained folder is keyword-searchable and will stay that way until AI is installed. Same
+   * derivation, same tick as {@link enrichmentStages}; `folderStatus` turns it into the row's caveat.
+   */
+  declare enrichmentBlocked: boolean;
+  /**
+   * Tempdoc 811 C-2a — the collections that documents ingested OUTSIDE every watched folder carry
+   * (the MCP/API ingest path). The folder rows describe watched roots only, so without this the
+   * user could not see, let alone remove, what an agent had ingested. Empty ⇒ the section is absent
+   * entirely, not an empty shell.
+   */
+  declare otherSources: OtherSourcesSnapshot;
 
   private aiUnsub: (() => void) | null = null;
+  /**
+   * Tempdoc 811 C-2a — the default-scope document count, used to size the collection facet scan so
+   * it cannot truncate (truncation OMITS collections; see `otherSources.ts`). Not reactive state:
+   * it only feeds the next probe's request, never the render.
+   */
+  private defaultScopeDocuments: Maybe<number> = UNKNOWN;
   // Tempdoc 599 §9.4 — debounce the add-time preview while typing.
   private previewTimer: number | null = null;
   private previewSeq = 0;
@@ -140,6 +222,10 @@ export class LibrarySurface extends JfElement {
     this.isTauri = false;
     this.activeTab = 'folders';
     this.provisional = false;
+    this.enrichmentStages = null;
+    this.enrichmentPending = false;
+    this.enrichmentBlocked = false;
+    this.otherSources = EMPTY_OTHER_SOURCES;
   }
 
   // Tempdoc 571 §11 / 578: Library is a host surface — it delegates layout to <jf-surface-tabs>
@@ -313,6 +399,16 @@ export class LibrarySurface extends JfElement {
       font-family: monospace;
       font-size: var(--font-size-sm);
     }
+    /* Tempdoc 811 C-2a — "Other sources" reuses the excludes panel's chrome and the folder-row card
+       verbatim; no new idiom, only a second section in the same visual language. */
+    .other-sources-note {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      margin-top: 0.5rem;
+      font-size: var(--font-size-xs);
+      color: var(--text-warning);
+    }
     .excludes-section {
       margin-top: 1.5rem;
       padding: 1rem;
@@ -363,6 +459,16 @@ export class LibrarySurface extends JfElement {
   // Tempdoc 599 §9.3 — live-refresh guards (overlap + throttle); not reactive state.
   private refreshing = false;
   private lastLiveRefreshAtMs = 0;
+  /**
+   * Tempdoc 811 C-2a — the `maxDocsScanned` the last enumeration probe used, and an overlap guard.
+   *
+   * The first probe necessarily runs BEFORE the first status poll (the surface fetches roots on
+   * connect), so it is sized at the engine's floor. On a corpus larger than that floor a capped scan
+   * OMITS collections outright — so when a poll later reveals a bigger index, the probe must run
+   * again rather than leaving a silently short list on screen. `0` means "never probed".
+   */
+  private lastProbeCap = 0;
+  private probing = false;
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -386,6 +492,33 @@ export class LibrarySurface extends JfElement {
     // transition renders as "Rebuilding…", not "No watched folders".
     this.aiUnsub = subscribeAiState((s) => {
       this.provisional = s.stability.kind === 'provisional';
+      // Tempdoc 813 §4 — the per-root second tier needs to know which stages apply; take it from the
+      // ONE index-wide progress derivation rather than re-reading the enrichment wire flags here.
+      const progress = selectIndexingProgress(
+        s.status,
+        s.snapshotLive,
+        s.episodeMaxPendingJobs,
+        s.enrichSettleSamples,
+      );
+      this.enrichmentStages = progress.stages;
+      // Round-15 F1b — same projection, same tick: whether the semantic stage can run at all, so a
+      // row cannot render an unqualified "✓ … Verified just now" over an index with no vectors.
+      this.enrichmentBlocked = progress.phase === 'blocked';
+      // 809 finding 1 — same tick, same store: whether the enrichment backfill is still running, so a
+      // row cannot claim the terminal "✓ indexed" while semantic search is still being built.
+      this.enrichmentPending = enrichmentProgress(s.status).pending;
+      // Tempdoc 811 C-2a — the facet probe runs under the DEFAULT search scope, so the
+      // default-scope population is its exact bound; fall back to the whole-index count on a
+      // backend that predates `searchableDocuments` (C-4).
+      this.defaultScopeDocuments = s.index.searchableDocumentCount.known
+        ? s.index.searchableDocumentCount
+        : s.index.documentCount;
+      // Only once a first probe has run (i.e. after the roots are loaded, so root-owned collections
+      // can be subtracted): a poll revealing a LARGER corpus than the last scan covered must
+      // re-probe — a capped scan omits collections rather than undercounting them.
+      if (this.lastProbeCap > 0 && facetScanCapFor(this.defaultScopeDocuments) > this.lastProbeCap) {
+        void this.loadOtherSources();
+      }
       // Tempdoc 599 §9.3 — ride the existing status tick to live-refresh the rows (counts-free, no
       // new poller), so a folder's "Indexing · N remaining → ✓ indexed" updates without re-nav.
       void this.refresh({ live: true });
@@ -438,10 +571,15 @@ export class LibrarySurface extends JfElement {
         // confirmed (distinct from lastIndexed, the last write). Same host time-ago util, no new formatter.
         verifiedRelativeTime: this.host_.utilities.formatRelativeTime(r.lastVerifiedIsoTime ?? ''),
         provisional: this.provisional,
+        // Tempdoc 813 §4 — the enrichment tier of the row's meta line.
+        enrichmentStages: this.enrichmentStages,
+        enrichmentPending: this.enrichmentPending,
+        enrichmentBlocked: this.enrichmentBlocked,
       });
       return {
         pathHash,
-        displayPath: this.resolvedPaths[pathHash] ?? `[${pathHash.slice(0, 12)}…]`,
+        // Tempdoc 804 §B9 (F8) — never the raw hash as the row's name (see folderRowLabel).
+        displayPath: folderRowLabel(pathHash, this.resolvedPaths[pathHash]).label,
         status: fs.glyph,
         metaText: fs.metaText,
         walkError: undefined,
@@ -514,6 +652,11 @@ export class LibrarySurface extends JfElement {
           });
         }
       }
+      // Tempdoc 811 C-2a — only on a full refresh. The probe is a corpus-wide facet scan, far too
+      // heavy for the 4-second aiState tick, and non-root sources only change on an ingest.
+      if (!live) {
+        void this.loadOtherSources();
+      }
     } catch (err) {
       // Live (background) failures stay silent — don't clobber the surface with a tick error.
       if (!live) {
@@ -524,6 +667,62 @@ export class LibrarySurface extends JfElement {
         this.loading = false;
       }
       this.refreshing = false;
+    }
+  }
+
+  /**
+   * Tempdoc 811 C-2a — enumerate the non-root collections via the `collection` facet.
+   *
+   * Runs AFTER `this.roots` is populated: a watched root's own collection is subtracted, so the
+   * section lists only what no folder row already describes. Failures are silent (the section is
+   * simply absent) — the same posture as `loadExcludes`: an unavailable enumeration must not put an
+   * error banner over a Library whose folder rows loaded fine.
+   */
+  private async loadOtherSources(): Promise<void> {
+    if (this.probing) return;
+    this.probing = true;
+    const cap = facetScanCapFor(this.defaultScopeDocuments);
+    // Stamped before the request, so a failing probe cannot re-fire on every status tick.
+    this.lastProbeCap = cap;
+    try {
+      const payload = await fetchCollectionFacet(cap, this.apiBase);
+      this.otherSources = deriveOtherSources(
+        payload,
+        this.roots.map((r) => r.collection),
+      );
+    } catch {
+      // Silent: an unreachable probe leaves the last known list rather than asserting "none".
+    } finally {
+      this.probing = false;
+    }
+  }
+
+  /**
+   * Tempdoc 811 C-2a — remove every document carrying this collection via the #380 route. Names the
+   * count in the confirm, because "mcp-ingest" tells the user nothing about how much is at stake and
+   * nothing else on this surface can show them the documents first.
+   */
+  private async handleRemoveCollection(source: OtherSource): Promise<void> {
+    const noun = source.docCount === 1 ? 'document' : 'documents';
+    const ok = await this.host_.ui.showConfirmDialog(
+      `Remove ${source.docCount.toLocaleString()} ${noun} ingested as '${source.collection}'? `
+        + 'They were added outside your watched folders, so nothing will re-index them.',
+      { confirmLabel: 'Remove', destructive: true },
+    );
+    if (!ok) return;
+    this.error = null;
+    try {
+      const res = await this.doFetch('/api/indexing/collections', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ collection: source.collection }),
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      await this.refresh();
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : String(err);
     }
   }
 
@@ -664,7 +863,12 @@ export class LibrarySurface extends JfElement {
       return;
     }
     const ok = await this.host_.ui.showConfirmDialog(
-      `Remove ${resolved}? Files indexed from this folder will be removed from search results.`,
+      // 813 §19 (W3) — the confirm states the ENRICHMENT consequence too: removal also discards
+      // whatever semantic work was still in flight for this folder. Deliberately no numeric latency:
+      // the stop-to-quiet bound is mode-dependent (combined mode checkpoints at 1-8 document
+      // granularity; individual mode retains whole-batch atomicity), so "within seconds" would
+      // overclaim exactly where the old copy underclaimed.
+      `Remove ${resolved}? Files indexed from this folder will be removed from search results, and any enrichment still running for it is stopped and discarded.`,
       { confirmLabel: 'Remove', destructive: true },
     );
     if (!ok) return;
@@ -722,7 +926,12 @@ export class LibrarySurface extends JfElement {
 
   private renderCard(root: IndexedRootView): TemplateResult {
     const pathHash = root.pathHash ?? '';
-    const displayPath = this.resolvedPaths[pathHash] ?? `[${pathHash.slice(0, 12)}…]`;
+    // Tempdoc 804 §B9 (F8) — the row's NAME is its folder name (full path on hover), or an honest
+    // "path unavailable"; never the raw hash beside a Remove button.
+    const { label: displayPath, title: displayTitle } = folderRowLabel(
+      pathHash,
+      this.resolvedPaths[pathHash],
+    );
     // Tempdoc 599 §9.1 — glyph + meta line project from the single folderStatus seam, so the row
     // reports a truthful state (✓ only on job drain) and a live "Indexing · N remaining" count-down.
     const status = folderStatus(root, {
@@ -731,13 +940,22 @@ export class LibrarySurface extends JfElement {
       // lastIndexed (last write). Same host time-ago util.
       verifiedRelativeTime: this.host_.utilities.formatRelativeTime(root.lastVerifiedIsoTime ?? ''),
       provisional: this.provisional,
+      // Tempdoc 813 §4 — the enrichment tier of the row's meta line.
+      enrichmentStages: this.enrichmentStages,
+      enrichmentPending: this.enrichmentPending,
+      enrichmentBlocked: this.enrichmentBlocked,
     });
     return html`
       <div class="card">
         <span class="card-icon">${icon({ name: 'folder', size: 24 })}</span>
         <div class="card-info">
           <div class="card-path">
-            ${this.renderStatusIcon(status.glyph)}<span>${displayPath}</span>
+            ${this.renderStatusIcon(status.glyph)}<span
+              class="folder-name"
+              title=${displayTitle}
+              data-testid="library-folder-name"
+              >${displayPath}</span
+            >
           </div>
           <div class="card-meta">
             ${status.metaText}${status.failed > 0
@@ -772,6 +990,69 @@ export class LibrarySurface extends JfElement {
     `;
   }
 
+  /**
+   * Tempdoc 811 C-2a — the sources that are not a watched folder: documents an agent (or the ingest
+   * API) added from a path under no root. They are searchable and pill-labelled in results, so
+   * leaving them off this surface made them un-seeable and un-removable.
+   *
+   * Absent when there is nothing to say. A TRUNCATED scan is the one case where an empty list still
+   * renders: the scan omits collections rather than undercounting them (see `otherSources.ts`), so
+   * silence there would be the same invisibility this section exists to end.
+   */
+  private renderOtherSources(): TemplateResult | typeof nothing {
+    const { sources, truncated } = this.otherSources;
+    if (sources.length === 0 && !truncated) return nothing;
+    return html`
+      <div class="excludes-section" data-testid="library-other-sources">
+        <div class="excludes-header">
+          <div>
+            <h3>Other sources</h3>
+            <p>
+              Documents added from outside your watched folders — by an agent or the ingest API.
+              Nothing re-indexes them, so removing a source is permanent.
+            </p>
+          </div>
+        </div>
+        ${sources.length > 0
+          ? html`<div class="cards">
+              ${sources.map((s) => this.renderOtherSourceCard(s))}
+            </div>`
+          : nothing}
+        ${truncated
+          ? html`<div class="other-sources-note">
+              ${icon({ name: 'alert-triangle', size: 12 })}
+              <span
+                >The index was too large to scan completely — this list may be missing
+                sources.</span
+              >
+            </div>`
+          : nothing}
+      </div>
+    `;
+  }
+
+  private renderOtherSourceCard(source: OtherSource): TemplateResult {
+    const noun = source.docCount === 1 ? 'document' : 'documents';
+    return html`
+      <div class="card">
+        <span class="card-icon">${icon({ name: 'hard-drive', size: 24 })}</span>
+        <div class="card-info">
+          <div class="card-path">
+            <span data-testid="library-other-source-name">${source.collection}</span>
+          </div>
+          <div class="card-meta">${source.docCount.toLocaleString()} ${noun}</div>
+        </div>
+        <jf-button
+          variant="danger"
+          label=${`Remove ${source.collection}`}
+          .onActivate=${() => void this.handleRemoveCollection(source)}
+        >
+          ${icon({ name: 'trash-2', size: 14 })} Remove
+        </jf-button>
+      </div>
+    `;
+  }
+
   private renderHeader(): TemplateResult {
     return html`
       <div class="header">
@@ -785,10 +1066,10 @@ export class LibrarySurface extends JfElement {
                is user-tier; core.reindex's wire audience=USER passes
                the gate. -->
           <jf-operation context="button" operation-id="core.reindex" api-base=${this.apiBase} @op-success=${() => this.refresh()}></jf-operation>
-          <!-- Tempdoc 672 follow-up: manual "Process Now" trigger for VDU/embedding offline
-               processing, same catalog-driven pattern as core.reindex above — the operation
-               already exists (core.trigger-offline-processing, LOW risk, no confirmation) and
-               was previously wired to nothing in the UI. -->
+          <!-- Tempdoc 813 §6: the manual "Process pending enrichment" trigger — drains the pending
+               VDU + embedding work for already-indexed documents, same catalog-driven pattern as
+               core.reindex above. Its LABEL comes from the operation catalog (one string, both
+               render sites); the operation id keeps its historical name. -->
           <jf-operation
             context="button"
             operation-id="core.trigger-offline-processing"
@@ -924,6 +1205,8 @@ export class LibrarySurface extends JfElement {
               No watched folders. Click "Add Folder" to add one.
             </div>`
           : this.renderCardsRegion()}
+
+      ${this.renderOtherSources()}
 
       <div class="excludes-section">
         <div class="excludes-header">

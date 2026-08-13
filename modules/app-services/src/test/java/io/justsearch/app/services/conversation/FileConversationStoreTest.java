@@ -4,10 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.agent.api.conversation.BranchesPreventDeletionException;
 import io.justsearch.agent.api.conversation.ConversationStore;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.UnsupportedStoreVersionException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -46,6 +49,57 @@ final class FileConversationStoreTest {
     assertFalse(((String) msg.get("id")).isBlank(), "id should not be blank");
     assertTrue(msg.get("hash") instanceof String, "hash should be a String");
     assertEquals(64, ((String) msg.get("hash")).length(), "sha-256 hex is 64 chars");
+  }
+
+  @Test
+  @DisplayName("new metadata writes declare schema v1")
+  void metadataWritesSchemaVersion(@TempDir Path tmp) throws Exception {
+    var store = new FileConversationStore(tmp);
+    store.appendMessage("s1", "core.free-chat", userMsg("hello"));
+    String meta = Files.readString(tmp.resolve("s1").resolve("meta.json"));
+    assertTrue(meta.contains("\"schemaVersion\":1"));
+  }
+
+  @Test
+  @DisplayName("future metadata is refused without overwrite")
+  void futureMetadataIsRefused(@TempDir Path tmp) throws Exception {
+    Path session = tmp.resolve("future");
+    Files.createDirectories(session);
+    Path meta = session.resolve("meta.json");
+    String future = "{\"schemaVersion\":99,\"shapeId\":\"core.free-chat\"}";
+    Files.writeString(meta, future);
+
+    var store = new FileConversationStore(tmp);
+    assertThrows(UnsupportedStoreVersionException.class, () -> store.getSessionMeta("future"));
+    assertEquals(future, Files.readString(meta));
+  }
+
+  @Test
+  @DisplayName("malformed metadata is not skipped from session listings")
+  void malformedMetadataFailsLoud(@TempDir Path tmp) throws Exception {
+    Path session = tmp.resolve("broken");
+    Files.createDirectories(session);
+    Path meta = session.resolve("meta.json");
+    String malformed = "{not-json";
+    Files.writeString(meta, malformed);
+
+    var store = new FileConversationStore(tmp);
+    assertThrows(CorruptDurableStoreException.class, () -> store.listSessions(null, 10));
+    assertEquals(malformed, Files.readString(meta));
+  }
+
+  @Test
+  @DisplayName("malformed message content is not reinterpreted as empty history")
+  void malformedMessagesFailLoud(@TempDir Path tmp) throws Exception {
+    Path session = tmp.resolve("broken");
+    Files.createDirectories(session);
+    Path messages = session.resolve("messages.jsonl");
+    String malformed = "{not-json\n";
+    Files.writeString(messages, malformed);
+
+    var store = new FileConversationStore(tmp);
+    assertThrows(CorruptDurableStoreException.class, () -> store.loadHistory("broken"));
+    assertEquals(malformed, Files.readString(messages));
   }
 
   /** A test DataKeyState with a fixed key whose lock state the test toggles. */

@@ -39,12 +39,14 @@ JustSearch fingerprints both the Lucene schema and the embedding model, stamping
 
 ### Schema fingerprint (`index_schema_fp`)
 
-- **Stamping:** on commit, the Worker writes `index_schema_fp` into Lucene commit user-data (derived from the SSOT field catalog / mapper).
-- **Validation:** on startup/open, `IndexMetadataParityGuard` compares the stored fp vs the current fp and classifies compatibility (compatible, legacy/missing, mismatch).
+- **Stamping:** on commit, the Worker writes `index_schema_fp` into Lucene commit user-data. It is the SHA-256 of the canonical `SSOT/catalogs/fields.v1.json` file (`SsotCommitMetadataSource.java:81-93`), optionally re-hashed with a runtime vector-dimension override.
+- **Validation:** on startup/open, `IndexMetadataParityGuard` compares the stored fp vs the current fp and classifies compatibility (compatible, legacy/missing, mismatch). **This guard does not currently enforce** — see [Enforcement status](#enforcement-status-2026-08) below.
 - **UI/automation signal:** the Worker surfaces schema state via `/api/status`:
   - `indexSchemaFpStored`, `indexSchemaFpCurrent`
   - `indexSchemaCompatState`
   - `reindexRequired` + `reindexRequiredReason` (stable reason code: `schema_mismatch`)
+- **Consumers:** none on the query path. `IndexStatusOps.safeSchemaCompatState()` computes the state for status reporting only; no planner, executor, or retrieval-leg decision reads it. The dense leg is gated by the *embedding* fingerprint below (`EmbeddingCompatibilityController.allowQueryEmbeddings()`, consumed at `SearchPlanner.java:87`). An index can therefore report `schema_mismatch` and still serve fully hybrid results — sandbox round 10 reproduced exactly that, which is why the frontend words this state as advisory (`info` severity, not a reindex cause).
+- **Sensitivity:** because it hashes the whole catalog file, *any* byte edit flips it — including annotation-only edits with no physical index consequence. The three post-v0.1.0 catalog edits (a dead-field deletion and three `rmwPolicy` annotations) each flipped `index_schema_fp` against v0.1.0 indexes that remained physically compatible. A fingerprint over the *physical* schema (or per-field consequence classes) would be needed to make the signal truthful; that is not implemented.
 
 ### Embedding model fingerprint (`embedding_model_sha256`)
 
@@ -84,8 +86,9 @@ The Worker always opens Lucene against a **specific generation directory**, neve
 
 When the Worker detects `SCHEMA_MISMATCH` at startup, behavior is policy-controlled:
 
-- **`FAIL_CLOSED`**: refuse to rebuild automatically (recommended production default).
+- **`FAIL_CLOSED`**: refuse to rebuild automatically (the value a production profile resolves to by default, `ResolvedConfigBuilder.normalizeSchemaMismatchPolicy`).
   - The Worker fails startup; the Head keeps the HTTP server up and surfaces the worker start error in `/api/status`.
+  - In practice only the `ComponentsFactory` `FieldInfos` detector reaches this policy today; the fingerprint detector is disabled (below).
 - **`REBUILD_BACKUP_FIRST`**: rename-to-backup and rebuild an empty index (dev convenience).
   - Backup-first, guarded filesystem operations (no recursive deletes).
 - **`BLUE_GREEN_MIGRATE`**: availability-first migration.
@@ -95,6 +98,15 @@ Override sources:
 
 - YAML: `index.schema_mismatch.policy`
 - Env/sysprop: `JUSTSEARCH_INDEX_SCHEMA_MISMATCH_POLICY` / `-Dindex.schema_mismatch.policy=...`
+
+## Enforcement status (2026-08)
+
+The parity half of the design above is **wired but not enforcing in any shipped run**. Verified at source during the sandbox round-10 investigation (tempdoc 804 §D1):
+
+- `HeadlessApp.java:267` (`setupInfra`) and `HeadlessApp.java:607` (sidecar entry) both set `justsearch.index.parity.allow_mismatch=true` **unconditionally** — there is no dev/prod condition on either set-site — and `WorkerSpawner` forwards `INDEX_PARITY_ALLOW_MISMATCH` into the Worker JVM.
+- `IndexMetadataParityGuard.checkOnOpen()` therefore logs the diffs at WARN (`continuing in WARN mode`) and returns, so it never raises `SCHEMA_MISMATCH` for a rebuild-requiring parity key (`analyzer_fp` / `schema_ver` / `index_schema_fp`) and `index.schema_mismatch.policy` never sees one.
+- What still enforces: the `FieldInfos` inspection in `ComponentsFactory`, which fires only when the on-disk index genuinely cannot accept writes under the current field mapping. That is the detector the “reindex did nothing” failure mode needs.
+- **Deliberate, not an oversight to revert blindly.** With today’s content-hash fingerprint, enabling enforcement would refuse to start on indexes that are physically fine (round 10’s index was serving hybrid results while reporting `schema_mismatch`). Making the guard enforce is gated on a truthful fingerprint, not on flipping the flag.
 
 ## Blue/Green migration model (current MVP)
 

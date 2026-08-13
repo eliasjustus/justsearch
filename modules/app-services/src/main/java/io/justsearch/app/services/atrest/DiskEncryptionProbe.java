@@ -33,6 +33,17 @@ public final class DiskEncryptionProbe {
   private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(4);
   private static final String SOURCE = "shell-property";
 
+  /**
+   * Sentinel the PowerShell script emits when {@code ExtendedProperty} returns {@code $null} (798
+   * Part 2): PowerShell's {@code [int]$null} silently coerces to {@code 0}, a value that then parses
+   * cleanly and falls into {@code mapPkeyValue}'s {@code default ->} arm alongside a genuinely
+   * indeterminate PKEY 3 read — so "the property doesn't exist here" (e.g. no BitLocker feature
+   * present at all) and "the probe read an indeterminate value" became indistinguishable by the time
+   * the mapper saw them. The script now checks for {@code $null} explicitly and emits this token
+   * instead of coercing, so absence takes a different branch than any numeric PKEY value.
+   */
+  private static final String PROPERTY_ABSENT = "PROPERTY_ABSENT";
+
   private final Path volumePath;
   private final java.util.function.LongSupplier nowMs;
   private final java.util.function.Function<Path, AtRestProtection> readMechanism;
@@ -95,12 +106,41 @@ public final class DiskEncryptionProbe {
       return AtRestProtection.unknown();
     }
     String drive = root.toString().replace("'", "''"); // e.g. C:\
-    String script =
-        "$ns=(New-Object -ComObject Shell.Application).Namespace('"
-            + drive
-            + "'); if($ns){[int]$ns.Self.ExtendedProperty('System.Volume.BitLockerProtection')}";
-    String out = runPowerShell(script).trim();
-    if (out.isEmpty()) {
+    return parseShellPropertyOutput(runPowerShell(buildProbeScript(drive)));
+  }
+
+  /**
+   * Builds the PowerShell one-liner that reads the shell property. Extracted to a pure function
+   * (798 Part 2) so the {@code $null} check is table-testable without a subprocess: the previous
+   * one-liner — {@code [int]$ns.Self.ExtendedProperty(...)} unconditionally — let PowerShell's
+   * {@code [int]$null} coerce a null (absent) property straight to the string {@code "0"}, making it
+   * indistinguishable from a genuinely probed {@code 0} by the time {@link
+   * #parseShellPropertyOutput} saw it. This version checks {@code $v} for {@code $null} explicitly
+   * and emits {@link #PROPERTY_ABSENT} instead of coercing.
+   */
+  static String buildProbeScript(String drive) {
+    return "$ns=(New-Object -ComObject Shell.Application).Namespace('"
+        + drive
+        + "'); if($ns){$v=$ns.Self.ExtendedProperty('System.Volume.BitLockerProtection');"
+        + " if($null -eq $v){'"
+        + PROPERTY_ABSENT
+        + "'}else{[int]$v}}";
+  }
+
+  /**
+   * Pure parse of the raw PowerShell stdout from {@link #readWindowsShellProperty}. Package-private
+   * and pure (no subprocess) so the empty / absent / numeric / non-numeric shapes are table-testable
+   * without a Windows host — mirroring the extraction precedent in {@code
+   * WindowsPowerStatus#toEnergyState} (raw read vs. pure derivation).
+   *
+   * <p>{@code PROPERTY_ABSENT} takes a different branch than any parsed integer (798 Part 2): a
+   * {@code null} property degrades to {@link AtRestProtection#unknown()} (source {@code "none"} — no
+   * answer at all), the same honest "no signal" result an execution failure yields, rather than being
+   * silently coerced into the numeric PKEY table and reported as an indeterminate-but-probed reading.
+   */
+  static AtRestProtection parseShellPropertyOutput(String rawOut) {
+    String out = rawOut == null ? "" : rawOut.trim();
+    if (out.isEmpty() || PROPERTY_ABSENT.equals(out)) {
       return AtRestProtection.unknown();
     }
     int value;
@@ -109,9 +149,23 @@ public final class DiskEncryptionProbe {
     } catch (NumberFormatException e) {
       return AtRestProtection.unknown();
     }
+    return mapPkeyValue(value);
+  }
+
+  /**
+   * Maps a {@code System.Volume.BitLockerProtection} PKEY value to the domain state. Package-private
+   * so the mapping is testable without a Windows host or a subprocess.
+   *
+   * <p>PKEY 4 ({@code NotApplicable} — the volume cannot be encrypted by the OS at all) gets its own
+   * state rather than falling into {@code UNKNOWN}: both are "not on/off", but only PKEY 3 is
+   * genuinely indeterminate. Merging them made the status surface tell the user to elevate in a case
+   * where elevation cannot produce an answer.
+   */
+  static AtRestProtection mapPkeyValue(int value) {
     return switch (value) {
       case 1 -> new AtRestProtection(AtRestProtection.State.ENCRYPTED, SOURCE, AtRestProtection.Confidence.MEDIUM);
       case 2 -> new AtRestProtection(AtRestProtection.State.NOT_ENCRYPTED, SOURCE, AtRestProtection.Confidence.MEDIUM);
+      case 4 -> new AtRestProtection(AtRestProtection.State.NOT_APPLICABLE, SOURCE, AtRestProtection.Confidence.MEDIUM);
       case 5, 6 -> new AtRestProtection(AtRestProtection.State.ENCRYPTING, SOURCE, AtRestProtection.Confidence.MEDIUM);
       default -> new AtRestProtection(AtRestProtection.State.UNKNOWN, SOURCE, AtRestProtection.Confidence.LOW);
     };

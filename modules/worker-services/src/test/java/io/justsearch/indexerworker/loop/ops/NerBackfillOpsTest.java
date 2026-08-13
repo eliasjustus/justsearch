@@ -56,13 +56,42 @@ class NerBackfillOpsTest {
     }
 
     @Test
-    @DisplayName("marks COMPLETED when content is blank")
-    void skipsDoc_whenContentBlank() {
+    @DisplayName("escalates via the retry seam when content is blank — never COMPLETED-without-data")
+    void escalatesDoc_whenContentBlank() {
       when(documentFieldOps.queryDocIdsByField(
               eq(SchemaFields.NER_STATUS), eq(SchemaFields.NER_STATUS_PENDING), anyInt()))
           .thenReturn(List.of("doc1"));
       when(signalBus.isUserActive()).thenReturn(false);
       when(documentFieldOps.getDocumentContent("doc1")).thenReturn("");
+
+      NerBackfillOps.BackfillContext context =
+          new NerBackfillOps.BackfillContext(
+              documentFieldOps, indexingCoordinator, commitOps, signalBus, () -> nerService, () -> true, 100,
+              LoggerFactory.getLogger(NerBackfillOpsTest.class));
+
+      NerBackfillOps.processNerBackfill(context);
+
+      // NER never ran, so nothing may claim COMPLETED: the doc takes the retry-count escalation.
+      verify(indexingCoordinator)
+          .updateDocument(
+              eq("doc1"),
+              argThat(
+                  (Map<String, Object> map) ->
+                      "1".equals(map.get(SchemaFields.NER_RETRY_COUNT))
+                          && !map.containsKey(SchemaFields.NER_STATUS)));
+      verify(indexingCoordinator, never()).updateDocumentsBatch(anyList());
+      verify(nerService, never()).extractEntities(anyString());
+    }
+
+    @Test
+    @DisplayName("marks COMPLETED_EMPTY when NER ran and extracted no entities")
+    void marksCompletedEmpty_whenNerFoundNoEntities() {
+      when(documentFieldOps.queryDocIdsByField(
+              eq(SchemaFields.NER_STATUS), eq(SchemaFields.NER_STATUS_PENDING), anyInt()))
+          .thenReturn(List.of("doc1"));
+      when(signalBus.isUserActive()).thenReturn(false);
+      when(documentFieldOps.getDocumentContent("doc1")).thenReturn("content with no entities");
+      when(nerService.extractEntitiesBatch(anyList())).thenReturn(List.of(NerResult.EMPTY));
       when(indexingCoordinator.updateDocumentsBatch(anyList()))
           .thenReturn(new LuceneRuntimeTypes.BatchUpdateResult(1, 0));
 
@@ -79,9 +108,37 @@ class NerBackfillOpsTest {
                   (List<Map.Entry<String, Map<String, Object>>> entries) ->
                       entries.size() == 1
                           && entries.get(0).getKey().equals("doc1")
+                          && SchemaFields.NER_STATUS_COMPLETED_EMPTY.equals(
+                              entries.get(0).getValue().get(SchemaFields.NER_STATUS))));
+    }
+
+    @Test
+    @DisplayName("marks COMPLETED when NER extracted at least one entity")
+    void marksCompleted_whenNerFoundEntities() {
+      when(documentFieldOps.queryDocIdsByField(
+              eq(SchemaFields.NER_STATUS), eq(SchemaFields.NER_STATUS_PENDING), anyInt()))
+          .thenReturn(List.of("doc1"));
+      when(signalBus.isUserActive()).thenReturn(false);
+      when(documentFieldOps.getDocumentContent("doc1")).thenReturn("Ada Lovelace wrote this");
+      when(nerService.extractEntitiesBatch(anyList()))
+          .thenReturn(List.of(new NerResult(List.of("Ada Lovelace"), List.of(), List.of())));
+      when(indexingCoordinator.updateDocumentsBatch(anyList()))
+          .thenReturn(new LuceneRuntimeTypes.BatchUpdateResult(1, 0));
+
+      NerBackfillOps.BackfillContext context =
+          new NerBackfillOps.BackfillContext(
+              documentFieldOps, indexingCoordinator, commitOps, signalBus, () -> nerService, () -> true, 100,
+              LoggerFactory.getLogger(NerBackfillOpsTest.class));
+
+      NerBackfillOps.processNerBackfill(context);
+
+      verify(indexingCoordinator)
+          .updateDocumentsBatch(
+              argThat(
+                  (List<Map.Entry<String, Map<String, Object>>> entries) ->
+                      entries.size() == 1
                           && SchemaFields.NER_STATUS_COMPLETED.equals(
                               entries.get(0).getValue().get(SchemaFields.NER_STATUS))));
-      verify(nerService, never()).extractEntities(anyString());
     }
 
     @Test

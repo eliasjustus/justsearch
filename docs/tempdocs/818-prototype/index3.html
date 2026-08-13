@@ -1,0 +1,1196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Search window · v5 — fragments, gallery, the copied sidebar</title>
+<link rel="stylesheet" href="style.css">
+<style>
+/* ===== v5 additions only — everything else stays in style.css ===== */
+
+/* carried from v4 */
+.pill.off{background:transparent;color:var(--g4);box-shadow:var(--inset);font-weight:400}
+.pill.alt.off{box-shadow:none;border:1px dashed var(--g3)}
+.pill.flip{box-shadow:0 0 0 1px var(--g6);text-decoration:underline dashed 1px;text-underline-offset:3px}
+.pill.lockpill{background:var(--risk)}
+.stale{font:var(--fs-label) var(--mono);color:var(--risk);background:var(--risk-hl);
+       border-radius:var(--r-xs);padding:1px 5px;margin-left:var(--s2);white-space:nowrap}
+.frozen .r.showall span{font:var(--fs-label) var(--mono);color:var(--g4)}
+.deck .noneleft{padding:var(--s4) var(--s5);font-size:var(--fs-ui);color:var(--g5);
+                background:var(--g2);border-top:1px solid var(--g3)}
+.lockseam{border:0;border-top:1px dashed var(--risk-line);margin:var(--s5) 0 var(--s2);position:relative}
+.lockseam span{position:absolute;top:-7px;left:0;background:var(--g0);padding-right:var(--s2);
+               font:var(--fs-label) var(--mono);color:var(--risk);letter-spacing:.06em}
+.hint .act{border-bottom:1px dotted var(--g4);cursor:pointer}
+.hint .act:hover{color:var(--g6)}
+
+/* the commit choreography — causal order made visible: the record lands first
+   (turn, then freeze), the periphery follows (deck, rail, name), the answer
+   last. The periphery must never move before the record. */
+@keyframes cm-rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes cm-land{0%{opacity:0;transform:translateY(-6px);box-shadow:0 0 0 3px var(--cite-bg)}
+                   55%{opacity:1;box-shadow:0 0 0 3px var(--cite-bg)}
+                   100%{opacity:1;transform:none;box-shadow:0 0 0 0 transparent}}
+@keyframes cm-fade{from{opacity:0}to{opacity:1}}
+#win.committing .turn{animation:cm-rise .2s ease both}
+#win.committing .frozen{animation:cm-land .5s ease .12s both}
+#win.committing .deck{animation:cm-fade .25s ease .3s both}
+#win.committing .railS{animation:cm-fade .3s ease .4s both}
+#win.committing .name{animation:cm-fade .3s ease .4s both}
+#win.committing .answer{animation:cm-fade .3s ease .55s both}
+@media (prefers-reduced-motion:reduce){
+  #win.committing .turn,#win.committing .frozen,#win.committing .deck,
+  #win.committing .railS,#win.committing .name,#win.committing .answer{animation:none}}
+.prose.pending{color:var(--g4)}
+.prose.pending::after{content:' ▍';animation:cm-blink 1s steps(1) infinite}
+@keyframes cm-blink{50%{opacity:0}}
+@media (prefers-reduced-motion:reduce){.prose.pending::after{animation:none}}
+
+/* one width for BOTH rail modes — the A→B flip must never be a layout jump */
+:root{--rail-a:190px}
+.railS{width:var(--rail-a);flex:0 0 var(--rail-a)}
+.railS.strip{width:34px;flex:0 0 34px;align-items:center;padding-top:var(--s2);gap:var(--s3)}
+.railS.strip .g{font:var(--fs-meta) var(--mono);color:var(--g4);cursor:pointer;padding:4px}
+.railS.strip .g:hover{color:var(--g6)}
+
+/* the copied sidebar (mode A) */
+.sbhead{padding:var(--s2) var(--s2) var(--s1);display:flex;flex-direction:column;gap:6px}
+.sbrow1{display:flex;align-items:center;gap:var(--s2)}
+.sbrow1 .clps{font:var(--fs-meta) var(--mono);color:var(--g4);cursor:pointer;padding:2px 4px}
+.sbrow1 .clps:hover{color:var(--g6)}
+.sbnew{flex:1;text-align:center;font:600 var(--fs-ui) var(--sans);color:var(--g6);background:var(--g2);
+       border-radius:var(--r-ctl);padding:5px 0;cursor:pointer;box-shadow:var(--inset)}
+.sbnew:hover{box-shadow:inset 0 0 0 1px var(--g6)}
+.sbsearch{display:flex;align-items:center;gap:6px;background:var(--g1d);border-radius:var(--r-ctl);
+          padding:3px var(--s2);font:var(--fs-meta) var(--mono);color:var(--g4)}
+.sbsearch input{flex:1;border:0;outline:0;background:transparent;font:var(--fs-ui) var(--sans);
+                color:var(--g6);min-width:0}
+.sbsearch input::placeholder{color:var(--g4)}
+.srow{padding:var(--s1) var(--s3);display:flex;flex-direction:column;gap:2px;cursor:default;position:relative}
+.srow:hover{background:var(--g2)}
+.srow .t{font-size:var(--fs-ui);color:var(--g5);line-height:1.45}      /* wraps — never truncates */
+.srow.on{background:var(--g2);box-shadow:inset 2px 0 0 var(--g6)}
+.srow.on .t{color:var(--g6);font-weight:600}
+.srow .m2{font:var(--fs-label) var(--mono);color:var(--g4)}
+.srow .lk{font:var(--fs-label) var(--mono);letter-spacing:.09em;color:var(--g4);background:var(--g1d);
+          border-radius:var(--r-xs);padding:1px 5px;align-self:flex-start}
+.srow .acts{position:absolute;right:var(--s2);top:var(--s1);display:flex;gap:6px;opacity:0;
+            font:var(--fs-meta) var(--mono);color:var(--g4);background:var(--g2);padding:0 2px}
+.srow:hover .acts{opacity:1}
+.srow .acts span{cursor:pointer}
+.srow .acts span:hover{color:var(--g6)}
+
+/* mode B header: the escape hatch back to all sessions */
+.idxback{padding:6px var(--s3);font:var(--fs-label) var(--mono);color:var(--g4);cursor:pointer;
+         border-bottom:1px solid var(--g3)}
+.idxback:hover{color:var(--g6)}
+
+/* input-band history dropdown (the omnibox home of the query trail) */
+.qhist{background:var(--g2);border:1px solid var(--g3);border-radius:var(--r-card);margin-top:4px;
+       box-shadow:var(--shadow-1);overflow:hidden;max-width:var(--measure)}
+.qhist .qh{padding:5px var(--s3) 2px;font-size:var(--fs-label);font-weight:600;letter-spacing:.1em;
+           text-transform:uppercase;color:var(--g4)}
+.qhist .qr{padding:4px var(--s3);font-size:var(--fs-ui);color:var(--g5);display:flex;gap:var(--s2);cursor:pointer}
+.qhist .qr:hover{background:var(--g1)}
+.qhist .qr .m{font:var(--fs-label) var(--mono);color:var(--g4);margin-left:auto}
+
+/* the gallery */
+#gal{width:1440px;display:none;flex-wrap:wrap;gap:var(--s4);align-items:flex-start}
+#gal.show{display:flex}
+.fx{background:var(--g0);border-radius:var(--r-card);box-shadow:var(--shadow-2);overflow:hidden;
+    display:flex;flex-direction:column}
+.fx .fxh{padding:5px var(--s3);font:var(--fs-label) var(--mono);letter-spacing:.08em;color:var(--g4);
+         background:var(--g1);border-bottom:1px solid var(--g3);text-transform:uppercase}
+.fx .fxb{display:flex;min-height:0}
+.fx .railS{border-right:0;height:460px}
+.sw2{display:flex;gap:2px;background:var(--g1d);padding:2px;border-radius:var(--r-card)}
+.sw2 button{font:500 var(--fs-ui) var(--sans);padding:var(--s1) var(--s2);border:0;background:transparent;
+            color:var(--g5);cursor:pointer;border-radius:var(--r-ctl)}
+.sw2 button:hover{background:var(--g1)}
+.sw2 button.on{background:var(--g2);color:var(--g6);font-weight:600;box-shadow:var(--shadow-1)}
+</style>
+</head>
+<body>
+
+<div class="harness">
+  <h1>Search window · v5</h1>
+  <div class="sw" id="sw"></div>
+  <div class="sw2" id="sw2"></div>
+  <div class="note">1440×900 · v5: fragments · gallery · live commit (⇧↩ in state 2) · <a href="?theme" style="color:inherit">?theme = identity pass</a></div>
+</div>
+<div class="statecap" id="cap"></div>
+
+<div class="window" id="win">
+  <div class="topbar" id="topbar">
+    <span class="name" id="sessname">New session</span>
+    <span id="branch"></span>
+    <span class="sp"></span>
+    <span class="seg" id="detail"><span class="on" data-d="simple">SIMPLE</span><span data-d="detailed">DETAILED</span></span>
+    <span>New</span><span>Export</span><span id="lockbtn">Lock</span>
+  </div>
+  <div class="bodyrow">
+    <div class="railS" id="railS"></div>
+    <div class="centre">
+      <div class="transcript" id="transcript"></div>
+      <div class="deck" id="deck"></div>
+      <div class="inputband" id="inputband"></div>
+    </div>
+    <div class="railM" id="railM"></div>
+  </div>
+</div>
+<div id="gal"></div>
+
+<div id="readout"></div>
+
+<script>
+/* IDENTITY is a swap layer (see identity.css): same structure, same laws,
+   different :root tokens + typography + one signature treatment. ?theme on. */
+if (new URLSearchParams(location.search).has('theme')){
+  const f=document.createElement('link'); f.rel='stylesheet';
+  f.href='https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap';
+  document.head.appendChild(f);
+  const l=document.createElement('link'); l.rel='stylesheet'; l.href='identity.css';
+  document.head.appendChild(l);
+}
+/* ==========================================================================
+   THE LAWS — L1–L10 carried from v4; v5 adds the two that this file exists
+   to demonstrate:
+
+   L1  the pill is never a surprise: destination = pure fn of visible facts;
+       the ⇥ flip is a lens that dies with the draft.
+   L2  a run claims the alt slot, nothing else.
+   L3  scope narrows every destination; it changes none.
+   L4  a frozen block is append-only history; labels derive from its set.
+   L5  ask-about-these-N means these N.
+   L6  every count on screen derives from the set it describes (audited).
+   L7  a decision can never leave the screen; every deck occupant has a
+       minimum honest form; only the list body is compressible.
+   L8  the transcript records commitments, not attention. Corollary: a
+       session is NAMED and INDEXED by its first committed record.
+   L9  a locked session refuses loudly on every path and never swallows text.
+   L10 an empty draft submits nowhere; the pill previews, dimmed.
+
+   L11 ONE FRAGMENT, MANY WINDOWS — every screen region is rendered by exactly
+       one fragment function of (data, options). A state may COMPOSE
+       fragments; it may never author a region's HTML inline. The gallery
+       renders each fragment alone; a full window cannot drift from the
+       gallery because they call the same function. (This is the prototype-
+       scale form of the repo's projection-vs-fork rule.)
+   L12 THE RAIL NEVER YIELDS ITEM-BY-ITEM. Mode A (no committed record) is
+       the conventional session sidebar, identical in every pre-session
+       state, collapsible only WHOLE. Mode B (records exist) is the session
+       index. The flip is the L8 corollary. A live search appears in
+       neither — the query trail lives in the input's own history.
+   ========================================================================== */
+
+/* ==========================================================================
+   MODEL — rungs, register, routing (unchanged from v4)
+   ========================================================================== */
+const RUNGS = {
+  search:   {pill:'SEARCH',   label:'the floor · runs on every keystroke'},
+  ask:      {pill:'ASK',      label:'answered with citations into your files'},
+  extract:  {pill:'EXTRACT',  label:'attachment — a schema chip, not a place'},
+  agent:    {pill:'DELEGATE', label:'handed to the agent, supervised'},
+  chat:     {pill:'CHAT',     label:'no relationship to your files'},
+  steer:    {pill:'STEER',    label:'redirects the run in flight'},
+  workflow: {pill:'WORKFLOW', label:'a saved routine, run as a delegated task'}
+};
+const REGISTER = [
+  {rung:'search',   teach:['↩','search']},
+  {rung:'ask',      teach:['⇧↩','ask'],
+                    strip:n=> n>0 ? `Ask about these ${n}` : 'Ask anyway — the model retrieves at answer time'},
+  {rung:'extract',  teach:['⌗','attach schema'],  strip:()=>'Extract fields…'},
+  {rung:'agent',    teach:['⌘↩','delegate'], teachRun:['⌘↩','steer'], strip:()=>'Delegate a task…'},
+  {rung:'workflow', strip:()=>'Run a workflow…'},
+  {rung:'chat',     teach:['⌥↩','chat'], strip:()=>'Ask without your files', off:true}
+];
+const QWORD = /^(what|who|when|where|why|how|which|does|do|did|is|are|was|were|can|could|should|would|will)\b/i;
+function route(draft, ctx){
+  const d = draft.trim();
+  if (!d.length) return {empty:true};
+  const q = QWORD.test(d) || d.endsWith('?');
+  const primary = ctx.schemaAttached ? 'extract' : (q ? 'ask' : 'search');
+  const alt = ctx.runInFlight ? 'steer' : (primary === 'search' ? 'ask' : 'search');
+  return {primary, alt, empty:false};
+}
+
+/* ==========================================================================
+   DATA — everything a fragment renders from. No fragment owns content.
+   ========================================================================== */
+const HITS = [
+  {t:'Northfield supplier agreement — 2025 renewal.pdf', l:'Contracts / Suppliers / Northfield',
+   e:'…the terms of this supplier agreement shall renew annually unless either party gives ninety days…'},
+  {t:'Q2 vendor review notes.md', l:'Ops / Reviews / 2025',
+   e:'…renegotiated terms with two suppliers; the third is still on the old schedule…'},
+  {t:'RE: revised payment terms.eml', l:'Archive / Mail / 2025-03',
+   e:'…confirming net-45 rather than net-30 for all supplier invoices from April…'},
+  {t:'Ashgrove MSA — executed.pdf', l:'Contracts / Suppliers / Ashgrove',
+   e:'…master services agreement; supplier terms superseded by schedule 2 of this document…'},
+  {t:'Bramhall renewal.pdf', l:'Contracts / Suppliers / Bramhall',
+   e:'…automatic renewal on the anniversary date unless terminated under clause 7…'},
+  {t:'supplier-onboarding-checklist.md', l:'Ops / Procurement',
+   e:'…confirm payment terms, insurance certificate and signatory before first invoice…'},
+  {t:'FW: Carrowmore terms — final.eml', l:'Archive / Mail / 2025-01',
+   e:'…they have accepted our standard supplier terms with one amendment to §4…'},
+  {t:'Procurement policy v3.docx', l:'Ops / Policy',
+   e:'…any supplier agreement above £50,000 requires two signatures and a review…'},
+  {t:'2025 vendor spend.xlsx', l:'Finance / Reporting / 2025',
+   e:'…supplier totals by quarter; terms column reflects the agreement in force…'},
+  {t:'Northfield SOW 02.pdf', l:'Contracts / Suppliers / Northfield / SOW',
+   e:'…this statement of work incorporates the supplier terms of the master agreement…'},
+  {t:'legal-review-notes-q1.md', l:'Legal / Reviews',
+   e:'…flagged three agreements whose terms diverge from the standard supplier template…'},
+  {t:'RE: insurance certificates.eml', l:'Archive / Mail / 2025-02',
+   e:'…required under the supplier terms; two are still outstanding for 2025…'}
+];
+while (HITS.length < 27) {
+  const i = HITS.length;
+  HITS.push({t:`supplier-terms-note-${String(i).padStart(2,'0')}.md`,
+             l:['Ops / Notes','Archive / 2024','Contracts / Drafts'][i%3],
+             e:'…references the standard supplier terms without restating them in full…'});
+}
+const AHITS = [
+  {t:'scan-0088 northfield countersigned.pdf', l:'Downloads', e:''},
+  {t:'Ashgrove_MSA_final_FINAL_v3 (1).pdf',    l:'Downloads', e:''},
+  {t:'terms-2025-signed.pdf',                  l:'Downloads', e:''}
+];
+while (AHITS.length < 41)
+  AHITS.push({t:`scan-${String(88+AHITS.length)} agreement.pdf`, l:'Downloads', e:''});
+
+const SETS = {
+  live:   {id:'live',   query:'supplier terms', mode:'exact-word',    ms:'24 ms',  hits:HITS,  total:HITS.length,  exact:19},
+  fzsup:  {id:'fzsup',  query:'supplier terms', mode:'exact-word',    ms:'24 ms',  hits:HITS.slice(), total:HITS.length},
+  agent:  {id:'agent',  query:'agreement 2025', mode:'meaning-based', ms:'310 ms', hits:AHITS, total:AHITS.length},
+  midrun: {id:'midrun', query:'payment terms',  mode:'exact-word',    ms:'21 ms',
+           hits:HITS.filter(h=>/payment|terms/i.test(h.t+' '+h.e)), total:0},
+  zero:   {id:'zero',   query:'chemring indemnity clause', mode:'exact-word', ms:'18 ms', hits:[], total:0, near:4}
+};
+SETS.midrun.total = SETS.midrun.hits.length;
+
+const SOURCES = [
+  {n:1, t:'Northfield renewal.pdf', s:'§4.2'},
+  {n:2, t:'Northfield renewal.pdf', s:'§1.1'},
+  {n:3, t:'Q2 vendor review notes.md', s:''}
+];
+const RETRIEVED_UNUSED = 6;
+
+/* the sessions — ONE array; the sidebar derives pinned + buckets from it */
+const SESSIONS = [
+  {id:'s1', title:'Supplier renewal terms',                 when:'today',     steps:4,  pinned:false},
+  {id:'s2', title:'File the 2025 supplier agreements',      when:'today',     steps:21, pinned:false},
+  {id:'s3', title:'Reconcile Q2 invoices',                  when:'yesterday', steps:31, pinned:false},
+  {id:'s4', title:'what did we agree on rent',              when:'yesterday', steps:2,  pinned:false},
+  {id:'s5', title:'Q3 forecast pack',                       when:'week',      steps:12, pinned:true},
+  {id:'s6', title:'invoices 2025 — recurring reconcile',    when:'week',      steps:7,  pinned:true},
+  {id:'s7', title:'Vendor audit',                           when:'week',      steps:9,  locked:true},
+  {id:'s8', title:'Lease comparison',                       when:'week',      steps:4},
+  {id:'s9', title:'warehouse photos hunt',                  when:'older',     steps:3},
+  {id:'s10',title:'deck v4 sources',                        when:'older',     steps:5}
+];
+const BUCKETS = [['today','Today'],['yesterday','Yesterday'],['week','This week'],['older','Older']];
+
+/* the query trail — lives in the INPUT's history, not in the rail (L12) */
+const PINNED_QUERIES = ['Q3 forecast', 'invoices 2025', 'lease renewal'];
+const RECENT_QUERIES = [
+  {q:'supplier terms', m:'11m'}, {q:'warehouse photos', m:'1h'},
+  {q:'what did we agree on rent', m:'1h'}, {q:'deck v4', m:'Tue'}
+];
+
+/* session-index records — clusters carry their own size; the header count is
+   the SUM, so it cannot disagree with the nodes (L6 applied to the rail) */
+const IDX_ANSWERED = [
+  {g:'◍', t:'Search · supplier terms'},
+  {g:'▤', t:'Read · Northfield renewal'},
+  {g:'●', t:'You · notice period'},
+  {g:'▲', t:'Answer', cur:true}
+];
+const IDX_AGENT = [
+  {g:'◦', t:'restored · 6 turns'},
+  {g:'●', t:'You · file the 2025 agreements'},
+  {g:'◍', t:'Agent search'},
+  {cluster:8, t:'steps · file scan'},
+  {g:'✕', t:'read_pdf failed', fail:true},
+  {g:'✓', t:'Approved · rename 4'},
+  {cluster:5, t:'steps · classify'},
+  {g:'▲', t:'Step 17 · awaiting you', cur:true},
+  {g:'◦', t:'Final answer · pending'}
+];
+const IDX_LOCKED = [
+  {g:'●', t:'You · missing certificates'},
+  {g:'◍', t:'Search · insurance 2025'},
+  {g:'▲', t:'Answer', cur:true}
+];
+
+/* ==========================================================================
+   FRAGMENTS (L11) — pure functions of (data, options) → html. States compose
+   these; no state authors region HTML inline. The gallery renders each one
+   alone, so a full window cannot drift from what the gallery shows.
+   ========================================================================== */
+const FRAG = {};
+
+/* ---- sessionSidebar — rail mode A. Copied from the T3/ChatGPT convention;
+   the five DELIBERATE divergences, so nobody "fixes" them back:
+     1. rows WRAP, never truncate — you must recognise a query you wrote
+     2. objects are SESSIONS of a search tool, never "chats"/"threads"
+     3. hover exposes pin + lock; DELETE lives behind the … overflow with a
+        confirm — sessions are evidence in a local-first tool, and a bare
+        destructive hover target contradicts the window's own honesty rules
+     4. New session is emphasised but NOT filled — the approval keeps A's
+        one-filled-element rule
+     5. a LOCKED badge exists; the convention has no lock at all            */
+FRAG.sessionSidebar = (o={}) => {
+  if (o.collapsed) return `
+    <span class="g" title="expand · ⌘B">☰</span>
+    <span class="g" title="new session">+</span>
+    <span class="g" title="pinned sessions">⌖</span>`;
+  const pinned = SESSIONS.filter(s=>s.pinned);
+  const row = s => `
+    <div class="srow${s.id===o.activeId?' on':''}" data-sess="${s.id}">
+      <span class="t">${s.title}</span>
+      ${s.locked ? `<span class="lk">LOCKED</span>`
+                 : `<span class="m2">${s.steps!=null? s.steps+' steps':''}</span>`}
+      <span class="acts" title="delete lives behind …, with a confirm — never a bare hover target">
+        <span>⌖</span><span>⊘</span><span>…</span></span>
+    </div>`;
+  return `
+    <div class="sbhead">
+      <div class="sbrow1"><span class="clps" title="collapse whole · ⌘B — the rail never yields item-by-item (L12)">☰</span>
+        <span class="sbnew">+ New session</span></div>
+      <div class="sbsearch">⌕<input placeholder="Search sessions…"></div>
+    </div>
+    <div class="scroll">
+      ${pinned.length ? `<div class="rlabel">Pinned</div><div class="rlist">${pinned.map(row).join('')}</div>` : ''}
+      ${BUCKETS.map(([k,lbl])=>{
+        const rows = SESSIONS.filter(s=>s.when===k && !s.pinned);
+        return rows.length ? `<div class="rlabel">${lbl}</div><div class="rlist">${rows.map(row).join('')}</div>` : '';
+      }).join('')}
+    </div>
+    <div class="foot">⌘B collapses the rail</div>`;
+};
+
+/* ---- sessionIndex — rail mode B. Appears at the first committed record
+   (L8 corollary); the ‹ back row is the escape hatch the convention gets
+   for free by never leaving mode A. Header count = Σ cluster sizes — the
+   label cannot disagree with its nodes (L6).                               */
+FRAG.sessionIndex = (records, o={}) => {
+  const n = records.reduce((a,r)=>a+(r.cluster||1),0);
+  return `
+    <div class="idxback">‹ All sessions</div>
+    <div class="rlabel">Session index <span class="n" data-idx-n="${n}">${n}</span></div>
+    <div class="scroll" data-idx-rows="${records.length}">
+      ${records.map(r=>`<div class="node${r.cur?' cur':''}${r.fail?' fail':''}${r.cluster?' cluster':''}">
+         <i class="g">${r.cluster||r.g}</i><span>${r.t}</span></div>`).join('')}
+    </div>
+    <div class="foot">${o.readonly ? 'read-only · the session is locked' : '⌥↑ ⌥↓ · never while typing'}</div>`;
+};
+
+/* ---- counts + live list + strips (deck occupants) ---------------------- */
+FRAG.countLine = (set, extra='') => `
+  <div class="counts" data-fz="${set.id}">
+    <span><b>${set.total} results</b></span>
+    ${set.exact!=null ? `<span style="color:var(--g5)">${set.exact} matched exactly</span>` : ''}
+    ${set.total===0 && set.near ? `<span style="color:var(--g5)">meaning-based finds ${set.near} near matches ▸ <i style="color:var(--g4)">an offer, not a result</i></span>` : ''}
+    <span class="more">${extra}drag the deck edge to trade list for transcript</span>
+  </div>`;
+FRAG.facetRow = () => `
+  <div class="facets">
+    <span class="fgroup">KIND</span>
+    <span class="fchip">PDF · 12</span><span class="fchip">Markdown · 8</span><span class="fchip">Email · 7</span>
+    <span class="fgroup" style="margin-left:8px">FOLDER</span>
+    <span class="fchip on">Contracts · 14</span><span class="fchip">Ops · 9</span><span class="fchip">Archive · 4</span>
+  </div>`;
+FRAG.rows = (set, sel=-1) => `<div class="rows" data-rows="${set.id}">` + set.hits.map((h,i)=>`
+    <div class="row ${i===sel?'sel':''}" data-hit="${i}">
+      <span class="ttl">${h.t}</span>
+      <span class="loc">${h.l}</span>
+      <span class="ex">${h.e}</span>
+      <span class="why">why?</span>
+    </div>`).join('') + `</div>`;
+FRAG.escal = n => `<div class="escal"><span class="k">ESCALATE</span>`
+  + REGISTER.filter(e=>e.strip).map(e=>`<span class="rung${e.off?' off':''}" data-rung="${e.rung}">${e.strip(n)}</span>`).join('')
+  + `</div>`;
+FRAG.teach = (ctx={}) => `<div class="teach">`
+  + REGISTER.filter(e=>e.teach).map(e=>{
+      const t = (ctx.runInFlight && e.teachRun) ? e.teachRun : e.teach;
+      return `<span><b>${t[0]}</b> ${t[1]}</span>`; }).join('')
+  + `<span style="color:var(--g4)">⇥ flips the destination · for this draft only</span></div>`;
+FRAG.liveList = (set, o={}) => `
+  <div class="dhead"><span class="k">DECK · LIVE SEARCH${o.midrun?' · MID-RUN':''}</span>
+    <span>${set.mode} · ${set.ms}</span><span class="sp"></span></div>
+  ${FRAG.countLine(set)}${o.facets?FRAG.facetRow():''}${set.total?FRAG.rows(set,o.sel??-1):''}`;
+
+/* ---- frozenBlock — unchanged from v4: derived header, immutable, honest
+   about staleness (L4/L6) ------------------------------------------------ */
+FRAG.frozen = (fz, o={}) => {
+  const label   = o.label || 'FROZEN SEARCH';
+  const showing = o.collapsed ? 0 : Math.min(o.showing ?? 5, fz.total);
+  const head    = o.collapsed
+    ? `${fz.total} results · ▸ collapsed while reading`
+    : (showing < fz.total ? `${fz.total} results · showing ${showing}` : `all ${fz.total} results`);
+  return `<div class="frozen" data-fz="${fz.id}" data-showing="${showing}"${o.collapsed?' data-collapsed="1"':''}>
+    <div class="h"><span>${label} · ${fz.query}</span>
+      <span>${fz.mode} · ${fz.ms} · ${head}${o.stale?`<span class="stale">index changed since this froze · ↻ re-run as new</span>`:''}</span></div>
+    ${fz.hits.slice(0,showing).map(h=>`<div class="r"><span>${h.t}</span><span class="p">${h.l}</span></div>`).join('')}
+    ${!o.collapsed && showing < fz.total ? `<div class="r showall"><span>Show all ${fz.total} ▾</span></div>` : ''}
+  </div>`;
+};
+
+/* ---- answer + prior exchange ------------------------------------------ */
+FRAG.answer = () => `
+<div class="answer" id="answercard">
+  <div class="banner">
+    <span class="k">PARTIALLY GROUNDED</span>
+    <span class="w">One clause is drawn from your files; the comparison to the ops team is not supported by anything retrieved.</span>
+  </div>
+  <div class="prose">
+    <span class="s direct" data-src="1">Northfield requires ninety days' written notice before the anniversary date</span><span class="cite" data-src="1">1</span><span class="s direct" data-src="2">, and the anniversary falls on 14 March</span><span class="cite" data-src="2">2</span>.
+    <span class="s inferred" data-src="3">The March vendor review notes describe the same window, though they round it to “three months”</span><span class="cite" data-src="3">3</span>.
+    <span class="s none">I found nothing recording what the ops team was told, so I cannot confirm the two agree.</span>
+  </div>
+  <div class="legend">
+    <span>unmarked · straight from your files</span><span><i class="d"></i>inferred</span><span>⚑ not in your files</span>
+    <span style="margin-left:auto;color:var(--g4)">grounding is the underline · citation is the colour · hover is the background</span>
+  </div>
+  <div class="srcs">
+    <div class="h">Sources · ${SOURCES.length} grounded this answer</div>
+    ${SOURCES.map(s=>`<span class="chip2" data-src="${s.n}"><span class="n">${s.n}</span>${s.t}${s.s?' '+s.s:''}</span>`).join('')}
+    <span class="chip2 unused">${RETRIEVED_UNUSED} retrieved, not used ▾</span>
+  </div>
+  <div class="rcpt" id="rcpt">3 s · on-device model</div>
+</div>`;
+FRAG.priorExchange = () => `
+  <div class="turn"><div class="who">You</div>
+    <div class="said">Which of our supplier agreements renew in the first half of 2026?</div>
+    <div class="aff">edit ⤳ branches · retry</div></div>
+  <div class="answer">
+    <div class="prose">
+      <span class="s direct">Three renew before 30 June 2026: Northfield on 14 March, Ashgrove on 2 May, and
+      Bramhall on 11 June</span><span class="cite" data-src="1">1</span>.
+      <span class="s direct">Bramhall is the only one of the three on automatic renewal — the other two require
+      written notice to continue</span><span class="cite" data-src="2">2</span>.
+      <span class="s inferred">A fourth, Carrowmore, has an anniversary in July but its notice window opens in
+      April, so it is worth treating as in-scope</span><span class="cite" data-src="3">3</span>.
+    </div>
+    <div class="srcs">
+      <div class="h">Sources · 3 grounded this answer</div>
+      <span class="chip2"><span class="n">1</span>renewal-schedule-2026.md</span>
+      <span class="chip2"><span class="n">2</span>Bramhall MSA.pdf §7</span>
+      <span class="chip2"><span class="n">3</span>Carrowmore terms.pdf §4.1</span>
+      <span class="chip2 unused">2 retrieved, not used ▾</span>
+    </div>
+    <div class="rcpt">2 s · on-device model &nbsp;·&nbsp; fully grounded — the only case with no banner</div>
+  </div>`;
+
+/* ---- run furniture ----------------------------------------------------- */
+FRAG.approval = () => `
+      <div class="approval">
+        <div class="ap-h">Needs you · step 17 · high risk</div>
+        <div class="ap-t">Move 14 files out of /Downloads into /Contracts/Suppliers/2025</div>
+        <div class="ap-w">Because step 12 classified each as a 2025 supplier agreement from its first page. One file could
+          not be read and is not included — the count is 14 of 15. Nothing already inside /Contracts is touched.
+          <span style="color:var(--g4)">Show the 14 ▾ · Show the reasoning ▾</span></div>
+        <div class="ap-a">
+          <span class="btn">Decline</span>
+          <span class="btn primary">Approve</span>
+          <span class="btn off">Approve the rest</span>
+          <span class="ap-note">high risk always asks — the dial can lower<br>ceremony, never remove it</span>
+        </div>
+      </div>`;
+FRAG.runrow = () => `
+      <div class="runrow">
+        <span class="step">Step 17 of ~24</span><span style="color:var(--g5)">holding</span>
+        <span class="btn">Pause</span><span class="btn">Steer…</span>
+        <span class="dial"><span class="on">ASK ME</span><span>CHECKPOINTS</span><span>RUN IT OUT</span></span>
+        <span class="meter" data-ctx="1">CONTEXT 78% <span class="bar"><i style="width:78%"></i></span> open ▸</span>
+      </div>`;
+FRAG.telem = () => `
+      <div class="telem"><span>TELEMETRY ▸</span><span>41.2k tokens</span><span>3m 04s</span><span>17 tool calls</span>
+        <span>over the 30k budget by 11.2k</span></div>`;
+FRAG.agentTranscript = () => `
+      <div class="card" style="border-style:dashed">
+        <div class="blabel">Compacted · 6 turns</div>
+        <div class="conseq">Six earlier turns established which folders count as supplier records, and that anything
+          before 2023 is out of scope.</div>
+        <div class="receipt">expand · edit</div>
+      </div>
+      <hr class="seam"><span>Restored history ends · live session begins</span></hr>
+      <div class="turn"><div class="who">You</div>
+        <div class="said">Find every 2025 supplier agreement in Downloads, rename them to the house convention,
+          and file them under Contracts/Suppliers.</div>
+        <div class="aff">‹ v2 of 3 › · edit · retry</div></div>
+      ${FRAG.frozen(SETS.agent, {showing:3, label:'AGENT SEARCH'})}
+      <div class="card"><div class="l"><i class="g">✓</i><span>list_files · /Downloads · 41 files</span><span class="tag">READ ONLY ▸</span></div></div>
+      <div class="card failed">
+        <div class="l"><i class="g">✕</i><span>read_pdf · scan-0091.pdf — encrypted, skipped</span><span class="tag">READ ONLY</span></div>
+        <div class="conseq">Left out of the batch. It is the only file in the set that is not classified, so the count
+          below is 14 of 15 — it is excluded from the move.</div>
+      </div>
+      <div class="card"><div class="l"><i class="g">✓</i><span>rename 4 files · approved by you at 14:02</span><span class="tag">WRITES ▸</span></div></div>
+      <div class="receipt">↗ Opened Ashgrove_MSA_final_FINAL_v3 (1).pdf at page 1 · you did not navigate here</div>
+      <div class="card"><div class="l"><i class="g">✓</i><span>classify · 15 files read, 14 classified</span><span class="tag">READ ONLY ▸</span></div></div>
+      <div class="receipt">Workflow · File supplier agreements (catalogue) · triggered by you</div>`;
+
+/* ---- material rail ----------------------------------------------------- */
+FRAG.docRail = (opts={}) => `
+  <div class="tabs"><span class="on" data-tab="doc">Document</span><span data-tab="ctx">Context</span><span class="x">×</span></div>
+  ${opts.nav ? `<div class="navrec">Opened by the agent at step 16 · you did not navigate here</div>`:''}
+  <div class="msub"><span class="bc">${opts.bc||'Northfield renewal.pdf › 4. Renewal › 4.2 Notice of non-renewal'}</span><span>Rendered · Source</span></div>
+  <div class="mbody">
+    ${opts.from ? `<span class="frommark">FROM ❶</span>`:''}
+    <h5>4. Renewal</h5>
+    <h4>4.2 Notice of non-renewal</h4>
+    <p><span class="psg" id="psg">Either party may decline renewal by written notice delivered no fewer than ninety (90) days
+       before the anniversary date.</span></p>
+    <h5>4.3 Price adjustment</h5>
+    <p>Fees may be adjusted once per term on sixty days' notice, capped at the published index rate for the
+       preceding twelve months.</p>
+    <div class="quoted"><span class="k">QUOTED FROM YOUR FILE</span>
+      Anything the model reproduces verbatim is framed like this wherever it appears — in an answer,
+      in an extraction, in a tool card.</div>
+    <h5>1. Term</h5>
+    <p>This agreement commences on 14 March 2025 and continues for twelve months, renewing on each
+       anniversary date unless notice is given under §4.2.</p>
+  </div>`;
+FRAG.ctxRail = () => `
+  <div class="tabs"><span data-tab="doc">Document</span><span class="on" data-tab="ctx">Context</span><span class="x">×</span></div>
+  <div class="msub"><span class="bc">What is in context · 34% of the window</span><span>ledger</span></div>
+  <div class="mbody ledger">
+    <div class="lrow"><span>Compacted summary · 6 turns</span><span class="sz">1.2k</span><span class="ex">exclude</span></div>
+    <div class="lrow"><span>Frozen search · supplier terms — the snapshot itself (L5)</span><span class="sz">0.9k</span><span class="ex">exclude</span></div>
+    <div class="lrow"><span>You · notice period question</span><span class="sz">0.1k</span><span class="ex">exclude</span></div>
+    <div class="lrow"><span>Northfield renewal.pdf §4.2</span><span class="sz">2.4k</span><span class="ex">exclude</span></div>
+    <div class="lrow"><span>Northfield renewal.pdf §1.1</span><span class="sz">1.8k</span><span class="ex">exclude</span></div>
+    <div class="lrow gone"><span>Q2 vendor review notes.md</span><span class="sz">3.1k</span><span class="ex">restore</span></div>
+    <div class="lrow"><span>${RETRIEVED_UNUSED} retrieved, not used</span><span class="sz">0</span><span class="ex">—</span></div>
+    <div class="foot">1 excluded · Bring back 1 excluded<br><br>
+      the meter is present tense and lives on the deck · the ledger is material and lives here</div>
+  </div>`;
+
+/* ---- inputBand — including the omnibox history, the query trail's home -- */
+FRAG.inputBand = (o={}) => {
+  if (o.locked) return `
+      <div class="chips" id="chiprow"></div>
+      <div class="field">
+        <input id="q" value="${o.draft||''}" autocomplete="off">
+        <span class="pill lockpill" title="every send path refuses identically — the gate lives on the session (L9)">LOCKED</span>
+      </div>
+      <div class="hint">the session refuses new turns · ${o.hint||''}</div>`;
+  return `
+      <div class="chips" id="chiprow">${o.chips||''}</div>
+      <div class="field">
+        <input id="q" placeholder="${o.scopePinned?'Ask about what is pinned…':'Search your files…'}" value="${o.draft||''}" autocomplete="off">
+        <span class="pill" id="pill"></span><span class="pill alt" id="pillalt"></span>
+      </div>
+      ${o.history ? FRAG.queryHistory() : ''}
+      <div class="hint"><span id="schemactl" style="border-bottom:1px dotted var(--g4);cursor:pointer;margin-right:10px">⌗ attach schema</span>${o.hint||''}</div>`;
+};
+FRAG.queryHistory = () => `
+  <div class="qhist">
+    <div class="qh">Pinned searches</div>
+    ${PINNED_QUERIES.map(q=>`<div class="qr">⌖ ${q}<span class="m">runs live</span></div>`).join('')}
+    <div class="qh">Recent</div>
+    ${RECENT_QUERIES.map(r=>`<div class="qr">${r.q}<span class="m">${r.m}</span></div>`).join('')}
+  </div>`;
+
+/* ==========================================================================
+   THE COMMIT — the live transition. One records array; transcript, index and
+   name are all projections of it (L11 on the live path — the tableaux above
+   still author these separately, which is logged as #818's first unification).
+   Choreography: the record lands first (turn, freeze), the periphery follows
+   (deck, rail, name), the answer last — you can trace why every region moved.
+   ========================================================================== */
+let COMMITTED = null;
+FRAG.record = r =>
+  r.kind==='frozen' ? FRAG.frozen(r.set,{showing:5})
+  : r.kind==='turn' ? `<div class="turn"><div class="who">You</div><div class="said">${r.text}</div>
+      <div class="aff">edit ⤳ branches · retry</div></div>`
+  : `<div class="answer"><div class="prose pending">Retrieving within the frozen ${SETS.fzsup.total} …</div>
+      <div class="rcpt">ASK · scoped to the committed set</div></div>`;
+const idxFrom = records => records.map(r =>
+  r.kind==='frozen' ? {g:'◍', t:'Search · '+r.set.query}
+  : r.kind==='turn' ? {g:'●', t:'You · '+(r.text.length>24? r.text.slice(0,24)+'…':r.text)}
+  : {g:'▲', t:'Answer · retrieving', cur:true});
+const nameFrom = records => records && records.length ? (records[0].set? records[0].set.query : records[0].text) : 'New session';
+function committedState(records){
+  return {
+    cap:'<b>Committed — the one moment three things change.</b> The order is the meaning: the record lands first (your turn, ' +
+        'then the freeze), and only then does the periphery follow — deck, index, name. Transcript, index and name here are all ' +
+        'projections of ONE records array; nothing was authored per state. Press 4 to continue into the dense tableau.',
+    rail:()=>FRAG.sessionIndex(idxFrom(records)), railM:null,
+    transcript:{html:()=>records.map(FRAG.record).join('')},
+    deck:()=>`<div class="collapsed"><span>Live · ${SETS.live.total} results for “${SETS.live.query}”</span><span style="color:var(--g4)">▴</span>
+            <span class="meter" data-ctx="1" style="margin-left:auto">CONTEXT 21% <span class="bar"><i style="width:21%"></i></span> open ▸</span></div>`,
+    input:{chips:`<span class="chip">SET · ${SETS.fzsup.total} results · ${SETS.fzsup.query}<span class="x">×</span></span>`, draft:'',
+           hint:'the committed set scopes the next turn · ⌫ removes the chip'}
+  };
+}
+function commit(draft){
+  COMMITTED = [
+    {kind:'frozen', set:SETS.fzsup},
+    {kind:'turn', text:(draft||'').trim() || 'Ask about these '+SETS.fzsup.total},
+    {kind:'pending'}
+  ];
+  STATES[10] = committedState(COMMITTED);
+  render(10);
+  const win = document.getElementById('win');
+  win.classList.add('committing');
+  setTimeout(()=>win.classList.remove('committing'), 950);
+}
+
+/* ==========================================================================
+   STATES — compositions only (L11). Rails per L12:
+     modeA sidebar: 1, 2, 9 identical; 3 collapsed whole
+     modeB index:   4, 5 (answered), 6, 7 (agent), 8 (locked, read-only)
+   ========================================================================== */
+const STATES = {
+1:{ cap:'<b>Idle.</b> One column; only the future, so only the input. The rail is the copied convention — sessions, pinned + ' +
+       'time buckets, search, collapse — with our five divergences (wrap, sessions-not-chats, no bare delete, unfilled New, LOCKED). ' +
+       '<i>The pill previews the default, dimmed (L10).</i>',
+    rail:()=>FRAG.sessionSidebar(), railM:null,
+    transcript:{centred:true, html:`
+      <div style="width:560px">
+        <div style="font-size:var(--fs-ui);color:var(--g4);font-family:var(--mono);letter-spacing:.12em;margin-bottom:9px">SEARCH YOUR FILES</div>
+        <div class="field">
+          <input id="q" placeholder="Search your files…" autocomplete="off">
+          <span class="pill" id="pill">SEARCH ⏎</span>
+          <span class="pill alt" id="pillalt">ASK ⇥</span>
+        </div>
+        ${FRAG.teach()}
+        <div class="corpus">12,480 files indexed · 4 folders · results appear as you type</div>
+      </div>`},
+    deck:null,
+    input:null },
+
+2:{ cap:'<b>Searching.</b> The deck appears; the transcript stays empty — a live search is not a record (L8), so there is no ' +
+       'name and no index yet. <b>The sidebar did not change at all</b>: it never morphs, and the live query is not in it — ' +
+       'the trail lives in the input&rsquo;s own history (L12). <i>Counts derive and are audited below (L6).</i> ' +
+       '<b>Press ⇧↩ (or click “Ask about these 27”) to watch the commit</b> — the one live transition.',
+    rail:()=>FRAG.sessionSidebar(), railM:null, deckFills:true,
+    transcript:{html:`<div class="tnote">TRANSCRIPT · empty — a live search is not a record until you commit to it</div>`},
+    deck:()=>FRAG.liveList(SETS.live,{facets:true}) + FRAG.escal(SETS.live.total),
+    input:{chips:'', draft:'supplier terms',
+           hint:'⇥ flips the destination for this draft only · ⌘↩ submits the other one directly · ⇧↩ asks about all of these'} },
+
+3:{ cap:'<b>Searching + reading.</b> Opening a result opens the material rail and pins the file as scope — one act, two visible ' +
+       'consequences (L3). The sidebar yields <b>whole</b>, to a strip — never item-by-item (L12). <i>Reading leaves no record ' +
+       '(L8): your attention needs no witness; the agent&rsquo;s does.</i>',
+    rail:()=>FRAG.sessionSidebar({collapsed:true}), railStrip:true, railM:()=>FRAG.docRail({}), deckFills:true,
+    transcript:{html:`<div class="tnote">TRANSCRIPT · empty — reading is not a turn, it leaves no record</div>`},
+    deck:()=>FRAG.liveList(SETS.live,{sel:0}) + `
+          <div class="escal"><span class="k">SELECTED 1</span>
+            <span class="rung on">Ask about this file</span><span class="rung">Ask about all ${SETS.live.total}</span><span class="rung">Delegate…</span>
+            <span style="font:var(--fs-label) var(--mono);color:var(--g4);margin-left:auto">⌘-click adds · ⇧-click ranges</span>
+          </div>`,
+    input:{chips:'<span class="chip">FILE · Northfield renewal.pdf<span class="x">×</span></span>', draft:'',
+           hint:'opening pinned it as scope · the pill still routes on the draft&rsquo;s own shape (L3) · ⌫ removes the last chip'} },
+
+4:{ cap:'<b>Answered.</b> The first commit: the search froze in (immutable, derived header, stale badge — L4/L6), and with it ' +
+       'the session earned a name and an index — the rail flipped modes at exactly this boundary (L8 corollary, L12), with ' +
+       '&lsaquo; All sessions as the way back. <b>Hover a citation</b> to see the channels.',
+    rail:()=>FRAG.sessionIndex(IDX_ANSWERED), railM:null,
+    transcript:{html:()=>`
+      ${FRAG.priorExchange()}
+      ${FRAG.frozen(SETS.fzsup, {showing:5, stale:true})}
+      <div class="turn"><div class="who">You</div>
+        <div class="said">What notice period do we owe Northfield, and does it match what we told the ops team?</div>
+        <div class="aff">edit ⤳ branches · retry</div></div>
+      ${FRAG.answer()}`},
+    deck:()=>`<div class="collapsed"><span>Live · ${SETS.live.total} results for “supplier terms”</span><span style="color:var(--g4)">▴</span>
+            <span class="meter" data-ctx="1" style="margin-left:auto">CONTEXT 34% <span class="bar"><i style="width:34%"></i></span> open ▸</span></div>`,
+    input:{chips:'<span class="chip">FILE · Northfield renewal.pdf<span class="x">×</span></span>'+
+                 `<span class="chip">SET · ${SETS.fzsup.total} results · supplier terms<span class="x">×</span></span>`+
+                 '<span class="u">asked against the union of both</span>',
+           draft:'', hint:'⌫ removes the last chip · chips scope the NEXT turn — the frozen record above never changes (L4)'} },
+
+5:{ cap:'<b>Followed a citation.</b> One act of highlighting in three places, and the passage lands strong then settles. ' +
+       '<b>Click a citation marker</b> to run it. <i>No new node in the index — reading is not a step (L8).</i>',
+    rail:()=>FRAG.sessionIndex(IDX_ANSWERED), railM:()=>FRAG.docRail({from:true}),
+    transcript:{html:()=>`
+      ${FRAG.priorExchange()}
+      ${FRAG.frozen(SETS.fzsup, {collapsed:true})}
+      ${FRAG.answer()}`},
+    deck:()=>`<div class="collapsed"><span>Live · ${SETS.live.total} results</span><span style="color:var(--g4)">▴</span>
+            <span class="meter" data-ctx="1" style="margin-left:auto">CONTEXT 34% <span class="bar"><i style="width:34%"></i></span> open ▸</span></div>`,
+    input:{chips:'<span class="chip">FILE · Northfield renewal.pdf<span class="x">×</span></span>'+
+                 `<span class="chip">SET · ${SETS.fzsup.total} results<span class="x">×</span></span>`,
+           draft:'', hint:'following a citation added no node — reading is not a step in the run'} },
+
+6:{ cap:'<b>Agent mid-run, dense.</b> Everything present and the decision still the largest thing on screen; failure states its ' +
+       'downstream consequence; the approval is the one filled element. The index header count is the SUM of its clusters — ' +
+       'it cannot disagree with its own nodes (L6, audited). <i>Dimmed pills preview ⏎ and ⌘↩ — STEER holds the alt slot (L2).</i>',
+    rail:()=>FRAG.sessionIndex(IDX_AGENT), railM:()=>FRAG.docRail({nav:true, bc:'Downloads › … › Ashgrove_MSA_final_FINAL_v3 (1).pdf'}),
+    transcript:{html:()=>FRAG.agentTranscript()},
+    deck:()=>FRAG.approval() + FRAG.runrow() + FRAG.telem(),
+    runInFlight:true,
+    input:{chips:`<span class="chip">SET · ${SETS.agent.total} results · agreement 2025<span class="x">×</span></span>`,
+           draft:'', hint:'↩ searches — the run is untouched (L2) · ⌘↩ steers · ⌫ removes the last chip'} },
+
+7:{ cap:'<b>Run + searching — the collision state.</b> The deck is a stack with a priority order: decision and controls ' +
+       'incompressible, the list the one compressible occupant, its minimum honest form its count line (L7). <b>Drag down</b> — ' +
+       'the approval never leaves the screen. <i>↩ searches, the run untouched (L2) · the index gained no node (L8).</i>',
+    rail:()=>FRAG.sessionIndex(IDX_AGENT), railM:null, deckH:490,
+    transcript:{html:()=>FRAG.agentTranscript()},
+    deck:()=>FRAG.liveList(SETS.midrun,{midrun:true}) + FRAG.approval() + FRAG.runrow() + FRAG.telem(),
+    runInFlight:true,
+    input:{chips:`<span class="chip">SET · ${SETS.agent.total} results · agreement 2025<span class="x">×</span></span>`,
+           draft:'payment terms',
+           hint:'↩ searches — the run is untouched (L2) · ⌘↩ steers · the decision cannot be dragged off screen (L7)'} },
+
+8:{ cap:'<b>Locked.</b> The gate is the session&rsquo;s, not a button&rsquo;s: every send path refuses identically, the refusal is ' +
+       'typed, the draft is never swallowed, and the exits are named (L9). The rail stays mode B — the session HAS records, so it ' +
+       'keeps its index, read-only (L12); &lsaquo; All sessions is the way out.',
+    rail:()=>FRAG.sessionIndex(IDX_LOCKED,{readonly:true}), railM:null,
+    transcript:{html:`
+      <div class="turn"><div class="who">You</div>
+        <div class="said">Which vendors are still missing insurance certificates for 2025?</div>
+        <div class="aff">read-only · locked</div></div>
+      <div class="answer">
+        <div class="prose">
+          <span class="s direct">Two are outstanding: Carrowmore and Bramhall</span><span class="cite" data-src="1">1</span>.
+          <span class="s direct">Both were reminded on 12 February; neither has responded</span><span class="cite" data-src="2">2</span>.
+        </div>
+        <div class="srcs">
+          <div class="h">Sources · 2 grounded this answer</div>
+          <span class="chip2"><span class="n">1</span>RE: insurance certificates.eml</span>
+          <span class="chip2"><span class="n">2</span>vendor-compliance-2025.xlsx</span>
+        </div>
+        <div class="rcpt">2 s · on-device model</div>
+      </div>
+      <hr class="lockseam"><span>LOCKED 2 AUG 2026 · nothing enters this record</span></hr>`},
+    deck:null,
+    input:{locked:true, draft:'add the two missing certificates to the tracker',
+           hint:'your text is kept · <span class="act" id="unlockact">Unlock</span> · <span class="act">Branch to a new session with this draft</span> — refusal always names the exit (L9)'} },
+
+9:{ cap:'<b>Nothing matched.</b> Zero is a count like any other and derives like any other (L6); the near-match line is an offer, ' +
+       'not a result; the strip&rsquo;s labels re-derive for n = 0. <b>The sidebar is still byte-identical to states 1 and 2</b> — ' +
+       'that is L12&rsquo;s whole claim, and the readout asserts it.',
+    rail:()=>FRAG.sessionSidebar(), railM:null, deckFills:true,
+    transcript:{html:`<div class="tnote">TRANSCRIPT · empty — a live search is not a record until you commit to it</div>`},
+    deck:()=>FRAG.liveList(SETS.zero) + `
+          <div class="noneleft" style="flex:1 1 auto">Nothing in your files matches all of “chemring indemnity clause”.
+            Names are the usual culprit — the near matches drop the word that found nothing.</div>` + FRAG.escal(SETS.zero.total),
+    input:{chips:'', draft:'chemring indemnity clause',
+           hint:'⇥ flips the destination · asking anyway retrieves at answer time — an empty list is not an empty corpus'} }
+};
+
+/* ==========================================================================
+   GALLERY — each fragment alone, in its own window (L11). These are the
+   component contracts for the rewrite: one gallery entry = one Lit component.
+   ========================================================================== */
+const GALLERY = {
+  sidebar:{ label:'Session sidebar',
+    cap:'<b>Fragment: session sidebar (rail mode A).</b> Copied from the thread-sidebar convention; divergences deliberate: ' +
+        'rows wrap (recognise what you wrote), objects are sessions, hover = pin + lock with delete behind … + confirm, New is ' +
+        'emphasised not filled, LOCKED exists. Derives pinned + buckets from ONE sessions array. → <i>jf-session-sidebar</i>',
+    html:()=>`
+      <div class="fx"><div class="fxh">default</div><div class="fxb"><div class="railS" style="height:460px">${FRAG.sessionSidebar()}</div></div></div>
+      <div class="fx"><div class="fxh">active session highlighted</div><div class="fxb"><div class="railS" style="height:460px">${FRAG.sessionSidebar({activeId:'s2'})}</div></div></div>
+      <div class="fx"><div class="fxh">collapsed — whole, never item-by-item (L12)</div><div class="fxb"><div class="railS strip" style="height:460px">${FRAG.sessionSidebar({collapsed:true})}</div></div></div>`},
+  index:{ label:'Session index',
+    cap:'<b>Fragment: session index (rail mode B).</b> Appears at the first committed record (L8 corollary). Header count = Σ ' +
+        'cluster sizes, audited against its own nodes (L6). ‹ All sessions is the escape hatch mode A never needs. Locked ' +
+        'sessions keep their index, read-only. → <i>jf-session-index</i>',
+    html:()=>`
+      <div class="fx"><div class="fxh">answered · ${IDX_ANSWERED.length} nodes</div><div class="fxb"><div class="railS" style="height:300px">${FRAG.sessionIndex(IDX_ANSWERED)}</div></div></div>
+      <div class="fx"><div class="fxh">agent run · clusters + failure</div><div class="fxb"><div class="railS" style="height:460px">${FRAG.sessionIndex(IDX_AGENT)}</div></div></div>
+      <div class="fx"><div class="fxh">locked · read-only</div><div class="fxb"><div class="railS" style="height:300px">${FRAG.sessionIndex(IDX_LOCKED,{readonly:true})}</div></div></div>`},
+  livelist:{ label:'Live search',
+    cap:'<b>Fragment: live search list (deck occupant).</b> Ephemeral by definition — never a record (L8). Counts derive from ' +
+        'the set (L6); its minimum honest form is its count line (L7). → <i>jf-live-search</i>',
+    html:()=>`
+      <div class="fx" style="width:720px"><div class="fxh">results · derived counts</div>
+        <div style="max-height:360px;overflow:hidden;display:flex;flex-direction:column">${FRAG.liveList(SETS.live,{facets:true})}</div></div>
+      <div class="fx" style="width:720px"><div class="fxh">zero — the honest empty</div>
+        <div>${FRAG.liveList(SETS.zero)}<div class="noneleft">Nothing matches all of “chemring indemnity clause”.</div>${FRAG.escal(0)}</div></div>`},
+  frozen:{ label:'Frozen search',
+    cap:'<b>Fragment: frozen search block.</b> Immutable once committed (L4); header, rows and show-all all derive from the ' +
+        'captured set (L6); staleness is a labelled badge offering re-run AS NEW, never a mutation. → <i>jf-frozen-search</i>',
+    html:()=>`
+      <div class="fx" style="width:560px"><div class="fxh">showing 5 of 27 · stale</div><div style="padding:var(--s3)">${FRAG.frozen(SETS.fzsup,{showing:5,stale:true})}</div></div>
+      <div class="fx" style="width:560px"><div class="fxh">collapsed while reading</div><div style="padding:var(--s3)">${FRAG.frozen(SETS.fzsup,{collapsed:true})}</div></div>
+      <div class="fx" style="width:560px"><div class="fxh">agent search · same block (687)</div><div style="padding:var(--s3)">${FRAG.frozen(SETS.agent,{showing:3,label:'AGENT SEARCH'})}</div></div>`},
+  answer:{ label:'Answer card',
+    cap:'<b>Fragment: answer card.</b> Three channels on three signals — grounding is the underline, citation the colour, hover ' +
+        'the background; fully grounded is the only case with no banner. Citation lighting scoped to ONE card. → <i>jf-answer-card</i>',
+    html:()=>`
+      <div class="fx" style="width:560px"><div class="fxh">partially grounded</div><div style="padding:var(--s3)">${FRAG.answer()}</div></div>
+      <div class="fx" style="width:560px"><div class="fxh">fully grounded · no banner</div><div style="padding:var(--s3)">${FRAG.priorExchange()}</div></div>`},
+  approval:{ label:'Approval + run',
+    cap:'<b>Fragment: approval + run controls (deck occupants).</b> Incompressible (L7): the drag floor is computed from these. ' +
+        'The approval is the one filled element on any screen it appears on. NOT unified with the answer card — both are cards, ' +
+        'but they change for different reasons. → <i>jf-approval-card</i>, <i>jf-run-controls</i>',
+    html:()=>`
+      <div class="fx" style="width:760px"><div class="fxh">the incompressible stack</div><div>${FRAG.approval()}${FRAG.runrow()}${FRAG.telem()}</div></div>`},
+  input:{ label:'Input band',
+    cap:'<b>Fragment: input band.</b> One input, meaning escalates; the pill derives (L1/L10); locked renders the session&rsquo;s ' +
+        'refusal, not a disabled button (L9). The query trail is the input&rsquo;s own history — omnibox convention, not a rail ' +
+        'occupant (L12). → <i>jf-input-band</i>',
+    html:()=>`
+      <div class="fx" style="width:760px"><div class="fxh">working · chips scope, never route (L3)</div>
+        <div class="inputband" style="border-top:0">${FRAG.inputBand({chips:'<span class="chip">FILE · Northfield renewal.pdf<span class="x">×</span></span>', draft:'supplier terms', hint:'⇥ flips · ⌘↩ submits the alternate'}).replace(/id="q"/,'').replace(/id="pill"/,'').replace(/id="pillalt"/,'')}</div></div>
+      <div class="fx" style="width:760px"><div class="fxh">history open — the query trail&rsquo;s home</div>
+        <div class="inputband" style="border-top:0">${FRAG.inputBand({draft:'', history:true, hint:'pinned searches run live · recents refill the draft'}).replace(/id="q"/,'').replace(/id="pill"/,'').replace(/id="pillalt"/,'')}</div></div>
+      <div class="fx" style="width:760px"><div class="fxh">locked (L9)</div>
+        <div class="inputband" style="border-top:0">${FRAG.inputBand({locked:true, draft:'add the two missing certificates', hint:'Unlock · Branch with this draft'}).replace(/id="q"/,'')}</div></div>`},
+  material:{ label:'Material rail',
+    cap:'<b>Fragment: material rail.</b> Document + context ledger; agent navigation carries a receipt — provenance of an ' +
+        'attention you cannot otherwise see (L8&rsquo;s deliberate asymmetry). → <i>jf-material-rail</i>',
+    html:()=>`
+      <div class="fx"><div class="fxh">document · agent-opened</div><div class="fxb"><div class="railM" style="height:460px;border-left:0">${FRAG.docRail({nav:true})}</div></div></div>
+      <div class="fx"><div class="fxh">context ledger</div><div class="fxb"><div class="railM" style="height:460px;border-left:0">${FRAG.ctxRail()}</div></div></div>`}
+};
+
+/* ==========================================================================
+   RENDER
+   ========================================================================== */
+let cur = 1, curFrag = null, scopePinned = false, ctxOpen = false, schemaAttached = false, runInFlight = false;
+let flipped = false;
+const TRANSCRIPT_MIN = 260;
+const val = x => typeof x === 'function' ? x() : x;
+
+const topbarFor = st => {
+  /* derived rule (L8 corollary): empty transcript → 'New session'; the
+     committed state derives its name from its own records */
+  document.getElementById('sessname').textContent =
+    st===10 ? nameFrom(COMMITTED)
+    : st<=3||st===9 ? 'New session' : st===6||st===7 ? 'File the 2025 supplier agreements'
+    : st===8 ? 'Vendor audit' : 'Supplier renewal terms';
+  document.getElementById('branch').textContent = (st===6||st===7) ? '‹ branch 2 of 3 ›' : '';
+  document.getElementById('lockbtn').textContent = st===8 ? 'Unlock' : 'Lock';
+};
+
+function render(n){
+  cur = n; curFrag = null; ctxOpen = false; flipped = false;
+  document.getElementById('win').style.display = '';
+  document.getElementById('gal').className = '';
+  document.querySelectorAll('#sw2 button').forEach(b=>b.classList.remove('on'));
+  const s = STATES[n];
+  topbarFor(n);
+  document.getElementById('cap').innerHTML = s.cap;
+  document.querySelectorAll('#sw button').forEach(b=>b.classList.toggle('on', +b.dataset.s===n));
+
+  const railS = document.getElementById('railS');
+  railS.className = 'railS' + (s.rail? (s.railStrip?' strip':'') :' hide');
+  railS.innerHTML = s.rail ? s.rail() : '';
+
+  const railM = document.getElementById('railM');
+  railM.className = 'railM' + (s.railM? '':' hide'); railM.innerHTML = s.railM ? s.railM() : '';
+
+  const tr = document.getElementById('transcript');
+  tr.className = 'transcript' + (s.transcript.centred? ' centred':'');
+  tr.innerHTML = val(s.transcript.html);
+
+  const dk = document.getElementById('deck');
+  dk.style.flex = s.deckH ? '0 0 '+s.deckH+'px' : '';
+  dk.className = 'deck' + (s.deck? '':' none') + (s.deckFills? ' fills':'');
+  dk.parentElement.classList.toggle('deck-fills', !!s.deckFills);
+  dk.innerHTML = (s.deck? '<div class="grip" title="drag to trade list for transcript · double-click for automatic"></div>':'') + (s.deck? val(s.deck):'');
+
+  scopePinned = /class="chip"/.test((s.input && s.input.chips) || '');
+  schemaAttached = false;
+  runInFlight = !!s.runInFlight;
+
+  const ib = document.getElementById('inputband');
+  if (!s.input){ ib.className='inputband hide'; ib.innerHTML=''; ib.style.display='none'; }
+  else {
+    ib.style.display=''; ib.className='inputband';
+    ib.innerHTML = FRAG.inputBand({...s.input, scopePinned});
+  }
+  wire();
+  updatePill();
+  measure();
+}
+
+function renderFrag(name){
+  curFrag = name; cur = 0;
+  document.getElementById('win').style.display = 'none';
+  const g = document.getElementById('gal');
+  g.className = 'show';
+  g.innerHTML = GALLERY[name].html();
+  document.getElementById('cap').innerHTML = GALLERY[name].cap;
+  document.querySelectorAll('#sw button').forEach(b=>b.classList.remove('on'));
+  document.querySelectorAll('#sw2 button').forEach(b=>b.classList.toggle('on', b.dataset.f===name));
+  measure();
+}
+
+/* ---- pill (L1/L2/L10) -------------------------------------------------- */
+function updatePill(){
+  const q = document.getElementById('q'); if(!q) return;
+  const pill = document.getElementById('pill'), alt = document.getElementById('pillalt');
+  if(!pill) return;
+  const ctx = {scopePinned, schemaAttached, runInFlight};
+  const r = route(q.value, ctx);
+  if (r.empty){
+    const p = route('x', ctx);
+    pill.className='pill off';
+    pill.textContent = RUNGS[p.primary].pill + ' ⏎';
+    pill.title = 'previews the default — an empty draft submits nothing (L10)';
+    alt.className='pill alt off';
+    alt.textContent = RUNGS[p.alt].pill + (p.alt==='steer' ? ' ⌘⏎' : ' ⇥');
+    alt.title = RUNGS[p.alt].label;
+  } else {
+    const pr = flipped ? r.alt : r.primary;
+    const al = flipped ? r.primary : r.alt;
+    pill.className = 'pill' + (flipped ? ' flip' : '');
+    pill.textContent = (flipped ? '⇥ ' : '') + RUNGS[pr].pill + ' ⏎';
+    pill.title = RUNGS[pr].label + (flipped ? ' · flipped for this draft only — Esc restores (L1)' : '');
+    alt.className='pill alt';
+    alt.textContent = RUNGS[al].pill + (al==='steer' && !flipped ? ' ⌘⏎' : ' ⇥');
+    alt.title = RUNGS[al].label;
+  }
+  const sc = document.getElementById('schemactl');
+  if (sc) sc.textContent = schemaAttached ? '⌗ detach schema' : '⌗ attach schema';
+}
+function toggleSchema(){
+  schemaAttached = !schemaAttached;
+  const row = document.getElementById('chiprow');
+  if(row){
+    const existing = row.querySelector('[data-schema]');
+    if (schemaAttached && !existing){
+      const c=document.createElement('span'); c.className='chip'; c.dataset.schema='1';
+      c.innerHTML='SCHEMA · vendor-terms.json<span class="x">×</span>';
+      c.querySelector('.x').onclick=toggleSchema;
+      row.prepend(c);
+    } else if (existing) existing.remove();
+  }
+  updatePill();
+  measure();
+}
+
+/* ---- citation channels + landing --------------------------------------- */
+function lightSource(scope, n, on){
+  if(!scope) return;
+  scope.querySelectorAll(`.s[data-src="${n}"]`).forEach(e=>e.classList.toggle('lit', on));
+  scope.querySelectorAll(`.cite[data-src="${n}"]`).forEach(e=>e.classList.toggle('lit', on));
+  scope.querySelectorAll(`.chip2[data-src="${n}"]`).forEach(e=>e.classList.toggle('lit', on));
+}
+let settleTimer=null;
+function landPassage(){
+  const p = document.getElementById('psg'); if(!p) return;
+  clearTimeout(settleTimer);
+  p.classList.remove('weak'); p.classList.add('strong');
+  p.scrollIntoView({block:'center', behavior:
+    matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto':'smooth'});
+  settleTimer = setTimeout(()=>{ p.classList.remove('strong'); p.classList.add('weak'); }, 1500);
+}
+
+/* ---- the movable boundary (L7) ----------------------------------------- */
+function deckFloor(dk){
+  let sum = 6;
+  [...dk.children].forEach(el=>{
+    if (el.classList.contains('rows') || el.classList.contains('grip')) return;
+    sum += el.getBoundingClientRect().height;
+  });
+  return Math.max(Math.round(sum), 40);
+}
+function wireGrip(){
+  const grip = document.querySelector('#deck .grip'); if(!grip) return;
+  const dk = document.getElementById('deck');
+  const centre = dk.parentElement;
+  grip.addEventListener('pointerdown', e=>{
+    e.preventDefault();
+    const startY = e.clientY, startH = dk.getBoundingClientRect().height;
+    const avail = centre.getBoundingClientRect().height;
+    const inputH = document.getElementById('inputband').getBoundingClientRect().height;
+    const min = deckFloor(dk);
+    const max = avail - inputH - TRANSCRIPT_MIN;
+    dk.classList.remove('fills'); centre.classList.remove('deck-fills');
+    dk.classList.add('dragging');
+    document.body.classList.add('rowresize');
+    grip.setPointerCapture(e.pointerId);
+    const move = ev=>{
+      const h = Math.max(min, Math.min(max, startH + (startY - ev.clientY)));
+      dk.style.flex = '0 0 ' + Math.round(h) + 'px';
+      measure();
+    };
+    const up = ()=>{
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', up);
+      dk.classList.remove('dragging'); document.body.classList.remove('rowresize');
+      measure();
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up);
+  });
+  grip.addEventListener('dblclick', ()=>{
+    dk.style.flex = STATES[cur].deckH ? '0 0 '+STATES[cur].deckH+'px' : '';
+    if (STATES[cur].deckFills){ dk.classList.add('fills'); centre.classList.add('deck-fills'); }
+    measure();
+  });
+}
+
+function wire(){
+  wireGrip();
+  const q = document.getElementById('q');
+  if(q){ q.addEventListener('input', ()=>{updatePill();});
+         q.addEventListener('keydown', e=>{
+           if(e.key==='Tab'){
+             e.preventDefault();
+             const r = route(q.value, {scopePinned, schemaAttached, runInFlight});
+             if(!r.empty){ flipped = !flipped; updatePill(); }
+           }
+           if(e.key==='Enter' && e.shiftKey && cur===2){ e.preventDefault(); commit(q.value); }
+           if(e.key==='Escape'){ flipped = false; updatePill(); } }); }
+  document.querySelectorAll('#win .rung[data-rung="ask"]').forEach(r=>
+    r.addEventListener('click', ()=>{ if(cur===2) commit(document.getElementById('q')?.value||''); }));
+  const sc = document.getElementById('schemactl');
+  if(sc) sc.addEventListener('click', toggleSchema);
+  const ua = document.getElementById('unlockact');
+  if(ua) ua.addEventListener('click', ()=>render(4));
+  document.querySelectorAll('#chiprow .chip .x').forEach(x=>{
+    x.addEventListener('click', e=>{
+      const chip=e.target.closest('.chip');
+      if(chip.dataset.schema) return toggleSchema();
+      chip.remove();
+      scopePinned = !!document.querySelector('#chiprow .chip:not([data-schema])');
+      updatePill(); measure();
+    });
+  });
+  document.querySelectorAll('#win .cite').forEach(c=>{
+    const card=c.closest('.answer');
+    c.addEventListener('mouseenter', ()=>lightSource(card, c.dataset.src, true));
+    c.addEventListener('mouseleave', ()=>lightSource(card, c.dataset.src, false));
+    c.addEventListener('click', ()=>{
+      if(cur===4){ render(5); setTimeout(landPassage, 60); } else if(cur===5){ landPassage(); }
+    });
+  });
+  document.querySelectorAll('#win .chip2[data-src]').forEach(c=>{
+    const card=c.closest('.answer');
+    c.addEventListener('mouseenter', ()=>lightSource(card, c.dataset.src, true));
+    c.addEventListener('mouseleave', ()=>lightSource(card, c.dataset.src, false));
+  });
+  document.querySelectorAll('#win .row[data-hit]').forEach(r=>{
+    r.addEventListener('click', ()=>{ if(cur===2) render(3); });
+  });
+  document.querySelectorAll('#win .meter[data-ctx]').forEach(m=>{
+    m.addEventListener('click', ()=>{
+      const railM = document.getElementById('railM');
+      ctxOpen = !ctxOpen;
+      railM.className = 'railM' + (ctxOpen? '':(STATES[cur].railM? '':' hide'));
+      railM.innerHTML = ctxOpen ? FRAG.ctxRail() : (STATES[cur].railM ? STATES[cur].railM() : '');
+      wire(); measure();
+    });
+  });
+  document.querySelectorAll('#detail span').forEach(s=>{
+    s.addEventListener('click', ()=>{
+      document.querySelectorAll('#detail span').forEach(x=>x.classList.remove('on'));
+      s.classList.add('on');
+      const d = s.dataset.d==='detailed';
+      const r = document.getElementById('rcpt');
+      if(r) r.textContent = d ? '3.21 s · llama-3-8b-q4 · 4 of 10 chunks used' : '3 s · on-device model';
+      document.querySelectorAll('.frozen .p, .row .loc').forEach(e=>{
+        if(!e.dataset.simple) e.dataset.simple = e.textContent;
+        e.textContent = d ? 'C:\\\\Users\\\\you\\\\Documents\\\\'+e.dataset.simple.replace(/ \\/ /g,'\\\\') : e.dataset.simple;
+      });
+    });
+  });
+  document.querySelectorAll('.idxback').forEach(b=>b.addEventListener('click', ()=>render(1)));
+}
+
+/* ---- audits ------------------------------------------------------------
+   L6:  every frozen/live count vs its set, plus the session-index header
+        count vs the sum of its own nodes.
+   L12: the sidebar must be BYTE-IDENTICAL across every pre-session state —
+        computed by rendering the fragment, so drift in any state is
+        impossible by construction; asserted anyway, because "impossible by
+        construction" was also true of v3's rails until it wasn't.          */
+function auditCounts(){
+  const out=[];
+  document.querySelectorAll('.frozen[data-fz]').forEach(f=>{
+    const set = SETS[f.dataset.fz]; if(!set){ out.push({name:f.dataset.fz, ok:false, note:'unknown set'}); return; }
+    const claimed = +f.dataset.showing;
+    const rows = f.querySelectorAll('.r:not(.showall)').length;
+    const showall = !!f.querySelector('.showall');
+    const collapsed = f.dataset.collapsed==='1';
+    const ok = rows===claimed && (collapsed || (claimed < set.total)===showall);
+    out.push({name:`frozen:${set.id}`, ok, note:`${rows} rows vs claimed ${claimed} of ${set.total}`});
+  });
+  document.querySelectorAll('.counts[data-fz]').forEach(c=>{
+    const set = SETS[c.dataset.fz]; if(!set) return;
+    const rowsEl = document.querySelector(`.rows[data-rows="${c.dataset.fz}"]`);
+    const rows = rowsEl ? rowsEl.querySelectorAll('.row').length : 0;
+    const ok = rows===set.total;
+    out.push({name:`live:${set.id}`, ok, note:`${rows} rows vs ${set.total} total`});
+  });
+  document.querySelectorAll('[data-idx-n]').forEach(n=>{
+    const scroll = n.closest('.railS')?.querySelector('[data-idx-rows]');
+    if(!scroll) return;
+    const nodes = [...scroll.querySelectorAll('.node')];
+    const derived = nodes.reduce((a,el)=>a+(el.classList.contains('cluster') ? +el.querySelector('.g').textContent : 1),0);
+    const ok = +n.dataset.idxN === derived || +n.getAttribute('data-idx-n') === derived;
+    out.push({name:'index', ok, note:`header ${n.textContent} vs Σnodes ${derived}`});
+  });
+  return out;
+}
+const sidebarCanon = FRAG.sessionSidebar();
+function auditSidebar(){
+  if (curFrag || ![1,2,9].includes(cur)) return null;
+  const railS = document.getElementById('railS');
+  return {ok: railS.innerHTML === sidebarCanon};
+}
+
+/* ---- measurement ------------------------------------------------------- */
+function measure(){
+  const h = el => el? Math.round(el.getBoundingClientRect().height):0;
+  const w = el => el? Math.round(el.getBoundingClientRect().width):0;
+  const audit = auditCounts();
+  const bad = audit.filter(a=>!a.ok);
+  const av = audit.length===0 ? 'no counted sets on screen'
+    : bad.length===0 ? `${audit.length} claims · <span class="ok">all derive from their sets</span>`
+    : `<span class="warn">${bad.length} MISMATCH</span> — ${bad.map(b=>`${b.name} (${b.note})`).join(' · ')}`;
+  if (curFrag){
+    document.getElementById('readout').innerHTML =
+      `<h3>Fragment: ${GALLERY[curFrag].label}</h3>`+
+      `count audit (L6) &nbsp; ${av} &nbsp;·&nbsp; one fragment, many windows (L11) — full states compose this exact function`;
+    return;
+  }
+  const top=h(document.getElementById('topbar')), deck=h(document.getElementById('deck'));
+  const inp=document.getElementById('inputband');
+  const input=(inp && inp.style.display!=='none')? h(inp):0;
+  const tr=h(document.getElementById('transcript'));
+  const avail=900-top;
+  const rS=w(document.getElementById('railS')), rM=w(document.getElementById('railM'));
+  const centreW=1440-rS-rM;
+  let cpl='—', cplv=0;
+  const mb=document.querySelector('#win .mbody');
+  if(mb){
+    const cs=getComputedStyle(mb);
+    const cw=mb.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight);
+    const c=document.createElement('canvas').getContext('2d'); c.font=cs.fontSize+' '+cs.fontFamily;
+    const smp='Either party may decline renewal by written notice delivered no fewer than ninety days.';
+    cplv=Math.round(cw/(c.measureText(smp).width/smp.length)); cpl=cplv+' cpl';
+  }
+  const chrome=deck+input, pct=(chrome/avail*100).toFixed(0);
+  const vv = STATES[cur].deckFills ? '<span class="ok">deck fills by design</span>'
+    : tr>=340? '<span class="ok">room</span>' : tr>=TRANSCRIPT_MIN? '<span class="warn">tight</span>' : '<span class="warn">below the floor</span>';
+  const rv = !cplv? '—' : cplv>=55? '<span class="ok">comfortable</span>' : '<span class="warn">below comfort</span>';
+  const sb = auditSidebar();
+  const sv = sb===null ? '' : ` &nbsp;·&nbsp; sidebar identity (L12) ${sb.ok?'<span class="ok">byte-identical</span>':'<span class="warn">DRIFTED</span>'}`;
+  document.getElementById('readout').innerHTML =
+    `<h3>State ${cur} — budget</h3>`+
+    `vertical &nbsp; centre column ${avail}px &nbsp;=&nbsp; transcript <b>${tr}</b> + deck <b>${deck}</b> + input <b>${input}</b>`+
+    ` &nbsp;·&nbsp; permanent chrome <b>${pct}%</b> &nbsp;·&nbsp; transcript ${vv} (floor ${TRANSCRIPT_MIN})<br>`+
+    `horizontal &nbsp; rail <b>${rS}</b> + centre <b>${centreW}</b> + material <b>${rM}</b>`+
+    ` &nbsp;·&nbsp; reading column <b>${cpl}</b> ${rv}<br>`+
+    `count audit (L6) &nbsp; ${av}${sv} &nbsp;·&nbsp; laws L1–L12 in source`;
+}
+
+/* ---- boot --------------------------------------------------------------- */
+const sw=document.getElementById('sw');
+['Idle','Searching','+ Reading','Answered','Citation','Agent run','Run + search','Locked','No results'].forEach((lbl,i)=>{
+  const b=document.createElement('button'); b.textContent=(i+1)+' · '+lbl; b.dataset.s=i+1;
+  b.onclick=()=>render(i+1); sw.appendChild(b);
+});
+const sw2=document.getElementById('sw2');
+Object.entries(GALLERY).forEach(([k,v])=>{
+  const b=document.createElement('button'); b.textContent=v.label; b.dataset.f=k;
+  b.onclick=()=>renderFrag(k); sw2.appendChild(b);
+});
+document.addEventListener('keydown', e=>{
+  if(e.target.tagName==='INPUT') return;
+  if(e.key>='1'&&e.key<='9') render(+e.key);
+});
+document.getElementById('lockbtn').addEventListener('click', ()=>render(cur===8?4:8));
+render(1);
+</script>
+</body>
+</html>

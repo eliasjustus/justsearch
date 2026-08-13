@@ -1,6 +1,7 @@
 """jseval release commands (split from cli.py — tempdoc 645)."""
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -8,9 +9,24 @@ import logging
 
 import click
 
-from .._paths import DEFAULT_JSEVAL_DATA_DIR
+from .._paths import DEFAULT_JSEVAL_DATA_DIR, REPO_ROOT
 
 log = logging.getLogger(__name__)
+
+
+def _repo_relative(p: Path) -> str:
+    """Render ``p`` relative to the repo root, with forward slashes, else absolute.
+
+    Release documents are committed and published, so a recorded run dir must not bake in
+    one machine's absolute path (`release.v1.json` already carries a few under
+    `cohort.model_identity` — this is the half that does not have to). Falls back to the
+    absolute string when the path is outside the repo, since a wrong-but-tidy pointer is
+    worse than an honest ugly one.
+    """
+    try:
+        return p.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return str(p)
 
 
 @click.command("release")
@@ -92,13 +108,24 @@ def cmd_release(ctx, runs, latest_per_dataset, data_dir, default_mode, external_
         click.echo("Error: provide --run (repeatable) or --latest-per-dataset", err=True)
         sys.exit(2)
 
+    # tempdoc 802: record WHICH artifacts this release projects from, alongside parsing them.
+    # `compose()` sees only summaries; the run dirs are known here and nowhere downstream, so a
+    # release composed without this step is un-rescoreable the moment the dirs are cleaned up
+    # (which is what happened to `715-rebaseline-2026-07-16`). The sha256 is over the exact
+    # summary.json bytes, so it still identifies the run after the path stops resolving.
     summaries: list[dict] = []
+    run_sources: list[dict] = []
     for rd in run_dirs:
         sp = rd / "summary.json"
         if not sp.is_file():
             click.echo(f"Error: no summary.json in {rd}", err=True)
             sys.exit(2)
-        summaries.append(json.loads(sp.read_text(encoding="utf-8")))
+        raw = sp.read_bytes()
+        summaries.append(json.loads(raw.decode("utf-8")))
+        run_sources.append({
+            "run_dir": _repo_relative(rd),
+            "summary_sha256": hashlib.sha256(raw).hexdigest(),
+        })
 
     # tempdoc 683: source the optional per-corpus leak section from the runs'
     # staged_recall_accounting projections (compose() only sees summaries; the run
@@ -142,6 +169,7 @@ def cmd_release(ctx, runs, latest_per_dataset, data_dir, default_mode, external_
             require_comparable=not allow_incomparable,
             leak_by_dataset=leak_by_dataset or None,
             union_recall_by_dataset=union_recall_by_dataset or None,
+            run_sources=run_sources,
         )
     except _release.ComposeError as e:
         click.echo(f"compose refused: {e}", err=True)

@@ -43,9 +43,23 @@ export class OverlayHost extends JfElement {
     /* corner + edge anchors (content-sized) */
     /* Tempdoc 602 R4 — dock below the 2.5rem topbar grid row (Shell.ts
        grid-template-rows) so a top-right overlay (nav toast, badge, plugin-error)
-       never occludes the topbar control cluster (Copy URL / bookmark). */
+       never occludes the topbar control cluster (Copy URL / bookmark).
+
+       The extra 3rem clears a surface's OWN header control row (UnifiedChatView's .header:
+       Activity / New chat / Export / the shape badge), which sits immediately below the topbar:
+       measured at 1050x800 with --fixtures, that band is y 56-88px, so a column docked at
+       2.5rem + 0.5rem = 48px landed squarely on it. The reserved band is therefore the topbar
+       row PLUS the surface header row — declared once here, in the ONE slot authority
+       (559 Authority I), rather than re-derived by each overlay that docks here.
+
+       Scope note: the reservation now serves this slot's persistent occupants —
+       jf-provenance-badge and jf-plugin-error-overlay. jf-advisory-toast-host also docks here,
+       but every toast it renders is time-bounded (AdvisoryToastHost's TOAST_DURATION_MS /
+       ACK_TOAST_DURATION_MS), so it is no longer the reason the band exists. Asserted by the
+       chat-occlusion step's mustNotOverlapSelector row in
+       governance/ui-proportion-baseline.v1.json. */
     .top-right {
-      top: calc(2.5rem + 0.5rem);
+      top: calc(2.5rem + 3rem + 0.5rem);
       right: 0.5rem;
       flex-direction: column;
       align-items: flex-end;
@@ -67,9 +81,29 @@ export class OverlayHost extends JfElement {
       align-items: center;
       z-index: var(--z-overlay-transient);
     }
+    /* Tempdoc 813 §5c — reserve the RAIL's column, mirroring the .top-right reservation above.
+
+       The bottom-left slot's persistent occupants (jf-task-list, jf-walkthrough-card) grow UPWARD
+       from the viewport's bottom-left corner, which is exactly where the rail parks its bottom
+       controls: Settings (button[data-surface-id="core.settings-surface"]) and the Help
+       affordance ([data-help-affordance]), both pinned to the bottom of the rail column
+       (Shell.ts renderHelpButton / BOTTOM_RAIL_IDS). At left:1rem a docked panel started INSIDE
+       that column and covered them outright — the same occlusion class round 7 measured for the
+       top-right toast stack, and the reason 813 §5's aggregate card alone would not have been
+       enough (a shorter panel still lands on the same two buttons).
+
+       The band is the rail's own width, read from the ONE --rail-width token Shell.ts lays the
+       grid track out with (tokens.css; Shell overrides it to 11rem under [data-rail-expanded]), so
+       the reservation follows rail expansion instead of being calibrated to one of its two states.
+       Declared once here, in the ONE slot authority (559 Authority I), rather than re-derived by
+       each overlay that docks here.
+
+       Asserted by the tasks-occlusion step's mustNotOverlapSelector rows in
+       governance/ui-proportion-baseline.v1.json, with a minWidthPx companion on jf-task-list so a
+       hidden (0-rect) panel fails the capture instead of satisfying the overlap check vacuously. */
     .bottom-left {
       bottom: 1rem;
-      left: 1rem;
+      left: calc(var(--rail-width) + 0.5rem);
       flex-direction: column;
       z-index: var(--z-overlay-float);
     }

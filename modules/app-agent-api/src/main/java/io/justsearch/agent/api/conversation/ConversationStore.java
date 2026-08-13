@@ -61,6 +61,20 @@ public interface ConversationStore {
   void appendMessage(String sessionId, String shapeId, Map<String, Object> message);
 
   /**
+   * Tempdoc 734 round-14 F4 — TRUE when the store cannot be read or written right now (encrypted at
+   * rest with the data key locked). The read side already answers this honestly ({@code
+   * loadHistory} lets {@code KeyLockedException} reach the 423 mapping); this is the same fact asked
+   * BEFORE a write, so a dispatch that would be accepted-and-dropped can refuse instead of returning
+   * a 200 for a turn no store will hold. Same predicate and same wording as the memory store's
+   * {@code MemoryStore#isLocked()} (tempdoc 806 W1) — one condition, one vocabulary.
+   *
+   * <p>Default {@code false} — an unencrypted or in-memory store is always writable.
+   */
+  default boolean isLocked() {
+    return false;
+  }
+
+  /**
    * List sessions for a given shape, ordered by last-active descending.
    */
   List<SessionSummary> listSessions(String shapeId, int limit);

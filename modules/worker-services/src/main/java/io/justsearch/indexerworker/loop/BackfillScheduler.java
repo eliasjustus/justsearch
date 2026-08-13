@@ -51,6 +51,44 @@ public final class BackfillScheduler {
 
   private static final Logger log = LoggerFactory.getLogger(BackfillScheduler.class);
 
+  /**
+   * Hard wall-clock budget for one {@link #runIdleCycle()} backfill burst (tempdoc 798).
+   *
+   * <p>Containment of last resort: whatever the input, control returns to {@code IndexingLoop
+   * .runLoop()} — and therefore to the job-queue poll — within this window. The livelock this
+   * bounds spun ~64 times/second on 2 documents for 20+ minutes and produced 59,420 identical
+   * INFO lines with zero WARN and zero ERROR, so tripping the budget logs at WARN.
+   */
+  private static final long CYCLE_BUDGET_MS = 5_000L;
+
+  /**
+   * The embed stage's reserved share of one cycle (round-15 post-round finding; the starvation
+   * residual recorded in tempdoc 813 §18).
+   *
+   * <p>Phases 3b/3c of the combined pass run after the embed stage and open by consulting the stop
+   * signal, so an embed stage allowed to spend the whole {@link #CYCLE_BUDGET_MS} makes SPLADE and
+   * NER structurally unrunnable — live evidence: {@code splade=0ms(ok=0)} and {@code ner=0ms(ok=0)}
+   * on 54 consecutive cycles with SPLADE stuck at 1.05% coverage, both advancing the instant embed
+   * finished. Past this point embed stops STARTING new units so the remaining ~40% reaches the
+   * other stages; see {@code CombinedEnrichmentBackfillOps.embedShareSpent} for why that is not the
+   * same signal as the yield/abort disjunction and why it does not apply to an embed-only backlog.
+   *
+   * <p>Cycle-absolute, not per-batch, on purpose: within one cycle the first batch takes the embed
+   * share and later batches then serve the other stages, which is the round-robin the reservation
+   * exists to produce.
+   */
+  private static final long EMBED_BUDGET_SHARE_MS = 3_000L;
+
+  /**
+   * Consecutive cycles with an identical combined work-set before the stall WARN fires (round-15
+   * post-round finding).
+   *
+   * <p>Five ~5 s cycles is ~25 s of selecting the same documents — long past any legitimate
+   * "one big batch spanning a couple of cycles" and far short of the 12+ minutes the field incident
+   * ran before anyone noticed, because nothing in the log distinguished it from healthy progress.
+   */
+  private static final int STALL_SIGNATURE_CYCLES = 5;
+
   // Tempdoc 710 Wave-1.5 Move 4: the per-stage backfill batch sizes (formerly static fields
   // computed once from LoopPacingPolicy, plus the BGE-M3 pair which bypassed LoopPacingPolicy
   // entirely as bare literals here) all moved onto ResolvedConfig.Ai.BackfillPacing
@@ -76,6 +114,20 @@ public final class BackfillScheduler {
   private long nextSpladeRetryTime = 0;
   private boolean disambiguationPassComplete = false;
   private int lastKnownNerCompletedCount = 0;
+
+  /**
+   * Cross-cycle per-window accumulator for long documents (round-15 post-round finding). Lives here
+   * because this is the object whose lifetime spans cycles — the pending-ID caches deliberately do
+   * not, so a per-cycle store would restore exactly the defect it removes.
+   */
+  private final io.justsearch.indexerworker.loop.ops.WindowedEmbedProgress windowedEmbedProgress =
+      new io.justsearch.indexerworker.loop.ops.WindowedEmbedProgress();
+
+  /** Stall detection state (round-15 post-round finding) — see {@link #noteWorkSet}. */
+  private long lastWorkSetSignature = 0;
+
+  private int repeatedWorkSetCycles = 0;
+  private boolean stallWarnedThisEpisode = false;
 
   public BackfillScheduler(
       DocumentFieldOps documentFieldOps,
@@ -122,9 +174,18 @@ public final class BackfillScheduler {
    *
    * <p>Self-committing: combined-backfill tight loop commits every 5 batches + a final
    * commit; individual stages commit per their own contracts.
+   *
+   * <p>Bounded by construction (tempdoc 798): every loop inside terminates on PROGRESS rather than
+   * activity, yields to pending ingest work, and is capped by {@link #CYCLE_BUDGET_MS}. Control
+   * returns to the caller's job-queue poll regardless of what the enrichment population does.
    */
   public boolean runIdleCycle() {
     boolean backfillDidWork = false;
+    final long cycleStartNanos = System.nanoTime();
+    final long cycleDeadlineNanos =
+        cycleStartNanos + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(CYCLE_BUDGET_MS);
+    final long embedShareDeadlineNanos =
+        cycleStartNanos + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(EMBED_BUDGET_SHARE_MS);
 
     boolean runBackfill =
         LoopPacingPolicy.shouldRunBackfill(
@@ -132,9 +193,16 @@ public final class BackfillScheduler {
             signalBus.isEnergyReduced(),
             embeddingLifecycle.embeddingProvider());
     if (runBackfill) {
-      CombinedEnrichmentBackfillOps.CombinedOutcome outcome = processCombinedBackfillIfApplicable();
+      CombinedEnrichmentBackfillOps.CombinedOutcome outcome =
+          processCombinedBackfillIfApplicable(cycleDeadlineNanos, embedShareDeadlineNanos);
       recordCombinedOutcome(outcome);
-      boolean useCombined = outcome.anyWorkDone();
+      // The mode-selection probe is the batch that re-selects the head of the pending queue each
+      // cycle — the one whose signature repeated byte-identically for 12+ minutes in the field.
+      noteWorkSet(outcome);
+      // Mode selection reads ACTIVITY (did the combined pass touch anything at all); the tight
+      // loop below reads PROGRESS. Tempdoc 798: these are different questions and conflating
+      // them is what livelocked ingest.
+      boolean useCombined = outcome.wroteAnything();
       if (useCombined) {
         // Tempdoc 710 Move 2 item 4: this cycle used the combined pass — the only path taken
         // between here and the next runIdleCycle() call (the tight loop below stays combined
@@ -145,8 +213,23 @@ public final class BackfillScheduler {
         var chunkIdCache = new ArrayDeque<String>();
         var batchCommitCounter = new int[] {0};
         backfillDidWork = true;
-        final boolean[] useCombinedRef = {useCombined};
+        // Tempdoc 809 finding 3: an aborted probe means a stop condition came up DURING that batch
+        // — pending ingest, the cycle budget, or a bulk deletion that invalidated the documents it
+        // had selected. Starting a fresh tight-loop batch would re-select and re-encode against
+        // that same condition, which is how the mid-batch signal ended up costing a further ~5s of
+        // GPU instead of returning control. Mode selection itself is unchanged: this cycle still
+        // used the combined pass, and the next idle cycle picks the enrichment up where it stopped.
+        final boolean[] useCombinedRef = {!outcome.aborted()};
         final int[] tightLoopBatches = {1};
+        // Tempdoc 809 finding 3: the mode-selection probe above is a full batch and is now
+        // interruptible too, so it can be the call that spends the budget. Seeding from it keeps
+        // the 798 WARN honest — without this, a cycle whose ONLY batch overran would report
+        // nothing at all.
+        final boolean[] budgetTripped = {outcome.aborted() && System.nanoTime() >= cycleDeadlineNanos};
+        // Tempdoc 798 review F3: cumulative across the whole cycle, mode-selection probe included.
+        // Budget exhaustion means very different things depending on this flag, and the diagnostic
+        // must not assert non-convergence when enrichment was demonstrably converging.
+        final boolean[] anyProgressThisCycle = {outcome.progressed()};
         // 334 Phase 8: NRT suspend during tight loop prevents mmap accumulation from
         // ControlledRealTimeReopenThread while commits are deferred (every 5 batches).
         commitOps.withNrtSuspended(
@@ -155,23 +238,83 @@ public final class BackfillScheduler {
                 if (!running.get() || Thread.currentThread().isInterrupted()) break;
                 if (signalBus.isUserActive()) break;
                 if (signalBus.shouldYieldGpuBackfill()) break; // tempdoc 630: GPU-claimed OR energy-reduced
+                // Tempdoc 798: primary indexing outranks background enrichment. Backfill resumes
+                // next idle cycle; a queued ingest job the user is waiting on cannot.
+                if (signalBus.hasPendingIngest()) break;
+                if (System.nanoTime() >= cycleDeadlineNanos) {
+                  budgetTripped[0] = true;
+                  break;
+                }
                 CombinedEnrichmentBackfillOps.CombinedOutcome tightLoopOutcome =
                     processCombinedBackfillIfApplicable(
-                        parentIdCache, chunkIdCache, batchCommitCounter);
+                        parentIdCache,
+                        chunkIdCache,
+                        batchCommitCounter,
+                        cycleDeadlineNanos,
+                        embedShareDeadlineNanos);
                 recordCombinedOutcome(tightLoopOutcome);
-                useCombinedRef[0] = tightLoopOutcome.anyWorkDone();
-                if (useCombinedRef[0]) tightLoopBatches[0]++;
+                // Tempdoc 798: PROGRESS, not activity. `wroteAnything()` stays true forever for a
+                // document that is rewritten every batch without ever advancing a stage.
+                useCombinedRef[0] = tightLoopOutcome.progressed();
+                if (useCombinedRef[0]) {
+                  anyProgressThisCycle[0] = true;
+                  tightLoopBatches[0]++;
+                }
+                // Tempdoc 809 finding 3: the batch left its own document set unfinished because a
+                // stop condition came up mid-batch. That condition is still true, so starting
+                // another batch would only re-discover it after another sub-batch of GPU work.
+                // Re-read the deadline first: an aborted batch is the most likely way the budget
+                // is now spent, and breaking without this would silently drop 798's WARN.
+                if (tightLoopOutcome.aborted()) {
+                  if (System.nanoTime() >= cycleDeadlineNanos) budgetTripped[0] = true;
+                  break;
+                }
               }
               if (batchCommitCounter[0] > 0) {
                 commitOps.commitAndTrack(CommitReason.BACKFILL_COMBINED_FINAL);
               }
             });
+        if (budgetTripped[0]) {
+          // Tempdoc 798 review F3: the budget is smaller than two large legitimate enrichment
+          // batches, so its most common trigger is a healthy cycle that simply ran out of window.
+          // Only a cycle in which NOTHING advanced is the non-convergence this WARN describes;
+          // crying wolf on the healthy case trains operators to ignore the one signal 798 added.
+          // Both branches return control to the job-queue poll — only the log level differs.
+          if (anyProgressThisCycle[0]) {
+            log.info(
+                "Combined enrichment backfill reached its {}ms cycle budget after {} batches while"
+                    + " still advancing documents — returning to the job-queue poll; the remaining"
+                    + " enrichment resumes next idle cycle (tempdoc 798).",
+                CYCLE_BUDGET_MS,
+                tightLoopBatches[0]);
+          } else {
+            log.warn(
+                "Combined enrichment backfill hit its {}ms cycle budget after {} batches with ZERO"
+                    + " stage advancement — returning to the job-queue poll (tempdoc 798). This is"
+                    + " the non-converging shape: the same documents are rewritten every batch"
+                    + " without any stage advancing.",
+                CYCLE_BUDGET_MS,
+                tightLoopBatches[0]);
+          }
+        }
         if (tightLoopBatches[0] > 1) {
           log.debug("Tight backfill loop: {} consecutive batches", tightLoopBatches[0]);
         }
       } else {
+        // Pre-stamped BEFORE the pass runs on purpose: mid-pass observability is the gauge's whole
+        // purpose (710 S-B3), so an operator polling DURING a long individual pass must see
+        // "individual" rather than the previous cycle's value.
         OperationalMetrics.getInstance().recordBackfillMode("individual");
-        backfillDidWork = runIndividualBackfills();
+        IndividualOutcome individual = runIndividualBackfills(cycleDeadlineNanos);
+        backfillDidWork = individual.didWork();
+        if (!individual.anyActivity()) {
+          // ...but a pass that ran and advanced NOTHING is exactly what getBackfillMode() documents
+          // as "idle" ("no backfill work was available/eligible last cycle"). Leaving "individual"
+          // standing left a last-known gauge looking like live activity for as long as the worker
+          // stayed idle — the worker half of the owner's 2026-08-07 finding (813 §20a), where a
+          // fully-settled index reported backfillMode="individual" indefinitely.
+          OperationalMetrics.getInstance().recordBackfillMode("idle");
+        }
       }
     } else {
       OperationalMetrics.getInstance().recordBackfillMode("idle");
@@ -240,13 +383,33 @@ public final class BackfillScheduler {
     nextSpladeRetryTime = 0;
     disambiguationPassComplete = false;
     lastKnownNerCompletedCount = 0;
+    windowedEmbedProgress.clear();
+    lastWorkSetSignature = 0;
+    repeatedWorkSetCycles = 0;
+    stallWarnedThisEpisode = false;
   }
 
-  private boolean runIndividualBackfills() {
+  /**
+   * What one individual-backfill pass did, on the two axes this loop keeps deliberately separate.
+   *
+   * <p>{@code didWork} drives the caller's active-vs-truly-idle SLEEP pacing and keeps its exact
+   * historical semantics (only the chunk tight-loop and a SPLADE pass over a non-empty backlog set
+   * it — a parent-embedding batch does not). {@code anyActivity} answers the OPERATOR GAUGE's
+   * different question: did any stage actually advance a document this cycle. Tempdoc 798 already
+   * draws this line for the combined branch ("Mode selection reads ACTIVITY... the tight loop reads
+   * PROGRESS... conflating them is what livelocked ingest"); reusing {@code didWork} for the gauge
+   * would stamp "idle" over a cycle that embedded a batch, which is the same lie in the other
+   * direction.
+   */
+  private record IndividualOutcome(boolean didWork, boolean anyActivity) {}
+
+  private IndividualOutcome runIndividualBackfills(long cycleDeadlineNanos) {
     boolean backfillDidWork = false;
+    boolean anyActivity = false;
     if (embeddingLifecycle.embeddingProvider().isAvailable()) {
       StageOutcome outcome = processEmbeddingBackfill();
       recordStageOutcome(BatchTimingKeys.EMBED, outcome);
+      anyActivity |= outcome.docsProcessed() > 0;
     }
     // Chunk vectors after parent embedding completes. 334 Phase 8 tight loop.
     if (resolvedConfigSupplier.get().rag().chunkVectorsEnabled()) {
@@ -256,15 +419,39 @@ public final class BackfillScheduler {
       if (pendingDocEmbeddings == 0) {
         StageOutcome chunkOutcome = processChunkEmbeddingBackfill();
         recordStageOutcome(BatchTimingKeys.EMBED, chunkOutcome);
+        anyActivity |= chunkOutcome.docsProcessed() > 0;
         boolean chunkDidWork = chunkOutcome.success();
+        // Tempdoc 798 review F3: same distinction as the combined loop — a budget hit while chunks
+        // were genuinely embedding is a healthy long cycle, not non-convergence.
+        boolean anyChunkProgress = chunkOutcome.docsProcessed() > 0;
         while (chunkDidWork) {
           backfillDidWork = true;
           if (!running.get() || Thread.currentThread().isInterrupted()) break;
           if (signalBus.isUserActive()) break;
           if (signalBus.shouldYieldGpuBackfill()) break; // tempdoc 630: GPU-claimed OR energy-reduced
+          if (signalBus.hasPendingIngest()) break; // tempdoc 798: primary indexing outranks backfill
+          if (System.nanoTime() >= cycleDeadlineNanos) {
+            if (anyChunkProgress) {
+              log.info(
+                  "Chunk-embedding backfill reached its {}ms cycle budget while still embedding"
+                      + " chunks — returning to the job-queue poll; the remainder resumes next idle"
+                      + " cycle (tempdoc 798).",
+                  CYCLE_BUDGET_MS);
+            } else {
+              log.warn(
+                  "Chunk-embedding backfill hit its {}ms cycle budget with ZERO chunks embedded —"
+                      + " returning to the job-queue poll (tempdoc 798).",
+                  CYCLE_BUDGET_MS);
+            }
+            break;
+          }
           chunkOutcome = processChunkEmbeddingBackfill();
           recordStageOutcome(BatchTimingKeys.EMBED, chunkOutcome);
           chunkDidWork = chunkOutcome.success();
+          if (chunkOutcome.docsProcessed() > 0) {
+            anyChunkProgress = true;
+            anyActivity = true;
+          }
         }
       }
     }
@@ -289,6 +476,7 @@ public final class BackfillScheduler {
       if (embeddingsReady) {
         StageOutcome outcome = processNerBackfill();
         recordStageOutcome(BatchTimingKeys.NER, outcome);
+        anyActivity |= outcome.docsProcessed() > 0;
       }
     }
     // SPLADE after embedding nearly completes (tempdoc 312 item 39, relaxed 334 item 37).
@@ -305,6 +493,7 @@ public final class BackfillScheduler {
                 SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING);
         StageOutcome outcome = processSpladeBackfill();
         recordStageOutcome(BatchTimingKeys.SPLADE, outcome);
+        anyActivity |= outcome.docsProcessed() > 0;
         boolean success = outcome.success();
         recordSpladeBackfillResult(success);
         if (success && spladePendingBefore > 0) {
@@ -312,7 +501,7 @@ public final class BackfillScheduler {
         }
       }
     }
-    return backfillDidWork;
+    return new IndividualOutcome(backfillDidWork, anyActivity);
   }
 
   private void runDisambiguationIfReady(boolean alreadyDidWork) {
@@ -326,6 +515,13 @@ public final class BackfillScheduler {
     int pendingNer =
         indexCountOps.countByField(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_PENDING);
     if (pendingNer != 0) return;
+    // Tempdoc 798 review F4: deliberately COMPLETED only, NOT COMPLETED_EMPTY. This counter is a
+    // change-detector for "new entities exist, so the disambiguation pass is stale". A
+    // COMPLETED_EMPTY document is one NER ran on and found no entities — it contributes nothing to
+    // the entity graph, so a batch that finishes entirely as COMPLETED_EMPTY genuinely has nothing
+    // to re-disambiguate and must not re-trigger a full pass. A mixed batch still moves this
+    // counter via its entity-bearing documents, so nothing is missed. (Contrast the coverage
+    // counters in IndexCountOps, which ask "is the stage done?" — there both tokens must sum.)
     int nerCompleted =
         indexCountOps.countByField(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED);
     if (nerCompleted != lastKnownNerCompletedCount) {
@@ -356,14 +552,75 @@ public final class BackfillScheduler {
 
   // ==================== Backfill delegates ====================
 
-  private CombinedEnrichmentBackfillOps.CombinedOutcome processCombinedBackfillIfApplicable() {
-    return processCombinedBackfillIfApplicable(null, null, null);
+  private CombinedEnrichmentBackfillOps.CombinedOutcome processCombinedBackfillIfApplicable(
+      long cycleDeadlineNanos, long embedShareDeadlineNanos) {
+    return processCombinedBackfillIfApplicable(
+        null, null, null, cycleDeadlineNanos, embedShareDeadlineNanos);
+  }
+
+  /**
+   * Non-termination detector (round-15 post-round finding): WARNs when the combined backfill keeps
+   * selecting the IDENTICAL work-set cycle after cycle while still attempting encoder work.
+   *
+   * <p>The gap this closes is not "no diagnostic existed" but "the wrong discriminator was used".
+   * 798's WARN fires only when a budget-spending cycle advanced NOTHING; the field incident
+   * advanced 56-80 documents per cycle and never moved its queue head, so it took the healthy INFO
+   * branch 54 times in a row. Progress is therefore deliberately NOT part of this condition —
+   * work-set identity is. A draining backfill's selection changes as its head drains; a stalled
+   * one's does not, whatever its per-cycle counters say.
+   *
+   * <p>Deduplicated per episode: one WARN, not one per cycle. The episode ends when the signature
+   * changes, which re-arms it.
+   */
+  private void noteWorkSet(CombinedEnrichmentBackfillOps.CombinedOutcome outcome) {
+    long signature = outcome.workSetSignature();
+    // No selection (nothing pending), or the pass returned before any stage ran: neither is an
+    // observation about whether enrichment is draining, so neither may extend OR reset an episode.
+    if (signature == 0 || !outcome.recordTiming()) {
+      return;
+    }
+    if (signature != lastWorkSetSignature) {
+      lastWorkSetSignature = signature;
+      repeatedWorkSetCycles = 1;
+      stallWarnedThisEpisode = false;
+      return;
+    }
+    repeatedWorkSetCycles++;
+    if (repeatedWorkSetCycles >= STALL_SIGNATURE_CYCLES && !stallWarnedThisEpisode) {
+      stallWarnedThisEpisode = true;
+      log.warn(
+          "Combined enrichment backfill has selected an IDENTICAL work-set for {} consecutive"
+              + " cycles while still attempting encoder work — the queue head is not draining."
+              + " Per-cycle counters can look healthy in this state (documents ARE being encoded);"
+              + " what is not happening is documents LEAVING the pending population. The known"
+              + " cause is documents whose enrichment cannot finish inside one cycle budget"
+              + " (round-15 post-round finding). Check the combined-backfill summary line's"
+              + " windowDocsResuming= and deferredForOtherStages= counters.",
+          repeatedWorkSetCycles);
+    }
+  }
+
+  /**
+   * The composite "stop starting new enrichment work" signal handed to one combined batch (tempdoc
+   * 809 finding 3). Exactly the conditions the tight loop below breaks on, evaluated at the batch's
+   * internal sub-batch boundaries instead of only between batches — a batch is ~150 documents and
+   * was measured at ~63 s, so between-batches was a 12x overshoot of the very budget it enforced.
+   */
+  private boolean shouldStopBackfillWork(long cycleDeadlineNanos) {
+    return !running.get()
+        || Thread.currentThread().isInterrupted()
+        || signalBus.isUserActive()
+        || signalBus.shouldYieldGpuBackfill()
+        || signalBus.hasPendingIngest()
+        || System.nanoTime() >= cycleDeadlineNanos;
   }
 
   private CombinedEnrichmentBackfillOps.CombinedOutcome processCombinedBackfillIfApplicable(
       ArrayDeque<String> parentIdCache,
       ArrayDeque<String> chunkIdCache,
-      int[] batchesSinceCommit) {
+      int[] batchesSinceCommit,
+      long cycleDeadlineNanos,
+      long embedShareDeadlineNanos) {
     boolean embedAvail =
         embeddingLifecycle.embeddingProvider().isAvailable()
             && embeddingLifecycle.allowEmbeddingWrites();
@@ -397,7 +654,10 @@ public final class BackfillScheduler {
             pacing.chunkSlotsPerBatch(),
             parentIdCache != null ? parentIdCache : new ArrayDeque<>(),
             chunkIdCache != null ? chunkIdCache : new ArrayDeque<>(),
-            batchesSinceCommit != null ? batchesSinceCommit : new int[] {0}));
+            batchesSinceCommit != null ? batchesSinceCommit : new int[] {0},
+            () -> shouldStopBackfillWork(cycleDeadlineNanos),
+            () -> System.nanoTime() >= embedShareDeadlineNanos,
+            windowedEmbedProgress));
   }
 
   private StageOutcome processEmbeddingBackfill() {

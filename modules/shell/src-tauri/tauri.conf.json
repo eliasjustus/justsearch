@@ -13,6 +13,8 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "Elias Justus",
+    "copyright": "JustSearch 0.2.0 - Copyright (c) JustSearch",
     "targets": [
       "nsis"
     ],
@@ -24,7 +26,11 @@
       "allowDowngrades": false,
       "nsis": {
         "installMode": "currentUser",
-        "installerHooks": "nsis/installer-hooks.nsh"
+        "installerHooks": "nsis/installer-hooks.nsh",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "headerImage": "nsis/header.bmp",
+        "sidebarImage": "nsis/sidebar.bmp"
       }
     },
     "icon": [
@@ -40,6 +46,13 @@
       "mobile": [],
       "desktop": {
         "schemes": ["justsearch"]
+      }
+    },
+    "updater": {
+      "pubkey": "",
+      "endpoints": [],
+      "windows": {
+        "installMode": "basicUi"
       }
     }
   },
@@ -66,5 +79,3 @@
     }
   }
 }
-
-

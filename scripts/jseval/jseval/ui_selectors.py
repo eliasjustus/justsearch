@@ -69,6 +69,59 @@ CSS_COMPOSER_TEXTAREA = 'jf-composer textarea'
 # thread (UnifiedChatView.ts:5189 `this.thread = [...]`).
 CSS_DEGRADATION_BANNER_COLLAPSED = '.degradation-banner-collapsed'
 CSS_MESSAGE_USER = '.message.user'
+# Tempdoc 814 closure (audit finding A) — the EXPANDED banner and the cause list only its
+# expanded branch renders. `.degradation-banner` is worn by BOTH forms (the pill's class is
+# `degradation-banner degradation-banner-collapsed`), so the causes list — not the banner
+# class — is what proves a capture actually reached Detailed expansion
+# (UnifiedChatView.renderDegradationBanner's `notice-causes` <ul>).
+CSS_DEGRADATION_BANNER = '.degradation-banner'
+CSS_DEGRADATION_CAUSES = '[data-testid="chat-degradation-causes"]'
+# Sandbox round 7 — the four elements whose RELATIONS the `chat-occlusion` step measures:
+# the reading column starved by the pane beside it, and the toast stack growing over the
+# chat header's control row. `.conversation` / `.document-pane` are UnifiedChatView zones
+# (unifiedChatStyles.ts); `.toast` is AdvisoryToastHost's wrapper; `.header` is the
+# New chat / Export / Activity control row (UnifiedChatView.ts renderAnswerPlane).
+CSS_CONVERSATION_COLUMN = '.conversation'
+CSS_DOCUMENT_PANE = '.document-pane'
+CSS_TOAST = '.toast'
+CSS_CHAT_HEADER = '.header'
+# Tempdoc 814 (W4 activation) — the D7 gate-registration elements for the "richest
+# all-bands" (`chat-bands`), small-viewport docked-composer (`chat-composer-small`), and
+# single-turn no-spine (`chat-spine-single`) steps.
+# `.conversation-zone` is the grid that owns the run-spine + `.conversation` scroller
+# (UnifiedChatView.renderAnswerPlane); `jf-unified-chat-view` is the surface HOST custom
+# element (`customElements.define('jf-unified-chat-view', ...)`), the D1 "owner of the
+# sum" denominator the D7.1 share assertion divides against.
+CSS_CONVERSATION_ZONE = '.conversation-zone'
+CSS_SURFACE_HOST = 'jf-unified-chat-view'
+# `.composer` is the composer BLOCK div (687 R5a's protected element — row-consolidation
+# happens inside it, never replacing it); `.activity-rail` is the agent-mode `<details>`
+# run-summary band (renders whenever `affordance === 'agent'`, even before a run reports
+# budget/lifecycle — UnifiedChatView.ts tempdoc-561-C-2 comment); `.run-spine` is the
+# agent-mode run-timeline minimap (mounts only when `spineItems()` is non-null — agent
+# affordance + wide zone + a run with more than one turn or real node boundaries).
+CSS_COMPOSER_BLOCK = '.composer'
+CSS_ACTIVITY_RAIL = '.activity-rail'
+CSS_RUN_SPINE = '.run-spine'
+# The "Delegate a multi-step task to the agent" escalation rung — the plain affordance
+# toggle (`this.affordance = 'agent'`) that mounts `.activity-rail` / gates `.run-spine`
+# WITHOUT requiring an actual agent run (no SSE stream needed; see chat-bands' setup
+# docstring for the fixture-reachability finding this selector exists to exploit).
+TID_ESCALATION_DELEGATE = "escalation-delegate"
+CSS_ESCALATION_DELEGATE = f'[data-testid="{TID_ESCALATION_DELEGATE}"]'
+# Tempdoc 814 §D8 — the two bands the agent-run fixture makes capture-reachable.
+# `.evidence-rail` is the DOCKED sources pane (mounts on `evidenceRailMounted()`: agent
+# affordance + a non-empty `answerSources` + wide zone); `.sources-affordance` is the
+# in-answer "Sources · N" chip, which by §D5 must NOT render while the rail owns the count.
+# `.activity-budget` is the FIRST body row of the expanded activity rail (the budget readout
+# + bar) and `.activity-context` its context-headroom sibling; `.activity-lifecycle` is the
+# turn/iteration/tool + state line the thread record's `lifecycles[]` feeds.
+CSS_EVIDENCE_RAIL = '.evidence-rail'
+CSS_SOURCES_AFFORDANCE = '.sources-affordance'
+CSS_ACTIVITY_RAIL_SUMMARY = '.activity-rail > summary'
+CSS_ACTIVITY_BUDGET = '.activity-budget'
+CSS_ACTIVITY_CONTEXT = '.activity-context'
+CSS_ACTIVITY_LIFECYCLE = '.activity-lifecycle'
 
 @dataclass(frozen=True)
 class Selector:

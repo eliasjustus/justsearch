@@ -129,7 +129,12 @@ public final class JobBatchWriter {
 
       int chunksIndexed =
           IndexingDocumentOps.indexChunks(
-              ex.filePath(), ex.artifact().result(), documentFieldOps, indexingCoordinator, parentMetadata);
+              ex.filePath(),
+              ex.artifact().result(),
+              documentFieldOps,
+              indexingCoordinator,
+              parentMetadata,
+              ex.collection());
       if (chunksIndexed > 0) {
         indexedDelta.accept(chunksIndexed);
         log.debug("Indexed {} chunks for: {}", chunksIndexed, ex.filePath().getFileName());

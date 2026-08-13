@@ -15,7 +15,15 @@
 
 import { html, css, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
-import { openActionLedgerStream, type UnifiedActionEntry } from '../operations/ActionLedgerClient.js';
+import {
+  ActionLedgerClient,
+  openActionLedgerStream,
+  projectBackend,
+  type UnifiedActionEntry,
+} from '../operations/ActionLedgerClient.js';
+// tempdoc 812 D4 — the SAME hash→path resolver the Tasks bridge uses (`core.indexing-jobs`'
+// privacy resolver), so a per-document row reads "corpus/report.pdf", not "default (f7e852)".
+import { resolvePathLazy, friendlyPathName } from '../hooks/resolvePathLazy.js';
 import type { MultiplexedStream } from '../streaming/MultiplexedStream.js';
 import { getSharedShellEventsMultiplex } from '../streaming/shellEventsMultiplexInstance.js';
 import { collapseBursts } from '../projections/boundedProjection.js';
@@ -47,6 +55,9 @@ function isBurst(row: UnifiedActionEntry | IndexBurstSummary): row is IndexBurst
   return (row as IndexBurstSummary).summary === true;
 }
 
+/** The Resource whose `privacy.resolver` (core.resolve-path-hash) resolves an index row's hash. */
+const INDEXING_JOBS_RESOURCE = 'core.indexing-jobs';
+
 export class ActionLedgerView extends JfElement {
   static properties = {
     apiBase: { type: String, attribute: 'api-base' },
@@ -63,6 +74,13 @@ export class ActionLedgerView extends JfElement {
     // tempdoc 612 §UX — the seen-cursor snapshot, mirrored into reactive state so the feed re-renders its
     // "new since you looked" marks when any recall surface (incl. the AI digest) advances the one cursor.
     seenCursor: { state: true },
+    // tempdoc 804 §B9 (F9) — did the ledger READ fail? "No activity yet" is a claim about the
+    // ledger, so it may only be made when the ledger was actually read.
+    ledgerUnreadable: { state: true },
+    // tempdoc 812 D4 — which scan rollups the user expanded to their per-document rows.
+    expandedScans: { state: true },
+    // tempdoc 812 D4 — pathHash → friendly name, filled lazily by core.resolve-path-hash.
+    resolvedNames: { state: true },
   } as const;
 
   declare apiBase: string;
@@ -72,12 +90,24 @@ export class ActionLedgerView extends JfElement {
   declare filterOutcomes: string[];
   declare showRoutine: boolean;
   declare seenCursor: string;
+  declare ledgerUnreadable: boolean;
+  declare expandedScans: string[];
+  declare resolvedNames: Record<string, string>;
+
+  /** Hashes already asked for (in-flight or resolved) — one resolve per hash per session. */
+  private readonly resolvingHashes = new Set<string>();
+  /** Injected only by tests; production uses the real `core.resolve-path-hash` resolver. */
+  resolveHash?: (resourceId: string, pathHash: string) => Promise<string | null>;
 
   /** Injected only by tests; production uses the real EventSource via openActionLedgerStream. */
   eventSourceFactory?: (url: string) => EventSource;
+  /** Injected only by tests; production uses `authorizedFetch` via {@link ActionLedgerClient}. */
+  ledgerFetch?: typeof fetch;
 
   private stopStream: (() => void) | null = null;
   private stopSeenSub: (() => void) | null = null;
+  /** tempdoc 804 §B9 (F9) — true once the live stream has delivered rows (the seed then stands down). */
+  private streamDeliveredRows = false;
 
   constructor() {
     super();
@@ -87,6 +117,54 @@ export class ActionLedgerView extends JfElement {
     this.filterOutcomes = [];
     this.showRoutine = false;
     this.seenCursor = getSeenCursor();
+    this.ledgerUnreadable = false;
+    this.expandedScans = [];
+    this.resolvedNames = {};
+  }
+
+  /**
+   * tempdoc 812 D4 — resolve an index row's pathHash to a friendly name ONCE, then re-render so the
+   * row relabels in place. Until it resolves (or if it can't), the short-hash label stands: an
+   * unresolvable hash degrades to what the row said before, never to a blank or a wrong name.
+   */
+  private ensureResolvedName(pathHash: string): void {
+    if (!pathHash || this.resolvingHashes.has(pathHash) || this.resolvedNames[pathHash]) return;
+    this.resolvingHashes.add(pathHash);
+    const resolve = this.resolveHash ?? resolvePathLazy;
+    void resolve(INDEXING_JOBS_RESOURCE, pathHash)
+      .then((path) => {
+        if (path) {
+          this.resolvedNames = { ...this.resolvedNames, [pathHash]: friendlyPathName(path) };
+        }
+      })
+      .catch(() => {
+        /* keep the short-hash fallback */
+      });
+  }
+
+  /**
+   * tempdoc 812 D4 — the per-document rows of one scan, matched by the capture-side scanId (D2).
+   * Only the rows still in the bounded ring survive; the rollup's own counts remain the audit
+   * truth, so an expansion showing fewer rows than the rollup counted is expected, not a conflict.
+   */
+  private rowsOfScan(scanId: string): UnifiedActionEntry[] {
+    return this.entries.filter((e) => e.kind === 'index' && e.scanId === scanId);
+  }
+
+  /** Relabel an index row with its resolved name when one is known (else leave it untouched). */
+  private withResolvedLabel(row: UnifiedActionEntry): UnifiedActionEntry {
+    if (row.kind !== 'index' || !row.pathHash) return row;
+    this.ensureResolvedName(row.pathHash);
+    const name = this.resolvedNames[row.pathHash];
+    if (!name) return row;
+    const failed = row.outcome === 'FAILED';
+    return { ...row, label: `${failed ? 'Index failed' : 'Indexed'} · ${name}` };
+  }
+
+  private toggleScan(scanId: string): void {
+    this.expandedScans = this.expandedScans.includes(scanId)
+      ? this.expandedScans.filter((s) => s !== scanId)
+      : [...this.expandedScans, scanId];
   }
 
   /** A foreground row the user has not yet seen (newer than the one shared seen-cursor). Routine rows
@@ -157,6 +235,26 @@ export class ActionLedgerView extends JfElement {
       .chip-count {
         opacity: 0.6;
       }
+      /* tempdoc 812 D4 — the scan rollup's expand affordance reads as the row's label, not a
+         separate control: same type, same colour, only the disclosure caret is added. */
+      .scan-expand {
+        flex: 1;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      /* Indented per-document detail under an expanded scan rollup. */
+      .scan-child {
+        padding-left: 1.25rem;
+      }
+      .scan-child.empty {
+        opacity: 0.6;
+        padding: 0.25rem 0 0.25rem 1.25rem;
+      }
     `,
   ];
 
@@ -176,10 +274,16 @@ export class ActionLedgerView extends JfElement {
       ...(multiplex ? { multiplex } : {}),
       ...(this.eventSourceFactory ? { eventSourceFactory: this.eventSourceFactory } : {}),
       onActivity: (rows) => {
+        // tempdoc 804 §B9 (F9) — a lifecycle frame that carries no rows (connected / heartbeat,
+        // and every frame before the snapshot arrives) must not erase what the snapshot read
+        // already established. The ledger is an append-only ring: it never shrinks to empty.
+        if (rows.length === 0 && this.entries.length > 0) return;
+        this.streamDeliveredRows = this.streamDeliveredRows || rows.length > 0;
         this.entries = rows;
         this.requestUpdate();
       },
     });
+    void this.seedFromLedgerSnapshot();
     // tempdoc 612 §UX — mirror the one shared seen-cursor into reactive state, so the "new" marks
     // re-fold whenever the cursor advances (here, or from the AI digest's "mark as seen" — one boundary).
     this.seenCursor = getSeenCursor();
@@ -194,6 +298,34 @@ export class ActionLedgerView extends JfElement {
     this.stopStream = null;
     this.stopSeenSub?.();
     this.stopSeenSub = null;
+    this.streamDeliveredRows = false;
+  }
+
+  /**
+   * Tempdoc 804 §B9 (round-10 F9) — read the ledger the surface claims to audit.
+   *
+   * The round found this view rendering "No activity yet." while `GET /api/action-ledger` held 405
+   * entries: the live stream was the ONLY source, so any frame the socket did not deliver rendered
+   * as a confident, false "nothing happened". The snapshot GET is the SAME projection as the
+   * stream's snapshot frame (`ActionLedgerController` serializes both through
+   * `ActionLedgerProjection`), so this is a second READ of one record, not a second authority —
+   * and it only fills the gap: live rows always win, and the seed never overwrites them.
+   */
+  private async seedFromLedgerSnapshot(): Promise<void> {
+    const client = new ActionLedgerClient({
+      apiBase: this.apiBase,
+      ...(this.ledgerFetch ? { fetchImpl: this.ledgerFetch } : {}),
+    });
+    try {
+      const backend = await client.fetchBackendLedger();
+      this.ledgerUnreadable = false;
+      if (this.streamDeliveredRows || this.entries.length > 0 || backend.length === 0) return;
+      this.entries = backend.map(projectBackend);
+      this.requestUpdate();
+    } catch {
+      // The ledger could not be read at all — say that, rather than claiming it is empty.
+      this.ledgerUnreadable = this.entries.length === 0 && !this.streamDeliveredRows;
+    }
   }
 
   /** tempdoc 612 §UX — advance the one shared seen-cursor to the newest foreground row (the standard
@@ -306,16 +438,78 @@ export class ActionLedgerView extends JfElement {
     </div>`;
   }
 
+  /**
+   * tempdoc 812 D4 — one scan = one collapsible row. "Indexed 5,184 documents · scifact · 6m 12s",
+   * expandable to whatever per-document rows for that scan are still in the ring (resolved to
+   * friendly names). The rollup is the durable record; the children are surviving detail.
+   */
+  private renderScanRollup(row: UnifiedActionEntry): TemplateResult {
+    const scanId = row.scanId ?? '';
+    const expanded = this.expandedScans.includes(scanId);
+    const children = expanded ? this.rowsOfScan(scanId) : [];
+    return html`<div
+        class="row"
+        data-testid="ledger-scan-rollup"
+        data-kind="scan"
+        data-scan-id=${scanId}
+        ?data-new=${this.isNewRow(row)}
+      >
+        ${this.isNewRow(row)
+          ? html`<span class="new-dot" data-testid="ledger-new-dot" aria-label="new since you looked"></span>`
+          : ''}
+        <span class="who" data-originator=${row.originator}>${row.originator}</span>
+        <button
+          type="button"
+          class="scan-expand"
+          data-testid="ledger-scan-expand"
+          aria-expanded=${expanded ? 'true' : 'false'}
+          @click=${() => this.toggleScan(scanId)}
+        >
+          ${expanded ? '▾' : '▸'} ${row.label}
+        </button>
+        <span class="src">backend</span>
+        ${renderEventWhen(row.occurredAt)}
+      </div>
+      ${expanded && children.length === 0
+        ? html`<div class="scan-child empty" data-testid="ledger-scan-empty">
+            No per-document rows retained for this scan.
+          </div>`
+        : ''}
+      ${children.map(
+        (child) =>
+          html`<div class="scan-child" data-testid="ledger-scan-child">
+            ${renderEventRow(this.withResolvedLabel(child))}
+          </div>`,
+      )}`;
+  }
+
   override render(): TemplateResult {
     if (this.entries.length === 0) {
-      return html`<div class="empty" data-testid="ledger-empty">No activity yet.</div>`;
+      // tempdoc 804 §B9 (F9) — "No activity yet" is a claim ABOUT the ledger, so it is only made
+      // when the ledger was read. An unreadable ledger is an unknown, not an empty one.
+      return this.ledgerUnreadable
+        ? html`<div class="empty" data-testid="ledger-unreadable">
+            Activity unavailable — the action ledger could not be read.
+          </div>`
+        : html`<div class="empty" data-testid="ledger-empty">No activity yet.</div>`;
     }
     const filters = this.renderFilters();
     // tempdoc 558 §E1 — facet the stream client-side before the existing ordering + burst projection.
     // tempdoc 613 §6/§10 — and exclude routine direct-user navigation by default (the de-flood): the
     // curated feed foregrounds what the user did NOT already witness; the toggle reveals the rest.
+    // tempdoc 812 D4 — a scan's STARTED row is a placeholder for a scan still in flight; once its
+    // completion row exists, the completion IS the record and the placeholder would double-count
+    // the same scan in the feed.
+    const finishedScans = new Set(
+      this.entries
+        .filter((e) => e.isScanRollup && e.outcome !== 'STARTED' && e.scanId)
+        .map((e) => e.scanId as string),
+    );
     const filtered = this.entries.filter(
-      (e) => this.matchesFilter(e) && (this.showRoutine || !e.isRoutine),
+      (e) =>
+        this.matchesFilter(e) &&
+        (this.showRoutine || !e.isRoutine) &&
+        !(e.isScanRollup && e.outcome === 'STARTED' && e.scanId && finishedScans.has(e.scanId)),
     );
     if (filtered.length === 0) {
       // tempdoc 612 §L.2 #4 — distinguish a genuinely-empty curated feed (the session was ALL routine,
@@ -354,7 +548,9 @@ export class ActionLedgerView extends JfElement {
       // rows are newest-first, so items[0] is the most recent terminal outcome in the burst.
       summarize: (groupKey, items) => ({
         summary: true,
-        groupKey,
+        // tempdoc 812 D2 — the group key may now be a scanId (exact grouping); the LABEL still
+        // names the collection, which is what a reader can act on.
+        groupKey: items[0]?.collection ?? groupKey,
         count: items.length,
         occurredAt: items[0]?.occurredAt ?? '',
       }),
@@ -375,9 +571,12 @@ export class ActionLedgerView extends JfElement {
             <span class="src">backend</span>
             ${renderEventWhen(row.occurredAt)}
           </div>`
-        : // tempdoc 612 §UX — pass the "new since you looked" mark as an ADDITIVE opt-in to the shared row;
-          // History/Timeline render the same row WITHOUT it (they pass no opts), so the marker never leaks.
-          renderEventRow(row, { isNew: this.isNewRow(row) }),
+        : row.isScanRollup
+          ? // tempdoc 812 D4 — one collapsible row per scan, expandable to its surviving per-doc rows.
+            this.renderScanRollup(row)
+          : // tempdoc 612 §UX — pass the "new since you looked" mark as an ADDITIVE opt-in to the shared row;
+            // History/Timeline render the same row WITHOUT it (they pass no opts), so the marker never leaks.
+            renderEventRow(this.withResolvedLabel(row), { isNew: this.isNewRow(row) }),
     )}`;
   }
 }

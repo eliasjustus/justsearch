@@ -121,8 +121,15 @@ final class ConversationApiAssembly {
         io.justsearch.app.services.conversation.spi.BatchSummaryDoneEnricher.INSTANCE);
     // Slice 493 Phase 6: CitationMatcher superseded by StreamingCitationMatcher (same
     // onDone behavior + streaming onChunk). Old class retained in source for one release.
+    // Tempdoc 799 N.2: the citation cutoff is now read from config. Tempdoc 565 15.A made this
+    // the ONE cutoff shared with the agent path, so AgentLoopWiring must read the same key —
+    // wiring only one side would reintroduce the RAG/agent divergence 565 removed.
+    var ragCfgForCitations = resolvedRag();
     streamConsumers.add(
-        new io.justsearch.app.services.conversation.spi.StreamingCitationMatcher(docs));
+        ragCfgForCitations == null
+            ? new io.justsearch.app.services.conversation.spi.StreamingCitationMatcher(docs)
+            : new io.justsearch.app.services.conversation.spi.StreamingCitationMatcher(
+                docs, ragCfgForCitations.citationMatchThreshold()));
     streamConsumers.add(io.justsearch.app.services.conversation.spi.RAGDoneEnricher.INSTANCE);
     // Slice 491 §9.D Phase E (C4 + F1) — same URLExtractor instance is registered in the
     // substrate-driven streamConsumers list AND consumed by ToolIteratingShapeRunner via
@@ -176,7 +183,10 @@ final class ConversationApiAssembly {
             List.of(
                 new io.justsearch.app.services.conversation.spi.DocAccess(docs),
                 new io.justsearch.app.services.conversation.spi.BatchDocAccess(docs),
-                new io.justsearch.app.services.conversation.spi.RAGContext(docs),
+                ragCfgForCitations == null
+                    ? new io.justsearch.app.services.conversation.spi.RAGContext(docs)
+                    : new io.justsearch.app.services.conversation.spi.RAGContext(
+                        docs, ragCfgForCitations.ragTopK()),
                 io.justsearch.app.services.conversation.spi.UserPromptInjector.INSTANCE,
                 io.justsearch.app.services.conversation.spi.ExternalContextInjector.INSTANCE,
                 // Tempdoc 603 C2 — conversation-aware query decontextualization before RAG retrieval.
@@ -411,5 +421,22 @@ final class ConversationApiAssembly {
         chatController,
         mcpProtocolHandler,
         conversationStore);
+  }
+
+  /**
+   * Resolved RAG settings, read once at this composition root (tempdoc 799 N.2).
+   *
+   * <p>Both settings resolved correctly and were read by nothing before this: {@code
+   * justsearch.rag.top_k} lost to a hardcoded 5, and {@code justsearch.citation.match_threshold}
+   * was typed String, never parsed, and lost to a hardcoded 0.5.
+   *
+   * <p>Reading config HERE rather than inside the SPI classes keeps them constructor-injected and
+   * unit-testable. Falls back to the compiled defaults when no ConfigStore is installed (tests,
+   * early boot), mirroring {@code DefaultWorkerAppServices.resolvedOcrConfig()}.
+   */
+  private static io.justsearch.configuration.resolved.ResolvedConfig.Rag resolvedRag() {
+    io.justsearch.configuration.resolved.ConfigStore store =
+        io.justsearch.configuration.resolved.ConfigStore.globalOrNull();
+    return store == null || store.get() == null ? null : store.get().rag();
   }
 }

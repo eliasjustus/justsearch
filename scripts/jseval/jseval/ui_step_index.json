@@ -18,8 +18,19 @@
     "citation-highlight"
   ],
   "shell-v0/views/UnifiedChatView.ts": [
-    "chat-mode", "qa-response", "chat-proportion"
+    "chat-mode", "qa-response", "chat-proportion",
+    "chat-bands", "chat-bands-detailed", "chat-composer-small",
+    "chat-spine-single", "chat-spine-multi", "chat-chip-yield",
+    "chat-evidence-rail", "chat-activity-rail-open", "chat-wide-docked"
   ],
+  "shell-v0/views/unifiedChatStyles.ts": [
+    "chat-bands", "chat-bands-detailed", "chat-spine-multi",
+    "chat-evidence-rail", "chat-activity-rail-open", "chat-wide-docked"
+  ],
+  "shell-v0/primitives/compositionLayout.ts": [
+    "chat-bands", "chat-bands-detailed", "chat-occlusion", "chat-wide-docked"
+  ],
+  "shell-v0/components/StatusDeck.ts": ["chat-chip-yield"],
   "shell-v0/components/ContextMenu.ts": ["context-menu"],
 
   "shell-v0/chrome/Shell.ts": [
@@ -27,13 +38,16 @@
     "home-light", "library-light", "ai-brain-light", "health-light",
     "settings-light", "security-light", "help-light"
   ],
+  "shell-v0/components/TaskList.ts": ["tasks-occlusion"],
+  "shell-v0/chrome/OverlayHost.ts": ["tasks-occlusion"],
   "shell-v0/plugin-api/CorePlugin.ts": [
     "home", "library", "ai-brain", "health", "settings", "security", "help"
   ],
   "shell-v0/views/SecuritySurface.ts": ["security", "security-light"],
   "shell-v0/views/security/atRestCard.ts": ["security", "security-light", "health", "health-light"],
   "shell-v0/views/HealthSurface.ts": ["health", "health-light"],
-  "shell-v0/views/LibrarySurface.ts": ["library", "library-light", "skeleton-library"],
+  "shell-v0/views/LibrarySurface.ts": ["library", "library-light", "skeleton-library", "library-enriching"],
+  "shell-v0/state/folderStatus.ts": ["library-enriching"],
   "shell-v0/views/BrainSurface.ts": [
     "ai-brain", "ai-brain-advanced", "ai-brain-light", "ai-brain-advanced-light"
   ],
@@ -41,6 +55,9 @@
     "settings", "settings-light",
     "search-results-light", "search-results-compact", "search-results-rich",
     "search-simple-mode", "search-advanced-mode"
+  ],
+  "shell-v0/components/AppUpdateBanner.ts": [
+    "settings", "settings-light"
   ],
   "shell-v0/views/HelpSurface.ts": ["help", "help-light"],
 

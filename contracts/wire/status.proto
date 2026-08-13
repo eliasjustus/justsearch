@@ -153,6 +153,16 @@ message CoreIndexView {
   // Tempdoc 419 C3 V1: 30-min RRD trends (sparkline data).
   repeated int64 recent_job_queue_depth = 11 [json_name = "recentJobQueueDepth"];
   repeated double recent_docs_per_sec = 12 [json_name = "recentDocsPerSec"];
+  // Tempdoc 813 Slice B: byte weight of remaining indexing work (PENDING+PROCESSING), summed
+  // from the size recorded at enqueue. pendingUnknownSizeJobs counts remaining jobs with no
+  // recorded size — an unknown weight must not read as zero bytes.
+  int64 pending_bytes = 13 [json_name = "pendingBytes"];
+  int64 pending_unknown_size_jobs = 14 [json_name = "pendingUnknownSizeJobs"];
+  // Tempdoc 811 C-4: the population a DEFAULT-scope search can actually return — indexedDocuments
+  // minus the collections the default scope excludes (today: agent-history). indexedDocuments keeps
+  // describing the whole non-chunk index (Health, jseval, sandbox evidence read it that way); a
+  // user-facing "Searching N documents" string must use THIS field.
+  int64 searchable_documents = 15 [json_name = "searchableDocuments"];
 }
 
 message FailureTrackingView {
@@ -455,8 +465,11 @@ message GpuStatusView {
 }
 
 // Tempdoc 629 (FLOOR): at-rest protection of the data-dir volume. Coarse on/off fidelity only —
-// disk_encryption ∈ {ENCRYPTED, NOT_ENCRYPTED, ENCRYPTING, UNKNOWN}; quality_known is false when the
-// configuration-quality distinction (TPM-only vs pre-boot PIN) could not be read (needs admin).
+// disk_encryption ∈ {ENCRYPTED, NOT_ENCRYPTED, ENCRYPTING, NOT_APPLICABLE, UNKNOWN}; quality_known is
+// false when the configuration-quality distinction (TPM-only vs pre-boot PIN) could not be read
+// (needs admin). NOT_APPLICABLE (the volume cannot be OS-encrypted at all) is deliberately distinct
+// from UNKNOWN (indeterminate) — only the latter is a case elevation could resolve. This is a `string`
+// rather than a proto enum precisely so the state set can grow without a wire-shape change.
 message AtRestProtectionView {
   optional string disk_encryption = 1 [json_name = "diskEncryption"];
   optional string source = 2 [json_name = "source"];

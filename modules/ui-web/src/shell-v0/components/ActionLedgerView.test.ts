@@ -58,13 +58,34 @@ function updateFrame(row: unknown, seq: number): unknown {
 let host: ActionLedgerView;
 let es: FakeEventSource | undefined;
 
+/**
+ * A stub for the snapshot READ the view now also performs (tempdoc 804 §B9 / F9: the live stream
+ * used to be the only source, so a frame the socket never delivered rendered as a false "No
+ * activity yet" over a full ledger). Tests that care about the stream keep an EMPTY ledger here, so
+ * the seed cannot influence what they assert.
+ */
+function ledgerFetchReturning(entries: unknown[]): typeof fetch {
+  return (async () =>
+    ({
+      ok: true,
+      status: 200,
+      json: async () => ({ entries }),
+    }) as unknown as Response) as unknown as typeof fetch;
+}
+
+/** Let the async snapshot READ (fetch → json → state) settle before asserting. */
+async function flushMicrotasks(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 /** Create + mount a <jf-action-ledger> wired to a fresh FakeEventSource. */
-function mount(): FakeEventSource {
+function mount(ledgerEntries: unknown[] = []): FakeEventSource {
   host = document.createElement('jf-action-ledger') as ActionLedgerView;
   host.eventSourceFactory = (url: string) => {
     es = new FakeEventSource(url);
     return es as unknown as EventSource;
   };
+  host.ledgerFetch = ledgerFetchReturning(ledgerEntries);
   document.body.appendChild(host);
   return es!;
 }
@@ -128,13 +149,20 @@ describe('<jf-action-ledger> (tempdoc 550 C1 / thesis II — live read-view)', (
     const src = mount();
     src.emitFrame(
       snapshotFrame([
-        // A real system event the user opened Activity to see.
+        // A real system event the user opened Activity to see. Tempdoc 812 D4 — the durable
+        // system record is the SCAN ROLLUP (one row per scan); the per-document index rows it
+        // summarizes are themselves routine now and live behind the same toggle.
         {
-          kind: 'index',
+          kind: 'operation',
+          operationId: 'core.scan-root',
           occurredAt: '2026-05-26T00:00:00.000Z',
           originator: 'system',
+          outcome: 'COMPLETED',
+          scanId: 'scan-1',
           collection: 'default',
-          state: 'DONE',
+          docsDone: 4,
+          docsFailed: 0,
+          durationMs: 12000,
         },
         // Two routine direct-user navigations (the §10 flood).
         {
@@ -159,7 +187,10 @@ describe('<jf-action-ledger> (tempdoc 550 C1 / thesis II — live read-view)', (
       Array.from(host.shadowRoot!.querySelectorAll('[data-testid="ledger-row"]')).map((r) =>
         r.getAttribute('data-kind'),
       );
-    expect(rowKinds()).toEqual(['index']);
+    expect(
+      Array.from(host.shadowRoot!.querySelectorAll('[data-testid="ledger-scan-rollup"]')).length,
+    ).toBe(1);
+    expect(rowKinds()).toEqual([]); // no per-row entries besides the scan rollup
     expect(host.shadowRoot!.textContent).not.toContain('Navigate to');
 
     // The routine toggle advertises how many were hidden.
@@ -274,6 +305,9 @@ describe('<jf-action-ledger> (tempdoc 550 C1 / thesis II — live read-view)', (
     // the one log; the timeline must collapse the adjacent same-collection burst into a single
     // "Indexed N · <collection>" summary rather than render N individual rows.
     const src = mount();
+    // tempdoc 812 D4 — per-document index rows are routine telemetry now (the scan rollup is the
+    // audit row), so the burst collapse is asserted on the revealed view. The collapse itself is
+    // unchanged: it is still the fallback for rows with no capture-side scan key.
     const indexRows = Array.from({ length: 5 }, (_, i) => ({
       id: `index:2026-05-28T00:00:0${i}.000Z:default:h${i}:DONE`,
       kind: 'index',
@@ -284,6 +318,7 @@ describe('<jf-action-ledger> (tempdoc 550 C1 / thesis II — live read-view)', (
       occurredAt: `2026-05-28T00:00:0${i}.000Z`,
     }));
     src.emitFrame(snapshotFrame(indexRows));
+    host.showRoutine = true;
     await host.updateComplete;
 
     const bursts = host.shadowRoot!.querySelectorAll('[data-testid="ledger-burst"]');
@@ -344,7 +379,8 @@ describe('<jf-action-ledger> (tempdoc 550 C1 / thesis II — live read-view)', (
     const src = mount();
     src.emitFrame(
       snapshotFrame([
-        { kind: 'index', occurredAt: '2026-05-26T00:00:00.000Z', originator: 'system', collection: 'default', state: 'DONE' },
+        // tempdoc 812 D4 — the foreground system record is the scan rollup, not a per-doc row.
+        { kind: 'operation', operationId: 'core.scan-root', occurredAt: '2026-05-26T00:00:00.000Z', originator: 'system', outcome: 'COMPLETED', scanId: 's1', collection: 'default', docsDone: 1, docsFailed: 0, durationMs: 1000 },
         { kind: 'effect', occurredAt: '2026-05-26T00:00:01.000Z', originator: 'user', effectKind: 'set-appearance', subject: '' },
         { kind: 'effect', occurredAt: '2026-05-26T00:00:02.000Z', originator: 'user', effectKind: 'save-settings', subject: '' },
       ]),
@@ -354,7 +390,8 @@ describe('<jf-action-ledger> (tempdoc 550 C1 / thesis II — live read-view)', (
     const rowKinds = () =>
       Array.from(host.shadowRoot!.querySelectorAll('[data-testid="ledger-row"]')).map((r) => r.getAttribute('data-kind'));
     // DEFAULT: the two preference effects are de-flooded; only the system event shows.
-    expect(rowKinds()).toEqual(['index']);
+    expect(rowKinds()).toEqual([]);
+    expect(host.shadowRoot!.querySelectorAll('[data-testid="ledger-scan-rollup"]').length).toBe(1);
 
     const toggle = host.shadowRoot!.querySelector('[data-testid="ledger-routine-toggle"]') as HTMLElement | null;
     expect(toggle).not.toBeNull();
@@ -401,7 +438,9 @@ describe('<jf-action-ledger> (tempdoc 550 C1 / thesis II — live read-view)', (
   // a mark + a header count; "mark all read" advances the cursor; routine rows are never marked.
   describe('unread "new since you looked" marker', () => {
     const foregroundRows = [
-      { kind: 'index', occurredAt: '2026-05-26T00:00:02.000Z', originator: 'system', collection: 'c', state: 'DONE' },
+      // tempdoc 812 D4 — a scan rollup is a foreground (durable-tier) system row; the per-document
+      // index rows it summarizes are routine and are never marked new.
+      { kind: 'operation', operationId: 'core.scan-root', occurredAt: '2026-05-26T00:00:02.000Z', originator: 'system', outcome: 'COMPLETED', scanId: 'c1', collection: 'c', docsDone: 2, docsFailed: 0, durationMs: 2000 },
       { kind: 'operation', occurredAt: '2026-05-26T00:00:03.000Z', originator: 'agent', operationId: 'core.reindex', outcome: 'SUCCESS' },
       // a routine row (must NEVER be marked new even when newer than the cursor)
       { kind: 'navigation', occurredAt: '2026-05-26T00:00:09.000Z', originator: 'user', targetSurface: 'core.system-surface' },
@@ -446,6 +485,287 @@ describe('<jf-action-ledger> (tempdoc 550 C1 / thesis II — live read-view)', (
       // the cursor advanced to the newest FOREGROUND row (the agent op at :03, not the routine nav at :09)
       expect(getSeenCursor()).toBe('2026-05-26T00:00:03.000Z');
       expect(host.shadowRoot!.querySelectorAll('[data-testid="ledger-new-dot"]').length).toBe(0);
+    });
+  });
+
+  /**
+   * Tempdoc 804 §B9 (round-10 F9): the Activity surface rendered "No activity yet." while
+   * `GET /api/action-ledger` held 405 entries. The live stream was the only source, so a snapshot
+   * frame the socket never delivered rendered as a confident, false "nothing happened".
+   */
+  describe('the empty state is computed from the ledger it claims to describe (804 F9)', () => {
+    // tempdoc 812 D4 — the seed carries the scan's durable rollup plus its per-document rows, so
+    // the assertion is about the SEED being read (804 F9), not about which tier a row lands in.
+    const indexRows = [
+      {
+        id: 'scan:1',
+        kind: 'operation',
+        operationId: 'core.scan-root',
+        occurredAt: '2026-05-26T00:00:03.000Z',
+        originator: 'system',
+        outcome: 'COMPLETED',
+        scanId: 'seed-scan',
+        collection: 'default',
+        docsDone: 2,
+        docsFailed: 0,
+        durationMs: 3000,
+      },
+      {
+        id: 'index:1',
+        kind: 'index',
+        occurredAt: '2026-05-26T00:00:01.000Z',
+        originator: 'system',
+        collection: 'default',
+        state: 'DONE',
+      },
+      {
+        id: 'index:2',
+        kind: 'index',
+        occurredAt: '2026-05-26T00:00:02.000Z',
+        originator: 'system',
+        collection: 'default',
+        state: 'DONE',
+      },
+    ];
+
+    it('renders rows from the ledger snapshot when the live stream delivers nothing', async () => {
+      mount(indexRows); // stream mounted, but NO frame is ever emitted
+      await host.updateComplete;
+      await flushMicrotasks(); // let the snapshot read settle
+      await host.updateComplete;
+
+      expect(host.shadowRoot!.querySelector('[data-testid="ledger-empty"]')).toBeNull();
+      // Adjacent same-collection index rows collapse into one burst summary (550 III(b)).
+      const rendered = host.shadowRoot!.querySelectorAll(
+        '[data-testid="ledger-row"], [data-testid="ledger-burst"], [data-testid="ledger-scan-rollup"]',
+      );
+      expect(rendered.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('live stream rows win over the snapshot seed (one authority, two reads)', async () => {
+      const src = mount(indexRows);
+      src.emitFrame(
+        snapshotFrame([
+          {
+            id: 'op:1',
+            kind: 'operation',
+            operationId: 'core.a',
+            occurredAt: '2026-05-26T00:00:05.000Z',
+            originator: 'agent',
+          },
+        ]),
+      );
+      await host.updateComplete;
+      await flushMicrotasks();
+      await host.updateComplete;
+
+      const rows = host.shadowRoot!.querySelectorAll('[data-testid="ledger-row"]');
+      expect(rows.length).toBe(1);
+      expect(host.shadowRoot!.querySelector('[data-testid="ledger-burst"]')).toBeNull();
+    });
+
+    it('says the ledger is unreadable rather than claiming it is empty', async () => {
+      host = document.createElement('jf-action-ledger') as ActionLedgerView;
+      host.eventSourceFactory = (url: string) => {
+        es = new FakeEventSource(url);
+        return es as unknown as EventSource;
+      };
+      host.ledgerFetch = (async () => {
+        throw new Error('connection refused');
+      }) as unknown as typeof fetch;
+      document.body.appendChild(host);
+      await host.updateComplete;
+      await flushMicrotasks();
+      await host.updateComplete;
+
+      expect(host.shadowRoot!.querySelector('[data-testid="ledger-empty"]')).toBeNull();
+      expect(host.shadowRoot!.querySelector('[data-testid="ledger-unreadable"]')).not.toBeNull();
+    });
+  });
+
+  /**
+   * Tempdoc 812 D4 — the audit-first default tier, and the regression home for tempdoc 809
+   * finding 6: a full-corpus ingest used to render as N per-document rows that pushed the
+   * consequential records (grants, gates, operations) out of view. The default feed now shows the
+   * DURABLE tiers; the per-document detail lives behind the existing routine toggle and under its
+   * own scan's rollup.
+   */
+  describe('audit-first default tier (tempdoc 812 D4 / 809 finding 6)', () => {
+    /** A scan rollup plus the N per-document rows it summarizes, all sharing one scanId. */
+    function scanWithDocs(n: number, scanId = 'scan-1'): unknown[] {
+      const docs = Array.from({ length: n }, (_, i) => ({
+        id: `index:${i}`,
+        kind: 'index',
+        occurredAt: `2026-08-06T00:00:${String(i).padStart(2, '0')}.000Z`,
+        originator: 'system',
+        collection: 'scifact',
+        state: i === 0 ? 'FAILED' : 'DONE',
+        pathHash: `hash${i}`,
+        scanId,
+      }));
+      return [
+        ...docs,
+        {
+          id: `scan:${scanId}`,
+          kind: 'operation',
+          operationId: 'core.scan-root',
+          occurredAt: '2026-08-06T00:01:00.000Z',
+          originator: 'system',
+          outcome: 'COMPLETED',
+          scanId,
+          collection: 'scifact',
+          root: 'C:/corpus/scifact',
+          docsDone: n - 1,
+          docsFailed: 1,
+          docsAdmitted: n,
+          durationMs: 372_000,
+        },
+      ];
+    }
+
+    it('an N-document ingest renders ONE batch row in the default view, not N', async () => {
+      const src = mount();
+      src.emitFrame(snapshotFrame(scanWithDocs(12)));
+      await host.updateComplete;
+
+      const rollups = host.shadowRoot!.querySelectorAll('[data-testid="ledger-scan-rollup"]');
+      expect(rollups.length).toBe(1);
+      expect(rollups[0]!.textContent).toContain('Indexed 11 documents');
+      expect(rollups[0]!.textContent).toContain('scifact');
+      expect(rollups[0]!.textContent).toContain('6m 12s'); // 372s at human altitude
+      expect(rollups[0]!.textContent).toContain('1 failed');
+      // NONE of the 12 per-document rows renders in the default feed — neither individually nor
+      // as an adjacency burst (the pre-812 render-time heuristic).
+      expect(host.shadowRoot!.querySelectorAll('[data-testid="ledger-row"]').length).toBe(0);
+      expect(host.shadowRoot!.querySelector('[data-testid="ledger-burst"]')).toBeNull();
+      // The toggle still advertises exactly how much detail is hidden.
+      const toggle = host.shadowRoot!.querySelector('[data-testid="ledger-routine-toggle"]');
+      expect(toggle!.textContent).toContain('(12)');
+    });
+
+    it('a scan rollup expands to the per-document rows OF THAT SCAN (matched by scanId)', async () => {
+      const src = mount();
+      src.emitFrame(
+        snapshotFrame([
+          ...scanWithDocs(3, 'scan-a'),
+          ...scanWithDocs(2, 'scan-b'),
+        ]),
+      );
+      host.resolveHash = async (_resource: string, hash: string) =>
+        hash === 'hash1' ? 'C:/corpus/scifact/report.pdf' : null;
+      await host.updateComplete;
+
+      const rollups = Array.from(
+        host.shadowRoot!.querySelectorAll('[data-testid="ledger-scan-rollup"]'),
+      );
+      expect(rollups.length).toBe(2);
+      const scanA = rollups.find((r) => r.getAttribute('data-scan-id') === 'scan-a')!;
+      const expand = scanA.querySelector('[data-testid="ledger-scan-expand"]') as HTMLElement;
+      expect(expand.getAttribute('aria-expanded')).toBe('false');
+      expand.click();
+      await host.updateComplete;
+      await flushMicrotasks();
+      await host.updateComplete;
+
+      const children = host.shadowRoot!.querySelectorAll('[data-testid="ledger-scan-child"]');
+      expect(children.length).toBe(3); // scan-a's three docs, NOT scan-b's two
+      const text = Array.from(children)
+        .map((c) => c.textContent ?? '')
+        .join('|');
+      // D4 item 5 — the resolved row reads as a name; an unresolvable hash degrades to the
+      // short-hash label it had before, never to a blank or a wrong name.
+      expect(text).toContain('scifact/report.pdf');
+      expect(text).toContain('(hash2'.slice(0, 6)); // the 6-char fallback prefix for the rest
+      expect(
+        (
+          scanA.querySelector('[data-testid="ledger-scan-expand"]') as HTMLElement
+        ).getAttribute('aria-expanded'),
+      ).toBe('true');
+    });
+
+    it('grant and gate rows are NEVER hidden by the default tier, under any classification path', async () => {
+      const src = mount();
+      src.emitFrame(
+        snapshotFrame([
+          ...scanWithDocs(4),
+          // Both originator flavours: a user-initiated grant and a system/agent one — neither may
+          // be routed routine by any path (the critical-analysis (b) assertion).
+          { id: 'g1', kind: 'grant', occurredAt: '2026-08-06T00:02:00.000Z', originator: 'user', action: 'ISSUED', grantId: 'gr-1', subject: 'core.search-index' },
+          { id: 'g2', kind: 'grant', occurredAt: '2026-08-06T00:02:01.000Z', originator: 'agent', action: 'CONSUMED', grantId: 'gr-2', subject: 'core.search-index' },
+          { id: 'k1', kind: 'gate', occurredAt: '2026-08-06T00:02:02.000Z', originator: 'user', operationId: 'core.reindex', disposition: 'GATED', gateBehavior: 'TYPED_CONFIRM' },
+          { id: 'k2', kind: 'gate', occurredAt: '2026-08-06T00:02:03.000Z', originator: 'agent', operationId: 'core.reindex', disposition: 'DENIED', gateBehavior: 'TYPED_CONFIRM' },
+          // A routine direct-user navigation — the one row that SHOULD be behind the toggle.
+          { id: 'n1', kind: 'navigation', occurredAt: '2026-08-06T00:02:04.000Z', originator: 'user', targetSurface: 'core.system-surface' },
+        ]),
+      );
+      await host.updateComplete;
+
+      const kinds = () =>
+        Array.from(host.shadowRoot!.querySelectorAll('[data-testid="ledger-row"]')).map((r) =>
+          r.getAttribute('data-kind'),
+        );
+      expect(kinds().filter((k) => k === 'grant').length).toBe(2);
+      expect(kinds().filter((k) => k === 'gate').length).toBe(2);
+      expect(kinds()).not.toContain('navigation'); // routine, behind the toggle
+      expect(host.shadowRoot!.querySelectorAll('[data-testid="ledger-scan-rollup"]').length).toBe(1);
+
+      // Revealing routine adds the navigation + the per-document rows, and removes nothing.
+      (host.shadowRoot!.querySelector('[data-testid="ledger-routine-toggle"]') as HTMLElement).click();
+      await host.updateComplete;
+      expect(kinds()).toContain('navigation');
+      expect(kinds().filter((k) => k === 'grant').length).toBe(2);
+      expect(kinds().filter((k) => k === 'gate').length).toBe(2);
+    });
+
+    it("a scan's STARTED placeholder is replaced by its completion row, not shown beside it", async () => {
+      const src = mount();
+      const started = {
+        id: 'scan:started',
+        kind: 'operation',
+        operationId: 'core.scan-root',
+        occurredAt: '2026-08-06T00:00:00.000Z',
+        originator: 'system',
+        outcome: 'STARTED',
+        scanId: 'scan-1',
+        collection: 'scifact',
+      };
+      src.emitFrame(snapshotFrame([started]));
+      await host.updateComplete;
+      // In flight: the placeholder IS the record — a scan that never finishes still left a trace.
+      let rollups = host.shadowRoot!.querySelectorAll('[data-testid="ledger-scan-rollup"]');
+      expect(rollups.length).toBe(1);
+      expect(rollups[0]!.textContent).toContain('Indexing');
+
+      src.emitFrame(snapshotFrame([started, ...scanWithDocs(2)]));
+      await host.updateComplete;
+      rollups = host.shadowRoot!.querySelectorAll('[data-testid="ledger-scan-rollup"]');
+      expect(rollups.length).toBe(1);
+      expect(rollups[0]!.textContent).toContain('Indexed 1 documents');
+    });
+
+    it('keyless index rows (pre-812 / single-file ingest) keep the adjacency collapse fallback', async () => {
+      const src = mount();
+      src.emitFrame(
+        snapshotFrame(
+          Array.from({ length: 4 }, (_, i) => ({
+            id: `legacy:${i}`,
+            kind: 'index',
+            occurredAt: `2026-08-06T00:00:0${i}.000Z`,
+            originator: 'system',
+            collection: 'default',
+            state: 'DONE',
+            pathHash: `legacy${i}`,
+            // no scanId — the capture-side key does not exist for these rows
+          })),
+        ),
+      );
+      host.showRoutine = true;
+      await host.updateComplete;
+
+      const bursts = host.shadowRoot!.querySelectorAll('[data-testid="ledger-burst"]');
+      expect(bursts.length).toBe(1);
+      expect(bursts[0]!.textContent).toContain('Indexed 4 · default');
+      expect(host.shadowRoot!.querySelectorAll('[data-testid="ledger-scan-rollup"]').length).toBe(0);
     });
   });
 });

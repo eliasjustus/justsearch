@@ -10,8 +10,8 @@
  * tests record journal effects AND emit a matching ledger row (the production ingest round-trip).
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AiActivityDigest } from './AiActivityDigest.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AiActivityDigest, AUTO_HIDE_MS } from './AiActivityDigest.js';
 import {
   recordEffect,
   __resetJournalForTest,
@@ -27,7 +27,7 @@ import {
 } from '../substrates/elicit/index.js';
 import { listMacros, __resetMacrosForTest } from '../substrates/macros/index.js';
 import { __resetActionsForTest } from '../substrates/actions/index.js';
-import { __resetRecallCursor } from '../substrates/recall/recallCursor.js';
+import { __resetRecallCursor, getSeenCursor } from '../substrates/recall/recallCursor.js';
 import { CORE_PROVENANCE } from '../primitives/provenance.js';
 
 void AiActivityDigest;
@@ -277,5 +277,79 @@ describe('<jf-ai-activity-digest> (§32 U3 / 577 #20)', () => {
     await flush();
     host.remove();
     expect(src.closed).toBe(true);
+  });
+
+  /**
+   * Tempdoc 806 B.2 — round 12 had this digest covering the header for ~10 minutes across every
+   * surface; round 7's B6-8 asked for a bounded lifetime and it never landed. The digest must give
+   * the screen back on its own, WITHOUT marking anything seen on the user's behalf.
+   */
+  describe('806: bounded lifetime', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    async function mountWithActivity(occurredAt: string): Promise<FakeEventSource> {
+      const src = mount();
+      src.emitFrame(snapshotFrame([agentRow({ kind: 'operation', occurredAt })]));
+      await flush();
+      return src;
+    }
+
+    it('collapses on its own after AUTO_HIDE_MS, leaving the seen-cursor untouched', async () => {
+      await mountWithActivity('2026-05-26T00:00:01.000Z');
+      expect(host.hasAttribute('data-empty'), 'visible while the window is open').toBe(false);
+
+      vi.advanceTimersByTime(AUTO_HIDE_MS - 1);
+      await flush();
+      expect(host.hasAttribute('data-empty'), 'not a moment early').toBe(false);
+
+      vi.advanceTimersByTime(1);
+      await flush();
+      expect(host.hasAttribute('data-empty'), 'the screen is given back').toBe(true);
+      // Hidden is hidden — nothing was marked read for the user (the cursor is still at its floor,
+      // so the same activity is still NEW everywhere it is recalled).
+      expect(getSeenCursor()).toBe('');
+    });
+
+    it('new agent activity earns a fresh window (re-shows, then expires again)', async () => {
+      const src = await mountWithActivity('2026-05-26T00:00:01.000Z');
+      vi.advanceTimersByTime(AUTO_HIDE_MS);
+      await flush();
+      expect(host.hasAttribute('data-empty')).toBe(true);
+
+      src.emitFrame(
+        updateFrame(agentRow({ kind: 'operation', occurredAt: '2026-05-26T00:00:09.000Z' }), 2),
+      );
+      await flush();
+      expect(host.hasAttribute('data-empty'), 'new information re-shows the digest').toBe(false);
+
+      vi.advanceTimersByTime(AUTO_HIDE_MS);
+      await flush();
+      expect(host.hasAttribute('data-empty'), 'and the fresh window expires too').toBe(true);
+    });
+
+    it('holds the window open while the mass-undo confirm preview is staged', async () => {
+      recordEffect({ kind: 'open-pane', paneId: 'a' }, CORE_PROVENANCE, { originator: 'agent' });
+      const src = mount();
+      src.emitFrame(
+        snapshotFrame([
+          agentRow({
+            kind: 'open-pane',
+            effectKind: 'open-pane',
+            occurredAt: '2026-05-26T00:00:01.000Z',
+          }),
+        ]),
+      );
+      await flush();
+      await activateJfButton(host.shadowRoot?.querySelector('[data-testid="ai-digest-undo-all"]'));
+      await flush();
+
+      vi.advanceTimersByTime(AUTO_HIDE_MS * 3);
+      await flush();
+      expect(
+        host.hasAttribute('data-empty'),
+        'a confirm dialog must not be yanked away mid-read',
+      ).toBe(false);
+    });
   });
 });

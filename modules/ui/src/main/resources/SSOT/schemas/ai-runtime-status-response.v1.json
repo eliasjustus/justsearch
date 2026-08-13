@@ -94,6 +94,15 @@
       "items" : {
         "type" : "object",
         "properties" : {
+          "executionProvider" : {
+            "type" : [ "string", "null" ]
+          },
+          "fallbackReason" : {
+            "type" : [ "string", "null" ]
+          },
+          "gpuFallback" : {
+            "type" : "boolean"
+          },
           "id" : {
             "type" : [ "string", "null" ]
           },

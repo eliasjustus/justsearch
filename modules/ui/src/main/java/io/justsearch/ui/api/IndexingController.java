@@ -170,6 +170,18 @@ public class IndexingController {
                     ApiErrorCode.INVALID_PATH, "Path does not exist or is not a directory: " + resolved, telemetry, ApiErrorHandler.routeOf(ctx)));
         return;
       }
+      // A watched root's collection tags every document the root's scan admits, so it is subject to
+      // the same reserved-name guard as the ad-hoc ingest surfaces — routed through the ONE
+      // authority (IngestCollectionPolicy), not a second copy of the rule. Blank/absent stays the
+      // pre-existing "index default" shape; only a supplied, non-blank value is validated.
+      if (collection != null && !collection.isBlank()) {
+        try {
+          collection = io.justsearch.app.api.knowledge.IngestCollectionPolicy.normalizeRequested(collection);
+        } catch (IllegalArgumentException e) {
+          ctx.status(400).json(ApiErrorHandler.toResponse(ApiErrorCode.INVALID_REQUEST, e.getMessage(), telemetry, ApiErrorHandler.routeOf(ctx)));
+          return;
+        }
+      }
       IndexingService indexing = indexingService();
       indexing.addWatchedRoot(collection, resolved);
       ctx.status(200).json(Map.of("status", "ok"));
@@ -257,6 +269,66 @@ public class IndexingController {
     }
   }
 
+  /**
+   * Tempdoc 811 (C-2a) — the removal route for collection-tagged ad-hoc ingests.
+   *
+   * <p>{@code DELETE /api/indexing/collections} body {@code {"collection": "mcp-ingest"}}. Before
+   * 811 a document ingested through {@code POST /api/knowledge/ingest} or the {@code
+   * core.ingest-files} tool from a path under no watched root carried NO collection and no prune
+   * path could reach it — {@code removeWatchedRoot} / {@code PruneOps.pruneByPathPrefix} are both
+   * watched-root-prefix driven. Deleting by collection is the addressable route the tag creates.
+   *
+   * <p>Reserved app-internal collections ({@code justsearch-help}, {@code agent-history}) and the
+   * untagged {@code default} bucket are refused: the latter would be a whole-index wipe wearing a
+   * collection's clothes. Loopback-only, and the session-token before-handler
+   * ({@code ApiSecurityFilters.setupSessionTokenEnforcement}) covers DELETE like every other
+   * mutation.
+   */
+  public void handleDeleteCollection(Context ctx) {
+    try {
+      Map<String, String> body = ctx.bodyAsClass(Map.class);
+      String collection = body == null ? null : body.get("collection");
+      if (collection == null || collection.isBlank()) {
+        ctx.status(400).json(ApiErrorHandler.toResponse(ApiErrorCode.INVALID_REQUEST, "collection is required", telemetry, ApiErrorHandler.routeOf(ctx)));
+        return;
+      }
+      String trimmed = collection.trim();
+      if (!io.justsearch.app.api.knowledge.IngestCollectionPolicy.isDeletable(trimmed)) {
+        ctx.status(400)
+            .json(
+                ApiErrorHandler.toResponse(
+                    ApiErrorCode.INVALID_REQUEST,
+                    "collection '"
+                        + trimmed
+                        + "' cannot be deleted: the app-internal collections ("
+                        + String.join(
+                            ", ",
+                            io.justsearch.app.api.knowledge.IngestCollectionPolicy
+                                .reservedCollections()
+                                .stream()
+                                .sorted()
+                                .toList())
+                        + ") and the untagged '"
+                        + io.justsearch.app.api.knowledge.IngestCollectionPolicy.DEFAULT_COLLECTION
+                        + "' bucket are protected",
+                    telemetry,
+                    ApiErrorHandler.routeOf(ctx)));
+        return;
+      }
+      int deleted = indexingService().deleteDocsByCollection(trimmed);
+      ctx.status(200).json(Map.of("status", "ok", "collection", trimmed, "deletedDocs", deleted));
+    } catch (StatusRuntimeException e) {
+      int http = ApiErrorHandler.mapGrpcToHttp(e.getStatus().getCode());
+      ctx.status(http).json(ApiErrorHandler.toResponse(e, telemetry, ApiErrorHandler.routeOf(ctx)));
+    } catch (KnowledgeServerNotConnectedException | UnsupportedOperationException e) {
+      ctx.status(503)
+          .json(ApiErrorHandler.toResponse(ApiErrorCode.SERVICE_UNAVAILABLE, "Knowledge Server not ready", telemetry, ApiErrorHandler.routeOf(ctx)));
+    } catch (Exception e) {
+      log.error("Failed to delete collection", e);
+      ctx.status(500).json(ApiErrorHandler.toResponse(e, telemetry, ApiErrorHandler.routeOf(ctx)));
+    }
+  }
+
   public void handleReindex(Context ctx) {
     try {
       boolean force = Boolean.parseBoolean(ctx.queryParam("force"));
@@ -337,7 +409,8 @@ public class IndexingController {
     try {
       boolean accepted = indexingService().startMigration(reason);
       if (accepted) {
-        // Lease lives in op-leases.json until expiry; covers Worker's async migration window.
+        // Worker persists MIGRATING before acknowledging, then owns the asynchronous lifetime.
+        handle.release(OpLeaseOutcome.SUCCESS);
         ctx.status(202).json(Map.of("status", "migration start requested"));
       } else {
         handle.release(OpLeaseOutcome.FAILURE);
@@ -788,6 +861,22 @@ public class IndexingController {
                     m.put(
                         "lastVerifiedIsoTime",
                         root.lastVerifiedAt() == null ? "" : root.lastVerifiedAt().toString());
+                    // Tempdoc 813 §1c — per-root ENRICHMENT coverage. inFlightCount above covers
+                    // only the first phase (keyword-searchable); enrichment backfill selects
+                    // index-wide by status and carries no per-root job rows, so without these a
+                    // 5%-embedded folder and a 100%-embedded one are indistinguishable. Parent
+                    // totals exclude chunk docs; the chunk tier is its own denominator.
+                    // Each parent stage carries its OWN denominator: a doc without that stage's
+                    // status field is outside the stage (post-798), never a permanent deficit.
+                    IndexingService.RootCoverage coverage = jobCounts.coverage();
+                    m.put("parentDocsTotalEmbedding", coverage.parentDocsTotalEmbedding());
+                    m.put("parentDocsSettledEmbedding", coverage.parentDocsSettledEmbedding());
+                    m.put("parentDocsTotalSplade", coverage.parentDocsTotalSplade());
+                    m.put("parentDocsSettledSplade", coverage.parentDocsSettledSplade());
+                    m.put("parentDocsTotalNer", coverage.parentDocsTotalNer());
+                    m.put("parentDocsSettledNer", coverage.parentDocsSettledNer());
+                    m.put("chunkDocsTotal", coverage.chunkDocsTotal());
+                    m.put("chunkDocsSettled", coverage.chunkDocsSettled());
                     return m;
                   })
               .toList();

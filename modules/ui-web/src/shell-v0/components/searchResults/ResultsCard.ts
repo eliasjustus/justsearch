@@ -70,6 +70,8 @@ export interface CardHit {
   readonly title: string;
   readonly path: string;
   readonly trace?: unknown;
+  /** Tempdoc 811 (C-1a) — the corpus the hit came from; drives the row's collection pill. */
+  readonly collection?: string;
 }
 
 /**
@@ -119,14 +121,23 @@ export interface SearchProvenance {
 /** How long the terminal "refined ✓" stamp stays before decaying to the mode text. */
 const REFINED_STAMP_MS = 4000;
 
-/** Search Thread S1/S4-final — the retrieval-mode label, shared by the live meta line
- *  ({@link ResultsCard.renderRetrievalMode}) and the frozen-card provenance header. */
+/**
+ * Search Thread S1/S4-final — the retrieval-mode label, shared by the live meta line
+ * ({@link ResultsCard.renderRetrievalMode}) and the frozen-card provenance header.
+ *
+ * Tempdoc 805 §G.2 — `'UNKNOWN'` (a commit whose refined-pass trace was not yet available) is
+ * labelled NOTHING, exactly like any unrecognized mode: the absence of a label is honest, whereas
+ * every label here is a positive claim about how the search ran.
+ */
 function retrievalModeLabel(mode: string | null | undefined): string | null {
+  if (mode === 'UNKNOWN') return null;
   return mode === 'HYBRID' ? 'Semantic + keyword' : mode === 'VECTOR' ? 'Semantic' : mode === 'TEXT' ? 'Keyword' : null;
 }
 
-/** Tempdoc 738 (C2) — the plain-language retrieval-mode label shown in Simple mode. */
+/** Tempdoc 738 (C2) — the plain-language retrieval-mode label shown in Simple mode.
+ *  805 §G.2: `'UNKNOWN'` labels nothing (see {@link retrievalModeLabel}). */
 function plainRetrievalModeLabel(mode: string | null | undefined): string | null {
+  if (mode === 'UNKNOWN') return null;
   return mode === 'HYBRID'
     ? 'meaning + words'
     : mode === 'VECTOR'
@@ -473,6 +484,18 @@ export class ResultsCard extends JfElement {
           ${view.kind === 'code' && view.approxLine != null
             ? html`<span class="line-anchor">:L${view.approxLine}</span>`
             : nothing}
+          ${/* Tempdoc 811 (C-1a) — the corpus marker: a hit from a named non-default collection
+                says so on the row, so the built-in help docs JustSearch ships (UIX-015) are not
+                silently indistinguishable from the user's own documents. */ ''}
+          ${view.collection
+            ? html`<span
+                class="collection-pill"
+                data-testid="collection-pill"
+                data-collection=${view.collection.collection}
+                data-tone=${view.collection.tone}
+                title=${view.collection.title}
+              >${view.collection.label}</span>`
+            : nothing}
           ${isLive
             ? html`<button
                 class="row-actions"
@@ -767,6 +790,26 @@ export class ResultsCard extends JfElement {
         color: var(--text-tertiary);
         font-size: var(--font-size-xs);
         flex-shrink: 0;
+      }
+      /* Tempdoc 811 (C-1a) — the per-collection row marker. Same pill geometry as the shared
+         .hit-why-signal / .facet-chip chips; the help tone reuses the gate-verified teal fill
+         pair (--accent-tint / --accent-on-tint) the selected facet chip already uses, which is
+         the teal "Help" pill docs/reference/search-ui-behavior.md documents. */
+      .row .collection-pill {
+        flex-shrink: 0;
+        padding: 0.05rem 0.45rem;
+        border: 1px solid var(--border-subtle);
+        border-radius: 1rem;
+        background: var(--surface-2);
+        color: var(--text-tertiary);
+        font-size: var(--font-size-xs);
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .row .collection-pill[data-tone='help'] {
+        background: var(--accent-tint);
+        border-color: var(--accent-command);
+        color: var(--accent-on-tint);
       }
       .row .path {
         font-size: var(--font-size-xs);

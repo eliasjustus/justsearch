@@ -20,14 +20,18 @@ Usage:
 """
 
 import argparse
+import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
@@ -394,25 +398,52 @@ def stage_golden_parity(share_dir: Path) -> str | None:
     )
 
 
-def check_node_installer_staged(tools_cache: Path) -> str | None:
-    """Check whether a Node.js Windows installer is present in the host tools
-    cache. `collect-evidence.ps1`'s in-sandbox MCP Inspector check needs `npx`
-    (Node) on PATH; if nothing is staged, that check silently depends on a
-    mid-session internet download instead of a reproducible staged asset.
+# Assets the staged docs tell a round to use from tools\ -- kept here as one
+# declared list so staging can diff against reality instead of assuming.
+# Round 11 (tempdoc 734/805) found staging-gaps.md said "None -- all
+# documented assets staged" while tools\Git-Setup.exe was silently absent:
+# nothing had ever checked for it. Add an entry here whenever a doc
+# (sandbox-CLAUDE.md, sandbox-environment.md) tells a round to run something
+# out of tools\.
+DOCUMENTED_TOOLS_ASSETS = [
+    {
+        "label": "Git for Windows",
+        "patterns": ["Git-Setup.exe", "Git-*.exe"],
+        "doc": "sandbox-CLAUDE.md Setup step 1 ('tools\\Git-Setup.exe /VERYSILENT ...'); sandbox-environment.md",
+        "consequence": "the round cannot run the documented Git-Setup.exe step and must fall back to an internet download it was told was pre-staged",
+    },
+    {
+        "label": "Node.js Windows installer",
+        "patterns": ["node*.msi", "node*.exe"],
+        "doc": "sandbox-CLAUDE.md 'What's NOT available' / collect-evidence.ps1's in-sandbox MCP Inspector check (needs npx on PATH)",
+        "consequence": "the MCP Inspector reachability check has no staged Node runtime and depends on a mid-session internet download instead of a reproducible staged asset",
+    },
+]
 
-    Returns a staging-gap message if no installer is found, or None if one is
-    already present."""
-    if tools_cache.is_dir():
-        found = list(tools_cache.glob("node*.msi")) + list(tools_cache.glob("node*.exe"))
+
+def check_documented_tools_staged(tools_dst: Path) -> list[str]:
+    """Diff the tools\\ assets the staged docs tell a round to use
+    (DOCUMENTED_TOOLS_ASSETS) against what actually landed in tools_dst
+    (the STAGED share dir, post-copy) -- not the host-side cache, and not an
+    assumption that copying succeeded.
+
+    Returns one gap message per documented asset whose glob pattern(s) match
+    nothing under tools_dst, so staging-gaps.md names each missing asset
+    explicitly instead of defaulting to "None -- all documented assets
+    staged" while something the docs promised is actually absent (round 11's
+    Git-Setup.exe miss)."""
+    gaps: list[str] = []
+    for tool in DOCUMENTED_TOOLS_ASSETS:
+        found = any(list(tools_dst.glob(pattern)) for pattern in tool["patterns"])
         if found:
-            return None
-    return (
-        f"No Node.js installer found in {tools_cache} — the in-sandbox MCP "
-        "Inspector check (npx @modelcontextprotocol/inspector) has no staged "
-        "Node runtime, so it depends on a mid-session download instead of a "
-        "reproducible staged asset. Remedy: drop a Node LTS Windows installer "
-        "(e.g. node-v*-x64.msi) into that directory before launching."
-    )
+            continue
+        gaps.append(
+            f"{tool['label']} not staged in tools\\ (expected a file matching one of: "
+            f"{', '.join(tool['patterns'])}) -- documented at {tool['doc']}. "
+            f"Consequence: {tool['consequence']}. Remedy: drop the installer into "
+            "tools-cache/ on the host before launching, then re-run sandbox-launch.py."
+        )
+    return gaps
 
 
 def write_staging_gaps(share_dir: Path, gaps: list[str]):
@@ -572,6 +603,164 @@ def _sha256_of(path: Path) -> str:
     return h.hexdigest()
 
 
+# Filenames a build could plausibly drop beside the installer to carry the
+# commit it was built from. None is written today (see write_candidate_provenance's
+# docstring) -- this is the read side of the contract, so the day a build writes
+# one the launcher picks it up without another change.
+_BUILD_METADATA_FILENAMES = (
+    "build-info.json",
+    "build-metadata.json",
+    "build-info.txt",
+    "BUILD_INFO.txt",
+    "commit.txt",
+)
+
+# Keys a build-metadata JSON might use for the commit.
+_COMMIT_JSON_KEYS = (
+    "commit",
+    "sha",
+    "gitsha",
+    "git_sha",
+    "github_sha",
+    "head_sha",
+    "headsha",
+    "revision",
+)
+
+# A full git object id. \b-anchored, so it cannot match a slice of the 64-hex
+# SHA-256 digests that share the installer's directory in SHA256SUMS.
+_GIT_SHA_RE = re.compile(r"\b[0-9a-f]{40}\b", re.IGNORECASE)
+
+
+def _derive_candidate_commit(installer: Path) -> tuple[str | None, str]:
+    """Try to derive the commit the candidate installer was built from, using
+    only what is on disk beside it.
+
+    Returns (commit_or_None, note). The note always explains where the value
+    came from, or why there is none -- an undeterminable commit is recorded as
+    undeterminable, never guessed. Deriving it from the host checkout's HEAD
+    would be a fabrication: the candidate is normally downloaded from a CI run
+    and has no relationship to whatever the host happens to have checked out."""
+    parent = installer.parent
+    for name in _BUILD_METADATA_FILENAMES:
+        candidate = parent / name
+        if not candidate.is_file():
+            continue
+        try:
+            raw = candidate.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            return None, f"{name} exists beside the installer but is unreadable ({e})"
+
+        if candidate.suffix.lower() == ".json":
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError as e:
+                return None, f"{name} exists beside the installer but is not valid JSON ({e})"
+            if isinstance(data, dict):
+                for key, value in data.items():
+                    if key.lower() in _COMMIT_JSON_KEYS and isinstance(value, str) and value.strip():
+                        return value.strip(), f"read from {name} (key '{key}') beside the installer"
+            return None, f"{name} beside the installer carries no recognised commit key"
+
+        match = _GIT_SHA_RE.search(raw)
+        if match:
+            return match.group(0), f"read from {name} beside the installer"
+        return None, f"{name} beside the installer contains no 40-hex commit id"
+
+    return None, (
+        "no build-metadata file ("
+        + ", ".join(_BUILD_METADATA_FILENAMES)
+        + ") accompanies the installer, and SHA256SUMS records digests only. "
+        "The candidate is normally downloaded from a CI run, so the host "
+        "checkout's HEAD is unrelated to it and is deliberately NOT used as a "
+        "substitute. Remedy: have the build workflow write the commit into a "
+        "metadata file beside the installer artifact"
+    )
+
+
+def _checksum_manifest_agreement(installer: Path, digest: str) -> str:
+    """Report whether the installer's digest agrees with a SHA256SUMS manifest
+    staged beside it, if one is there. Read-only and non-fatal: this records
+    provenance, it does not gate the launch."""
+    manifest = installer.parent / "SHA256SUMS"
+    if not manifest.is_file():
+        return "no SHA256SUMS manifest beside the installer"
+    try:
+        lines = manifest.read_text(encoding="utf-8").splitlines()
+    except OSError as e:
+        return f"SHA256SUMS beside the installer is unreadable ({e})"
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = stripped.split()
+        if len(parts) < 2:
+            continue
+        recorded, name = parts[0], parts[-1]
+        if Path(name).name == installer.name:
+            if recorded.lower() == digest.lower():
+                return "matches the SHA256SUMS entry beside the installer"
+            return (
+                f"MISMATCH -- SHA256SUMS beside the installer records {recorded} "
+                f"for this filename"
+            )
+    return f"SHA256SUMS beside the installer has no entry for {installer.name}"
+
+
+def write_candidate_provenance(share_dir: Path, installer: Path) -> Path:
+    """Record what this round is actually validating into
+    <share>/candidate-provenance.md.
+
+    Round 8 recorded no candidate commit hash -- no PR, branch, CI-run or
+    artifact URL was reachable from inside the sandbox -- so settling whether a
+    specific fix was present in the validated candidate later required matching
+    a CI run's head SHA against a merge commit by hand. Everything derivable at
+    staging time is on the host; nothing was writing it down.
+
+    Commit derivation is best-effort and honest: when no build metadata
+    accompanies the installer, the file says so in as many words rather than
+    substituting a plausible-looking value."""
+    digest = _sha256_of(installer)
+    stat = installer.stat()
+    modified = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(timespec="seconds")
+    commit, commit_note = _derive_candidate_commit(installer)
+    checksum_note = _checksum_manifest_agreement(installer, digest)
+
+    commit_line = (
+        f"- Candidate commit: {commit} ({commit_note})"
+        if commit
+        else f"- Candidate commit: NOT DETERMINABLE -- {commit_note}"
+    )
+
+    text = [
+        "# Candidate Provenance",
+        "",
+        "Generated by `scripts/sandbox/sandbox-launch.py` at staging time, from",
+        "what is on the host's disk. It answers \"what exactly was in this build?\"",
+        "from the round's own evidence, instead of host-side archaeology after the",
+        "fact (tempdoc 734 Part B8, round-8 retrospective).",
+        "",
+        f"- Installer: {installer.name}",
+        f"- SHA-256: {digest}",
+        f"- Size: {stat.st_size} bytes",
+        f"- Modified (host, UTC): {modified}",
+        f"- Host source path: {installer}",
+        f"- Checksum manifest: {checksum_note}",
+        commit_line,
+        "",
+        "Quote this block in the round's final validation summary, so the archived",
+        "evidence identifies the build it came from.",
+        "",
+    ]
+    path = share_dir / "candidate-provenance.md"
+    path.write_text("\n".join(text), encoding="utf-8")
+    print(
+        f"Staged candidate-provenance.md (sha256 {digest}, commit "
+        f"{commit if commit else 'not determinable'})"
+    )
+    return path
+
+
 def stage_upgrade_installer(share_dir: Path, upgrade_installer: Path) -> tuple[str, str]:
     """Stage the previous release's installer into share/previous-release/
     (tempdoc 750 Part C), next to the candidate under share root, and return
@@ -589,12 +778,204 @@ def stage_upgrade_installer(share_dir: Path, upgrade_installer: Path) -> tuple[s
     return upgrade_installer.name, digest
 
 
+def _ed25519_raw_public_key(public_key_path: Path) -> str:
+    """Convert an Ed25519 SPKI PEM public key to the raw 32-byte base64 form
+    consumed by the Rust updater. Fail closed on any other key shape."""
+    text = public_key_path.read_text(encoding="utf-8")
+    encoded = "".join(
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.startswith("-----")
+    )
+    try:
+        der = base64.b64decode(encoded, validate=True)
+    except (ValueError, base64.binascii.Error) as exc:
+        sys.exit(f"Updater metadata public key is not valid PEM/base64: {exc}")
+    spki_prefix = bytes.fromhex("302a300506032b6570032100")
+    if len(der) != len(spki_prefix) + 32 or not der.startswith(spki_prefix):
+        sys.exit("Updater metadata public key must be an Ed25519 SPKI PEM key.")
+    return base64.b64encode(der[-32:]).decode("ascii")
+
+
+def stage_in_app_updater_assets(
+    share_dir: Path,
+    installer: Path,
+    release_dir: Path,
+    metadata_public_key_path: Path,
+) -> dict[str, object]:
+    """Verify and stage the authenticated release closed set for an in-app
+    updater Sandbox round.
+
+    Production consumes HTTPS. A Sandbox test candidate compiled with the
+    explicit release test gate consumes this same byte-for-byte set over the
+    loopback-only server staged below.
+    """
+    release_dir = release_dir.resolve()
+    metadata_public_key_path = metadata_public_key_path.resolve()
+    required = [
+        release_dir / "release.v1.json",
+        release_dir / "release.v1.json.sig",
+        release_dir / "latest.json",
+        release_dir / f"{installer.name}.sig",
+        metadata_public_key_path,
+    ]
+    missing = [str(path) for path in required if not path.is_file()]
+    if missing:
+        sys.exit("Missing in-app updater release asset(s): " + ", ".join(missing))
+
+    try:
+        descriptor = json.loads(required[0].read_text(encoding="utf-8"))
+        latest = json.loads(required[2].read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        sys.exit(f"Updater release metadata is unreadable: {exc}")
+
+    artifact = descriptor.get("artifact") or {}
+    artifact_url = str(artifact.get("url") or "")
+    parsed_url = urlparse(artifact_url)
+    candidate_hash = _sha256_of(installer)
+    latest_platform = (latest.get("platforms") or {}).get("windows-x86_64") or {}
+    metadata_key_id = str(descriptor.get("metadataKeyId") or "")
+    if (
+        descriptor.get("schemaVersion") != 1
+        or parsed_url.scheme != "http"
+        or parsed_url.hostname not in {"127.0.0.1", "localhost"}
+        or Path(parsed_url.path).name != installer.name
+        or artifact.get("sha256") != candidate_hash
+        or latest.get("version") != descriptor.get("version")
+        or latest_platform.get("url") != artifact_url
+        or latest_platform.get("signature") != artifact.get("signature")
+        or not metadata_key_id
+    ):
+        sys.exit(
+            "Updater release set is not a closed loopback Sandbox set for "
+            "the selected candidate installer."
+        )
+
+    verifier = REPO_ROOT / "scripts" / "release" / "app-release-assets.mjs"
+    verified = subprocess.run(
+        [
+            "node",
+            str(verifier),
+            "verify",
+            "--installer",
+            str(installer),
+            "--artifact-signature",
+            str(release_dir / f"{installer.name}.sig"),
+            "--metadata-public-key",
+            str(metadata_public_key_path),
+            "--release-dir",
+            str(release_dir),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if verified.returncode != 0:
+        detail = (verified.stderr or verified.stdout).strip()
+        sys.exit(f"Authenticated updater release verification failed: {detail}")
+
+    feed_dir = share_dir / "updater-release"
+    feed_dir.mkdir(parents=True, exist_ok=True)
+    for source in required[:4]:
+        shutil.copy2(source, feed_dir / source.name)
+    shutil.copy2(installer, feed_dir / installer.name)
+    for script_name in (
+        "serve-updater-feed.ps1",
+        "start-in-app-update-test.ps1",
+        "collect-updater-evidence.ps1",
+    ):
+        shutil.copy2(SCRIPT_DIR / script_name, share_dir / script_name)
+
+    info: dict[str, object] = {
+        "schemaVersion": 1,
+        "mode": "in-app-update-from-release",
+        "version": descriptor.get("version"),
+        "sequence": descriptor.get("sequence"),
+        "candidateInstaller": installer.name,
+        "candidateSha256": candidate_hash,
+        "descriptorUrl": artifact_url.rsplit("/", 1)[0] + "/release.v1.json",
+        "metadataRootKeyId": metadata_key_id,
+        "metadataRootPublicKey": _ed25519_raw_public_key(metadata_public_key_path),
+        "durablePhases": [
+            "PREPARED",
+            "HEAD_STOPPED",
+            "INSTALL_LAUNCHING",
+            "INSTALL_LAUNCHED",
+            "RECONCILING",
+            "COMMITTED",
+            "CANCELLED",
+            "REPAIR_REQUIRED",
+        ],
+    }
+    (share_dir / "updater-qualification.v1.json").write_text(
+        json.dumps(info, indent=2) + "\n", encoding="utf-8"
+    )
+    (share_dir / "updater-qualification.md").write_text(
+        "\n".join(
+            [
+                "# In-app updater qualification",
+                "",
+                "This lane is valid only when the installed SOURCE build "
+                "contains the updater and was compiled from the previous "
+                "release source with `JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE=1` "
+                "and Tauri updater `dangerousInsecureTransportProtocol=true`. "
+                "Production builds must reject this loopback transport. The "
+                "ordinary `upgrade-from-release` lane separately qualifies the "
+                "exact published previous installer; the loopback lane cannot "
+                "be byte-identical because that production binary rejects "
+                "runtime trust overrides by design.",
+                "",
+                "This lane proves the APPLY MACHINERY. That the user is asked before "
+                "anything is applied is a separate claim, and it is covered by the "
+                "operator-driven whole-product round, not here. Run both.",
+                "",
+                "1. Install the updater-capable previous-source Sandbox build "
+                "and seed retained user state.",
+                "2. Run `powershell -ExecutionPolicy Bypass -File .\\start-in-app-update-test.ps1`, "
+                "adding `-Autorun` to drive check and install with no operator input. The app "
+                "honours `-Autorun` only when compiled with the qualification gate; a production "
+                "build ignores it.",
+                "3. Without `-Autorun`: in Settings, check for the authenticated update and "
+                "explicitly choose install. This is the consent path.",
+                "4. Before any deliberate interruption, and after every restart, run "
+                "`.\\collect-updater-evidence.ps1`. Preserve `evidence\\updater`.",
+                "5. A normal round passes only when the installed version is the target, "
+                "the intent is `COMMITTED`, and seeded state survives. With `-Autorun`, "
+                "`updater-state.json` carries `autorunVerdict` directly — but it is written by "
+                "the SECOND boot, because a successful apply exits the process that started it. "
+                "A missing verdict after one boot means the handoff did not complete.",
+                "",
+                "Recovery oracles:",
+                "- A source-version restart with a pre-launch intent must settle `CANCELLED`.",
+                "- A target-version restart with a witnessed launch must settle `COMMITTED`.",
+                "- An unprovable/invalid launch or unavailable recovery path must settle "
+                "`REPAIR_REQUIRED` and keep the signed staged artifact for diagnosis.",
+                "- `installer-launch-witness.v1.json` must agree with the intent attempt, "
+                "digest, size, staged path, and process id.",
+                "",
+                "The Rust transition/fixture suite deterministically exercises every durable "
+                "phase. This Sandbox lane supplies the real NSIS/Windows recovery oracle; do "
+                "not claim a phase interruption unless its before/after evidence was captured.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    print(
+        "Staged authenticated loopback updater feed "
+        f"(version {info['version']}, sequence {info['sequence']})."
+    )
+    return info
+
+
 def write_validation_mode(
     share_dir: Path,
     installer: Path,
     models_dir: Path | None,
     no_models: bool,
     upgrade_info: tuple[str, str] | None = None,
+    updater_info: dict[str, object] | None = None,
 ):
     """Write the actual launch mode into the mapped folder.
 
@@ -617,7 +998,11 @@ def write_validation_mode(
 
     if upgrade_info:
         prev_name, prev_sha256 = upgrade_info
-        mode = "upgrade-from-release"
+        mode = (
+            "in-app-update-from-release"
+            if updater_info
+            else "upgrade-from-release"
+        )
         details = [
             "Host models mapped: no",
             "JUSTSEARCH_MODELS_DIR: must remain unset",
@@ -633,6 +1018,18 @@ def write_validation_mode(
             "3. Proceed with the normal mission -- data survival across the upgrade is itself a "
             "required observation, per ADR-0024 retained user data.",
         ]
+        if updater_info:
+            details.extend(
+                [
+                    "Candidate apply path: authenticated in-app updater over loopback Sandbox feed",
+                    f"Target version: {updater_info.get('version')}",
+                    f"Release sequence: {updater_info.get('sequence')}",
+                    "Start command: powershell -ExecutionPolicy Bypass -File "
+                    ".\\start-in-app-update-test.ps1",
+                    "Evidence command: powershell -ExecutionPolicy Bypass -File "
+                    ".\\collect-updater-evidence.ps1",
+                ]
+            )
     elif no_models:
         mode = "fresh-install"
         details = [
@@ -704,6 +1101,178 @@ def _read_resolved_mode(share_dir: Path) -> tuple[str, str]:
     return mode, meaning
 
 
+CONVERGENCE_TEMPDOC_SUFFIX = "-sandbox-convergence.md"
+
+# A charter names its round in a Markdown heading, e.g. "# Round 8 charter --
+# v0.2.x candidate, post-798". Anchored at the heading start so a body
+# sentence mentioning an earlier round ("in round 7 it did not") can never be
+# mistaken for the round being launched.
+_CHARTER_ROUND_RE = re.compile(r"^#+\s*round\s+(\d+)\b", re.IGNORECASE)
+
+# The convergence tempdoc records each round under its own section heading,
+# e.g. "## Round 7 (fresh-install, first post-772 payload) -- DO-NOT-QUALIFY".
+# Anchored the same way, so "## Part A -- Round convergence record" and
+# "## Part B8 -- ... (round 8, ...)" are not counted as round records.
+_TEMPDOC_ROUND_RE = re.compile(r"^#{2,6}\s*round\s+(\d+)\b", re.IGNORECASE)
+
+# A pre-registration section describes a round that has NOT run yet, so it is
+# not a recorded round -- counting it would let the guard pass on exactly the
+# document state it exists to catch.
+_TEMPDOC_NOT_A_RECORD_MARKERS = ("pre-registration", "not yet run")
+
+
+def find_convergence_tempdoc(tempdocs_dir: Path) -> Path:
+    """Locate the release line's convergence tempdoc
+    (docs/tempdocs/NNN-<version>-sandbox-convergence.md).
+
+    FAILS CLOSED when none exists: the guard's whole point is that a document
+    which cannot perform its function must not be staged silently. When
+    several exist (one per release line), the highest-numbered one is the
+    current release's record -- the same "highest number is newest" rule the
+    project's tempdoc convention already uses."""
+    matches = sorted(tempdocs_dir.glob("*" + CONVERGENCE_TEMPDOC_SUFFIX))
+    if not matches:
+        sys.exit(
+            f"No convergence tempdoc found in {tempdocs_dir} (expected a file "
+            f"named NNN-<version>{CONVERGENCE_TEMPDOC_SUFFIX}). The staged "
+            "sandbox instructions require the round to read it to learn which "
+            "prior findings it exists to re-confirm; staging without one hands "
+            "the round an authority file that does not exist. Remedy: create "
+            "the release's convergence tempdoc, or launch with --no-charter if "
+            "this is a non-qualifying launch."
+        )
+
+    def _number(p: Path) -> int:
+        head = p.name.split("-", 1)[0]
+        return int(head) if head.isdigit() else -1
+
+    return max(matches, key=_number)
+
+
+def parse_charter_round(charter_path: Path) -> int:
+    """Return the round number the charter declares.
+
+    FAILS CLOSED when no heading names a round. A guard that cannot read its
+    own input must not report OK -- that is the exact defect class this check
+    exists to close (tempdoc 734 B8.1)."""
+    text = charter_path.read_text(encoding="utf-8")
+    for line in text.splitlines():
+        match = _CHARTER_ROUND_RE.match(line.strip())
+        if match:
+            return int(match.group(1))
+    sys.exit(
+        f"Cannot determine this round's number from the charter: {charter_path}\n"
+        "No Markdown heading names the round. The charter must declare it in a "
+        "heading, e.g.:\n"
+        "    # Round 9 charter -- v0.2.x candidate\n"
+        "This is required so the launcher can check the convergence tempdoc is "
+        "current for this round (tempdoc 734 B8.1). Fix the charter heading, or "
+        "launch with --no-charter for a non-qualifying round."
+    )
+
+
+def latest_recorded_round(tempdoc_path: Path) -> int:
+    """Return the highest round number RECORDED in the convergence tempdoc.
+
+    Pre-registration sections (a round staged but not yet run) are skipped --
+    they describe intent, not a recorded round.
+
+    FAILS CLOSED when no round section is found at all, for the same reason
+    parse_charter_round() does."""
+    rounds: list[int] = []
+    for line in tempdoc_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        match = _TEMPDOC_ROUND_RE.match(stripped)
+        if not match:
+            continue
+        lowered = stripped.lower()
+        if any(marker in lowered for marker in _TEMPDOC_NOT_A_RECORD_MARKERS):
+            continue
+        rounds.append(int(match.group(1)))
+    if not rounds:
+        sys.exit(
+            f"Cannot determine the latest recorded round from {tempdoc_path}\n"
+            "No '## Round <N> ...' section heading was found. Each round's "
+            "record must live under its own numbered section heading so the "
+            "launcher can check the document is current before staging it "
+            "(tempdoc 734 B8.1). Fix the tempdoc's headings, or launch with "
+            "--no-charter for a non-qualifying round."
+        )
+    return max(rounds)
+
+
+def assert_convergence_tempdoc_current(
+    charter_path: str | None, no_charter: bool, tempdocs_dir: Path | None = None
+):
+    """Refuse to stage when the convergence tempdoc has not recorded every round
+    BEFORE the one the charter declares (tempdoc 734 B8.1).
+
+    The bound is `recorded >= declared - 1`, not `recorded >= declared`: the
+    round being staged has not run yet, so its own section cannot exist. What
+    must exist is every PRIOR round. Round 8's actual defect was a tempdoc at
+    round 6 staging a round-8 charter -- round 7 was missing. Requiring
+    `recorded >= declared` would instead refuse every new round, including the
+    first one staged after this guard shipped.
+
+    Round 8 read a tempdoc that stopped at round 6: it could not perform its
+    documented function ("which prior findings this round exists to re-confirm
+    fixed, and which are still open"), and a round-6 finding was rediscovered
+    from scratch as a result. Updating the tempdoc is a host-side step AFTER a
+    round ends, and the only party positioned to notice the skip is the NEXT
+    round -- a different agent with no baseline, reading the document precisely
+    because it does not already know its contents. So the check belongs here,
+    at staging time, on the host.
+
+    With --no-charter there is no declared round number, so there is nothing to
+    compare against and the check is SKIPPED with an explicit printed notice. A
+    non-qualifying launch does not stage a charter and is not part of the
+    qualifying set, so it neither needs nor can perform this check -- the notice
+    exists so a skipped check is never silent."""
+    if no_charter:
+        print(
+            "Convergence-tempdoc freshness check: SKIPPED (--no-charter -- a "
+            "non-qualifying launch declares no round number to check against)."
+        )
+        return
+
+    path = Path(charter_path)
+    if not path.is_absolute():
+        path = REPO_ROOT / path
+    if not path.is_file():
+        sys.exit(f"--charter file not found: {path}")
+
+    if tempdocs_dir is None:
+        tempdocs_dir = REPO_ROOT / "docs" / "tempdocs"
+
+    declared = parse_charter_round(path)
+    tempdoc = find_convergence_tempdoc(tempdocs_dir)
+    recorded = latest_recorded_round(tempdoc)
+
+    if recorded < declared - 1:
+        sys.exit(
+            f"Convergence tempdoc is STALE -- refusing to stage.\n"
+            f"  Charter declares:        round {declared} ({path})\n"
+            f"  Tempdoc last records:    round {recorded} ({tempdoc})\n"
+            "\n"
+            "The staged sandbox instructions require the round to read this "
+            "tempdoc to learn which prior findings it exists to re-confirm "
+            "fixed and which are still open. A tempdoc that stops before this "
+            "round cannot do that, and the round has no baseline to notice it "
+            "with -- round 8 rediscovered a round-6 finding from scratch for "
+            "exactly this reason (tempdoc 734 B8.1).\n"
+            "\n"
+            f"Remedy: record round(s) {recorded + 1}-{declared - 1} in {tempdoc} "
+            "(a '## Round <N> ...' section per round, as "
+            "docs/how-to/cut-a-release.md already requires), then re-run this "
+            "launcher."
+        )
+
+    print(
+        f"Convergence tempdoc current: {tempdoc.name} records round {recorded} "
+        f"(charter declares round {declared}; every prior round is recorded)"
+    )
+
+
 def stage_charter(share_dir: Path, charter_path: str | None, no_charter: bool):
     """Stage this round's charter (Session-Based Test Management, J. Bach &
     J. Bach, STQE 2000 -- charter/debrief/TBS time accounting, adapted;
@@ -754,10 +1323,25 @@ def stage_coverage_brief(share_dir: Path):
     surface not yet classified in the register, the generator exits non-zero and
     we abort staging rather than validate against a silently-incomplete brief —
     that is the whole point (a new surface can no longer be forgotten).
+
+    Sandbox rounds 9+10 (tempdoc 734/804 B10): this is the one place that both
+    stages coverage-manifest.json AND already knows the round's resolved
+    validation mode (write_validation_mode() ran earlier in main() and wrote
+    validation-mode.md; _read_resolved_mode() reads it back, the same way
+    stage_charter() already does for its trailer). Passing that mode to
+    gen_coverage_brief.py via --mode is what makes an item's OPTIONAL 'modes'
+    field (governance/sandbox-coverage.v1.json) actually take effect: an
+    upgrade-survival mustWatch item scoped to 'upgrade-from-release' is staged
+    into coverage-manifest.json/coverage-brief.md ONLY on an upgrade round,
+    not as noise in every fresh-install round's brief.
     """
     gen = SCRIPT_DIR / "gen_coverage_brief.py"
+    mode, _meaning = _read_resolved_mode(share_dir)
+    cmd = [sys.executable, str(gen), "--out-dir", str(share_dir)]
+    if mode and mode != "unknown":
+        cmd.extend(["--mode", mode])
     result = subprocess.run(
-        [sys.executable, str(gen), "--out-dir", str(share_dir)],
+        cmd,
         capture_output=True,
         text=True,
     )
@@ -768,7 +1352,7 @@ def stage_coverage_brief(share_dir: Path):
             "Coverage-brief generation FAILED (a shipped surface is unclassified in "
             "governance/sandbox-coverage.v1.json). Classify it there before validating."
         )
-    print("Staged coverage-brief.md + coverage-manifest.json")
+    print(f"Staged coverage-brief.md + coverage-manifest.json (mode={mode!r})")
 
 
 def stage_round_plan(share_dir: Path):
@@ -811,6 +1395,58 @@ def stage_evidence_harness(share_dir: Path):
     if harness.exists():
         shutil.copy2(harness, share_dir / "collect-evidence.ps1")
         print("Staged collect-evidence.ps1")
+
+
+def stage_round_scripts(share_dir: Path):
+    """Copy the small round-utility scripts every round otherwise rewrites
+    from scratch (tempdoc 805 Part E / G.5, round-11 retrospective item 2;
+    tempdoc 806 W3 item 2 adds analyze-traces.ps1):
+
+    - chat-ask.ps1 -- consumes POST /api/chat/ask as SSE (not JSON).
+    - oracle.ps1 -- fixed-query-set before/after search oracle, the core
+      instrument of upgrade-from-release rounds.
+    - redact.ps1 -- blacks out a region of a PNG so a secret-bearing
+      surface (e.g. the recovery-key ceremony) can be captured without
+      leaking the secret value into evidence.
+    - analyze-traces.ps1 -- prints the discovered http.* attribute keys,
+      the mutating-span count, and any mutating span answered 401 (the
+      token-health discriminator), via regex over raw text rather than
+      line-JSON parsing -- round 12's own first self-check reported a false
+      "mutating spans: 0" because `attrs` (the real key) is not
+      `attributes`, and CRLF-embedded excerpt text breaks
+      Get-Content | ConvertFrom-Json on many lines.
+    - probe-download.ps1 -- manual-fetch control (round 16, tempdoc 823 §4):
+      fetches one URL with the SAME curl.exe flag set the product falls back
+      to (DownloadExecutor.runCurl) and prints status, bytes, elapsed and
+      SHA-256, plus the BITS service state the product tries first. It
+      partitions environment-vs-product on any download failure in one
+      command; round 16 had to invent it mid-investigation, and the answer
+      (HTTP 200, 872 bytes, 0.41s, digest matching the manifest) reframed the
+      round's blocking finding.
+
+    All five were written fresh inside a round's sandbox with no staged
+    equivalent; each is now reviewed and generalized (port discovered from
+    the runtime manifest where applicable, paths taken as parameters -- no
+    round-specific hardcoding) and staged unconditionally next to
+    collect-evidence.ps1."""
+    count = 0
+    for script_name in (
+        "chat-ask.ps1",
+        "oracle.ps1",
+        "redact.ps1",
+        "analyze-traces.ps1",
+        "probe-download.ps1",
+    ):
+        src = SCRIPT_DIR / script_name
+        if src.exists():
+            shutil.copy2(src, share_dir / script_name)
+            count += 1
+        else:
+            print(f"WARNING: {script_name} not found at {src} -- round-scripts staging incomplete")
+    print(
+        f"Staged round scripts ({count} files -- chat-ask.ps1, oracle.ps1, redact.ps1, "
+        "analyze-traces.ps1, probe-download.ps1)"
+    )
 
 
 def stage_gui_harness(share_dir: Path):
@@ -872,6 +1508,136 @@ def stage_mcp_client_harness(share_dir: Path):
         count += 1
 
     print(f"Staged mcp-client/ ({count} files — real MCPB stdio bridge + TYPED_CONFIRM driver)")
+
+
+KICKOFF_FILENAME = "KICKOFF.md"
+
+# The per-round authority files sandbox-CLAUDE.md's own "Read these first"
+# section names, in the order it lists them -- kept here as one declared
+# list (label, filename, one-line purpose) so KICKOFF.md's file-status table
+# is generated from checking what's ACTUALLY present in share_dir, not typed
+# out by hand each time this function is touched.
+KICKOFF_AUTHORITY_DOCS: list[tuple[str, str]] = [
+    ("coverage-brief.md", "surfaces this round must exercise (generated per-candidate)"),
+    ("validation-mode.md", "the model mode for this instance -- overrides static model wording"),
+    ("charter.md", "this round's pre-registration: purpose, blocker classification, expectations"),
+    ("sandbox-environment.md", "directory layout, what is staged, environment characteristics"),
+    ("staging-gaps.md", "assets the host failed to stage this round -- each a required coverage gap"),
+]
+
+
+def generate_kickoff(share_dir: Path, installer_name: str, tools_dst: Path) -> str | None:
+    """Generate KICKOFF.md into the share dir (tempdoc 806 W3 item 4).
+
+    Round 12 was launched with the instruction "/start also read
+    KICKOFF.md" and no such file existed anywhere in the mapped folder --
+    an orchestrator error the harness should make structurally impossible,
+    not merely avoidable by remembering to stage one by hand. This
+    generates it as a normal staging step, deriving every claim it makes
+    from what actually landed in share_dir (file existence checks, the
+    already-resolved validation mode, the DOCUMENTED_TOOLS_ASSETS Git
+    check) rather than a hardcoded list that can drift from reality the
+    same way the never-staged file itself did.
+
+    Returns a gap message (for the caller's `gaps` list -- see
+    write_staging_gaps) if KICKOFF.md could not be written or is missing
+    immediately after this function returns, else None. This makes a
+    regression in THIS function (or its call site being dropped, exactly
+    what happened to the file it replaces) a declared, visible round-level
+    gap instead of a silent absence -- the same failure mode B2 already
+    closed for tools\\ assets, applied to this file.
+    """
+    mode, meaning = _read_resolved_mode(share_dir)
+
+    git_staged = any(
+        list(tools_dst.glob(pattern))
+        for tool in DOCUMENTED_TOOLS_ASSETS
+        if tool["label"] == "Git for Windows"
+        for pattern in tool["patterns"]
+    )
+    git_step = (
+        r"run `tools\Git-Setup.exe /VERYSILENT /NORESTART /NOCANCEL /SP-`"
+        if git_staged
+        else "no Git installer is staged in tools\\ this run -- see staging-gaps.md and "
+        "CLAUDE.md's Setup step 1 for the fallback (download Git for Windows)"
+    )
+
+    doc_lines = []
+    for filename, purpose in KICKOFF_AUTHORITY_DOCS:
+        mark = "x" if (share_dir / filename).is_file() else " "
+        doc_lines.append(f"- [{mark}] `{filename}` -- {purpose}")
+
+    convergence_matches = sorted((share_dir / "docs" / "tempdocs").glob("*-sandbox-convergence.md")) if (share_dir / "docs" / "tempdocs").is_dir() else []
+    if len(convergence_matches) == 1:
+        convergence_line = (
+            f"- This candidate's convergence tempdoc: `docs/tempdocs/{convergence_matches[0].name}` "
+            "-- states what THIS round is for and which prior findings it must re-confirm fixed."
+        )
+    elif convergence_matches:
+        names = ", ".join(f"`docs/tempdocs/{p.name}`" for p in convergence_matches)
+        convergence_line = f"- Multiple convergence tempdocs staged ({names}) -- confirm which one names this candidate."
+    else:
+        convergence_line = (
+            "- No `*-sandbox-convergence.md` found under `docs/tempdocs/` -- check that directory "
+            "manually for this candidate's convergence tempdoc."
+        )
+
+    lines = [
+        "# Kickoff",
+        "",
+        f"Generated by `scripts/sandbox/sandbox-launch.py` at staging time from what was "
+        f"ACTUALLY staged into this share directory ({share_dir.name}) -- not a fixed "
+        "template. If this file and the round's other authority docs disagree, the OTHER "
+        "docs win; this file only tells you where to look and in what order.",
+        "",
+        "## 1. Setup",
+        "",
+        f"1. **Git** -- {git_step}",
+        "2. **Claude Code** -- run the install command in `CLAUDE.md`'s \"Setup (manual)\" "
+        "step 2, then run `claude` from this mapped folder. The staged `.claude/settings.json` "
+        "starts Claude Code in bypass-permissions mode automatically.",
+        "3. Read **`CLAUDE.md`** first -- it is this round's entry point and names every "
+        "other authority file below in its own \"Read these first\" section.",
+        "",
+        "## 2. Round mode",
+        "",
+        f"- Mode: `{mode}`",
+        f"- {meaning}" if meaning else "- (see validation-mode.md for detail)",
+        "- Full detail: `validation-mode.md`",
+        "",
+        "## 3. Per-round authority files",
+        "",
+        "Checked box = actually staged this run; read them in this order (matches "
+        "CLAUDE.md's own \"Read these first\"):",
+        "",
+        *doc_lines,
+        "",
+        "## 4. This candidate",
+        "",
+        f"- Installer: `{installer_name}` (mapped folder root)",
+        "- Provenance (filename, SHA-256, commit when derivable): `candidate-provenance.md`",
+        convergence_line,
+        "",
+        "## 5. Staging gaps",
+        "",
+        "See `staging-gaps.md` for the authoritative, checked-against-reality list -- this "
+        "file does not duplicate it.",
+        "",
+    ]
+
+    path = share_dir / KICKOFF_FILENAME
+    try:
+        path.write_text("\n".join(lines), encoding="utf-8")
+    except OSError as exc:
+        print(f"WARNING: {KICKOFF_FILENAME} generation FAILED: {exc}")
+        return f"{KICKOFF_FILENAME} failed to generate ({exc}) -- the round's launch instruction may reference a file that does not exist."
+
+    if not path.is_file():
+        print(f"WARNING: {KICKOFF_FILENAME} was not found at {path} immediately after writing it")
+        return f"{KICKOFF_FILENAME} was not found at {path} immediately after generation -- treat as not staged."
+
+    print(f"Staged {KICKOFF_FILENAME} (mode={mode!r})")
+    return None
 
 
 def generate_wsb(wsb_path: Path, share_dir: Path, memory_mb: int, models_dir: Path | None = None):
@@ -1002,6 +1768,26 @@ def main():
             "the candidate installer (refuses staging the same file twice)."
         ),
     )
+    parser.add_argument(
+        "--in-app-updater-assets",
+        help=(
+            "Directory containing the candidate's authenticated updater closed "
+            "set (release.v1.json, release.v1.json.sig, latest.json, and "
+            "<installer>.sig). Requires --upgrade-from and "
+            "--metadata-public-key. The descriptor/artifact URLs must target "
+            "loopback HTTP. The installed --upgrade-from SOURCE build must "
+            "contain the updater and be compiled with its Sandbox test gate; "
+            "production builds remain HTTPS-only."
+        ),
+    )
+    parser.add_argument(
+        "--metadata-public-key",
+        help=(
+            "Ed25519 SPKI PEM public key used to verify release.v1.json for an "
+            "--in-app-updater-assets round. This is public trust material, not "
+            "a signing secret."
+        ),
+    )
     args = parser.parse_args()
     if args.no_models and args.models_dir:
         sys.exit("--no-models and --models-dir are mutually exclusive.")
@@ -1011,6 +1797,17 @@ def main():
             "--upgrade-from and --models-dir are mutually exclusive: an "
             "upgrade-from-release round exercises the real download path "
             "(like fresh-install), not the pre-staged-models shortcut."
+        )
+
+    if bool(args.in_app_updater_assets) != bool(args.metadata_public_key):
+        sys.exit(
+            "--in-app-updater-assets and --metadata-public-key must be supplied together."
+        )
+    if args.in_app_updater_assets and not args.upgrade_from:
+        sys.exit(
+            "--in-app-updater-assets requires --upgrade-from: the in-app lane "
+            "must start from an installed updater-capable previous-source "
+            "Sandbox build."
         )
 
     if args.charter and args.no_charter:
@@ -1028,6 +1825,11 @@ def main():
 
     if not (REPO_ROOT / "gradlew.bat").exists():
         sys.exit(f"Cannot find repo root from {SCRIPT_DIR}")
+
+    # 0. Refuse to stage a convergence tempdoc that stops before this round
+    #    (tempdoc 734 B8.1). Runs before any staging step so a stale tempdoc
+    #    fails BEFORE the previous round's share dir is cleaned.
+    assert_convergence_tempdoc_current(args.charter, args.no_charter)
 
     # 1. Resolve installer
     installer = find_installer(args.installer)
@@ -1055,6 +1857,11 @@ def main():
 
     shutil.copy2(installer, share_dir / installer.name)
     print(f"Staged installer: {installer.name}")
+
+    # Record the candidate's provenance (filename, SHA-256, size, source path,
+    # checksum-manifest agreement, and the build commit when derivable) so the
+    # round's evidence identifies its own build (tempdoc 734 Part B8).
+    write_candidate_provenance(share_dir, installer)
 
     # Copy environment doc
     shutil.copy2(SCRIPT_DIR / "sandbox-environment.md", share_dir / "sandbox-environment.md")
@@ -1109,9 +1916,7 @@ def main():
         if staged:
             print(f"Staged tools/ from tools-cache ({staged} files)")
 
-    node_gap = check_node_installer_staged(tools_cache)
-    if node_gap:
-        gaps.append(node_gap)
+    gaps.extend(check_documented_tools_staged(tools_dst))
 
     # 3. Resolve models dir. Never map a weightless directory: a worktree's
     # own models/ holds only tracked config/tokenizer JSON (~42 MB) — the
@@ -1143,9 +1948,10 @@ def main():
         else:
             print("No models directory with real weights found — models will need to be downloaded in sandbox")
 
-    # Write the collected staging gaps now that staging (short of the
-    # fail-closed coverage-brief step below) is complete.
-    write_staging_gaps(share_dir, gaps)
+    # write_staging_gaps() is deferred to the end of staging (after KICKOFF.md
+    # is generated, tempdoc 806 W3 item 4) so a KICKOFF.md generation failure
+    # is recorded in the SAME declared-gap list/file as every other staging
+    # gap, rather than needing a second gaps file or a late silent append.
 
     # Report share size
     total_bytes = sum(f.stat().st_size for f in share_dir.rglob("*") if f.is_file())
@@ -1158,17 +1964,57 @@ def main():
     upgrade_info = None
     if upgrade_installer:
         upgrade_info = stage_upgrade_installer(share_dir, upgrade_installer)
+    updater_info = None
+    if args.in_app_updater_assets:
+        release_dir = Path(args.in_app_updater_assets)
+        if not release_dir.is_absolute():
+            release_dir = REPO_ROOT / release_dir
+        metadata_public_key = Path(args.metadata_public_key)
+        if not metadata_public_key.is_absolute():
+            metadata_public_key = REPO_ROOT / metadata_public_key
+        updater_info = stage_in_app_updater_assets(
+            share_dir,
+            installer,
+            release_dir,
+            metadata_public_key,
+        )
 
     # 4. Stamp actual validation mode, generate the per-candidate coverage brief
     #    (fail-closed on an unclassified shipped surface), stage the capture
     #    harness, then generate .wsb (tempdoc 728).
-    write_validation_mode(share_dir, installer, models_dir, args.no_models, upgrade_info)
+    write_validation_mode(
+        share_dir,
+        installer,
+        models_dir,
+        args.no_models,
+        upgrade_info,
+        updater_info,
+    )
     stage_charter(share_dir, args.charter, args.no_charter)
     stage_coverage_brief(share_dir)
     stage_round_plan(share_dir)
     stage_evidence_harness(share_dir)
+    stage_round_scripts(share_dir)
     stage_gui_harness(share_dir)
     stage_mcp_client_harness(share_dir)
+
+    # Generate KICKOFF.md now that every other authority file/tool it
+    # references has had its chance to be staged (tempdoc 806 W3 item 4).
+    # Any generation failure -- or the file simply not existing right after
+    # this call -- becomes a declared gap in the SAME staging-gaps.md every
+    # other missing asset is recorded in, instead of a silent absence.
+    try:
+        kickoff_gap = generate_kickoff(share_dir, installer.name, tools_dst)
+    except Exception as exc:  # noqa: BLE001 -- staging must not crash on this
+        print(f"WARNING: {KICKOFF_FILENAME} generation raised {exc!r}")
+        kickoff_gap = f"{KICKOFF_FILENAME} generation raised an exception ({exc}) -- not staged."
+    if kickoff_gap:
+        gaps.append(kickoff_gap)
+
+    # Now that staging (short of the fail-closed coverage-brief step above)
+    # is complete, write the collected staging gaps -- KICKOFF.md included.
+    write_staging_gaps(share_dir, gaps)
+
     wsb_path = stage_dir / "JustSearch-Validation.wsb"
     generate_wsb(wsb_path, share_dir, args.memory, models_dir)
     print(f"Sandbox RAM: {args.memory} MB")

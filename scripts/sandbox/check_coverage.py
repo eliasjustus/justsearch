@@ -14,8 +14,17 @@ Gates enforced by main() (all fail-closed unless noted):
   - round retrospective (D1): presence, substance, required topic coverage,
     AND a TBS time-accounting section (Session-Based Test Management, Bach &
     Bach, STQE 2000 -- adapted; tempdoc 750 Part B)
+  - round findings (823 §4): presence, substance, required topic coverage --
+    severity, observation with an evidence pointer, regression home; an
+    explicit no-findings declaration satisfies the topics for a clean round
   - evidence review (735-followup): a reader must examine every credit-
     eligible screenshot
+  - mustWatch verdict record (808 I1a): every mode-included mustWatch id
+    carries a verdict; 'observed-fail' prints loudly but does NOT flip the
+    exit code (recording is graded, outcomes stay judgment)
+  - mutating-surface probe verdict (808 I1b): collect-evidence.ps1's POST
+    rung result, fail-closed; 'skipped' warns loudly instead
+  - session self-analysis (808 I2): presence + byte floor, content ungraded
   - evidence mtime timeline: REPORT-ONLY, does not affect the exit code
 
 Pure Python 3 stdlib. No network access.
@@ -40,6 +49,47 @@ from typing import Iterable
 # api-*.json filename is a false positive (tempdoc 728 review, defect F1), so
 # surface/shape matching considers only image files.
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+
+# Bulk-frame exclusion (round-12 retrospective A5 / tempdoc 806 W3 item 1): a
+# periodic capture driver (e.g. one screenshot every ~1.5s to watch a long
+# install/upgrade) can produce hundreds of near-identical frames. Every one
+# clears MIN_SCREENSHOT_BYTES, so without this exclusion each becomes
+# "credit-eligible" and evidence-review.v1.json's reader gate (see
+# check_evidence_review below) must enumerate every single one -- making the
+# mandatory reader pass impossible by construction (sandbox-CLAUDE.md states
+# ~90 images is one agent's practical review budget; round 12 hit 947).
+#
+# Convention: a round's periodic/bulk capture driver writes into a
+# subdirectory of the evidence dir named BULK_FRAMES_DIRNAME (documented in
+# sandbox-CLAUDE.md's "Evidence review" section). Files under it are still
+# collected by load_evidence_files (present as evidence, inspectable, not
+# deleted) but excluded from the credit-eligible screenshot set: they cannot
+# satisfy a mustTouch surface/shape token, and evidence-review.v1.json is not
+# required to enumerate them individually. A round that wants a bulk frame to
+# actually evidence a requirement must promote/copy that one frame to the top
+# level (or another non-bulk directory) with a real name -- exactly like any
+# other screenshot.
+BULK_FRAMES_DIRNAME = "raw-frames"
+
+# Post-round investigation exclusion (round-15 retrospective finding 6,
+# tempdoc 817): a same-share investigation session that runs AFTER finalize
+# (e.g. following up on a filed finding) can add screenshots/notes into the
+# SAME evidence dir the finalized round already reviewed. Round 15: a
+# post-finalize investigation session added ~52 screenshots, and re-running
+# check_coverage.py against that evidence dir then failed the ALREADY-
+# FINALIZED review as incomplete, because none of those new files were (or
+# could have been) in the round's evidence-review.v1.json 'examined' list --
+# the review was complete and correct at the moment the round finalized.
+#
+# Convention (sandbox-CLAUDE.md, "Writing results" section): investigation
+# that happens after finalize writes its screenshots/notes into a
+# subdirectory of the evidence dir named POST_ROUND_DIRNAME. Same treatment
+# as BULK_FRAMES_DIRNAME above: files under it are still collected by
+# load_evidence_files (present as evidence, inspectable, never deleted) but
+# excluded from the credit-eligible screenshot set -- they cannot satisfy a
+# mustTouch surface/shape token, and evidence-review.v1.json's 'examined'
+# list is not required to enumerate them.
+POST_ROUND_DIRNAME = "post-round"
 
 
 # --------------------------------------------------------------------------
@@ -203,6 +253,135 @@ def check_retrospective(evidence_dir: str | None) -> tuple[bool, str]:
 
 
 # --------------------------------------------------------------------------
+# Round findings check (round 16, tempdoc 823 §4): the round's DEFECT report,
+# as its own artifact.
+#
+# Round 16 produced five findings -- one blocking -- and wrote no standalone
+# findings file: they were scattered across mustwatch-verdicts.v1.json,
+# retrospective.md and session-analysis.md, and reassembling them cost the
+# host-side reader a pass over three artifacts written for three other
+# purposes. Nothing checked for it, because until now the convention lived
+# only in prose ("Report findings by journey" in sandbox-CLAUDE.md's *Writing
+# results*).
+#
+# Modeled directly on check_retrospective above: presence, a deliberately dumb
+# byte floor, keyword topic groups, a clear PRESENT/BLOCKING report, AND-ed
+# into the same fail-closed exit in main(). It cannot judge whether the
+# findings are RIGHT -- only that the round wrote them down somewhere a reader
+# can find them.
+#
+# Escape valve (the same shape check_mustwatch_verdicts gives 'unobservable':
+# an honest answer is acceptable when it says so explicitly): a round that
+# genuinely found nothing satisfies the topic groups with an explicit
+# no-findings declaration. The byte floor still applies -- "no findings" as a
+# one-line file is a stub, and a clean round still has to say what it
+# exercised to reach that conclusion.
+# --------------------------------------------------------------------------
+
+FINDINGS_FILENAME = "findings.md"
+
+FINDINGS_MIN_BYTES = 400
+
+# An explicit no-findings declaration satisfies the topic groups below. Kept
+# separate (not folded in as extra alternatives) so the pass reason can SAY
+# which of the two shapes was accepted -- a clean round and a round with
+# findings should not read identically in the finalize report.
+FINDINGS_NO_FINDINGS_DECLARATIONS: tuple[str, ...] = (
+    "no findings",
+    "zero findings",
+    "no product findings",
+    "no defects",
+    "no blocking findings and no non-blocking findings",
+)
+
+# The declaration only counts as a ROUND-LEVEL one: it must OPEN a line
+# (markdown heading/bullet/emphasis decoration allowed), may carry a "this
+# round" qualifier, and must close its clause there. Matching the phrase
+# anywhere -- the original shape -- let a substantive report that merely says
+# "... no findings in the search journey, but the install journey ..." skip
+# the topic checks entirely (round-16 wave review, claim-4). Scoped statements
+# like that are a report ABOUT findings, so they stay topic-checked.
+FINDINGS_NO_FINDINGS_DECLARATION_RE = re.compile(
+    r"^[\s>#*_`~\-]*(?:"
+    + "|".join(re.escape(phrase) for phrase in FINDINGS_NO_FINDINGS_DECLARATIONS)
+    + r")(?:\s+(?:this|in this|for this)\s+round)?[\s*_`~]*(?:[.!;:]|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+FINDINGS_REQUIRED_TOPICS: list[tuple[str, tuple[str, ...]]] = [
+    (
+        "each finding's severity/classification",
+        ("severity", "blocking", "high", "medium", "low", "critical"),
+    ),
+    (
+        "what was observed (evidence pointer)",
+        ("evidence", "screenshot", ".png", "api-", "log", "traces", "repro"),
+    ),
+    (
+        "each finding's regression home / routing",
+        ("regression home", "routing", "route", "must-watch", "mustwatch", "gate", "test", "tempdoc"),
+    ),
+]
+
+
+def check_findings(evidence_dir: str | None) -> tuple[bool, str]:
+    """Check evidence/findings.md is present and substantial (823 §4).
+
+    Returns (ok, reason). Does not raise on I/O errors -- a missing/unreadable
+    file is reported as a normal failure reason, matching check_retrospective's
+    style.
+    """
+    if not evidence_dir:
+        return False, f"no --evidence-dir given; cannot check for evidence/{FINDINGS_FILENAME}"
+
+    path = os.path.join(evidence_dir, FINDINGS_FILENAME)
+    if not os.path.isfile(path):
+        return False, f"{FINDINGS_FILENAME} not found in evidence dir {evidence_dir!r}"
+
+    try:
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            content = fh.read()
+    except OSError as exc:
+        return False, f"{FINDINGS_FILENAME} could not be read: {exc}"
+
+    stripped = content.strip()
+    if len(stripped) < FINDINGS_MIN_BYTES:
+        return False, (
+            f"{FINDINGS_FILENAME} is only {len(stripped)} non-whitespace-trimmed byte(s) "
+            f"(minimum {FINDINGS_MIN_BYTES}) -- reads like an empty or placeholder stub, not a "
+            f"real findings report (a round that genuinely found nothing still has to say what "
+            f"it exercised to reach that conclusion)"
+        )
+
+    lowered = content.lower()
+    declared_clean = FINDINGS_NO_FINDINGS_DECLARATION_RE.search(content) is not None
+    if declared_clean:
+        return True, (
+            f"{FINDINGS_FILENAME} present ({len(stripped)} bytes) with an explicit no-findings "
+            "declaration -- accepted as a clean-round report"
+        )
+
+    missing_topics = [
+        label
+        for label, alternatives in FINDINGS_REQUIRED_TOPICS
+        if not any(alt in lowered for alt in alternatives)
+    ]
+    if missing_topics:
+        return False, (
+            f"{FINDINGS_FILENAME} is missing required coverage of: {'; '.join(missing_topics)} "
+            f"(no matching keyword found for the topic) -- each finding needs a severity, what "
+            f"was observed with an evidence pointer, and its regression home. If the round "
+            f"genuinely found nothing, declare it at the START of a line (e.g. 'No findings this "
+            f"round.') -- the phrase inside a scoped sentence does not count -- and describe what "
+            f"was exercised to reach that conclusion"
+        )
+
+    return True, (
+        f"{FINDINGS_FILENAME} present ({len(stripped)} bytes, all required topics found)"
+    )
+
+
+# --------------------------------------------------------------------------
 # Evidence review check: a required READER gate, not a product surface.
 #
 # Measured, not assumed (tempdoc 735-followup): known-bad artefacts were
@@ -351,6 +530,265 @@ def check_evidence_review(evidence_dir: str | None, screenshots: set[str]) -> tu
         f"{EVIDENCE_REVIEW_FILENAME} present, all {len(screenshots)} credit-eligible "
         "screenshot(s) examined, no mismatches, none uncertain"
     )
+
+
+# --------------------------------------------------------------------------
+# mustWatch verdict record (tempdoc 808 I1a).
+#
+# The register's mustWatch items are re-injected into every round's brief
+# (gen_coverage_brief.py's build_manifest writes the mode-filtered list into
+# coverage-manifest.json's top-level "mustWatch" array) with their validateHow
+# notes -- and until now nothing here referenced them. A round could observe
+# NOTHING on all 13 and still exit 0: a recorded claim nothing verifies, which
+# is this campaign's own signature defect class applied to the harness itself.
+#
+# What is graded is the RECORDING, not the outcome. The gate's job is to make
+# the *claim of observation* verifiable (the write-time witness shape of
+# tempdoc 798 D2); deciding what a failed watch MEANS is the round agent's and
+# the owner's call, and flows through the findings process like any defect.
+# So: a missing file, an item set that does not cover every mode-included
+# mustWatch id, an invalid verdict enum, or an 'unobservable' with no note all
+# fail closed -- while 'observed-fail' prints prominently and does NOT flip the
+# exit code.
+#
+# The 'unobservable' + non-empty-note rule mirrors the register's own honesty
+# rule for install-trust-prompts (observability: blocked-by-posture carries a
+# note explaining WHY): "not observable this round" is an acceptable answer
+# only when it says why.
+# --------------------------------------------------------------------------
+
+MUSTWATCH_VERDICTS_FILENAME = "mustwatch-verdicts.v1.json"
+
+MUSTWATCH_VERDICT_VALUES = ("observed-pass", "observed-fail", "unobservable")
+
+
+def check_mustwatch_verdicts(
+    evidence_dir: str | None, manifest: dict
+) -> tuple[bool, str, list[str]]:
+    """Check evidence/mustwatch-verdicts.v1.json against the manifest's
+    mode-included mustWatch ids (tempdoc 808 I1a).
+
+    Returns (ok, reason, observed_fail_ids). The third element is reported
+    separately BECAUSE it is deliberately not part of `ok`: an observed-fail
+    is a real finding the report must shout about, but severity is judgment,
+    so it must not silently flip the exit code (see the section comment).
+
+    Does not raise on I/O or shape errors -- reported as a normal failure
+    reason, matching check_retrospective/check_evidence_review's style.
+    """
+    required_ids = [
+        str(item.get("id", ""))
+        for item in (manifest.get("mustWatch") or [])
+        if isinstance(item, dict) and item.get("id")
+    ]
+
+    if not evidence_dir:
+        return False, f"no --evidence-dir given; cannot check for evidence/{MUSTWATCH_VERDICTS_FILENAME}", []
+
+    path = os.path.join(evidence_dir, MUSTWATCH_VERDICTS_FILENAME)
+    if not os.path.isfile(path):
+        return False, (
+            f"{MUSTWATCH_VERDICTS_FILENAME} not found in evidence dir {evidence_dir!r} -- "
+            f"the round must record a verdict for each of the {len(required_ids)} mustWatch "
+            "item(s) in this round's coverage-manifest.json"
+        ), []
+
+    try:
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except OSError as exc:
+        return False, f"{MUSTWATCH_VERDICTS_FILENAME} could not be read: {exc}", []
+    except json.JSONDecodeError as exc:
+        return False, f"{MUSTWATCH_VERDICTS_FILENAME} is not valid JSON: {exc}", []
+
+    if not isinstance(data, dict):
+        return False, (
+            f"{MUSTWATCH_VERDICTS_FILENAME} must contain a JSON object, got "
+            f"{type(data).__name__}"
+        ), []
+
+    items = data.get("items")
+    if not isinstance(items, list):
+        return False, (
+            f"{MUSTWATCH_VERDICTS_FILENAME} 'items' must be a list, got "
+            f"{type(items).__name__}"
+        ), []
+
+    recorded: dict[str, str] = {}
+    observed_fail_ids: list[str] = []
+    for index, raw in enumerate(items):
+        if not isinstance(raw, dict):
+            return False, (
+                f"{MUSTWATCH_VERDICTS_FILENAME} items[{index}] must be an object, got "
+                f"{type(raw).__name__}"
+            ), []
+        item_id = str(raw.get("id", "")).strip()
+        if not item_id:
+            return False, f"{MUSTWATCH_VERDICTS_FILENAME} items[{index}] has no 'id'", []
+        verdict = raw.get("verdict")
+        if verdict not in MUSTWATCH_VERDICT_VALUES:
+            return False, (
+                f"{MUSTWATCH_VERDICTS_FILENAME} item {item_id!r} has verdict={verdict!r}, "
+                f"must be one of {list(MUSTWATCH_VERDICT_VALUES)!r}"
+            ), []
+        if verdict == "unobservable" and not str(raw.get("note", "")).strip():
+            return False, (
+                f"{MUSTWATCH_VERDICTS_FILENAME} item {item_id!r} is verdict='unobservable' "
+                "with an empty/missing 'note' -- 'not observable this round' is only an "
+                "honest answer when it says WHY (mirrors the register's own note rule for "
+                "observability='blocked-by-posture')"
+            ), []
+        recorded[item_id] = verdict
+        if verdict == "observed-fail":
+            observed_fail_ids.append(item_id)
+
+    missing = [item_id for item_id in required_ids if item_id not in recorded]
+    if missing:
+        return False, (
+            f"{MUSTWATCH_VERDICTS_FILENAME} records no verdict for {len(missing)} "
+            f"mode-included mustWatch item(s): {sorted(missing)!r} -- every mustWatch id in "
+            "this round's coverage-manifest.json must carry a verdict. An item nobody looked "
+            "at is 'unobservable' WITH a note, not an omission."
+        ), []
+
+    extra = sorted(set(recorded) - set(required_ids))
+    extra_note = f"; {len(extra)} extra id(s) also recorded: {extra!r}" if extra else ""
+    return True, (
+        f"{MUSTWATCH_VERDICTS_FILENAME} present, all {len(required_ids)} mode-included "
+        f"mustWatch item(s) carry a verdict{extra_note}"
+    ), observed_fail_ids
+
+
+# --------------------------------------------------------------------------
+# Mutating-surface probe verdict (tempdoc 808 I1b).
+#
+# collect-evidence.ps1 already detects the round-10 false-green class (every
+# GET rung green while the whole mutating surface 401s) and already refuses to
+# change its own exit code -- capture-only by contract, judgment is host-side.
+# But it wrote that verdict only to the console and collect-evidence-summary.txt,
+# which NO host-side checker reads, so three rounds of tested detection never
+# reached an exit code. It now also writes a machine-readable
+# evidence/mutating-probe.v1.json; this is the host-side half that grades it.
+#
+# Fail-closed immediately (no soak period): this completes existing, three-
+# rounds-tested machinery rather than debuting new detection. 'skipped' -- the
+# backend was never reachable -- prints a prominent warning instead of failing,
+# because an unreachable backend already fails coverage elsewhere and a second
+# failure for the same cause is noise, not signal.
+# --------------------------------------------------------------------------
+
+MUTATING_PROBE_FILENAME = "mutating-probe.v1.json"
+
+MUTATING_PROBE_STATUS_VALUES = ("pass", "fail", "skipped")
+
+
+def check_mutating_probe(evidence_dir: str | None) -> tuple[bool, str, bool]:
+    """Check evidence/mutating-probe.v1.json (tempdoc 808 I1b).
+
+    Returns (ok, reason, skipped). `skipped` is surfaced separately so main()
+    can print the loud warning without the status flipping the exit code.
+    """
+    if not evidence_dir:
+        return False, f"no --evidence-dir given; cannot check for evidence/{MUTATING_PROBE_FILENAME}", False
+
+    path = os.path.join(evidence_dir, MUTATING_PROBE_FILENAME)
+    if not os.path.isfile(path):
+        return False, (
+            f"{MUTATING_PROBE_FILENAME} not found in evidence dir {evidence_dir!r} -- "
+            "collect-evidence.ps1 writes it on every run, so its absence means the capture "
+            "harness never ran (or ran a pre-808 copy) and the mutating surface was never "
+            "probed this round"
+        ), False
+
+    try:
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except OSError as exc:
+        return False, f"{MUTATING_PROBE_FILENAME} could not be read: {exc}", False
+    except json.JSONDecodeError as exc:
+        return False, f"{MUTATING_PROBE_FILENAME} is not valid JSON: {exc}", False
+
+    if not isinstance(data, dict):
+        return False, (
+            f"{MUTATING_PROBE_FILENAME} must contain a JSON object, got {type(data).__name__}"
+        ), False
+
+    status = data.get("status")
+    detail = str(data.get("detail", "")).strip()
+    if status not in MUTATING_PROBE_STATUS_VALUES:
+        return False, (
+            f"{MUTATING_PROBE_FILENAME} has status={status!r}, must be one of "
+            f"{list(MUTATING_PROBE_STATUS_VALUES)!r}"
+        ), False
+
+    if status == "fail":
+        return False, (
+            f"{MUTATING_PROBE_FILENAME} reports status='fail' -- the product's mutating "
+            "surface (search, ingest, chat) did not answer this round. Every GET rung can "
+            "still be green while this is true; that combination IS the round-10 false-green "
+            f"(finding F7). Detail: {detail or '(none given)'}"
+        ), False
+
+    if status == "skipped":
+        return True, (
+            f"{MUTATING_PROBE_FILENAME} reports status='skipped' (backend never reachable) -- "
+            f"the mutating surface was NOT proven this round. Detail: {detail or '(none given)'}"
+        ), True
+
+    return True, f"{MUTATING_PROBE_FILENAME} reports status='pass'. Detail: {detail or '(none given)'}", False
+
+
+# --------------------------------------------------------------------------
+# Session self-analysis (tempdoc 808 I2).
+#
+# Round 12 wrote a session-level self-analysis nobody asked for -- what the
+# harness/charter made hard, what was done off-charter and why, what the next
+# round should do differently -- and it produced ~11 adopted harness fixes
+# (tempdoc 734), the single highest-yield artifact of the campaign. Nothing
+# collected it, so it happened once.
+#
+# Deliberately dumb, exactly like check_retrospective's byte floor and for the
+# same stated reason: this cannot judge QUALITY, only reject an absent file and
+# a placeholder stub. The value is that the artifact exists at all.
+#
+# Not folded into retrospective.md on purpose: the retrospective debriefs THE
+# ROUND against its charter (SBTM), this debriefs THE SESSION against the
+# harness. Merging them loses the second every time the first is long enough
+# to feel done.
+# --------------------------------------------------------------------------
+
+SESSION_ANALYSIS_FILENAME = "session-analysis.md"
+
+SESSION_ANALYSIS_MIN_BYTES = 400
+
+
+def check_session_analysis(evidence_dir: str | None) -> tuple[bool, str]:
+    """Check evidence/session-analysis.md is present and not a stub (808 I2).
+
+    Content is UNGRADED beyond the byte floor -- see the section comment.
+    """
+    if not evidence_dir:
+        return False, f"no --evidence-dir given; cannot check for evidence/{SESSION_ANALYSIS_FILENAME}"
+
+    path = os.path.join(evidence_dir, SESSION_ANALYSIS_FILENAME)
+    if not os.path.isfile(path):
+        return False, f"{SESSION_ANALYSIS_FILENAME} not found in evidence dir {evidence_dir!r}"
+
+    try:
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            content = fh.read()
+    except OSError as exc:
+        return False, f"{SESSION_ANALYSIS_FILENAME} could not be read: {exc}"
+
+    stripped = content.strip()
+    if len(stripped) < SESSION_ANALYSIS_MIN_BYTES:
+        return False, (
+            f"{SESSION_ANALYSIS_FILENAME} is only {len(stripped)} non-whitespace-trimmed "
+            f"byte(s) (minimum {SESSION_ANALYSIS_MIN_BYTES}) -- reads like an empty or "
+            "placeholder stub, not a real session self-analysis"
+        )
+
+    return True, f"{SESSION_ANALYSIS_FILENAME} present ({len(stripped)} bytes; content ungraded)"
 
 
 # --------------------------------------------------------------------------
@@ -585,7 +1023,16 @@ MIN_SCREENSHOT_BYTES = 16384
 
 
 def load_evidence_files(path: str | None) -> dict[str, int]:
-    """Collect {lowercased evidence filename: size in bytes} in `path`.
+    """Collect {lowercased evidence relative-path: size in bytes} in `path`,
+    recursively.
+
+    Keys are relative to `path` with forward-slash separators regardless of
+    platform, so a top-level file's key is unchanged from before this walked
+    subdirectories (e.g. "42-recovery-key.png"), and a nested file's key
+    carries its subdirectory prefix (e.g. "raw-frames/seq-0001.png",
+    "post-round/investigation-01.png") -- see BULK_FRAMES_DIRNAME and
+    POST_ROUND_DIRNAME above for the two conventions that currently read
+    that prefix.
 
     A missing directory yields an empty dict plus a warning.
     """
@@ -599,12 +1046,41 @@ def load_evidence_files(path: str | None) -> dict[str, int]:
         print(f"WARNING: evidence dir not found: {path!r} (treating as empty).", file=sys.stderr)
         return files
 
-    for entry in os.listdir(path):
-        full = os.path.join(path, entry)
-        if os.path.isfile(full):
-            files[entry.lower()] = os.path.getsize(full)
+    for root, _dirs, filenames in os.walk(path):
+        rel_root = os.path.relpath(root, path)
+        for entry in filenames:
+            full = os.path.join(root, entry)
+            if rel_root == ".":
+                rel = entry
+            else:
+                rel = f"{rel_root.replace(os.sep, '/')}/{entry}"
+            files[rel.lower()] = os.path.getsize(full)
 
     return files
+
+
+def is_bulk_frame(evidence_relpath: str) -> bool:
+    """True if `evidence_relpath` (a load_evidence_files key: lowercased,
+    forward-slash-separated, relative to the evidence dir) lives under the
+    designated bulk-frames convention directory.
+
+    Only the FIRST path component is checked -- BULK_FRAMES_DIRNAME must be a
+    direct child of the evidence dir, matching the documented convention in
+    sandbox-CLAUDE.md. A top-level file (no "/") is never a bulk frame.
+    """
+    parts = evidence_relpath.split("/", 1)
+    return len(parts) > 1 and parts[0] == BULK_FRAMES_DIRNAME
+
+
+def is_post_round_capture(evidence_relpath: str) -> bool:
+    """True if `evidence_relpath` lives under the post-finalize investigation
+    convention directory (POST_ROUND_DIRNAME) -- same direct-child-only rule
+    as is_bulk_frame above, and the same exclusion treatment: present as
+    evidence, never required in evidence-review.v1.json's 'examined' list,
+    never credit-eligible for a mustTouch surface/shape token.
+    """
+    parts = evidence_relpath.split("/", 1)
+    return len(parts) > 1 and parts[0] == POST_ROUND_DIRNAME
 
 
 # --------------------------------------------------------------------------
@@ -961,6 +1437,35 @@ def main(argv: list[str] | None = None) -> int:
     all_screenshots = {
         f for f in evidence_files if os.path.splitext(f)[1].lower() in IMAGE_EXTS
     }
+    # Bulk-frame exclusion (A5 / tempdoc 806 W3 item 1): frames under the
+    # BULK_FRAMES_DIRNAME convention remain present as evidence but are never
+    # credit-eligible -- see the constant's docstring above. Excluded BEFORE
+    # the size floor below so the printed undersized-count doesn't include
+    # frames that were never going to be eligible either way.
+    bulk_frames = {f for f in all_screenshots if is_bulk_frame(f)}
+    all_screenshots = all_screenshots - bulk_frames
+    if bulk_frames:
+        print(
+            f"INFO: {len(bulk_frames)} screenshot(s) under '{BULK_FRAMES_DIRNAME}/' are "
+            "excluded from the credit-eligible set (bulk/periodic capture-driver "
+            "convention) -- present as evidence, not required in evidence-review.v1.json's "
+            "'examined' list, and cannot satisfy a mustTouch surface/shape token.",
+            file=sys.stderr,
+        )
+    # Post-round investigation exclusion (round-15 retrospective finding 6,
+    # tempdoc 817): same treatment as the bulk-frame exclusion above, for
+    # screenshots/notes a same-share investigation session added AFTER this
+    # round already finalized -- see POST_ROUND_DIRNAME's docstring.
+    post_round_frames = {f for f in all_screenshots if is_post_round_capture(f)}
+    all_screenshots = all_screenshots - post_round_frames
+    if post_round_frames:
+        print(
+            f"INFO: {len(post_round_frames)} screenshot(s) under '{POST_ROUND_DIRNAME}/' are "
+            "excluded from the credit-eligible set (post-finalize investigation convention) -- "
+            "present as evidence, not required in evidence-review.v1.json's 'examined' list, "
+            "and cannot satisfy a mustTouch surface/shape token.",
+            file=sys.stderr,
+        )
     # F-729-2: drop screenshots under the size floor before they can match a
     # surface/shape token — a blank, occluded, or near-blank capture must not
     # silently credit coverage. See MIN_SCREENSHOT_BYTES for calibration.
@@ -1043,6 +1548,25 @@ def main(argv: list[str] | None = None) -> int:
         )
         print("=" * 72)
 
+    findings_ok, findings_reason = check_findings(args.evidence_dir)
+    print("=" * 72)
+    print("Round findings check (823 §4 -- the defect report as its own artifact)")
+    print("=" * 72)
+    print(f"[{'PRESENT' if findings_ok else 'MISSING/TRIVIAL'}] evidence/{FINDINGS_FILENAME}")
+    print(f"    reason: {findings_reason}")
+    if not findings_ok:
+        print("=" * 72)
+        print(f"BLOCKING: evidence/{FINDINGS_FILENAME} is required and must be substantial.")
+        print(
+            "Round 16 wrote five findings -- one blocking -- and no findings file: they were "
+            "scattered across mustwatch-verdicts.v1.json, retrospective.md and "
+            "session-analysis.md. Write each finding with a severity, what was observed (with an "
+            "evidence pointer) and its regression home; a round that genuinely found nothing "
+            "says so explicitly. See scripts/sandbox/sandbox-CLAUDE.md 'Writing results' -> "
+            "'Findings'."
+        )
+        print("=" * 72)
+
     evidence_review_ok, evidence_review_reason = check_evidence_review(args.evidence_dir, screenshots)
     print("=" * 72)
     print("Evidence review check (735-followup -- a reader gate, filenames are claims not proof)")
@@ -1060,11 +1584,94 @@ def main(argv: list[str] | None = None) -> int:
         )
         print("=" * 72)
 
+    mustwatch_ok, mustwatch_reason, observed_fail_ids = check_mustwatch_verdicts(
+        args.evidence_dir, manifest
+    )
+    print("=" * 72)
+    print("mustWatch verdict record (808 I1a -- the claim of observation must be verifiable)")
+    print("=" * 72)
+    print(f"[{'PRESENT' if mustwatch_ok else 'BLOCKING'}] evidence/{MUSTWATCH_VERDICTS_FILENAME}")
+    print(f"    reason: {mustwatch_reason}")
+    if not mustwatch_ok:
+        print("=" * 72)
+        print(f"BLOCKING: evidence/{MUSTWATCH_VERDICTS_FILENAME} is required and must be complete.")
+        print(
+            "Every mustWatch id in this round's coverage-manifest.json needs a verdict of "
+            f"{list(MUSTWATCH_VERDICT_VALUES)!r}; 'unobservable' needs a note saying why. "
+            "See scripts/sandbox/sandbox-CLAUDE.md 'Writing results' -> 'Must-watch verdicts'."
+        )
+        print("=" * 72)
+    if observed_fail_ids:
+        # Deliberately NOT part of the exit composition below (808 I1a): what a
+        # failed watch MEANS is judgment, routed through the findings process.
+        # It must be impossible to MISS, not impossible to pass.
+        print("=" * 72)
+        print(f"**OBSERVED-FAIL** on {len(observed_fail_ids)} mustWatch item(s): {sorted(observed_fail_ids)!r}")
+        print(
+            "This does NOT flip the exit code by itself -- severity is the round's and the "
+            "owner's call -- but each one must be written up as a finding, not left in this "
+            "file alone. A round that ends with an unexplained observed-fail is not finished."
+        )
+        print("=" * 72)
+
+    mutating_ok, mutating_reason, mutating_skipped = check_mutating_probe(args.evidence_dir)
+    print("=" * 72)
+    print("Mutating-surface probe (808 I1b -- the round-10 false-green, now machine-visible)")
+    print("=" * 72)
+    print(f"[{'PRESENT' if mutating_ok else 'BLOCKING'}] evidence/{MUTATING_PROBE_FILENAME}")
+    print(f"    reason: {mutating_reason}")
+    if not mutating_ok:
+        print("=" * 72)
+        print(f"BLOCKING: evidence/{MUTATING_PROBE_FILENAME} is required and must not report 'fail'.")
+        print(
+            "collect-evidence.ps1 writes this on every run. A missing file means the capture "
+            "harness never ran; status='fail' means every GET rung above can be green while "
+            "the product's whole mutating surface is dead (round-10 finding F7)."
+        )
+        print("=" * 72)
+    elif mutating_skipped:
+        print("=" * 72)
+        print(
+            "**WARNING** the mutating-surface probe was SKIPPED (backend never reachable) -- "
+            "this round proved nothing about search/ingest/chat. Not failed here only because "
+            "an unreachable backend already fails coverage above."
+        )
+        print("=" * 72)
+
+    session_analysis_ok, session_analysis_reason = check_session_analysis(args.evidence_dir)
+    print("=" * 72)
+    print("Session self-analysis (808 I2 -- the harness's own highest-yield artifact)")
+    print("=" * 72)
+    print(f"[{'PRESENT' if session_analysis_ok else 'MISSING/TRIVIAL'}] evidence/{SESSION_ANALYSIS_FILENAME}")
+    print(f"    reason: {session_analysis_reason}")
+    if not session_analysis_ok:
+        print("=" * 72)
+        print(f"BLOCKING: evidence/{SESSION_ANALYSIS_FILENAME} is required and must be substantial.")
+        print(
+            "Write what the harness/charter/instructions made HARD, what was done off-charter "
+            "and why, and what the next round should do differently. Content is not graded -- "
+            "see scripts/sandbox/sandbox-CLAUDE.md 'Writing results' -> 'Session self-analysis'."
+        )
+        print("=" * 72)
+
     # Report-only (no gate): see emit_evidence_timeline's docstring. Runs
     # after every gate above and never affects the exit code below.
     emit_evidence_timeline(args.evidence_dir)
 
-    return 0 if (all_covered and retrospective_ok and evidence_review_ok and not collisions) else 1
+    return (
+        0
+        if (
+            all_covered
+            and retrospective_ok
+            and findings_ok
+            and evidence_review_ok
+            and mustwatch_ok
+            and mutating_ok
+            and session_analysis_ok
+            and not collisions
+        )
+        else 1
+    )
 
 
 if __name__ == "__main__":

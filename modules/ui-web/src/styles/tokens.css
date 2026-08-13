@@ -273,7 +273,13 @@
   --cat-folder: oklch(70% 0.12 70);   /* Amber (hue 70, matching folder identity) */
 
   /* === Layout === */
-  --rail-width: 60px;
+  /* Tempdoc 813 §5c — the COLLAPSED rail column width, and now a real authority: it is what
+     Shell.ts lays its `rail` grid track out with, and what the OverlayHost bottom-left slot
+     reserves so an overlay cannot cover the rail's bottom controls. Shell overrides it to the
+     expanded width under [data-rail-expanded], so the reservation tracks expansion. (It was
+     60px and consumed by nothing — a stale literal from the retired stack; corrected here to
+     the width the live Shell grid actually uses rather than adding a second name for it.) */
+  --rail-width: 3.25rem;
   --command-height: 60px;
   --status-height: 32px;
   --inspector-width-collapsed: 0px;
@@ -334,6 +340,18 @@
      max-width column with intentional side whitespace instead of stretching
      full-bleed and reading as a loose empty band on wide viewports. */
   --surface-content-max-width: 72rem;
+  /* Tempdoc 816 §3/§4a.3 — the MEASURE tokens: role-derived inline-size bounds in CONTENT units.
+     The values are NOT authored here — `governance/ui-proportion-baseline.v1.json`'s `roles` block
+     is the authority (it also states each bound's function) and `jseval ui-proportion-gate` fails on
+     any drift between these declarations and the register (the catalog-verbatim pattern: one
+     authority both renders and judges).
+     NOT to be confused with --surface-content-max-width above: that is the SURFACE PAGE column
+     (Settings-class, 72rem/1152px); a measure is a line-length bound in `ch`, resolved against the
+     bound element's OWN type — the same token is a different pixel count on 16px chrome and a 13px
+     textarea, which is the whole point of a content unit. */
+  --measure-prose: 88ch;
+  --measure-text-entry: 88ch;
+  --measure-notice: 88ch;
 }
 } /* close @layer core-theme — slice 477 H2.2 */
 

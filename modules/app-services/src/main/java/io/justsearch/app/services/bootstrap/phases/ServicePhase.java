@@ -293,6 +293,18 @@ public final class ServicePhase {
             // window in an ACTIVATION procedure and nudges specChanged (null in the no-inference
             // branch).
             runtimeReconciler);
+    // Tempdoc 805 G.3: observed ONNX execution provider beside the intent fields on
+    // /api/ai/runtime/status. Same live-supplier shape as workerFeatureCache above — the RPC client
+    // is null at bootstrap, so it must not be captured by value.
+    runtimeActivationHelper.setEncoderRuntimeCache(
+        new io.justsearch.app.services.observability.WorkerEncoderRuntimeCache(
+            in.knowledgeClientSupplier()));
+    // Tempdoc 824 §3.3c: the install status reconciles its bookkeeping ("a file is missing")
+    // against what the runtime observes ("the capability is running"). Bound here, after the
+    // activation service exists — it takes aiInstallHelper as a constructor argument, so the
+    // dependency can only run in this direction. A method reference, not a captured value: the
+    // observation changes with every activation and must be read at status time.
+    aiInstallHelper.setFunctionalStatusSource(runtimeActivationHelper::functionalStatusByPackage);
 
     // §31 Phase 3: 7 controller-services constructed here.
     // SettingsService: callable wraps the late-bound resetFn (set by LocalApiServer after
@@ -323,6 +335,13 @@ public final class ServicePhase {
     // Tempdoc 542: op-lease SPI. Reads JUSTSEARCH_DEV_RUNNER_STATE_ROOT env var; no-op when
     // unset (production / non-dev-runner launch). Single Java writer to op-leases.json.
     OperationLeaseService operationLeaseService = new OperationLeaseServiceImpl();
+
+    // Tempdoc 617: both services run their work on background threads that outlive the HTTP
+    // request, so the request-scoped mutation lease is released while multi-GB asset writes are
+    // still in flight. Late-bound here because the lease service is created after they are built.
+    aiInstallHelper.setOperationLeaseService(operationLeaseService);
+    aiPackImportHelper.setOperationLeaseService(operationLeaseService);
+    runtimeActivationHelper.setOperationLeaseService(operationLeaseService);
 
     BrainInstallService brainInstall = new BrainInstallServiceImpl(aiInstallHelper);
     BrainRuntimeService brainRuntime =

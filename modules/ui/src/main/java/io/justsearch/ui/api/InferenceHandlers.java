@@ -10,6 +10,7 @@ import io.justsearch.app.api.BrainRuntimeService;
 import io.justsearch.app.api.OnlineAiRuntimeControl;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.ModeTransitionException;
+import io.justsearch.app.api.ModeTransitionOutcome;
 import io.justsearch.app.api.lifecycle.CapabilityHealth;
 import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
 import io.justsearch.app.api.status.InferenceGpuView;
@@ -372,14 +373,12 @@ final class InferenceHandlers {
 
     // Tempdoc 737 fix pack (fix 4): route through the ONE runtime-intent authority. This is an
     // intent write (chatEnabled spec + reconciler nudge), NOT a raw mode switch — so it never
-    // bypasses the reconciler and cannot re-introduce the §3b circular denial. The engine may still
-    // be transitioning when this returns; report the live mode (unchanged response shape). Policy /
-    // GPU enforcement is a convergence ceiling inside the reconciler, not an intent-time 4xx denial.
+    // bypasses the reconciler and cannot re-introduce the §3b circular denial. Policy / GPU
+    // enforcement is a convergence ceiling inside the reconciler, not an intent-time 4xx denial.
     BrainRuntimeService brainRuntime = this.brainRuntimeService;
     if (brainRuntime != null) {
       try {
-        String currentMode = brainRuntime.switchInferenceMode(mode);
-        ctx.json(Map.of("success", true, "mode", currentMode));
+        ctx.json(modeTransitionPayload(brainRuntime.switchInferenceMode(mode)));
       } catch (IllegalArgumentException e) {
         ctx.status(400).json(ApiErrorHandler.toResponse(ApiErrorCode.INVALID_REQUEST,
             e.getMessage() == null ? "Invalid mode" : e.getMessage(), telemetry, ApiErrorHandler.routeOf(ctx)));
@@ -415,7 +414,7 @@ final class InferenceHandlers {
         ctx.status(400).json(ApiErrorHandler.toResponse(ApiErrorCode.INVALID_REQUEST, "Invalid mode. Use 'online' or 'indexing'", telemetry, ApiErrorHandler.routeOf(ctx)));
         return;
       }
-      ctx.json(Map.of("success", true, "mode", onlineAi.getCurrentMode()));
+      ctx.json(modeTransitionPayload(ModeTransitionOutcome.of(mode, onlineAi.getCurrentMode())));
     } catch (Exception e) {
       log.error("Failed to switch inference mode to: {}", mode, e);
       String msg = e.getMessage() != null ? e.getMessage() : e.toString();
@@ -461,6 +460,25 @@ final class InferenceHandlers {
       }
       ctx.status(statusCode).json(payload);
     }
+  }
+
+  /**
+   * Tempdoc 804 §B6: the success payload of {@code POST /api/inference/mode}.
+   *
+   * <p>{@code success} is retained with its narrow meaning — the intent write itself succeeded —
+   * and {@code mode} stays the live mode, so existing callers are unaffected. What the shape used
+   * to lack is the relation between the two: the transition is asynchronous, so a live {@code mode}
+   * read taken at return time is not the transition's result. {@code requested} + {@code state}
+   * ({@code recorded} | {@code converged}) say that outright instead of leaving
+   * {@code {"success":true,"mode":"indexing"}} to be misread as a successful switch to ONLINE
+   * (round-10 evidence).
+   */
+  private static Map<String, Object> modeTransitionPayload(ModeTransitionOutcome outcome) {
+    return Map.of(
+        "success", true,
+        "requested", outcome.requested() == null ? "" : outcome.requested(),
+        "mode", outcome.mode() == null ? "" : outcome.mode(),
+        "state", outcome.state());
   }
 
   /**

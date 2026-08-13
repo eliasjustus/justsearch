@@ -35,8 +35,13 @@ export interface ReadinessNoticeView {
   remedy: NoticeRemedy;
 }
 
-/** The "Open Health" fallback remedy — always actionable, never wrong. */
-const OPEN_HEALTH: NoticeRemedy = {
+/**
+ * The "Open Health" fallback remedy — always actionable, never wrong.
+ *
+ * Exported for the affordance-scoped `degraded` caveat (round-14 finding 8: the info-tier caveat
+ * carried no route to the detail the warn tier already routes to), so the two cannot drift apart.
+ */
+export const OPEN_HEALTH: NoticeRemedy = {
   kind: 'navigate',
   target: 'core.health-surface',
   label: 'Open Health',
@@ -256,10 +261,29 @@ const CAUSE_ROWS: ReadonlyArray<{
   // Tempdoc 629 (#3) — FE-derived: the conversation store is encrypted + locked (history 423'd). The
   // backend never emits this readiness code; it lives here so the locked-chat affordance speaks the ONE
   // CAUSE_ROWS vocabulary instead of hardcoding its wording (the honesty-as-typed-guarantee for the gate).
+  //
+  // SCOPE (tempdoc 806 W1): this row words the CHAT store only. Every AUTHORED store locks together on
+  // ONE data key, but the wording names WHICH data is unreadable, so a second locked store gets its own
+  // row rather than reusing this one — a Memory surface saying "Your chat history is encrypted and
+  // locked" would be a true statement about the wrong store. Sibling: `memory.locked` below (same
+  // remedy: one key, one unlock).
   {
     code: 'conversations.locked',
     wording: 'Your chat history is encrypted and locked',
-    remedy: { kind: 'navigate', target: 'core.settings-surface', label: 'Unlock in Settings' },
+    // The remedy must point at the surface that OWNS the unlock capability: `unlockEncryption()`
+    // lives on SecuritySurface (`core.security-surface`, CorePlugin.ts), NOT on Settings — 629 moved
+    // the encryption control out of Settings and this remedy was left behind pointing one hop short.
+    remedy: { kind: 'navigate', target: 'core.security-surface', label: 'Unlock in Security' },
+    severity: 'warn',
+  },
+  // Tempdoc 806 W1 — FE-derived sibling of `conversations.locked`: the learned-memory store is
+  // encrypted + locked (`GET /api/memory` answers `locked: true`, and every mutation 423s). Same key,
+  // same remedy, different data — so the Memory surface renders a locked state instead of "No learned
+  // memory yet.", which claimed the AI had learned nothing when it simply could not read.
+  {
+    code: 'memory.locked',
+    wording: 'What the AI has learned is encrypted and locked',
+    remedy: { kind: 'navigate', target: 'core.security-surface', label: 'Unlock in Security' },
     severity: 'warn',
   },
   // Tempdoc 600 Design A — the embedding/schema compatibility causes the worker emits on the
@@ -281,11 +305,20 @@ const CAUSE_ROWS: ReadonlyArray<{
     remedy: { kind: 'operation', operationId: 'core.rebuild-index' },
     severity: 'warn',
   },
+  // Tempdoc 804 §D1 — ADVISORY, not degrading, and therefore NOT in REINDEX_CAUSE_CODES below.
+  // `index_schema_fp` is a content hash of the canonical `SSOT/catalogs/fields.v1.json`
+  // (SsotCommitMetadataSource.java:81-93, compared at IndexStatusOps.java:995) and has ZERO
+  // query-path consumers: the dense leg is gated by the EMBEDDING fingerprint
+  // (SearchPlanner.java:87 via allowQueryEmbeddings()), never by this one. Sandbox round 10
+  // reproduced the consequence of getting this wrong — `schema_mismatch` true while dense retrieval
+  // was provably live, under a red "results may be keyword-only" banner. A rebuild picks up newer
+  // index features; it does not restore anything that is broken ⇒ `info`, rebuild remedy retained.
   {
     code: 'index.schema_mismatch',
-    wording: 'The index format changed — rebuild the index to restore full search.',
+    wording:
+      'The index format is out of date — search is fully working; rebuilding picks up newer index features.',
     remedy: { kind: 'operation', operationId: 'core.rebuild-index' },
-    severity: 'warn',
+    severity: 'info',
   },
   // Tempdoc 628 Stage C — the index was detected corrupt and is being automatically rebuilt from your
   // files. No one-click rebuild remedy: it's already rebuilding, so the honest affordance is to watch
@@ -323,18 +356,187 @@ const CAUSE_ROWS: ReadonlyArray<{
  * The ONE place that knows which codes carry the "Reindex required" headline, so the 595 verdict
  * (`verdictHeadline`/`verdictBody`) and this banner cannot disagree. Replaces the old synthetic
  * `reindex-required` token that was minted from a boolean (tempdoc 600 PART III §16).
+ *
+ * Tempdoc 804 §D1 — this is the DEGRADING bucket: every member genuinely gates the dense leg
+ * (embedding fingerprint / no fingerprint at all), so the "results may be keyword-only" consequence
+ * is true of all of them. `index.schema_mismatch` was removed from this set: it is advisory (see its
+ * CAUSE_ROWS row) and lumping it here made the banner assert a degradation that measurably was not
+ * happening.
  */
 const REINDEX_CAUSE_CODES: ReadonlySet<string> = new Set([
   'index.blocked_legacy',
   'index.embedding_legacy',
-  'index.schema_mismatch',
   'index.embedding_mismatch',
 ]);
+
+/**
+ * The advisory index-format code (804 §D1): the stored catalog fingerprint differs from the current
+ * one, with no query-path consequence. Named here so surfaces that already headline the rebuild
+ * story do not have to string-match it (the round-2 "dedup by code, not wording" ruling).
+ */
+export const INDEX_SCHEMA_MISMATCH = 'index.schema_mismatch';
 
 /** True when {@code code} is an embedding/schema compat cause that a rebuild fixes. */
 export function isReindexCause(code: string): boolean {
   return REINDEX_CAUSE_CODES.has(code);
 }
+
+/**
+ * Tempdoc 804 §B5 (live round-11 finding) — the reason codes that mean the RETRIEVAL pipeline
+ * itself fell back (or cannot be asserted live). Same shape as REINDEX_CAUSE_CODES above: the ONE
+ * place that knows which causes justify the "showing keyword results" consequence, so the impairing
+ * banner stops deriving that claim from SEVERITY alone. Observed defect: on a fully-enriched index
+ * with only `lambdamart.not_configured` (info) + `inference.offline` (warn), the verdict is warn and
+ * the banner read "Semantic search degraded / Showing keyword results" while dense retrieval AND the
+ * cross-encoder were provably live — an AI-features cause worded as a retrieval fallback.
+ *
+ * The three REINDEX_CAUSE_CODES are retrieval-impairing too, but can never reach the branch this set
+ * guards (the reindex branch returns first), so they are not restated here.
+ */
+const RETRIEVAL_IMPAIRING_CODES: ReadonlySet<string> = new Set([
+  // The dense leg is positively known not to serve (StatusLifecycleHandler.denseUnavailableReason).
+  'index.dense_unavailable',
+  // The embedder is down ⇒ query embeddings unavailable ⇒ AUTO degrades to keyword.
+  'worker.health.embedding_not_ready',
+  // The embedder could not be probed: we do NOT know both legs are live, and the reassuring wording
+  // requires positive knowledge (same doctrine as severityForCodes' unknown ⇒ warn default).
+  'worker.health.embedding_probe_missing',
+  // The index is being rebuilt from source: results are temporarily incomplete on both legs.
+  'index.rebuilding',
+  // The knowledge server is not serving (or not serving yet): retrieval as a whole is impaired, so
+  // the "search is fully working" claim would be flatly false.
+  'worker.starting',
+  'worker.recovering',
+  'worker.spawn.failed',
+  'worker.restart_exhausted',
+]);
+
+/**
+ * Tempdoc 805 §G.2 — the PASSAGE leg, and only the passage leg, is reduced: chunk (passage) vectors
+ * are absent or still being computed, so passage-level precision drops — while the DOCUMENT-level
+ * dense leg and the cross-encoder keep serving. Round 11 measured exactly this state and the banner
+ * claimed "Showing keyword results" over a trace showing dense retrieval + reranking executing, so
+ * these two codes move OUT of `RETRIEVAL_IMPAIRING_CODES`: a keyword-fallback claim is not licensed
+ * by a passage-vector gap.
+ */
+const PASSAGE_REDUCED_CODES: ReadonlySet<string> = new Set([
+  'chunk_embedding.not_ready',
+  'chunk_embedding.in_progress',
+]);
+
+/**
+ * True when {@code code} means retrieval itself is impaired. An UNKNOWN code counts as impairing:
+ * the calm "search is fully working" wording is an assertion, and we never assert full retrieval
+ * health from a code we cannot classify (mirrors `severityForCodes`, which refuses to downgrade an
+ * unrecognized degradation to `info`).
+ */
+function isRetrievalImpairing(code: string): boolean {
+  if (RETRIEVAL_IMPAIRING_CODES.has(code)) return true;
+  if (PASSAGE_REDUCED_CODES.has(code)) return false;
+  return !CAUSE_ROWS.some((row) => row.code === code);
+}
+
+/** True when {@code code} is a passage-leg-only reduction (805 §G.2). */
+function isPassageReduced(code: string): boolean {
+  return PASSAGE_REDUCED_CODES.has(code);
+}
+
+/**
+ * The codes that mean the local AI model is not available, so chat/answer features are off while
+ * retrieval is untouched. Positive gate (not merely "no retrieval cause"): several non-retrieval
+ * causes are also non-AI (`ocr.*`, `worker.throughput_*`, `conversations.locked`), and wording those
+ * as "AI features unavailable" would repeat the very defect this fixes in the other direction.
+ * Excluded on purpose: `inference.starting` (transient, owned by the calm `info` branch),
+ * `inference.policy_*` (policy-disabled never "comes online"), `vdu.ai_offline` (document
+ * understanding, not chat).
+ */
+const AI_MODEL_UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
+  'inference.offline',
+  'inference.model_not_configured',
+  'inference.model_not_found',
+  'inference.runtime_not_installed',
+  'inference.activation_failed',
+]);
+
+/**
+ * Tempdoc 805 §G.2 — the consequence CLASS a degradation licenses: the one derivation every
+ * degradation claim (this module's banner, `availability.ts`'s affordance caveat) must consume, so a
+ * second projection cannot re-derive the keyword-fallback claim from severity and contradict the
+ * measured trace (round 11's defect, in two copies).
+ *
+ * `unknown` is a real class, not a gap: an unrecognized code is not evidence of anything, so it must
+ * never license a CALMER claim than the conservative one (same doctrine as `isRetrievalImpairing` /
+ * `severityForCodes`). Consumers word `unknown` exactly as `retrieval-impaired`.
+ */
+export type ConsequenceClass =
+  | 'retrieval-impaired'
+  | 'passage-reduced'
+  | 'ai-unavailable'
+  | 'cosmetic'
+  | 'unknown';
+
+/**
+ * Classify a verdict's reason codes into the ONE consequence class that licenses its wording.
+ *
+ * Precedence: `retrieval-impaired` > `unknown` > `passage-reduced` > `ai-unavailable` > `cosmetic`.
+ * A positively-known retrieval block is the most specific and most severe, so it wins outright; an
+ * unrecognized code outranks every remaining class because those are all calmer claims we could not
+ * back. An empty code list is `unknown` for the same reason (mirrors `severityForCodes`' empty ⇒
+ * `warn`), never the calm `cosmetic`.
+ */
+export function classifyConsequence(codes: readonly string[]): ConsequenceClass {
+  let sawUnrecognized = codes.length === 0;
+  let sawPassage = false;
+  let sawAi = false;
+  for (const code of codes) {
+    if (RETRIEVAL_IMPAIRING_CODES.has(code) || REINDEX_CAUSE_CODES.has(code)) {
+      return 'retrieval-impaired';
+    }
+    if (PASSAGE_REDUCED_CODES.has(code)) sawPassage = true;
+    else if (AI_MODEL_UNAVAILABLE_CODES.has(code)) sawAi = true;
+    else if (!CAUSE_ROWS.some((row) => row.code === code)) sawUnrecognized = true;
+  }
+  if (sawUnrecognized) return 'unknown';
+  if (sawPassage) return 'passage-reduced';
+  if (sawAi) return 'ai-unavailable';
+  return 'cosmetic';
+}
+
+/**
+ * Tempdoc 805 §G.2 — the affordance-scoped consequence caveats (`availability.ts`'s `degraded`
+ * kind). They live HERE, beside the banner wording and the classifier that licenses them, because
+ * round 11 found the keyword-fallback claim in TWO modules disagreeing with the same trace: one
+ * module owns the claim's words, every other surface imports them. The
+ * `consequence-classification` gate enforces exactly that (no re-authored claim literal).
+ */
+export const KEYWORD_FALLBACK_CAVEAT =
+  'Showing keyword-ranked results — semantic ranking is degraded';
+
+/** 805 §G.2 — the passage-leg-only caveat: document-level semantic ranking still serves. */
+export const PASSAGE_REDUCED_CAVEAT =
+  'Passage-level precision is reduced — results are still ranked semantically';
+
+/**
+ * 805 §G.2 — the calm caveat: nothing about retrieval itself is reduced.
+ *
+ * Round-14 finding 8: the pre-fix wording ("An optional ranking model is unavailable") named NEITHER
+ * the feature nor the model, and a careful reader with full API access resolved it to the WRONG one
+ * (the cross-encoder reranker, which was measured `status: active` / `executionProvider: cuda` while
+ * the actual gap was `lambdamartModel: DEGRADED / lambdamart.not_configured`). The caveat now names
+ * the feature the `cosmetic` class is actually about — the same feature `CAUSE_ROWS`' LambdaMART rows
+ * word — so the affordance caveat and the cause list cannot be resolved to different models.
+ */
+export const OPTIONAL_CAPABILITY_CAVEAT =
+  'Learned re-ranking (LambdaMART) is unavailable — results are complete, ranking may be simpler';
+
+/**
+ * Round-14 finding 8 — the AI-model-unavailable sibling. `ai-unavailable` is a different consequence
+ * class from `cosmetic` (chat/answer features are off; retrieval is untouched), so it must not borrow
+ * the learned-re-ranking wording above: naming a feature the cause is not about is the very defect
+ * finding 8 records, in the other direction. Same claim the banner's AI branch makes, at affordance scope.
+ */
+export const AI_UNAVAILABLE_CAVEAT =
+  'The local AI model is unavailable — search results are complete, chat and answers are off';
 
 const SEVERITY_RANK: Record<ReasonSeverity, number> = { info: 0, warn: 1, error: 2 };
 
@@ -362,10 +564,11 @@ export function severityForCodes(codes: readonly string[]): Severity {
  * window's degradation notice. The banner CONSUMES the verdict — it does NOT
  * re-read `readiness.retrieval` (so it can no longer contradict the Health
  * header/footer, the §1.1 third-interpreter split). Returns null unless the
- * verdict is `degraded`; the wording tracks the verdict's SEVERITY, so a cosmetic
- * degradation (e.g. LambdaMART off, severity `info`) is worded calmly and
- * accurately — never the over-claiming "showing keyword results" that misdescribes
- * a re-ranking gap as a retrieval failure (595 §10.3).
+ * verdict is `degraded`; a cosmetic degradation (e.g. LambdaMART off, severity
+ * `info`) is worded calmly and accurately — never the over-claiming "showing keyword
+ * results" that misdescribes a re-ranking gap as a retrieval failure (595 §10.3).
+ * Tempdoc 805 §G.2: the impairing wording is licensed by `classifyConsequence`, not
+ * by severity, so a passage-only gap can no longer claim a keyword fallback.
  */
 export function readinessNotice(verdict: SystemHealthVerdict): ReadinessNoticeView | null {
   // Tempdoc 637 #1: a dead/replaced FE→backend binding surfaces AS a loud notice at its own
@@ -386,16 +589,33 @@ export function readinessNotice(verdict: SystemHealthVerdict): ReadinessNoticeVi
   // embedding/schema compat codes), not a synthetic boolean-derived token — so the `causes` slot
   // names the SPECIFIC cause instead of being empty.
   const codes = verdict.reasons;
-  const reindexRequired = codes.some(isReindexCause);
-  if (reindexRequired) {
+  // Tempdoc 804 §B5/§D1 — cause-list SCOPING: the rebuild headline lists only the causes a rebuild
+  // clears. Before, every verdict reason was rendered under the one Force-Rebuild remedy, so causes
+  // a rebuild cannot fix (`lambdamart.not_configured`, `inference.offline`) read as reindex causes.
+  // Non-reindex codes keep their own rows and remedies via the paths below (this branch is only
+  // reached when a genuinely degrading reindex cause is present).
+  const reindexCauses = codes.filter(isReindexCause);
+  if (reindexCauses.length > 0) {
     return {
       headline: 'Reindex required.',
       body: 'Semantic search is degraded until the index is rebuilt — results may be keyword-only.',
-      causes: wordCauses(codes),
+      causes: wordCauses(reindexCauses),
       remedy: { kind: 'operation', operationId: 'core.rebuild-index' },
     };
   }
   if (verdict.severity === 'info') {
+    // Tempdoc 804 §D1 — the ADVISORY index-format state. Reached only when no degrading cause is
+    // present (the reindex branch above and the `info` severity together guarantee that), so the
+    // banner can state the measured truth: retrieval is intact on both legs. The rebuild remedy
+    // stays — a rebuild is what adopts the newer index format.
+    if (codes.includes(INDEX_SCHEMA_MISMATCH)) {
+      return {
+        headline: 'Index format is out of date.',
+        body: 'Search is fully working — both semantic and keyword retrieval are active. Rebuilding will pick up newer index features.',
+        causes: wordCauses(codes.filter((c) => c !== INDEX_SCHEMA_MISMATCH)),
+        remedy: { kind: 'operation', operationId: 'core.rebuild-index' },
+      };
+    }
     // §10.3 — cosmetic/optional degradation: search still serves fully; say so
     // accurately and calmly (consistent with the Health header's "Reduced capability").
     return {
@@ -405,13 +625,64 @@ export function readinessNotice(verdict: SystemHealthVerdict): ReadinessNoticeVi
       remedy: pickRemedy(codes),
     };
   }
-  // Impairing degradation (warn/error): retrieval genuinely fell back.
+  // Tempdoc 804 §B5 (round-11 live finding), generalized by 805 §G.2 — an impairing degradation is
+  // not automatically a RETRIEVAL degradation. The consequence comes from the ONE classifier, the way
+  // the reindex branch above selects by cause class: only a retrieval-impairing (or unclassifiable)
+  // cause licenses "showing keyword results", a passage-vector gap licenses only the passage claim,
+  // and only a positively-known AI-model cause licenses the calm AI-features wording. Each branch
+  // also SCOPES its cause list + remedy to the codes of its own class, so a cause a branch cannot
+  // speak to is never presented under that branch's consequence or remedy.
+  const consequence = classifyConsequence(codes);
+  if (consequence === 'passage-reduced') {
+    const passageCauses = codes.filter(isPassageReduced);
+    return {
+      headline: 'Semantic search partially degraded.',
+      body: 'Passage-level precision is reduced while passage embeddings are missing — results are still ranked semantically.',
+      causes: wordCauses(passageCauses),
+      remedy: pickRemedy(passageCauses),
+    };
+  }
+  if (consequence === 'ai-unavailable') {
+    const aiCauses = codes.filter((c) => AI_MODEL_UNAVAILABLE_CODES.has(c));
+    return {
+      headline: 'AI features unavailable.',
+      body: 'Search is fully working — both semantic and keyword retrieval are active. Chat and answer features are unavailable until the AI model is online.',
+      causes: wordCauses(aiCauses),
+      remedy: pickRemedy(aiCauses),
+    };
+  }
+  // Impairing degradation (warn/error): retrieval genuinely fell back, or a code we cannot classify
+  // leaves us unable to assert otherwise. The list scopes to the causes that carry THIS consequence
+  // (impairing + unclassified). A recognized non-retrieval cause at warn severity (e.g. `ocr.*`)
+  // reaches here with no such cause to name — it keeps its own causes rather than a claim with an
+  // empty cause list, which is the pre-805 behaviour for that set.
+  const impairingCauses = codes.filter(isRetrievalImpairing);
+  const listed = impairingCauses.length > 0 ? impairingCauses : codes;
   return {
     headline: 'Semantic search degraded.',
     body: 'Showing keyword results; relevance ranking may be reduced.',
-    causes: wordCauses(codes),
-    remedy: pickRemedy(codes),
+    causes: wordCauses(listed),
+    remedy: pickRemedy(listed),
   };
+}
+
+/**
+ * Round-14 finding 9 — does this verdict warrant the search surface's BANNER-TIER warning?
+ *
+ * The banner's chrome (alert triangle + a "Reduced search capability" headline in the same slot a
+ * genuine retrieval failure uses) is warning-tier presentation. An `info`-severity verdict is by
+ * construction a cause that leaves search fully serving — measured live as a permanent, unconfigurable
+ * optional gap holding ~25% of the space above the fold indefinitely, which trains the alarm to be
+ * ignored. So severity decides the TIER: `info`-only causes drop out of the banner and are carried by
+ * Health (which renders the same verdict's causes), while `warn`/`error` — and `unreachable`, which is
+ * not a degradation at all — keep the banner.
+ *
+ * The notice itself is unchanged: `readinessNotice` still projects the info-tier wording (Health reads
+ * it), and this predicate never *widens* what the banner shows — it can only withhold it.
+ */
+export function warrantsSearchDegradationBanner(verdict: SystemHealthVerdict): boolean {
+  if (readinessNotice(verdict) === null) return false;
+  return !(verdict.kind === 'degraded' && verdict.severity === 'info');
 }
 
 /** Word each known code; unknown codes word generically (deduped, original order). */

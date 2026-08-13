@@ -127,8 +127,9 @@ public final class AgentToolHandlers {
     IngestTool ingestTool =
         new IngestTool(
             adapter::ingest,
-            (rootPath, excludeGlobs) -> adapter.scanRoot(rootPath, null, excludeGlobs),
-            rootsSupplier);
+            adapter::scanRoot,
+            rootsSupplier,
+            () -> AgentToolFactory.rootBindings(indexingService));
     operationHandlers.register(
         AgentToolsOperationCatalog.SEARCH_INDEX, new SearchOperationHandler(searchTool));
     operationHandlers.register(

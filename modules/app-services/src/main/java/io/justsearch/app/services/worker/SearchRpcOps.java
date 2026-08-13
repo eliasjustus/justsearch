@@ -226,7 +226,12 @@ final class SearchRpcOps {
         RetrieveContextRequest request = builder.build();
         return rpc.execute(
                 "retrieveContext",
-                RemoteKnowledgeClient.RpcDeadlineCategory.CONTENT_FETCH,
+                // Tempdoc 806 B.2 (round-12): this RPC runs a cross-encoder rerank inside the Worker
+                // (RagContextOps.executeRetrieval), so CONTENT_FETCH (2x base = 10s) budgeted it below
+                // the cost the RERANK category was created for ("20 docs x 2048 seq on CPU takes ~42s").
+                // Round 12's cold-reranker Document Q&A answered in ~9.5s -- under the 10s ceiling by
+                // 0.5s. The caller's own 20s budget (RAGContext.DEFAULT_TIMEOUT) is the real ceiling now.
+                RemoteKnowledgeClient.RpcDeadlineCategory.RERANK,
                 stub -> stub.retrieveContext(request));
     }
 
@@ -308,7 +313,9 @@ final class SearchRpcOps {
         RetrieveContextRequest request = builder.build();
         return rpc.execute(
                 "retrieveContext",
-                RemoteKnowledgeClient.RpcDeadlineCategory.CONTENT_FETCH,
+                // Tempdoc 806 B.2 — see the sibling overload above: this RPC reranks, so it takes the
+                // RERANK budget rather than CONTENT_FETCH's 10s.
+                RemoteKnowledgeClient.RpcDeadlineCategory.RERANK,
                 stub -> stub.retrieveContext(request));
     }
 

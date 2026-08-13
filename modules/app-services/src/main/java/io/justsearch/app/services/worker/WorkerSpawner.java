@@ -38,6 +38,12 @@ import org.slf4j.LoggerFactory;
  * </ul>
  */
 public final class WorkerSpawner implements Closeable {
+    public enum ShutdownOutcome {
+        GRACEFUL,
+        FORCED,
+        FAILED
+    }
+
     private static final Logger log = LoggerFactory.getLogger(WorkerSpawner.class);
 
     private static final long HEARTBEAT_INTERVAL_MS = 1000;
@@ -843,9 +849,9 @@ public final class WorkerSpawner implements Closeable {
      * worker does not exit within the configured shutdown timeout. Shared by {@link #close()},
      * {@link #restart()}, and the supervised {@link #doRestart}.
      */
-    private void stopProcess(Process p, boolean graceful) {
+    private ShutdownOutcome stopProcess(Process p, boolean graceful) {
         if (p == null || !p.isAlive()) {
-            return;
+            return ShutdownOutcome.GRACEFUL;
         }
         if (graceful) {
             try {
@@ -861,11 +867,14 @@ public final class WorkerSpawner implements Closeable {
                 telemetry.recordShutdownTimeout();
                 p.destroyForcibly();
                 telemetry.recordForcibleKill();
+                return ShutdownOutcome.FORCED;
             }
+            return ShutdownOutcome.GRACEFUL;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             p.destroyForcibly();
             telemetry.recordForcibleKill();
+            return ShutdownOutcome.FAILED;
         }
     }
 
@@ -912,8 +921,15 @@ public final class WorkerSpawner implements Closeable {
 
     @Override
     public void close() {
+        shutdownForUpgrade();
+    }
+
+    /**
+     * Stop the Worker and report whether the durable-owner shutdown was graceful. Idempotent.
+     */
+    public ShutdownOutcome shutdownForUpgrade() {
         if (!running.compareAndSet(true, false)) {
-            return;
+            return ShutdownOutcome.GRACEFUL;
         }
 
         log.info("Shutting down worker spawner");
@@ -941,7 +957,7 @@ public final class WorkerSpawner implements Closeable {
         }
 
         // Signal shutdown to worker and wait for graceful termination (force only on timeout).
-        stopProcess(workerProcess.get(), true);
+        ShutdownOutcome outcome = stopProcess(workerProcess.get(), true);
 
         // Close signal bus
         signalBus.close();
@@ -953,5 +969,6 @@ public final class WorkerSpawner implements Closeable {
         }
 
         log.info("Worker spawner shutdown complete");
+        return outcome;
     }
 }

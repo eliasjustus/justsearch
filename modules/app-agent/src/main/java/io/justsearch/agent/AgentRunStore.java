@@ -8,6 +8,8 @@ import io.justsearch.agent.api.AgentEvent;
 import io.justsearch.agent.api.AgentEventPayloads;
 import io.justsearch.agent.api.AgentProfile;
 import io.justsearch.agent.api.AgentRequest;
+import io.justsearch.configuration.persistence.AtomicFileWrites;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
 import io.justsearch.telemetry.DiagnosticFileRetention;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -544,9 +546,8 @@ public final class AgentRunStore {
   }
 
   private void writeMeta(String sessionId, Map<String, Object> meta) throws IOException {
-    Files.createDirectories(runDir(sessionId));
     String json = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(meta);
-    Files.writeString(metaPath(sessionId), cipher.seal(json), StandardCharsets.UTF_8);
+    AtomicFileWrites.replaceUtf8(metaPath(sessionId), cipher.seal(json));
   }
 
   private Map<String, Object> readMeta(String sessionId) {
@@ -571,8 +572,8 @@ public final class AgentRunStore {
           e.getMessage());
       throw e;
     } catch (Exception e) {
-      LOG.warn("Failed to read meta for session {}", sessionId, e);
-      return null;
+      throw new CorruptDurableStoreException(
+          "agent-runs", "Checkpoint is unreadable for session " + sessionId, e);
     }
   }
 
@@ -639,8 +640,7 @@ public final class AgentRunStore {
   }
 
   private void writeLastSessionId(String sessionId) throws IOException {
-    Files.createDirectories(rootDir);
-    Files.writeString(lastSessionPath(), sessionId, StandardCharsets.UTF_8);
+    AtomicFileWrites.replaceUtf8(lastSessionPath(), sessionId);
   }
 
   private String readLastSessionId() {

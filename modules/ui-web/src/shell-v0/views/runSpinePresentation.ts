@@ -12,6 +12,11 @@ import type { UnifiedTurnItem } from './unifiedThreadProjection.js';
  * anchor at their real measured scroll fraction (from the `NavigationController`'s `fractions` map); the
  * intra-run steps (tool/progress/error) are interpolated EVENLY between the turn landmarks as "texture",
  * so a dense run's step burst spreads across the user→answer span instead of knotting into one region.
+ *
+ * Tempdoc 814 §D4 (superseding 565's midpoint anchoring knowingly — 809 finding 15): the anchor fraction
+ * a turn receives is now its block's TOP EDGE (`navigation.anchorFractions`), because a gutter index must
+ * align with where the block STARTS. The interpolation is unchanged and stays sensible under it: steps
+ * still spread across the span between the turn tops that bracket them.
  */
 export function computeSpinePositions(
   items: readonly UnifiedTurnItem[],

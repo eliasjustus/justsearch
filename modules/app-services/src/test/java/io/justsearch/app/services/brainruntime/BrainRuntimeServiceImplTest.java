@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.app.api.Mode;
+import io.justsearch.app.api.ModeTransitionOutcome;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.services.runtimestate.RuntimeGpuLease;
 import io.justsearch.app.services.runtimestate.RuntimeReconciler;
@@ -92,26 +93,43 @@ final class BrainRuntimeServiceImplTest {
     return new Fixture(onlineAi, spec, nudged, svc);
   }
 
+  /**
+   * Tempdoc 804 §B6 re-pin: the live mode stays "indexing" here (the reconciler is not running), and
+   * that is exactly the round-10 shape that used to be reported as an unqualified success. The
+   * outcome must now SAY the requested mode has only been recorded, not reached.
+   */
   @Test
   void switchOnline_writesSpecTrue_nudges_noRawSwitch() throws Exception {
     Fixture f = fixture(false);
 
-    String mode = f.svc().switchInferenceMode("online");
+    ModeTransitionOutcome outcome = f.svc().switchInferenceMode("online");
 
-    assertEquals("indexing", mode, "returns the live getCurrentMode() (may still be transitioning)");
+    assertEquals("online", outcome.requested());
+    assertEquals(
+        "indexing", outcome.mode(), "returns the live getCurrentMode() (may still be transitioning)");
+    assertEquals(
+        ModeTransitionOutcome.STATE_RECORDED,
+        outcome.state(),
+        "live mode != requested mode, so the transition is recorded — not converged");
     assertTrue(f.spec().load().chatEnabled(), "intent recorded: chatEnabled=true");
     assertEquals(1, f.nudged().get(), "reconciler nudged via specChanged()");
     assertEquals(0, f.onlineAi().switchOnline.get(), "no raw switchToOnlineMode");
     assertEquals(0, f.onlineAi().switchIndexing.get(), "no raw switchToIndexingMode");
   }
 
+  /** The converged case: the live mode already equals what was requested. */
   @Test
   void switchIndexing_writesSpecFalse_nudges_noRawSwitch() throws Exception {
     Fixture f = fixture(true);
 
-    String mode = f.svc().switchInferenceMode("indexing");
+    ModeTransitionOutcome outcome = f.svc().switchInferenceMode("indexing");
 
-    assertEquals("indexing", mode);
+    assertEquals("indexing", outcome.requested());
+    assertEquals("indexing", outcome.mode());
+    assertEquals(
+        ModeTransitionOutcome.STATE_CONVERGED,
+        outcome.state(),
+        "live mode == requested mode, so the transition is already converged");
     assertFalse(f.spec().load().chatEnabled(), "intent recorded: chatEnabled=false");
     assertEquals(1, f.nudged().get(), "reconciler nudged via specChanged()");
     assertEquals(0, f.onlineAi().switchOnline.get(), "no raw switchToOnlineMode");

@@ -35,7 +35,6 @@ import {
   subscribeSelection,
   getSelection,
   clearSelection,
-  type SelectionItem,
 } from '../state/selectionState.js';
 import { compose, type ComposeArgs } from '../utils/compose.js';
 import {
@@ -43,7 +42,7 @@ import {
   subscribeMenuAnchor,
   setMenuAnchor,
 } from '../utils/selectionAnchor.js';
-import type { SelectionPayload } from '../../api/types/selection.js';
+import { selectionItemToWirePayload } from '../utils/selectionWire.js';
 
 interface AnchorRect {
   readonly top: number;
@@ -208,7 +207,7 @@ export class SelectionActionsMenu extends JfElement {
     const sel = getSelection();
     const item = sel.items[0];
     if (!item) return;
-    const payload = itemToWirePayload(item);
+    const payload = selectionItemToWirePayload(item);
     if (!payload) return;
     const args: ComposeArgs = {
       operation: action.operation,
@@ -249,53 +248,6 @@ function readDomSelectionRect(): AnchorRect | null {
   const rect = range.getBoundingClientRect();
   if (!rect || (rect.width === 0 && rect.height === 0)) return null;
   return { top: rect.top, left: rect.left, bottom: rect.bottom, right: rect.right };
-}
-
-/**
- * Build the wire SelectionPayload from the internal SelectionItem. Mirrors
- * the wire variants — this is what `compose()` forwards as body.selection.
- */
-function itemToWirePayload(item: SelectionItem): SelectionPayload | null {
-  switch (item.kind) {
-    case 'text-range':
-      return {
-        kind: 'text-range',
-        address: item.address,
-        selectionText: item.selectionText,
-        hostEntity: item.hostEntity,
-      };
-    case 'citation':
-      return { kind: 'citation', citation: item.citation, promotedFrom: item.promotedFrom };
-    case 'result-set':
-      return { kind: 'result-set', items: item.items, query: item.query };
-    case 'health-condition':
-      return {
-        kind: 'health-condition',
-        conditionId: item.conditionId,
-        severity: item.severity,
-        summary: item.summary,
-      };
-    case 'search-hit':
-      return {
-        kind: 'item',
-        itemKind: 'search-hit',
-        itemId: item.hitId,
-        label: item.title,
-      };
-    case 'browse-node':
-      return {
-        kind: 'item',
-        itemKind: 'browse-node',
-        itemId: item.path,
-      };
-    case 'plugin-item':
-      return {
-        kind: 'item',
-        itemKind: 'plugin-item',
-        itemId: item.itemId,
-        label: item.label,
-      };
-  }
 }
 
 customElements.define('jf-selection-actions-menu', SelectionActionsMenu);

@@ -20,6 +20,7 @@
 
 import { EnvelopeStream } from '../streaming/EnvelopeStream.js';
 import type { SseEnvelope } from '../streaming/envelope-types.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import type {
   CapabilitiesSnapshot,
   CapabilitiesView,
@@ -60,7 +61,7 @@ export class CapabilitiesHandshake {
 
   constructor(config: CapabilitiesHandshakeConfig) {
     this.apiBase = config.apiBase.replace(/\/$/, '');
-    this.fetchImpl = config.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.fetchImpl = config.fetchImpl ?? authorizedFetch;
     this.eventSourceFactory =
       config.eventSourceFactory ?? ((url) => new EventSource(url));
   }

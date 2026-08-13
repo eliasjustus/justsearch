@@ -629,7 +629,18 @@ message CoreStatus {
   // (curated RRD metric) — complementary to recent_job_queue_depth, rendered as a
   // second sparkline next to firing throughput events.
   repeated double recent_docs_per_sec = 17;
-  // Next available field number: 18
+  // Tempdoc 813 Slice B: byte weight of remaining (PENDING+PROCESSING) indexing work, recorded
+  // at enqueue time. pending_unknown_size_jobs counts remaining jobs with NO recorded size so a
+  // consumer can distinguish "nothing left" from "left, weight unknown" instead of reading an
+  // unknown as zero bytes.
+  int64 pending_bytes = 18;
+  int64 pending_unknown_size_jobs = 19;
+  // Tempdoc 811 C-4: the population a DEFAULT-scope search can actually return — doc_count minus
+  // the collections the default scope excludes (today: agent-history). doc_count keeps its meaning
+  // (the whole non-chunk index) because Health/jseval/sandbox evidence describe the index itself;
+  // this is the number a user-facing "Searching N documents" string may honestly use.
+  int64 searchable_doc_count = 20;
+  // Next available field number: 21
 }
 
 // Failure tracking and search quality signals.
@@ -890,6 +901,23 @@ message DeleteByPathResponse {
   string error = 2;
 }
 
+// === Delete by Collection (tempdoc 811 C-2a) ===
+// Removal route for ad-hoc ingests. `deleteByPath` is watched-root-prefix driven, so documents
+// ingested through POST /api/knowledge/ingest or the core.ingest-files tool from a path under no
+// watched root had NO removal route at all. Deletes every parent + chunk document carrying the
+// collection term. Which collections may be deleted is decided by ONE authority on the Head side
+// (io.justsearch.app.api.knowledge.IngestCollectionPolicy#isDeletable — refuses the reserved
+// app-internal corpora and the untagged default bucket); the worker only refuses a blank value, so
+// the policy has a single home rather than two literal sets that can drift.
+message DeleteByCollectionRequest {
+  string collection = 1;
+}
+
+message DeleteByCollectionResponse {
+  int32 deleted_docs = 1;   // documents matched (and submitted for deletion); -1 on error
+  string error = 2;
+}
+
 // === Delete by Exact ID ===
 // Deletes a single document by exact doc_id (normalized path).
 // Used by file watcher to handle single file deletions.
@@ -1083,6 +1111,19 @@ message MigrationRollbackResponse {
   bool restart_scheduled = 5;
 }
 
+message UpgradeQuiescenceRequest {
+  string preparation_id = 1;
+}
+
+message UpgradeQuiescenceResponse {
+  string preparation_id = 1;
+  bool ready = 2;
+  bool loop_quiesced = 3;
+  bool queue_checkpointed = 4;
+  string migration_state = 5;
+  repeated string blockers = 6;
+}
+
 // --- Path update messages (Phase 4: agent file operations) ---
 
 message PathMapping {
@@ -1112,6 +1153,11 @@ service IngestService {
   // NOT strictly idempotent: deletes are one-shot, but retry-safe
   rpc DeleteById(DeleteByIdRequest) returns (DeleteByIdResponse);
 
+  // Tempdoc 811 (C-2a): the removal route for collection-tagged ad-hoc ingests, which no
+  // path-prefix prune can reach. NOT strictly idempotent (one-shot delete), but retry-safe:
+  // a second call matches nothing and reports 0.
+  rpc DeleteByCollection(DeleteByCollectionRequest) returns (DeleteByCollectionResponse);
+
   // Idempotent: best-effort deletion, files either exist or don't - safe to retry on UNAVAILABLE
   // DEPRECATED: use SyncDirectory
   rpc PruneMissing(PruneRequest) returns (PruneResponse) {
@@ -1140,6 +1186,9 @@ service IngestService {
   rpc ResumeMigration(MigrationResumeRequest) returns (MigrationResumeResponse);
   rpc RunIndexGc(IndexGcRequest) returns (IndexGcResponse);
   rpc RollbackMigration(MigrationRollbackRequest) returns (MigrationRollbackResponse);
+  rpc PrepareUpgrade(UpgradeQuiescenceRequest) returns (UpgradeQuiescenceResponse);
+  rpc UpgradeStatus(UpgradeQuiescenceRequest) returns (UpgradeQuiescenceResponse);
+  rpc CancelUpgrade(UpgradeQuiescenceRequest) returns (UpgradeQuiescenceResponse);
 
   // NOT idempotent: updates document paths (DOC_ID, PATH, FILENAME) and chunk PARENT_DOC_ID.
   // Used by agent file operations tool after MOVE/RENAME to keep index consistent.
@@ -1259,8 +1308,29 @@ message IndexingJobCounts {
   int64 failed_count = 3;      // permanently FAILED
 }
 
+// Per-root enrichment coverage (tempdoc 813 §1c/§13). Counted from the Lucene index under the
+// same path prefix, alongside the queue counts above. Parent-stage denominators EXCLUDE chunk
+// documents; the chunk tier is its own denominator and must never be folded into an "N of M
+// files" ratio. "settled" = the stage reached a TERMINAL state (COMPLETED + COMPLETED_EMPTY
+// where the stage defines it + FAILED), not specifically success — a permanently failed doc
+// never leaves PENDING, so a COMPLETED-only numerator would pin a folder below 100% forever.
+// Per-stage denominators: a doc is in a stage's total only if it CARRIES that stage's status
+// field. An absent status field means the stage does not apply to that doc (post-798), and the
+// backfill selects by status value — so counting it would pin the folder below 100% forever.
+message RootCoverageCounts {
+  int64 parent_docs_total_embedding = 1;    // non-chunk docs carrying embedding_status
+  int64 parent_docs_settled_embedding = 2;  // embedding_status terminal (COMPLETED|FAILED)
+  int64 parent_docs_total_splade = 7;       // non-chunk docs carrying splade_status
+  int64 parent_docs_settled_splade = 3;     // splade_status terminal (+COMPLETED_EMPTY)
+  int64 parent_docs_total_ner = 8;          // non-chunk docs carrying ner_status
+  int64 parent_docs_settled_ner = 4;        // ner_status terminal (+COMPLETED_EMPTY)
+  int64 chunk_docs_total = 5;               // chunk docs carrying chunk_embedding_status
+  int64 chunk_docs_settled = 6;             // chunk_embedding_status terminal (COMPLETED|FAILED)
+}
+
 message CountJobsByPathPrefixResponse {
   IndexingJobCounts counts = 1;
+  RootCoverageCounts coverage = 2;  // all-zero when the index runtime is unavailable
 }
 
 // --- Session policies diagnostic (tempdoc 397 §14.28 U4) ---
@@ -1306,6 +1376,11 @@ message IndexingJobView {
   string error_message = 5;    // empty when not FAILED
   int64 retry_after_ms = 6;    // 0 when no backoff scheduled
   string collection = 7;
+  // Tempdoc 812 D2 — the scan that enqueued this job (ScanRootProgress.scan_id), or empty for
+  // jobs enqueued outside a directory scan (single-file ingest, watcher) and for rows written
+  // before the scan_id column existed. The rollup key: the Head groups per-document terminal
+  // outcomes by this value into ONE durable scan-completion audit row.
+  string scan_id = 8;
 }
 
 // Snapshot frame: full collection at the point of subscription. Only one snapshot

@@ -124,19 +124,6 @@ Good subagent tasks: open-ended research, parallel exploration, second-opinion r
 
 Full architecture: `docs/explanation/01-system-overview.md`. Key API endpoints: `docs/reference/api-contract-map.md`.
 
-## Key Modules
-
-- `modules/ui` - UI Host backend (Head process, Javalin REST API)
-- `modules/ui-web` - Frontend (TypeScript, Lit web components, Vite)
-- `modules/indexer-worker` - Knowledge Server (Body process, Lucene owner)
-- `modules/adapters-lucene` - Lucene search integration
-- `modules/ai-backend` - Backend abstractions and local translator support
-- `modules/gpu-bridge` - GPU/VRAM detection and hardware capability helpers
-- `modules/prompt-support` - Prompt templates and prompt/reasoning support utilities
-- `modules/app-inference` - Online llama-server lifecycle
-- `modules/ort-common` - ORT session infrastructure (OrtSessionAssembler, SessionHandle, NativeSessionHandle, OrtCudaHelper, OrtCudaStatus, OnnxSessionCache, ModelManifest)
-- `modules/shell` - Tauri desktop shell
-
 ## Quick Commands
 
 | Goal | Command |
@@ -164,6 +151,7 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | PR title/body as public squash message | `preview-squash-message` |
 | `contracts/**` | `--gate wire` |
 | new `<dataDir>/runtime/` file | `check-runtime-manifest-closure` |
+| NSIS hooks · tauri bundle resources · sidecar staging | `check-update-preserves-models` |
 | `SSOT/catalogs/**` · analyzers schema · `adapters-lucene/**` | `check-language-agnostic-analysis` |
 | new tempdoc/changeset (cross-worktree) | `check-tempdoc-numbers` |
 | indexing-job lifecycle surfaces | `--gate operation-surface` |
@@ -182,16 +170,9 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 
 | Pitfall | Solution |
 |---------|----------|
-| Stale lockfiles after dep changes | `lockfile-hint` flags `build.gradle.kts` edits — regenerate: `./gradlew.bat --no-configuration-cache resolveAndLockAll --write-locks` (`/lockfile`) |
 | Windows env vars unreliable | Pass config via `-D` system properties |
 | Windows memory pressure | Use `-PskipWebBuild=true` for backend-only runs |
 | Flaky IPC tests | Use state polling (`awaitPort`), not `Thread.sleep()` |
-| Large files in `models/` | **This public repo never tracks model blobs** (0 `.onnx` in its history; CI builds without them). `models/.gitignore` excludes the weights so `git add -A` can't stage ~2.6 GB via the `*.onnx` LFS filter. The *private* repo LFS-tracks them — "do not gitignore model files" applies there, and was inherited here at v0.1.0 despite never being true of this repo. |
-| Stale index after field changes | Adding fields to `fields.v1.json` or extraction logic in `IndexingDocumentOps` does NOT update existing documents. Existing indices must be rebuilt: `jseval run --reset` (eval mode) or `jseval run --start-backend --clean`. Test corpora indexed before your change will silently lack the new fields. |
-| Classpath catalog drift | `ssot-hint` + the `ssot-catalog-sync` CI gate enforce the SSOT dual-copy sync (`/ssot-catalog`) |
-| Schema/fixture drift after record changes | After field changes on `app-api` records: `./gradlew.bat :modules:app-api:updateSchemas`; `test-edit-hint` re-surfaces the affected test (`/api-record`) |
-| Dev stack runs stale jar after Java edits | The MCP `justsearch_dev_start` doesn't always re-install the worker dist when upstream Gradle tasks report UP-TO-DATE. After editing Java in `modules/app-services/`, `modules/app-agent-api/`, or other modules on the head process classpath, run `./gradlew.bat :modules:ui:installDist` explicitly before `dev_start` / restart so the jar in `modules/ui/build/install/ui/lib/` is fresh. Symptom: wire payload reflects the previous build despite a successful `gradlew build`. Discovered tempdoc 511-followup Track E live-verify. |
-| Running `jseval` Inspect evals from a worktree on Windows | `jseval` is normally pip-installed editable against wherever it was first installed; invoking it from a *different* worktree now FAILS CLOSED with the exact `PYTHONPATH=<worktree>/scripts/jseval` remedy inline (tempdoc 716; pre-716 it silently ran the wrong copy). Follow the printed fix; `JUSTSEARCH_ALLOW_CROSS_CHECKOUT_JSEVAL=1` overrides deliberately. Separately, Inspect AI's rich display crashes with `UnicodeEncodeError` on Windows when stdout is redirected/backgrounded (cp1252 can't encode its braille spinner) — set `INSPECT_DISPLAY=none PYTHONUTF8=1` for any backgrounded `eval_set`/`jseval utility-run` invocation. Discovered tempdoc 675. |
 | Local installer build fails on a dev machine | `package-installer-win.ps1` self-diagnoses and refuses to start when Windows Smart App Control is enforcing — SAC blocks unsigned cargo build-scripts, failing the Rust compile with `os error 4551`; `JUSTSEARCH_SKIP_SAC_CHECK=1` only skips the warning, not the actual block. Use CI instead: `gh workflow run build-installer.yml --ref main` (no tag needed, no Release created against a non-tag ref), then `gh run download`. See `docs/how-to/cut-a-release.md` step 1. |
 
 ## Skills (load via `/skill-name`)

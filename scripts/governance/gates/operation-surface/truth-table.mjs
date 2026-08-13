@@ -137,43 +137,6 @@ export function verdictForForbiddenReintroduction({ violations }) {
   };
 }
 
-/**
- * Verdict: a POSITIVE structural check (tempdoc 561 §18 C-1) — every DURABLE store (a `*Store.java`
- * with a `Path`/`dataDir` constructor: it persists to a path) must be classified, either as a
- * declared interaction `store` surface OR on the register's `unrelatedStores` allowlist. This closes
- * the gap the import-scan + name-denylist cannot: a NEW durable store that re-models interaction /
- * action / memory data with its OWN vocabulary and NO canonical-type import (e.g. a
- * `ConversationTimelineStore`) is import-invisible AND dodges the denylist — but it cannot dodge a
- * positive "every durable store is classified" gate. It forces a human decision at the discovery
- * moment: declare it a governed projection, or explicitly mark it unrelated.
- *
- * <p>Honest residue (named, not hidden): a durable persister with NEITHER a `*Store` name NOR a
- * canonical import (a bare `DialogJournal` / `TurnArchive`) is still import-invisible to this check;
- * the name-denylist (`forbiddenReintroduction`) is the backstop for the known thread/memory fork
- * vocabularies. This narrows the residue from "any new-vocabulary fork" to "a non-`*Store`-named one".
- */
-export function verdictForUnclassifiedDurableStores({ unclassified }) {
-  if (unclassified.length > 0) {
-    return {
-      ruleId: 'operation-surface/unclassified-durable-store',
-      status: 'fail',
-      reason:
-        `These durable *Store.java files (a Path/dataDir constructor → they persist to disk) are ` +
-        `neither a declared interaction surface NOR on the register's unrelatedStores allowlist: ` +
-        `${unclassified.join(', ')}. Every durable store must be CLASSIFIED (tempdoc 561 §18 C-1): if ` +
-        `it carries interaction / action / memory state, add it to surfaces[] as a governed projection ` +
-        `(kind:store) of the one record; if it is genuinely unrelated (settings, telemetry, worker ` +
-        `internals), add its path to unrelatedStores. This is the positive gate that catches a ` +
-        `new-vocabulary fork the import-scan + name-denylist cannot.`,
-    };
-  }
-  return {
-    ruleId: 'operation-surface/durable-stores-classified',
-    status: 'pass',
-    reason: 'Every durable *Store.java is classified (a declared surface or an allowlisted unrelated store).',
-  };
-}
-
 /** Verdict when the register file itself is absent. */
 export function verdictForMissingRegister({ path }) {
   return {

@@ -2,6 +2,7 @@ package io.justsearch.indexerworker.queue;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -608,6 +609,104 @@ final class JobQueueTest {
     assertTrue(counts.failedCount() >= 1L, "Should report at least 1 FAILED job");
     assertTrue(counts.processingCount() >= 1L, "Should report at least 1 PROCESSING job");
     assertTrue(counts.pendingCount() >= 1L, "Should report at least 1 PENDING job");
+  }
+
+  // ============================================================================
+  // size_bytes at enqueue + pendingBytes() aggregate (tempdoc 813 Slice B)
+  // ============================================================================
+
+  /**
+   * The jobs write is {@code INSERT OR REPLACE}, so a re-enqueue of an already-queued path
+   * rewrites every listed column. The recorded size must therefore follow the latest entry —
+   * including following it back to NULL when the re-enqueuer could not determine a size.
+   */
+  @Test
+  void reEnqueueRestatesSizeFromTheEntryIncludingBackToUnknown() throws Exception {
+    Path path = Path.of("/size/replace.txt");
+
+    assertEquals(1, jobQueue.enqueueEntries(List.of(new JobQueue.EnqueueEntry(path, 111L))));
+    assertEquals(111L, storedSizeBytes(path), "First enqueue should record its stated size");
+
+    assertEquals(1, jobQueue.enqueueEntries(List.of(new JobQueue.EnqueueEntry(path, 222L))));
+    assertEquals(222L, storedSizeBytes(path), "Re-enqueue with a new size: the new size wins");
+
+    assertEquals(1, jobQueue.enqueueEntries(List.of(JobQueue.EnqueueEntry.ofUnknownSize(path))));
+    assertNull(
+        storedSizeBytes(path),
+        "Re-enqueue with an unknown size must store NULL, not silently keep the stale size");
+
+    // The path-only overload is the unknown-size path for callers that cannot state a size.
+    assertEquals(1, jobQueue.enqueue(List.of(path)));
+    assertNull(storedSizeBytes(path), "enqueue(List<Path>) records an unknown (NULL) size");
+  }
+
+  @Test
+  void pendingBytesSumsPendingAndProcessingAndExcludesUnknownSizes() {
+    Path pending = Path.of("/size/pending.txt");
+    Path processing = Path.of("/size/processing.txt");
+    Path done = Path.of("/size/done.txt");
+    Path failed = Path.of("/size/failed.txt");
+    Path unknown = Path.of("/size/unknown.txt");
+
+    jobQueue.enqueueEntries(List.of(new JobQueue.EnqueueEntry(processing, 1_000L)));
+    jobQueue.pollPending(1); // claims it -> PROCESSING
+
+    jobQueue.enqueueEntries(List.of(new JobQueue.EnqueueEntry(done, 8_000L)));
+    jobQueue.pollPending(1);
+    jobQueue.markDone(done);
+
+    jobQueue.enqueueEntries(List.of(new JobQueue.EnqueueEntry(failed, 4_000L)));
+    for (int i = 0; i < 6; i++) { // drive to FAILED
+      jobQueue.pollPending(10);
+      jobQueue.markFailed(failed, "permanent");
+    }
+
+    jobQueue.enqueueEntries(List.of(new JobQueue.EnqueueEntry(pending, 500L)));
+    jobQueue.enqueueEntries(List.of(JobQueue.EnqueueEntry.ofUnknownSize(unknown)));
+
+    JobQueue.PendingBytes bytes = jobQueue.pendingBytes();
+    assertEquals(
+        1_500L,
+        bytes.knownBytes(),
+        "Only PENDING(500) + PROCESSING(1000) with known sizes count; DONE/FAILED excluded");
+    assertEquals(
+        1L, bytes.unknownSizeJobs(), "The unknown-size PENDING job is counted, never summed as 0");
+  }
+
+  /**
+   * A failed aggregate must not masquerade as "nothing pending" (813 remediation F9b). Closing the
+   * queue makes the query fail the same way an IO error would; the all-zero {@code EMPTY} would
+   * render as "0 B remaining" mid-backlog, so the failure gets its own marker.
+   */
+  @Test
+  void pendingBytesReportsUnavailableWhenTheAggregateCannotBeComputed() throws Exception {
+    jobQueue.enqueueEntries(List.of(new JobQueue.EnqueueEntry(Path.of("/size/a.txt"), 4_096L)));
+    jobQueue.close();
+
+    JobQueue.PendingBytes bytes = jobQueue.pendingBytes();
+
+    assertEquals(JobQueue.PendingBytes.UNAVAILABLE, bytes);
+    assertEquals(
+        -1L,
+        bytes.unknownSizeJobs(),
+        "a failed aggregate must be distinguishable from the 'nothing pending' sentinel");
+    assertNotEquals(
+        JobQueue.PendingBytes.EMPTY, bytes, "EMPTY is the positive claim that nothing is pending");
+  }
+
+  /** Raw {@code size_bytes} for a path, or null when the column holds SQL NULL. */
+  private Long storedSizeBytes(Path path) throws SQLException {
+    String normalized = PathNormalizer.normalizePath(path.toAbsolutePath().toString());
+    try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toAbsolutePath());
+        PreparedStatement stmt =
+            conn.prepareStatement("SELECT size_bytes FROM jobs WHERE path = ?")) {
+      stmt.setString(1, normalized);
+      try (ResultSet rs = stmt.executeQuery()) {
+        assertTrue(rs.next(), "Expected a jobs row for " + normalized);
+        long value = rs.getLong(1);
+        return rs.wasNull() ? null : value;
+      }
+    }
   }
 
   @Test

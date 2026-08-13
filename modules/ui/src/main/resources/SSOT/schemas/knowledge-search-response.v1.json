@@ -1,6 +1,95 @@
 {
   "$schema" : "https://json-schema.org/draft/2020-12/schema",
   "$defs" : {
+    "Filters" : {
+      "type" : "object",
+      "properties" : {
+        "collection" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "docIds" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "entityLocations" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "entityOrganizations" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "entityPersons" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "fileKind" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "includeChunks" : {
+          "type" : [ "boolean", "null" ]
+        },
+        "language" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "metaAuthor" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "metaCategory" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "metaPublishedAt" : {
+          "$ref" : "#/$defs/TimeRangeMs-nullable"
+        },
+        "metaSource" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "mime" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "mimeBase" : {
+          "type" : [ "array", "null" ],
+          "items" : {
+            "type" : "string"
+          }
+        },
+        "modifiedAt" : {
+          "$ref" : "#/$defs/TimeRangeMs-nullable"
+        },
+        "pathPrefix" : {
+          "type" : [ "string", "null" ]
+        }
+      }
+    },
     "MatchSpan" : {
       "type" : "object",
       "properties" : {
@@ -21,10 +110,32 @@
     "StageId" : {
       "type" : "string",
       "enum" : [ "query-understanding", "expansion", "correction", "sparse-retrieval", "dense-retrieval", "splade-retrieval", "fusion", "chunk-merge", "branch-fusion", "lambdamart", "cross-encoder", "freshness" ]
+    },
+    "TimeRangeMs-nullable" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "fromMs" : {
+          "type" : [ "integer", "null" ]
+        },
+        "toMs" : {
+          "type" : [ "integer", "null" ]
+        }
+      }
     }
   },
   "type" : "object",
   "properties" : {
+    "appliedFilters" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "boostFilters" : {
+          "$ref" : "#/$defs/Filters"
+        },
+        "filters" : {
+          "$ref" : "#/$defs/Filters"
+        }
+      }
+    },
     "entityFacetVariants" : {
       "type" : [ "object", "null" ],
       "additionalProperties" : {

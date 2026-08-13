@@ -152,6 +152,38 @@ public final class IndexingCoordinator {
     }
   }
 
+  /**
+   * Tempdoc 811 (C-2a) pass-through. Direct delete, no RMW envelope — takes {@link #dispatchLock}.
+   *
+   * @return number of documents matched (and submitted for deletion)
+   */
+  public int deleteByCollection(String collection) {
+    acquireReadLockTimed();
+    try {
+      dispatchLock.lock();
+      try {
+        return writeOps.get().deleteByCollection(collection);
+      } finally {
+        dispatchLock.unlock();
+      }
+    } finally {
+      session.writeBarrier.readLock().unlock();
+    }
+  }
+
+  /**
+   * Monotonic count of bulk deletions ({@code deleteByPathPrefix} / {@code deleteAll}) submitted to
+   * the writer (tempdoc 809 finding 3). Removing a watched root lands as a
+   * {@link #deleteByPathPrefix(String)} here, so a background batch that captures this value when
+   * it selects its documents and re-reads it at its interruption points learns that its selection
+   * is stale — without a second flag to keep in sync with the deletion.
+   *
+   * @return the current bulk-deletion epoch; a change means documents may have been removed
+   */
+  public long bulkDeleteEpoch() {
+    return session.bulkDeleteEpoch.get();
+  }
+
   /** Pass-through convenience. Takes {@link #dispatchLock} to serialize with RMW ops. */
   public int updateDocumentPaths(String oldPath, String newPath) {
     acquireReadLockTimed();
@@ -222,6 +254,10 @@ public final class IndexingCoordinator {
         log.warn("Validation warn: missing_uid_field");
       }
     }
+    // Write-time status/artifact contract (tempdoc 798): a full-document write claiming
+    // <stage>_status=COMPLETED must carry the witnessing artifact. The RMW lane enforces the same
+    // contract over its merged map — this call covers only indexSingle/indexBatch.
+    StatusArtifactContract.enforce(session, fields, "index-document");
     // Vector dimension check: ensure provided vector matches catalog dimension if present
     FieldMapper.FieldDef vecDef = session.fieldMapper.fieldDef("vector");
     if (vecDef != null && fields.containsKey("vector") && vecDef.vectorDim != null) {

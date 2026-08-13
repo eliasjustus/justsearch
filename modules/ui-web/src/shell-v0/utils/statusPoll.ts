@@ -14,6 +14,7 @@
 import type { StatusResponse } from '../../api/generated/index.js';
 import { parseWireContract } from '../../api/schemas.js';
 import { statusResponseSchema } from '../../api/generated/schema-types/status-response.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 
 export type StatusSnapshot = StatusResponse;
 
@@ -28,7 +29,7 @@ const INTERVAL_MS = 10000;
 
 async function fetchOnce(): Promise<void> {
   try {
-    const res = await fetch((apiBase || '') + '/api/status');
+    const res = await authorizedFetch((apiBase || '') + '/api/status');
     if (!res.ok) {
       for (const l of listeners) l(null);
       return;

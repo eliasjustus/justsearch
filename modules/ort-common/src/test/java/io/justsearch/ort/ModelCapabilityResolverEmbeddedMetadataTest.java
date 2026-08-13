@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
+import java.util.EnumSet;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -31,6 +32,20 @@ import org.junit.jupiter.api.io.TempDir;
  */
 @DisplayName("ModelCapabilityResolver — embedded ONNX metadata_props rung (tempdoc 711 Item 3)")
 class ModelCapabilityResolverEmbeddedMetadataTest {
+
+  /**
+   * The embedding role's facts PLUS precision. Precision is in no role preset since tempdoc 807
+   * item 2 (no production consumer reads it), but this class's subject is the embedded rung's
+   * coverage of every stamped fact, so it requests precision explicitly.
+   */
+  private static final CapabilityRequirements EMBEDDING_PLUS_PRECISION =
+      new CapabilityRequirements(
+          EnumSet.of(
+              CapabilityRequirements.Fact.POOLING,
+              CapabilityRequirements.Fact.CONTEXT_LENGTH,
+              CapabilityRequirements.Fact.DIMENSION,
+              CapabilityRequirements.Fact.PRECISION,
+              CapabilityRequirements.Fact.PREFIXES));
 
   private static Path fixturesDir;
 
@@ -67,7 +82,7 @@ class ModelCapabilityResolverEmbeddedMetadataTest {
 
     ModelCapabilities caps =
         ModelCapabilityResolver.resolve(
-            "embedding", fixturesDir, manifest, CapabilityRequirements.EMBEDDING, false);
+            "embedding", fixturesDir, manifest, EMBEDDING_PLUS_PRECISION, false);
 
     assertEquals(ModelCapabilities.PoolingMode.CLS, caps.poolingMode());
     assertEquals(512, caps.trainedContextLength());
@@ -96,7 +111,7 @@ class ModelCapabilityResolverEmbeddedMetadataTest {
 
     ModelCapabilities caps =
         ModelCapabilityResolver.resolve(
-            "embedding", fixturesDir, manifest, CapabilityRequirements.EMBEDDING, false);
+            "embedding", fixturesDir, manifest, EMBEDDING_PLUS_PRECISION, false);
 
     assertEquals(
         ModelCapabilities.PoolingMode.MEAN, caps.poolingMode(), "manifest value must win over embedded 'cls'");
@@ -124,7 +139,7 @@ class ModelCapabilityResolverEmbeddedMetadataTest {
 
     ModelCapabilities caps =
         ModelCapabilityResolver.resolve(
-            "embedding", fixturesDir, manifest, CapabilityRequirements.EMBEDDING, false);
+            "embedding", fixturesDir, manifest, EMBEDDING_PLUS_PRECISION, false);
 
     assertEquals(ModelCapabilities.PoolingMode.UNKNOWN, caps.poolingMode());
     assertEquals(0, caps.trainedContextLength());

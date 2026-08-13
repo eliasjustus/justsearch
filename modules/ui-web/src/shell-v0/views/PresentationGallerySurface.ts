@@ -25,7 +25,18 @@ import {
   subscribePresentation,
 } from '../state/presentationRuntime.js';
 import { getDocument, subscribeDocument } from '../state/UserStateDocument.js';
+import { isSafeTokenValue } from '../themes/designTokenTree.js';
 import type { PresentationDeclaration, PresentationOrigin } from '../themes/presentationDeclaration.js';
+
+/**
+ * Swatch fill for a declaration that declares no theme tier (CORE_DECLARED, SETTINGS_DECLARED,
+ * THREE_SURFACE_SPIKE): applying one changes no accent token, so "the default accent" is the honest
+ * preview. A literal rather than `var(--accent-tint)`, because applying a skin overwrites that token
+ * document-scoped — which is exactly the defect where every card previewed the ACTIVE skin instead of
+ * its own. Reuses the theme-invariant `--h-teal` hue constant (src/styles/tokens.css); only the
+ * lightness/chroma pair is local.
+ */
+const DEFAULT_SWATCH_TINT = 'oklch(75% 0.15 var(--h-teal))';
 
 export class PresentationGallerySurface extends JfElement {
   static properties = {
@@ -71,6 +82,17 @@ export class PresentationGallerySurface extends JfElement {
     this._presUnsub = null;
     this._docUnsub = null;
     super.disconnectedCallback();
+  }
+
+  /**
+   * The fill this card's own declaration would apply — NOT the document's current accent. `theme` is
+   * optional, so a declaration without one falls back to {@link DEFAULT_SWATCH_TINT}. The value is
+   * re-checked with the same `isSafeTokenValue` authority the declaration gate uses, since it lands
+   * in a style attribute.
+   */
+  private swatchTint(decl: PresentationDeclaration): string {
+    const tint = decl.theme?.tokens['accent-tint'];
+    return tint !== undefined && isSafeTokenValue(tint) ? tint : DEFAULT_SWATCH_TINT;
   }
 
   private originLabel(origin: PresentationOrigin | undefined): string {
@@ -155,10 +177,12 @@ export class PresentationGallerySurface extends JfElement {
       .card.active {
         border-color: var(--accent-primary);
       }
+      /* No background declaration here: the fill is per-card (each card previews its OWN accent),
+         bound inline from the declaration by swatchTint(). A rule here would be dead authority. */
       .swatch {
         block-size: 1.6rem;
         border-radius: 0.3rem;
-        background: var(--accent-primary);
+        border: 1px solid var(--border-subtle);
       }
       .card-name {
         font-weight: 600;
@@ -222,7 +246,11 @@ export class PresentationGallerySurface extends JfElement {
                 class="card ${decl.id === this.activeId ? 'active' : ''}"
                 data-presentation-id=${decl.id}
               >
-                <div class="swatch"></div>
+                <div
+                  class="swatch"
+                  data-testid="gallery-swatch"
+                  style="background: ${this.swatchTint(decl)}"
+                ></div>
                 <div class="card-name">${decl.displayName}</div>
                 <div class="origin-label">${this.originLabel(decl.origin)}</div>
                 <jf-control

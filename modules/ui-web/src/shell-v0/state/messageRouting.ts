@@ -99,14 +99,22 @@ function isRoutineEffectKind(effectKind: string | undefined): boolean {
 }
 
 /**
- * Is a unified-activity row a ROUTINE, already-witnessed direct-user action? Reads the ledger's existing
- * facets: `kind` (+ the FE-effect `effectKind`) and `originator`. Routine = a backend navigation row, OR
- * a witnessed local-ack / preference EFFECT (see {@link EFFECT_ACTIVITY_CLASS}). Only DIRECT-USER rows can
- * be routine — agent/system rows explain background effects and stay (612: approvals/denials/causal chains
- * remain visible). OPERATION rows are graded separately by their declared significance
+ * Is a unified-activity row ROUTINE (excluded from the curated default Activity feed)? Reads the ledger's
+ * existing facets: `kind` (+ the FE-effect `effectKind`) and `originator`. Routine = a backend navigation
+ * row, a witnessed local-ack / preference EFFECT (see {@link EFFECT_ACTIVITY_CLASS}), or a per-document
+ * `index` row (812 D4 — the scan rollup is its audit record). Apart from index telemetry, only
+ * DIRECT-USER rows can be routine — agent/system rows explain background effects and stay (612:
+ * approvals/denials/causal chains remain visible). OPERATION rows are graded separately by their
+ * declared significance
  * ({@link isRoutineOperation}); this predicate never routes an operation.
  */
 export function isRoutineActivity(kind: string, originator: string, effectKind?: string): boolean {
+  // Tempdoc 812 D4 — a per-document indexing outcome is background telemetry, not an act anyone
+  // performed: the AUDIT record for indexing is the scan's rollup row (one per scan, durable
+  // `operation` kind), and this is the per-file detail behind it. Routed here rather than through a
+  // second classification so the default Activity feed has ONE routine vocabulary. It is graded
+  // before the direct-user guard because index rows are system-originated by construction.
+  if (kind === 'index') return true;
   if (originator !== 'user') return false;
   if (kind === 'navigation') return true; // backend navigation row
   // An ingested FE effect row carries the real kind in `effectKind`; a raw FE journal row carries it as

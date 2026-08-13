@@ -15,6 +15,19 @@ describe('buildRequestBody (tempdoc 621 Phase 2 — extracted request shaping)',
     expect(body).toMatchObject({ shapeId: 'core.extract', prompt: 'pull fields', schema: '{"a":1}' });
   });
 
+  it('extract carries a document reference, so the schema is not applied to thin air', () => {
+    const sel: SelectionPayload = {
+      kind: 'item',
+      itemKind: 'search-hit',
+      itemId: '/docs/invoice.md',
+      label: 'invoice.md',
+    };
+    const body = buildRequestBody('core.extract', 'pull fields', 's1', '{"a":1}', [], sel);
+    // body.selection is the document channel: ExtractShape declares SelectionContextInjector,
+    // which resolves this reference to real document content.
+    expect(body.selection).toEqual(sel);
+  });
+
   it('free-chat / agent-run carry `prompt` + `sessionId`', () => {
     for (const shape of ['core.free-chat', 'core.agent-run'] as const) {
       const body = buildRequestBody(shape, 'hi', 'sess-9', '', []);

@@ -295,6 +295,32 @@ async def _navigate_and_search(page, url: str, query: str = "justsearch", *, tim
     await _type_and_search(page, query)
 
 
+async def _await_turn_count(page, expected: int, *, timeout_ms: int = 15_000) -> None:
+    """Wait until the conversation has rendered exactly ``expected`` user bubbles.
+
+    Tempdoc 814 review pass — the condition-poll that makes the multi-turn spine step honest:
+    the turn count is what `spineItems()` gates on, so photographing a half-loaded timeline
+    would register a ceiling/presence assertion against the wrong state. An observed count,
+    not a sleep. Shadow-piercing because the bubbles live inside the surface's shadow root.
+    """
+    await page.wait_for_function(
+        """(args) => {
+            const deepAll = (root, acc, depth) => {
+                root = root || document; acc = acc || []; depth = depth || 0;
+                if (depth > 40) return acc;
+                for (const el of root.querySelectorAll('*')) {
+                    acc.push(el);
+                    if (el.shadowRoot) deepAll(el.shadowRoot, acc, depth + 1);
+                }
+                return acc;
+            };
+            return deepAll().filter((el) => el.matches(args.sel)).length === args.n;
+        }""",
+        arg={"sel": S.CSS_MESSAGE_USER, "n": expected},
+        timeout=timeout_ms,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Step registry — all screenshots declared here
 # ---------------------------------------------------------------------------
@@ -659,6 +685,597 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
             state="visible", timeout=10_000
         )
 
+    async def setup_chat_occlusion(page):
+        # The ONE capture where both Sandbox round-7 layout defects are on screen together:
+        #   (1) the RAG answer column starved by the document pane beside it, and
+        #   (2) the advisory toast stack growing down over the chat header's control row.
+        # Both are RELATIONS between elements, so they need a deterministic state where the
+        # crowding surfaces are actually mounted — hence a dedicated isolated step rather
+        # than an assertion bolted onto `chat-proportion` (whose own screenshot/a11y
+        # baseline must stay undisturbed, same reasoning that step records).
+        #
+        # 1250x800: just OVER the 64rem (1024px) wide breakpoint AS THE CHAT SURFACE SEES IT.
+        # Round 8 corrected the measurement this width was originally derived from: the
+        # breakpoint is a `@container` query on the surface box, not a `@media` query on the
+        # viewport, and the surface box is the viewport minus the Shell rail (11rem expanded)
+        # minus the surface's own 1rem padding. At the old 1050 the surface got ~842px and the
+        # wide grid no longer commits at all (the pane moves to the OverlayHost drawer, so
+        # `.document-pane` would drop out of this capture entirely). 1250 puts the surface at
+        # ~1042px — still the worst case the gate wants (every zone mounted, least room to fit
+        # them), now computed against the box the tracks are actually laid out in.
+        await page.set_viewport_size({"width": 1250, "height": 800})
+        # Same rail-click + composer path `setup_chat_proportion` uses, and for the same
+        # reason: `_type_and_search` / `S.SEARCH_INPUT` target a searchbox role + testid
+        # that tempdoc 687 retired (see the ui_selectors.py note).
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        try:
+            await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "() => { location.hash = 'justsearch://surface/core.unified-chat-surface'; }"
+            )
+        ta = page.locator(S.CSS_COMPOSER_TEXTAREA)
+        await ta.wait_for(state="visible", timeout=10_000)
+        await ta.click()
+        await ta.type("justsearch", delay=20)
+        await page.locator(S.CSS_SEARCH_RESULT_ROW).first.wait_for(state="visible", timeout=30_000)
+        # A row click emits `card-open`, which funnels through the shared inspectorState
+        # store; UnifiedChatView's ONE subscription derives `readingDocPath` from it and
+        # mounts `<jf-document-pane class="document-pane">` in grid column 5.
+        await page.locator(S.CSS_SEARCH_RESULT_ROW).first.click(force=True)
+        await page.locator(S.CSS_DOCUMENT_PANE).first.wait_for(state="visible", timeout=15_000)
+        # A toast burst through the one client-originated message channel (the
+        # `jf-advisory-ephemeral` document event AdvisoryStore consumes — emitEphemeralToast's
+        # transport). severity 'error' makes each toast sticky (messageClasses
+        # presentationForSeverity), and supersede:false opts out of same-class single-occupancy,
+        # so the stack is deterministic at capture time instead of racing a 5s auto-dismiss.
+        #
+        # EXACTLY the cap (MAX_VISIBLE_TOASTS), deliberately: at the cap there is no
+        # `+N earlier` summary row, so the toast column sits at its HIGHEST possible
+        # position — the worst case for occluding the header band. Over the cap the
+        # summary row displaces the column ~31px downward, which would let a re-broken
+        # dock offset pass this assertion for an incidental reason (verified: with the
+        # dock reverted and an 8-toast burst the residual intersection was 1px, inside
+        # tolerance, so the gate reported clean). Stack BOUNDING is asserted at the unit
+        # level (AdvisoryToastHost.test.ts); this capture asserts the OCCLUSION relation.
+        await page.evaluate(
+            """(n) => {
+                for (let i = 0; i < n; i += 1) {
+                    document.dispatchEvent(new CustomEvent('jf-advisory-ephemeral', {
+                        detail: {
+                            message: `Occlusion probe toast ${i + 1}`,
+                            severity: 'error',
+                            supersede: false,
+                        },
+                        bubbles: true,
+                    }));
+                }
+            }""",
+            3,
+        )
+        await page.locator(S.CSS_TOAST).first.wait_for(state="visible", timeout=10_000)
+        await asyncio.sleep(0.3)  # let the toast enter-animation settle before measuring
+
+    async def setup_tasks_occlusion(page):
+        # Tempdoc 813 Slice D — the capture that proves the redesigned Tasks panel cannot cover the
+        # rail's bottom controls. Registered in governance/ui-proportion-baseline.v1.json with TWO
+        # mustNotOverlapSelector rows (Settings + the Help affordance) AND a `minWidthPx` floor on
+        # `jf-task-list` itself: a hidden panel yields a 0x0 rect that satisfies any overlap check
+        # vacuously (ui_proportion_gate._rects_overlap), so the non-vacuity companion is what makes
+        # the two occlusion rows mean anything.
+        #
+        # `fixtures_variant="indexing"` is the whole reason this is a dedicated isolated step. Under
+        # the default fixture the worker reports indexState "SERVING" — a fallback state the progress
+        # projection deliberately refuses to read (indexingProgress.WORKER_REPORTED_INDEX_STATES) —
+        # so the panel is correctly invisible on every other step. The `indexing` variant supplies a
+        # live INDEXING worker with a real backlog (ui_fixtures._status_body), which is what puts the
+        # aggregate card on screen.
+        #
+        # Note the panel is driven by the POLL projection, NOT the jobs SSE: install_fixtures serves
+        # every `/stream` as an empty event stream, so a task-list-gated panel would never render
+        # here. That is exactly the §1d defect Slice D removed (the panel used to hide at zero tasks
+        # even while enrichment ran), and this step only captures anything BECAUSE it was removed.
+        await page.set_viewport_size({"width": 1280, "height": 800})
+        await page.goto(demo, wait_until="domcontentloaded", timeout=timeout_ms)
+        # Land on a plain rail surface rather than the default chat landing: the assertion is about
+        # the SHELL's bottom-left corner versus the rail, so the least surface-specific screen is the
+        # least likely to drift for reasons unrelated to the relation being measured.
+        try:
+            btn = page.locator(S.rail_css(S.RAIL_SURFACE_LIBRARY))
+            await btn.wait_for(state="visible", timeout=15_000)
+            await btn.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "(id) => { location.hash = `justsearch://surface/${id}`; }", S.RAIL_SURFACE_LIBRARY
+            )
+        # Both sides of the relation must actually be on screen before measuring.
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SETTINGS)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        await page.locator("[data-help-affordance]").first.wait_for(state="visible", timeout=15_000)
+        # The aggregate card, not merely the host element: `jf-task-list` exists in the DOM whenever
+        # the shell is mounted (it self-hides via [data-empty]), so waiting on the host would wait on
+        # nothing. The card is only rendered on a phase the projection can actually speak to.
+        await page.locator('[data-testid="task-aggregate"]').first.wait_for(
+            state="visible", timeout=15_000
+        )
+        if cooldown_ms > 0:
+            await asyncio.sleep(cooldown_ms / 1000)
+
+    async def setup_library_enriching(page):
+        # Tempdoc 813 §4 (Library folder rows) + §5 (the Tasks panel aggregate card) — the ONLY
+        # deterministic render of the ENRICHING tier anywhere in the harness. No other fixture
+        # reaches it: `default` reports the fallback "SERVING" state the progress projection refuses
+        # to read, and `indexing` reports a non-empty job backlog, which wins the phase ternary
+        # (indexingProgress.ts:333-334) — so `enriching` is unreachable from both by construction.
+        #
+        # The `enriching` variant is the only one that transforms BOTH halves the tier needs
+        # (ui_fixtures): `/api/status` supplies the index-wide phase + the stage-applicability flags
+        # the per-root row cannot carry, and `/api/indexing-roots/substrate` supplies two rows that
+        # differ only in coverage — one mid-flight (the caveat + this root's percent) and one fully
+        # settled ("fully searchable"). Capturing both arms together is the point: the honest claim
+        # is per-root, so a settled folder must read terminal WHILE the index-wide backfill runs.
+        await page.set_viewport_size({"width": 1280, "height": 800})
+        await page.goto(demo, wait_until="domcontentloaded", timeout=timeout_ms)
+        try:
+            btn = page.locator(S.rail_css(S.RAIL_SURFACE_LIBRARY))
+            await btn.wait_for(state="visible", timeout=15_000)
+            await btn.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "(id) => { location.hash = `justsearch://surface/${id}`; }", S.RAIL_SURFACE_LIBRARY
+            )
+        # BOTH rows, not just the first: a one-row wait would pass on a truncated list and the
+        # capture would silently be about a single arm. `.card-meta` (the meta LINE, which is what
+        # the tier is about) rather than a testid: the row is rendered by the DECLARED path
+        # (FolderCardRenderer, active by default via LIBRARY_CARDS_REGION) whose markup carries no
+        # testid — `library-folder-name` exists only on LibrarySurface's own quarantine fallback, so
+        # waiting on it would time out on the path that actually renders here. Both renderers project
+        # the same `folderStatus` meta text and both use this class.
+        await page.locator(".card-meta").nth(1).wait_for(state="visible", timeout=15_000)
+        # The aggregate card (not the `jf-task-list` host, which exists whenever the shell is mounted
+        # and self-hides via [data-empty]) — the same non-vacuity reasoning as `tasks-occlusion`.
+        await page.locator('[data-testid="task-aggregate"]').first.wait_for(
+            state="visible", timeout=15_000
+        )
+        if cooldown_ms > 0:
+            await asyncio.sleep(cooldown_ms / 1000)
+
+    async def setup_chat_bands(page):
+        # Tempdoc 814 §D7.2 — the ONE capture where every persistent chat-surface band
+        # renders at once (the finding-12 screen): the degraded readiness pill, a
+        # submitted turn, and the agent-mode activity-rail chrome, all under --fixtures
+        # at the pinned 1366x768 viewport.
+        #
+        # Reuses `setup_chat_proportion`'s exact degraded-fixtures + rail-click +
+        # composer-submit recipe (same reasoning applies here: `_type_and_search` /
+        # `S.SEARCH_INPUT` target a retired searchbox role/testid — see that step's
+        # docstring), then ADDS one action: click the "Delegate — the agent works
+        # multi-step" escalation rung (`S.CSS_ESCALATION_DELEGATE`, which flips
+        # `this.affordance = 'agent'` at UnifiedChatView.ts:2648) to mount `.activity-rail`.
+        #
+        # FIXTURE-REACHABILITY FINDING (814 W4 investigation — recorded per the tempdoc's
+        # own instruction not to silently cap the state reached): the activity rail's BODY
+        # rows (`.activity-budget` / `.activity-lifecycle` — budget consumed, turn/tool
+        # counts) need a REAL agent run. That routes through
+        # `AgentSessionController.send()` -> `dispatchRunControl({kind:'initiate'})` -> a
+        # POST to `/api/chat/agent` whose RESPONSE IS an SSE stream consumed by the typed
+        # `consumeShapeStream` protocol (modules/ui-web/src/api/streams.ts, a
+        # `StreamEventV1` discriminated union with budget/lifecycle/done event shapes).
+        # `install_fixtures` stubs EVERY `/stream`-ish request (or `text/event-stream`
+        # accept header) with an immediately-closed EMPTY body — reproducing a valid
+        # event sequence would mean hand-authoring that typed wire protocol inside
+        # `ui_fixtures.py`, well past a "modest route addition" and outside this task's
+        # ~1h investigation budget; NOT attempted, to avoid destabilizing every other
+        # fixture-backed step sharing `install_fixtures`. What IS fixture-reachable, and
+        # what this step exercises instead: the rail's COLLAPSED SUMMARY renders from
+        # `affordance === 'agent'` ALONE — UnifiedChatView.ts's own tempdoc-561-C-2
+        # comment: "in agent mode the rail (action-plane chrome) is always present,
+        # naming the approval posture in its summary — even before a run reports
+        # budget[/lifecycle]" — so clicking Delegate (no submit, no network call) mounts
+        # the REAL `.activity-rail` element with its real `<summary>` band; only the two
+        # budget/lifecycle BODY rows stay unreachable under --fixtures. This is the
+        # "activity-rail summary … (whichever renders)" band tempdoc 814 §D7.2
+        # anticipated, and a 40px ceiling (this step's baseline registration) is
+        # generous for a collapsed `<details><summary>` alone.
+        await page.set_viewport_size({"width": 1366, "height": 768})
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        try:
+            await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "() => { location.hash = 'justsearch://surface/core.unified-chat-surface'; }"
+            )
+        ta = page.locator(S.CSS_COMPOSER_TEXTAREA)
+        await ta.wait_for(state="visible", timeout=10_000)
+        await ta.click()
+        await ta.type("justsearch", delay=20)
+        await page.locator(S.CSS_SEARCH_RESULT_ROW).first.wait_for(state="visible", timeout=30_000)
+        await ta.fill("?? What is this file about")
+        await ta.press("Enter")
+        await page.locator(S.CSS_MESSAGE_USER).first.wait_for(state="visible", timeout=15_000)
+        await page.locator(S.CSS_DEGRADATION_BANNER_COLLAPSED).first.wait_for(
+            state="visible", timeout=10_000
+        )
+        # Mount the activity-rail band WITHOUT a real agent run (see the fixture-
+        # reachability finding above) — a plain affordance toggle, availability-gated on
+        # `aiState.capabilities.chat` (true under the `degraded` fixtures variant's
+        # `_inference_body` transform, same as the ask escalation just above).
+        await page.locator(S.CSS_ESCALATION_DELEGATE).first.click(force=True)
+        await page.locator(S.CSS_ACTIVITY_RAIL).first.wait_for(state="visible", timeout=10_000)
+        await asyncio.sleep(0.2)
+
+    # The overflowing draft `setup_chat_bands_detailed` submits. Long ENOUGH that the one
+    # rendered user bubble exceeds the conversation zone at 1366x900 with the expanded
+    # banner in flow — the step's `minScrollableRegions: 1` is what keeps that true (see
+    # the setup's docstring for why a scroller has to be witnessed, not merely bounded).
+    _OVERFLOWING_ASK = "?? " + " ".join(
+        f"Part {i}: what does this file say about indexing, retrieval, ranking and "
+        "enrichment, and how does the worker hand its results back to the head process "
+        "so I can verify the whole path end to end?"
+        for i in range(1, 25)
+    )
+
+    async def setup_chat_bands_detailed(page):
+        # Tempdoc 814 closure (audit findings A + C) — the DETAILED-disclosure sibling of
+        # `chat-bands`, and the only capture where the EXPANDED degradation banner exists.
+        #
+        # WHY A SECOND STEP, not a knob on `chat-bands`: the two disclosure modes are
+        # different height regimes, and §D1 states a different floor for each (>= 0.55 in
+        # Simple, >= 0.45 in Detailed — "Detailed legitimately spends more, but bounded").
+        # `chat-bands` registers the Simple pill's 42px ceiling and the 0.55 share; the
+        # expanded banner had NO registered ceiling at all, so the Detailed floor was
+        # prose-only. One step per regime keeps each screenshot/a11y baseline undisturbed
+        # (the same reasoning `chat-proportion` records for not editing `chat-mode`).
+        #
+        # 1366x900, not the 1366x768 design basis: 900 is ABOVE the block-axis breakpoint
+        # (SHORT_VIEWPORT_MAX_HEIGHT_PX = 820, primitives/compositionLayout.ts), so W1's own
+        # gate — `forcedExpanded = severity === 'error' || (isAdvancedMode() && !shortZone)`
+        # — actually lets Detailed expand. At 768 the same Detailed state renders the pill
+        # first (that IS W1's behaviour, and `chat-bands` no longer distinguishes it), so a
+        # 768 capture would register a ceiling for a banner that never expands: a vacuous
+        # row. The width stays 1366 so the wide grid and the band set match `chat-bands`.
+        #
+        # DETAILED-MODE MECHANISM: the `degraded-detailed` fixtures variant. `uiModeState`
+        # is seeded at boot from `/api/settings/v2` (themeState.restoreAppearanceOnBoot ->
+        # setUiMode(data.ui.mode)), and the captured `settings-v2-live.json` fixture already
+        # carries `ui.mode: "advanced"` — so the variant's job is to NOT do what `degraded`
+        # does (flip it to "simple"), while keeping that variant's other two transforms
+        # (`_status_body`'s DEGRADED retrieval verdict, `_inference_body`'s ONLINE model).
+        # Driving the topbar Simple|Detailed control instead would work but adds a second
+        # authority for the same fact to the capture; the settings seed is the one the app
+        # actually boots from.
+        await page.set_viewport_size({"width": 1366, "height": 900})
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        try:
+            await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "() => { location.hash = 'justsearch://surface/core.unified-chat-surface'; }"
+            )
+        ta = page.locator(S.CSS_COMPOSER_TEXTAREA)
+        await ta.wait_for(state="visible", timeout=10_000)
+        await ta.click()
+        await ta.type("justsearch", delay=20)
+        await page.locator(S.CSS_SEARCH_RESULT_ROW).first.wait_for(state="visible", timeout=30_000)
+        # ONE long "?"-bearing draft rather than N short turns: `send()` pushes the user turn
+        # synchronously, but each submit also flips `isStreaming` (cleared only when the
+        # stubbed, immediately-closed SSE response drains), so a submit loop races that flag
+        # and silently drops turns. One overflowing bubble is deterministic.
+        await ta.fill(_OVERFLOWING_ASK)
+        await ta.press("Enter")
+        await page.locator(S.CSS_MESSAGE_USER).first.wait_for(state="visible", timeout=15_000)
+        # The EXPANDED form is the assertion this step exists for, so wait on the element that
+        # ONLY the expanded branch renders (the worded cause list) — not on `.degradation-banner`,
+        # which the collapsed pill also carries (`class="degradation-banner
+        # degradation-banner-collapsed"`). A Detailed regression would otherwise capture the pill
+        # under the expanded banner's registered ceiling and read as a (very comfortable) pass.
+        await page.locator(S.CSS_DEGRADATION_CAUSES).first.wait_for(
+            state="visible", timeout=10_000
+        )
+        await page.locator(S.CSS_ESCALATION_DELEGATE).first.click(force=True)
+        await page.locator(S.CSS_ACTIVITY_RAIL).first.wait_for(state="visible", timeout=10_000)
+        # EVIDENCE-RAIL REACHABILITY (audit finding C.3, investigated and NOT faked): the docked
+        # `.evidence-rail` needs `agentCtrl.answerSources.length > 0` (UnifiedChatView.
+        # evidenceRailMounted), and only two things write that field — a real agent SSE `done`
+        # payload (the typed protocol `install_fixtures` stubs empty, as `setup_chat_bands`
+        # records) or `hydrateAnswerEvidenceFromRecord` off a `/api/thread` record, which is
+        # reached only from `refreshUnifiedThread` and no-ops while `agentCtrl` is still null —
+        # i.e. it would need an affordance round-trip (retrieve -> agent -> retrieve -> submit ->
+        # agent) plus a hand-authored thread fixture. Left unreached; the rail's no-scroll
+        # obligation stays asserted by `maxScrollableRegions: 1` the moment it does mount.
+        await asyncio.sleep(0.3)
+
+    async def setup_chat_composer_small(page):
+        # Tempdoc 814 §D6/§D7.2 — the F5 close: the small-viewport docked-composer step
+        # 807 flagged as a coverage gap ("no ui-shot covers the docked composer at a small
+        # viewport, which is where round 8's F5 layout defect lived"). Copies
+        # `chat-occlusion`'s exact search -> open-document-pane pattern (same reasoning
+        # applies: the retired searchbox role/testid), pinned at 1366x768 (this task's
+        # pinned viewport — chat-occlusion's own 1250x800 targets its wide-breakpoint
+        # worst case, a different probe), then adds the ONE new action: clear the
+        # composer draft with the preview still open — tempdoc 734's exact repro
+        # (clearing results with the document pane open used to clip the composer below
+        # the viewport, because the pane's 24rem min-height floor + fixed chrome exceeded
+        # a short window and the composer, bottom of the flex column, paid). D6 closes
+        # it: the pane's floor yields below the height breakpoint.
+        await page.set_viewport_size({"width": 1366, "height": 768})
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        try:
+            await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "() => { location.hash = 'justsearch://surface/core.unified-chat-surface'; }"
+            )
+        ta = page.locator(S.CSS_COMPOSER_TEXTAREA)
+        await ta.wait_for(state="visible", timeout=10_000)
+        await ta.click()
+        await ta.type("justsearch", delay=20)
+        await page.locator(S.CSS_SEARCH_RESULT_ROW).first.wait_for(state="visible", timeout=30_000)
+        await page.locator(S.CSS_SEARCH_RESULT_ROW).first.click(force=True)
+        await page.locator(S.CSS_DOCUMENT_PANE).first.wait_for(state="visible", timeout=15_000)
+        # tempdoc 734's F5 repro: clear the draft (and therefore the results — every
+        # keystroke feeds `setSearchQuery` via `@composer-input`, UnifiedChatView.ts
+        # ~2707-2711) with the document pane still open.
+        await ta.fill("")
+        await page.locator(S.CSS_SEARCH_RESULT_ROW).first.wait_for(state="hidden", timeout=10_000)
+        await asyncio.sleep(0.3)
+
+    async def setup_chat_wide_docked(page):
+        # Tempdoc 816 §5 — the INLINE-axis camera: the docked chat surface at a WIDE viewport.
+        #
+        # WHY 1920x900, and why a NEW step. Every existing chat camera is pinned at 1250-1366
+        # (814's design basis), and full-bleed stretching is least visible exactly there: the
+        # defect this step registers GROWS with monitor width, so the instrument set had a
+        # structural blind spot rather than a missing assertion. Measured here before the fix,
+        # at 1920: the docked `.composer` and `.escalation-strip-docked` spanned the whole
+        # 1836px surface and the composer's textarea ran 1760px = 251 characters per line,
+        # while `.conversation` beside them was already bound and centred at 800px. 1920 stays
+        # under the 2000px screenshot cap at 1x DPI (the ui-check DPI limitation), so no
+        # capture-side compromise is needed.
+        #
+        # The state is reached the way `chat-proportion` reaches it — rail click, a real search,
+        # then a "?"-bearing draft submitted with plain Enter, which routes through
+        # `escalateAsk()` -> `send()` and pushes the turn synchronously. `degraded` is the
+        # fixtures variant for the same reasons that step records: the collapsed pill needs a
+        # degraded verdict AND `ui.mode: simple`, and `capabilities.chat` has to be true for the
+        # ask to escalate at all. Both waits below are the observed conditions that say the
+        # DOCKED state was actually reached: a rendered user turn (the composer only docks once
+        # the landing is gone) and the banner whose content box this step bounds.
+        await page.set_viewport_size({"width": 1920, "height": 900})
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        try:
+            await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "() => { location.hash = 'justsearch://surface/core.unified-chat-surface'; }"
+            )
+        ta = page.locator(S.CSS_COMPOSER_TEXTAREA)
+        await ta.wait_for(state="visible", timeout=10_000)
+        await ta.click()
+        await ta.type("justsearch", delay=20)
+        await page.locator(S.CSS_SEARCH_RESULT_ROW).first.wait_for(state="visible", timeout=30_000)
+        await ta.fill("?? What is this file about")
+        await ta.press("Enter")
+        await page.locator(S.CSS_MESSAGE_USER).first.wait_for(state="visible", timeout=15_000)
+        await page.locator(S.CSS_DEGRADATION_BANNER_COLLAPSED).first.wait_for(
+            state="visible", timeout=10_000
+        )
+        await asyncio.sleep(0.3)
+
+    async def setup_chat_chip_yield(page):
+        # Tempdoc 814 §D5 (review pass 2026-08-06) — the CAPTURE-level witness for the chip
+        # yield. `chat-bands` cannot be it: it submits an ask, and under `--fixtures` the
+        # stubbed SSE never drains, so `aiState.activity` stays 'thinking' and the status
+        # chip reads "Thinking…" whether the yield works or not (measured: "Thinking" 1,
+        # "Service degraded" 0 — a green for the WRONG reason). This step reaches the same
+        # degraded chat surface with NO activity overlay by simply not submitting: the
+        # banner is chrome, not a function of the thread, so navigating to the surface is
+        # the whole recipe. With activity idle the chip's label IS the verdict projection —
+        # so the register's `forbiddenVisibleText: ["Service degraded"]` discriminates:
+        # yield working -> the neutral AI-mode readout (0 renders); yield regressed ->
+        # `verdictHeadline(degraded)` back in the bar (1 render, gate red).
+        #
+        # NON-VACUITY: the assertion is only meaningful while the BANNER owns the fact, so
+        # the step also registers `requiredSelectors: [".degradation-banner-collapsed"]` —
+        # otherwise a capture that failed to render the surface at all would show neither
+        # string and read as a pass.
+        await page.set_viewport_size({"width": 1366, "height": 768})
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        try:
+            await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "() => { location.hash = 'justsearch://surface/core.unified-chat-surface'; }"
+            )
+        await page.locator(S.CSS_DEGRADATION_BANNER_COLLAPSED).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        await asyncio.sleep(0.3)
+
+    async def setup_chat_spine_multi(page):
+        # Tempdoc 814 §D7.2 — the POSITIVE half of the spine pair, deferred by W4 and landed
+        # in the review pass. `spineItems()` (UnifiedChatView.ts ~3151) mounts the spine on
+        # `affordance === 'agent'` AND `wideZone` AND (>= 2 user turns OR >= 2 distinct
+        # workflow nodeIds). Node boundaries need a real agent SSE run (unreachable under
+        # `--fixtures`, see `setup_chat_bands`), so this step takes the TURNS branch.
+        #
+        # WHY IT IS A RECORD FIXTURE, not two submits (measured, not assumed — the prior
+        # attempt's dead end): `spineItems()` reads `mergedTimeline()`, which merges the
+        # canonical RECORD (`projectUnifiedThread(this.unifiedEvents)`, fetched from
+        # `/api/thread/{id}`) with the live agent overlay — it never reads `this.thread`, the
+        # array plain ask-submits push into. A two-submit capture therefore measured
+        # `users: 2, affordance: 'agent', wideZone: true, spine: 0`: the turns were on screen
+        # and the spine's own input was still empty. (`send()` also early-returns while
+        # `isStreaming`, which the stubbed SSE never clears — a second, independent reason
+        # submits are the wrong lever here.) The `degraded-thread` fixtures variant supplies
+        # the record instead: two user turns + their answers, auto-loaded on connect via the
+        # seeded per-tab `lastViewedConversation` pointer (ui_fixtures._thread_body).
+        #
+        # DIVISION OF LABOUR (recorded so the step is not read as asserting more than it
+        # does): the CAPTURE witnesses spine PRESENCE on a multi-turn conversation — the
+        # regression the pair exists for, against `chat-spine-single`'s absence assertion.
+        # "Marker count == segment count" stays UNIT-tier (adaptiveSpacing / UnifiedChatView
+        # tests): it needs the segmented nodeIds only a real agent SSE run produces.
+        await page.set_viewport_size({"width": 1366, "height": 768})
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        try:
+            await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "() => { location.hash = 'justsearch://surface/core.unified-chat-surface'; }"
+            )
+        # `affordance = 'agent'` FIRST, and not only because it is the spine's first gate: the
+        # base `retrieve` tier renders the ephemeral hit-list in the conversation column and
+        # owns no thread history (renderAnswerPlane ~2590), so the record's turns are not on
+        # screen at all until the affordance is promoted. The Delegate rung is the only
+        # fixture-reachable way to flip it (the same finding `chat-bands` records).
+        await page.locator(S.CSS_ESCALATION_DELEGATE).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        await page.locator(S.CSS_ESCALATION_DELEGATE).first.click(force=True)
+        # The record's two turns must be ON SCREEN before the capture — an observed condition,
+        # not a sleep, so a half-loaded timeline cannot be photographed as a full one.
+        await _await_turn_count(page, 2)
+        await page.locator(S.CSS_RUN_SPINE).first.wait_for(state="visible", timeout=10_000)
+        await asyncio.sleep(0.3)
+
+    async def setup_chat_spine_single(page):
+        # Tempdoc 814 §D7.2 (Lane 2's home, kept alongside the deferred segmented-spine
+        # sibling so the pair travels together; also Round-14 finding 15's regression
+        # home): a single-turn conversation must NOT mount the run-spine. `spineItems()`
+        # (UnifiedChatView.ts ~3040) returns null unless `affordance === 'agent'` AND
+        # `wideZone` AND the merged timeline has more than one turn (or real workflow-node
+        # boundaries) — so this drives affordance into 'agent' (the only fixture-reachable
+        # way to satisfy the first two thirds of that predicate — see `setup_chat_bands`'s
+        # fixture-reachability finding) on top of a single already-submitted ask turn, and
+        # asserts the negative: still no `.run-spine`, registered via the gate's new
+        # `absentSelectors` step-level check.
+        #
+        # DEFERRED (this task's brief): a genuine multi-turn SEGMENTED agent run (the
+        # sibling assertion tempdoc 814 also names — "a segmented-run spine step asserting
+        # marker count == segment count") needs the same real SSE agent-run protocol
+        # `chat-bands` found unreachable under --fixtures; left to integration once
+        # another worker's DOM changes land, not attempted here.
+        await page.set_viewport_size({"width": 1366, "height": 768})
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        try:
+            await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "() => { location.hash = 'justsearch://surface/core.unified-chat-surface'; }"
+            )
+        ta = page.locator(S.CSS_COMPOSER_TEXTAREA)
+        await ta.wait_for(state="visible", timeout=10_000)
+        await ta.click()
+        await ta.type("justsearch", delay=20)
+        await page.locator(S.CSS_SEARCH_RESULT_ROW).first.wait_for(state="visible", timeout=30_000)
+        await ta.fill("?? What is this file about")
+        await ta.press("Enter")
+        await page.locator(S.CSS_MESSAGE_USER).first.wait_for(state="visible", timeout=15_000)
+        await page.locator(S.CSS_ESCALATION_DELEGATE).first.click(force=True)
+        # No wait_for on `.run-spine` — its absence IS the assertion this step exists to
+        # capture. A short settle instead, so the affordance flip's re-render has landed.
+        await asyncio.sleep(0.3)
+
+    async def _drive_agent_run_to_done(page):
+        # Tempdoc 814 §D8 — the ONE recipe that reaches a COMPLETED agent run under `--fixtures`,
+        # shared by the two steps below so they cannot drift into two different "same" states.
+        #
+        # Order is load-bearing at every step:
+        #  1. Delegate FIRST. `escalateAsk()` (the "??"-draft Enter path the older chat steps use)
+        #     re-derives the affordance from route 'ask', which would demote agent mode — so the
+        #     agent branch of `send()` is reachable only from an ALREADY-agent affordance, where
+        #     `handleComposerSubmit` calls `this.send()` directly (UnifiedChatView.ts ~2860).
+        #     Clicking Delegate also creates the hosted controller (`ensureAgentCtrl` on the next
+        #     render), which the record-hydration in step 4 needs to exist.
+        #  2. The submit streams the `agent-run` variant's DONE body from /api/chat/dispatch
+        #     (ui_fixtures._handler). `ctrl.available` must already be true or `send()` returns
+        #     silently — that is what the variant's `/api/chat/agent/tools` body supplies.
+        #  3. `.activity-lifecycle` is the observed condition for "the record is in", not a sleep.
+        #  4. The evidence rail arrives LAST and from the RECORD: `send()` resolves after the whole
+        #     stream drains, and only then does `.then(() => refreshUnifiedThread())` fire
+        #     `hydrateAnswerEvidenceFromRecord`, which is what sets `answerSources` (the DONE frame
+        #     deliberately carries none — see agent_stream_fixture.DONE_RUN). Waiting on the rail
+        #     therefore witnesses the full record round-trip, not just a rendered frame.
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        try:
+            await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "() => { location.hash = 'justsearch://surface/core.unified-chat-surface'; }"
+            )
+        await page.locator(S.CSS_ESCALATION_DELEGATE).first.wait_for(state="visible", timeout=15_000)
+        await page.locator(S.CSS_ESCALATION_DELEGATE).first.click(force=True)
+        await page.locator(S.CSS_ACTIVITY_RAIL).first.wait_for(state="visible", timeout=10_000)
+        ta = page.locator(S.CSS_COMPOSER_TEXTAREA)
+        await ta.wait_for(state="visible", timeout=10_000)
+        await ta.click()
+        await ta.fill("How does indexing reach the head process?")
+        await ta.press("Enter")
+        await page.locator(S.CSS_ACTIVITY_LIFECYCLE).first.wait_for(state="attached", timeout=20_000)
+        await page.locator(S.CSS_EVIDENCE_RAIL).first.wait_for(state="visible", timeout=20_000)
+
+    async def setup_chat_evidence_rail(page):
+        # Tempdoc 814 §D8.1 — the RECORD-path capture: the docked evidence rail on screen at the
+        # pinned 1366x768 viewport, which §V residual 1 recorded as fixture-unreachable ("the rail
+        # additionally an affordance round-trip"). What this step registers, and why each row is
+        # not vacuous on its own:
+        #   - `requiredSelectors: ['.evidence-rail']` — the rail MOUNTED. Every other row below is
+        #     about the rail, so without this they would all pass on a capture where it never
+        #     rendered.
+        #   - `nonScrollableSelectors: ['.evidence-rail']` — §D3's DIRECT witness. The surface-wide
+        #     `maxScrollableRegions: 1` cannot say WHICH element may scroll: a regression where
+        #     `.conversation` stopped scrolling and the rail started would still count 1.
+        #   - `absentSelectors: ['.sources-affordance']` — §D5's source-count single authority, on
+        #     camera: while the rail owns the count the in-answer "Sources · N" chip must not
+        #     render at all (not merely be CSS-hidden — the review pass's own correction).
+        #   - the `.conversation-zone` share floor — §D1 still holds WITH the rail in the grid
+        #     (the rail is a column, so a share regression here would mean the rail cost height).
+        await page.set_viewport_size({"width": 1366, "height": 768})
+        await _drive_agent_run_to_done(page)
+        await asyncio.sleep(0.3)
+
+    async def setup_chat_activity_rail_open(page):
+        # Tempdoc 814 §D8.2 — the EXPANDED activity-rail body, the other half of §V residual 1.
+        # Same completed run, plus one action: open the `<details>`. The three body rows only
+        # exist after a real run reports them, which is exactly what the SSE fixture supplies —
+        # `.activity-budget` + `.activity-context` come from the stream's single `budget_update`
+        # (the context meter needs promptTokens AND contextWindow > 0, else
+        # `projectContextHorizon` returns null and the meter silently does not render), and
+        # `.activity-lifecycle` from the record's DONE lifecycle.
+        #
+        # The assertion this step exists for is §D2's BOUNDED EXPANSION: the conversation zone
+        # keeps its share floor WITH the expanded body in flow. The closure audit recorded that
+        # half as untested precisely because no capture could open a populated rail.
+        await page.set_viewport_size({"width": 1366, "height": 768})
+        await _drive_agent_run_to_done(page)
+        # Click the summary rather than setting `open` in JS: the `<details>` binds `?open` to
+        # `activityRailExpanded` and records the toggle, so a JS poke would be re-closed by the
+        # next render (the state, not the attribute, is the authority — 814 finding 12(a)).
+        await page.locator(S.CSS_ACTIVITY_RAIL_SUMMARY).first.click()
+        await page.locator(S.CSS_ACTIVITY_BUDGET).first.wait_for(state="visible", timeout=10_000)
+        await page.locator(S.CSS_ACTIVITY_CONTEXT).first.wait_for(state="visible", timeout=10_000)
+        await asyncio.sleep(0.3)
+
     async def setup_responsive(page):
         await page.goto(demo, wait_until="domcontentloaded", timeout=timeout_ms)
         await _type_and_search(page)
@@ -886,6 +1503,76 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # serves the DEGRADED status fixture (see ui_fixtures._status_body).
         Step("chat-proportion", setup=setup_chat_proportion, isolated=True,
              fixtures_variant="degraded"),
+
+        # --- Sandbox round 7: the two measured layout-occlusion assertions ---
+        # Registered in governance/ui-proportion-baseline.v1.json with a `minWidthPx` floor
+        # on the reading column and a `mustNotOverlapSelector` between the toast stack and
+        # the chat header row. Isolated + fixtures: structural, no backend.
+        Step("chat-occlusion", setup=setup_chat_occlusion, isolated=True),
+
+        # --- Tempdoc 813 Slice D: the Tasks panel vs the rail's bottom controls ---
+        # Registered in governance/ui-proportion-baseline.v1.json with two mustNotOverlapSelector
+        # rows (Settings / Help) plus a minWidthPx floor on jf-task-list — the non-vacuity companion
+        # a 0-rect hidden panel would otherwise slip past. Isolated + the `indexing` fixtures
+        # variant: the panel only speaks when the worker reports a state the progress projection
+        # accepts, which no other step's fixture does.
+        Step("tasks-occlusion", setup=setup_tasks_occlusion, isolated=True,
+             fixtures_variant="indexing"),
+        # --- Tempdoc 813 §4/§5: the ENRICHING tier (folder rows + the aggregate card) ---
+        # The one deterministic capture of the drained-but-enriching state: both folder arms (percent
+        # caveat / "fully searchable") and the index-wide aggregate card, from the `enriching`
+        # fixtures variant that no other step uses (see the setup for why the other two variants
+        # cannot reach this phase).
+        Step("library-enriching", setup=setup_library_enriching, isolated=True,
+             fixtures_variant="enriching"),
+        # --- Tempdoc 814 W4: chrome-allocation gate steps (§D7.2) ---
+        # `chat-bands`: the richest all-bands state reachable under --fixtures (degraded
+        # pill + submitted turn + activity-rail summary — see its setup's fixture-
+        # reachability finding for what stayed unreachable). Needs the `degraded` variant
+        # for the same two reasons `chat-proportion` does (the pill AND the Delegate
+        # escalation rung's `capabilities.chat` availability gate).
+        Step("chat-bands", setup=setup_chat_bands, isolated=True, fixtures_variant="degraded"),
+        # `chat-bands-detailed`: the same band family in DETAILED disclosure at 1366x900 (above
+        # the 820px block-axis breakpoint, so the banner genuinely expands) with a conversation
+        # that actually overflows. Registers the expanded banner's ceiling — the Detailed floor
+        # that was prose-only — and is the one capture where the D3 one-scroller rule witnesses a
+        # real scroller (min 1 / max 1) instead of passing vacuously on zero.
+        Step("chat-bands-detailed", setup=setup_chat_bands_detailed, isolated=True,
+             fixtures_variant="degraded-detailed"),
+        # `chat-composer-small`: the F5 recipe (807's coverage gap) — default fixtures
+        # variant, like `chat-occlusion`; no AI capability needed for a plain search.
+        Step("chat-composer-small", setup=setup_chat_composer_small, isolated=True),
+        # `chat-spine-single`: single-turn conversation asserts NO run-spine. Needs
+        # `degraded` for the same Delegate-availability reason as `chat-bands`.
+        Step("chat-spine-single", setup=setup_chat_spine_single, isolated=True,
+             fixtures_variant="degraded"),
+        # `chat-spine-multi`: the PAIR's positive half (§D7.2, landed in the review pass) —
+        # two user turns + agent affordance must MOUNT `.run-spine` (`requiredSelectors`).
+        # `degraded-thread` = `degraded` + the two-turn `/api/thread` record the spine's
+        # `mergedTimeline()` actually reads (submitted turns never reach it — see the setup).
+        Step("chat-spine-multi", setup=setup_chat_spine_multi, isolated=True,
+             fixtures_variant="degraded-thread"),
+        # `chat-chip-yield`: the D5 chip-yield capture witness — the degraded chat surface
+        # with NO activity overlay (no submit), so the status chip's label is the verdict
+        # projection and `forbiddenVisibleText` can discriminate yield-on from yield-off.
+        Step("chat-chip-yield", setup=setup_chat_chip_yield, isolated=True,
+             fixtures_variant="degraded"),
+        # `chat-wide-docked`: tempdoc 816 §5's INLINE-axis camera — the docked composer, its
+        # escalation strip and the banner's content box at 1920x900, the width class where an
+        # unbounded element is actually offensive and where no other step looks. Registers the
+        # first role-bound rows (`inlineSizeRole`) alongside physical presence floors. `degraded`
+        # for the same pill/capability reasons as `chat-proportion`.
+        Step("chat-wide-docked", setup=setup_chat_wide_docked, isolated=True,
+             fixtures_variant="degraded"),
+        # `chat-evidence-rail` / `chat-activity-rail-open`: tempdoc 814 §D8's two residual-closure
+        # captures, both on the `agent-run` variant — `degraded-thread` plus record grounding +
+        # a DONE lifecycle plus a REAL terminating SSE body for POST /api/chat/dispatch. It is the
+        # only variant under which an agent run completes, so it is also the only one whose
+        # captures are free of the spurious "Connection lost" row (asserted, not assumed).
+        Step("chat-evidence-rail", setup=setup_chat_evidence_rail, isolated=True,
+             fixtures_variant="agent-run"),
+        Step("chat-activity-rail-open", setup=setup_chat_activity_rail_open, isolated=True,
+             fixtures_variant="agent-run"),
 
         # --- Slice 3a.1 Phase 6: Lit shell-v0 visual verification ---
         # Mounts the standalone shell demo (Lumino DockPanel + Lit panes)

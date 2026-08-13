@@ -91,63 +91,24 @@ public enum EnvRegistry {
      */
     MODE("justsearch.mode", "JUSTSEARCH_MODE"),
 
-    /** LLM model file hash (sha256). */
-    LLM_MODEL_SHA256("justsearch.llm.model_sha256", "JUSTSEARCH_LLM_MODEL_SHA256"),
 
-    /** LLM GPU layer count. */
-    LLM_GPU_LAYERS("justsearch.llm.gpu_layers", "JUSTSEARCH_LLM_GPU_LAYERS"),
 
-    /** LLM request deadline in milliseconds. */
-    LLM_DEADLINE_MS("justsearch.llm.deadline_ms", "JUSTSEARCH_LLM_DEADLINE_MS"),
 
-    /** Max in-flight inferences. */
-    LLM_MAX_PARALLEL("justsearch.llm.max_parallel", "JUSTSEARCH_LLM_MAX_PARALLEL"),
 
-    /** Session pool size override. */
-    LLM_MAX_SESSIONS("justsearch.llm.max_sessions", "JUSTSEARCH_LLM_MAX_SESSIONS"),
 
-    /** Session warmup duration in milliseconds. */
-    LLM_SESSION_WARMUP_MS("justsearch.llm.session_warmup_ms", "JUSTSEARCH_LLM_SESSION_WARMUP_MS"),
 
-    /** Inference queue capacity. */
-    LLM_QUEUE_CAPACITY("justsearch.llm.queue_capacity", "JUSTSEARCH_LLM_QUEUE_CAPACITY"),
 
-    /** Fractional VRAM hard limit. */
-    LLM_VRAM_FRACTION("justsearch.llm.vram_fraction", "JUSTSEARCH_LLM_VRAM_FRACTION"),
 
-    /** Fractional projected VRAM usage. */
-    LLM_VRAM_PROJECTED("justsearch.llm.vram_projected", "JUSTSEARCH_LLM_VRAM_PROJECTED"),
 
-    /** Max concurrent backend slots. */
-    LLM_MAX_SLOTS("justsearch.llm.max_slots", "JUSTSEARCH_LLM_MAX_SLOTS"),
 
-    /** Absolute VRAM limit in bytes. */
-    LLM_VRAM_LIMIT_BYTES("justsearch.llm.vram_limit_bytes", "JUSTSEARCH_LLM_VRAM_LIMIT_BYTES"),
 
-    /** Enables dynamic VRAM autoscaling. */
-    LLM_VRAM_AUTO_SCALE("justsearch.llm.vram_auto_scale", "JUSTSEARCH_LLM_VRAM_AUTO_SCALE"),
 
-    /** Simulated backend latency in milliseconds. */
-    LLM_SIMULATED_LATENCY_MS(
-        "justsearch.llm.simulated_latency_ms", "JUSTSEARCH_LLM_SIMULATED_LATENCY_MS"),
 
-    /** LLM execution thread count. */
-    LLM_THREADS("justsearch.llm.threads", "JUSTSEARCH_LLM_THREADS"),
 
-    /** LLM context window. */
-    LLM_CONTEXT_LENGTH("justsearch.llm.context_length", "JUSTSEARCH_LLM_CONTEXT_LENGTH"),
 
-    /** Max generated tokens per request. */
-    LLM_MAX_NEW_TOKENS("justsearch.llm.max_new_tokens", "JUSTSEARCH_LLM_MAX_NEW_TOKENS"),
 
-    /** Sampling temperature. */
-    LLM_TEMPERATURE("justsearch.llm.temperature", "JUSTSEARCH_LLM_TEMPERATURE"),
 
-    /** Top-p sampling parameter. */
-    LLM_TOP_P("justsearch.llm.top_p", "JUSTSEARCH_LLM_TOP_P"),
 
-    /** Min-p sampling parameter. */
-    LLM_MIN_P("justsearch.llm.min_p", "JUSTSEARCH_LLM_MIN_P"),
 
     /** Enables thinking mode (reasoning_content parsing, --reasoning-format deepseek). Default true. */
     USE_THINKING("justsearch.llm.use_thinking", "JUSTSEARCH_USE_THINKING"),
@@ -191,31 +152,13 @@ public enum EnvRegistry {
     AGENT_MAX_COMPLETION_TOKENS(
         "justsearch.agent.max_completion_tokens", "JUSTSEARCH_AGENT_MAX_COMPLETION_TOKENS"),
 
-    /** Template root directory. */
-    LLM_TEMPLATE_ROOT("justsearch.llm.template_root", "JUSTSEARCH_LLM_TEMPLATE_ROOT"),
 
-    /** Summary map template filename. */
-    LLM_TEMPLATE_SUMMARY("justsearch.llm.template_summary", "JUSTSEARCH_LLM_TEMPLATE_SUMMARY"),
 
-    /** Summary reduce template filename. */
-    LLM_TEMPLATE_REDUCE("justsearch.llm.template_reduce", "JUSTSEARCH_LLM_TEMPLATE_REDUCE"),
 
-    /** RNG seed used by deterministic test/dev paths. */
-    LLM_RNG_SEED("justsearch.llm.rng_seed", "JUSTSEARCH_LLM_RNG_SEED"),
 
-    /** Backend selector profile. */
-    LLM_BACKEND_SELECTOR("justsearch.llm.backend_selector", "JUSTSEARCH_LLM_BACKEND_SELECTOR"),
 
-    /** Summary chunk size in tokens. */
-    LLM_SUMMARY_CHUNK_TOKENS(
-        "justsearch.llm.summary_chunk_tokens", "JUSTSEARCH_LLM_SUMMARY_CHUNK_TOKENS"),
 
-    /** Summary chunk overlap in tokens. */
-    LLM_SUMMARY_CHUNK_OVERLAP(
-        "justsearch.llm.summary_chunk_overlap", "JUSTSEARCH_LLM_SUMMARY_CHUNK_OVERLAP"),
 
-    /** Comma-separated backend task capability overrides. */
-    LLM_BACKEND_SUPPORTS("justsearch.llm.backend_supports", "JUSTSEARCH_LLM_BACKEND_SUPPORTS"),
 
     /** Summary pipeline identifier. */
     SUMMARY_PIPELINE("justsearch.summary.pipeline", "JUSTSEARCH_SUMMARY_PIPELINE"),
@@ -1057,8 +1000,6 @@ public enum EnvRegistry {
 
     /** RAG retrieval mode (hybrid, vector, text). */
     RAG_RETRIEVE_MODE("rag.retrieve.mode", "JUSTSEARCH_RAG_RETRIEVE_MODE"),
-    /** RAG retrieval top-K candidates. */
-    RAG_RETRIEVE_TOP_K("rag.retrieve.top_k", "JUSTSEARCH_RAG_RETRIEVE_TOP_K"),
     /** RAG over-retrieval factor for diverse sampling. */
     RAG_OVERRETRIEVE_FACTOR("rag.retrieve.overretrieve_factor", "JUSTSEARCH_RAG_OVERRETRIEVE_FACTOR"),
     /** RAG diversification mode (none, mmr). */
@@ -1076,10 +1017,6 @@ public enum EnvRegistry {
 
     // ==================== Worker Limits (tempdoc 347 D2: sysProp = configKey) ====================
 
-    /** Max batch size for indexing operations. */
-    WORKER_MAX_BATCH_SIZE("worker.limits.max_batch_size", "JUSTSEARCH_WORKER_MAX_BATCH_SIZE"),
-    /** Max queue depth for pending indexing jobs. */
-    WORKER_MAX_QUEUE_DEPTH("worker.limits.max_queue_depth", "JUSTSEARCH_WORKER_MAX_QUEUE_DEPTH"),
     /** Max content length per document (characters). */
     WORKER_MAX_CONTENT_LENGTH("worker.limits.max_content_length",
         "JUSTSEARCH_WORKER_MAX_CONTENT_LENGTH"),
@@ -1230,7 +1167,16 @@ public enum EnvRegistry {
      * RuleRunnerBuilder helper to satisfy the checkNoDirectJustsearchSysProp build gate
      * after the rule-engine wiring was lifted into a phase-helper class.
      */
-    RULE_TICK_MS("justsearch.rule.tick.ms", "JUSTSEARCH_RULE_TICK_MS");
+    RULE_TICK_MS("justsearch.rule.tick.ms", "JUSTSEARCH_RULE_TICK_MS"),
+    /**
+     * Running application version, injected by the desktop shell. Read by the upgrade surfaces
+     * (LocalApiServer's upgrade reconciliation wiring and HeadlessApp's assembly) to decide whether
+     * a durable update intent describes the source build or the target build — the distinction that
+     * keeps restart reconciliation from treating a version match as proof of a successful install.
+     * Tempdoc 617: promoted from raw System.getProperty to satisfy the
+     * checkNoDirectJustsearchSysProp build gate.
+     */
+    APP_VERSION("justsearch.app.version", "JUSTSEARCH_APP_VERSION");
 
     // YAML-only keys moved to ConfigKey.java (tempdoc 347 D1).
 
