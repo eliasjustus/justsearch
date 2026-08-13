@@ -395,6 +395,17 @@ export class MarkdownBlock extends JfElement {
     .cite-ref.cite-weak {
       color: var(--text-secondary);
     }
+    /* Tempdoc 822 §3c — the missing weakest-tier rule (the citation-mark presentation session's line
+       range; landed here under the design's crossing-1 default). Without it cite-ungrounded fell
+       through to .cite-ref's blue and the WEAKEST tier wore the STRONGEST tier's color. The mark now
+       speaks the sentence body's own tier vocabulary (none / secondary / warning, see .cite-sentence
+       above), so mark and underline agree. The token is the warning role's TEXT member, not the fill
+       the body's border uses: check-accent-as-text forbids an --accent-* fill as a text color, and
+       --text-warning is the AA-checked foreground of the same role (sv3 bridges both to
+       --warning-foreground, so the two are literally one color there). */
+    .cite-ref.cite-ungrounded {
+      color: var(--text-warning);
+    }
     /* Tempdoc 565 §12.3.E — the cross-surface selection: this mark cites the source the user focused
        (in the answer or the evidence rail), highlighted in sync with the rail card. */
     .cite-ref.cite-selected {

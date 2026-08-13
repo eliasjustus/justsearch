@@ -27,7 +27,9 @@ import { unifiedChatBodyStyles } from './unifiedChatStyles.js';
 // Ask AI staging test asserts the view calls the SAME compose() seam the pre-round-2 behavior used).
 import * as composeModule from '../utils/compose.js';
 import { restoreUnifiedChat, resetUnifiedChatState, getUnifiedChatState } from '../state/unifiedChatState.js';
-import { consumeShapeStream } from '../../api/streams.js';
+import { consumeShapeStream, dispatchShapeEventToHandlers } from '../../api/streams.js';
+// Tempdoc 822 §3d — the provenance-split assertions read the accumulator's own claim shape.
+import type { Claim } from '../components/chat/citationTypes.js';
 // Tempdoc 609 — value imports for the 609 describes (modules are vi.mock'd below; vi.mocked() wraps them).
 import { resumeConversation } from '../state/conversationListStore.js';
 import { setAiActivity } from '../state/aiStateStore.js';
@@ -2080,7 +2082,7 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
         // Tempdoc 720 — a genuinely grounded turn carries a per-sentence claim-match. A source WITHOUT
         // any matched cite is now the `sourced` (provenance) frame once settled, not silently "grounded";
         // this fixture tests the receipt tail on a GROUNDED answer, so it must actually be grounded.
-        claims: [{ sentenceIndex: 0, sentenceText: 'a', score: 0.9, sourceRefs: [0] }],
+        claims: [{ sentenceIndex: 0, sentenceText: 'a', verifiedScore: 0.9, lexicalScore: 0, sourceRefs: [0] }],
         durationMs: 3200,
       },
     ];
@@ -2120,7 +2122,7 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
         shapeId: 'core.rag-ask',
         id: 'a1',
         sources: [chunkCitation(0)],
-        claims: [{ sentenceIndex: 0, sentenceText: 'a.', score: 0.9, sourceRefs: [0] }],
+        claims: [{ sentenceIndex: 0, sentenceText: 'a.', verifiedScore: 0.9, lexicalScore: 0, sourceRefs: [0] }],
         durationMs: 500,
       },
     ];
@@ -2179,7 +2181,7 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
         id: 'a1',
         sources: [chunkCitation(0)],
         // Tempdoc 720 — grounded fixture needs a matched cite (see the receipt-tail test above).
-        claims: [{ sentenceIndex: 0, sentenceText: 'a', score: 0.9, sourceRefs: [0] }],
+        claims: [{ sentenceIndex: 0, sentenceText: 'a', verifiedScore: 0.9, lexicalScore: 0, sourceRefs: [0] }],
         // no durationMs — the reload case
       },
     ];
@@ -2202,7 +2204,7 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
     v.thread = [
       { role: 'user', content: 'q', shapeId: 'core.rag-ask', id: 'u1' },
       // Tempdoc 720 — grounded fixture needs a matched cite; a bare source is now `sourced` once settled.
-      { role: 'assistant', content: 'a', shapeId: 'core.rag-ask', id: 'a1', sources: [chunkCitation(0)], claims: [{ sentenceIndex: 0, sentenceText: 'a', score: 0.9, sourceRefs: [0] }] },
+      { role: 'assistant', content: 'a', shapeId: 'core.rag-ask', id: 'a1', sources: [chunkCitation(0)], claims: [{ sentenceIndex: 0, sentenceText: 'a', verifiedScore: 0.9, lexicalScore: 0, sourceRefs: [0] }] },
     ];
     view.requestUpdate();
     await view.updateComplete;
@@ -5426,6 +5428,175 @@ describe('round-14 finding 15 — the spine gate is a DISJUNCTION: node boundari
     await view.updateComplete;
     expect(view.shadowRoot!.querySelector('.run-spine')).toBeNull();
     __resetAgentSessionStore();
+    view.remove();
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * Tempdoc 822 §3d — THE PROVENANCE GATE at the SHIPPED window's accumulator.
+ *
+ * One defect, two accumulators (sv3's is asserted in `SearchV3View.honesty.test.ts`). The two
+ * citation events are already separate handlers, so the gate needs no payload field: the streaming
+ * lexical matcher's word-overlap ratio lands in `lexicalScore` and never reaches a tier, and the
+ * cross-encoder's probability lands in `verifiedScore` — the only score a mark, an underline or a
+ * grounded/weak count may be computed from.
+ *
+ * The handlers are reached the way the stream reaches them: `consumeShapeStream` is mocked, so its
+ * `onEvent` callback hands the real handler object to the (also mocked) shape dispatcher, and the
+ * test drives the real handler from there. No hand-built claim objects.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════ */
+describe('Tempdoc 822 §3d — the shipped window keeps lexical and verified scores apart', () => {
+  interface RagHandlers {
+    onRagCitations?(p: unknown): void;
+    onRagCitationDelta?(p: unknown): void;
+    onRagCitationMatches?(p: unknown): void;
+  }
+
+  /** Send one Ask and return the live handler object the stream would drive. */
+  async function askAndCaptureHandlers(view: UnifiedChatView): Promise<RagHandlers> {
+    view.affordance = 'documents';
+    view.inputDraft = 'why did the renewal fail?';
+    await view.updateComplete;
+    view.shadowRoot?.querySelector('jf-composer')?.dispatchEvent(new CustomEvent('composer-submit'));
+    await view.updateComplete;
+    const onEvent = vi.mocked(consumeShapeStream).mock.calls.at(-1)![2] as (
+      e: string,
+      p: unknown,
+    ) => void;
+    const dispatchMock = vi.mocked(dispatchShapeEventToHandlers);
+    dispatchMock.mockClear();
+    onEvent('probe', {});
+    return dispatchMock.mock.calls.at(-1)![0] as RagHandlers;
+  }
+
+  const claimsOf = (view: UnifiedChatView): readonly Claim[] =>
+    (view as unknown as { claims: Claim[] }).claims;
+
+  /** One chunk-precise retrieval source, in the shape `rag.citations` mints. */
+  const ragSource = (chunkIndex: number): Record<string, unknown> => ({
+    parentDocId: 'docs/a.md',
+    chunkIndex,
+    chunkTotal: 1,
+    startChar: 0,
+    endChar: 10,
+    score: 0.9,
+    excerpt: 'excerpt',
+    startLine: 1,
+    endLine: 2,
+    headingText: '',
+    headingLevel: 0,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+  });
+
+  it('a citation_delta contributes a LEXICAL score only — no verified score, no mark', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    const h = await askAndCaptureHandlers(view);
+    h.onRagCitations?.({ citations: [ragSource(0)] });
+    // Word overlap of 1.0 — the strongest possible reading, on the WRONG scale.
+    h.onRagCitationDelta?.({
+      sentenceIndex: 0,
+      sentenceText: 'The lock held.',
+      citations: [{ parentDocId: 'docs/a.md', chunkIndex: 0, score: 1 }],
+    });
+    await view.updateComplete;
+
+    const claims = claimsOf(view);
+    expect(claims).toHaveLength(1);
+    expect(claims[0]!.verifiedScore).toBeNull();
+    expect(claims[0]!.lexicalScore).toBe(1);
+    // …and the resolver mints nothing from it: no mark, no underline, no grounded/weak count.
+    const resolved = (
+      view as unknown as {
+        resolveClaimCitations(c: readonly Claim[], s: readonly unknown[]): unknown[];
+      }
+    ).resolveClaimCitations(claims, (view as unknown as { sources: unknown[] }).sources);
+    expect(resolved).toEqual([]);
+    view.remove();
+  });
+
+  it('a citation_matches merge sets the VERIFIED score and never maxes across the two scales', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    const h = await askAndCaptureHandlers(view);
+    h.onRagCitations?.({ citations: [ragSource(0)] });
+    h.onRagCitationDelta?.({
+      sentenceIndex: 0,
+      sentenceText: 'The lock held.',
+      citations: [{ parentDocId: 'docs/a.md', chunkIndex: 0, score: 0.95 }],
+    });
+    h.onRagCitationMatches?.({
+      matches: [
+        {
+          sentenceIndex: 0,
+          sentenceText: 'The lock held.',
+          chunkIndex: 0,
+          similarity: 0.52,
+          parentDocId: 'docs/a.md',
+        },
+      ],
+    });
+    await view.updateComplete;
+
+    const claims = claimsOf(view);
+    expect(claims).toHaveLength(1);
+    // The pre-822 merge kept `Math.max(0.95, 0.52)` — a weak sentence reading 'grounded'.
+    expect(claims[0]!.verifiedScore).toBe(0.52);
+    expect(claims[0]!.lexicalScore).toBe(0.95);
+    const resolved = (
+      view as unknown as {
+        resolveClaimCitations(c: readonly Claim[], s: readonly unknown[]): Array<{ similarity: number }>;
+      }
+    ).resolveClaimCitations(claims, (view as unknown as { sources: unknown[] }).sources);
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]!.similarity).toBe(0.52);
+    view.remove();
+  });
+
+  it('a rendered turn weaves marks for verified claims only — the lexical one stays plain prose', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    const v = view as unknown as { thread: unknown[]; affordance: string; isStreaming: boolean };
+    v.affordance = 'documents';
+    v.isStreaming = false;
+    v.thread = [
+      {
+        role: 'assistant',
+        content: 'One verified sentence. One lexical sentence.',
+        shapeId: 'core.rag-ask',
+        id: 'a1',
+        sources: [ragSource(0)],
+        claims: [
+          {
+            sentenceIndex: 0,
+            sentenceText: 'One verified sentence.',
+            verifiedScore: 0.9,
+            lexicalScore: 0,
+            sourceRefs: [0],
+          },
+          {
+            sentenceIndex: 1,
+            sentenceText: 'One lexical sentence.',
+            verifiedScore: null,
+            lexicalScore: 0.88,
+            sourceRefs: [0],
+          },
+        ],
+      },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const block = view.shadowRoot!.querySelector(
+      '.message.assistant[data-item-id="a1"] jf-markdown-block',
+    ) as (HTMLElement & { citations: Array<{ similarity: number; sentenceText: string }> }) | null;
+    expect(block).not.toBeNull();
+    expect(block!.citations).toHaveLength(1);
+    expect(block!.citations[0]!.sentenceText).toBe('One verified sentence.');
+    expect(block!.citations[0]!.similarity).toBe(0.9);
     view.remove();
   });
 });

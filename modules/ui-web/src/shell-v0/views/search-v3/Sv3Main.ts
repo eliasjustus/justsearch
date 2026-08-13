@@ -384,6 +384,10 @@ export class Sv3Main extends JfElement {
         --accent-tint: var(--primary);
         --accent-on-tint: var(--primary-foreground);
         --accent-warning: var(--warning-foreground);
+        /* Tempdoc 822 §3c — the ungrounded citation MARK's color (the warning role's text member;
+           the body underline beside it uses the fill member above). Bridged in the same slice that
+           introduced the read, per the charter's import-bridge clause. */
+        --text-warning: var(--warning-foreground);
         --font-size-sm: var(--font-size-sv3-sm);
         --font-size-xs: var(--font-size-sv3-xs);
         --duration-fast: var(--duration-sv3-micro);

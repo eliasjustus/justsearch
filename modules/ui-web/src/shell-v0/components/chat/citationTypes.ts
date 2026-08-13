@@ -16,11 +16,30 @@
  * indices it grounds to). Tempdoc 565 §15.B relocated this from the retired `StreamingTextBlock`; it
  * is the internal RAG model that `UnifiedChatView` builds from `rag.citation_matches` and then maps
  * into the one `Citation` render shape (`MarkdownBlock`). A leaf data type, no renderer dependency.
+ *
+ * Tempdoc 822 §3d (the score-scale mismatch) — the single `score` field is GONE, split by producer.
+ * Two events feed this model and they do not measure the same quantity: `rag.citation_matches`
+ * carries a cross-encoder relevance probability, `rag.citation_delta` carries the streaming lexical
+ * matcher's word-overlap coverage ratio (`hits / significantWords`, whose denominator is the
+ * passage's vocabulary size). `Math.max`-ing them into one number fed word overlap into thresholds
+ * calibrated on the cross-encoder cutoff — a 2-of-4-word passage read "grounded". Keeping them
+ * apart is the gate: only {@link verifiedScore} may reach a grounding tier.
  */
 export interface Claim {
   sentenceIndex: number;
   sentenceText: string;
-  score: number;
+  /**
+   * The cross-encoder similarity from `rag.citation_matches` — the ONLY score a grounding tier may
+   * be computed from. `null` means no authoritative matcher verified this sentence, and such a claim
+   * mints no citation, no mark, no underline, and no grounded/weak count.
+   */
+  verifiedScore: number | null;
+  /**
+   * The streaming lexical matcher's word-overlap ratio from `rag.citation_delta`. Kept because it is
+   * what arrived, never because it is comparable: it is not on the cross-encoder scale and no
+   * monotone mapping onto it exists. Diagnostic only — never a tier input.
+   */
+  lexicalScore: number;
   sourceRefs: number[];
 }
 

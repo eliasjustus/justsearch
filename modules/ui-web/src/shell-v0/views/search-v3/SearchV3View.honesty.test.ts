@@ -436,7 +436,10 @@ describe('the inline marks are the SHARED resolver\'s output, and they preview o
         {
           sentenceIndex: 0,
           sentenceText: 'The lock held.',
-          score: 0.9,
+          // 822 §3d — the fixture mirrors what the window accumulated from `rag.citation_matches`
+          // (cross-encoder verified); a lexical-only claim would resolve to no mark at all.
+          verifiedScore: 0.9,
+          lexicalScore: 0,
           sourceRefs: [0],
         },
       ],
@@ -494,6 +497,61 @@ describe('the inline marks are the SHARED resolver\'s output, and they preview o
     );
     await card?.updateComplete;
     expect(card?.visible).toBe(false);
+  });
+
+  /* Tempdoc 822 §3d — THE PROVENANCE GATE, asserted at this window's own accumulator (the shipped
+     window's copy is asserted in `UnifiedChatView.test.ts`: one defect, two accumulators). */
+
+  it('mints NO mark from a lexical citation_delta, whatever its word-overlap score says', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'why did the renewal fail?');
+    stream.emit('rag.citations', { citations: [source(0)] });
+    stream.emit('chunk', { text: 'The lock held.' });
+    // 1.0 overlap — every significant word of a short passage present. On the cross-encoder scale
+    // this would be the STRONGEST tier; it is a coverage ratio, so it earns no tier at all.
+    stream.emit('rag.citation_delta', {
+      sentenceIndex: 0,
+      sentenceText: 'The lock held.',
+      citations: [{ chunkIndex: 0, score: 1 }],
+    });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+
+    const evidence = el.sessions.sessions[0]?.turns[0]?.evidence;
+    expect(evidence?.marks).toEqual([]);
+    const main = await region(el, 'jf-sv3-main');
+    const block = q(main, 'sv3-turn-markdown') as (HTMLElement & { citations: unknown }) | null;
+    expect(block?.citations).toEqual([]);
+  });
+
+  it('keeps the verified score when BOTH producers scored one sentence (no cross-scale max)', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'why did the renewal fail?');
+    stream.emit('rag.citations', { citations: [source(0)] });
+    stream.emit('chunk', { text: 'The lock held.' });
+    // The delta arrives FIRST (it streams) and scores higher on its own scale…
+    stream.emit('rag.citation_delta', {
+      sentenceIndex: 0,
+      sentenceText: 'The lock held.',
+      citations: [{ chunkIndex: 0, score: 0.95 }],
+    });
+    // …then the authoritative cross-encoder lands at 0.52 — a WEAK sentence.
+    stream.emit('rag.citation_matches', {
+      matches: [{ sentenceIndex: 0, sentenceText: 'The lock held.', similarity: 0.52, chunkIndex: 0 }],
+    });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+
+    const marks = el.sessions.sessions[0]?.turns[0]?.evidence?.marks ?? [];
+    expect(marks).toHaveLength(1);
+    // The old `Math.max` across the two scales would read 0.95 here and render 'grounded'.
+    expect(marks[0]?.similarity).toBe(0.52);
   });
 });
 

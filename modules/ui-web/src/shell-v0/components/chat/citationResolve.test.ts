@@ -29,7 +29,13 @@ const SOURCES: RetrievalCitation[] = [
 describe('claimsToCitations — the one RAG claim→Citation resolver (§15.B)', () => {
   it('maps a grounded claim to a Citation with the deep-link detail + hover the flat-text fork lacked', () => {
     const claims: Claim[] = [
-      { sentenceIndex: 0, sentenceText: 'Grounded sentence.', score: 0.8, sourceRefs: [0] },
+      {
+        sentenceIndex: 0,
+        sentenceText: 'Grounded sentence.',
+        verifiedScore: 0.8,
+        lexicalScore: 0,
+        sourceRefs: [0],
+      },
     ];
     const out = claimsToCitations(claims, SOURCES);
     expect(out).toHaveLength(1);
@@ -48,16 +54,77 @@ describe('claimsToCitations — the one RAG claim→Citation resolver (§15.B)',
 
   it('drops an ungrounded claim (no sourceRefs) — neutral prose, no mark', () => {
     const claims: Claim[] = [
-      { sentenceIndex: 0, sentenceText: 'Ungrounded.', score: 0.1, sourceRefs: [] },
+      {
+        sentenceIndex: 0,
+        sentenceText: 'Ungrounded.',
+        verifiedScore: 0.1,
+        lexicalScore: 0,
+        sourceRefs: [],
+      },
     ];
     expect(claimsToCitations(claims, SOURCES)).toEqual([]);
   });
 
   it('returns [] when there are no sources to deep-link to', () => {
     const claims: Claim[] = [
-      { sentenceIndex: 0, sentenceText: 'x', score: 0.8, sourceRefs: [0] },
+      {
+        sentenceIndex: 0,
+        sentenceText: 'x',
+        verifiedScore: 0.8,
+        lexicalScore: 0,
+        sourceRefs: [0],
+      },
     ];
     expect(claimsToCitations(claims, [])).toEqual([]);
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────────────────────────
+ * Tempdoc 822 §3d — THE PROVENANCE GATE. The streaming lexical matcher emits a word-overlap
+ * coverage ratio (`hits / significantWords`, `StreamingCitationMatcher.matchSentenceLexical`); the
+ * post-hoc matcher emits a cross-encoder relevance probability. The tier thresholds
+ * (`evidenceProjection` TIER_HIGH/TIER_MEDIUM) are calibrated on the SECOND scale only. These tests
+ * are the mutation probe: any route that lets a lexical score reach a tier fails them.
+ * ─────────────────────────────────────────────────────────────────────────────────────────────── */
+describe('claimsToCitations — the 822 §3d provenance gate', () => {
+  const lexicalOnly = (score: number): Claim => ({
+    sentenceIndex: 0,
+    sentenceText: 'A sentence the lexical matcher liked.',
+    verifiedScore: null,
+    lexicalScore: score,
+    sourceRefs: [0],
+  });
+
+  it('mints NO citation for a lexical-only claim, however high its word overlap runs', () => {
+    // 1.0 is reachable: every significant word of a short passage appearing in the sentence. Under
+    // the old single-`score` model this was 'grounded' — the strongest tier, from word overlap.
+    for (const overlap of [0.1, 0.33, 0.5, 0.6, 0.75, 1]) {
+      expect(claimsToCitations([lexicalOnly(overlap)], SOURCES)).toEqual([]);
+    }
+  });
+
+  it('carries the VERIFIED score, never the lexical one, when both producers scored the sentence', () => {
+    const both: Claim[] = [
+      {
+        sentenceIndex: 0,
+        sentenceText: 'Grounded sentence.',
+        verifiedScore: 0.52,
+        // Higher than the verified score, and above TIER_HIGH — a `Math.max` across the two scales
+        // (the defect) would surface 0.95 here and read 'grounded' instead of 'weak'.
+        lexicalScore: 0.95,
+        sourceRefs: [0],
+      },
+    ];
+    const out = claimsToCitations(both, SOURCES);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.similarity).toBe(0.52);
+  });
+
+  it('fails CLOSED for a claim carrying no verified score field at all (legacy/untyped object)', () => {
+    const legacy = [
+      { sentenceIndex: 0, sentenceText: 'Legacy.', lexicalScore: 0.9, sourceRefs: [0] },
+    ] as unknown as Claim[];
+    expect(claimsToCitations(legacy, SOURCES)).toEqual([]);
   });
 });
 

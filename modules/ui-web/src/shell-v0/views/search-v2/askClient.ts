@@ -73,26 +73,40 @@ export interface AskSink {
 /** Accumulator for the per-sentence grounding model the two citation events both contribute to. */
 interface ClaimAcc {
   text: string;
-  score: number;
+  verifiedScore: number | null;
+  lexicalScore: number;
   refs: Set<number>;
 }
+
+/** Tempdoc 822 §3d — which event scored this sentence (the handler knows; the payload need not). */
+type ScoreProvenance = 'verified' | 'lexical';
 
 function mergeClaim(
   acc: Map<number, ClaimAcc>,
   sentenceIndex: number,
   sentenceText: string,
   score: number,
+  provenance: ScoreProvenance,
   chunkIndex: number | null,
 ): void {
   const existing = acc.get(sentenceIndex);
   if (existing) {
-    existing.score = Math.max(existing.score, score);
+    if (provenance === 'verified') {
+      existing.verifiedScore = Math.max(existing.verifiedScore ?? 0, score);
+    } else {
+      existing.lexicalScore = Math.max(existing.lexicalScore, score);
+    }
     if (chunkIndex !== null) existing.refs.add(chunkIndex);
     return;
   }
   const refs = new Set<number>();
   if (chunkIndex !== null) refs.add(chunkIndex);
-  acc.set(sentenceIndex, { text: sentenceText, score, refs });
+  acc.set(sentenceIndex, {
+    text: sentenceText,
+    verifiedScore: provenance === 'verified' ? score : null,
+    lexicalScore: provenance === 'lexical' ? score : 0,
+    refs,
+  });
 }
 
 function claimsOf(acc: Map<number, ClaimAcc>): Claim[] {
@@ -100,7 +114,8 @@ function claimsOf(acc: Map<number, ClaimAcc>): Claim[] {
     .map(([sentenceIndex, v]) => ({
       sentenceIndex,
       sentenceText: v.text,
-      score: v.score,
+      verifiedScore: v.verifiedScore,
+      lexicalScore: v.lexicalScore,
       sourceRefs: [...v.refs],
     }))
     .sort((a, b) => a.sentenceIndex - b.sentenceIndex);
@@ -164,6 +179,7 @@ export async function askDocuments(req: AskRequest, sink: AskSink): Promise<void
         p.sentenceIndex ?? 0,
         p.sentenceText,
         best,
+        'lexical',
         typeof chunk === 'number' ? chunk : null,
       );
     },
@@ -182,6 +198,7 @@ export async function askDocuments(req: AskRequest, sink: AskSink): Promise<void
             m.sentenceIndex ?? 0,
             m.sentenceText ?? '',
             typeof m.similarity === 'number' ? m.similarity : 0,
+            'verified',
             typeof m.chunkIndex === 'number' ? m.chunkIndex : null,
           );
         }

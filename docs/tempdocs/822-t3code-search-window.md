@@ -416,6 +416,23 @@ are re-creatable from the log's descriptions.
   out-of-range mark states stay for the FE slices. LIVE VERIFICATION DEFERRED to
   ride the S2/S3 round (one backend restart for all three). Two out-of-scope
   findings filed (budget-stopped citation; truncation-after-emission).
+- 2026-08-13 — **Slice S2 implemented (shared-FE). Tier provenance + the ungrounded
+  palette.** Claim.score split by producer (verifiedScore cross-encoder /
+  lexicalScore word-overlap) across all four accumulators; the gate is one
+  structural line in the sole resolver — Citation.similarity can only be a verified
+  score; cross-scale Math.max dead. Underline wall: 33.5%→16.6% on the realistic
+  fixture (98.5% original), adversarial fixture exceeds honestly (not a cap); the
+  before-measure is itself asserted so the test states what it fixed.
+  .cite-ref.cite-ungrounded landed under crossing-1's default with a gate-driven
+  value deviation (--text-warning; accent-as-text forbids accent fills as text —
+  same warning role, AA-checked; MarkdownBlock leaves that gate's offender list).
+  Three mark colors distinct in BOTH consumers (computed, live). Persisted records
+  keep their marks (claimMatches provenance verified at source — no migration).
+  OWNER-VISIBLE FINDING: the summarize surface's shape declares only
+  citation_delta (no cross-encoder pass) → it now renders ZERO citation marks —
+  honest (word overlap was never grounding evidence) but a visible shipped change;
+  options when wanted: give summarize a cross-encoder pass (backend) or accept
+  markless summaries. 4949 tests (+15) / gates green / recipe green.
 - 2026-08-13 — **Slice F11 implemented + measured. The one-line answer tail.**
   Per the f11 design + orchestrator resolutions: 24.0px single row (was 3 rows/103px),
   verdict·duration resting with elaboration in title+accessible name, bare "Sources"

@@ -178,9 +178,12 @@ describe('818 askClient — the stream', () => {
     expect(done?.promptTokens).toBe(1234);
     // L6 — the counts are the payload's, never counted here.
     expect(done?.grounding).toEqual({ sentencesMatched: 1, sentencesTotal: 2 });
-    // The delta and the authoritative match merge into ONE claim, keeping the higher score.
+    // The delta and the authoritative match merge into ONE claim — but tempdoc 822 §3d keeps the two
+    // scores APART instead of maxing them into one number: the delta's 0.4 is a lexical word-overlap
+    // ratio, the match's 0.77 is a cross-encoder probability, and only the latter may reach a tier.
     expect(done?.claims).toHaveLength(1);
-    expect(done?.claims[0]?.score).toBeCloseTo(0.77);
+    expect(done?.claims[0]?.verifiedScore).toBeCloseTo(0.77);
+    expect(done?.claims[0]?.lexicalScore).toBeCloseTo(0.4);
     expect(done?.claims[0]?.sourceRefs).toEqual([0]);
   });
 

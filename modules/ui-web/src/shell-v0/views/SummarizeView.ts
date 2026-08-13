@@ -358,7 +358,13 @@ export class SummarizeView extends JfElement {
               {
                 sentenceIndex: p.sentenceIndex ?? 0,
                 sentenceText: p.sentenceText,
-                score: bestScore,
+                // Tempdoc 822 §3d — `core.summarize` declares `rag.citation_delta` and NO
+                // `rag.citation_matches` (`SummarizeShape.java:47`), so every claim this surface holds
+                // is scored by the streaming LEXICAL matcher. Under the provenance gate those claims
+                // mint no marks here: word overlap is not grounding evidence, and this tier has no
+                // cross-encoder pass to promote it. Adding one is a backend question, not a render fix.
+                verifiedScore: null,
+                lexicalScore: bestScore,
                 sourceRefs: p.citations.map((c) => c.chunkIndex),
               },
             ];

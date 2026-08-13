@@ -5276,13 +5276,17 @@ export class UnifiedChatView extends JfElement {
       const chunk = typeof m.chunkIndex === 'number' ? m.chunkIndex : -1;
       const existing = bySentence.get(idx);
       if (existing) {
-        existing.score = Math.max(existing.score, sim);
+        existing.verifiedScore = Math.max(existing.verifiedScore ?? 0, sim);
         if (chunk >= 0 && !existing.sourceRefs.includes(chunk)) existing.sourceRefs.push(chunk);
       } else {
         bySentence.set(idx, {
           sentenceIndex: idx,
           sentenceText: text,
-          score: sim,
+          // Tempdoc 822 §3d — the persisted `claimMatches` come from the AUTHORITATIVE post-hoc
+          // `documents.matchCitations` call (`StreamingCitationMatcher.onDone`), never from the
+          // streaming lexical deltas, so a reloaded conversation's scores are verified by provenance.
+          verifiedScore: sim,
+          lexicalScore: 0,
           sourceRefs: chunk >= 0 ? [chunk] : [],
         });
       }
@@ -5410,7 +5414,12 @@ export class UnifiedChatView extends JfElement {
     // bar below the message (renderTurnActionBar), gated by canTurnControl.
     // Tempdoc 577 §2.12 Move 3 — the epistemic frame for the live ThreadMessage path (carries
     // shapeId). The claims' similarity feeds the coverage; the source count is the grounding signal.
-    const claimCites = (m.claims ?? []).map((c) => ({ similarity: c.score }));
+    // Tempdoc 822 §3d — only a cross-encoder-verified claim contributes a similarity to the coverage
+    // read. A lexical-only claim is excluded STRUCTURALLY (it has no score on this scale to give),
+    // so "Grounded · N of M" can no longer be lifted by word overlap.
+    const claimCites = (m.claims ?? []).flatMap((c) =>
+      typeof c.verifiedScore === 'number' ? [{ similarity: c.verifiedScore }] : [],
+    );
     const sourceCount = (m.sources?.length ?? 0) + (m.claims?.length ?? 0);
     // Tempdoc 603 D-4 — document-level sources (agent, no chunk identity) frame as `sourced`, not
     // "Grounded · 0 of N". RAG sources (RetrievalCitation, chunk-native) carry no sentinel → chunk-precise.
@@ -5917,7 +5926,11 @@ export class UnifiedChatView extends JfElement {
               {
                 sentenceIndex: p.sentenceIndex ?? 0,
                 sentenceText: p.sentenceText,
-                score: bestScore,
+                // Tempdoc 822 §3d — this event is the STREAMING LEXICAL matcher (word-overlap
+                // coverage), not the cross-encoder. It lands in `lexicalScore` and leaves
+                // `verifiedScore` null, so it can never reach the tier thresholds.
+                verifiedScore: null,
+                lexicalScore: bestScore,
                 sourceRefs: p.citations.map((c) => c.chunkIndex),
               },
             ];
@@ -5964,11 +5977,18 @@ export class UnifiedChatView extends JfElement {
           // done-time gives authoritative cosine-similarity matches — convert
           // them into claims so grounded spans + inline markers (F-17) render.
           // Preserve any existing claims (from streaming deltas) and merge.
-          const bySentence = new Map<number, { text: string; score: number; refs: Set<number> }>();
+          // Tempdoc 822 §3d — the merge keeps the two producers' scores APART. A delta's word-overlap
+          // ratio and a match's cross-encoder probability are different quantities; the old
+          // `Math.max` across them fed the lexical number into cross-encoder-calibrated thresholds.
+          const bySentence = new Map<
+            number,
+            { text: string; verifiedScore: number | null; lexicalScore: number; refs: Set<number> }
+          >();
           for (const cl of this.claims) {
             bySentence.set(cl.sentenceIndex, {
               text: cl.sentenceText,
-              score: cl.score,
+              verifiedScore: cl.verifiedScore,
+              lexicalScore: cl.lexicalScore,
               refs: new Set(cl.sourceRefs),
             });
           }
@@ -5978,19 +5998,20 @@ export class UnifiedChatView extends JfElement {
             const sim = typeof m.similarity === 'number' ? m.similarity : 0;
             const existing = bySentence.get(idx);
             if (existing) {
-              existing.score = Math.max(existing.score, sim);
+              existing.verifiedScore = Math.max(existing.verifiedScore ?? 0, sim);
               if (typeof m.chunkIndex === 'number') existing.refs.add(m.chunkIndex);
             } else {
               const refs = new Set<number>();
               if (typeof m.chunkIndex === 'number') refs.add(m.chunkIndex);
-              bySentence.set(idx, { text, score: sim, refs });
+              bySentence.set(idx, { text, verifiedScore: sim, lexicalScore: 0, refs });
             }
           }
           this.claims = Array.from(bySentence.entries())
             .map(([sentenceIndex, v]) => ({
               sentenceIndex,
               sentenceText: v.text,
-              score: v.score,
+              verifiedScore: v.verifiedScore,
+              lexicalScore: v.lexicalScore,
               sourceRefs: Array.from(v.refs),
             }))
             .sort((a, b) => a.sentenceIndex - b.sentenceIndex);

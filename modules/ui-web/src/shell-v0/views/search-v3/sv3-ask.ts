@@ -200,26 +200,45 @@ export interface Sv3AskSink {
  */
 interface ClaimAcc {
   text: string;
-  score: number;
+  verifiedScore: number | null;
+  lexicalScore: number;
   refs: Set<number>;
 }
+
+/**
+ * Tempdoc 822 §3d — which producer scored this sentence. The two citation events are already
+ * separate handlers, so the provenance needs no wire field: it is the handler that knows.
+ */
+type ScoreProvenance = 'verified' | 'lexical';
 
 function mergeClaim(
   acc: Map<number, ClaimAcc>,
   sentenceIndex: number,
   sentenceText: string,
   score: number,
+  provenance: ScoreProvenance,
   chunkIndex: number | null,
 ): void {
   const existing = acc.get(sentenceIndex);
   if (existing) {
-    existing.score = Math.max(existing.score, score);
+    // The two scores are maxed WITHIN a scale, never across one (822 §3d: no monotone mapping
+    // between a coverage ratio and a relevance probability exists to max over).
+    if (provenance === 'verified') {
+      existing.verifiedScore = Math.max(existing.verifiedScore ?? 0, score);
+    } else {
+      existing.lexicalScore = Math.max(existing.lexicalScore, score);
+    }
     if (chunkIndex !== null) existing.refs.add(chunkIndex);
     return;
   }
   const refs = new Set<number>();
   if (chunkIndex !== null) refs.add(chunkIndex);
-  acc.set(sentenceIndex, { text: sentenceText, score, refs });
+  acc.set(sentenceIndex, {
+    text: sentenceText,
+    verifiedScore: provenance === 'verified' ? score : null,
+    lexicalScore: provenance === 'lexical' ? score : 0,
+    refs,
+  });
 }
 
 function claimsOf(acc: Map<number, ClaimAcc>): Claim[] {
@@ -227,7 +246,8 @@ function claimsOf(acc: Map<number, ClaimAcc>): Claim[] {
     .map(([sentenceIndex, v]) => ({
       sentenceIndex,
       sentenceText: v.text,
-      score: v.score,
+      verifiedScore: v.verifiedScore,
+      lexicalScore: v.lexicalScore,
       sourceRefs: [...v.refs],
     }))
     .sort((a, b) => a.sentenceIndex - b.sentenceIndex);
@@ -308,6 +328,7 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
         p.sentenceIndex ?? 0,
         p.sentenceText,
         best,
+        'lexical',
         typeof chunk === 'number' ? chunk : null,
       );
       publish();
@@ -322,6 +343,7 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
           m.sentenceIndex ?? 0,
           m.sentenceText ?? '',
           typeof m.similarity === 'number' ? m.similarity : 0,
+          'verified',
           typeof m.chunkIndex === 'number' ? m.chunkIndex : null,
         );
       }

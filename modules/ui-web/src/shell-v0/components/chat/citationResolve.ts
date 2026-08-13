@@ -9,6 +9,13 @@
  * lookup, so RAG marks gain the deep-link + cross-surface selection key the flat-text block lacked.
  * Ungrounded sentences (`sourceRefs` empty) get no mark — neutral prose (the §15.B medium-appropriate
  * take on the flat-text dimming; the §15.A cutoff already filtered to grounded sentences).
+ *
+ * Tempdoc 822 §3d — the PROVENANCE GATE lives here, because this is the one place a `Claim` becomes a
+ * `Citation` and `Citation.similarity` is what every downstream tier read (`groundingClass` for the
+ * mark + the sentence underline, `groundingCoverage` for the grounded/weak counts) consumes. A claim
+ * the cross-encoder never verified yields NO citation, so a lexical word-overlap ratio has no path to
+ * a threshold calibrated on the cross-encoder cutoff. The gate is structural, not a check: there is
+ * no field on `Citation` a lexical score could be written into.
  */
 import type { Claim, RetrievalCitation } from './citationTypes.js';
 import type { Citation } from './MarkdownBlock.js';
@@ -26,12 +33,17 @@ export function claimsToCitations(
   const out: Citation[] = [];
   for (const cl of claims) {
     if (cl.sourceRefs.length === 0) continue;
+    // 822 §3d — the gate. Only a cross-encoder-verified claim can mint a mark; a lexical-only claim
+    // is dropped whole rather than being handed over with a score on the wrong scale. The check is
+    // `typeof number`, not `!== null`: an untyped/legacy claim object carries no verified score at
+    // all, and a missing score must fail closed (no mark) exactly like an explicit null.
+    if (typeof cl.verifiedScore !== 'number') continue;
     const refIdx = cl.sourceRefs[0] ?? 0;
     const s = sources[refIdx] ?? sources[0];
     if (!s) continue;
     out.push({
       sentenceText: cl.sentenceText,
-      similarity: cl.score,
+      similarity: cl.verifiedScore,
       sourceRefs: cl.sourceRefs,
       label: refIdx + 1,
       detail: {
