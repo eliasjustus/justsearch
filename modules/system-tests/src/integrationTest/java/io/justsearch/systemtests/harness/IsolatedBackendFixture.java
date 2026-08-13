@@ -63,7 +63,14 @@ import java.util.stream.Stream;
 public final class IsolatedBackendFixture {
 
   private static final long PORT_FILE_TIMEOUT_MS = 60_000L;
-  private static final long HEALTH_TIMEOUT_MS = 30_000L;
+  // Tempdoc 821 P4. Measured port-file->health delta on windows-latest hosted runners
+  // (48 samples across all 8 integration-tier runs of 2026-08-13): min 2.45s, p50 2.74s,
+  // max 7.02s. All five @BeforeAll flakes that day stalled in THIS phase — each had passed
+  // port-file and never reached health-ok when the JUnit cap killed it at ~t0+30s, an
+  // excursion well past the observed max and into the old 30s budget. 90s (matching
+  // WORKER_READY) keeps ~13x headroom over the observed max and absorbs that excursion;
+  // a genuinely dead backend still fails fast via the process.isAlive() check below.
+  private static final long HEALTH_TIMEOUT_MS = 90_000L;
   private static final long WORKER_READY_TIMEOUT_MS = 90_000L;
   private static final long POLL_INTERVAL_MS = 200L;
   private static final long STOP_GRACE_MS = 5_000L;
