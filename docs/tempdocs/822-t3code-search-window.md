@@ -429,6 +429,24 @@ are re-creatable from the log's descriptions.
   out-of-range mark states stay for the FE slices. LIVE VERIFICATION DEFERRED to
   ride the S2/S3 round (one backend restart for all three). Two out-of-scope
   findings filed (budget-stopped citation; truncation-after-emission).
+- 2026-08-14 — **S6 CLOSED: gate unmet after three campaigns — grammar stays
+  default-OFF, shipped ask path byte-identical to pre-S6.** Cycle 0: 2/4 (the
+  fragment's own preamble suppressed its headings; premise partially falsified —
+  baseline already backticks). Cycle 1 (reworded, default flipped OFF per the
+  provisional rule): 2/4 with better internals (headings 2→7/12, medians flat);
+  escalated per the design rule. Cycle 2 (owner-ratified recalibration: qualifying
+  denominators, backticks as non-regression, collapse tightened): heading half
+  PASSED 8/10 — the amendment repaired what it named — but the run exposed the
+  substantive cost: anti-inflation compresses sentence counts (22→7, 17→5, 16→2),
+  the per-sentence matcher then matches nothing, arm B produced 7 zero-cited runs
+  vs baseline's 1, frames shifted into "sourced" — a REAL grounding regression,
+  unstable run-to-run. Verdict rests on substance, not instrumentation. The
+  grammar remains registered, opt-in via answerShapeGrammar:true, with all three
+  campaigns' artifacts preserved (ab822/, ab822-c1/, ab822-c2/). Revisiting is
+  model-upgrade or fragment-redesign territory — recorded, not scheduled.
+  Side-yield across all 144 dispatches: M9=0 — the S1/S3 numbering contract never
+  produced a surviving out-of-range bracket. THE REMEDIATION SERIES IS COMPLETE:
+  S1-S5 shipped their fixes; S6 shipped its evidence.
 - 2026-08-13 — **Slice S4 implemented + two-sided-proven. The geometry tokens.**
   15 --md-* tokens on MarkdownBlock :host with byte-identical defaults (frozen
   against the design's recorded literals — a typo cannot self-validate); sv3

@@ -201,6 +201,90 @@ metrics, appended to this tempdoc's log. `interrogate-results` applies: if arm B
 win came from the fragment and not from a warm cache, a re-index between arms, or a different
 corpus — run the arms **interleaved** (A,B,A,B per prompt), not blocked, to remove drift.
 
+#### AMENDED post-cycle-1, owner-ratified (2026-08-13)
+
+Two 48-run campaigns (cycle 0 = the §1.2 text; cycle 1 = the reordered text) showed that criteria 1
+and 3 as originally written measure partly the wrong thing. The owner ratified the recalibration
+below; it replaces the corresponding clauses above and **decides S6 on one final run**. Criteria 2
+and 4 are unchanged. Measured rationale, then the amended text:
+
+- **C1 heading half — the denominator was wrong.** Cycle 1 moved arm B from 2/12 to 7/12 headed
+  multi-part runs against an arm-A baseline of **0/12** — an unambiguous effect that still missed a
+  bar of 8. Four of the five misses were prompts `mp2` and `mp5`, which produced **zero headings in
+  both arms across both repeats**: the questions were labelled multi-part but the corpus answers
+  them in one part. Heading those would violate C2, which the design itself calls a *failure*, not
+  a partial success. So the metric must not count twins where no arm ever saw a multi-part answer.
+- **C1 backtick half — the baseline is saturated.** §1.1 assumed a baseline emitting no backticks;
+  it emits them in 18 of 24 runs. Across 24 twins cycle 1 scored **9 wins / 6 ties / 9 losses** —
+  symmetric noise — and two wording cycles moved the multi-part half only 4→6 of 12. "Strictly
+  greater on 9 of 12" is unreachable by wording on this model, and it encodes the wrong intent: the
+  guidance's job here is to *not break* an already-good behaviour.
+- **C3 collapse — knife-edge.** All three cycle-1 collapses were `1 → 0` claims, and two of the
+  three arm-B answers were *longer* than their twins (mp5-r2: 452→808 chars, 5 sentences, 0
+  matches). That is matcher variance at a twin value of one, not a substance regression — while the
+  medians, the criterion's real substance signal, were exactly flat (0.0 % / 0.0 %).
+
+**Amended acceptance (C1 and C3 only; all four must still hold):**
+
+1. **Structure gained where it belongs.** *Heading half:* the denominator is the set of
+   **qualifying** multi-part twins. A prompt **qualifies** iff at least one of its four runs (either
+   arm, either repeat) produced a genuinely multi-part answer, evidenced by M1 ≥ 1; a prompt that
+   produced no heading anywhere is disqualified, not failed. Arm B's M1 ≥ 1 in **≥ 2/3 of qualifying
+   twins**, with a floor of **6 qualifying twins** (3 prompts × 2 repeats) — below that the corpus
+   has not been exercised enough to judge, and the run is repeated with replacement prompts
+   pre-verified multi-part by a 2-probe check. *(The qualifier is deliberately lenient and can only
+   remove a twin no arm ever headed; it cannot manufacture a pass, because arm A's headings qualify
+   a prompt just as arm B's do.)* *Backtick half:* re-derived as **non-regression** — arm B emits
+   fewer backtick spans than its twin in **at most 2 of 24** twins. Ties and wins both count; the
+   grammar must not degrade a baseline that already backticks identifiers.
+2. *(unchanged)*
+3. **Substance does not regress.** Arm B's median M6 and M7 stay within ±15 % of arm A's —
+   **unchanged, and still the criterion's primary signal**. A **collapse** is now a within-twin drop
+   of **≥ 2 claims AND ≥ 50 % relative**; a `1 → 0` twin is no longer a collapse. No collapse may
+   occur.
+4. *(unchanged)*
+
+**Cycle budget closed.** This amendment buys one final run, judged on a **fresh** 48-dispatch
+schedule (re-scoring an earlier campaign under new criteria would be marking one's own homework).
+Pass ⇒ the grammar's provisional clause is satisfied and its default flips ON. Fail ⇒ S6 closes with
+the grammar default-OFF and this evidence recorded; no further wording cycles.
+
+#### OUTCOME of the deciding run (fresh 48 dispatches, amended criteria) — **FAIL, S6 closes default-OFF**
+
+| # | Amended criterion | Measured | Verdict |
+|---|---|---|---|
+| 1 | headings in ≥ 2/3 of qualifying twins (floor 6); backtick spans regress in ≤ 2/24 | **8/10** qualifying headed (needed 7) ✔; **11/24** backtick regressions ✘ | FAIL |
+| 2 | single-fact: headings ≤ 1/12; median length growth ≤ 25 % | 1/12; **−46.0 %** | PASS |
+| 3 | median M6/M7 within ±15 %; no collapse (≥ 2 claims and ≥ 50 %) | claims **−66.7 %**, coverage **−15.6 %**, **8** collapses | FAIL |
+| 4 | frame histogram shift ≤ 2/24; no new `ungrounded`; M9 not up | shift **6**; 0 new ungrounded; M9 0→0 | FAIL |
+
+Qualifying prompts: mp1, mp3, mp4, mp5, mp6 (only mp2 disqualified — the amended denominator worked
+as intended, and the heading half **passed** on it). Frames — A: 5 grounded / 18 partially-grounded /
+1 sourced; B: 4 / 13 / **7** sourced.
+
+**Why it failed, mechanically** (not noise — arm A was stable across both campaigns: median 816→759
+chars, 2→3 claims; only arm B moved): the fragment's anti-inflation clauses compress the answer's
+**sentence count** — 22→7, 17→5, 16→2, 13→2 in the collapsing twins. The citation matcher runs
+**per sentence**, so M6 falls by construction whenever prose shortens, and a sentence-poor answer
+matches nothing at all: arm B produced 7 zero-cited runs to arm A's 1, which is what drove C4's
+histogram shift from `partially-grounded` into `sourced`. That last part is a **real user-visible
+honesty regression**, not a metrology artifact: the same answer frames as "sourced, not per-sentence
+verified" more often. Two independent grounds to not ship, so the verdict does not rest on the
+metric critique below.
+
+**Recorded for whoever revisits this** — M6 ("verified claims") is substantially a *length* proxy:
+it counts matched sentences, so any guidance that shortens prose lowers it whether or not
+information was lost. Coverage (M7 = cited/total) degraded far less (0.50→0.46) because both terms
+shrink together. A future attempt at answer-shape guidance on this model should either pick a
+length-invariant substance metric or pair de-inflation with a matcher that scores clauses rather
+than sentences. Effect size also varied run-to-run on an identical jar (cycle 1: medians flat, 3
+knife-edge collapses; deciding run: −66.7 % claims, 8 collapses), so the fragment's substance cost
+is not merely small-but-stable — it is unstable, which is its own argument against shipping.
+
+**Closure.** `AnswerShapeGrammar` stays registered on `core.rag-ask` and **default-OFF**
+(opt-in via the request flag); the shipped ask path is byte-identical to pre-S6. Campaign artifacts:
+three 48-run capture sets (cycle 0, cycle 1, deciding run) with per-run M1-M9.
+
 ### 1.6 Token budget
 
 `DEFAULT_MAX_TOKENS = 1024` (`ConversationEngine.java:65`) is a per-request-overridable fallback

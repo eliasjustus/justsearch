@@ -408,11 +408,26 @@ async function cmdScore(opts) {
     rows.find((r) => r.arm === arm && r.promptId === promptId && r.repeat === repeat);
   const pick = (arm, kind) => rows.filter((r) => r.arm === arm && (!kind || r.kind === kind));
 
-  // 1 — structure gained where it belongs (multi-part).
-  const bMulti = pick('B', 'multi-part');
-  const headedB = bMulti.filter((r) => r.m1Headings >= 1).length;
-  const backtickWins = bMulti.filter((r) => r.m2InlineCode > twin('A', r.promptId, r.repeat).m2InlineCode).length;
-  const c1 = headedB >= 8 && backtickWins >= 9;
+  // 1 — structure gained where it belongs (AMENDED post-cycle-1, owner-ratified; §1.5).
+  // Heading half: only QUALIFYING multi-part twins count. A prompt qualifies iff at least one of
+  // its four runs (either arm, either repeat) headed at all — a prompt the corpus answers in one
+  // part is disqualified, not failed. The qualifier is lenient by construction: arm A's headings
+  // qualify a prompt exactly as arm B's do, so it can never manufacture a pass.
+  const multiPromptIds = [...new Set(pick('B', 'multi-part').map((r) => r.promptId))];
+  const qualifyingPrompts = multiPromptIds.filter((id) =>
+    rows.some((r) => r.promptId === id && r.m1Headings >= 1),
+  );
+  const disqualifiedPrompts = multiPromptIds.filter((id) => !qualifyingPrompts.includes(id));
+  const qualifyingTwins = pick('B', 'multi-part').filter((r) => qualifyingPrompts.includes(r.promptId));
+  const headedB = qualifyingTwins.filter((r) => r.m1Headings >= 1).length;
+  const enoughQualifying = qualifyingTwins.length >= 6;
+  const headingHalf = enoughQualifying && headedB >= Math.ceil((2 / 3) * qualifyingTwins.length);
+  // Backtick half: NON-REGRESSION against a saturated baseline — ties and wins both pass.
+  const backtickRegressions = pick('B').filter(
+    (r) => r.m2InlineCode < twin('A', r.promptId, r.repeat).m2InlineCode,
+  );
+  const backtickHalf = backtickRegressions.length <= 2;
+  const c1 = headingHalf && backtickHalf;
 
   // 2 — no fabricated structure (single-fact).
   const bSingle = pick('B', 'single-fact');
@@ -424,9 +439,13 @@ async function cmdScore(opts) {
   // 3 — substance does not regress.
   const claimsDelta = pctDelta(median(pick('B').map((r) => r.m6VerifiedClaims)), median(pick('A').map((r) => r.m6VerifiedClaims)));
   const coverageDelta = pctDelta(median(pick('B').map((r) => r.m7Coverage)), median(pick('A').map((r) => r.m7Coverage)));
-  const claimCollapses = pick('B').filter(
-    (r) => r.m6VerifiedClaims === 0 && twin('A', r.promptId, r.repeat).m6VerifiedClaims > 0,
-  );
+  // AMENDED: a collapse is a within-twin drop of >= 2 claims AND >= 50 % relative. A 1 -> 0 twin is
+  // matcher variance at a knife edge, not a substance regression; the medians above are the signal.
+  const claimCollapses = pick('B').filter((r) => {
+    const a = twin('A', r.promptId, r.repeat).m6VerifiedClaims;
+    const drop = a - r.m6VerifiedClaims;
+    return a > 0 && drop >= 2 && drop / a >= 0.5;
+  });
   const c3 = Math.abs(claimsDelta) <= 0.15 && Math.abs(coverageDelta) <= 0.15 && claimCollapses.length === 0;
 
   // 4 — frame verdicts unchanged distributionally.
@@ -449,7 +468,24 @@ async function cmdScore(opts) {
     generatedAt: new Date().toISOString(),
     runs: rows,
     acceptance: {
-      c1_structureWhereItBelongs: { pass: c1, headedRunsOf12: headedB, backtickWinsOf12: backtickWins },
+      c1_structureWhereItBelongs: {
+        pass: c1,
+        headingHalf: {
+          pass: headingHalf,
+          qualifyingPrompts,
+          disqualifiedPrompts,
+          qualifyingTwins: qualifyingTwins.length,
+          headed: headedB,
+          required: enoughQualifying ? Math.ceil((2 / 3) * qualifyingTwins.length) : null,
+          floorMet: enoughQualifying,
+        },
+        backtickHalf: {
+          pass: backtickHalf,
+          regressionsOf24: backtickRegressions.length,
+          allowed: 2,
+          regressed: backtickRegressions.map((r) => captureName(r)),
+        },
+      },
       c2_noFabricatedStructure: { pass: c2, headedSingleFactOf12: headedSingle, medianLengthGrowth: lenGrowth },
       c3_substanceHolds: {
         pass: c3,
@@ -490,11 +526,13 @@ function renderReport(result) {
     '',
     '| # | Acceptance criterion | Measured | Verdict |',
     '|---|---|---|---|',
-    `| 1 | multi-part: arm B headings >= 1 in >= 8/12, backticks > twin in >= 9/12 | ${a.c1_structureWhereItBelongs.headedRunsOf12}/12 headed, ${a.c1_structureWhereItBelongs.backtickWinsOf12}/12 backtick wins | ${mark(a.c1_structureWhereItBelongs.pass)} |`,
+    `| 1 | AMENDED — headings >= 1 in >= 2/3 of qualifying twins (floor 6); backtick spans regress in <= 2/24 | ${a.c1_structureWhereItBelongs.headingHalf.headed}/${a.c1_structureWhereItBelongs.headingHalf.qualifyingTwins} qualifying headed (need ${a.c1_structureWhereItBelongs.headingHalf.required ?? 'n/a'}), ${a.c1_structureWhereItBelongs.backtickHalf.regressionsOf24}/24 backtick regressions | ${mark(a.c1_structureWhereItBelongs.pass)} |`,
     `| 2 | single-fact: arm B headings >= 1 in <= 1/12, median length growth <= 25 % | ${a.c2_noFabricatedStructure.headedSingleFactOf12}/12 headed, ${pct(a.c2_noFabricatedStructure.medianLengthGrowth)} | ${mark(a.c2_noFabricatedStructure.pass)} |`,
-    `| 3 | substance: median M6/M7 within +-15 %, no twin claim collapse | claims ${pct(a.c3_substanceHolds.medianClaimsDelta)}, coverage ${pct(a.c3_substanceHolds.medianCoverageDelta)}, ${a.c3_substanceHolds.claimCollapses.length} collapses | ${mark(a.c3_substanceHolds.pass)} |`,
+    `| 3 | substance: median M6/M7 within +-15 %, no collapse (AMENDED: drop >= 2 claims AND >= 50 %) | claims ${pct(a.c3_substanceHolds.medianClaimsDelta)}, coverage ${pct(a.c3_substanceHolds.medianCoverageDelta)}, ${a.c3_substanceHolds.claimCollapses.length} collapses | ${mark(a.c3_substanceHolds.pass)} |`,
     `| 4 | frames: worst bucket shift <= 2/24, no new ungrounded, M9 not up | shift ${a.c4_framesUnchanged.worstBucketShift}, ${a.c4_framesUnchanged.newlyUngrounded.length} new ungrounded, M9 ${a.c4_framesUnchanged.rawBracketsA} -> ${a.c4_framesUnchanged.rawBracketsB} | ${mark(a.c4_framesUnchanged.pass)} |`,
     '',
+    `Qualifying multi-part prompts: ${a.c1_structureWhereItBelongs.headingHalf.qualifyingPrompts.join(', ') || 'none'}`
+      + ` — disqualified (no heading in any arm or repeat): ${a.c1_structureWhereItBelongs.headingHalf.disqualifiedPrompts.join(', ') || 'none'}`,
     `Frame histogram — A: ${JSON.stringify(a.c4_framesUnchanged.histogramA)}; B: ${JSON.stringify(a.c4_framesUnchanged.histogramB)}`,
     `Token wall (§1.6): ${result.tokenWall.armBTruncatedMidStructure}/24 arm-B runs truncated mid-structure`
       + `${result.tokenWall.raiseBudgetEvidence ? ' — this IS the evidence to raise DEFAULT_MAX_TOKENS' : ''}.`,
