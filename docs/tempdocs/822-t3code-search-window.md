@@ -156,7 +156,18 @@ and citation rendering join the copyable backlog. Do not re-propose search work.
 - BACKEND WORK NOT NEEDED NOW: controller server-reattach (true reload survival),
   status-vs-serving mismatch fix — observations stand, no slices.
 
-**Phase F — T3 Code's functionality on the shell (F-series slices):**
+**SCOPE GRANT (owner, 2026-08-13, post-rendering-gap report):** the four-cause
+remediation ("why the answers look so different") is granted design-then-implement,
+INCLUDING work outside search-v3/: the ask-tier prompt shape string (RAGQAStyle),
+context-section numbering (ContextBudgeter), the citation-chain correctness defects
+(index conflation + sources[0] mistarget in citationResolve, missing cite-ungrounded
+rule, lexical-vs-cross-encoder score-scale mismatch), and the MarkdownBlock geometry
+exposure. CONTAINMENT RULE for shipped-shared edits: the shipped window's visual
+behavior must not change except where a named defect is being fixed — geometry
+exposure uses tokens-with-identical-defaults so shipped surfaces render byte-alike
+until a consumer overrides. Implementation queues serially behind the in-flight
+design/implementation agents (owner: "resume the agents with implementation once the
+previous agent is done").
 - F1. The conversational core: composer submit routes to the shared ask tier
   (grounded, cited, streamed — the seams search-v2 proved: `buildRequestBody` +
   `consumeShapeStream` shared authorities; mine v2's askClient PATTERN, do not import
