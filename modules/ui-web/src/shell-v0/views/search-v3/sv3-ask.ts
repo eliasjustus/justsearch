@@ -19,6 +19,12 @@
  *  - the GENERATED `CoreRagAskHandlers` interface — a new shape event is a compile-time fact.
  *  - `claimsToCitations` (Phase F4) — the ONE claim→mark resolver, so this window's inline `[n]`
  *    marks are the same resolution the shipped surfaces render.
+ *  - `friendlyStreamError` (Phase F7) — the ONE stream-error vocabulary.
+ *
+ * Phase F7 also opened the two channels this shape declares and F1 left unread: `reasoning_chunk`
+ * (the model's thinking) and `rag.rewrite` (the standalone question retrieval ran on). Both are
+ * handed to the caller rather than interpreted here — the reasoning payload goes to the shared
+ * `ReasoningController` verbatim.
  *
  * Registered in `governance/execution-surfaces.v1.json` (`sv3-ask-client`) as an opaque carrier of
  * the `RetrievalCitation` evidence record: it accumulates the backend's citation payloads and hands
@@ -37,6 +43,9 @@ import {
 } from '../../../api/streams.js';
 import type { CoreRagAskHandlers } from '../../../api/generated/shape-handlers/core-rag-ask.js';
 import { buildRequestBody } from '../unifiedChatRequest.js';
+// The ONE stream-error vocabulary (slice 497; inventory E9). A technical code becomes the same
+// sentence here as it does in the shipped window; an abort never reaches it (see the catch below).
+import { friendlyStreamError } from '../../utils/streamError.js';
 import type {
   CitationMatch,
   Claim,
@@ -71,17 +80,25 @@ export interface Sv3AskSink {
    * text finishes, so a halted turn keeps the sources that really arrived.
    */
   onEvidence(evidence: Sv3TurnEvidence): void;
+  /**
+   * The model's own thinking, chunk by chunk (`reasoning_chunk`, a declared event of this shape —
+   * `api/generated/shape-handlers/core-rag-ask.ts`). Handed over as the RAW payload because the
+   * SHARED `ReasoningController` is the one thing that parses it, accumulates it and times it
+   * (inventory C9); a second parse here would be a second reasoning model.
+   */
+  onReasoning(payload: unknown): void;
+  /**
+   * A follow-up was decontextualized before retrieval ran (`rag.rewrite`; tempdoc 603 C2, inventory
+   * C8). What is handed over is what retrieval ACTUALLY searched for, which is the whole point of
+   * showing it back.
+   */
+  onRewrite(standalone: string): void;
   onDone(): void;
   /** The session lock refused this send (HTTP 423) — the ONLY 423 consumer in this window. */
   onRefused(): void;
   /** The reader pressed Stop. Whatever streamed so far is kept; the turn is halted, not failed. */
   onHalted(): void;
   onFailed(message: string): void;
-}
-
-function messageOf(err: unknown): string {
-  if (err instanceof Error && err.message) return err.message;
-  return 'The answer could not be produced.';
 }
 
 /**
@@ -155,6 +172,14 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
     });
 
   const handlers: CoreRagAskHandlers = {
+    onReasoningChunk(payload: unknown) {
+      sink.onReasoning(payload);
+    },
+    onRagRewrite(payload: unknown) {
+      const p = payload as { standalone?: unknown } | null;
+      if (typeof p?.standalone !== 'string') return;
+      sink.onRewrite(p.standalone);
+    },
     onChunk(payload: unknown) {
       const p = payload as { text?: unknown } | string | null;
       const delta = typeof p === 'string' ? p : typeof p?.text === 'string' ? p.text : '';
@@ -232,7 +257,10 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
       sink.onRefused();
       return;
     }
-    sink.onFailed(messageOf(err));
+    // The shared mapping, reached only AFTER the abort and the refusal have been ruled out above —
+    // which is exactly the shipped window's ordering (`views/UnifiedChatView.ts:6019-6024`) and the
+    // reason a reader's own Stop is never worded as a failure (inventory E9).
+    sink.onFailed(friendlyStreamError(err));
     return;
   }
 

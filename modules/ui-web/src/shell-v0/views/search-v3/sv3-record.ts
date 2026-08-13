@@ -163,6 +163,14 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       // the same paragraph. Only a turn with real activity carries the interleaved sequence.
       activity: agent ? turn.activity : [],
       askedAt: turn.askedAt,
+      // The record carries none of the four (tempdoc 822 Phase F7): no rewrite note, no thinking
+      // blocks, and no receipt. They are seeded EMPTY rather than guessed, and
+      // {@link ../sv3-sessions.applySv3Record} keeps whatever the live turn observed — so a
+      // cold-loaded turn honestly shows no frame line instead of one built from invented numbers.
+      standaloneQuestion: '',
+      reasoning: [],
+      durationMs: null,
+      modelLabel: null,
     } satisfies Sv3Turn;
   });
 }

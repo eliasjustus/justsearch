@@ -730,6 +730,12 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
     toolCalls: 0,
     activity: [],
     askedAt: T0,
+    // The record carries none of these (Phase F7): `applySv3Record` keeps whatever the live turn
+    // observed, so a record turn arrives empty of them exactly as `sv3-record.ts` mints it.
+    standaloneQuestion: '',
+    reasoning: [],
+    durationMs: null,
+    modelLabel: null,
     ...over,
   });
 

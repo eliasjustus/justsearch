@@ -80,6 +80,16 @@ export type Sv3TurnStatus = 'streaming' | 'complete' | 'halted' | 'refused' | 'f
  */
 export type Sv3TurnKind = 'ask' | 'agent';
 
+/**
+ * One block of the model's thinking, as the SHARED `ReasoningController` finalized it (tempdoc 822
+ * Phase F7; inventory C9). Structural rather than the controller's own exported interface, so this
+ * module stays free of the controller — the shape is `controllers/ReasoningController.ts:2-5`.
+ */
+export interface Sv3TurnReasoning {
+  readonly text: string;
+  readonly durationMs: number;
+}
+
 /** One exchange: what was asked, and what came back. */
 export interface Sv3Turn {
   readonly id: string;
@@ -111,6 +121,32 @@ export interface Sv3Turn {
    */
   readonly activity: readonly Sv3RunFeedItem[];
   readonly askedAt: number;
+  /**
+   * The decontextualized standalone question retrieval actually ran on (tempdoc 603 C2; inventory
+   * C8), or `''` when the backend did not rewrite this one. Pinned onto the turn rather than held for
+   * the live stream, exactly as the shipped window pins it (`views/UnifiedChatView.ts:5849`): a
+   * transparency note that vanished when the stream ended would only ever be seen by someone
+   * watching.
+   */
+  readonly standaloneQuestion: string;
+  /**
+   * The model's thinking for this turn, finalized (inventory C9). Empty when the shape's
+   * `reasoning_chunk` channel said nothing — which is most turns, and is not a state to announce.
+   */
+  readonly reasoning: readonly Sv3TurnReasoning[];
+  /**
+   * How long the answer took, MEASURED by this window from the turn's own `askedAt` to its terminal
+   * (inventory C1). `null` until it settles. Measured rather than reported: `core.rag-ask`'s `done`
+   * payload carries `promptTokens`/`contextBreakdown` and no duration, and the shipped window derives
+   * it the same way (from the activity indicator's `startedAtMs`, `views/UnifiedChatView.ts:5839`).
+   */
+  readonly durationMs: number | null;
+  /**
+   * Which model produced the answer, stamped AT THE TERMINAL. The shipped window reads the label at
+   * render time instead (`views/UnifiedChatView.ts:5434`), which re-labels an old answer with
+   * whatever is loaded now; recording it once is the same fact without the drift.
+   */
+  readonly modelLabel: string | null;
 }
 
 /** One conversation in this window: what it was opened with, and every turn it has taken. */
@@ -141,6 +177,13 @@ export interface Sv3Session {
    * row's single-line ellipsis handles length).
    */
   readonly title: string;
+  /**
+   * The reader named this conversation themselves (tempdoc 822 Phase F7; inventory A11). It is the
+   * PRECEDENCE flag auto-titling has to lose to: a model-generated name is a convenience, and one
+   * that could overwrite a name the reader chose would be the window disagreeing with them about
+   * what their own conversation is called.
+   */
+  readonly renamed: boolean;
   /** Oldest FIRST — the transcript's render order. */
   readonly turns: readonly Sv3Turn[];
   readonly createdAt: number;
@@ -189,6 +232,10 @@ const openTurn = (
   toolCalls: 0,
   activity: [],
   askedAt: now,
+  standaloneQuestion: '',
+  reasoning: [],
+  durationMs: null,
+  modelLabel: null,
 });
 
 /**
@@ -210,6 +257,7 @@ function openSession(
   return {
     id,
     title,
+    renamed: false,
     turns: [openTurn(id, 0, title, now, kind)],
     createdAt: now,
     updatedAt: now,
@@ -311,6 +359,28 @@ export const setTurnEvidence = (
 ): Sv3SessionList => mapTurn(list, ref, (turn) => ({ ...turn, evidence }));
 
 /**
+ * The decontextualized question retrieval really ran on (tempdoc 603 C2; inventory C8). An empty
+ * standalone is DROPPED rather than stored: "interpreted as: (nothing)" would be a transparency note
+ * that hides what it claims to show.
+ */
+export const setTurnRewrite = (
+  list: Sv3SessionList,
+  ref: Sv3TurnRef,
+  standaloneQuestion: string,
+): Sv3SessionList =>
+  standaloneQuestion.trim() === ''
+    ? list
+    : mapTurn(list, ref, (turn) => ({ ...turn, standaloneQuestion }));
+
+/** The finalized thinking blocks, written as ONE snapshot at the terminal (inventory C9). */
+export const setTurnReasoning = (
+  list: Sv3SessionList,
+  ref: Sv3TurnRef,
+  reasoning: readonly Sv3TurnReasoning[],
+): Sv3SessionList =>
+  reasoning.length === 0 ? list : mapTurn(list, ref, (turn) => ({ ...turn, reasoning }));
+
+/**
  * How many sources the answer stood on, DERIVED from the one evidence record — `null` when the
  * backend never reported any, which is not "0 sources". Derived rather than stored so a count and
  * the panel beside it cannot describe different sets (tempdoc 822 Phase F4).
@@ -361,6 +431,12 @@ function settleWith(
 /**
  * The turn reaches its ONE terminal. A turn that already settled stays settled: the stream reports
  * exactly one terminal, and a second write could only be a bug re-wording the first.
+ *
+ * The RECEIPT is stamped here and only here (tempdoc 822 Phase F7; inventory C1): the duration is
+ * measured from the turn's own `askedAt` to this terminal, and `modelLabel` is whatever produced the
+ * answer at the moment it ended. Both are inputs to the frame line and neither is re-derived at
+ * render — a receipt recomputed while the transcript is read would drift with the clock and with
+ * whichever model happens to be loaded later.
  */
 export const settleTurn = (
   list: Sv3SessionList,
@@ -368,7 +444,15 @@ export const settleTurn = (
   status: Exclude<Sv3TurnStatus, 'streaming'>,
   now: number,
   detail = '',
-): Sv3SessionList => settleWith(list, ref, now, status, (turn) => ({ ...turn, status, detail }));
+  modelLabel: string | null = null,
+): Sv3SessionList =>
+  settleWith(list, ref, now, status, (turn) => ({
+    ...turn,
+    status,
+    detail,
+    durationMs: Math.max(0, now - turn.askedAt),
+    modelLabel,
+  }));
 
 /**
  * The agent run's terminal (tempdoc 822 Phase F2): the turn settles AND becomes its own receipt in
@@ -495,6 +579,10 @@ export function mergeStoreConversations(
     .map<Sv3Session>((c) => ({
       id: c.id,
       title: titleFor(c, ''),
+      // Whether the store's title came from a rename or from auto-titling is not on the wire, and
+      // this window only auto-titles conversations IT opened — so a merged-in row starts unflagged
+      // rather than claiming a provenance the store cannot report.
+      renamed: false,
       turns: [],
       createdAt: c.createdAt,
       updatedAt: c.lastActiveAt,
@@ -564,6 +652,15 @@ export function applySv3Record(
       status: prior.status === 'halted' ? 'halted' : recorded.status,
       detail: prior.status === 'halted' ? prior.detail : recorded.detail,
       toolCalls: recorded.toolCalls > 0 ? recorded.toolCalls : prior.toolCalls,
+      // The same rule as `evidence`, for the same reason (tempdoc 822 Phase F7): the record carries
+      // no rewrite note, no thinking blocks and no receipt, so a refresh that copied its silence over
+      // them would delete facts this window actually observed. A cold-loaded turn has none of them —
+      // an honest "never told", which is why `sv3-record.ts` seeds them empty rather than guessing.
+      standaloneQuestion:
+        prior.standaloneQuestion === '' ? recorded.standaloneQuestion : prior.standaloneQuestion,
+      reasoning: prior.reasoning.length > 0 ? prior.reasoning : recorded.reasoning,
+      durationMs: prior.durationMs ?? recorded.durationMs,
+      modelLabel: prior.modelLabel ?? recorded.modelLabel,
     };
   });
   // A turn the record has not been told about yet — the in-flight one, or one dispatched while the
@@ -615,10 +712,10 @@ export function resolveSv3Rename(title: string, originalTitle: string): Sv3Renam
 }
 
 /**
- * The reader names a conversation. The title was fixed at creation from the opening question and is
- * never re-derived afterwards ({@link Sv3Session.title}), so a rename is permanent by CONSTRUCTION
- * rather than by a precedence flag: there is no auto-titling pass for it to outrank, and a later turn
- * writes `turns`/`updatedAt` and nothing else.
+ * The reader names a conversation. It also RAISES {@link Sv3Session.renamed}, which is what auto-
+ * titling loses to (tempdoc 822 Phase F7): F5 could rely on construction — no auto-titling pass
+ * existed to outrank — and F7 added one, so the precedence has to be a recorded fact rather than an
+ * absence.
  *
  * An empty or unchanged title leaves the list untouched — {@link resolveSv3Rename} is the one place
  * that decides, so a caller cannot commit a blank by taking a different route in. Phase F6: the
@@ -633,8 +730,29 @@ export function renameSession(list: Sv3SessionList, id: string, title: string): 
   if (resolution.action !== 'commit') return list;
   return {
     ...list,
-    sessions: list.sessions.map((s) => (s.id === id ? { ...s, title: resolution.title } : s)),
+    sessions: list.sessions.map((s) =>
+      s.id === id ? { ...s, title: resolution.title, renamed: true } : s,
+    ),
   };
+}
+
+/**
+ * May the window ask the model to name this conversation (tempdoc 822 Phase F7; inventory A11)?
+ *
+ * The shipped window's rule is "≥ 2 messages" (`views/UnifiedChatView.ts:2045-2051`) — one ask and
+ * one answer, so there is something to summarise. Two things are added, both refusals rather than
+ * conditions:
+ *
+ *  - **A renamed conversation is never re-titled.** The reader already answered the question the
+ *    model would be answering.
+ *  - **Only a COMPLETED ask counts.** A halted, refused or failed turn has no answer worth naming
+ *    a conversation after, and titling one from the fragment that arrived would put the model's
+ *    summary of a broken turn in the sidebar forever (the row label never re-derives).
+ */
+export function sv3ShouldGenerateTitle(session: Sv3Session): boolean {
+  if (session.renamed) return false;
+  const turn = session.turns.find((t) => t.kind === 'ask' && t.status === 'complete');
+  return turn !== undefined && turn.question !== '' && turn.answer.trim() !== '';
 }
 
 /**

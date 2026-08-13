@@ -383,6 +383,29 @@ are re-creatable from the log's descriptions.
   memory. Run ended by stack stop (dev throwaway). Residuals → F3: shelf model,
   presence/recovery, cross-surface slot honesty; issuance-register decision still
   open (owner/orchestrator).
+- 2026-08-13 — **Slice F7 implemented + model-tier verified. The honesty pack: 13/13.**
+  E5+E4 (lock-elsewhere → transcript replaced by the locked view; tri-state derive;
+  composer deliberately NOT gated on the stale poll — the 423 stays authority),
+  C1 (answer frame from the evidenceProjection authority; duration measured, model
+  stamped — the done payload carries neither; live: ".answer-frame" =
+  "Partly grounded — some statements are not backed by your documents · 4.3 s ·
+  Qwen Qwen3.5-9B" — the basis clause varies with the real grounding verdict, which
+  the orchestrator's first probe misread as a missing frame by pattern-matching the
+  fixture wording; diagnosed via deep-shadow walk, no defect), C4 (resolver-output
+  parity pinned), C3 (hover card via the shared block's event, delegated at the
+  scroller), C8 (rag.rewrite → standalone-question note), C9 (reasoning_chunk IS in
+  the shape; jf-reasoning-block wired), E9 (friendlyStreamError after abort/423
+  branches), E10 (three-state zero-corpus landing — unreported ≠ zero, sharper than
+  the shipped conflation; remedy navigates to Library), E8 (no allow-list needed —
+  v3 never uses the word; a test keeps it so), A9 (per-turn copy on the donor action
+  bar; honesty facts hold at opacity 1), A10 (export via the store seam, palette
+  command — no resting chrome), A11 (generated titles, rename wins — probed),
+  B8 (raise-budget through the one seam; remedy renders before concessions).
+  Register: sv3-honesty.ts added to groundingSemantics.consumerSites (gate-demanded,
+  caller-not-classifier note). 4839 tests / 14 probes / gates green. Residuals:
+  E3 Detailed-mode gating stays Tier-B; record-restored turns carry no frame
+  (F6 recorded gap); C8/C9 live-exercise depends on model emitting rewrite/reasoning
+  (fixture-covered; shape-verified).
 - 2026-08-13 — **Slice F6 implemented + STACK-TIER VERIFIED. Sessions live on the
   product's record.** Adopted (each ≥2-consumer shared): conversationListStore
   (id mint/list/title/active/apiBase), unifiedThreadClient/Projection (extractions
@@ -408,6 +431,57 @@ are re-creatable from the log's descriptions.
   record-side evidence not projected (cold-loaded turns show no citations panel —
   honest never-told; F8-adjacent), detached-run re-claim renders record not live
   feed (presence latched per run id).
+- 2026-08-13 — **Slice F7 implemented + live-verified. THE HONESTY PACK.** The 14 inventory
+  rows the brief named, all on shared authorities. New pure module `sv3-honesty.ts` (the
+  window's three honesty derivations, testable without a DOM): **E5+E4** — `historyLocked`
+  is derived TRI-STATE from every `conversationProtection` snapshot (734's mechanism, not
+  write-once from a 423), and a locked store makes the transcript UNREADABLE — `Sv3Main`
+  renders a locked view (the donor-economy `jf-sv3-empty` + `reasonFor('conversations.locked')`
+  wording + that cause's own navigate remedy) INSTEAD of the turns; a 423 adopts the lock
+  immediately (poll is ~10s behind) and its refusal line clears when the lock lifts.
+  **C1** — the answer frame line, `answerFrame`/`answerFrameLabel` from the shared authority
+  plus a receipt tail; duration is MEASURED (`now − askedAt`, stamped in `settleTurn`) and
+  the model is stamped AT THE TERMINAL (the shipped window re-reads it at render, which
+  re-labels old answers). Verified deviation: `core.rag-ask`'s `done` payload carries
+  `promptTokens`/`contextBreakdown` and NO duration or model — the brief's "the data arrives
+  in the done payload" does not hold; the shipped window derives both the same way we do.
+  738's Detailed-mode gating of the model name NOT adopted (that is E3/Tier-B).
+  **C4** — already satisfied by F4; pinned with a test comparing stored marks against
+  `claimsToCitations`' own output. **C3** — `cite-ref-hover`/`leave` delegated at the
+  scroller into the shared `jf-citation-hover-card`. **C8** — `rag.rewrite` → the turn's
+  `standaloneQuestion` → "Interpreted as: …". **C9** — NOT n/a: `core.rag-ask` declares
+  `reasoning_chunk`; wired to the shared `ReasoningController`, blocks recorded on the turn
+  at every terminal (a halt keeps what was thought). **E9** — `friendlyStreamError`, reached
+  only after the abort and 423 branches. **E10** — a THREE-state corpus (`documents` /
+  `empty` / `unknown`): a reported 0 offers "Add folders in Library…" as a real navigation,
+  and an unreported count says NOTHING — a deliberate improvement on the shipped landing,
+  which shows the remedy for both. **E8** — search-v3 uses the token nowhere; no allow-list
+  entry needed (gate green) and a test keeps it that way. **A9** — per-turn Copy answer in
+  the donor's hover/focus-reveal action bar; honesty facts never yield. **A10** —
+  `exportConversationMarkdown` + `copyToClipboard` as a palette command (streaming turns
+  excluded). **A11** — `generateConversationTitle` once per conversation, refused for a
+  renamed one (new `renamed` flag) with a write-back if the reader renames mid-flight.
+  **B8** — the raise-by-a-step option, FIRST in the prompt (the remedy before the
+  concessions), dispatched as `raise-budget` through `dispatchRunControl`.
+  REGISTER: `sv3-honesty.ts` added to `run-renderers.v1.json` `groundingSemantics.consumerSites`
+  (with a `consumerNotes` rationale) — the gate demanded it for the `answerFrame` import; it
+  is a caller, not a second classifier. 4839 tests (+52) / **14 of 14 mutation probes bite** /
+  typecheck clean / vite build green / ui-web + kernel gates green (the same 4 pre-existing
+  reds F3 recorded, all in untouched files). **LIVE** (worktree vite on 5179 against the
+  running stack, read-only; fixture values pinned onto the regions): zero-corpus landing shows
+  the underlined remedy centred 8px under the headline; a real recorded conversation renders,
+  then the pinned lock REPLACES it — 0 turns, no transcript node, the answer text absent from
+  the region entirely, heading = the shared wording, "Unlock in Security" present; a fixture
+  turn renders the whole pack in one turn — "Interpreted as: …", "Thought for 2s",
+  the `[1]` mark, **"Based on your documents — per-sentence grounding not verified · 45.7 s ·
+  Qwen Qwen3.5-9B"** (810 §T-B's own sentence), the citations panel, and Copy answer at
+  opacity 0 at rest → 1 on focus while the frame line holds at 1; the shared hover card shows
+  "strong match · 91%" on the mark and hides on leave. Residuals: a live ask was NOT sent
+  (it would write a conversation into the shared stack the orchestrator holds), so C1/C8/C9
+  are stack-verified fixture-driven rather than model-driven; the composer is deliberately
+  NOT gated on `historyLocked` (the poll can be stale in both directions — the 423 stays the
+  authority); a record-restored turn carries no frame line (the record has no receipt —
+  honest never-told, F6's recorded gap).
 - 2026-08-13 — **Slice F5 implemented + live-verified (backendless — no stack tier
   needed for chrome mechanics).** Sidebar mechanics per donor: drag-resize
   (min 208 / default 256 / max = box − 640; 16px grip hit with 2px line — worker

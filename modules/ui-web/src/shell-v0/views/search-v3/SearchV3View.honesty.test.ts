@@ -1,0 +1,888 @@
+// @vitest-environment happy-dom
+
+/**
+ * The Search v3 window's honesty pack (tempdoc 822 Phase F7) — the inventory rows that make the
+ * window say true things about itself: the lock (E4/E5), the answer frame (C1), the citation marks
+ * and their preview (C4/C3), the rewrite note (C8), reasoning (C9), friendly failures (E9), the
+ * corpus remedy (E10), copy (A9), export (A10) and auto-titling (A11).
+ *
+ * Everything reaches through real seams: the SSE body is a real stream the case drives frame by
+ * frame, `claimsToCitations` is the real resolver, and the answer frame's wording is compared against
+ * the SHARED authority's own output rather than a literal. Where a case could pass for the wrong
+ * reason, the wrong reason is asserted absent — the locked cases assert the transcript is GONE, not
+ * merely that a notice appeared, and the frame cases assert the number is the one the window
+ * measured rather than any number at all.
+ */
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import './SearchV3View.js';
+import type { SearchV3View } from './SearchV3View.js';
+import { resetSearchState } from '../../state/searchState.js';
+import {
+  __feedContactForTest,
+  __feedForTest,
+  __resetAiStateForTest,
+} from '../../state/aiStateStore.js';
+import type { StatusSnapshot } from '../../utils/statusPoll.js';
+import { reasonFor } from '../../state/readinessNotice.js';
+import { answerFrameLabel } from '../../components/chat/evidenceProjection.js';
+import { claimsToCitations } from '../../components/chat/citationResolve.js';
+import { exportConversationMarkdown } from '../../state/conversationListStore.js';
+import { __resetConversationListForTest } from '../../state/conversationListStore.js';
+import { __resetDraftProvidersForTest } from '../../controllers/draftPersistence.js';
+import { __resetDraftKeptForTest } from '../../controllers/draftKeptHint.js';
+import { NAVIGATE_TO_SURFACE_EVENT } from '../../controllers/navigateRequest.js';
+import {
+  CORPUS_ADD_FOLDERS,
+  CORPUS_REMEDY_TARGET,
+  HISTORY_LOCKED_REFUSED,
+  REWRITE_NOTE_LABEL,
+  SV3_COMMAND_EXPORT_MARKDOWN,
+  TURN_COPY_DONE,
+} from './fixtures.js';
+
+type Mounted = HTMLElement & { updateComplete: Promise<unknown> };
+
+let fetchMock: ReturnType<typeof vi.fn>;
+let clipboard: ReturnType<typeof vi.fn>;
+
+/** A status snapshot the store will stamp a settled index from — the shape `stampSettledIndex` reads. */
+function status(over: {
+  documents?: number;
+  searchable?: number | null;
+  lock?: 'locked' | 'unlocked';
+}): StatusSnapshot {
+  return {
+    worker: {
+      core: {
+        indexedDocuments: over.documents ?? 42,
+        ...(over.searchable === undefined ? {} : { searchableDocuments: over.searchable }),
+      },
+    },
+    ...(over.lock === undefined ? {} : { conversationProtection: { state: over.lock } }),
+  } as unknown as StatusSnapshot;
+}
+
+/** The observed state in which the ask tier is genuinely available. */
+function feed(over: Parameters<typeof status>[0] & { model?: string } = {}): void {
+  __feedForTest({
+    inference: {
+      mode: 'online',
+      available: true,
+      activeModelId: over.model ?? 'Qwen_Qwen3.5-9B.Q4_K_M.gguf',
+    } as never,
+    status: status(over),
+  });
+  __feedContactForTest();
+}
+
+interface FakeStream {
+  emit(event: string, data: unknown): void;
+  end(): void;
+}
+
+/** The dispatch's SSE body, driven frame by frame; the reader rejects once the signal aborts. */
+function stubStream(): FakeStream {
+  const encoder = new TextEncoder();
+  const queued: Array<{ done: boolean; value?: Uint8Array }> = [];
+  let wake: (() => void) | null = null;
+  let signal: AbortSignal | null = null;
+  const push = (frame: { done: boolean; value?: Uint8Array }): void => {
+    queued.push(frame);
+    wake?.();
+    wake = null;
+  };
+  fetchMock.mockImplementation(async (url: unknown, init: { signal?: AbortSignal }) => {
+    // The auto-title POST (A11) is a different request against the same endpoint; it must not eat
+    // the frames this case is feeding the answer stream.
+    if (!String(url).includes('/api/chat/dispatch')) {
+      return { ok: true, status: 200, body: null, json: async () => ({}) };
+    }
+    signal = init?.signal ?? null;
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        getReader: () => ({
+          read: async () => {
+            while (queued.length === 0) {
+              if (signal?.aborted === true) throw new Error('The operation was aborted.');
+              await new Promise<void>((resolve) => {
+                wake = resolve;
+                signal?.addEventListener('abort', () => resolve(), { once: true });
+              });
+            }
+            return queued.shift();
+          },
+          releaseLock: () => {},
+        }),
+      },
+    };
+  });
+  return {
+    emit: (event, data) =>
+      push({ done: false, value: encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`) }),
+    end: () => push({ done: true }),
+  };
+}
+
+beforeEach(() => {
+  sessionStorage.clear();
+  localStorage.clear();
+  __resetConversationListForTest();
+  __resetDraftProvidersForTest();
+  __resetDraftKeptForTest();
+  fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, body: null, json: async () => ({}) });
+  vi.stubGlobal('fetch', fetchMock);
+  clipboard = vi.fn(async () => {});
+  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText: clipboard } });
+  __resetAiStateForTest();
+});
+
+afterEach(() => {
+  for (const child of [...document.body.children]) child.remove();
+  resetSearchState();
+  __resetAiStateForTest();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+async function settle(el: Mounted): Promise<void> {
+  for (let turn = 0; turn < 8; turn += 1) await new Promise<void>((r) => setTimeout(r, 0));
+  await el.updateComplete;
+}
+
+async function mount(): Promise<SearchV3View & Mounted> {
+  const el = document.createElement('jf-sv3-window') as SearchV3View & Mounted;
+  el.setAttribute('api-base', 'http://127.0.0.1:9999');
+  document.body.appendChild(el);
+  await el.updateComplete;
+  return el;
+}
+
+async function region(el: Mounted, tag: string): Promise<Mounted> {
+  const found = el.shadowRoot?.querySelector(tag) as Mounted | null;
+  if (!found) throw new Error(`no <${tag}> in the window`);
+  await found.updateComplete;
+  return found;
+}
+
+const q = (host: Mounted, testid: string): HTMLElement | null =>
+  host.shadowRoot?.querySelector(`[data-testid="${testid}"]`) ?? null;
+
+const all = (host: Mounted, testid: string): HTMLElement[] => [
+  ...(host.shadowRoot?.querySelectorAll<HTMLElement>(`[data-testid="${testid}"]`) ?? []),
+];
+
+const textOf = (el: HTMLElement | null): string => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
+
+async function type(el: Mounted, draft: string): Promise<void> {
+  const composer = await region(el, 'jf-sv3-composer');
+  const field = composer.shadowRoot?.querySelector<HTMLTextAreaElement>(
+    '[data-testid="sv3-composer-input"]',
+  );
+  if (!field) throw new Error('no field in the composer');
+  field.value = draft;
+  field.dispatchEvent(new Event('input'));
+  await composer.updateComplete;
+}
+
+async function ask(el: Mounted, draft: string): Promise<void> {
+  await type(el, draft);
+  const composer = await region(el, 'jf-sv3-composer');
+  (q(composer, 'sv3-composer-send') as HTMLButtonElement | null)?.click();
+  await settle(el);
+}
+
+/** The reader names a row — the sidebar's own commit phase, the way the panel raises it. */
+async function rename(el: Mounted, id: string, title: string): Promise<void> {
+  const sidebar = await region(el, 'jf-sv3-sidebar');
+  sidebar.dispatchEvent(
+    new CustomEvent('sv3-session-rename', {
+      detail: { id, phase: 'commit', title },
+      bubbles: true,
+      composed: true,
+    }),
+  );
+  await settle(el);
+}
+
+/** One retrieval source in the shape the backend mints. */
+const source = (i: number): Record<string, unknown> => ({
+  parentDocId: `f:/docs/note-${i}.md`,
+  chunkIndex: i,
+  chunkTotal: 2,
+  startChar: 0,
+  endChar: 40,
+  score: 0.8,
+  excerpt: `excerpt ${i}`,
+  startLine: 1,
+  endLine: 4,
+  headingText: 'Notes',
+  headingLevel: 2,
+});
+
+/** Ask, stream one grounded answer with a per-sentence match, and settle. */
+async function askGrounded(el: Mounted, stream: FakeStream, answer = 'The lock held.'): Promise<void> {
+  await ask(el, 'why did the renewal fail?');
+  stream.emit('rag.citations', { citations: [source(0)] });
+  stream.emit('chunk', { text: answer });
+  stream.emit('rag.citation_matches', {
+    matches: [{ sentenceIndex: 0, sentenceText: answer, similarity: 0.9, chunkIndex: 0 }],
+  });
+  stream.emit('done', {});
+  stream.end();
+  await settle(el);
+}
+
+/* ── E5 + E4: a lock taken elsewhere, and a transcript that stops being readable ─────────────── */
+
+describe('a lock taken ELSEWHERE reaches this window, and locks the transcript', () => {
+  it('picks the lock up from the poll and makes the transcript unreadable', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await askGrounded(el, stream);
+    const main = await region(el, 'jf-sv3-main');
+    // Precondition: the answer really is on screen, so the assertion below is about the LOCK.
+    expect(all(main, 'sv3-turn')).toHaveLength(1);
+
+    // Nothing this window did — an idle auto-lock, another tab, the Security surface.
+    feed({ lock: 'locked' });
+    await settle(el);
+    await main.updateComplete;
+
+    // NOT stale-readable: the transcript is gone, not merely captioned (tempdoc 734's own defect).
+    expect(all(main, 'sv3-turn')).toHaveLength(0);
+    expect(q(main, 'sv3-transcript')).toBeNull();
+    expect(main.shadowRoot?.textContent).not.toContain('The lock held.');
+    // ...and locked never looks deleted (tempdoc 629 §L4): the state is named, in the one vocabulary.
+    const locked = q(main, 'sv3-history-locked');
+    expect(locked).not.toBeNull();
+    expect(locked?.getAttribute('heading')).toBe(reasonFor('conversations.locked').wording);
+  });
+
+  it('gives the reader the cause\'s own remedy, and navigates through the one seam', async () => {
+    feed({ lock: 'locked' });
+    const stream = stubStream();
+    const el = await mount();
+    await askGrounded(el, stream);
+    const main = await region(el, 'jf-sv3-main');
+    const navigations: string[] = [];
+    document.addEventListener(NAVIGATE_TO_SURFACE_EVENT, (e) =>
+      navigations.push((e as CustomEvent<{ surfaceId: string }>).detail.surfaceId),
+    );
+
+    const remedy = q(main, 'sv3-history-locked-remedy') as HTMLButtonElement | null;
+    const nav = reasonFor('conversations.locked').remedy;
+    expect(nav?.kind).toBe('navigate');
+    expect(textOf(remedy)).toContain(nav?.kind === 'navigate' ? nav.label : '');
+    remedy?.click();
+    // The target is the cause's declared one — the surface that OWNS the unlock, not one hop short.
+    expect(navigations).toEqual([nav?.kind === 'navigate' ? nav.target : '']);
+  });
+
+  it('gives the transcript back when the lock lifts, and drops the refusal with it', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await askGrounded(el, stream);
+    feed({ lock: 'locked' });
+    await settle(el);
+    const main = await region(el, 'jf-sv3-main');
+    expect(q(main, 'sv3-history-locked')).not.toBeNull();
+
+    feed({ lock: 'unlocked' });
+    await settle(el);
+    await main.updateComplete;
+    expect(q(main, 'sv3-history-locked')).toBeNull();
+    expect(all(main, 'sv3-turn')).toHaveLength(1);
+  });
+
+  it('does not unlock itself on a snapshot that never mentions the lock', async () => {
+    feed({ lock: 'locked' });
+    const stream = stubStream();
+    const el = await mount();
+    await askGrounded(el, stream);
+    const main = await region(el, 'jf-sv3-main');
+    expect(q(main, 'sv3-history-locked')).not.toBeNull();
+
+    // A perfectly ordinary status frame with no protection field at all.
+    feed();
+    await settle(el);
+    await main.updateComplete;
+    expect(q(main, 'sv3-history-locked')).not.toBeNull();
+  });
+
+  it('says what became of a send the lock refused, without claiming to have kept the text', async () => {
+    feed();
+    const el = await mount();
+    fetchMock.mockImplementation(async (url: unknown) =>
+      String(url).includes('/api/chat/dispatch')
+        ? { ok: false, status: 423, text: async () => '', body: null }
+        : { ok: true, status: 200, body: null, json: async () => ({}) },
+    );
+    await ask(el, 'what changed?');
+    const main = await region(el, 'jf-sv3-main');
+    // The 423 is newer than any poll, so the window adopts the lock without waiting for one.
+    expect(q(main, 'sv3-history-locked')).not.toBeNull();
+    expect(textOf(q(main, 'sv3-history-locked-refusal'))).toBe(HISTORY_LOCKED_REFUSED);
+
+    // The refusal describes a lock; when the lock is gone, so is the refusal.
+    feed({ lock: 'unlocked' });
+    await settle(el);
+    await main.updateComplete;
+    expect(q(main, 'sv3-history-locked-refusal')).toBeNull();
+  });
+});
+
+/* ── C1: the honest answer frame ─────────────────────────────────────────────────────────────── */
+
+describe('a settled answer carries its basis, its duration and its model', () => {
+  it('derives the whole line — the wording from the shared authority, the model from the snapshot', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    // Sources arrive but no sentence is matched, so the SETTLED frame is `sourced` and not "grounded".
+    await ask(el, 'why did the renewal fail?');
+    stream.emit('rag.citations', { citations: [source(0)] });
+    stream.emit('chunk', { text: 'The lock held.' });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+
+    const main = await region(el, 'jf-sv3-main');
+    const line = textOf(q(main, 'sv3-answer-frame'));
+    expect(line).toContain(answerFrameLabel('sourced', false));
+    // The model is the one the OBSERVED-STATE authority reported, not a literal in this window.
+    const model = el.aiSnapshot?.runtime.modelLabel;
+    expect(model === null || model === undefined ? '' : model).not.toBe('');
+    expect(line).toContain(String(model));
+    // The duration is MEASURED — a real elapsed value on the turn, not a rendered placeholder.
+    const turn = el.sessions.sessions[0]?.turns[0];
+    expect(typeof turn?.durationMs).toBe('number');
+    expect(line).toMatch(/\d+(\.\d)? (s|ms)/);
+  });
+
+  it('says nothing about grounding when the answer IS grounded — the marks already do', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await askGrounded(el, stream);
+    const main = await region(el, 'jf-sv3-main');
+    const line = textOf(q(main, 'sv3-answer-frame'));
+    expect(line).not.toContain(answerFrameLabel('sourced', false));
+    expect(line).not.toContain(answerFrameLabel('ungrounded', true));
+    // The receipt half still renders: it is the part that is always measured.
+    expect(line).toMatch(/\d+(\.\d)? (s|ms)/);
+  });
+
+  it('frames nothing while the answer is still arriving', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'why did the renewal fail?');
+    stream.emit('chunk', { text: 'Partial…' });
+    await settle(el);
+    const main = await region(el, 'jf-sv3-main');
+    expect(q(main, 'sv3-answer-frame')).toBeNull();
+  });
+});
+
+/* ── C4 + C3: the shared resolver's marks, and their preview ─────────────────────────────────── */
+
+describe('the inline marks are the SHARED resolver\'s output, and they preview on hover', () => {
+  it('hands the markdown block exactly what claimsToCitations resolved — nothing ad hoc', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await askGrounded(el, stream);
+
+    const evidence = el.sessions.sessions[0]?.turns[0]?.evidence;
+    expect(evidence).not.toBeNull();
+    const resolved = claimsToCitations(
+      [
+        {
+          sentenceIndex: 0,
+          sentenceText: 'The lock held.',
+          score: 0.9,
+          sourceRefs: [0],
+        },
+      ],
+      evidence?.sources ?? [],
+    );
+    // The stored marks ARE the resolver's answer for the same claims + sources. A window that wove
+    // its own `[n]` would differ here even when it happened to number them the same way.
+    expect(evidence?.marks).toEqual(resolved);
+    expect(resolved.length).toBeGreaterThan(0);
+
+    const main = await region(el, 'jf-sv3-main');
+    const block = q(main, 'sv3-turn-markdown') as (HTMLElement & { citations: unknown }) | null;
+    expect(block?.citations).toEqual(evidence?.marks);
+  });
+
+  it('shows the product\'s ONE hover card, from the mark\'s own source', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await askGrounded(el, stream);
+    const main = await region(el, 'jf-sv3-main');
+    const card = q(main, 'sv3-citation-hover') as (Mounted & { visible: boolean; data: unknown }) | null;
+    expect(card).not.toBeNull();
+    expect(card?.visible).toBe(false);
+
+    const rect = { left: 12, bottom: 40 } as DOMRect;
+    const hover = { excerpt: 'excerpt 0', parentDocId: 'f:/docs/note-0.md', score: 0.9, headingText: 'Notes' };
+    q(main, 'sv3-turn-markdown')?.dispatchEvent(
+      new CustomEvent('cite-ref-hover', {
+        detail: { rect, source: hover },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await card?.updateComplete;
+    expect(card?.visible).toBe(true);
+    expect(card?.data).toEqual(hover);
+
+    q(main, 'sv3-turn-markdown')?.dispatchEvent(
+      new CustomEvent('cite-ref-leave', { bubbles: true, composed: true }),
+    );
+    await card?.updateComplete;
+    expect(card?.visible).toBe(false);
+  });
+
+  it('shows nothing for an event carrying no resolved source', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await askGrounded(el, stream);
+    const main = await region(el, 'jf-sv3-main');
+    const card = q(main, 'sv3-citation-hover') as (Mounted & { visible: boolean }) | null;
+    q(main, 'sv3-turn-markdown')?.dispatchEvent(
+      new CustomEvent('cite-ref-hover', { detail: {}, bubbles: true, composed: true }),
+    );
+    await card?.updateComplete;
+    expect(card?.visible).toBe(false);
+  });
+});
+
+/* ── C8: the standalone question ─────────────────────────────────────────────────────────────── */
+
+describe('the question retrieval actually ran on is shown back', () => {
+  it('renders the rewrite as a transparency note, and keeps it past the stream', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'and the second one?');
+    stream.emit('rag.rewrite', {
+      original: 'and the second one?',
+      standalone: 'what caused the second renewal failure?',
+    });
+    stream.emit('chunk', { text: 'It expired.' });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+
+    const main = await region(el, 'jf-sv3-main');
+    const note = textOf(q(main, 'sv3-turn-rewrite'));
+    expect(note).toBe(`${REWRITE_NOTE_LABEL} what caused the second renewal failure?`);
+    // Pinned onto the TURN, so it survives the stream that produced it.
+    expect(el.sessions.sessions[0]?.turns[0]?.standaloneQuestion).toBe(
+      'what caused the second renewal failure?',
+    );
+  });
+
+  it('shows no note when the backend rewrote nothing', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await askGrounded(el, stream);
+    expect(q(await region(el, 'jf-sv3-main'), 'sv3-turn-rewrite')).toBeNull();
+  });
+});
+
+/* ── C9: reasoning as its own controlled block ───────────────────────────────────────────────── */
+
+describe('the model\'s thinking is its own block, never mixed into the answer', () => {
+  it('renders the shared block while thinking and keeps it on the settled turn', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'why did the renewal fail?');
+    stream.emit('reasoning_chunk', { text: 'checking the renewal log' });
+    await settle(el);
+    const main = await region(el, 'jf-sv3-main');
+    expect(q(main, 'sv3-turn-reasoning')).not.toBeNull();
+    // It is a BLOCK, not answer text: the answer must not have absorbed it.
+    expect(textOf(q(main, 'sv3-turn-answer'))).not.toContain('checking the renewal log');
+
+    stream.emit('chunk', { text: 'It expired.' });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+    await main.updateComplete;
+    expect(el.sessions.sessions[0]?.turns[0]?.reasoning).toHaveLength(1);
+    expect(el.sessions.sessions[0]?.turns[0]?.reasoning[0]?.text).toContain('checking the renewal log');
+    expect(q(main, 'sv3-turn-reasoning')).not.toBeNull();
+  });
+
+  it('renders no block at all for a turn the model did not think out loud in', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await askGrounded(el, stream);
+    expect(q(await region(el, 'jf-sv3-main'), 'sv3-turn-reasoning')).toBeNull();
+  });
+});
+
+/* ── E9: a failure in the reader's words; a halt is not one ──────────────────────────────────── */
+
+describe('a stream failure is worded by the shared mapping, and an abort is not a failure', () => {
+  it('maps an interrupted stream to the shared sentence', async () => {
+    feed();
+    const el = await mount();
+    const failure = Object.assign(new Error('stream ended before done'), {
+      code: 'STREAM_INCOMPLETE',
+    });
+    fetchMock.mockImplementation(async (url: unknown) => {
+      if (!String(url).includes('/api/chat/dispatch')) {
+        return { ok: true, status: 200, body: null, json: async () => ({}) };
+      }
+      throw failure;
+    });
+    await ask(el, 'what changed?');
+    const turn = el.sessions.sessions[0]?.turns[0];
+    expect(turn?.status).toBe('failed');
+    // The shared vocabulary, not the raw technical message the throw carried.
+    expect(turn?.detail).toBe('Connection lost — the response was interrupted.');
+    expect(turn?.detail).not.toContain('stream ended before done');
+  });
+
+  it('never routes the reader\'s own Stop through that mapping', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'why did the renewal fail?');
+    stream.emit('chunk', { text: 'Half an ans' });
+    await settle(el);
+    const composer = await region(el, 'jf-sv3-composer');
+    (q(composer, 'sv3-composer-stop') as HTMLButtonElement | null)?.click();
+    await settle(el);
+
+    const turn = el.sessions.sessions[0]?.turns[0];
+    expect(turn?.status).toBe('halted');
+    expect(turn?.detail).toBe('');
+    // What arrived is kept, and nothing about it reads as a failure.
+    expect(turn?.answer).toBe('Half an ans');
+  });
+});
+
+/* ── E10: a corpus of zero offers the fix ────────────────────────────────────────────────────── */
+
+describe('the landing says what there is to search, or offers the way to get some', () => {
+  it('states the default-scope population when there is one', async () => {
+    feed({ documents: 900, searchable: 12 });
+    const el = await mount();
+    const composer = await region(el, 'jf-sv3-composer');
+    const line = q(composer, 'sv3-composer-corpus');
+    expect(line?.dataset.kind).toBe('documents');
+    expect(textOf(line)).toContain('12');
+    expect(q(composer, 'sv3-composer-corpus-remedy')).toBeNull();
+  });
+
+  it('offers the remedy on a REPORTED zero, and navigates to the surface that owns it', async () => {
+    feed({ documents: 0, searchable: 0 });
+    const el = await mount();
+    const composer = await region(el, 'jf-sv3-composer');
+    const remedy = q(composer, 'sv3-composer-corpus-remedy') as HTMLButtonElement | null;
+    expect(textOf(remedy)).toBe(CORPUS_ADD_FOLDERS);
+    const navigations: string[] = [];
+    document.addEventListener(NAVIGATE_TO_SURFACE_EVENT, (e) =>
+      navigations.push((e as CustomEvent<{ surfaceId: string }>).detail.surfaceId),
+    );
+    remedy?.click();
+    expect(navigations).toEqual([CORPUS_REMEDY_TARGET]);
+  });
+
+  it('claims nothing before a settled poll — the case the shipped landing gets wrong', async () => {
+    const el = await mount();
+    const composer = await region(el, 'jf-sv3-composer');
+    // Neither "Searching 0 files" nor the remedy: the window has not been told, so it says nothing.
+    expect(q(composer, 'sv3-composer-corpus')).toBeNull();
+  });
+
+  it('spends no chrome on the corpus once the window is working', async () => {
+    feed({ documents: 900, searchable: 12 });
+    const stream = stubStream();
+    const el = await mount();
+    const composer = await region(el, 'jf-sv3-composer');
+    // Present on the landing…
+    expect(q(composer, 'sv3-composer-corpus')).not.toBeNull();
+    await askGrounded(el, stream);
+    await composer.updateComplete;
+    // …and gone once the conversation owns the region. The fact belongs to the empty window.
+    expect(composer.getAttribute('state')).toBe('docked');
+    expect(q(composer, 'sv3-composer-corpus')).toBeNull();
+  });
+});
+
+/* ── A9 + A10: copy an answer, export a conversation ─────────────────────────────────────────── */
+
+describe('an answer can be copied and a conversation exported, through the shared utilities', () => {
+  it('copies the settled answer and confirms it', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await askGrounded(el, stream, 'The renewal lock held past its window.');
+    const main = await region(el, 'jf-sv3-main');
+    const copy = q(main, 'sv3-turn-copy') as HTMLButtonElement | null;
+    expect(copy).not.toBeNull();
+    copy?.click();
+    await settle(el);
+    await main.updateComplete;
+
+    expect(clipboard).toHaveBeenCalledWith('The renewal lock held past its window.');
+    expect(textOf(q(main, 'sv3-turn-copy'))).toBe(TURN_COPY_DONE);
+  });
+
+  it('offers no copy for a turn with no settled answer to copy', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'why did the renewal fail?');
+    stream.emit('chunk', { text: 'Half an ans' });
+    await settle(el);
+    const main = await region(el, 'jf-sv3-main');
+    expect(q(main, 'sv3-turn-copy')).toBeNull();
+  });
+
+  it('exports the conversation as the SHARED serialisation, from the palette', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await askGrounded(el, stream, 'It expired.');
+    clipboard.mockClear();
+
+    const palette = await region(el, 'jf-sv3-palette');
+    palette.dispatchEvent(
+      new CustomEvent('sv3-palette-run', {
+        detail: { id: SV3_COMMAND_EXPORT_MARKDOWN },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await settle(el);
+
+    const session = el.sessions.sessions[0];
+    expect(clipboard).toHaveBeenCalledWith(
+      exportConversationMarkdown(
+        [
+          { role: 'user', content: 'why did the renewal fail?' },
+          { role: 'assistant', content: 'It expired.' },
+        ],
+        session?.title ?? null,
+      ),
+    );
+  });
+
+  it('exports nothing when there is no claimed conversation', async () => {
+    feed();
+    const el = await mount();
+    const palette = await region(el, 'jf-sv3-palette');
+    palette.dispatchEvent(
+      new CustomEvent('sv3-palette-run', {
+        detail: { id: SV3_COMMAND_EXPORT_MARKDOWN },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await settle(el);
+    expect(clipboard).not.toHaveBeenCalled();
+  });
+});
+
+/* ── A11: the model names the conversation, unless the reader already did ────────────────────── */
+
+/** The auto-title POST the conversation store makes: a throwaway `_title_…` free-chat session. */
+const titleCalls = (): unknown[][] =>
+  fetchMock.mock.calls.filter((call) =>
+    String((call[1] as { body?: unknown } | undefined)?.body ?? '').includes('_title_'),
+  );
+
+describe('a conversation gets a model-generated name, and a rename beats it', () => {
+  it('asks the store\'s naming authority once the first answer has landed', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await askGrounded(el, stream);
+
+    expect(titleCalls()).toHaveLength(1);
+    const body = JSON.parse(String((titleCalls()[0]?.[1] as { body: string }).body));
+    // Both halves of the exchange are handed over — the store's own contract for naming.
+    expect(body.prompt).toContain('why did the renewal fail?');
+    expect(body.prompt).toContain('The lock held.');
+    expect(body.shapeId).toBe('core.free-chat');
+  });
+
+  it('never asks twice for the same conversation', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await askGrounded(el, stream);
+    expect(titleCalls()).toHaveLength(1);
+
+    stream.emit('chunk', { text: 'more' });
+    await ask(el, 'and then?');
+    stream.emit('chunk', { text: 'It expired.' });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+    expect(titleCalls()).toHaveLength(1);
+  });
+
+  it('NEVER names a conversation the reader named first — the rename wins', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'why did the renewal fail?');
+    // Renamed while the answer is still streaming, so the guard is consulted at the terminal rather
+    // than being made moot by the once-per-conversation latch.
+    const id = el.sessions.sessions[0]?.id ?? '';
+    await rename(el, id, 'Renewal postmortem');
+    expect(el.sessions.sessions[0]?.renamed).toBe(true);
+
+    stream.emit('chunk', { text: 'The lock held.' });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+
+    expect(titleCalls()).toHaveLength(0);
+    expect(el.sessions.sessions[0]?.title).toBe('Renewal postmortem');
+  });
+
+  it('still names the NEXT conversation, so the guard is a refusal and not a breakage', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'why did the renewal fail?');
+    await rename(el, el.sessions.sessions[0]?.id ?? '', 'Renewal postmortem');
+    stream.emit('chunk', { text: 'The lock held.' });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+    expect(titleCalls()).toHaveLength(0);
+
+    (q(await region(el, 'jf-sv3-sidebar'), 'sv3-sidebar-new') as HTMLButtonElement | null)?.click();
+    await settle(el);
+    await ask(el, 'a second question');
+    stream.emit('chunk', { text: 'a second answer' });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+
+    expect(titleCalls()).toHaveLength(1);
+    const prompt = JSON.parse(String((titleCalls()[0]?.[1] as { body: string }).body))
+      .prompt as string;
+    expect(prompt).toContain('a second question');
+    expect(prompt).not.toContain('Renewal postmortem');
+  });
+
+  it('writes the reader\'s name back when they rename while the model is still naming it', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    // The naming POST is held open until this case releases it, which is the race: the generation is
+    // already in flight when the reader answers the same question themselves.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const answerFetch = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (url: unknown, init: unknown) => {
+      if (String((init as { body?: unknown } | undefined)?.body ?? '').includes('_title_')) {
+        await held;
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            getReader: () => {
+              let sent = false;
+              return {
+                read: async () => {
+                  if (sent) return { done: true };
+                  sent = true;
+                  return {
+                    done: false,
+                    value: new TextEncoder().encode('data: {"text":"Renewal Lock Failure"}\n\n'),
+                  };
+                },
+                releaseLock: () => {},
+              };
+            },
+          },
+        };
+      }
+      return (answerFetch as (u: unknown, i: unknown) => Promise<unknown>)(url, init);
+    });
+
+    await ask(el, 'why did the renewal fail?');
+    stream.emit('chunk', { text: 'The lock held.' });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+    const id = el.sessions.sessions[0]?.id ?? '';
+    expect(titleCalls()).toHaveLength(1);
+
+    await rename(el, id, 'Renewal postmortem');
+    release();
+    await settle(el);
+
+    // The store's persisted title is the READER'S, not the one that landed after they had answered.
+    const persisted = JSON.parse(localStorage.getItem('jf-conversation-titles') ?? '{}') as Record<
+      string,
+      string
+    >;
+    expect(persisted[id]).toBe('Renewal postmortem');
+    expect(el.sessions.sessions[0]?.title).toBe('Renewal postmortem');
+  });
+
+  it('does not name a conversation whose only turn was stopped by the reader', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'why did the renewal fail?');
+    stream.emit('chunk', { text: 'Half an ans' });
+    await settle(el);
+    const composer = await region(el, 'jf-sv3-composer');
+    (q(composer, 'sv3-composer-stop') as HTMLButtonElement | null)?.click();
+    await settle(el);
+    expect(titleCalls()).toHaveLength(0);
+  });
+});
+
+/* ── E8: "offline" keeps its one sense in this window's copy ─────────────────────────────────── */
+
+describe('this window re-splits no word the product has already settled', () => {
+  it('spends no copy on "offline" at all (tempdoc 813 §6; inventory E8)', async () => {
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const { dirname, join } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const here = dirname(fileURLToPath(import.meta.url));
+    // The repo-wide gate (`scripts/ci/check-offline-single-sense.mjs`) keeps a per-file allow-list of
+    // sanctioned uses; search-v3 has NO entry, and this is what keeps that true rather than leaving
+    // it to be discovered at the gate. The window's every "the model is unavailable" phrase comes
+    // from `readinessNotice`, so it needs the word nowhere.
+    const offenders = readdirSync(here)
+      .filter((name) => name.endsWith('.ts'))
+      // This file writes the token in order to forbid it — the one allowed mention.
+      .filter((name) => name !== 'SearchV3View.honesty.test.ts')
+      .filter((name) =>
+        readFileSync(join(here, name), 'utf8')
+          // Comments are not copy, and the gate strips them before scanning; do the same here.
+          .replace(/\/\*[\s\S]*?\*\//g, '')
+          .replace(/^\s*\/\/.*$/gm, '')
+          .toLowerCase()
+          .includes('offline'),
+      );
+    expect(offenders).toEqual([]);
+  });
+});

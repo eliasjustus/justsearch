@@ -98,6 +98,7 @@ import { resetSearchState } from '../../state/searchState.js';
 import { __feedContactForTest, __feedForTest, __resetAiStateForTest } from '../../state/aiStateStore.js';
 import type { StatusSnapshot } from '../../utils/statusPoll.js';
 import { RUN_DISPATCHING } from './fixtures.js';
+import { RAISE_BUDGET_STEP_TOKENS } from '../unifiedChatRequest.js';
 import { __resetConversationListForTest } from '../../state/conversationListStore.js';
 import { __resetDraftProvidersForTest } from '../../controllers/draftPersistence.js';
 import { __resetDraftKeptForTest } from '../../controllers/draftKeptHint.js';
@@ -342,7 +343,9 @@ describe('the primary slot is a strict-priority state machine in the DOM', () =>
     (q(composer, 'sv3-composer-answer') as HTMLButtonElement).click();
     await settle(el);
     const main = await region(el, 'jf-sv3-main');
-    expect(main.shadowRoot?.activeElement).toBe(q(main, 'sv3-run-budget-finalize'));
+    // The prompt's FIRST control, which since Phase F7 (inventory B8) is the raise remedy rather
+    // than a concession — landing the reader on "give something up" would be the wrong default.
+    expect(main.shadowRoot?.activeElement).toBe(q(main, 'sv3-run-budget-raise'));
     expect(ctrl.resolveBudgetGate).not.toHaveBeenCalled();
   });
 
@@ -395,6 +398,44 @@ describe('a typed prompt is resolved by its OWN command, never by chat text', ()
     (q(main, 'sv3-run-budget-finalize') as HTMLButtonElement | null)?.click();
     await settle(el);
     expect(ctrl.resolveBudgetGate).toHaveBeenCalledWith('finalize');
+  });
+
+  it('offers RAISING the budget as the third option, through the same seam (inventory B8)', async () => {
+    aiOnline();
+    const el = await mount();
+    await delegateWithCalls(el, 'do the thing', []);
+    await frame(el, {
+      budgetGate: { tokensNeeded: 500, tokensRemaining: 10, totalTokensConsumed: 90 },
+    });
+    const main = await region(el, 'jf-sv3-main');
+    const raise = q(main, 'sv3-run-budget-raise') as HTMLButtonElement | null;
+    // The label states the step the directive actually spends — read from the SHARED constant, so a
+    // button that promised one number and dispatched another would fail here.
+    expect(raise?.textContent).toContain(RAISE_BUDGET_STEP_TOKENS.toLocaleString());
+    raise?.click();
+    await settle(el);
+
+    // Through the seam's own `raise-budget` directive, not by resolving the gate: raising is not a
+    // decision about the gate, it is more allowance (`controllers/runControlIntent.ts:34-36`).
+    expect(ctrl.raiseBudget).toHaveBeenCalledWith(RAISE_BUDGET_STEP_TOKENS);
+    expect(ctrl.resolveBudgetGate).not.toHaveBeenCalled();
+    expect(ctrl.cancelSession).not.toHaveBeenCalled();
+  });
+
+  it('refuses the raise the moment the run is no longer live — the seam\'s predicate, not a guess', async () => {
+    aiOnline();
+    const el = await mount();
+    await delegateWithCalls(el, 'do the thing', []);
+    await frame(el, {
+      budgetGate: { tokensNeeded: 500, tokensRemaining: 10, totalTokensConsumed: 90 },
+    });
+    const main = await region(el, 'jf-sv3-main');
+    // The backend evicts finished sessions, so a raise on one is the 404 class tempdoc 577 Ext III
+    // made structural. The window dispatches; the SEAM refuses.
+    await frame(el, { runInFlight: false, isStreaming: false });
+    (q(main, 'sv3-run-budget-raise') as HTMLButtonElement | null)?.click();
+    await settle(el);
+    expect(ctrl.raiseBudget).not.toHaveBeenCalled();
   });
 
   it('renders a held tool call as a typed prompt WITHOUT a second approve/deny of its own', async () => {

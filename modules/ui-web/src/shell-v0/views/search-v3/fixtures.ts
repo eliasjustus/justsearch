@@ -148,6 +148,9 @@ export interface Sv3Command {
 /** Named rather than inlined, because the window matches on it and a typo would silently do nothing. */
 export const SV3_COMMAND_SEARCH_TEXT = 'cmd-search-text';
 
+/** The palette's export command (tempdoc 822 Phase F7; inventory A10). Named for the same reason. */
+export const SV3_COMMAND_EXPORT_MARKDOWN = 'cmd-export-markdown';
+
 export interface Sv3CommandGroup {
   readonly id: string;
   readonly label: string;
@@ -155,7 +158,7 @@ export interface Sv3CommandGroup {
 }
 
 /**
- * Eight commands over two groups, so the ONE separator between them is exercised. Exactly one command
+ * Nine commands over two groups, so the ONE separator between them is exercised. Exactly one command
  * is `selected` — the palette's current choice — which is what makes the donor's two-state distinction
  * visible: the highlight starts on the first row while the selection sits elsewhere.
  */
@@ -181,6 +184,11 @@ export const COMMAND_GROUPS: readonly Sv3CommandGroup[] = [
     id: 'cg-workspace',
     label: 'Workspace',
     commands: [
+      /* Live (tempdoc 822 Phase F7, inventory A10). Export is a real capability with no resting
+         chrome to spend on it, which is what the palette is FOR in the donor's economy — the
+         alternative was a per-conversation overflow this window does not have. Handled in
+         `SearchV3View.onPaletteRun`. */
+      { id: SV3_COMMAND_EXPORT_MARKDOWN, label: 'Copy this conversation as Markdown' },
       { id: 'cmd-folders', label: 'Manage indexed folders' },
       { id: 'cmd-reindex', label: 'Reindex this folder' },
       { id: 'cmd-diagnostics', label: 'Open indexing diagnostics', shortcut: 'Ctrl D' },
@@ -205,3 +213,42 @@ export const PALETTE_HINTS: readonly Sv3PaletteHint[] = [
   { keys: ['Enter'], label: 'Run' },
   { keys: ['Esc'], label: 'Close' },
 ];
+
+/* ── Phase F7: the honesty pack ────────────────────────────────────────────────────────────── */
+
+/**
+ * The conversation store is locked, so the transcript CANNOT BE READ (tempdoc 629 §L4, inventory
+ * E4/E5). The heading is the ONE readiness vocabulary's wording (`reasonFor('conversations.locked')`)
+ * and is therefore not written here; what this adds is the reassurance the shipped window carries
+ * beside it — locked must never look deleted, and the index is a different store entirely.
+ */
+export const HISTORY_LOCKED_HELP =
+  'Unlock it to read your chat history — your search index is unaffected.';
+
+/**
+ * A send the lock refused, said next to the remedy that fixes it (tempdoc 734 round-14 F4). It is the
+ * shipped sentence MINUS its "your text is back in the composer" half, because this window does not
+ * put the draft back — a reassurance about something that did not happen would be the exact class of
+ * untruth this pack exists to remove.
+ */
+export const HISTORY_LOCKED_REFUSED = 'Your last message was not sent.';
+
+/** The transparency note (tempdoc 603 C2; inventory C8) — the donor window's own label. */
+export const REWRITE_NOTE_LABEL = 'Interpreted as:';
+
+/**
+ * The zero-corpus remedy (tempdoc 811 C-4; inventory E10) — the shipped landing's own wording, which
+ * names both the destination and why the reader is being sent there.
+ */
+export const CORPUS_ADD_FOLDERS = 'Add folders in Library to start searching';
+
+/** Where {@link CORPUS_ADD_FOLDERS} goes. The surface that OWNS folder management, not one hop short. */
+export const CORPUS_REMEDY_TARGET = 'core.library-surface';
+
+/** The per-turn copy action and its confirmation (inventory A9). */
+export const TURN_COPY_LABEL = 'Copy answer';
+export const TURN_COPY_DONE = 'Copied';
+
+/** How long the copy confirmation stands before the label returns. */
+export const TURN_COPY_FEEDBACK_MS = 1600;
+

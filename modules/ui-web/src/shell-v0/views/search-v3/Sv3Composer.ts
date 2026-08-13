@@ -36,10 +36,18 @@ import {
   COMPOSER_SCOPES,
   COMPOSER_PLACEHOLDER,
   COMPOSER_STATE_DEFAULT,
+  CORPUS_ADD_FOLDERS,
+  CORPUS_REMEDY_TARGET,
   HERO_HEADLINE,
   type Sv3ComposerState,
 } from './fixtures.js';
 import { sv3PrimaryAction, type Sv3SlotKind } from './sv3-run.js';
+import {
+  SV3_CORPUS_UNKNOWN,
+  SV3_REMEDY,
+  type Sv3Corpus,
+  type Sv3RemedyDetail,
+} from './sv3-honesty.js';
 
 /** Raised when the composer asks the window for the other state; the window owns the morph. */
 export const SV3_COMPOSER_STATE_REQUEST = 'sv3-composer-state-request';
@@ -128,18 +136,57 @@ export class Sv3Composer extends JfElement {
         margin-inline: auto;
       }
 
-      .headline {
+      /* The hero INTRO — headline plus the corpus line under it (tempdoc 822 Phase F7, inventory
+         E10). It sits directly above the composer box, which is the shipped landing's own placement
+         ("this block renders at the bottom of the conversation column so the intro sits directly
+         above the CSS-centered bar", views/UnifiedChatView.ts:3016-3018). The absolute positioning
+         moved here off .headline so the two lines are ONE block above the band; .headline keeps its
+         type and its view-transition name, so the morph is untouched. */
+      .landing {
         position: absolute;
         inset-inline: 0;
         bottom: 100%;
-        margin: 0;
         padding-bottom: var(--space-8);
+      }
+
+      .headline {
+        margin: 0;
         color: var(--foreground);
         font-size: var(--font-size-sv3-display);
         font-weight: 400;
         letter-spacing: -0.025em;
         text-align: center;
         text-wrap: balance;
+      }
+
+      /* The corpus fact under the headline. Recedes to the secondary label because it is context for
+         the question, not the question — and the REMEDY inside it is a real control, so it takes the
+         foreground and an underline rather than becoming a coloured word that only looks clickable. */
+      .corpus {
+        margin: var(--space-2) 0 0;
+        color: var(--secondary-label);
+        font-size: var(--font-size-sv3-sm);
+        text-align: center;
+        text-wrap: balance;
+      }
+      .corpus-remedy {
+        padding: 0;
+        border: 0;
+        background: none;
+        color: var(--foreground);
+        font-family: inherit;
+        font-size: inherit;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+        cursor: pointer;
+      }
+      .corpus-remedy:hover {
+        color: var(--primary);
+      }
+      .corpus-remedy:focus-visible {
+        outline: 2px solid var(--ring);
+        outline-offset: 2px;
+        border-radius: var(--control-radius);
       }
 
       /* The donor stacks composer banners ABOVE the box, 8px clear of it, at the composer's own
@@ -455,6 +502,7 @@ export class Sv3Composer extends JfElement {
     steerable: { type: Boolean, reflect: true },
     unavailableReason: { type: String, attribute: 'unavailable-reason' },
     delegateUnavailableReason: { type: String, attribute: 'delegate-unavailable-reason' },
+    corpus: { attribute: false },
     draft: { state: true },
   };
 
@@ -488,6 +536,13 @@ export class Sv3Composer extends JfElement {
    * that, and Ctrl+Enter still works while the notice explains why Enter does not.
    */
   declare delegateUnavailableReason: string;
+  /**
+   * What the next question can be answered from (tempdoc 822 Phase F7; inventory E10). Handed down
+   * already DERIVED by the window's one projection (`sv3-honesty.ts`), so the composer decides
+   * nothing about the corpus — including whether "not reported" counts as zero, which is exactly the
+   * decision that must not be made twice.
+   */
+  declare corpus: Sv3Corpus;
   declare draft: string;
 
   constructor() {
@@ -502,6 +557,7 @@ export class Sv3Composer extends JfElement {
     this.steerable = false;
     this.unavailableReason = '';
     this.delegateUnavailableReason = '';
+    this.corpus = SV3_CORPUS_UNKNOWN;
     this.draft = '';
   }
 
@@ -601,9 +657,7 @@ export class Sv3Composer extends JfElement {
     const unavailable = this.unavailableReason !== '';
     return html`
       <div class="band" data-testid="sv3-composer-band">
-        ${this.state === 'hero'
-          ? html`<h1 class="headline" data-testid="sv3-composer-headline">${HERO_HEADLINE}</h1>`
-          : nothing}
+        ${this.state === 'hero' ? this.landing() : nothing}
         ${this.unavailableReason === ''
           ? nothing
           : html`<p class="notice" id="sv3-composer-notice" role="status" data-testid="sv3-composer-notice">
@@ -653,6 +707,55 @@ export class Sv3Composer extends JfElement {
         </div>
       </div>
     `;
+  }
+
+  /**
+   * The hero intro: the headline, and what the next question can actually be answered from
+   * (tempdoc 822 Phase F7; inventory E10 / tempdoc 811 C-4).
+   *
+   * THREE outcomes, and the third is silence. A corpus of zero offers the REMEDY instead of letting
+   * the window imply it will search something; a known corpus states its size; and an `unknown` one
+   * says nothing at all, because a window that has not been told the count must not fill the gap with
+   * either claim. The remedy is a real navigation the window performs — the composer announces it,
+   * exactly as it announces a send.
+   */
+  private landing(): TemplateResult {
+    return html`
+      <div class="landing">
+        <h1 class="headline" data-testid="sv3-composer-headline">${HERO_HEADLINE}</h1>
+        ${this.corpusLine()}
+      </div>
+    `;
+  }
+
+  private corpusLine(): TemplateResult | typeof nothing {
+    if (this.corpus.kind === 'unknown') return nothing;
+    if (this.corpus.kind === 'documents') {
+      return html`<p class="corpus" data-testid="sv3-composer-corpus" data-kind="documents">
+        Searching ${this.corpus.count.toLocaleString()}
+        ${this.corpus.count === 1 ? 'file' : 'files'}
+      </p>`;
+    }
+    return html`<p class="corpus" data-testid="sv3-composer-corpus" data-kind="empty">
+      <button
+        type="button"
+        class="corpus-remedy"
+        data-testid="sv3-composer-corpus-remedy"
+        @click=${this.remedy}
+      >
+        ${CORPUS_ADD_FOLDERS}
+      </button>
+    </p>`;
+  }
+
+  private remedy(): void {
+    this.dispatchEvent(
+      new CustomEvent<Sv3RemedyDetail>(SV3_REMEDY, {
+        detail: { target: CORPUS_REMEDY_TARGET },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   /**

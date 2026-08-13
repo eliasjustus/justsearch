@@ -95,29 +95,53 @@ import {
   projectSv3Sessions,
   sessionById,
   setTurnEvidence,
+  setTurnReasoning,
+  setTurnRewrite,
   settleAgentTurn,
   settleTurn,
   startNewSession,
   submitInSession,
+  sv3ShouldGenerateTitle,
   SV3_SESSIONS_EMPTY,
   type Sv3SessionList,
 } from './sv3-sessions.js';
+// The window's honesty derivations (tempdoc 822 Phase F7): the lock, the corpus, and the ONE remedy
+// channel every region's fix-it control leaves through.
+import {
+  deriveSv3HistoryLocked,
+  projectSv3Corpus,
+  type Sv3RemedyDetail,
+} from './sv3-honesty.js';
+// The product's ONE reasoning model (inventory C9). The window holds it for the turn that is
+// streaming and hands the finalized blocks to that turn at its terminal; nothing here parses a
+// thinking payload.
+import { ReasoningController } from '../../controllers/ReasoningController.js';
+// Tempdoc 596 §11.4 — the shared remedy navigation, reached from exactly one place in this window.
+import { requestSurfaceNavigation } from '../../controllers/navigateRequest.js';
 import { projectSv3RecordTurns } from './sv3-record.js';
 import { SV3_ASK_SHAPE_ID, sv3Ask } from './sv3-ask.js';
 // The app-wide CONVERSATION authority (tempdoc 510 Design D; inventory A1). A v3 session IS a
-// conversation, so identity, existence and title come from here — this window mints none of them.
+// conversation, so identity, existence, title and its markdown export come from here — this window
+// mints none of them.
 import {
   createConversationId,
+  exportConversationMarkdown,
+  generateConversationTitle,
   loadConversations,
   setActiveConversation,
   setConversationApiBase,
   setConversationTitle,
   subscribeConversationList,
 } from '../../state/conversationListStore.js';
+// The shared clipboard util — the export's destination, the same one the shipped window uses.
+import { copyToClipboard } from '../../utils/clipboardCopy.js';
 // The canonical thread RECORD (tempdoc 561 P-A; inventory D1) — the shared fetch, already consumed
 // by the shipped window AND by search-v2. The shared PROJECTOR is reached through 'sv3-record.ts',
 // this window's registered run-projection site (governance/run-renderers.v1.json), never from here.
 import { fetchUnifiedThread } from '../unifiedThreadClient.js';
+// The shared per-raise step (565 run-control seam), so the button's label and the directive it
+// dispatches cannot promise different numbers.
+import { RAISE_BUDGET_STEP_TOKENS } from '../unifiedChatRequest.js';
 // Tempdoc 609 Phase 3 — the ONE per-tab pointer (sessionStorage): a reload restores the thread THIS
 // tab was reading, not the globally-most-recent one.
 import {
@@ -162,7 +186,12 @@ import { type Sv3RunDecision } from './Sv3Main.js';
 import { setAiActivity, subscribeAiState, type AiState } from '../../state/aiStateStore.js';
 import { projectAvailability } from '../../state/availability.js';
 import { reasonFor } from '../../state/readinessNotice.js';
-import { SV3_COMMAND_SEARCH_TEXT, SV3_DRAFT_KEY, SV3_SURFACE_KEY } from './fixtures.js';
+import {
+  SV3_COMMAND_EXPORT_MARKDOWN,
+  SV3_COMMAND_SEARCH_TEXT,
+  SV3_DRAFT_KEY,
+  SV3_SURFACE_KEY,
+} from './fixtures.js';
 import { type Sv3PaletteRun } from './Sv3Palette.js';
 import type { Sv3Palette } from './Sv3Palette.js';
 import './Sv3Topbar.js';
@@ -305,6 +334,8 @@ export class SearchV3View extends JfElement {
     resizing: { type: Boolean, reflect: true },
     renamingId: { state: true },
     recordNotice: { state: true },
+    historyLocked: { state: true },
+    lockedRefusal: { state: true },
   };
 
   declare composerState: Sv3ComposerState;
@@ -344,6 +375,20 @@ export class SearchV3View extends JfElement {
    * live state on screen by `fetchUnifiedThread`'s contract, and this is what stops that being silent.
    */
   declare recordNotice: boolean;
+  /**
+   * The conversation store is encrypted and locked (tempdoc 629; inventory E4/E5). Derived from EVERY
+   * observed-state snapshot rather than written once from a 423, which is the half tempdoc 734 had to
+   * add later: before it, a lock taken elsewhere — an idle auto-lock, another tab — left the
+   * transcript readable forever. The derivation itself is `deriveSv3HistoryLocked`, and it is
+   * tri-state, so a snapshot that does not mention the lock changes nothing.
+   */
+  declare historyLocked: boolean;
+  /**
+   * A send this window made was refused by that lock (tempdoc 734 round-14 F4). It is what lets the
+   * locked view say what became of the message, and it is cleared the moment the lock lifts — a
+   * notice about a lock that is gone would be describing a refusal that can no longer happen.
+   */
+  declare lockedRefusal: boolean;
 
   private searchUnsubscribe: (() => void) | null = null;
   private aiUnsubscribe: (() => void) | null = null;
@@ -380,6 +425,18 @@ export class SearchV3View extends JfElement {
    * after its turn settled, and the sidebar would grow a row per frame.
    */
   private readonly adoptedRunIds = new Set<string>();
+  /**
+   * Conversations this window has already asked the model to name (inventory A11). Once per
+   * conversation: the title is the row's label forever, so a second generation would rename a row
+   * the reader has already learned to recognise.
+   */
+  private readonly titledSessionIds = new Set<string>();
+  /**
+   * The SHARED reasoning model for the ask that is streaming (inventory C9). One controller, reset
+   * per ask, exactly as the shipped window holds it (`views/UnifiedChatView.ts:645`) — its blocks are
+   * handed to the turn at the terminal, which is what makes a past turn's thinking survive the reset.
+   */
+  private readonly askReasoning = new ReasoningController(() => this.requestUpdate());
 
   constructor() {
     super();
@@ -395,6 +452,8 @@ export class SearchV3View extends JfElement {
     this.resizing = false;
     this.renamingId = null;
     this.recordNotice = false;
+    this.historyLocked = false;
+    this.lockedRefusal = false;
     // Constructed HERE rather than on connect: a Lit controller added before connection still gets
     // its `hostConnected`, and adding it inside `connectedCallback` would add a second one on every
     // re-attach of this retained instance.
@@ -425,6 +484,7 @@ export class SearchV3View extends JfElement {
     });
     this.aiUnsubscribe = subscribeAiState((snapshot) => {
       this.aiSnapshot = snapshot;
+      this.applyLockState(snapshot);
     });
     // Subscribing does NOT create a controller (the read below is a `peek`), so a window that never
     // delegates never starts the agent controller's polling as a side effect of being mounted.
@@ -478,6 +538,9 @@ export class SearchV3View extends JfElement {
     // Lifecycle containment: an unmounted window's stream would keep a connection open against the
     // shared channel budget and settle a turn nobody can see.
     this.abortAsk();
+    // The controller runs a 1s tick while the model is thinking; an unmounted window's tick would go
+    // on requesting updates on a detached element forever.
+    this.askReasoning.destroy();
     this.removeEventListener('keydown', this.onHostKeydown, true);
   }
 
@@ -574,6 +637,41 @@ export class SearchV3View extends JfElement {
     if (readActiveRun() === null) return;
     const ctrl = getAgentSessionController(this.apiBase);
     void ctrl.reattachActiveRunOnLoad();
+  }
+
+  /* ── The lock (tempdoc 822 Phase F7; inventory E4/E5) ─────────────────────────────────────── */
+
+  /**
+   * Adopt whatever the observed-state authority says about the conversation store's lock.
+   *
+   * This is the whole of E5: the lock is not a fact about this window's own sends, it is a fact about
+   * the STORE, and it can be taken anywhere — an idle auto-lock, the Security surface, another tab.
+   * Reading it from every snapshot is what makes a lock taken elsewhere reach this transcript, at the
+   * poll's own ~10s bound. An UNLOCK also clears the refusal, because that notice describes a lock
+   * that is gone (tempdoc 734 round-14 F4, the same clear at `views/UnifiedChatView.ts:1047`).
+   */
+  private applyLockState(snapshot: AiState | null): void {
+    const locked = deriveSv3HistoryLocked(this.historyLocked, snapshot);
+    if (locked === this.historyLocked) return;
+    this.historyLocked = locked;
+    if (!locked) this.lockedRefusal = false;
+  }
+
+  /**
+   * The 423 path's own half. The poll is up to ~10s behind, and a refusal is the SERVER saying the
+   * store is locked right now — so the window adopts it immediately rather than leaving the
+   * transcript readable until the next poll agrees.
+   */
+  private noteRefusedWhileLocked(): void {
+    this.historyLocked = true;
+    this.lockedRefusal = true;
+  }
+
+  /** The ONE remedy exit (inventory E1's remedy nav, E10's, and the locked view's). */
+  private onRemedy(event: Event): void {
+    const target = (event as CustomEvent<Sv3RemedyDetail>).detail?.target ?? '';
+    if (target === '') return;
+    requestSurfaceNavigation(target);
   }
 
   /** The app-wide activity indicator, settled (tempdoc 609 Phase 4 / inventory G11). */
@@ -838,6 +936,10 @@ export class SearchV3View extends JfElement {
     const abort = new AbortController();
     this.askAbort = abort;
     this.streaming = true;
+    // The controller is per-ASK, not per-turn: it accumulates and times one stream's thinking, and
+    // the blocks it finalizes are written onto the turn below. Resetting here is what stops the
+    // previous answer's thinking appearing under this one.
+    this.askReasoning.reset();
     // The app-wide activity indicator, raised for the duration and settled at the terminal below
     // (inventory G11). Cancelling through the SAME abort handle Stop uses, so there is one way to
     // stop this stream however the reader reaches it.
@@ -854,7 +956,21 @@ export class SearchV3View extends JfElement {
       status: 'complete' | 'halted' | 'refused' | 'failed',
       detail = '',
     ): void => {
-      this.sessions = settleTurn(this.sessions, ref, status, Date.now(), detail);
+      // The thinking is closed out and RECORDED on the turn at every terminal, including a halt: what
+      // the model thought before the reader stopped it was really produced, and dropping it would
+      // lose evidence the window actually received (inventory C9).
+      this.askReasoning.finalize();
+      this.sessions = setTurnReasoning(this.sessions, ref, [...this.askReasoning.reasoningBlocks]);
+      this.sessions = settleTurn(
+        this.sessions,
+        ref,
+        status,
+        Date.now(),
+        detail,
+        // The model AS OF THIS TERMINAL (inventory C1). Recorded rather than read at render, so a
+        // transcript re-read after a model swap still names the one that wrote each answer.
+        this.aiSnapshot?.runtime.modelLabel ?? null,
+      );
       // Only THIS dispatch's terminal may clear the window's busy state: a later ask has already
       // installed its own controller, and clearing it here would strand a live stream with a Send
       // control in the slot.
@@ -878,15 +994,29 @@ export class SearchV3View extends JfElement {
         onEvidence: (evidence) => {
           this.sessions = setTurnEvidence(this.sessions, ref, evidence);
         },
+        onReasoning: (payload) => {
+          this.askReasoning.handleReasoningChunk(payload);
+        },
+        onRewrite: (standalone) => {
+          this.sessions = setTurnRewrite(this.sessions, ref, standalone);
+        },
         onDone: () => {
+          // The answer has arrived, so the thinking that preceded it is over — the shipped window
+          // ends it on the first content chunk; ending it at the terminal is the same edge for a
+          // window whose transcript renders the block beside the answer rather than instead of it.
           settle('complete');
           // The record now holds this turn; the store now holds the conversation. Both refreshed so
           // a reload projects exactly what is on screen (inventory A1 + D1).
           void loadConversations();
           void this.refreshRecord(ref.sessionId);
+          void this.maybeGenerateTitle(ref.sessionId);
         },
         // The lock's refusal is worded by the ONE reason vocabulary, not re-phrased here.
-        onRefused: () => settle('refused', reasonFor('conversations.locked').wording),
+        onRefused: () => {
+          settle('refused', reasonFor('conversations.locked').wording);
+          // The SERVER just said the store is locked, which is newer than any poll (inventory E4/E5).
+          this.noteRefusedWhileLocked();
+        },
         onHalted: () => settle('halted'),
         onFailed: (message) => settle('failed', message),
       },
@@ -896,6 +1026,54 @@ export class SearchV3View extends JfElement {
   /** Halting is always the reader's; the turn settles `halted` through the sink's own terminal. */
   private abortAsk(): void {
     this.askAbort?.abort();
+  }
+
+  /**
+   * A11 — ask the model to name the conversation, through the store's own authority
+   * (`generateConversationTitle`, which dispatches a throwaway free-chat turn, cleans it up, and
+   * writes the result to `setConversationTitle`). The window neither prompts nor parses: it decides
+   * WHETHER, and `sv3-sessions.ts`'s `sv3ShouldGenerateTitle` is where that decision lives.
+   *
+   * ONCE per conversation, and never over a rename. The second guard runs AFTER the call returns as
+   * well: naming takes a model round-trip, and a reader who renamed the row while it was in flight
+   * has answered the same question better — so their title is written back rather than lost to a
+   * result that was already stale when it landed.
+   */
+  private async maybeGenerateTitle(sessionId: string): Promise<void> {
+    if (this.titledSessionIds.has(sessionId)) return;
+    const session = sessionById(this.sessions, sessionId);
+    if (session === null || !sv3ShouldGenerateTitle(session)) return;
+    this.titledSessionIds.add(sessionId);
+    const turn = session.turns.find((t) => t.kind === 'ask' && t.status === 'complete');
+    if (turn === undefined) return;
+    const generated = await generateConversationTitle(sessionId, turn.question, turn.answer);
+    if (generated === null) return;
+    const after = sessionById(this.sessions, sessionId);
+    if (after !== null && after.renamed) setConversationTitle(sessionId, after.title);
+  }
+
+  /**
+   * A10 — the conversation as Markdown, on the clipboard. Both halves are the product's:
+   * `exportConversationMarkdown` is the ONE serialisation (the shipped window's export writes the
+   * same bytes) and `copyToClipboard` is the ONE write. It lives in the PALETTE rather than in a
+   * per-conversation control, which is the donor's economy for a real capability with no resting
+   * chrome to spend on it.
+   */
+  private exportActiveConversation(): void {
+    const active = this.sessions.activeId;
+    const session = active === null ? null : sessionById(this.sessions, active);
+    if (session === null || session.turns.length === 0) return;
+    // A turn that has not settled is NOT exported as an answer: whatever is on screen mid-stream is a
+    // fragment, and a markdown file that recorded it as the assistant's reply would be a record of
+    // something that never finished being said.
+    const thread = session.turns
+      .filter((turn) => turn.status !== 'streaming')
+      .flatMap((turn) => [
+        { role: 'user', content: turn.question },
+        { role: 'assistant', content: turn.answer },
+      ]);
+    if (thread.length === 0) return;
+    void copyToClipboard(exportConversationMarkdown(thread, session.title));
   }
 
   /* ── The delegate tier (tempdoc 822 Phase F2) ─────────────────────────────────────────────── */
@@ -1129,6 +1307,17 @@ export class SearchV3View extends JfElement {
     const detail = (event as CustomEvent<Sv3RunDecision>).detail;
     if (ctrl === null || detail === undefined) return;
     if (detail.kind === 'budget') {
+      // B8 — RAISE is a different directive, not a third value of the gate's decision: the gate is
+      // resolved by finalize/stop, whereas raising extends the run's allowance and leaves the gate to
+      // clear itself (tempdoc 577 Ext III, `views/UnifiedChatView.ts:3748-3755`). Same seam either
+      // way — `dispatchRunControl` is the only way a directive leaves this window.
+      if (detail.decision === 'raise') {
+        void dispatchRunControl(ctrl, {
+          kind: 'raise-budget',
+          addTokens: RAISE_BUDGET_STEP_TOKENS,
+        });
+        return;
+      }
       if (detail.decision === 'stop') this.markHaltRequested();
       void dispatchRunControl(ctrl, { kind: 'budget-decision', decision: detail.decision });
       return;
@@ -1171,8 +1360,12 @@ export class SearchV3View extends JfElement {
   }
 
   private onPaletteRun(event: Event): void {
-    if ((event as CustomEvent<Sv3PaletteRun>).detail?.id !== SV3_COMMAND_SEARCH_TEXT) return;
-    this.runSearch(this.composer?.draft ?? '');
+    const id = (event as CustomEvent<Sv3PaletteRun>).detail?.id ?? '';
+    if (id === SV3_COMMAND_SEARCH_TEXT) {
+      this.runSearch(this.composer?.draft ?? '');
+      return;
+    }
+    if (id === SV3_COMMAND_EXPORT_MARKDOWN) this.exportActiveConversation();
   }
 
   private get composer(): Sv3Composer | null {
@@ -1371,6 +1564,7 @@ export class SearchV3View extends JfElement {
         @sv3-composer-answer=${this.onComposerAnswer}
         @sv3-run-decision=${this.onRunDecision}
         @sv3-palette-request=${this.onPaletteRequest}
+        @sv3-remedy=${this.onRemedy}
       >
         <jf-sv3-topbar window-title=${WINDOW_TITLE} data-testid="sv3-topbar"></jf-sv3-topbar>
         <jf-sv3-main
@@ -1379,6 +1573,9 @@ export class SearchV3View extends JfElement {
           .turns=${turns}
           .run=${run}
           ?record-notice=${this.recordNotice}
+          ?history-locked=${this.historyLocked}
+          ?locked-refusal=${this.lockedRefusal}
+          .reasoning=${this.streaming ? this.askReasoning : null}
           data-testid="sv3-main"
         ></jf-sv3-main>
         <jf-sv3-composer
@@ -1388,6 +1585,7 @@ export class SearchV3View extends JfElement {
           ?steerable=${this.steerableRun !== null}
           unavailable-reason=${this.askUnavailableReason}
           delegate-unavailable-reason=${this.delegateUnavailableReason}
+          .corpus=${projectSv3Corpus(this.aiSnapshot)}
           data-testid="sv3-composer"
         ></jf-sv3-composer>
       </div>

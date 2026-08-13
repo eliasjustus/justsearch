@@ -35,12 +35,34 @@ import '../../components/chat/ToolCallCard.js';
 // sv3 tokens through the custom properties the two components read.
 import '../../components/chat/MarkdownBlock.js';
 import '../../components/chat/CitationsPanel.js';
+// The product's ONE citation hover preview and ONE reasoning block (tempdoc 822 Phase F7; inventory
+// C3 and C9). Both are shared components the shipped window mounts for the same events this surface
+// now receives; a window-local preview card or thinking disclosure would be a second presentation of
+// evidence and of the model's own output.
+import '../../components/chat/CitationHoverCard.js';
+import '../../components/chat/ReasoningBlock.js';
+import type { CitationHoverCard, CitationHoverData } from '../../components/chat/CitationHoverCard.js';
+import type { ReasoningController } from '../../controllers/ReasoningController.js';
+// The shared clipboard util (slice 486 G35) — permission-denied and API-absent already handled, so a
+// per-turn copy needs no error path of its own.
+import { copyToClipboard } from '../../utils/clipboardCopy.js';
+import { icon } from '../../components/Icon.js';
+// The ONE readiness vocabulary. The locked transcript's heading and its remedy are read from it, not
+// worded here (tempdoc 629 #3 — the locked-chat gate speaks the same words as every other cause).
+import { reasonFor } from '../../state/readinessNotice.js';
+import { RAISE_BUDGET_STEP_TOKENS } from '../unifiedChatRequest.js';
 import {
   COMPOSER_STATE_DEFAULT,
+  HISTORY_LOCKED_HELP,
+  HISTORY_LOCKED_REFUSED,
   MAIN_EMPTY,
   MAIN_UNREACHABLE,
   RECORD_UNREACHABLE,
+  REWRITE_NOTE_LABEL,
   RUN_DISPATCHING,
+  TURN_COPY_DONE,
+  TURN_COPY_FEEDBACK_MS,
+  TURN_COPY_LABEL,
   TURN_EMPTY_ANSWER,
   TURN_FAILED,
   TURN_HALTED,
@@ -48,6 +70,7 @@ import {
 import type { Sv3ComposerState } from './fixtures.js';
 import { SV3_RESULTS_IDLE, type Sv3ResultsView } from './sv3-results.js';
 import { sv3TurnSourceCount, type Sv3Turn } from './sv3-sessions.js';
+import { projectSv3AnswerFrame, SV3_REMEDY, type Sv3RemedyDetail } from './sv3-honesty.js';
 import { sv3RunReceiptLabel } from './sv3-run.js';
 import type { Sv3RunFeedItem, Sv3RunPrompt, Sv3RunView } from './sv3-run.js';
 
@@ -59,7 +82,7 @@ import type { Sv3RunFeedItem, Sv3RunPrompt, Sv3RunView } from './sv3-run.js';
 export const SV3_RUN_DECISION = 'sv3-run-decision';
 
 export type Sv3RunDecision =
-  | { readonly kind: 'budget'; readonly decision: 'finalize' | 'stop' }
+  | { readonly kind: 'budget'; readonly decision: 'raise' | 'finalize' | 'stop' }
   | { readonly kind: 'context'; readonly decision: 'continue' | 'summarize' | 'stop' };
 
 /** Enough bars to fill the region's first screen without claiming a result count it cannot know. */
@@ -256,6 +279,119 @@ export class Sv3Main extends JfElement {
       .answer-empty {
         color: var(--secondary-label);
       }
+
+      /* ── The honesty pack (tempdoc 822 Phase F7) ───────────────────────────
+         Every line below is a FACT about the answer, so none of them is allowed to hide behind hover
+         (818 §6b L14): only the action bar at the bottom of the turn yields, and it yields on its
+         own. They share the answer's own inset so a fact and the text it qualifies line up. */
+
+      /* C8 — what retrieval actually searched for, above the answer it produced (the shipped
+         window's own placement, views/UnifiedChatView.ts:5550-5553). */
+      .rewrite-note {
+        margin: 0 0 var(--space-1);
+        padding-inline: var(--space-1);
+        color: var(--secondary-label);
+        font-size: var(--font-size-sv3-xs);
+      }
+      .rewrite-note em {
+        color: var(--foreground);
+        font-style: italic;
+      }
+
+      /* C1 — the answer's basis, duration and model. Under the answer, above the evidence: it frames
+         what was just read and introduces what backs it. */
+      .answer-frame {
+        margin: var(--space-1) 0 0;
+        padding-inline: var(--space-1);
+        color: var(--secondary-label);
+        font-size: var(--font-size-sv3-xs);
+        line-height: 1.5;
+      }
+      .answer-frame-receipt {
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* A9 — the per-turn action bar, the ONE thing in a turn that hides until asked for. The donor's
+         own reveal (chat/MessagesTimeline.tsx:1043,1131 — opacity 0 → 100 on group-hover AND
+         focus-within, 200ms). Out of FLOW-height terms it costs nothing that moves: the row is always
+         laid out, only its opacity changes, so a turn does not resize under the pointer. */
+      .turn-actions {
+        display: flex;
+        gap: var(--space-1);
+        margin-top: var(--space-1);
+        padding-inline: var(--space-0-5);
+        opacity: 0;
+        transition: opacity var(--duration-sv3-layout) var(--ease-sv3-enter);
+      }
+      .turn:hover .turn-actions {
+        opacity: 1;
+      }
+      .turn:focus-within .turn-actions {
+        opacity: 1;
+      }
+      /* Focus must not depend on the reveal having finished, and a keyboard reader gets no hover. */
+      .turn-actions:focus-within {
+        opacity: 1;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .turn-actions {
+          transition: none;
+        }
+      }
+      .turn-action {
+        padding: var(--space-0-5) var(--space-2);
+        border: 1px solid transparent;
+        border-radius: var(--control-radius);
+        background: none;
+        color: var(--secondary-label);
+        font-family: inherit;
+        font-size: var(--font-size-sv3-xs);
+        cursor: pointer;
+      }
+      .turn-action:hover {
+        border-color: var(--border);
+        background: var(--muted);
+        color: var(--foreground);
+      }
+      .turn-action:focus-visible {
+        outline: 2px solid var(--ring);
+        outline-offset: 1px;
+      }
+
+      /* ── E4/E5: the store is locked, so the transcript is NOT READABLE ─────
+         Tempdoc 629 §L4 — locked must never look deleted, and it must never look readable either.
+         The region renders this INSTEAD of the transcript; nothing of the conversation is drawn
+         behind it, which is the whole difference from the stale-readable state tempdoc 734 fixed. */
+      .locked-detail {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: var(--space-3);
+      }
+      .locked-refusal {
+        margin: 0;
+        color: var(--foreground);
+      }
+      .locked-remedy {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-1-5);
+        padding: var(--space-1-5) var(--space-3);
+        border: 1px solid var(--border);
+        border-radius: var(--control-radius);
+        background: var(--background);
+        color: var(--foreground);
+        font-family: inherit;
+        font-size: var(--font-size-sv3-sm);
+        cursor: pointer;
+      }
+      .locked-remedy:hover {
+        background: var(--muted);
+      }
+      .locked-remedy:focus-visible {
+        outline: 2px solid var(--ring);
+        outline-offset: 1px;
+      }
       /* The turn's terminal, said in words. Halting is the reader's own act and gets no colour — the
          3-colour budget is for act-now / in-motion / broken, and a stop is none of those. */
       .turn-note {
@@ -377,6 +513,16 @@ export class Sv3Main extends JfElement {
     turns: { attribute: false },
     run: { attribute: false },
     recordNotice: { type: Boolean, attribute: 'record-notice' },
+    historyLocked: { type: Boolean, attribute: 'history-locked' },
+    lockedRefusal: { type: Boolean, attribute: 'locked-refusal' },
+    // A MUTABLE handle, not a value: the controller accumulates thinking in place, so its identity
+    // never changes and Lit's default equality would hold this region back from re-rendering while
+    // the model is thinking. Declared changed whenever one is present, unchanged when it is absent.
+    reasoning: {
+      attribute: false,
+      hasChanged: (value: unknown, old: unknown) => value !== old || value !== null,
+    },
+    copiedTurnId: { state: true },
   };
 
   declare state: Sv3ComposerState;
@@ -395,6 +541,23 @@ export class Sv3Main extends JfElement {
    * word this state a second way.
    */
   declare recordNotice: boolean;
+  /**
+   * The conversation store is encrypted and locked, so this region MUST NOT render the transcript
+   * (tempdoc 629 §L4; inventory E4/E5). Handed down already derived by the window's one tri-state
+   * reading of the polled protection state (`sv3-honesty.ts`), because a lock taken elsewhere reaches
+   * every surface the same way and no region may decide it locally.
+   */
+  declare historyLocked: boolean;
+  /** A send this window made was REFUSED by that lock, so the locked view says what became of it. */
+  declare lockedRefusal: boolean;
+  /**
+   * The SHARED reasoning controller driving the turn that is streaming right now, or null (inventory
+   * C9). Live only: a settled turn renders the blocks stored on it, so a finished conversation does
+   * not depend on a controller that has since been reset.
+   */
+  declare reasoning: ReasoningController | null;
+  /** The turn whose answer was just copied — the confirmation, and the only state this region owns. */
+  declare copiedTurnId: string | null;
 
   /**
    * The donor's two scroll modes as one flag: armed = `following-end` (the reader is at the end, so
@@ -402,6 +565,7 @@ export class Sv3Main extends JfElement {
    * the viewport until they return to the end, which RE-ARMS it).
    */
   private followEnd = true;
+  private copiedTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     super();
@@ -410,6 +574,17 @@ export class Sv3Main extends JfElement {
     this.turns = [];
     this.run = null;
     this.recordNotice = false;
+    this.historyLocked = false;
+    this.lockedRefusal = false;
+    this.reasoning = null;
+    this.copiedTurnId = null;
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    // The confirmation's timer would otherwise outlive the region and set state on a detached element.
+    if (this.copiedTimer !== null) clearTimeout(this.copiedTimer);
+    this.copiedTimer = null;
   }
 
   private get scroller(): HTMLElement | null {
@@ -434,6 +609,13 @@ export class Sv3Main extends JfElement {
   render(): TemplateResult {
     const view = this.view ?? SV3_RESULTS_IDLE;
     const turns = this.turns ?? [];
+    // THE LOCK COMES FIRST, and it replaces the transcript rather than covering it (inventory E4):
+    // a store that refuses to be read must not leave a readable copy of what it holds on screen. Only
+    // the CONVERSATION is gated — the search projection below is a different, unencrypted store, and
+    // gating it too would be a true statement about the wrong data (tempdoc 629's own scope rule).
+    if (this.historyLocked && (turns.length > 0 || this.recordNotice || this.lockedRefusal)) {
+      return this.locked();
+    }
     // The conversation owns the region whenever the claimed session has one. The search projection
     // below is the SECONDARY axis now (822 §4b course correction) and speaks only for a session that
     // has asked nothing — it is reached from the palette, never from a plain submit.
@@ -486,6 +668,8 @@ export class Sv3Main extends JfElement {
         data-testid="sv3-main-scroller"
         @scroll=${this.onScroll}
         aria-busy=${turns.at(-1)?.status === 'streaming' ? 'true' : 'false'}
+        @cite-ref-hover=${this.onCiteRefHover}
+        @cite-ref-leave=${this.onCiteRefLeave}
       >
         <div class="transcript" data-testid="sv3-transcript">
           ${this.recordNotice
@@ -497,7 +681,83 @@ export class Sv3Main extends JfElement {
           ${turns.map((turn) => this.turn(turn))}
         </div>
       </div>
+      <!-- OUTSIDE the scroller: the card is viewport-positioned from the mark's own rect, so a
+           scroller that clipped it would hide the preview at the region's edges. -->
+      <jf-citation-hover-card data-testid="sv3-citation-hover"></jf-citation-hover-card>
     `;
+  }
+
+  /**
+   * C3 — the mark's preview, in the product's ONE hover card. The event is the shared markdown
+   * block's own (`components/chat/MarkdownBlock.ts:591-607`), carrying both the trigger's rect and
+   * the resolved source, so this surface looks nothing up: it forwards what the mark already knows.
+   * Delegated at the scroller rather than bound per mark, because the marks are woven into the shared
+   * block's shadow DOM and this window never touches them.
+   */
+  private readonly onCiteRefHover = (event: Event): void => {
+    const detail = (event as CustomEvent).detail as
+      | { rect?: DOMRect; source?: CitationHoverData }
+      | undefined;
+    const source = detail?.source;
+    const rect = detail?.rect;
+    if (source === undefined || rect === undefined) return;
+    this.hoverCard?.show(source, rect);
+  };
+
+  private readonly onCiteRefLeave = (): void => {
+    this.hoverCard?.hide();
+  };
+
+  private get hoverCard(): CitationHoverCard | null {
+    return this.shadowRoot?.querySelector('jf-citation-hover-card') ?? null;
+  }
+
+  /**
+   * E4/E5 — the locked store's own view, in the window's ONE empty-state component (donor §6.6). The
+   * heading is `reasonFor('conversations.locked')`'s wording and the remedy is that cause's own
+   * declared navigation, so the locked transcript speaks the vocabulary every other readiness cause
+   * in the product speaks and points at the surface that actually owns the unlock.
+   */
+  private locked(): TemplateResult {
+    const reason = reasonFor('conversations.locked');
+    const nav = reason.remedy?.kind === 'navigate' ? reason.remedy : null;
+    return html`
+      <jf-sv3-empty
+        roomy
+        data-testid="sv3-history-locked"
+        glyph="&#9634;"
+        heading=${reason.wording}
+        description=${HISTORY_LOCKED_HELP}
+      >
+        <div class="locked-detail">
+          ${this.lockedRefusal
+            ? html`<p class="locked-refusal" role="alert" data-testid="sv3-history-locked-refusal">
+                ${HISTORY_LOCKED_REFUSED}
+              </p>`
+            : nothing}
+          ${nav === null
+            ? nothing
+            : html`<button
+                type="button"
+                class="locked-remedy"
+                data-testid="sv3-history-locked-remedy"
+                @click=${() => this.remedy(nav.target)}
+              >
+                ${icon({ name: 'shield', size: 14 })} ${nav.label}
+              </button>`}
+        </div>
+      </jf-sv3-empty>
+    `;
+  }
+
+  private remedy(target: string): void {
+    this.dispatchEvent(
+      new CustomEvent<Sv3RemedyDetail>(SV3_REMEDY, {
+        detail: { target },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private turn(turn: Sv3Turn): TemplateResult {
@@ -521,6 +781,7 @@ export class Sv3Main extends JfElement {
             ? this.recordedActivity(turn)
             : this.runBody(run)
           : html`
+              ${this.rewriteNote(turn)}${this.reasoningBlocks(turn, streaming)}
               <div class="answer" data-testid="sv3-turn-answer">
                 ${empty && !streaming
                   ? html`<span class="answer-empty" data-testid="sv3-turn-answer-empty"
@@ -534,11 +795,101 @@ export class Sv3Main extends JfElement {
                       .citations=${[...(turn.evidence?.marks ?? [])]}
                     ></jf-markdown-block>`}
               </div>
-              ${this.citations(turn)}
+              ${this.answerFrameLine(turn)}${this.citations(turn)}
             `}
-        ${this.turnNote(turn)}
+        ${this.turnNote(turn)}${this.turnActions(turn)}
       </div>
     `;
+  }
+
+  /**
+   * C8 (tempdoc 603 C2) — the standalone question retrieval actually ran on, shown back. A follow-up
+   * like "and the second one?" is searched as something else entirely, and a reader who cannot see
+   * what that was cannot tell a bad answer from a bad rewrite.
+   */
+  private rewriteNote(turn: Sv3Turn): TemplateResult | typeof nothing {
+    if (turn.standaloneQuestion === '') return nothing;
+    return html`<p class="rewrite-note" data-testid="sv3-turn-rewrite">
+      ${REWRITE_NOTE_LABEL} <em>${turn.standaloneQuestion}</em>
+    </p>`;
+  }
+
+  /**
+   * C9 — the model's thinking, in the product's ONE controlled block: collapsed by its own
+   * disclosure, never mixed into the answer text. Two sources, and only ever one of them: the LIVE
+   * controller while this turn streams, the blocks recorded on the turn once it has settled.
+   */
+  private reasoningBlocks(turn: Sv3Turn, streaming: boolean): TemplateResult | typeof nothing {
+    const live = this.reasoning;
+    if (streaming) {
+      if (live === null || (!live.isThinking && live.reasoningBlocks.length === 0)) return nothing;
+      return html`<jf-reasoning-block
+        data-testid="sv3-turn-reasoning"
+        .controller=${live}
+      ></jf-reasoning-block>`;
+    }
+    if (turn.reasoning.length === 0) return nothing;
+    return html`${turn.reasoning.map(
+      (block) => html`<jf-reasoning-block
+        data-testid="sv3-turn-reasoning"
+        .text=${block.text}
+        .durationMs=${block.durationMs}
+      ></jf-reasoning-block>`,
+    )}`;
+  }
+
+  /**
+   * C1 — the honest answer frame: what it is based on, how long it took, which model wrote it. The
+   * whole line is `sv3-honesty.ts`'s derivation over the SHARED frame authority; this renders it and
+   * decides nothing, which is what keeps the wording identical to the shipped window's.
+   */
+  private answerFrameLine(turn: Sv3Turn): TemplateResult | typeof nothing {
+    const frame = projectSv3AnswerFrame(turn);
+    if (frame === null) return nothing;
+    return html`<p class="answer-frame" role="note" data-testid="sv3-answer-frame">
+      ${frame.label ?? nothing}${frame.label !== null && frame.tail !== '' ? ' · ' : nothing}${frame.tail ===
+      ''
+        ? nothing
+        : html`<span class="answer-frame-receipt">${frame.tail}</span>`}
+    </p>`;
+  }
+
+  /**
+   * A9 — copy this answer. The one affordance in a turn that hides until the reader reaches for it
+   * (the donor's message action bar); every honesty fact above it stays visible, which is L14's
+   * boundary drawn exactly where the donor draws its own.
+   *
+   * Offered only for an answer there IS: a streaming turn's text is still arriving, and a halted or
+   * failed one is a fragment the reader did not ask to keep.
+   */
+  private turnActions(turn: Sv3Turn): TemplateResult | typeof nothing {
+    if (turn.kind !== 'ask' || turn.status !== 'complete' || turn.answer === '') return nothing;
+    const copied = this.copiedTurnId === turn.id;
+    return html`
+      <div class="turn-actions" data-testid="sv3-turn-actions">
+        <button
+          type="button"
+          class="turn-action"
+          data-testid="sv3-turn-copy"
+          aria-live="polite"
+          @click=${() => void this.copyAnswer(turn)}
+        >
+          ${copied ? TURN_COPY_DONE : TURN_COPY_LABEL}
+        </button>
+      </div>
+    `;
+  }
+
+  private async copyAnswer(turn: Sv3Turn): Promise<void> {
+    // The util never throws and reports whether the write landed; a confirmation is shown only when
+    // it did, so "Copied" is never said over an empty clipboard.
+    if (!(await copyToClipboard(turn.answer))) return;
+    if (this.copiedTimer !== null) clearTimeout(this.copiedTimer);
+    this.copiedTurnId = turn.id;
+    this.copiedTimer = setTimeout(() => {
+      this.copiedTurnId = null;
+      this.copiedTimer = null;
+    }, TURN_COPY_FEEDBACK_MS);
   }
 
   /**
@@ -649,6 +1000,15 @@ export class Sv3Main extends JfElement {
             The run needs ${prompt.tokensNeeded.toLocaleString()} more tokens;
             ${prompt.tokensRemaining.toLocaleString()} remain.
           </p>
+          <!-- B8 — the REMEDY comes first (tempdoc 577 Ext III, views/UnifiedChatView.ts:3648): the
+               other two arms both give something up, and offering them before the one that does not
+               would put the concession where the reader looks first. The step is the shared
+               RAISE_BUDGET_STEP_TOKENS, so the label cannot promise a different number than the
+               directive spends. -->
+          <button type="button" data-testid="sv3-run-budget-raise" @click=${() =>
+            this.decide({ kind: 'budget', decision: 'raise' })}>
+            Add ${RAISE_BUDGET_STEP_TOKENS.toLocaleString()} tokens
+          </button>
           <button type="button" data-testid="sv3-run-budget-finalize" @click=${() =>
             this.decide({ kind: 'budget', decision: 'finalize' })}>
             Finish with what it has

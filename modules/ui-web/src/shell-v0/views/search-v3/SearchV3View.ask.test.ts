@@ -111,7 +111,14 @@ function stubStatus(status: number): void {
  * assertion on issuance, which is the thing that must be exactly one.
  */
 const dispatches = (): unknown[][] =>
-  fetchMock.mock.calls.filter((call) => String(call[0]).includes('/api/chat/dispatch'));
+  fetchMock.mock.calls
+    .filter((call) => String(call[0]).includes('/api/chat/dispatch'))
+    // Phase F7 (inventory A11) added a SECOND POST to the same endpoint after an answer lands: the
+    // conversation store's own auto-titling, a throwaway `core.free-chat` turn against a
+    // `_title_…` session it then deletes (`state/conversationListStore.ts:206-253`). It is not a
+    // second issuance site — it is the product's naming authority, reached through the store — so it
+    // is excluded here, and asserted on its own terms in the auto-titling case below.
+    .filter((call) => !String((call[1] as { body?: unknown } | undefined)?.body ?? '').includes('_title_'));
 
 beforeEach(() => {
   // Phase F6 wired this window to APP-WIDE, process-lifetime authorities (the conversation store,
@@ -408,9 +415,15 @@ describe('every terminal is distinct, and says only what happened', () => {
     stubStatus(423);
     const el = await mount();
     await ask(el, 'what changed?');
-    const turn = turnsOf(await region(el, 'jf-sv3-main'))[0] as HTMLElement;
-    expect(turn.dataset.status).toBe('refused');
-    expect(textIn(turn, 'sv3-turn-note')).toBe(reasonFor('conversations.locked').wording);
+    // The TURN still reaches its own distinct terminal, worded by the one vocabulary — asserted on
+    // the model because Phase F7 (inventory E4) makes the locked store's transcript unreadable, so
+    // the refusal is now said in the locked view rather than under a turn nobody may read.
+    const turn = el.sessions.sessions[0]?.turns[0];
+    expect(turn?.status).toBe('refused');
+    expect(turn?.detail).toBe(reasonFor('conversations.locked').wording);
+    const main = await region(el, 'jf-sv3-main');
+    expect(turnsOf(main)).toHaveLength(0);
+    expect(q(main, 'sv3-history-locked')).not.toBeNull();
   });
 
   it('reports a failure with the stream\'s own words, and never as a halt', async () => {
