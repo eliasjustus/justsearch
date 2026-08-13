@@ -298,7 +298,10 @@ public class RetrieveContextController {
             Map<String, Object> entry = new HashMap<>();
             entry.put("sentence_index", m.sentenceIndex());
             entry.put("sentence_text", m.sentenceText());
-            entry.put("chunk_index", m.chunkIndex());
+            // Tempdoc 822 §3b — the match carries the POSITION of the matched entry in the request's
+            // `chunk_refs` array, not a document-relative chunk ordinal. It was published under the
+            // input field's name (`chunk_index`), which invited exactly that misreading.
+            entry.put("source_index", m.sourceIndex());
             entry.put("parent_doc_id", m.parentDocId());
             entry.put("similarity", m.similarity());
             return entry;

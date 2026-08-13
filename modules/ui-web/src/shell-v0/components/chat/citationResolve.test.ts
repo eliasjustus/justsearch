@@ -8,6 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { claimsToCitations } from './citationResolve.js';
+import { answerFrame, groundingCoverage } from './evidenceProjection.js';
 import type { Claim, RetrievalCitation } from './citationTypes.js';
 
 const SOURCES: RetrievalCitation[] = [
@@ -34,7 +35,8 @@ describe('claimsToCitations — the one RAG claim→Citation resolver (§15.B)',
         sentenceText: 'Grounded sentence.',
         verifiedScore: 0.8,
         lexicalScore: 0,
-        sourceRefs: [0],
+        verifiedRefs: [0],
+        lexicalRefs: [],
       },
     ];
     const out = claimsToCitations(claims, SOURCES);
@@ -59,7 +61,8 @@ describe('claimsToCitations — the one RAG claim→Citation resolver (§15.B)',
         sentenceText: 'Ungrounded.',
         verifiedScore: 0.1,
         lexicalScore: 0,
-        sourceRefs: [],
+        verifiedRefs: [],
+        lexicalRefs: [],
       },
     ];
     expect(claimsToCitations(claims, SOURCES)).toEqual([]);
@@ -72,7 +75,8 @@ describe('claimsToCitations — the one RAG claim→Citation resolver (§15.B)',
         sentenceText: 'x',
         verifiedScore: 0.8,
         lexicalScore: 0,
-        sourceRefs: [0],
+        verifiedRefs: [0],
+        lexicalRefs: [],
       },
     ];
     expect(claimsToCitations(claims, [])).toEqual([]);
@@ -92,7 +96,10 @@ describe('claimsToCitations — the 822 §3d provenance gate', () => {
     sentenceText: 'A sentence the lexical matcher liked.',
     verifiedScore: null,
     lexicalScore: score,
-    sourceRefs: [0],
+    // Deliberately a RESOLVABLE verified ref: only the §3d SCORE gate can drop this claim, so the
+    // probe stays precise (the §3b ref gate below is tested on its own fixtures).
+    verifiedRefs: [0],
+    lexicalRefs: [],
   });
 
   it('mints NO citation for a lexical-only claim, however high its word overlap runs', () => {
@@ -112,7 +119,8 @@ describe('claimsToCitations — the 822 §3d provenance gate', () => {
         // Higher than the verified score, and above TIER_HIGH — a `Math.max` across the two scales
         // (the defect) would surface 0.95 here and read 'grounded' instead of 'weak'.
         lexicalScore: 0.95,
-        sourceRefs: [0],
+        verifiedRefs: [0],
+        lexicalRefs: [],
       },
     ];
     const out = claimsToCitations(both, SOURCES);
@@ -125,6 +133,104 @@ describe('claimsToCitations — the 822 §3d provenance gate', () => {
       { sentenceIndex: 0, sentenceText: 'Legacy.', lexicalScore: 0.9, sourceRefs: [0] },
     ] as unknown as Claim[];
     expect(claimsToCitations(legacy, SOURCES)).toEqual([]);
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────────────────────────
+ * Tempdoc 822 §3b — THE NUMBERING CONTRACT's resolver half. Two rules, both mutation-probed:
+ *   1. a claim resolves ONLY through a ref the authoritative matcher supplied (`verifiedRefs`);
+ *   2. a ref that addresses no source mints NO citation — the `sources[refIdx] ?? sources[0]`
+ *      fallback is gone, so a wrong-target deep link is unconstructible rather than merely rare.
+ * The reproduction fixture is the gap report's: a streamed index of 59 against 5 sources, which
+ * used to render a mark labelled 60 that deep-linked to source 1.
+ * ─────────────────────────────────────────────────────────────────────────────────────────────── */
+describe('claimsToCitations — the 822 §3b numbering contract', () => {
+  const fiveSources: RetrievalCitation[] = Array.from({ length: 5 }, (_, i) => ({
+    ...SOURCES[0]!,
+    parentDocId: `docs/${i}.md`,
+    excerpt: `passage ${i}`,
+  }));
+
+  it('mints NO citation for an out-of-range ref — and the old sources[0] result is GONE', () => {
+    const claims: Claim[] = [
+      {
+        sentenceIndex: 0,
+        sentenceText: 'A doubly-matched sentence.',
+        verifiedScore: 0.8,
+        lexicalScore: 0,
+        verifiedRefs: [59],
+        lexicalRefs: [],
+      },
+    ];
+    const out = claimsToCitations(claims, fiveSources);
+    expect(out).toEqual([]);
+    // The precise assertion: not merely "no mark for source 59", but no mark pointing at source 0
+    // either — which is exactly what the removed fallback produced.
+    expect(out.some((c) => c.detail.parentDocId === 'docs/0.md')).toBe(false);
+  });
+
+  it('resolves through the VERIFIED ref even when a lexical ref arrived first', () => {
+    // The live ordering: deltas stream before the post-hoc matches, so a merged ref list put the
+    // lexical guess at index 0 and the resolver took it.
+    const claims: Claim[] = [
+      {
+        sentenceIndex: 0,
+        sentenceText: 'A doubly-matched sentence.',
+        verifiedScore: 0.8,
+        lexicalScore: 0.9,
+        verifiedRefs: [3],
+        lexicalRefs: [1],
+      },
+    ];
+    const out = claimsToCitations(claims, fiveSources);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.label).toBe(4);
+    expect(out[0]!.detail.parentDocId).toBe('docs/3.md');
+    expect(out[0]!.sourceRefs).toEqual([3]);
+  });
+
+  it('mints NO citation for a claim with lexical refs only, even with a verified score', () => {
+    const claims: Claim[] = [
+      {
+        sentenceIndex: 0,
+        sentenceText: 'The matcher scored it but tied it to no passage.',
+        verifiedScore: 0.9,
+        lexicalScore: 0.4,
+        verifiedRefs: [],
+        lexicalRefs: [2],
+      },
+    ];
+    expect(claimsToCitations(claims, fiveSources)).toEqual([]);
+  });
+});
+
+/* Tempdoc 822 §3b — the frame consequence, asserted rather than assumed: a dropped claim is not
+ * counted as grounded, so the coverage read over the RESOLVED MARKS degrades and the frame moves. */
+describe('the dropped claim degrades the frame (822 §3b)', () => {
+  const sources: RetrievalCitation[] = Array.from({ length: 5 }, (_, i) => ({
+    ...SOURCES[0]!,
+    parentDocId: `docs/${i}.md`,
+  }));
+  const answer = 'One. Two. Three. Four. Five. Six.';
+  const claim = (i: number, ref: number): Claim => ({
+    sentenceIndex: i,
+    sentenceText: `S${i}`,
+    verifiedScore: 0.8,
+    lexicalScore: 0,
+    verifiedRefs: [ref],
+    lexicalRefs: [],
+  });
+
+  it('reads "4 of 6" (partially-grounded), not "5 of 6", when one ref addresses no source', () => {
+    const claims = [claim(0, 0), claim(1, 1), claim(2, 2), claim(3, 3), claim(4, 59)];
+    const marks = claimsToCitations(claims, sources);
+    expect(marks).toHaveLength(4);
+
+    const cov = groundingCoverage(marks, answer);
+    expect(cov.cited).toBe(4);
+    expect(cov.total).toBe(6);
+    expect(cov.label).toBe('Grounded · 4 of 6 sentences');
+    expect(answerFrame('core.rag-ask', sources.length, cov, true, true)).toBe('partially-grounded');
   });
 });
 

@@ -379,6 +379,20 @@ function rungLabel(base: string, active: boolean): string {
   return active ? `${base} (current mode)` : base;
 }
 
+/**
+ * Tempdoc 822 §3b — read a persisted match's source position. Records written before the rename
+ * carry the key `chunkIndex`, and their stored VALUES were already the correct positional numbers:
+ * `claimMatches` is persisted from `StreamingCitationMatcher.onDone`'s authoritative
+ * `documents.matchCitations` call, never from the streaming deltas whose values were wrong. So this
+ * is a reader for user data under its old key, not a compatibility shim for wrong values — and no
+ * migration is needed. `-1` = absent.
+ */
+function readSourceIndex(m: Record<string, unknown>): number {
+  if (typeof m.sourceIndex === 'number') return m.sourceIndex;
+  if (typeof m.chunkIndex === 'number') return m.chunkIndex;
+  return -1;
+}
+
 export class UnifiedChatView extends JfElement {
   static properties = {
     apiBase: { attribute: 'api-base', type: String },
@@ -5273,21 +5287,23 @@ export class UnifiedChatView extends JfElement {
       const idx = typeof m.sentenceIndex === 'number' ? m.sentenceIndex : 0;
       const text = typeof m.sentenceText === 'string' ? m.sentenceText : '';
       const sim = typeof m.similarity === 'number' ? m.similarity : 0;
-      const chunk = typeof m.chunkIndex === 'number' ? m.chunkIndex : -1;
+      const ref = readSourceIndex(m);
       const existing = bySentence.get(idx);
       if (existing) {
         existing.verifiedScore = Math.max(existing.verifiedScore ?? 0, sim);
-        if (chunk >= 0 && !existing.sourceRefs.includes(chunk)) existing.sourceRefs.push(chunk);
+        if (ref >= 0 && !existing.verifiedRefs.includes(ref)) existing.verifiedRefs.push(ref);
       } else {
         bySentence.set(idx, {
           sentenceIndex: idx,
           sentenceText: text,
-          // Tempdoc 822 §3d — the persisted `claimMatches` come from the AUTHORITATIVE post-hoc
+          // Tempdoc 822 §3d/§3b — the persisted `claimMatches` come from the AUTHORITATIVE post-hoc
           // `documents.matchCitations` call (`StreamingCitationMatcher.onDone`), never from the
-          // streaming lexical deltas, so a reloaded conversation's scores are verified by provenance.
+          // streaming lexical deltas, so a reloaded conversation's scores AND refs are verified by
+          // provenance: both land on the verified side.
           verifiedScore: sim,
           lexicalScore: 0,
-          sourceRefs: chunk >= 0 ? [chunk] : [],
+          verifiedRefs: ref >= 0 ? [ref] : [],
+          lexicalRefs: [],
         });
       }
     }
@@ -5298,7 +5314,7 @@ export class UnifiedChatView extends JfElement {
    * Tempdoc 603 PART X.B — the SOURCES-panel grounding sibling of {@link claimsFromRecord}: reconstruct the
    * `CitationMatch[]` from the record's persisted `claimMatches.matches` (already that shape) so a RELOADED
    * conversation's source panel groups by grounding too (the live path passes `m.citations`; the record path
-   * passed `[]`, leaving reload grounding-blind). The match `chunkIndex` is the source's POSITION in the
+   * passed `[]`, leaving reload grounding-blind). The match `sourceIndex` is the source's POSITION in the
    * persisted `citations` list — persisted in order by `RAGDoneEnricher`, the same order `sourceGrounding` joins on.
    */
   private matchesFromRecord(claimMatches: unknown): CitationMatch[] {
@@ -5310,7 +5326,7 @@ export class UnifiedChatView extends JfElement {
     return matches.map((m) => ({
       sentenceIndex: typeof m.sentenceIndex === 'number' ? m.sentenceIndex : 0,
       sentenceText: typeof m.sentenceText === 'string' ? m.sentenceText : '',
-      chunkIndex: typeof m.chunkIndex === 'number' ? m.chunkIndex : -1,
+      sourceIndex: readSourceIndex(m),
       similarity: typeof m.similarity === 'number' ? m.similarity : 0,
       parentDocId: typeof m.parentDocId === 'string' ? m.parentDocId : '',
     }));
@@ -5417,9 +5433,11 @@ export class UnifiedChatView extends JfElement {
     // Tempdoc 822 §3d — only a cross-encoder-verified claim contributes a similarity to the coverage
     // read. A lexical-only claim is excluded STRUCTURALLY (it has no score on this scale to give),
     // so "Grounded · N of M" can no longer be lifted by word overlap.
-    const claimCites = (m.claims ?? []).flatMap((c) =>
-      typeof c.verifiedScore === 'number' ? [{ similarity: c.verifiedScore }] : [],
-    );
+    // Tempdoc 822 §3b — the coverage counts the RESOLVED MARKS, which is the same list the answer
+    // renders, so a claim the resolver dropped (no verified ref, or one addressing no source) is
+    // not counted as grounded. "Grounded · 4 of 6" instead of "5 of 6" is the honest read: the
+    // frame degrades because the evidence degraded, rather than claiming a mark that isn't there.
+    const marks = this.resolveClaimCitations(m.claims ?? [], m.sources ?? []);
     const sourceCount = (m.sources?.length ?? 0) + (m.claims?.length ?? 0);
     // Tempdoc 603 D-4 — document-level sources (agent, no chunk identity) frame as `sourced`, not
     // "Grounded · 0 of N". RAG sources (RetrievalCitation, chunk-native) carry no sentinel → chunk-precise.
@@ -5428,7 +5446,7 @@ export class UnifiedChatView extends JfElement {
       : this.frameFor(
           m.shapeId,
           sourceCount,
-          claimCites,
+          marks,
           m.content,
           sourcesAreChunkPrecise(m.sources ?? []),
           // Tempdoc 720 — renderMessage renders committed messages (the in-progress answer streams via
@@ -5464,7 +5482,7 @@ export class UnifiedChatView extends JfElement {
               html`<jf-markdown-block
                 format="plain"
                 .text=${m.content}
-                .citations=${this.resolveClaimCitations(m.claims ?? [], m.sources ?? [])}
+                .citations=${marks}
                 frame=${frame}
               ></jf-markdown-block>`
             : // Tempdoc 565 §15.B — the canonical answer block for every other mode (agent/chat).
@@ -5907,7 +5925,7 @@ export class UnifiedChatView extends JfElement {
           sentenceText?: string;
           citations?: Array<{
             parentDocId: string;
-            chunkIndex: number;
+            sourceIndex: number;
             score: number;
           }>;
         } | null;
@@ -5931,7 +5949,12 @@ export class UnifiedChatView extends JfElement {
                 // `verifiedScore` null, so it can never reach the tier thresholds.
                 verifiedScore: null,
                 lexicalScore: bestScore,
-                sourceRefs: p.citations.map((c) => c.chunkIndex),
+                // Tempdoc 822 §3b — the same producer split applies to the REFS. Deltas arrive
+                // first, so merging them into one ref list made the first ref of every
+                // doubly-matched sentence the lexical guess; a mark resolves through verified refs
+                // only, so these can never become a deep-link target.
+                verifiedRefs: [],
+                lexicalRefs: p.citations.map((c) => c.sourceIndex),
               },
             ];
           }
@@ -5947,7 +5970,7 @@ export class UnifiedChatView extends JfElement {
                 {
                   sentenceIndex: p.sentenceIndex ?? 0,
                   sentenceText: p.sentenceText,
-                  chunkIndex: c.chunkIndex,
+                  sourceIndex: c.sourceIndex,
                   similarity: c.score,
                   parentDocId: c.parentDocId,
                 },
@@ -5982,14 +6005,23 @@ export class UnifiedChatView extends JfElement {
           // `Math.max` across them fed the lexical number into cross-encoder-calibrated thresholds.
           const bySentence = new Map<
             number,
-            { text: string; verifiedScore: number | null; lexicalScore: number; refs: Set<number> }
+            {
+              text: string;
+              verifiedScore: number | null;
+              lexicalScore: number;
+              // Tempdoc 822 §3b — two ref sets, for the same reason there are two scores: the
+              // producers do not measure the same thing, and only the verified one may resolve.
+              verifiedRefs: Set<number>;
+              lexicalRefs: Set<number>;
+            }
           >();
           for (const cl of this.claims) {
             bySentence.set(cl.sentenceIndex, {
               text: cl.sentenceText,
               verifiedScore: cl.verifiedScore,
               lexicalScore: cl.lexicalScore,
-              refs: new Set(cl.sourceRefs),
+              verifiedRefs: new Set(cl.verifiedRefs),
+              lexicalRefs: new Set(cl.lexicalRefs),
             });
           }
           for (const m of p.matches) {
@@ -5999,11 +6031,17 @@ export class UnifiedChatView extends JfElement {
             const existing = bySentence.get(idx);
             if (existing) {
               existing.verifiedScore = Math.max(existing.verifiedScore ?? 0, sim);
-              if (typeof m.chunkIndex === 'number') existing.refs.add(m.chunkIndex);
+              if (typeof m.sourceIndex === 'number') existing.verifiedRefs.add(m.sourceIndex);
             } else {
-              const refs = new Set<number>();
-              if (typeof m.chunkIndex === 'number') refs.add(m.chunkIndex);
-              bySentence.set(idx, { text, verifiedScore: sim, lexicalScore: 0, refs });
+              const verifiedRefs = new Set<number>();
+              if (typeof m.sourceIndex === 'number') verifiedRefs.add(m.sourceIndex);
+              bySentence.set(idx, {
+                text,
+                verifiedScore: sim,
+                lexicalScore: 0,
+                verifiedRefs,
+                lexicalRefs: new Set<number>(),
+              });
             }
           }
           this.claims = Array.from(bySentence.entries())
@@ -6012,7 +6050,8 @@ export class UnifiedChatView extends JfElement {
               sentenceText: v.text,
               verifiedScore: v.verifiedScore,
               lexicalScore: v.lexicalScore,
-              sourceRefs: Array.from(v.refs),
+              verifiedRefs: Array.from(v.verifiedRefs),
+              lexicalRefs: Array.from(v.lexicalRefs),
             }))
             .sort((a, b) => a.sentenceIndex - b.sentenceIndex);
           // Propagate to the committed thread message if streaming has ended.

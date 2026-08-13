@@ -44,7 +44,7 @@ function fakeCitation(overrides: Partial<CitationMatch> = {}): CitationMatch {
   return {
     sentenceIndex: 0,
     sentenceText: 'Default sentence text.',
-    chunkIndex: 0,
+    sourceIndex: 0,
     similarity: 0.85,
     parentDocId: 'doc.fake',
     ...overrides,
@@ -76,10 +76,10 @@ describe('CitationsPanel', () => {
         excerpt: 'The system uses a three-process model.',
       }),
     ];
-    // 603 PART X.B — the match's chunkIndex is the source's POSITION in this list (0), not the doc-ordinal (2).
+    // 603 PART X.B — the match's sourceIndex is the source's POSITION in this list (0), not the doc-ordinal (2).
     // Joining by doc-ordinal (the §1 bug) would find nothing here and wrongly read "not cited".
     el.citations = [
-      fakeCitation({ parentDocId: 'doc.architecture', chunkIndex: 0, similarity: 0.8 }),
+      fakeCitation({ parentDocId: 'doc.architecture', sourceIndex: 0, similarity: 0.8 }),
     ];
     document.body.appendChild(el);
     await settle(el);
@@ -100,7 +100,7 @@ describe('CitationsPanel', () => {
       // retrieved (high BM25) but never cited → demoted
       fakeSource({ parentDocId: 'b.md', chunkIndex: 1, score: 0.99, excerpt: 'Unused passage' }),
     ];
-    el.citations = [fakeCitation({ parentDocId: 'a.md', chunkIndex: 0, similarity: 0.85 })];
+    el.citations = [fakeCitation({ parentDocId: 'a.md', sourceIndex: 0, similarity: 0.85 })];
     document.body.appendChild(el);
     await settle(el);
     const text = (el.shadowRoot?.textContent ?? '').replace(/\s+/g, ' ');
@@ -201,7 +201,7 @@ describe('CitationsPanel', () => {
     // 603 C1 / PART X.B — the collapsible disclosure is the GROUNDED (tiered) path; supply a match per
     // source POSITION (0 and 1) so both are cited and render through renderTieredSources (the flat
     // no-matches path has no disclosure). Grounding joins by array position, so one match per index.
-    el.citations = [fakeCitation({ chunkIndex: 0 }), fakeCitation({ chunkIndex: 1 })];
+    el.citations = [fakeCitation({ sourceIndex: 0 }), fakeCitation({ sourceIndex: 1 })];
     document.body.appendChild(el);
     // Raw settle (no auto-expand) — assert the default-collapsed state.
     await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
@@ -228,7 +228,7 @@ describe('CitationsPanel', () => {
       what: 'tiered sources (the disclosure path)',
       apply: (el: CitationsPanel) => {
         el.sources = [fakeSource(), fakeSource()];
-        el.citations = [fakeCitation({ chunkIndex: 0 }), fakeCitation({ chunkIndex: 1 })];
+        el.citations = [fakeCitation({ sourceIndex: 0 }), fakeCitation({ sourceIndex: 1 })];
       },
       header: 'button.panel-header',
       body: 'button.source',

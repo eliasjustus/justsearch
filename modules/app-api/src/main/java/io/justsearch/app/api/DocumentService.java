@@ -323,11 +323,19 @@ public interface DocumentService {
     }
   }
 
-  /** A single sentence-to-chunk citation match. */
+  /**
+   * A single answer-sentence-to-source citation match.
+   *
+   * <p>Tempdoc 822 §3b (the numbering contract): {@code sourceIndex} is the matched source's
+   * POSITION in the {@code citations} list handed to {@link #matchCitations} — the same list the UI
+   * numbers its {@code [n]} marks from. It is NOT the chunk's ordinal inside its parent document
+   * (that fact lives only on {@link ContextCitation#chunkIndex()} and never travels on a match).
+   * Renamed from {@code chunkIndex}, which let the two facts be conflated silently.
+   */
   record CitationMatchEntry(
       int sentenceIndex,
       String sentenceText,
-      int chunkIndex,
+      int sourceIndex,
       double similarity,
       String parentDocId) {
     public CitationMatchEntry {

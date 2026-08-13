@@ -40,14 +40,31 @@ export interface Claim {
    * monotone mapping onto it exists. Diagnostic only — never a tier input.
    */
   lexicalScore: number;
-  sourceRefs: number[];
+  /**
+   * Tempdoc 822 §3b — the source positions the AUTHORITATIVE matcher (`rag.citation_matches`) tied
+   * this sentence to. The ONLY set a mark may resolve through: deltas arrive first, so a single
+   * merged ref list made the first ref of any doubly-matched sentence the lexical one.
+   */
+  verifiedRefs: number[];
+  /**
+   * The source positions the streaming lexical matcher (`rag.citation_delta`) guessed. Kept because
+   * it is what arrived — never a resolution source, exactly as {@link lexicalScore} is never a tier
+   * input. Same producer, same standing.
+   */
+  lexicalRefs: number[];
 }
 
-/** Citation match (mirrors `CitationMatch` in streams.ts). */
+/**
+ * Citation match (mirrors `CitationMatch` in streams.ts).
+ *
+ * <p>Tempdoc 822 §3b — `sourceIndex` (renamed from `chunkIndex`) is the matched source's POSITION in
+ * this turn's `rag.citations` array, which is what the `[n]` labels and the sources panel index by.
+ * A chunk's ordinal inside its parent document is a different fact and never travels on a match.
+ */
 export interface CitationMatch {
   sentenceIndex: number;
   sentenceText: string;
-  chunkIndex: number;
+  sourceIndex: number;
   similarity: number;
   parentDocId: string;
   excerpt?: string;

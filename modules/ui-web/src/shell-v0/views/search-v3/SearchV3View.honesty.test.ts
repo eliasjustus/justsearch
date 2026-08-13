@@ -228,7 +228,7 @@ async function askGrounded(el: Mounted, stream: FakeStream, answer = 'The lock h
   stream.emit('rag.citations', { citations: [source(0)] });
   stream.emit('chunk', { text: answer });
   stream.emit('rag.citation_matches', {
-    matches: [{ sentenceIndex: 0, sentenceText: answer, similarity: 0.9, chunkIndex: 0 }],
+    matches: [{ sentenceIndex: 0, sentenceText: answer, similarity: 0.9, sourceIndex: 0 }],
   });
   stream.emit('done', {});
   stream.end();
@@ -440,7 +440,8 @@ describe('the inline marks are the SHARED resolver\'s output, and they preview o
           // (cross-encoder verified); a lexical-only claim would resolve to no mark at all.
           verifiedScore: 0.9,
           lexicalScore: 0,
-          sourceRefs: [0],
+          verifiedRefs: [0],
+          lexicalRefs: [],
         },
       ],
       evidence?.sources ?? [],
@@ -514,7 +515,7 @@ describe('the inline marks are the SHARED resolver\'s output, and they preview o
     stream.emit('rag.citation_delta', {
       sentenceIndex: 0,
       sentenceText: 'The lock held.',
-      citations: [{ chunkIndex: 0, score: 1 }],
+      citations: [{ sourceIndex: 0, score: 1 }],
     });
     stream.emit('done', {});
     stream.end();
@@ -538,11 +539,11 @@ describe('the inline marks are the SHARED resolver\'s output, and they preview o
     stream.emit('rag.citation_delta', {
       sentenceIndex: 0,
       sentenceText: 'The lock held.',
-      citations: [{ chunkIndex: 0, score: 0.95 }],
+      citations: [{ sourceIndex: 0, score: 0.95 }],
     });
     // …then the authoritative cross-encoder lands at 0.52 — a WEAK sentence.
     stream.emit('rag.citation_matches', {
-      matches: [{ sentenceIndex: 0, sentenceText: 'The lock held.', similarity: 0.52, chunkIndex: 0 }],
+      matches: [{ sentenceIndex: 0, sentenceText: 'The lock held.', similarity: 0.52, sourceIndex: 0 }],
     });
     stream.emit('done', {});
     stream.end();
@@ -552,6 +553,59 @@ describe('the inline marks are the SHARED resolver\'s output, and they preview o
     expect(marks).toHaveLength(1);
     // The old `Math.max` across the two scales would read 0.95 here and render 'grounded'.
     expect(marks[0]?.similarity).toBe(0.52);
+  });
+
+  /* Tempdoc 822 §3b — THE NUMBERING CONTRACT at this window's accumulator. The same two assertions
+     run against `UnifiedChatView`'s merge: one defect, two accumulators. */
+
+  it('a doubly-matched sentence resolves through the VERIFIED ref, not the delta that arrived first', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'why did the renewal fail?');
+    stream.emit('rag.citations', { citations: [source(0), source(1), source(2)] });
+    stream.emit('chunk', { text: 'The lock held.' });
+    // The delta streams first and guesses source 0 …
+    stream.emit('rag.citation_delta', {
+      sentenceIndex: 0,
+      sentenceText: 'The lock held.',
+      citations: [{ sourceIndex: 0, score: 0.9 }],
+    });
+    // … the authoritative matcher ties it to source 2.
+    stream.emit('rag.citation_matches', {
+      matches: [{ sentenceIndex: 0, sentenceText: 'The lock held.', similarity: 0.8, sourceIndex: 2 }],
+    });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+
+    const marks = el.sessions.sessions[0]?.turns[0]?.evidence?.marks ?? [];
+    expect(marks).toHaveLength(1);
+    // A single merged ref set put the delta's guess first, so the mark read [1] and deep-linked to
+    // the wrong passage.
+    expect(marks[0]?.label).toBe(3);
+    expect(marks[0]?.detail.parentDocId).toBe('f:/docs/note-2.md');
+  });
+
+  it('an out-of-range index mints NO mark — no wrong-target link is constructible', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'why did the renewal fail?');
+    stream.emit('rag.citations', { citations: [0, 1, 2, 3, 4].map((i) => source(i)) });
+    stream.emit('chunk', { text: 'The lock held.' });
+    stream.emit('rag.citation_matches', {
+      matches: [{ sentenceIndex: 0, sentenceText: 'The lock held.', similarity: 0.9, sourceIndex: 59 }],
+    });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+
+    // BEFORE: a mark labelled 60 pointing at source 0 (the removed `sources[refIdx] ?? sources[0]`).
+    expect(el.sessions.sessions[0]?.turns[0]?.evidence?.marks).toEqual([]);
+    const main = await region(el, 'jf-sv3-main');
+    const block = q(main, 'sv3-turn-markdown') as (HTMLElement & { citations: unknown }) | null;
+    expect(block?.citations).toEqual([]);
   });
 });
 

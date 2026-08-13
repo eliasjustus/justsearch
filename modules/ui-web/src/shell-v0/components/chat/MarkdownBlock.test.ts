@@ -367,7 +367,8 @@ function realisticClaims(): Claim[] {
     sentenceText,
     verifiedScore: REALISTIC_VERIFIED.get(i) ?? null,
     lexicalScore: REALISTIC_LEXICAL.get(i) ?? 0,
-    sourceRefs: [i % 3],
+    verifiedRefs: [i % 3],
+    lexicalRefs: [],
   }));
 }
 
@@ -462,7 +463,8 @@ describe('MarkdownBlock 822 §3d — the underline-density acceptance test', () 
       sentenceText,
       verifiedScore: [0.52, 0.54, 0.55, 0.56, 0.57, 0.58][i]!,
       lexicalScore: 0,
-      sourceRefs: [i % 3],
+      verifiedRefs: [i % 3],
+      lexicalRefs: [],
     }));
     const el = await renderAnswer(sentences, claims);
     const content = el.renderRoot.querySelector('.md-content')!;
@@ -485,7 +487,8 @@ describe('MarkdownBlock 822 §3d — the underline-density acceptance test', () 
       // Word overlap can reach 1.0 on a short passage — under the pre-822 merge that read
       // `grounded`, the STRONGEST tier, from a coverage ratio.
       lexicalScore: [0.33, 0.75, 1][i]!,
-      sourceRefs: [0],
+      verifiedRefs: [0],
+      lexicalRefs: [],
     }));
     const el = await renderAnswer(sentences, claims);
     const content = el.renderRoot.querySelector('.md-content')!;

@@ -348,7 +348,7 @@ export class SummarizeView extends JfElement {
         const p = payload as {
           sentenceIndex?: number;
           sentenceText?: string;
-          citations?: Array<{ parentDocId: string; chunkIndex: number; score: number }>;
+          citations?: Array<{ parentDocId: string; sourceIndex: number; score: number }>;
         } | null;
         if (p && Array.isArray(p.citations) && typeof p.sentenceText === 'string') {
           const bestScore = Math.max(...p.citations.map((c) => c.score), 0);
@@ -365,7 +365,10 @@ export class SummarizeView extends JfElement {
                 // cross-encoder pass to promote it. Adding one is a backend question, not a render fix.
                 verifiedScore: null,
                 lexicalScore: bestScore,
-                sourceRefs: p.citations.map((c) => c.chunkIndex),
+                // Tempdoc 822 §3b — same producer, same standing: a delta's refs are the streaming
+                // guess, so they land on the lexical side and mint no mark here either.
+                verifiedRefs: [],
+                lexicalRefs: p.citations.map((c) => c.sourceIndex),
               },
             ];
           }

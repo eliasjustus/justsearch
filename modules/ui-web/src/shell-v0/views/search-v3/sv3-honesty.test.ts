@@ -174,13 +174,24 @@ describe('the answer frame is derived from the shared authority, never worded he
   });
 
   it('says nothing about grounding for a fully grounded answer — the marks already do', () => {
-    const matches = [
-      { sentenceIndex: 0, sentenceText: 'Because the lock held.', similarity: 0.9, chunkIndex: 0 },
-    ] as unknown as CitationMatch[];
-    const frame = projectSv3AnswerFrame(turn({ evidence: evidence({ matches }) }), null);
+    // Tempdoc 822 §3b — the coverage is read from the RESOLVED MARKS (what the reader can see),
+    // so the fixture supplies marks: the frame follows what renders, not what the stream reported.
+    const marks = [{ similarity: 0.9 }] as unknown as Sv3TurnEvidence['marks'];
+    const frame = projectSv3AnswerFrame(turn({ evidence: evidence({ marks }) }), null);
     expect(frame?.verdict).toBeNull();
     expect(frame?.elaboration).toBe('');
     expect(frame?.tail).toBe('45.7 s · Qwen3');
+  });
+
+  it('a match the resolver dropped does NOT lift the frame — coverage counts what renders (822 §3b)', () => {
+    // The dropped-claim case: the backend matched a sentence, but the resolver minted no mark (an
+    // unverified or out-of-range ref). Counting the raw match would claim a verification the reader
+    // cannot see, so the answer stays `sourced` — the honest read.
+    const matches = [
+      { sentenceIndex: 0, sentenceText: 'Because the lock held.', similarity: 0.9, sourceIndex: 59 },
+    ] as unknown as CitationMatch[];
+    const frame = projectSv3AnswerFrame(turn({ evidence: evidence({ matches, marks: [] }) }), null);
+    expect(whole(frame!)).toBe(answerFrameLabel('sourced', false));
   });
 
   it('refuses to frame a turn the backend never sent evidence for', () => {
@@ -272,7 +283,7 @@ describe("the tail's sources trigger says only what the panel actually holds", (
   const source = (chunkIndex: number): RetrievalCitation =>
     ({ parentDocId: 'f:/a.md', chunkIndex, score: 0.7, excerpt: 'x' }) as RetrievalCitation;
   const match = (sentenceIndex: number): CitationMatch =>
-    ({ sentenceIndex, sentenceText: 's', similarity: 0.9, chunkIndex: 0 }) as CitationMatch;
+    ({ sentenceIndex, sentenceText: 's', similarity: 0.9, sourceIndex: 0 }) as CitationMatch;
 
   const ev = (over: Partial<Sv3TurnEvidence> = {}): Sv3TurnEvidence => ({
     sources: [],

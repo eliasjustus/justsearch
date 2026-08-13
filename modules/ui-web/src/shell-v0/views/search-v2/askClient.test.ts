@@ -139,7 +139,7 @@ describe('818 askClient — the stream', () => {
         {
           sentenceIndex: 0,
           sentenceText: 'Payment terms moved to net-45.',
-          citations: [{ chunkIndex: 0, score: 0.4 }],
+          citations: [{ sourceIndex: 0, score: 0.4 }],
         },
       ],
       [
@@ -149,7 +149,7 @@ describe('818 askClient — the stream', () => {
             {
               sentenceIndex: 0,
               sentenceText: 'Payment terms moved to net-45.',
-              chunkIndex: 0,
+              sourceIndex: 0,
               similarity: 0.77,
               parentDocId: 'Contracts/Northfield.pdf',
             },
@@ -184,7 +184,7 @@ describe('818 askClient — the stream', () => {
     expect(done?.claims).toHaveLength(1);
     expect(done?.claims[0]?.verifiedScore).toBeCloseTo(0.77);
     expect(done?.claims[0]?.lexicalScore).toBeCloseTo(0.4);
-    expect(done?.claims[0]?.sourceRefs).toEqual([0]);
+    expect(done?.claims[0]?.verifiedRefs).toEqual([0]);
   });
 
   it('a turn the backend never citation-matched reports NO grounding (never a fabricated zero)', async () => {

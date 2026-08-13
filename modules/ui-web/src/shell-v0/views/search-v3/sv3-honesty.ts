@@ -204,7 +204,11 @@ export function projectSv3AnswerFrame(
   const frame = answerFrame(
     SV3_ASK_SHAPE_ID,
     sourceCount,
-    groundingCoverage(evidence.matches, turn.answer),
+    // Tempdoc 822 §3b — the coverage counts the RESOLVED MARKS, not the raw match list: a claim the
+    // resolver dropped (no verified ref, or one addressing no source) renders no mark, so counting
+    // it would claim a verification the reader cannot see. The frame degrades because the evidence
+    // degraded — the same read the shipped window makes.
+    groundingCoverage(evidence.marks, turn.answer),
     sourcesAreChunkPrecise(evidence.sources),
     // Settled by construction: this projection refuses anything but a completed turn above, so the
     // matcher has finished and a zero-cite answer can no longer excuse itself as "marks pending".

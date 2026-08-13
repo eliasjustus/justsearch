@@ -53,7 +53,7 @@ const match = (sentenceIndex: number): CitationMatch =>
   ({
     sentenceIndex,
     sentenceText: 'The lock held.',
-    chunkIndex: sentenceIndex,
+    sourceIndex: sentenceIndex,
     similarity: 0.9,
     parentDocId: `f:/docs/note-${sentenceIndex}.md`,
   }) as CitationMatch;

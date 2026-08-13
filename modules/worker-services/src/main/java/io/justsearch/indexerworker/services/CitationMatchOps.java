@@ -172,7 +172,9 @@ final class CitationMatchOps {
           matches.add(CitationMatchEntry.newBuilder()
               .setSentenceIndex(match.sentenceIndex())
               .setSentenceText(match.sentenceText())
-              .setChunkIndex(match.chunkIndex())
+              // 822 §3b — `ScoredMatch.chunkIndex` is the position in the request arrays the scorer
+              // was handed (it never sees a document ordinal), which IS the contract's sourceIndex.
+              .setSourceIndex(match.chunkIndex())
               .setSimilarity(match.score())
               .setParentDocId(match.parentDocId())
               .build());
@@ -256,7 +258,7 @@ final class CitationMatchOps {
           matches.add(CitationMatchEntry.newBuilder()
               .setSentenceIndex(si)
               .setSentenceText(sentenceList.get(si))
-              .setChunkIndex(bestChunkIdx)
+              .setSourceIndex(bestChunkIdx)
               .setSimilarity(bestSim)
               .setParentDocId(resolvedChunkDocIds.get(bestChunkIdx))
               .build());

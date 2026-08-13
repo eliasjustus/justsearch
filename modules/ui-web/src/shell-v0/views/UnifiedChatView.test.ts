@@ -2082,7 +2082,7 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
         // Tempdoc 720 — a genuinely grounded turn carries a per-sentence claim-match. A source WITHOUT
         // any matched cite is now the `sourced` (provenance) frame once settled, not silently "grounded";
         // this fixture tests the receipt tail on a GROUNDED answer, so it must actually be grounded.
-        claims: [{ sentenceIndex: 0, sentenceText: 'a', verifiedScore: 0.9, lexicalScore: 0, sourceRefs: [0] }],
+        claims: [{ sentenceIndex: 0, sentenceText: 'a', verifiedScore: 0.9, lexicalScore: 0, verifiedRefs: [0], lexicalRefs: [] }],
         durationMs: 3200,
       },
     ];
@@ -2122,7 +2122,7 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
         shapeId: 'core.rag-ask',
         id: 'a1',
         sources: [chunkCitation(0)],
-        claims: [{ sentenceIndex: 0, sentenceText: 'a.', verifiedScore: 0.9, lexicalScore: 0, sourceRefs: [0] }],
+        claims: [{ sentenceIndex: 0, sentenceText: 'a.', verifiedScore: 0.9, lexicalScore: 0, verifiedRefs: [0], lexicalRefs: [] }],
         durationMs: 500,
       },
     ];
@@ -2181,7 +2181,7 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
         id: 'a1',
         sources: [chunkCitation(0)],
         // Tempdoc 720 — grounded fixture needs a matched cite (see the receipt-tail test above).
-        claims: [{ sentenceIndex: 0, sentenceText: 'a', verifiedScore: 0.9, lexicalScore: 0, sourceRefs: [0] }],
+        claims: [{ sentenceIndex: 0, sentenceText: 'a', verifiedScore: 0.9, lexicalScore: 0, verifiedRefs: [0], lexicalRefs: [] }],
         // no durationMs — the reload case
       },
     ];
@@ -2204,7 +2204,7 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
     v.thread = [
       { role: 'user', content: 'q', shapeId: 'core.rag-ask', id: 'u1' },
       // Tempdoc 720 — grounded fixture needs a matched cite; a bare source is now `sourced` once settled.
-      { role: 'assistant', content: 'a', shapeId: 'core.rag-ask', id: 'a1', sources: [chunkCitation(0)], claims: [{ sentenceIndex: 0, sentenceText: 'a', verifiedScore: 0.9, lexicalScore: 0, sourceRefs: [0] }] },
+      { role: 'assistant', content: 'a', shapeId: 'core.rag-ask', id: 'a1', sources: [chunkCitation(0)], claims: [{ sentenceIndex: 0, sentenceText: 'a', verifiedScore: 0.9, lexicalScore: 0, verifiedRefs: [0], lexicalRefs: [] }] },
     ];
     view.requestUpdate();
     await view.updateComplete;
@@ -5501,7 +5501,7 @@ describe('Tempdoc 822 §3d — the shipped window keeps lexical and verified sco
     h.onRagCitationDelta?.({
       sentenceIndex: 0,
       sentenceText: 'The lock held.',
-      citations: [{ parentDocId: 'docs/a.md', chunkIndex: 0, score: 1 }],
+      citations: [{ parentDocId: 'docs/a.md', sourceIndex: 0, score: 1 }],
     });
     await view.updateComplete;
 
@@ -5527,14 +5527,14 @@ describe('Tempdoc 822 §3d — the shipped window keeps lexical and verified sco
     h.onRagCitationDelta?.({
       sentenceIndex: 0,
       sentenceText: 'The lock held.',
-      citations: [{ parentDocId: 'docs/a.md', chunkIndex: 0, score: 0.95 }],
+      citations: [{ parentDocId: 'docs/a.md', sourceIndex: 0, score: 0.95 }],
     });
     h.onRagCitationMatches?.({
       matches: [
         {
           sentenceIndex: 0,
           sentenceText: 'The lock held.',
-          chunkIndex: 0,
+          sourceIndex: 0,
           similarity: 0.52,
           parentDocId: 'docs/a.md',
         },
@@ -5576,14 +5576,16 @@ describe('Tempdoc 822 §3d — the shipped window keeps lexical and verified sco
             sentenceText: 'One verified sentence.',
             verifiedScore: 0.9,
             lexicalScore: 0,
-            sourceRefs: [0],
+            verifiedRefs: [0],
+            lexicalRefs: [],
           },
           {
             sentenceIndex: 1,
             sentenceText: 'One lexical sentence.',
             verifiedScore: null,
             lexicalScore: 0.88,
-            sourceRefs: [0],
+            verifiedRefs: [],
+            lexicalRefs: [0],
           },
         ],
       },
@@ -5597,6 +5599,108 @@ describe('Tempdoc 822 §3d — the shipped window keeps lexical and verified sco
     expect(block!.citations).toHaveLength(1);
     expect(block!.citations[0]!.sentenceText).toBe('One verified sentence.');
     expect(block!.citations[0]!.similarity).toBe(0.9);
+    view.remove();
+  });
+
+  /* ── Tempdoc 822 §3b — the numbering contract in THIS window's accumulator. One defect, two
+        accumulators: the same three assertions run against `sv3-ask`'s merge (see
+        `SearchV3View.honesty.test.ts`), because a fix in one window is not a fix. ────────────── */
+
+  it('a doubly-matched sentence resolves through the VERIFIED ref, not the delta that arrived first', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    const h = await askAndCaptureHandlers(view);
+    h.onRagCitations?.({ citations: [ragSource(0), ragSource(1), ragSource(2)] });
+    // The delta streams FIRST and guesses source 0 …
+    h.onRagCitationDelta?.({
+      sentenceIndex: 0,
+      sentenceText: 'The lock held.',
+      citations: [{ parentDocId: 'docs/a.md', sourceIndex: 0, score: 0.9 }],
+    });
+    // … then the authoritative matcher ties the sentence to source 2.
+    h.onRagCitationMatches?.({
+      matches: [
+        {
+          sentenceIndex: 0,
+          sentenceText: 'The lock held.',
+          sourceIndex: 2,
+          similarity: 0.8,
+          parentDocId: 'docs/a.md',
+        },
+      ],
+    });
+    await view.updateComplete;
+
+    const claims = claimsOf(view);
+    expect(claims[0]!.verifiedRefs).toEqual([2]);
+    expect(claims[0]!.lexicalRefs).toEqual([0]);
+    const resolved = (
+      view as unknown as {
+        resolveClaimCitations(c: readonly Claim[], s: readonly unknown[]): Array<{ label: number }>;
+      }
+    ).resolveClaimCitations(claims, (view as unknown as { sources: unknown[] }).sources);
+    // The pre-822 merge put the delta's ref first in one set, so the mark read [1] and deep-linked
+    // to the wrong passage.
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]!.label).toBe(3);
+    view.remove();
+  });
+
+  it('an out-of-range streamed index mints NO mark — the 59-against-5 reproduction fails to reproduce', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    const h = await askAndCaptureHandlers(view);
+    h.onRagCitations?.({ citations: [0, 1, 2, 3, 4].map((i) => ragSource(i)) });
+    h.onRagCitationMatches?.({
+      matches: [
+        {
+          sentenceIndex: 0,
+          sentenceText: 'The lock held.',
+          sourceIndex: 59,
+          similarity: 0.9,
+          parentDocId: 'docs/a.md',
+        },
+      ],
+    });
+    await view.updateComplete;
+
+    const resolved = (
+      view as unknown as {
+        resolveClaimCitations(
+          c: readonly Claim[],
+          s: readonly unknown[],
+        ): Array<{ label: number; detail: { parentDocId: string } }>;
+      }
+    ).resolveClaimCitations(claimsOf(view), (view as unknown as { sources: unknown[] }).sources);
+    // BEFORE: one mark labelled 60, deep-linking to sources[0] via the removed fallback.
+    expect(resolved).toEqual([]);
+    view.remove();
+  });
+
+  it('reads a legacy persisted record under its old `chunkIndex` key (user data, no migration)', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    const v = view as unknown as {
+      claimsFromRecord(cm: unknown): Claim[];
+      matchesFromRecord(cm: unknown): Array<{ sourceIndex: number }>;
+    };
+    // Persisted BEFORE the rename. The stored values were already positional (they come from the
+    // authoritative `matchCitations` call), so the old record renders correctly under the new reader.
+    const legacy = {
+      matches: [
+        { sentenceIndex: 0, sentenceText: 'The lock held.', chunkIndex: 2, similarity: 0.9, parentDocId: 'docs/a.md' },
+      ],
+    };
+    expect(v.claimsFromRecord(legacy)[0]!.verifiedRefs).toEqual([2]);
+    expect(v.matchesFromRecord(legacy)[0]!.sourceIndex).toBe(2);
+    // A record written after the rename reads the same way.
+    const current = {
+      matches: [
+        { sentenceIndex: 0, sentenceText: 'The lock held.', sourceIndex: 2, similarity: 0.9, parentDocId: 'docs/a.md' },
+      ],
+    };
+    expect(v.claimsFromRecord(current)[0]!.verifiedRefs).toEqual([2]);
+    expect(v.matchesFromRecord(current)[0]!.sourceIndex).toBe(2);
     view.remove();
   });
 });

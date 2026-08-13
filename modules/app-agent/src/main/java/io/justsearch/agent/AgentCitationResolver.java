@@ -79,8 +79,13 @@ final class AgentCitationResolver {
               .get(MATCH_TIMEOUT_MS, TimeUnit.MILLISECONDS);
       List<AgentEvent.AgentSentenceCite> out = new ArrayList<>();
       for (DocumentService.CitationMatchEntry m : result.matches()) {
-        int sourceIndex = indexOfSource(sources, m.parentDocId(), m.chunkIndex());
-        if (sourceIndex >= 0) {
+        // Tempdoc 822 §3b — the match's `sourceIndex` IS the position in the list handed to the
+        // matcher, and that list is built 1:1 from `sources` just above, so it indexes `sources`
+        // directly. The old (parentDocId, chunkIndex) re-derivation compared a positional index
+        // against a DOCUMENT-relative ordinal and fell back to "first source of the same document"
+        // — the wrong-target link this slice removes. Out of range ⇒ no mark, never a fallback.
+        int sourceIndex = m.sourceIndex();
+        if (sourceIndex >= 0 && sourceIndex < sources.size()) {
           out.add(new AgentEvent.AgentSentenceCite(m.sentenceText(), sourceIndex, m.similarity()));
         }
       }
@@ -92,23 +97,5 @@ final class AgentCitationResolver {
           e.toString());
       return List.of();
     }
-  }
-
-  /** The index of the source matching (parentDocId, chunkIndex); falls back to the same document. */
-  private static int indexOfSource(
-      List<AgentEvent.AgentSource> sources, String parentDocId, int chunkIndex) {
-    int sameDoc = -1;
-    for (int i = 0; i < sources.size(); i++) {
-      AgentEvent.AgentSource s = sources.get(i);
-      if (s.parentDocId().equals(parentDocId)) {
-        if (s.chunkIndex() == chunkIndex) {
-          return i;
-        }
-        if (sameDoc < 0) {
-          sameDoc = i;
-        }
-      }
-    }
-    return sameDoc;
   }
 }

@@ -522,7 +522,7 @@ public final class RemoteDocumentService implements DocumentService {
           entries.add(new CitationMatchEntry(
               m.getSentenceIndex(),
               m.getSentenceText(),
-              m.getChunkIndex(),
+              m.getSourceIndex(),
               m.getSimilarity(),
               m.getParentDocId()));
         }

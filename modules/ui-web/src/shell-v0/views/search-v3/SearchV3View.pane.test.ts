@@ -204,7 +204,7 @@ async function askGrounded(el: Mounted): Promise<void> {
   stream.emit('rag.citations', { citations: [source()] });
   stream.emit('chunk', { text: 'The lock held.' });
   stream.emit('rag.citation_matches', {
-    matches: [{ sentenceIndex: 0, sentenceText: 'The lock held.', similarity: 0.9, chunkIndex: 0 }],
+    matches: [{ sentenceIndex: 0, sentenceText: 'The lock held.', similarity: 0.9, sourceIndex: 0 }],
   });
   stream.emit('done', {});
   stream.end();
