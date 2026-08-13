@@ -613,7 +613,7 @@ public final class TextQueryOps {
   /**
    * Text search with optional soft-boost filters (363), parsing the user's text with {@code syntax}.
    *
-   * <p>Tempdoc 822: the multi-leg lexical leg passes the REQUEST's syntax here — a
+   * <p>Tempdoc 821 §P / register F-046: the multi-leg lexical leg passes the REQUEST's syntax here — a
    * {@code query_syntax: "lucene"} request retrieves via a LUCENE parse on this leg, exactly as the
    * sparse-only shortcut always has. Whatever value the caller passes must also be the value used by
    * anything that re-derives a COUNT over this leg's matched population (the facet scan and the
@@ -657,7 +657,7 @@ public final class TextQueryOps {
    * <p>Builds the full multi-field query (content + title + entity fields) with {@code syntax}, then
    * combines with the provided Lucene filter using a BooleanQuery. This ensures the 2-leg hybrid
    * path (HybridSearchOps) gets the same title boost and entity boost as the direct text search
-   * path — and, since tempdoc 822, the same honouring of the request's {@code query_syntax}.
+   * path — and, since tempdoc 821 §P, the same honouring of the request's {@code query_syntax}.
    *
    * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
    */

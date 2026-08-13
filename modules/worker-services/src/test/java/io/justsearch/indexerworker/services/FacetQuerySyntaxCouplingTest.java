@@ -28,11 +28,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Tempdoc 821 §L.3 + 822 — the facet scan and the headline match count must tally the SAME parse the
- * hits came from, and (since 822) that parse is the REQUEST's {@code query_syntax} on every leg.
+ * Tempdoc 821 §L.3 + §P — the facet scan and the headline match count must tally the SAME parse the
+ * hits came from, and (since §P) that parse is the REQUEST's {@code query_syntax} on every leg.
  *
- * <p>Before 822 the multi-leg (composable) BM25 leg parsed SIMPLE-only regardless of the request, so
- * these assertions pinned "counts follow the leg's SIMPLE constant". 822 is the future they were
+ * <p>Before §P the multi-leg (composable) BM25 leg parsed SIMPLE-only regardless of the request, so
+ * these assertions pinned "counts follow the leg's SIMPLE constant". §P is the future they were
  * written for: {@code SearchDecision.MultiLegDecision.runtimeSyntax()} is now the ONE value the leg
  * ({@code SearchExecutor#runMultiLeg}), the facet rebuild and {@code computeMatchCount} all read. So
  * the same bidirectional pin now asserts the LUCENE parse on BOTH sides: a LUCENE-syntax request
@@ -53,7 +53,7 @@ import org.junit.jupiter.api.Test;
  * decision's syntax, and the explicit {@code 1 != 3} assertions fail if a regression reverts the leg
  * to a SIMPLE-only parse while the request asked for LUCENE.
  */
-@DisplayName("Facet/matchCount parse is coupled to the retrieval leg's parse (tempdoc 821 §L.3, 822)")
+@DisplayName("Facet/matchCount parse is coupled to the retrieval leg's parse (tempdoc 821 §L.3 + §P)")
 final class FacetQuerySyntaxCouplingTest {
 
   /**
@@ -87,7 +87,7 @@ final class FacetQuerySyntaxCouplingTest {
       assertEquals(
           1L,
           response.getTotalHits(),
-          "tempdoc 822: the multi-leg BM25 leg parses the request's LUCENE syntax, so the required"
+          "tempdoc 821 §P: the multi-leg BM25 leg parses the request's LUCENE syntax, so the required"
               + " clauses (+shared +alpha) select only doc-a");
       assertNotEquals(
           3L,
@@ -165,7 +165,7 @@ final class FacetQuerySyntaxCouplingTest {
       assertEquals(
           3L,
           simple.getTotalHits(),
-          "the default SIMPLE path escapes the operators and is unchanged by tempdoc 822");
+          "the default SIMPLE path escapes the operators and is unchanged by tempdoc 821 §P");
       assertEquals(
           simple.getTotalHits(), simple.getMatchCount(), "SIMPLE counts still follow SIMPLE hits");
       assertEquals(
@@ -175,7 +175,7 @@ final class FacetQuerySyntaxCouplingTest {
       assertNotEquals(
           simple.getMatchCount(),
           lucene.getMatchCount(),
-          "tempdoc 822: the two syntaxes now retrieve different populations for this query — equal"
+          "tempdoc 821 §P: the two syntaxes now retrieve different populations for this query — equal"
               + " counts would mean one of them ignored its request's syntax");
       assertEquals(
           lucene.getTotalHits(),
@@ -243,7 +243,7 @@ final class FacetQuerySyntaxCouplingTest {
       assertEquals(
           io.grpc.Status.Code.INVALID_ARGUMENT, io.grpc.Status.fromThrowable(sparseError).getCode());
 
-      // Tempdoc 822: now that the multi-leg lexical leg parses LUCENE too, it must fail the same
+      // Tempdoc 821 §P: now that the multi-leg lexical leg parses LUCENE too, it must fail the same
       // way — a silent 0-hit answer would hide a malformed query behind "no results".
       Throwable multiLegError =
           invokeSearchExpectingError(
@@ -263,6 +263,46 @@ final class FacetQuerySyntaxCouplingTest {
               service, multiLeg(MALFORMED_LUCENE_QUERY, SearchQuerySyntax.SEARCH_QUERY_SYNTAX_SIMPLE));
       assertEquals(
           3L, simple.getTotalHits(), "SIMPLE escapes the operators — no parse failure to signal");
+    } finally {
+      restoreProperty("justsearch.config", prevConfig);
+    }
+  }
+
+  @Test
+  @DisplayName("Malformed LUCENE on a DENSE-ONLY leg still signals — the counts parse it too")
+  void malformedLuceneSignalsEvenWithoutALexicalLeg() throws Exception {
+    String prevConfig = System.getProperty("justsearch.config");
+    try (RunningRuntime lifecycle = newLifecycleWithPdfDocs(CORPUS)) {
+      GrpcSearchService service = new GrpcSearchService(lifecycle);
+
+      // An explicit query vector makes this a MultiLegDecision(DenseOnly) — no lexical leg runs, so
+      // an "only probe when a lexical leg exists" gate would let this through. But
+      // computeMatchCount re-parses the query regardless, so the response would carry matchCount 0
+      // beside real dense hits: a count contradicting its own results.
+      SearchRequest denseOnly =
+          SearchRequest.newBuilder()
+              .setQuery(MALFORMED_LUCENE_QUERY)
+              .setLimit(10)
+              .setQuerySyntax(SearchQuerySyntax.SEARCH_QUERY_SYNTAX_LUCENE)
+              .addAllVector(java.util.List.of(0.1f, 0.2f, 0.3f, 0.4f))
+              .setPipeline(
+                  PipelineConfig.newBuilder().setSparseEnabled(false).setDenseEnabled(true).build())
+              .build();
+
+      Throwable error = invokeSearchExpectingError(service, denseOnly);
+      assertEquals(
+          io.grpc.Status.Code.INVALID_ARGUMENT,
+          io.grpc.Status.fromThrowable(error).getCode(),
+          "a leg-less LUCENE parse failure must still be signalled, not answered with a 0 count");
+
+      // Control: the same dense-only request with a WELL-FORMED LUCENE query ANSWERS instead of
+      // erroring — so the signal above is about the malformed parse, not about dense-only requests
+      // failing. (It answers 0 hits: this corpus is indexed without vectors, so the KNN leg has
+      // nothing to match. That is the point — the parse probe fires before, and independently of,
+      // whether the leg can retrieve anything.)
+      SearchResponse ok =
+          invokeSearch(service, denseOnly.toBuilder().setQuery("\"alpha shared\"").build());
+      assertEquals(0L, ok.getTotalHits(), "vector-less corpus → empty dense result, but no error");
     } finally {
       restoreProperty("justsearch.config", prevConfig);
     }

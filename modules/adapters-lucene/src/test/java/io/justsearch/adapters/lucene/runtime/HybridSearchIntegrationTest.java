@@ -398,4 +398,100 @@ class HybridSearchIntegrationTest extends RuntimeTestBase {
 
     runtime.close();
   }
+
+  /**
+   * Tempdoc 821 §P: the HYBRID entry points must forward the caller's syntax to their text leg.
+   *
+   * <p>This is the headline production path and the one the gRPC-level tests cannot reach (with no
+   * embedding service every request degrades to {@code Bm25Only}), so hardcoding SIMPLE at
+   * {@code HybridSearchOps}' two text-leg lambdas would pass the whole suite otherwise.
+   *
+   * <p>The discriminator is per-hit PROVENANCE, not hit count: the dense leg returns all three docs
+   * either way, so only "which docs did the BM25 leg contribute" separates a LUCENE parse (required
+   * clauses → doc-a alone) from a SIMPLE one (escaped → token OR → all three).
+   */
+  @Test
+  void hybridEntryPointsForwardQuerySyntaxToTheTextLeg() throws Exception {
+    Path base = dataDir();
+    String yaml =
+        "app:\n  data_dir: "
+            + base.toString().replace("\\", "\\\\")
+            + "\n"
+            + "index:\n  collections:\n    - name: hybridsyntaxtest\n      roots: ['ignored']\n"
+            + "  vector:\n    dimension: 4\n";
+    Path cfg = writeConfig(yaml);
+    System.setProperty("justsearch.config", cfg.toString());
+
+    var runtime = createRuntimeWithDim(4);
+    indexVectorDoc(runtime, "doc-a", "alpha shared term", new float[] {1.0f, 0.0f, 0.0f, 0.0f});
+    indexVectorDoc(runtime, "doc-b", "beta shared term", new float[] {0.9f, 0.1f, 0.0f, 0.0f});
+    indexVectorDoc(runtime, "doc-c", "gamma shared term", new float[] {0.8f, 0.2f, 0.0f, 0.0f});
+    runtime.commitOps().commitAndTrack();
+    runtime.commitOps().maybeRefreshBlocking();
+
+    var hybridOps = runtime.hybridSearchOps();
+    float[] queryVector = new float[] {1.0f, 0.0f, 0.0f, 0.0f};
+    org.apache.lucene.search.Query passThrough = new org.apache.lucene.search.MatchAllDocsQuery();
+
+    // searchHybridFiltered → searchTextWithFilter (the Bm25Dense leg's non-debug path)
+    assertEquals(
+        1,
+        bm25ContributedDocIds(
+                hybridOps.searchHybridFiltered(
+                    "+shared +alpha",
+                    queryVector,
+                    10,
+                    passThrough,
+                    LuceneRuntimeTypes.QuerySyntax.LUCENE))
+            .size(),
+        "LUCENE required clauses must reach the filtered hybrid's text leg");
+    assertEquals(
+        3,
+        bm25ContributedDocIds(
+                hybridOps.searchHybridFiltered(
+                    "+shared +alpha",
+                    queryVector,
+                    10,
+                    passThrough,
+                    LuceneRuntimeTypes.QuerySyntax.SIMPLE))
+            .size(),
+        "SIMPLE escapes them into a token OR — all three docs come from the text leg");
+
+    // searchHybridWithDebug → searchText (the Bm25Dense leg's debug path, a separate lambda)
+    assertEquals(
+        1,
+        bm25ContributedDocIds(
+                hybridOps.searchHybridWithDebug(
+                    "+shared +alpha", queryVector, 10, null, LuceneRuntimeTypes.QuerySyntax.LUCENE))
+            .size(),
+        "the debug hybrid path must forward the syntax too");
+    assertEquals(
+        3,
+        bm25ContributedDocIds(
+                hybridOps.searchHybridWithDebug(
+                    "+shared +alpha", queryVector, 10, null, LuceneRuntimeTypes.QuerySyntax.SIMPLE))
+            .size(),
+        "and must stay SIMPLE for a SIMPLE caller");
+
+    runtime.close();
+  }
+
+  /** Doc ids whose typed provenance shows a BM25 (text-leg) contribution. */
+  private static java.util.List<String> bm25ContributedDocIds(SearchResult result) {
+    return result.hits().stream()
+        .filter(h -> h.provenance() != null && h.provenance().bm25() != null)
+        .map(LuceneRuntimeTypes.SearchHit::docId)
+        .toList();
+  }
+
+  private static void indexVectorDoc(
+      RunningRuntime runtime, String docId, String content, float[] vector) throws Exception {
+    runtime.indexingCoordinator().indexSingle(
+        new IndexDocument(
+            Map.of(
+                SchemaFields.DOC_ID, docId,
+                SchemaFields.DOC_UID, docId + "#0",
+                SchemaFields.CONTENT, content,
+                SchemaFields.VECTOR, vector)));
+  }
 }

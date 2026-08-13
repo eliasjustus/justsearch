@@ -434,7 +434,12 @@ public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImpl
           responseObserver.onCompleted();
         } catch (IllegalArgumentException e) {
           metrics.recordSearchFailed();
-          log.warn("Invalid search request: {}", e.getMessage());
+          // The CALLER still gets the full message below — it is their own query. This LOG line does
+          // not: a Lucene ParseException quotes the query verbatim, and worker.log is bundled into
+          // the diagnostics export (path-only redaction), which is exactly why the sibling
+          // parse-failure site keeps query text at TRACE (SearchExecutor:160-168). Same split here.
+          log.warn("Invalid search request: {}", withoutQuotedQuery(e.getMessage()));
+          log.trace("Invalid search request detail", e);
           responseObserver.onError(
               io.grpc.Status.INVALID_ARGUMENT.withDescription(e.getMessage()).asException());
         } catch (RuntimeException e) {
@@ -943,4 +948,25 @@ public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImpl
     }
   }
 
+  /**
+   * Strips the quoted user query out of an error message before it reaches a server-side log.
+   *
+   * <p>Lucene's {@code ParseException} renders as {@code Cannot parse '<query>': Encountered ...},
+   * so logging the raw message writes the user's search text into worker.log — which the
+   * diagnostics export bundles with path-only redaction. Everything between the first and last
+   * quote is replaced (over-redacting is the safe direction) and the result is length-capped; the
+   * diagnostic shape — which parser rejected it, and where — survives.
+   */
+  static String withoutQuotedQuery(String message) {
+    if (message == null || message.isBlank()) {
+      return "(no message)";
+    }
+    int first = message.indexOf('\'');
+    int last = message.lastIndexOf('\'');
+    String out =
+        (first >= 0 && last > first)
+            ? message.substring(0, first + 1) + "[REDACTED]" + message.substring(last)
+            : message;
+    return out.length() > 200 ? out.substring(0, 200) + "..." : out;
+  }
 }

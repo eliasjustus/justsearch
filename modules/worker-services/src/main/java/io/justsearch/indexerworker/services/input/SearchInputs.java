@@ -49,7 +49,7 @@ public record SearchInputs(
    * still read the wire enum directly: {@code SearchInputCapture.java:125-126},
    * {@code SearchPlanner.java:251} — both only ask "is it LUCENE?" to skip chunk-merge).
    *
-   * <p>This is what the CLIENT asked for, and (since tempdoc 822) what every stage that parses the
+   * <p>This is what the CLIENT asked for, and (since tempdoc 821 §P) what every stage that parses the
    * user's query for retrieval uses — the sparse-only shortcut directly, the multi-leg lexical leg
    * via {@code SearchDecision.MultiLegDecision.runtimeSyntax()}. A stage that re-derives counts over
    * an already-retrieved population must NOT re-project the wire enum here a second time; it reads

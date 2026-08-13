@@ -526,7 +526,7 @@ public final class HybridSearchOps {
    * @param queryText the text query for BM25 search
    * @param queryVector the query vector for KNN search
    * @param limit maximum number of results to return
-   * @param syntax how the text leg parses {@code queryText} (tempdoc 822)
+   * @param syntax how the text leg parses {@code queryText} (tempdoc 821 §P / register F-046)
    * @return search results ordered by fused RRF score
    */
   SearchResult searchHybrid(String queryText, float[] queryVector, int limit, QuerySyntax syntax) {
@@ -559,7 +559,7 @@ public final class HybridSearchOps {
     return searchHybridFiltered(queryText, queryVector, limit, filter, QuerySyntax.SIMPLE);
   }
 
-  /** Filtered hybrid search parsing the text leg with {@code syntax} (tempdoc 822). */
+  /** Filtered hybrid search parsing the text leg with {@code syntax} (tempdoc 821 §P). */
   public SearchResult searchHybridFiltered(
       String queryText, float[] queryVector, int limit, Query filter, QuerySyntax syntax) {
     if (filter == null) {
@@ -591,7 +591,7 @@ public final class HybridSearchOps {
    * @param queryVector the query vector for KNN search
    * @param limit maximum number of results to return
    * @param filters optional runtime filters (may be null)
-   * @param syntax how the text leg parses {@code queryText} (tempdoc 822)
+   * @param syntax how the text leg parses {@code queryText} (tempdoc 821 §P / register F-046)
    * @return search results with debug scores populated
    */
   public SearchResult searchHybridWithDebug(

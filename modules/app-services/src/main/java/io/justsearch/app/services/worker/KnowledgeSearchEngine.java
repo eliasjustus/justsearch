@@ -813,7 +813,7 @@ final class KnowledgeSearchEngine {
           // The expansion re-search is an OPTIONAL enhancement over an answer we already hold, and
           // this block's contract (line 779) is "falls back to base results on timeout or error".
           // Only the checked failures were caught, so a failing re-search took the whole search
-          // down with it. Reachable since tempdoc 822: the multi-leg path now honours this
+          // down with it. Reachable since tempdoc 821 §P: the multi-leg path now honours this
           // request's LUCENE syntax and rejects a malformed parse with INVALID_ARGUMENT (as the
           // sparse-only path always did) — and `expandedQuery` embeds the RAW user query text, so
           // any Lucene metacharacter the user typed can produce one. `resp` still holds the base
@@ -1222,6 +1222,14 @@ final class KnowledgeSearchEngine {
    * rejects if any remaining token is non-alphabetic (hallucination guard), or if no new terms
    * were added. Truncating rather than rejecting handles the common case where the model produces
    * valid morphological variants for each word but exceeds the cap due to the 5-form system prompt.
+   *
+   * <p>The merged string is re-issued as a LUCENE-syntax request (the {@code ^0.3} boosts have to
+   * parse), but expansion only runs for SIMPLE requests ({@code :644-645}) — users who never asked
+   * for Lucene semantics. So the user's half is ESCAPED here: without it, {@code covid -vaccine}
+   * would silently invert to a NOT and {@code error:timeout} would become a query against a
+   * non-existent field, with {@code expansionApplied=true} and no degradation signal. The escape
+   * set is exactly the one the SIMPLE path applies before parsing, so the user's half means what it
+   * would have meant unexpanded; only the appended (alphabetic-guarded) variants carry syntax.
    */
   static String mergeExpansion(String originalQuery, String expansionText) {
     if (expansionText == null || expansionText.isBlank()) {
@@ -1247,7 +1255,7 @@ final class KnowledgeSearchEngine {
     for (String t : origTokens) {
       seen.add(t.toLowerCase(Locale.ROOT));
     }
-    StringBuilder sb = new StringBuilder(originalQuery.strip());
+    StringBuilder sb = new StringBuilder(escapeLuceneSyntax(originalQuery.strip()));
     boolean added = false;
     for (String t : expandTokens) {
       if (seen.add(t.toLowerCase(Locale.ROOT))) {
@@ -1256,6 +1264,46 @@ final class KnowledgeSearchEngine {
       }
     }
     return added ? sb.toString() : null;
+  }
+
+  /**
+   * Escapes the Lucene query-syntax metacharacters, so text a user typed as plain words stays plain
+   * words when it is embedded in a LUCENE-syntax request ({@link #mergeExpansion}).
+   *
+   * <p>The character set is restated rather than imported: the Head never touches Lucene (hard
+   * invariant 1) and lucene-core is {@code runtimeOnly} in this module. It is the same set the
+   * Worker's SIMPLE path escapes before parsing, which is what makes the escaped half equivalent to
+   * an unexpanded SIMPLE query. Expansion variants are appended AFTER this call because their
+   * {@code ^0.3} boost must survive as syntax.
+   */
+  static String escapeLuceneSyntax(String text) {
+    StringBuilder out = new StringBuilder(text.length() + 8);
+    for (int i = 0; i < text.length(); i++) {
+      char c = text.charAt(i);
+      if (c == '\\'
+          || c == '+'
+          || c == '-'
+          || c == '!'
+          || c == '('
+          || c == ')'
+          || c == ':'
+          || c == '^'
+          || c == '['
+          || c == ']'
+          || c == '"'
+          || c == '{'
+          || c == '}'
+          || c == '~'
+          || c == '*'
+          || c == '?'
+          || c == '|'
+          || c == '&'
+          || c == '/') {
+        out.append('\\');
+      }
+      out.append(c);
+    }
+    return out.toString();
   }
 
   // Tempdoc 549 Phase E2: the leg-keyed per-hit HitProvenance (and its head-side

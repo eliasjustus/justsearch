@@ -111,9 +111,9 @@ public sealed interface SearchDecision
    * SPLADE-only single-leg request lands here (not in {@code SparseShortcut}).
    *
    * <p>{@code runtimeSyntax} is the request's {@code query_syntax} projected onto the runtime enum
-   * (tempdoc 822). It is the ONE value the lexical leg parses with AND every count re-derived over
+   * (tempdoc 821 §P). It is the ONE value the lexical leg parses with AND every count re-derived over
    * that leg's matched population parses with — the BM25 leg in {@code SearchExecutor}, the facet
-   * rebuild and {@code computeMatchCount} in {@code SearchResponseBuilder}. Before 822 the legs were
+   * rebuild and {@code computeMatchCount} in {@code SearchResponseBuilder}. Before §P the legs were
    * SIMPLE-only and the counts mirrored a shared constant; now the coupling is "the same per-request
    * value", carried here so a divergence is a missing read of this component rather than a silently
    * different literal. A count parsed differently from its leg reads as "Top 3 of 1 matches"

@@ -210,7 +210,7 @@ public final class ChunkSearchOps {
    * <p>Used for interactive chunk-aware search. Searches the chunk_content field with an
    * is_chunk=true filter but no parent_doc_id constraint.
    *
-   * <p>Query syntax (tempdoc 822): this leg treats ALL query text as literal — operators are
+   * <p>Query syntax (tempdoc 821 §P): this leg treats ALL query text as literal — operators are
    * escaped, never parsed — and deliberately has no LUCENE branch, unlike the doc-level lexical leg
    * ({@code TextQueryOps#searchText}), which honours the request's {@code query_syntax}. That is not
    * a gap: a {@code query_syntax: "lucene"} request never reaches this method, because the planner

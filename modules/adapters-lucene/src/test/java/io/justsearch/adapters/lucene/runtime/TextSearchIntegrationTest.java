@@ -3,6 +3,7 @@ package io.justsearch.adapters.lucene.runtime;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -633,7 +634,7 @@ class TextSearchIntegrationTest extends RuntimeTestBase {
   }
 
   /**
-   * Tempdoc 822: the multi-field lexical leg parses the syntax the CALLER passes. Before 822 it was
+   * Tempdoc 821 §P: the multi-field lexical leg parses the syntax the CALLER passes. Before §P it was
    * SIMPLE-only, so a LUCENE-syntax request silently retrieved an escaped (token-OR) query.
    *
    * <p>Pins three things at leg level: LUCENE phrases are phrase-matched (order-sensitive), LUCENE
@@ -693,21 +694,33 @@ class TextSearchIntegrationTest extends RuntimeTestBase {
             .size(),
         "the reversed phrase matches nothing — a token OR would have matched all 3");
 
-    // SIMPLE-neutrality: the query the leg builds for a SIMPLE caller is byte-identical to the one
-    // the untyped (pre-822) entry point builds. This is the assertion that jseval's SIMPLE-default
-    // baselines cannot move.
-    assertEquals(
-        textOps.buildTextQuery("alpha shared", null).toString(),
-        textOps.buildTextQuery("alpha shared", null, LuceneRuntimeTypes.QuerySyntax.SIMPLE)
-            .toString(),
-        "SIMPLE parsing is unchanged by the syntax-threading");
-    assertEquals(
-        textOps.searchText("alpha shared", 10, null).hits().size(),
+    // SIMPLE-neutrality, pinned by CONTENT rather than by comparing two overloads that delegate to
+    // the same call (which would pass no matter what SIMPLE does). The SIMPLE branch must still
+    // produce its two distinguishing artifacts: prefix expansion on the last token, and escaped
+    // operators — and it must NOT collapse onto the LUCENE parse of the same text.
+    String simpleQuery =
         textOps
-            .searchText("alpha shared", 10, null, null, LuceneRuntimeTypes.QuerySyntax.SIMPLE)
-            .hits()
-            .size(),
-        "the convenience overload and an explicit SIMPLE call are the same search");
+            .buildTextQuery("alpha shared", null, LuceneRuntimeTypes.QuerySyntax.SIMPLE)
+            .toString();
+    assertTrue(
+        simpleQuery.contains("shared*"),
+        "SIMPLE still prefix-expands the last token (a LUCENE parse does not): " + simpleQuery);
+    String simpleOperators =
+        textOps
+            .buildTextQuery("+shared +alpha", null, LuceneRuntimeTypes.QuerySyntax.SIMPLE)
+            .toString();
+    String luceneOperators =
+        textOps
+            .buildTextQuery("+shared +alpha", null, LuceneRuntimeTypes.QuerySyntax.LUCENE)
+            .toString();
+    assertNotEquals(
+        luceneOperators,
+        simpleOperators,
+        "SIMPLE escapes the operators into optional clauses; LUCENE builds required ones — if these"
+            + " ever match, one of the two branches stopped doing its job");
+    assertFalse(
+        simpleOperators.contains("+content:shared"),
+        "SIMPLE must not build a REQUIRED clause from the user's '+': " + simpleOperators);
 
     // Malformed LUCENE never escapes the leg as an exception — the leg degrades to empty and the
     // multi-leg executor is what signals INVALID_ARGUMENT (FacetQuerySyntaxCouplingTest).
@@ -721,7 +734,7 @@ class TextSearchIntegrationTest extends RuntimeTestBase {
     runtime.close();
   }
 
-  /** Tempdoc 822: the filtered 2-leg hybrid entry point honours the caller's syntax too. */
+  /** Tempdoc 821 §P: the filtered 2-leg hybrid entry point honours the caller's syntax too. */
   @Test
   void searchTextWithFilterHonoursTheCallersQuerySyntax() throws Exception {
     Path base = dataDir();

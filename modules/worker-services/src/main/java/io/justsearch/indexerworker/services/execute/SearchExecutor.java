@@ -276,12 +276,18 @@ public final class SearchExecutor {
     boolean debug = request.getDebug() || request.getIncludeDetail();
     String effectiveMode = decision.legs().effectiveModeLabel();
     var syntax = decision.runtimeSyntax();
-    // Tempdoc 822: the lexical leg honours the request's query_syntax, so a malformed LUCENE query
-    // must fail the same way the sparse-only shortcut fails it (INVALID_ARGUMENT, SearchExecutor
-    // :156) rather than degrading to a silent 0-hit answer. The legs themselves run inside fusion
-    // futures and must not throw, so the parse is probed here, once, and only for the LUCENE
-    // requests that actually run a lexical leg — SIMPLE requests take no extra parse.
-    if (syntax == LuceneRuntimeTypes.QuerySyntax.LUCENE && decision.legs().hasLexicalLeg()) {
+    // Tempdoc 821 §P: the lexical leg honours the request's query_syntax, so a malformed LUCENE
+    // query must fail the same way the sparse-only shortcut fails it (INVALID_ARGUMENT,
+    // SearchExecutor:156) rather than degrading to a silent 0-hit answer. The legs themselves run
+    // inside fusion futures and must not throw, so the parse is probed here, once.
+    //
+    // Probed for EVERY LUCENE multi-leg request, not only the ones with a lexical leg: every
+    // multi-leg response re-parses this same query for the headline count
+    // (SearchResponseBuilder#computeMatchCount) and for the facet scan, so on a dense-only or
+    // splade-only request a malformed query would otherwise surface as "matchCount 0" beside real
+    // hits — the exact count-vs-hits contradiction 821 §L.3 exists to prevent. SIMPLE requests
+    // take no extra parse.
+    if (syntax == LuceneRuntimeTypes.QuerySyntax.LUCENE) {
       try {
         textQueryOps.buildTextQuery(queryString, runtimeFilters, syntax);
       } catch (org.apache.lucene.queryparser.classic.ParseException e) {
