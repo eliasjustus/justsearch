@@ -115,9 +115,9 @@ final class StatusLifecycleHandlerTest {
     // The INDEX_SERVING component is DEGRADED with the specific compat reason...
     assertEquals("DEGRADED", env.components().get("indexServing").state());
     assertEquals("index.embedding_legacy", env.components().get("indexServing").reasonCode());
-    // ...and it rolls up into the `retrieval` composite the 595 verdict consumes. (The sibling
-    // retrieval dims CHUNK_EMBEDDING/LAMBDAMART are DEGRADED-capped by design, so the composite
-    // resolves to DEGRADED — never a higher-precedence state that would mask the compat reason.)
+    // ...and it rolls up into the `retrieval` composite the 595 verdict consumes. INDEX_SERVING's
+    // DEGRADED is the composite's floor here: no sibling retrieval dim reaches a higher-precedence
+    // state on this fixture, so nothing masks the compat reason.
     assertEquals("DEGRADED", env.composites().get("retrieval").state());
     assertTrue(
         env.composites().get("retrieval").reasonCodes().contains("index.embedding_legacy"),
@@ -134,6 +134,30 @@ final class StatusLifecycleHandlerTest {
     assertEquals("READY", env.components().get("indexServing").state());
     String reason = env.components().get("indexServing").reasonCode();
     assertFalse(reason != null && reason.startsWith("index."), "no compat reason when COMPATIBLE");
+  }
+
+  @Test
+  @DisplayName("F-021: an unconfigured LambdaMART reranker reads READY + informational reason, leaving retrieval READY")
+  void unconfiguredLambdamartLeavesRetrievalCompositeReady() {
+    // newHandler() wires no LambdaMART/GPL suppliers — the shipped default (F-021: the reranker
+    // measured harmful and is absent by design), which previously pinned `retrieval` to DEGRADED
+    // on every install.
+    StatusLifecycleHandler handler = newHandler();
+    WorkerOperationalView view =
+        withChunkCoverage(
+            compatWorkerView(CompatibilityStatusView.empty()),
+            /* indexedDocuments= */ 0,
+            ChunkCoverageView.empty());
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
+
+    assertEquals("READY", env.components().get("lambdamartModel").state());
+    assertEquals(
+        "lambdamart.not_configured", env.components().get("lambdamartModel").reasonCode());
+    assertEquals("READY", env.components().get("indexServing").state());
+    assertEquals(
+        "READY",
+        env.composites().get("retrieval").state(),
+        "an install without LambdaMART must not read as permanently degraded retrieval");
   }
 
   // ===== Tempdoc 598 reopen (B-3): dense-serviceability projection onto the retrieval composite =====

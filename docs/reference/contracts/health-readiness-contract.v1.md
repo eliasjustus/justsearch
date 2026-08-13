@@ -79,6 +79,11 @@ Interpretation:
 - `NOT_CONFIGURED`
 - `DEGRADED`
 - `READY`
+10. A `READY` component MAY carry a reason code. Such a code is *informational* — it names a
+   condition that is present but is not degradation (e.g. an optional component that is absent by
+   design). Consumers must read **state** as the degradation signal: the presence of a reason code
+   on a component or on a composite's `reasonCodes` list is not, on its own, evidence of
+   degradation.
 
 ## Reason Code Taxonomy (v1)
 

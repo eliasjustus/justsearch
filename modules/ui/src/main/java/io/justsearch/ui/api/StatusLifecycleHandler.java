@@ -1493,9 +1493,11 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
       }
 
       case LAMBDAMART_MODEL -> {
-        // DEGRADED-capped: default to DEGRADED (not NOT_CONFIGURED) to avoid poisoning
-        // the retrieval composite. The reason code still communicates "not configured" to the UI.
-        String state = READINESS_DEGRADED;
+        // Absent by design (F-021: the LambdaMART reranker measured harmful and ships
+        // unconfigured), so "not configured" is the healthy steady state, not degradation —
+        // READY carrying an informational reason code. Emitting DEGRADED here made every
+        // install read "Reduced capability" on the `retrieval` composite forever.
+        String state = READINESS_READY;
         String reason = LifecycleReasonCode.LAMBDAMART_NOT_CONFIGURED.code();
         if (lambdamartRerankerSupplier != null && gplCoordinatorSupplier != null) {
           var reranker = lambdamartRerankerSupplier.get();
