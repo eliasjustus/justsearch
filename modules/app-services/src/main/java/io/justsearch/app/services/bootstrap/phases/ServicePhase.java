@@ -299,6 +299,12 @@ public final class ServicePhase {
     runtimeActivationHelper.setEncoderRuntimeCache(
         new io.justsearch.app.services.observability.WorkerEncoderRuntimeCache(
             in.knowledgeClientSupplier()));
+    // Tempdoc 824 §3.3c: the install status reconciles its bookkeeping ("a file is missing")
+    // against what the runtime observes ("the capability is running"). Bound here, after the
+    // activation service exists — it takes aiInstallHelper as a constructor argument, so the
+    // dependency can only run in this direction. A method reference, not a captured value: the
+    // observation changes with every activation and must be read at status time.
+    aiInstallHelper.setFunctionalStatusSource(runtimeActivationHelper::functionalStatusByPackage);
 
     // §31 Phase 3: 7 controller-services constructed here.
     // SettingsService: callable wraps the late-bound resetFn (set by LocalApiServer after

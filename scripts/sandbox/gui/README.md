@@ -16,8 +16,8 @@ alongside `collect-evidence.ps1`.
 | `JustSearchGui.psm1` | Shared module — P/Invoke boilerplate, window connect/click/capture, and the assert-then-act primitive. The other scripts are thin wrappers over this; import it directly if you're scripting something ad hoc (`Import-Module (Join-Path $PSScriptRoot "JustSearchGui.psm1") -Force`). |
 | `snap.ps1` | Full-desktop capture (`CopyFromScreen`). Use for the Step-0 capability probe and whole-screen evidence. Prints the PHYSICAL-pixel dimensions actually written (read back from the saved PNG), not `Screen.PrimaryScreen.Bounds`, which can be DPI-scaled and mismatch what got saved. |
 | `win-capture.ps1` | Locate + focus + capture ONE window by process name (`GetWindowRect` + `SetForegroundWindow`). Optional `-Keys` sends keystrokes before capturing. |
-| `click.ps1` | Click at window-relative coordinates in a target window, then capture. Fails closed (exits 1, no click sent) if the window did not actually take foreground focus; `NO WINDOW` failures echo the actual `-ProcName` value searched for, not a hardcoded default. |
-| `crop.ps1` | Crop + magnify a region of an existing PNG (for illegible small text). Parameters are `-X -Y -W -H`, not `-Width`/`-Height` -- passing the wrong flag names fails loud instead of silently cropping the 100x100 default. |
+| `click.ps1` | Click at window-relative coordinates in a target window, then capture. Fails closed (exits 1, no click sent) if the window did not actually take foreground focus, **and again at capture time** — after the `-DelayMs` sleep it re-asserts the clicked hwnd is still foreground and exits 1 WITHOUT writing a file if it is not (round 16 captured a terminal window under a health-surface filename this way). `-DelayMs` is capped at 3000 ms, checked before the click so a refusal has no side effect; `NO WINDOW` failures echo the actual `-ProcName` value searched for, not a hardcoded default. |
+| `crop.ps1` | Crop + magnify a region of an existing PNG (for illegible small text). **The wrapper's parameters are `-In`/`-Out`** (`-InPath`/`-OutPath` belong to the module function it calls — see the table below). Dimension parameters are `-X -Y -W -H`, not `-Width`/`-Height` -- passing the wrong flag names fails loud instead of silently cropping the 100x100 default. |
 | `gui-approve.ps1` | **EXAMPLE**, not a generic tool — see below. |
 
 ## Parameter-signature quick reference (round 12: `-Path` silently wrote ZERO PNGs for 10 minutes)
@@ -27,9 +27,17 @@ parameter name for "where does this go" / "what am I connecting to" -- a
 round guessed wrong once and lost 10 minutes to a `try/catch` that swallowed
 the resulting error while reporting nothing:
 
-| Function | Required parameters | Notes |
+**This table lists the MODULE functions in `JustSearchGui.psm1`, not the
+wrapper scripts.** The wrappers do not all pass their own parameter names
+through: `crop.ps1` takes **`-In`/`-Out`** and forwards them to
+`Save-AppShotRegion`'s `-InPath`/`-OutPath`. Round 16 read the module row for
+the wrapper and got the names wrong (tempdoc 823 §4). Wrapper parameter names
+are in the *What each script does* table above and each script's usage
+comment; module parameter names are here.
+
+| Function (module) | Required parameters | Notes |
 |---|---|---|
-| `Connect-App` | `-ProcName` (default `"JustSearch"`), `-FocusDelayMs` (default `700`), `-MaxFocusAttempts` (default `4`) | Produces the connection object (`$conn` in every wrapper script's examples) that every other function below needs -- `$conn.Handle`, `$conn.Focused`, `$conn.Process`, `$conn.Foreground`. The README used to show `$conn.Handle` without ever naming this function. |
+| `Connect-App` | either `-ProcName` (default `"JustSearch"`) **or** `-Hwnd <IntPtr>`, plus `-FocusDelayMs` (default `700`), `-MaxFocusAttempts` (default `4`) | Produces the connection object (`$conn` in every wrapper script's examples) that every other function below needs -- `$conn.Handle`, `$conn.Focused`, `$conn.Process`, `$conn.Foreground`. The README used to show `$conn.Handle` without ever naming this function. **`-Hwnd` addresses a window that is NOT a process's `MainWindowHandle`** -- the shell **Properties** dialog and the NSIS installer/uninstaller wizards, which the `-ProcName` lookup structurally cannot reach (round 16 needed all three for must-watch captures and rebuilt the plumbing in a scratchpad that was wiped with the sandbox). Everything after the lookup -- restore, foreground, ALT-nudge retry, `.Focused` verification -- is the same code path, so the fail-closed contract is identical. `.Process` is best-effort under `-Hwnd` (resolved from the owning pid) and can be `$null`; `.Handle`/`.Focused` are the load-bearing fields. Enumerate candidate hwnds with `[System.Diagnostics.Process]::GetProcesses()` / `EnumWindows` or read one off the process that owns the dialog. |
 | `Save-DesktopShot` | `-Out` | Full-desktop capture. **NOT `-Path`.** |
 | `Save-AppShot` | `-Handle`, `-Out` | Captures ONE window by hwnd (pass `$conn.Handle`). **NOT `-Path`, and there is NO `-ProcName`** on this function -- unlike `win-capture.ps1`, which takes `-ProcName` and calls `Connect-App` + `Save-AppShot` internally. |
 | `Save-AppShotRegion` | `-InPath`, `-OutPath`, `-X -Y -W -H`, `-Scale` (default `3`) | Crop + magnify an EXISTING PNG. Different shape from the two above: `-InPath`/`-OutPath`, not `-Out`. |
@@ -90,7 +98,7 @@ not match a different resolution, a different dialog, or even the same dialog
 after a theme change. Treat it as a template: copy the pattern, re-derive the
 coordinates fresh each round from a screenshot of *that* round's dialog.
 
-## Three mechanical gotchas (cost 3+ attempts each to discover — don't re-spend the round on them)
+## Six mechanical gotchas (cost 3+ attempts each to discover — don't re-spend the round on them)
 
 1. **Focus is not sticky.** `SendKeys` goes to whatever element currently has
    focus. Click the target field first, *then* type — never assume a field
@@ -118,6 +126,31 @@ coordinates fresh each round from a screenshot of *that* round's dialog.
    The correct sequence is paste, `{ENTER}` (to commit the path into the
    field/navigate to it), THEN click the "Select Folder" button — do not
    treat Enter alone as a substitute for the click.
+5. **The shell "Properties" dialog dies with the process that opened it**
+   (round 16, tempdoc 823 §4 — cost one wasted capture, and it is written
+   down nowhere else). `Start-Process`-ing it from a PowerShell that the tool
+   call kills when it returns takes the dialog down with it, so the next call
+   finds no window. Open it from a **detached** PowerShell that outlives the
+   tool call, then address it by hwnd:
+   ```powershell
+   Start-Process powershell -ArgumentList '-NoProfile','-Command',
+     '(New-Object -ComObject Shell.Application).Namespace((Split-Path $exe)).ParseName((Split-Path $exe -Leaf)).InvokeVerb("Properties"); Start-Sleep 120'
+   # then, from the next call: find the dialog hwnd and
+   $conn = Connect-App -Hwnd $dialogHwnd
+   ```
+6. **Click and capture in one call only for fast surfaces; otherwise split
+   them.** `click.ps1` sleeps `-DelayMs` between the click and its capture,
+   and anything that steals the foreground during that sleep gets captured
+   instead (round 16, with `-DelayMs 6000`). The script now re-asserts the
+   clicked hwnd before capturing and refuses to write a file on a mismatch,
+   and caps `-DelayMs` at 3000 ms — so for a surface that takes longer to
+   settle, use the **click-then-separate-capture** pattern: `click.ps1` with
+   a short delay for the ACTION, then a separate `win-capture.ps1` call for
+   the EVIDENCE frame (it connects and focuses immediately before capturing,
+   so it cannot drift). This does not contradict gotcha #2 — that one is
+   about splitting *type* and *click*, which resets the dialog; splitting the
+   *evidence capture* off a completed click is safe and is now the
+   recommended shape.
 
 ## Pixel-coordinate caveat
 
