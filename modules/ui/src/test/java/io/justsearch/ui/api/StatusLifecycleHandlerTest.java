@@ -273,11 +273,16 @@ final class StatusLifecycleHandlerTest {
   void embeddingRebuildRollsUpToBothComposites() {
     StatusLifecycleHandler handler = newHandler();
     // The live-observed shape: the encoder is loaded (embeddingReady=true) while the Worker refuses
-    // dense queries because the embeddings are being rebuilt in place.
+    // dense queries because the embeddings are being rebuilt in place. The empty-corpus chunk
+    // coverage keeps CHUNK_EMBEDDING READY, so the composite's DEGRADED is attributable to this
+    // branch rather than to a sibling dimension that was already degraded on the base fixture.
     WorkerOperationalView view =
-        compatWorkerView(
-            new CompatibilityStatusView("REBUILDING", "REBUILD_IN_PROGRESS", "", "", "", "", "COMPATIBLE", false, ""),
-            true);
+        withChunkCoverage(
+            compatWorkerView(
+                new CompatibilityStatusView("REBUILDING", "REBUILD_IN_PROGRESS", "", "", "", "", "COMPATIBLE", false, ""),
+                true),
+            /* indexedDocuments= */ 0,
+            ChunkCoverageView.empty());
     ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
 
     assertEquals("DEGRADED", env.components().get("indexServing").state());
@@ -286,6 +291,12 @@ final class StatusLifecycleHandlerTest {
     // The encoder-loaded probe must no longer read READY while queries cannot use embeddings.
     assertEquals("DEGRADED", env.components().get("embedding").state());
     assertEquals("index.embedding_rebuilding", env.components().get("embedding").reasonCode());
+    // Pins the attribution: every other retrieval dimension is READY on this fixture, so a
+    // DEGRADED composite can only have come from the two arms above.
+    assertEquals("READY", env.components().get("chunkEmbedding").state());
+    assertEquals("READY", env.components().get("workerControlPlane").state());
+    assertEquals("READY", env.components().get("visualTextExtraction").state());
+    assertEquals("READY", env.components().get("lambdamartModel").state());
     assertEquals("DEGRADED", env.composites().get("retrieval").state());
     assertTrue(
         env.composites().get("retrieval").reasonCodes().contains("index.embedding_rebuilding"),

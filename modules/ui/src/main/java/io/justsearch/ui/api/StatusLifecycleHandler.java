@@ -1263,7 +1263,10 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
    * the Worker refuses dense queries ({@code hybridFallback=REBUILD_IN_PROGRESS}). Returns
    * {@code index.embedding_rebuilding}, else {@code null}.
    *
-   * <p>This is the one dense-leg outage nothing else observes. The 595 Stability axis sees only
+   * <p>Nothing in the readiness envelope — and so nothing in the 595 verdict — observed this
+   * outage before. (The conditions store does: {@code WorkerSnapshotTap} maps {@code REBUILDING} to
+   * {@code embedding.not-ready}, tempdoc 726 F5. This closes the readiness side of the same fact.)
+   * The 595 Stability axis sees only
    * generation migrations, and {@link #compatBlockedReason}/{@link #denseUnavailableReason} both
    * exclude {@code REBUILDING} by design (their remedies — reindex, or "no model" — are wrong
    * here; the remedy is to wait), so readiness reported the embedding dimension READY off
