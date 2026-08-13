@@ -44,6 +44,12 @@ public enum LifecycleReasonCode {
   // detected corrupt, backed up, and is being rebuilt). Distinct from the BLOCKED_* reindex codes:
   // here the rebuild is already running — the cause is "the index was corrupt", remedy is to wait.
   INDEX_REBUILDING("index.rebuilding"),
+  // An in-place embedding rebuild is running (`embeddingCompatState=REBUILDING`): the Worker
+  // refuses dense queries with `REBUILD_IN_PROGRESS` until it finishes, so keyword results are
+  // complete but semantic ranking is off. Distinct from INDEX_REBUILDING, whose cause is "the
+  // index was corrupt" — reusing that code would tell the user their index is damaged when it
+  // is merely re-embedding.
+  INDEX_EMBEDDING_REBUILDING("index.embedding_rebuilding"),
   INDEX_EMBEDDING_LEGACY("index.embedding_legacy"),
   INDEX_EMBEDDING_MISMATCH("index.embedding_mismatch"),
   // Tempdoc 598 reopen (B-3): dense/semantic retrieval cannot run for a reason a rebuild does NOT

@@ -1415,14 +1415,28 @@ def stage_round_scripts(share_dir: Path):
       "mutating spans: 0" because `attrs` (the real key) is not
       `attributes`, and CRLF-embedded excerpt text breaks
       Get-Content | ConvertFrom-Json on many lines.
+    - probe-download.ps1 -- manual-fetch control (round 16, tempdoc 823 §4):
+      fetches one URL with the SAME curl.exe flag set the product falls back
+      to (DownloadExecutor.runCurl) and prints status, bytes, elapsed and
+      SHA-256, plus the BITS service state the product tries first. It
+      partitions environment-vs-product on any download failure in one
+      command; round 16 had to invent it mid-investigation, and the answer
+      (HTTP 200, 872 bytes, 0.41s, digest matching the manifest) reframed the
+      round's blocking finding.
 
-    All four were written fresh inside a round's sandbox with no staged
+    All five were written fresh inside a round's sandbox with no staged
     equivalent; each is now reviewed and generalized (port discovered from
     the runtime manifest where applicable, paths taken as parameters -- no
     round-specific hardcoding) and staged unconditionally next to
     collect-evidence.ps1."""
     count = 0
-    for script_name in ("chat-ask.ps1", "oracle.ps1", "redact.ps1", "analyze-traces.ps1"):
+    for script_name in (
+        "chat-ask.ps1",
+        "oracle.ps1",
+        "redact.ps1",
+        "analyze-traces.ps1",
+        "probe-download.ps1",
+    ):
         src = SCRIPT_DIR / script_name
         if src.exists():
             shutil.copy2(src, share_dir / script_name)
@@ -1431,7 +1445,7 @@ def stage_round_scripts(share_dir: Path):
             print(f"WARNING: {script_name} not found at {src} -- round-scripts staging incomplete")
     print(
         f"Staged round scripts ({count} files -- chat-ask.ps1, oracle.ps1, redact.ps1, "
-        "analyze-traces.ps1)"
+        "analyze-traces.ps1, probe-download.ps1)"
     )
 
 

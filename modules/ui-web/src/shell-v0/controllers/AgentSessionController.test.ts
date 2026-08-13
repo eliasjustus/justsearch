@@ -823,6 +823,53 @@ describe('AgentSessionController interaction methods', () => {
     expect(ctrl.sessions[0]?.sessionId).toBe('s1');
   });
 
+  // Tempdoc 821 §4 — the backend (`AgentSessionSummary.java` / the generated
+  // `agent-sessions-response.ts` wire schema) emits `startedAt` (ISO-8601 string) and `state`, not
+  // `startedAtEpochMs`/`status`. loadSessions used to cast the raw JSON straight through, so every
+  // row's `startedAtEpochMs` was undefined and RetrospectivePanel rendered a blank timestamp for
+  // every session. This is the realistic backend payload shape (mirrors AgentRunStore.toSessionSummary).
+  it('loadSessions maps the real backend field names (startedAt/state) onto startedAtEpochMs/status', async () => {
+    const startedAtIso = '2026-08-12T09:30:00.000Z';
+    globalThis.fetch = mockFetchJson({
+      sessions: [
+        {
+          sessionId: 's1',
+          startedAt: startedAtIso,
+          updatedAt: startedAtIso,
+          state: 'READY_FOR_LLM',
+          resumable: true,
+          iterationsUsed: 2,
+          toolCallsExecuted: 1,
+          totalTokensUsed: 100,
+          activeAgentId: 'primary',
+          terminationReason: null,
+          preview: 'summarize this doc',
+        },
+      ],
+    });
+    await ctrl.loadSessions();
+    expect(ctrl.sessions.length).toBe(1);
+    const s = ctrl.sessions[0]!;
+    expect(s.sessionId).toBe('s1');
+    expect(s.startedAtEpochMs).toBe(Date.parse(startedAtIso));
+    expect(s.status).toBe('READY_FOR_LLM');
+    expect(s.preview).toBe('summarize this doc');
+    expect(s.resumable).toBe(true);
+  });
+
+  // Precision guard: a payload that already speaks the FE shape (startedAtEpochMs/status) must
+  // still round-trip unchanged — the normalizer tolerates both shapes, it doesn't only accept the
+  // backend one.
+  it('loadSessions tolerates a payload already in the startedAtEpochMs/status shape', async () => {
+    const epochMs = 1_723_000_000_000;
+    globalThis.fetch = mockFetchJson({
+      sessions: [{ sessionId: 's1', startedAtEpochMs: epochMs, status: 'done' }],
+    });
+    await ctrl.loadSessions();
+    expect(ctrl.sessions[0]?.startedAtEpochMs).toBe(epochMs);
+    expect(ctrl.sessions[0]?.status).toBe('done');
+  });
+
   // Tempdoc 561 P-B1: History is a projection of the ONE action ledger, filtered to this session
   // via the cross-domain correlationId join key — not the old FileOperationLog-backed
   // /api/chat/agent/history (which is exactly why a completed search left History empty).

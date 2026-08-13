@@ -122,6 +122,17 @@ public final class McpEvidenceProjection {
     coverage.put("tookMs", content.tookMs());
     out.put("coverage", coverage);
     out.put("truncated", content.truncated());
+    // Facets-truncation MCP relay (tempdoc 821 §L.3): distinct from `truncated` above (that flag is
+    // the RESULT-LIST truncation — totalHits > shownCount). This one is the facet SCAN's own
+    // incompleteness (resp.facetsTruncated(), sourced via content.facetsTruncated() so both tiers
+    // read the same computed fact per 735 G3) — true when per-value facet counts are a lower bound
+    // rather than exact. Cause-neutral deliberately: the set of causes is not fixed — today the
+    // maxDocsScanned cap, and 821's facets-engine work extends the flag to a mid-scan failure too —
+    // so this relay states the effect (incomplete scan), not a specific cause. Previously read
+    // nowhere in
+    // the MCP layer even though the tool description tells the agent to trust facet counts for
+    // filter discovery.
+    out.put("facetsTruncated", content.facetsTruncated());
     putAppliedFilters(out, resp);
     return out;
   }

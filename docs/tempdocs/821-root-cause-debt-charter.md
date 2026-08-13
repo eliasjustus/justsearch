@@ -306,9 +306,17 @@ The census produced everything the store's own §Resolving flow needs:
   Single supervised campaign, or verify opportunistically per class?
 - **D4 — Demo-blemish timing**: before the installer freeze (they're what testers see)
   or into the risky phase? Items 1/2/4 arguably belong IN the first installer.
-- **D5 — Dead registers**: retire `docs/reference/issues/*` with a sweep (routing open
-  items into domain registers + store), or revive them as the defect home the store
-  routes into? (This census routed 53 items "to register" — the answer decides where.)
+- **D5 — Dead registers**: ~~retire or revive?~~ **EXECUTED (2026-08-12, owner-authorized
+  default, branch `worktree-agent-aa70c939fd4d37e5b` commit e576e570):** all eight
+  `docs/reference/issues/*` files retired with a 14-reference sweep (regens + link
+  checks green). 21 live entries + 1 consolidated decisions stub routed into the
+  observations store (BKD-012 tagged with class C3/C4 — promote from the store at the
+  next fold if wanted as a first-class item); 24 entries verified dead, 5 of those
+  verified FIXED in source (BKD-011/021, INS-002/003/006). Non-defect census items
+  routed "to register" now route to the store + the two domain registers. OPEN
+  residue for the owner: the decisions.md rationales with no other home (GPU-012
+  DLL thresholds, EXC-002 methvin revisit trigger, UIX-015 first-run-help-docs fact,
+  UIX-010/011/012 as expected-state rows) — listed in the retirement worker's report.
 - **D6 — Class ownership overlaps**: C3-long-doc and C7 straddle this direction and
   differentiators; C1/C4 FE surfaces straddle the frontend rework. Proposed split
   drawn above; confirm or redraw.
@@ -458,14 +466,146 @@ Residuals and pending closure items:
    searchable" over a dead backend — behavioral decision, C1 class member.
 4. **NEEDS-LIVE lane** (28 conditions, Appendix B) — untouched, owner D3.
 5. **RAG collection scoping + facets deeper tiers** — design-gated (§L.3), not started.
-6. **Store maintenance pass** (§6 as amended) — per-occurrence verification before
-   any deletion; not started.
+6. **Store maintenance pass** (§6 as amended) — **EXECUTED for the defect stratum
+   (2026-08-12):** all 111 FIXED/STALE candidates re-verified per-OCCURRENCE (3
+   workers); 92 confirmed fully resolved and deleted (branch
+   `worktree-agent-aca6d2da1713b04c6` commit ea66fc83; store depth 498 → 406,
+   whole-block deletions only), 18 KEEP with named live occurrences + 1 UNCLEAR
+   retained. The per-occurrence protocol caught 19 conditions the census would have
+   wrongly deleted (17% of candidates). **Non-defect stratum EXECUTED (2026-08-13,
+   commit 46b369a7):** the 30 retire proposals were put through the same
+   per-occurrence rigor — 26 deleted, 4 kept with live occurrences. Branch total
+   118 deletions (92 + 26), 23 kept. Published after reconciliation against main's
+   intervening folds (see §N): 114 of the 118 applied, 4 revived because main's fold
+   added occurrence lines postdating the verification (`searchstate`, `tokens`,
+   `token-names-generated`, `component-vocabulary-generated`); final depth 401.
+   Remaining store work: the 53 register / 35 park routing proposals stay
+   LIGHT-triaged only.
 7. **Merge-order note**: the two FE branches and local main each carry a
    same-named observation shard (`docs/observations.d/776e10cd-….md`) with
    different bodies — whichever merges later hits add/add; resolve by
    concatenating bullets (all entries are append-only lines).
 8. 792's branch also carries the sole copies of tempdocs 793/794 — they land with
    the rescue merge.
+
+## §N Wave 2 execution log (2026-08-12/13; owner: "proceed with everything aside from the frontend")
+
+Same discipline as §M: worker-implemented, independently reviewed (reviewer ≠
+implementer), re-fixed on review verdicts. All branches green, UNPUSHED, no PRs.
+
+| lane | branch / location | state |
+|---|---|---|
+| Store cleanup (both strata) | `agent-aca6d2da1713b04c6` (ea66fc83, 46b369a7) | §6 row above — 118 per-occurrence-verified deletions (92 defect + 26 non-defect), 23 kept. Reconciled against main's folds at publication: 114 applied, 4 revived by new occurrence lines, final depth 401. |
+| D5 register retirement | `agent-aa70c939fd4d37e5b` (e576e570) | §7-D5 row above — 21+1 routed, 24 dead, 14-reference sweep. |
+| Count-drop live A/B | in-branch (05e052b5) | CLOSED: scifact hybrid **0.7543** on the fix branch, `relevance-gate` verdict ok (floor 0.7404), F-045 amended with the measurement. §M residual 2 done. |
+| Needs-live lane (D3) | shard notes (this session) | EXECUTED for the backend subset: `drift-9` resolved with mechanism (retrieval composite degraded by `lambdamart.not_configured` while the embedding dim reads READY off encoder-loaded semantics during a live REBUILD_IN_PROGRESS hybridFallback — a C1 double-defect, unfixed, now precisely charted); `general-28` CONFIRMED WORST-CASE live (fingerprint never persists; two consecutive restarts each reset the full re-embed, coverage 9%→0.2% — **raises merge priority of worktree 819-fingerprint-boot-race**); `localapiserver` CONFIRMED (POST /mcp accepts foreign Origin, GET 404); `missing-2` partially moot (CE cold 426ms no deadline miss; status key set restart-stable, `crossEncoderAvailable` field gone). FE-rendering + tooling one-off conditions stay parked (frontend excluded / not demo-relevant). |
+| C1-BE live verification | dev-stack `distFrom` session | §M residual on `static-green ≠ live-working` CLOSED: worker killed → embedding UNKNOWN/stale:true with monotone stalenessMs (3.2s→16.2s), indexServing NOT_READY/stale, reclassified GPU stale:true, head-local telemetry fresh; watchdog recovery to all-fresh at ~16s. |
+| RAG collection scoping (C2 wire tier) | `agent-a74053fa3a341af5a` (a07f5bc0 + 063b559d) | Backend+MCP only (FE selector excluded). Proto field 25 mirroring SearchFilters; full chain threaded; pre-search scoping (a discovery — without it the common ASK path was dead plumbing); MCP tool-surface 0.6.0. Review NEEDS-FIXES → all fixed with falsification-verified tests: FULLTEXT_FALLBACK/full-document legs now scope-carrying (closing an 811 D-1 residue), hybrid/pre-search coupling tested + documented, discriminating routing fixture. All five touched modules' suites green. |
+| Facets truthfulness (engine tiers) | `agent-aec27f0e6dd7d66d7` (16ff3bf4 + 8864dfe0) | Non-facetable fields OMITTED (key-absence ≠ zero matches); failed scans report truncated=true (never the truncated=false lie); swallowed catches raised to WARN. **§L.3 design reversal, measured:** the querySyntax-hardcode premise was INVERTED — every multi-leg BM25 path parses SIMPLE-only, so the literals were consistent; shipped one coupling symbol (`MULTI_LEG_LEXICAL_SYNTAX`) consumed by leg + both count sites, with a bidirectional coupling test (computeMatchCount arm pinned by a measured failing-on-revert). The REAL defect (multi-leg ignores `query_syntax=LUCENE`) is logged in the store — a search-quality lane, not chartered here. Review verified the inversion independently; all fixes applied; suites 567+967 green. |
+| Facets↔relay wording | `agent-a58afac96dfa2dfb2` (+ bdb8ce81) | Cross-branch interaction fixed in the relay's branch: `facetsTruncated` wording cause-neutral ("did not cover every match") since the flag now also fires on scan failure. Merge-order safe either way. |
+
+Remaining open (this charter): §M residuals 1 (measured UX audit) and 3 (settled-arm
+gap) — both frontend, owner-excluded; the facets/limit WIRE tier (response reason
+codes, 100-cap echo — changeset-gated); the non-defect store strata (30 retire
+proposals need per-occurrence rigor); C3 (enrichment completeness) and the remaining
+§3 classes not yet chartered into lanes; §7 D1/D4/D6 defaults stand unless redirected.
+
+## §O Root-cause investigations (2026-08-13; owner: "investigate for root causes and the correct fixes")
+
+### §O.1 Embedding fingerprint never persists (the §N needs-live worst-case finding)
+
+**Root cause (current main, file:line-verified):** the fingerprint's only durable home
+is Lucene commit userData, which `CommitOps.commit()` REBUILDS WHOLESALE each commit
+(`CommitOps.java:78-110`) from suppliers — and `EmbeddingCompatibilityController.
+fingerprintToStamp()` (:299-310) supplies it only when state is COMPATIBLE (or
+rebuild-completed). Persistence is thus a per-commit re-assertion, erased by any commit
+taken while the ECC declines — including the ENTIRE async boot window (supplier defaults
+`Optional::empty`, `KnowledgeServer.java:218-219`; ECC wired in `initDeferredModels`
+dispatched after `startIndexingLoop`). On every FIRST launch the Head's help-doc ingest
+commits before `ECC.refresh()`, making the empty-index fast path structurally
+unreachable → `BLOCKED_LEGACY` → auto-rescue → REBUILDING. Certification needs
+`pending==0` twice (or a graceful shutdown the dev-runner's `taskkill` never performs) —
+so the index is **never stamped at all**, and `EmbeddingRecoveryOps.
+remarkEmbeddedParentDocsPending` (:132-170) unconditionally re-marks every parent on
+every boot: the observed 99.7%-chunk-vectors/0.17%-coverage signature is bookkeeping
+destruction, not vector loss. Bonus defect: certification counts PARENT embedding
+status while retrieval serves CHUNK vectors — the attestation doesn't cover the
+artifact it gates.
+
+**819 branch verdict: PARTIAL — closes origination, not recovery.** Its 3 real commits
+(+1472/−70) fix boot ordering (ECC synchronous before the loop), add an evidence gate
+to certification, route retries, and add graceful dev-runner shutdown. It does NOT add
+rebuild-progress persistence or touch the unconditional re-mark: every existing
+unstamped index still re-embeds fully and still resets on interrupt. **Merge-review
+checklist for 819:** (1) its `emptyIndexAtRefresh` latch re-opens the zero-evidence
+hole (help-batch all-fail scenario stamps COMPATIBLE with zero vectors) — should only
+permit while the index is still empty; (2) `noteSuccessfulEmbeddingObserved()` has no
+production caller; (3) its regression guard is a source-order assertion — ask for a
+behavioral boot test.
+
+**Remaining correct fix (design ready, BLOCKED on 819 merging first — same files):**
+F1 resumable rebuild: an unconditionally-supplied `embedding_rebuild_model_sha256`
+commit key while REBUILDING (cleared at certification); boot resumes REBUILDING and
+skips the re-mark when it matches the current fingerprint. F2 preservation contract:
+`fingerprintToStamp` → tri-state STAMP/PRESERVE/CLEAR with PRESERVE copying the prior
+commit's value (also stops BLOCKED_MISMATCH destroying its own evidence). F3 certify
+chunk-vector presence (already countable via `IndexCountOps`) or re-mark chunk status
+too. Note: `EmbeddingFingerprintDurabilityTest` seeds an unconditional supplier —
+`unreachable-seed-green`, rewrite with F2. New test: rebuild to ~50%, restart, assert
+no re-mark. Why 730's shipped remediation didn't help: it acts at certification/
+COMPATIBLE — the last mile of a path this index never walks.
+
+### §O.2 Readiness truthfulness double defect — IMPLEMENTED + REVIEWED (2026-08-13)
+
+Branch `worktree-agent-a1772b240fdd73bd0` (6c2fac76 Defect A, 6c4a18bc Defect B,
+6762439e review nits + disclosure). Review verdict MERGEABLE-AS-IS: wrong-gate trace
+clean (no shadowing; fallback worker view yields no fabricated rebuild alarm;
+fall-throughs all worse-or-equal), composite math verified, both arms independently
+pinned with the composite assertion de-vacuumed (all four sibling retrieval dims
+asserted READY so the DEGRADED verdict is attributable). Gates: readiness-reason-codes
+48/42 green; FE suite 4,452. Wire-visible disclosure for the PR body: the legacy
+`embeddingReady` alias now reads false during a rebuild (contract-consistent).
+**MERGE-ORDER (silent semantic blocker):** the wave-1 staleness branch
+(`agent-a22be6e46206d73f8`) changed `buildReadinessEnvelope` to 3-arg with NO overload
+— whichever merges second, StatusLifecycleHandlerTest will NOT COMPILE with zero
+conflict markers; the second merger adds the contact argument to this branch's three
+new call sites. Also: several branches wrote the SAME observation shard file (worker
+session-id resolution collapses to the orchestrator's — meta-observation logged);
+expect add/add shard conflicts, resolve by union.
+
+(original charter note follows)
+
+Design (implementation-ready, worker running): (A) LambdaMART unconfigured →
+READY-with-informational-note (matches four sibling absent-by-design precedents; the
+DEGRADED-capped comment deleted); (B) new `index.embedding_rebuilding` reason code
+fired from a compat-REBUILDING helper into BOTH the indexServing chain and the
+embedding arm — the "owned by the 595 Stability axis" comments are FALSE for in-place
+rebuilds (that axis sees only generation migrations). Owner-visible flips (named for
+PR review): steady-state verdict degraded→operational on every install; rebuilds now
+show a warn-tier true cause for their duration. Interaction-walked, no new false
+states; merge after the wave-1 staleness branch (signature-level, not semantic,
+conflicts).
+
+### §O.3 MCP Origin validation — IMPLEMENTED + ADVERSARIALLY REVIEWED (2026-08-13)
+
+Branch `worktree-agent-a9392a68dde8ec2cd` (a3619093 + 6a2e444c, 15/15 tests). Spec
+MUST implemented: host-equality allowlist (absent Origin allowed per the spec's
+"present and invalid" clause; loopback + tauri shell origins allowed; `null` and all
+else 403 with a JSON-RPC-shaped body), reusing the 633 Host-guard infrastructure; the
+review's parser-attack and bypass hunt found no hole in the decision logic. The review
+DID find two blockers in the halt mechanism — `skipRemainingHandlers()` proven (via
+decompiled Javalin 6.7.0 bytecode) to destroy the after-handler queue, an
+attacker-triggerable OTel-scope + inflight-gauge leak; and the justifying measurement
+proven a hermetic-test artifact (production's HttpResponseException mapper preserves
+bodies) — both fixed: sibling throw pattern restored, the regression test empirically
+falsified in-repo, deny-logging made flood-proof (time-window + 128-char truncation),
+the guarded path and routed path unified on one shared constant, and the wrong shard
+claim retracted with an explicit CORRECTED marker. Documented follow-up: `GET /mcp`
+must return 405 (not 404) per spec — carries a route-manifest regen tail. Bonus
+pre-existing findings logged: `GET /api/mcp/token` token-exempt and not
+Origin-guarded (worth separate review); `resolveAllowedOrigin` rejects `[::1]`
+origins (bracket handling); LocalApiHostValidationTest mirrors its filter instead of
+exercising install().
 
 ## Appendix A — 145 verified STILL-TRUE defect conditions
 
