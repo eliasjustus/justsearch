@@ -101,6 +101,15 @@ export const TURN_HALTED = 'Stopped by you.';
 
 export const TURN_FAILED = 'The answer failed.';
 
+/* ── Phase F2: the delegated run ───────────────────────────────────────────────────────────── */
+
+/**
+ * The optimistic echo: the task left this window and the server has not acknowledged it yet. It
+ * claims nothing about the run itself — a run that has not been acknowledged may not exist — and it
+ * yields the moment `hasServerAcknowledgedLocalDispatch` holds (`sv3-run.ts`).
+ */
+export const RUN_DISPATCHING = 'Sending…';
+
 export interface Sv3Command {
   readonly id: string;
   readonly label: string;

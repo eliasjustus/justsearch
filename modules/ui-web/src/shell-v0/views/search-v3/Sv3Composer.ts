@@ -39,6 +39,7 @@ import {
   HERO_HEADLINE,
   type Sv3ComposerState,
 } from './fixtures.js';
+import { sv3PrimaryAction, type Sv3SlotKind } from './sv3-run.js';
 
 /** Raised when the composer asks the window for the other state; the window owns the morph. */
 export const SV3_COMPOSER_STATE_REQUEST = 'sv3-composer-state-request';
@@ -55,8 +56,17 @@ export interface Sv3ComposerStateRequest {
  */
 export const SV3_COMPOSER_SUBMIT = 'sv3-composer-submit';
 
+/**
+ * Which tier the reader routed the draft to (tempdoc 822 Phase F2). Enter asks the local model;
+ * Ctrl+Enter DELEGATES the same draft as an agent task. The keys are the whole difference — no mode
+ * switch, no second field, and no new chrome: the routing is announced in the send slot's aria-label
+ * and title, which is the one place a control may explain itself without spending screen.
+ */
+export type Sv3ComposerTier = 'ask' | 'delegate';
+
 export interface Sv3ComposerSubmit {
   readonly query: string;
+  readonly tier: Sv3ComposerTier;
 }
 
 /**
@@ -64,6 +74,13 @@ export interface Sv3ComposerSubmit {
  * AbortController, so the composer announces the intent and nothing else.
  */
 export const SV3_COMPOSER_STOP = 'sv3-composer-stop';
+
+/**
+ * Raised by the `answer` rung of the primary slot (tempdoc 822 Phase F2). The composer cannot resolve
+ * a typed prompt — that is the point of pattern (f) — so the control does the one thing it honestly
+ * can: it asks the window to take the reader to the decision that is holding the run.
+ */
+export const SV3_COMPOSER_ANSWER = 'sv3-composer-answer';
 
 /** Donor `ComposerControlIcon` at its default optical size (`size-4`). */
 const SCOPE_GLYPH_SIZE = 16;
@@ -332,12 +349,12 @@ export class Sv3Composer extends JfElement {
       }
 
       /* ── The primary-action SLOT ──────────────────────────────────────────
-         The slot holds exactly ONE control: Send when the window is idle, Stop while a response
-         streams. That is the donor's own construction — an early 'return' renders the stop button
-         INSTEAD of the send control ('chat/ComposerPrimaryActions.tsx:156-157') — and it is what
-         makes double-firing structurally impossible rather than merely guarded: an unrendered Send
-         cannot be clicked. Both occupants are the same box with the same physics, so the geometry is
-         declared once for both; only the material differs below. */
+         The slot holds exactly ONE control, chosen by a strict-priority state machine (Phase F2):
+         Answer ▸ Stop ▸ Follow-up ▸ Send. That is the donor's own construction — an early 'return'
+         renders the stop button INSTEAD of the send control ('chat/ComposerPrimaryActions.tsx:156-157')
+         — and it is what makes double-firing structurally impossible rather than merely guarded: an
+         unrendered Send cannot be clicked. Every occupant is the same box with the same physics, so
+         the geometry is declared once for all of them; only the material differs below. */
       button.stop,
       button.send {
         position: relative;
@@ -370,6 +387,15 @@ export class Sv3Composer extends JfElement {
           var(--control-inset-highlight),
           0 1px 2px 0 color-mix(in srgb, var(--destructive) 24%, transparent);
       }
+      /* The ACT-NOW rung. The 3-colour budget spends --success on "you are the blocker", which is
+         exactly what a held decision is; the control is a jump to the decision, never the decision. */
+      button.send.answer {
+        background: var(--success);
+        color: var(--color-white);
+        box-shadow:
+          var(--control-inset-highlight),
+          0 1px 2px 0 color-mix(in srgb, var(--success) 24%, transparent);
+      }
       button.stop:hover:not(:disabled),
       button.send:hover:not(:disabled) {
         background: var(--message-action-hover);
@@ -378,6 +404,9 @@ export class Sv3Composer extends JfElement {
       /* Declared after the shared hover rule, or the slot's send material would win on a Stop. */
       button.stop:hover:not(:disabled) {
         background: var(--destructive);
+      }
+      button.send.answer:hover:not(:disabled) {
+        background: var(--success);
       }
       /* Pressing does three things at once: the highlight flips from top-light to top-dark and the
          drop shadow goes, so the control reads as pressed INTO the surface rather than merely dimmed. */
@@ -421,27 +450,58 @@ export class Sv3Composer extends JfElement {
 
   static properties = {
     state: { type: String, reflect: true },
-    busy: { type: Boolean, reflect: true },
+    slotKind: { type: String, reflect: true, attribute: 'slot-kind' },
+    slotReason: { type: String, attribute: 'slot-reason' },
+    steerable: { type: Boolean, reflect: true },
     unavailableReason: { type: String, attribute: 'unavailable-reason' },
+    delegateUnavailableReason: { type: String, attribute: 'delegate-unavailable-reason' },
     draft: { state: true },
   };
 
   declare state: Sv3ComposerState;
-  /** A response is streaming, so the primary slot IS Stop. Set by the window, which owns the stream. */
-  declare busy: boolean;
+  /**
+   * Which control occupies the primary slot, decided by the WINDOW's `sv3PrimaryAction` state machine
+   * (`sv3-run.ts`) — the composer renders the verdict and never re-derives it, so the slot's priority
+   * order lives in exactly one place. The attribute is `slot-kind`, not `slot`: `slot` is a reserved
+   * global attribute and would try to assign this element to a light-DOM slot.
+   */
+  declare slotKind: Sv3SlotKind;
+  /** The reason from the same derivation, carried into the control's aria-label and title. */
+  declare slotReason: string;
+  /**
+   * The live run accepts a mid-run submit as a STEER that joins it (an agent run does; an ask stream
+   * has no such channel). It is what decides whether a submit while the slot is Stop is a refusal or
+   * a directive — the window then routes it, because only the window may reach the run.
+   */
+  declare steerable: boolean;
   /**
    * Why the ask tier cannot be used right now, from the app's availability authority — empty means
    * available. The composer refuses its OWN send on it rather than dispatching a send the window
    * would have to un-do, which is what keeps the draft safe: a refused send never leaves here.
    */
   declare unavailableReason: string;
+  /**
+   * The same authority's answer for the DELEGATE tier, which is gated separately because it is gated
+   * differently: an agent task needs a live model, but not an indexed document to ground an answer
+   * in. The visible notice stays the ASK tier's — Enter is the composer's default and its refusal is
+   * the one that must never be silent — so a window that can delegate but cannot ask says exactly
+   * that, and Ctrl+Enter still works while the notice explains why Enter does not.
+   */
+  declare delegateUnavailableReason: string;
   declare draft: string;
 
   constructor() {
     super();
     this.state = COMPOSER_STATE_DEFAULT;
-    this.busy = false;
+    this.slotKind = 'send';
+    this.slotReason = sv3PrimaryAction({
+      pendingPrompt: false,
+      running: false,
+      followUp: false,
+    }).reason;
+    this.steerable = false;
     this.unavailableReason = '';
+    this.delegateUnavailableReason = '';
     this.draft = '';
   }
 
@@ -465,13 +525,16 @@ export class Sv3Composer extends JfElement {
       this.request('hero');
       return;
     }
-    // Enter sends; Shift+Enter is the newline the multi-line field would otherwise have no way to
-    // take. An IME composing a character owns the key first (`isComposing`), or a Japanese or
-    // Chinese draft is sent halfway through being typed.
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-      event.preventDefault();
-      this.submit();
-    }
+    if (event.key !== 'Enter' || event.isComposing) return;
+    // Shift+Enter is the newline the multi-line field would otherwise have no way to take, and it
+    // wins over the modifier tiers: a reader adding a line never means to dispatch anything. An IME
+    // composing a character owns the key first (`isComposing`), or a Japanese or Chinese draft is
+    // sent halfway through being typed.
+    if (event.shiftKey) return;
+    event.preventDefault();
+    // Ctrl+Enter (⌘↩ on macOS) DELEGATES; plain Enter asks. Alt is left alone — an Alt+Enter this
+    // window claimed would swallow a chord the platform or the shell may already own.
+    this.submit(event.ctrlKey || event.metaKey ? 'delegate' : 'ask');
   }
 
   /**
@@ -486,18 +549,34 @@ export class Sv3Composer extends JfElement {
   /**
    * The ONE origin of a send, whichever affordance asked. An empty draft is not a send.
    *
-   * A refusal — the model is unreachable, or a response is already streaming — returns without
-   * dispatching AND WITHOUT TOUCHING THE DRAFT. The reason is already on screen (the banner), so the
-   * refusal is legible rather than silent, and the text the reader typed survives to be sent when
-   * the model comes back. Clearing a draft the window never accepted would be destroying work.
+   * Three refusals, each returning WITHOUT TOUCHING THE DRAFT. The reason is already on screen (the
+   * banner, or the slot's own control), so a refusal is legible rather than silent, and the text the
+   * reader typed survives. Clearing a draft the window never accepted would be destroying work.
+   *
+   *  - the model is unreachable;
+   *  - a typed prompt is holding the run (`answer` rung) — THE structural half of donor pattern (f):
+   *    a held approval or question is resolved by its own dedicated command, so there must be no path
+   *    by which typing a sentence into the composer could resolve it. This is a refusal and not a
+   *    disabled field, because the reader may legitimately be drafting the message they will send
+   *    once the decision is made;
+   *  - a response is streaming and the run takes no steer (the ask tier has no interject channel).
+   *    A STEERABLE run does not refuse: the submit leaves as a directive that joins the live turn,
+   *    which is the window's call to make, not this element's.
    */
-  private submit(): void {
+  private submit(tier: Sv3ComposerTier): void {
     const query = this.draft.trim();
     if (query.length === 0) return;
-    if (this.unavailableReason !== '' || this.busy) return;
+    if (this.slotKind === 'answer') return;
+    if (this.slotKind === 'stop' && !this.steerable) return;
+    // A STEER is not a new commitment against the tier's gate — it joins a run that is already
+    // running, so it is refused only by the slot rule above.
+    if (this.slotKind !== 'stop') {
+      const reason = tier === 'delegate' ? this.delegateUnavailableReason : this.unavailableReason;
+      if (reason !== '') return;
+    }
     this.dispatchEvent(
       new CustomEvent<Sv3ComposerSubmit>(SV3_COMPOSER_SUBMIT, {
-        detail: { query },
+        detail: { query, tier },
         bubbles: true,
         composed: true,
       }),
@@ -507,6 +586,11 @@ export class Sv3Composer extends JfElement {
   /** Halt the streaming response. The window owns the stream; this only says the reader asked. */
   private stop(): void {
     this.dispatchEvent(new CustomEvent(SV3_COMPOSER_STOP, { bubbles: true, composed: true }));
+  }
+
+  /** Ask the window to take the reader to the decision holding the run. Resolves nothing itself. */
+  private answer(): void {
+    this.dispatchEvent(new CustomEvent(SV3_COMPOSER_ANSWER, { bubbles: true, composed: true }));
   }
 
   render(): TemplateResult {
@@ -564,39 +648,89 @@ export class Sv3Composer extends JfElement {
                 `,
               )}
             </div>
-            ${this.busy
-              ? html`
-                  <button
-                    type="button"
-                    class="stop"
-                    aria-label="Stop generating"
-                    data-testid="sv3-composer-stop"
-                    @click=${this.stop}
-                  >
-                    <!-- Donor's 12px square with a 1.5 radius (chat/ComposerPrimaryActions.tsx:96). -->
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
-                      <rect x="2" y="2" width="8" height="8" rx="1.5"></rect>
-                    </svg>
-                  </button>
-                `
-              : html`
-                  <button
-                    type="button"
-                    class="send"
-                    aria-label="Send"
-                    ?disabled=${empty}
-                    data-unavailable=${String(unavailable)}
-                    aria-describedby=${unavailable ? 'sv3-composer-notice' : nothing}
-                    data-testid="sv3-composer-send"
-                    @click=${this.submit}
-                  >
-                    &#8593;
-                  </button>
-                `}
+            ${this.primaryAction(empty, unavailable)}
           </div>
         </div>
       </div>
     `;
+  }
+
+  /**
+   * The primary slot holds EXACTLY ONE control — a switch with four arms, not four conditionals that
+   * could each independently decide to render. The donor early-returns its one action
+   * (`chat/ComposerPrimaryActions.tsx:156-157`) and never disables the loser behind the winner; F1
+   * made that structural for Stop-vs-Send and F2 keeps the same construction across all four rungs.
+   *
+   * The reason string is the window's derivation, and it lands in BOTH `aria-label` and `title`: the
+   * routing (Enter vs Ctrl+Enter, or that Enter now steers) is explained here and nowhere else, which
+   * is what "no new chrome" means in practice — the composer gained a tier without gaining a band.
+   */
+  private primaryAction(empty: boolean, unavailable: boolean): TemplateResult {
+    switch (this.slotKind) {
+      case 'answer':
+        return html`
+          <button
+            type="button"
+            class="send answer"
+            aria-label=${this.slotReason}
+            title=${this.slotReason}
+            data-testid="sv3-composer-answer"
+            @click=${this.answer}
+          >
+            &#8226;
+          </button>
+        `;
+      case 'stop':
+        return html`
+          <button
+            type="button"
+            class="stop"
+            aria-label=${this.slotReason}
+            title=${this.slotReason}
+            data-testid="sv3-composer-stop"
+            @click=${this.stop}
+          >
+            <!-- Donor's 12px square with a 1.5 radius (chat/ComposerPrimaryActions.tsx:96). -->
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+              <rect x="2" y="2" width="8" height="8" rx="1.5"></rect>
+            </svg>
+          </button>
+        `;
+      case 'follow-up':
+      case 'send':
+        // TWO forms of the one control, and the split is not cosmetic. An empty draft keeps slice-3's
+        // native `disabled` — there is nothing to route, so nothing to explain — and carries NO
+        // `title`, because a browser suppresses a tooltip on a disabled element and an unreachable
+        // reason is worse than none (596 face 1.1, enforced by `check-controls-a11y`). The moment
+        // there IS a draft the control is live and the routing hint becomes both true and reachable.
+        return empty
+          ? html`
+              <button
+                type="button"
+                class="send"
+                aria-label="Send"
+                disabled
+                data-unavailable=${String(unavailable)}
+                data-testid="sv3-composer-send"
+              >
+                &#8593;
+              </button>
+            `
+          : html`
+              <button
+                type="button"
+                class="send"
+                aria-label=${this.slotReason}
+                title=${this.slotReason}
+                data-unavailable=${String(unavailable)}
+                aria-describedby=${unavailable ? 'sv3-composer-notice' : nothing}
+                data-testid="sv3-composer-send"
+                @click=${() => this.submit('ask')}
+              >
+                &#8593;
+              </button>
+            `;
+    }
   }
 }
 

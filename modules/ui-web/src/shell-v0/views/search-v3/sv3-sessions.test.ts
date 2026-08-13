@@ -23,6 +23,7 @@ import {
   sv3RelativeTime,
   SV3_SESSIONS_EMPTY,
   type Sv3SessionList,
+  type Sv3SessionProjection,
   type Sv3TurnRef,
 } from './sv3-sessions.js';
 
@@ -31,7 +32,15 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-const rest = { searching: false, now: T0 };
+/** The projection's inputs, with the Phase-F2 act-now axis left unset unless a case is about it. */
+const proj = (over: Partial<Sv3SessionProjection> = {}): Sv3SessionProjection => ({
+  searching: false,
+  awaitingDecisionIn: null,
+  now: T0,
+  ...over,
+});
+
+const rest = proj();
 
 describe('a submit creates a session, or appends a turn to the active one', () => {
   it('creates the first session from the question, with one turn against it', () => {
@@ -172,7 +181,7 @@ describe('the sidebar projection groups by recency and hides what is empty', () 
   });
 
   it('puts this visit under one Today label, newest first', () => {
-    const groups = projectSv3Sessions(twoSessions(), { searching: false, now: T0 + 2 * MINUTE });
+    const groups = projectSv3Sessions(twoSessions(), proj({ searching: false, now: T0 + 2 * MINUTE }));
     expect(groups).toHaveLength(1);
     expect(groups[0]?.label).toBe('Today');
     expect(groups[0]?.rows.map((r) => r.label)).toEqual(['second', 'first']);
@@ -202,7 +211,7 @@ describe('the sidebar projection groups by recency and hides what is empty', () 
 
   it('spends the in-motion colour on the searching session ALONE', () => {
     const list = twoSessions();
-    const rows = projectSv3Sessions(list, { searching: true, now: T0 + 2 * MINUTE })[0]?.rows ?? [];
+    const rows = projectSv3Sessions(list, proj({ searching: true, now: T0 + 2 * MINUTE }))[0]?.rows ?? [];
     expect(rows.map((r) => r.status)).toEqual(['in-motion', 'resting']);
     // The running row shows a dot, so it spends no timestamp; the settled one is the other way round.
     expect(rows[0]?.meta).toBe('');
@@ -211,8 +220,8 @@ describe('the sidebar projection groups by recency and hides what is empty', () 
 
   it('drops the colour the moment the search settles, without reordering anything', () => {
     const list = twoSessions();
-    const running = projectSv3Sessions(list, { searching: true, now: T0 + MINUTE })[0]?.rows ?? [];
-    const settled = projectSv3Sessions(list, { searching: false, now: T0 + MINUTE })[0]?.rows ?? [];
+    const running = projectSv3Sessions(list, proj({ searching: true, now: T0 + MINUTE }))[0]?.rows ?? [];
+    const settled = projectSv3Sessions(list, proj({ searching: false, now: T0 + MINUTE }))[0]?.rows ?? [];
     expect(running.map((r) => r.status)).toEqual(['in-motion', 'resting']);
     expect(settled.map((r) => r.status)).toEqual(['resting', 'resting']);
     expect(settled.map((r) => r.id)).toEqual(running.map((r) => r.id));
@@ -222,7 +231,7 @@ describe('the sidebar projection groups by recency and hides what is empty', () 
   it('shows the LAST activity, not the creation time, on a session with a second turn', () => {
     const one = ask(SV3_SESSIONS_EMPTY, 'first', T0);
     const rerun = ask(one, 'and then?', T0 + 30 * MINUTE);
-    const rows = projectSv3Sessions(rerun, { searching: false, now: T0 + 32 * MINUTE })[0]?.rows;
+    const rows = projectSv3Sessions(rerun, proj({ searching: false, now: T0 + 32 * MINUTE }))[0]?.rows;
     expect(rows?.[0]?.meta).toBe('2m');
   });
 
@@ -231,7 +240,7 @@ describe('the sidebar projection groups by recency and hides what is empty', () 
     // say who asked, but a streaming turn can.
     const one = submitInSession(SV3_SESSIONS_EMPTY, 'first', T0);
     const two = ask(startNewSession(one), 'second', T0 + MINUTE);
-    const rows = projectSv3Sessions(two, { searching: false, now: T0 + MINUTE })[0]?.rows ?? [];
+    const rows = projectSv3Sessions(two, proj({ searching: false, now: T0 + MINUTE }))[0]?.rows ?? [];
     expect(rows.map((r) => r.label)).toEqual(['second', 'first']);
     expect(rows.map((r) => r.status)).toEqual(['resting', 'in-motion']);
     expect(rows[1]?.active).toBe(false);
@@ -241,7 +250,7 @@ describe('the sidebar projection groups by recency and hides what is empty', () 
     const opened = submitInSession(SV3_SESSIONS_EMPTY, 'first', T0);
     const ref = latestTurnRef(opened);
     const statusOf = (list: Sv3SessionList): string =>
-      projectSv3Sessions(list, { searching: false, now: T0 })[0]?.rows[0]?.status ?? '';
+      projectSv3Sessions(list, proj({ searching: false, now: T0 }))[0]?.rows[0]?.status ?? '';
     expect(statusOf(settleTurn(opened, ref!, 'failed', 'HTTP 502'))).toBe('broken');
     expect(statusOf(settleTurn(opened, ref!, 'refused'))).toBe('broken');
     // Stopping a response is the reader's own act, not a break — it spends no colour.

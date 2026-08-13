@@ -24,10 +24,15 @@ import { JfElement } from '../../primitives/JfElement.js';
 import { matchCountLabel } from '../../components/searchResults/matchCountLabel.js';
 import { sv3Shared } from './sv3-shared-styles.js';
 import './Sv3Empty.js';
+// The product's ONE tool-call primitive (`governance/run-renderers.v1.json` — this file is a
+// registered mount site). A window-local tool card would be the second render path that register
+// exists to forbid, so the donor's own tool row is deliberately NOT ported.
+import '../../components/chat/ToolCallCard.js';
 import {
   COMPOSER_STATE_DEFAULT,
   MAIN_EMPTY,
   MAIN_UNREACHABLE,
+  RUN_DISPATCHING,
   TURN_EMPTY_ANSWER,
   TURN_FAILED,
   TURN_HALTED,
@@ -35,6 +40,19 @@ import {
 import type { Sv3ComposerState } from './fixtures.js';
 import { SV3_RESULTS_IDLE, type Sv3ResultsView } from './sv3-results.js';
 import type { Sv3Turn } from './sv3-sessions.js';
+import { sv3RunReceiptLabel } from './sv3-run.js';
+import type { Sv3RunFeedItem, Sv3RunPrompt, Sv3RunView } from './sv3-run.js';
+
+/**
+ * Raised when the reader resolves a typed prompt with its OWN dedicated control (tempdoc 822 Phase
+ * F2, donor pattern (f)). The surface announces the decision; the window dispatches it through the
+ * ONE `dispatchRunControl` seam, because only the window may reach the run.
+ */
+export const SV3_RUN_DECISION = 'sv3-run-decision';
+
+export type Sv3RunDecision =
+  | { readonly kind: 'budget'; readonly decision: 'finalize' | 'stop' }
+  | { readonly kind: 'context'; readonly decision: 'continue' | 'summarize' | 'stop' };
 
 /** Enough bars to fill the region's first screen without claiming a result count it cannot know. */
 const SKELETON_ROWS = 6;
@@ -187,6 +205,77 @@ export class Sv3Main extends JfElement {
         color: var(--error-foreground);
       }
 
+      /* ── The delegated run (Phase F2) ──────────────────────────────────────
+         The live feed sits where the answer would be, at the same measure and the same rhythm: a run
+         and an answer are two ways the same turn can be answered, so they must not read as two
+         different regions of the window. */
+      .run {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+        min-width: 0;
+      }
+      .run-feed {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+        min-width: 0;
+      }
+      .run-echo {
+        margin: 0;
+        padding-inline: var(--space-1);
+        color: var(--secondary-label);
+        font-size: var(--font-size-sv3-sm);
+      }
+      .run-note {
+        margin: 0;
+        padding-inline: var(--space-1);
+        color: var(--secondary-label);
+        font-size: var(--font-size-sv3-xs);
+        line-height: 1.5;
+      }
+      .run-note-label {
+        color: var(--foreground);
+        font-weight: 500;
+      }
+      .run-note[data-label='Error'] .run-note-label {
+        color: var(--error-foreground);
+      }
+      /* A held decision is act-now, which is the one place this window spends --success on a surface.
+         It is a SIBLING of the feed, never inside it, so no amount of feed content can bury it. */
+      .run-prompt {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--space-2);
+        padding: var(--space-3);
+        border: 1px solid color-mix(in srgb, var(--success) 40%, transparent);
+        border-radius: var(--radius-lg);
+        background: color-mix(in srgb, var(--success) 8%, transparent);
+      }
+      .run-prompt-text {
+        flex: 1 1 100%;
+        margin: 0;
+        font-size: var(--font-size-sv3-sm);
+      }
+      .run-prompt button {
+        padding: var(--space-1) var(--space-3);
+        border: 1px solid var(--border);
+        border-radius: var(--control-radius);
+        background: var(--background);
+        color: var(--foreground);
+        font-family: inherit;
+        font-size: var(--font-size-sv3-xs);
+        cursor: pointer;
+      }
+      .run-prompt button:hover {
+        background: var(--muted);
+      }
+      .run-prompt button:focus-visible {
+        outline: 2px solid var(--ring);
+        outline-offset: 1px;
+      }
+
       /* The store's own failure text, kept at diagnostic altitude: the state is said in words above
          it, and this is the detail that makes the words checkable. */
       .failure-detail {
@@ -201,12 +290,18 @@ export class Sv3Main extends JfElement {
     state: { type: String, reflect: true },
     view: { attribute: false },
     turns: { attribute: false },
+    run: { attribute: false },
   };
 
   declare state: Sv3ComposerState;
   declare view: Sv3ResultsView;
   /** The ACTIVE session's turns, oldest first. Handed down; the region holds no session list. */
   declare turns: readonly Sv3Turn[];
+  /**
+   * The ONE live agent run, or null. Rendered against `run.turnId` and no other turn, so the feed
+   * cannot appear under a turn that did not open it (tempdoc 822 Phase F2).
+   */
+  declare run: Sv3RunView | null;
 
   /**
    * The donor's two scroll modes as one flag: armed = `following-end` (the reader is at the end, so
@@ -220,6 +315,7 @@ export class Sv3Main extends JfElement {
     this.state = COMPOSER_STATE_DEFAULT;
     this.view = SV3_RESULTS_IDLE;
     this.turns = [];
+    this.run = null;
   }
 
   private get scroller(): HTMLElement | null {
@@ -307,21 +403,148 @@ export class Sv3Main extends JfElement {
   private turn(turn: Sv3Turn): TemplateResult {
     const streaming = turn.status === 'streaming';
     const empty = turn.answer === '';
+    // The run this turn OPENED, if it is the one live — matched by id, never by "the last turn". An
+    // ENDED run renders nothing here: its live feed was attention, and the receipt below is what
+    // survives it (the same record/attention split search-v2's L8 makes).
+    const live = this.run;
+    const run =
+      turn.kind === 'agent' && live?.turnId === turn.id && live.phase !== 'ended' ? live : null;
     return html`
-      <div class="turn" data-testid="sv3-turn" data-status=${turn.status}>
+      <div class="turn" data-testid="sv3-turn" data-kind=${turn.kind} data-status=${turn.status}>
         <div class="ask">
           <div class="ask-bubble" data-testid="sv3-turn-question">${turn.question}</div>
         </div>
-        <div class="answer" data-testid="sv3-turn-answer">
-          ${empty && !streaming
-            ? html`<span class="answer-empty" data-testid="sv3-turn-answer-empty"
-                >${TURN_EMPTY_ANSWER}</span
-              >`
-            : turn.answer}
-        </div>
+        ${turn.kind === 'agent'
+          ? run === null
+            ? nothing
+            : this.runBody(run)
+          : html`
+              <div class="answer" data-testid="sv3-turn-answer">
+                ${empty && !streaming
+                  ? html`<span class="answer-empty" data-testid="sv3-turn-answer-empty"
+                      >${TURN_EMPTY_ANSWER}</span
+                    >`
+                  : turn.answer}
+              </div>
+            `}
         ${this.turnNote(turn)}
       </div>
     `;
+  }
+
+  /**
+   * The live run: its feed, then the decisions it is parked on. Prompts come LAST and outside the
+   * feed's own flow, because a held decision must not be something the reader can scroll past — the
+   * same "incompressible occupant" rule search-v2 gives its run controls
+   * (`views/search-v2/SearchV2View.ts:2550-2554`).
+   *
+   * `dispatching` is the optimistic window: the reader's task left and the server has not answered.
+   * It is a distinct STATE, not an empty feed, so the window never has to imply progress it cannot
+   * see (the handoff predicate in `sv3-run.ts` is what leaves it).
+   */
+  private runBody(run: Sv3RunView): TemplateResult {
+    return html`
+      <div class="run" data-testid="sv3-run" data-phase=${run.phase}>
+        ${run.phase === 'dispatching'
+          ? html`<p class="run-echo" data-testid="sv3-run-echo" role="status">${RUN_DISPATCHING}</p>`
+          : html`
+              <div class="run-feed" data-testid="sv3-run-feed">
+                ${run.feed.items.map((item) => this.runItem(item))}
+              </div>
+            `}
+        ${run.prompts.map((prompt) => this.runPrompt(prompt))}
+      </div>
+    `;
+  }
+
+  private runItem(item: Sv3RunFeedItem): TemplateResult {
+    if (item.kind === 'text') {
+      return html`<p class="answer" data-testid="sv3-run-text">${item.text}</p>`;
+    }
+    if (item.kind === 'tool') {
+      return html`<jf-tool-call-card
+        data-testid="sv3-run-tool"
+        .toolCall=${item.call}
+        .stepPresentation=${null}
+      ></jf-tool-call-card>`;
+    }
+    return html`<p class="run-note" data-testid="sv3-run-note" data-label=${item.label}>
+      <span class="run-note-label">${item.label}</span> ${item.text}
+    </p>`;
+  }
+
+  /**
+   * A typed prompt with its OWN controls (donor pattern (f)). The APPROVAL arm deliberately carries
+   * no Approve/Deny of its own: the product has exactly one approve/deny ceremony
+   * (`operations/authorizationBroker.ts:14-21`, which those inline per-card buttons were retired
+   * INTO), so this block SAYS what is held and lets the one ceremony ask. The two gates are the
+   * window's to resolve, and each button is a dedicated typed command — never a sentence typed into
+   * the composer, which refuses to send while any prompt is pending.
+   */
+  private runPrompt(prompt: Sv3RunPrompt): TemplateResult {
+    if (prompt.kind === 'budget') {
+      return html`
+        <div class="run-prompt" role="group" aria-label="Budget decision" data-testid="sv3-run-prompt" data-kind="budget">
+          <p class="run-prompt-text">
+            The run needs ${prompt.tokensNeeded.toLocaleString()} more tokens;
+            ${prompt.tokensRemaining.toLocaleString()} remain.
+          </p>
+          <button type="button" data-testid="sv3-run-budget-finalize" @click=${() =>
+            this.decide({ kind: 'budget', decision: 'finalize' })}>
+            Finish with what it has
+          </button>
+          <button type="button" data-testid="sv3-run-budget-stop" @click=${() =>
+            this.decide({ kind: 'budget', decision: 'stop' })}>
+            Stop the run
+          </button>
+        </div>
+      `;
+    }
+    if (prompt.kind === 'context') {
+      return html`
+        <div class="run-prompt" role="group" aria-label="Context decision" data-testid="sv3-run-prompt" data-kind="context">
+          <p class="run-prompt-text">
+            The prompt is ${prompt.promptTokens.toLocaleString()} of
+            ${prompt.contextWindow.toLocaleString()} tokens.
+          </p>
+          <button type="button" data-testid="sv3-run-context-continue" @click=${() =>
+            this.decide({ kind: 'context', decision: 'continue' })}>
+            Continue anyway
+          </button>
+          <button type="button" data-testid="sv3-run-context-summarize" @click=${() =>
+            this.decide({ kind: 'context', decision: 'summarize' })}>
+            Compact older turns
+          </button>
+          <button type="button" data-testid="sv3-run-context-stop" @click=${() =>
+            this.decide({ kind: 'context', decision: 'stop' })}>
+            Stop the run
+          </button>
+        </div>
+      `;
+    }
+    return html`
+      <div
+        class="run-prompt"
+        role="group"
+        aria-label="Tool approval"
+        data-testid="sv3-run-prompt"
+        data-kind="approval"
+      >
+        <p class="run-prompt-text">
+          ${prompt.toolName} is waiting for your approval (${prompt.risk.toLowerCase()} risk).
+        </p>
+      </div>
+    `;
+  }
+
+  private decide(decision: Sv3RunDecision): void {
+    this.dispatchEvent(
+      new CustomEvent<Sv3RunDecision>(SV3_RUN_DECISION, {
+        detail: decision,
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   /**
@@ -331,6 +554,16 @@ export class Sv3Main extends JfElement {
   private turnNote(turn: Sv3Turn): TemplateResult | typeof nothing {
     if (turn.status === 'streaming') return nothing;
     const broken = turn.status === 'failed' || turn.status === 'refused';
+    if (turn.kind === 'agent') {
+      return html`<p
+        class="turn-note"
+        data-testid="sv3-run-receipt"
+        data-outcome=${turn.status}
+        data-broken=${String(broken)}
+      >
+        ${sv3RunReceiptLabel(turn.toolCalls, turn.status)}
+      </p>`;
+    }
     const note =
       turn.status === 'halted'
         ? TURN_HALTED

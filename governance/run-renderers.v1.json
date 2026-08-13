@@ -9,7 +9,8 @@
     "mountSites": [
       "modules/ui-web/src/shell-v0/components/chat/ToolCallCard.ts",
       "modules/ui-web/src/shell-v0/views/UnifiedChatView.ts",
-      "modules/ui-web/src/shell-v0/views/search-v2/SearchV2View.ts"
+      "modules/ui-web/src/shell-v0/views/search-v2/SearchV2View.ts",
+      "modules/ui-web/src/shell-v0/views/search-v3/Sv3Main.ts"
     ]
   },
   "runProjection": {

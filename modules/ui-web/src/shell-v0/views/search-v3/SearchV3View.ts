@@ -70,7 +70,9 @@ import {
   focusSession,
   latestTurnRef,
   projectSv3Sessions,
+  sessionById,
   setTurnCitations,
+  settleAgentTurn,
   settleTurn,
   startNewSession,
   submitInSession,
@@ -78,6 +80,32 @@ import {
   type Sv3SessionList,
 } from './sv3-sessions.js';
 import { sv3Ask } from './sv3-ask.js';
+import {
+  getAgentSessionController,
+  peekAgentSessionController,
+  subscribeAgentSession,
+} from '../../state/agentSessionStore.js';
+import type { AgentSessionController } from '../../controllers/AgentSessionController.js';
+import {
+  directiveAvailable,
+  dispatchRunControl,
+  type RunControlRefusal,
+} from '../../controllers/runControlIntent.js';
+import {
+  deriveSv3RunPhase,
+  hasServerAcknowledgedLocalDispatch,
+  projectSv3RunFeed,
+  projectSv3RunPrompts,
+  sv3PrimaryAction,
+  sv3RunOutcome,
+  sv3RunSessionStatus,
+  SV3_RUN_FEED_EMPTY,
+  type Sv3RunFeed,
+  type Sv3RunLocal,
+  type Sv3RunTurnState,
+  type Sv3RunView,
+} from './sv3-run.js';
+import { type Sv3RunDecision } from './Sv3Main.js';
 import { subscribeAiState, type AiState } from '../../state/aiStateStore.js';
 import { projectAvailability } from '../../state/availability.js';
 import { reasonFor } from '../../state/readinessNotice.js';
@@ -171,8 +199,17 @@ export class SearchV3View extends JfElement {
 
   private searchUnsubscribe: (() => void) | null = null;
   private aiUnsubscribe: (() => void) | null = null;
+  private agentUnsubscribe: (() => void) | null = null;
   /** The in-flight ask's abort handle; null exactly when no response is streaming. */
   private askAbort: AbortController | null = null;
+  /**
+   * What this window remembers about the delegated run it dispatched — including the explicit turn
+   * ref that is its `activeTurnId`. Not reactive state: it is mutated in place by the controller's
+   * notifications (a latch and two flags), and every one of those paths already re-renders.
+   */
+  private run: Sv3RunLocal | null = null;
+  /** Whether the run was observed LIVE, so its terminal is an EDGE rather than a repeated verdict. */
+  private runLive = false;
 
   constructor() {
     super();
@@ -195,6 +232,9 @@ export class SearchV3View extends JfElement {
     this.aiUnsubscribe = subscribeAiState((snapshot) => {
       this.aiSnapshot = snapshot;
     });
+    // Subscribing does NOT create a controller (the read below is a `peek`), so a window that never
+    // delegates never starts the agent controller's polling as a side effect of being mounted.
+    this.agentUnsubscribe = subscribeAgentSession(this.onAgentUpdate);
     // Scoped to the HOST, not to `window`. A host listener is only reached by events whose composed
     // path runs through this window, so a chord pressed anywhere else in the shipped app is invisible
     // here by construction — there is no "is the focus inside?" test to get wrong. Capture phase so
@@ -209,6 +249,11 @@ export class SearchV3View extends JfElement {
     this.searchUnsubscribe = null;
     this.aiUnsubscribe?.();
     this.aiUnsubscribe = null;
+    // The RUN is not cancelled here. Unlike the ask stream (which this window owns), a delegated run
+    // is hosted by the product-wide controller and may be watched from another surface; tearing it
+    // down because this dev window unmounted would be this window deciding for the whole product.
+    this.agentUnsubscribe?.();
+    this.agentUnsubscribe = null;
     // Lifecycle containment: an unmounted window's stream would keep a connection open against the
     // shared channel budget and settle a turn nobody can see.
     this.abortAsk();
@@ -299,14 +344,41 @@ export class SearchV3View extends JfElement {
   /**
    * A send is one ask and one morph, in that order: the request goes out in this tick, so the
    * transcript is already showing the streaming turn by the time the morph settles.
+   *
+   * THREE destinations, decided here and nowhere else (the composer announces a draft and a tier; it
+   * does not know what a run is). The mid-run case comes FIRST and overrides the tier: a submit while
+   * a delegated run is live JOINS that run as a steering directive — it is not an interrupt and it is
+   * not a second commitment, so pressing Ctrl+Enter mid-run cannot start a competing run.
    */
   private onComposerSubmit(event: Event): void {
-    void this.runAsk(((event as CustomEvent<Sv3ComposerSubmit>).detail?.query ?? '').trim());
+    const detail = (event as CustomEvent<Sv3ComposerSubmit>).detail;
+    const text = (detail?.query ?? '').trim();
+    if (text === '') return;
+    if (this.steerableRun !== null) {
+      this.steerLiveRun(text);
+      return;
+    }
+    if (detail?.tier === 'delegate') {
+      this.delegate(text);
+      return;
+    }
+    void this.runAsk(text);
   }
 
   /** The composer's availability, projected from the ONE observed-state authority. */
   private get askUnavailableReason(): string {
     const availability = projectAvailability('documents', this.aiSnapshot);
+    return availability.kind === 'unavailable' ? availability.reason : '';
+  }
+
+  /**
+   * The DELEGATE tier's own gate, from the same authority. It is a strict SUPERSET of the ask tier's:
+   * both need a live backend and a loaded model, but only the ask tier additionally needs an indexed
+   * document to ground an answer in. Reading one reason for both would therefore refuse a delegation
+   * the agent could have served — the two tiers get two projections rather than one shared guess.
+   */
+  private get delegateUnavailableReason(): string {
+    const availability = projectAvailability('agent', this.aiSnapshot);
     return availability.kind === 'unavailable' ? availability.reason : '';
   }
 
@@ -370,6 +442,180 @@ export class SearchV3View extends JfElement {
     this.askAbort?.abort();
   }
 
+  /* ── The delegate tier (tempdoc 822 Phase F2) ─────────────────────────────────────────────── */
+
+  /**
+   * The shared run controller as a READ. `peek` never constructs one, so "is a run live?" can be
+   * asked on every render without this window creating a controller — and starting its polling — as
+   * a side effect of being looked at.
+   */
+  private agentController(): AgentSessionController | null {
+    return peekAgentSessionController();
+  }
+
+  /**
+   * The live run this window owns AND that accepts a steer, or null. Both halves matter: the
+   * controller is product-wide, so a run this window did not dispatch is not this window's to
+   * redirect, and only an `agent` run has an interject channel at all (a workflow or background run
+   * does not) — the seam's own lifecycle predicate decides the rest.
+   */
+  private get steerableRun(): AgentSessionController | null {
+    const ctrl = this.agentController();
+    if (ctrl === null || this.run === null) return null;
+    if (ctrl.runKind !== 'agent') return null;
+    return directiveAvailable(ctrl, { kind: 'interject', text: '' }) ? ctrl : null;
+  }
+
+  /**
+   * The DELEGATE path: the draft becomes an agent task. The causal order mirrors the ask — the turn
+   * is opened first, then the run is dispatched — so the transcript already shows what was committed
+   * before anything can come back, and the run has a turn to be written to from its very first frame.
+   *
+   * The run is HOSTED, never re-implemented: the shared `AgentSessionController` runs it and every
+   * directive leaves through the ONE `dispatchRunControl` seam (`governance/steering-surfaces.v1.json`).
+   */
+  private delegate(text: string): void {
+    // Defence in depth, not a second gate: the composer already refuses an unavailable delegate and
+    // keeps the draft. This exists because `delegate` is reachable from the window's own routing.
+    if (this.delegateUnavailableReason !== '') return;
+    this.sessions = submitInSession(this.sessions, text, Date.now(), 'agent');
+    const ref = latestTurnRef(this.sessions);
+    if (ref === null) return;
+    this.composer?.clearDraft();
+    void this.setComposerState('docked');
+
+    const ctrl = getAgentSessionController(this.apiBase);
+    // The run's thread events are stamped with THIS window's session, so a delegated run lands under
+    // the conversation that asked for it rather than under whatever the controller ran last.
+    ctrl.conversationId = ref.sessionId;
+    this.run = {
+      sessionId: ref.sessionId,
+      turnId: ref.turnId,
+      // The window's slice of a product-wide conversation: everything before this belongs to someone
+      // else's run and must never be counted into this one's receipt.
+      entryStart: ctrl.conversation.length,
+      sessionIdAtDispatch: ctrl.sessionId,
+      acknowledged: false,
+      haltRequested: false,
+      haltDispatched: false,
+    };
+    this.runLive = false;
+    this.requestUpdate();
+    void dispatchRunControl(ctrl, { kind: 'initiate', prompt: text });
+  }
+
+  /**
+   * A mid-run submit JOINS the live turn. Through the seam, like every other per-run directive.
+   *
+   * Named `steerLiveRun` and not `steer` on purpose: the steering register bans a bare `.steer(` call
+   * anywhere but the seam, and `this.steer(` would read as exactly that to the gate's scan. A method
+   * whose name makes a correct call look like the forbidden one is a trap for the next reader too.
+   */
+  private steerLiveRun(text: string): void {
+    const ctrl = this.steerableRun;
+    if (ctrl === null) return;
+    this.composer?.clearDraft();
+    void dispatchRunControl(ctrl, { kind: 'interject', text });
+  }
+
+  /**
+   * The reader's stop. Recorded FIRST and dispatched second, because the record of the decision is
+   * what makes `halted` an honest receipt outcome — and because a stop pressed before the stream
+   * opened cannot be delivered yet (the seam's predicate refuses a halt on a run with no abort handle
+   * yet). Remembering it means the next update delivers it, instead of the decision being dropped.
+   */
+  private haltRun(): void {
+    const local = this.run;
+    if (local === null) return;
+    local.haltRequested = true;
+    this.deliverHalt();
+    this.requestUpdate();
+  }
+
+  private deliverHalt(): void {
+    const ctrl = this.agentController();
+    const local = this.run;
+    if (ctrl === null || local === null || local.haltDispatched) return;
+    void dispatchRunControl(ctrl, { kind: 'halt' }).then((result) => {
+      // Only an ACCEPTED halt closes the door; a lifecycle refusal leaves the request pending so the
+      // next update can try again, and does so without a retry storm.
+      if ((result as RunControlRefusal | undefined)?.refused !== true) local.haltDispatched = true;
+    });
+  }
+
+  /**
+   * The shared controller moved. Three things happen: the optimistic handoff latches the first time
+   * the SERVER says anything, a pending halt is delivered once the run can honour it, and the run's
+   * TERMINAL edge is detected so exactly one receipt lands.
+   */
+  private readonly onAgentUpdate = (): void => {
+    const ctrl = this.agentController();
+    const local = this.run;
+    if (ctrl !== null && local !== null) {
+      // Latched once and never read again: a run whose evidence later disappears cannot push this
+      // window back into claiming it is still sending.
+      if (!local.acknowledged && hasServerAcknowledgedLocalDispatch(local, ctrl)) {
+        local.acknowledged = true;
+      }
+      const feed = projectSv3RunFeed(ctrl, local.entryStart);
+      const status = sv3RunSessionStatus(ctrl, feed);
+      if (status === 'live' || status === 'holding') {
+        this.runLive = true;
+        if (local.haltRequested) this.deliverHalt();
+      } else if (this.runLive) {
+        this.runLive = false;
+        this.concludeRun(local, feed);
+      }
+    }
+    this.requestUpdate();
+  };
+
+  /**
+   * The run's terminal: exactly ONE receipt, written to the turn the dispatch opened. The count comes
+   * from the SAME feed projection the cards were rendered from, so the receipt can never disagree
+   * with what the reader watched — and it is addressed by ref, so a later run started from another
+   * surface cannot write its numbers into this window's turn.
+   */
+  private concludeRun(local: Sv3RunLocal, feed: Sv3RunFeed): void {
+    this.sessions = settleAgentTurn(
+      this.sessions,
+      { sessionId: local.sessionId, turnId: local.turnId },
+      sv3RunOutcome(feed, local.haltRequested),
+      feed.toolCallCount,
+    );
+  }
+
+  /** A typed prompt resolved by its OWN control — never by anything typed into the composer. */
+  private onRunDecision(event: Event): void {
+    const ctrl = this.agentController();
+    const detail = (event as CustomEvent<Sv3RunDecision>).detail;
+    if (ctrl === null || detail === undefined) return;
+    if (detail.kind === 'budget') {
+      if (detail.decision === 'stop') this.markHaltRequested();
+      void dispatchRunControl(ctrl, { kind: 'budget-decision', decision: detail.decision });
+      return;
+    }
+    if (detail.decision === 'stop') this.markHaltRequested();
+    void dispatchRunControl(ctrl, { kind: 'context-decision', decision: detail.decision });
+  }
+
+  /** A gate resolved with "stop" IS the reader halting, so the receipt must say so. */
+  private markHaltRequested(): void {
+    if (this.run !== null) this.run.haltRequested = true;
+  }
+
+  /**
+   * The `answer` rung of the primary slot. The composer cannot resolve a typed prompt, so the control
+   * does the one honest thing available to it: it takes the reader to the decision.
+   */
+  private onComposerAnswer(): void {
+    const main = this.shadowRoot?.querySelector('jf-sv3-main');
+    const prompt = main?.shadowRoot?.querySelector<HTMLElement>('[data-testid="sv3-run-prompt"]');
+    if (prompt === null || prompt === undefined) return;
+    prompt.scrollIntoView({ block: 'nearest' });
+    prompt.querySelector('button')?.focus();
+  }
+
   /**
    * The SECONDARY axis (822 §4b course correction). Phase A1's search seam stays wired and tested,
    * but a plain submit no longer reaches it — it is called from the palette's "Search this text"
@@ -421,6 +667,48 @@ export class SearchV3View extends JfElement {
     void this.setComposerState('hero');
   }
 
+  /**
+   * The Stop slot serves BOTH streams, because there is one slot. Which one it halts is decided here,
+   * by which one is actually running — the composer says the reader pressed Stop and nothing more.
+   */
+  private onComposerStop(): void {
+    if (this.streaming) {
+      this.abortAsk();
+      return;
+    }
+    this.haltRun();
+  }
+
+  /**
+   * TWO AXES, ONE PHASE (donor pattern 1). The SESSION axis is what the shared controller says; the
+   * TURN axis is what this window's own turn is doing — including the optimistic window before the
+   * server has acknowledged the dispatch, which no controller field can report because the controller
+   * is optimistic too. `deriveSv3RunPhase` collapses them into the one value everything renders from,
+   * so the slot, the feed, the sidebar colour and the receipt cannot each decide separately.
+   */
+  private projectRun(): Sv3RunView | null {
+    const local = this.run;
+    if (local === null) return null;
+    const ctrl = this.agentController();
+    const feed = ctrl === null ? SV3_RUN_FEED_EMPTY : projectSv3RunFeed(ctrl, local.entryStart);
+    const prompts = ctrl === null ? [] : projectSv3RunPrompts(ctrl, feed);
+    const turn = sessionById(this.sessions, local.sessionId)?.turns.find(
+      (t) => t.id === local.turnId,
+    );
+    const turnState: Sv3RunTurnState =
+      turn === undefined || turn.status !== 'streaming'
+        ? 'settled'
+        : local.acknowledged
+          ? 'open'
+          : 'dispatching';
+    return {
+      turnId: local.turnId,
+      phase: deriveSv3RunPhase({ session: sv3RunSessionStatus(ctrl, feed), turn: turnState }),
+      feed,
+      prompts,
+    };
+  }
+
   render(): TemplateResult {
     const results: Sv3ResultsView = projectSv3Results(this.searchSnapshot, this.asked);
     // Relative timestamps are computed HERE, on render, and never ticked: a sidebar that re-renders
@@ -429,8 +717,23 @@ export class SearchV3View extends JfElement {
     // (`state/searchState.ts:611` — no skeleton, so the content surface keeps the old rows), and the
     // row's dot is then the only thing on screen saying the session is running a pass.
     const snapshot = this.searchSnapshot;
+    const run = this.projectRun();
+    const turns = activeTurns(this.sessions);
+    const pendingPrompt = run !== null && run.prompts.length > 0;
+    const slot = sv3PrimaryAction({
+      pendingPrompt,
+      running:
+        this.streaming ||
+        run?.phase === 'dispatching' ||
+        run?.phase === 'running' ||
+        run?.phase === 'holding',
+      followUp: turns.length > 0,
+    });
     const sessionGroups = projectSv3Sessions(this.sessions, {
       searching: this.asked && (snapshot?.isSearching === true || snapshot?.isRefining === true),
+      // Named by session, not by flag: only the conversation that OPENED the parked run may wear the
+      // act-now colour, whichever row the reader happens to be looking at.
+      awaitingDecisionIn: pendingPrompt && this.run !== null ? this.run.sessionId : null,
       now: Date.now(),
     });
     return html`
@@ -445,20 +748,26 @@ export class SearchV3View extends JfElement {
         data-testid="sv3-column"
         @sv3-composer-state-request=${this.onStateRequest}
         @sv3-composer-submit=${this.onComposerSubmit}
-        @sv3-composer-stop=${this.abortAsk}
+        @sv3-composer-stop=${this.onComposerStop}
+        @sv3-composer-answer=${this.onComposerAnswer}
+        @sv3-run-decision=${this.onRunDecision}
         @sv3-palette-request=${this.onPaletteRequest}
       >
         <jf-sv3-topbar window-title=${WINDOW_TITLE} data-testid="sv3-topbar"></jf-sv3-topbar>
         <jf-sv3-main
           state=${this.composerState}
           .view=${results}
-          .turns=${activeTurns(this.sessions)}
+          .turns=${turns}
+          .run=${run}
           data-testid="sv3-main"
         ></jf-sv3-main>
         <jf-sv3-composer
           state=${this.composerState}
-          ?busy=${this.streaming}
+          slot-kind=${slot.kind}
+          slot-reason=${slot.reason}
+          ?steerable=${this.steerableRun !== null}
           unavailable-reason=${this.askUnavailableReason}
+          delegate-unavailable-reason=${this.delegateUnavailableReason}
           data-testid="sv3-composer"
         ></jf-sv3-composer>
       </div>

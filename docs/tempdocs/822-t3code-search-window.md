@@ -333,6 +333,33 @@ are re-creatable from the log's descriptions.
   charter §9), citation resolving/panel (count only), issuance-register decision
   (sv3 is now the SECOND window-local ask site — 818's residual is live; owner/
   orchestrator call), streaming rebuilds session list per delta (fine at scale).
+- 2026-08-13 — **Slice F2 implemented + live-verified (partial live tier; gaps
+  honest).** Agent-run hosting on shared authorities only: agentSessionStore
+  (peek-first — a never-delegating window starts no polling), EVERY directive via
+  dispatchRunControl (+directiveAvailable), the ONE jf-tool-call-card, availability
+  via projectAvailability('agent'). Registers: steering-surfaces adopter +
+  run-renderers mount site. Derived-phase model `sv3-run.ts`: session axis ×
+  turn axis → one of idle|dispatching|running|holding|ended (dispatching added for
+  the window's optimistic echo; holding outranks live); explicit activeTurnId.
+  Slot = strict-priority state machine with the reason in the aria-label.
+  APPROVALS DEVIATION (correct): no inline Approve/Deny — authorizationBroker.ts
+  retired inline approvals into the one jf-authorization-host ceremony; the window
+  renders a held call as a typed act-now block and the ceremony asks. Ctrl+Enter
+  delegates / Enter asks (hint via slot aria-label only; a11y gate caught + fixed
+  title-on-disabled). 4659 tests / 10 probes bite / steering-arbitration +
+  run-renderers + controls-a11y + kernel gates green. LIVE (stack + model): real
+  delegate → run feed with tool card, slot "Stop … Enter steers", session in-motion;
+  then the agent requested core_ingest_files and the run HELD: typed prompt
+  "waiting for your approval (medium risk)", slot "The run is waiting for your
+  decision", session ACT-NOW — the donor state vocabulary end-to-end. Halt receipt
+  verified at unit tier only (probe: halt-as-completion fails) — live halt was
+  frustrated by a NEW NAMED FINDING: **window-local in-memory sessions orphan a
+  live run on reload** — a fresh window instance showed 0 sessions while the run
+  kept holding server-side (F2's cross-surface residual made concrete). F3 /
+  records-substrate must recover window state from the controller (presence), not
+  memory. Run ended by stack stop (dev throwaway). Residuals → F3: shelf model,
+  presence/recovery, cross-surface slot honesty; issuance-register decision still
+  open (owner/orchestrator).
 - 2026-08-12 — **Sidebar comparison findings** (owner-requested donor-vs-copy analysis;
   feed the adaptation phase): (1) ROW-HEIGHT REFERENT — our rows are 32px from §3.2's
   menu-button ladder, but the donor's SESSION rows are §6.1's slim 36px / card 78px;

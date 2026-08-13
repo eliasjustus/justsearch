@@ -36,9 +36,19 @@ import type { Sv3RowStatus } from './fixtures.js';
  */
 export type Sv3TurnStatus = 'streaming' | 'complete' | 'halted' | 'refused' | 'failed';
 
+/**
+ * Which tier produced the turn (tempdoc 822 Phase F2). An `ask` turn is a grounded answer streamed
+ * from `sv3-ask.ts`; an `agent` turn is a delegated RUN hosted by the shared `AgentSessionController`,
+ * which renders as a live feed while it runs and as a receipt once it ends. One turn type with a
+ * discriminator, not two lists: a conversation interleaves both and the transcript must keep their
+ * order.
+ */
+export type Sv3TurnKind = 'ask' | 'agent';
+
 /** One exchange: what was asked, and what came back. */
 export interface Sv3Turn {
   readonly id: string;
+  readonly kind: Sv3TurnKind;
   readonly question: string;
   /** Accumulated answer text. Whatever streamed before a halt is KEPT — it was really received. */
   readonly answer: string;
@@ -50,6 +60,13 @@ export interface Sv3Turn {
   readonly citations: number | null;
   /** The failure's own words, from the stream. Empty for every other status. */
   readonly detail: string;
+  /**
+   * An `agent` turn's receipt count — how many tool calls the run made (tempdoc 822 Phase F2). It is
+   * written ONCE, at the run's terminal, from the same feed projection the cards were rendered from
+   * (`sv3-run.ts` {@link Sv3RunFeed.toolCallCount}), so the receipt cannot describe a different set
+   * than the feed it summarises. Always 0 on an `ask` turn, which makes no tool calls.
+   */
+  readonly toolCalls: number;
   readonly askedAt: number;
 }
 
@@ -94,13 +111,21 @@ export const sessionById = (list: Sv3SessionList, id: string): Sv3Session | null
 /** Deterministic and position-based, so the caller can address a turn without the list handing back a tuple. */
 const turnIdFor = (sessionId: string, index: number): string => `${sessionId}#t${index + 1}`;
 
-const openTurn = (sessionId: string, index: number, question: string, now: number): Sv3Turn => ({
+const openTurn = (
+  sessionId: string,
+  index: number,
+  question: string,
+  now: number,
+  kind: Sv3TurnKind,
+): Sv3Turn => ({
   id: turnIdFor(sessionId, index),
+  kind,
   question,
   answer: '',
   status: 'streaming',
   citations: null,
   detail: '',
+  toolCalls: 0,
   askedAt: now,
 });
 
@@ -113,7 +138,12 @@ const openTurn = (sessionId: string, index: number, question: string, now: numbe
  * renders. The SEARCH axis, which A2's semantics were written for, no longer routes through the
  * session list at all — it is a palette-only dev affordance (`SearchV3View.runSearch`).
  */
-export function submitInSession(list: Sv3SessionList, question: string, now: number): Sv3SessionList {
+export function submitInSession(
+  list: Sv3SessionList,
+  question: string,
+  now: number,
+  kind: Sv3TurnKind = 'ask',
+): Sv3SessionList {
   const text = question.trim();
   if (text === '') return list;
   const active = list.activeId === null ? null : sessionById(list, list.activeId);
@@ -122,7 +152,7 @@ export function submitInSession(list: Sv3SessionList, question: string, now: num
     const created: Sv3Session = {
       id,
       title: text,
-      turns: [openTurn(id, 0, text, now)],
+      turns: [openTurn(id, 0, text, now, kind)],
       createdAt: now,
       updatedAt: now,
     };
@@ -134,7 +164,7 @@ export function submitInSession(list: Sv3SessionList, question: string, now: num
       session.id === active.id
         ? {
             ...session,
-            turns: [...session.turns, openTurn(session.id, session.turns.length, text, now)],
+            turns: [...session.turns, openTurn(session.id, session.turns.length, text, now, kind)],
             updatedAt: now,
           }
         : session,
@@ -201,6 +231,23 @@ export const settleTurn = (
   );
 
 /**
+ * The agent run's terminal (tempdoc 822 Phase F2): the turn settles AND becomes its own receipt in
+ * ONE write, because the count and the outcome describe the same ended run and must never be able to
+ * arrive separately. `toolCalls` is the feed projection's own count — the same list the cards were
+ * rendered from — so the caller has no second counter it could pass instead.
+ */
+export const settleAgentTurn = (
+  list: Sv3SessionList,
+  ref: Sv3TurnRef,
+  status: Exclude<Sv3TurnStatus, 'streaming'>,
+  toolCalls: number,
+  detail = '',
+): Sv3SessionList =>
+  mapTurn(list, ref, (turn) =>
+    turn.status === 'streaming' ? { ...turn, status, detail, toolCalls } : turn,
+  );
+
+/**
  * The New-search affordance: the window returns to its empty state and the NEXT submit opens a new
  * session. Nothing is dropped — the sessions so far stay in the list, they are just no longer active.
  */
@@ -261,6 +308,12 @@ const isSameDay = (a: number, b: number): boolean => {
 export interface Sv3SessionProjection {
   /** The shared store's in-flight flag: the ACTIVE session is the one that asked. */
   readonly searching: boolean;
+  /**
+   * The session whose delegated run is parked on a typed decision, or null (tempdoc 822 Phase F2).
+   * Named by ID rather than passed as a flag for the active row, because the shared controller is
+   * product-wide: only the session that OPENED the run may wear its act-now colour.
+   */
+  readonly awaitingDecisionIn: string | null;
   readonly now: number;
 }
 
@@ -274,11 +327,14 @@ export interface Sv3SessionProjection {
  */
 export function projectSv3Sessions(
   list: Sv3SessionList,
-  { searching, now }: Sv3SessionProjection,
+  { searching, awaitingDecisionIn, now }: Sv3SessionProjection,
 ): readonly Sv3SessionGroup[] {
   const toRow = (session: Sv3Session): Sv3SessionRowView => {
     const active = session.id === list.activeId;
     const last = session.turns.at(-1);
+    // ACT-NOW outranks in-motion: a run parked on the reader's decision is not making progress, and
+    // the one colour that means "you are the blocker" must win over the one that means "it is busy".
+    const awaiting = awaitingDecisionIn === session.id;
     // Two axes reach the same three colours. The CONVERSATIONAL one is the session's own: its last
     // turn is streaming, or it broke — a property of THIS session, true whichever row is claimed.
     // The SEARCH one is the process-wide store flag, which only the active session can own (the
@@ -288,8 +344,8 @@ export function projectSv3Sessions(
     return {
       id: session.id,
       label: session.title,
-      status: running ? 'in-motion' : broken ? 'broken' : 'resting',
-      meta: running ? '' : sv3RelativeTime(session.updatedAt, now),
+      status: awaiting ? 'act-now' : running ? 'in-motion' : broken ? 'broken' : 'resting',
+      meta: awaiting || running ? '' : sv3RelativeTime(session.updatedAt, now),
       active,
     };
   };
