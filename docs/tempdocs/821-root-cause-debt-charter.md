@@ -607,6 +607,59 @@ Origin-guarded (worth separate review); `resolveAllowedOrigin` rejects `[::1]`
 origins (bracket handling); LocalApiHostValidationTest mirrors its filter instead of
 exercising install().
 
+### §O.4 Head bricks itself on transient bootstrap failure — ROOT-CAUSED (2026-08-13, publication-window find)
+
+Found *during* the publish queue: the recurring CI isolated-backend `initializationError`
+flake turned out to be a **production bug** in the C1 dark-ship class. Chain (all
+code-verified by a read-only investigator, then narrowed by the first-ever captured
+`worker.log` from PR #434's failure-log upload, run 31735720225):
+
+- A transient `KnowledgeServerBootstrap.start()` failure hits the catch at
+  `KnowledgeServerBootstrap.java:235` → tears down the **healthy** worker (sole
+  production writer of the MMF shutdown byte: `MainSignalBus.writeShutdown()` via
+  `WorkerSpawner.close()` teardown path) → `HeadlessApp.java:447-453` pins the worker
+  capability DEGRADED and **no `KnowledgeServerHealthMonitor` is started** (only created
+  when `knowledgeServer != null`, `:434-438`) → lifecycle projects ERROR →
+  `/api/health` 503s **forever** while Javalin keeps serving. No in-process path recovers.
+- Trigger **H1 CONFIRMED** (2026-08-13, first `headless-backend.log` captured by the
+  diagnostics PR #436 sweep, run 31742266298): verbatim `IllegalStateException: PID
+  validation timeout after 5000ms: expected PID 8556` at
+  `KnowledgeServerBootstrap.validateWorkerPid:344` ← `start:201` ←
+  `HeadlessApp.tryStartKnowledgeServer:924`, followed by "Wrote shutdown signal to
+  signal bus" against a healthy worker and permanent lifecycle ERROR. Mechanism: the
+  5000ms window (`KnowledgeServerConfig.java:68`) is consumed by a single cold RPC
+  carrying a 5s STANDARD deadline (`RemoteKnowledgeClient.java:845-850`), so the retry
+  loop never iterates; the worker-side health RPC is a deep check (live SQLite +
+  Lucene) with cold-start cost on a contended 4-vCPU runner. Bonus defect: the boot
+  failure prints "Ensure the indexer-worker module is built" — wrong guidance for this
+  cause.
+- "Elevated today" is partly re-labelling: pre-#429 this died at the silent 30s JUnit
+  cap with a different signature. No boot-path change landed on main since 2026-08-06.
+
+Shipped in-window: PR #434 (failure-log artifact upload + budget cascade; budgets are
+provisional pending measured values — for the terminal-DEGRADED mode they are neutral
+on outcome) and PR #436 (preserve the *correct* Head log — sweep `<dataDir>/logs/*.log{,.gz}`,
+not the never-written `app.log` — and surface the last non-200 status+body in the
+timeout message). #436 deliberately **omitted** fail-fast on `worker.spawn.failed`:
+that reason code covers both this terminal path and genuinely recoverable
+slow-worker paths (`KnowledgeServerBootstrap.java:230`/`:502`,
+`KnowledgeServerHealthMonitor.java:111` — monitor does converge back to READY),
+so failing fast would hard-fail the recoverable case; the reason-code ambiguity is
+itself logged as a state-truthfulness observation. Fix lane (in flight at write time,
+after H1 confirmation): per-attempt RPC deadline inside the validation window so
+retries actually iterate, bounded retry of `bootstrap.start()` (legal:
+`closeForUpgrade()` resets `started=false`), and cause-honest routing of the
+"module not built" hint. Fix lane SHIPPED as PR #439 (2026-08-13) after a FIX-FIRST
+independent refute-first review and a 9-finding fix round (supervision-budget veto —
+boot retry defers to `SupervisionPolicy` once supervision engages, spawn ceiling 6
+documented; re-`start()` safety regression test; rotated-log hint; minimal RECOVERING
+narration; `started` reset in `finally`; specific-first hint routing; forced-exit reap;
+budget-bounded mismatch reconnect). Honest scope per the review: the trigger is ~3x
+rarer, the outcome is NOT yet recoverable — the sole `KnowledgeServerHealthMonitor`
+construction site remains gated on `knowledgeServer != null`. Still chartered for a
+future PR: recovery monitor for the `knowledgeServer == null` state +
+`worker.spawn.failed` reason-code disambiguation.
+
 ## §P Wave 3 execution log (2026-08-13; owner: "proceed with the remaining chartered work")
 
 Same discipline (implement → independent refute-first review → fix round). All

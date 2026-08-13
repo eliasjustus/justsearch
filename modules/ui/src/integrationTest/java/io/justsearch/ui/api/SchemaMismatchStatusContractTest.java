@@ -43,7 +43,10 @@ import org.junit.jupiter.api.io.TempDir;
  */
 @DisplayName("Schema mismatch contract: /api/status exposes reindexRequired (index_schema_fp)")
 @DisabledIfEnvironmentVariable(named = "CI", matches = "true")
-@Timeout(value = 60, unit = TimeUnit.SECONDS)
+// 120s, not 60s: setUp uses the Head's own bounded worker-start retry, whose worst case is three
+// spawn+validate rounds. A budget that a legal slow path can exceed turns a diagnosable failure
+// (with the worker log tail) into a bare timeout.
+@Timeout(value = 120, unit = TimeUnit.SECONDS)
 final class SchemaMismatchStatusContractTest {
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -88,7 +91,10 @@ final class SchemaMismatchStatusContractTest {
 
     bootstrap = new KnowledgeServerBootstrap(config);
     try {
-      bootstrap.start();
+      // Same bounded retry the Head uses: on a loaded dev machine a transient PID-validation
+      // timeout must not read as a schema-contract failure. (This test never runs in CI — see the
+      // @DisabledIfEnvironmentVariable above — so the budget below covers local load only.)
+      bootstrap.startWithRetry();
     } catch (Exception e) {
       String tail = readTailBestEffort(workerLogPath, 12_000);
       throw new IllegalStateException(
