@@ -114,6 +114,28 @@ fires. The pattern is named-question, not generic-dashboard (419 C3 explicit non
   enumerate. A consumer must treat an ABSENT field (older backend) as "fall back to
   `indexedDocuments`" and a reported `0` as a real value.
 
+**Enrichment completeness (post tempdoc 821 §3-C3, 2026-08-13):** the coverage percentages under
+`worker.enrichment` divide by every document, so a stage that silently lost a *sub-population*
+reads the same as a stage with nothing to do. Four additive fields close that:
+- `worker.enrichment.completeness: StageCompletenessView[]` — one entry per stage
+  (`stageId` ∈ `embed`|`splade`|`ner`|`chunk_embed`) with `{expected, present, missing, failed}`,
+  plus an honesty `tier`: **`ARTIFACT`** when `present` counted the artifact itself (a lying status
+  field cannot inflate it) and **`STATUS`** when only the bookkeeping field was countable — SPLADE's
+  feature field is `docValues:false` and NER writes no per-document artifact, so those two declare
+  the weaker tier rather than implying a verification they cannot perform. `expected` is scoped to
+  the documents that carry the stage's status field (absent = not applicable), so `present` and
+  `failed` are drawn from the same denominator; `missing` is `expected - present - failed` floored
+  at 0. Derived in `IndexCountOps` (adapters-lucene) — a projection over counts the worker already
+  holds, not a second authority.
+- `worker.enrichment.failedNerCount: long` — NER reported only pending/completed; the other three
+  stages have carried a failure count since 354, so a stalled NER sub-population was invisible here.
+- `worker.enrichment.chunkMinChars: int`, `worker.enrichment.vectorReadyPercent: double` — the two
+  thresholds the auditor OWNS, published so off-process oracles read them instead of mirroring the
+  Java constants. jseval's chunk-completeness guard consumes `chunkMinChars` and its local 2000-char
+  mirror is deleted (`docs/reference/jseval-pipeline-reference.md` §Chunk-completeness validity
+  guard). A consumer must treat a non-positive/absent `chunkMinChars` (older backend — proto3
+  scalars arrive as `0`, never absent) as "cannot evaluate", not as a licence to guess.
+
 Each metric-backed field declares `surfacedAt(StatusEndpoint, fieldName)` on its
 `MetricDefinition`; `MetricSurfaceContractTest` (worker-services) and
 `HeadMetricSurfaceContractTest` (app-services) fail CI if the catalog declaration drifts
@@ -396,7 +418,7 @@ Source: slices 491 (substrate), 496 (FreeChat + Extract), 497 (dynamic dispatch)
 
 **Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java`
 
-**Transport:** Streamable HTTP at `POST /mcp` on the existing Javalin server (loopback-only). Protocol version `2025-11-25` (single-sourced in `io.justsearch.app.api.mcp.McpContractVersions`). No separate process. The `/mcp` endpoint + curated tool set is one of the three **Runtime Contract** public surfaces (tempdoc 654); `serverInfo.version` carries the BUILD version and `serverInfo._meta["io.justsearch/toolSurfaceVersion"]` the SemVer tool-surface version — see [Runtime Contract](runtime-contract.md).
+**Transport:** Streamable HTTP at `/mcp` on the existing Javalin server (loopback-only) — `POST` carries the whole JSON-RPC surface, `DELETE` ends the session named by `Mcp-Session-Id`, and `GET` returns `405` with `Allow: POST, DELETE, OPTIONS` (no server-initiated SSE stream is offered; see [MCP production server](mcp-production-server.md#transport)). Protocol version `2025-11-25` (single-sourced in `io.justsearch.app.api.mcp.McpContractVersions`). No separate process. The `/mcp` endpoint + curated tool set is one of the three **Runtime Contract** public surfaces (tempdoc 654); `serverInfo.version` carries the BUILD version and `serverInfo._meta["io.justsearch/toolSurfaceVersion"]` the SemVer tool-surface version — see [Runtime Contract](runtime-contract.md).
 
 6-tool curated surface (tempdoc 500, adapted from eval-validated 4-tool TS server in tempdoc 366):
 

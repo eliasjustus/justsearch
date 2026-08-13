@@ -86,11 +86,7 @@ function main() {
   // The #1 public descriptor — the front door must not lie while CI is green.
   const extraFiles = [path.join(repoRoot, "README.md")];
   const files = [...dirs.flatMap((d) => walk(d)), ...extraFiles.filter((f) => fs.existsSync(f))]
-    .filter((p) => p.toLowerCase().endsWith(".md"))
-    // docs/reference/issues/ are historical bug/decision logs that legitimately
-    // record old (React-era) file paths in the context of a past defect; they are
-    // not current-behaviour claims, so they are out of this gate's scope.
-    .filter((p) => !normalizeRel(p).includes("/reference/issues/"));
+    .filter((p) => p.toLowerCase().endsWith(".md"));
 
   const errors = [];
   for (const f of files) {

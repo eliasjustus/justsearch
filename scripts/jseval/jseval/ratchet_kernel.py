@@ -148,6 +148,12 @@ def assert_chunk_completeness(
     is treated as ``ok`` -- backward-compatible, matches ``compare_engine_sets``'s "skip when
     unrecorded" precedent.
 
+    ``unevaluable`` (tempdoc 821 §3-C3 -- the backend published no chunk threshold, so the
+    offline expectation could not be computed) passes, but NOT silently: it warns on stderr like
+    the override path below. A silent pass here would be the guard's own failure mode -- on a
+    threshold-less backend a genuinely degenerate build would sail through with nothing said,
+    which is exactly the "0 reads the same as healthy" class this guard exists to catch.
+
     Override with ``allow_incomplete=True`` (the CLI's ``--allow-chunk-incompleteness`` flag)
     or the ``JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1`` env var (checked here, once, so all four
     call sites get the env escape hatch without repeating the check) -- mirrors
@@ -159,6 +165,15 @@ def assert_chunk_completeness(
                if summary_path.is_file() else {})
     block = summary.get("chunk_completeness") or {}
     verdict = block.get("verdict")
+    if verdict == "unevaluable":
+        click.echo(json.dumps({
+            "warning": "chunk-completeness guard STOOD DOWN — this run was not checked",
+            "reasons": block.get("reasons"),
+            "remedy": "run against a backend that publishes worker.enrichment.chunkMinChars "
+                      "(tempdoc 821 §3-C3) to get a real verdict.",
+            "observed": block.get("observed"),
+        }, indent=2), err=True)
+        return
     if verdict != "degenerate":
         return
 

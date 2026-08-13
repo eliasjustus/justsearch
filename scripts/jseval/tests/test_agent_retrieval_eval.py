@@ -32,7 +32,6 @@ from jseval.agent_retrieval_eval import (
     rag_reachability_probe,
     stage_corpus_dir,
 )
-from jseval.chunk_completeness import CHUNK_THRESHOLD_CHARS
 
 
 # --- _score_answer scorer semantics fixture (tempdoc 624 §M.8 amendment, Step 0
@@ -217,9 +216,15 @@ def test_agent_result_leak_suspect_tool_calls_defaults_empty():
     assert result.leak_suspect_tool_calls == []
 
 
+# The chunk threshold these probe tests act as the "backend" for. Tempdoc 821 §3-C3 retired
+# the jseval-side mirror of ChunkDocumentWriter.THRESHOLD; a test hard-coding 2000
+# would quietly reinstate it, so this is a deliberately different number passed in explicitly.
+THRESHOLD = 2500
+
+
 # --- rag_reachability_probe: the retrieval-completeness invariant guard (tempdoc 749).
 #
-# ChunkDocumentWriter writes ZERO chunk documents for docs < CHUNK_THRESHOLD_CHARS, so RAG
+# ChunkDocumentWriter writes ZERO chunk documents for docs < THRESHOLD, so RAG
 # chunk retrieval (which filters IS_CHUNK:true) is structurally blind to them unless the
 # doc-level-union fix is actually wired into the primary retrieval path. This probe samples
 # the shortest chunkless-by-construction docs from a BEIR-format corpus.jsonl and asserts each
@@ -248,15 +253,15 @@ def _mock_response(*, mode: str, chunks: list[dict]):
 
 class TestRagReachabilityProbeSampling:
     def test_boundary_doc_at_exactly_threshold_is_not_sampled(self, tmp_path):
-        """A doc whose content is exactly CHUNK_THRESHOLD_CHARS long DOES get chunked by
-        ChunkDocumentWriter (its guard is `< CHUNK_THRESHOLD_CHARS`), so it must not be
+        """A doc whose content is exactly THRESHOLD long DOES get chunked by
+        ChunkDocumentWriter (its guard is `< THRESHOLD`), so it must not be
         treated as chunkless-by-construction here either."""
         p = _write_corpus(tmp_path, [
-            {"_id": "at-threshold", "title": "", "text": "x" * CHUNK_THRESHOLD_CHARS},
+            {"_id": "at-threshold", "title": "", "text": "x" * THRESHOLD},
         ])
         mock_client = MagicMock()
 
-        result = rag_reachability_probe(p, mock_client, n=10, top_k=5)
+        result = rag_reachability_probe(p, mock_client, n=10, top_k=5, threshold_chars=THRESHOLD)
 
         assert result == {"sampled": 0, "passed": 0, "failed": [], "verdict": "not-applicable"}
         mock_client.post.assert_not_called()
@@ -272,7 +277,7 @@ class TestRagReachabilityProbeSampling:
             {"_id": "d3", "title": "T3", "text": "x" * 1500},
             {"_id": "d2", "title": "T2", "text": "x" * 500},
             {"_id": "d1", "title": "T1", "text": "x" * 500},  # ties d2 on length -> d1 first
-            {"_id": "d4", "title": "T4", "text": "x" * CHUNK_THRESHOLD_CHARS},  # not chunkless
+            {"_id": "d4", "title": "T4", "text": "x" * THRESHOLD},  # not chunkless
         ])
         mock_client = MagicMock()
         title_to_id = {"T1": "d1", "T2": "d2", "T3": "d3"}
@@ -285,7 +290,7 @@ class TestRagReachabilityProbeSampling:
 
         mock_client.post.side_effect = _side_effect
 
-        result = rag_reachability_probe(p, mock_client, n=10, top_k=5)
+        result = rag_reachability_probe(p, mock_client, n=10, top_k=5, threshold_chars=THRESHOLD)
 
         called_queries = [c.kwargs["json"]["query"] for c in mock_client.post.call_args_list]
         assert called_queries == ["T1", "T2", "T3"]
@@ -301,7 +306,7 @@ class TestRagReachabilityProbeSampling:
             mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": "/corpus/whichever.txt"}],
         )
 
-        result = rag_reachability_probe(p, mock_client, n=2, top_k=5)
+        result = rag_reachability_probe(p, mock_client, n=2, top_k=5, threshold_chars=THRESHOLD)
 
         assert result["sampled"] == 2
         assert mock_client.post.call_count == 2
@@ -318,7 +323,7 @@ class TestRagReachabilityProbeSampling:
             mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": "/corpus/d1.txt"}],
         )
 
-        rag_reachability_probe(p, mock_client, n=10, top_k=5)
+        rag_reachability_probe(p, mock_client, n=10, top_k=5, threshold_chars=THRESHOLD)
 
         sent = mock_client.post.call_args.kwargs["json"]
         assert "doc_ids" not in sent
@@ -333,7 +338,7 @@ class TestRagReachabilityProbeSampling:
             mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": "/corpus/d1.txt"}],
         )
 
-        rag_reachability_probe(p, mock_client, n=10, top_k=5)
+        rag_reachability_probe(p, mock_client, n=10, top_k=5, threshold_chars=THRESHOLD)
 
         sent = mock_client.post.call_args.kwargs["json"]
         assert sent["query"] == "The FTX Trial"
@@ -348,7 +353,7 @@ class TestRagReachabilityProbeSampling:
             mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": "/corpus/d1.txt"}],
         )
 
-        rag_reachability_probe(p, mock_client, n=10, top_k=5)
+        rag_reachability_probe(p, mock_client, n=10, top_k=5, threshold_chars=THRESHOLD)
 
         sent = mock_client.post.call_args.kwargs["json"]
         assert sent["query"] == " ".join(words[:12])
@@ -368,7 +373,7 @@ class TestRagReachabilityProbeVerdict:
             mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": "/some/path/d1.txt"}],
         )
 
-        result = rag_reachability_probe(p, mock_client, n=10, top_k=5)
+        result = rag_reachability_probe(p, mock_client, n=10, top_k=5, threshold_chars=THRESHOLD)
 
         assert result == {"sampled": 1, "passed": 1, "failed": [], "verdict": "ok"}
 
@@ -382,7 +387,7 @@ class TestRagReachabilityProbeVerdict:
             mode="FULLTEXT_FALLBACK", chunks=[{"parent_doc_id": "/some/path/d1.txt"}],
         )
 
-        result = rag_reachability_probe(p, mock_client, n=10, top_k=5)
+        result = rag_reachability_probe(p, mock_client, n=10, top_k=5, threshold_chars=THRESHOLD)
 
         assert result == {"sampled": 1, "passed": 0, "failed": ["d1"], "verdict": "fail"}
 
@@ -393,20 +398,20 @@ class TestRagReachabilityProbeVerdict:
             mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": "/some/other/path/some-other-doc.txt"}],
         )
 
-        result = rag_reachability_probe(p, mock_client, n=10, top_k=5)
+        result = rag_reachability_probe(p, mock_client, n=10, top_k=5, threshold_chars=THRESHOLD)
 
         assert result["verdict"] == "fail"
         assert result["failed"] == ["d1"]
 
     def test_not_applicable_on_all_long_corpus(self, tmp_path):
-        long_text = "x" * (CHUNK_THRESHOLD_CHARS + 500)
+        long_text = "x" * (THRESHOLD + 500)
         p = _write_corpus(tmp_path, [
             {"_id": "d1", "title": "", "text": long_text},
             {"_id": "d2", "title": "", "text": long_text},
         ])
         mock_client = MagicMock()
 
-        result = rag_reachability_probe(p, mock_client, n=10, top_k=5)
+        result = rag_reachability_probe(p, mock_client, n=10, top_k=5, threshold_chars=THRESHOLD)
 
         assert result == {"sampled": 0, "passed": 0, "failed": [], "verdict": "not-applicable"}
         mock_client.post.assert_not_called()
@@ -415,7 +420,7 @@ class TestRagReachabilityProbeVerdict:
         mock_client = MagicMock()
 
         result = rag_reachability_probe(
-            tmp_path / "does-not-exist.jsonl", mock_client, n=10, top_k=5,
+            tmp_path / "does-not-exist.jsonl", mock_client, n=10, top_k=5, threshold_chars=THRESHOLD,
         )
 
         assert result["verdict"] == "not-applicable"
@@ -426,7 +431,7 @@ class TestRagReachabilityProbeVerdict:
         mock_client = MagicMock()
         mock_client.post.side_effect = RuntimeError("connection refused")
 
-        result = rag_reachability_probe(p, mock_client, n=10, top_k=5)
+        result = rag_reachability_probe(p, mock_client, n=10, top_k=5, threshold_chars=THRESHOLD)
 
         assert result == {"sampled": 1, "passed": 0, "failed": ["d1"], "verdict": "fail"}
 
@@ -445,7 +450,9 @@ class TestRagReachabilityProbeVerdict:
 
         monkeypatch.setattr("jseval.agent_retrieval_eval.httpx.Client", _fake_client)
 
-        result = rag_reachability_probe(p, "http://127.0.0.1:33221", n=10, top_k=5)
+        result = rag_reachability_probe(
+            p, "http://127.0.0.1:33221", n=10, top_k=5, threshold_chars=THRESHOLD,
+        )
 
         assert created_with["base_url"] == "http://127.0.0.1:33221"
         assert result["verdict"] == "ok"
@@ -458,9 +465,82 @@ class TestRagReachabilityProbeVerdict:
             mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": "/corpus/d1.txt"}],
         )
 
-        rag_reachability_probe(p, mock_client, n=10, top_k=5)
+        rag_reachability_probe(p, mock_client, n=10, top_k=5, threshold_chars=THRESHOLD)
 
         mock_client.close.assert_not_called()
+
+
+class TestRagReachabilityProbeThresholdSource:
+    """Tempdoc 821 §3-C3: the probe READS the chunk threshold from the backend it is probing."""
+
+    @staticmethod
+    def _status(payload):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = payload
+        return resp
+
+    def _probe_with_published_threshold(self, tmp_path, name, published):
+        # One 1502-char doc (title "T" + "\n\n" + 1500 x's), classified against whatever the
+        # (mocked) backend publishes.
+        p = _write_corpus(tmp_path / name, [{"_id": "d1", "title": "T", "text": "x" * 1500}])
+        mock_client = MagicMock()
+        mock_client.get.return_value = self._status(
+            {"worker": {"enrichment": {"chunkMinChars": published}}}
+        )
+        mock_client.post.return_value = _mock_response(
+            mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": "/corpus/d1.txt"}],
+        )
+        return mock_client, rag_reachability_probe(p, mock_client, n=10, top_k=5)
+
+    def test_the_published_threshold_decides_which_docs_are_chunkless(self, tmp_path):
+        # Discriminating: the SAME doc is sub-threshold under one published value and above it
+        # under another. No surviving local constant could produce both outcomes.
+        (tmp_path / "low").mkdir()
+        (tmp_path / "high").mkdir()
+
+        client_low, low = self._probe_with_published_threshold(tmp_path, "low", 1000)
+        _, high = self._probe_with_published_threshold(tmp_path, "high", 3000)
+
+        client_low.get.assert_called_once_with("/api/status")
+        # 1502 >= 1000 -> the doc gets chunked by the backend, so it is not this probe's business.
+        assert low == {"sampled": 0, "passed": 0, "failed": [], "verdict": "not-applicable"}
+        # 1502 < 3000 -> chunkless-by-construction, so it must be probed for reachability.
+        assert high == {"sampled": 1, "passed": 1, "failed": [], "verdict": "ok"}
+
+    def test_backend_without_the_threshold_is_not_applicable_not_a_guessed_default(self, tmp_path):
+        # A backend predating 821 publishes no chunkMinChars. Falling back to a hard-coded 2000
+        # would reinstate the mirror this change removed, so the probe must stand down instead.
+        p = _write_corpus(tmp_path, [{"_id": "d1", "title": "T", "text": "x" * 50}])
+        mock_client = MagicMock()
+        mock_client.get.return_value = self._status({"worker": {"enrichment": {}}})
+
+        result = rag_reachability_probe(p, mock_client, n=10, top_k=5)
+
+        assert result == {"sampled": 0, "passed": 0, "failed": [], "verdict": "not-applicable"}
+        mock_client.post.assert_not_called()
+
+    def test_unreachable_status_endpoint_is_not_applicable_never_raises(self, tmp_path):
+        p = _write_corpus(tmp_path, [{"_id": "d1", "title": "T", "text": "x" * 50}])
+        mock_client = MagicMock()
+        mock_client.get.side_effect = RuntimeError("connection refused")
+
+        result = rag_reachability_probe(p, mock_client, n=10, top_k=5)
+
+        assert result == {"sampled": 0, "passed": 0, "failed": [], "verdict": "not-applicable"}
+        mock_client.post.assert_not_called()
+
+    def test_explicit_threshold_skips_the_status_call(self, tmp_path):
+        p = _write_corpus(tmp_path, [{"_id": "d1", "title": "T", "text": "x" * 50}])
+        mock_client = MagicMock()
+        mock_client.post.return_value = _mock_response(
+            mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": "/corpus/d1.txt"}],
+        )
+
+        result = rag_reachability_probe(p, mock_client, n=10, top_k=5, threshold_chars=THRESHOLD)
+
+        assert result["verdict"] == "ok"
+        mock_client.get.assert_not_called()
 
 
 # --- stage_corpus_dir: the answer-key isolation fix (tempdoc 624 §As-built #7).

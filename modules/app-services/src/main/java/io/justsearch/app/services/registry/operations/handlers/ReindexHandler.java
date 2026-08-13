@@ -55,6 +55,10 @@ public final class ReindexHandler implements OperationHandler {
     try {
       indexing.reindexWatchedRoots(force);
       indexing.flush();
+      // Tempdoc 821 §3-C3 — this sentence became TRUE here. The scan now goes out as
+      // SCAN_MODE_FORCE_REINDEX, the Worker marks the admitted paths forced, and JobBatchExtractor
+      // skips its unchanged-check for them. Until then the force flag never left the Head and the
+      // message was a claim the pipeline did not honour.
       return OperationResult.success(
           force ? "Reindex started (force=true; bypasses mtime unchanged-check)" : "Reindex started");
     } catch (RuntimeException e) {

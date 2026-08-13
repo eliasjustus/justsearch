@@ -269,14 +269,12 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         // enqueue happen Worker-side via WorkerScanOps.
         // Tempdoc 821 §3-C2 — forward the root's collection into the scan RPC (the wire and the
         // Worker have carried it all along; only this lambda dropped it).
+        // Tempdoc 821 §3-C3 — same defect on the mode: this lambda hard-coded
+        // SCAN_MODE_INITIAL, so a force-reindex arrived at the Worker indistinguishable from an
+        // ordinary rewalk. The caller decides the mode now; this lambda only carries it.
         RootLifecycleOps.ScanRootFn scanRootFn =
-            (rootPath, collection, excludeGlobs, progressConsumer) ->
-                scanRoot(
-                    rootPath,
-                    collection,
-                    io.justsearch.ipc.ScanMode.SCAN_MODE_INITIAL,
-                    excludeGlobs,
-                    progressConsumer);
+            (rootPath, collection, mode, excludeGlobs, progressConsumer) ->
+                scanRoot(rootPath, collection, mode, excludeGlobs, progressConsumer);
         RootLifecycleOps.WorkerWatchFn workerWatchFn =
             new RootLifecycleOps.WorkerWatchFn() {
                 @Override

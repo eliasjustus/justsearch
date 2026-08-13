@@ -729,8 +729,37 @@
                 }
               }
             },
+            "chunkMinChars" : {
+              "type" : "integer"
+            },
             "completedNerCount" : {
               "type" : "integer"
+            },
+            "completeness" : {
+              "type" : [ "array", "null" ],
+              "items" : {
+                "type" : "object",
+                "properties" : {
+                  "expected" : {
+                    "type" : "integer"
+                  },
+                  "failed" : {
+                    "type" : "integer"
+                  },
+                  "missing" : {
+                    "type" : "integer"
+                  },
+                  "present" : {
+                    "type" : "integer"
+                  },
+                  "stageId" : {
+                    "type" : [ "string", "null" ]
+                  },
+                  "tier" : {
+                    "type" : [ "string", "null" ]
+                  }
+                }
+              }
             },
             "embeddingCompletedCount" : {
               "type" : "integer"
@@ -788,6 +817,9 @@
                 "type" : "integer"
               }
             },
+            "failedNerCount" : {
+              "type" : "integer"
+            },
             "nerEnabled" : {
               "type" : "boolean"
             },
@@ -811,6 +843,9 @@
             },
             "spladePendingCount" : {
               "type" : "integer"
+            },
+            "vectorReadyPercent" : {
+              "type" : "number"
             }
           }
         },

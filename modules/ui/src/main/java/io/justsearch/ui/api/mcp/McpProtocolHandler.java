@@ -163,6 +163,36 @@ public final class McpProtocolHandler {
     ctx.status(204);
   }
 
+  /**
+   * MCP Streamable-HTTP requires the single endpoint to answer {@code GET}: the server either opens
+   * a server-to-client SSE stream ({@code text/event-stream}) or "MUST return HTTP 405 Method Not
+   * Allowed, indicating that the server does not offer an SSE stream at this endpoint" (Transports
+   * §Streamable HTTP, identical in 2025-06-18 and 2025-11-25).
+   *
+   * <p>JustSearch offers no SSE stream at {@code /mcp}: every MCP response is the direct reply to a
+   * {@code POST}, and nothing here pushes unsolicited JSON-RPC to a connected client. Serving one
+   * would need a per-session push channel plus the spec's resumability machinery
+   * ({@code Last-Event-ID}, event ids) — a <b>product</b> decision, not a conformance one. 405 is
+   * the spec's own answer for a server without such a stream, and it is what a conforming client
+   * probes for; before this it was a 404, which tells the client nothing about the endpoint.
+   *
+   * <p>Static because the answer carries no session or protocol state — which also lets the
+   * conformance test bind the production handler rather than a mirror of it.
+   */
+  public static void handleGet(Context ctx) {
+    // OPTIONS included because the CORS preflight catch-all (app.options("/*"),
+    // ApiSecurityFilters#setupCors) genuinely serves it on this path too — Allow must name every
+    // method the resource answers, not just the ones bound here.
+    ctx.header("Allow", "POST, DELETE, OPTIONS");
+    ctx.status(405);
+    writeError(
+        ctx,
+        null,
+        -32600,
+        "Method Not Allowed: this endpoint offers no server-initiated SSE stream; use POST",
+        "MCP_METHOD_NOT_ALLOWED");
+  }
+
   @SuppressWarnings("unchecked")
   private Map<String, Object> handleInitialize(Context ctx, Object paramsObj) {
     cleanStaleSessions();
@@ -302,12 +332,28 @@ public final class McpProtocolHandler {
     }
   }
 
-  private void writeError(Context ctx, Object id, int code, String message) {
+  private static void writeError(Context ctx, Object id, int code, String message) {
+    writeError(ctx, id, code, message, null);
+  }
+
+  /**
+   * JSON-RPC error envelope. {@code errorCode} is optional and rides in the {@code error.data} slot
+   * — the repo's {@code errorCode} convention expressed without breaking the JSON-RPC error object
+   * (the same placement {@code ApiSecurityFilters.mcpForbiddenOriginBody} uses for the 403).
+   */
+  private static void writeError(
+      Context ctx, Object id, int code, String message, String errorCode) {
     try {
+      var error = new LinkedHashMap<String, Object>();
+      error.put("code", code);
+      error.put("message", message);
+      if (errorCode != null) {
+        error.put("data", Map.of("errorCode", errorCode));
+      }
       var response = new LinkedHashMap<String, Object>();
       response.put("jsonrpc", JSONRPC_VERSION);
       response.put("id", id);
-      response.put("error", Map.of("code", code, "message", message));
+      response.put("error", error);
       ctx.contentType("application/json");
       ctx.result(MAPPER.writeValueAsString(response));
     } catch (Exception e) {

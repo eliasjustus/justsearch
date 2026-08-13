@@ -74,6 +74,14 @@ public class LocalApiServer {
    */
   public static final String MCP_ENDPOINT_PATH = "/mcp";
 
+  /**
+   * The MCP session-token bootstrap path. Shared with {@link
+   * ApiSecurityFilters#setupMcpOriginValidation} for the same reason as {@link #MCP_ENDPOINT_PATH}:
+   * this route hands out the credential that gates every mutating call, so the guarded path and the
+   * routed path must not be able to drift apart.
+   */
+  public static final String MCP_TOKEN_PATH = "/api/mcp/token";
+
   // Tempdoc 374 alpha.21 Bug O: not final because the explicit-port-bind-failure
   // fallback rebuilds a fresh Javalin instance — Javalin/Jetty's lifecycle prohibits
   // re-starting a failed instance. Volatile for safe publication after constructor
@@ -620,10 +628,14 @@ public class LocalApiServer {
     if (convApi.resolveAddressController() != null) {
       app.post("/api/document/{id}/resolve-address", convApi.resolveAddressController()::handle);
     }
-    app.get("/api/mcp/token", this::handleMcpToken);
+    app.get(MCP_TOKEN_PATH, this::handleMcpToken);
     if (convApi.mcpProtocolHandler() != null) {
       app.post(MCP_ENDPOINT_PATH, convApi.mcpProtocolHandler()::handlePost);
       app.delete(MCP_ENDPOINT_PATH, convApi.mcpProtocolHandler()::handleDelete);
+      // Streamable-HTTP conformance: the single endpoint must answer GET. Registered inside this
+      // branch so the 405's `Allow` can never name POST/DELETE while they are unbound (its third
+      // entry, OPTIONS, comes from the API-wide CORS preflight catch-all, not from here).
+      app.get(MCP_ENDPOINT_PATH, io.justsearch.ui.api.mcp.McpProtocolHandler::handleGet);
     }
 
     // Tempdoc 374 alpha.17 R5: OpenAI-compatible surface. Proxies to the

@@ -251,6 +251,29 @@ message EnrichmentProgressView {
   bool splade_enabled = 18 [json_name = "spladeEnabled"];
   bool ner_enabled = 19 [json_name = "nerEnabled"];
   string backfill_mode = 20 [json_name = "backfillMode"];
+  // Tempdoc 821 §3-C3 — NER reported only pending/completed; the other three stages have carried
+  // a failure count since 354, so a stalled NER sub-population was invisible on this surface.
+  int64 failed_ner_count = 21 [json_name = "failedNerCount"];
+  // Per-stage completeness audit: a PROJECTION over the counts above plus the artifact-presence
+  // walks, not a second authority. The coverage percentages divide by every document, so a stage
+  // that silently lost a sub-population reads the same as one with nothing to do.
+  repeated StageCompletenessView completeness = 22;
+  // Thresholds the auditor OWNS and publishes so off-process oracles read them here instead of
+  // mirroring the Java constants and drifting.
+  int32 chunk_min_chars = 23 [json_name = "chunkMinChars"];
+  double vector_ready_percent = 24 [json_name = "vectorReadyPercent"];
+}
+
+message StageCompletenessView {
+  // "embed" | "splade" | "ner" | "chunk_embed".
+  string stage_id = 1 [json_name = "stageId"];
+  // "ARTIFACT" (present counted the artifact itself) | "STATUS" (only the bookkeeping field was
+  // countable — SPLADE's feature field is docValues:false and NER writes no per-doc artifact).
+  string tier = 2;
+  int64 expected = 3;
+  int64 present = 4;
+  int64 missing = 5;
+  int64 failed = 6;
 }
 
 message ChunkCoverageView {
