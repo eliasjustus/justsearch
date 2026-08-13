@@ -395,6 +395,48 @@ export function toggleSessionPin(list: Sv3SessionList, id: string): Sv3SessionLi
 }
 
 /**
+ * What an edited title should DO, decided before anything is written (tempdoc 822 Phase F5). The
+ * donor's own three-way rule, ported verbatim from `apps/web/src/components/chat/ChatHeader.tsx:80-88`
+ * ("trim, reject empty (the caller toasts), and skip the mutation when nothing changed") — it is one
+ * function there precisely because the donor's sidebar rename and header rename must not diverge, and
+ * it is one function here for the same reason.
+ *
+ * `reject-empty` is a REVERT, not an error state: the conversation keeps the title it had. A window
+ * that let a row become nameless would have traded a label the reader can find for one they cannot.
+ */
+export type Sv3RenameResolution =
+  | { readonly action: 'commit'; readonly title: string }
+  | { readonly action: 'reject-empty' }
+  | { readonly action: 'noop' };
+
+export function resolveSv3Rename(title: string, originalTitle: string): Sv3RenameResolution {
+  const trimmed = title.trim();
+  if (trimmed.length === 0) return { action: 'reject-empty' };
+  if (trimmed === originalTitle) return { action: 'noop' };
+  return { action: 'commit', title: trimmed };
+}
+
+/**
+ * The reader names a conversation. The title was fixed at creation from the opening question and is
+ * never re-derived afterwards ({@link Sv3Session.title}), so a rename is permanent by CONSTRUCTION
+ * rather than by a precedence flag: there is no auto-titling pass for it to outrank, and a later turn
+ * writes `turns`/`updatedAt` and nothing else.
+ *
+ * An empty or unchanged title leaves the list untouched — {@link resolveSv3Rename} is the one place
+ * that decides, so a caller cannot commit a blank by taking a different route in.
+ */
+export function renameSession(list: Sv3SessionList, id: string, title: string): Sv3SessionList {
+  const session = sessionById(list, id);
+  if (session === null) return list;
+  const resolution = resolveSv3Rename(title, session.title);
+  if (resolution.action !== 'commit') return list;
+  return {
+    ...list,
+    sessions: list.sessions.map((s) => (s.id === id ? { ...s, title: resolution.title } : s)),
+  };
+}
+
+/**
  * The New-search affordance: the window returns to its empty state and the NEXT submit opens a new
  * session. Nothing is dropped — the sessions so far stay in the list, they are just no longer active.
  */

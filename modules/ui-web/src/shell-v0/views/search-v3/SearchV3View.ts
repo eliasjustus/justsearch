@@ -63,12 +63,28 @@ import {
   type Sv3ComposerSubmit,
 } from './Sv3Composer.js';
 import { projectSv3Results, type Sv3ResultsView } from './sv3-results.js';
-import { type Sv3SessionPin, type Sv3SessionSelect } from './Sv3Sidebar.js';
+import {
+  type Sv3SessionPin,
+  type Sv3SessionRename,
+  type Sv3SessionSelect,
+} from './Sv3Sidebar.js';
+import {
+  clampSv3SidebarWidth,
+  forgetSv3SidebarWidth,
+  readStoredSv3SidebarCollapsed,
+  readStoredSv3SidebarWidth,
+  resolveInitialSv3SidebarWidth,
+  storeSv3SidebarCollapsed,
+  storeSv3SidebarWidth,
+  SV3_SIDEBAR_DEFAULT_PX,
+  SV3_SIDEBAR_KEY_STEP_PX,
+} from './sv3-sidebar-sizing.js';
 import {
   activeTurns,
   adoptRunSession,
   appendTurnDelta,
   focusSession,
+  renameSession,
   toggleSessionPin,
   latestTurnRef,
   projectSv3Sessions,
@@ -125,6 +141,10 @@ import './Sv3Palette.js';
 
 const COMPOSER_STATE_ATTR = 'composer-state';
 
+/** The grip names all three of its gestures, because two of them are not discoverable by pointing. */
+const SIDEBAR_GRIP_LABEL =
+  'Resize the sidebar — arrow keys resize, Home returns to automatic, double-click resets';
+
 /**
  * The palette chord, matched only for events that reach THIS window. The shipped shell binds the same
  * chord globally (`mod+k` → `shell.toggle-palette`), so the scope is the whole contract: a keystroke
@@ -157,6 +177,74 @@ export class SearchV3View extends JfElement {
       jf-sv3-sidebar {
         flex: 0 0 var(--sidebar-width);
         width: var(--sidebar-width);
+        /* The donor's own collapse animation (ui/sidebar.tsx:283 — transition-[width] duration-200
+           ease-linear). Suppressed during a drag below, for the donor's reason: an eased width lags
+           a pointer that is setting it directly. */
+        transition:
+          flex-basis var(--duration-sv3-layout) var(--ease-sv3-linear),
+          width var(--duration-sv3-layout) var(--ease-sv3-linear);
+      }
+      :host([sidebar-collapsed]) jf-sv3-sidebar {
+        flex-basis: var(--sidebar-width-icon);
+        width: var(--sidebar-width-icon);
+      }
+      :host([resizing]) jf-sv3-sidebar {
+        transition: none;
+      }
+      /* THE GRIP (tempdoc 822 Phase F5). The donor's anatomy exactly (ui/sidebar.tsx:602): a w-4
+         (16px) hit area straddling the boundary (-translate-x-1/2) with a 2px LINE drawn by ::after
+         at its centre, invisible until hover. A native button rather than the donor's tabIndex={-1}
+         rail, so the keyboard half of the boundary exists at all — the same construction
+         views/search-v2/SearchV2View.ts:1937-1957 uses for the same job. */
+      button.sidebar-grip {
+        position: absolute;
+        inset-block: 0;
+        left: var(--sidebar-width);
+        transform: translateX(-50%);
+        inline-size: var(--space-4);
+        padding: 0;
+        border: 0;
+        background: transparent;
+        cursor: w-resize;
+        z-index: var(--z-sticky);
+        /* A drag must not be interpreted as a page scroll/pan gesture mid-gesture. */
+        touch-action: none;
+        transition: left var(--duration-sv3-layout) var(--ease-sv3-linear);
+      }
+      :host([sidebar-collapsed]) button.sidebar-grip {
+        left: var(--sidebar-width-icon);
+        cursor: e-resize;
+      }
+      :host([resizing]) button.sidebar-grip {
+        transition: none;
+      }
+      button.sidebar-grip::after {
+        content: '';
+        position: absolute;
+        inset-block: 0;
+        left: 50%;
+        inline-size: 2px;
+        background: transparent;
+        transition: background-color var(--duration-sv3-micro) var(--ease-sv3-enter);
+      }
+      button.sidebar-grip:hover::after {
+        background: var(--sidebar-border);
+      }
+      /* Focus lights the LINE rather than drawing a ring: an outline around a 16px-wide, full-height
+         hit area reads as a second boundary beside the first. The ring colour is used so the
+         indicator is unmistakably a focus state and not the hover treatment. */
+      button.sidebar-grip:focus-visible {
+        outline: none;
+      }
+      button.sidebar-grip:focus-visible::after {
+        background: var(--ring);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        jf-sv3-sidebar,
+        button.sidebar-grip,
+        button.sidebar-grip::after {
+          transition: none;
+        }
       }
       .column {
         display: flex;
@@ -180,6 +268,10 @@ export class SearchV3View extends JfElement {
     sessions: { state: true },
     aiSnapshot: { state: true },
     streaming: { state: true },
+    sidebarWidthPx: { state: true },
+    sidebarCollapsed: { type: Boolean, reflect: true, attribute: 'sidebar-collapsed' },
+    resizing: { type: Boolean, reflect: true },
+    renamingId: { state: true },
   };
 
   declare composerState: Sv3ComposerState;
@@ -201,6 +293,17 @@ export class SearchV3View extends JfElement {
   declare aiSnapshot: AiState | null;
   /** A response is in flight. Window-level, not session-level: the composer's slot is one slot. */
   declare streaming: boolean;
+  /**
+   * The sidebar's chosen width (tempdoc 822 Phase F5). Kept EXPANDED-only: collapsing renders the
+   * icon rail without touching this number, which is what makes "expand restores the width I chose"
+   * true by construction rather than by saving and re-applying it.
+   */
+  declare sidebarWidthPx: number;
+  declare sidebarCollapsed: boolean;
+  /** A drag is in progress — the transitions stand down so the panel tracks the pointer exactly. */
+  declare resizing: boolean;
+  /** The session whose title is being edited, or null. */
+  declare renamingId: string | null;
 
   private searchUnsubscribe: (() => void) | null = null;
   private aiUnsubscribe: (() => void) | null = null;
@@ -231,11 +334,16 @@ export class SearchV3View extends JfElement {
     this.sessions = SV3_SESSIONS_EMPTY;
     this.aiSnapshot = null;
     this.streaming = false;
+    this.sidebarWidthPx = SV3_SIDEBAR_DEFAULT_PX;
+    this.sidebarCollapsed = false;
+    this.resizing = false;
+    this.renamingId = null;
   }
 
   override connectedCallback(): void {
     super.connectedCallback();
     adoptSv3MorphSheet();
+    this.restoreSidebarPreferences();
     setSearchApiBase(this.apiBase || '');
     this.searchUnsubscribe = subscribeSearch((snapshot) => {
       this.searchSnapshot = snapshot;
@@ -281,6 +389,126 @@ export class SearchV3View extends JfElement {
    */
   protected override updated(changed: Map<string, unknown>): void {
     if (changed.has('apiBase')) setSearchApiBase(this.apiBase || '');
+    if (changed.has('sidebarWidthPx')) this.applySidebarWidth(this.sidebarWidthPx);
+  }
+
+  /**
+   * `--sidebar-width` is written as an INLINE custom property on the host — the donor's own mechanism
+   * (`AppSidebarLayout.tsx:164-169` / `ui/sidebar.tsx:503`), which is why the panel, the grip's
+   * position and the collapse animation all read one number instead of three. Inline beats the token
+   * sheet's `:host` declaration, so the 16rem default stays the value the window opens at when
+   * nothing has been chosen.
+   */
+  private applySidebarWidth(px: number): void {
+    this.style.setProperty('--sidebar-width', `${px}px`);
+  }
+
+  /**
+   * The box the sidebar and the main region actually share — the donor's `wrapper`, not the viewport.
+   *
+   * An UNMEASURABLE box (0, i.e. not laid out yet) yields no ceiling rather than a tiny one: an
+   * unknown width is not a narrow width, and treating it as one would collapse a remembered
+   * preference to the floor as a side effect of the window not having been painted. The FLOOR still
+   * applies — `clampSv3SidebarWidth` keeps it on the outside — so nothing illegal gets through.
+   */
+  private availableWidth(): number {
+    const measured = this.getBoundingClientRect().width;
+    return measured > 0 ? measured : Number.POSITIVE_INFINITY;
+  }
+
+  private restoreSidebarPreferences(): void {
+    this.sidebarCollapsed = readStoredSv3SidebarCollapsed();
+    this.sidebarWidthPx = resolveInitialSv3SidebarWidth(
+      readStoredSv3SidebarWidth(),
+      this.availableWidth(),
+    );
+    this.applySidebarWidth(this.sidebarWidthPx);
+  }
+
+  /** A chosen width is adopted AND remembered; the two are one act (818 L13). */
+  private adoptSidebarWidth(px: number): void {
+    this.sidebarWidthPx = px;
+    storeSv3SidebarWidth(px);
+  }
+
+  /**
+   * L13 / donor `resetSidebarWidth` (`AppSidebarLayout.tsx:150-157`): returning the boundary to
+   * automatic FORGETS the remembered width rather than storing the default over it — the reader
+   * withdrew a choice, and a window that stored "256" would reopen at 256 even after the default moved.
+   */
+  private resetSidebarWidth(): void {
+    forgetSv3SidebarWidth();
+    this.sidebarWidthPx = resolveInitialSv3SidebarWidth(null, this.availableWidth());
+  }
+
+  /**
+   * The donor's drag (`ui/sidebar.tsx:408-520`), ported: pointer capture so the gesture survives the
+   * pointer outrunning the 16px handle, the width written DIRECTLY during the move (a re-render per
+   * frame would re-project every session row), the clamp taken from the box measured AT DRAG TIME,
+   * and the chosen width adopted once at the end.
+   */
+  private onGripPointerDown(event: PointerEvent): void {
+    if (event.button !== 0 || this.sidebarCollapsed) return;
+    event.preventDefault();
+    const grip = event.currentTarget as HTMLElement;
+    grip.setPointerCapture?.(event.pointerId);
+    const available = this.availableWidth();
+    const startX = event.clientX;
+    const startWidth = this.sidebarWidthPx;
+    let width = startWidth;
+    this.resizing = true;
+    const move = (moved: PointerEvent): void => {
+      width = clampSv3SidebarWidth(startWidth + (moved.clientX - startX), available);
+      this.applySidebarWidth(width);
+    };
+    const end = (): void => {
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', end);
+      grip.removeEventListener('pointercancel', end);
+      this.resizing = false;
+      this.adoptSidebarWidth(width);
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
+  }
+
+  /**
+   * The keyboard half of the SAME boundary — same clamp, same floor, one nudge at a time. The donor
+   * has no equivalent (its rail is `tabIndex={-1}`); this is `views/search-v2`'s answer, and the
+   * a11y contract's: a boundary a pointer can move must be movable without one.
+   */
+  private onGripKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Home' || event.key === 'Escape') {
+      event.preventDefault();
+      this.resetSidebarWidth();
+      return;
+    }
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const step = event.key === 'ArrowRight' ? SV3_SIDEBAR_KEY_STEP_PX : -SV3_SIDEBAR_KEY_STEP_PX;
+    this.adoptSidebarWidth(
+      clampSv3SidebarWidth(this.sidebarWidthPx + step, this.availableWidth()),
+    );
+  }
+
+  /**
+   * A click on the grip EXPANDS a collapsed panel and otherwise does nothing — the donor's own rule
+   * (`ui/sidebar.tsx:540-556`: the rail toggles exactly when it cannot resize). No drag-suppression
+   * latch is needed on this side of it, because a collapsed panel is the only state in which the
+   * click does anything and {@link onGripPointerDown} refuses to start a drag there.
+   */
+  private onGripClick(): void {
+    if (this.sidebarCollapsed) this.setSidebarCollapsed(false);
+  }
+
+  private setSidebarCollapsed(collapsed: boolean): void {
+    this.sidebarCollapsed = collapsed;
+    storeSv3SidebarCollapsed(collapsed);
+  }
+
+  private onSidebarToggle(): void {
+    this.setSidebarCollapsed(!this.sidebarCollapsed);
   }
 
   private readonly onHostKeydown = (event: KeyboardEvent): void => {
@@ -733,8 +961,30 @@ export class SearchV3View extends JfElement {
    */
   private onSessionSelect(event: Event): void {
     const id = (event as CustomEvent<Sv3SessionSelect>).detail?.id ?? '';
+    // An edit in another row is DROPPED rather than committed, the donor's rule
+    // (`ChatHeader.tsx:143-149`): navigating away must not write text the reader walked away from.
+    this.renamingId = null;
     this.sessions = focusSession(this.sessions, id, Date.now());
     void this.setComposerState('docked');
+  }
+
+  /**
+   * The reader names a conversation (tempdoc 822 Phase F5). The three phases meet here because the
+   * window owns the list: the row raises intent, the panel says which row, and only this decides.
+   * `commit` routes through `renameSession`, so an empty title reverts by the pure module's rule
+   * rather than by a check duplicated at the view.
+   */
+  private onSessionRename(event: Event): void {
+    const detail = (event as CustomEvent<Sv3SessionRename>).detail;
+    if (detail === undefined) return;
+    if (detail.phase === 'start') {
+      this.renamingId = detail.id;
+      return;
+    }
+    this.renamingId = null;
+    if (detail.phase === 'commit') {
+      this.sessions = renameSession(this.sessions, detail.id, detail.title ?? '');
+    }
   }
 
   /**
@@ -755,6 +1005,7 @@ export class SearchV3View extends JfElement {
    */
   private onSessionNew(): void {
     this.abortAsk();
+    this.renamingId = null;
     this.sessions = startNewSession(this.sessions);
     this.asked = false;
     this.composer?.clearDraft();
@@ -833,11 +1084,26 @@ export class SearchV3View extends JfElement {
     return html`
       <jf-sv3-sidebar
         .groups=${sessionGroups}
+        .renamingId=${this.renamingId}
+        ?collapsed=${this.sidebarCollapsed}
         data-testid="sv3-sidebar"
         @sv3-session-select=${this.onSessionSelect}
         @sv3-session-pin=${this.onSessionPin}
         @sv3-session-new=${this.onSessionNew}
+        @sv3-session-rename=${this.onSessionRename}
+        @sv3-sidebar-toggle=${this.onSidebarToggle}
       ></jf-sv3-sidebar>
+      <button
+        type="button"
+        class="sidebar-grip"
+        data-testid="sv3-sidebar-grip"
+        aria-label=${SIDEBAR_GRIP_LABEL}
+        title=${SIDEBAR_GRIP_LABEL}
+        @pointerdown=${this.onGripPointerDown}
+        @keydown=${this.onGripKeydown}
+        @click=${this.onGripClick}
+        @dblclick=${this.resetSidebarWidth}
+      ></button>
       <div
         class="column"
         data-testid="sv3-column"

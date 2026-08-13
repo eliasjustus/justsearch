@@ -153,6 +153,10 @@ export const sv3Tokens = css`
        apart, because they read the same names. Enforced by sv3-tokens.test.ts. */
     --control-radius: 0.5rem;
     --sidebar-width: 16rem;
+    /* The collapsed ICON rail (donor ui/sidebar.tsx:29 — SIDEBAR_WIDTH_ICON = 3rem). Its own token
+       rather than a literal because the grip's position reads it too, and a boundary drawn somewhere
+       other than where the panel ends is the one drift this file exists to prevent. */
+    --sidebar-width-icon: 3rem;
     --sidebar-content-inset: 0.5rem;
     --sidebar-control-gap: 0.5rem;
     --sidebar-row-content-inset: 0.625rem;

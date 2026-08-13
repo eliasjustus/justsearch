@@ -383,6 +383,27 @@ are re-creatable from the log's descriptions.
   memory. Run ended by stack stop (dev throwaway). Residuals → F3: shelf model,
   presence/recovery, cross-surface slot honesty; issuance-register decision still
   open (owner/orchestrator).
+- 2026-08-13 — **Slice F5 implemented + live-verified (backendless — no stack tier
+  needed for chrome mechanics).** Sidebar mechanics per donor: drag-resize
+  (min 208 / default 256 / max = box − 640; 16px grip hit with 2px line — worker
+  corrected the brief's 4px; pointer-capture + rAF, persisted at pointer-up;
+  keyboard arrows mined from v2's grips since the donor rail is tabIndex=-1;
+  double-click FORGETS the stored width per L13), icon-collapse (48px rail,
+  200ms, glyph+status stay — act-now dot survives collapse, probed; width
+  untouched by collapse so expand restores the chosen width structurally),
+  rename (donor's real mechanics found: double-click guarded inline input,
+  Enter/Escape/blur-latch, one shared commit rule ported as resolveSv3Rename;
+  rename beats first-question titling, probed). Persistence:
+  justsearch.searchV3.sidebar.{width,collapsed}.v1 localStorage — chrome
+  PREFERENCE, explicitly not session data (Phase-D boundary comment).
+  DELIBERATE DEVIATION, live-proven: clamp derives from the WINDOW HOST box,
+  not the viewport (host 1516 vs viewport 1568 — the donor's rule would have
+  let main drop to 588; ours pins main at exactly 640). 4748 tests / 17 probes /
+  gates green / zero page errors; jitter check: rects byte-identical on grip
+  hover. Residuals: tooltip primitive still deferred (title+aria-label);
+  chevron glyphs (no panel-left in shared set); toggle in sidebar header (topbar
+  move = window-grid change, out of scope); narrow-window re-clamp binds at next
+  gesture (donor parity).
 - 2026-08-13 — **Slice F4 implemented + full-tier verified.** Response rendering +
   citations on SHARED authorities: `jf-markdown-block` mounted per turn (single
   mount, streaming-first — the block's own mend+rAF path; a test forbids

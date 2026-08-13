@@ -21,7 +21,7 @@
  *
  * Side-effect registers <jf-sv3-sidebar>.
  */
-import { html, css, type TemplateResult } from 'lit';
+import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
 import { icon } from '../../components/Icon.js';
 import { sv3Shared } from './sv3-shared-styles.js';
@@ -47,7 +47,26 @@ export interface Sv3SessionPin {
 /** Asks the window to start a fresh session — back to the hero, previous sessions kept. */
 export const SV3_SESSION_NEW = 'sv3-session-new';
 
+/** Asks the window to collapse the panel to its icon rail, or to put it back (Phase F5). */
+export const SV3_SIDEBAR_TOGGLE = 'sv3-sidebar-toggle';
+
+/**
+ * The rename triad, re-raised with the row's id attached (Phase F5). The row knows it is being
+ * renamed; only the panel knows WHICH row that is.
+ */
+export const SV3_SESSION_RENAME = 'sv3-session-rename';
+
+export interface Sv3SessionRename {
+  readonly id: string;
+  /** The committed title, or null for "start editing this row" / "cancel". */
+  readonly title: string | null;
+  readonly phase: 'start' | 'commit' | 'cancel';
+}
+
 const NEW_SESSION_LABEL = 'New search';
+
+/** One name for both directions — the donor's own (`AppSidebarLayout.tsx:116`), plus `aria-pressed`. */
+const COLLAPSE_LABEL = 'Toggle sidebar';
 
 /** Donor §3.2's menu-button glyph size (`size-4`), which is what the header control is. */
 const NEW_SESSION_GLYPH_SIZE = 16;
@@ -75,6 +94,29 @@ export class Sv3Sidebar extends JfElement {
         font-size: var(--font-size-sv3-xs);
         font-weight: 500;
         color: var(--sidebar-muted-foreground);
+        /* The donor's icon-mode treatment of a group label, verbatim (ui/sidebar.tsx:730 —
+           -mt-8 opacity-0, over transition-[margin,opacity] duration-200 ease-linear): it fades AND
+           pulls its own height back out of the column, so the rows close up without a reflow step. */
+        transition:
+          margin-top var(--duration-sv3-layout) var(--ease-sv3-linear),
+          opacity var(--duration-sv3-layout) var(--ease-sv3-linear);
+      }
+      :host([collapsed]) .group-label {
+        margin-top: calc(-1 * var(--space-8));
+        opacity: 0;
+        pointer-events: none;
+      }
+      /* The header is a row that becomes a stack: two 32px squares on the icon rail, which is the
+         only shape the donor's size-8 icon-mode control fits into at 48px minus two 8px insets. */
+      .header {
+        display: flex;
+        align-items: center;
+        gap: var(--space-1);
+        margin-bottom: var(--space-1);
+      }
+      :host([collapsed]) .header {
+        flex-direction: column;
+        gap: var(--space-1);
       }
       .groups {
         display: flex;
@@ -89,13 +131,12 @@ export class Sv3Sidebar extends JfElement {
       }
       /* Donor §3.2's menu-button DEFAULT rung (h-8, --control-radius, the row content inset,
          text-sm) — a header control is a menu button, not a session row (§6.1's 36px). */
-      button.new-session {
+      button.new-session,
+      button.collapse-toggle {
         display: flex;
         align-items: center;
         gap: var(--sidebar-control-gap);
-        width: 100%;
         height: var(--space-8);
-        margin-bottom: var(--space-1);
         padding-inline: var(--sidebar-row-content-inset);
         padding-block: 0;
         border: 0;
@@ -110,20 +151,49 @@ export class Sv3Sidebar extends JfElement {
         flex-shrink: 0;
         transition: background-color var(--duration-sv3-micro) var(--ease-sv3-enter);
       }
-      button.new-session:hover {
+      button.new-session {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      button.collapse-toggle {
+        justify-content: center;
+        inline-size: var(--space-8);
+        padding-inline: 0;
+        flex: 0 0 auto;
+      }
+      button.new-session:hover,
+      button.collapse-toggle:hover {
         background: var(--sidebar-row-hover);
       }
-      button.new-session:focus-visible {
+      button.new-session:focus-visible,
+      button.collapse-toggle:focus-visible {
         outline: 2px solid var(--ring);
         outline-offset: -2px;
       }
       /* Donor §6.3 technique 4: the glyph dims while the label stays full contrast. */
-      button.new-session svg {
+      button.new-session svg,
+      button.collapse-toggle svg {
         flex-shrink: 0;
         color: var(--icon-muted);
       }
+      /* The donor's icon-mode control: a 32px square with the label truncated away
+         (ui/sidebar.tsx:798 — size-8 plus [&>span:last-child]:truncate). */
+      :host([collapsed]) button.new-session {
+        flex: 0 0 auto;
+        inline-size: var(--space-8);
+        justify-content: center;
+        padding-inline: 0;
+      }
+      :host([collapsed]) button.new-session span {
+        display: none;
+      }
+      :host([collapsed]) jf-sv3-empty {
+        display: none;
+      }
       @media (prefers-reduced-motion: reduce) {
-        button.new-session {
+        button.new-session,
+        button.collapse-toggle,
+        .group-label {
           transition: none;
         }
       }
@@ -132,14 +202,22 @@ export class Sv3Sidebar extends JfElement {
 
   static properties = {
     groups: { attribute: false },
+    collapsed: { type: Boolean, reflect: true },
+    renamingId: { attribute: false },
   };
 
   /** The window's projected session groups; empty means nothing has been searched in this window. */
   declare groups: readonly Sv3SessionGroup[];
+  /** The panel is on its 3rem icon rail (Phase F5). The WIDTH is the window's — this is the mode. */
+  declare collapsed: boolean;
+  /** Which row is being renamed, or null. At most one: an edit is where the reader's attention is. */
+  declare renamingId: string | null;
 
   constructor() {
     super();
     this.groups = [];
+    this.collapsed = false;
+    this.renamingId = null;
   }
 
   private startNew(): void {
@@ -168,17 +246,53 @@ export class Sv3Sidebar extends JfElement {
     );
   }
 
+  private toggleCollapsed(): void {
+    this.dispatchEvent(new CustomEvent(SV3_SIDEBAR_TOGGLE, { bubbles: true, composed: true }));
+  }
+
+  /** The row's rename intent, named. The panel supplies the id and decides nothing else. */
+  private rename(id: string, phase: Sv3SessionRename['phase'], event: Event): void {
+    event.stopPropagation();
+    const title =
+      phase === 'commit' ? ((event as CustomEvent<{ title: string }>).detail?.title ?? '') : null;
+    this.dispatchEvent(
+      new CustomEvent<Sv3SessionRename>(SV3_SESSION_RENAME, {
+        detail: { id, phase, title },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
   render(): TemplateResult {
     return html`
-      <button
-        type="button"
-        class="new-session"
-        data-testid="sv3-sidebar-new"
-        @click=${this.startNew}
-      >
-        ${icon({ name: 'search', size: NEW_SESSION_GLYPH_SIZE })}
-        <span>${NEW_SESSION_LABEL}</span>
-      </button>
+      <div class="header">
+        <button
+          type="button"
+          class="new-session"
+          title=${this.collapsed ? NEW_SESSION_LABEL : nothing}
+          aria-label=${this.collapsed ? NEW_SESSION_LABEL : nothing}
+          data-testid="sv3-sidebar-new"
+          @click=${this.startNew}
+        >
+          ${icon({ name: 'search', size: NEW_SESSION_GLYPH_SIZE })}
+          <span>${NEW_SESSION_LABEL}</span>
+        </button>
+        <button
+          type="button"
+          class="collapse-toggle"
+          aria-pressed=${this.collapsed ? 'true' : 'false'}
+          aria-label=${COLLAPSE_LABEL}
+          title=${COLLAPSE_LABEL}
+          data-testid="sv3-sidebar-collapse"
+          @click=${this.toggleCollapsed}
+        >
+          ${icon({
+            name: this.collapsed ? 'chevron-right' : 'chevron-left',
+            size: NEW_SESSION_GLYPH_SIZE,
+          })}
+        </button>
+      </div>
       ${this.groups.length === 0
         ? html`
             <jf-sv3-empty
@@ -207,8 +321,16 @@ export class Sv3Sidebar extends JfElement {
                             ?active=${row.active}
                             ?pinned=${row.pinned}
                             ?unread=${row.unread}
+                            ?compact=${this.collapsed}
+                            ?renaming=${this.renamingId === row.id}
                             @click=${() => this.select(row.id)}
                             @sv3-session-pin-toggle=${(event: Event) => this.pin(row.id, event)}
+                            @sv3-session-rename-start=${(event: Event) =>
+                              this.rename(row.id, 'start', event)}
+                            @sv3-session-rename-commit=${(event: Event) =>
+                              this.rename(row.id, 'commit', event)}
+                            @sv3-session-rename-cancel=${(event: Event) =>
+                              this.rename(row.id, 'cancel', event)}
                           ></jf-sv3-session-row>
                         `,
                       )}

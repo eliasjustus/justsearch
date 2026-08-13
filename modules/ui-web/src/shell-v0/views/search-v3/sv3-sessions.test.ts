@@ -16,6 +16,8 @@ import {
   focusSession,
   latestTurnRef,
   projectSv3Sessions,
+  renameSession,
+  resolveSv3Rename,
   sessionById,
   setTurnEvidence,
   settleAgentTurn,
@@ -535,6 +537,62 @@ describe('a turn accumulates its answer and reaches exactly one terminal', () =>
     // Claiming the older session shows ITS transcript — the list is per-session, not per-window.
     const older = focusSession(two, two.sessions[1]?.id ?? '', T0);
     expect(activeTurns(older).map((t) => t.question)).toEqual(['first']);
+  });
+});
+
+describe('renaming a conversation (tempdoc 822 Phase F5)', () => {
+  const opened = (): Sv3SessionList => submitInSession(SV3_SESSIONS_EMPTY, 'northfield lease', T0);
+  const id = (list: Sv3SessionList): string => list.sessions[0]?.id ?? '';
+
+  it('resolves an edit into commit / revert / noop, the donor rule', () => {
+    // Donor ChatHeader.tsx:80-88 — trim, reject empty, skip an unchanged title.
+    expect(resolveSv3Rename('  Lease terms  ', 'northfield lease')).toEqual({
+      action: 'commit',
+      title: 'Lease terms',
+    });
+    expect(resolveSv3Rename('   ', 'northfield lease')).toEqual({ action: 'reject-empty' });
+    expect(resolveSv3Rename('northfield lease', 'northfield lease')).toEqual({ action: 'noop' });
+    expect(resolveSv3Rename(' northfield lease ', 'northfield lease')).toEqual({ action: 'noop' });
+  });
+
+  it('commits a trimmed title onto the named session and nothing else', () => {
+    const list = renameSession(opened(), id(opened()), '  Lease terms  ');
+    expect(list.sessions[0]?.title).toBe('Lease terms');
+    // The TURN keeps the question it was actually asked: a title is a label, not a rewrite of history.
+    expect(list.sessions[0]?.turns[0]?.question).toBe('northfield lease');
+  });
+
+  it('reverts an empty title rather than leaving a nameless row', () => {
+    const before = opened();
+    expect(renameSession(before, id(before), '   ')).toBe(before);
+    expect(renameSession(before, id(before), '')).toBe(before);
+  });
+
+  it('changes nothing for an unchanged title or an unknown id', () => {
+    const before = opened();
+    expect(renameSession(before, id(before), 'northfield lease')).toBe(before);
+    expect(renameSession(before, 'sv3-session-999', 'Lease terms')).toBe(before);
+  });
+
+  it('KEEPS the chosen title when later turns arrive', () => {
+    // Rename wins over the opening-question title by construction: nothing re-derives `title`.
+    const renamed = renameSession(opened(), 'sv3-session-1', 'Lease terms');
+    const later = submitInSession(renamed, 'and the renewal option?', T0 + MINUTE);
+    expect(later.sessions[0]?.title).toBe('Lease terms');
+    expect(later.sessions[0]?.turns).toHaveLength(2);
+    // And the sidebar shows the chosen name, not the question that opened the conversation.
+    expect(flatRows(projectSv3Sessions(later, rest)).map((row) => row.label)).toEqual([
+      'Lease terms',
+    ]);
+  });
+
+  it('renames one conversation without touching its neighbours', () => {
+    const first = submitInSession(SV3_SESSIONS_EMPTY, 'first', T0);
+    const two = submitInSession(startNewSession(first), 'second', T0 + MINUTE);
+    const renamed = renameSession(two, 'sv3-session-1', 'Renamed first');
+    expect(renamed.sessions.map((s) => s.title)).toEqual(['second', 'Renamed first']);
+    // A rename is not a reorder either: creation order is render order forever.
+    expect(renamed.sessions.map((s) => s.id)).toEqual(two.sessions.map((s) => s.id));
   });
 });
 

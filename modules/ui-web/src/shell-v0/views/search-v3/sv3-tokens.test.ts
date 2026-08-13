@@ -77,6 +77,8 @@ describe('the geometry tokens the window is built from', () => {
       '--floating-content-inset: 0.75rem',
       '--workspace-topbar-height: 52px',
       '--sidebar-width: 16rem',
+      // Donor ui/sidebar.tsx:29 — the collapsed icon rail (tempdoc 822 Phase F5).
+      '--sidebar-width-icon: 3rem',
       '--glass-blur: 16px',
       '--glass-opacity: 80%',
       '--glass-saturation: 1.08',
@@ -172,6 +174,17 @@ describe('every region reads the tokens rather than re-hardcoding them', () => {
     expect(styles).toContain('flex: 0 0 var(--sidebar-width)');
     expect(styles).toContain('width: var(--sidebar-width)');
     expect(styles).not.toContain('16rem');
+  });
+
+  it('the collapsed rail and the grip that sits on it read the SAME boundary token', () => {
+    // The one drift the geometry-token law exists to prevent: a panel that ends at 48px with a grip
+    // drawn somewhere else. Both the collapsed width and the grip's collapsed position are the token.
+    const styles = styleTextOf(SearchV3View);
+    expect(styles).toContain('flex-basis: var(--sidebar-width-icon)');
+    expect(styles).toContain('left: var(--sidebar-width-icon)');
+    expect(styles).toContain('left: var(--sidebar-width)');
+    expect(styles).not.toContain('3rem');
+    expect(styles).not.toContain('48px');
   });
 
   it('the composer reads the floating inset, the surface ladder and the pad compensation', () => {
@@ -355,9 +368,14 @@ describe('the session row spends one fill and three colours, by construction', (
    * donor's never-yields exception.
    */
   it('swaps the status for the action on hover AND on keyboard focus, out of flow', () => {
-    const yielders = [...styles.matchAll(/[^\n]*\.slot-content[^\n]*/g)]
-      .map((m) => m[0] ?? '')
-      .filter((selector) => selector.includes(':host('));
+    // Selectors are read per RULE with their whitespace normalised, not per line: a selector long
+    // enough to wrap (the keyboard halves both are) would otherwise fall out of a line-based scrape
+    // and take its never-yields guard with it — silently, which is the failure this case is for.
+    const yielders = styles
+      .split('}')
+      .map((block) => block.slice(0, block.indexOf('{')).replace(/\s+/g, ' ').trim())
+      .filter((selector) => selector.includes('.slot-content') && selector.includes(':host('));
+    expect(yielders.length).toBeGreaterThanOrEqual(3);
     // Two ways in: the pointer and the keyboard. A hover-only swap is unreachable by keyboard.
     expect(yielders.some((s) => s.includes(':hover'))).toBe(true);
     expect(yielders.some((s) => s.includes(':focus-visible'))).toBe(true);
@@ -370,7 +388,7 @@ describe('the session row spends one fill and three colours, by construction', (
       );
     }
     // The hidden state leaves the FLOW, which is what lets the title reclaim the width.
-    const yielded = ruleFor(":host(:hover:not([status='act-now'])");
+    const yielded = ruleFor(":host(:hover:not([compact]):not([status='act-now'])");
     expect(yielded).toContain('position: absolute');
     expect(yielded).toContain('opacity: 0');
   });

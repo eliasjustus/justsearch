@@ -41,6 +41,18 @@ const STATUS_LABEL: Record<Exclude<Sv3RowStatus, 'resting'>, string> = {
 /** The row asks to be pinned or unpinned; the sidebar names which row, the window owns the list. */
 export const SV3_SESSION_PIN_TOGGLE = 'sv3-session-pin-toggle';
 
+/**
+ * The rename triad (tempdoc 822 Phase F5). The row raises intent and holds no title of its own: the
+ * one title lives in `sv3-sessions.ts`, so an edit in flight cannot become a second copy of it.
+ */
+export const SV3_SESSION_RENAME_START = 'sv3-session-rename-start';
+export const SV3_SESSION_RENAME_COMMIT = 'sv3-session-rename-commit';
+export const SV3_SESSION_RENAME_CANCEL = 'sv3-session-rename-cancel';
+
+export interface Sv3SessionRenameCommit {
+  readonly title: string;
+}
+
 /** Lucide "bookmark" — the shared icon set's pin glyph, at the slim row's control size. */
 const PIN_GLYPH_SIZE = 14;
 
@@ -184,19 +196,21 @@ export class Sv3SessionRow extends JfElement {
          that nesting as a syntax error, and an invalid member takes its whole selector list down
          with it, which is how the first cut of this swap passed its CSS-text unit tests while doing
          nothing at all in the browser (live-measured, 822 F3). */
-      :host(:hover:not([status='act-now']):not([status='broken'])) .slot-content {
+      :host(:hover:not([compact]):not([status='act-now']):not([status='broken'])) .slot-content {
         position: absolute;
         inset-inline-end: 0;
         opacity: 0;
       }
       /* Keyboard, in two halves: the row itself focused, and the action focused. The pin is a
          FOLLOWING SIBLING of the row button, so the second half is a :has() on a plain element. */
-      :host(:not([status='act-now']):not([status='broken'])) button.row:focus-visible .slot-content {
+      :host(:not([compact]):not([status='act-now']):not([status='broken']))
+        button.row:focus-visible
+        .slot-content {
         position: absolute;
         inset-inline-end: 0;
         opacity: 0;
       }
-      :host(:not([status='act-now']):not([status='broken']))
+      :host(:not([compact]):not([status='act-now']):not([status='broken']))
         button.row:has(~ button.pin:focus-visible)
         .slot-content {
         position: absolute;
@@ -294,6 +308,76 @@ export class Sv3SessionRow extends JfElement {
         background: color-mix(in srgb, var(--warning) 60%, transparent);
       }
 
+      /* ── COMPACT: the row on the donor's 3rem icon rail (tempdoc 822 Phase F5) ───────────────
+         The donor's icon mode squares the menu button (ui/sidebar.tsx:798 —
+         group-data-[collapsible=icon]:size-8 plus its content inset) and HIDES the row's action
+         (:875 — group-data-[collapsible=icon]:hidden on the menu action). The label goes with them:
+         48px minus the panel's two 8px insets is not a place a title can be read.
+
+         WHAT DOES NOT GO: the status dot. Act-now means the run is blocked on the reader and broken
+         means it failed — the same two facts the never-yields exception above refuses to let a hover
+         take away, and collapsing the rail is no better a reason than hovering was. So the slot
+         leaves the flow and becomes a corner badge on the square, and only the RESTING slot's
+         timestamp is dropped (it is the one thing here that spends no colour and claims nothing). */
+      :host([compact]) button.row {
+        inline-size: var(--space-8);
+        /* The rail's 48px is a TOTAL: its 8px insets and 1px border come out of it (border-box), so
+           the content column is 31px and the donor's 32px square would overflow it by one pixel.
+           The square is still the declared size; the column is what bounds it. */
+        max-inline-size: 100%;
+        block-size: var(--space-8);
+        padding-inline: 0;
+        justify-content: center;
+        contain-intrinsic-size: auto var(--space-8);
+      }
+      :host([compact]) .row-label,
+      :host([compact]) .meta,
+      :host([compact]) button.pin {
+        display: none;
+      }
+      :host([compact]) .status-slot {
+        position: absolute;
+        inset-block-start: 0;
+        inset-inline-end: 0;
+        min-inline-size: 0;
+        block-size: auto;
+        padding-inline-end: 0;
+      }
+
+      /* ── RENAMING: the donor's inline input, in the row's own box ────────────────────────────
+         The donor swaps its title span for an autoFocused input in place (Sidebar.tsx:1042-1054).
+         Ours swaps the whole ROW ELEMENT with it, because our row is a native button and an input
+         inside a button is invalid content — and because a row that is being renamed is not a
+         navigation target: the reader is editing it, not going into it. */
+      .row-static {
+        display: flex;
+        align-items: center;
+        gap: var(--sidebar-control-gap);
+        width: 100%;
+        height: var(--space-9);
+        padding-inline: var(--sidebar-row-content-inset);
+        padding-block: 0.375rem;
+        border-radius: var(--control-radius);
+        background: var(--sidebar-row-active);
+        overflow: hidden;
+      }
+      input.rename {
+        min-width: 0;
+        flex: 1 1 auto;
+        border: 1px solid var(--input);
+        border-radius: var(--radius-sm);
+        padding-inline: var(--space-1);
+        background: var(--card);
+        color: var(--card-foreground);
+        font-family: inherit;
+        font-size: var(--font-size-sv3-sm);
+        font-weight: 500;
+        outline: none;
+      }
+      input.rename:focus {
+        border-color: var(--foreground);
+      }
+
       @media (prefers-reduced-motion: reduce) {
         button.row,
         button.pin,
@@ -315,6 +399,8 @@ export class Sv3SessionRow extends JfElement {
     unread: { type: Boolean, reflect: true },
     inflight: { type: Boolean, reflect: true },
     pinned: { type: Boolean, reflect: true },
+    compact: { type: Boolean, reflect: true },
+    renaming: { type: Boolean, reflect: true },
   };
 
   declare label: string;
@@ -326,6 +412,10 @@ export class Sv3SessionRow extends JfElement {
   declare unread: boolean;
   declare inflight: boolean;
   declare pinned: boolean;
+  /** The sidebar is on its collapsed icon rail; the row is a 32px square. */
+  declare compact: boolean;
+  /** The reader is editing this row's title (tempdoc 822 Phase F5). */
+  declare renaming: boolean;
 
   constructor() {
     super();
@@ -338,6 +428,8 @@ export class Sv3SessionRow extends JfElement {
     this.unread = false;
     this.inflight = false;
     this.pinned = false;
+    this.compact = false;
+    this.renaming = false;
   }
 
   /**
@@ -349,14 +441,115 @@ export class Sv3SessionRow extends JfElement {
     this.dispatchEvent(new CustomEvent(SV3_SESSION_PIN_TOGGLE, { bubbles: true, composed: true }));
   }
 
+  /**
+   * The donor's rename trigger: a DOUBLE-CLICK on the row (`Sidebar.tsx:919-929`), with its two
+   * guards — a modified double-click is a selection gesture, and a double-click that landed on a
+   * control inside the row belongs to that control.
+   */
+  private onRowDoubleClick(event: MouseEvent): void {
+    if (this.renaming || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if ((event.target as HTMLElement | null)?.closest('button.pin') !== null) return;
+    event.preventDefault();
+    this.dispatchEvent(
+      new CustomEvent(SV3_SESSION_RENAME_START, { bubbles: true, composed: true }),
+    );
+  }
+
+  /**
+   * The keyboard half of the same trigger. The donor reaches rename by a row MENU it has and this
+   * window does not (`Sidebar.tsx:3016-3018`), so the gesture is F2 — the platform convention for
+   * renaming the focused item, and the only way a pointerless reader gets to the affordance at all.
+   */
+  private onRowKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'F2' || this.renaming) return;
+    event.preventDefault();
+    this.dispatchEvent(
+      new CustomEvent(SV3_SESSION_RENAME_START, { bubbles: true, composed: true }),
+    );
+  }
+
+  /** Enter commits, Escape cancels (donor `Sidebar.tsx:934-948`). */
+  private onRenameKeydown(event: KeyboardEvent): void {
+    // The row list is inside the window's own key handling; an edit's keys are the edit's alone.
+    event.stopPropagation();
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      this.commitRename(event.currentTarget as HTMLInputElement);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      this.renameCommitted = true;
+      this.dispatchEvent(
+        new CustomEvent(SV3_SESSION_RENAME_CANCEL, { bubbles: true, composed: true }),
+      );
+    }
+  }
+
+  /** Blur commits what is there, unless a key already settled it (donor `Sidebar.tsx:949-953`). */
+  private onRenameBlur(event: FocusEvent): void {
+    if (this.renameCommitted) return;
+    this.commitRename(event.currentTarget as HTMLInputElement);
+  }
+
+  /** Latch so the blur that FOLLOWS an Enter or an Escape does not commit a second time. */
+  private renameCommitted = false;
+
+  private commitRename(input: HTMLInputElement): void {
+    this.renameCommitted = true;
+    this.dispatchEvent(
+      new CustomEvent<Sv3SessionRenameCommit>(SV3_SESSION_RENAME_COMMIT, {
+        detail: { title: input.value },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  protected override updated(changed: Map<string, unknown>): void {
+    if (!changed.has('renaming')) return;
+    if (!this.renaming) return;
+    this.renameCommitted = false;
+    // The donor's `autoFocus` + `onFocus → select()` (`Sidebar.tsx:1044,1048`): the edit opens with
+    // the old title selected, so typing replaces it and Escape still has something to restore to.
+    const input = this.shadowRoot?.querySelector<HTMLInputElement>('input.rename');
+    input?.focus();
+    input?.select();
+  }
+
+  /**
+   * The row while it is being edited. The input's value is UNCONTROLLED (`.value` set once, on the
+   * first render of the edit) — the committed title is the session's, and a keystroke round-tripping
+   * through the window would put the caret at the mercy of a re-render.
+   */
+  private renameRow(): TemplateResult {
+    return html`
+      <div class="row-static" data-testid="sv3-session-row-renaming">
+        <span class="glyph" aria-hidden="true"></span>
+        <input
+          class="rename"
+          type="text"
+          aria-label="Conversation title"
+          .value=${this.label}
+          data-testid="sv3-session-row-rename-input"
+          @keydown=${this.onRenameKeydown}
+          @blur=${this.onRenameBlur}
+        />
+      </div>
+    `;
+  }
+
   render(): TemplateResult {
+    if (this.renaming) return this.renameRow();
     const colored = this.status !== 'resting';
     return html`
       <button
         type="button"
         class="row"
         aria-current=${this.active ? 'true' : nothing}
+        aria-label=${this.compact && this.label !== '' ? this.label : nothing}
+        title=${this.compact && this.label !== '' ? this.label : nothing}
         data-testid="sv3-session-row-button"
+        @dblclick=${this.onRowDoubleClick}
+        @keydown=${this.onRowKeydown}
       >
         <span class="glyph" aria-hidden="true"></span>
         <span class="row-label">${this.label}</span>
