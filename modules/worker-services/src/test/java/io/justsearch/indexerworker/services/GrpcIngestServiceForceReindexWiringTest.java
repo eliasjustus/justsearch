@@ -12,6 +12,8 @@ import io.justsearch.indexerworker.ingest.IngestionOutcome;
 import io.justsearch.indexerworker.loop.IndexingLoop;
 import io.justsearch.indexerworker.queue.JobQueue;
 import io.justsearch.indexerworker.util.PathNormalizer;
+import io.justsearch.ipc.BatchRequest;
+import io.justsearch.ipc.BatchResponse;
 import io.justsearch.ipc.ScanMode;
 import io.justsearch.ipc.ScanRootProgress;
 import io.justsearch.ipc.ScanRootRequest;
@@ -69,6 +71,27 @@ final class GrpcIngestServiceForceReindexWiringTest {
         });
   }
 
+  private void submit(GrpcIngestService svc, Path file, boolean force) {
+    svc.submitBatch(
+        BatchRequest.newBuilder().addFilePaths(file.toString()).setForceReindex(force).build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(BatchResponse value) {
+            // the response shape is not under test here
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            throw new AssertionError("unexpected onError", t);
+          }
+
+          @Override
+          public void onCompleted() {
+            // no-op
+          }
+        });
+  }
+
   @Test
   @DisplayName("a FORCE_REINDEX scan marks its admitted paths through IndexingLoop.markForced")
   void forceReindexScanReachesMarkForced() throws Exception {
@@ -82,9 +105,45 @@ final class GrpcIngestServiceForceReindexWiringTest {
     ArgumentCaptor<Collection<String>> captor = ArgumentCaptor.forClass(Collection.class);
     verify(loop).markForced(captor.capture());
     assertEquals(
-        Set.of(PathNormalizer.normalizePath(a.toAbsolutePath().normalize().toString())),
+        Set.of(PathNormalizer.normalizeKey(a)),
         Set.copyOf(captor.getValue()),
         "the key must be the one JobBatchExtractor looks the path up by");
+  }
+
+  @Test
+  @DisplayName("submitBatch(force_reindex) marks the envelope's key, not a hand-rolled variant")
+  void submitBatchForceReindexMarksTheEnvelopeKey() throws Exception {
+    Path file = Files.writeString(tempDir.resolve("b.txt"), "beta");
+    IndexingLoop loop = mock(IndexingLoop.class);
+
+    submit(serviceWith(new RecordingQueue(), loop), file, true);
+
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<Collection<String>> captor = ArgumentCaptor.forClass(Collection.class);
+    verify(loop).markForced(captor.capture());
+    // Tempdoc 821 §P/P3: the batch API's force path used to spell its own derivation here
+    // (absolutize, never normalize). Binding the seam to PathNormalizer#normalizeKey is what keeps
+    // it agreeing with FileFreshnessSnapshot.capture — the only producer of the key the extractor
+    // looks up. JobBatchExtractorForcedPathTest carries the behavioural arms.
+    assertEquals(
+        Set.of(PathNormalizer.normalizeKey(file)),
+        Set.copyOf(captor.getValue()),
+        "the key must be the one JobBatchExtractor looks the path up by");
+  }
+
+  @Test
+  @DisplayName("submitBatch without force_reindex marks nothing")
+  void submitBatchWithoutForceReindexMarksNothing() throws Exception {
+    Path file = Files.writeString(tempDir.resolve("b.txt"), "beta");
+    IndexingLoop loop = mock(IndexingLoop.class);
+    RecordingQueue queue = new RecordingQueue();
+
+    submit(serviceWith(queue, loop), file, false);
+
+    // Precision: the batch WAS accepted, so "nothing marked" is the flag gate firing rather than a
+    // rejected path.
+    assertEquals(1, queue.enqueuedPaths.size(), "the ordinary batch still admits the file");
+    verify(loop, never()).markForced(any());
   }
 
   @Test

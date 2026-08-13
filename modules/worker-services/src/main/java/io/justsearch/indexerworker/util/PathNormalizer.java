@@ -3,6 +3,7 @@ package io.justsearch.indexerworker.util;
 
 import io.justsearch.configuration.PlatformPaths;
 import java.io.File;
+import java.nio.file.Path;
 import java.util.Locale;
 
 /**
@@ -26,6 +27,26 @@ public final class PathNormalizer {
             normalized = normalized.toLowerCase(Locale.ROOT);
         }
         return normalized;
+    }
+
+    /**
+     * Derives the ingestion key for a filesystem path — the single form every producer and every
+     * marker of that key must use.
+     *
+     * <p>{@code FileFreshnessSnapshot.capture} is the only producer of a {@code FileEnvelope}'s
+     * {@code normalizedPath}, and it absolutizes and {@link Path#normalize() normalizes} BEFORE
+     * handing the string to {@link #normalizePath}. {@code normalizePath} only fixes separators and
+     * case — it never resolves a {@code ..} segment and never absolutizes — so a key derived
+     * without those two steps can differ from the envelope's by one segment. {@code JobBatchExtractor}
+     * looks the forced set up by the envelope's key, so such a key is marked but never read and the
+     * force silently does nothing (tempdoc 821 §P/C3).
+     *
+     * @param path the path to key; {@code null} yields {@code null}
+     * @return the key {@code FileEnvelope#normalizedPath} would carry for this file
+     */
+    public static String normalizeKey(Path path) {
+        if (path == null) return null;
+        return normalizePath(path.toAbsolutePath().normalize().toString());
     }
 
     /**

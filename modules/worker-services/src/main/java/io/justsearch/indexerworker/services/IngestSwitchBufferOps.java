@@ -138,7 +138,7 @@ final class IngestSwitchBufferOps {
       StreamObserver<BatchResponse> responseObserver) {
     int accepted = 0;
     for (Path p : validPaths) {
-      String normalized = PathNormalizer.normalizePath(p.toAbsolutePath().toString());
+      String normalized = PathNormalizer.normalizeKey(p);
       if (!putSwitchBufferOrReplyUnavailable(
           sbq,
           switchBufferPathKey(normalized),
