@@ -472,9 +472,15 @@ Residuals and pending closure items:
    `worktree-agent-aca6d2da1713b04c6` commit ea66fc83; store depth 498 → 406,
    whole-block deletions only), 18 KEEP with named live occurrences + 1 UNCLEAR
    retained. The per-occurrence protocol caught 19 conditions the census would have
-   wrongly deleted (17% of candidates). Remaining store work: the non-defect routing
-   proposals (53 register / 30 retire / 35 park) were LIGHT-triaged only — the 30
-   retire proposals need the same per-occurrence rigor before deletion; not started.
+   wrongly deleted (17% of candidates). **Non-defect stratum EXECUTED (2026-08-13,
+   commit 46b369a7):** the 30 retire proposals were put through the same
+   per-occurrence rigor — 26 deleted, 4 kept with live occurrences. Branch total
+   118 deletions (92 + 26), 23 kept. Published after reconciliation against main's
+   intervening folds (see §N): 114 of the 118 applied, 4 revived because main's fold
+   added occurrence lines postdating the verification (`searchstate`, `tokens`,
+   `token-names-generated`, `component-vocabulary-generated`); final depth 401.
+   Remaining store work: the 53 register / 35 park routing proposals stay
+   LIGHT-triaged only.
 7. **Merge-order note**: the two FE branches and local main each carry a
    same-named observation shard (`docs/observations.d/776e10cd-….md`) with
    different bodies — whichever merges later hits add/add; resolve by
@@ -489,7 +495,7 @@ implementer), re-fixed on review verdicts. All branches green, UNPUSHED, no PRs.
 
 | lane | branch / location | state |
 |---|---|---|
-| Store cleanup (defect stratum) | `agent-aca6d2da1713b04c6` (ea66fc83) | §6 row above — 92 per-occurrence-verified deletions, depth 498→406. |
+| Store cleanup (both strata) | `agent-aca6d2da1713b04c6` (ea66fc83, 46b369a7) | §6 row above — 118 per-occurrence-verified deletions (92 defect + 26 non-defect), 23 kept. Reconciled against main's folds at publication: 114 applied, 4 revived by new occurrence lines, final depth 401. |
 | D5 register retirement | `agent-aa70c939fd4d37e5b` (e576e570) | §7-D5 row above — 21+1 routed, 24 dead, 14-reference sweep. |
 | Count-drop live A/B | in-branch (05e052b5) | CLOSED: scifact hybrid **0.7543** on the fix branch, `relevance-gate` verdict ok (floor 0.7404), F-045 amended with the measurement. §M residual 2 done. |
 | Needs-live lane (D3) | shard notes (this session) | EXECUTED for the backend subset: `drift-9` resolved with mechanism (retrieval composite degraded by `lambdamart.not_configured` while the embedding dim reads READY off encoder-loaded semantics during a live REBUILD_IN_PROGRESS hybridFallback — a C1 double-defect, unfixed, now precisely charted); `general-28` CONFIRMED WORST-CASE live (fingerprint never persists; two consecutive restarts each reset the full re-embed, coverage 9%→0.2% — **raises merge priority of worktree 819-fingerprint-boot-race**); `localapiserver` CONFIRMED (POST /mcp accepts foreign Origin, GET 404); `missing-2` partially moot (CE cold 426ms no deadline miss; status key set restart-stable, `crossEncoderAvailable` field gone). FE-rendering + tooling one-off conditions stay parked (frontend excluded / not demo-relevant). |
@@ -600,6 +606,27 @@ pre-existing findings logged: `GET /api/mcp/token` token-exempt and not
 Origin-guarded (worth separate review); `resolveAllowedOrigin` rejects `[::1]`
 origins (bracket handling); LocalApiHostValidationTest mirrors its filter instead of
 exercising install().
+
+## §P Wave 3 execution log (2026-08-13; owner: "proceed with the remaining chartered work")
+
+Same discipline (implement → independent refute-first review → fix round). All
+branches green, UNPUSHED, no PRs. Worktree cleanup remains the ONE item held for
+explicit owner go-ahead (destructive multi-agent state).
+
+| lane | branch / commits | state |
+|---|---|---|
+| LUCENE query-syntax (F-046) | `agent-ae506aa77bbf4e151` (66898d70 merge-base + 9065d0dd + 55fe5d90) | Multi-leg legs honor request syntax via `MultiLegDecision.runtimeSyntax()`; probe fail-fast on malformed LUCENE (all multi-leg shapes); coupling test evolved per its pre-registered design. Review found + fixed: expansion-path silent MISPARSE (user text now escaped at composition — the Head-side escape helper respects Hard Invariant 1), a 21-site citation collision with the live tempdoc-822 branch (re-cited to 821 §P/F-046), an unsupported delta attribution withdrawn-on-record, hybrid forwarding pinned via per-hit provenance, WARN-log query redaction, probe/rebuild gate alignment. Eval: scifact hybrid 0.7543, relevance-gate ok. Register: F-046 + Q-020 (LUCENE-syntax quality UNMEASURED — no such corpus exists). **Merge after the facets branch.** |
+| MCP GET-405 + token guard | `agent-a55b7c0c2dd118d6f` (0f8c5238 merge-base + 8eeccb7b + 2e9cd7e9) | GET /mcp → 405 + Allow (the shipped MCPB bridge already expects 405); route-manifest entry derived from primary source (stack held by agent 822) and reviewer-re-derived on all six fields; token endpoint Origin-guarded on a caller census; conformance doc claim SCOPED after review (one clause verified, NOT the transport) — new gap found: `MCP-Protocol-Version` request header never read (logged). **Merge after the Origin branch (or merge this, which carries it).** |
+| C3 P1+P2 | `agent-a513b316ebd876d59` (merge-base of watched-root + 2ba5e8f4 + a0563325 + 18f8a105) | P1 completeness truth surface: per-stage {expected, present, failed, missing} with honest ARTIFACT/STATUS tiers, thresholds published, jseval de-mirrored (no fallback; distinct `unevaluable` stand-down verdict with stderr loudness). P2: FORCE_REINDEX made real end-to-end (was inert; ReindexHandler's message was false) with two-arm discriminating tests + gRPC wiring test. Review found + fixed: ARTIFACT-tier population mismatch (presence now scoped to the status-carrying denominator; unscoped twin RETIRED; clamp removed; adverse fixtures added), stage-counts reader-version cache (12 uncached counts/poll at jseval's 2s cadence), jseval false stand-down reason + zero-vs-absent conflation. Governance: additive wire change needs no changeset (precedent-confirmed; the gate's structural blindness to additive changes logged as an observation). **Merge after the watched-root branch.** P3 (targeted repair op) remains chartered, not started. |
+| Store cleanup completion | `agent-aca6d2da1713b04c6` (ea66fc83 + 46b369a7) | Depth 498 → 380: 118 per-occurrence-verified deletions (92 defect + 26 non-defect), 23 keeps with named live occurrences. The applier caught the verifier's own prose miscount by recounting from the JSON. |
+| C3 class design | (report, §-recorded) | Implementation-ready design incl. the ReindexHandler false-claim find; P1/P2 executed above; P3 pending. |
+
+Cross-cutting facts recorded this wave: another session (`822-t3code-window`) holds the
+dev stack and owns tempdoc 822; the wire gate cannot demand changesets for additive
+contract changes ("No contract changes" on a +23-line diff); LegacyEndpointGuardTest
+mirrors the route table and omits /mcp entirely; check-api-client-regen is not
+CI-wired; delegated workers share the orchestrator's observation shard (add/add
+conflicts guaranteed — resolve by union).
 
 ## Appendix A — 145 verified STILL-TRUE defect conditions
 
