@@ -924,6 +924,9 @@ above)*
   --clean --json` on the fix worktree (`git_sha 66898d70`, full enrichment: embed/chunk/ner/splade
   all `stage_complete` before querying; observed legs `cross_encoder+dense+hybrid+
   query_classification`; 300/300 queries) → **nDCG@10 0.7543** (P@1 0.627, R@10 0.888, RR@10 0.716).
+  Run `scripts/jseval/tmp/eval-results/20260813T132736_scifact` (worktree, gitignored — the
+  `summary.json` values quoted here are the durable record; `comparable: true`,
+  `comparability_reasons: []`, `ann_proof_status: PASS`, `error_count: 0`).
   `jseval relevance-gate --data-dir tmp --dataset beir/scifact` → **exit 0**, `ndcg10-no-regression:
   ok` (baseline 0.7604, floor 0.7404). Δ vs the 775 §I baseline is **−0.0061**, inside the ratchet's
   ±0.02 tolerance and within the documented single-run wobble band — **no cause established**. (An
@@ -949,6 +952,20 @@ above)*
   returns `INVALID_ARGUMENT`, and the block's documented contract ("falls back to base results on
   timeout or error") caught only the checked exceptions, so it would have failed the whole search;
   now caught and degraded to the base response with `expansionSkipReason=FAILED`.
+- **Evidence:** tempdoc 821 §P (investigation, threading design, merge-order notes);
+  `SearchDecision.MultiLegDecision.runtimeSyntax()` + `SearchPlanner` (set-site) +
+  `SearchExecutor` (leg dispatch) + `TextQueryOps#searchText`/`#searchTextWithFilter` +
+  `HybridSearchOps` (per-hit provenance pin) + `FacetCompute.FromFreshBm25` /
+  `SearchResponseBuilder` (count-site coupling) + `KnowledgeSearchEngine#mergeExpansion` /
+  `#escapeLuceneSyntax`. Tests: `TextSearchIntegrationTest` (syntax honoured, quoted phrase
+  phrase-matched not token-OR'd), `HybridSearchIntegrationTest#hybridEntryPointsForwardQuerySyntax
+  ToTheTextLeg`, `FacetQuerySyntaxCouplingTest` (bidirectional counts-follow-the-leg, malformed
+  fail-fast for every multi-leg shape incl. no-lexical-leg), `KnowledgeHttpApiAdapterExpansionTest`
+  (escape + `-term`/`field:value`/`c++ (crash)` + every metacharacter), and the four
+  `SSOT/schemas/search-decisions/multi-leg-*.v1.json` approval fixtures (`runtime_syntax` pinned).
+  Caller-visible contract recorded in `docs/reference/api-contract-map.md` (Knowledge Search API,
+  `querySyntax`).
+
 ### F-045: the default rerank branch silently DROPPED candidates on a short cross-encoder sorted-indices list — fixed count-preserving; well-formed runs bit-identical (tempdoc 821 §L.3, 2026-08-12)
 
 - **Answer:** In `KnowledgeSearchEngine`, the default (judge-blend-off) rerank application emitted
