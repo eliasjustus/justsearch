@@ -39,6 +39,7 @@ import {
   COMPOSER_STATE_DEFAULT,
   MAIN_EMPTY,
   MAIN_UNREACHABLE,
+  RECORD_UNREACHABLE,
   RUN_DISPATCHING,
   TURN_EMPTY_ANSWER,
   TURN_FAILED,
@@ -345,6 +346,28 @@ export class Sv3Main extends JfElement {
         font-family: var(--font-mono);
         font-size: var(--font-size-sv3-xs);
       }
+
+      /* ── The record could not be read (Phase F6 / inventory D2) ────────────
+         In FLOW at the top of the transcript, not floating over it: it qualifies everything below,
+         so it has to be the first thing read and it has to scroll away with the content it qualifies.
+         It carries no colour from the 3-colour budget — a refresh that failed is neither act-now nor
+         broken, it is a shortfall in what the window can show. */
+      .record-notice {
+        margin-block-end: var(--space-4);
+        padding: var(--space-2) var(--space-3);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        background: var(--muted);
+      }
+      .record-notice-title {
+        margin: 0;
+        font-size: var(--font-size-sv3-sm);
+      }
+      .record-notice-detail {
+        margin: var(--space-1) 0 0;
+        color: var(--secondary-label);
+        font-size: var(--font-size-sv3-xs);
+      }
     `,
   ];
 
@@ -353,6 +376,7 @@ export class Sv3Main extends JfElement {
     view: { attribute: false },
     turns: { attribute: false },
     run: { attribute: false },
+    recordNotice: { type: Boolean, attribute: 'record-notice' },
   };
 
   declare state: Sv3ComposerState;
@@ -364,6 +388,13 @@ export class Sv3Main extends JfElement {
    * cannot appear under a turn that did not open it (tempdoc 822 Phase F2).
    */
   declare run: Sv3RunView | null;
+  /**
+   * The claimed conversation's canonical record could not be read, so what is on screen may be
+   * incomplete (tempdoc 822 Phase F6 / inventory D2). A BOOLEAN, not a message: the copy is fixed
+   * ({@link RECORD_UNREACHABLE}) and belongs with the window's other fixed copy, so a caller cannot
+   * word this state a second way.
+   */
+  declare recordNotice: boolean;
 
   /**
    * The donor's two scroll modes as one flag: armed = `following-end` (the reader is at the end, so
@@ -378,6 +409,7 @@ export class Sv3Main extends JfElement {
     this.view = SV3_RESULTS_IDLE;
     this.turns = [];
     this.run = null;
+    this.recordNotice = false;
   }
 
   private get scroller(): HTMLElement | null {
@@ -405,7 +437,7 @@ export class Sv3Main extends JfElement {
     // The conversation owns the region whenever the claimed session has one. The search projection
     // below is the SECONDARY axis now (822 §4b course correction) and speaks only for a session that
     // has asked nothing — it is reached from the palette, never from a plain submit.
-    if (turns.length > 0) return this.transcript(turns);
+    if (turns.length > 0 || this.recordNotice) return this.transcript(turns);
     // Nothing but the hero composer belongs in the region until the window has docked: an untouched
     // window's emptiness is the composer's to speak for, not a state to announce.
     if (this.state !== 'docked' || view.status === 'idle') {
@@ -456,6 +488,12 @@ export class Sv3Main extends JfElement {
         aria-busy=${turns.at(-1)?.status === 'streaming' ? 'true' : 'false'}
       >
         <div class="transcript" data-testid="sv3-transcript">
+          ${this.recordNotice
+            ? html`<div class="record-notice" role="status" data-testid="sv3-record-notice">
+                <p class="record-notice-title">${RECORD_UNREACHABLE.title}</p>
+                <p class="record-notice-detail">${RECORD_UNREACHABLE.description}</p>
+              </div>`
+            : nothing}
           ${turns.map((turn) => this.turn(turn))}
         </div>
       </div>
@@ -473,12 +511,14 @@ export class Sv3Main extends JfElement {
       turn.kind === 'agent' && live?.turnId === turn.id && live.phase !== 'ended' ? live : null;
     return html`
       <div class="turn" data-testid="sv3-turn" data-kind=${turn.kind} data-status=${turn.status}>
-        <div class="ask">
-          <div class="ask-bubble" data-testid="sv3-turn-question">${turn.question}</div>
-        </div>
+        ${turn.question === ''
+          ? nothing
+          : html`<div class="ask">
+              <div class="ask-bubble" data-testid="sv3-turn-question">${turn.question}</div>
+            </div>`}
         ${turn.kind === 'agent'
           ? run === null
-            ? nothing
+            ? this.recordedActivity(turn)
             : this.runBody(run)
           : html`
               <div class="answer" data-testid="sv3-turn-answer">
@@ -499,6 +539,23 @@ export class Sv3Main extends JfElement {
         ${this.turnNote(turn)}
       </div>
     `;
+  }
+
+  /**
+   * What the RECORD says happened in an agent turn that is not the live one (tempdoc 822 Phase F6;
+   * inventory D1). Two sources, ONE renderer: `runItem` below draws both the live controller feed and
+   * this, because they are the same three item shapes — so a run the reader watched and a run they
+   * came back to cannot be drawn differently. The record's order is the record's, interleaved
+   * (561 P-A), never re-sorted here.
+   *
+   * Empty until the record has spoken for the turn, which is also what a run that ended before this
+   * window could refresh looks like — the receipt line below still says what it was.
+   */
+  private recordedActivity(turn: Sv3Turn): TemplateResult | typeof nothing {
+    if (turn.activity.length === 0) return nothing;
+    return html`<div class="run-feed" data-testid="sv3-record-activity">
+      ${turn.activity.map((item) => this.runItem(item))}
+    </div>`;
   }
 
   /**

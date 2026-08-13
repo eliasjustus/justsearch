@@ -23,6 +23,9 @@ import type { Sv3Empty } from './Sv3Empty.js';
 import { resetSearchState } from '../../state/searchState.js';
 import { matchCountLabel } from '../../components/searchResults/matchCountLabel.js';
 import { MAIN_EMPTY, MAIN_UNREACHABLE, SV3_COMMAND_SEARCH_TEXT } from './fixtures.js';
+import { __resetConversationListForTest } from '../../state/conversationListStore.js';
+import { __resetDraftProvidersForTest } from '../../controllers/draftPersistence.js';
+import { __resetDraftKeptForTest } from '../../controllers/draftKeptHint.js';
 
 type Mounted = HTMLElement & { updateComplete: Promise<unknown> };
 
@@ -35,7 +38,24 @@ const respond = (body: Record<string, unknown>): void => {
   fetchMock.mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(body) });
 };
 
+/**
+ * The calls to the ONE issuance exit. Since Phase F6 the window also READS on mount and on a claim
+ * (the app-wide conversation list, the canonical thread record), so a bare call count would answer
+ * a different question than "how many times did this window issue?" — the filter keeps the
+ * assertion on issuance, which is the thing that must be exactly one.
+ */
+const searches = (): unknown[][] =>
+  fetchMock.mock.calls.filter((call) => String(call[0]).includes('/api/knowledge/search'));
+
 beforeEach(() => {
+  // Phase F6 wired this window to APP-WIDE, process-lifetime authorities (the conversation store,
+  // the per-tab reload pointer, the shared draft controller). Each is a module singleton or a
+  // storage key, so a case that did not reset them would be reading the previous case's state.
+  sessionStorage.clear();
+  localStorage.clear();
+  __resetConversationListForTest();
+  __resetDraftProvidersForTest();
+  __resetDraftKeptForTest();
   fetchMock = vi
     .fn()
     .mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({ results: [] }) });
@@ -137,8 +157,8 @@ describe('a send issues exactly one search, through the shared store', () => {
     // both, so a second request here would be a search the user never asked for.
     await vi.advanceTimersByTimeAsync(2000);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0] as [unknown, { body: string }];
+    expect(searches()).toHaveLength(1);
+    const [url, init] = searches()[0] as [unknown, { body: string }];
     // The endpoint is the shared store's, which is the observable form of "this window owns no client".
     expect(String(url)).toContain('/api/knowledge/search');
     expect(JSON.parse(init.body).query).toBe('northfield lease');
@@ -151,7 +171,7 @@ describe('a send issues exactly one search, through the shared store', () => {
     const el = await mount();
     await send(el, '   ');
     await vi.advanceTimersByTimeAsync(2000);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(searches()).toHaveLength(0);
     expect(el.getAttribute('composer-state')).toBe('hero');
   });
 

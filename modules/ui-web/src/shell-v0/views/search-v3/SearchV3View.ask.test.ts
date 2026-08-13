@@ -29,6 +29,9 @@ import {
 import type { StatusSnapshot } from '../../utils/statusPoll.js';
 import { reasonFor } from '../../state/readinessNotice.js';
 import { TURN_HALTED } from './fixtures.js';
+import { __resetConversationListForTest } from '../../state/conversationListStore.js';
+import { __resetDraftProvidersForTest } from '../../controllers/draftPersistence.js';
+import { __resetDraftKeptForTest } from '../../controllers/draftKeptHint.js';
 
 type Mounted = HTMLElement & { updateComplete: Promise<unknown> };
 
@@ -101,7 +104,24 @@ function stubStatus(status: number): void {
   });
 }
 
+/**
+ * The calls to the ONE issuance exit. Since Phase F6 the window also READS on mount and on a claim
+ * (the app-wide conversation list, the canonical thread record), so a bare call count would answer
+ * a different question than "how many times did this window issue?" — the filter keeps the
+ * assertion on issuance, which is the thing that must be exactly one.
+ */
+const dispatches = (): unknown[][] =>
+  fetchMock.mock.calls.filter((call) => String(call[0]).includes('/api/chat/dispatch'));
+
 beforeEach(() => {
+  // Phase F6 wired this window to APP-WIDE, process-lifetime authorities (the conversation store,
+  // the per-tab reload pointer, the shared draft controller). Each is a module singleton or a
+  // storage key, so a case that did not reset them would be reading the previous case's state.
+  sessionStorage.clear();
+  localStorage.clear();
+  __resetConversationListForTest();
+  __resetDraftProvidersForTest();
+  __resetDraftKeptForTest();
   fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({}) });
   vi.stubGlobal('fetch', fetchMock);
   __resetAiStateForTest();
@@ -246,13 +266,16 @@ describe('a send asks the local model, once, through the one site', () => {
     stream.end();
     await settle(el);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0] as [unknown, { body: string }];
+    expect(dispatches()).toHaveLength(1);
+    const [url, init] = dispatches()[0] as [unknown, { body: string }];
     expect(String(url)).toContain('/api/chat/dispatch');
     const body = JSON.parse(init.body);
     expect(body.shapeId).toBe('core.rag-ask');
     expect(body.question).toBe('why did the renewal fail?');
-    expect(body.conversationId).toBe('sv3-session-1');
+    // The id is the app-wide store's, not this window's (Phase F6): a v3 session IS a conversation,
+    // so the dispatch is stamped with the same identity the conversation list will carry.
+    expect(body.conversationId).toBe(el.sessions.sessions[0]?.id);
+    expect(String(body.conversationId).startsWith('uc-')).toBe(true);
     // Open retrieval by construction: this window scopes an answer to no committed document set.
     expect(body.docIds).toEqual([]);
     // The send is an ask AND a state change, not one at the cost of the other.
@@ -268,12 +291,12 @@ describe('a send asks the local model, once, through the one site', () => {
       new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }),
     );
     await settle(el);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(dispatches()).toHaveLength(0);
     expect(el.getAttribute('composer-state')).toBe('hero');
 
     field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await settle(el);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(dispatches()).toHaveLength(1);
     expect(el.getAttribute('composer-state')).toBe('docked');
   });
 
@@ -433,7 +456,7 @@ describe('an unreachable model refuses the send and keeps the draft', () => {
     (q(composer, 'sv3-composer-send') as HTMLButtonElement).click();
     await settle(el);
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(dispatches()).toHaveLength(0);
     // The draft is the reader's and nothing is holding it — back, character for character.
     expect((await fieldOf(el)).value).toBe(draft);
     // Still the empty window: a refused send is not a session.

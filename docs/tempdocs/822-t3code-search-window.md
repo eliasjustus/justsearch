@@ -383,6 +383,31 @@ are re-creatable from the log's descriptions.
   memory. Run ended by stack stop (dev throwaway). Residuals → F3: shelf model,
   presence/recovery, cross-surface slot honesty; issuance-register decision still
   open (owner/orchestrator).
+- 2026-08-13 — **Slice F6 implemented + STACK-TIER VERIFIED. Sessions live on the
+  product's record.** Adopted (each ≥2-consumer shared): conversationListStore
+  (id mint/list/title/active/apiBase), unifiedThreadClient/Projection (extractions
+  consumed by BOTH shipped windows — the brief's "outside views/" test replaced by
+  the two-consumer test, else fork), lastViewedConversation (per-tab, 609P3),
+  DraftPersistence + notifyDraftKeptOnce, activeRunPointer+reattachActiveRunOnLoad,
+  setAiActivity. sv3-sessions = pure projection/cache now (identity/title/existence
+  in the store; pin/unread stay window-local prefs — boundary note rewritten). New
+  sv3-record.ts: record events → the live feed's own item shapes, ONE renderer for
+  live and recorded runs; refuses to touch streaming turns, F4 evidence, or halt
+  wording; empty record is a no-op (727 F-8). New-session aborts the ask stream and
+  detaches (never halts) the run view. 4787 tests / 9 probes / gates green.
+  REGISTER RECONCILIATION: F2 was right, the inventory's D6 "not registered" was
+  stale — sv3 appears in 5 registers. LIVE (stack, model): sidebar pre-listed
+  conversations from OTHER windows/sessions (incl. the owner's own browsing thread
+  and the F1-era ask — cross-window continuity observed); ask → session; FULL PAGE
+  RELOAD → all sessions survive; claim → thread renders from the record without
+  re-asking; zero page errors. FINDINGS: (a) production dev-data carries the pre-F6
+  window-local id "sv3-session-1" as a real conversation — the A1 identity collision
+  observed in the wild, closed by this slice; (b) PRODUCT BEHAVIOR: the v3 sidebar
+  now lists ALL app-wide conversations (both windows share the one store) — coherent
+  with sessions=conversations and with cutover, surfaced to the owner. Residuals:
+  record-side evidence not projected (cold-loaded turns show no citations panel —
+  honest never-told; F8-adjacent), detached-run re-claim renders record not live
+  feed (presence latched per run id).
 - 2026-08-13 — **Slice F5 implemented + live-verified (backendless — no stack tier
   needed for chrome mechanics).** Sidebar mechanics per donor: drag-resize
   (min 208 / default 256 / max = box − 640; 16px grip hit with 2px line — worker

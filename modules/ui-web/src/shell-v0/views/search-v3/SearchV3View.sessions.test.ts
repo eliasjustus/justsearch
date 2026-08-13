@@ -28,6 +28,9 @@ import {
 } from '../../state/aiStateStore.js';
 import type { StatusSnapshot } from '../../utils/statusPoll.js';
 import { SV3_COMMAND_SEARCH_TEXT } from './fixtures.js';
+import { __resetConversationListForTest } from '../../state/conversationListStore.js';
+import { __resetDraftProvidersForTest } from '../../controllers/draftPersistence.js';
+import { __resetDraftKeptForTest } from '../../controllers/draftKeptHint.js';
 
 type Mounted = HTMLElement & { updateComplete: Promise<unknown> };
 
@@ -115,6 +118,14 @@ function stubFetch(): Router {
 let router: Router;
 
 beforeEach(() => {
+  // Phase F6 wired this window to APP-WIDE, process-lifetime authorities (the conversation store,
+  // the per-tab reload pointer, the shared draft controller). Each is a module singleton or a
+  // storage key, so a case that did not reset them would be reading the previous case's state.
+  sessionStorage.clear();
+  localStorage.clear();
+  __resetConversationListForTest();
+  __resetDraftProvidersForTest();
+  __resetDraftKeptForTest();
   fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
   router = stubFetch();
@@ -334,10 +345,17 @@ describe('clicking a session claims it and shows its transcript', () => {
 
   it('issues NOTHING — a claim is not a re-ask', async () => {
     const el = await twoSessions();
-    const before = fetchMock.mock.calls.length;
+    const dispatches = (): unknown[][] =>
+      fetchMock.mock.calls.filter((call) => String(call[0]).includes('/api/chat/dispatch'));
+    const before = dispatches().length;
     await clickRow((await rowsOf(el))[1] as Sv3SessionRow);
     await settle(el);
-    expect(fetchMock.mock.calls.length).toBe(before);
+    // No ISSUANCE — the A2 behaviour F1 retired. It does READ (Phase F6: the claimed conversation's
+    // canonical record), which is the opposite of a re-ask and is asserted as such below.
+    expect(dispatches()).toHaveLength(before);
+    expect(
+      fetchMock.mock.calls.filter((call) => String(call[0]).includes('/api/thread/')),
+    ).not.toHaveLength(0);
     // What it DOES do is show that conversation.
     expect(await questionsOf(el)).toEqual(['first question']);
   });

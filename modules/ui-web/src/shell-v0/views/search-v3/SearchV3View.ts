@@ -29,11 +29,14 @@
  *     terminal the stream reports. Phase A1's SEARCH issuance (`setQuery` + `submitSearch`, the pair
  *     `views/search-v2/SearchV2View.ts:998-999` sends) is still here and still exactly one request,
  *     but it is the SECONDARY axis now: only the palette's "Search this text" reaches it.
- *  6. **The session list** (Phase A2; conversations since F1). Window-local and in-memory by
- *     decision, not by omission — `sv3-sessions.ts` carries the reasoning and the Phase-D boundary.
- *     The host holds the list and routes everything that changes it (a send, a row click, New
- *     session, and every stream event) through the funnels above; the sidebar and the content
- *     surface render projections and issue nothing.
+ *  6. **The session list, as a PROJECTION of the product's record** (Phase A2; conversations since
+ *     F1; on the record since F6). A session IS a conversation: its identity and its listing come
+ *     from `state/conversationListStore.ts`, and its transcript from the canonical
+ *     `GET /api/thread/{id}` record via `sv3-record.ts`. The host holds the projected list and routes
+ *     everything that changes it (a send, a row click, New session, every stream event, and each
+ *     record refresh) through the funnels above; the sidebar and the content surface render
+ *     projections and issue nothing. What is still window-local — the pin and the unread bit — and
+ *     why, is stated in `sv3-sessions.ts`'s persistence-boundary note.
  *
  * Mounted as a hidden DEEPLINK surface, dev audience, no rail entry:
  * `#justsearch://surface/core.search-v3-surface`.
@@ -83,7 +86,9 @@ import {
   activeTurns,
   adoptRunSession,
   appendTurnDelta,
+  applySv3Record,
   focusSession,
+  mergeStoreConversations,
   renameSession,
   toggleSessionPin,
   latestTurnRef,
@@ -97,7 +102,34 @@ import {
   SV3_SESSIONS_EMPTY,
   type Sv3SessionList,
 } from './sv3-sessions.js';
-import { sv3Ask } from './sv3-ask.js';
+import { projectSv3RecordTurns } from './sv3-record.js';
+import { SV3_ASK_SHAPE_ID, sv3Ask } from './sv3-ask.js';
+// The app-wide CONVERSATION authority (tempdoc 510 Design D; inventory A1). A v3 session IS a
+// conversation, so identity, existence and title come from here — this window mints none of them.
+import {
+  createConversationId,
+  loadConversations,
+  setActiveConversation,
+  setConversationApiBase,
+  setConversationTitle,
+  subscribeConversationList,
+} from '../../state/conversationListStore.js';
+// The canonical thread RECORD (tempdoc 561 P-A; inventory D1) — the shared fetch, already consumed
+// by the shipped window AND by search-v2. The shared PROJECTOR is reached through 'sv3-record.ts',
+// this window's registered run-projection site (governance/run-renderers.v1.json), never from here.
+import { fetchUnifiedThread } from '../unifiedThreadClient.js';
+// Tempdoc 609 Phase 3 — the ONE per-tab pointer (sessionStorage): a reload restores the thread THIS
+// tab was reading, not the globally-most-recent one.
+import {
+  clearLastViewedConversation,
+  readLastViewedConversation,
+  setLastViewedConversation,
+} from '../../controllers/lastViewedConversation.js';
+// Tempdoc 609 §R — the shared reload-durable draft controller (T2.1) and its one-shot leave hint (T1.4).
+import { DraftPersistence } from '../../controllers/draftPersistence.js';
+import { notifyDraftKeptOnce } from '../../controllers/draftKeptHint.js';
+// Tempdoc 577 Root I (#1d) — the shared cross-tab live-run pointer, read on a cold load.
+import { readActiveRun } from '../../controllers/activeRunPointer.js';
 import {
   getAgentSessionController,
   peekAgentSessionController,
@@ -127,10 +159,10 @@ import {
   type Sv3RunView,
 } from './sv3-run.js';
 import { type Sv3RunDecision } from './Sv3Main.js';
-import { subscribeAiState, type AiState } from '../../state/aiStateStore.js';
+import { setAiActivity, subscribeAiState, type AiState } from '../../state/aiStateStore.js';
 import { projectAvailability } from '../../state/availability.js';
 import { reasonFor } from '../../state/readinessNotice.js';
-import { SV3_COMMAND_SEARCH_TEXT } from './fixtures.js';
+import { SV3_COMMAND_SEARCH_TEXT, SV3_DRAFT_KEY, SV3_SURFACE_KEY } from './fixtures.js';
 import { type Sv3PaletteRun } from './Sv3Palette.js';
 import type { Sv3Palette } from './Sv3Palette.js';
 import './Sv3Topbar.js';
@@ -272,6 +304,7 @@ export class SearchV3View extends JfElement {
     sidebarCollapsed: { type: Boolean, reflect: true, attribute: 'sidebar-collapsed' },
     resizing: { type: Boolean, reflect: true },
     renamingId: { state: true },
+    recordNotice: { state: true },
   };
 
   declare composerState: Sv3ComposerState;
@@ -285,8 +318,9 @@ export class SearchV3View extends JfElement {
    */
   declare asked: boolean;
   /**
-   * The window's own session list — in-memory, window-local, and NOT a store (see `sv3-sessions.ts`
-   * for why the authority question belongs to Phase D).
+   * The window's session list — a PROJECTION and a per-render cache of the app-wide conversation
+   * store plus the canonical thread record, not an authority of its own (Phase F6; the exact split
+   * between what the store owns and what stays window-local is in `sv3-sessions.ts`).
    */
   declare sessions: Sv3SessionList;
   /** The observed-state authority's latest emission; the ONE input to this window's availability. */
@@ -304,10 +338,32 @@ export class SearchV3View extends JfElement {
   declare resizing: boolean;
   /** The session whose title is being edited, or null. */
   declare renamingId: string | null;
+  /**
+   * The claimed conversation's canonical record could not be read (tempdoc 822 Phase F6; inventory
+   * D2 / tempdoc 727 F-8). Distinct from "the conversation is empty": a failed refresh leaves the
+   * live state on screen by `fetchUnifiedThread`'s contract, and this is what stops that being silent.
+   */
+  declare recordNotice: boolean;
 
   private searchUnsubscribe: (() => void) | null = null;
   private aiUnsubscribe: (() => void) | null = null;
   private agentUnsubscribe: (() => void) | null = null;
+  private convListUnsubscribe: (() => void) | null = null;
+  /** The in-flight record fetch, so a claim that supersedes another cannot land out of order. */
+  private recordAbort: AbortController | null = null;
+  /**
+   * One-shot, mirroring the shipped window's `reattachChecked` (`views/UnifiedChatView.ts:3496`): a
+   * cold load asks the shared controller to reattach to a live run ONCE. Re-asking on every render
+   * would re-attach a run the reader has since halted.
+   */
+  private reattachChecked = false;
+  /**
+   * The draft restored from storage before the composer existed to receive it. `DraftPersistence`
+   * rehydrates during `hostConnected`, which is BEFORE the first render, so the value is parked here
+   * and applied on the update that first creates the composer.
+   */
+  private draftSeed = '';
+  private draftSeedPending = false;
   /** The in-flight ask's abort handle; null exactly when no response is streaming. */
   private askAbort: AbortController | null = null;
   /**
@@ -338,6 +394,25 @@ export class SearchV3View extends JfElement {
     this.sidebarCollapsed = false;
     this.resizing = false;
     this.renamingId = null;
+    this.recordNotice = false;
+    // Constructed HERE rather than on connect: a Lit controller added before connection still gets
+    // its `hostConnected`, and adding it inside `connectedCallback` would add a second one on every
+    // re-attach of this retained instance.
+    new DraftPersistence(
+      this,
+      SV3_DRAFT_KEY,
+      () => this.currentDraft(),
+      (value) => {
+        this.draftSeed = value;
+        this.draftSeedPending = true;
+        this.requestUpdate();
+      },
+    );
+  }
+
+  /** The draft as it stands, wherever it currently lives — the composer owns it once it exists. */
+  private currentDraft(): string {
+    return this.composer?.draft ?? this.draftSeed;
   }
 
   override connectedCallback(): void {
@@ -354,6 +429,18 @@ export class SearchV3View extends JfElement {
     // Subscribing does NOT create a controller (the read below is a `peek`), so a window that never
     // delegates never starts the agent controller's polling as a side effect of being mounted.
     this.agentUnsubscribe = subscribeAgentSession(this.onAgentUpdate);
+    // ── The conversation record (tempdoc 822 Phase F6) ─────────────────────────────────────────
+    // A session is a conversation, so the app-wide store is where the list comes from. The
+    // subscription fires immediately with whatever is already loaded; the fetch refreshes it.
+    setConversationApiBase(this.apiBase || '');
+    this.convListUnsubscribe = subscribeConversationList((state) => {
+      this.sessions = mergeStoreConversations(this.sessions, state.conversations);
+    });
+    void loadConversations();
+    this.restoreLastViewed();
+    // Cold-load reattach BEFORE the first presence look: a run recovered from the shared pointer is
+    // then already on the controller when `syncRunPresence` asks it what is live.
+    this.reattachLiveRun();
     // The window may be mounting BESIDE a run that is already going (a surface switch, a re-mount).
     // The store notifies on change only, so the first look has to be taken here — see
     // `syncRunPresence` for why an unrepresented live run is this window's problem to state.
@@ -366,8 +453,19 @@ export class SearchV3View extends JfElement {
   }
 
   override disconnectedCallback(): void {
+    // BEFORE `super`, which is what tears the shadow tree's controllers down: the reassurance has to
+    // read the draft while the composer still holds it (tempdoc 609 §R T1.4 — instance retention
+    // keeps the draft, and this is what makes that invisible guarantee legible, once per session).
+    notifyDraftKeptOnce(SV3_SURFACE_KEY, this.currentDraft().trim().length > 0);
+    // Tempdoc 609 Phase 4 (inventory G11) — a torn-down stream is no longer live, so the app-wide
+    // activity indicator must not be left claiming this window's work is still going.
+    if (this.streaming) this.settleAiActivity();
     super.disconnectedCallback();
     releaseSv3MorphSheet();
+    this.convListUnsubscribe?.();
+    this.convListUnsubscribe = null;
+    this.recordAbort?.abort();
+    this.recordAbort = null;
     this.searchUnsubscribe?.();
     this.searchUnsubscribe = null;
     this.aiUnsubscribe?.();
@@ -388,8 +486,105 @@ export class SearchV3View extends JfElement {
    * to follow the attribute and not just the first connect.
    */
   protected override updated(changed: Map<string, unknown>): void {
-    if (changed.has('apiBase')) setSearchApiBase(this.apiBase || '');
+    if (changed.has('apiBase')) {
+      setSearchApiBase(this.apiBase || '');
+      setConversationApiBase(this.apiBase || '');
+    }
     if (changed.has('sidebarWidthPx')) this.applySidebarWidth(this.sidebarWidthPx);
+    // The restored draft reaches the composer on the first update that produced one. Once only: a
+    // later re-application would clobber what the reader has typed since.
+    if (this.draftSeedPending) {
+      const composer = this.composer;
+      if (composer !== null) {
+        this.draftSeedPending = false;
+        composer.draft = this.draftSeed;
+      }
+    }
+  }
+
+  /* ── The conversation record (tempdoc 822 Phase F6) ───────────────────────────────────────── */
+
+  /**
+   * A3 (tempdoc 609 Phase 3) — restore the conversation THIS TAB was reading. The pointer is per-tab
+   * `sessionStorage`, deliberately not the globally-most-recent conversation: a second tab must land
+   * cold rather than adopt what another tab had open.
+   *
+   * The session is created from the pointer alone, before the store list arrives, so the claim can
+   * happen in this tick; {@link mergeStoreConversations} fills its real title when the list lands and
+   * the record fetch fills its transcript. A pointer to a conversation that no longer exists resolves
+   * to an empty record, which leaves the placeholder row and says nothing false.
+   */
+  private restoreLastViewed(): void {
+    const id = readLastViewedConversation();
+    if (id === null || sessionById(this.sessions, id) !== null) return;
+    const now = Date.now();
+    this.sessions = mergeStoreConversations(this.sessions, [
+      { id, title: null, firstUserMessage: '', createdAt: now, lastActiveAt: now },
+    ]);
+    this.sessions = focusSession(this.sessions, id, now);
+    setActiveConversation(id);
+    void this.setComposerState('docked');
+    void this.refreshRecord(id);
+  }
+
+  /**
+   * D1 — project the conversation from its canonical record. The window is not the authority: the
+   * turns it renders for a settled conversation are `GET /api/thread/{id}` projected through the two
+   * SHARED authorities, so a run's history outlives the controller that produced it and survives a
+   * reload the controller singleton does not.
+   *
+   * D2 (tempdoc 727 F-8) — a failed fetch returns EMPTY by contract precisely so it cannot wipe the
+   * caller's live state, which is right and was also completely silent. `onFailure` is the out-of-band
+   * signal; the notice is raised and the merge is SKIPPED, so a failure never re-renders the thread.
+   */
+  private async refreshRecord(conversationId: string): Promise<void> {
+    this.recordAbort?.abort();
+    const abort = new AbortController();
+    this.recordAbort = abort;
+    let failed = false;
+    const record = await fetchUnifiedThread(this.apiBase, conversationId, abort.signal, () => {
+      failed = true;
+    });
+    // A superseded claim's response must not land on the conversation the reader moved to.
+    if (abort.signal.aborted) return;
+    if (this.recordAbort === abort) this.recordAbort = null;
+    this.recordNotice = failed;
+    if (failed) return;
+    this.sessions = applySv3Record(
+      this.sessions,
+      conversationId,
+      projectSv3RecordTurns(record.events),
+    );
+  }
+
+  /**
+   * D3 — the COLD-LOAD half of run recovery. F3 closed the same-instance half (presence adopts a run
+   * the shared controller still holds); this closes the half a full page load opens, where the
+   * controller singleton is gone with the tab that made it. The shared cross-tab pointer
+   * (`controllers/activeRunPointer.ts`) is what survives, and the controller's own
+   * `reattachActiveRunOnLoad` is what acts on it — this window asks, once, and then lets presence
+   * synthesise the session exactly as it does for a run it found already running.
+   *
+   * Conditional on the pointer EXISTING, so the F2 law holds: a window with no live run to recover
+   * still constructs no controller and starts no polling by being mounted.
+   */
+  private reattachLiveRun(): void {
+    if (this.reattachChecked) return;
+    this.reattachChecked = true;
+    if (readActiveRun() === null) return;
+    const ctrl = getAgentSessionController(this.apiBase);
+    void ctrl.reattachActiveRunOnLoad();
+  }
+
+  /** The app-wide activity indicator, settled (tempdoc 609 Phase 4 / inventory G11). */
+  private settleAiActivity(): void {
+    setAiActivity({
+      state: 'idle',
+      shapeId: null,
+      startedAtMs: null,
+      canCancel: false,
+      cancel: null,
+    });
   }
 
   /**
@@ -633,15 +828,26 @@ export class SearchV3View extends JfElement {
   private async runAsk(rawQuestion: string): Promise<void> {
     const question = rawQuestion.trim();
     if (question === '') return;
-    this.sessions = submitInSession(this.sessions, question, Date.now());
+    this.sessions = submitInSession(this.sessions, question, Date.now(), 'ask', createConversationId());
     const ref = latestTurnRef(this.sessions);
     if (ref === null) return;
+    this.claimConversation(ref.sessionId);
     this.composer?.clearDraft();
     void this.setComposerState('docked');
 
     const abort = new AbortController();
     this.askAbort = abort;
     this.streaming = true;
+    // The app-wide activity indicator, raised for the duration and settled at the terminal below
+    // (inventory G11). Cancelling through the SAME abort handle Stop uses, so there is one way to
+    // stop this stream however the reader reaches it.
+    setAiActivity({
+      state: 'streaming',
+      shapeId: SV3_ASK_SHAPE_ID,
+      startedAtMs: Date.now(),
+      canCancel: true,
+      cancel: () => abort.abort(),
+    });
     // Every terminal below settles the SAME ref the dispatch opened, so a reader who claims another
     // session mid-stream still gets the answer written where it was asked.
     const settle = (
@@ -655,6 +861,7 @@ export class SearchV3View extends JfElement {
       if (this.askAbort === abort) {
         this.askAbort = null;
         this.streaming = false;
+        this.settleAiActivity();
       }
     };
     await sv3Ask(
@@ -671,7 +878,13 @@ export class SearchV3View extends JfElement {
         onEvidence: (evidence) => {
           this.sessions = setTurnEvidence(this.sessions, ref, evidence);
         },
-        onDone: () => settle('complete'),
+        onDone: () => {
+          settle('complete');
+          // The record now holds this turn; the store now holds the conversation. Both refreshed so
+          // a reload projects exactly what is on screen (inventory A1 + D1).
+          void loadConversations();
+          void this.refreshRecord(ref.sessionId);
+        },
         // The lock's refusal is worded by the ONE reason vocabulary, not re-phrased here.
         onRefused: () => settle('refused', reasonFor('conversations.locked').wording),
         onHalted: () => settle('halted'),
@@ -721,9 +934,10 @@ export class SearchV3View extends JfElement {
     // Defence in depth, not a second gate: the composer already refuses an unavailable delegate and
     // keeps the draft. This exists because `delegate` is reachable from the window's own routing.
     if (this.delegateUnavailableReason !== '') return;
-    this.sessions = submitInSession(this.sessions, text, Date.now(), 'agent');
+    this.sessions = submitInSession(this.sessions, text, Date.now(), 'agent', createConversationId());
     const ref = latestTurnRef(this.sessions);
     if (ref === null) return;
+    this.claimConversation(ref.sessionId);
     this.composer?.clearDraft();
     void this.setComposerState('docked');
 
@@ -836,7 +1050,15 @@ export class SearchV3View extends JfElement {
       adoptedRunIds: this.adoptedRunIds,
     };
     if (!sv3RunNeedsPresence(probe)) return;
-    const { list, ref } = adoptRunSession(this.sessions, sv3RunPresenceTitle(ctrl), Date.now());
+    // The controller's own conversationId when it has one (a run dispatched from another surface
+    // carries the conversation it belongs to), so the adopted session IS that conversation rather
+    // than a second row for it. Only a run with no conversation gets a freshly minted id.
+    const { list, ref } = adoptRunSession(
+      this.sessions,
+      sv3RunPresenceTitle(ctrl),
+      Date.now(),
+      ctrl.conversationId ?? createConversationId(),
+    );
     this.sessions = list;
     this.run = {
       sessionId: ref.sessionId,
@@ -895,6 +1117,10 @@ export class SearchV3View extends JfElement {
       feed.toolCallCount,
       Date.now(),
     );
+    // The live feed was ATTENTION; the record is what survives it. Refreshing at the terminal is what
+    // makes the yield happen (inventory D1): the settled turn re-renders from the canonical record's
+    // interleaved items instead of vanishing with the controller that produced them.
+    void this.refreshRecord(local.sessionId);
   }
 
   /** A typed prompt resolved by its OWN control — never by anything typed into the composer. */
@@ -964,8 +1190,24 @@ export class SearchV3View extends JfElement {
     // An edit in another row is DROPPED rather than committed, the donor's rule
     // (`ChatHeader.tsx:143-149`): navigating away must not write text the reader walked away from.
     this.renamingId = null;
+    const before = this.sessions;
     this.sessions = focusSession(this.sessions, id, Date.now());
+    if (this.sessions === before) return; // unknown id — nothing was claimed, so nothing to record
+    this.claimConversation(id);
+    // The RECORD is what the reader is being shown, so it is fetched on the claim rather than trusted
+    // from whatever this window happened to still hold (inventory D1).
+    void this.refreshRecord(id);
     void this.setComposerState('docked');
+  }
+
+  /**
+   * The two pointers a claim moves, both shared authorities: the store's active conversation (what
+   * the product thinks is open) and the per-tab reload pointer (what THIS tab was reading — 609
+   * Phase 3, and per-tab on purpose, so a second tab lands cold rather than adopting this one's thread).
+   */
+  private claimConversation(id: string): void {
+    setActiveConversation(id);
+    setLastViewedConversation(id);
   }
 
   /**
@@ -982,9 +1224,15 @@ export class SearchV3View extends JfElement {
       return;
     }
     this.renamingId = null;
-    if (detail.phase === 'commit') {
-      this.sessions = renameSession(this.sessions, detail.id, detail.title ?? '');
-    }
+    if (detail.phase !== 'commit') return;
+    const before = sessionById(this.sessions, detail.id)?.title ?? '';
+    this.sessions = renameSession(this.sessions, detail.id, detail.title ?? '');
+    const after = sessionById(this.sessions, detail.id)?.title ?? '';
+    // WRITTEN THROUGH to the conversation store, which persists titles (`conversationListStore.ts:184`
+    // → `jf-conversation-titles`) — so the name survives the process and every surface listing this
+    // conversation shows the one the reader chose. Derived from the pure module's OUTCOME rather than
+    // re-deciding here: `resolveSv3Rename` stays the one place an empty or unchanged title is judged.
+    if (after !== before) setConversationTitle(detail.id, after);
   }
 
   /**
@@ -1005,10 +1253,20 @@ export class SearchV3View extends JfElement {
    */
   private onSessionNew(): void {
     this.abortAsk();
+    // DETACHED, not halted (Slice 516 FIX-T1's rule, applied to the run half). A delegated run is
+    // hosted by the product-wide controller and may be watched elsewhere, so this window stops
+    // RENDERING it and never stops it. Dropping the local handle is also what keeps the composer's
+    // slot honest: Send belongs in a fresh conversation, not a Stop for a run that is not in it.
+    this.run = null;
+    this.runLive = false;
     this.renamingId = null;
+    this.recordNotice = false;
     this.sessions = startNewSession(this.sessions);
     this.asked = false;
     this.composer?.clearDraft();
+    // New conversation means "do not restore the one I just left" (tempdoc 609 Phase 3).
+    setActiveConversation(null);
+    clearLastViewedConversation();
     void this.setComposerState('hero');
   }
 
@@ -1120,6 +1378,7 @@ export class SearchV3View extends JfElement {
           .view=${results}
           .turns=${turns}
           .run=${run}
+          ?record-notice=${this.recordNotice}
           data-testid="sv3-main"
         ></jf-sv3-main>
         <jf-sv3-composer

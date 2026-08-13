@@ -87,6 +87,32 @@ export const MAIN_UNREACHABLE: Sv3EmptyCopy = {
   description: reasonFor('binding.unreachable').wording,
 };
 
+/**
+ * The conversation's canonical record could not be read (tempdoc 822 Phase F6; inventory D2 /
+ * tempdoc 727 F-8). It is a THIRD state, distinct from both of the two above: {@link MAIN_EMPTY} says
+ * the corpus held nothing, {@link MAIN_UNREACHABLE} says a SEARCH never reached the backend, and this
+ * says the window is showing a conversation it could not fully load. 727 F-8's finding was that the
+ * shipped window's empty-on-failure fallback was *completely silent* — a reader stared at a thread
+ * with no hint anything was missing — so the notice states the shortfall AND that what is on screen
+ * is still real. The detail line is the same `readinessNotice` wording {@link MAIN_UNREACHABLE} reads,
+ * because it is the same condition underneath and this window authors no second phrasing of it.
+ */
+export const RECORD_UNREACHABLE: Sv3EmptyCopy = {
+  title: "Couldn't load this conversation's full record — showing what's here.",
+  description: reasonFor('binding.unreachable').wording,
+};
+
+/* ── Phase F6: the window's identity to the shared draft + hint authorities ─────────────────── */
+
+/**
+ * This window's own key into the shared `DraftPersistence` controller (tempdoc 609 §R T2.1). Its own,
+ * not the shipped window's: two surfaces sharing a key would each rehydrate the other's draft.
+ */
+export const SV3_DRAFT_KEY = 'search-v3.composer';
+
+/** The surface key the one-shot "Draft kept" hint is remembered against (tempdoc 609 §R T1.4). */
+export const SV3_SURFACE_KEY = 'core.search-v3-surface';
+
 /* ── Phase F1: the transcript's fixed copy ─────────────────────────────────────────────────── */
 
 /**

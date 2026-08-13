@@ -32,6 +32,9 @@ import {
   SV3_SIDEBAR_DEFAULT_PX,
   SV3_SIDEBAR_MIN_PX,
 } from './sv3-sidebar-sizing.js';
+import { __resetConversationListForTest } from '../../state/conversationListStore.js';
+import { __resetDraftProvidersForTest } from '../../controllers/draftPersistence.js';
+import { __resetDraftKeptForTest } from '../../controllers/draftKeptHint.js';
 
 type Mounted = SearchV3View & { updateComplete: Promise<unknown> };
 
@@ -75,11 +78,31 @@ async function drag(el: Mounted, deltaX: number): Promise<void> {
 
 /** Two sessions, the second of them claimed — handed in as data, the way F3's live check does. */
 function twoSessions(el: Mounted): void {
-  const first = submitInSession(SV3_SESSIONS_EMPTY, 'northfield lease', Date.parse('2026-08-13T10:00:00Z'));
-  el.sessions = submitInSession(startNewSession(first), 'renewal option', Date.parse('2026-08-13T10:05:00Z'));
+  const first = submitInSession(
+    SV3_SESSIONS_EMPTY,
+    'northfield lease',
+    Date.parse('2026-08-13T10:00:00Z'),
+    'ask',
+    'uc-first',
+  );
+  el.sessions = submitInSession(
+    startNewSession(first),
+    'renewal option',
+    Date.parse('2026-08-13T10:05:00Z'),
+    'ask',
+    'uc-second',
+  );
 }
 
 beforeEach(() => {
+  // Phase F6 wired this window to APP-WIDE, process-lifetime authorities (the conversation store,
+  // the per-tab reload pointer, the shared draft controller). Each is a module singleton or a
+  // storage key, so a case that did not reset them would be reading the previous case's state.
+  sessionStorage.clear();
+  localStorage.clear();
+  __resetConversationListForTest();
+  __resetDraftProvidersForTest();
+  __resetDraftKeptForTest();
   localStorage.clear();
   vi.stubGlobal(
     'fetch',
@@ -468,7 +491,7 @@ describe('renaming a conversation from its row', () => {
     input.value = 'Lease renewal';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true, cancelable: true }));
     await el.updateComplete;
-    el.sessions = submitInSession(el.sessions, 'and the break clause?', Date.now());
+    el.sessions = submitInSession(el.sessions, 'and the break clause?', Date.now(), 'ask', 'uc-unused');
     await el.updateComplete;
     await sidebar(el).updateComplete;
     expect(el.sessions.sessions[0]?.title).toBe('Lease renewal');

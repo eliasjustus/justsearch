@@ -98,6 +98,9 @@ import { resetSearchState } from '../../state/searchState.js';
 import { __feedContactForTest, __feedForTest, __resetAiStateForTest } from '../../state/aiStateStore.js';
 import type { StatusSnapshot } from '../../utils/statusPoll.js';
 import { RUN_DISPATCHING } from './fixtures.js';
+import { __resetConversationListForTest } from '../../state/conversationListStore.js';
+import { __resetDraftProvidersForTest } from '../../controllers/draftPersistence.js';
+import { __resetDraftKeptForTest } from '../../controllers/draftKeptHint.js';
 
 type Mounted = HTMLElement & { updateComplete: Promise<unknown> };
 
@@ -112,7 +115,23 @@ function aiOnline(): void {
   __feedContactForTest();
 }
 
+/**
+ * The calls to this window ASK exit. Since Phase F6 the window also READS on mount and on a claim
+ * (the app-wide conversation list, the canonical thread record), so a bare call count would answer
+ * a different question than "did this send reach the ask tier?".
+ */
+const dispatches = (): unknown[][] =>
+  fetchMock.mock.calls.filter((call) => String(call[0]).includes('/api/chat/dispatch'));
+
 beforeEach(() => {
+  // Phase F6 wired this window to APP-WIDE, process-lifetime authorities (the conversation store,
+  // the per-tab reload pointer, the shared draft controller). Each is a module singleton or a
+  // storage key, so a case that did not reset them would be reading the previous case's state.
+  sessionStorage.clear();
+  localStorage.clear();
+  __resetConversationListForTest();
+  __resetDraftProvidersForTest();
+  __resetDraftKeptForTest();
   ctrl = makeCtrl();
   ctrlExists = false;
   getCtrl.mockClear();
@@ -225,8 +244,8 @@ describe('the composer routes by KEY, and each key reaches exactly one tier', ()
     await type(el, 'why did the renewal fail?');
     await press(el);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/chat/dispatch');
+    expect(dispatches()).toHaveLength(1);
+    expect(String(dispatches()[0]?.[0])).toContain('/api/chat/dispatch');
     expect(getCtrl).not.toHaveBeenCalled();
     expect(ctrl.send).not.toHaveBeenCalled();
   });
@@ -239,9 +258,11 @@ describe('the composer routes by KEY, and each key reaches exactly one tier', ()
 
     expect(ctrl.send).toHaveBeenCalledTimes(1);
     expect(ctrl.send).toHaveBeenCalledWith('clean up the vendor folder');
-    // The delegated turn is stamped with THIS window's conversation, not with whatever ran last.
-    expect(ctrl.conversationId).toBe('sv3-session-1');
-    expect(fetchMock).not.toHaveBeenCalled();
+    // The delegated turn is stamped with THIS window's conversation, not with whatever ran last —
+    // and the conversation is the app-wide store's, not a window-local counter (Phase F6).
+    expect(ctrl.conversationId).toBe(el.sessions.sessions[0]?.id);
+    expect(String(ctrl.conversationId).startsWith('uc-')).toBe(true);
+    expect(dispatches()).toHaveLength(0);
     // ...and it opened an AGENT turn in the transcript, in the same session a plain ask would use.
     const main = await region(el, 'jf-sv3-main');
     const turns = all(main, 'sv3-turn');
@@ -255,7 +276,7 @@ describe('the composer routes by KEY, and each key reaches exactly one tier', ()
     await type(el, 'a line');
     await press(el, { shiftKey: true });
     await press(el, { shiftKey: true, ctrlKey: true });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(dispatches()).toHaveLength(0);
     expect(ctrl.send).not.toHaveBeenCalled();
   });
 
@@ -358,7 +379,7 @@ describe('a typed prompt is resolved by its OWN command, never by chat text', ()
     expect(ctrl.send).not.toHaveBeenCalled();
     expect(ctrl.steer).not.toHaveBeenCalled();
     expect(ctrl.resolveBudgetGate).not.toHaveBeenCalled();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(dispatches()).toHaveLength(0);
     const main = await region(el, 'jf-sv3-main');
     expect(q(main, 'sv3-run-prompt')?.dataset.kind).toBe('budget');
   });
@@ -451,6 +472,7 @@ describe('the run ends in ONE receipt whose counts come from the feed it summari
       conversation: [
         { id: 'u1', type: 'user', content: 'audit the folder', timestamp: 0 },
         groupEntry('g1', ['c1']),
+        { id: 'u2', type: 'user', content: 'reindex the archive', timestamp: 1 },
         groupEntry('g2', ['c2', 'c3', 'c4']),
       ],
       toolCalls: {
@@ -462,8 +484,14 @@ describe('the run ends in ONE receipt whose counts come from the feed it summari
     });
     await frame(el, { runInFlight: false, isStreaming: false });
 
-    expect(all(main, 'sv3-run-receipt')).toHaveLength(1);
-    expect(q(main, 'sv3-run-receipt')?.textContent?.trim()).toBe('1 tool call · finished');
+    // The CONCLUDED turn is untouched — that is the whole guarantee, and a wrong-origin write would
+    // show up right here as "4 tool calls".
+    const receipts = all(main, 'sv3-run-receipt');
+    expect(receipts[0]?.textContent?.trim()).toBe('1 tool call · finished');
+    // The later run gets its OWN turn instead, because the controller says it belongs to this
+    // conversation (Phase F6: the run's conversation is the identity, so it is not a second row).
+    expect(receipts).toHaveLength(2);
+    expect(receipts[1]?.textContent?.trim()).toBe('3 tool calls · finished');
   });
 });
 
@@ -505,7 +533,7 @@ describe('a mid-run submit JOINS the live turn instead of starting a second one'
     await press(el);
     expect(ctrl.steer).toHaveBeenCalledWith('skip the archive');
     expect(ctrl.send).not.toHaveBeenCalled();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(dispatches()).toHaveLength(0);
 
     await type(el, 'and the drafts too');
     await press(el, { ctrlKey: true });
@@ -525,11 +553,11 @@ describe('a mid-run submit JOINS the live turn instead of starting a second one'
     );
     await type(el, 'why did it fail?');
     await press(el);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(dispatches()).toHaveLength(1);
 
     await type(el, 'actually, never mind');
     await press(el);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(dispatches()).toHaveLength(1);
     expect(ctrl.steer).not.toHaveBeenCalled();
   });
 });

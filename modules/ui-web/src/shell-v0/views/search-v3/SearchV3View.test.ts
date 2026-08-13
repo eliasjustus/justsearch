@@ -28,6 +28,9 @@ import { COMPONENT_TAGS } from '../../renderers/component-vocabulary.generated.j
 import { Sv3SessionRow } from './Sv3SessionRow.js';
 import { COMPOSER_SCOPES, HERO_HEADLINE } from './fixtures.js';
 import { SV3_MORPH_ROOT_ATTR, sv3MorphSheetAdopted } from './sv3-composer-morph.js';
+import { __resetConversationListForTest } from '../../state/conversationListStore.js';
+import { __resetDraftProvidersForTest } from '../../controllers/draftPersistence.js';
+import { __resetDraftKeptForTest } from '../../controllers/draftKeptHint.js';
 
 type Mounted = HTMLElement & { updateComplete: Promise<unknown> };
 
@@ -49,6 +52,14 @@ async function mount(): Promise<Mounted> {
 }
 
 beforeEach(() => {
+  // Phase F6 wired this window to APP-WIDE, process-lifetime authorities (the conversation store,
+  // the per-tab reload pointer, the shared draft controller). Each is a module singleton or a
+  // storage key, so a case that did not reset them would be reading the previous case's state.
+  sessionStorage.clear();
+  localStorage.clear();
+  __resetConversationListForTest();
+  __resetDraftProvidersForTest();
+  __resetDraftKeptForTest();
   vi.stubGlobal(
     'fetch',
     vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ results: [] }) }),

@@ -8,15 +8,27 @@
  *
  * Derived from T3 Code (T3 Tools Inc., MIT) — see THIRD-PARTY-NOTICES.md in this directory.
  *
- * **WINDOW-LOCAL AND IN-MEMORY ON PURPOSE — this is not a store, and must not become one.** There is
- * no canonical authority for "search sessions" in this codebase yet; whether one exists, and where it
- * lives, is the Phase-D records-substrate question (tempdoc 822 §4b — v3 presentation meeting v2's
- * records model). Until that decision is made, a persisted session list here would be a SECOND
- * authority for the same concept, drifting from whatever Phase D settles on: exactly the
- * representation fork `CLAUDE.md`'s projection-vs-fork rule exists to prevent. So: no localStorage, no
- * new persisted store, no writes into the shared conversation/search stores. The list lives as long as
- * the window is mounted and dies with it, and every function here is pure so the semantics can be
- * tested without a DOM.
+ * **THE PERSISTENCE BOUNDARY, AS OF PHASE F6 — partially resolved.** Phase A2 deferred the whole
+ * authority question to Phase D because no canonical "search session" store existed. F6 answers the
+ * half that did have an authority: a session IS a conversation, and the product's app-wide
+ * conversation authority is `state/conversationListStore.ts`. So:
+ *
+ *  - **MOVED OUT (the store's now, not ours).** Conversation IDENTITY (`createConversationId`, minted
+ *    by the store and handed in — this module mints nothing), EXISTENCE (the store's list is what a
+ *    reload projects sessions back from, via {@link mergeStoreConversations}), and TITLE (a rename
+ *    writes through to `setConversationTitle`; the store persists it). The TRANSCRIPT moved further
+ *    still: turns are a projection of the canonical `/api/thread/{id}` record ({@link applySv3Record},
+ *    fed by the shared `fetchUnifiedThread` + `projectUnifiedThread`), so this module holds the
+ *    in-flight turn and nothing else is authored here.
+ *  - **STAYED WINDOW-LOCAL (deliberately, and still Phase-D's question).** `pinned` and the unread
+ *    bit (`completedAt`/`lastVisitedAt`) are reader PREFERENCES about a row in THIS window, and the
+ *    conversation store has no field for either. Persisting them here would mint the second authority
+ *    A2 refused; they should move to whatever preference store Phase D settles on, alongside the
+ *    sidebar's width/collapsed pair. The SHELF projection stays here for the same reason — it is a
+ *    presentation of the two window-local prefs plus the live run.
+ *
+ * Everything here is still PURE: ids, records, and store rows arrive as arguments, so the semantics
+ * can be tested without a DOM and this module still performs no IO of its own.
  *
  * Two laws from the donor shape the API:
  *
@@ -29,6 +41,10 @@
 import type { Sv3RowStatus } from './fixtures.js';
 import type { CitationMatch, RetrievalCitation } from '../../components/chat/citationTypes.js';
 import type { Citation } from '../../components/chat/MarkdownBlock.js';
+// Type-only, and deliberately the LIVE feed's own item type: a turn's record-projected activity and
+// a running turn's live feed are the same three shapes, so the content surface has ONE renderer for
+// both and a settled run cannot be drawn by a second one (tempdoc 822 Phase F6 / inventory D1).
+import type { Sv3RunFeedItem } from './sv3-run.js';
 
 /**
  * What one answer stood on, as ONE record (tempdoc 822 Phase F4). Registered in
@@ -86,6 +102,14 @@ export interface Sv3Turn {
    * than the feed it summarises. Always 0 on an `ask` turn, which makes no tool calls.
    */
   readonly toolCalls: number;
+  /**
+   * What HAPPENED in this turn, in the canonical record's own order (tempdoc 822 Phase F6, inventory
+   * D1 / 561 P-A): the agent's prose, its tool calls and its notes INTERLEAVED, never re-sorted into
+   * two lists. Empty on a turn the record has not spoken for yet — an in-flight run renders from the
+   * live controller feed instead, and yields to this the moment the record catches up. Empty forever
+   * on an `ask` turn, whose whole response is {@link answer}.
+   */
+  readonly activity: readonly Sv3RunFeedItem[];
   readonly askedAt: number;
 }
 
@@ -135,11 +159,12 @@ export interface Sv3SessionList {
   readonly sessions: readonly Sv3Session[];
   /** The session a submit belongs to; null means the next submit opens a new one. */
   readonly activeId: string | null;
-  /** Ids minted so far. Nothing is ever removed, but a counter keeps ids unique regardless. */
-  readonly minted: number;
 }
 
-export const SV3_SESSIONS_EMPTY: Sv3SessionList = { sessions: [], activeId: null, minted: 0 };
+export const SV3_SESSIONS_EMPTY: Sv3SessionList = { sessions: [], activeId: null };
+
+/** A conversation the store lists but this window has no title for — never a nameless row. */
+export const SV3_UNTITLED_CONVERSATION = 'Untitled conversation';
 
 export const sessionById = (list: Sv3SessionList, id: string): Sv3Session | null =>
   list.sessions.find((session) => session.id === id) ?? null;
@@ -162,6 +187,7 @@ const openTurn = (
   evidence: null,
   detail: '',
   toolCalls: 0,
+  activity: [],
   askedAt: now,
 });
 
@@ -169,15 +195,18 @@ const openTurn = (
  * The ONE construction of a session, shared by a submit and by an adopted run, so a session can
  * never exist in two shapes. `visitedAt` is the caller's: a submit is made by a reader who is
  * looking at the window, an adopted run is not.
+ *
+ * `id` is HANDED IN (tempdoc 822 Phase F6): the app-wide conversation store mints conversation ids
+ * (`state/conversationListStore.ts:195` `createConversationId`) and a session is a conversation, so
+ * a local counter here would be a second identity authority — the fork the header refuses.
  */
 function openSession(
-  list: Sv3SessionList,
+  id: string,
   title: string,
   now: number,
   kind: Sv3TurnKind,
   visitedAt: number,
 ): Sv3Session {
-  const id = `sv3-session-${list.minted + 1}`;
   return {
     id,
     title,
@@ -203,17 +232,18 @@ export function submitInSession(
   list: Sv3SessionList,
   question: string,
   now: number,
-  kind: Sv3TurnKind = 'ask',
+  kind: Sv3TurnKind,
+  /** The store-minted conversation id, used only when this submit OPENS a conversation. */
+  newId: string,
 ): Sv3SessionList {
   const text = question.trim();
   if (text === '') return list;
   const active = list.activeId === null ? null : sessionById(list, list.activeId);
   if (active === null) {
-    const created = openSession(list, text, now, kind, now);
+    const created = openSession(newId, text, now, kind, now);
     return {
       sessions: [created, ...list.sessions],
       activeId: created.id,
-      minted: list.minted + 1,
     };
   }
   return {
@@ -373,11 +403,179 @@ export interface Sv3Adoption {
   readonly ref: Sv3TurnRef;
 }
 
-export function adoptRunSession(list: Sv3SessionList, title: string, now: number): Sv3Adoption {
-  const session = openSession(list, title.trim(), now, 'agent', 0);
+export function adoptRunSession(
+  list: Sv3SessionList,
+  title: string,
+  now: number,
+  /**
+   * The conversation the run belongs to. When the run already names one this window is listing —
+   * the store put it there, or the reader was in it — the run is ADOPTED INTO that conversation
+   * rather than beside it: two rows for one conversation would be the identity fork Phase F6 closed.
+   */
+  conversationId: string,
+): Sv3Adoption {
+  const existing = sessionById(list, conversationId);
+  if (existing !== null) {
+    const turnId = turnIdFor(existing.id, existing.turns.length);
+    return {
+      list: {
+        ...list,
+        sessions: list.sessions.map((s) =>
+          s.id === existing.id
+            ? {
+                ...s,
+                turns: [...s.turns, openTurn(s.id, s.turns.length, title.trim(), now, 'agent')],
+                updatedAt: now,
+              }
+            : s,
+        ),
+      },
+      ref: { sessionId: existing.id, turnId },
+    };
+  }
+  const session = openSession(conversationId, title.trim(), now, 'agent', 0);
   return {
-    list: { ...list, sessions: [session, ...list.sessions], minted: list.minted + 1 },
+    list: { ...list, sessions: [session, ...list.sessions] },
     ref: { sessionId: session.id, turnId: turnIdFor(session.id, 0) },
+  };
+}
+
+/* ── The app-wide conversation store, projected in (tempdoc 822 Phase F6 / inventory A1) ─────── */
+
+/**
+ * One row of `state/conversationListStore.ts`'s list, as this module consumes it. A structural type
+ * rather than the store's `Conversation` class-of-record, so this module stays pure and a test can
+ * hand it rows without standing the store up — the same construction `sv3-run.ts`'s `Sv3RunSource`
+ * uses for the run controller.
+ */
+export interface Sv3StoreConversation {
+  readonly id: string;
+  readonly title: string | null;
+  /** Lock-safe (tempdoc 562): the store returns "" while the conversation store is encrypted. */
+  readonly firstUserMessage: string;
+  readonly createdAt: number;
+  readonly lastActiveAt: number;
+}
+
+/**
+ * The store's conversations, folded into this window's list — the half of A1 that makes a session
+ * SURVIVE THE PROCESS. On a cold mount the local list is empty and this IS the session list; on a
+ * warm one it adds whatever the product gained elsewhere and re-titles what was renamed elsewhere.
+ *
+ * Two rules, both the donor's never-reorder law applied to a merge:
+ *
+ *  - **A known conversation is never re-created and never moved.** It is matched by id, and only its
+ *    TITLE is taken from the store (the authority a rename writes through to). Its turns, pin and
+ *    unread bit — the parts the store has no field for — are left exactly as they were.
+ *  - **A new conversation is APPENDED, not prepended.** A conversation this window did not open is
+ *    not its news; putting it at the top would move every row the reader was looking at. On a cold
+ *    mount that appends into an empty list, so the store's own newest-first order is the render order.
+ *
+ * A store row arrives with no turns: the TRANSCRIPT is the canonical record's ({@link applySv3Record}),
+ * fetched when the conversation is claimed, not carried on the list row.
+ */
+export function mergeStoreConversations(
+  list: Sv3SessionList,
+  conversations: readonly Sv3StoreConversation[],
+): Sv3SessionList {
+  if (conversations.length === 0) return list;
+  const byId = new Map(conversations.map((c) => [c.id, c] as const));
+  let changed = false;
+  const sessions = list.sessions.map((session) => {
+    const row = byId.get(session.id);
+    if (row === undefined) return session;
+    const title = titleFor(row, session.title);
+    if (title === session.title) return session;
+    changed = true;
+    return { ...session, title };
+  });
+  const known = new Set(list.sessions.map((s) => s.id));
+  const added = conversations
+    .filter((c) => !known.has(c.id))
+    .map<Sv3Session>((c) => ({
+      id: c.id,
+      title: titleFor(c, ''),
+      turns: [],
+      createdAt: c.createdAt,
+      updatedAt: c.lastActiveAt,
+      pinned: false,
+      completedAt: null,
+      lastVisitedAt: 0,
+    }));
+  if (!changed && added.length === 0) return list;
+  return { ...list, sessions: [...sessions, ...added] };
+}
+
+/**
+ * The store's title wins when it HAS one (that is where a rename was written through to); otherwise
+ * the conversation keeps the name it already had, and a nameless one falls back to its opening
+ * message — which the store blanks while the conversation store is locked, so the last resort is a
+ * placeholder rather than an unclickable empty row.
+ */
+function titleFor(row: Sv3StoreConversation, current: string): string {
+  if (row.title !== null && row.title !== '') return row.title;
+  // The PLACEHOLDER is not a name. A conversation restored from the per-tab pointer exists before
+  // the list that can name it arrives, so treating its stand-in as an established title would leave
+  // the row reading "Untitled conversation" forever — the merge must still be allowed to name it.
+  // A conversation the reader really named this is unaffected: the store carries that title above.
+  if (current !== '' && current !== SV3_UNTITLED_CONVERSATION) return current;
+  return row.firstUserMessage !== '' ? row.firstUserMessage : SV3_UNTITLED_CONVERSATION;
+}
+
+/**
+ * The canonical thread record, projected onto a conversation's turns (tempdoc 822 Phase F6;
+ * inventory D1 / tempdoc 561 P-A: *the window is not the authority*).
+ *
+ * `recordTurns` comes from {@link file://./sv3-record.ts}, which is a pure projection of the SHARED
+ * `fetchUnifiedThread` + `projectUnifiedThread` pair — so this window renders the same record the
+ * shipped window does, and its history outlives the controller that produced it.
+ *
+ * THREE THINGS THE RECORD IS NOT ALLOWED TO DO, each because it cannot know the thing it would
+ * overwrite:
+ *
+ *  1. **Touch a STREAMING turn.** The live feed is the authority for the in-flight run and for
+ *     nothing else (F2's activeTurnId discipline); a turn still streaming keeps its local id, so the
+ *     run's `turnId` stays valid across a refresh, and yields to the record once it settles.
+ *  2. **Blank the evidence.** F4's citation marks are resolved from the live stream by the shared
+ *     `claimsToCitations`; the record does not carry that resolution, so a refresh keeps whatever the
+ *     turn already stood on rather than emptying the panel beside it.
+ *  3. **Re-word a HALT.** "The reader pressed Stop" is not in the record — to the backend a halted
+ *     answer just ended. Overwriting it with `complete` would call the reader's own decision a
+ *     success (the four-terminal rule {@link Sv3TurnStatus} exists to keep them distinct).
+ *
+ * An EMPTY record leaves the list untouched: `fetchUnifiedThread` returns empty on failure by
+ * contract (tempdoc 727 F-8), so "the record said nothing" must never be read as "there is nothing".
+ */
+export function applySv3Record(
+  list: Sv3SessionList,
+  sessionId: string,
+  recordTurns: readonly Sv3Turn[],
+): Sv3SessionList {
+  const session = sessionById(list, sessionId);
+  if (session === null || recordTurns.length === 0) return list;
+  const local = session.turns;
+  const merged: Sv3Turn[] = recordTurns.map((recorded, index) => {
+    const prior = local[index];
+    if (prior === undefined) return recorded;
+    if (prior.status === 'streaming') return prior;
+    return {
+      ...recorded,
+      evidence: prior.evidence ?? recorded.evidence,
+      status: prior.status === 'halted' ? 'halted' : recorded.status,
+      detail: prior.status === 'halted' ? prior.detail : recorded.detail,
+      toolCalls: recorded.toolCalls > 0 ? recorded.toolCalls : prior.toolCalls,
+    };
+  });
+  // A turn the record has not been told about yet — the in-flight one, or one dispatched while the
+  // fetch was in the air — is KEPT at the tail. The record is authoritative for what it holds, never
+  // for what has not reached it.
+  for (let index = recordTurns.length; index < local.length; index++) {
+    const trailing = local[index];
+    if (trailing !== undefined) merged.push(trailing);
+  }
+  return {
+    ...list,
+    sessions: list.sessions.map((s) => (s.id === sessionId ? { ...s, turns: merged } : s)),
   };
 }
 
@@ -423,7 +621,10 @@ export function resolveSv3Rename(title: string, originalTitle: string): Sv3Renam
  * writes `turns`/`updatedAt` and nothing else.
  *
  * An empty or unchanged title leaves the list untouched — {@link resolveSv3Rename} is the one place
- * that decides, so a caller cannot commit a blank by taking a different route in.
+ * that decides, so a caller cannot commit a blank by taking a different route in. Phase F6: the
+ * caller WRITES THE OUTCOME THROUGH to `setConversationTitle`, so the name survives the process and
+ * every surface listing the conversation shows the one the reader chose; the decision still happens
+ * exactly here.
  */
 export function renameSession(list: Sv3SessionList, id: string, title: string): Sv3SessionList {
   const session = sessionById(list, id);

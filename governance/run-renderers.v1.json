@@ -19,7 +19,8 @@
     "projectionSymbols": ["projectUnifiedThread", "projectLiveAgentActivity"],
     "renderSites": [
       "modules/ui-web/src/shell-v0/views/unifiedThreadProjection.ts",
-      "modules/ui-web/src/shell-v0/views/UnifiedChatView.ts"
+      "modules/ui-web/src/shell-v0/views/UnifiedChatView.ts",
+      "modules/ui-web/src/shell-v0/views/search-v3/sv3-record.ts"
     ]
   },
   "runSegments": {

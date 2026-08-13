@@ -8,13 +8,15 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect } from 'vitest';
 import {
   activeTurns,
   adoptRunSession,
   appendTurnDelta,
+  applySv3Record,
   focusSession,
   latestTurnRef,
+  mergeStoreConversations,
   projectSv3Sessions,
   renameSession,
   resolveSv3Rename,
@@ -28,14 +30,38 @@ import {
   sv3TurnSourceCount,
   toggleSessionPin,
   SV3_SESSIONS_EMPTY,
+  SV3_UNTITLED_CONVERSATION,
+  type Sv3Adoption,
   type Sv3SessionGroup,
   type Sv3SessionList,
   type Sv3SessionProjection,
   type Sv3SessionRowView,
+  type Sv3StoreConversation,
   type Sv3Turn,
   type Sv3TurnEvidence,
+  type Sv3TurnKind,
   type Sv3TurnRef,
 } from './sv3-sessions.js';
+
+/**
+ * Conversation IDENTITY moved to the app-wide store in Phase F6 (`createConversationId`), so the pure
+ * module is HANDED an id rather than minting one. These stand-ins keep the shape the shipped minter
+ * produces per call — unique, opaque to the module — and are reset per test so ids stay deterministic.
+ */
+let mintCount = 0;
+const nextConversationId = (): string => `sv3-session-${++mintCount}`;
+const submit = (
+  list: Sv3SessionList,
+  question: string,
+  now: number,
+  kind: Sv3TurnKind = 'ask',
+): Sv3SessionList => submitInSession(list, question, now, kind, nextConversationId());
+const adopt = (list: Sv3SessionList, title: string, now: number): Sv3Adoption =>
+  adoptRunSession(list, title, now, nextConversationId());
+
+beforeEach(() => {
+  mintCount = 0;
+});
 
 /** N retrieval sources, shaped as the backend mints them; the fields the panel reads are real. */
 const evidence = (count: number): Sv3TurnEvidence => ({
@@ -78,7 +104,7 @@ const rest = proj();
 
 describe('a submit creates a session, or appends a turn to the active one', () => {
   it('creates the first session from the question, with one turn against it', () => {
-    const list = submitInSession(SV3_SESSIONS_EMPTY, 'northfield lease', T0);
+    const list = submit(SV3_SESSIONS_EMPTY, 'northfield lease', T0);
     expect(list.sessions).toHaveLength(1);
     const [session] = list.sessions;
     // The opening question IS the title — nothing generates a name for it.
@@ -95,8 +121,8 @@ describe('a submit creates a session, or appends a turn to the active one', () =
   });
 
   it('APPENDS a turn to the active session rather than opening a second one', () => {
-    const first = submitInSession(SV3_SESSIONS_EMPTY, 'vendor risk', T0);
-    const second = submitInSession(first, 'vendor risk register', T0 + 2 * MINUTE);
+    const first = submit(SV3_SESSIONS_EMPTY, 'vendor risk', T0);
+    const second = submit(first, 'vendor risk register', T0 + 2 * MINUTE);
     expect(second.sessions).toHaveLength(1);
     // A conversation ACCUMULATES: the second question is a turn, and the first one survives it.
     expect(second.sessions[0]?.turns.map((t) => t.question)).toEqual([
@@ -114,30 +140,40 @@ describe('a submit creates a session, or appends a turn to the active one', () =
   });
 
   it('opens the NEXT session at the top and never moves it again', () => {
-    const one = submitInSession(SV3_SESSIONS_EMPTY, 'first', T0);
-    const two = submitInSession(startNewSession(one), 'second', T0 + MINUTE);
+    const one = submit(SV3_SESSIONS_EMPTY, 'first', T0);
+    const two = submit(startNewSession(one), 'second', T0 + MINUTE);
     expect(two.sessions.map((s) => s.title)).toEqual(['second', 'first']);
     // Activity on the OLDER session must not float it back up (charter law: order is fixed).
-    const rerun = submitInSession(focusSession(two, two.sessions[1]?.id ?? '', T0), 'more', T0 + HOUR);
+    const rerun = submit(focusSession(two, two.sessions[1]?.id ?? '', T0), 'more', T0 + HOUR);
     expect(rerun.sessions.map((s) => s.title)).toEqual(['second', 'first']);
     expect(rerun.sessions[1]?.turns).toHaveLength(2);
   });
 
-  it('mints an id per session, so two sessions are never the same row', () => {
-    const one = submitInSession(SV3_SESSIONS_EMPTY, 'a', T0);
-    const two = submitInSession(startNewSession(one), 'b', T0);
-    expect(new Set(two.sessions.map((s) => s.id)).size).toBe(2);
-    expect(two.minted).toBe(2);
+  it('takes the id it is HANDED, so the store is the only conversation-identity authority', () => {
+    const one = submitInSession(SV3_SESSIONS_EMPTY, 'a', T0, 'ask', 'uc-alpha');
+    expect(one.sessions[0]?.id).toBe('uc-alpha');
+    expect(one.activeId).toBe('uc-alpha');
+    // Every turn is addressed within that id, so a stream's ref survives the store owning the name.
+    expect(one.sessions[0]?.turns[0]?.id.startsWith('uc-alpha')).toBe(true);
+    const two = submitInSession(startNewSession(one), 'b', T0, 'ask', 'uc-beta');
+    expect(two.sessions.map((s) => s.id)).toEqual(['uc-beta', 'uc-alpha']);
+  });
+
+  it('ignores the handed id when a conversation is already claimed — a turn is not a conversation', () => {
+    const one = submitInSession(SV3_SESSIONS_EMPTY, 'a', T0, 'ask', 'uc-alpha');
+    const follow = submitInSession(one, 'b', T0 + MINUTE, 'ask', 'uc-unused');
+    expect(follow.sessions.map((s) => s.id)).toEqual(['uc-alpha']);
+    expect(follow.sessions[0]?.turns).toHaveLength(2);
   });
 
   it('is not a submit at all when the query is blank', () => {
-    expect(submitInSession(SV3_SESSIONS_EMPTY, '   ', T0)).toBe(SV3_SESSIONS_EMPTY);
-    const one = submitInSession(SV3_SESSIONS_EMPTY, 'a', T0);
-    expect(submitInSession(one, '\n\t ', T0 + MINUTE)).toBe(one);
+    expect(submit(SV3_SESSIONS_EMPTY, '   ', T0)).toBe(SV3_SESSIONS_EMPTY);
+    const one = submit(SV3_SESSIONS_EMPTY, 'a', T0);
+    expect(submit(one, '\n\t ', T0 + MINUTE)).toBe(one);
   });
 
   it('trims the question it stores, so the title is not padded by the field', () => {
-    const list = submitInSession(SV3_SESSIONS_EMPTY, '  spaced  ', T0);
+    const list = submit(SV3_SESSIONS_EMPTY, '  spaced  ', T0);
     expect(list.sessions[0]?.title).toBe('spaced');
     expect(list.sessions[0]?.turns[0]?.question).toBe('spaced');
   });
@@ -145,12 +181,12 @@ describe('a submit creates a session, or appends a turn to the active one', () =
 
 describe('New search parks the active session without dropping it', () => {
   it('clears the claim and keeps every session, so the next submit opens a new one', () => {
-    const one = submitInSession(SV3_SESSIONS_EMPTY, 'first', T0);
+    const one = submit(SV3_SESSIONS_EMPTY, 'first', T0);
     const parked = startNewSession(one);
     expect(parked.activeId).toBeNull();
     expect(parked.sessions).toHaveLength(1);
 
-    const two = submitInSession(parked, 'second', T0 + MINUTE);
+    const two = submit(parked, 'second', T0 + MINUTE);
     expect(two.sessions).toHaveLength(2);
     expect(two.activeId).toBe(two.sessions[0]?.id);
   });
@@ -158,19 +194,19 @@ describe('New search parks the active session without dropping it', () => {
 
 describe('focusing a session claims it', () => {
   it('moves the claim, so the next submit lands on the clicked session', () => {
-    const one = submitInSession(SV3_SESSIONS_EMPTY, 'first', T0);
-    const two = submitInSession(startNewSession(one), 'second', T0 + MINUTE);
+    const one = submit(SV3_SESSIONS_EMPTY, 'first', T0);
+    const two = submit(startNewSession(one), 'second', T0 + MINUTE);
     const olderId = two.sessions[1]?.id ?? '';
     const focused = focusSession(two, olderId, T0 + MINUTE);
     expect(focused.activeId).toBe(olderId);
-    const rerun = submitInSession(focused, 'and the renewal?', T0 + 2 * MINUTE);
+    const rerun = submit(focused, 'and the renewal?', T0 + 2 * MINUTE);
     expect(rerun.sessions).toHaveLength(2);
     expect(rerun.sessions[1]?.turns).toHaveLength(2);
     expect(rerun.sessions[0]?.turns).toHaveLength(1);
   });
 
   it('leaves an unknown id alone rather than clearing the claim', () => {
-    const one = submitInSession(SV3_SESSIONS_EMPTY, 'first', T0);
+    const one = submit(SV3_SESSIONS_EMPTY, 'first', T0);
     expect(focusSession(one, 'sv3-session-nope', T0)).toBe(one);
     expect(sessionById(one, 'sv3-session-nope')).toBeNull();
   });
@@ -201,7 +237,7 @@ describe('the sidebar projection shelves by STATE and hides what is empty', () =
    * status expectation is not silently satisfied by "still running".
    */
   const ask = (list: Sv3SessionList, text: string, at: number): Sv3SessionList => {
-    const next = submitInSession(list, text, at);
+    const next = submit(list, text, at);
     const ref = latestTurnRef(next);
     return ref === null ? next : settleTurn(next, ref, 'complete', at);
   };
@@ -228,7 +264,7 @@ describe('the sidebar projection shelves by STATE and hides what is empty', () =
 
   it('opens the Active shelf for a running session and closes it when it settles', () => {
     const settled = ask(SV3_SESSIONS_EMPTY, 'first', T0);
-    const running = submitInSession(startNewSession(settled), 'second', T0 + MINUTE);
+    const running = submit(startNewSession(settled), 'second', T0 + MINUTE);
     const shelves = projectSv3Sessions(running, proj({ now: T0 + MINUTE }));
     expect(shelves.map((g) => g.label)).toEqual(['Active', 'Recent']);
     expect(shelves[0]?.rows.map((r) => r.label)).toEqual(['second']);
@@ -280,7 +316,7 @@ describe('the sidebar projection shelves by STATE and hides what is empty', () =
 
   it('keeps a WORKING pinned run on Active too, for the same reason', () => {
     const settled = ask(SV3_SESSIONS_EMPTY, 'first', T0);
-    const running = submitInSession(startNewSession(settled), 'second', T0 + MINUTE);
+    const running = submit(startNewSession(settled), 'second', T0 + MINUTE);
     const pinned = toggleSessionPin(running, running.sessions[0]?.id ?? '');
     const shelves = projectSv3Sessions(pinned, proj({ now: T0 + MINUTE }));
     expect(shelves.map((g) => g.label)).toEqual(['Active', 'Recent']);
@@ -351,7 +387,7 @@ describe('the sidebar projection shelves by STATE and hides what is empty', () =
   it('spends in-motion on a session whose OWN turn is streaming, claimed or not', () => {
     // The conversational axis is a property of the session, not of the claim: the store flag cannot
     // say who asked, but a streaming turn can.
-    const one = submitInSession(SV3_SESSIONS_EMPTY, 'first', T0);
+    const one = submit(SV3_SESSIONS_EMPTY, 'first', T0);
     const two = ask(startNewSession(one), 'second', T0 + MINUTE);
     const shelves = projectSv3Sessions(two, proj({ searching: false, now: T0 + MINUTE }));
     // The streaming one is on ACTIVE even though the reader is claiming the other conversation.
@@ -363,7 +399,7 @@ describe('the sidebar projection shelves by STATE and hides what is empty', () =
   });
 
   it('spends the broken colour on a failed or refused turn, and nothing on a halted one', () => {
-    const opened = submitInSession(SV3_SESSIONS_EMPTY, 'first', T0);
+    const opened = submit(SV3_SESSIONS_EMPTY, 'first', T0);
     const ref = latestTurnRef(opened);
     const statusOf = (list: Sv3SessionList): string =>
       flatRows(projectSv3Sessions(list, proj({ searching: false, now: T0 })))[0]?.status ?? '';
@@ -385,9 +421,9 @@ describe('the unread bit says something finished while the reader was elsewhere'
 
   /** Two sessions where the OLDER one is still streaming and the reader has claimed the newer one. */
   const elsewhere = (): { list: Sv3SessionList; ref: Sv3TurnRef; oldId: string } => {
-    const one = submitInSession(SV3_SESSIONS_EMPTY, 'the run', T0);
+    const one = submit(SV3_SESSIONS_EMPTY, 'the run', T0);
     const ref = latestTurnRef(one) as Sv3TurnRef;
-    const two = submitInSession(startNewSession(one), 'something else', T0 + MINUTE);
+    const two = submit(startNewSession(one), 'something else', T0 + MINUTE);
     return { list: two, ref, oldId: ref.sessionId };
   };
 
@@ -401,7 +437,7 @@ describe('the unread bit says something finished while the reader was elsewhere'
   });
 
   it('NEVER raises it when the turn completes in the claimed session', () => {
-    const one = submitInSession(SV3_SESSIONS_EMPTY, 'here', T0);
+    const one = submit(SV3_SESSIONS_EMPTY, 'here', T0);
     const ref = latestTurnRef(one) as Sv3TurnRef;
     const done = settleTurn(one, ref, 'complete', T0 + MINUTE);
     expect(done.activeId).toBe(ref.sessionId);
@@ -439,8 +475,8 @@ describe('the unread bit says something finished while the reader was elsewhere'
 
 describe('presence: a run this window did not start is adopted as a session', () => {
   it('opens an unclaimed session with one streaming agent turn, at the top of the list', () => {
-    const existing = submitInSession(SV3_SESSIONS_EMPTY, 'my own question', T0);
-    const { list, ref } = adoptRunSession(existing, 'index the vendor folder', T0 + MINUTE);
+    const existing = submit(SV3_SESSIONS_EMPTY, 'my own question', T0);
+    const { list, ref } = adopt(existing, 'index the vendor folder', T0 + MINUTE);
     const adopted = sessionById(list, ref.sessionId);
     expect(list.sessions.map((s) => s.title)).toEqual(['index the vendor folder', 'my own question']);
     expect(adopted?.turns).toHaveLength(1);
@@ -455,7 +491,7 @@ describe('presence: a run this window did not start is adopted as a session', ()
   });
 
   it('shelves the adopted run on Active, and marks it unread once it ends unseen', () => {
-    const { list, ref } = adoptRunSession(SV3_SESSIONS_EMPTY, 'index the vendor folder', T0);
+    const { list, ref } = adopt(SV3_SESSIONS_EMPTY, 'index the vendor folder', T0);
     expect(projectSv3Sessions(list, proj({ now: T0 })).map((g) => g.label)).toEqual(['Active']);
     const ended = settleAgentTurn(list, ref, 'complete', 3, T0 + MINUTE);
     const shelves = projectSv3Sessions(ended, proj({ now: T0 + MINUTE }));
@@ -464,17 +500,33 @@ describe('presence: a run this window did not start is adopted as a session', ()
     expect(ended.sessions[0]?.turns[0]?.toolCalls).toBe(3);
   });
 
-  it('mints its own id, so a later submit cannot collide with it', () => {
-    const { list } = adoptRunSession(SV3_SESSIONS_EMPTY, 'a run', T0);
-    const asked = submitInSession(startNewSession(list), 'a question', T0 + MINUTE);
-    expect(new Set(asked.sessions.map((s) => s.id)).size).toBe(2);
-    expect(asked.minted).toBe(2);
+  it('takes the run’s own conversation id, so a later submit cannot collide with it', () => {
+    const { list } = adoptRunSession(SV3_SESSIONS_EMPTY, 'a run', T0, 'uc-run');
+    expect(list.sessions[0]?.id).toBe('uc-run');
+    const asked = submitInSession(startNewSession(list), 'a question', T0 + MINUTE, 'ask', 'uc-ask');
+    expect(asked.sessions.map((s) => s.id)).toEqual(['uc-ask', 'uc-run']);
+  });
+
+  it('adopts INTO the conversation the run names when this window already lists it', () => {
+    // A run dispatched elsewhere carries its conversation; two rows for one conversation would be
+    // the identity fork Phase F6 closed, so the run becomes a TURN in the row that already exists.
+    const existing = submitInSession(SV3_SESSIONS_EMPTY, 'my own question', T0, 'ask', 'uc-shared');
+    const { list, ref } = adoptRunSession(existing, 'index the vendor folder', T0 + MINUTE, 'uc-shared');
+    expect(list.sessions).toHaveLength(1);
+    expect(ref.sessionId).toBe('uc-shared');
+    const session = sessionById(list, 'uc-shared');
+    expect(session?.turns).toHaveLength(2);
+    expect(session?.turns[1]?.id).toBe(ref.turnId);
+    expect(session?.turns[1]?.kind).toBe('agent');
+    expect(session?.turns[1]?.status).toBe('streaming');
+    // The title is the conversation's own, not the run's task: the row did not change identity.
+    expect(session?.title).toBe('my own question');
   });
 });
 
 describe('a turn accumulates its answer and reaches exactly one terminal', () => {
   const opened = (): { list: Sv3SessionList; ref: Sv3TurnRef } => {
-    const list = submitInSession(SV3_SESSIONS_EMPTY, 'why did it fail?', T0);
+    const list = submit(SV3_SESSIONS_EMPTY, 'why did it fail?', T0);
     return { list, ref: latestTurnRef(list) as Sv3TurnRef };
   };
 
@@ -529,8 +581,8 @@ describe('a turn accumulates its answer and reaches exactly one terminal', () =>
   });
 
   it('shows the ACTIVE session\'s turns, and nothing at all when none is claimed', () => {
-    const one = submitInSession(SV3_SESSIONS_EMPTY, 'first', T0);
-    const two = submitInSession(startNewSession(one), 'second', T0 + MINUTE);
+    const one = submit(SV3_SESSIONS_EMPTY, 'first', T0);
+    const two = submit(startNewSession(one), 'second', T0 + MINUTE);
     expect(activeTurns(two).map((t) => t.question)).toEqual(['second']);
     expect(activeTurns(startNewSession(two))).toEqual([]);
     expect(activeTurns(SV3_SESSIONS_EMPTY)).toEqual([]);
@@ -541,7 +593,10 @@ describe('a turn accumulates its answer and reaches exactly one terminal', () =>
 });
 
 describe('renaming a conversation (tempdoc 822 Phase F5)', () => {
-  const opened = (): Sv3SessionList => submitInSession(SV3_SESSIONS_EMPTY, 'northfield lease', T0);
+  // A FIXED id, not a minted one: these cases name the conversation they rename, and two calls to
+  // `opened()` in one case must produce the same conversation for that name to mean anything.
+  const opened = (): Sv3SessionList =>
+    submitInSession(SV3_SESSIONS_EMPTY, 'northfield lease', T0, 'ask', 'sv3-session-1');
   const id = (list: Sv3SessionList): string => list.sessions[0]?.id ?? '';
 
   it('resolves an edit into commit / revert / noop, the donor rule', () => {
@@ -577,7 +632,7 @@ describe('renaming a conversation (tempdoc 822 Phase F5)', () => {
   it('KEEPS the chosen title when later turns arrive', () => {
     // Rename wins over the opening-question title by construction: nothing re-derives `title`.
     const renamed = renameSession(opened(), 'sv3-session-1', 'Lease terms');
-    const later = submitInSession(renamed, 'and the renewal option?', T0 + MINUTE);
+    const later = submit(renamed, 'and the renewal option?', T0 + MINUTE);
     expect(later.sessions[0]?.title).toBe('Lease terms');
     expect(later.sessions[0]?.turns).toHaveLength(2);
     // And the sidebar shows the chosen name, not the question that opened the conversation.
@@ -587,12 +642,162 @@ describe('renaming a conversation (tempdoc 822 Phase F5)', () => {
   });
 
   it('renames one conversation without touching its neighbours', () => {
-    const first = submitInSession(SV3_SESSIONS_EMPTY, 'first', T0);
-    const two = submitInSession(startNewSession(first), 'second', T0 + MINUTE);
+    const first = submit(SV3_SESSIONS_EMPTY, 'first', T0);
+    const two = submit(startNewSession(first), 'second', T0 + MINUTE);
     const renamed = renameSession(two, 'sv3-session-1', 'Renamed first');
     expect(renamed.sessions.map((s) => s.title)).toEqual(['second', 'Renamed first']);
     // A rename is not a reorder either: creation order is render order forever.
     expect(renamed.sessions.map((s) => s.id)).toEqual(two.sessions.map((s) => s.id));
+  });
+});
+
+describe('the app-wide conversation store, folded in (tempdoc 822 Phase F6 / inventory A1)', () => {
+  const row = (over: Partial<Sv3StoreConversation> & { id: string }): Sv3StoreConversation => ({
+    title: null,
+    firstUserMessage: '',
+    createdAt: T0,
+    lastActiveAt: T0,
+    ...over,
+  });
+
+  it('projects a conversation this window has never seen into a listable session', () => {
+    const list = mergeStoreConversations(SV3_SESSIONS_EMPTY, [
+      row({ id: 'uc-a', firstUserMessage: 'northfield lease', lastActiveAt: T0 + HOUR }),
+    ]);
+    expect(list.sessions).toHaveLength(1);
+    expect(list.sessions[0]?.id).toBe('uc-a');
+    expect(list.sessions[0]?.title).toBe('northfield lease');
+    // No turns: the TRANSCRIPT is the canonical record's, fetched when the row is claimed.
+    expect(list.sessions[0]?.turns).toEqual([]);
+    expect(list.sessions[0]?.updatedAt).toBe(T0 + HOUR);
+    // Nothing is claimed by a list arriving — that is the reader's decision, not the store's.
+    expect(list.activeId).toBeNull();
+  });
+
+  it('prefers the store TITLE over the opening message, because that is where a rename landed', () => {
+    const list = mergeStoreConversations(SV3_SESSIONS_EMPTY, [
+      row({ id: 'uc-a', title: 'Lease terms', firstUserMessage: 'northfield lease' }),
+    ]);
+    expect(list.sessions[0]?.title).toBe('Lease terms');
+  });
+
+  it('names a locked conversation rather than rendering a row with no label', () => {
+    // Tempdoc 562 — the store returns "" for `firstUserMessage` while the conversation store is
+    // encrypted, so the honest fallback is a placeholder, not an unreadable empty row.
+    const list = mergeStoreConversations(SV3_SESSIONS_EMPTY, [row({ id: 'uc-locked' })]);
+    expect(list.sessions[0]?.title).toBe(SV3_UNTITLED_CONVERSATION);
+  });
+
+  it('never re-creates, re-orders or re-turns a conversation it already lists', () => {
+    const mine = submitInSession(SV3_SESSIONS_EMPTY, 'my question', T0, 'ask', 'uc-mine');
+    const merged = mergeStoreConversations(mine, [
+      row({ id: 'uc-mine', firstUserMessage: 'my question' }),
+      row({ id: 'uc-other', firstUserMessage: 'someone else' }),
+    ]);
+    // The known one keeps its position, its turns and the claim; the new one is APPENDED, because a
+    // conversation this window did not open is not its news and must not move the row being read.
+    expect(merged.sessions.map((s) => s.id)).toEqual(['uc-mine', 'uc-other']);
+    expect(merged.sessions[0]?.turns).toHaveLength(1);
+    expect(merged.activeId).toBe('uc-mine');
+  });
+
+  it('adopts a title renamed elsewhere, and leaves the window-local pin alone', () => {
+    const mine = toggleSessionPin(
+      submitInSession(SV3_SESSIONS_EMPTY, 'my question', T0, 'ask', 'uc-mine'),
+      'uc-mine',
+    );
+    const merged = mergeStoreConversations(mine, [row({ id: 'uc-mine', title: 'Renamed there' })]);
+    expect(merged.sessions[0]?.title).toBe('Renamed there');
+    // Pin is a window-local preference the store has no field for — it must survive the merge.
+    expect(merged.sessions[0]?.pinned).toBe(true);
+  });
+
+  it('is identity for an empty list and for a list that changes nothing', () => {
+    const mine = submitInSession(SV3_SESSIONS_EMPTY, 'my question', T0, 'ask', 'uc-mine');
+    expect(mergeStoreConversations(mine, [])).toBe(mine);
+    expect(mergeStoreConversations(mine, [row({ id: 'uc-mine' })])).toBe(mine);
+  });
+});
+
+describe('the canonical record, applied to a conversation (Phase F6 / inventory D1)', () => {
+  const recordTurn = (over: Partial<Sv3Turn> & { id: string }): Sv3Turn => ({
+    kind: 'ask',
+    question: 'q',
+    answer: 'a',
+    status: 'complete',
+    evidence: null,
+    detail: '',
+    toolCalls: 0,
+    activity: [],
+    askedAt: T0,
+    ...over,
+  });
+
+  const settled = (): Sv3SessionList => {
+    const list = submitInSession(SV3_SESSIONS_EMPTY, 'why did it fail?', T0, 'ask', 'uc-a');
+    const ref = latestTurnRef(list) as Sv3TurnRef;
+    return settleTurn(appendTurnDelta(list, ref, 'local text'), ref, 'complete', T0 + MINUTE);
+  };
+
+  it('replaces a settled turn with the record’s, taking the record’s id as the stable handle', () => {
+    const applied = applySv3Record(settled(), 'uc-a', [
+      recordTurn({ id: 'evt-1', question: 'why did it fail?', answer: 'The lock held.' }),
+    ]);
+    expect(applied.sessions[0]?.turns).toHaveLength(1);
+    expect(applied.sessions[0]?.turns[0]?.id).toBe('evt-1');
+    expect(applied.sessions[0]?.turns[0]?.answer).toBe('The lock held.');
+  });
+
+  it('does NOT touch a streaming turn — the live feed owns the in-flight one', () => {
+    // F2's activeTurnId discipline: the run's `turnId` must stay valid across a refresh, so the
+    // record cannot re-id or re-word the turn a stream is still writing to.
+    const live = submitInSession(SV3_SESSIONS_EMPTY, 'why did it fail?', T0, 'ask', 'uc-a');
+    const ref = latestTurnRef(live) as Sv3TurnRef;
+    const applied = applySv3Record(appendTurnDelta(live, ref, 'partial'), 'uc-a', [
+      recordTurn({ id: 'evt-1', answer: 'the record thinks it finished' }),
+    ]);
+    expect(applied.sessions[0]?.turns[0]?.id).toBe(ref.turnId);
+    expect(applied.sessions[0]?.turns[0]?.answer).toBe('partial');
+    expect(applied.sessions[0]?.turns[0]?.status).toBe('streaming');
+  });
+
+  it('keeps the evidence the record cannot resolve, so a refresh never blanks the panel', () => {
+    const list = submitInSession(SV3_SESSIONS_EMPTY, 'q', T0, 'ask', 'uc-a');
+    const ref = latestTurnRef(list) as Sv3TurnRef;
+    const withEvidence = settleTurn(
+      setTurnEvidence(list, ref, evidence(3)),
+      ref,
+      'complete',
+      T0 + MINUTE,
+    );
+    const applied = applySv3Record(withEvidence, 'uc-a', [recordTurn({ id: 'evt-1' })]);
+    expect(sv3TurnSourceCount(applied.sessions[0]?.turns[0] as Sv3Turn)).toBe(3);
+  });
+
+  it('never re-words a HALT as a completion — the reader’s own act is not in the record', () => {
+    const list = submitInSession(SV3_SESSIONS_EMPTY, 'q', T0, 'ask', 'uc-a');
+    const ref = latestTurnRef(list) as Sv3TurnRef;
+    const halted = settleTurn(list, ref, 'halted', T0 + MINUTE);
+    const applied = applySv3Record(halted, 'uc-a', [recordTurn({ id: 'evt-1' })]);
+    expect(applied.sessions[0]?.turns[0]?.status).toBe('halted');
+  });
+
+  it('KEEPS a turn the record has not been told about yet, at the tail', () => {
+    const two = submitInSession(settled(), 'and the break clause?', T0 + HOUR, 'ask', 'uc-unused');
+    const applied = applySv3Record(two, 'uc-a', [recordTurn({ id: 'evt-1', question: 'why did it fail?' })]);
+    expect(applied.sessions[0]?.turns.map((t) => t.question)).toEqual([
+      'why did it fail?',
+      'and the break clause?',
+    ]);
+    expect(applied.sessions[0]?.turns[1]?.status).toBe('streaming');
+  });
+
+  it('changes nothing for an EMPTY record or an unknown conversation', () => {
+    // `fetchUnifiedThread` returns empty on failure by contract (727 F-8), so "the record said
+    // nothing" must never be readable as "there is nothing".
+    const before = settled();
+    expect(applySv3Record(before, 'uc-a', [])).toBe(before);
+    expect(applySv3Record(before, 'uc-nope', [recordTurn({ id: 'evt-1' })])).toBe(before);
   });
 });
 
