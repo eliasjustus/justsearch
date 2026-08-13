@@ -400,6 +400,12 @@ message RetrieveContextRequest {
   // The Worker drops these chunks BEFORE ranking (a MUST_NOT pre-search filter), so over-retrieval
   // refills top-K from the remaining candidates. Empty = no exclusion (backward-compatible default).
   repeated ChunkRef excluded_chunks = 24;
+
+  // Tempdoc 821 §3-C2 — scope RAG retrieval to Lucene collection tag(s). Shape mirrors
+  // SearchFilters.collection (field 16) so the ASK path and the SEARCH path model scope identically.
+  // Non-empty = a POSITIVE include of exactly those collections; EMPTY = the DEFAULT scope (the
+  // MUST_NOT agent-history exclusion of tempdoc 585 D4b), never "match nothing".
+  repeated string collection = 25;
 }
 
 // Tempdoc 610 §J.3 — a structured (parentDocId, chunkIndex) reference to one retrieved chunk.
