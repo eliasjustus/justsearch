@@ -89,6 +89,7 @@ public final class IsolatedBackendFixture {
   private static final int CLEANUP_ATTEMPTS = 3;
   private static final long CLEANUP_BACKOFF_MS = 500L;
   private static final int LOG_TAIL_LINES = 500;
+  private static final int HEALTH_BODY_EXCERPT_CHARS = 500;
 
   private final HttpClient httpClient =
       HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(5)).build();
@@ -343,6 +344,8 @@ public final class IsolatedBackendFixture {
     HttpRequest req =
         HttpRequest.newBuilder(uri).timeout(java.time.Duration.ofSeconds(5)).GET().build();
     Throwable lastError = null;
+    int lastStatus = -1;
+    String lastBody = "<no response>";
     while (System.currentTimeMillis() < deadline) {
       if (process != null && !process.isAlive()) {
         throw new IllegalStateException(
@@ -357,6 +360,11 @@ public final class IsolatedBackendFixture {
         // Lite mode reports DEGRADED with status 503; that's fine for tests that only need
         // diagnostics + ingestion endpoints. We accept any 2xx as ready, but per the spike
         // /api/health returns 200 in lite mode (DEGRADED is reported in the body).
+        // The non-200 body carries the LifecycleSnapshotV1 that says WHY (lifecycle.reason_code
+        // and components.worker.reason_code), so keep the most recent one for the timeout
+        // message — without it the failure reads as a bare timeout with no cause.
+        lastStatus = resp.statusCode();
+        lastBody = resp.body();
       } catch (IOException ioe) {
         lastError = ioe;
       }
@@ -364,7 +372,19 @@ public final class IsolatedBackendFixture {
     }
     String hint = lastError == null ? "" : " (last error: " + lastError + ")";
     throw new IllegalStateException(
-        "/api/health did not return 200 within " + HEALTH_TIMEOUT_MS + "ms" + hint);
+        "/api/health did not return 200 within " + HEALTH_TIMEOUT_MS + "ms" + hint
+            + ". Last response: status=" + lastStatus + " body=" + truncate(lastBody));
+  }
+
+  /** Caps a response body so a timeout message stays readable in the JUnit XML. */
+  private static String truncate(String body) {
+    if (body == null) {
+      return "<null>";
+    }
+    return body.length() <= HEALTH_BODY_EXCERPT_CHARS
+        ? body
+        : body.substring(0, HEALTH_BODY_EXCERPT_CHARS)
+            + "...[truncated, " + body.length() + " chars total]";
   }
 
   // --------------------------------------------------------------------------------
@@ -415,13 +435,38 @@ public final class IsolatedBackendFixture {
     }
   }
 
+  /**
+   * Copies the evidence a boot failure leaves behind into {@link #resolveFailureLogDir()}.
+   *
+   * <p>{@code backend.log} is only the child JVM's redirected stdout/stderr — the Head's actual
+   * application log is {@code <dataDir>/logs/headless-backend.log}
+   * ({@code modules/ui/src/main/resources/logback.xml}), and the Worker's is
+   * {@code <dataDir>/logs/worker.log}
+   * ({@code modules/indexer-worker/src/main/resources/logback.xml}). Both roll to
+   * {@code <name>.%d{yyyy-MM-dd}.%i.log.gz} / {@code <name>-%d{yyyy-MM-dd}.%i.log.gz} at 10&nbsp;MB,
+   * so the whole {@code logs/} directory is swept rather than a fixed filename list. The previous
+   * {@code app.log} copy could never fire: that file is written by the app-launcher process, which
+   * this fixture never spawns.
+   */
   private void preserveLogOnFailure() {
     logsPreserved = true;
     Path dest = resolveFailureLogDir();
     copyIfPresent(backendLog, dest.resolve("backend.log"));
     if (dataDir != null) {
-      copyIfPresent(dataDir.resolve("logs").resolve("app.log"), dest.resolve("app.log"));
-      copyIfPresent(dataDir.resolve("logs").resolve("worker.log"), dest.resolve("worker.log"));
+      Path logsDir = dataDir.resolve("logs");
+      if (Files.isDirectory(logsDir)) {
+        try (Stream<Path> logs = Files.list(logsDir)) {
+          logs.filter(Files::isRegularFile)
+              .filter(
+                  p -> {
+                    String name = p.getFileName().toString();
+                    return name.endsWith(".log") || name.endsWith(".log.gz");
+                  })
+              .forEach(p -> copyIfPresent(p, dest.resolve(p.getFileName().toString())));
+        } catch (IOException io) {
+          System.err.println("[IsolatedBackendFixture] failed to list logs dir: " + io);
+        }
+      }
       Path crashesDir = dataDir.resolve("crashes");
       if (Files.exists(crashesDir)) {
         try (Stream<Path> walk = Files.walk(crashesDir)) {
