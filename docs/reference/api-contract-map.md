@@ -440,7 +440,11 @@ Source: tempdoc 500, ADR-0015, tempdoc 366.
 `POST /api/knowledge/search` accepts a JSON body with required `query` and optional fields:
 
 - `limit`, `mode`, `sort`, `cursor`
-- `querySyntax` (or `query_syntax` alias)
+- `querySyntax` (or `query_syntax` alias) — since tempdoc 821 §P / register F-046, `lucene` is
+  honoured on **every** retrieval path (previously only the sparse-only one; multi-leg legs escaped
+  the operators and retrieved a SIMPLE parse), so a malformed `lucene` query now fails the request
+  with HTTP `400` / `INVALID_REQUEST` (Worker gRPC `INVALID_ARGUMENT`) instead of being silently
+  parsed as plain text.
 - `projection[]`
 - `filters` (`mime`, `mimeBase`, `fileKind`, `language`, `pathPrefix`, `includeChunks`, `modifiedAt`)
 - Entity filter fields: `entityPersons`, `entityOrganizations`, `entityLocations` (repeated string) (362)
