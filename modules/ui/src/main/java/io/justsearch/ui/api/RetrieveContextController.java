@@ -97,9 +97,14 @@ public class RetrieveContextController {
     List<String> metaAuthor = List.of();
     List<String> metaCategory = List.of();
     RetrieveContextParams.TimeRange metaPublishedAt = RetrieveContextParams.TimeRange.UNSET;
+    // Tempdoc 821 §3-C2 — the collection scope. Same wire key as the search endpoint's filter block
+    // (`collection`, see KnowledgeSearchController#parseFilters), so one scope name spans both
+    // surfaces. Absent/empty = the default scope, not "match nothing".
+    List<String> collection = List.of();
 
     if (filters != null) {
       pathPrefix = getString(filters, "path_prefix", "");
+      collection = getStringList(filters, "collection");
       fileKind = getStringList(filters, "file_kind");
       entityPersons = getStringList(filters, "entity_persons");
       entityOrganizations = getStringList(filters, "entity_organizations");
@@ -177,7 +182,7 @@ public class RetrieveContextController {
         modifiedAt, false, pathPrefix, fileKind,
         autoEntityExtract, format,
         metaSource, metaAuthor, metaCategory, metaPublishedAt, returnFullDocuments,
-        java.util.List.of());
+        java.util.List.of(), collection);
 
     try {
       ContextResult result = documentService()

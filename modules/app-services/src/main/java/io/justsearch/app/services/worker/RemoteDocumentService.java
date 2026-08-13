@@ -285,7 +285,7 @@ public final class RemoteDocumentService implements DocumentService {
                 params.fileKind(), params.autoEntityExtract(), params.contextFormat(),
                 params.metaSource(), params.metaAuthor(), params.metaCategory(),
                 params.metaPublishedAt(), params.returnFullDocuments(),
-                params.excludedSourceIds());
+                params.excludedSourceIds(), params.collection());
           }
         }
 
@@ -335,10 +335,18 @@ public final class RemoteDocumentService implements DocumentService {
           || !params.entityLocations().isEmpty()
           || !params.metaSource().isEmpty()
           || !params.metaAuthor().isEmpty()
-          || !params.metaCategory().isEmpty();
+          || !params.metaCategory().isEmpty()
+          // Tempdoc 821 §3-C2: the pre-search discovers the doc universe the RAG request is then
+          // scoped to, so it must carry the same collection scope. Without it an explicit
+          // agent-history ASK pre-searched under the DEFAULT scope, which excludes agent-history,
+          // and discovered zero parents.
+          || !params.collection().isEmpty();
 
       if (hasFilters || params.modifiedAt().isSet() || params.metaPublishedAt().isSet()) {
         var filtersBuilder = io.justsearch.ipc.SearchFilters.newBuilder();
+        if (!params.collection().isEmpty()) {
+          filtersBuilder.addAllCollection(params.collection());
+        }
         if (!params.pathPrefix().isEmpty()) {
           filtersBuilder.setPathPrefix(params.pathPrefix());
         }

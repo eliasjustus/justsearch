@@ -390,10 +390,23 @@ public final class ChunkSearchOps {
    * by doc_id and NOT is_chunk.
    */
   public SearchResult searchFullDocsForDocs(String queryText, Set<String> docIds, int limit) {
+    return searchFullDocsForDocs(queryText, docIds, limit, null);
+  }
+
+  /**
+   * Filter-carrying sibling of {@link #searchFullDocsForDocs(String, Set, int)} (tempdoc 821 §3-C2).
+   *
+   * <p>Keeps the return-empty-on-empty-scope contract — the distinction from {@link #searchFullDocs}
+   * that tempdoc 749 made deliberate — while letting the RAG whole-document legs apply the same
+   * doc-level filter (notably the collection scope) their chunk sibling already applies. Without it
+   * the FULLTEXT_FALLBACK and return_full_documents legs answered from outside the requested scope.
+   */
+  public SearchResult searchFullDocsForDocs(
+      String queryText, Set<String> docIds, int limit, Query additionalFilter) {
     if (queryText == null || queryText.isBlank() || docIds == null || docIds.isEmpty()) {
       return new SearchResult(List.of(), 0, 0);
     }
-    return searchFullDocs(queryText, docIds, limit, null);
+    return searchFullDocs(queryText, docIds, limit, additionalFilter);
   }
 
   /**

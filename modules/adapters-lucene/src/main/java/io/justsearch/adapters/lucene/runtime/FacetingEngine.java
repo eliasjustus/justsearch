@@ -62,6 +62,19 @@ public final class FacetingEngine {
    * <p>Only keyword fields (SortedDocValues) are counted. This is intentionally off by default
    * and should only be executed when the client explicitly requests facets.
    *
+   * <p><b>Key presence is the honest signal for "can this field facet at all?"</b> A requested
+   * field the schema cannot facet (unknown field, no DocValues, or a non-{@code keyword} type) is
+   * <b>omitted from the returned map entirely</b> — its key is absent. A facetable field is always
+   * present, even when nothing matched (key present, empty or zero counts). So callers can tell
+   * "this field is not facetable" (key absent) from "this field faceted and found nothing"
+   * (key present) — the two used to be indistinguishable, both surfacing as an empty map.
+   *
+   * <p>{@code truncated} is likewise honest about the scan: it is {@code true} both when the
+   * {@code maxDocsScanned} cap stopped the scan early AND when the scan failed with an
+   * {@link IOException} partway through (the counts accumulated so far are still returned, since
+   * partial-and-flagged beats silently-complete-looking). It is {@code false} only for a scan that
+   * ran to completion.
+   *
    * @param query lucene query (should already include any filters)
    * @param fieldToSize facet fields to compute (field -> topN)
    * @param maxDocsScanned safety cap (<=0 uses default of 50,000)
@@ -75,6 +88,37 @@ public final class FacetingEngine {
     // Safety default: prevent pathological broad queries from scanning the entire index.
     int cap = maxDocsScanned <= 0 ? DEFAULT_MAX_DOCS_SCANNED : maxDocsScanned;
 
+    // Resolve which requested fields the schema can actually facet BEFORE seeding the result, so a
+    // non-facetable field never gets a key (see the key-presence contract above). Non-facetable
+    // fields are dropped here, not in the scan loop.
+    Map<String, FieldMapper.FieldDef> facetableDefs = new LinkedHashMap<>();
+    List<String> notFacetable = new ArrayList<>();
+    for (String f : fieldToSize.keySet()) {
+      if (f == null || f.isBlank()) continue;
+      FieldMapper.FieldDef def = fieldDefLookup.apply(f);
+      if (def == null || !def.docValues || !"keyword".equals(def.type)) {
+        notFacetable.add(f);
+        continue;
+      }
+      facetableDefs.put(f, def);
+    }
+    if (!notFacetable.isEmpty()) {
+      log.debug(
+          "Facet fields not facetable (keyword+docValues required) — omitted from the result: {}",
+          notFacetable);
+    }
+
+    Map<String, Map<String, Long>> counts = new HashMap<>();
+    for (String f : facetableDefs.keySet()) {
+      counts.put(f, new HashMap<>());
+    }
+
+    boolean truncated = false;
+    long scanned = 0;
+    // Failure context for the IOException path (which field / which segment the scan died on).
+    int leafOrd = -1;
+    String loadingField = null;
+
     IndexSearcher searcher = null;
     try {
       searcher = bridge.acquire();
@@ -86,30 +130,20 @@ public final class FacetingEngine {
       Query rewritten = searcher.rewrite(query);
       Weight weight = searcher.createWeight(rewritten, ScoreMode.COMPLETE_NO_SCORES, 1.0f);
 
-      Map<String, Map<String, Long>> counts = new HashMap<>();
-      for (String f : fieldToSize.keySet()) {
-        if (f != null && !f.isBlank()) {
-          counts.put(f, new HashMap<>());
-        }
-      }
-
-      boolean truncated = false;
-      long scanned = 0;
-
       for (LeafReaderContext leaf : searcher.getIndexReader().leaves()) {
         if (truncated) break;
+        leafOrd = leaf.ord;
 
         Scorer scorer = weight.scorer(leaf);
         if (scorer == null) continue;
 
-        // Cache per-leaf DocValues for requested fields (only keyword/docValues fields are supported).
+        // Cache per-leaf DocValues for the facetable fields resolved above.
         Map<String, SortedDocValues> dvs = new HashMap<>();
         Map<String, SortedSetDocValues> setDvs = new HashMap<>();
-        for (String field : counts.keySet()) {
-          FieldMapper.FieldDef def = fieldDefLookup.apply(field);
-          if (def == null || !def.docValues || !"keyword".equals(def.type)) {
-            continue;
-          }
+        for (var defEntry : facetableDefs.entrySet()) {
+          String field = defEntry.getKey();
+          FieldMapper.FieldDef def = defEntry.getValue();
+          loadingField = field;
           try {
             if (def.multiValued) {
               SortedSetDocValues sdv = DocValues.getSortedSet(leaf.reader(), field);
@@ -122,6 +156,7 @@ public final class FacetingEngine {
             // Field has no DocValues in this segment.
           }
         }
+        loadingField = null;
 
         // IMPORTANT:
         // Some queries expose a two-phase iterator (approximation + matches()).
@@ -169,39 +204,52 @@ public final class FacetingEngine {
         }
       }
 
-      // Reduce to top-N per field.
-      Map<String, Map<String, Long>> top = new HashMap<>();
-      for (var entry : counts.entrySet()) {
-        String field = entry.getKey();
-        int size = fieldToSize.getOrDefault(field, 10);
-        if (size <= 0) size = 10;
-
-        List<Map.Entry<String, Long>> list = new ArrayList<>(entry.getValue().entrySet());
-        list.sort((a, b) -> {
-          int c = Long.compare(b.getValue(), a.getValue());
-          if (c != 0) return c;
-          return a.getKey().compareTo(b.getKey());
-        });
-
-        LinkedHashMap<String, Long> out = new LinkedHashMap<>();
-        int n = Math.min(size, list.size());
-        for (int i = 0; i < n; i++) {
-          out.put(list.get(i).getKey(), list.get(i).getValue());
-        }
-        top.put(field, Collections.unmodifiableMap(out));
-      }
-
       // Tempdoc 597: `scanned` is the matched-document total — the headline's "M", with every facet
       // value tallied from it (so facet value <= matchedDocs by construction).
-      return new FacetsResult(Collections.unmodifiableMap(top), truncated, scanned);
+      return new FacetsResult(reduceToTopN(counts, fieldToSize), truncated, scanned);
 
     } catch (IOException e) {
-      log.warn("Failed to compute facets", e);
-      return new FacetsResult(Map.of(), false, 0L);
+      // The scan FAILED — it did not complete, so `truncated=false` would be a lie about a partial
+      // tally. Return what was accumulated, flagged truncated (tempdoc 821 §L.3).
+      log.warn(
+          "Facet scan FAILED (not capped) after {} matched docs {}{} — returning PARTIAL counts"
+              + " for {} marked truncated",
+          scanned,
+          leafOrd < 0 ? "before segment iteration" : "on segment ord " + leafOrd,
+          loadingField == null ? "" : " while loading DocValues for field '" + loadingField + "'",
+          counts.keySet(),
+          e);
+      return new FacetsResult(reduceToTopN(counts, fieldToSize), true, scanned);
     } finally {
       if (searcher != null) {
         bridge.release(searcher);
       }
     }
+  }
+
+  /** Reduces the raw per-field tallies to the requested top-N, preserving every field key. */
+  private static Map<String, Map<String, Long>> reduceToTopN(
+      Map<String, Map<String, Long>> counts, Map<String, Integer> fieldToSize) {
+    Map<String, Map<String, Long>> top = new HashMap<>();
+    for (var entry : counts.entrySet()) {
+      String field = entry.getKey();
+      int size = fieldToSize.getOrDefault(field, 10);
+      if (size <= 0) size = 10;
+
+      List<Map.Entry<String, Long>> list = new ArrayList<>(entry.getValue().entrySet());
+      list.sort((a, b) -> {
+        int c = Long.compare(b.getValue(), a.getValue());
+        if (c != 0) return c;
+        return a.getKey().compareTo(b.getKey());
+      });
+
+      LinkedHashMap<String, Long> out = new LinkedHashMap<>();
+      int n = Math.min(size, list.size());
+      for (int i = 0; i < n; i++) {
+        out.put(list.get(i).getKey(), list.get(i).getValue());
+      }
+      top.put(field, Collections.unmodifiableMap(out));
+    }
+    return Collections.unmodifiableMap(top);
   }
 }
