@@ -113,7 +113,7 @@ public final class TokenAwareBudgeter {
    * Appends one section as:
    *
    * <pre>
-   * [From: label]
+   * [n] label
    * content
    * </pre>
    *
@@ -127,7 +127,7 @@ public final class TokenAwareBudgeter {
     }
 
     String label = (sourceLabel == null || sourceLabel.isBlank()) ? DEFAULT_SOURCE_LABEL : sourceLabel;
-    String header = "[From: " + label + "]\n";
+    String header = ContextBudgeter.sectionHeader(sections.size() + 1, label);
     String sep = first ? "" : SECTION_SEPARATOR;
 
     // Calculate token budget remaining

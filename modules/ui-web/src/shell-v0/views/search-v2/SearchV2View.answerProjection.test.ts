@@ -57,7 +57,7 @@ const OUTCOME: AskOutcome = {
     {
       sentenceIndex: 0,
       sentenceText: 'Payment terms moved to net-45 in the Northfield renewal.',
-      chunkIndex: 0,
+      sourceIndex: 0,
       similarity: 0.77,
       parentDocId: 'Contracts/Northfield.pdf',
     },

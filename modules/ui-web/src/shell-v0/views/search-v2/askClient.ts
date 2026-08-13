@@ -73,26 +73,47 @@ export interface AskSink {
 /** Accumulator for the per-sentence grounding model the two citation events both contribute to. */
 interface ClaimAcc {
   text: string;
-  score: number;
-  refs: Set<number>;
+  verifiedScore: number | null;
+  lexicalScore: number;
+  /** Tempdoc 822 §3b — split by producer; only verified refs may resolve a mark (deltas arrive first). */
+  verifiedRefs: Set<number>;
+  lexicalRefs: Set<number>;
 }
+
+/** Tempdoc 822 §3d — which event scored this sentence (the handler knows; the payload need not). */
+type ScoreProvenance = 'verified' | 'lexical';
 
 function mergeClaim(
   acc: Map<number, ClaimAcc>,
   sentenceIndex: number,
   sentenceText: string,
   score: number,
-  chunkIndex: number | null,
+  provenance: ScoreProvenance,
+  sourceIndex: number | null,
 ): void {
   const existing = acc.get(sentenceIndex);
   if (existing) {
-    existing.score = Math.max(existing.score, score);
-    if (chunkIndex !== null) existing.refs.add(chunkIndex);
+    if (provenance === 'verified') {
+      existing.verifiedScore = Math.max(existing.verifiedScore ?? 0, score);
+      if (sourceIndex !== null) existing.verifiedRefs.add(sourceIndex);
+    } else {
+      existing.lexicalScore = Math.max(existing.lexicalScore, score);
+      if (sourceIndex !== null) existing.lexicalRefs.add(sourceIndex);
+    }
     return;
   }
-  const refs = new Set<number>();
-  if (chunkIndex !== null) refs.add(chunkIndex);
-  acc.set(sentenceIndex, { text: sentenceText, score, refs });
+  const verifiedRefs = new Set<number>();
+  const lexicalRefs = new Set<number>();
+  if (sourceIndex !== null) {
+    (provenance === 'verified' ? verifiedRefs : lexicalRefs).add(sourceIndex);
+  }
+  acc.set(sentenceIndex, {
+    text: sentenceText,
+    verifiedScore: provenance === 'verified' ? score : null,
+    lexicalScore: provenance === 'lexical' ? score : 0,
+    verifiedRefs,
+    lexicalRefs,
+  });
 }
 
 function claimsOf(acc: Map<number, ClaimAcc>): Claim[] {
@@ -100,8 +121,10 @@ function claimsOf(acc: Map<number, ClaimAcc>): Claim[] {
     .map(([sentenceIndex, v]) => ({
       sentenceIndex,
       sentenceText: v.text,
-      score: v.score,
-      sourceRefs: [...v.refs],
+      verifiedScore: v.verifiedScore,
+      lexicalScore: v.lexicalScore,
+      verifiedRefs: [...v.verifiedRefs],
+      lexicalRefs: [...v.lexicalRefs],
     }))
     .sort((a, b) => a.sentenceIndex - b.sentenceIndex);
 }
@@ -154,17 +177,18 @@ export async function askDocuments(req: AskRequest, sink: AskSink): Promise<void
       const p = payload as {
         sentenceIndex?: number;
         sentenceText?: string;
-        citations?: Array<{ chunkIndex?: number; score?: number }>;
+        citations?: Array<{ sourceIndex?: number; score?: number }>;
       } | null;
       if (!p || typeof p.sentenceText !== 'string' || !Array.isArray(p.citations)) return;
       const best = Math.max(0, ...p.citations.map((c) => (typeof c.score === 'number' ? c.score : 0)));
-      const chunk = p.citations[0]?.chunkIndex;
+      const ref = p.citations[0]?.sourceIndex;
       mergeClaim(
         claimAcc,
         p.sentenceIndex ?? 0,
         p.sentenceText,
         best,
-        typeof chunk === 'number' ? chunk : null,
+        'lexical',
+        typeof ref === 'number' ? ref : null,
       );
     },
     onRagCitationMatches(payload: unknown) {
@@ -182,7 +206,8 @@ export async function askDocuments(req: AskRequest, sink: AskSink): Promise<void
             m.sentenceIndex ?? 0,
             m.sentenceText ?? '',
             typeof m.similarity === 'number' ? m.similarity : 0,
-            typeof m.chunkIndex === 'number' ? m.chunkIndex : null,
+            'verified',
+            typeof m.sourceIndex === 'number' ? m.sourceIndex : null,
           );
         }
       }

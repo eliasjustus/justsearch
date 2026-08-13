@@ -35,7 +35,7 @@ import org.mockito.ArgumentCaptor;
  *
  * <p>The W2b regression (audit-without-test rule): {@code McpToolSurface.callAnswer} used to
  * request {@code ContextFormat.XML} even though the Worker's {@code ContextBudgeter} has no
- * XML/PLAIN branch and always renders LABELED ({@code "[From: label]\n"} sections) — a dead
+ * XML/PLAIN branch and always renders LABELED ({@code "[n] label\n"} sections) — a dead
  * orphan request (tempdoc 725 orphan #5). {@link #answerRequestsLabeledContextFormat()} captures
  * the actual {@link RetrieveContextParams} passed to {@code DocumentService.retrieveContext} and
  * fails if the call site ever requests a format other than LABELED again.
@@ -232,9 +232,11 @@ final class McpAnswerLegibilityTest {
     String text =
         textOf(invokeAnswer(canned, Map.of("query", "q", "response_format", "concise")).result());
 
-    assertTrue(text.contains("[From: doc-1]"), text);
-    assertTrue(text.contains("[From: doc-2]"), text);
-    assertTrue(text.contains("[From: doc-3]"), text);
+    // Tempdoc 822 §3a: concise re-renders sections detailed mode passes through verbatim, so it
+    // carries the same "[n] label" header — a section's ordinal must not depend on the density.
+    assertTrue(text.contains("[1] doc-1"), text);
+    assertTrue(text.contains("[2] doc-2"), text);
+    assertTrue(text.contains("[3] doc-3"), text);
     assertFalse(text.contains("doc-4"), text);
     assertFalse(text.contains("should not appear"), text);
     assertTrue(text.contains(McpSearchResultFormatter.TRUNCATION_REMEDY), text);

@@ -60,7 +60,7 @@ final class McpSearchResultFormatter {
    * on the text's content. Deliberately preserves {@code \t}/{@code \n}/{@code \r}: those are
    * ISO control chars by the JDK's classification but are legitimate text-formatting whitespace
    * (paragraph/section breaks in multi-line excerpt, preview, and answer-context text) rather than
-   * corrupted bytes — stripping them would collapse the {@code [From: ...]} section structure
+   * corrupted bytes — stripping them would collapse the {@code [n] label} section structure
    * detailed-mode answers render verbatim. Tempdoc 732 issue 7: extracted out of {@link #sanitize}
    * so the narrower control-char concern can be applied on its own at raw-echo sites
    * (excerpt/preview/answer text) that must NOT also lose printable punctuation like {@code "} and

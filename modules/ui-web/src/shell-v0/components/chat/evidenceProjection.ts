@@ -405,10 +405,11 @@ export interface SourceGrounding {
 /**
  * Join a source to its grounding via the answer's citation-matches (603 C1, corrected per PART X.B).
  *
- * <p>The match's `chunkIndex` is the source's **array position in the `rag.citations` list** — the ONE
- * established convention across the citation system: the inline `[n]` marks + their label + `Claim.sourceRefs`
+ * <p>The match's `sourceIndex` is the source's **array position in the `rag.citations` list** — the ONE
+ * established convention across the citation system: the inline `[n]` marks + their label + `Claim.verifiedRefs`
  * (`citationResolve.claimsToCitations` does `sources[refIdx]`) all index sources by that position, and the worker
- * emits exactly that position. So a source is grounded by the matches whose `chunkIndex` equals its POSITION in the
+ * emits exactly that position (822 §3b renamed the field so the two facts cannot re-conflate). So a source is
+ * grounded by the matches whose `sourceIndex` equals its POSITION in the
  * panel's sources list (NOT a document-ordinal compare — that was the §1 "everything uncited" bug). `parentDocId`
  * is a cheap correctness guard (a position's match shares the source's document).
  */
@@ -420,7 +421,7 @@ export function sourceGrounding(
   let count = 0;
   let best = 0;
   for (const m of matches) {
-    if (m.chunkIndex === sourceIndex && (parentDocId === undefined || m.parentDocId === parentDocId)) {
+    if (m.sourceIndex === sourceIndex && (parentDocId === undefined || m.parentDocId === parentDocId)) {
       count += 1;
       if (m.similarity > best) best = m.similarity;
     }

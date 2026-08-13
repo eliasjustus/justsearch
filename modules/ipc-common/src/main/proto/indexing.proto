@@ -505,7 +505,10 @@ message MatchCitationsRequest {
 message CitationMatchEntry {
   int32 sentence_index = 1;       // 0-based sentence position in answer
   string sentence_text = 2;       // The sentence text
-  int32 chunk_index = 3;          // Which context chunk matched (index into request arrays)
+  // Tempdoc 822 §3b (the numbering contract) — renamed from `chunk_index`, field NUMBER unchanged so
+  // the head<->worker wire is untouched. The value is the matched source's POSITION in the request
+  // arrays; a chunk's ordinal inside its parent document is a different fact and never travels here.
+  int32 source_index = 3;
   double similarity = 4;          // Cosine similarity score
   string parent_doc_id = 5;       // Parent document ID for the matched chunk
 }
