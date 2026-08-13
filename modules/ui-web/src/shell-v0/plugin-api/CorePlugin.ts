@@ -101,6 +101,17 @@ const CORE_SURFACES: PluginSurfaceContribution[] = [
     audience: 'DEVELOPER',
     placement: 'DEEPLINK',
   },
+  // Tempdoc 822 slice 1 — Search v3: the window rebuilt on a new design system, built
+  // from scratch beside both the shipped window and search-v2. DEVELOPER/DEEPLINK and off-rail for
+  // the same reason its predecessor is: a visible peer would recreate the defect 687 deleted.
+  {
+    id: 'core.search-v3-surface',
+    mountTag: 'jf-sv3-window',
+    labelKey: 'registry-surface.search-v3-surface.label',
+    descriptionKey: 'registry-surface.search-v3-surface.description',
+    audience: 'DEVELOPER',
+    placement: 'DEEPLINK',
+  },
   {
     id: 'core.brain-surface',
     mountTag: 'jf-brain-surface',

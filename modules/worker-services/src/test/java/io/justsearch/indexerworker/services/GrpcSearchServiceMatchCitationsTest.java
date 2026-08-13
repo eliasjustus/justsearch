@@ -185,13 +185,14 @@ class GrpcSearchServiceMatchCitationsTest {
       // Sentence 0 (ML-related) should match chunk 0 (ML content)
       var match0 = response.getMatches(0);
       assertEquals(0, match0.getSentenceIndex());
-      assertEquals(0, match0.getChunkIndex(), "ML sentence should match ML chunk");
+      assertEquals(0, match0.getSourceIndex(), "ML sentence should match request-array position 0");
       assertTrue(match0.getSimilarity() > 0.9, "Same-topic similarity should be high");
 
       // Sentence 1 (brain/neural) should match chunk 1 (neural networks content)
       var match1 = response.getMatches(1);
       assertEquals(1, match1.getSentenceIndex());
-      assertEquals(1, match1.getChunkIndex(), "Neural sentence should match neural chunk");
+      assertEquals(
+          1, match1.getSourceIndex(), "Neural sentence should match request-array position 1");
       assertTrue(match1.getSimilarity() > 0.9, "Same-topic similarity should be high");
     }
   }

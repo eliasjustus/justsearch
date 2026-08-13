@@ -511,7 +511,7 @@ public final class McpToolSurface {
               true,
               // Tempdoc 725 W2b: LABELED is the only format the Worker's ContextBudgeter actually
               // renders — RagContextOps never reads contextFormat off the wire, and ContextBudgeter
-              // has no XML/PLAIN branch at all (it unconditionally emits "[From: label]\n" +
+              // has no XML/PLAIN branch at all (it unconditionally emits "[n] label\n" +
               // content). Requesting XML here was a dead orphan (tempdoc 725 orphan #5): the param
               // was serialized onto the gRPC request correctly, but nothing downstream consumed it,
               // so every caller has always received LABELED regardless of what it asked for.
@@ -582,7 +582,7 @@ public final class McpToolSurface {
     // Tempdoc 725 W2a: N/M come from the in-hand result: N is the citation count (== chunksUsed;
     // both are derived from the same worker-reported chunk list —
     // RemoteDocumentService.mapRetrieveContextResponse), which equals the number of rendered
-    // "[From: ...]" sections in result.context() for both the chunk-RAG and virtual-chunk-fallback
+    // "[n] label" sections in result.context() for both the chunk-RAG and virtual-chunk-fallback
     // paths.
     //
     // Tempdoc 725 review fix: RemoteDocumentService.retrieveContextFallback (FULLTEXT_FALLBACK
@@ -768,9 +768,14 @@ public final class McpToolSurface {
       if (i > 0) sb.append(DocumentService.SECTION_SEPARATOR);
       McpSearchResultFormatter.Window window =
           McpSearchResultFormatter.windowStartingAt(section.content(), 0, 600);
-      sb.append("[From: ")
+      // Same "[n] label\n" header the assembled context carries (ContextBudgeter.sectionHeader,
+      // tempdoc 822 §3a) — concise re-renders the sections detailed mode passes through verbatim,
+      // so the two densities must not disagree about a section's ordinal.
+      sb.append('[')
+          .append(section.sectionIndex() + 1)
+          .append("] ")
           .append(section.sourceLabel())
-          .append("]\n")
+          .append('\n')
           .append(McpSearchResultFormatter.stripControlChars(window.text()));
       if (window.truncated()) sb.append(McpSearchResultFormatter.TRUNCATION_REMEDY);
     }

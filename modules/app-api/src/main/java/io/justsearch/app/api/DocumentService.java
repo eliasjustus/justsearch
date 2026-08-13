@@ -136,12 +136,18 @@ public interface DocumentService {
     return fetchBatch(List.copyOf(docIds))
         .thenApply(docs -> {
           StringBuilder sb = new StringBuilder();
+          // Mirrors ContextBudgeter.sectionHeader ("[n] label\n") — app-api cannot depend on
+          // :modules:indexing, the same constraint SECTION_SEPARATOR above is mirrored under. The
+          // 1-based ordinal is the one the prompt asks the model to cite (tempdoc 822 §3a).
+          int sectionNumber = 0;
           for (var entry : docs.entrySet()) {
             if (entry.getValue() != null && !entry.getValue().content().isBlank()) {
               if (sb.length() > 0) {
                 sb.append(SECTION_SEPARATOR);
               }
-              sb.append("[From: ").append(extractFilename(entry.getKey())).append("]\n");
+              sectionNumber++;
+              sb.append('[').append(sectionNumber).append("] ")
+                  .append(extractFilename(entry.getKey())).append('\n');
               sb.append(entry.getValue().content());
             }
           }
@@ -317,11 +323,19 @@ public interface DocumentService {
     }
   }
 
-  /** A single sentence-to-chunk citation match. */
+  /**
+   * A single answer-sentence-to-source citation match.
+   *
+   * <p>Tempdoc 822 §3b (the numbering contract): {@code sourceIndex} is the matched source's
+   * POSITION in the {@code citations} list handed to {@link #matchCitations} — the same list the UI
+   * numbers its {@code [n]} marks from. It is NOT the chunk's ordinal inside its parent document
+   * (that fact lives only on {@link ContextCitation#chunkIndex()} and never travels on a match).
+   * Renamed from {@code chunkIndex}, which let the two facts be conflated silently.
+   */
   record CitationMatchEntry(
       int sentenceIndex,
       String sentenceText,
-      int chunkIndex,
+      int sourceIndex,
       double similarity,
       String parentDocId) {
     public CitationMatchEntry {

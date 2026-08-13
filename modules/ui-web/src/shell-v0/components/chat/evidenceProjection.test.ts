@@ -33,7 +33,7 @@ function match(overrides: Partial<CitationMatch> = {}): CitationMatch {
   return {
     sentenceIndex: 0,
     sentenceText: 's',
-    chunkIndex: 0,
+    sourceIndex: 0,
     similarity: 0.8,
     parentDocId: 'a.md',
     ...overrides,
@@ -303,13 +303,13 @@ describe('answerFrame — the epistemic frame (declared class × actual outcome)
 });
 
 describe('sourceGrounding — faithfulness join by ARRAY POSITION (603 C1 / PART X.B)', () => {
-  it('joins a source to its grounded sentences by its array position (match.chunkIndex === sourceIndex)', () => {
-    // The match `chunkIndex` is the source's POSITION in the rag.citations list (the established convention
+  it('joins a source to its grounded sentences by its array position (match.sourceIndex === sourceIndex)', () => {
+    // The match `sourceIndex` is the source's POSITION in the rag.citations list (the established convention
     // the inline marks use), NOT a document ordinal. Source at index 2 is grounded by matches at position 2.
     const g = sourceGrounding(2, [
-      match({ chunkIndex: 2, parentDocId: 'a.md', similarity: 0.7 }),
-      match({ chunkIndex: 2, parentDocId: 'a.md', similarity: 0.9 }),
-      match({ chunkIndex: 5, parentDocId: 'a.md', similarity: 0.99 }), // different position — excluded
+      match({ sourceIndex: 2, parentDocId: 'a.md', similarity: 0.7 }),
+      match({ sourceIndex: 2, parentDocId: 'a.md', similarity: 0.9 }),
+      match({ sourceIndex: 5, parentDocId: 'a.md', similarity: 0.99 }), // different position — excluded
     ], 'a.md');
     expect(g.cited).toBe(true);
     expect(g.groundedSentences).toBe(2);
@@ -320,7 +320,7 @@ describe('sourceGrounding — faithfulness join by ARRAY POSITION (603 C1 / PART
   it('DECISIVE — position-join, not doc-ordinal: a match at position 1 grounds index 1 even when ordinals differ', () => {
     // This is the §1 "everything uncited" bug guard. Sources have NON-sequential doc-ordinals; the join must
     // key on the array POSITION (what the matcher emits), so an ordinal compare would mis-assign here.
-    const matches = [match({ chunkIndex: 1, parentDocId: 'sys.md', similarity: 0.95 })];
+    const matches = [match({ sourceIndex: 1, parentDocId: 'sys.md', similarity: 0.95 })];
     const grounded = sourceGrounding(1, matches, 'sys.md'); // the source at array-index 1
     expect(grounded.cited).toBe(true);
     expect(grounded.groundedSentences).toBe(1);
@@ -329,12 +329,12 @@ describe('sourceGrounding — faithfulness join by ARRAY POSITION (603 C1 / PART
   });
 
   it('parentDocId guards a position whose match is from a different document', () => {
-    const g = sourceGrounding(0, [match({ chunkIndex: 0, parentDocId: 'b.md' })], 'a.md');
+    const g = sourceGrounding(0, [match({ sourceIndex: 0, parentDocId: 'b.md' })], 'a.md');
     expect(g.cited).toBe(false);
   });
 
   it('a retrieved-but-unmatched source is uncited (low tier, similarity 0)', () => {
-    const g = sourceGrounding(0, [match({ chunkIndex: 3, parentDocId: 'a.md' })], 'a.md');
+    const g = sourceGrounding(0, [match({ sourceIndex: 3, parentDocId: 'a.md' })], 'a.md');
     expect(g.cited).toBe(false);
     expect(g.groundedSentences).toBe(0);
     expect(g.similarity).toBe(0);

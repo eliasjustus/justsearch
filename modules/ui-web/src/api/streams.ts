@@ -14,11 +14,17 @@ import { bumpChannelClosed, bumpChannelOpened } from '../shell-v0/state/liveChan
 
 
 /** Structured citation metadata emitted by RAG endpoints for click-to-verify UI. */
-/** A single sentence-to-chunk citation match from post-hoc embedding similarity. */
+/**
+ * A single sentence-to-source citation match from post-hoc embedding similarity.
+ *
+ * Tempdoc 822 §3b — `sourceIndex` is the source's POSITION in the turn's `rag.citations` array
+ * (renamed from `chunkIndex`, which is the chunk's ordinal inside its parent document and never
+ * travels on a match).
+ */
 export interface CitationMatch {
   sentenceIndex: number;
   sentenceText: string;
-  chunkIndex: number;
+  sourceIndex: number;
   similarity: number;
   parentDocId: string;
 }
