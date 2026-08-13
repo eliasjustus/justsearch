@@ -633,7 +633,8 @@ public class LocalApiServer {
       app.post(MCP_ENDPOINT_PATH, convApi.mcpProtocolHandler()::handlePost);
       app.delete(MCP_ENDPOINT_PATH, convApi.mcpProtocolHandler()::handleDelete);
       // Streamable-HTTP conformance: the single endpoint must answer GET. Registered inside this
-      // branch so the 405's `Allow: POST, DELETE` can never advertise methods that are not bound.
+      // branch so the 405's `Allow` can never name POST/DELETE while they are unbound (its third
+      // entry, OPTIONS, comes from the API-wide CORS preflight catch-all, not from here).
       app.get(MCP_ENDPOINT_PATH, io.justsearch.ui.api.mcp.McpProtocolHandler::handleGet);
     }
 
