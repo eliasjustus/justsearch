@@ -88,7 +88,9 @@ final class SchemaMismatchStatusContractTest {
 
     bootstrap = new KnowledgeServerBootstrap(config);
     try {
-      bootstrap.start();
+      // Same bounded retry the Head uses: a transient PID-validation timeout on a contended CI
+      // runner must not read as a schema-contract failure.
+      bootstrap.startWithRetry();
     } catch (Exception e) {
       String tail = readTailBestEffort(workerLogPath, 12_000);
       throw new IllegalStateException(

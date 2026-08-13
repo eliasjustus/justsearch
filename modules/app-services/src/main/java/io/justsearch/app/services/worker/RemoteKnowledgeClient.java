@@ -469,10 +469,6 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         return ingestStub.withDeadlineAfter(deadline(category), TimeUnit.MILLISECONDS);
     }
 
-    private HealthServiceGrpc.HealthServiceBlockingStub healthStubWithDeadline(RpcDeadlineCategory category) {
-        return healthStub.withDeadlineAfter(deadline(category), TimeUnit.MILLISECONDS);
-    }
-
     private <T> T executeSearchRpc(
             String operation,
             RpcDeadlineCategory category,
@@ -497,9 +493,18 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
             String operation,
             RpcDeadlineCategory category,
             java.util.function.Function<HealthServiceGrpc.HealthServiceBlockingStub, T> rpc) {
+        return executeHealthRpc(operation, deadline(category), rpc);
+    }
+
+    private <T> T executeHealthRpc(
+            String operation,
+            long callDeadlineMs,
+            java.util.function.Function<HealthServiceGrpc.HealthServiceBlockingStub, T> rpc) {
         ensureConnected();
         reconnect();
-        return executeWithCircuitBreaker(operation, () -> rpc.apply(healthStubWithDeadline(category)));
+        return executeWithCircuitBreaker(
+            operation,
+            () -> rpc.apply(healthStub.withDeadlineAfter(callDeadlineMs, TimeUnit.MILLISECONDS)));
     }
 
     private DeleteByPathResponse executeDeleteByPath(Path normalizedPath) {
@@ -847,10 +852,25 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
      * re-reading the signal bus, to avoid false failures from timing issues.
      */
     public HealthCheckResponse getHealthCheck() {
+        return getHealthCheck(deadline(RpcDeadlineCategory.STANDARD));
+    }
+
+    /**
+     * Health check with an explicit per-call gRPC deadline, for callers that own a total budget and
+     * must be able to spend it over several attempts.
+     *
+     * <p>Boot-time PID validation is the motivating caller: its whole window equals the STANDARD
+     * deadline, so a single slow cold call (the worker-side check touches SQLite and Lucene, which
+     * are expensive on first contact) consumed the entire budget and its retry loop never iterated.
+     * Passing a per-attempt deadline keeps the retry loop a retry loop.
+     *
+     * @param callDeadlineMs the gRPC deadline for this one call, in milliseconds
+     */
+    public HealthCheckResponse getHealthCheck(long callDeadlineMs) {
         // Note: We intentionally do NOT call reconnect() here - same rationale as isHealthy().
         HealthCheckResponse response = executeHealthRpc(
             "getHealthCheck",
-            RpcDeadlineCategory.STANDARD,
+            callDeadlineMs,
             stub -> stub.check(HealthCheckRequest.newBuilder().build()));
         // Update last-known-good ONNX model cache from Worker's startup-time discovery (D-4).
         // executeHealthRpc never returns null — it throws on failure, so cache is only updated
