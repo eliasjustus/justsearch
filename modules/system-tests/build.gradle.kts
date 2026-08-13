@@ -195,11 +195,27 @@ val integrationTest = tasks.register<Test>("integrationTest") {
     }
   }
 
-  // Time limit: 10 minutes default, 30 for agent tests, configurable for AI runs.
+  // Time limit: 22 minutes default, 30 for agent tests, configurable for AI runs.
+  //
+  // Tempdoc 821 P4 — this task timeout, not the 25-min job budget (ci.yml:529), is the binding
+  // ceiling, and Gradle enforces it by killing the forked test JVM. That destroys the fixture's
+  // diagnostics exactly like the 30s @BeforeAll cap below did, so it has to clear the
+  // retry-amplified worst case rather than the happy-path wall.
+  //
+  // Arithmetic: Develocity sets maxRetries=2 in CI (JvmBaseConventionsPlugin.kt:135), so a class
+  // whose @BeforeAll stalls is booted 3 times -> 3 x ~250s fixture worst case (PORT_FILE 60s +
+  // HEALTH 90s + WORKER_READY 90s + HttpClient send overshoot) = ~12.5 min, on top of the ~8.5 min
+  // this tier already takes to run everything else (measured: the Gradle step of run 31716264505
+  // ran 8m28s). The old 10 min could not even hold the baseline plus one stalled boot, and 20 min
+  // still fell ~1 min short of 8.5 + 12.5. 22 min clears that worst case with ~1 min margin and,
+  // against the same run's measured 1m26s of checkout/setup/post steps, still lands ~1.5 min under
+  // the job budget.
+  //
+  // The AI and agent branches are already >= this and need no change.
   val integrationTestTimeoutMinutes = when {
     includeAiTests -> ragEvalTimeoutMinutes
     includeAgentTests -> 30
-    else -> 10
+    else -> 22
   }
   timeout.set(Duration.ofMinutes(integrationTestTimeoutMinutes.toLong()))
 
@@ -207,6 +223,33 @@ val integrationTest = tasks.register<Test>("integrationTest") {
     events("passed", "skipped", "failed")
     showStandardStreams = true
   }
+
+  // Tempdoc 821 P4 — hosted-runner init-timeout flakes.
+  //
+  // `conventions.jvm-base` sets junit.jupiter.execution.timeout.default=30s for every Test
+  // task (JvmBaseConventionsPlugin.kt:117). A class-level @Timeout covers *testable* methods
+  // only, never lifecycle methods, so every IsolatedBackendFixture @BeforeAll ran under that
+  // 30s cap regardless of its class annotation — proven on 2026-08-13 by IngestStarvationE2ETest
+  // ("Two-batch ingest starvation"), annotated @Timeout(6, MINUTES) at the class (:52) and dying
+  // at t0+30.10s in run 31726924465.
+  //
+  // That cap is far SHORTER than the fixture's own layered boot budget (PORT_FILE 60s +
+  // HEALTH 90s + WORKER_READY 90s, IsolatedBackendFixture.java:65-73), so it always fired
+  // first and reported a bare java.util.concurrent.TimeoutException with no message or cause —
+  // the fixture never reaches the point of naming the budget it blew. Five such
+  // initializationError failures landed in five separate PR runs on 2026-08-13 (31718400614,
+  // 31719369201, 31724706479, 31726924465, 31727436857) across four test classes, every one of
+  // them passing on the automatic retry — red only because failOnPassedAfterRetry keeps flakes
+  // visible.
+  //
+  // Headroom: measured boot-to-ready on windows-latest is min 6.54s / p50 7.17s / max 15.39s
+  // (48 samples across that day's 8 integration-tier runs) — the old cap left under 2x over the
+  // observed max. 300s sits just above the fixture's ~250s worst case, so the fixture's own
+  // budgets are once again the binding constraint and a real hang fails with diagnostics
+  // instead of an opaque timeout.
+  // Cost ceiling: this tier runs ~8.5min wall against the job's 25-min budget (ci.yml:529),
+  // so even a full 300s stall stays comfortably inside it.
+  systemProperty("junit.jupiter.execution.timeout.beforeall.method.default", "300s")
 
   // Forward API port system property for HTTP tests
   System.getProperty("justsearch.api.port")?.let { systemProperty("justsearch.api.port", it) }
