@@ -206,7 +206,7 @@ public final class InstallPlanner {
           downloads.add(
               new InstallPlan.PlannedDownload(
                   pkg.id(), variant.downloadUrl(), targetPath, variant.sha256(),
-                  variant.sizeBytes(), true));
+                  variant.sizeBytes(), true, false, true));
           totalBytes += variant.sizeBytes();
           resumableBytes += partialBytesFor(targetFile, variant.sizeBytes());
           packageFullyInstalled = false;
@@ -230,7 +230,8 @@ public final class InstallPlanner {
                 sf.sha256(),
                 sf.sizeBytes(),
                 false,
-                sf.extract()));
+                sf.extract(),
+                sf.required()));
         totalBytes += sf.sizeBytes();
         resumableBytes += partialBytesFor(targetFile, sf.sizeBytes());
         packageFullyInstalled = false;

@@ -1554,9 +1554,13 @@ export const unifiedChatBodyStyles = css`
       border-radius: 0.25rem;
       margin-left: 0.5rem;
     }
-    .new-chat-btn:hover {
+    .new-chat-btn:hover:not(:disabled) {
       color: var(--text-primary);
       border-color: var(--accent-tint);
+    }
+    .new-chat-btn:disabled {
+      opacity: 0.35;
+      cursor: default;
     }
     .affordance-preview {
       font-size: var(--font-size-xs);

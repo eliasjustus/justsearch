@@ -94,7 +94,7 @@ final class StatusLifecycleHandlerTest {
   }
 
   @Test
-  @DisplayName("compatBlockedReason ignores transient REBUILDING (owned by the 595 Stability axis)")
+  @DisplayName("compatBlockedReason ignores REBUILDING (owned by embeddingRebuildReason — no reindex remedy)")
   void compatBlockedReasonIgnoresRebuilding() {
     WorkerOperationalView workerView =
         compatWorkerView(
@@ -110,14 +110,14 @@ final class StatusLifecycleHandlerTest {
         compatWorkerView(
             new CompatibilityStatusView(
                 "BLOCKED_LEGACY", "LEGACY_INDEX_NO_FINGERPRINT", "", "", "", "", "COMPATIBLE", true, "embedding_legacy"));
-    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot(), freshContact());
 
     // The INDEX_SERVING component is DEGRADED with the specific compat reason...
     assertEquals("DEGRADED", env.components().get("indexServing").state());
     assertEquals("index.embedding_legacy", env.components().get("indexServing").reasonCode());
-    // ...and it rolls up into the `retrieval` composite the 595 verdict consumes. (The sibling
-    // retrieval dims CHUNK_EMBEDDING/LAMBDAMART are DEGRADED-capped by design, so the composite
-    // resolves to DEGRADED — never a higher-precedence state that would mask the compat reason.)
+    // ...and it rolls up into the `retrieval` composite the 595 verdict consumes. INDEX_SERVING's
+    // DEGRADED is the composite's floor here: no sibling retrieval dim reaches a higher-precedence
+    // state on this fixture, so nothing masks the compat reason.
     assertEquals("DEGRADED", env.composites().get("retrieval").state());
     assertTrue(
         env.composites().get("retrieval").reasonCodes().contains("index.embedding_legacy"),
@@ -129,11 +129,35 @@ final class StatusLifecycleHandlerTest {
   void compatibleWorkerViewLeavesIndexServingReady() {
     StatusLifecycleHandler handler = newHandler();
     WorkerOperationalView view = compatWorkerView(CompatibilityStatusView.empty());
-    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot(), freshContact());
 
     assertEquals("READY", env.components().get("indexServing").state());
     String reason = env.components().get("indexServing").reasonCode();
     assertFalse(reason != null && reason.startsWith("index."), "no compat reason when COMPATIBLE");
+  }
+
+  @Test
+  @DisplayName("F-021: an unconfigured LambdaMART reranker reads READY + informational reason, leaving retrieval READY")
+  void unconfiguredLambdamartLeavesRetrievalCompositeReady() {
+    // newHandler() wires no LambdaMART/GPL suppliers — the shipped default (F-021: the reranker
+    // measured harmful and is absent by design), which previously pinned `retrieval` to DEGRADED
+    // on every install.
+    StatusLifecycleHandler handler = newHandler();
+    WorkerOperationalView view =
+        withChunkCoverage(
+            compatWorkerView(CompatibilityStatusView.empty()),
+            /* indexedDocuments= */ 0,
+            ChunkCoverageView.empty());
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot(), freshContact());
+
+    assertEquals("READY", env.components().get("lambdamartModel").state());
+    assertEquals(
+        "lambdamart.not_configured", env.components().get("lambdamartModel").reasonCode());
+    assertEquals("READY", env.components().get("indexServing").state());
+    assertEquals(
+        "READY",
+        env.composites().get("retrieval").state(),
+        "an install without LambdaMART must not read as permanently degraded retrieval");
   }
 
   // ===== Tempdoc 598 reopen (B-3): dense-serviceability projection onto the retrieval composite =====
@@ -176,7 +200,7 @@ final class StatusLifecycleHandlerTest {
   }
 
   @Test
-  @DisplayName("denseUnavailableReason does NOT fire for REBUILDING (owned by the 595 Stability axis)")
+  @DisplayName("denseUnavailableReason does NOT fire for REBUILDING (owned by embeddingRebuildReason)")
   void denseUnavailableReasonIgnoresRebuilding() {
     assertNull(
         StatusLifecycleHandler.denseUnavailableReason(
@@ -192,7 +216,7 @@ final class StatusLifecycleHandlerTest {
     WorkerOperationalView view =
         compatWorkerView(
             new CompatibilityStatusView("UNAVAILABLE", "NO_EMBEDDING_MODEL", "", "", "", "", "COMPATIBLE", false, ""));
-    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot(), freshContact());
 
     assertEquals("DEGRADED", env.components().get("indexServing").state());
     assertEquals("index.dense_unavailable", env.components().get("indexServing").reasonCode());
@@ -207,11 +231,77 @@ final class StatusLifecycleHandlerTest {
         compatWorkerView(
             new CompatibilityStatusView("COMPATIBLE", "FINGERPRINT_MATCH", "", "", "", "", "COMPATIBLE", false, ""),
             false);
-    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot(), freshContact());
 
     assertEquals("DEGRADED", env.components().get("indexServing").state());
     assertEquals("index.dense_unavailable", env.components().get("indexServing").reasonCode());
     assertEquals("DEGRADED", env.composites().get("retrieval").state());
+  }
+
+  // ===== In-place embedding rebuild (embeddingCompatState=REBUILDING) is visible to readiness =====
+
+  @Test
+  @DisplayName("embeddingRebuildReason maps REBUILDING → index.embedding_rebuilding")
+  void embeddingRebuildReasonMapsRebuilding() {
+    WorkerOperationalView workerView =
+        compatWorkerView(
+            new CompatibilityStatusView("REBUILDING", "REBUILD_IN_PROGRESS", "", "", "", "", "COMPATIBLE", false, ""));
+    assertEquals(
+        "index.embedding_rebuilding", StatusLifecycleHandler.embeddingRebuildReason(workerView));
+  }
+
+  @Test
+  @DisplayName("embeddingRebuildReason returns null for COMPATIBLE, both BLOCKED_* states, and a null compat")
+  void embeddingRebuildReasonNullOutsideRebuilding() {
+    assertNull(
+        StatusLifecycleHandler.embeddingRebuildReason(
+            compatWorkerView(
+                new CompatibilityStatusView("COMPATIBLE", "FINGERPRINT_MATCH", "", "", "", "", "COMPATIBLE", false, ""))));
+    assertNull(
+        StatusLifecycleHandler.embeddingRebuildReason(
+            compatWorkerView(
+                new CompatibilityStatusView("BLOCKED_LEGACY", "LEGACY_INDEX_NO_FINGERPRINT", "", "", "", "", "COMPATIBLE", true, "embedding_legacy"))));
+    assertNull(
+        StatusLifecycleHandler.embeddingRebuildReason(
+            compatWorkerView(
+                new CompatibilityStatusView("BLOCKED_MISMATCH", "FINGERPRINT_MISMATCH", "", "", "", "", "COMPATIBLE", true, "embedding_mismatch"))));
+    assertNull(StatusLifecycleHandler.embeddingRebuildReason(compatWorkerView(null)));
+  }
+
+  @Test
+  @DisplayName("REBUILDING rolls up to indexServing + embedding DEGRADED and both composites carry index.embedding_rebuilding (end-to-end)")
+  void embeddingRebuildRollsUpToBothComposites() {
+    StatusLifecycleHandler handler = newHandler();
+    // The live-observed shape: the encoder is loaded (embeddingReady=true) while the Worker refuses
+    // dense queries because the embeddings are being rebuilt in place. The empty-corpus chunk
+    // coverage keeps CHUNK_EMBEDDING READY, so the composite's DEGRADED is attributable to this
+    // branch rather than to a sibling dimension that was already degraded on the base fixture.
+    WorkerOperationalView view =
+        withChunkCoverage(
+            compatWorkerView(
+                new CompatibilityStatusView("REBUILDING", "REBUILD_IN_PROGRESS", "", "", "", "", "COMPATIBLE", false, ""),
+                true),
+            /* indexedDocuments= */ 0,
+            ChunkCoverageView.empty());
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot(), freshContact());
+
+    assertEquals("DEGRADED", env.components().get("indexServing").state());
+    assertEquals(
+        "index.embedding_rebuilding", env.components().get("indexServing").reasonCode());
+    // The encoder-loaded probe must no longer read READY while queries cannot use embeddings.
+    assertEquals("DEGRADED", env.components().get("embedding").state());
+    assertEquals("index.embedding_rebuilding", env.components().get("embedding").reasonCode());
+    // Pins the attribution: every other retrieval dimension is READY on this fixture, so a
+    // DEGRADED composite can only have come from the two arms above.
+    assertEquals("READY", env.components().get("chunkEmbedding").state());
+    assertEquals("READY", env.components().get("workerControlPlane").state());
+    assertEquals("READY", env.components().get("visualTextExtraction").state());
+    assertEquals("READY", env.components().get("lambdamartModel").state());
+    assertEquals("DEGRADED", env.composites().get("retrieval").state());
+    assertTrue(
+        env.composites().get("retrieval").reasonCodes().contains("index.embedding_rebuilding"),
+        "the retrieval composite must name the rebuild so the verdict can word it");
+    assertEquals("DEGRADED", env.composites().get("aiFeatures").state());
   }
 
   // ===== Tempdoc 804 §D1: an EMPTY corpus is not a chunk-embedding degradation =====
@@ -226,7 +316,7 @@ final class StatusLifecycleHandlerTest {
             compatWorkerView(CompatibilityStatusView.empty()),
             /* indexedDocuments= */ 0,
             ChunkCoverageView.empty());
-    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot(), freshContact());
 
     assertEquals("READY", env.components().get("chunkEmbedding").state());
     assertNull(env.components().get("chunkEmbedding").reasonCode());
@@ -245,7 +335,7 @@ final class StatusLifecycleHandlerTest {
             compatWorkerView(CompatibilityStatusView.empty()),
             /* indexedDocuments= */ 42,
             new ChunkCoverageView(0, 0, 0, 0, 0.0, false));
-    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot(), freshContact());
 
     assertEquals("DEGRADED", env.components().get("chunkEmbedding").state());
     assertEquals("chunk_embedding.not_ready", env.components().get("chunkEmbedding").reasonCode());
@@ -262,7 +352,7 @@ final class StatusLifecycleHandlerTest {
             compatWorkerView(CompatibilityStatusView.empty()),
             /* indexedDocuments= */ 0,
             new ChunkCoverageView(7, 0, 7, 0, 0.0, false));
-    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot(), freshContact());
 
     assertEquals("DEGRADED", env.components().get("chunkEmbedding").state());
     assertEquals("chunk_embedding.not_ready", env.components().get("chunkEmbedding").reasonCode());
@@ -276,7 +366,7 @@ final class StatusLifecycleHandlerTest {
         withVisualExtraction(
             compatWorkerView(CompatibilityStatusView.empty()),
             new VisualExtractionView(true, false, "tesseract", "ocr.engine_missing", 2L, 0L, null, false));
-    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot(), freshContact());
 
     assertEquals("DEGRADED", env.components().get("visualTextExtraction").state());
     assertEquals("ocr.engine_missing", env.components().get("visualTextExtraction").reasonCode());
@@ -291,7 +381,7 @@ final class StatusLifecycleHandlerTest {
         withVisualExtraction(
             compatWorkerView(CompatibilityStatusView.empty()),
             new VisualExtractionView(true, false, "tesseract", "ocr.engine_missing", 0L, 0L, null, false));
-    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot(), freshContact());
 
     assertEquals("READY", env.components().get("visualTextExtraction").state());
     assertFalse(env.composites().get("retrieval").reasonCodes().contains("ocr.engine_missing"));
@@ -305,7 +395,7 @@ final class StatusLifecycleHandlerTest {
         withVisualExtraction(
             compatWorkerView(CompatibilityStatusView.empty()),
             new VisualExtractionView(true, true, "tesseract", null, 2L, 0L, "vdu.circuit_open", false));
-    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot(), freshContact());
 
     assertEquals("DEGRADED", env.components().get("visualTextExtraction").state());
     assertEquals("vdu.circuit_open", env.components().get("visualTextExtraction").reasonCode());
@@ -320,7 +410,7 @@ final class StatusLifecycleHandlerTest {
         withVisualExtraction(
             compatWorkerView(CompatibilityStatusView.empty()),
             new VisualExtractionView(true, true, "tesseract", null, 0L, 4L, "vdu.missing_mmproj", false));
-    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot());
+    ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot(), freshContact());
 
     assertEquals("READY", env.components().get("visualTextExtraction").state());
     assertEquals("DEGRADED", env.components().get("visualDocumentUnderstanding").state());
@@ -328,6 +418,11 @@ final class StatusLifecycleHandlerTest {
         "vdu.missing_mmproj", env.components().get("visualDocumentUnderstanding").reasonCode());
     assertFalse(env.composites().get("retrieval").reasonCodes().contains("vdu.missing_mmproj"));
     assertTrue(env.composites().get("aiFeatures").reasonCodes().contains("vdu.missing_mmproj"));
+  }
+
+  /** Worker answered during this response build — the provenance these state/reason tests assume. */
+  private static StatusLifecycleHandler.WorkerContact freshContact() {
+    return StatusLifecycleHandler.WorkerContact.observed(System.currentTimeMillis());
   }
 
   /** A lifecycle snapshot with all components READY (so INDEX_SERVING is not gated by worker state). */
