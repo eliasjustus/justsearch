@@ -153,14 +153,22 @@ the server offers none:
 |---|---|
 | `POST` | JSON-RPC request/response — the whole protocol surface |
 | `DELETE` | `204`, ends the session named by `Mcp-Session-Id` |
-| `GET` | **405** with `Allow: POST, DELETE` and a JSON-RPC error body (`MCP_METHOD_NOT_ALLOWED`) |
+| `GET` | **405** with `Allow: POST, DELETE, OPTIONS` and a JSON-RPC error body (`MCP_METHOD_NOT_ALLOWED`) |
+| `OPTIONS` | CORS preflight, served by the API-wide catch-all |
 
 JustSearch serves **no SSE stream** at `/mcp`: every response is the direct reply to a `POST`, and
 nothing pushes unsolicited JSON-RPC to a connected client. Adding one would need a per-session push
 channel plus the spec's resumability machinery (`Last-Event-ID`, event ids) — a **product**
 decision, not a conformance one. 405 is the spec's own answer for a server without such a stream,
-so the transport is conformant as it stands. (Before this, `GET /mcp` returned 404 — live-verified
+so **the GET/SSE clause is now conformant**. (Before this, `GET /mcp` returned 404 — live-verified
 2026-08-12 — which told a probing client nothing about the endpoint.)
+
+That is one clause, not the whole transport. **Known remaining gap:** the spec's *Protocol Version
+Header* section requires the server to validate the `MCP-Protocol-Version` **request** header on
+every non-`initialize` request and answer `400 Bad Request` on an unsupported or invalid value.
+`McpProtocolHandler` only ever *emits* a version — at `initialize`
+(`McpProtocolHandler.java:37,217`) — and never reads that request header, so an unsupported version
+is silently accepted rather than rejected. Tracked; not addressed by this change.
 
 Protocol version: `2025-11-25`. Capabilities: tools, resources,
 prompts. Curated tool-surface version (single-sourced from

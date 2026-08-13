@@ -243,7 +243,7 @@ class McpOriginValidationTest {
 
     assertEquals(405, resp.statusCode(), "Not 404: the endpoint exists and must say so");
     assertEquals(
-        "POST, DELETE",
+        "POST, DELETE, OPTIONS",
         resp.headers().firstValue("Allow").orElse(null),
         "405 MUST carry Allow naming the methods this endpoint does serve");
     assertTrue(resp.body().contains("\"jsonrpc\":\"2.0\""), "Body should be JSON-RPC shaped: " + resp.body());
@@ -258,7 +258,7 @@ class McpOriginValidationTest {
     HttpResponse<String> resp = get(LocalApiServer.MCP_ENDPOINT_PATH, "http://127.0.0.1:5173");
 
     assertEquals(405, resp.statusCode());
-    assertEquals("POST, DELETE", resp.headers().firstValue("Allow").orElse(null));
+    assertEquals("POST, DELETE, OPTIONS", resp.headers().firstValue("Allow").orElse(null));
   }
 
   /**

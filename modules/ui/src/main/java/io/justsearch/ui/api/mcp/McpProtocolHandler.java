@@ -180,7 +180,10 @@ public final class McpProtocolHandler {
    * conformance test bind the production handler rather than a mirror of it.
    */
   public static void handleGet(Context ctx) {
-    ctx.header("Allow", "POST, DELETE");
+    // OPTIONS included because the CORS preflight catch-all (app.options("/*"),
+    // ApiSecurityFilters#setupCors) genuinely serves it on this path too — Allow must name every
+    // method the resource answers, not just the ones bound here.
+    ctx.header("Allow", "POST, DELETE, OPTIONS");
     ctx.status(405);
     writeError(
         ctx,
