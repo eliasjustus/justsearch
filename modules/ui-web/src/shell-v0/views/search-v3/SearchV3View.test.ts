@@ -26,7 +26,8 @@ import { createCorePluginManifest } from '../../plugin-api/CorePlugin.js';
 import { isLazySurface } from '../lazySurfaceRegistry.js';
 import { COMPONENT_TAGS } from '../../renderers/component-vocabulary.generated.js';
 import { Sv3SessionRow } from './Sv3SessionRow.js';
-import { COMPOSER_SCOPES, HERO_HEADLINE } from './fixtures.js';
+import { HERO_HEADLINE } from './fixtures.js';
+import { SV3_EFFORT_DEFAULT, sv3EffortLabel } from './sv3-ask.js';
 import { SV3_MORPH_ROOT_ATTR, sv3MorphSheetAdopted } from './sv3-composer-morph.js';
 import { __resetConversationListForTest } from '../../state/conversationListStore.js';
 import { __resetDraftProvidersForTest } from '../../controllers/draftPersistence.js';
@@ -154,14 +155,14 @@ describe('the window mounts with its five regions', () => {
     expect(main.shadowRoot?.querySelector('[data-testid="sv3-main-count"]')).toBeNull();
   });
 
-  it('gives the composer a field, scope controls and a send control', async () => {
+  it('gives the composer a field, its effort control and a send control', async () => {
     const el = await mount();
     const composer = await region(el, 'jf-sv3-composer');
     expect(composer.shadowRoot?.querySelector('[data-testid="sv3-composer-input"]')).toBeTruthy();
     expect(composer.shadowRoot?.querySelector('[data-testid="sv3-composer-send"]')).toBeTruthy();
-    expect(composer.shadowRoot?.querySelectorAll('[data-testid="sv3-composer-scope"]')).toHaveLength(
-      COMPOSER_SCOPES.length,
-    );
+    expect(composer.shadowRoot?.querySelector('[data-testid="sv3-composer-effort"]')).toBeTruthy();
+    // The slice-3 scope placeholders are GONE, not merely unused (Phase F10).
+    expect(composer.shadowRoot?.querySelector('[data-testid="sv3-composer-scope"]')).toBeNull();
   });
 });
 
@@ -192,9 +193,7 @@ describe('the composer has two anatomies and one way between them', () => {
     expect(composer.shadowRoot?.querySelector('[data-testid="sv3-composer-headline"]')).toBeNull();
     // Both anatomies keep the field, the controls and the action — one component, two states.
     expect(composer.shadowRoot?.querySelector('[data-testid="sv3-composer-input"]')).toBeTruthy();
-    expect(composer.shadowRoot?.querySelectorAll('[data-testid="sv3-composer-scope"]')).toHaveLength(
-      COMPOSER_SCOPES.length,
-    );
+    expect(composer.shadowRoot?.querySelector('[data-testid="sv3-composer-effort"]')).toBeTruthy();
     // The region the composer vacated is the results' — what it holds is the search's business
     // (SearchV3View.search.test.ts), not the morph's.
     expect(await region(el, 'jf-sv3-main')).toBeTruthy();
@@ -258,36 +257,32 @@ describe('the composer has two anatomies and one way between them', () => {
    * compacts a control INTO its glyph (`ComposerControlIcon`, `ComposerControl.tsx:37`), so the glyph
    * has to be real, and the name the text was carrying has to move somewhere assistive tech can read.
    */
-  it('compacts each scope control into a real glyph that keeps its name', async () => {
+  it('compacts the effort control into a real glyph that keeps its whole name', async () => {
     const el = await mount();
     const composer = await region(el, 'jf-sv3-composer');
-    const chips = (): HTMLElement[] => [
-      ...(composer.shadowRoot?.querySelectorAll<HTMLElement>(
-        '[data-testid="sv3-composer-scope"]',
-      ) ?? []),
-    ];
+    const control = (): HTMLElement | null =>
+      composer.shadowRoot?.querySelector<HTMLElement>('[data-testid="sv3-composer-effort"]') ?? null;
 
-    // Hero: the visible text IS the accessible name, so an aria-label would only duplicate it.
-    expect(chips()).toHaveLength(COMPOSER_SCOPES.length);
-    for (const chip of chips()) expect(chip.hasAttribute('aria-label')).toBe(false);
-    for (const [i, chip] of chips().entries()) {
-      const glyph = chip.querySelector('svg.scope-glyph');
-      expect(glyph, `scope ${i} renders no glyph`).toBeTruthy();
-      // A real stroke glyph, not the placeholder swatch it replaced.
-      expect(glyph?.querySelector('path, circle, ellipse, polyline')).toBeTruthy();
-      expect(glyph?.getAttribute('stroke')).toBe('currentColor');
-      expect(chip.textContent?.trim()).toContain(COMPOSER_SCOPES[i]?.label);
-    }
+    // Hero: the visible label is only the VALUE, so the accessible name carries both halves in both
+    // forms — a value-carrying control that compacts must not lose what the value is OF.
+    const named = `Effort: ${sv3EffortLabel(SV3_EFFORT_DEFAULT)}`;
+    expect(control()?.getAttribute('aria-label')).toBe(named);
+    expect(control()?.textContent?.trim()).toContain(sv3EffortLabel(SV3_EFFORT_DEFAULT));
+    const glyph = control()?.querySelector('svg.control-glyph');
+    expect(glyph).toBeTruthy();
+    // A real stroke glyph, not a placeholder swatch: it is all that survives the compaction.
+    expect(glyph?.querySelector('path, circle, ellipse, polyline')).toBeTruthy();
+    expect(glyph?.getAttribute('stroke')).toBe('currentColor');
+    expect(control()?.querySelector('svg.control-chevron')).toBeTruthy();
 
     await (el as SearchV3View).setComposerState('docked');
     await composer.updateComplete;
-    // Docked: the text is width-collapsed, so the name moves onto the control itself.
-    for (const [i, chip] of chips().entries()) {
-      expect(chip.getAttribute('aria-label'), `scope ${i} lost its name when compacted`).toBe(
-        COMPOSER_SCOPES[i]?.label,
-      );
-      expect(chip.querySelector('svg.scope-glyph')).toBeTruthy();
-    }
+    // Docked: the text is width-collapsed by CSS, and the name (which never moved) still says it.
+    expect(control()?.getAttribute('aria-label'), 'the control lost its name when compacted').toBe(
+      named,
+    );
+    expect(control()?.querySelector('svg.control-glyph')).toBeTruthy();
+    expect(control()?.querySelector('svg.control-chevron')).toBeTruthy();
   });
 
   it('routes an external write of the dev attribute through the same morph', async () => {

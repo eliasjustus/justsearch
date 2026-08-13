@@ -401,6 +401,28 @@ are re-creatable from the log's descriptions.
   memory. Run ended by stack stop (dev throwaway). Residuals → F3: shelf model,
   presence/recovery, cross-surface slot honesty; issuance-register decision still
   open (owner/orchestrator).
+- 2026-08-13 — **Slice F10 implemented + payload-proven. The composer effort control.**
+  Capability audit table (donor→backend→verdict): effort/traits BUILT on the shared
+  seams enableThinking (ConversationEngine→OnlineModeOps→chat_template_kwargs),
+  maxTokens, topK — rungs Quick {thinking:false, 512} / Standard {} (sends NOTHING —
+  restating defaults would fork them) / Thorough {thinking:true, 3072, topK 12};
+  runtime-mode (autonomy) DEFERRED-seam-verified (needs the confirmAsync ceremony +
+  an owner scope call — its own slice when wanted); provider picker EXCLUDED (§9 +
+  ratified remap); attachment EXCLUDED (search-deferred); ask-path posture parameter
+  DESIGN-ONLY (absent in buildRequestBody). BRIEF CORRECTION: the shipped window has
+  NO effort chip — the orchestrator's "Low" memory was ToolCallCard's risk word;
+  no effort seam exists anywhere in UnifiedChatView. Chip referent RESOLVED: composer
+  controls take ComposerControl h-7/28px (measured 28.00 live); slice-3's two inert
+  scope chips SWEPT (dead chrome for the deferred search axis). Donor menu anatomy
+  (MenuPopup/RadioItem, glass recipe, Default badge at the 2xs rung; one measured
+  deviation: badge fill dropped for AA at 10px → 4.56:1). Escape ladder gains
+  menu>pane as most-local. Window-local per-session effort state (no shared
+  per-conversation preference seam exists — verified). 4895 tests / 8 probes /
+  payload proof at the fetch boundary per rung / 7 contrast pairs ≥AA / zero
+  console errors. NOTE: one stray probe ask reached the stack (fetch-restore race,
+  halted; conversation "probe standard rung" carries an honest broken dot);
+  incidental: thinking:false produced no reasoning block — uncontrolled but
+  consistent with the parameter reaching the engine.
 - 2026-08-13 — **Fit audit + Slice F9 (fit pass).** Independent audit
   (822-donor/f-series-fit-audit.md): the founding disease did NOT return — resting
   interactive chrome 16/16/16 across hero/settled/run-holding (donor baseline 27),

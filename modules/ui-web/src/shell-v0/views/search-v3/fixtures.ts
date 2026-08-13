@@ -5,9 +5,9 @@
  * The window was fixture-first on purpose: the shell's geometry had to clear the bar before any
  * backend was wired. Phase A1 moved the CONTENT SURFACE onto the shared search store and Phase A2
  * moved the SIDEBAR onto real window-local sessions (`sv3-sessions.ts`), so the fixture sessions are
- * gone. What remains is fixed copy, the row's status vocabulary, and the composer's placeholders.
+ * gone. What remains is fixed copy and the row's status vocabulary — the composer's placeholder
+ * controls went with Phase F10, which replaced them with a real one.
  */
-import type { IconName } from '../../components/Icon.js';
 import { reasonFor } from '../../state/readinessNotice.js';
 
 /**
@@ -33,26 +33,14 @@ export const COMPOSER_STATE_DEFAULT: Sv3ComposerState = 'hero';
 
 export const HERO_HEADLINE = 'What are you looking for?';
 
-export interface Sv3ComposerScope {
-  readonly id: string;
-  readonly label: string;
-  /**
-   * The glyph the label compacts INTO when the composer docks — so a control that has lost its text
-   * still says what it is. Named out of the shared `icon()` registry, which is the same Lucide set
-   * the donor imports (`lucide-react`), so no icon dependency and no hand-drawn path.
-   */
-  readonly glyph: IconName;
-}
-
-/**
- * Placeholders for the scope controls a wired composer will carry (source set, recency). They exist in
- * this slice for one reason: their labels are what the compaction morph evaporates when the composer
- * docks, leaving the glyphs behind.
+/*
+ * The slice-3 scope-control PLACEHOLDERS ("All sources" / "Any time") are gone (Phase F10). They
+ * were search-scope furniture standing in for controls the §4b standing directive defers
+ * indefinitely, they did nothing when clicked, and the row they occupied is now the composer's
+ * effort control — a real one. Deleting them rather than leaving them beside it is the same call
+ * F9 made on the two inert topbar placeholders: chrome that cannot act is chrome that lies about
+ * what the window can do.
  */
-export const COMPOSER_SCOPES: readonly Sv3ComposerScope[] = [
-  { id: 'scope-sources', label: 'All sources', glyph: 'database' },
-  { id: 'scope-recency', label: 'Any time', glyph: 'clock' },
-];
 
 /* ── Slice 4: the palette and the empty states ─────────────────────────────────────────────── */
 

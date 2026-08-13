@@ -64,6 +64,7 @@ import {
   type Sv3Composer,
   type Sv3ComposerStateRequest,
   type Sv3ComposerSubmit,
+  type Sv3EffortChange,
 } from './Sv3Composer.js';
 import { projectSv3Results, type Sv3ResultsView } from './sv3-results.js';
 import {
@@ -128,7 +129,13 @@ import { ReasoningController } from '../../controllers/ReasoningController.js';
 // Tempdoc 596 §11.4 — the shared remedy navigation, reached from exactly one place in this window.
 import { requestSurfaceNavigation } from '../../controllers/navigateRequest.js';
 import { projectSv3RecordTurns } from './sv3-record.js';
-import { SV3_ASK_SHAPE_ID, sv3Ask } from './sv3-ask.js';
+import {
+  SV3_ASK_SHAPE_ID,
+  SV3_EFFORT_DEFAULT,
+  isSv3Effort,
+  sv3Ask,
+  type Sv3Effort,
+} from './sv3-ask.js';
 // The app-wide CONVERSATION authority (tempdoc 510 Design D; inventory A1). A v3 session IS a
 // conversation, so identity, existence, title and its markdown export come from here — this window
 // mints none of them.
@@ -242,6 +249,17 @@ const renamingRowInPath = (event: KeyboardEvent): boolean =>
   event.composedPath().some((node) => {
     const el = node as Element & { renaming?: unknown };
     return el.localName === 'jf-sv3-session-row' && el.renaming === true;
+  });
+
+/**
+ * Is the keystroke coming out of a composer whose control MENU is open (tempdoc 822 Phase F10)? The
+ * same question as the rename above, asked of the same kind of state, and answered the same way:
+ * the element is asked for its own public flag rather than the DOM being pattern-matched.
+ */
+const openControlMenuInPath = (event: KeyboardEvent): boolean =>
+  event.composedPath().some((node) => {
+    const el = node as Element & { effortMenuOpen?: unknown };
+    return el.localName === 'jf-sv3-composer' && el.effortMenuOpen === true;
   });
 
 export class SearchV3View extends JfElement {
@@ -423,6 +441,7 @@ export class SearchV3View extends JfElement {
     recordNotice: { state: true },
     historyLocked: { state: true },
     lockedRefusal: { state: true },
+    effort: { state: true },
   };
 
   declare composerState: Sv3ComposerState;
@@ -489,6 +508,15 @@ export class SearchV3View extends JfElement {
    * notice about a lock that is gone would be describing a refusal that can no longer happen.
    */
   declare lockedRefusal: boolean;
+  /**
+   * How much work the next question asks for (tempdoc 822 Phase F10). WINDOW-LOCAL and in-memory by
+   * decision, not by omission: there is no shared per-conversation preference seam to hold it —
+   * `conversationListStore` carries identity, title and protection, and nothing per-conversation the
+   * FE may add to — and minting a `localStorage` key would make an ask-time parameter into a
+   * persisted chrome preference like the sidebar width, which is a different kind of thing. So the
+   * control describes THIS window's next send, which is exactly what it says.
+   */
+  declare effort: Sv3Effort;
 
   /** Watches the window box so the pane's presentation follows it (Phase F8). */
   private boxObserver: ResizeObserver | null = null;
@@ -560,6 +588,7 @@ export class SearchV3View extends JfElement {
     this.recordNotice = false;
     this.historyLocked = false;
     this.lockedRefusal = false;
+    this.effort = SV3_EFFORT_DEFAULT;
     // Constructed HERE rather than on connect: a Lit controller added before connection still gets
     // its `hostConnected`, and adding it inside `connectedCallback` would add a second one on every
     // re-attach of this retained instance.
@@ -1105,6 +1134,10 @@ export class SearchV3View extends JfElement {
     // an Escape pressed while typing in the rename field closed the PANE, silently, in a region
     // the reader was not looking at, and left the edit open (F-series fit audit, DEFECT-7).
     if (event.key === 'Escape' && renamingRowInPath(event)) return;
+    // An open control menu is served the same way and for the same reason: it is the most local
+    // transient the reader is inside, it closes itself (`Sv3Composer.onMenuKeydown`), and without
+    // this yield the same keystroke would close the PANE behind it (F9's DEFECT-7, one control on).
+    if (event.key === 'Escape' && openControlMenuInPath(event)) return;
     if (event.key === 'Escape' && this.paneDocPath !== null) {
       event.preventDefault();
       event.stopPropagation();
@@ -1329,6 +1362,10 @@ export class SearchV3View extends JfElement {
         apiBase: this.apiBase,
         question,
         conversationId: ref.sessionId,
+        // The rung AS OF THIS SEND (tempdoc 822 Phase F10). Read here rather than inside the ask
+        // client, so the one place a question is dispatched is also the one place its parameters
+        // are decided — and a rung changed mid-stream cannot rewrite a request already in flight.
+        effort: this.effort,
         signal: abort.signal,
       },
       {
@@ -1365,6 +1402,17 @@ export class SearchV3View extends JfElement {
         onFailed: (message) => settle('failed', message),
       },
     );
+  }
+
+  /**
+   * The composer announced a new effort rung (tempdoc 822 Phase F10). The window keeps it, and the
+   * NEXT dispatch carries it — an in-flight stream is never re-parameterised, because its request
+   * has already left.
+   */
+  private onEffortChange(event: Event): void {
+    const effort = (event as CustomEvent<Sv3EffortChange>).detail?.effort;
+    if (!isSv3Effort(effort)) return;
+    this.effort = effort;
   }
 
   /** Halting is always the reader's; the turn settles `halted` through the sink's own terminal. */
@@ -1944,6 +1992,7 @@ export class SearchV3View extends JfElement {
         @sv3-composer-submit=${this.onComposerSubmit}
         @sv3-composer-stop=${this.onComposerStop}
         @sv3-composer-answer=${this.onComposerAnswer}
+        @sv3-effort-change=${this.onEffortChange}
         @sv3-run-decision=${this.onRunDecision}
         @sv3-palette-request=${this.onPaletteRequest}
         @sv3-remedy=${this.onRemedy}
@@ -1969,6 +2018,7 @@ export class SearchV3View extends JfElement {
           unavailable-reason=${this.askUnavailableReason}
           delegate-unavailable-reason=${this.delegateUnavailableReason}
           .corpus=${projectSv3Corpus(this.aiSnapshot)}
+          effort=${this.effort}
           data-testid="sv3-composer"
         ></jf-sv3-composer>
       </div>

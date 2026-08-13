@@ -59,11 +59,103 @@ import type { Sv3TurnEvidence } from './sv3-sessions.js';
 /** The one shape this window's ask route dispatches. */
 export const SV3_ASK_SHAPE_ID = 'core.rag-ask';
 
+/**
+ * How much work the next question asks for (tempdoc 822 Phase F10; the §4b ADAPTATION RATIFIED —
+ * the donor's per-session provider picker maps to an effort control, because there is ONE local
+ * model and therefore no provider to pick).
+ *
+ * Every rung is a REAL request parameter the shared dispatch path already reads. Verified at the
+ * source rather than assumed, because a control that changes nothing is the exact failure this
+ * window exists to avoid:
+ *  - `enableThinking` — `ConversationEngine.java:781-786` turns it into `SamplingParams`, and
+ *    `OnlineModeOps.java:611-614` forwards it to llama-server as
+ *    `chat_template_kwargs={"enable_thinking": …}`. It is the switch behind the reasoning block
+ *    Phase F7 wired (inventory C9).
+ *  - `maxTokens` — `ConversationEngine.java:772-778`; absent means the engine's own
+ *    `DEFAULT_MAX_TOKENS = 1024` (`:65`).
+ *  - `topK` — `RAGContext.java:421-428`; precedence is body → configured → `DEFAULT_TOP_K = 5`
+ *    (`:55`, `:88-94`), so an explicit per-request value always wins.
+ *
+ * There is deliberately NO reasoning-effort or posture parameter in the table: the backend has
+ * none (`buildRequestBody` declares question/prompt/docIds/schema/sessionId/selection and nothing
+ * else), and inventing a name the server ignores would be the dead control in disguise.
+ *
+ * ONE honest side effect, stated where the mapping is made: `parseSamplingParams` returns sampling
+ * params ONLY when `enableThinking` is present, and the object it builds pins temperature 0.8 /
+ * top_p 0.95 with it (`ConversationEngine.java:780-786`). So the two rungs that name thinking also
+ * pin those two, and `standard` — which sends no parameter at all — is the only rung that leaves
+ * every sampling decision to the backend. That is why `standard` is the default and sends `{}`
+ * rather than a spelled-out copy of the defaults: a rung that restates the backend's numbers would
+ * silently fork them the first time they change.
+ */
+export type Sv3Effort = 'quick' | 'standard' | 'thorough';
+
+export interface Sv3EffortOption {
+  readonly id: Sv3Effort;
+  /** The trigger's label when this rung is chosen — the donor's trigger IS the current value. */
+  readonly label: string;
+  /** One line, in the menu, saying exactly what the rung changes (donor `SelectItem` description). */
+  readonly description: string;
+  /** The rung the window starts on; the donor badges it in the menu (`TraitsPicker.tsx:51-60`). */
+  readonly isDefault: boolean;
+}
+
+/** The menu's group label (donor `MenuGroupLabel`, one per descriptor — `TraitsPicker.tsx:308`). */
+export const SV3_EFFORT_MENU_LABEL = 'Effort';
+
+export const SV3_EFFORT_OPTIONS: readonly Sv3EffortOption[] = [
+  {
+    id: 'quick',
+    label: 'Quick',
+    description: 'Skips the thinking step and keeps the answer short.',
+    isDefault: false,
+  },
+  {
+    id: 'standard',
+    label: 'Standard',
+    description: 'Leaves every setting to the model.',
+    isDefault: true,
+  },
+  {
+    id: 'thorough',
+    label: 'Thorough',
+    description: 'Thinks first, allows a longer answer, and retrieves more passages.',
+    isDefault: false,
+  },
+];
+
+export const SV3_EFFORT_DEFAULT: Sv3Effort = 'standard';
+
+export const isSv3Effort = (value: unknown): value is Sv3Effort =>
+  SV3_EFFORT_OPTIONS.some((option) => option.id === value);
+
+export const sv3EffortLabel = (effort: Sv3Effort): string =>
+  SV3_EFFORT_OPTIONS.find((option) => option.id === effort)?.label ?? '';
+
+/**
+ * The rung → request parameters mapping, and the ONLY place it is made. Each field below is one
+ * sentence of the option's description, so a copy change that stops being true has to happen here,
+ * next to the parameter that made it true.
+ */
+export function sv3EffortParams(effort: Sv3Effort): Readonly<Record<string, unknown>> {
+  switch (effort) {
+    case 'quick':
+      return { enableThinking: false, maxTokens: 512 };
+    case 'thorough':
+      return { enableThinking: true, maxTokens: 3072, topK: 12 };
+    case 'standard':
+    default:
+      return {};
+  }
+}
+
 export interface Sv3AskRequest {
   readonly apiBase: string;
   readonly question: string;
   /** The window's session id — stamped on every dispatch so the backend records the turn. */
   readonly conversationId: string;
+  /** The composer's effort rung for THIS send; omitted is the default rung, not "no parameters". */
+  readonly effort?: Sv3Effort;
   readonly signal?: AbortSignal;
 }
 
@@ -153,6 +245,10 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
   const body = buildRequestBody(SV3_ASK_SHAPE_ID, req.question, req.conversationId, '', []);
   // The turn is recorded against THIS window's session, exactly as the shipped window stamps it.
   body.conversationId = req.conversationId;
+  // The effort rung's parameters, added AFTER the shared builder rather than inside it: the builder
+  // is the shipped window's authority over the per-shape body and this window may not widen it. The
+  // fields land beside `conversationId`, which arrives the same way and for the same reason.
+  Object.assign(body, sv3EffortParams(req.effort ?? SV3_EFFORT_DEFAULT));
 
   let sources: readonly RetrievalCitation[] = [];
   let matches: readonly CitationMatch[] = [];

@@ -193,8 +193,10 @@ describe('every region reads the tokens rather than re-hardcoding them', () => {
     // The glass silhouette is the top of the radius ladder, not a re-typed 22px.
     expect(styles).toContain('border-radius: var(--radius-3xl)');
     expect(styles).not.toContain('22px');
-    // The 1px border comes out of the control inset ONCE, through the token.
-    expect(styles).toContain('padding-inline: var(--control-pad-3)');
+    // The 1px border still comes out of the control inset (donor §6.3 technique 1) — off the
+    // ladder step the DONOR's composer control uses (px-2.5), since Phase F10 moved the row from
+    // the placeholder chips' menu-button referent to `ComposerControl`'s own.
+    expect(styles).toContain('padding-inline: calc(var(--space-2-5) - 1px)');
     // The hero composer hangs off the topbar's own height rather than a second copy of 52px.
     expect(styles).toContain('inset: var(--workspace-topbar-height) 0 0 0');
     expect(styles).not.toContain('52px');
@@ -477,15 +479,22 @@ describe('the composer glass is token-fed material, so dark inverts without a co
     expect(rule).toContain('backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation))');
     expect(rule).toContain('-webkit-backdrop-filter:');
 
-    // ...and NO blur declaration lives anywhere else — a node split is what put it out of reach.
+    // ...and no blur declaration of the GLASS's own recipe lives anywhere else — a node split is
+    // what put it out of reach. Phase F10 added a SECOND blurred surface, the control menu, which
+    // is a different recipe on its own node; it is admitted by name and by rule bounds, so a blur
+    // that escaped either silhouette still fails here.
+    const menuStart = composer.indexOf('.menu {');
+    const menuEnd = composer.indexOf('}', menuStart);
     const declarations = [...composer.matchAll(/backdrop-filter: blur\(var\(--glass-blur\)\)/g)];
-    expect(declarations).toHaveLength(2);
+    expect(declarations).toHaveLength(4);
     for (const declaration of declarations) {
-      expect(declaration.index, 'a blur declaration escaped the silhouette node').toBeGreaterThan(
-        start,
-      );
-      expect(declaration.index).toBeLessThan(end);
+      const at = declaration.index ?? -1;
+      const inGlass = at > start && at < end;
+      const inMenu = at > menuStart && at < menuEnd;
+      expect(inGlass || inMenu, 'a blur declaration escaped both silhouette nodes').toBe(true);
     }
+    // The two recipes stay distinct: only the composer's ambient glass saturates (donor §4.2).
+    expect(composer.slice(menuStart, menuEnd)).not.toContain('saturate(');
   });
 
   it('goes opaque where blur is unsupported, which is the mandatory companion to any glass', () => {
@@ -569,26 +578,88 @@ describe('the composer glass is token-fed material, so dark inverts without a co
     }
   });
 
-  it('sizes the scope controls off the ladder and gives them the ghost variant', () => {
-    const control = ruleFor('button.scope-control {');
-    expect(control).toContain('height: var(--space-6)');
-    expect(control).toContain('padding-inline: var(--control-pad-3)');
-    expect(control).toContain('gap: var(--space-1)');
-    expect(control).toContain('font-size: var(--font-size-sv3-xs)');
+  /**
+   * THE CHIP-REFERENT DECISION, pinned (tempdoc 822 Phase F10; the polish pass's open item (a)).
+   * Slice 3's inert chips were 24px off the donor's menu-button ladder (§3.2); a REAL composer
+   * control takes the donor's own composer referent — `ComposerControl`'s h-7
+   * (`chat/ComposerControl.tsx:9`) on the button `sm` desktop row (`ui/button.tsx:18-31`) — which is
+   * 28px, with gap-1.5 and px-2.5.
+   */
+  it('sizes the composer control off the donor composer referent, not the menu ladder', () => {
+    const control = ruleFor('button.composer-control {');
+    expect(control).toContain('height: var(--space-7)');
+    expect(control).toContain('min-height: var(--space-7)');
+    expect(control).not.toContain('height: var(--space-6)');
+    // Donor §6.3 technique 1 — the inset is reduced by exactly the border it sits inside.
+    expect(control).toContain('padding-inline: calc(var(--space-2-5) - 1px)');
+    expect(control).toContain('gap: var(--space-1-5)');
+    expect(control).toContain('font-size: var(--font-size-sv3-sm)');
     expect(control).toContain('border: 1px solid transparent');
+    expect(control).toContain('color: var(--secondary-label)');
     expect(control).toContain('--control-icon-color: var(--icon-muted)');
-    expect(ruleFor('button.scope-control:hover')).toContain('background: var(--accent-surface)');
+    const hover = ruleFor('button.composer-control:hover');
+    expect(hover).toContain('background: var(--accent-surface)');
+    expect(hover).toContain('color: var(--foreground)');
     // A button eases its ELEVATION only; a hover fill is instant.
     expect(control).toContain('transition: box-shadow var(--duration-sv3-micro)');
   });
 
-  it('evaporates the scope labels leftward on docking, and only fades them under reduced motion', () => {
+  /**
+   * The control's menu is the window's THIRD glass recipe, and the donor gives it its own
+   * (`index.css:835-851`): a denser tint than the composer's ambient glass, no saturate, and the
+   * geometry of `MenuPopup` / `MenuRadioItem` / `MenuGroupLabel` (`ui/menu.tsx`).
+   */
+  it('builds the control menu on the donor dropdown recipe, by token', () => {
+    const menu = ruleFor('.menu {');
+    expect(menu).toContain('background: var(--dropdown-surface)');
+    expect(menu).toContain('border: 1px solid var(--dropdown-border)');
+    expect(menu).toContain('box-shadow: var(--dropdown-shadow)');
+    expect(menu).toContain('border-radius: var(--radius-lg)');
+    expect(menu).toContain('padding: var(--space-1)');
+    // Donor positioner sideOffset = 4 (ui/menu.tsx:26), opening upward from a bottom-docked bar.
+    expect(menu).toContain('bottom: calc(100% + var(--space-1))');
+    expect(menu).toContain('inset-inline-start: 0');
+    // Intra-component stacking, but still off the window's z-scale: no raw rung is typed here.
+    expect(menu).toContain('z-index: var(--z-sticky)');
+
+    const item = ruleFor('button.menu-item {');
+    expect(item).toContain('min-height: var(--space-7)');
+    expect(item).toContain('padding: var(--space-1) var(--space-2)');
+    expect(item).toContain('border-radius: var(--radius-sm)');
+    expect(item).toContain('font-size: var(--font-size-sv3-sm)');
+    expect(ruleFor("button.menu-item[aria-checked='true']")).toContain(
+      'background: color-mix(in srgb, var(--foreground) 8%, transparent)',
+    );
+    const label = ruleFor('.menu-label {');
+    expect(label).toContain('padding: var(--space-1-5) var(--space-2)');
+    expect(label).toContain('color: var(--muted-foreground)');
+    expect(label).toContain('font-size: var(--font-size-sv3-xs)');
+  });
+
+  /**
+   * A glass surface without its no-blur fallback is unreadable, not subtle — the window's own rule,
+   * now that a SECOND blurred surface lives in this file.
+   */
+  it('gives every blurred surface in the composer an opaque fallback', () => {
+    const blurred = [...composer.matchAll(/([.\w-]+)\s*\{[^}]*backdrop-filter:\s*blur/g)].map(
+      (m) => m[1],
+    );
+    expect(blurred).toContain('.glass');
+    expect(blurred).toContain('.menu');
+    const fallback = composer.slice(
+      composer.indexOf('@supports not ((-webkit-backdrop-filter: blur(1px))'),
+    );
+    expect(fallback).toContain('.glass');
+    expect(fallback).toContain('.menu');
+  });
+
+  it('evaporates the control labels leftward on docking, and only fades them under reduced motion', () => {
     // Width on the outer (collapses in one frame), motion on the inner — the two halves of §5.9.
-    expect(ruleFor(":host([state='docked']) .scope-label {")).toContain('max-inline-size: 0');
-    const motion = ruleFor(":host([state='docked']) .scope-label-motion {");
+    expect(ruleFor(":host([state='docked']) .control-label {")).toContain('max-inline-size: 0');
+    const motion = ruleFor(":host([state='docked']) .control-label-motion {");
     expect(motion).toContain('transform: translateX(-0.25rem) scaleX(0.95)');
     expect(motion).toContain('opacity: 0');
-    expect(ruleFor('.scope-label-motion {')).toContain('transform-origin: left');
+    expect(ruleFor('.control-label-motion {')).toContain('transform-origin: left');
     const reduced = composer.slice(composer.indexOf('@media (prefers-reduced-motion: reduce)'));
     expect(reduced).toContain('transform: none');
     // The fade survives: reduce drops the transform half, not the affordance.
@@ -653,8 +724,8 @@ describe('the composer glass is token-fed material, so dark inverts without a co
     );
   });
 
-  it('leaves the scope glyph its own colour and no placeholder box', () => {
-    const glyph = ruleFor('.scope-glyph {');
+  it('leaves the control glyph its own colour and no placeholder box', () => {
+    const glyph = ruleFor('.control-glyph {');
     expect(glyph).toContain('color: var(--control-icon-color)');
     // The slice-3 placeholder was a filled swatch; a real stroke glyph must not keep its box.
     expect(glyph).not.toContain('background');

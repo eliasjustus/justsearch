@@ -22,9 +22,13 @@
  * Send, or Stop while a response streams. Never both, and never one disabled behind the other.
  *
  * ONE component in TWO states. HERO centres it in the main region under a headline (the empty
- * window); DOCKED returns it to the bottom band (the working window). Docking evaporates the scope-control
- * LABELS leftward into their glyphs (§5.9's signature compaction) and the window morphs the moving
+ * window); DOCKED returns it to the bottom band (the working window). Docking evaporates the control
+ * LABEL leftward into its glyph (§5.9's signature compaction) and the window morphs the moving
  * box with the view transition in `sv3-composer-morph.ts` (§5.5).
+ *
+ * Its control row holds ONE control (tempdoc 822 Phase F10): the effort rung the next question will
+ * carry. Slice 3's two scope PLACEHOLDERS are gone with it — they stood for the search axis the §4b
+ * standing directive defers indefinitely and did nothing when clicked.
  *
  * Side-effect registers <jf-sv3-composer>.
  */
@@ -33,7 +37,6 @@ import { JfElement } from '../../primitives/JfElement.js';
 import { icon } from '../../components/Icon.js';
 import { sv3Shared } from './sv3-shared-styles.js';
 import {
-  COMPOSER_SCOPES,
   COMPOSER_PLACEHOLDER,
   COMPOSER_STATE_DEFAULT,
   CORPUS_ADD_FOLDERS,
@@ -41,6 +44,13 @@ import {
   HERO_HEADLINE,
   type Sv3ComposerState,
 } from './fixtures.js';
+import {
+  SV3_EFFORT_DEFAULT,
+  SV3_EFFORT_MENU_LABEL,
+  SV3_EFFORT_OPTIONS,
+  sv3EffortLabel,
+  type Sv3Effort,
+} from './sv3-ask.js';
 import { sv3PrimaryAction, type Sv3SlotKind } from './sv3-run.js';
 import {
   SV3_CORPUS_UNKNOWN,
@@ -90,8 +100,29 @@ export const SV3_COMPOSER_STOP = 'sv3-composer-stop';
  */
 export const SV3_COMPOSER_ANSWER = 'sv3-composer-answer';
 
+/**
+ * Raised when the reader picks an effort rung (tempdoc 822 Phase F10). The composer owns the
+ * control, never the choice: the window holds the rung and stamps it on the next dispatch, which is
+ * the same boundary the draft's own submit event draws.
+ */
+export const SV3_EFFORT_CHANGE = 'sv3-effort-change';
+
+export interface Sv3EffortChange {
+  readonly effort: Sv3Effort;
+}
+
 /** Donor `ComposerControlIcon` at its default optical size (`size-4`). */
-const SCOPE_GLYPH_SIZE = 16;
+const CONTROL_GLYPH_SIZE = 16;
+
+/** Donor `ComposerControlChevron` — `size-3.5` (chat/ComposerControl.tsx:49). */
+const CHEVRON_SIZE = 14;
+
+/**
+ * The effort control's glyph. The donor's traits trigger carries a bolt for the fast rung
+ * (`chat/TraitsPicker.tsx:19,482`); this control wears it always, because docking evaporates the
+ * label and the glyph is then the only thing left to say what the control is about.
+ */
+const EFFORT_GLYPH = 'zap';
 
 export class Sv3Composer extends JfElement {
   static styles = [
@@ -322,26 +353,40 @@ export class Sv3Composer extends JfElement {
       :host([state='docked']) .footer {
         padding: 0 var(--space-3) var(--space-2);
       }
-      .scopes {
+      /* The control row is the ANCHOR for the control's menu, which is why it is positioned: the
+         menu opens upward from a composer that sits at the bottom of the window. */
+      .controls {
+        position: relative;
         display: flex;
         align-items: center;
         gap: var(--space-1);
         min-width: 0;
       }
 
-      button.scope-control {
+      /* Donor ComposerControl (chat/ComposerControl.tsx:8-9) on the button sm ladder
+         (ui/button.tsx:18-31): h-7 / min-h-7, gap-1.5, px-2.5, the ghost variant's secondary label
+         with the icon dimmed one step further, and transition-none on colour.
+         THE CHIP-REFERENT QUESTION IS SETTLED HERE (tempdoc 822 §5, the polish pass's open item
+         (a)): slice 3's placeholder chips were 24px off §3.2's menu-button ladder, which was the
+         right referent while they were inert scope furniture. They are gone; what stands in the row
+         now is a real composer control, so the row takes the donor's own composer referent —
+         28px — and the two numbers stop competing. */
+      button.composer-control {
         display: inline-flex;
         align-items: center;
-        gap: var(--space-1);
-        height: var(--space-6);
+        gap: var(--space-1-5);
+        height: var(--space-7);
+        min-height: var(--space-7);
         min-width: 0;
-        padding-inline: var(--control-pad-3);
+        /* Donor §6.3 technique 1: the inset is reduced by exactly the 1px border, so the VISUAL
+           padding is the ladder's 10px rather than 11. */
+        padding-inline: calc(var(--space-2-5) - 1px);
         border: 1px solid transparent;
         border-radius: var(--control-radius);
         background: transparent;
-        color: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+        color: var(--secondary-label);
         font-family: inherit;
-        font-size: var(--font-size-sv3-xs);
+        font-size: var(--font-size-sv3-sm);
         font-weight: 500;
         cursor: pointer;
         --control-icon-color: var(--icon-muted);
@@ -349,18 +394,129 @@ export class Sv3Composer extends JfElement {
            while the depth change eases. */
         transition: box-shadow var(--duration-sv3-micro) var(--ease-sv3-enter);
       }
-      button.scope-control:hover {
+      button.composer-control:hover {
         background: var(--accent-surface);
+        color: var(--foreground);
       }
-      button.scope-control:focus-visible {
+      button.composer-control:focus-visible {
         outline: 2px solid var(--ring);
         outline-offset: 1px;
       }
       /* A real glyph, not a placeholder swatch: the label evaporates on docking, so whatever is left
          has to carry the control's meaning on its own. Lucide strokes read currentColor. */
-      .scope-glyph {
+      .control-glyph {
         flex-shrink: 0;
         color: var(--control-icon-color);
+      }
+      /* Donor ComposerControlChevron (chat/ComposerControl.tsx:45-54): 14px, the muted icon token,
+         and a −2px optical margin so it sits closer to the label than the gap would put it. */
+      .control-chevron {
+        flex-shrink: 0;
+        margin-inline: -2px;
+        color: var(--icon-muted);
+      }
+
+      /* ── The control's menu (donor MenuPopup + MenuRadioItem) ───────────
+         Authored here rather than mounted from the shipped set: this window has no menu primitive
+         and the donor's material is a THIRD glass recipe (denser than the composer's, lighter than
+         the dialog's), which is exactly the kind of thing the token layer is for. */
+      .menu {
+        position: absolute;
+        /* Donor positioner sideOffset = 4, align="start" (ui/menu.tsx:26-27, and the traits
+           picker's own align=start at TraitsPicker.tsx:529). The composer sits at the bottom of
+           the window, so the side that has room is the top — which is where the donor's positioner
+           flips to for the same reason. */
+        bottom: calc(100% + var(--space-1));
+        inset-inline-start: 0;
+        /* The composer glass ISOLATES, so this is intra-component stacking (donor §1.6's z-0/z-1/z-2
+           rung) and any positive value clears the outline ring at 1 — but the number is still read
+           off the window's z-scale rather than typed, so the ladder has one home. */
+        z-index: var(--z-sticky);
+        min-inline-size: 16rem;
+        padding: var(--space-1);
+        border: 1px solid var(--dropdown-border);
+        border-radius: var(--radius-lg);
+        background: var(--dropdown-surface);
+        -webkit-backdrop-filter: blur(var(--glass-blur));
+        backdrop-filter: blur(var(--glass-blur));
+        box-shadow: var(--dropdown-shadow);
+      }
+      @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+        .menu {
+          background: var(--popover);
+        }
+      }
+      /* Donor MenuGroupLabel: px-2 py-1.5, medium, muted, 12px (ui/menu.tsx:183-186). */
+      .menu-label {
+        padding: var(--space-1-5) var(--space-2);
+        color: var(--muted-foreground);
+        font-size: var(--font-size-sv3-xs);
+        font-weight: 500;
+      }
+      /* Donor MenuRadioItem: min-h-7, rounded-sm, px-2 py-1, 14px, the checked rung filled at
+         foreground/8% and the highlighted one on the accent surface (ui/menu.tsx:157). */
+      button.menu-item {
+        display: block;
+        width: 100%;
+        min-height: var(--space-7);
+        padding: var(--space-1) var(--space-2);
+        border: 0;
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--foreground);
+        font-family: inherit;
+        font-size: var(--font-size-sv3-sm);
+        text-align: start;
+        cursor: pointer;
+      }
+      /* The donor highlights a menu item with accent fill + accent foreground; the FILL is copied
+         and the text stays on --foreground, because an accent-role token used as text is the
+         growth the accent-as-text ratchet exists to stop (tempdoc 576 §6 rung-1). Same resolved
+         ink in dark, one step darker in light — and one text colour across the window. */
+      button.menu-item:hover {
+        background: var(--accent-surface);
+        color: var(--foreground);
+      }
+      button.menu-item:focus-visible {
+        outline: 2px solid var(--ring);
+        outline-offset: -2px;
+      }
+      button.menu-item[aria-checked='true'] {
+        background: color-mix(in srgb, var(--foreground) 8%, transparent);
+      }
+      .menu-item-head {
+        display: flex;
+        align-items: center;
+        gap: var(--space-1-5);
+      }
+      /* Donor DefaultBadge (TraitsPicker.tsx:51-59): h-4, px-1.5, 10px semibold, muted fill and a
+         border one step lighter than the surface's own. */
+      .menu-badge {
+        display: inline-flex;
+        align-items: center;
+        height: var(--space-4);
+        padding-inline: var(--space-1-5);
+        border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+        border-radius: var(--control-radius);
+        /* The donor's badge adds a muted FILL under this text. Measured on THIS window's denser
+           menu glass, that fill lifts the surface and drops the pair to 4.31:1 — under AA for 10px
+           text — so the outline variant keeps its border and drops its fill, and the pair reads
+           4.56:1 like every other muted line in the menu. Legibility is measured, never eyeballed
+           (the import-bridge clause's own rule, applied to a component authored here). */
+        background: transparent;
+        color: var(--muted-foreground);
+        font-size: var(--font-size-sv3-2xs);
+        font-weight: 600;
+        line-height: 1;
+      }
+      /* Donor SelectItem description line (ChatComposer.tsx:377-379 — the runtime-mode menu, the
+         donor's own place for saying what a mode DOES). It is the honesty half of this control: each
+         line names the parameters its rung sends and nothing more. */
+      .menu-item-description {
+        display: block;
+        color: var(--muted-foreground);
+        font-size: var(--font-size-sv3-xs);
+        line-height: 1.334;
       }
 
       /* §5.9's compaction, in two elements: the outer carries the WIDTH (which collapses in one
@@ -368,15 +524,15 @@ export class Sv3Composer extends JfElement {
          therefore an instant layout change that the morph's mid-transition crossfade covers — which
          is what that crossfade is for (§5.5) — while the reverse, and any state change made without
          a view transition, animates the label back in over the 180ms. */
-      .scope-label {
+      .control-label {
         display: block;
         min-inline-size: 0;
         max-inline-size: 240px;
       }
-      :host([state='docked']) .scope-label {
+      :host([state='docked']) .control-label {
         max-inline-size: 0;
       }
-      .scope-label-motion {
+      .control-label-motion {
         display: block;
         width: 100%;
         min-width: 0;
@@ -390,7 +546,7 @@ export class Sv3Composer extends JfElement {
           opacity var(--duration-sv3-morph) var(--ease-sv3-morph),
           transform var(--duration-sv3-morph) var(--ease-sv3-morph);
       }
-      :host([state='docked']) .scope-label-motion {
+      :host([state='docked']) .control-label-motion {
         transform: translateX(-0.25rem) scaleX(0.95);
         opacity: 0;
       }
@@ -476,13 +632,13 @@ export class Sv3Composer extends JfElement {
       @media (prefers-reduced-motion: reduce) {
         /* The fade survives, the transform does not — the donor keeps whichever half still carries
            the meaning. */
-        .scope-label-motion {
+        .control-label-motion {
           transition: opacity var(--duration-sv3-morph) var(--ease-sv3-morph);
         }
-        :host([state='docked']) .scope-label-motion {
+        :host([state='docked']) .control-label-motion {
           transform: none;
         }
-        button.scope-control,
+        button.composer-control,
         button.stop,
         button.send {
           transition: none;
@@ -503,7 +659,9 @@ export class Sv3Composer extends JfElement {
     unavailableReason: { type: String, attribute: 'unavailable-reason' },
     delegateUnavailableReason: { type: String, attribute: 'delegate-unavailable-reason' },
     corpus: { attribute: false },
+    effort: { type: String, reflect: true },
     draft: { state: true },
+    effortMenuOpen: { state: true },
   };
 
   declare state: Sv3ComposerState;
@@ -543,7 +701,19 @@ export class Sv3Composer extends JfElement {
    * decision that must not be made twice.
    */
   declare corpus: Sv3Corpus;
+  /**
+   * The effort rung the next send will carry, HELD BY THE WINDOW and handed down (tempdoc 822 Phase
+   * F10). The composer renders it and announces a change; it does not keep the choice, for the same
+   * reason it does not keep the session: the thing that dispatches is the thing that must know.
+   */
+  declare effort: Sv3Effort;
   declare draft: string;
+  /**
+   * Public because the window's Escape ladder has to see it: an open menu is the MOST LOCAL
+   * transient in the composer, so the window declines the key the way it declines to an open rename
+   * (`SearchV3View.onHostKeydown`).
+   */
+  declare effortMenuOpen: boolean;
 
   constructor() {
     super();
@@ -558,7 +728,9 @@ export class Sv3Composer extends JfElement {
     this.unavailableReason = '';
     this.delegateUnavailableReason = '';
     this.corpus = SV3_CORPUS_UNKNOWN;
+    this.effort = SV3_EFFORT_DEFAULT;
     this.draft = '';
+    this.effortMenuOpen = false;
   }
 
   private request(next: Sv3ComposerState): void {
@@ -651,7 +823,6 @@ export class Sv3Composer extends JfElement {
 
   render(): TemplateResult {
     const empty = this.draft.trim().length === 0;
-    const docked = this.state === 'docked';
     // Soft, never `disabled`: the availability authority's contract is that the reason stays
     // reachable, and a natively-disabled control is not even focusable (`state/availability.ts:6-20`).
     const unavailable = this.unavailableReason !== '';
@@ -685,28 +856,155 @@ export class Sv3Composer extends JfElement {
             </div>
           </div>
           <div class="footer">
-            <div class="scopes">
-              ${COMPOSER_SCOPES.map(
-                (scope) => html`
-                  <button
-                    type="button"
-                    class="scope-control"
-                    data-testid="sv3-composer-scope"
-                    aria-label=${docked ? scope.label : nothing}
-                  >
-                    ${icon({ name: scope.glyph, size: SCOPE_GLYPH_SIZE, className: 'scope-glyph' })}
-                    <span class="scope-label"
-                      ><span class="scope-label-motion">${scope.label}</span></span
-                    >
-                  </button>
-                `,
-              )}
-            </div>
+            <div class="controls" @focusout=${this.onControlsFocusOut}>${this.effortControl()}</div>
             ${this.primaryAction(empty, unavailable)}
           </div>
         </div>
       </div>
     `;
+  }
+
+  /**
+   * The composer's ONE control (tempdoc 822 Phase F10) — the donor's traits picker
+   * (`chat/TraitsPicker.tsx:495-542`) re-expressed on this window's tokens: a ghost
+   * `ComposerControl` whose LABEL IS THE CURRENT VALUE, a chevron, and a menu of radio rungs.
+   *
+   * The accessible name carries both halves in BOTH forms ("Effort: Standard"), because the visible
+   * label is only the value: docking evaporates it into the glyph (§5.9), and a control whose
+   * remaining glyph means "effort" to nobody would have gone quiet exactly when it got smaller.
+   */
+  private effortControl(): TemplateResult {
+    const label = sv3EffortLabel(this.effort);
+    return html`
+      <button
+        type="button"
+        class="composer-control"
+        data-testid="sv3-composer-effort"
+        aria-haspopup="menu"
+        aria-expanded=${this.effortMenuOpen ? 'true' : 'false'}
+        aria-label=${`${SV3_EFFORT_MENU_LABEL}: ${label}`}
+        title=${`${SV3_EFFORT_MENU_LABEL}: ${label}`}
+        @click=${this.toggleEffortMenu}
+        @keydown=${this.onTriggerKeydown}
+      >
+        ${icon({ name: EFFORT_GLYPH, size: CONTROL_GLYPH_SIZE, className: 'control-glyph' })}
+        <span class="control-label"><span class="control-label-motion">${label}</span></span>
+        ${icon({ name: 'chevron-down', size: CHEVRON_SIZE, className: 'control-chevron' })}
+      </button>
+      ${this.effortMenuOpen ? this.effortMenu() : nothing}
+    `;
+  }
+
+  private effortMenu(): TemplateResult {
+    return html`
+      <div
+        class="menu"
+        role="menu"
+        aria-label=${SV3_EFFORT_MENU_LABEL}
+        data-testid="sv3-composer-effort-menu"
+        @keydown=${this.onMenuKeydown}
+      >
+        <div class="menu-label">${SV3_EFFORT_MENU_LABEL}</div>
+        ${SV3_EFFORT_OPTIONS.map(
+          (option) => html`
+            <button
+              type="button"
+              class="menu-item"
+              role="menuitemradio"
+              data-testid="sv3-composer-effort-option"
+              data-effort=${option.id}
+              aria-checked=${option.id === this.effort ? 'true' : 'false'}
+              @click=${() => this.chooseEffort(option.id)}
+            >
+              <span class="menu-item-head">
+                ${option.label}
+                ${option.isDefault
+                  ? html`<span class="menu-badge" data-testid="sv3-composer-effort-default"
+                      >Default</span
+                    >`
+                  : nothing}
+              </span>
+              <span class="menu-item-description">${option.description}</span>
+            </button>
+          `,
+        )}
+      </div>
+    `;
+  }
+
+  private toggleEffortMenu(): void {
+    this.effortMenuOpen = !this.effortMenuOpen;
+  }
+
+  /**
+   * The rung is the WINDOW's to keep — the composer announces it exactly as it announces a draft,
+   * and re-renders from the property the window writes back. A rung that is already current is
+   * still a close, never a second announcement.
+   */
+  private chooseEffort(effort: Sv3Effort): void {
+    this.effortMenuOpen = false;
+    this.focusTrigger();
+    if (effort === this.effort) return;
+    this.dispatchEvent(
+      new CustomEvent<Sv3EffortChange>(SV3_EFFORT_CHANGE, {
+        detail: { effort },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  /** Down-arrow on the trigger opens the menu onto its first rung (the donor's menu behaviour). */
+  private onTriggerKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'ArrowDown' || this.effortMenuOpen) return;
+    event.preventDefault();
+    this.effortMenuOpen = true;
+    void this.updateComplete.then(() => this.menuItems()[0]?.focus());
+  }
+
+  /**
+   * The menu's own keys. Escape is FIRST and is stopped here, which is what keeps the window's
+   * Escape ladder true: `SearchV3View` yields to an open menu the way it yields to a rename, and
+   * the focus returns to the control that opened it rather than to wherever it was before.
+   */
+  private onMenuKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.effortMenuOpen = false;
+      this.focusTrigger();
+      return;
+    }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    const items = this.menuItems();
+    const active = items.findIndex((item) => item === this.shadowRoot?.activeElement);
+    if (items.length === 0) return;
+    event.preventDefault();
+    const step = event.key === 'ArrowDown' ? 1 : -1;
+    const next = (active + step + items.length) % items.length;
+    items[next]?.focus();
+  }
+
+  /**
+   * Focus leaving the control row closes the menu (F9's rule for the palette, applied to the second
+   * transient this window owns): a menu left open behind a moved caret is reachable by pointer only.
+   */
+  private onControlsFocusOut(event: FocusEvent): void {
+    if (!this.effortMenuOpen) return;
+    const next = event.relatedTarget as Node | null;
+    const row = this.shadowRoot?.querySelector('.controls') ?? null;
+    if (next !== null && row?.contains(next) === true) return;
+    this.effortMenuOpen = false;
+  }
+
+  private menuItems(): HTMLButtonElement[] {
+    return [
+      ...(this.shadowRoot?.querySelectorAll<HTMLButtonElement>('button.menu-item') ?? []),
+    ];
+  }
+
+  private focusTrigger(): void {
+    this.shadowRoot?.querySelector<HTMLButtonElement>('button.composer-control')?.focus();
   }
 
   /**

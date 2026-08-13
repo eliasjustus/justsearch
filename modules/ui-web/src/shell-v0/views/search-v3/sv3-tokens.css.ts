@@ -123,6 +123,19 @@ export const sv3Tokens = css`
     --dialog-border: color-mix(in srgb, var(--color-white) 8%, transparent);
     --dialog-shadow:
       inset 0 1px rgb(255 255 255 / 4%), 0 24px 72px -20px rgb(0 0 0 / 90%);
+    /* Dropdown material (Phase F10 — the composer's control menu). The donor's THIRD glass recipe
+       (index.css:835-851, spec §4.2): elevated glass needs a denser tint than an ambient surface,
+       so the user's opacity setting is nested INSIDE an 18% popover tint — which remaps the range
+       (40% → 51%, 80% → 84%, 100% → 100%) so a menu stays legible over busy content even at its most
+       transparent. The technique and its reason are the donor's; the comment is kept because the
+       number 18 is meaningless without it. No saturate() here, unlike the composer's own glass. */
+    --dropdown-surface: color-mix(
+      in srgb,
+      var(--popover) 18%,
+      color-mix(in srgb, var(--popover) var(--glass-opacity), transparent)
+    );
+    --dropdown-border: color-mix(in srgb, var(--foreground) 10%, transparent);
+    --dropdown-shadow: 0 16px 40px -18px rgb(0 0 0 / 55%);
     /* The empty-state tile's edge is the elevation inversion at its smallest: a hairline BELOW the
        tile in light, ABOVE it in dark. */
     --empty-tile-shadow: none;
@@ -258,6 +271,10 @@ export const sv3Tokens = css`
     --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     --font-mono: ui-monospace, 'SF Mono', 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono',
       monospace;
+    /* The BADGE rung, and only that: the donor's desktop ramp table gives "Badge sm" its own 10px
+       (spec §2.4, from ui/badge.tsx:18-21 — sm:text-[.625rem]). It sits below the four-size UI ramp
+       the way the display size sits above it, so the ramp itself is untouched. */
+    --font-size-sv3-2xs: 0.625rem;
     --font-size-sv3-xs: 0.75rem;
     --font-size-sv3-sm: 0.875rem;
     --font-size-sv3-base: 1rem;
