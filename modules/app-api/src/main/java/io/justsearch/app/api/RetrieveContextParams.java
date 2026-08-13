@@ -33,7 +33,11 @@ public record RetrieveContextParams(
     List<String> metaCategory,
     TimeRange metaPublishedAt,
     boolean returnFullDocuments,
-    List<String> excludedSourceIds) {
+    List<String> excludedSourceIds,
+    // Tempdoc 821 §3-C2 — the collection scope for RAG retrieval. Non-empty = a POSITIVE include of
+    // exactly those collections; EMPTY = the DEFAULT scope (the 585-D4b MUST_NOT agent-history
+    // exclusion the Worker applies for null/empty filters), never "match nothing".
+    List<String> collection) {
 
   /** Time range filter (inclusive bounds, epoch millis). */
   public record TimeRange(long fromMs, long toMs) {
@@ -73,6 +77,7 @@ public record RetrieveContextParams(
     metaCategory = metaCategory == null ? List.of() : List.copyOf(metaCategory);
     metaPublishedAt = metaPublishedAt == null ? TimeRange.UNSET : metaPublishedAt;
     excludedSourceIds = excludedSourceIds == null ? List.of() : List.copyOf(excludedSourceIds);
+    collection = collection == null ? List.of() : List.copyOf(collection);
   }
 
   /** Minimal builder for the common case: question + token budget. */
@@ -82,22 +87,23 @@ public record RetrieveContextParams(
         List.of(), List.of(), List.of(),
         TimeRange.UNSET, false, "", List.of(),
         false, ContextFormat.LABELED,
-        List.of(), List.of(), List.of(), TimeRange.UNSET, false, List.of());
+        List.of(), List.of(), List.of(), TimeRange.UNSET, false, List.of(), List.of());
   }
 
   /**
    * Tempdoc 610 §J.3 — builder for the chat RAG path: question + token budget + (optional) scoped
-   * docIds + the hidden-source exclusion set.
+   * docIds + the hidden-source exclusion set. Tempdoc 821 §3-C2 added {@code collection}: the chat
+   * SPI carries the caller's scope; an empty list is the default scope, i.e. unchanged behavior.
    */
   public static RetrieveContextParams of(
       String question, int topK, int maxContextTokens,
-      Set<String> docIds, List<String> excludedSourceIds) {
+      Set<String> docIds, List<String> excludedSourceIds, List<String> collection) {
     return new RetrieveContextParams(
         question, docIds, topK, maxContextTokens,
         List.of(), List.of(), List.of(),
         TimeRange.UNSET, false, "", List.of(),
         false, ContextFormat.LABELED,
-        List.of(), List.of(), List.of(), TimeRange.UNSET, false, excludedSourceIds);
+        List.of(), List.of(), List.of(), TimeRange.UNSET, false, excludedSourceIds, collection);
   }
 
   /** Builder from the existing positional parameters (backward compatibility). */
@@ -108,6 +114,6 @@ public record RetrieveContextParams(
         List.of(), List.of(), List.of(),
         TimeRange.UNSET, false, "", List.of(),
         false, ContextFormat.LABELED,
-        List.of(), List.of(), List.of(), TimeRange.UNSET, false, List.of());
+        List.of(), List.of(), List.of(), TimeRange.UNSET, false, List.of(), List.of());
   }
 }
