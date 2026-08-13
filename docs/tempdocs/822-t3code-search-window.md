@@ -180,9 +180,22 @@ previous agent is done").
   optimistic-handoff predicate, settle/snooze shelves).
 - F3. Session lifecycle depth: shelves replace recency buckets (the sidebar
   comparison finding 4 resolves toward the donor), broken-state mapping, unread/woke.
-- F4+. The deferred search-integration conversation (owner), then the 818 synthesis. Go = the donor-copy strategy cleared
-the bar; no-go = record why, delete the window in one PR (818-style falsification),
-re-open the strategy question. Everything below assumes GO.
+- F4+. The deferred search-integration conversation (owner), then the 818 synthesis.
+
+**DECISION LEDGER RATIFIED (owner, 2026-08-13: "i agree with your recommendations"):**
+(1) summarize surface stays honestly markless; cross-encoder pass backlogged.
+(2) "Sources" stays bare (quiet-count flip remains one tested constant away).
+(3) theme seam: dark-only until cutover. (4) autonomy control: not built now; seam
+verified and recorded — build honest-app-wide with the consent ceremony when wanted.
+(5) D12 handoff cards: out. (6) Tier-B sittings: order ratified (a) degradation form
+→ (b) conversation actions, scheduled only on owner word. (7) small taste batch
+recorded as-is. (8) merge: stays local until the explicit publish word.
+**S6 ESCALATION RESOLVED (same ratification):** criteria recalibration authorized as
+a design-level amendment — re-qualify the multi-part prompt set against measured
+behavior; re-derive the saturated backtick half as non-regression; tighten the
+collapse definition against knife-edge matcher variance; ONE re-run decides.
+[Seam repair note 2026-08-13: an edit collision had dropped the Phase-F heading and
+fused a Gate-0 fragment onto F4 — content restored, nothing lost.]
 
 **Phase A — real data in the donor shell** (functional spine; minimal design; each item
 the slices-1-4 loop: brief → opus worker → measure → commit):
