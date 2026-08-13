@@ -504,6 +504,68 @@ codes, 100-cap echo — changeset-gated); the non-defect store strata (30 retire
 proposals need per-occurrence rigor); C3 (enrichment completeness) and the remaining
 §3 classes not yet chartered into lanes; §7 D1/D4/D6 defaults stand unless redirected.
 
+## §O Root-cause investigations (2026-08-13; owner: "investigate for root causes and the correct fixes")
+
+### §O.1 Embedding fingerprint never persists (the §N needs-live worst-case finding)
+
+**Root cause (current main, file:line-verified):** the fingerprint's only durable home
+is Lucene commit userData, which `CommitOps.commit()` REBUILDS WHOLESALE each commit
+(`CommitOps.java:78-110`) from suppliers — and `EmbeddingCompatibilityController.
+fingerprintToStamp()` (:299-310) supplies it only when state is COMPATIBLE (or
+rebuild-completed). Persistence is thus a per-commit re-assertion, erased by any commit
+taken while the ECC declines — including the ENTIRE async boot window (supplier defaults
+`Optional::empty`, `KnowledgeServer.java:218-219`; ECC wired in `initDeferredModels`
+dispatched after `startIndexingLoop`). On every FIRST launch the Head's help-doc ingest
+commits before `ECC.refresh()`, making the empty-index fast path structurally
+unreachable → `BLOCKED_LEGACY` → auto-rescue → REBUILDING. Certification needs
+`pending==0` twice (or a graceful shutdown the dev-runner's `taskkill` never performs) —
+so the index is **never stamped at all**, and `EmbeddingRecoveryOps.
+remarkEmbeddedParentDocsPending` (:132-170) unconditionally re-marks every parent on
+every boot: the observed 99.7%-chunk-vectors/0.17%-coverage signature is bookkeeping
+destruction, not vector loss. Bonus defect: certification counts PARENT embedding
+status while retrieval serves CHUNK vectors — the attestation doesn't cover the
+artifact it gates.
+
+**819 branch verdict: PARTIAL — closes origination, not recovery.** Its 3 real commits
+(+1472/−70) fix boot ordering (ECC synchronous before the loop), add an evidence gate
+to certification, route retries, and add graceful dev-runner shutdown. It does NOT add
+rebuild-progress persistence or touch the unconditional re-mark: every existing
+unstamped index still re-embeds fully and still resets on interrupt. **Merge-review
+checklist for 819:** (1) its `emptyIndexAtRefresh` latch re-opens the zero-evidence
+hole (help-batch all-fail scenario stamps COMPATIBLE with zero vectors) — should only
+permit while the index is still empty; (2) `noteSuccessfulEmbeddingObserved()` has no
+production caller; (3) its regression guard is a source-order assertion — ask for a
+behavioral boot test.
+
+**Remaining correct fix (design ready, BLOCKED on 819 merging first — same files):**
+F1 resumable rebuild: an unconditionally-supplied `embedding_rebuild_model_sha256`
+commit key while REBUILDING (cleared at certification); boot resumes REBUILDING and
+skips the re-mark when it matches the current fingerprint. F2 preservation contract:
+`fingerprintToStamp` → tri-state STAMP/PRESERVE/CLEAR with PRESERVE copying the prior
+commit's value (also stops BLOCKED_MISMATCH destroying its own evidence). F3 certify
+chunk-vector presence (already countable via `IndexCountOps`) or re-mark chunk status
+too. Note: `EmbeddingFingerprintDurabilityTest` seeds an unconditional supplier —
+`unreachable-seed-green`, rewrite with F2. New test: rebuild to ~50%, restart, assert
+no re-mark. Why 730's shipped remediation didn't help: it acts at certification/
+COMPATIBLE — the last mile of a path this index never walks.
+
+### §O.2 Readiness truthfulness double defect — implementation chartered
+
+Design (implementation-ready, worker running): (A) LambdaMART unconfigured →
+READY-with-informational-note (matches four sibling absent-by-design precedents; the
+DEGRADED-capped comment deleted); (B) new `index.embedding_rebuilding` reason code
+fired from a compat-REBUILDING helper into BOTH the indexServing chain and the
+embedding arm — the "owned by the 595 Stability axis" comments are FALSE for in-place
+rebuilds (that axis sees only generation migrations). Owner-visible flips (named for
+PR review): steady-state verdict degraded→operational on every install; rebuilds now
+show a warn-tier true cause for their duration. Interaction-walked, no new false
+states; merge after the wave-1 staleness branch (signature-level, not semantic,
+conflicts).
+
+### §O.3 MCP Origin validation — investigate-then-implement worker running (spec
+normative language, client Origin census, host-parsed allowlist, lookalike-robust
+tests; GET/SSE conformance scoped as follow-up).
+
 ## Appendix A — 145 verified STILL-TRUE defect conditions
 
 (class-ordered: product, drift, tooling, governance; demo-relevant flagged Y)
