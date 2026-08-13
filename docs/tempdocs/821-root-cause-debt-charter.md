@@ -504,6 +504,103 @@ codes, 100-cap echo — changeset-gated); the non-defect store strata (30 retire
 proposals need per-occurrence rigor); C3 (enrichment completeness) and the remaining
 §3 classes not yet chartered into lanes; §7 D1/D4/D6 defaults stand unless redirected.
 
+## §O Root-cause investigations (2026-08-13; owner: "investigate for root causes and the correct fixes")
+
+### §O.1 Embedding fingerprint never persists (the §N needs-live worst-case finding)
+
+**Root cause (current main, file:line-verified):** the fingerprint's only durable home
+is Lucene commit userData, which `CommitOps.commit()` REBUILDS WHOLESALE each commit
+(`CommitOps.java:78-110`) from suppliers — and `EmbeddingCompatibilityController.
+fingerprintToStamp()` (:299-310) supplies it only when state is COMPATIBLE (or
+rebuild-completed). Persistence is thus a per-commit re-assertion, erased by any commit
+taken while the ECC declines — including the ENTIRE async boot window (supplier defaults
+`Optional::empty`, `KnowledgeServer.java:218-219`; ECC wired in `initDeferredModels`
+dispatched after `startIndexingLoop`). On every FIRST launch the Head's help-doc ingest
+commits before `ECC.refresh()`, making the empty-index fast path structurally
+unreachable → `BLOCKED_LEGACY` → auto-rescue → REBUILDING. Certification needs
+`pending==0` twice (or a graceful shutdown the dev-runner's `taskkill` never performs) —
+so the index is **never stamped at all**, and `EmbeddingRecoveryOps.
+remarkEmbeddedParentDocsPending` (:132-170) unconditionally re-marks every parent on
+every boot: the observed 99.7%-chunk-vectors/0.17%-coverage signature is bookkeeping
+destruction, not vector loss. Bonus defect: certification counts PARENT embedding
+status while retrieval serves CHUNK vectors — the attestation doesn't cover the
+artifact it gates.
+
+**819 branch verdict: PARTIAL — closes origination, not recovery.** Its 3 real commits
+(+1472/−70) fix boot ordering (ECC synchronous before the loop), add an evidence gate
+to certification, route retries, and add graceful dev-runner shutdown. It does NOT add
+rebuild-progress persistence or touch the unconditional re-mark: every existing
+unstamped index still re-embeds fully and still resets on interrupt. **Merge-review
+checklist for 819:** (1) its `emptyIndexAtRefresh` latch re-opens the zero-evidence
+hole (help-batch all-fail scenario stamps COMPATIBLE with zero vectors) — should only
+permit while the index is still empty; (2) `noteSuccessfulEmbeddingObserved()` has no
+production caller; (3) its regression guard is a source-order assertion — ask for a
+behavioral boot test.
+
+**Remaining correct fix (design ready, BLOCKED on 819 merging first — same files):**
+F1 resumable rebuild: an unconditionally-supplied `embedding_rebuild_model_sha256`
+commit key while REBUILDING (cleared at certification); boot resumes REBUILDING and
+skips the re-mark when it matches the current fingerprint. F2 preservation contract:
+`fingerprintToStamp` → tri-state STAMP/PRESERVE/CLEAR with PRESERVE copying the prior
+commit's value (also stops BLOCKED_MISMATCH destroying its own evidence). F3 certify
+chunk-vector presence (already countable via `IndexCountOps`) or re-mark chunk status
+too. Note: `EmbeddingFingerprintDurabilityTest` seeds an unconditional supplier —
+`unreachable-seed-green`, rewrite with F2. New test: rebuild to ~50%, restart, assert
+no re-mark. Why 730's shipped remediation didn't help: it acts at certification/
+COMPATIBLE — the last mile of a path this index never walks.
+
+### §O.2 Readiness truthfulness double defect — IMPLEMENTED + REVIEWED (2026-08-13)
+
+Branch `worktree-agent-a1772b240fdd73bd0` (6c2fac76 Defect A, 6c4a18bc Defect B,
+6762439e review nits + disclosure). Review verdict MERGEABLE-AS-IS: wrong-gate trace
+clean (no shadowing; fallback worker view yields no fabricated rebuild alarm;
+fall-throughs all worse-or-equal), composite math verified, both arms independently
+pinned with the composite assertion de-vacuumed (all four sibling retrieval dims
+asserted READY so the DEGRADED verdict is attributable). Gates: readiness-reason-codes
+48/42 green; FE suite 4,452. Wire-visible disclosure for the PR body: the legacy
+`embeddingReady` alias now reads false during a rebuild (contract-consistent).
+**MERGE-ORDER (silent semantic blocker):** the wave-1 staleness branch
+(`agent-a22be6e46206d73f8`) changed `buildReadinessEnvelope` to 3-arg with NO overload
+— whichever merges second, StatusLifecycleHandlerTest will NOT COMPILE with zero
+conflict markers; the second merger adds the contact argument to this branch's three
+new call sites. Also: several branches wrote the SAME observation shard file (worker
+session-id resolution collapses to the orchestrator's — meta-observation logged);
+expect add/add shard conflicts, resolve by union.
+
+(original charter note follows)
+
+Design (implementation-ready, worker running): (A) LambdaMART unconfigured →
+READY-with-informational-note (matches four sibling absent-by-design precedents; the
+DEGRADED-capped comment deleted); (B) new `index.embedding_rebuilding` reason code
+fired from a compat-REBUILDING helper into BOTH the indexServing chain and the
+embedding arm — the "owned by the 595 Stability axis" comments are FALSE for in-place
+rebuilds (that axis sees only generation migrations). Owner-visible flips (named for
+PR review): steady-state verdict degraded→operational on every install; rebuilds now
+show a warn-tier true cause for their duration. Interaction-walked, no new false
+states; merge after the wave-1 staleness branch (signature-level, not semantic,
+conflicts).
+
+### §O.3 MCP Origin validation — IMPLEMENTED + ADVERSARIALLY REVIEWED (2026-08-13)
+
+Branch `worktree-agent-a9392a68dde8ec2cd` (a3619093 + 6a2e444c, 15/15 tests). Spec
+MUST implemented: host-equality allowlist (absent Origin allowed per the spec's
+"present and invalid" clause; loopback + tauri shell origins allowed; `null` and all
+else 403 with a JSON-RPC-shaped body), reusing the 633 Host-guard infrastructure; the
+review's parser-attack and bypass hunt found no hole in the decision logic. The review
+DID find two blockers in the halt mechanism — `skipRemainingHandlers()` proven (via
+decompiled Javalin 6.7.0 bytecode) to destroy the after-handler queue, an
+attacker-triggerable OTel-scope + inflight-gauge leak; and the justifying measurement
+proven a hermetic-test artifact (production's HttpResponseException mapper preserves
+bodies) — both fixed: sibling throw pattern restored, the regression test empirically
+falsified in-repo, deny-logging made flood-proof (time-window + 128-char truncation),
+the guarded path and routed path unified on one shared constant, and the wrong shard
+claim retracted with an explicit CORRECTED marker. Documented follow-up: `GET /mcp`
+must return 405 (not 404) per spec — carries a route-manifest regen tail. Bonus
+pre-existing findings logged: `GET /api/mcp/token` token-exempt and not
+Origin-guarded (worth separate review); `resolveAllowedOrigin` rejects `[::1]`
+origins (bracket handling); LocalApiHostValidationTest mirrors its filter instead of
+exercising install().
+
 ## Appendix A — 145 verified STILL-TRUE defect conditions
 
 (class-ordered: product, drift, tooling, governance; demo-relevant flagged Y)
