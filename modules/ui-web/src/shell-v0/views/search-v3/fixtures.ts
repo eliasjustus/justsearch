@@ -233,9 +233,24 @@ export const CORPUS_ADD_FOLDERS = 'Add folders in Library to start searching';
 /** Where {@link CORPUS_ADD_FOLDERS} goes. The surface that OWNS folder management, not one hop short. */
 export const CORPUS_REMEDY_TARGET = 'core.library-surface';
 
-/** The per-turn copy action and its confirmation (inventory A9). */
+/**
+ * The per-turn copy action and its confirmation (inventory A9). Since Phase F11 the control is
+ * ICON-ONLY (the donor's `chat/MessageCopyButton.tsx`), so {@link TURN_COPY_LABEL} is its ACCESSIBLE
+ * NAME rather than its text, and {@link TURN_COPY_DONE} is what the tail's live region announces.
+ */
 export const TURN_COPY_LABEL = 'Copy answer';
 export const TURN_COPY_DONE = 'Copied';
+
+/**
+ * The tail's disclosure, in the two words it may use (tempdoc 822 Phase F11). Sentence case at the
+ * tail's own 12px — the window declares ONE disclosure affordance and this is its wording, replacing
+ * the imported panel's `▸ N SOURCES` dialect (the fit audit's axis 3 + axis 5, for this region).
+ *
+ * TWO words because they are two claims: a retrieval set really was reported, versus only
+ * per-sentence citation-matches were, which is not a retrieval the window may name.
+ */
+export const SOURCES_LABEL = 'Sources';
+export const CITATIONS_LABEL = 'Citations';
 
 /** How long the copy confirmation stands before the label returns. */
 export const TURN_COPY_FEEDBACK_MS = 1600;

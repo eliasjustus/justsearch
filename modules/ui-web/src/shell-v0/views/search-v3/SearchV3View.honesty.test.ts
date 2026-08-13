@@ -38,6 +38,7 @@ import {
   REWRITE_NOTE_LABEL,
   SV3_COMMAND_EXPORT_MARKDOWN,
   TURN_COPY_DONE,
+  TURN_COPY_LABEL,
 } from './fixtures.js';
 
 type Mounted = HTMLElement & { updateComplete: Promise<unknown> };
@@ -351,16 +352,47 @@ describe('a settled answer carries its basis, its duration and its model', () =>
     await settle(el);
 
     const main = await region(el, 'jf-sv3-main');
+    // The accessible half carries the authority's WHOLE label; the resting half carries the verdict.
     const line = textOf(q(main, 'sv3-answer-frame'));
     expect(line).toContain(answerFrameLabel('sourced', false));
-    // The model is the one the OBSERVED-STATE authority reported, not a literal in this window.
+    // The model is the one the OBSERVED-STATE authority reported, not a literal in this window...
     const model = el.aiSnapshot?.runtime.modelLabel;
     expect(model === null || model === undefined ? '' : model).not.toBe('');
-    expect(line).toContain(String(model));
+    // ...and it is NOT repeated in the tail, because the composer is already naming that same model
+    // (Phase F11). The mutation probe for the suppression: remove the equality test and this fails.
+    expect(line).not.toContain(String(model));
+    expect(textOf(q(await region(el, 'jf-sv3-composer'), 'sv3-composer-model'))).toBe(String(model));
     // The duration is MEASURED — a real elapsed value on the turn, not a rendered placeholder.
     const turn = el.sessions.sessions[0]?.turns[0];
     expect(typeof turn?.durationMs).toBe('number');
     expect(line).toMatch(/\d+(\.\d)? (s|ms)/);
+  });
+
+  it('re-states the model in the tail when it is NOT the one the composer names', async () => {
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'why did the renewal fail?');
+    stream.emit('rag.citations', { citations: [source(0)] });
+    stream.emit('chunk', { text: 'The lock held.' });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+    const stamped = el.sessions.sessions[0]?.turns[0]?.modelLabel;
+    expect(stamped).not.toBeNull();
+
+    // The model is swapped AFTER the answer landed. The composer now names the new one, so the turn
+    // must re-state the one that actually wrote it — the stale-attribution defect the per-turn stamp
+    // exists to prevent, which moving the name into the composer would otherwise re-open.
+    feed({ model: 'Meta_Llama-4-Scout.Q4_K_M.gguf' });
+    await settle(el);
+    const current = el.aiSnapshot?.runtime.modelLabel ?? null;
+    expect(current).not.toBe(stamped);
+    const main = await region(el, 'jf-sv3-main');
+    await main.updateComplete;
+    expect(textOf(q(main, 'sv3-answer-frame'))).toContain(String(stamped));
+    const composer = await region(el, 'jf-sv3-composer');
+    expect(textOf(q(composer, 'sv3-composer-model'))).toBe(String(current));
   });
 
   it('says nothing about grounding when the answer IS grounded — the marks already do', async () => {
@@ -636,12 +668,17 @@ describe('an answer can be copied and a conversation exported, through the share
     const main = await region(el, 'jf-sv3-main');
     const copy = q(main, 'sv3-turn-copy') as HTMLButtonElement | null;
     expect(copy).not.toBeNull();
+    // Icon-only since Phase F11, so the NAME is the action and never becomes the confirmation —
+    // a control renamed to "Copied" would be reporting the act by renaming itself.
+    expect(copy?.getAttribute('aria-label')).toBe(TURN_COPY_LABEL);
+    expect(textOf(q(main, 'sv3-turn-copy-status'))).toBe('');
     copy?.click();
     await settle(el);
     await main.updateComplete;
 
     expect(clipboard).toHaveBeenCalledWith('The renewal lock held past its window.');
-    expect(textOf(q(main, 'sv3-turn-copy'))).toBe(TURN_COPY_DONE);
+    expect(copy?.getAttribute('aria-label')).toBe(TURN_COPY_LABEL);
+    expect(textOf(q(main, 'sv3-turn-copy-status'))).toBe(TURN_COPY_DONE);
   });
 
   it('offers no copy for a turn with no settled answer to copy', async () => {
@@ -884,5 +921,21 @@ describe('this window re-splits no word the product has already settled', () => 
           .includes('offline'),
       );
     expect(offenders).toEqual([]);
+  });
+
+  it('keeps the composer model label to IDENTITY, never a second sense of "offline"', async () => {
+    // Phase F11 put a model NAME in the composer's control row, one box away from the availability
+    // notice. The name states which model; the notice states whether it can be used, in the ONE
+    // readiness vocabulary's own words. Two senses of availability in the same box is exactly the
+    // duplicate this window measures zero of — asserted HERE because this is the only file in the
+    // window allowed to spell the word.
+    feed();
+    const el = await mount();
+    const composer = await region(el, 'jf-sv3-composer');
+    const label = textOf(q(composer, 'sv3-composer-model')).toLowerCase();
+    expect(label).not.toBe('');
+    for (const word of ['offline', 'unavailable', 'not available', 'no model']) {
+      expect(label).not.toContain(word);
+    }
   });
 });

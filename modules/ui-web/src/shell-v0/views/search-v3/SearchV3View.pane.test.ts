@@ -221,6 +221,11 @@ function fireCitation(from: HTMLElement): void {
 async function openPane(el: Mounted): Promise<HTMLElement & { updateComplete: Promise<unknown> }> {
   await askGrounded(el);
   const main = await region(el, 'jf-sv3-main');
+  // Phase F11 — the evidence is behind the tail's own disclosure, so the panel exists once opened.
+  const trigger = q<HTMLButtonElement>(main, 'sv3-turn-sources');
+  if (trigger === null) throw new Error('the answer landed without a sources disclosure');
+  trigger.click();
+  await main.updateComplete;
   const panel = q(main, 'sv3-turn-citations');
   if (panel === null) throw new Error('the answer landed without a citations panel');
   // The window's own event is what crosses from the surface to the host — asserted here so the

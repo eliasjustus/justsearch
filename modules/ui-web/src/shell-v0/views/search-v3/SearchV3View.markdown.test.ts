@@ -178,6 +178,24 @@ interface MountedPanel extends HTMLElement {
 const panelIn = (turn: HTMLElement): MountedPanel | null =>
   turn.querySelector<MountedPanel>('[data-testid="sv3-turn-citations"]');
 
+/**
+ * Open the tail's own disclosure (Phase F11): the shared panel is mounted body-only, behind the
+ * window's ONE trigger, so a collapsed turn has no panel to interrogate.
+ */
+async function openSources(
+  main: HTMLElement & { updateComplete: Promise<unknown> },
+  turn: HTMLElement,
+): Promise<MountedPanel> {
+  const trigger = turn.querySelector<HTMLButtonElement>('[data-testid="sv3-turn-sources"]');
+  if (trigger === null) throw new Error('the turn landed without a sources disclosure');
+  trigger.click();
+  await main.updateComplete;
+  const panel = panelIn(turn);
+  if (panel === null) throw new Error('the disclosure opened onto no panel');
+  await panel.updateComplete;
+  return panel;
+}
+
 /** One retrieval source in the shape the backend mints (`rag.citations`). */
 const source = (i: number): Record<string, unknown> => ({
   parentDocId: `f:/docs/note-${i}.md`,
@@ -269,18 +287,18 @@ describe('the answer\'s evidence is stored on its turn and rendered from there',
 
     const main = await region(el, 'jf-sv3-main');
     const turn = firstTurn(main);
-    const panel = panelIn(turn);
-    expect(panel).not.toBeNull();
-    await (panel as MountedPanel).updateComplete;
+    // Collapsed by construction (Phase F11): the disclosure is the window's, and it opens the panel.
+    expect(panelIn(turn)).toBeNull();
+    const panel = await openSources(main, turn);
 
     // Compared against what the STREAM sent, not against what the panel was handed: a window that
     // truncated on the way in would otherwise agree with itself all the way down.
-    expect((panel as MountedPanel).sources).toHaveLength(3);
-    expect((panel as MountedPanel).retrievalMode).toBe('HYBRID');
-    const cards = (panel as MountedPanel).shadowRoot?.querySelectorAll('.source-card') ?? [];
+    expect(panel.sources).toHaveLength(3);
+    expect(panel.retrievalMode).toBe('HYBRID');
+    const cards = panel.shadowRoot?.querySelectorAll('.source-card') ?? [];
     expect(cards).toHaveLength(3);
 
-    // The count is now the panel's own header; the turn note does not say it a second time.
+    // The count is the tail disclosure's accessible name; the turn note does not say it a second time.
     expect(turn.querySelector('[data-testid="sv3-turn-note"]')).toBeNull();
   });
 
@@ -332,7 +350,7 @@ describe('the answer\'s evidence is stored on its turn and rendered from there',
     expect([...markers].map((m) => m.textContent)).toEqual(['1', '2']);
 
     // The matches reach the panel too, so its grouping is the same evidence the marks stand on.
-    const panel = panelIn(turn) as MountedPanel;
+    const panel = await openSources(main, turn);
     expect(panel.citations).toHaveLength(2);
     expect(panel.sources).toHaveLength(2);
   });

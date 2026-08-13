@@ -315,6 +315,35 @@ describe('the bridges also carry the window type and motion budget', () => {
   });
 });
 
+/* ── 3b. The window's OWN tail row (tempdoc 822 Phase F11) ────────────────────────────────────── */
+
+describe('the answer tail clears the same floor as the components beside it', () => {
+  // The bridge clause applies to the row's own colours too: the tail is 12px secondary-label text
+  // carrying the honesty facts, and its one hovered control paints foreground on the 4 %-white wash.
+  // No component scope here — these are the window's own tokens, resolved straight off `:host`.
+  const NO_SCOPE = new Map<string, string>();
+
+  const pairs = [
+    { what: 'the facts, the note and the disclosure at rest', text: 'var(--secondary-label)', on: [] },
+    { what: 'the disclosure under the pointer', text: 'var(--foreground)', on: [] },
+    { what: 'the copy control under the pointer', text: 'var(--foreground)', on: ['var(--accent-surface)'] },
+    { what: 'a broken turn note', text: 'var(--error-foreground)', on: [] },
+  ] as const;
+
+  it('keeps every text/surface pair the row can paint at or above WCAG AA', () => {
+    for (const pair of pairs) {
+      const bg = surface(pair.on, NO_SCOPE);
+      const fg = composite(color(pair.text, NO_SCOPE), bg);
+      const ratio = contrastRatio(fg, bg);
+      expect(ratio, `tail — ${pair.what} (${ratio.toFixed(2)}:1)`).toBeGreaterThanOrEqual(WCAG_AA);
+      expect(
+        relativeLuminance(bg),
+        `tail — ${pair.what}: the surface is LIGHTER than its text`,
+      ).toBeLessThan(relativeLuminance(fg));
+    }
+  });
+});
+
 /* ── 4. The name collision that made a link invisible (audit DEFECT-6) ────────────────────────── */
 
 describe('the window does not re-use a shipped token NAME for a different meaning', () => {

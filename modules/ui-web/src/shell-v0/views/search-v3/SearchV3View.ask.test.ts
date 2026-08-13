@@ -220,12 +220,12 @@ const source = (i: number): Record<string, unknown> => ({
 });
 
 /** The shared panel's own header line — its count is the one the window shows. */
-const panelHeader = (turn: HTMLElement): string =>
-  (
-    turn
-      .querySelector('[data-testid="sv3-turn-citations"]')
-      ?.shadowRoot?.querySelector('.panel-header')?.textContent ?? ''
-  ).trim();
+/**
+ * The tail's own disclosure (Phase F11) — the count lives in its ACCESSIBLE NAME, since the imported
+ * panel no longer heads itself inside this window.
+ */
+const sourcesName = (turn: HTMLElement): string =>
+  turn.querySelector('[data-testid="sv3-turn-sources"]')?.getAttribute('aria-label') ?? '';
 
 const answerTextIn = (turn: HTMLElement): string =>
   (
@@ -335,10 +335,12 @@ describe('the transcript is the session, in order', () => {
     first.emit('done', {});
     first.end();
     await settle(el);
-    // Phase F4 — the count moved to the panel that shows the sources; the note no longer repeats it.
+    // Phase F4 — the count moved to the surface that shows the sources; the note no longer repeats
+    // it. Phase F11 — that surface is now the tail's own disclosure, which carries the count in its
+    // accessible name.
     const settled = turnsOf(main)[0] as HTMLElement;
     expect(textIn(settled, 'sv3-turn-note')).toBe('');
-    expect(panelHeader(settled)).toContain('2');
+    expect(sourcesName(settled)).toContain('2');
 
     const second = stubStream();
     await ask(el, 'second question');

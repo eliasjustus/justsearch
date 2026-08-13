@@ -1346,7 +1346,7 @@ export class SearchV3View extends JfElement {
         detail,
         // The model AS OF THIS TERMINAL (inventory C1). Recorded rather than read at render, so a
         // transcript re-read after a model swap still names the one that wrote each answer.
-        this.aiSnapshot?.runtime.modelLabel ?? null,
+        this.currentModelLabel,
       );
       // Only THIS dispatch's terminal may clear the window's busy state: a later ask has already
       // installed its own controller, and clearing it here would strand a live stream with a Send
@@ -1765,6 +1765,16 @@ export class SearchV3View extends JfElement {
   }
 
   /**
+   * WHICH MODEL WOULD ANSWER RIGHT NOW, read from the observed-state authority (tempdoc 822 Phase
+   * F11). ONE expression, used in all three places it is needed — the composer's fact, the stamp a
+   * terminal writes onto a turn, and the comparison the tail makes between the two — so "the current
+   * model" cannot come to mean two different things in the same window.
+   */
+  private get currentModelLabel(): string | null {
+    return this.aiSnapshot?.runtime.modelLabel ?? null;
+  }
+
+  /**
    * A row click CLAIMS that conversation and shows its transcript. It re-runs nothing: a session is
    * a thread now, and re-issuing its opening question on a click would append a turn the reader
    * never asked for (Phase F1 — A2's row click re-ran the search, which was right for a search list
@@ -2008,6 +2018,7 @@ export class SearchV3View extends JfElement {
           ?history-locked=${this.historyLocked}
           ?locked-refusal=${this.lockedRefusal}
           .reasoning=${this.streaming ? this.askReasoning : null}
+          .currentModelLabel=${this.currentModelLabel}
           data-testid="sv3-main"
         ></jf-sv3-main>
         <jf-sv3-composer
@@ -2019,6 +2030,7 @@ export class SearchV3View extends JfElement {
           delegate-unavailable-reason=${this.delegateUnavailableReason}
           .corpus=${projectSv3Corpus(this.aiSnapshot)}
           effort=${this.effort}
+          model-label=${this.currentModelLabel ?? ''}
           data-testid="sv3-composer"
         ></jf-sv3-composer>
       </div>

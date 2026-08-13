@@ -401,6 +401,25 @@ are re-creatable from the log's descriptions.
   memory. Run ended by stack stop (dev throwaway). Residuals → F3: shelf model,
   presence/recovery, cross-surface slot honesty; issuance-register decision still
   open (owner/orchestrator).
+- 2026-08-13 — **Slice F11 implemented + measured. The one-line answer tail.**
+  Per the f11 design + orchestrator resolutions: 24.0px single row (was 3 rows/103px),
+  verdict·duration resting with elaboration in title+accessible name, bare "Sources"
+  disclosure (sentence case, aria carries the count; quiet-count variant behind a
+  tested one-line switch — owner may flip), icon-only copy as the sole yielding
+  element (live-region as SIBLING — a label flip would rename the control),
+  stale-attribution guard adopted (tail shows a turn's model IFF ≠ composer's),
+  model label relocated to the composer as a static span SURVIVING docked compaction
+  (98.5/192px cap; absent when empty). CitationsPanel gains additive default-false
+  externalDisclosure under the containment rule — six regression tests over all
+  three header paths prove the shipped window byte-identical; live: plain mount
+  still renders its own header. Deviations (all sound): panel mounted only while
+  expanded (preserves the 30px total the design demanded), E8 assertion placement.
+  4934 tests (+39) / gates green / live: gap 6px, rhythm 16px unchanged, no-wrap at
+  the 640 floor, per-turn expansion, zero console errors. RESIDUALS: composer model
+  label likely persists after model unload (static evidence: lastKnownModelId) —
+  the design's availability gate deferred to the next composer touch, recorded;
+  panel-internal uppercase dialect remains (choice-6 residual, screenshot filed);
+  gen-token-names red is pre-existing on an untouched tree (inbox).
 - 2026-08-13 — **Slice F10 implemented + payload-proven. The composer effort control.**
   Capability audit table (donor→backend→verdict): effort/traits BUILT on the shared
   seams enableThinking (ConversationEngine→OnlineModeOps→chat_template_kwargs),

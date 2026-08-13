@@ -216,4 +216,79 @@ describe('CitationsPanel', () => {
     expect(el.shadowRoot?.querySelectorAll('button.source').length).toBe(2);
     el.remove();
   });
+
+  /* ── Tempdoc 822 Phase F11: the additive `externalDisclosure`, and the shipped default it must
+        not move. The property lets ONE consumer (the Search v3 window) own the disclosure itself;
+        the containment rule is that every other consumer renders byte-identically to before, so the
+        default path is asserted here on ALL THREE header paths rather than on the one that changed. */
+
+  /** The three shapes the panel's `render` dispatches over — one per header path. */
+  const paths = [
+    {
+      what: 'tiered sources (the disclosure path)',
+      apply: (el: CitationsPanel) => {
+        el.sources = [fakeSource(), fakeSource()];
+        el.citations = [fakeCitation({ chunkIndex: 0 }), fakeCitation({ chunkIndex: 1 })];
+      },
+      header: 'button.panel-header',
+      body: 'button.source',
+    },
+    {
+      what: 'flat sources (no matches, so no trust grade)',
+      apply: (el: CitationsPanel) => {
+        el.sources = [fakeSource(), fakeSource()];
+        el.citations = [];
+      },
+      header: 'div.panel-header',
+      body: 'button.source',
+    },
+    {
+      what: 'citation-matches only (no retrieval sources)',
+      apply: (el: CitationsPanel) => {
+        el.sources = [];
+        el.citations = [fakeCitation()];
+      },
+      header: 'div.panel-header',
+      body: '.citation',
+    },
+  ] as const;
+
+  const mount = async (
+    apply: (el: CitationsPanel) => void,
+    external: boolean,
+  ): Promise<CitationsPanel> => {
+    const el = document.createElement('jf-citations-panel') as CitationsPanel;
+    apply(el);
+    if (external) el.externalDisclosure = true;
+    document.body.appendChild(el);
+    await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    return el;
+  };
+
+  for (const path of paths) {
+    it(`leaves the SHIPPED default untouched — ${path.what}`, async () => {
+      const el = await mount(path.apply, false);
+      // The header is still the panel's own, and the two always-open bodies are still open: a
+      // default that quietly started gating itself would close SearchV2View and SummarizeView.
+      expect(el.externalDisclosure).toBe(false);
+      expect(el.shadowRoot?.querySelector(path.header)).not.toBeNull();
+      const openByDefault = path.header === 'div.panel-header';
+      expect(el.shadowRoot?.querySelector(path.body) !== null).toBe(openByDefault);
+      el.remove();
+    });
+
+    it(`renders BODY ONLY when the host owns the disclosure — ${path.what}`, async () => {
+      const el = await mount(path.apply, true);
+      // No header at all, on any of the three paths...
+      expect(el.shadowRoot?.querySelector('.panel-header')).toBeNull();
+      // ...and no body either, until the host says the disclosure is open — a suppressed toggle
+      // must not leave a body permanently expanded.
+      expect(el.shadowRoot?.querySelector(path.body)).toBeNull();
+      el.sourcesExpanded = true;
+      await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+      expect(el.shadowRoot?.querySelector('.panel-header')).toBeNull();
+      expect(el.shadowRoot?.querySelector(path.body)).not.toBeNull();
+      el.remove();
+    });
+  }
 });

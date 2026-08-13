@@ -71,7 +71,14 @@ import {
 import type { Sv3ComposerState } from './fixtures.js';
 import { SV3_RESULTS_IDLE, type Sv3ResultsView } from './sv3-results.js';
 import { sv3TurnSourceCount, type Sv3Turn } from './sv3-sessions.js';
-import { projectSv3AnswerFrame, SV3_REMEDY, type Sv3RemedyDetail } from './sv3-honesty.js';
+import {
+  projectSv3AnswerFrame,
+  sv3SourcesTrigger,
+  sv3SourcesTriggerCount,
+  sv3SourcesTriggerLabel,
+  SV3_REMEDY,
+  type Sv3RemedyDetail,
+} from './sv3-honesty.js';
 import { sv3RunReceiptLabel } from './sv3-run.js';
 import type { Sv3RunFeedItem, Sv3RunPrompt, Sv3RunView } from './sv3-run.js';
 
@@ -110,6 +117,15 @@ const SKELETON_ROWS = 6;
  * non-zero so sub-pixel scroll heights cannot disarm the follow on their own.
  */
 const FOLLOW_END_SLACK_PX = 24;
+
+/** Donor `size-3.5` on the inline disclosure's chevron (`chat/MessagesTimeline.tsx:1101`). */
+const TAIL_CHEVRON_SIZE = 14;
+
+/** Donor `size-3` on the copy glyph (`chat/MessageCopyButton.tsx:71`) — the tail's own 12px. */
+const TAIL_GLYPH_SIZE = 12;
+
+/** The disclosure's target, per turn — the ids live in this element's shadow root and nowhere else. */
+const sourcesBodyId = (turnId: string): string => `sv3-sources-${turnId}`;
 
 export class Sv3Main extends JfElement {
   static styles = [
@@ -284,11 +300,13 @@ export class Sv3Main extends JfElement {
         overflow-wrap: anywhere;
         word-break: break-word;
       }
-      /* Donor :1824 — the block rhythm the renderer's own margins cannot express, applied where it
-         still can be: between the answer and the evidence beneath it. */
+      /* The expanded evidence sits under the TAIL ROW, not under the answer (Phase F11), so its
+         rhythm is the row's own 8px. An outer-tree rule on the host beats the component's own :host
+         margin (the F8 pane lesson), which is why the shared component's 0.5rem is neutralised from
+         here rather than edited inside an authority three windows render through. */
       .sv3-citations {
         display: block;
-        margin-top: var(--space-2-5);
+        margin: var(--space-2) 0 0;
       }
       .answer-empty {
         color: var(--secondary-label);
@@ -409,64 +427,103 @@ export class Sv3Main extends JfElement {
         font-style: italic;
       }
 
-      /* C1 — the answer's basis, duration and model. Under the answer, above the evidence: it frames
-         what was just read and introduces what backs it. */
-      .answer-frame {
-        margin: var(--space-1) 0 0;
+      /* ── THE ANSWER TAIL: C1 + the evidence disclosure + A9, in ONE row (Phase F11) ────────
+         The donor's assistant footer (chat/MessagesTimeline.tsx:1131) is exactly this: mt-1.5,
+         gap-2, text-xs, tabular-nums, items-center, one line under the message. Everything that used
+         to stack below an answer — the frame line, the imported panel's own uppercase disclosure and
+         the action bar — is this row now, at 30px instead of ~103px.
+
+         The honesty facts hold at opacity 1 (818 §6b L14); the ONE thing that yields is the copy
+         button, on its own, exactly as the F7 action bar did. */
+      .tail {
+        display: flex;
+        /* The honest overflow: the tail WRAPS. It never truncates and never hides a fact. */
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--space-2);
+        /* Donor xs control height — reserved whether or not the copy button is revealed, so nothing
+           in the turn resizes under the pointer. */
+        min-height: var(--space-6);
+        margin-top: var(--space-1-5);
+        /* Matches the .answer inset above, so the tail and the text it belongs to share an edge. */
         padding-inline: var(--space-1);
         color: var(--secondary-label);
         font-size: var(--font-size-sv3-xs);
         line-height: 1.5;
-      }
-      .answer-frame-receipt {
         font-variant-numeric: tabular-nums;
       }
+      .tail-note[data-broken='true'] {
+        color: var(--error-foreground);
+      }
 
-      /* A9 — the per-turn action bar, the ONE thing in a turn that hides until asked for. The donor's
-         own reveal (chat/MessagesTimeline.tsx:1043,1131 — opacity 0 → 100 on group-hover AND
-         focus-within, 200ms). Out of FLOW-height terms it costs nothing that moves: the row is always
-         laid out, only its opacity changes, so a turn does not resize under the pointer. */
-      .turn-actions {
-        display: flex;
+      /* The window's ONE disclosure affordance (the fit audit's axis 3, answered for this region):
+         the donor's own inline TurnFoldTimelineRow (chat/MessagesTimeline.tsx:1101) — sentence case,
+         gap-1, rounded, px-1, muted → foreground on hover. No uppercase, no letter-spacing, and the
+         same 12px as the facts beside it. */
+      .tail-sources {
+        display: inline-flex;
+        align-items: center;
         gap: var(--space-1);
-        margin-top: var(--space-1);
-        padding-inline: var(--space-0-5);
+        height: var(--space-6);
+        padding-inline: var(--space-1);
+        border: 0;
+        border-radius: var(--control-radius);
+        background: none;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+      }
+      .tail-sources:hover {
+        color: var(--foreground);
+      }
+      .tail-sources:focus-visible {
+        outline: 2px solid var(--ring);
+        outline-offset: 1px;
+      }
+      .tail-chevron {
+        flex-shrink: 0;
+        color: var(--icon-muted);
+      }
+
+      /* A9 — the one thing in a turn that hides until the reader reaches for it. Donor
+         Button size="xs" (24x24) carrying chat/MessageCopyButton's glyph pair. */
+      .tail-copy {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        inline-size: var(--space-6);
+        block-size: var(--space-6);
+        border: 0;
+        border-radius: var(--control-radius);
+        background: none;
+        color: inherit;
+        cursor: pointer;
         opacity: 0;
         transition: opacity var(--duration-sv3-layout) var(--ease-sv3-enter);
       }
-      .turn:hover .turn-actions {
+      /* THREE SEPARATE RULES, never one rule nesting a focus test inside :has() — that selector is
+         a Chrome syntax error and it killed the whole rule list in Phase F3 (static-green is not
+         live-working).
+         Focus must not depend on the reveal having finished, and a keyboard reader gets no hover. */
+      .turn:hover .tail-copy {
         opacity: 1;
       }
-      .turn:focus-within .turn-actions {
+      .turn:focus-within .tail-copy {
         opacity: 1;
       }
-      /* Focus must not depend on the reveal having finished, and a keyboard reader gets no hover. */
-      .turn-actions:focus-within {
+      .tail-copy:focus-visible {
         opacity: 1;
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .turn-actions {
-          transition: none;
-        }
-      }
-      .turn-action {
-        padding: var(--space-0-5) var(--space-2);
-        border: 1px solid transparent;
-        border-radius: var(--control-radius);
-        background: none;
-        color: var(--secondary-label);
-        font-family: inherit;
-        font-size: var(--font-size-sv3-xs);
-        cursor: pointer;
-      }
-      .turn-action:hover {
-        border-color: var(--border);
-        background: var(--muted);
-        color: var(--foreground);
-      }
-      .turn-action:focus-visible {
         outline: 2px solid var(--ring);
         outline-offset: 1px;
+      }
+      .tail-copy:hover {
+        background: var(--accent-surface);
+        color: var(--foreground);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .tail-copy {
+          transition: none;
+        }
       }
 
       /* ── E4/E5: the store is locked, so the transcript is NOT READABLE ─────
@@ -505,15 +562,6 @@ export class Sv3Main extends JfElement {
       }
       /* The turn's terminal, said in words. Halting is the reader's own act and gets no colour — the
          3-colour budget is for act-now / in-motion / broken, and a stop is none of those. */
-      .turn-note {
-        margin-top: var(--space-1);
-        padding-inline: var(--space-1);
-        color: var(--secondary-label);
-        font-size: var(--font-size-sv3-xs);
-      }
-      .turn-note[data-broken='true'] {
-        color: var(--error-foreground);
-      }
 
       /* ── The delegated run (Phase F2) ──────────────────────────────────────
          The live feed sits where the answer would be, at the same measure and the same rhythm: a run
@@ -633,7 +681,9 @@ export class Sv3Main extends JfElement {
       attribute: false,
       hasChanged: (value: unknown, old: unknown) => value !== old || value !== null,
     },
+    currentModelLabel: { attribute: false },
     copiedTurnId: { state: true },
+    expandedSources: { state: true },
   };
 
   declare state: Sv3ComposerState;
@@ -667,8 +717,20 @@ export class Sv3Main extends JfElement {
    * not depend on a controller that has since been reset.
    */
   declare reasoning: ReasoningController | null;
+  /**
+   * The model the COMPOSER is currently naming (tempdoc 822 Phase F11). Handed down so a turn's own
+   * stamped model can be suppressed when the two agree and re-stated when they do not — the region
+   * decides neither, it is given both and asks the one derivation (`sv3TailModelLabel`).
+   */
+  declare currentModelLabel: string | null;
   /** The turn whose answer was just copied — the confirmation, and the only state this region owns. */
   declare copiedTurnId: string | null;
+  /**
+   * Which turns have their evidence open, BY TURN ID. Per turn and never global, so opening turn 3's
+   * sources leaves turn 7 collapsed; replaced rather than mutated, because a Set mutated in place is
+   * the same Set and Lit would not re-render.
+   */
+  declare expandedSources: ReadonlySet<string>;
 
   /**
    * The donor's two scroll modes as one flag: armed = `following-end` (the reader is at the end, so
@@ -688,7 +750,9 @@ export class Sv3Main extends JfElement {
     this.historyLocked = false;
     this.lockedRefusal = false;
     this.reasoning = null;
+    this.currentModelLabel = null;
     this.copiedTurnId = null;
+    this.expandedSources = new Set();
   }
 
   override disconnectedCallback(): void {
@@ -907,9 +971,8 @@ export class Sv3Main extends JfElement {
                       @citation-select=${this.onCitationSelect}
                     ></jf-markdown-block>`}
               </div>
-              ${this.answerFrameLine(turn)}${this.citations(turn)}
             `}
-        ${this.turnNote(turn)}${this.turnActions(turn)}
+        ${this.tail(turn)}${this.citations(turn)}
       </div>
     `;
   }
@@ -951,45 +1014,138 @@ export class Sv3Main extends JfElement {
   }
 
   /**
-   * C1 — the honest answer frame: what it is based on, how long it took, which model wrote it. The
-   * whole line is `sv3-honesty.ts`'s derivation over the SHARED frame authority; this renders it and
-   * decides nothing, which is what keeps the wording identical to the shipped window's.
+   * THE ANSWER TAIL (tempdoc 822 Phase F11) — everything below a settled answer, in ONE row.
+   *
+   * Three stacked rows became one: the frame line's facts, the evidence disclosure (previously the
+   * imported panel's own `▸ N SOURCES` header, on its own line, in a dialect the window speaks
+   * nowhere else) and the copy action. The row is the donor's assistant-message footer
+   * (`chat/MessagesTimeline.tsx:1131`), which is exactly this composition.
+   *
+   * It renders only when it has something in it, so a STREAMING turn has no row at all — the donor's
+   * own rule (`!row.message.streaming`) and today's behaviour unchanged.
    */
-  private answerFrameLine(turn: Sv3Turn): TemplateResult | typeof nothing {
-    const frame = projectSv3AnswerFrame(turn);
-    if (frame === null) return nothing;
-    return html`<p class="answer-frame" role="note" data-testid="sv3-answer-frame">
-      ${frame.label ?? nothing}${frame.label !== null && frame.tail !== '' ? ' · ' : nothing}${frame.tail ===
-      ''
-        ? nothing
-        : html`<span class="answer-frame-receipt">${frame.tail}</span>`}
-    </p>`;
+  private tail(turn: Sv3Turn): TemplateResult | typeof nothing {
+    const facts = this.tailFacts(turn);
+    const note = this.turnNote(turn);
+    const sources = this.tailSources(turn);
+    const copy = this.tailCopy(turn);
+    if (facts === nothing && note === nothing && sources === nothing && copy === nothing) {
+      return nothing;
+    }
+    return html`<div class="tail" data-testid="sv3-turn-tail">
+      ${facts}${note}${sources}${copy}
+    </div>`;
   }
 
   /**
-   * A9 — copy this answer. The one affordance in a turn that hides until the reader reaches for it
-   * (the donor's message action bar); every honesty fact above it stays visible, which is L14's
-   * boundary drawn exactly where the donor draws its own.
+   * C1 — the honest answer frame: what it is based on, how long it took, and which model wrote it in
+   * the one case the composer would otherwise mislabel. The whole line is `sv3-honesty.ts`'s
+   * derivation over the SHARED frame authority; this renders it and decides nothing, which is what
+   * keeps the wording identical to the shipped window's.
+   *
+   * TWO NODES, ONE FACT. The authority's label is `"<verdict> — <elaboration>"`; the verdict is an
+   * honesty fact and RESTS, the elaboration is elaboration by L14's own words and extends on pointer
+   * (`title`). What is NOT done is hiding it from assistive tech: the `.visually-hidden` half carries
+   * the authority's WHOLE string permanently, so nothing was hidden from AT and nothing has to be
+   * revealed to it. The residual — a sighted keyboard-only reader sees the verdict, not the
+   * elaboration — is accepted rather than paid for with a turn that resizes under the pointer or a
+   * second tab stop per turn (tempdoc 822 F11 §2.6).
+   */
+  private tailFacts(turn: Sv3Turn): TemplateResult | typeof nothing {
+    const frame = projectSv3AnswerFrame(turn, this.currentModelLabel);
+    if (frame === null) return nothing;
+    const verdict = frame.verdict ?? '';
+    const label =
+      verdict === '' || frame.elaboration === ''
+        ? verdict
+        : `${verdict} — ${frame.elaboration}`;
+    // The separator lives ONLY inside this text node. Between the facts and the controls beside them
+    // there is an 8px gap and no dot: a middle dot between a sentence and a button is nobody's idiom.
+    const join = (head: string): string =>
+      head === '' ? frame.tail : frame.tail === '' ? head : `${head} · ${frame.tail}`;
+    const full = join(label);
+    return html`<span
+      class="tail-facts"
+      role="note"
+      data-testid="sv3-answer-frame"
+      title=${full}
+      ><span class="visually-hidden">${full}</span
+      ><span aria-hidden="true">${join(verdict)}</span
+    ></span>`;
+  }
+
+  /**
+   * The window's ONE disclosure affordance for a turn's evidence (the fit audit's axis 3, answered
+   * for this region): the donor's own inline trigger, sentence case at the tail's 12px, opening the
+   * SHARED panel beneath the row rather than a window-local source list.
+   *
+   * The count is not on the resting surface (the owner's direction) but is never lost: the
+   * accessible name carries it always, so the calibration fact reaches AT unconditionally and the
+   * sighted reader is one click from it. `SV3_SOURCES_COUNT_IN_TRIGGER` is the one-line flip.
+   */
+  private tailSources(turn: Sv3Turn): TemplateResult | typeof nothing {
+    if (!this.panelSpeaks(turn)) return nothing;
+    const trigger = sv3SourcesTrigger(turn.evidence);
+    if (trigger === null) return nothing;
+    const count = sv3SourcesTriggerCount(turn.evidence);
+    const expanded = this.expandedSources.has(turn.id);
+    return html`<button
+      type="button"
+      class="tail-sources"
+      data-testid="sv3-turn-sources"
+      aria-expanded=${expanded ? 'true' : 'false'}
+      aria-controls=${expanded ? sourcesBodyId(turn.id) : nothing}
+      aria-label=${`${trigger}: ${count}`}
+      @click=${() => this.toggleSources(turn.id)}
+    >
+      <span>${sv3SourcesTriggerLabel(trigger, count)}</span>
+      ${icon({
+        name: expanded ? 'chevron-down' : 'chevron-right',
+        size: TAIL_CHEVRON_SIZE,
+        className: 'tail-chevron',
+      })}
+    </button>`;
+  }
+
+  /** Per TURN, never global: opening turn 3's sources must not open turn 7's. */
+  private toggleSources(id: string): void {
+    const next = new Set(this.expandedSources);
+    if (!next.delete(id)) next.add(id);
+    this.expandedSources = next;
+  }
+
+  /**
+   * A9 — copy this answer. The ONE affordance in a turn that hides until the reader reaches for it;
+   * every honesty fact beside it stays visible, which is L14's boundary drawn exactly where the donor
+   * draws its own. Icon-only since Phase F11 (`chat/MessageCopyButton.tsx`), so the label is the
+   * ACCESSIBLE name and the confirmation moved to the row's own live region — a name that changed to
+   * "Copied" would rename the control instead of reporting the act.
    *
    * Offered only for an answer there IS: a streaming turn's text is still arriving, and a halted or
    * failed one is a fragment the reader did not ask to keep.
    */
-  private turnActions(turn: Sv3Turn): TemplateResult | typeof nothing {
+  private tailCopy(turn: Sv3Turn): TemplateResult | typeof nothing {
     if (turn.kind !== 'ask' || turn.status !== 'complete' || turn.answer === '') return nothing;
     const copied = this.copiedTurnId === turn.id;
-    return html`
-      <div class="turn-actions" data-testid="sv3-turn-actions">
-        <button
-          type="button"
-          class="turn-action"
-          data-testid="sv3-turn-copy"
-          aria-live="polite"
-          @click=${() => void this.copyAnswer(turn)}
-        >
-          ${copied ? TURN_COPY_DONE : TURN_COPY_LABEL}
-        </button>
-      </div>
-    `;
+    return html`<button
+        type="button"
+        class="tail-copy"
+        data-testid="sv3-turn-copy"
+        aria-label=${TURN_COPY_LABEL}
+        title=${TURN_COPY_LABEL}
+        @click=${() => void this.copyAnswer(turn)}
+      >
+        ${icon({
+          name: copied ? 'check-circle-2' : 'clipboard-copy',
+          size: TAIL_GLYPH_SIZE,
+        })}</button
+      ><span
+        class="visually-hidden"
+        role="status"
+        aria-live="polite"
+        data-testid="sv3-turn-copy-status"
+        >${copied ? TURN_COPY_DONE : ''}</span
+      >`;
   }
 
   private async copyAnswer(turn: Sv3Turn): Promise<void> {
@@ -1032,15 +1188,24 @@ export class Sv3Main extends JfElement {
   }
 
   /**
-   * The answer's evidence, in the product's ONE citations panel — mounted per turn and collapsed by
-   * its own disclosure, exactly as search-v2 mounts it on a landed answer
-   * (`views/search-v2/SearchV2View.ts:2220-2229`).
+   * The answer's evidence, in the product's ONE citations panel — the same component search-v2
+   * mounts on a landed answer (`views/search-v2/SearchV2View.ts:2220-2229`), with the DISCLOSURE
+   * moved out to the tail row above (Phase F11).
+   *
+   * `externalDisclosure` is what makes the tail one line: without it the panel heads itself, on its
+   * own row, in an uppercase dialect the window speaks nowhere else. The panel is mounted only while
+   * open, so a collapsed turn contributes no box and no margin to the 30px tail — a permanently
+   * mounted empty panel would push the next turn 8px down for a body nobody asked to see.
    */
   private citations(turn: Sv3Turn): TemplateResult | typeof nothing {
     if (!this.panelSpeaks(turn) || turn.evidence === null) return nothing;
+    if (!this.expandedSources.has(turn.id)) return nothing;
     return html`<jf-citations-panel
       class="sv3-citations"
+      id=${sourcesBodyId(turn.id)}
       data-testid="sv3-turn-citations"
+      .externalDisclosure=${true}
+      .sourcesExpanded=${true}
       .citations=${[...turn.evidence.matches]}
       .sources=${[...turn.evidence.sources]}
       .retrievalMode=${turn.evidence.retrievalMode}
@@ -1212,21 +1377,21 @@ export class Sv3Main extends JfElement {
   }
 
   /**
-   * What became of the turn, in words. A streaming turn says nothing — the text arriving IS the
-   * state, and a "generating…" label beside moving text would be a second, redundant claim.
+   * What became of the turn, in words — the tail row's facts slot when the turn has no answer frame
+   * of its own. A streaming turn says nothing: the text arriving IS the state, and a "generating…"
+   * label beside moving text would be a second, redundant claim.
    */
   private turnNote(turn: Sv3Turn): TemplateResult | typeof nothing {
     if (turn.status === 'streaming') return nothing;
     const broken = turn.status === 'failed' || turn.status === 'refused';
     if (turn.kind === 'agent') {
-      return html`<p
-        class="turn-note"
+      return html`<span
+        class="tail-note"
         data-testid="sv3-run-receipt"
         data-outcome=${turn.status}
         data-broken=${String(broken)}
-      >
-        ${sv3RunReceiptLabel(turn.toolCalls, turn.status)}
-      </p>`;
+        >${sv3RunReceiptLabel(turn.toolCalls, turn.status)}</span
+      >`;
     }
     const sources = sv3TurnSourceCount(turn);
     const note =
@@ -1243,9 +1408,12 @@ export class Sv3Main extends JfElement {
               ? ''
               : `${sources} ${sources === 1 ? 'source' : 'sources'}`;
     if (note === '') return nothing;
-    return html`<p class="turn-note" data-testid="sv3-turn-note" data-broken=${String(broken)}>
-      ${note}
-    </p>`;
+    return html`<span
+      class="tail-note"
+      data-testid="sv3-turn-note"
+      data-broken=${String(broken)}
+      >${note}</span
+    >`;
   }
 
   private pending(): TemplateResult {

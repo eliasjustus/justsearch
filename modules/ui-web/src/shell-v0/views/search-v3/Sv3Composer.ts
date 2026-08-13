@@ -26,9 +26,10 @@
  * LABEL leftward into its glyph (§5.9's signature compaction) and the window morphs the moving
  * box with the view transition in `sv3-composer-morph.ts` (§5.5).
  *
- * Its control row holds ONE control (tempdoc 822 Phase F10): the effort rung the next question will
- * carry. Slice 3's two scope PLACEHOLDERS are gone with it — they stood for the search axis the §4b
- * standing directive defers indefinitely and did nothing when clicked.
+ * Its control row holds ONE control (tempdoc 822 Phase F10) — the effort rung the next question will
+ * carry — and, beside it, ONE FACT (Phase F11): which model would answer. Control first, fact second,
+ * the donor's own footer order. Slice 3's two scope PLACEHOLDERS are gone with them — they stood for
+ * the search axis the §4b standing directive defers indefinitely and did nothing when clicked.
  *
  * Side-effect registers <jf-sv3-composer>.
  */
@@ -402,6 +403,22 @@ export class Sv3Composer extends JfElement {
         outline: 2px solid var(--ring);
         outline-offset: 1px;
       }
+      /* The model identity (Phase F11): the donor's ProviderModelPicker width ladder (max-w-48) with
+         its truncation + tooltip, but no trigger chrome — a FACT in a row of controls, one step down
+         from the control's 14px/500 so the eye separates "thing I can change" from "thing I am told".
+         Deliberately NOT given the docked evaporation the label above gets. */
+      .model-label {
+        min-width: 0;
+        max-inline-size: 12rem;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        color: var(--secondary-label);
+        font-size: var(--font-size-sv3-xs);
+        font-weight: 400;
+        cursor: default;
+      }
+
       /* A real glyph, not a placeholder swatch: the label evaporates on docking, so whatever is left
          has to carry the control's meaning on its own. Lucide strokes read currentColor. */
       .control-glyph {
@@ -660,6 +677,7 @@ export class Sv3Composer extends JfElement {
     delegateUnavailableReason: { type: String, attribute: 'delegate-unavailable-reason' },
     corpus: { attribute: false },
     effort: { type: String, reflect: true },
+    modelLabel: { type: String, reflect: true, attribute: 'model-label' },
     draft: { state: true },
     effortMenuOpen: { state: true },
   };
@@ -707,6 +725,17 @@ export class Sv3Composer extends JfElement {
    * reason it does not keep the session: the thing that dispatches is the thing that must know.
    */
   declare effort: Sv3Effort;
+  /**
+   * Which model would answer the next question, VERBATIM from the runtime authority (tempdoc 822
+   * Phase F11; the same expression `SearchV3View` stamps on a turn). The window authors no model
+   * name: no shortening, no re-casing, no vendor-stripping.
+   *
+   * IDENTITY ONLY, NEVER STATE: empty means the label is ABSENT — no "no model", no "offline", no em
+   * dash. The availability notice above the box is the ONE place a state is said, in the one
+   * readiness vocabulary's own wording, and a second sense of "offline" in the same box is exactly
+   * the duplicate the F-series audit measured zero of.
+   */
+  declare modelLabel: string;
   declare draft: string;
   /**
    * Public because the window's Escape ladder has to see it: an open menu is the MOST LOCAL
@@ -729,6 +758,7 @@ export class Sv3Composer extends JfElement {
     this.delegateUnavailableReason = '';
     this.corpus = SV3_CORPUS_UNKNOWN;
     this.effort = SV3_EFFORT_DEFAULT;
+    this.modelLabel = '';
     this.draft = '';
     this.effortMenuOpen = false;
   }
@@ -856,7 +886,9 @@ export class Sv3Composer extends JfElement {
             </div>
           </div>
           <div class="footer">
-            <div class="controls" @focusout=${this.onControlsFocusOut}>${this.effortControl()}</div>
+            <div class="controls" @focusout=${this.onControlsFocusOut}>
+              ${this.effortControl()}${this.modelLabelFact()}
+            </div>
             ${this.primaryAction(empty, unavailable)}
           </div>
         </div>
@@ -893,6 +925,23 @@ export class Sv3Composer extends JfElement {
       </button>
       ${this.effortMenuOpen ? this.effortMenu() : nothing}
     `;
+  }
+
+  /**
+   * WHICH MODEL WOULD ANSWER (tempdoc 822 Phase F11) — the donor's `ProviderModelPicker` slot in the
+   * control row, degenerated to a static label because this window has one local model and no
+   * provider concept: a picker with nothing to pick would be chrome that lies about what it can do.
+   *
+   * A FACT IN A ROW OF CONTROLS, so it must not look clickable — one step down from the control's
+   * 14px/500, not focusable, not a button, no invented role. And it does NOT adopt the effort
+   * control's evaporate-on-dock treatment (`:host([state='docked']) .control-label`): docked is the
+   * transcript-reading state, which is exactly when "which model wrote this" is being asked.
+   */
+  private modelLabelFact(): TemplateResult | typeof nothing {
+    if (this.modelLabel === '') return nothing;
+    return html`<span class="model-label" data-testid="sv3-composer-model" title=${this.modelLabel}
+      >${this.modelLabel}</span
+    >`;
   }
 
   private effortMenu(): TemplateResult {

@@ -25,7 +25,8 @@ import {
   sourcesAreChunkPrecise,
 } from '../../components/chat/evidenceProjection.js';
 import { SV3_ASK_SHAPE_ID } from './sv3-ask.js';
-import type { Sv3Turn } from './sv3-sessions.js';
+import { CITATIONS_LABEL, SOURCES_LABEL } from './fixtures.js';
+import type { Sv3Turn, Sv3TurnEvidence } from './sv3-sessions.js';
 
 /* ── The one remedy channel ──────────────────────────────────────────────────────────────────── */
 
@@ -123,28 +124,82 @@ export function sv3ReceiptTail(durationMs: number | null, modelLabel: string | n
  *  - the LABEL is the shared authority's, taken from the shape's declared grounding class refined by
  *    what this run actually produced. It is `null` for a fully-grounded answer, because the inline
  *    marks already say so and a banner repeating them would be the twice-rendered fact 814 §D5 bans.
- *  - the TAIL is the turn's own measured duration and the model recorded AT ITS TERMINAL, not the
- *    model that happens to be loaded when the transcript is re-read.
+ *  - the TAIL is the turn's own measured duration and, when it is still needed, the model recorded AT
+ *    ITS TERMINAL — never the model that happens to be loaded when the transcript is re-read. Since
+ *    Phase F11 the model's ordinary home is the composer, so the stamp is named here only when it
+ *    differs from what the composer is currently saying ({@link sv3TailModelLabel}).
+ *
+ * The LABEL arrives as one string and is rendered as two ({@link splitSv3FrameLabel}): the verdict
+ * rests, the elaboration extends (L14). Both halves are the authority's own substrings.
  *
  * A turn the backend never sent retrieval evidence for gets NO label: `evidence === null` is "never
  * told", and framing it as "searched your documents and found nothing to cite" would be inventing a
  * search that may not have happened. Its tail still renders — the duration is measured, not reported.
  */
 export interface Sv3AnswerFrame {
-  /** The shared authority's wording, or `null` when a fully-grounded answer needs no line. */
-  readonly label: string | null;
-  /** `"45.7 s · Qwen3"`, or `''` when neither part was known. */
+  /** `"Partly grounded"` — the authority's verdict half, which RESTS. `null` needs no line at all. */
+  readonly verdict: string | null;
+  /** `"some statements are not backed by your documents"` — the elaboration half, or `''`. */
+  readonly elaboration: string;
+  /** `"45.7 s"` (+ `" · <model>"` only when the model differs), or `''` when nothing was known. */
   readonly tail: string;
 }
 
-export function projectSv3AnswerFrame(turn: Sv3Turn): Sv3AnswerFrame | null {
+/** The separator the shared authority words every two-part frame label with (U+2014, spaced). */
+const FRAME_LABEL_SEPARATOR = ' — ';
+
+/**
+ * The authority's label is `"<verdict> — <elaboration>"` for every frame it words
+ * (`components/chat/evidenceProjection.ts:171-188`). This RE-WORDS NOTHING: both halves are the
+ * authority's own substrings, and the whole string survives verbatim wherever the reader is given
+ * the full line (the tail's accessible name and its `title`).
+ *
+ * Fail-safe direction matters: a label the authority ever words WITHOUT the em dash rests ENTIRELY,
+ * because the failure the window can afford is more text, never less.
+ */
+export function splitSv3FrameLabel(label: string): { verdict: string; elaboration: string } {
+  const at = label.indexOf(FRAME_LABEL_SEPARATOR);
+  if (at < 0) return { verdict: label, elaboration: '' };
+  return {
+    verdict: label.slice(0, at),
+    elaboration: label.slice(at + FRAME_LABEL_SEPARATOR.length),
+  };
+}
+
+/**
+ * Which model to name IN THE TAIL, given the one this turn was stamped with at its terminal and the
+ * one the composer is currently naming (tempdoc 822 Phase F11).
+ *
+ * The model moved into the composer, and a composer names the CURRENT model — so for an old answer
+ * written by a different one, the composer would be mislabelling it. That is the exact defect the
+ * per-turn stamp exists to avoid (see the note above), so the stamp REAPPEARS in the tail precisely
+ * when, and only when, it would otherwise be contradicted:
+ *
+ *  - same model  → `null`: the composer already says it, and saying it twice is the duplicated fact.
+ *  - different   → the STAMPED one: this answer was not written by what the composer names.
+ *  - current unknown → the stamped one: "not said" is not "the same".
+ */
+export function sv3TailModelLabel(stamped: string | null, current: string | null): string | null {
+  if (stamped === null || stamped === '') return null;
+  return stamped === current ? null : stamped;
+}
+
+export function projectSv3AnswerFrame(
+  turn: Sv3Turn,
+  currentModelLabel: string | null,
+): Sv3AnswerFrame | null {
   // Only a COMPLETED ask carries a frame. A halted, refused or failed turn has its own note saying
   // what became of it, and framing the grounding of an answer that never landed would be a claim
   // about text the reader does not have.
   if (turn.kind !== 'ask' || turn.status !== 'complete') return null;
-  const tail = sv3ReceiptTail(turn.durationMs, turn.modelLabel);
+  const tail = sv3ReceiptTail(
+    turn.durationMs,
+    sv3TailModelLabel(turn.modelLabel, currentModelLabel),
+  );
   const evidence = turn.evidence;
-  if (evidence === null) return tail === '' ? null : { label: null, tail };
+  if (evidence === null) {
+    return tail === '' ? null : { verdict: null, elaboration: '', tail };
+  }
   const sourceCount = evidence.sources.length;
   const frame = answerFrame(
     SV3_ASK_SHAPE_ID,
@@ -157,5 +212,51 @@ export function projectSv3AnswerFrame(turn: Sv3Turn): Sv3AnswerFrame | null {
   );
   const label = answerFrameLabel(frame, groundingDegraded(SV3_ASK_SHAPE_ID, sourceCount));
   if (label === null && tail === '') return null;
-  return { label, tail };
+  if (label === null) return { verdict: null, elaboration: '', tail };
+  return { ...splitSv3FrameLabel(label), tail };
+}
+
+/* ── The tail's sources disclosure (tempdoc 822 Phase F11) ───────────────────────────────────── */
+
+/** What the tail's disclosure may be called for this turn, or `null` when there is nothing to open. */
+export type Sv3SourcesTrigger = typeof SOURCES_LABEL | typeof CITATIONS_LABEL;
+
+/**
+ * The window's ONE disclosure affordance for a turn's evidence, and the word it may use.
+ *
+ * The word is not decorative: with a retrieval set the panel holds SOURCES, but with only
+ * per-sentence matches it holds citation-matches and nothing was reported as retrieved — calling
+ * that "Sources" would claim a retrieval the window was never told about. The trigger's presence
+ * mirrors `CitationsPanel.render`'s own both-empty short-circuit, so a trigger can never open onto
+ * an empty panel.
+ */
+export function sv3SourcesTrigger(evidence: Sv3TurnEvidence | null): Sv3SourcesTrigger | null {
+  if (evidence === null) return null;
+  if (evidence.sources.length > 0) return SOURCES_LABEL;
+  return evidence.matches.length > 0 ? CITATIONS_LABEL : null;
+}
+
+/**
+ * Whether the disclosure carries its COUNT on the resting surface (`5 Sources`) or only in its
+ * accessible name (`Sources`, `aria-label="Sources: 5"`).
+ *
+ * `false` is the owner's literal direction (tempdoc 822 F11 §4 choice 1(i)). It is a named constant
+ * rather than an inlined `false` because the alternative — the quiet count, which keeps a resting
+ * honesty fact L14 placed deliberately — must stay a ONE-LINE flip, and both branches are tested.
+ */
+export const SV3_SOURCES_COUNT_IN_TRIGGER = false;
+
+/** How many the disclosure would be speaking for — sources when there are any, else the matches. */
+export function sv3SourcesTriggerCount(evidence: Sv3TurnEvidence | null): number {
+  if (evidence === null) return 0;
+  return evidence.sources.length > 0 ? evidence.sources.length : evidence.matches.length;
+}
+
+/** The disclosure's VISIBLE label, under the constant above. Its accessible name always has the count. */
+export function sv3SourcesTriggerLabel(
+  trigger: Sv3SourcesTrigger,
+  count: number,
+  countInTrigger: boolean = SV3_SOURCES_COUNT_IN_TRIGGER,
+): string {
+  return countInTrigger ? `${count} ${trigger}` : trigger;
 }
