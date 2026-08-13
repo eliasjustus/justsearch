@@ -295,11 +295,15 @@
     "composites" : {
       "aiFeatures" : {
         "state" : "READY",
-        "reasonCodes" : [ ]
+        "reasonCodes" : [ ],
+        "stale" : false,
+        "maxStalenessMs" : 0
       },
       "retrieval" : {
         "state" : "READY",
-        "reasonCodes" : [ ]
+        "reasonCodes" : [ ],
+        "stale" : false,
+        "maxStalenessMs" : 0
       }
     }
   },
