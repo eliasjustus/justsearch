@@ -201,14 +201,50 @@ function check(tag: string, pairs: readonly Pair[]): void {
   }
 }
 
-/** Every custom property the component reads must be re-pointed by the window. */
-function assertClosed(tag: string, source: string, alsoRead: readonly string[] = []): void {
+/**
+ * Every custom property the component reads must be re-pointed by the window — unless the bridge
+ * DELIBERATELY leaves it at the component's own default, which is a decision that has to be written
+ * down. `exempt` is that written-down list: a name may only be skipped with a reason, so "the window
+ * forgot it" (the defect this file exists for) can never look like "the window meant it".
+ */
+function assertClosed(
+  tag: string,
+  source: string,
+  alsoRead: readonly string[] = [],
+  exempt: Readonly<Record<string, string>> = {},
+): void {
   const scope = bridgeFor(MAIN, tag);
   const consumed = new Set<string>(alsoRead);
   for (const match of source.matchAll(/var\((--[\w-]+)/g)) consumed.add(match[1] as string);
-  const missing = [...consumed].filter((name) => !scope.has(name)).sort();
+  const missing = [...consumed].filter((name) => !scope.has(name) && !(name in exempt)).sort();
   expect(missing, `<${tag}> reads tokens the window never re-points`).toEqual([]);
 }
+
+/**
+ * The renderer's block-geometry vocabulary (tempdoc 822 §2.2, slice S4). Declared on the component's
+ * own `:host` with the shipped literals, so an unbridged name is a deliberate "keep the shipped
+ * value", not a fall-through to another theme.
+ */
+const MD_GEOMETRY = [
+  '--md-line-height',
+  '--md-block-gap',
+  '--md-block-gap-wide',
+  '--md-item-gap',
+  '--md-list-indent',
+  '--md-code-border',
+  '--md-code-radius',
+  '--md-code-padding',
+  '--md-code-size',
+  '--md-code-font',
+  '--md-pre-radius',
+  '--md-pre-padding',
+  '--md-quote-border',
+  '--md-quote-padding',
+  '--md-link-decoration',
+] as const;
+
+const reasons = (names: readonly string[], why: string): Record<string, string> =>
+  Object.fromEntries(names.map((name) => [name, why]));
 
 /* ── 1. Closure: nothing falls through to the shipped app's light `:root` ─────────────────────── */
 
@@ -231,7 +267,49 @@ describe('the three imported components read NO token the window leaves unbridge
       'jf-reasoning-block',
       componentSource('ReasoningBlock.ts') + componentSource('MarkdownBlock.ts'),
       [],
+      reasons(
+        MD_GEOMETRY,
+        'the reasoning trace keeps the SHIPPED geometry (tempdoc 822 §2.1): a compact trace should ' +
+          'not adopt prose rhythm, and a :host declaration blocks inheritance, so this is the ' +
+          'outcome by construction — the remedy, if it is ever wanted, is a forwarding block in ' +
+          'ReasoningBlock.ts, not a re-point here.',
+      ),
     );
+  });
+
+  it('dresses the transcript markdown itself — the geometry half of the .sv3-markdown bridge', () => {
+    // The answer prose is the one place the donor's block geometry applies, and it arrives through
+    // the class bridge on the host element (an outer-tree rule on the host beats the component's
+    // own `:host`). Two of the fifteen are deliberately absent.
+    const KEEPS_SHIPPED: Readonly<Record<string, string>> = {
+      '--md-list-indent': 'sv3 keeps the shipped value (1.25rem)',
+      '--md-pre-padding': 'sv3 keeps the shipped value (0.625rem 0.75rem)',
+    };
+    const scope = bridgeFor(MAIN, '\\.sv3-markdown');
+    const missing = MD_GEOMETRY.filter((name) => !scope.has(name) && !(name in KEEPS_SHIPPED));
+    expect(missing, 'the transcript prose reads a geometry token the window never re-points').toEqual(
+      [],
+    );
+    for (const name of Object.keys(KEEPS_SHIPPED)) {
+      expect(scope.has(name), `${name} is allow-listed but ALSO re-pointed`).toBe(false);
+    }
+    // The donor targets that make the difference visible, pinned so a later tidy cannot flatten them
+    // back onto the shipped values (design §2.2's override column).
+    expect(scope.get('--md-code-size')).toBe('var(--font-size-sv3-xs)');
+    expect(scope.get('--md-code-font')).toBe('var(--font-mono)');
+    expect(scope.get('--md-code-border')).toBe('1px solid var(--border)');
+    expect(scope.get('--md-block-gap')).toBe('var(--space-2-5)');
+    expect(scope.get('--md-block-gap-wide')).toBe('var(--space-2-5)');
+    expect(scope.get('--md-pre-radius')).toBe('var(--radius)');
+    expect(scope.get('--md-link-decoration')).toBe('none');
+  });
+
+  it('caps the answer column at the donor measure, on the window and not in the renderer', () => {
+    // Tempdoc 822 §2.5 — the measure is the COLUMN's property; the shipped chat sets it on its own
+    // container for the same reason. The name is the shipped concept's, re-pointed, not a second
+    // measure vocabulary.
+    expect(MAIN).toMatch(/max-inline-size: var\(--measure-prose\)/);
+    expect(TOKENS.get('--measure-prose')).toBe('48rem');
   });
 
   it('dresses <jf-citation-hover-card>', () => {

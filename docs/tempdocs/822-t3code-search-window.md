@@ -416,6 +416,19 @@ are re-creatable from the log's descriptions.
   out-of-range mark states stay for the FE slices. LIVE VERIFICATION DEFERRED to
   ride the S2/S3 round (one backend restart for all three). Two out-of-scope
   findings filed (budget-stopped citation; truncation-after-emission).
+- 2026-08-13 — **Slice S4 implemented + two-sided-proven. The geometry tokens.**
+  15 --md-* tokens on MarkdownBlock :host with byte-identical defaults (frozen
+  against the design's recorded literals — a typo cannot self-validate); sv3
+  overrides via the existing bridge (donor code chips 12px/--font-mono/border,
+  block rhythm, quote/link treatment) + the 768px measure cap (pulled forward from
+  §2.5 — sv3-private, S5 must not re-add). Containment: 47-test suite — resolved-
+  declaration equality property-by-property vs the parent commit, the ten shipped
+  call sites enumerated each with its covering test + a closed inventory assertion,
+  three thin render tests added where none existed; LIVE two-sided proof: shipped
+  0 changed properties / sv3 40, all targets; the 22 F9 contrast pairs hold.
+  Deviations recorded: pre-code border guard (computed-identical, pinned),
+  token-names regen now legitimate (sv3 added real --measure-* names). 5008 tests
+  (one unrelated EnvelopeStream flake, observation filed).
 - 2026-08-13 — **S1-S3 LIVE ROUND (orchestrator; backend rebuilt with S1+S3, model
   active).** Real ask through v3: marks 3/5/4 — all in-range, all cite-grounded
   (the 59-class mislabel gone live); underlined chars 0% on a partly-grounded

@@ -283,11 +283,37 @@ export class MarkdownBlock extends JfElement {
   }
 
   static styles = css`
+    /* Tempdoc 822 §C2/§2.2 (slice S4) — the block-geometry vocabulary. Every value below is the
+       literal this stylesheet already carried, moved to a name a consumer can re-point from the
+       outer tree (an outer-tree rule on the host beats a :host rule). The containment rule is the
+       point of the slice: changing ANY default here changes shipped rendering, so the defaults are
+       frozen verbatim in 'MarkdownBlock.geometry.test.ts' and asserted against the pre-tokenization
+       computed set — a "tidy-up" of 0.125em to 2px is a containment failure, not a cleanup.
+       The rules that do NOT exist today (headings, tables, hr, img) are deliberately NOT tokens: a
+       token cannot express "this rule exists", so they land behind ':host([prose])' in slice S5. */
     :host {
+      --md-line-height: 1.6;
+      --md-block-gap: 0.25em;
+      --md-block-gap-wide: 0.5em;
+      --md-item-gap: 0.125em;
+      --md-list-indent: 1.25rem;
+      /* A shorthand, not a width: the default 'none' computes to zero width, which is byte-identical
+         to declaring no border at all ('1px solid transparent' would shift every chip by 2px). */
+      --md-code-border: none;
+      --md-code-radius: 0.25rem;
+      --md-code-padding: 0.125rem 0.375rem;
+      --md-code-size: var(--font-size-sm);
+      --md-code-font: monospace;
+      --md-pre-radius: 0.375rem;
+      --md-pre-padding: 0.625rem 0.75rem;
+      --md-quote-border: 3px solid var(--border-subtle);
+      --md-quote-padding: 0.75rem;
+      --md-link-decoration: underline;
+
       display: block;
       font-family: system-ui, -apple-system, sans-serif;
       font-size: var(--font-size-sm);
-      line-height: 1.6;
+      line-height: var(--md-line-height);
       color: var(--text-primary);
       word-wrap: break-word;
     }
@@ -314,7 +340,7 @@ export class MarkdownBlock extends JfElement {
       border-bottom: 1px dotted var(--accent-warning);
     }
     .md-content p {
-      margin: 0.25em 0;
+      margin: var(--md-block-gap) 0;
     }
     .md-content p:first-child {
       margin-top: 0;
@@ -324,32 +350,44 @@ export class MarkdownBlock extends JfElement {
     }
     .md-content code {
       background: var(--surface-tertiary);
-      padding: 0.125rem 0.375rem;
-      border-radius: 0.25rem;
-      font-family: monospace;
-      font-size: var(--font-size-sm);
+      padding: var(--md-code-padding);
+      border: var(--md-code-border);
+      border-radius: var(--md-code-radius);
+      font-family: var(--md-code-font);
+      font-size: var(--md-code-size);
     }
     .md-content pre {
       background: var(--surface-tertiary);
-      padding: 0.625rem 0.75rem;
-      border-radius: 0.375rem;
+      padding: var(--md-pre-padding);
+      border-radius: var(--md-pre-radius);
       overflow-x: auto;
-      margin: 0.5em 0;
+      margin: var(--md-block-gap-wide) 0;
     }
+    /* The block's inner <code> keeps shedding the inline chip's clothes (this rule's existing job):
+       'border: none' joins background/padding/size because a consumer that gives the inline chip an
+       edge means the CHIP, not a second rule inside the already-framed block. Zero shipped delta —
+       the chip's own default is 'none'. */
     .md-content pre code {
       background: none;
+      border: none;
       padding: 0;
       font-size: var(--font-size-xs);
     }
     .md-content ul, .md-content ol {
-      margin: 0.25em 0;
-      padding-left: 1.25rem;
+      margin: var(--md-block-gap) 0;
+      padding-left: var(--md-list-indent);
     }
     .md-content li {
-      margin: 0.125em 0;
+      margin: var(--md-item-gap) 0;
     }
     .md-content a {
       color: var(--text-tint);
+      text-decoration: var(--md-link-decoration);
+    }
+    /* Unconditional, not variant-gated: with the default 'underline' at rest this is a no-op on
+       every shipped surface (already underlined); it restores the hover affordance for a consumer
+       whose override removes the resting rule. */
+    .md-content a:hover {
       text-decoration: underline;
     }
     .md-content strong {
@@ -357,9 +395,9 @@ export class MarkdownBlock extends JfElement {
       font-weight: 600;
     }
     .md-content blockquote {
-      border-left: 3px solid var(--border-subtle);
-      padding-left: 0.75rem;
-      margin: 0.5em 0;
+      border-left: var(--md-quote-border);
+      padding-left: var(--md-quote-padding);
+      margin: var(--md-block-gap-wide) 0;
       color: var(--text-secondary);
     }
     .cursor {

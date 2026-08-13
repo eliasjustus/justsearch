@@ -166,6 +166,9 @@ export type TokenName =
   | '--justsearch-shell-text'
   | '--layer-base'
   | '--layer-base-solid'
+  | '--measure-notice'
+  | '--measure-prose'
+  | '--measure-text-entry'
   | '--p-glass'
   | '--p-shadow'
   | '--p-text'
@@ -388,6 +391,9 @@ export const TOKEN_NAMES: readonly TokenName[] = [
   '--justsearch-shell-text',
   '--layer-base',
   '--layer-base-solid',
+  '--measure-notice',
+  '--measure-prose',
+  '--measure-text-entry',
   '--p-glass',
   '--p-shadow',
   '--p-text',

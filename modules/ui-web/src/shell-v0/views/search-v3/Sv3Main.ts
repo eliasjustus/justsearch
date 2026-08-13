@@ -246,6 +246,9 @@ export class Sv3Main extends JfElement {
       .answer {
         position: relative;
         min-width: 0;
+        /* Donor 'max-w-3xl' (chat/MessagesTimeline.tsx:553) — the reading measure is the COLUMN's
+           property, not the renderer's, which is why it sits here (tempdoc 822 §2.5). */
+        max-inline-size: var(--measure-prose);
         padding: var(--space-0-5) var(--space-1);
         font-size: var(--font-size-sv3-sm);
         line-height: 1.625;
@@ -258,13 +261,13 @@ export class Sv3Main extends JfElement {
          re-mapping of those names onto sv3 tokens. Every mapping below cites the donor rule it
          carries (t3code@b73232b apps/web/src/index.css).
 
-         GAP, recorded rather than worked around: the renderer hard-codes its block GEOMETRY (list
-         indent, paragraph/pre margins, pre radius + padding, blockquote rule), its mono face
-         ('monospace', not our --font-mono), and it declares nothing at all for headings or tables —
-         so donor :1824 (0.65rem block rhythm), :1839-1855 (heading scale), :1995-1997 (pre chrome)
-         and :2101-2140 (the table separators + truncate/expand rule) cannot be applied from here.
-         Closing it needs the shared component to expose a part or geometry tokens, which is a
-         change to an authority three surfaces render through — its own slice, not this one's. */
+         The recorded GAP's first half is CLOSED (tempdoc 822 §C2 slice S4): the renderer now names
+         its block geometry as '--md-*' on its own ':host' with byte-identical defaults, so donor
+         :1824 (block rhythm), :1970-1997 (the inline chip's edge + step-down, the pre chrome) and
+         :1933 (the quote rule) arrive from here as a re-mapping like every colour above. What is
+         still out of reach is the markup with NO rule at all — headings :1839-1855 and tables
+         :2101-2140 — because a token cannot express "this rule exists"; those land behind the
+         component's ':host([prose])' variant in slice S5, which this window then opts into. */
       .sv3-markdown,
       .sv3-citations {
         /* Donor :1836 / :1972 — headings and code sit at full foreground. */
@@ -299,6 +302,34 @@ export class Sv3Main extends JfElement {
         /* Donor :1806-1807 — an unbroken token in chat prose must not widen the measure. */
         overflow-wrap: anywhere;
         word-break: break-word;
+
+        /* The geometry half of the bridge (tempdoc 822 §2.2). These names are the renderer's own,
+           declared on its ':host' with the SHIPPED literals; the values here are the donor's, and
+           they reach only the elements carrying this class — the citations list and the reasoning
+           trace keep the shipped rhythm on purpose. Two of the fifteen are absent because sv3 keeps
+           the shipped value: '--md-list-indent' (1.25rem) and '--md-pre-padding'. */
+        /* Donor :1806 — the transcript's prose leading. */
+        --md-line-height: 1.625;
+        /* Donor :1824 — one 0.65rem-class rhythm for every block, wide or not (10px on the ladder). */
+        --md-block-gap: var(--space-2-5);
+        --md-block-gap-wide: var(--space-2-5);
+        /* Donor :1829 — list items sit tight; the variant's 'li + li' carries the gap (S5). */
+        --md-item-gap: 0;
+        /* Donor :1970-1973 — the inline chip: an edge, the small radius, a tighter inset and the
+           12px step-down in the window's mono face. */
+        --md-code-border: 1px solid var(--border);
+        --md-code-radius: var(--radius-sm);
+        --md-code-padding: 0.1rem 0.35rem;
+        --md-code-size: var(--font-size-sv3-xs);
+        --md-code-font: var(--font-mono);
+        /* Donor :1995 — the code block takes the window's full radius knob. */
+        --md-pre-radius: var(--radius);
+        /* Donor :1933-1935 — a thinner quote rule, a slightly wider inset. */
+        --md-quote-border: 2px solid var(--border);
+        --md-quote-padding: 0.8rem;
+        /* Donor :1908 — a link is coloured, not underlined; the renderer's unconditional ':hover'
+           rule restores the affordance under the pointer. */
+        --md-link-decoration: none;
       }
       /* The expanded evidence sits under the TAIL ROW, not under the answer (Phase F11), so its
          rhythm is the row's own 8px. An outer-tree rule on the host beats the component's own :host

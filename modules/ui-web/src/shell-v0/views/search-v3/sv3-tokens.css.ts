@@ -233,6 +233,13 @@ export const sv3Tokens = css`
     --radius-3xl: calc(var(--radius) + 12px);
     --radius-4xl: calc(var(--radius) + 16px);
 
+    /* ── Reading measure ───────────────────────────────────────────────────
+       The donor's transcript column is 'max-w-3xl' (chat/MessagesTimeline.tsx:553). It reuses the
+       SHIPPED concept name (styles/tokens.css:352) rather than minting a second measure vocabulary,
+       and it is the COLUMN's property — which is why it is spent on the window's own '.answer' box
+       and not inside the shared renderer (tempdoc 822 §2.5). */
+    --measure-prose: 48rem;
+
     /* ── Z-scale (donor improvement: the donor has none) ───────────────────
        Tooltips deliberately sit above dialogs. */
     --z-content: 0;
