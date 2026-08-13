@@ -112,7 +112,7 @@ class HybridSearchIntegrationTest extends RuntimeTestBase {
     // Query: "fox" with vector pointing in +X direction
     float[] queryVector = new float[] {1.0f, 0.0f, 0.0f, 0.0f};
 
-    SearchResult result = runtime.hybridSearchOps().searchHybrid("fox", queryVector, 10);
+    SearchResult result = runtime.hybridSearchOps().searchHybrid("fox", queryVector, 10, LuceneRuntimeTypes.QuerySyntax.SIMPLE);
 
     assertNotNull(result);
     assertTrue(result.hits().size() >= 2, "Should return at least 2 documents");
@@ -239,7 +239,7 @@ class HybridSearchIntegrationTest extends RuntimeTestBase {
     System.setProperty("index.hybrid.text_candidate_multiplier", "1");
     System.setProperty("index.hybrid.vector_candidate_multiplier", "1");
     new LifecycleTestAccessor(runtime).refreshConfigForTests();
-    var small = runtime.hybridSearchOps().searchHybrid(queryText, queryVector, 10);
+    var small = runtime.hybridSearchOps().searchHybrid(queryText, queryVector, 10, LuceneRuntimeTypes.QuerySyntax.SIMPLE);
     var smallIds = small.hits().stream().map(h -> h.docId()).toList();
     assertFalse(
         smallIds.contains("both"),
@@ -254,7 +254,7 @@ class HybridSearchIntegrationTest extends RuntimeTestBase {
     System.setProperty("index.hybrid.text_candidate_multiplier", "2");
     System.setProperty("index.hybrid.vector_candidate_multiplier", "2");
     new LifecycleTestAccessor(runtime).refreshConfigForTests();
-    var large = runtime.hybridSearchOps().searchHybrid(queryText, queryVector, 10);
+    var large = runtime.hybridSearchOps().searchHybrid(queryText, queryVector, 10, LuceneRuntimeTypes.QuerySyntax.SIMPLE);
     assertEquals(
         "both",
         large.hits().get(0).docId(),
@@ -340,7 +340,7 @@ class HybridSearchIntegrationTest extends RuntimeTestBase {
     runtime.commitOps().maybeRefreshBlocking();
 
     float[] queryVector = new float[] {1.0f, 0.0f, 0.0f, 0.0f};
-    SearchResult result = runtime.hybridSearchOps().searchHybrid("uniqueterm", queryVector, 10);
+    SearchResult result = runtime.hybridSearchOps().searchHybrid("uniqueterm", queryVector, 10, LuceneRuntimeTypes.QuerySyntax.SIMPLE);
 
     assertNotNull(result);
 
@@ -379,22 +379,22 @@ class HybridSearchIntegrationTest extends RuntimeTestBase {
     // Null query text should throw
     assertThrows(
         IllegalArgumentException.class,
-        () -> runtime.hybridSearchOps().searchHybrid(null, validVector, 10));
+        () -> runtime.hybridSearchOps().searchHybrid(null, validVector, 10, LuceneRuntimeTypes.QuerySyntax.SIMPLE));
 
     // Blank query text should throw
     assertThrows(
         IllegalArgumentException.class,
-        () -> runtime.hybridSearchOps().searchHybrid("  ", validVector, 10));
+        () -> runtime.hybridSearchOps().searchHybrid("  ", validVector, 10, LuceneRuntimeTypes.QuerySyntax.SIMPLE));
 
     // Null vector should throw
     assertThrows(
         IllegalArgumentException.class,
-        () -> runtime.hybridSearchOps().searchHybrid("query", null, 10));
+        () -> runtime.hybridSearchOps().searchHybrid("query", null, 10, LuceneRuntimeTypes.QuerySyntax.SIMPLE));
 
     // Empty vector should throw
     assertThrows(
         IllegalArgumentException.class,
-        () -> runtime.hybridSearchOps().searchHybrid("query", new float[0], 10));
+        () -> runtime.hybridSearchOps().searchHybrid("query", new float[0], 10, LuceneRuntimeTypes.QuerySyntax.SIMPLE));
 
     runtime.close();
   }

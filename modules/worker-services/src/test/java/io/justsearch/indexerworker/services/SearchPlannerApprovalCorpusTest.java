@@ -259,6 +259,10 @@ final class SearchPlannerApprovalCorpusTest {
         out.put("chunk_merge_inputs_present", chunkInputsPresent(sparse.chunkMerge()));
       }
       case SearchDecision.MultiLegDecision multi -> {
+        // Tempdoc 822: the multi-leg lexical leg now parses with this value, so it is a
+        // behaviour-determining structural field of the decision — same standing as the sparse
+        // shortcut's, and a planner regression that flips it must show up as a baseline diff.
+        out.put("runtime_syntax", multi.runtimeSyntax().name());
         out.put("legs_detail", canonicalizeLegSet(multi.legs()));
         out.put("facets_requested", multi.facets().isPresent());
         out.put("hybrid_fallback", multi.hybridFallback().map(f -> f.reason().name()).orElse(null));

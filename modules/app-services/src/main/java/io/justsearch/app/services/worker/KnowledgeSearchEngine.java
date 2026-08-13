@@ -809,6 +809,17 @@ final class KnowledgeSearchEngine {
         } catch (ExecutionException e) {
           expansionSkipReason = "FAILED";
           log.debug("LLM expansion failed: {}", e.getCause().getMessage());
+        } catch (RuntimeException e) {
+          // The expansion re-search is an OPTIONAL enhancement over an answer we already hold, and
+          // this block's contract (line 779) is "falls back to base results on timeout or error".
+          // Only the checked failures were caught, so a failing re-search took the whole search
+          // down with it. Reachable since tempdoc 822: the multi-leg path now honours this
+          // request's LUCENE syntax and rejects a malformed parse with INVALID_ARGUMENT (as the
+          // sparse-only path always did) — and `expandedQuery` embeds the RAW user query text, so
+          // any Lucene metacharacter the user typed can produce one. `resp` still holds the base
+          // response here, so the fallback is simply not overwriting it.
+          expansionSkipReason = "FAILED";
+          log.warn("LLM expansion re-search failed, using base results: {}", e.getMessage());
         }
       } else {
         expansionFuture.cancel(true);

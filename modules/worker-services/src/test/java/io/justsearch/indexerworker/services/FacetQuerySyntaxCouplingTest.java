@@ -28,15 +28,15 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Tempdoc 821 §L.3 — the facet scan and the headline match count must tally the SAME parse the
- * hits came from.
+ * Tempdoc 821 §L.3 + 822 — the facet scan and the headline match count must tally the SAME parse the
+ * hits came from, and (since 822) that parse is the REQUEST's {@code query_syntax} on every leg.
  *
- * <p>The multi-leg (composable) path retrieves its BM25 leg with
- * {@code TextQueryOps.MULTI_LEG_LEXICAL_SYNTAX} (SIMPLE) regardless of the request's
- * {@code query_syntax} — see {@code TextQueryOps#searchText} / {@code #searchTextWithFilter}. So the
- * facet rebuild and {@code computeMatchCount} in {@code SearchResponseBuilder} must parse with that
- * same constant. Threading the REQUEST's syntax there instead would make a LUCENE-syntax request
- * report facets and a headline over a query it never actually ran ("Top 3 of 1 matches").
+ * <p>Before 822 the multi-leg (composable) BM25 leg parsed SIMPLE-only regardless of the request, so
+ * these assertions pinned "counts follow the leg's SIMPLE constant". 822 is the future they were
+ * written for: {@code SearchDecision.MultiLegDecision.runtimeSyntax()} is now the ONE value the leg
+ * ({@code SearchExecutor#runMultiLeg}), the facet rebuild and {@code computeMatchCount} all read. So
+ * the same bidirectional pin now asserts the LUCENE parse on BOTH sides: a LUCENE-syntax request
+ * retrieves the LUCENE population AND reports counts over it.
  *
  * <p>The query below parses to 3 docs under SIMPLE and 1 under LUCENE, so a parse skew shows up as a
  * number rather than a shape. Each test pins a different producer, because {@code matchCount} has
@@ -49,11 +49,11 @@ import org.junit.jupiter.api.Test;
  *       no-facets case is the only one that pins the {@code :308} rebuild.
  * </ul>
  *
- * <p>Each pin is bidirectional: asserting count == hits fails if the counts start honouring the
- * request's syntax while the leg does not, AND if the leg starts honouring it while the counts
- * do not.
+ * <p>Each pin stays bidirectional: asserting count == hits fails if either side stops reading the
+ * decision's syntax, and the explicit {@code 1 != 3} assertions fail if a regression reverts the leg
+ * to a SIMPLE-only parse while the request asked for LUCENE.
  */
-@DisplayName("Facet/matchCount parse is coupled to the retrieval leg's parse (tempdoc 821 §L.3)")
+@DisplayName("Facet/matchCount parse is coupled to the retrieval leg's parse (tempdoc 821 §L.3, 822)")
 final class FacetQuerySyntaxCouplingTest {
 
   /**
@@ -63,6 +63,9 @@ final class FacetQuerySyntaxCouplingTest {
    */
   private static final String DIVERGING_QUERY = "+shared +alpha";
 
+  /** Unbalanced parenthesis — a genuine {@code ParseException} under LUCENE, harmless under SIMPLE. */
+  private static final String MALFORMED_LUCENE_QUERY = "+shared +(alpha";
+
   private static final Map<String, String> CORPUS =
       Map.of(
           "doc-a", "alpha shared term",
@@ -70,7 +73,7 @@ final class FacetQuerySyntaxCouplingTest {
           "doc-c", "gamma shared term");
 
   @Test
-  @DisplayName("LUCENE-syntax multi-leg request: facets + matchCount tally the leg's SIMPLE parse")
+  @DisplayName("LUCENE-syntax multi-leg request: leg honours LUCENE, facets + matchCount follow it")
   void luceneSyntaxMultiLegCountsMatchTheRetrievedPopulation() throws Exception {
     String prevConfig = System.getProperty("justsearch.config");
     try (RunningRuntime lifecycle = newLifecycleWithPdfDocs(CORPUS)) {
@@ -82,23 +85,22 @@ final class FacetQuerySyntaxCouplingTest {
       assertEquals("TEXT", response.getSearchTrace().getEffectiveMode());
 
       assertEquals(
-          3L,
-          response.getTotalHits(),
-          "precondition: the BM25 leg retrieves with a SIMPLE parse, so all 3 docs match");
-      assertEquals(
-          response.getTotalHits(),
-          response.getMatchCount(),
-          "the headline must count the population the hits came from, not a re-parse of the"
-              + " request's LUCENE syntax");
-      assertNotEquals(
           1L,
-          response.getMatchCount(),
-          "1 would mean the headline was computed with the request's LUCENE parse while the hits"
-              + " came from a SIMPLE parse");
-      assertEquals(
+          response.getTotalHits(),
+          "tempdoc 822: the multi-leg BM25 leg parses the request's LUCENE syntax, so the required"
+              + " clauses (+shared +alpha) select only doc-a");
+      assertNotEquals(
           3L,
+          response.getTotalHits(),
+          "3 would mean the leg fell back to a SIMPLE parse while the request asked for LUCENE");
+      assertEquals(
+          response.getTotalHits(),
+          response.getMatchCount(),
+          "the headline must count the population the hits came from");
+      assertEquals(
+          1L,
           response.getFacetsMap().get(SchemaFields.MIME).getCountsMap().get("application/pdf"),
-          "the facet scan must tally the same 3 retrieved docs, not the LUCENE parse's 1");
+          "the facet scan must tally the same single retrieved doc, not the SIMPLE parse's 3");
       assertFalse(
           response.getFacetsTruncated(), "the tiny scan completed — truncated must stay false");
     } finally {
@@ -133,24 +135,24 @@ final class FacetQuerySyntaxCouplingTest {
           response.getFacetsMap().isEmpty(),
           "precondition: no facets requested, so matchCount must come from computeMatchCount");
       assertEquals(
-          3L,
+          1L,
           response.getTotalHits(),
-          "precondition: the BM25 leg retrieves with a SIMPLE parse, so all 3 docs match");
+          "precondition: the BM25 leg parses the request's LUCENE syntax, so only doc-a matches");
       assertEquals(
           response.getTotalHits(),
           response.getMatchCount(),
-          "computeMatchCount must re-parse with the leg's syntax, not the request's LUCENE syntax");
+          "computeMatchCount must re-parse with the decision's syntax — the same one the leg used");
       assertNotEquals(
-          1L,
+          3L,
           response.getMatchCount(),
-          "1 would mean computeMatchCount used the request's LUCENE parse");
+          "3 would mean computeMatchCount re-parsed as SIMPLE while the leg parsed LUCENE");
     } finally {
       restoreProperty("justsearch.config", prevConfig);
     }
   }
 
   @Test
-  @DisplayName("SIMPLE-syntax multi-leg request is byte-identical to the LUCENE-syntax one")
+  @DisplayName("SIMPLE-syntax multi-leg request is unchanged — and now diverges from the LUCENE one")
   void simpleSyntaxMultiLegIsUnchanged() throws Exception {
     String prevConfig = System.getProperty("justsearch.config");
     try (RunningRuntime lifecycle = newLifecycleWithPdfDocs(CORPUS)) {
@@ -160,15 +162,120 @@ final class FacetQuerySyntaxCouplingTest {
       SearchResponse lucene =
           invokeSearch(service, hybridWithMimeFacet(SearchQuerySyntax.SEARCH_QUERY_SYNTAX_LUCENE));
 
-      assertEquals(3L, simple.getTotalHits(), "the default SIMPLE path is unchanged");
-      assertEquals(simple.getMatchCount(), lucene.getMatchCount(), "same counts on both requests");
       assertEquals(
-          simple.getFacetsMap().get(SchemaFields.MIME).getCountsMap(),
-          lucene.getFacetsMap().get(SchemaFields.MIME).getCountsMap(),
-          "same facet tally on both requests — the counts follow the leg, not the request");
+          3L,
+          simple.getTotalHits(),
+          "the default SIMPLE path escapes the operators and is unchanged by tempdoc 822");
+      assertEquals(
+          simple.getTotalHits(), simple.getMatchCount(), "SIMPLE counts still follow SIMPLE hits");
+      assertEquals(
+          3L,
+          simple.getFacetsMap().get(SchemaFields.MIME).getCountsMap().get("application/pdf"),
+          "the SIMPLE facet tally is unchanged");
+      assertNotEquals(
+          simple.getMatchCount(),
+          lucene.getMatchCount(),
+          "tempdoc 822: the two syntaxes now retrieve different populations for this query — equal"
+              + " counts would mean one of them ignored its request's syntax");
+      assertEquals(
+          lucene.getTotalHits(),
+          lucene.getMatchCount(),
+          "and each request stays internally consistent (counts follow ITS leg)");
     } finally {
       restoreProperty("justsearch.config", prevConfig);
     }
+  }
+
+  @Test
+  @DisplayName("LUCENE quoted phrase retrieves phrase matches, not a token OR — counts follow")
+  void luceneQuotedPhraseIsPhraseMatchedNotTokenOred() throws Exception {
+    String prevConfig = System.getProperty("justsearch.config");
+    try (RunningRuntime lifecycle = newLifecycleWithPdfDocs(CORPUS)) {
+      GrpcSearchService service = new GrpcSearchService(lifecycle);
+
+      // "alpha shared" is an in-order adjacent phrase in doc-a only. A token OR (the SIMPLE parse
+      // of the same text, quotes escaped) matches all 3 docs via `shared`.
+      SearchResponse inOrder =
+          invokeSearch(
+              service, multiLeg("\"alpha shared\"", SearchQuerySyntax.SEARCH_QUERY_SYNTAX_LUCENE));
+      assertEquals(1L, inOrder.getTotalHits(), "the phrase matches doc-a only");
+      assertEquals("doc-a", inOrder.getResults(0).getId());
+      assertEquals(
+          inOrder.getTotalHits(), inOrder.getMatchCount(), "counts follow the phrase-parsed leg");
+
+      // Reversed, the same two tokens are not a phrase anywhere — 0 hits. Under a token OR this
+      // would still be 3, so this is the assertion that phrase SEMANTICS (not just term selection)
+      // reached the leg.
+      SearchResponse reversed =
+          invokeSearch(
+              service, multiLeg("\"shared alpha\"", SearchQuerySyntax.SEARCH_QUERY_SYNTAX_LUCENE));
+      assertEquals(0L, reversed.getTotalHits(), "no document contains the reversed phrase");
+      assertEquals(0L, reversed.getMatchCount(), "the headline agrees with the empty result");
+
+      // Control: the identical text as a SIMPLE request escapes the quotes and ORs the tokens.
+      SearchResponse simple =
+          invokeSearch(
+              service, multiLeg("\"alpha shared\"", SearchQuerySyntax.SEARCH_QUERY_SYNTAX_SIMPLE));
+      assertEquals(3L, simple.getTotalHits(), "SIMPLE still treats the quotes as literal text");
+    } finally {
+      restoreProperty("justsearch.config", prevConfig);
+    }
+  }
+
+  @Test
+  @DisplayName("Malformed LUCENE query: multi-leg mirrors the sparse shortcut's INVALID_ARGUMENT")
+  void malformedLuceneQueryDegradesLikeTheSparseShortcut() throws Exception {
+    String prevConfig = System.getProperty("justsearch.config");
+    try (RunningRuntime lifecycle = newLifecycleWithPdfDocs(CORPUS)) {
+      GrpcSearchService service = new GrpcSearchService(lifecycle);
+
+      // The reference behaviour: the sparse-only shortcut has always signalled a bad LUCENE parse
+      // as INVALID_ARGUMENT rather than answering 0 hits (SearchExecutor:156).
+      Throwable sparseError =
+          invokeSearchExpectingError(
+              service,
+              SearchRequest.newBuilder()
+                  .setQuery(MALFORMED_LUCENE_QUERY)
+                  .setLimit(10)
+                  .setQuerySyntax(SearchQuerySyntax.SEARCH_QUERY_SYNTAX_LUCENE)
+                  .setPipeline(PipelineConfig.newBuilder().setSparseEnabled(true).build())
+                  .build());
+      assertEquals(
+          io.grpc.Status.Code.INVALID_ARGUMENT, io.grpc.Status.fromThrowable(sparseError).getCode());
+
+      // Tempdoc 822: now that the multi-leg lexical leg parses LUCENE too, it must fail the same
+      // way — a silent 0-hit answer would hide a malformed query behind "no results".
+      Throwable multiLegError =
+          invokeSearchExpectingError(
+              service, multiLeg(MALFORMED_LUCENE_QUERY, SearchQuerySyntax.SEARCH_QUERY_SYNTAX_LUCENE));
+      assertEquals(
+          io.grpc.Status.Code.INVALID_ARGUMENT,
+          io.grpc.Status.fromThrowable(multiLegError).getCode(),
+          "the multi-leg path must mirror the sparse shortcut, not degrade silently");
+      assertTrue(
+          String.valueOf(io.grpc.Status.fromThrowable(multiLegError).getDescription())
+              .startsWith("Invalid query syntax"),
+          "same message shape as the sparse shortcut");
+
+      // The same malformed text under SIMPLE is just literal text — it must still answer normally.
+      SearchResponse simple =
+          invokeSearch(
+              service, multiLeg(MALFORMED_LUCENE_QUERY, SearchQuerySyntax.SEARCH_QUERY_SYNTAX_SIMPLE));
+      assertEquals(
+          3L, simple.getTotalHits(), "SIMPLE escapes the operators — no parse failure to signal");
+    } finally {
+      restoreProperty("justsearch.config", prevConfig);
+    }
+  }
+
+  private static SearchRequest multiLeg(String query, SearchQuerySyntax syntax) {
+    return SearchRequest.newBuilder()
+        .setQuery(query)
+        .setLimit(10)
+        .setQuerySyntax(syntax)
+        // Dense enabled with no embedding service → hybrid degrades to the composable Bm25Only leg.
+        .setPipeline(PipelineConfig.newBuilder().setSparseEnabled(true).setDenseEnabled(true).build())
+        .build();
   }
 
   private static SearchRequest hybridWithMimeFacet(SearchQuerySyntax syntax) {
@@ -210,6 +317,33 @@ final class FacetQuerySyntaxCouplingTest {
     SearchResponse response = responseRef.get();
     assertNotNull(response);
     return response;
+  }
+
+  /** Same call shape as {@link #invokeSearch}, but the error is the assertion subject. */
+  private static Throwable invokeSearchExpectingError(
+      GrpcSearchService service, SearchRequest request) {
+    AtomicReference<SearchResponse> responseRef = new AtomicReference<>();
+    AtomicReference<Throwable> errorRef = new AtomicReference<>();
+    service.search(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(SearchResponse value) {
+            responseRef.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            errorRef.set(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+    assertNull(responseRef.get(), "search() answered instead of signalling the malformed query");
+    Throwable error = errorRef.get();
+    assertNotNull(error, "search() neither answered nor errored");
+    return error;
   }
 
   private static RunningRuntime newLifecycleWithPdfDocs(Map<String, String> docs) throws Exception {

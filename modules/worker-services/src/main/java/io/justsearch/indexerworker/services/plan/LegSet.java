@@ -95,6 +95,23 @@ public sealed interface LegSet
     };
   }
 
+  /**
+   * Whether this leg set runs the BM25 (lexical) leg — the only leg that parses the user's query
+   * text, and therefore the only one a request's {@code query_syntax} can apply to (tempdoc 822).
+   * SPLADE is a sparse text variant but consumes encoded term weights, not parsed query syntax.
+   */
+  default boolean hasLexicalLeg() {
+    return switch (this) {
+      case Bm25Only b -> true;
+      case Bm25Dense bd -> true;
+      case Bm25Splade bs -> true;
+      case ThreeWay t -> true;
+      case DenseOnly d -> false;
+      case SpladeOnly p -> false;
+      case DenseSplade ds -> false;
+    };
+  }
+
   /** Mode label for the wire response's {@code effective_mode} field. */
   default String effectiveModeLabel() {
     return switch (this) {

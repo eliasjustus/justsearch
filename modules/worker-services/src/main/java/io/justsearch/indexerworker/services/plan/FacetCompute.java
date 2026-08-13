@@ -15,9 +15,9 @@ import java.util.Objects;
  *
  * <p>{@code FromFreshBm25} builds a fresh BM25 query, omitting boost filters and
  * swallowing {@code ParseException} (legacy lines 678–705). It parses with
- * {@code TextQueryOps.MULTI_LEG_LEXICAL_SYNTAX} — the syntax the multi-leg BM25 leg
- * it describes retrieves with, regardless of what the request asked for — so the
- * facet counts always tally the same population the hits came from
+ * {@code SearchDecision.MultiLegDecision.runtimeSyntax()} — the syntax the multi-leg
+ * BM25 leg it describes retrieves with, which since tempdoc 822 is the request's own
+ * syntax — so the facet counts always tally the same population the hits came from
  * (tempdoc 821 §L.3).
  *
  * <p>These are not duplicates and cannot be unified — both observable behaviours
@@ -37,7 +37,10 @@ public sealed interface FacetCompute
     }
   }
 
-  /** Build a fresh SIMPLE BM25 query without boost filters. Composable / multi-leg path. */
+  /**
+   * Build a fresh BM25 query without boost filters, parsed with the decision's
+   * {@code runtimeSyntax}. Composable / multi-leg path.
+   */
   record FromFreshBm25(
       String queryString,
       LuceneRuntimeTypes.RuntimeSearchFilters filters,

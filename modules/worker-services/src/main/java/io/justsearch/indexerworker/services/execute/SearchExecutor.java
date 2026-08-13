@@ -275,6 +275,19 @@ public final class SearchExecutor {
     // computed when on — Slice-1 interrogation finding), so widen the flag end-to-end here.
     boolean debug = request.getDebug() || request.getIncludeDetail();
     String effectiveMode = decision.legs().effectiveModeLabel();
+    var syntax = decision.runtimeSyntax();
+    // Tempdoc 822: the lexical leg honours the request's query_syntax, so a malformed LUCENE query
+    // must fail the same way the sparse-only shortcut fails it (INVALID_ARGUMENT, SearchExecutor
+    // :156) rather than degrading to a silent 0-hit answer. The legs themselves run inside fusion
+    // futures and must not throw, so the parse is probed here, once, and only for the LUCENE
+    // requests that actually run a lexical leg — SIMPLE requests take no extra parse.
+    if (syntax == LuceneRuntimeTypes.QuerySyntax.LUCENE && decision.legs().hasLexicalLeg()) {
+      try {
+        textQueryOps.buildTextQuery(queryString, runtimeFilters, syntax);
+      } catch (org.apache.lucene.queryparser.classic.ParseException e) {
+        throw new IllegalArgumentException("Invalid query syntax: " + e.getMessage());
+      }
+    }
 
     Span retrievalSpan =
         tracer()
@@ -291,17 +304,23 @@ public final class SearchExecutor {
           switch (decision.legs()) {
             case LegSet.ThreeWay tw -> {
               spladeExecuted = true;
-              yield runThreeWay(tw, queryString, runtimeFilters, boostRuntimeFilters, debug, retrievalSpan);
+              yield runThreeWay(
+                  tw, queryString, runtimeFilters, boostRuntimeFilters, syntax, debug, retrievalSpan);
             }
             case LegSet.Bm25Dense bd ->
                 debug
                     ? hybridSearchOps.searchHybridWithDebug(
-                        queryString, toFloatArray(bd.vector().vector()), bd.retrievalLimit(), runtimeFilters)
+                        queryString,
+                        toFloatArray(bd.vector().vector()),
+                        bd.retrievalLimit(),
+                        runtimeFilters,
+                        syntax)
                     : hybridSearchOps.searchHybridFiltered(
                         queryString,
                         toFloatArray(bd.vector().vector()),
                         bd.retrievalLimit(),
-                        QueryFilterBuilder.buildFilterQueryOnly(runtimeFilters));
+                        QueryFilterBuilder.buildFilterQueryOnly(runtimeFilters),
+                        syntax);
             case LegSet.DenseOnly d ->
                 // Tempdoc 549 Slice 3c (U2): single dense leg, no fusion.
                 HitProvenanceProjector.attachSingleLeg(
@@ -320,7 +339,7 @@ public final class SearchExecutor {
               spladeExecuted = true;
               var bm25Result =
                   textQueryOps.searchText(
-                      queryString, bs.retrievalLimit(), runtimeFilters, boostRuntimeFilters);
+                      queryString, bs.retrievalLimit(), runtimeFilters, boostRuntimeFilters, syntax);
               var spladeResult =
                   searchSplade(bs.splade().weights(), bs.retrievalLimit(), runtimeFilters);
               var fused = fuseLegs(List.of(bm25Result, spladeResult), bs.retrievalLimit(), debug);
@@ -343,7 +362,7 @@ public final class SearchExecutor {
             case LegSet.Bm25Only b ->
                 HitProvenanceProjector.attachSingleLeg(
                     textQueryOps.searchText(
-                        queryString, b.retrievalLimit(), runtimeFilters, boostRuntimeFilters),
+                        queryString, b.retrievalLimit(), runtimeFilters, boostRuntimeFilters, syntax),
                     HitProvenanceProjector.LegKind.BM25);
           };
       retrievalMs = (System.nanoTime() - retrievalStartNs) / 1_000_000;
@@ -384,6 +403,7 @@ public final class SearchExecutor {
       String queryString,
       LuceneRuntimeTypes.RuntimeSearchFilters runtimeFilters,
       LuceneRuntimeTypes.RuntimeSearchFilters boostRuntimeFilters,
+      LuceneRuntimeTypes.QuerySyntax syntax,
       boolean debug,
       Span retrievalSpan) {
     ResolvedConfig rc3 = resolvedConfigSupplier.get();
@@ -405,7 +425,11 @@ public final class SearchExecutor {
                       "lexical",
                       () ->
                           textQueryOps.searchText(
-                              queryString, textCandLimit, runtimeFilters, boostRuntimeFilters));
+                              queryString,
+                              textCandLimit,
+                              runtimeFilters,
+                              boostRuntimeFilters,
+                              syntax));
                 }
               },
               executor);

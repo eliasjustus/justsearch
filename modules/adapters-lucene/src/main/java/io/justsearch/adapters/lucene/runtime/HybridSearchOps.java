@@ -5,6 +5,7 @@ import static io.justsearch.adapters.lucene.runtime.HybridFusionUtils.fuseWithCC
 import static io.justsearch.adapters.lucene.runtime.HybridFusionUtils.fuseWithRRF;
 import static io.justsearch.adapters.lucene.runtime.QueryFilterBuilder.buildFilterQueryOnly;
 
+import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.QuerySyntax;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.RuntimeSearchFilters;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.SearchHit;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.SearchResult;
@@ -525,9 +526,10 @@ public final class HybridSearchOps {
    * @param queryText the text query for BM25 search
    * @param queryVector the query vector for KNN search
    * @param limit maximum number of results to return
+   * @param syntax how the text leg parses {@code queryText} (tempdoc 822)
    * @return search results ordered by fused RRF score
    */
-  SearchResult searchHybrid(String queryText, float[] queryVector, int limit) {
+  SearchResult searchHybrid(String queryText, float[] queryVector, int limit, QuerySyntax syntax) {
     if (queryText == null || queryText.isBlank()) {
       throw new IllegalArgumentException("queryText must not be null or blank");
     }
@@ -538,7 +540,7 @@ public final class HybridSearchOps {
       limit = 10;
     }
     return executeHybrid(
-        (t, l) -> textQueryOps.searchText(t, l, null),
+        (t, l) -> textQueryOps.searchText(t, l, null, null, syntax),
         (v, l) -> readPathOps.searchVector(v, l),
         queryText, queryVector, limit, false, "Hybrid");
   }
@@ -554,8 +556,14 @@ public final class HybridSearchOps {
    */
   public SearchResult searchHybridFiltered(
       String queryText, float[] queryVector, int limit, Query filter) {
+    return searchHybridFiltered(queryText, queryVector, limit, filter, QuerySyntax.SIMPLE);
+  }
+
+  /** Filtered hybrid search parsing the text leg with {@code syntax} (tempdoc 822). */
+  public SearchResult searchHybridFiltered(
+      String queryText, float[] queryVector, int limit, Query filter, QuerySyntax syntax) {
     if (filter == null) {
-      return searchHybrid(queryText, queryVector, limit);
+      return searchHybrid(queryText, queryVector, limit, syntax);
     }
     if (queryText == null || queryText.isBlank()) {
       throw new IllegalArgumentException("queryText must not be null or blank");
@@ -567,7 +575,7 @@ public final class HybridSearchOps {
       limit = 10;
     }
     return executeHybrid(
-        (t, l) -> textQueryOps.searchTextWithFilter(t, l, filter),
+        (t, l) -> textQueryOps.searchTextWithFilter(t, l, filter, syntax),
         (v, l) -> readPathOps.searchVector(v, l, filter),
         queryText,
         queryVector,
@@ -583,10 +591,15 @@ public final class HybridSearchOps {
    * @param queryVector the query vector for KNN search
    * @param limit maximum number of results to return
    * @param filters optional runtime filters (may be null)
+   * @param syntax how the text leg parses {@code queryText} (tempdoc 822)
    * @return search results with debug scores populated
    */
   public SearchResult searchHybridWithDebug(
-      String queryText, float[] queryVector, int limit, RuntimeSearchFilters filters) {
+      String queryText,
+      float[] queryVector,
+      int limit,
+      RuntimeSearchFilters filters,
+      QuerySyntax syntax) {
     if (queryText == null || queryText.isBlank()) {
       throw new IllegalArgumentException("queryText must not be null or blank");
     }
@@ -597,7 +610,7 @@ public final class HybridSearchOps {
       limit = 10;
     }
     return executeHybrid(
-        (t, l) -> textQueryOps.searchText(t, l, filters),
+        (t, l) -> textQueryOps.searchText(t, l, filters, null, syntax),
         (v, l) -> readPathOps.searchVector(v, l, buildFilterQueryOnly(filters)),
         queryText,
         queryVector,
