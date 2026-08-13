@@ -6,8 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.app.api.status.CompatibilityStatusView;
+import io.justsearch.app.api.status.EnrichmentProgressView;
+import io.justsearch.app.api.status.EnrichmentProgressViewBuilder;
 import io.justsearch.app.api.status.FailureTrackingView;
 import io.justsearch.app.api.status.QueueDbStatusView;
+import io.justsearch.app.api.status.StageCompletenessView;
 import io.justsearch.app.api.status.WorkerOperationalView;
 import io.justsearch.app.api.status.WorkerOperationalViewBuilder;
 import io.justsearch.app.observability.health.AssertedCondition;
@@ -61,13 +64,21 @@ final class WorkerSnapshotTapTest {
 
   private static WorkerOperationalView view(
       CompatibilityStatusView compat, QueueDbStatusView queueDb, FailureTrackingView failure) {
+    return view(compat, queueDb, failure, EnrichmentProgressView.empty());
+  }
+
+  private static WorkerOperationalView view(
+      CompatibilityStatusView compat,
+      QueueDbStatusView queueDb,
+      FailureTrackingView failure,
+      EnrichmentProgressView enrichment) {
     return WorkerOperationalViewBuilder.builder()
         .core(io.justsearch.app.api.status.CoreIndexView.fallback("READY"))
         .failure(failure)
         .migration(io.justsearch.app.api.status.MigrationGenerationView.empty())
         .compatibility(compat)
         .queueDb(queueDb)
-        .enrichment(io.justsearch.app.api.status.EnrichmentProgressView.empty())
+        .enrichment(enrichment)
         .gpu(io.justsearch.app.api.status.GpuDiagnosticsView.empty())
         .vectorFormat(io.justsearch.app.api.status.VectorFormatView.empty())
         .telemetry(io.justsearch.app.api.status.TelemetryMetricsView.empty())
@@ -124,6 +135,40 @@ final class WorkerSnapshotTapTest {
         compat("COMPATIBLE", state, false),
         queueDb(true, true),
         failure("", "", 0, 0));
+  }
+
+  // ----- enrichment completeness helpers (tempdoc 821 §3-C3 follow-on) -----
+
+  private static StageCompletenessView stage(
+      String stageId, long expected, long present, long failed) {
+    return new StageCompletenessView(
+        stageId, "ARTIFACT", expected, present, expected - present - failed, failed);
+  }
+
+  /** A view whose enrichment carries the given audit rows and per-stage PENDING counts. */
+  private static WorkerOperationalView enrichmentView(
+      List<StageCompletenessView> completeness,
+      long embedPending,
+      long spladePending,
+      long nerPending) {
+    EnrichmentProgressView enrichment =
+        EnrichmentProgressViewBuilder.builder(EnrichmentProgressView.empty())
+            .completeness(completeness)
+            .embeddingPendingCount(embedPending)
+            .spladePendingCount(spladePending)
+            .pendingNerCount(nerPending)
+            .build();
+    return view(
+        compat("COMPATIBLE", "COMPATIBLE", false),
+        queueDb(true, true),
+        failure("", "", 0, 0),
+        enrichment);
+  }
+
+  /** embed stage only: {@code expected} docs, {@code present} done, {@code pending} queued. */
+  private static WorkerOperationalView embedCompleteness(
+      long expected, long present, long pending) {
+    return enrichmentView(List.of(stage("embed", expected, present, 0)), pending, 0, 0);
   }
 
   // ============================================================
@@ -423,6 +468,118 @@ final class WorkerSnapshotTapTest {
     tap.accept(v, false);
 
     assertEquals(0, listener.size());
+  }
+
+  // ============================================================
+  // Enrichment completeness (tempdoc 821 §3-C3 follow-on)
+  // ============================================================
+
+  @Test
+  @DisplayName("quiescent missing>0 → enrichment.incomplete ADDED on worker.enrichment/embed")
+  void quiescentMissingAssertsCondition() {
+    tap.accept(embedCompleteness(340, 328, 0), false);
+
+    assertEquals(1, listener.size());
+    HealthEventChangeRegistry.HealthChangeEvent e0 = listener.events.get(0);
+    assertEquals(HealthEventChangeRegistry.Kind.CONDITION_ADDED, e0.kind());
+    assertEquals("enrichment.incomplete", e0.event().id());
+    assertEquals(Severity.WARNING, e0.event().severity());
+    AssertedCondition cond = (AssertedCondition) e0.event().body();
+    assertEquals("worker.enrichment/embed", cond.subject());
+    assertEquals(ConditionStatus.TRUE, cond.status());
+    assertEquals("MissingAtQuiescence", cond.reason());
+    assertTrue(
+        cond.message().orElse("").contains("12 of 340"),
+        "message must carry {missing, expected}; was: " + cond.message());
+  }
+
+  @Test
+  @DisplayName("mid-ingest (pending>0) with the SAME missing count → no condition")
+  void pendingWorkDoesNotAssertCondition() {
+    // 12 documents are "missing" purely because they are queued: missing counts PENDING docs
+    // (missing = expected - present - failed), so this is the every-ingest false positive the
+    // quiescence gate exists to suppress.
+    tap.accept(embedCompleteness(340, 328, 12), false);
+
+    assertEquals(0, listener.size(), "in-flight work must not read as loss");
+    assertTrue(conditions.find("enrichment.incomplete", "worker.enrichment/embed").isEmpty());
+  }
+
+  @Test
+  @DisplayName("missing → 0 after firing → enrichment.incomplete REMOVED")
+  void repairedStageClearsCondition() {
+    tap.accept(embedCompleteness(340, 328, 0), false);
+    assertTrue(conditions.find("enrichment.incomplete", "worker.enrichment/embed").isPresent());
+    listener.events.clear();
+
+    tap.accept(embedCompleteness(340, 340, 0), false);
+
+    assertEquals(1, listener.size());
+    assertEquals(
+        HealthEventChangeRegistry.Kind.CONDITION_REMOVED, listener.events.get(0).kind());
+    assertTrue(conditions.find("enrichment.incomplete", "worker.enrichment/embed").isEmpty());
+  }
+
+  @Test
+  @DisplayName("new ingest starts after firing (pending>0) → condition clears, no longer quiescent")
+  void resumedIngestClearsCondition() {
+    tap.accept(embedCompleteness(340, 328, 0), false);
+    listener.events.clear();
+
+    tap.accept(embedCompleteness(400, 328, 60), false);
+
+    assertEquals(
+        HealthEventChangeRegistry.Kind.CONDITION_REMOVED, listener.events.get(0).kind());
+    assertTrue(conditions.find("enrichment.incomplete", "worker.enrichment/embed").isEmpty());
+  }
+
+  @Test
+  @DisplayName("per-stage instances are independent: quiescent embed fires, pending splade doesn't")
+  void perStageInstancesAreIndependent() {
+    tap.accept(
+        enrichmentView(
+            List.of(stage("embed", 100, 90, 0), stage("splade", 100, 40, 0)), 0, 60, 0),
+        false);
+
+    assertEquals(1, listener.size());
+    assertTrue(conditions.find("enrichment.incomplete", "worker.enrichment/embed").isPresent());
+    assertTrue(conditions.find("enrichment.incomplete", "worker.enrichment/splade").isEmpty());
+  }
+
+  @Test
+  @DisplayName("empty completeness list → prior assertion preserved (unknown ≠ healthy)")
+  void absentAuditRowsPreservePriorAssertion() {
+    tap.accept(embedCompleteness(340, 328, 0), false);
+    listener.events.clear();
+
+    // A pre-821 worker (or a failed count query) reports no audit rows at all. Absence of data
+    // is not evidence of completeness.
+    tap.accept(enrichmentView(List.of(), 0, 0, 0), false);
+
+    assertEquals(0, listener.size());
+    assertTrue(conditions.find("enrichment.incomplete", "worker.enrichment/embed").isPresent());
+  }
+
+  @Test
+  @DisplayName("unknown stageId → no condition asserted (quiescence unknowable)")
+  void unknownStageIdDoesNotAssert() {
+    tap.accept(enrichmentView(List.of(stage("future_stage", 100, 10, 0)), 0, 0, 0), false);
+
+    assertEquals(0, listener.size());
+    assertTrue(
+        conditions.find("enrichment.incomplete", "worker.enrichment/future_stage").isEmpty());
+  }
+
+  @Test
+  @DisplayName("stale view does NOT clear a prior enrichment.incomplete")
+  void staleViewPreservesEnrichmentCondition() {
+    tap.accept(embedCompleteness(340, 328, 0), false);
+    listener.events.clear();
+
+    tap.accept(embedCompleteness(340, 340, 0), true);
+
+    assertEquals(0, listener.size());
+    assertTrue(conditions.find("enrichment.incomplete", "worker.enrichment/embed").isPresent());
   }
 
   // ============================================================

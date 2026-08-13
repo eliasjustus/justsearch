@@ -831,6 +831,294 @@ class GrpcSearchServiceRetrieveContextTest {
     }
   }
 
+  /**
+   * Tempdoc 821 §3-C2 — end-to-end collection scoping over a real index. The unit-level routing
+   * decision is pinned in {@code RagContextOpsCollectionScopeTest}; this pins the observable
+   * retrieval behavior the decision produces.
+   */
+  @Nested
+  @DisplayName("Collection scoping (821 §3-C2)")
+  class CollectionScoping {
+
+    private static final String NORMAL_DOC = "d:/docs/quarterly-budget.md";
+    private static final String AGENT_DOC = "d:/agent/session-42.md";
+
+    /** Indexes a parent + one chunk, both tagged with {@code collection} when non-null. */
+    private void indexDocWithChunk(String parentDocId, String collection, String chunkText)
+        throws Exception {
+      Map<String, Object> parent = new java.util.HashMap<>(Map.of(
+          SchemaFields.DOC_ID, parentDocId,
+          SchemaFields.DOC_UID, parentDocId + "#0",
+          SchemaFields.PATH, parentDocId,
+          SchemaFields.CONTENT, chunkText,
+          SchemaFields.MIME, "text/markdown"));
+      Map<String, Object> chunk = new java.util.HashMap<>(Map.of(
+          SchemaFields.DOC_ID, "chunk:" + parentDocId,
+          SchemaFields.DOC_UID, "chunk:" + parentDocId + "#0",
+          SchemaFields.PATH, parentDocId,
+          SchemaFields.PARENT_DOC_ID, parentDocId,
+          SchemaFields.IS_CHUNK, "true",
+          SchemaFields.CHUNK_INDEX, "0",
+          SchemaFields.CHUNK_TOTAL, "1",
+          SchemaFields.CHUNK_CONTENT, chunkText,
+          SchemaFields.CHUNK_START_CHAR, "0",
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(chunkText.length())));
+      if (collection != null) {
+        // ChunkDocumentWriter propagates the parent's collection onto chunks (811 item 3); the
+        // fixture mirrors that, since the scope binds on the chunk branch.
+        parent.put(SchemaFields.COLLECTION, collection);
+        chunk.put(SchemaFields.COLLECTION, collection);
+      }
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(parent));
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(chunk));
+    }
+
+    @BeforeEach
+    void indexBothCollections() throws Exception {
+      indexDocWithChunk(
+          NORMAL_DOC, null, "Retention policy NORMALMARKER for the quarterly budget review.");
+      indexDocWithChunk(
+          AGENT_DOC, "agent-history", "Retention policy AGENTMARKER discussed in the agent run.");
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+    }
+
+    @Test
+    @DisplayName("absent collection keeps the default scope: agent-history is excluded")
+    void absentCollectionExcludesAgentHistory() {
+      var response = callRetrieveContext(
+          RetrieveContextRequest.newBuilder().setQuestion("retention policy").setTopK(5).build());
+
+      assertTrue(response.getContext().contains("NORMALMARKER"),
+          "the untagged document must still be retrieved: " + response.getContext());
+      assertFalse(response.getContext().contains("AGENTMARKER"),
+          "the 811 D-1 default exclusion must still bind when no scope is given: "
+              + response.getContext());
+    }
+
+    @Test
+    @DisplayName("an explicit agent-history scope is a positive include, not a match-nothing")
+    void explicitAgentHistoryScopeIncludesOnlyAgentHistory() {
+      var response = callRetrieveContext(
+          RetrieveContextRequest.newBuilder()
+              .setQuestion("retention policy")
+              .setTopK(5)
+              .addCollection("agent-history")
+              .build());
+
+      assertTrue(response.getContext().contains("AGENTMARKER"),
+          "an explicit scope must INCLUDE that collection: " + response.getContext());
+      assertFalse(response.getContext().contains("NORMALMARKER"),
+          "an explicit scope must exclude everything outside it: " + response.getContext());
+    }
+
+    @Test
+    @DisplayName("a collection-only request keeps the chunk path, not the parent pre-filter")
+    void collectionOnlyRequestStaysOnTheChunkPath() throws Exception {
+      // The DISCRIMINATING fixture: parent UNTAGGED, chunk TAGGED. This is the only shape that
+      // tells the two routings apart —
+      //   chunk path  : buildChunkFilterQuery matches the tagged CHUNK  -> content returned;
+      //   parent path : findMatchingParentDocIds runs with IS_CHUNK MUST_NOT, so it sees only the
+      //                 UNTAGGED parent, matches nothing, and returns buildEmptyFilterResponse.
+      // With a tagged parent (as the shared fixture has) both routings resolve the same document,
+      // so the assertions below would hold either way and prove nothing.
+      String splitDoc = "d:/agent/split-tagged.md";
+      String text = "Retention policy SPLITMARKER recorded mid-run.";
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+          SchemaFields.DOC_ID, splitDoc,
+          SchemaFields.DOC_UID, splitDoc + "#0",
+          SchemaFields.PATH, splitDoc,
+          SchemaFields.CONTENT, text,
+          SchemaFields.MIME, "text/markdown")));
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+          SchemaFields.DOC_ID, "chunk:" + splitDoc,
+          SchemaFields.DOC_UID, "chunk:" + splitDoc + "#0",
+          SchemaFields.PATH, splitDoc,
+          SchemaFields.PARENT_DOC_ID, splitDoc,
+          SchemaFields.IS_CHUNK, "true",
+          SchemaFields.COLLECTION, "agent-history",
+          SchemaFields.CHUNK_INDEX, "0",
+          SchemaFields.CHUNK_CONTENT, text,
+          SchemaFields.CHUNK_START_CHAR, "0",
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(text.length()))));
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+
+      var response = callRetrieveContext(
+          RetrieveContextRequest.newBuilder()
+              .setQuestion("retention policy")
+              .setTopK(5)
+              .addCollection("agent-history")
+              .build());
+
+      assertTrue(response.getUsedChunks(), "collection-only retrieval must use the chunk path");
+      assertTrue(response.getContext().contains("SPLITMARKER"),
+          "the chunk-branch filter must find a chunk whose PARENT carries no collection tag;"
+              + " routing this through parent resolution would return the empty-filter shape: "
+              + response.getContext());
+    }
+
+    @Test
+    @DisplayName("an unknown collection scopes to nothing without falling back to everything")
+    void unknownCollectionMatchesNothing() {
+      var response = callRetrieveContext(
+          RetrieveContextRequest.newBuilder()
+              .setQuestion("retention policy")
+              .setTopK(5)
+              .addCollection("no-such-collection")
+              .build());
+
+      assertFalse(response.getContext().contains("AGENTMARKER"),
+          "an unmatched scope must not leak agent-history: " + response.getContext());
+      assertFalse(response.getContext().contains("NORMALMARKER"),
+          "an unmatched scope must not silently widen back to the default scope: "
+              + response.getContext());
+    }
+  }
+
+  /**
+   * Tempdoc 821 §3-C2 (review fix 1) — the two WHOLE-DOCUMENT legs. Both bypass the chunk search
+   * and, before this, applied no filter at all: {@code searchFullDocsForDocs} was called with a
+   * {@code null} filter, so a scoped request answered from outside its scope the moment the chunk
+   * leg came back blank, and {@code return_full_documents=true} made the scope a no-op outright.
+   *
+   * <p>Fixture, and why it is shaped this way: reaching FULLTEXT_FALLBACK needs BOTH the chunk leg
+   * and the tempdoc-749 union leg to come back empty. Chunkless documents do NOT work — the union
+   * leg exists precisely to answer for them. So each document here HAS a chunk whose text does not
+   * match the question, while its parent {@code content} does: the chunk leg finds nothing, the
+   * union leg skips parents that have chunks, and the whole-document leg is left holding the query.
+   * {@code doc_ids} is supplied explicitly because {@code searchFullDocsForDocs} keeps its
+   * return-empty-on-empty-scope contract (tempdoc 749) — that is the scoped-chat request shape.
+   */
+  @Nested
+  @DisplayName("Whole-document legs honour the scope (821 §3-C2 review fix 1)")
+  class WholeDocumentLegScoping {
+
+    private static final String IN_SCOPE = "d:/notes/in-scope.md";
+    private static final String OUT_OF_SCOPE = "d:/notes/out-of-scope.md";
+    private static final String AGENT_DOC = "d:/agent/transcript.md";
+
+    private void indexDocWithNonMatchingChunk(String docId, String collection, String content)
+        throws Exception {
+      Map<String, Object> parent = new java.util.HashMap<>(Map.of(
+          SchemaFields.DOC_ID, docId,
+          SchemaFields.DOC_UID, docId + "#0",
+          SchemaFields.PATH, docId,
+          SchemaFields.CONTENT, content,
+          SchemaFields.MIME, "text/markdown"));
+      String chunkText = "Unrelated appendix about stationery inventory.";
+      Map<String, Object> chunk = new java.util.HashMap<>(Map.of(
+          SchemaFields.DOC_ID, "chunk:" + docId,
+          SchemaFields.DOC_UID, "chunk:" + docId + "#0",
+          SchemaFields.PATH, docId,
+          SchemaFields.PARENT_DOC_ID, docId,
+          SchemaFields.IS_CHUNK, "true",
+          SchemaFields.CHUNK_INDEX, "0",
+          SchemaFields.CHUNK_TOTAL, "1",
+          SchemaFields.CHUNK_CONTENT, chunkText,
+          SchemaFields.CHUNK_START_CHAR, "0",
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(chunkText.length())));
+      if (collection != null) {
+        parent.put(SchemaFields.COLLECTION, collection);
+        chunk.put(SchemaFields.COLLECTION, collection);
+      }
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(parent));
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(chunk));
+    }
+
+    @BeforeEach
+    void indexCorpus() throws Exception {
+      indexDocWithNonMatchingChunk(
+          IN_SCOPE, "project-notes", "Escalation ladder INSCOPEMARKER for on-call.");
+      indexDocWithNonMatchingChunk(
+          OUT_OF_SCOPE, null, "Escalation ladder OUTOFSCOPEMARKER for on-call.");
+      indexDocWithNonMatchingChunk(
+          AGENT_DOC, "agent-history", "Escalation ladder AGENTMARKER from a run.");
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+    }
+
+    @Test
+    @DisplayName("(a) FULLTEXT_FALLBACK returns only in-scope documents")
+    void fallbackLegHonoursTheScope() {
+      var response = callRetrieveContext(
+          RetrieveContextRequest.newBuilder()
+              .setQuestion("escalation ladder")
+              .setTopK(5)
+              .addDocIds(IN_SCOPE)
+              .addDocIds(OUT_OF_SCOPE)
+              .addCollection("project-notes")
+              .build());
+
+      assertEquals("FULLTEXT_FALLBACK", response.getRetrievalMode(),
+          "fixture must actually exercise the whole-document fallback leg");
+      assertTrue(response.getContext().contains("INSCOPEMARKER"),
+          "the in-scope document must still be returned: " + response.getContext());
+      assertFalse(response.getContext().contains("OUTOFSCOPEMARKER"),
+          "the fallback leg must not answer from outside the requested scope: "
+              + response.getContext());
+    }
+
+    @Test
+    @DisplayName("(b) return_full_documents=true honours the scope")
+    void returnFullDocumentsHonoursTheScope() {
+      var response = callRetrieveContext(
+          RetrieveContextRequest.newBuilder()
+              .setQuestion("escalation ladder")
+              .setTopK(5)
+              .addDocIds(IN_SCOPE)
+              .addDocIds(OUT_OF_SCOPE)
+              .addCollection("project-notes")
+              .setReturnFullDocuments(true)
+              .build());
+
+      assertEquals("FULL_DOCUMENT", response.getRetrievalMode(),
+          "fixture must actually exercise the return_full_documents leg");
+      assertTrue(response.getContext().contains("INSCOPEMARKER"), response.getContext());
+      assertFalse(response.getContext().contains("OUTOFSCOPEMARKER"),
+          "return_full_documents skips the chunk leg, so the scope must bind here or not at all: "
+              + response.getContext());
+    }
+
+    @Test
+    @DisplayName("811 D-1 residue: the whole-doc legs now also apply the default exclusion")
+    void unscopedWholeDocLegStillExcludesAgentHistory() {
+      // Behaviour-visible closure, stated plainly: an UNSCOPED request over explicitly-supplied
+      // doc_ids used to get agent-history full text back here, even though the chunk leg has
+      // refused it since 811 D-1. The two legs now agree.
+      var response = callRetrieveContext(
+          RetrieveContextRequest.newBuilder()
+              .setQuestion("escalation ladder")
+              .setTopK(5)
+              .addDocIds(OUT_OF_SCOPE)
+              .addDocIds(AGENT_DOC)
+              .build());
+
+      assertTrue(response.getContext().contains("OUTOFSCOPEMARKER"),
+          "an ordinary document is unaffected: " + response.getContext());
+      assertFalse(response.getContext().contains("AGENTMARKER"),
+          "the default agent-history exclusion must bind on the whole-document leg too: "
+              + response.getContext());
+    }
+
+    @Test
+    @DisplayName("an unscoped request over ordinary docs is unchanged")
+    void unscopedOrdinaryRequestUnchanged() {
+      var response = callRetrieveContext(
+          RetrieveContextRequest.newBuilder()
+              .setQuestion("escalation ladder")
+              .setTopK(5)
+              .addDocIds(IN_SCOPE)
+              .addDocIds(OUT_OF_SCOPE)
+              .build());
+
+      assertTrue(response.getContext().contains("INSCOPEMARKER"),
+          "a collection-tagged doc is NOT excluded by the default scope — only agent-history is: "
+              + response.getContext());
+      assertTrue(response.getContext().contains("OUTOFSCOPEMARKER"), response.getContext());
+    }
+  }
+
   // ==================== Helper ====================
 
   private RetrieveContextResponse callRetrieveContext(RetrieveContextRequest request) {

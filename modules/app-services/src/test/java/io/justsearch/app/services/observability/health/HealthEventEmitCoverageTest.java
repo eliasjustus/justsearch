@@ -49,6 +49,8 @@ final class HealthEventEmitCoverageTest {
           "embedding.blocked",
           "queue-db.unhealthy",
           "queue-db.check-failed",
+          // Tempdoc 821 §3-C3 follow-on — per-stage enrichment completeness (WorkerSnapshotTap).
+          "enrichment.incomplete",
           "ai.not-ready",
           "ai.readiness-unknown",
           "ai.not-configured",
@@ -157,11 +159,11 @@ final class HealthEventEmitCoverageTest {
   }
 
   @Test
-  @DisplayName("canonical list is exactly 32 entries with no duplicates")
-  void canonicalListIs32Unique() {
-    assertEquals(32, CANONICAL_IDS.size(), "CANONICAL_IDS should hold 32 entries");
+  @DisplayName("canonical list is exactly 33 entries with no duplicates")
+  void canonicalListIs33Unique() {
+    assertEquals(33, CANONICAL_IDS.size(), "CANONICAL_IDS should hold 33 entries");
     assertEquals(
-        32,
+        33,
         new HashSet<>(CANONICAL_IDS).size(),
         "CANONICAL_IDS contains a duplicate entry");
   }

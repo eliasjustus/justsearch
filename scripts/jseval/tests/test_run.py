@@ -372,11 +372,17 @@ def _write_golden_corpus(tmp_path, dataset_name, docs):
     return ddir
 
 
-def _status_snapshot(chunk_doc_count, coverage_pct):
-    return {"worker": {"enrichment": {"chunk": {
+def _status_snapshot(chunk_doc_count, coverage_pct, chunk_min_chars=2000):
+    # tempdoc 821 §3-C3: the worker's enrichment auditor publishes the chunk threshold, and
+    # `_compute_chunk_completeness` computes its offline expectation against THAT number instead
+    # of a jseval-side mirror. `chunk_min_chars=None` models a backend predating that field.
+    enrichment = {"chunk": {
         "chunkDocCount": chunk_doc_count,
         "chunkVectorCoveragePercent": coverage_pct,
-    }}}}
+    }}
+    if chunk_min_chars is not None:
+        enrichment["chunkMinChars"] = chunk_min_chars
+    return {"worker": {"enrichment": enrichment}}
 
 
 def _mode_result(pipeline_tracking_observed=(), run_evidence=None):
@@ -446,7 +452,13 @@ class TestComputeChunkCompleteness:
         )
         assert block["verdict"] == "ok"
 
-    def test_missing_status_snapshot_treated_as_zero_observed(self, tmp_path):
+    def test_missing_status_snapshot_is_unevaluable_not_a_clean_pass(self, tmp_path):
+        # Pre-821 this read `degenerate`, because a missing snapshot made observed=0 while the
+        # expectation came from a jseval-side threshold mirror. With the mirror retired (821
+        # §3-C3) the threshold comes from that same snapshot, so a run with NO snapshot has no
+        # expectation to compare against. It must NOT borrow `chunk-free`: that verdict asserts
+        # "no corpus doc reaches the threshold", which this path never computed and which is
+        # affirmatively wrong here (the corpus has a 2500-char doc).
         long_text = "x" * 2500
         _write_golden_corpus(tmp_path, "golden/demo", [
             {"_id": "d1", "title": "", "text": long_text},
@@ -454,8 +466,62 @@ class TestComputeChunkCompleteness:
         block = _compute_chunk_completeness(
             "golden/demo", {"vector": _mode_result(["chunk_merge"])}, None, tmp_path,
         )
-        assert block["verdict"] == "degenerate"
+        assert block["verdict"] == "unevaluable"
         assert block["observed"] == 0
+        assert block["threshold_chars"] is None
+        assert any("chunkMinChars" in r for r in block["reasons"])
+        # No stale reason survives alongside it: the stand-down REPLACES the reason list rather
+        # than prepending to a `chunk-free` explanation that was never computed.
+        assert not any("no corpus doc reaches" in r for r in block["reasons"])
+
+    def test_backend_publishing_zero_threshold_stands_down(self, tmp_path):
+        # chunkMinChars is a proto3 scalar, so an old backend does not OMIT it — it reports 0.
+        # This is the real-world shape, and it must stand down exactly like an absent field.
+        long_text = "x" * 2500
+        _write_golden_corpus(tmp_path, "golden/demo", [
+            {"_id": "d1", "title": "", "text": long_text},
+        ])
+        block = _compute_chunk_completeness(
+            "golden/demo",
+            {"vector": _mode_result(["dense"])},  # no chunk_merge -- would be degenerate if gated
+            _status_snapshot(0, 0.0, chunk_min_chars=0),
+            tmp_path,
+        )
+        assert block["verdict"] == "unevaluable"
+        assert block["threshold_chars"] is None
+        assert block["expected"] == 0
+
+    def test_backend_omitting_the_threshold_stands_down(self, tmp_path):
+        # Belt-and-braces for a payload that genuinely lacks the key (a hand-built snapshot, or a
+        # projection that drops zero-valued fields).
+        long_text = "x" * 2500
+        _write_golden_corpus(tmp_path, "golden/demo", [
+            {"_id": "d1", "title": "", "text": long_text},
+        ])
+        block = _compute_chunk_completeness(
+            "golden/demo",
+            {"vector": _mode_result(["dense"])},
+            _status_snapshot(0, 0.0, chunk_min_chars=None),
+            tmp_path,
+        )
+        assert block["verdict"] == "unevaluable"
+        assert block["threshold_chars"] is None
+
+    def test_expectation_follows_the_published_threshold(self, tmp_path):
+        # Discriminating: the SAME corpus expects chunks under a 2000-char threshold and expects
+        # none under a 5000-char one. A surviving hard-coded mirror could not produce both.
+        _write_golden_corpus(tmp_path, "golden/demo", [
+            {"_id": "d1", "title": "", "text": "x" * 2500},
+        ])
+        healthy = {"vector": _mode_result(["dense", "chunk_merge"])}
+        low = _compute_chunk_completeness(
+            "golden/demo", healthy, _status_snapshot(48, 100.0, chunk_min_chars=2000), tmp_path,
+        )
+        high = _compute_chunk_completeness(
+            "golden/demo", healthy, _status_snapshot(48, 100.0, chunk_min_chars=5000), tmp_path,
+        )
+        assert (low["expected"], low["threshold_chars"]) == (1, 2000)
+        assert (high["expected"], high["threshold_chars"], high["verdict"]) == (0, 5000, "chunk-free")
 
     def test_beir_dataset_with_no_local_corpus_jsonl_is_chunk_free(self, tmp_path):
         # BEIR datasets materialize via ir_datasets; there is no local corpus.jsonl for
@@ -589,4 +655,8 @@ class TestBuildSummaryEmbedsChunkCompleteness:
         )
         assert "chunk_completeness" in summary
         assert summary["chunk_completeness"]["verdict"] == "ok"
-        assert set(summary["chunk_completeness"]) == {"expected", "observed", "verdict", "reasons"}
+        assert set(summary["chunk_completeness"]) == {
+            "expected", "observed", "verdict", "reasons", "threshold_chars",
+        }
+        # 821 §3-C3 provenance: the expectation was computed against the PUBLISHED threshold.
+        assert summary["chunk_completeness"]["threshold_chars"] == 2000

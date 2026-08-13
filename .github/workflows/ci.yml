@@ -198,6 +198,15 @@ jobs:
       - name: Registered Tauri plugins have a base config block
         run: node scripts/ci/check-tauri-plugin-config.mjs
 
+      # Round 16 (tempdoc 823/824 F4) hit a 400 from POST /api/ai/install/repair with nowhere to
+      # look: the whole /api/ai/install/* family had shipped since alpha without ever appearing in
+      # the API contract map. Nothing compared bound routes against documented ones.
+      - name: Test the install-API contract-doc gate
+        run: node scripts/ci/check-install-api-contract.test.mjs
+
+      - name: Install API routes are documented
+        run: node scripts/ci/check-install-api-contract.mjs
+
       - name: Verify frontend-stack claims
         run: node scripts/docs/check-frontend-stack-claims.mjs
 
@@ -517,7 +526,10 @@ jobs:
   integration-tests:
     name: Integration tests (system-tests tier)
     runs-on: windows-latest
-    timeout-minutes: 25
+    # Must stay above the Gradle task timeout (modules/system-tests/build.gradle.kts, 30 min),
+    # or the job is killed first and the artifact-upload step below never runs. 30 min + the
+    # measured 1m26s of checkout/setup/post steps (run 31716264505) leaves ~3.5 min of margin.
+    timeout-minutes: 35
     continue-on-error: true
     steps:
       - name: Checkout
@@ -545,6 +557,7 @@ jobs:
           path: |
             modules/system-tests/build/test-results/integrationTest/TEST-*.xml
             modules/system-tests/build/reports/tests/integrationTest/**
+            modules/system-tests/build/reports/isolated-backend/**
           if-no-files-found: warn
 
   secret-scan:

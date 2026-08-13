@@ -149,13 +149,18 @@ public final class RAGContext implements ContextInjector {
     // threaded to retrieval so the Worker drops these chunks before ranking.
     List<String> excludedSourceIds = excludedSourcesFrom(ctx);
 
+    // Tempdoc 821 §3-C2 — the conversation's collection scope, carried verbatim to retrieval so an
+    // ASK can be scoped the same way a search is. Absent (the FE does not send it yet) = an empty
+    // list = the default scope, i.e. behavior unchanged.
+    List<String> collection = extractStringList(body, "collection");
+
     // Try chunked RAG retrieval. When docIds is empty, use open-retrieval
     // (BM25 pre-search discovers relevant documents from the full index).
     RetrievalAttempt attempt;
     if (docIds.isEmpty()) {
-      attempt = tryOpenRetrieval(question, topK, excludedSourceIds);
+      attempt = tryOpenRetrieval(question, topK, excludedSourceIds, collection);
     } else {
-      attempt = tryRetrieveContext(question, docIdSet, topK, excludedSourceIds);
+      attempt = tryRetrieveContext(question, docIdSet, topK, excludedSourceIds, collection);
     }
     ContextResult retrieval = attempt.result();
     String context = retrieval == null ? null : retrieval.context();
@@ -307,12 +312,13 @@ public final class RAGContext implements ContextInjector {
   }
 
   private RetrievalAttempt tryRetrieveContext(
-      String question, Set<String> docIdSet, int topK, List<String> excludedSourceIds) {
+      String question, Set<String> docIdSet, int topK, List<String> excludedSourceIds,
+      List<String> collection) {
     try {
       // Tempdoc 610 §J.3 — go through the rich params path so the hidden-source exclusion threads to
       // the Worker. maxContextTokens=0 preserves the scoped path's char-budget behavior.
       RetrieveContextParams params =
-          RetrieveContextParams.of(question, topK, 0, docIdSet, excludedSourceIds);
+          RetrieveContextParams.of(question, topK, 0, docIdSet, excludedSourceIds, collection);
       return RetrievalAttempt.ok(
           documents
               .retrieveContext(params)
@@ -325,11 +331,12 @@ public final class RAGContext implements ContextInjector {
   }
 
   private RetrievalAttempt tryOpenRetrieval(
-      String question, int topK, List<String> excludedSourceIds) {
+      String question, int topK, List<String> excludedSourceIds, List<String> collection) {
     try {
       int budgetTokens = TokenEstimation.computeSafeInputBudgetTokens(8192, 1024);
       RetrieveContextParams params =
-          RetrieveContextParams.of(question, topK, budgetTokens, Set.of(), excludedSourceIds);
+          RetrieveContextParams.of(
+              question, topK, budgetTokens, Set.of(), excludedSourceIds, collection);
       return RetrievalAttempt.ok(
           documents
               .retrieveContext(params)
@@ -407,7 +414,12 @@ public final class RAGContext implements ContextInjector {
 
   @SuppressWarnings("unchecked")
   private static List<String> extractDocIds(Map<String, Object> body) {
-    Object raw = body == null ? null : body.get("docIds");
+    return extractStringList(body, "docIds");
+  }
+
+  /** Reads a body key as a list of non-blank strings; absent or non-list yields an empty list. */
+  private static List<String> extractStringList(Map<String, Object> body, String key) {
+    Object raw = body == null ? null : body.get(key);
     if (!(raw instanceof List<?> list)) {
       return List.of();
     }

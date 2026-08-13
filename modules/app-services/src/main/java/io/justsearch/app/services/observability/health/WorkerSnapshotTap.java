@@ -2,8 +2,10 @@
 package io.justsearch.app.services.observability.health;
 
 import io.justsearch.app.api.status.CompatibilityStatusView;
+import io.justsearch.app.api.status.EnrichmentProgressView;
 import io.justsearch.app.api.status.FailureTrackingView;
 import io.justsearch.app.api.status.QueueDbStatusView;
+import io.justsearch.app.api.status.StageCompletenessView;
 import io.justsearch.app.api.status.WorkerOperationalView;
 import io.justsearch.app.observability.health.AssertedCondition;
 import io.justsearch.app.observability.health.ConditionStatus;
@@ -17,10 +19,12 @@ import io.justsearch.app.observability.health.Source;
 import java.time.Clock;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
@@ -37,9 +41,11 @@ import org.slf4j.LoggerFactory;
  * from the gRPC-projected worker view the head already receives. Two emission modes:
  *
  * <ul>
- *   <li><strong>5 Conditions</strong> via {@link ConditionStore} + {@code CONDITION_*}
+ *   <li><strong>Conditions</strong> via {@link ConditionStore} + {@code CONDITION_*}
  *       broadcasts: {@code schema.blocked}, {@code schema.reindex-required},
- *       {@code embedding.blocked}, {@code queue-db.unhealthy}, {@code queue-db.check-failed}.
+ *       {@code embedding.blocked}, {@code embedding.not-ready}, {@code queue-db.unhealthy},
+ *       {@code queue-db.check-failed}, and (tempdoc 821 §3-C3 follow-on, per-stage subjects)
+ *       {@code enrichment.incomplete}.
  *   <li><strong>2 Occurrences</strong> via {@link OccurrenceLog} +
  *       {@code OCCURRENCE_APPENDED} broadcasts (the first OccurrenceLog producers in V1):
  *       {@code worker.job.failed}, {@code worker.job.retry-scheduled}.
@@ -163,6 +169,35 @@ public final class WorkerSnapshotTap {
               new io.justsearch.agent.api.registry.OperationInvocation(
                   new io.justsearch.agent.api.registry.OperationRef("core.reindex"),
                   "{\"force\":true}")));
+  // ----- Enrichment completeness (tempdoc 821 §3-C3 follow-on) -----
+
+  /**
+   * The per-stage completeness audit's condition id. One catalog id, one Condition
+   * <em>instance per stage</em> — {@link ConditionStore} keys on {@code (id, subject)}, so the
+   * subject carries the stage ({@code worker.enrichment/embed}) exactly as
+   * {@code IndexDriftHealthTap} carries the root. A single aggregate condition would collapse
+   * "SPLADE lost 400 documents" and "NER lost 3" into one entry that neither stage can clear.
+   */
+  static final String ENRICHMENT_INCOMPLETE_ID = "enrichment.incomplete";
+
+  private static final String ENRICHMENT_SUBJECT_PREFIX = "worker.enrichment/";
+
+  /** Names the predicate, not just the symptom — missing counts alone are normal mid-ingest. */
+  private static final String ENRICHMENT_REASON = "MissingAtQuiescence";
+
+  /**
+   * Verbatim {@code stageId} values produced by {@code IndexStatusOps.buildEnrichmentCoverage}
+   * ({@code BatchTimingKeys.EMBED}/{@code SPLADE}/{@code NER} and {@code STAGE_CHUNK_EMBED}),
+   * mapped to the sibling PENDING count that decides quiescence for that stage. Head-side
+   * literals for the same reason the compat tables above are: these are wire values, and the
+   * producing constants live in worker modules the head does not depend on.
+   */
+  private static final String STAGE_EMBED = "embed";
+
+  private static final String STAGE_CHUNK_EMBED = "chunk_embed";
+  private static final String STAGE_SPLADE = "splade";
+  private static final String STAGE_NER = "ner";
+
   private static final ConditionMapping QUEUE_DB_UNHEALTHY =
       new ConditionMapping("queue-db.unhealthy", "worker.queue-db", Severity.ERROR);
   private static final ConditionMapping QUEUE_DB_CHECK_FAILED =
@@ -195,6 +230,9 @@ public final class WorkerSnapshotTap {
     ids.add(REINDEX_MAPPING.conditionId());
     ids.add(QUEUE_DB_UNHEALTHY.conditionId());
     ids.add(QUEUE_DB_CHECK_FAILED.conditionId());
+    // Tempdoc 821 §3-C3 follow-on: one catalog id, per-stage subjects (see
+    // reconcileEnrichmentCompleteness) — so the id is a literal here, not a table lookup.
+    ids.add(ENRICHMENT_INCOMPLETE_ID);
     // Phase 6 §B.T.4: the two occurrence events come from per-instance prior-value
     // tracking in detect{JobFailure,RetryScheduled}Occurrence — not from any static
     // mapping table. Declared as literals here so the coverage test sees the full
@@ -226,6 +264,13 @@ public final class WorkerSnapshotTap {
 
   private final Set<String> warnedSchemaStates = ConcurrentHashMap.newKeySet();
   private final Set<String> warnedEmbeddingStates = ConcurrentHashMap.newKeySet();
+  private final Set<String> warnedCompletenessStages = ConcurrentHashMap.newKeySet();
+
+  /**
+   * Subjects currently asserting {@link #ENRICHMENT_INCOMPLETE_ID}, so a stage that repairs
+   * (or stops reporting) clears its own instance — mirrors {@code IndexDriftHealthTap}.
+   */
+  private final Set<String> activeIncompleteSubjects = ConcurrentHashMap.newKeySet();
 
   public WorkerSnapshotTap(
       ConditionStore conditions,
@@ -263,6 +308,7 @@ public final class WorkerSnapshotTap {
     reconcileEmbedding(view.compatibility());
     reconcileQueueDbHealthy(view.queueDb());
     reconcileQueueDbCheck(view.queueDb());
+    reconcileEnrichmentCompleteness(view.enrichment());
     detectJobFailureOccurrence(view.failure());
     detectRetryScheduledOccurrence(view.failure());
   }
@@ -409,6 +455,106 @@ public final class WorkerSnapshotTap {
       clearCondition(QUEUE_DB_CHECK_FAILED.conditionId(), QUEUE_DB_CHECK_FAILED.subject());
     }
     priorQueueDbCheckOk = ok;
+  }
+
+  // ----- Enrichment completeness (per-stage Condition instances) -----
+
+  /**
+   * Turns the per-stage completeness audit (tempdoc 821 §3-C3) into standing Conditions —
+   * {@code missing > 0} is precisely the silent-loss signal that surface exists to expose, and
+   * the {@link ConditionStore} is where a standing defect becomes visible instead of sitting in
+   * a status payload nobody reads.
+   *
+   * <p><strong>The quiescence predicate, and why the naive one is wrong.</strong> The auditor
+   * derives {@code missing = expected - present - failed} ({@code IndexStatusOps.stageCompleteness}),
+   * and a document still queued for the stage is neither {@code present} (not at terminal success,
+   * no artifact) nor {@code failed} — so <em>every PENDING document counts as missing</em>. A
+   * mapping on {@code missing > 0} alone would therefore assert this condition throughout every
+   * normal ingest, which is pending work, not loss. This tap fires only when the stage's own
+   * PENDING count is zero: no in-flight work can explain the gap, so what remains is a population
+   * the backfill will never pick up. Under-reporting is the deliberate side: a COMPLETED-but-
+   * artifact-less document is invisible here while any sibling document is still pending.
+   *
+   * <p>The stricter-looking alternative — {@code missing > pending} — is rejected on purpose: the
+   * completeness counts come from one reader-version-cached searcher acquisition
+   * ({@code IndexCountOps.queryStageCompletenessCounts}) while the PENDING counts are separate
+   * queries, so mid-ingest the two can straddle reader refreshes and the residual would fire on
+   * skew. At quiescence there is nothing left to skew.
+   *
+   * <p>A disabled stage needs no separate gate: its backlog sits at PENDING, so the same predicate
+   * already keeps it silent.
+   *
+   * <p>Tri-state, per the file's convention. An EMPTY {@code completeness} list is absence of data
+   * (a pre-821 worker, or a count query that failed) — unknown ≠ healthy, so prior assertions are
+   * preserved rather than cleared. An unrecognised {@code stageId} cannot have its quiescence
+   * evaluated at all: WARN-once and preserve that stage's prior assertion.
+   *
+   * <p>No recovery {@code OperationInvocation} is attached: no operation repairs one stage's
+   * backlog at this granularity ({@code core.reindex} is corpus-wide), and a wrong affordance is
+   * worse than none.
+   */
+  private void reconcileEnrichmentCompleteness(EnrichmentProgressView enrichment) {
+    if (enrichment == null || enrichment.completeness().isEmpty()) {
+      return;
+    }
+    Set<String> stillIncomplete = new LinkedHashSet<>();
+    for (StageCompletenessView stage : enrichment.completeness()) {
+      String subject = ENRICHMENT_SUBJECT_PREFIX + stage.stageId();
+      OptionalLong pending = pendingCountFor(enrichment, stage.stageId());
+      if (pending.isEmpty()) {
+        warnUnmappedCompletenessStage(stage.stageId());
+        if (activeIncompleteSubjects.contains(subject)) {
+          stillIncomplete.add(subject); // preserve — quiescence is unknowable for this stage
+        }
+        continue;
+      }
+      if (stage.missing() > 0 && pending.getAsLong() == 0L) {
+        upsertCondition(
+            new ConditionMapping(ENRICHMENT_INCOMPLETE_ID, subject, Severity.WARNING),
+            ENRICHMENT_REASON,
+            Optional.of(
+                stage.missing()
+                    + " of "
+                    + stage.expected()
+                    + " documents never got the "
+                    + stage.stageId()
+                    + " stage's output, and no work is pending."));
+        stillIncomplete.add(subject);
+      }
+    }
+    for (String prior : Set.copyOf(activeIncompleteSubjects)) {
+      if (!stillIncomplete.contains(prior)) {
+        clearCondition(ENRICHMENT_INCOMPLETE_ID, prior);
+      }
+    }
+    activeIncompleteSubjects.clear();
+    activeIncompleteSubjects.addAll(stillIncomplete);
+  }
+
+  /**
+   * The PENDING count that decides a stage's quiescence, or empty when the {@code stageId} is not
+   * one this head knows how to evaluate.
+   */
+  private static OptionalLong pendingCountFor(EnrichmentProgressView enrichment, String stageId) {
+    return switch (stageId == null ? "" : stageId) {
+      case STAGE_EMBED -> OptionalLong.of(enrichment.embeddingPendingCount());
+      case STAGE_SPLADE -> OptionalLong.of(enrichment.spladePendingCount());
+      case STAGE_NER -> OptionalLong.of(enrichment.pendingNerCount());
+      case STAGE_CHUNK_EMBED ->
+          enrichment.chunk() == null
+              ? OptionalLong.empty()
+              : OptionalLong.of(enrichment.chunk().chunkEmbeddingPendingCount());
+      default -> OptionalLong.empty();
+    };
+  }
+
+  private void warnUnmappedCompletenessStage(String stageId) {
+    if (warnedCompletenessStages.add(String.valueOf(stageId))) {
+      log.warn(
+          "WorkerSnapshotTap: completeness stageId={} has no known pending count; cannot judge"
+              + " quiescence, preserving prior assertion (unknown ≠ healthy)",
+          stageId);
+    }
   }
 
   // ----- Occurrence detection -----

@@ -297,8 +297,10 @@ Two staged tools make rounds repeatable and make coverage fail closed:
   claims a surface; it cannot prove the PIXELS show it, so a reader pass over
   every credited screenshot is a required, separately fail-closed gate, not an
   optional judgment call.
-  Three further artifacts are required by the same check, each separately
-  fail-closed (all under *Writing results* below): **`mustwatch-verdicts.v1.json`**
+  Four further artifacts are required by the same check, each separately
+  fail-closed (all under *Writing results* below): **`findings.md`** (this round's
+  defect report as its own artifact — see *Findings* below),
+  **`mustwatch-verdicts.v1.json`**
   (a verdict for every must-watch id in this round's brief),
   **`session-analysis.md`** (the session-vs-harness debrief), and
   **`mutating-probe.v1.json`** (written for you by `collect-evidence.ps1` — a
@@ -358,7 +360,26 @@ capture step, already wired into `collect-evidence.ps1` — if `golden-queries.j
 to it, the script POSTs each query to `/api/knowledge/search` (hybrid, limit 10) against your
 running candidate and saves the raw responses to `evidence/golden/<queryId>.json`. No judgment is
 required from you here; the tolerance comparison against the baseline runs host-side at finalize
-via `check_golden_parity.py`. If `staging-gaps.md` lists a missing golden-parity baseline for this
+via `check_golden_parity.py`.
+
+**The capture is gated on a warm GPU embedding session (round 16, tempdoc 823 §3).** Before
+capturing, `collect-evidence.ps1` reads the `embed` entry of `/api/ai/runtime/status`'s
+`onnxFeatures` array (note: an ARRAY keyed by `id`, not an object with an `embed` property) and
+requires `executionProvider: "cuda"` with `gpuFallback: false`. The CUDA session is created
+lazily on the first inference batch, so a capture taken too early runs CPU-FP32 query vectors
+against a GPU-FP16 baseline — exactly what made round 16's parity check exit 1 on three queries
+with the dense leg alone collapsing while SPLADE and text stayed high. If the session is cold the
+script triggers a vector-mode warm-up search and polls for up to 3 minutes; if the session is still
+reported as fallen back to CPU (`gpuFallback: true`) it **auto-skips the capture** with a note (same
+mechanism as the corpus-ratio floor above) rather than producing evidence that reads as a ranking
+regression. A host that is genuinely CPU-only — `executionProvider: "cpu"` with no `gpuFallback` —
+has no GPU session to wait for, so the capture **proceeds** and is labelled
+`captureCondition: "cpu-native"` with the reasoning in `golden-capture-note.txt`; comparability is
+then host-side's call (`check_golden_parity.py` fails typed on the embedding-fingerprint mismatch,
+and such a host needs its own CPU-generated baseline). Either way the observed state, including
+`captureCondition`, is written to `evidence/golden-capture-ep.json`, so finalize can always see the
+condition the capture was taken under. A skip is a recorded gap: re-run `collect-evidence.ps1` after
+real search/enrichment traffic has warmed the session. If `staging-gaps.md` lists a missing golden-parity baseline for this
 candidate, record that as a round-level coverage gap (per the protocol above) rather than
 attempting to judge search quality yourself.
 
@@ -431,17 +452,33 @@ sub-floor overlap is still expected of the round.
    not need to prove this. Your one residual job: **if any elevation prompt
    appears during the JustSearch install, that is a finding** — note the
    publisher shown and report it.
-   **Run this round non-elevated.** UAC renders on the secure desktop, so
-   screenshots can't capture it, and an already-elevated session is never
-   re-prompted (an elevated process tree cannot observe a UAC prompt at all,
-   regardless of what the installer requests). But that is not the reason to
-   run non-elevated: an elevated round does not reproduce a normal user's
-   environment and can mask permission defects a real user would hit — a pass
-   that depends on an environment precondition is not a pass (this repo's
-   `green-masked-destructive` principle). If this session's own terminal is
-   already elevated (`collect-evidence.ps1` self-checks this at Step 0 and
-   writes `evidence/elevation-check.txt`), say so in the round's summary —
-   an elevation prompt was structurally impossible to observe this round.
+   **Elevation posture: every round in this image runs ELEVATED, and no round
+   can observe a UAC prompt. This is a property of the image, not of the
+   round.** The Windows Sandbox image has `EnableLUA=0`, so Windows issues no
+   filtered/split token at all: `explorer.exe` itself runs elevated, every
+   process inherits that, and the de-elevation tricks (relaunch via Explorer,
+   `runas /trustlevel`) have no non-elevated token to inherit. Round 16
+   established this to root cause; the evidence is
+   `evidence/elevation-check.txt` from that round (2026-08-12), and
+   `collect-evidence.ps1` re-writes that file at Step 0 every round.
+   Consequences you must record rather than work around:
+   - **Any UAC-observation item is `unobservable` with this reason**, never a
+     pass and never silence. UAC also renders on the secure desktop, which
+     screenshots cannot capture — but the elevated process tree is the binding
+     constraint: it is never re-prompted in the first place.
+   - **The round does not reproduce a normal user's integrity level** and can
+     therefore mask permission defects a real user would hit — a pass that
+     depends on an environment precondition is not a pass (this repo's
+     `green-masked-destructive` principle). Say so in the round's summary.
+   - The earlier instruction here ("Run this round non-elevated") was
+     **unfollowable as written** and cost round 16 a real detour. It is
+     removed rather than softened.
+   **Posture decision PENDING (owner):** either `generate_wsb` sets
+   `EnableLUA=1` (costs one reboot inside sandbox boot; restores a normal
+   user's integrity level and makes the trust prompts reproducible), or the
+   Sandbox tier drops the non-elevated expectation and accepts the blind spot
+   explicitly. Until that is decided, the `.wsb` posture is unchanged and this
+   text states the fact — do not treat the blind spot as closed.
    **Launch the installer DETACHED, never with `-Wait` (round 12, tempdoc 806
    W3 item 5).** The candidate installer is interactive and parks on a wizard
    page — `Start-Process -FilePath ... -Wait` blocks until the process exits,
@@ -466,6 +503,14 @@ sub-floor overlap is still expected of the round.
 6. **Install AI** — in `fresh-install` mode, validate the full model + GPU-runtime
    download through the UI, backed by `/api/ai/install/status` snapshots. In
    `pre-staged-models` mode, label the evidence shortcut-only.
+   **On ANY package download failure, run the staged manual-fetch control
+   BEFORE forming a hypothesis** (round 16, tempdoc 823 §4): `.\probe-download.ps1
+   -Url <the failing URL from the manifest> [-ExpectedSha256 <digest>]`. It
+   fetches with the same `curl.exe` flag set the product falls back to and prints
+   the BITS service state, HTTP status, bytes, elapsed time and SHA-256 — one
+   command that partitions environment-vs-product. Round 16's wedged package
+   fetched by hand in 0.41 s with a matching digest, which reframed the whole
+   finding (and refuted the round's leading root-cause hypothesis).
 7. **Library / indexing journey** — add a folder through the UI where possible;
    for the full corpus, ingest `Desktop\JustSearchTest\scifact\`. Verify
    per-folder row state, Tasks panel live updates, and `/api/knowledge/status`
@@ -705,6 +750,44 @@ Files written to the mapped folder
 the sandbox closes. Anywhere else (`C:\`, the user profile) is wiped on shutdown.
 Report findings by journey with screenshot filenames and raw API/log evidence, and
 state the coverage result against `coverage-brief.md`.
+
+**Any tool you build during the round is saved under the mapped share, not the
+sandbox-side scratchpad.** The scratchpad is wiped with the sandbox like
+everything else outside the mapped folder. Round 16 built four working
+instruments in it — `hwnd-drive.ps1`, `nav.ps1`, `ui-search.ps1`,
+`pick-folder.ps1` — and all four were lost at shutdown; only their prose
+descriptions in the retrospective survived, and re-deriving them costs the next
+round the same time again. Write in-round tooling to
+`Desktop\JustSearchTest\round-tools\` (any name; the directory is not
+credit-eligible evidence and is excluded from nothing — it is simply
+persisted), and name it in the retrospective so the harness can promote what
+earned its keep into `scripts/sandbox/`.
+
+### Findings (required — the defect report as its own artifact)
+
+Every round must write `evidence/findings.md`. Round 16 filed five findings, one
+of them blocking, and wrote no findings file: they lived scattered across
+`mustwatch-verdicts.v1.json`, `retrospective.md` and `session-analysis.md`, so
+reassembling the round's actual defect list meant reading three artifacts written
+for three other purposes. The convention existed only as the "report findings by
+journey" sentence above; it is now checked.
+
+Write one entry per finding, each carrying:
+
+- **A severity** — blocking/HIGH/MEDIUM/LOW, and what the severity is grounded in.
+- **What was observed, with an evidence pointer** — the screenshot filename, the
+  API snapshot, the log line. A finding a reader cannot re-open is a claim.
+- **Its regression home** — a gate/test in its natural tier, or a
+  `sandbox-must-watch` entry (see *Convergence* above). One of the two, named.
+
+`evidence/findings.md` is checked at finalize and the round **fails closed** if it
+is missing or too thin. A round that genuinely found nothing still writes the file
+and **says so explicitly at the start of a line** ("No findings this round."),
+describing what it exercised to reach that conclusion — an explicit clean-round
+declaration satisfies the check; silence does not. The declaration is matched
+line-anchored on purpose: a report that merely contains the phrase inside a scoped
+sentence ("no findings in the search journey, but …") is a report WITH findings and
+stays subject to the per-finding topic checks above.
 
 ### Evidence review (required — a reader, not just a filename, must confirm coverage)
 

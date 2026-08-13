@@ -84,8 +84,13 @@ public final class ModelRegistryLoader {
       for (RawSupportingFile rs : rp.supportingFiles) {
         // extract: optional flag (default false) — alpha.15 archive support.
         boolean extract = rs.extract != null && rs.extract;
+        // required: optional flag defaulting to TRUE (tempdoc 824 §3.3a). Absent must mean
+        // required, so a registry written before the axis existed — and any entry whose author
+        // did not classify it — keeps producing the full-strength missing-file verdict.
+        boolean required = rs.required == null || rs.required;
         supporting.add(
-            new SupportingFile(rs.filename, rs.sha256, rs.sizeBytes, rs.downloadUrl, extract));
+            new SupportingFile(
+                rs.filename, rs.sha256, rs.sizeBytes, rs.downloadUrl, extract, required));
       }
     }
     // requiresCuda: optional flag (default false) — tempdoc 772 Q3. Absent in a pre-772 registry
@@ -137,5 +142,10 @@ public final class ModelRegistryLoader {
       String downloadUrl) {}
 
   private record RawSupportingFile(
-      String filename, String sha256, long sizeBytes, String downloadUrl, Boolean extract) {}
+      String filename,
+      String sha256,
+      long sizeBytes,
+      String downloadUrl,
+      Boolean extract,
+      Boolean required) {}
 }

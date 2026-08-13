@@ -3,6 +3,7 @@ package io.justsearch.indexerworker.services;
 
 import io.justsearch.indexerworker.ingest.IngestionSkipPolicy;
 import io.justsearch.indexerworker.queue.JobQueue;
+import io.justsearch.indexerworker.util.PathNormalizer;
 import io.justsearch.ipc.ScanRootProgress;
 import java.io.IOException;
 import java.nio.file.FileSystem;
@@ -14,6 +15,7 @@ import java.nio.file.PathMatcher;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.BooleanSupplier;
@@ -63,6 +65,7 @@ final class WorkerScanOps {
   private final LongSupplier queueDepthSupplier;
   private final BooleanSupplier isCancelled;
   private final BackpressureWaiter backpressureWaiter;
+  private final ForcedPathSink forcedPathSink;
 
   /** Production constructor — uses the real cloud-placeholder detector and no-op pacing hooks. */
   WorkerScanOps(JobQueue jobQueue) {
@@ -72,7 +75,8 @@ final class WorkerScanOps {
         SyncDirectoryOps::isCloudPlaceholder,
         jobQueue::queueDepth,
         () -> false,
-        WorkerScanOps::sleepForBackpressure);
+        WorkerScanOps::sleepForBackpressure,
+        paths -> {});
   }
 
   /**
@@ -80,14 +84,19 @@ final class WorkerScanOps {
    * detector. Used by {@link GrpcIngestService} so the Worker-owned scan honours
    * {@link io.grpc.stub.ServerCallStreamObserver#isCancelled()} and the live queue depth.
    */
-  WorkerScanOps(JobQueue jobQueue, LongSupplier queueDepthSupplier, BooleanSupplier isCancelled) {
+  WorkerScanOps(
+      JobQueue jobQueue,
+      LongSupplier queueDepthSupplier,
+      BooleanSupplier isCancelled,
+      ForcedPathSink forcedPathSink) {
     this(
         jobQueue,
         new CloudPlaceholderRecorder(jobQueue),
         SyncDirectoryOps::isCloudPlaceholder,
         queueDepthSupplier,
         isCancelled,
-        WorkerScanOps::sleepForBackpressure);
+        WorkerScanOps::sleepForBackpressure,
+        forcedPathSink);
   }
 
   /**
@@ -102,7 +111,8 @@ final class WorkerScanOps {
       Predicate<Path> isCloudPlaceholder,
       LongSupplier queueDepthSupplier,
       BooleanSupplier isCancelled,
-      BackpressureWaiter backpressureWaiter) {
+      BackpressureWaiter backpressureWaiter,
+      ForcedPathSink forcedPathSink) {
     this.jobQueue = Objects.requireNonNull(jobQueue, "jobQueue");
     this.cloudPlaceholderRecorder =
         Objects.requireNonNull(cloudPlaceholderRecorder, "cloudPlaceholderRecorder");
@@ -110,6 +120,7 @@ final class WorkerScanOps {
     this.queueDepthSupplier = Objects.requireNonNull(queueDepthSupplier, "queueDepthSupplier");
     this.isCancelled = Objects.requireNonNull(isCancelled, "isCancelled");
     this.backpressureWaiter = Objects.requireNonNull(backpressureWaiter, "backpressureWaiter");
+    this.forcedPathSink = Objects.requireNonNull(forcedPathSink, "forcedPathSink");
   }
 
   /** Test-only convenience for the prior 3-arg constructor. */
@@ -123,7 +134,8 @@ final class WorkerScanOps {
         isCloudPlaceholder,
         () -> 0L,
         () -> false,
-        WorkerScanOps::sleepForBackpressure);
+        WorkerScanOps::sleepForBackpressure,
+        paths -> {});
   }
 
   /**
@@ -161,6 +173,11 @@ final class WorkerScanOps {
     List<JobQueue.EnqueueEntry> batch = new ArrayList<>(ENQUEUE_BATCH_SIZE);
     boolean[] cancelled = {false};
     String collection = request.collection();
+    // Tempdoc 821 §3-C3: a FORCE_REINDEX scan marks every path it admits forced, so the batch
+    // extractor bypasses its unchanged-check and actually re-runs extraction + enrichment.
+    // Same sink GrpcIngestService#submitBatch already uses for ForceReindex on the batch API —
+    // no new mechanism, just the arm that never consulted request.mode().
+    boolean forceReindex = request.mode() == ScanMode.FORCE_REINDEX;
     // Tempdoc 812 D2: every job this walk admits remembers the scan that admitted it, so the Head
     // can roll the per-document terminal outcomes up into ONE durable scan-completion audit row.
     String enqueueScanId = scanId;
@@ -204,7 +221,7 @@ final class WorkerScanOps {
             batch.add(new JobQueue.EnqueueEntry(file, attrs.size()));
             if (batch.size() >= ENQUEUE_BATCH_SIZE) {
               awaitQueueBelowThreshold();
-              flushBatch(batch, collection, enqueueScanId);
+              flushBatch(batch, collection, enqueueScanId, forceReindex);
               if (isCancelled.getAsBoolean()) {
                 cancelled[0] = true;
                 return FileVisitResult.TERMINATE;
@@ -230,7 +247,7 @@ final class WorkerScanOps {
 
     if (!batch.isEmpty()) {
       awaitQueueBelowThreshold();
-      flushBatch(batch, collection, enqueueScanId);
+      flushBatch(batch, collection, enqueueScanId, forceReindex);
       if (isCancelled.getAsBoolean()) {
         cancelled[0] = true;
       }
@@ -243,11 +260,32 @@ final class WorkerScanOps {
     return terminal;
   }
 
-  private void flushBatch(List<JobQueue.EnqueueEntry> batch, String collection, String scanId) {
+  private void flushBatch(
+      List<JobQueue.EnqueueEntry> batch, String collection, String scanId, boolean forceReindex) {
     String coll = collection == null || collection.isBlank() ? null : collection;
     jobQueue.enqueueEntries(
         List.copyOf(batch), coll, scanId == null || scanId.isBlank() ? null : scanId);
+    if (forceReindex && !batch.isEmpty()) {
+      // Mark per batch rather than once at the end: a long walk's early batches are already
+      // being extracted while later directories are still being visited, so a deferred mark
+      // would arrive after the extractor had skipped them as UNCHANGED.
+      // The key MUST be byte-identical to FileFreshnessSnapshot.capture's, so both sides derive it
+      // through the one shared PathNormalizer#normalizeKey: a key that differs by one `..` segment
+      // would make `forcedPaths.remove(normalizedPath)` miss and the force silently do nothing.
+      forcedPathSink.markForced(
+          batch.stream().map(e -> PathNormalizer.normalizeKey(e.path())).toList());
+    }
     batch.clear();
+  }
+
+  /**
+   * Sink for paths a FORCE_REINDEX scan admits (tempdoc 821 §3-C3). Production wiring is {@code
+   * IndexingLoop::markForced} — the same set {@code GrpcIngestService#submitBatch} feeds for the
+   * batch API's {@code force_reindex} flag.
+   */
+  @FunctionalInterface
+  interface ForcedPathSink {
+    void markForced(Collection<String> normalizedPaths);
   }
 
   /**

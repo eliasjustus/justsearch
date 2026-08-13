@@ -525,7 +525,7 @@ describe('UnifiedChatView header controls are rung-invariant (round-14 finding 1
     }
   });
 
-  it('the surviving gate is thread state, not the rung — an empty thread hides them on EVERY rung alike', async () => {
+  it('the surviving gate is thread state, not the rung — an empty thread hides Export (nothing to export) but keeps New chat visible+disabled on EVERY rung alike', async () => {
     // Precision guard: proves the assertion above is not "these buttons always render".
     for (const rung of RUNGS) {
       const view = mountView();
@@ -537,8 +537,53 @@ describe('UnifiedChatView header controls are rung-invariant (round-14 finding 1
       const labels = [...view.shadowRoot!.querySelectorAll('.header .new-chat-btn')].map((b) =>
         (b.textContent ?? '').trim(),
       );
-      expect(labels, `rung ${rung}`).toEqual(['Activity']);
+      expect(labels, `rung ${rung}`).toEqual(['Activity', 'New chat']);
     }
+  });
+});
+
+// Tempdoc 821 §4 — New chat used to be hidden ENTIRELY on a fresh/empty chat (thread.length > 0
+// gate), leaving no visible entry point. It now always renders, disabled when there is nothing to
+// reset (empty thread) and enabled once the thread has content — the .ver-nav disabled idiom.
+describe('UnifiedChatView "New chat" control (tempdoc 821 §4)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    __resetUserConfigForTest();
+    __resetUiModeForTest();
+  });
+
+  function newChatButton(view: UnifiedChatView): HTMLButtonElement | null {
+    return [...view.shadowRoot!.querySelectorAll('.header .new-chat-btn')].find(
+      (b) => (b.textContent ?? '').trim() === 'New chat',
+    ) as HTMLButtonElement | null;
+  }
+
+  it('renders New chat DISABLED (not hidden) when the thread is empty', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { thread: unknown[] }).thread = [];
+    view.requestUpdate();
+    await view.updateComplete;
+    const btn = newChatButton(view);
+    expect(btn).not.toBeNull();
+    expect(btn!.disabled).toBe(true);
+    expect(btn!.title).toBe('Already a new chat');
+  });
+
+  it('renders New chat ENABLED once the thread has content', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { thread: unknown[] }).thread = [
+      { role: 'user', content: 'q', shapeId: 'core.free-chat' },
+      { role: 'assistant', content: 'a', shapeId: 'core.free-chat' },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const btn = newChatButton(view);
+    expect(btn).not.toBeNull();
+    expect(btn!.disabled).toBe(false);
+    expect(btn!.title).toBe('');
   });
 });
 

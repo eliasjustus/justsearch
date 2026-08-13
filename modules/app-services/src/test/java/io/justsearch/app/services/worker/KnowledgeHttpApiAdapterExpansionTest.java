@@ -111,4 +111,61 @@ final class KnowledgeHttpApiAdapterExpansionTest {
     assertFalse(result.startsWith("optimize^"), "original term should NOT be boosted");
   }
 
+  // ---------------------------------------------------------------------
+  // The merged query is re-issued as LUCENE syntax, but expansion only runs for SIMPLE requests —
+  // so the user's half must stay LITERAL. Before the escape (register F-046 / tempdoc 821 §P) the
+  // multi-leg legs ignored query_syntax, which made these strings harmless by accident; once the
+  // legs honour it, an unescaped user half silently changes what the user asked for.
+  // ---------------------------------------------------------------------
+
+  @Test
+  @DisplayName("a leading minus in the USER's text stays a literal term, not a NOT operator")
+  void mergeExpansion_escapesUserMinusSoItCannotInvertMeaning() {
+    String result = KnowledgeSearchEngine.mergeExpansion("covid -vaccine", "vaccination immunized");
+    assertNotNull(result);
+    assertTrue(result.startsWith("covid \\-vaccine"), "the user's '-' is escaped: " + result);
+    assertFalse(
+        result.contains(" -vaccine"),
+        "an unescaped '-vaccine' would EXCLUDE every vaccine document — the opposite of the"
+            + " user's SIMPLE-syntax query: "
+            + result);
+  }
+
+  @Test
+  @DisplayName("a colon in the USER's text stays literal, not a field qualifier")
+  void mergeExpansion_escapesUserColonSoItCannotBecomeAFieldQuery() {
+    String result = KnowledgeSearchEngine.mergeExpansion("error:timeout", "errors timeouts");
+    assertNotNull(result);
+    assertTrue(result.startsWith("error\\:timeout"), "the user's ':' is escaped: " + result);
+    assertFalse(
+        result.startsWith("error:timeout"),
+        "unescaped, this parses as a query against a field named 'error' (which does not exist)"
+            + " and matches nothing: "
+            + result);
+  }
+
+  @Test
+  @DisplayName("escaping the user half does not disarm the expansion boosts")
+  void mergeExpansion_escapeLeavesAppendedBoostsIntact() {
+    String result = KnowledgeSearchEngine.mergeExpansion("c++ (crash)", "crashes crashing");
+    assertNotNull(result);
+    assertTrue(result.startsWith("c\\+\\+ \\(crash\\)"), "every metacharacter escaped: " + result);
+    assertTrue(result.contains("crashes^0.3"), "appended variants keep live boost syntax");
+    assertFalse(result.contains("crashes\\^0.3"), "the boost caret must NOT be escaped");
+  }
+
+  @Test
+  @DisplayName("escapeLuceneSyntax covers the whole Lucene metacharacter set")
+  void escapeLuceneSyntax_coversEveryMetacharacter() {
+    // The set the Worker's SIMPLE path escapes before parsing (QueryParser.escape). Restated here
+    // because the Head cannot import Lucene (hard invariant 1); this test is the pin against drift.
+    String metas = "\\+-!():^[]\"{}~*?|&/";
+    String escaped = KnowledgeSearchEngine.escapeLuceneSyntax(metas);
+    StringBuilder expected = new StringBuilder();
+    for (char c : metas.toCharArray()) {
+      expected.append('\\').append(c);
+    }
+    assertEquals(expected.toString(), escaped);
+    assertEquals("plain words 1 2 3", KnowledgeSearchEngine.escapeLuceneSyntax("plain words 1 2 3"));
+  }
 }

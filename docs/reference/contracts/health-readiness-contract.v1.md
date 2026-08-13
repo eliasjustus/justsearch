@@ -2,7 +2,7 @@
 title: Health Readiness Contract v1
 type: contract
 status: stable
-updated: 2026-06-20
+updated: 2026-08-12
 description: Additive typed readiness envelope for /api/status with legacy boolean aliases.
 ---
 
@@ -37,6 +37,10 @@ This contract defines `/api/status.readiness` semantics and migration rules.
   }
 }
 ```
+
+This sample shows a **reachable Worker**, which is why every component carries `stale: false` and
+`stalenessMs: 0`; it also abbreviates `components` to a representative subset. See
+[Staleness Semantics](#staleness-semantics) for what these fields carry when Worker contact is lost.
 
 ## Typed States
 
@@ -79,6 +83,11 @@ Interpretation:
 - `NOT_CONFIGURED`
 - `DEGRADED`
 - `READY`
+10. A `READY` component MAY carry a reason code. Such a code is *informational* — it names a
+   condition that is present but is not degradation (e.g. an optional component that is absent by
+   design). Consumers must read **state** as the degradation signal: the presence of a reason code
+   on a component or on a composite's `reasonCodes` list is not, on its own, evidence of
+   degradation.
 
 ## Reason Code Taxonomy (v1)
 
@@ -106,11 +115,66 @@ Worker `health_check.ai_ready` remains worker-local telemetry and is non-authori
 ## Staleness Semantics
 
 For each readiness component:
-1. `observedAt` is required and ISO-8601.
-2. `stale` is a boolean freshness flag.
-3. `stalenessMs` is non-negative age since last confirmed source update.
+1. `observedAt` is ISO-8601 and means *when the fact behind this component was last observed from
+   its source*. It is omitted when there is no such observation (see rule 5).
+2. `stale` is a boolean freshness flag: `true` means this component's verdict was derived without a
+   fresh observation of its source.
+3. `stalenessMs` is a non-negative age. It is `0` whenever `stale` is `false`.
 
-v1 behavior uses `stale=false`, `stalenessMs=0` for current status snapshots.
+Head-local dimensions read head-side supervisor, capability, or monitor state that is current at
+response-build time. They always report `stale=false`, `stalenessMs=0`, and the response-build
+`observedAt` — a Worker outage does not make them stale.
+
+Worker-observed dimensions are those whose verdict reads the Worker's gRPC status view. When that
+call fails or the worker capability is unavailable, the Head substitutes a fallback view, so those
+arms answer from placeholder data. Then:
+
+4. `stale` is `true`, and `observedAt` carries the epoch of the newest *successful* Worker
+   observation in this Head process — not the response-build time, which would be a false freshness
+   claim over a fallback-derived verdict. `stalenessMs` is the gap from that observation to now.
+5. If the Worker has never been reached in this Head process, there is no observation to timestamp:
+   `observedAt` is **omitted** rather than fabricated, and `stalenessMs` measures from Head start as
+   a lower bound on the out-of-contact gap.
+
+Which dimensions are worker-observed is decided by what each one reads, not by its `source` label:
+
+| Dimension | Worker-observed | Note |
+|---|---|---|
+| `indexServing`, `embedding`, `chunkEmbedding`, `visualTextExtraction` | yes | read the Worker status/health view directly |
+| `visualDocumentUnderstanding` | yes | `source` is `head_vdu_status`, but its gate is the Worker's `visualEnrichmentNeededCount` |
+| `gpu` | yes | the NVML sample is head-local, but its saturation-suppression gate reads the Worker's `processingJobsCount` |
+| `workerControlPlane`, `ai`, `lambdamartModel`, `telemetry` | no | head-side capability / supervisor / monitor state |
+
+For a dimension mixing head-local and Worker inputs (`gpu`, `visualDocumentUnderstanding`), the
+oldest input governs the freshness claim: the timestamp under-claims the freshness of the head-local
+part rather than over-claiming the freshness of the Worker part.
+
+Composites aggregate their members' freshness: `stale` is `true` when **any** member component is
+stale, and `maxStalenessMs` is the **maximum** `stalenessMs` over the stale members (`0` when
+`stale` is `false`). The aggregate is derived from the same member component views in the same
+response — it is a projection, not a second observation, so a composite can never disagree with its
+members. A composite whose members are all head-local (`telemetry`) therefore stays `stale=false`
+through a Worker outage, while `retrieval` and `aiFeatures` go stale as soon as one worker-observed
+member does. A consumer may still read the member components' `stale` for per-dimension detail, or
+the process-wide `meta.workerRpcStale` for the contact fact itself.
+
+Example of the same envelope after Worker contact is lost (components abbreviated):
+
+```json
+{
+  "readiness": {
+    "components": {
+      "indexServing": { "state": "NOT_READY", "reasonCode": "worker.unavailable", "source": "worker_status", "observedAt": "2026-02-19T07:59:12Z", "stale": true, "stalenessMs": 48000 },
+      "workerControlPlane": { "state": "NOT_READY", "reasonCode": "worker.spawn_failed", "source": "lifecycle_snapshot", "observedAt": "2026-02-19T08:00:00Z", "stale": false, "stalenessMs": 0 }
+    },
+    "composites": {
+      "retrieval": { "state": "NOT_READY", "reasonCodes": ["worker.unavailable", "worker.spawn_failed"], "stale": true, "maxStalenessMs": 48000 },
+      "telemetry": { "state": "READY", "reasonCodes": [], "stale": false, "maxStalenessMs": 0 }
+    }
+  },
+  "meta": { "workerRpcAtMs": 1771488000000, "workerRpcStale": true }
+}
+```
 
 ## Non-Goals
 

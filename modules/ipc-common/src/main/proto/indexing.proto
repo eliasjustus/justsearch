@@ -400,6 +400,12 @@ message RetrieveContextRequest {
   // The Worker drops these chunks BEFORE ranking (a MUST_NOT pre-search filter), so over-retrieval
   // refills top-K from the remaining candidates. Empty = no exclusion (backward-compatible default).
   repeated ChunkRef excluded_chunks = 24;
+
+  // Tempdoc 821 §3-C2 — scope RAG retrieval to Lucene collection tag(s). Shape mirrors
+  // SearchFilters.collection (field 16) so the ASK path and the SEARCH path model scope identically.
+  // Non-empty = a POSITIVE include of exactly those collections; EMPTY = the DEFAULT scope (the
+  // MUST_NOT agent-history exclusion of tempdoc 585 D4b), never "match nothing".
+  repeated string collection = 25;
 }
 
 // Tempdoc 610 §J.3 — a structured (parentDocId, chunkIndex) reference to one retrieved chunk.
@@ -788,7 +794,42 @@ message EnrichmentCoverage {
   // Move 2 item 4 — previously unobservable; batchTiming/enrichmentCompleted counters froze in
   // individual mode with no signal explaining why).
   string backfill_mode = 15;
-  // Next available field number: 16
+  // Tempdoc 821 §3-C3: per-stage completeness audit. A PROJECTION over the counts above plus the
+  // artifact-presence walks — not a second authority. Answers "did every document this stage
+  // applies to actually get its artifact?", which the coverage percentages above cannot: they
+  // divide by every document, so a stage that silently lost a sub-population reads the same as
+  // one with nothing to do.
+  repeated StageCompleteness completeness = 16;
+  // Thresholds the auditor OWNS and publishes so off-process oracles (jseval) read them here
+  // instead of mirroring the Java constants and drifting.
+  int32 chunk_min_chars = 17;      // ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS
+  double vector_ready_percent = 18; // the bar ChunkCoverage.vectors_ready is evaluated against
+  // Documents whose ner_status is terminal-FAILED. The other three stages have carried a
+  // failed_count since 354; NER reported only pending/completed until 821 §3-C3. int64 to match
+  // those siblings (FeatureCoverage.failed_count) and the app-api view, not the int32 the
+  // neighbouring pending/completed_ner_count fields happen to use.
+  int64 failed_ner_count = 19;
+  // Next available field number: 20
+}
+
+// One enrichment stage's completeness audit (tempdoc 821 §3-C3).
+message StageCompleteness {
+  // "embed" | "splade" | "ner" | "chunk_embed". The first three match the enrichment_completed /
+  // batch_timing map keys (BatchTimingKeys); chunk embedding has no timing key of its own because
+  // it rides the "embed" stage.
+  string stage_id = 1;
+  // How "present" was established:
+  //   ARTIFACT — the artifact itself was counted (the KNN vector values), so a status field that
+  //              lies cannot inflate it.
+  //   STATUS   — only the bookkeeping status field was counted. Declared honestly because no
+  //              artifact proxy exists: the `splade` field is a postings/feature field with
+  //              docValues:false (fields.v1.json) and NER writes no countable per-doc artifact.
+  string tier = 2;
+  int64 expected = 3; // docs in scope that CARRY the stage's status field (absent => N/A, post-798)
+  int64 present = 4;  // ARTIFACT: docs carrying the artifact; STATUS: docs at a terminal SUCCESS
+  int64 missing = 5;  // expected - present - failed, floored at 0
+  int64 failed = 6;   // docs at the terminal FAILED value
+  // Next available field number: 7
 }
 
 // Reusable ORT CUDA probe result for per-subsystem GPU diagnostics.

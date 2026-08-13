@@ -49,6 +49,17 @@
       "advisory": false
     },
     {
+      "name": "Sign Vendored Mirrors",
+      "path": ".github/workflows/sign-vendored-mirrors.yml",
+      "class": "release-gate",
+      "expectedTriggers": ["workflow_dispatch"],
+      "owner": "tempdoc 760/772 SS-K sign-once-per-upstream-bump",
+      "failureDefault": "release-blocking-failure",
+      "staleDays": 365,
+      "blocking": false,
+      "advisory": true
+    },
+    {
       "name": "Docs lint",
       "path": ".github/workflows/docs-lint.yml",
       "class": "docs-manual-gate",

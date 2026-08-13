@@ -148,16 +148,6 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 - [MetricCatalog as the Telemetry Contract](decisions/0027-metric-catalog-as-telemetry-contract.md): Every metric the JustSearch processes emit flows through a typed `MetricCatalog`. Callsites build `MetricDefinition`s at module load, register them with `LocalTelemetry` at boot, and emit through compile-checked `Counter/Histogram/Gauge/ObservableCounter` instruments. The legacy `Telemetry.counter/timer/histogram/gauge/meter` surface is retired.
 - [Public main history publication](decisions/0045-public-main-history-publication.md): Public main receives curated squash commits from pull requests while branch commits remain workspace history.
 
-### Known Issues
-- [Known Issues](reference/issues/README.md): Severity levels, status values, and issue format.
-- [Backend Tech Debt Issues](reference/issues/backend-tech-debt.md): Legacy code, deprecated APIs, internal consistency.
-- [Closed Decisions](reference/issues/decisions.md): Evaluated items intentionally closed with rationale preserved.
-- [Documentation Issues](reference/issues/documentation.md): Documentation gaps affecting developer/agent effectiveness.
-- [GPU Detection Issues](reference/issues/gpu-detection.md): NVIDIA detection, VRAM, multi-GPU support limitations.
-- [Installer Issues](reference/issues/installer.md): Code signing, sandbox testing, SAC workarounds, Worker spawn, GPU detection, ORT sessions.
-- [Search Accessibility Issues](reference/issues/search-accessibility.md): Result list ARIA, keyboard access, match pills.
-- [UI/UX Issues](reference/issues/ui-ux.md): Frontend display and interaction issues.
-
 <!-- generated:end -->
 
 ## Core Concepts for Agents
