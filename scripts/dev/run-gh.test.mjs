@@ -13,7 +13,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { decodeChecksExit, isUnregistered, resolveGhBin } from './run-gh.mjs';
+import {
+  decodeChecksExit,
+  isUnregistered,
+  resolveGhBin,
+  buildChecksArgs,
+  parseRequiredOnly,
+} from './run-gh.mjs';
 
 let passed = 0;
 const failures = [];
@@ -87,6 +93,27 @@ if (process.platform === 'win32' && fs.existsSync('F:\\scoop\\apps\\gh')) {
     assert.ok(fs.existsSync(bin), `resolved path does not exist: ${bin}`);
   });
 }
+
+// --- buildChecksArgs / parseRequiredOnly: 829 R1 required-only gating ---
+run('buildChecksArgs without requiredOnly omits --required (backward-compat)', () => {
+  assert.deepEqual(buildChecksArgs(443, false), ['pr', 'checks', '443']);
+});
+run('buildChecksArgs without requiredOnly arg (undefined) also omits --required', () => {
+  assert.deepEqual(buildChecksArgs(443), ['pr', 'checks', '443']);
+});
+run('buildChecksArgs with requiredOnly appends --required', () => {
+  assert.deepEqual(buildChecksArgs(443, true), ['pr', 'checks', '443', '--required']);
+});
+run('parseRequiredOnly detects --required-only and strips it from rest', () => {
+  const { requiredOnly, rest } = parseRequiredOnly(['443', '--required-only', '--timeout-sec', '60']);
+  assert.equal(requiredOnly, true);
+  assert.deepEqual(rest, ['443', '--timeout-sec', '60']);
+});
+run('parseRequiredOnly is false and rest is unchanged when flag absent', () => {
+  const { requiredOnly, rest } = parseRequiredOnly(['443', '--timeout-sec', '60']);
+  assert.equal(requiredOnly, false);
+  assert.deepEqual(rest, ['443', '--timeout-sec', '60']);
+});
 
 // --- Report ---
 if (failures.length > 0) {

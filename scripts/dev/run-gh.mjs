@@ -17,7 +17,7 @@
  *     (`.claude/skills/publish/SKILL.md` "Registration race" bullet) as a runnable command
  *     instead of a hand-rolled poll loop:
  *
- *     `node scripts/dev/run-gh.mjs checks-wait <pr-number> [--timeout-sec N]`
+ *     `node scripts/dev/run-gh.mjs checks-wait <pr-number> [--timeout-sec N] [--required-only]`
  *
  *     `gh pr checks <pr>` exit-code contract (cli/cli#7866, verified live on gh 2.90.0 —
  *     tempdoc 743 R3 derisk): the exit code is a BITWISE combination —
@@ -33,6 +33,20 @@
  *     alone. This wrapper pre-polls (every 15s) until the output stops looking like the
  *     no-checks-yet case before it starts trusting the bitwise contract, which is the fix
  *     #7401 itself never shipped.
+ *
+ *     `--required-only` (tempdoc 829 R1): passes `--required` through to every underlying
+ *     `gh pr checks` call, so the bitwise verdict above is computed over ONLY the contexts
+ *     registered in the branch protection rule's `required_status_checks.contexts` — verified
+ *     working on gh 2.90.0, filters to exactly the required contexts. Advisory (non-required)
+ *     lanes cannot change mergeability, so without this flag a flaky advisory lane (e.g.
+ *     continue-on-error integration tests) reads as FAIL and triggers a rerun that cannot
+ *     possibly matter: 829 F1 found 12/12 lane reruns on 2026-08-13 were unnecessary because
+ *     the one failing lane was never in the required set — every attempt-1 run was already
+ *     mergeable. The no-checks-yet pre-poll heuristic (`isUnregistered`) is unaffected: `gh`
+ *     emits the same "no checks reported" text regardless of `--required`, so the same text
+ *     match covers both invocation shapes. The bitwise exit contract itself is unchanged by
+ *     the flag — only which checks feed into it. Omitting the flag is byte-identical to the
+ *     pre-829 behavior (all reported checks, required and advisory alike).
  *
  *     Exit codes of `checks-wait` itself: 0 = all checks passed, 1 = a check failed,
  *     3 = TIMEOUT (bounded by --timeout-sec, default 1800), 2 = an unexpected `gh` error
@@ -101,9 +115,19 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function checksWait(bin, prNumber, timeoutSec) {
+/**
+ * Build the `gh pr checks` argument vector. Pure; unit-tested. With `requiredOnly`, appends
+ * `--required` so the bitwise verdict only reflects `required_status_checks.contexts` (829 R1).
+ */
+export function buildChecksArgs(prNumber, requiredOnly) {
+  const args = ['pr', 'checks', String(prNumber)];
+  if (requiredOnly) args.push('--required');
+  return args;
+}
+
+async function checksWait(bin, prNumber, timeoutSec, requiredOnly) {
   const deadline = Date.now() + timeoutSec * 1000;
-  const checksArgs = ['pr', 'checks', String(prNumber)];
+  const checksArgs = buildChecksArgs(prNumber, requiredOnly);
 
   // Phase 1: pre-poll until checks register (cli/cli#7401 mitigation).
   let last = runGhCaptured(bin, checksArgs);
@@ -167,18 +191,27 @@ function parseTimeoutSec(args) {
   return { timeoutSec: Number.isFinite(value) && value > 0 ? value : DEFAULT_TIMEOUT_SEC, rest };
 }
 
+/** Extract the boolean `--required-only` flag (829 R1). Pure; unit-tested. */
+export function parseRequiredOnly(args) {
+  const i = args.indexOf('--required-only');
+  if (i === -1) return { requiredOnly: false, rest: args };
+  const rest = [...args.slice(0, i), ...args.slice(i + 1)];
+  return { requiredOnly: true, rest };
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const bin = resolveGhBin();
 
   if (argv[0] === 'checks-wait') {
-    const { timeoutSec, rest } = parseTimeoutSec(argv.slice(1));
+    const { timeoutSec, rest: afterTimeout } = parseTimeoutSec(argv.slice(1));
+    const { requiredOnly, rest } = parseRequiredOnly(afterTimeout);
     const prNumber = rest[0];
     if (!prNumber) {
       process.stderr.write('run-gh checks-wait: missing <pr-number>\n');
       process.exit(2);
     }
-    const code = await checksWait(bin, prNumber, timeoutSec);
+    const code = await checksWait(bin, prNumber, timeoutSec, requiredOnly);
     process.exit(code);
   }
 
