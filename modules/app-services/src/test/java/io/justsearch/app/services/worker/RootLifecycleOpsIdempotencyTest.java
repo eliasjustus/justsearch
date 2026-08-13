@@ -39,7 +39,7 @@ final class RootLifecycleOpsIdempotencyTest {
         watchedRoots,
         state,
         () -> null, // excludeMatcherSupplier — not used by addWatchedRoot
-        (rootPath, collection, globs, progress) -> null, // scanRootFn — not used (walk never runs)
+        (rootPath, collection, mode, globs, progress) -> null, // scanRootFn — not used (walk never runs)
         new RootLifecycleOps.WorkerWatchFn() {
           @Override
           public void watch(String rootPath, String collection) {}

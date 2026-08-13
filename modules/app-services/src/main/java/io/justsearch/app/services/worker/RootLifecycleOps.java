@@ -102,12 +102,19 @@ final class RootLifecycleOps {
      * mirroring the watcher arm's {@link WorkerWatchFn#watch(String, String)}. A {@code null} or
      * blank value means "no explicit label": the wire leaves {@code ScanRootRequest.collection}
      * unset and the Worker files the documents in the default bucket.
+     *
+     * <p>Tempdoc 821 §3-C3 — {@code mode} is what makes a force-reindex real. Every scan used to
+     * be dispatched as {@code SCAN_MODE_INITIAL}, so the Worker admitted the same paths and the
+     * batch extractor took its UNCHANGED branch on all of them: a user's force-reindex could not
+     * repair a bad enrichment population, which is the "installed bases cannot self-repair"
+     * member of the C3 class.
      */
     @FunctionalInterface
     interface ScanRootFn {
         ScanRootProgress scan(
                 String rootPath,
                 String collection,
+                io.justsearch.ipc.ScanMode mode,
                 List<String> excludeGlobs,
                 java.util.function.Consumer<ScanRootProgress> progressConsumer);
     }
@@ -195,7 +202,10 @@ final class RootLifecycleOps {
         // normalizes to and the reindex paths re-send (tempdoc 821 §L.3 — real labels are still
         // lost on restart because root→collection is not persisted; that is the deferred fix).
         walkExecutor.execute(
-                () -> walkAndSubmit(normalized, IngestCollectionPolicy.DEFAULT_COLLECTION));
+                () -> walkAndSubmit(
+                        normalized,
+                        IngestCollectionPolicy.DEFAULT_COLLECTION,
+                        io.justsearch.ipc.ScanMode.SCAN_MODE_INITIAL));
     }
 
     /**
@@ -207,8 +217,13 @@ final class RootLifecycleOps {
      *
      * <p>Tempdoc 821 §3-C2 — {@code collection} labels the documents this scan admits; {@code null}
      * or blank means the default bucket (the wire leaves the field unset).
+     *
+     * <p>Tempdoc 821 §3-C3 — {@code mode} decides whether the Worker marks the admitted paths
+     * forced (bypassing the extractor's unchanged-check). Only the force-reindex entry point
+     * passes {@code SCAN_MODE_FORCE_REINDEX}; every other walk is an ordinary initial scan.
      */
-    private void walkAndSubmit(Path normalized, String collection) {
+    private void walkAndSubmit(
+            Path normalized, String collection, io.justsearch.ipc.ScanMode mode) {
         if (!watchedRoots.containsKey(normalized)) {
             log.debug("Walk cancelled before start: root {} removed", normalized);
             return;
@@ -221,6 +236,7 @@ final class RootLifecycleOps {
                     scanRootFn.scan(
                             normalized.toString(),
                             collection,
+                            mode,
                             excludeGlobs,
                             progress -> admittedTotal[0] = progress.getFilesAdmitted());
 
@@ -301,7 +317,9 @@ final class RootLifecycleOps {
         //    are handled by walkAndSubmit() on the walk-bg thread. Tempdoc 821 §3-C2 — the scan arm
         //    carries the SAME label the watcher arm just got, so the root's own initial scan admits
         //    documents under its collection instead of dropping the tag.
-        walkExecutor.execute(() -> walkAndSubmit(normalized, collectionName));
+        walkExecutor.execute(
+                () -> walkAndSubmit(
+                        normalized, collectionName, io.justsearch.ipc.ScanMode.SCAN_MODE_INITIAL));
     }
 
     int deleteDocsByPathPrefix(Path pathPrefix) {
@@ -414,6 +432,14 @@ final class RootLifecycleOps {
         List<Path> roots = List.copyOf(watchedRoots.keySet());
         log.info("Reindexing {} watched roots (force={})", roots.size(), force);
 
+        // Tempdoc 821 §3-C3 — the force flag now reaches the Worker. Before this, `force` only
+        // chose which Head-side branch ran below; both branches dispatched SCAN_MODE_INITIAL, so
+        // the Worker could not tell a force-reindex from an ordinary rewalk.
+        io.justsearch.ipc.ScanMode scanMode =
+                force
+                        ? io.justsearch.ipc.ScanMode.SCAN_MODE_FORCE_REINDEX
+                        : io.justsearch.ipc.ScanMode.SCAN_MODE_INITIAL;
+
         for (Path root : roots) {
             if (!Files.exists(root)) {
                 log.warn("Watched root no longer exists, skipping: {}", root);
@@ -442,7 +468,10 @@ final class RootLifecycleOps {
                 // default the root was admitted under rather than leaving the field unset: a
                 // rewalk that writes nothing where the add path wrote "default" would make one
                 // root's documents oscillate between tagged and untagged over time.
-                walkAndSubmit(root, IngestCollectionPolicy.DEFAULT_COLLECTION);
+                // Tempdoc 821 §3-C3 — THIS is what makes the user's force-reindex real. The
+                // scan used to go out as SCAN_MODE_INITIAL regardless, so the Worker admitted the
+                // same paths and the batch extractor skipped every one of them as UNCHANGED.
+                walkAndSubmit(root, IngestCollectionPolicy.DEFAULT_COLLECTION, scanMode);
             });
         }
         watchedRootsState.persist();
@@ -470,7 +499,10 @@ final class RootLifecycleOps {
             // other and with what the add path wrote, so the scan re-sends the watcher's default.
             startWatcherIfAvailable(IngestCollectionPolicy.DEFAULT_COLLECTION, normalized);
             walkExecutor.execute(
-                () -> walkAndSubmit(normalized, IngestCollectionPolicy.DEFAULT_COLLECTION));
+                () -> walkAndSubmit(
+                    normalized,
+                    IngestCollectionPolicy.DEFAULT_COLLECTION,
+                    io.justsearch.ipc.ScanMode.SCAN_MODE_INITIAL));
         }
         // Runs after all walks complete (single-thread executor serializes tasks).
         int count = rootsToReindex.size();
