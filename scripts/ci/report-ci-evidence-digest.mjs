@@ -87,7 +87,7 @@ const LOCAL_REPRO_COMMANDS = new Map([
       './gradlew.bat :modules:ai-backend:test :modules:api-contract-projection-java:test :modules:app-inference:test :modules:benchmarks:test :modules:dead-code-audit:test :modules:extension-substrate:test :modules:gpu-bridge:test :modules:infra-core:test :modules:ort-common:test :modules:prompt-support:test :modules:reranker:test :modules:ssot-tools:test :modules:system-tests:test :modules:telemetry:test :modules:test-support:test -PskipWebBuild=true --console=plain',
     ],
   ],
-  ['Secret scan', ['gitleaks detect --source . --config .gitleaks.toml --redact']],
+  ['Secret scan', ['gitleaks dir . --config .gitleaks.toml --redact']],
 ]);
 
 function repoRootFromCwd() {
