@@ -20,6 +20,7 @@
  *   node scripts/ci/pack-mcpb.mjs                 -> print the bundle's sha256
  *   node scripts/ci/pack-mcpb.mjs <outfile>       -> write the bundle to <outfile>
  *   node scripts/ci/pack-mcpb.mjs --sync          -> write the hash into server.json.fileSha256
+ *   node scripts/ci/pack-mcpb.mjs --set-version X -> stamp X into server.json AND manifest.json
  * Test override: CHECK_MCPB_ROOT=<dir>.
  */
 
@@ -31,6 +32,7 @@ import { fileURLToPath } from 'node:url';
 
 const MCPB_DIR = 'packaging/mcpb';
 const SERVER_JSON_REL = `${MCPB_DIR}/server.json`;
+const MANIFEST_JSON_REL = `${MCPB_DIR}/manifest.json`;
 const DOS_DATE = 0x0021; // 1980-01-01
 const DOS_TIME = 0x0000; // 00:00:00
 
@@ -218,6 +220,57 @@ function setServerVersion(repoRoot, version, { dryRun = false } = {}) {
   return { changed, version, url };
 }
 
+/**
+ * Set manifest.json's top-level "version" (the version an MCP client shows for the installed
+ * bundle — it must not drift from server.json/gradle.properties).
+ *
+ * manifest.json is hand-formatted (it holds a single-line array that a
+ * JSON.stringify(obj, null, 2) round-trip would expand over 3 lines), so the value is edited
+ * in place rather than by reserialising. That is safe here because the edit is JSON-verified
+ * both ways: the file must parse before, and the result must parse and differ from the
+ * original in the "version" field ONLY — a mis-targeted replacement throws instead of writing.
+ */
+function setManifestVersion(repoRoot, version, { dryRun = false } = {}) {
+  const p = path.join(repoRoot, MANIFEST_JSON_REL);
+  let raw;
+  try {
+    raw = fs.readFileSync(p, 'utf8');
+  } catch (e) {
+    throw new Error(`pack-mcpb: cannot read ${MANIFEST_JSON_REL}: ${e.message}`);
+  }
+  let before;
+  try {
+    before = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`pack-mcpb: ${MANIFEST_JSON_REL} is not valid JSON: ${e.message}`);
+  }
+  if (typeof before.version !== 'string') {
+    throw new Error(`pack-mcpb: ${MANIFEST_JSON_REL} has no top-level "version" string to stamp.`);
+  }
+  if (before.version === version) return { changed: false, version };
+
+  const versionLine = /^(\s*"version"\s*:\s*)"(?:[^"\\]|\\.)*"/gm;
+  const hits = raw.match(versionLine) || [];
+  if (hits.length !== 1) {
+    throw new Error(
+      `pack-mcpb: ${MANIFEST_JSON_REL} has ${hits.length} "version" lines — expected exactly 1. ` +
+        'Disambiguate the nested key or extend setManifestVersion() before stamping.',
+    );
+  }
+  const next = raw.replace(versionLine, `$1${JSON.stringify(version)}`);
+  let after;
+  try {
+    after = JSON.parse(next);
+  } catch (e) {
+    throw new Error(`pack-mcpb: stamping ${MANIFEST_JSON_REL} produced invalid JSON: ${e.message}`);
+  }
+  if (JSON.stringify(after) !== JSON.stringify({ ...before, version })) {
+    throw new Error(`pack-mcpb: stamping ${MANIFEST_JSON_REL} changed more than its "version" field — aborted.`);
+  }
+  if (!dryRun) fs.writeFileSync(p, next);
+  return { changed: true, version };
+}
+
 function main() {
   const args = process.argv.slice(2);
   const repoRoot = repoRootFromCwd();
@@ -230,12 +283,33 @@ function main() {
       process.exit(1);
     }
     const dryRun = args.includes('--dry-run');
-    const res = setServerVersion(repoRoot, version, { dryRun });
-    const suffix = res.changed ? '' : ' (already set)';
+    let srv;
+    let man;
+    let resynced = null;
+    try {
+      // Validate the manifest edit BEFORE writing server.json, so a manifest that cannot be
+      // stamped leaves both files untouched rather than half-bumped.
+      setManifestVersion(repoRoot, version, { dryRun: true });
+      srv = setServerVersion(repoRoot, version, { dryRun });
+      man = setManifestVersion(repoRoot, version, { dryRun });
+      // manifest.json is IN the bundle, so stamping it changes the packed bytes: re-sync
+      // fileSha256 here or check-mcpb-consistency goes red on every version bump.
+      if (man.changed && !dryRun) {
+        resynced = packMcpb(repoRoot).sha256;
+        syncServerJson(repoRoot, resynced);
+      }
+    } catch (e) {
+      console.error(e.message.startsWith('pack-mcpb:') ? e.message : `pack-mcpb: ${e.message}`);
+      process.exit(1);
+    }
+    const suffix = srv.changed || man.changed ? '' : ' (already set)';
+    const resyncNote = resynced ? ` (fileSha256 re-synced -> ${resynced})` : '';
     console.log(
       dryRun
-        ? `pack-mcpb: --set-version (dry-run) would set ${SERVER_JSON_REL} version=${res.version} identifier=${res.url}${suffix}`
-        : `pack-mcpb: --set-version set ${SERVER_JSON_REL} version=${res.version}${suffix}`,
+        ? `pack-mcpb: --set-version (dry-run) would set ${SERVER_JSON_REL} version=${srv.version} ` +
+            `identifier=${srv.url} and ${MANIFEST_JSON_REL} version=${man.version}${suffix}`
+        : `pack-mcpb: --set-version set ${SERVER_JSON_REL} + ${MANIFEST_JSON_REL} ` +
+            `version=${srv.version}${suffix}${resyncNote}`,
     );
     return;
   }
