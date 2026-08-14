@@ -83,6 +83,27 @@ public final class AgentToolFactory {
   }
 
   /**
+   * Tempdoc 832 (lane D) — binds the scan-progress registry and scan-rollup ledger onto the
+   * agent-owned adapter built by {@link #build}. Without this, a directory ingest driven through
+   * {@code IngestTool} (agent loop / MCP {@code justsearch_ingest}) emitted no scan-progress SSE and
+   * left no rollup row, while the byte-identical ingest through {@code /api/knowledge/ingest} did —
+   * the setters were only ever called on the controller-owned adapter.
+   *
+   * <p>This is a separate late call rather than {@link #build} parameters because neither
+   * collaborator exists yet when {@code build} runs: the ledger is created by the substrate phase and
+   * the registry by {@code LocalApiServer}, both strictly after the service phase. The agent adapter
+   * stays its own instance — sharing the controller's would couple two lifecycles.
+   */
+  public static void bindScanObservability(
+      KnowledgeHttpApiAdapter agentSearchAdapter,
+      io.justsearch.app.services.worker.ScanProgressRegistry scanProgressRegistry,
+      io.justsearch.app.observability.ledger.ScanRollupLedger scanRollupLedger) {
+    if (agentSearchAdapter == null) return;
+    if (scanProgressRegistry != null) agentSearchAdapter.setScanProgressRegistry(scanProgressRegistry);
+    if (scanRollupLedger != null) agentSearchAdapter.setScanRollupLedger(scanRollupLedger);
+  }
+
+  /**
    * Tempdoc 811 (C-2a) — projects the watched-root registry into the ingest-tagging authority so an
    * agent/MCP ingest of an in-root path inherits that root's collection instead of writing an
    * unlabeled document. Best-effort: a Worker-unavailable lookup yields an empty list, which makes

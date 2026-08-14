@@ -87,7 +87,9 @@ public final class AgentToolHandlers {
       OnlineAiService onlineAiService,
       LambdaMartReranker lambdaMartReranker,
       KnowledgeHttpApiAdapter existingAdapter,
-      io.justsearch.agent.api.memory.MemoryStore memoryStore) {
+      io.justsearch.agent.api.memory.MemoryStore memoryStore,
+      io.justsearch.app.services.worker.ScanProgressRegistry scanProgressRegistry,
+      io.justsearch.app.observability.ledger.ScanRollupLedger scanRollupLedger) {
     if (operationHandlers.resolve(AgentToolsOperationCatalog.SEARCH_INDEX).isPresent()) {
       return false;
     }
@@ -107,6 +109,12 @@ public final class AgentToolHandlers {
         existingAdapter != null
             ? existingAdapter
             : new KnowledgeHttpApiAdapter(knowledgeServer, onlineAiService, lambdaMartReranker);
+    // Tempdoc 832 (lane D): bind scan observability onto whichever adapter the ingest tool ends up
+    // driving. On the normal boot the Worker connects asynchronously, so the eager
+    // AgentToolFactory.build produced nothing and the adapter is FRESHLY built right above —
+    // binding only the eager one would leave the common path emitting no scan-progress SSE and no
+    // rollup row.
+    AgentToolFactory.bindScanObservability(adapter, scanProgressRegistry, scanRollupLedger);
     FileOperationLog fileOperationLog = new FileOperationLog(dataDir.resolve("file-operations"));
     FileOperationsTool fileOperationsTool =
         new FileOperationsTool(
