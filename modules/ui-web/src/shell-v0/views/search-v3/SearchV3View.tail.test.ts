@@ -87,11 +87,13 @@ const turn = (over: Partial<Sv3Turn> = {}): Sv3Turn => ({
 async function mountMain(
   turns: readonly Sv3Turn[],
   currentModelLabel: string | null = 'Qwen3',
+  detailed = false,
 ): Promise<Sv3Main & Mounted> {
   const el = document.createElement('jf-sv3-main') as Sv3Main & Mounted;
   el.state = 'docked';
   el.turns = turns;
   el.currentModelLabel = currentModelLabel;
+  el.detailed = detailed;
   document.body.appendChild(el);
   await el.updateComplete;
   return el;
@@ -215,10 +217,12 @@ describe('the verdict rests and the elaboration extends, re-wording neither', ()
   });
 
   it('drops the model when the composer already names it, and re-states it when it does not', async () => {
-    const same = await mountMain([turn()], 'Qwen3');
+    // Inventory E3 — the model is a Detailed-mode fact, so the re-statement is checked in the mode
+    // that can show it at all; the Simple direction is the case below.
+    const same = await mountMain([turn()], 'Qwen3', true);
     expect(text(q(same, 'sv3-answer-frame'))).not.toContain('Qwen3');
     same.remove();
-    const swapped = await mountMain([turn()], 'Llama-4');
+    const swapped = await mountMain([turn()], 'Llama-4', true);
     expect(text(q(swapped, 'sv3-answer-frame'))).toContain('Qwen3');
   });
 });

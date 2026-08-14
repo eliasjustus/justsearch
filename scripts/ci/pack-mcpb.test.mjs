@@ -27,14 +27,31 @@ const ok = (label, cond) => {
   }
 };
 
-function makeSource({ serverJs } = {}) {
+// Hand-formatted like the real manifest.json: the single-line "args" array is what a
+// JSON.stringify(obj, null, 2) round-trip would expand, so it doubles as the formatting oracle.
+const MANIFEST_TEXT = `{
+  "manifest_version": "0.4",
+  "name": "x",
+  "version": "0.1.0",
+  "server": {
+    "mcp_config": {
+      "command": "node",
+      "args": ["\${__dirname}/server/index.js"]
+    }
+  }
+}
+`;
+
+function makeSource({ serverJs, manifest } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mcpb-pack-'));
   const mcpbDir = path.join(root, 'packaging', 'mcpb');
   fs.mkdirSync(path.join(mcpbDir, 'server'), { recursive: true });
-  fs.writeFileSync(path.join(mcpbDir, 'manifest.json'), JSON.stringify({ name: 'x' }));
+  fs.writeFileSync(path.join(mcpbDir, 'manifest.json'), manifest ?? MANIFEST_TEXT);
   fs.writeFileSync(path.join(mcpbDir, 'server', 'index.js'), serverJs ?? '// bridge\n');
   return root;
 }
+
+const readManifest = (root) => fs.readFileSync(path.join(root, 'packaging', 'mcpb', 'manifest.json'), 'utf8');
 
 // 1. Deterministic: two packs of identical source -> identical hash + bytes.
 {
@@ -117,7 +134,51 @@ const throws = (fn) => {
   ok('top-level version set', after.version === '0.9.9');
   ok('asset URL points at the tag', after.packages[0].identifier.endsWith('/v0.9.9/justsearch-mcp.mcpb'));
   ok('nested packages[0].version untouched (replace-all regression)', after.packages[0].version === 'DO-NOT-TOUCH');
+  const manifestText = readManifest(root);
+  ok('manifest.json version stamped too (0.1.0-vs-0.2.0 drift)', JSON.parse(manifestText).version === '0.9.9');
+  ok('manifest.json hand formatting preserved', manifestText.includes('"args": ["${__dirname}/server/index.js"]'));
+  ok(
+    'manifest.json changed in the version field only',
+    JSON.stringify(JSON.parse(manifestText)) === JSON.stringify({ ...JSON.parse(MANIFEST_TEXT), version: '0.9.9' }),
+  );
   fs.rmSync(root, { recursive: true, force: true });
+}
+
+// 5b. --set-version re-syncs fileSha256: manifest.json is IN the bundle, so a version bump that
+// did not re-hash would leave check-mcpb-consistency red on every release.
+{
+  const root = makeSource();
+  const sjPath = withServerJson(root, { fileSha256: 'stale' });
+  ok('--set-version exits 0', runCli(root, ['--set-version', '0.9.9']).status === 0);
+  const after = JSON.parse(fs.readFileSync(sjPath, 'utf8'));
+  ok('fileSha256 re-synced to the freshly packed bundle', after.packages[0].fileSha256 === packMcpb(root).sha256);
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
+// 5c. --dry-run writes neither file.
+{
+  const root = makeSource();
+  const sjPath = withServerJson(root, { version: '0.2.0' });
+  ok('--set-version --dry-run exits 0', runCli(root, ['--set-version', '0.9.9', '--dry-run']).status === 0);
+  ok('server.json untouched by dry-run', JSON.parse(fs.readFileSync(sjPath, 'utf8')).version === '0.2.0');
+  ok('manifest.json untouched by dry-run', readManifest(root) === MANIFEST_TEXT);
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
+// 5d. An un-stampable manifest fails closed and leaves BOTH files untouched (no half-bumped pair).
+{
+  for (const [label, manifest] of [
+    ['ambiguous second "version"', MANIFEST_TEXT.replace('"name": "x",', '"name": "x",\n  "nested": {\n    "version": "9"\n  },')],
+    ['no top-level "version"', '{\n  "name": "x"\n}\n'],
+  ]) {
+    const root = makeSource({ manifest });
+    const sjPath = withServerJson(root, { version: '0.2.0' });
+    const r = runCli(root, ['--set-version', '0.9.9']);
+    ok(`--set-version fails on ${label}`, r.status !== 0);
+    ok(`server.json not half-bumped on ${label}`, JSON.parse(fs.readFileSync(sjPath, 'utf8')).version === '0.2.0');
+    ok(`manifest.json untouched on ${label}`, readManifest(root) === manifest);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 }
 
 // 6. Guard: a non-ASCII archive name throws (flags=0 STORED zip).

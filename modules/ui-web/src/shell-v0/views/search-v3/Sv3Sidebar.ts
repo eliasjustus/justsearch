@@ -26,6 +26,7 @@ import { JfElement } from '../../primitives/JfElement.js';
 import { icon } from '../../components/Icon.js';
 import { sv3Shared } from './sv3-shared-styles.js';
 import './Sv3SessionRow.js';
+import type { Sv3SessionRow } from './Sv3SessionRow.js';
 import './Sv3Empty.js';
 import { SIDEBAR_EMPTY } from './fixtures.js';
 import type { Sv3SessionGroup } from './sv3-sessions.js';
@@ -41,6 +42,17 @@ export interface Sv3SessionSelect {
 export const SV3_SESSION_PIN = 'sv3-session-pin';
 
 export interface Sv3SessionPin {
+  readonly id: string;
+}
+
+/**
+ * Asks the window to discard a session (tempdoc 831) — the row raises it, the panel says which row,
+ * and the window is the only thing that may act: existence is the conversation store's, so a delete
+ * is a write-through the panel has no business making.
+ */
+export const SV3_SESSION_REMOVE = 'sv3-session-remove';
+
+export interface Sv3SessionRemove {
   readonly id: string;
 }
 
@@ -204,6 +216,7 @@ export class Sv3Sidebar extends JfElement {
     groups: { attribute: false },
     collapsed: { type: Boolean, reflect: true },
     renamingId: { attribute: false },
+    announcement: { state: true },
   };
 
   /** The window's projected session groups; empty means nothing has been searched in this window. */
@@ -212,12 +225,36 @@ export class Sv3Sidebar extends JfElement {
   declare collapsed: boolean;
   /** Which row is being renamed, or null. At most one: an edit is where the reader's attention is. */
   declare renamingId: string | null;
+  /**
+   * What the polite live region is currently saying (tempdoc 831). A discard removes a row with no
+   * visible confirmation and no sound; a reader who cannot see the list disappear is otherwise told
+   * nothing at all that it happened.
+   */
+  declare announcement: string;
+
+  /**
+   * The discard this panel has asked for and not yet seen land, with the two rows either side of it
+   * recorded AT REQUEST TIME — afterwards the list no longer contains the row, so its neighbours
+   * cannot be found from it.
+   */
+  private pendingDiscard: {
+    readonly id: string;
+    readonly label: string;
+    readonly successorId: string | null;
+    readonly predecessorId: string | null;
+  } | null = null;
 
   constructor() {
     super();
     this.groups = [];
     this.collapsed = false;
     this.renamingId = null;
+    this.announcement = '';
+  }
+
+  /** Every row the panel is showing, in render order — shelves flattened, which is the tab order. */
+  private flatRows(): readonly Sv3SessionGroup['rows'][number][] {
+    return this.groups.flatMap((group) => group.rows);
   }
 
   private startNew(): void {
@@ -244,6 +281,87 @@ export class Sv3Sidebar extends JfElement {
         composed: true,
       }),
     );
+  }
+
+  /**
+   * The row's discard request, named. Whether it is ALLOWED is the window's call, not the panel's.
+   * `discard` rather than `remove`: the latter would shadow `Element.remove()` on this host.
+   *
+   * The panel also takes on what only IT knows: where the focus should land afterwards. Lit reuses
+   * the row nodes, so a discarded row's Delete button stays under the keyboard and silently becomes
+   * the NEXT conversation's Delete — a second Enter would then delete a conversation the reader
+   * never chose (measured, tempdoc 831 D2). The neighbours are recorded here because after the
+   * removal there is no row left to find them from.
+   */
+  private discard(id: string, event: Event): void {
+    event.stopPropagation();
+    const rows = this.flatRows();
+    const at = rows.findIndex((row) => row.id === id);
+    this.pendingDiscard = {
+      id,
+      label: rows[at]?.label ?? '',
+      successorId: rows[at + 1]?.id ?? null,
+      predecessorId: at > 0 ? (rows[at - 1]?.id ?? null) : null,
+    };
+    // EMPTIED on the request, filled when the removal lands. A live region speaks on MUTATION, so
+    // discarding two conversations that happen to share a title would set the same string twice and
+    // announce the second one to nobody.
+    this.announcement = '';
+    this.dispatchEvent(
+      new CustomEvent<Sv3SessionRemove>(SV3_SESSION_REMOVE, {
+        detail: { id },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  /**
+   * The discard landed: say so, and put the keyboard somewhere it can carry on from.
+   *
+   * The target is the SUCCESSOR'S ROW BUTTON — never its Delete — so the key that discarded one
+   * conversation cannot discard the next one by repeating itself. Falling back through predecessor
+   * to the new-search control means the focus is never simply dropped, which is what happened when
+   * the last row went.
+   */
+  protected override willUpdate(): void {
+    const pending = this.pendingDiscard;
+    if (pending === null) return;
+    const rows = this.flatRows();
+    if (rows.some((row) => row.id === pending.id)) return; // the window has not removed it (yet)
+    this.pendingDiscard = null;
+    // Decided BEFORE the render that will show the shortened list, so the announcement rides that
+    // same update instead of scheduling a second one.
+    this.announcement = pending.label === '' ? 'Conversation deleted' : `${pending.label} deleted`;
+    this.focusAfterDiscard =
+      [pending.successorId, pending.predecessorId].find(
+        (id) => id !== null && rows.some((row) => row.id === id),
+      ) ?? null;
+    this.focusPending = true;
+  }
+
+  /** Set for exactly one update: the row to hand the keyboard to, or null for the new-search control. */
+  private focusAfterDiscard: string | null = null;
+  private focusPending = false;
+
+  protected override updated(): void {
+    if (!this.focusPending) return;
+    this.focusPending = false;
+    void this.placeFocusAfterDiscard(this.focusAfterDiscard);
+  }
+
+  private async placeFocusAfterDiscard(survivorId: string | null): Promise<void> {
+    if (survivorId === null) {
+      this.shadowRoot?.querySelector<HTMLButtonElement>('[data-testid="sv3-sidebar-new"]')?.focus();
+      return;
+    }
+    const index = this.flatRows().findIndex((row) => row.id === survivorId);
+    const rows = [...(this.shadowRoot?.querySelectorAll<Sv3SessionRow>('jf-sv3-session-row') ?? [])];
+    const row = index < 0 ? undefined : rows[index];
+    if (row === undefined) return;
+    // The row owns its own shadow root, so it may still be one update away from having a button.
+    await row.updateComplete;
+    row.focusRow();
   }
 
   private toggleCollapsed(): void {
@@ -321,10 +439,13 @@ export class Sv3Sidebar extends JfElement {
                             ?active=${row.active}
                             ?pinned=${row.pinned}
                             ?unread=${row.unread}
+                            ?live=${row.live}
                             ?compact=${this.collapsed}
                             ?renaming=${this.renamingId === row.id}
                             @click=${() => this.select(row.id)}
                             @sv3-session-pin-toggle=${(event: Event) => this.pin(row.id, event)}
+                            @sv3-session-remove-request=${(event: Event) =>
+                              this.discard(row.id, event)}
                             @sv3-session-rename-start=${(event: Event) =>
                               this.rename(row.id, 'start', event)}
                             @sv3-session-rename-commit=${(event: Event) =>
@@ -340,6 +461,19 @@ export class Sv3Sidebar extends JfElement {
               )}
             </div>
           `}
+      ${/* The panel's one polite announcement channel (tempdoc 831). A LEAF at the end of the
+           panel, holding text and nothing else: a live region wrapped around controls re-announces
+           the whole subtree every time any of it re-renders, which turns a screen reader into
+           noise. Only this node's text ever changes. */ ''}
+      <div
+        class="visually-hidden"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        data-testid="sv3-sidebar-announcer"
+      >
+        ${this.announcement}
+      </div>
     `;
   }
 }

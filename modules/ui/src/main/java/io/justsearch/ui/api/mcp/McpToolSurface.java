@@ -1671,7 +1671,8 @@ public final class McpToolSurface {
         sb.append("embeddingCoverage: ").append(String.format("%.1f%%", n.doubleValue())).append("\n");
       if (extras.get("spladeCoveragePercent") instanceof Number n)
         sb.append("spladeCoverage: ").append(String.format("%.1f%%", n.doubleValue())).append("\n");
-      return Map.of("contents", List.of(Map.of("uri", uri, "mimeType", "text/plain", "text", sb.toString())));
+      return Map.of("contents",
+          List.of(orderedMap("uri", uri, "mimeType", "text/plain", "text", sb.toString())));
     } catch (Exception e) {
       return resourceError(uri, e.getMessage());
     }
@@ -1684,7 +1685,8 @@ public final class McpToolSurface {
       @SuppressWarnings("unchecked")
       var content = (List<Map<String, Object>>) result.get("content");
       String text = content != null && !content.isEmpty() ? (String) content.get(0).get("text") : "No roots";
-      return Map.of("contents", List.of(Map.of("uri", uri, "mimeType", "text/plain", "text", text)));
+      return Map.of("contents",
+          List.of(orderedMap("uri", uri, "mimeType", "text/plain", "text", text)));
     } catch (Exception e) {
       return resourceError(uri, e.getMessage());
     }
@@ -1701,7 +1703,8 @@ public final class McpToolSurface {
           null, null, null, null);
       var resp = ctrl.getAdapter().search(req);
       String text = resp.facets() != null ? MAPPER.writeValueAsString(resp.facets()) : "{}";
-      return Map.of("contents", List.of(Map.of("uri", uri, "mimeType", "application/json", "text", text)));
+      return Map.of("contents",
+          List.of(orderedMap("uri", uri, "mimeType", "application/json", "text", text)));
     } catch (Exception e) {
       return resourceError(uri, e.getMessage());
     }
@@ -1720,7 +1723,8 @@ public final class McpToolSurface {
           null, null, null, null);
       var resp = ctrl.getAdapter().search(req);
       String text = resp.facets() != null ? MAPPER.writeValueAsString(resp.facets()) : "{}";
-      return Map.of("contents", List.of(Map.of("uri", uri, "mimeType", "application/json", "text", text)));
+      return Map.of("contents",
+          List.of(orderedMap("uri", uri, "mimeType", "application/json", "text", text)));
     } catch (Exception e) {
       return resourceError(uri, e.getMessage());
     }
@@ -1850,7 +1854,7 @@ public final class McpToolSurface {
   }
 
   private static Map<String, Object> resourceError(String uri, String message) {
-    return Map.of("contents", List.of(Map.of(
+    return Map.of("contents", List.of(orderedMap(
         "uri", uri, "mimeType", "text/plain", "text", "Error: " + message)));
   }
 

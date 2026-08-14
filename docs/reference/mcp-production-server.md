@@ -44,8 +44,8 @@ MCP server on?" is exactly "which port is the API on?":
 An MCPB bundle (`justsearch-mcp.mcpb`, sources in
 [`packaging/mcpb/`](../../packaging/mcpb/README.md)) will be attached to
 JustSearch releases **starting with the next release** — it is not on any
-published release yet, and the v0.1.0 app predates the `/mcp` endpoint, so
-the bundle cannot work against it. Once shipped: download the `.mcpb` from
+published release yet, and it needs an app build that serves `POST /mcp`,
+which the v0.1.0 release may predate. Once shipped: download the `.mcpb` from
 the release page and open it with Claude Desktop (Settings → Extensions) —
 one click, no JSON editing. The bundle is a thin local stdio bridge to the
 running app's `/mcp` endpoint; it handles port discovery via `api-port.txt`
@@ -103,6 +103,17 @@ claude mcp add justsearch --transport http http://127.0.0.1:8080/mcp
 In all three: replace `8080` with the port from
 `%APPDATA%\io.justsearch.shell\runtime\api-port.txt` if `8080` was taken on your machine
 (see [Which port?](#which-port)).
+
+Every flow above needs a build that serves `POST /mcp`; the v0.1.0 installer release may predate it.
+If a client reports no tools, probe the endpoint before debugging the client — it should answer with
+the six tools, and a 404 means the running build has no MCP endpoint (use a newer release or a
+from-source build):
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/mcp -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
 
 ### Claude Code: headless / non-interactive approval
 

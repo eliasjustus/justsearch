@@ -69,6 +69,7 @@ import {
 import { projectSv3Results, type Sv3ResultsView } from './sv3-results.js';
 import {
   type Sv3SessionPin,
+  type Sv3SessionRemove,
   type Sv3SessionRename,
   type Sv3SessionSelect,
 } from './Sv3Sidebar.js';
@@ -103,6 +104,7 @@ import {
   toggleSessionPin,
   latestTurnRef,
   projectSv3Sessions,
+  removeSession,
   sessionById,
   setTurnEvidence,
   setTurnReasoning,
@@ -113,6 +115,7 @@ import {
   submitInSession,
   sv3ShouldGenerateTitle,
   SV3_SESSIONS_EMPTY,
+  type Sv3RunGate,
   type Sv3SessionList,
 } from './sv3-sessions.js';
 // The window's honesty derivations (tempdoc 822 Phase F7): the lock, the corpus, and the ONE remedy
@@ -141,6 +144,7 @@ import {
 // mints none of them.
 import {
   createConversationId,
+  deleteConversation,
   exportConversationMarkdown,
   generateConversationTitle,
   loadConversations,
@@ -203,6 +207,8 @@ import type { DocumentLineRange } from '../../components/documentPane/DocumentPa
 import { setAiActivity, subscribeAiState, type AiState } from '../../state/aiStateStore.js';
 import { projectAvailability } from '../../state/availability.js';
 import { reasonFor } from '../../state/readinessNotice.js';
+import { isAdvancedMode, subscribeUiMode } from '../../state/uiModeState.js';
+import { projectSv3Degradation, type Sv3Degradation } from './sv3-degradation.js';
 import {
   PANE_LABEL,
   SV3_COMMAND_EXPORT_MARKDOWN,
@@ -522,6 +528,7 @@ export class SearchV3View extends JfElement {
   private boxObserver: ResizeObserver | null = null;
   private searchUnsubscribe: (() => void) | null = null;
   private aiUnsubscribe: (() => void) | null = null;
+  private uiModeUnsubscribe: (() => void) | null = null;
   private agentUnsubscribe: (() => void) | null = null;
   private convListUnsubscribe: (() => void) | null = null;
   /** The in-flight record fetch, so a claim that supersedes another cannot land out of order. */
@@ -622,6 +629,10 @@ export class SearchV3View extends JfElement {
       this.aiSnapshot = snapshot;
       this.applyLockState(snapshot);
     });
+    // Inventory E3 — the app-wide Simple/Detailed authority. Nothing is COPIED into this element:
+    // every render site reads `isAdvancedMode()` live, so the subscription's only job is to ask for
+    // a re-render when the reader changes the preference on another surface.
+    this.uiModeUnsubscribe = subscribeUiMode(() => this.requestUpdate());
     // Subscribing does NOT create a controller (the read below is a `peek`), so a window that never
     // delegates never starts the agent controller's polling as a side effect of being mounted.
     this.agentUnsubscribe = subscribeAgentSession(this.onAgentUpdate);
@@ -667,6 +678,8 @@ export class SearchV3View extends JfElement {
     this.searchUnsubscribe = null;
     this.aiUnsubscribe?.();
     this.aiUnsubscribe = null;
+    this.uiModeUnsubscribe?.();
+    this.uiModeUnsubscribe = null;
     // The RUN is not cancelled here. Unlike the ask stream (which this window owns), a delegated run
     // is hosted by the product-wide controller and may be watched from another surface; tearing it
     // down because this dev window unmounted would be this window deciding for the whole product.
@@ -1278,6 +1291,16 @@ export class SearchV3View extends JfElement {
     void this.runAsk(text);
   }
 
+  /**
+   * The window's reduced-capability fact (inventory E1), from the SAME observed-state authority the
+   * availability projection above reads — so the banner and the composer's refusal can never
+   * disagree about what is wrong. Derived per render rather than held: the store is the authority,
+   * and a cached copy would be a second one.
+   */
+  private get degradation(): Sv3Degradation | null {
+    return projectSv3Degradation(this.aiSnapshot);
+  }
+
   /** The composer's availability, projected from the ONE observed-state authority. */
   private get askUnavailableReason(): string {
     const availability = projectAvailability('documents', this.aiSnapshot);
@@ -1841,6 +1864,55 @@ export class SearchV3View extends JfElement {
   }
 
   /**
+   * What the window knows about work in flight (tempdoc 831), read in ONE place and handed to both
+   * the projection that paints the rows and the removal that refuses a live one. Two callers of one
+   * expression, rather than two expressions — the row's affordance and the list's refusal have to be
+   * the same judgement or the reader gets offered a delete that silently does nothing.
+   */
+  private runGate(run: Sv3RunView | null = this.projectRun()): Sv3RunGate {
+    const snapshot = this.searchSnapshot;
+    // `isRefining` counts too: the store runs a re-query BEHIND displayed results quietly
+    // (`state/searchState.ts:611` — no skeleton, so the content surface keeps the old rows), and the
+    // row's dot is then the only thing on screen saying the session is running a pass.
+    const searching =
+      this.asked && (snapshot?.isSearching === true || snapshot?.isRefining === true);
+    const local = this.run;
+    // The render pass HANDS IN the projection it already made: projecting the feed a second time per
+    // frame would be the same answer at twice the cost.
+    const pendingPrompt = (run?.prompts.length ?? 0) > 0;
+    return {
+      searching,
+      // Named by session, not by flag: only the conversation that OPENED the parked run may wear the
+      // act-now colour, whichever row the reader happens to be looking at.
+      awaitingDecisionIn: pendingPrompt && local !== null ? local.sessionId : null,
+    };
+  }
+
+  /**
+   * The reader discards a conversation (tempdoc 831). `removeSession` decides — including the
+   * refusal for a conversation with work in flight, which is why nothing is re-checked here — and
+   * the deletion is WRITTEN THROUGH to the conversation store, the authority for a conversation's
+   * existence (the same shape the rename write-through takes). If the authority declines, the next
+   * list load projects the row back: the window never claims a deletion that did not happen.
+   *
+   * Removing the conversation ON SCREEN routes through New session first, so the window leaves the
+   * transcript the way every other exit from it does — an emptied pane and nothing claimed — rather
+   * than through a second, partial teardown that would be free to forget one of the pointers.
+   */
+  private onSessionRemove(event: Event): void {
+    const id = (event as CustomEvent<Sv3SessionRemove>).detail?.id ?? '';
+    const gate = this.runGate();
+    // Asked TWICE, deliberately: the first call is the decision (an unchanged list is the refusal,
+    // and nothing else may happen on a refusal), and the second is the write — because the New-
+    // session exit in between replaces the list this one would otherwise have been computed from.
+    if (removeSession(this.sessions, id, gate) === this.sessions) return;
+    if (this.sessions.activeId === id) this.onSessionNew();
+    if (this.renamingId === id) this.renamingId = null;
+    this.sessions = removeSession(this.sessions, id, gate);
+    void deleteConversation(id);
+  }
+
+  /**
    * New session: back to the hero with an empty draft and nothing claimed about the corpus. The
    * sessions so far stay in the list — starting one is not ending the others. An in-flight response
    * IS ended, because its own session is no longer the one on screen and a stream nobody is watching
@@ -1947,12 +2019,6 @@ export class SearchV3View extends JfElement {
 
   render(): TemplateResult {
     const results: Sv3ResultsView = projectSv3Results(this.searchSnapshot, this.asked);
-    // Relative timestamps are computed HERE, on render, and never ticked: a sidebar that re-renders
-    // itself every second is continuous motion at rest, which the spec's duty-cycle law rules out.
-    // `isRefining` counts too: the store runs a re-query BEHIND displayed results quietly
-    // (`state/searchState.ts:611` — no skeleton, so the content surface keeps the old rows), and the
-    // row's dot is then the only thing on screen saying the session is running a pass.
-    const snapshot = this.searchSnapshot;
     const run = this.projectRun();
     const turns = activeTurns(this.sessions);
     const pendingPrompt = run !== null && run.prompts.length > 0;
@@ -1965,11 +2031,10 @@ export class SearchV3View extends JfElement {
         run?.phase === 'holding',
       followUp: turns.length > 0,
     });
+    // Relative timestamps are computed HERE, on render, and never ticked: a sidebar that re-renders
+    // itself every second is continuous motion at rest, which the spec's duty-cycle law rules out.
     const sessionGroups = projectSv3Sessions(this.sessions, {
-      searching: this.asked && (snapshot?.isSearching === true || snapshot?.isRefining === true),
-      // Named by session, not by flag: only the conversation that OPENED the parked run may wear the
-      // act-now colour, whichever row the reader happens to be looking at.
-      awaitingDecisionIn: pendingPrompt && this.run !== null ? this.run.sessionId : null,
+      ...this.runGate(run),
       now: Date.now(),
     });
     return html`
@@ -1980,6 +2045,7 @@ export class SearchV3View extends JfElement {
         data-testid="sv3-sidebar"
         @sv3-session-select=${this.onSessionSelect}
         @sv3-session-pin=${this.onSessionPin}
+        @sv3-session-remove=${this.onSessionRemove}
         @sv3-session-new=${this.onSessionNew}
         @sv3-session-rename=${this.onSessionRename}
         @sv3-sidebar-toggle=${this.onSidebarToggle}
@@ -2019,6 +2085,7 @@ export class SearchV3View extends JfElement {
           ?locked-refusal=${this.lockedRefusal}
           .reasoning=${this.streaming ? this.askReasoning : null}
           .currentModelLabel=${this.currentModelLabel}
+          ?detailed=${isAdvancedMode()}
           data-testid="sv3-main"
         ></jf-sv3-main>
         <jf-sv3-composer
@@ -2028,6 +2095,8 @@ export class SearchV3View extends JfElement {
           ?steerable=${this.steerableRun !== null}
           unavailable-reason=${this.askUnavailableReason}
           delegate-unavailable-reason=${this.delegateUnavailableReason}
+          .degradation=${this.degradation}
+          ?detailed=${isAdvancedMode()}
           .corpus=${projectSv3Corpus(this.aiSnapshot)}
           effort=${this.effort}
           model-label=${this.currentModelLabel ?? ''}
