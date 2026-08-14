@@ -105,7 +105,7 @@ withTempRoot((root) => {
   assert.equal(res.status, 0, res.stderr);
   assert.equal(JSON.parse(fs.readFileSync(outJson, 'utf8')).totals.errors, 1);
   assert.match(fs.readFileSync(outMd, 'utf8'), /GammaTest/);
-  assert.match(fs.readFileSync(summary, 'utf8'), /Unit test attribution/);
+  assert.match(fs.readFileSync(summary, 'utf8'), /Test attribution \(gamma-lane\)/);
   assert.equal(JSON.parse(res.stdout).lane, 'gamma-lane');
   assert.equal(JSON.parse(res.stdout).runner.imageVersion, 'v-test');
 });
@@ -208,6 +208,25 @@ withTempRoot((root) => {
   const md = renderMarkdown(report);
   assert.match(md, /Flaky tests \(self-recovered on Develocity retry\): 0\./);
   assert.doesNotMatch(md, /Caution: retried executions inflate/);
+});
+
+// PR #447 review fix — the integration-tests lane (`:modules:system-tests:integrationTest`)
+// writes JUnit XML under build/test-results/integrationTest/, not build/test-results/test/.
+// Before the isJUnitResultPath / modulePathFor generalization, this layout was invisible to
+// walk() (never discovered) and, if discovered by some other path, would report module
+// `<unknown>` instead of `modules/system-tests`. Assert both: the file is picked up at all,
+// and its module resolves correctly.
+withTempRoot((root) => {
+  write(
+    path.join(root, 'modules/system-tests/build/test-results/integrationTest/TEST-example.IntegrationOnlyTest.xml'),
+    suiteXml({ name: 'example.IntegrationOnlyTest', tests: 1, skipped: 0, failures: 0, errors: 0, time: 3.2 }),
+  );
+
+  const report = buildReport({ root, lane: 'integration-tests', top: 20 });
+  assert.equal(report.totals.suites, 1, 'integrationTest-layout XML must be discovered by walk()');
+  assert.equal(report.totals.tests, 1);
+  assert.equal(report.modules.length, 1);
+  assert.equal(report.modules[0].module, 'modules/system-tests', 'module must resolve, not fall back to <unknown>');
 });
 
 console.log('test-report-unit-test-attribution: PASS');

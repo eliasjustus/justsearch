@@ -11,6 +11,11 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+// KIND is deliberately NOT renamed to be lane-generic even though this script now also
+// covers the integration-tests lane: it's a consumer-facing schema identifier (JSON
+// structure/field-shape contract), not a lane label, and renaming it would break any
+// existing consumer keyed on this string for no structural reason. Lane identity lives in
+// the `lane` field and (for humans) the Markdown header below.
 const KIND = 'justsearch-unit-test-attribution.v1';
 
 function repoRootFromCwd() {
@@ -101,12 +106,20 @@ function asInt(value) {
   return Math.trunc(asNumber(value, 0));
 }
 
+// Gradle names the results directory after the Test TASK, not a fixed "test" literal —
+// build/test-results/test/ for the default `test` task, build/test-results/integrationTest/
+// for `:modules:system-tests:integrationTest`, etc. Any task-name segment must be accepted
+// here, or a whole tier's XML is silently invisible to attribution (tempdoc 829 follow-up).
+const TEST_RESULTS_TASK_DIR = '[^/]+';
+
 function isJUnitResultPath(root, absPath) {
   const rel = normalizeRel(root, absPath);
   const rootBase = path.basename(path.resolve(root));
-  if (rel.startsWith('modules/')) return /^modules\/[^/]+\/build\/test-results\/test\/TEST-.+\.xml$/i.test(rel);
-  if (rootBase === 'modules') return /^[^/]+\/build\/test-results\/test\/TEST-.+\.xml$/i.test(rel);
-  return /^build\/test-results\/test\/TEST-.+\.xml$/i.test(rel);
+  if (rel.startsWith('modules/'))
+    return new RegExp(`^modules/[^/]+/build/test-results/${TEST_RESULTS_TASK_DIR}/TEST-.+\\.xml$`, 'i').test(rel);
+  if (rootBase === 'modules')
+    return new RegExp(`^[^/]+/build/test-results/${TEST_RESULTS_TASK_DIR}/TEST-.+\\.xml$`, 'i').test(rel);
+  return new RegExp(`^build/test-results/${TEST_RESULTS_TASK_DIR}/TEST-.+\\.xml$`, 'i').test(rel);
 }
 
 function walk(dir, root = dir, out = []) {
@@ -125,10 +138,10 @@ function walk(dir, root = dir, out = []) {
 
 function modulePathFor(root, filePath) {
   const rel = normalizeRel(root, filePath);
-  const match = /^(modules\/[^/]+)\/build\/test-results\/test\//.exec(rel);
+  const match = new RegExp(`^(modules/[^/]+)/build/test-results/${TEST_RESULTS_TASK_DIR}/`).exec(rel);
   if (match) return match[1];
-  const buildIndex = rel.indexOf('/build/test-results/test/');
-  return buildIndex === -1 ? '<unknown>' : rel.slice(0, buildIndex);
+  const buildIndexMatch = new RegExp(`/build/test-results/${TEST_RESULTS_TASK_DIR}/`).exec(rel);
+  return buildIndexMatch ? rel.slice(0, buildIndexMatch.index) : '<unknown>';
 }
 
 // Develocity's test-retry extension re-executes a flaky test in place: the retried
@@ -294,8 +307,13 @@ function fmtSeconds(n) {
 }
 
 export function renderMarkdown(report) {
+  // Lane-aware heading — this script now runs for both the unit-tests matrix and the
+  // integration-tests lane, so a hardcoded "Unit test attribution" title misdescribes the
+  // latter's report even though the underlying JSON `KIND` stays a stable schema id (see
+  // the KIND comment above).
+  const laneLabel = report.lane || 'unknown lane';
   const lines = [
-    '### Unit test attribution',
+    `### Test attribution (${laneLabel})`,
     '',
     `Generated: ${report.generatedAt}`,
     '',

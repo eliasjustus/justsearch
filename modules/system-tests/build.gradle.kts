@@ -307,9 +307,9 @@ val integrationTest = tasks.register<Test>("integrationTest") {
       null
     }
   } ?: extensions.findByName("retry")
-  retryExt?.let { ext ->
+  if (retryExt != null) {
     try {
-      val failOnPassedProp = ext.javaClass.getMethod("getFailOnPassedAfterRetry").invoke(ext)
+      val failOnPassedProp = retryExt.javaClass.getMethod("getFailOnPassedAfterRetry").invoke(retryExt)
       @Suppress("UNCHECKED_CAST")
       (failOnPassedProp as org.gradle.api.provider.Property<Boolean>).set(false)
     } catch (e: ReflectiveOperationException) {
@@ -317,6 +317,14 @@ val integrationTest = tasks.register<Test>("integrationTest") {
     } catch (e: ClassCastException) {
       logger.warn("Test retry extension has unexpected type: ${e.message}")
     }
+  } else {
+    // Neither the Develocity 4.x `develocity.testRetry` nor the deprecated 3.x `retry`
+    // extension was found on this task, so the failOnPassedAfterRetry=false override above
+    // is a silent no-op: the convention plugin's project-wide failOnPassedAfterRetry=true
+    // (JvmBaseConventionsPlugin.kt:119-143) would still apply, and a self-recovered flake in
+    // this advisory lane would redden the job exactly as R3 intended to prevent.
+    logger.warn("Test retry extension not found (develocity.testRetry / retry) — R3's " +
+        "failOnPassedAfterRetry=false override for integrationTest did not apply")
   }
 }
 
