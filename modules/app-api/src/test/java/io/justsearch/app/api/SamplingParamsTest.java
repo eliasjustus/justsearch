@@ -92,11 +92,18 @@ class SamplingParamsTest {
 
   @Test
   void presetsHaveExpectedEnableThinking() {
+    // Null = "let the server decide": the calls that are allowed to think.
     assertNull(SamplingParams.AGENT.enableThinking());
     assertNull(SamplingParams.THINKING.enableThinking());
-    assertNull(SamplingParams.DETERMINISTIC.enableThinking());
     // VDU explicitly disables thinking — output goes to reasoning_content (lost) otherwise
     assertEquals(false, SamplingParams.VDU.enableThinking());
+    assertEquals(false, SamplingParams.VDU_PROBE.enableThinking());
+    // DETERMINISTIC is the pipeline's mechanical preset (query rewrite, QU, filter normalization,
+    // context sufficiency, query expansion, section summarize). Since the server-wide reasoning
+    // budget is on by default, a null here would make every one of those calls think — measured at
+    // 95 reasoning activations across 101 completion requests in one rag-ask round (tempdoc 835
+    // §10f). Thinking for answers, not for plumbing.
+    assertEquals(false, SamplingParams.DETERMINISTIC.enableThinking());
   }
 
   @Test

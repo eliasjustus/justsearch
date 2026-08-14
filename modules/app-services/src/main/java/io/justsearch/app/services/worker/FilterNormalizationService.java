@@ -52,9 +52,11 @@ public final class FilterNormalizationService {
   /** Hard deadline for the LLM normalization call. Matches QU deadline (366). */
   private static final long NORM_DEADLINE_MS = 8000L;
 
-  /** No response_format — plain text for speed (avoids grammar-constrained decoding). */
-  private static final SamplingParams NORM_SAMPLING =
-      SamplingParams.DETERMINISTIC.withEnableThinking(false);
+  /**
+   * No response_format — plain text for speed (avoids grammar-constrained decoding). Thinking is
+   * off because {@link SamplingParams#DETERMINISTIC} carries it for every mechanical call (835 §10f).
+   */
+  private static final SamplingParams NORM_SAMPLING = SamplingParams.DETERMINISTIC;
 
   /** Pattern to parse "input -> output" lines from LLM response. */
   private static final Pattern ARROW_LINE = Pattern.compile("^(.+?)\\s*->\\s*(.+)$");

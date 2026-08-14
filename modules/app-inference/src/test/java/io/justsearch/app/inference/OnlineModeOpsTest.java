@@ -335,6 +335,114 @@ class OnlineModeOpsTest {
   }
 
   @Test
+  void chatCompletion_deterministicPresetSuppressesThinkingOnTheWire() throws Exception {
+    // Tempdoc 835 §10f — the auxiliary-call guarantee, asserted where it is actually delivered:
+    // in the request body llama-server sees. DETERMINISTIC is what query rewrite, query
+    // understanding, filter normalization, context sufficiency and query expansion all pass; with
+    // the server-wide budget on, an absent kwarg means every one of them thinks.
+    AtomicReference<String> capturedBody = new AtomicReference<>();
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          capturedBody.set(
+              new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+          byte[] body =
+              "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}".getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().add("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, body.length);
+          exchange.getResponseBody().write(body);
+          exchange.close();
+        });
+
+    ops.chatCompletion(
+            List.of(Map.of("role", "user", "content", "test")), 100, SamplingParams.DETERMINISTIC)
+        .get(5, TimeUnit.SECONDS);
+
+    JsonNode requestJson = MAPPER.readTree(capturedBody.get());
+    assertFalse(
+        requestJson.path("chat_template_kwargs").path("enable_thinking").asBoolean(true),
+        "DETERMINISTIC must send chat_template_kwargs.enable_thinking=false: " + capturedBody.get());
+  }
+
+  @Test
+  void streamChat_deterministicPresetSuppressesThinkingOnTheWire() throws Exception {
+    // The same guarantee on the streaming transport — query expansion (KnowledgeSearchEngine) and
+    // section summarize (HierarchicalShapeRunner) reach llama-server this way, not via chatCompletion.
+    AtomicReference<String> capturedBody = new AtomicReference<>();
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          capturedBody.set(
+              new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+          exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+          exchange.sendResponseHeaders(200, 0);
+          var os = exchange.getResponseBody();
+          os.write(
+              "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"
+                  .getBytes(StandardCharsets.UTF_8));
+          os.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
+          os.flush();
+          os.close();
+        });
+
+    CountDownLatch done = new CountDownLatch(1);
+    ops.streamChat(
+        List.of(Map.of("role", "user", "content", "test")), 100,
+        chunk -> {}, null, fr -> done.countDown(), t -> done.countDown(),
+        SamplingParams.DETERMINISTIC);
+
+    assertTrue(done.await(5, TimeUnit.SECONDS));
+    JsonNode requestJson = MAPPER.readTree(capturedBody.get());
+    assertFalse(
+        requestJson.path("chat_template_kwargs").path("enable_thinking").asBoolean(true),
+        "DETERMINISTIC must suppress thinking on the streaming path too: " + capturedBody.get());
+  }
+
+  @Test
+  void streamChat_serverErrorBodyReachesTheCaller() throws Exception {
+    // Tempdoc 835 §10f: the streaming paths used to pass null as the error body, so a context
+    // overflow — llama-server's own "exceeds the available context size" explanation — surfaced as
+    // a bare "Server returned status 400" with "check llama-server logs" as the only lead.
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          byte[] body =
+              ("{\"error\":{\"code\":400,\"message\":\"request (5878 tokens) exceeds the available"
+                      + " context size (4096 tokens), try increasing it\"}}")
+                  .getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().add("Content-Type", "application/json");
+          exchange.sendResponseHeaders(400, body.length);
+          exchange.getResponseBody().write(body);
+          exchange.close();
+        });
+
+    AtomicReference<Throwable> error = new AtomicReference<>();
+    CountDownLatch done = new CountDownLatch(1);
+    ops.streamChat(
+        List.of(Map.of("role", "user", "content", "test")), 100,
+        chunk -> {},
+        null,
+        fr -> done.countDown(),
+        t -> {
+          error.set(t);
+          done.countDown();
+        },
+        SamplingParams.DETERMINISTIC);
+
+    assertTrue(done.await(5, TimeUnit.SECONDS));
+    assertNotNull(error.get());
+    assertTrue(
+        error.get() instanceof LlmServerException lse && lse.httpStatus() == 400,
+        "expected a typed 400: " + error.get());
+    assertTrue(
+        error.get().getMessage().contains("exceeds the available context size"),
+        "the server's explanation must survive to the caller: " + error.get().getMessage());
+  }
+
+  @Test
   void chatCompletion_omitsSamplingWhenNull() throws Exception {
     AtomicReference<String> capturedBody = new AtomicReference<>();
     server.removeContext("/v1/chat/completions");

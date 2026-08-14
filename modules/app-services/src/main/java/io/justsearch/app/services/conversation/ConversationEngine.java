@@ -808,8 +808,8 @@ public final class ConversationEngine {
    * validate-retry loop still guards correctness, so a bad schema degrades rather than fails.
    *
    * <p>Structured extraction wants near-deterministic, non-thinking output; when the caller supplied
-   * no explicit sampling we base the constrained params on {@link SamplingParams#DETERMINISTIC} with
-   * thinking disabled (mirroring the QueryUnderstanding structured-output preset).
+   * no explicit sampling we base the constrained params on {@link SamplingParams#DETERMINISTIC},
+   * which carries {@code enable_thinking:false} for every mechanical call (tempdoc 835 §10f).
    */
   private static SamplingParams applySchemaConstraint(
       SamplingParams sampling, Map<String, Object> body) {
@@ -826,8 +826,7 @@ public final class ConversationEngine {
           e.getMessage());
       return sampling;
     }
-    SamplingParams base =
-        sampling != null ? sampling : SamplingParams.DETERMINISTIC.withEnableThinking(false);
+    SamplingParams base = sampling != null ? sampling : SamplingParams.DETERMINISTIC;
     // The codebase-standard schema→GBNF response_format form (QueryUnderstandingService +
     // OnlineModeOps' non-streaming path): a response_format-enforcing llama.cpp build converts this to
     // a server-side grammar so the FIRST emission is schema-valid. On a build that does NOT enforce it,

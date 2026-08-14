@@ -1299,3 +1299,63 @@ already settled that comparison; re-running it would mean removing the guard.
 Stopped through the dev-runner; verified after: no `llama-server.exe`, no dev-runner node
 process, ports 8081/8082/API/5173 closed, `quick_health` → `running: false`. The residual
 2683 MiB of GPU memory belongs to the foreign eval run, which was left alone.
+
+### 10f. Amendment — thinking for answers, not for plumbing
+
+The §10e measurement (95 `reasoning-budget: activated` across 101 completion requests) is
+the justification: turning the budget on server-wide made *every* LLM call in a turn think,
+while only one of them produces text a person reads. The default's intent was "answers
+think"; this makes the runtime say so per call.
+
+**The enumeration, by call site rather than by memory** (`grep` for `SamplingParams.` across
+production sources). A rag-ask turn's non-answer calls, all of which pass the same preset:
+
+| Auxiliary call | Site | Transport |
+|---|---|---|
+| Query rewrite (follow-up decontextualization) | `QueryRewriteInjector.java:92` | `chatCompletion` |
+| Query understanding (structured filters) | `QueryUnderstandingService.java:87` | `chatCompletion` |
+| Filter normalization | `FilterNormalizationService.java:56` | `chatCompletion` |
+| Context sufficiency | `ContextSufficiencyService.java:76` | `chatCompletion` |
+| Query expansion | `KnowledgeSearchEngine.java:1262` | `streamChat` |
+| Section summarize (map step) | `HierarchicalShapeRunner.java:355` | `streamChat` |
+| Schema-constrained extract fallback | `ConversationEngine.java:829` | streaming |
+| Legacy `summarize` / `askQuestion` | `OnlineModeOps.java:266`, `:279` | `chatCompletion` |
+
+**One authority, not eight patches.** All of them pass `SamplingParams.DETERMINISTIC`, and
+three had *already* hand-applied `.withEnableThinking(false)` — the duplication is itself the
+evidence that the preset was missing a default. So `DETERMINISTIC` now carries
+`enableThinking=false` (as `VDU` already did, for the same reason: its reasoning is
+discarded), and the three hand-applied overrides are swept. Calls that should think are
+unaffected: the conversation answer call passes request-derived params or null, the agent
+loop uses `AGENT`, and `THINKING` exists for reasoning-heavy work.
+
+**A latent wire bug the test found.** `OnlineModeOps.streamChat` — one of the three
+transports — built its request body with `temperature` and `top_p` but **no
+`chat_template_kwargs` at all**, so a caller's suppression was silently discarded on that
+path (`streamChatWithTools` and the non-streaming `sendChatRequest` both emitted it). Query
+expansion and section summarize arrive through exactly that transport, so the amendment would
+have been half-inert. Fixed with the emission the other two transports already had; the
+wire-level test is what caught it, which is why the tests assert the request body rather than
+the params object.
+
+**Verification** — a test per site, at the layer where the guarantee is delivered:
+
+- `SamplingParamsTest.presetsHaveExpectedEnableThinking` — the preset itself, with the
+  measurement recorded next to the assertion (and `AGENT`/`THINKING` still null).
+- `OnlineModeOpsTest.chatCompletion_deterministicPresetSuppressesThinkingOnTheWire` and
+  `…streamChat_deterministicPresetSuppressesThinkingOnTheWire` — the actual request body
+  llama-server would receive, one per transport.
+- `QueryRewriteInjectorTest.rewriteCallSuppressesThinking` — the per-site capture, on the
+  turn's first auxiliary call.
+
+**The Thorough overflow: the smallest honest fix, taken.** The §10e failure surfaced as a
+bare `Server returned status 400` because both streaming paths passed `null` as the error
+body, discarding llama-server's own explanation (`request (5878 tokens) exceeds the available
+context size (4096 tokens), try increasing it`) and leaving "check llama-server logs" as the
+only lead. `OnlineModeOps` now reads the failed response's body and carries it into
+`LlmServerException` (which also closes a stream that previously leaked on the error path),
+so the overflow explains itself. Guarded by
+`OnlineModeOpsTest.streamChat_serverErrorBodyReachesTheCaller`. The larger fix — making the
+Thorough rung's passage count and token ceiling *ctx-aware* so the request is never built
+too large — is **not** taken here and is logged to the observations inbox instead: it is a
+product decision about a rung's parameters, not a diagnostic defect.
