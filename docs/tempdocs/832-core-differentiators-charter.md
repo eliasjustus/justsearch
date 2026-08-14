@@ -80,6 +80,19 @@ measurement requires paid cells; only content-coverage was measurable at $0 (don
    staged_recall_accounting). Entity-carriage live smoke rides the same stack window.
 4. **Founder-gated spend:** 789 naturalistic launch and/or 791 campaign v2, designed to
    include an entity-carriage arm. Not launched without explicit owner go-ahead.
+   **OWNER DECISION 2026-08-14: "dont do any runs costing money for now"** — the lane
+   stays parked; free/GPU work only.
+
+### Owner decisions (2026-08-14, in-session)
+
+- Paid agent-utility runs: **no** (above).
+- Q-010 ratchet tier: **keep agent-invoked** (register disposition recorded).
+- v0.2.0 MCPB asset: **rebuild + refresh now** — `build-installer.yml` triggered on main
+  (run 31780573795); orchestrator hands artifacts to owner for upload (no release touch
+  without separate authorization).
+- `registerLateBound`/`AgentToolFactory` dedup: **approved, do now** (worker delegated).
+- Dev-stack note: idle stack held by session `edfec71b` (822 arc) taken down under the
+  tool's own IDLE_HOLD/takeover-warn verdict to free GPU for lane-B work.
 
 ## §3 Coordination / collision notes (checked 2026-08-14)
 
