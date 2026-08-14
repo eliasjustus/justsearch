@@ -248,6 +248,36 @@ export class Sv3SessionRow extends JfElement {
         padding-inline-end: var(--sv3-row-actions-inline);
       }
 
+      /* THE OTHER HALF OF THE SAME RESERVATION (tempdoc 831, D1). The gutter above only covers the
+         two statuses that never yield; every OTHER row reserved just the slot's 32px floor, so a
+         revealed 72px action set painted its icons over the tail of the title — 32px of text under
+         the glyphs at the default sidebar width, at 2.91:1 against them (measured). A yielding row
+         therefore widens its slot to the action set's width for exactly as long as the set is shown:
+         the title truncates one ellipsis earlier while you are pointing at the row, and no glyph is
+         ever composited under an icon.
+
+         Widening the SLOT and not the label is what keeps this free of side effects — the slot is
+         already the trailing reservation, so nothing moves but the title's clip. It is safe to do on
+         hover here precisely because these are the rows whose slot content has yielded: there is no
+         dot to move (that is why the never-yields rows keep their at-rest gutter instead).
+
+         Same three triggers as the yield above, same guards, still three SEPARATE rules, and none of
+         them nests :has() inside the host selector — Chrome's parse error there takes the whole
+         selector list with it. */
+      :host(:hover:not([compact]):not([status='act-now']):not([status='broken'])) .status-slot {
+        min-inline-size: var(--sv3-row-actions-inline);
+      }
+      :host(:not([compact]):not([status='act-now']):not([status='broken']))
+        button.row:focus-visible
+        .status-slot {
+        min-inline-size: var(--sv3-row-actions-inline);
+      }
+      :host(:not([compact]):not([status='act-now']):not([status='broken']))
+        button.row:has(~ .actions button.act:focus-visible)
+        .status-slot {
+        min-inline-size: var(--sv3-row-actions-inline);
+      }
+
       /* ── The ACTION SET (tempdoc 831) ────────────────────────────────────────
          The slot swaps for a SET, not a single control: rename, pin, and — only where it is safe —
          discard. One flex group, absolutely positioned over the row's trailing edge, so the whole
@@ -544,16 +574,20 @@ export class Sv3SessionRow extends JfElement {
   private onRenameKeydown(event: KeyboardEvent): void {
     // The row list is inside the window's own key handling; an edit's keys are the edit's alone.
     event.stopPropagation();
+    if (event.key !== 'Enter' && event.key !== 'Escape') return;
+    event.preventDefault();
+    // Both keyboard routes out of the edit have to LAND somewhere (tempdoc 831, audit advisory):
+    // the input is removed when the edit closes, and focus falls to <body> — a pointerless reader
+    // ends up at the top of the document having lost the row they were naming.
+    this.restoreFocusOnRenameExit = true;
     if (event.key === 'Enter') {
-      event.preventDefault();
       this.commitRename(event.currentTarget as HTMLInputElement);
-    } else if (event.key === 'Escape') {
-      event.preventDefault();
-      this.renameCommitted = true;
-      this.dispatchEvent(
-        new CustomEvent(SV3_SESSION_RENAME_CANCEL, { bubbles: true, composed: true }),
-      );
+      return;
     }
+    this.renameCommitted = true;
+    this.dispatchEvent(
+      new CustomEvent(SV3_SESSION_RENAME_CANCEL, { bubbles: true, composed: true }),
+    );
   }
 
   /** Blur commits what is there, unless a key already settled it, per the design spec. */
@@ -564,6 +598,13 @@ export class Sv3SessionRow extends JfElement {
 
   /** Latch so the blur that FOLLOWS an Enter or an Escape does not commit a second time. */
   private renameCommitted = false;
+
+  /**
+   * The edit was left BY KEY, so the focus it is about to lose is owed back to the row. Set only on
+   * the keyboard routes: a blur-commit means the reader clicked something else, and taking their
+   * focus back from whatever they just clicked would be the worse bug.
+   */
+  private restoreFocusOnRenameExit = false;
 
   private commitRename(input: HTMLInputElement): void {
     this.renameCommitted = true;
@@ -576,9 +617,25 @@ export class Sv3SessionRow extends JfElement {
     );
   }
 
+  /**
+   * Put the keyboard back on this row's claim control (tempdoc 831). The button lives in the shadow
+   * root, so the panel above cannot reach it — the row owns its own focus, and this is the one way
+   * in. Used when a row is discarded (the survivor takes the focus) and when an edit is left by key.
+   */
+  focusRow(): void {
+    this.shadowRoot?.querySelector<HTMLButtonElement>('button.row')?.focus();
+  }
+
   protected override updated(changed: Map<string, unknown>): void {
     if (!changed.has('renaming')) return;
-    if (!this.renaming) return;
+    if (!this.renaming) {
+      // The edit closed. If a key closed it, the input that held the focus is gone now and the row
+      // takes it back; anything else means the reader moved on themselves.
+      if (!this.restoreFocusOnRenameExit) return;
+      this.restoreFocusOnRenameExit = false;
+      this.focusRow();
+      return;
+    }
     this.renameCommitted = false;
     // The spec's `autoFocus` + `onFocus → select()`: the edit opens with
     // the old title selected, so typing replaces it and Escape still has something to restore to.

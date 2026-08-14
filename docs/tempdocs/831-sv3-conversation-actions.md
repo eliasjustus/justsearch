@@ -1,7 +1,7 @@
 ---
 title: "831 — Search v3 conversation actions: the status→action slot swap"
 type: tempdocs
-status: "IMPLEMENTED (2026-08-14) — built, unit-tested, gate-checked and live-measured in a backendless browser."
+status: "IMPLEMENTED + AUDITED (2026-08-14) — built, unit-tested, gate-checked, live-measured; an independent measured a11y audit (axe 0/0 across 11 states) confirmed the binding rules and found two defects (D1 title-composite, D2 keyboard double-delete), both fixed and re-measured."
 created: 2026-08-14
 updated: 2026-08-14
 author: agent session bccfc163-7b8f-4b1a-b9e4-0c011632d8a1
@@ -114,6 +114,86 @@ had"), since CI has no browser.
 The same pass also collapsed a second projection of the run per render: `runGate()` now takes the
 already-projected run the render pass made, instead of projecting the feed twice a frame.
 
+## The independent measured audit, and the two defects it found
+
+An independent auditor (≠ committer) ran a measured, live whole-screen pass over the row actions
+(`ux-audit-closure` discipline). It **confirmed** the headline claims: never-yields holds
+(byte-identical dot rects, `elementFromPoint`-clickable, zero overlap including at the 208px sidebar
+minimum), 36px height everywhere, live rows offer no discard, the rest state is not a dead strip, the
+full keyboard path with 9.24:1 focus rings, **axe 0/0 across 11 states**, all contrast pairs passing.
+
+It then found two defects in what the implementation had NOT measured. Both are fixed here.
+
+### D1 — the revealed set painted over the title
+
+The never-yields gutter was reserved only for act-now/broken rows. Every other row reserved just the
+slot's 32px floor while the revealed set is 72px wide, so at the default 256px sidebar **32px of title
+text sat under the icons** (8px on a live row) at 2.91:1 — under the 3:1 non-text floor. This was new
+in this work: one 28px pin fitted the 32px slot; three actions do not.
+
+Fixed by reserving the set's own width on the yielding rows too, for exactly as long as the set is
+shown (`Sv3SessionRow.ts:251-273`): the title truncates one ellipsis earlier while the actions are up,
+and no glyph is ever composited under an icon. The slot is widened rather than the label, because the
+slot IS the trailing reservation — and it is safe to do on hover here precisely because these are the
+rows whose slot content has already yielded, so there is no dot to move (which is why the never-yields
+rows keep their at-rest gutter instead, unchanged).
+
+Re-measured live with Range client rects **clipped by the label's own box** (the ellipsis is a
+paint-time effect, so an unclipped range overruns its container):
+
+| sidebar | row | painted title right (rest → hover) | actions left | overlap on hover |
+|---|---|---|---|---|
+| 256px | resting | 249 → **209** | 217 | **0** |
+| 256px | pinned | 249 → **209** | 217 | **0** |
+| 256px | broken | 197 → 197 | 217 | **0** |
+| 208px (min) | resting | 201 → **161** | 169 | **0** |
+| 208px (min) | pinned | 201 → **161** | 169 | **0** |
+| 208px (min) | broken | 149 → 149 | 169 | **0** |
+
+Row height stayed 36px in every cell; `elementFromPoint` at the pencil centre returns the rename
+action, and no title glyph is painted under it. (At REST the title still extends past the action box —
+correct: the set is fully transparent there, and reserving the width at rest would take it from the
+title permanently for nothing.)
+
+### D2 — keyboard double-delete via a silent focus re-point
+
+Reproduced end to end: focus "Delete A" → Enter → the row goes → Lit reuses the node, so the focus now
+sits on "Delete B" with nothing announced → a second Enter deleted a conversation the reader never
+chose (4→3→2), and the focus was then lost entirely. WCAG 3.3.4 plus a focus-management fault,
+independent of the confirmation-UX question.
+
+Fixed in the panel, which is the only party that knows the row ORDER
+(`Sv3Sidebar.ts:286-365`): the neighbours are recorded at request time (afterwards there is no row
+left to find them from), and when the removal lands the focus goes to the **successor's row button** —
+never its Delete — falling back to the predecessor and then to the new-search control, so it is never
+simply dropped. The deletion is announced in a polite live region that is a **leaf** holding text only
+(`Sv3Sidebar.ts:464-479`), following the codebase's existing `visually-hidden role=status` idiom
+(`components/Control.ts:578`) and deliberately not wrapping any control — a region around controls
+re-announces its whole subtree on every render.
+
+Live re-measurement: Enter on a Delete removed exactly that row; focus landed on
+`sv3-session-row-button` of the successor; **the second Enter changed nothing** (list identical); the
+region read "<title> deleted", `aria-live=polite`, 0 controls inside. Both keyboard routes out of
+rename now land on the row button too (advisory, also fixed: `Sv3SessionRow.ts:573-590` + `:625-640`, restoring
+focus only on the KEY routes — a blur-commit means the reader clicked something else, and taking their
+focus back from it would be the worse bug).
+
+A third precision defect surfaced while testing D2's fix and is fixed with it: a live region speaks on
+MUTATION, so two conversations sharing a title would have set the same string twice and announced the
+second to nobody. The region is emptied on the request and filled when the removal lands
+(`Sv3Sidebar.ts:306-309`), pinned by a `MutationObserver` case asserting the exact sequence
+`['same title deleted', '', 'same title deleted']`.
+
+### Owner-facing notes (recorded, not acted on)
+
+- **The in-motion dot yields on hover.** Per the spec only act-now and broken are protected, so this
+  is as designed — but it does mean the one row that is actually working loses its dot under the
+  pointer. A design call for the owner, not a defect.
+- **The sidebar resize grip has no visible focus indicator.** Pre-existing and outside this work;
+  logged to the observations inbox.
+- **No confirmation or undo on discard.** Already flagged under "Not verified"; still a product
+  question for the owner.
+
 ## Tests changed rather than added, and why
 
 Three existing cases pinned the ONE-pin shape. Their intent survives; the literal did not:
@@ -129,7 +209,8 @@ No assertion was weakened; each of the three gained a claim.
 ## Evidence
 
 **Unit** — `cd modules/ui-web && npm run typecheck && npm run test:unit:run`: typecheck clean,
-**420 files / 5068 tests green** (the window's own subset: 21 files / 515 tests, up from 20 / 490).
+**420 files / 5077 tests green** (the window's own subset: 21 files / 524 tests, up from 20 / 490 —
++8 from the audit fixes: 1 CSS-text reservation case, 6 focus/announcement cases, 1 rename-focus case).
 New: 13 cases in `Sv3SessionRow.actions.test.ts`, 7 in
 `sv3-sessions.test.ts` (`describe('a conversation can be discarded…')`), 5 window-level mutation
 probes in `SearchV3View.sessions.test.ts` (`describe('the row actions each change the state they
@@ -160,7 +241,20 @@ synthetic 60-Tab sweep of the whole shell is a surface-swap view-transition time
 touches nothing shows only the absent-backend fetch failures.
 
 Artefacts (scratchpad, not committed): `sv3-actions-resting.png`, `sv3-actions-hover.png`,
-`sv3-actions-hover-broken.png`, `sv3-actions-focus.png`, `sv3-actions-measure.json`.
+`sv3-actions-hover-broken.png`, `sv3-actions-focus.png`, `sv3-actions-measure.json`, and for the
+audit fixes `sv3-d1-default-256.png`, `sv3-d1-minimum-208.png`, `sv3-d2-after-discard.png`,
+`sv3-d1-d2-measure.json`.
+
+One pre-existing flake surfaced while re-running the suite: `streaming/EnvelopeStream.test.ts`'s
+heartbeat-watchdog reconnect case fails intermittently under full-suite parallel load and passes
+24/24 in isolation. It is a timer test in a file this branch does not touch; logged to the
+observations inbox. Four consecutive full runs: 5075/5076/5076/**5077** passing, with the final two
+runs of record green.
+
+**Test precision (D2)** — the four focus cases were run against a deliberately neutered fix to prove
+they discriminate: all four fail without it, and the double-delete case fails with `['first']` versus
+the expected `['second', 'first']` — i.e. it reproduces the audit's second-Enter deletion exactly,
+rather than failing on the focus assertion alone.
 
 **Gates** — the `ui-web-gates` recipe ran green: presentation-purity, observed-state-collapse,
 color-tokens, a11y-closure, adaptive-closure, layout-purity, surface-composition, inflight-liveness,

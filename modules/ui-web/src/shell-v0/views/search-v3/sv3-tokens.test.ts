@@ -439,6 +439,41 @@ describe('the session row spends one fill and three colours, by construction', (
     expect(ruleFor(':host([pinned]) button.pin')).toContain('color: var(--sidebar-foreground)');
   });
 
+  it('reserves the action width on the YIELDING rows too, so no icon paints over a title', () => {
+    // Tempdoc 831 D1, found by the independent measured audit: the never-yields gutter covered only
+    // act-now/broken, so every other row reserved the slot's 32px floor while the revealed set is
+    // 72px wide — 32px of title text under the icons at the default sidebar width, at 2.91:1
+    // against them. The fix reserves the SET'S OWN width for exactly as long as the set is shown.
+    const reserving = styles
+      .split('}')
+      .map((block) => ({
+        selector: block.slice(0, block.indexOf('{')).replace(/\s+/g, ' ').trim(),
+        body: block.slice(block.indexOf('{')),
+      }))
+      .filter(
+        (rule) =>
+          rule.selector.includes('.status-slot') &&
+          rule.body.includes('min-inline-size: var(--sv3-row-actions-inline)'),
+      )
+      .map((rule) => rule.selector);
+    // The same three triggers the yield has: a swap reachable by pointer but not by keyboard would
+    // leave the keyboard reader with the overlap this fixes.
+    expect(reserving).toHaveLength(3);
+    expect(reserving.some((s) => s.includes(':hover'))).toBe(true);
+    expect(reserving.filter((s) => s.includes(':focus-visible'))).toHaveLength(2);
+    for (const selector of reserving) {
+      // ...and each one is guarded OUT of the never-yields rows, which reserve their gutter at rest
+      // instead — widening theirs on hover would move the dot the guard exists to hold still.
+      expect(selector, `unguarded reservation: ${selector}`).toContain(
+        ":not([status='act-now']):not([status='broken'])",
+      );
+      expect(selector).toContain(':not([compact])');
+    }
+    // The reservation is the TOKEN, never a copied figure, so it cannot describe a different set
+    // than the one that is rendered.
+    expect(styles).not.toMatch(/min-inline-size:\s*(72px|calc\(3)/);
+  });
+
   it('never lets the action GROUP take a hit the row should have had', () => {
     // The set is an absolutely-positioned box over the row's trailing strip. Left targetable, it
     // would swallow the claim click there even at rest, when it shows nothing to press — the row's
