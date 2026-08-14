@@ -1051,18 +1051,98 @@ green again. Note that `AgentEventSchemaConformanceTest` and `AgentEventPayloadC
 **stayed green** under the mutation — they pin names and declared-superset, so a *dropped* field is
 invisible to them. That is the gap §6.3.1 named and this test closes.
 
-### 12.6 Deferred — NOT done in this branch
+### 12.6 Live legs — VERIFIED 2026-08-14
 
-Both of §11's "done when" clauses have a live leg that needs a running stack; no dev stack was used:
+Both of §11's "done when" clauses were run against a real stack (supervised window, owner-cleared).
+Stack: this worktree's dist (`distFrom`, provenance `gitHead 8e16febf`), API port 7710, cuda12 GPU
+runtime, `Qwen_Qwen3.5-9B-Q4_K_M.gguf`. Every run below used `autonomyLevel: "watch"`, under which
+even a LOW-risk read is gated (`inline_confirm`) — the deterministic way to park a run at an
+approval gate.
 
-- **S1 live leg** — attach to a run parked at an approval gate and confirm the snapshot alone
-  carries enough to render and answer the gate. **PENDING.**
-- **S2 live leg** — start a run, kill the Head, restart, read the sessions list; then repeat with
-  encryption enabled and the store locked at boot. **PENDING.** The locked-store branch is covered
-  at unit tier by `AgentRunReconcilerTest.lockedStoreIsANoOpUntilUnlock`, which is the adverse
-  precondition, but that is not the same as a real kill-restart.
+#### S1 live leg — the gate-parked reattach · **VERIFIED**
 
-Also untouched by design (S5's job): no FE consumer reads the three new snapshot fields or
+Run `9b6cdded` parked at a `core_search_index` gate; the observing SSE client was killed; a fresh
+`POST /api/chat/agent/{id}/attach` returned this as its **first frame, ahead of the replay**:
+
+```
+event: state_snapshot
+data: {"iteration":1,"budgetRemaining":6519,"toolCallsExecuted":0,"messageCount":3,
+       "activeAgentId":"primary",
+       "pendingApprovals":[{"callId":"8bZbOLrIJJTjNvxI4aXJeW9dBjqjRknm",
+                            "toolName":"core_search_index",
+                            "arguments":"{\"query\":\"invoice\"}",
+                            "risk":"low","gateBehavior":"inline_confirm"}],
+       "autonomyLevel":"WATCH",
+       "park":{"kind":"approval","sinceEpochMs":1786706180851,
+               "detail":"8bZbOLrIJJTjNvxI4aXJeW9dBjqjRknm"}}
+```
+
+Then `id: 1 session_started`, `id: 2 progress`, … — i.e. the primer precedes the ring replay
+entirely, which is the §6.1 ring-independence claim observed rather than argued. All three 834
+fields are present and populated; `park.kind` is `approval` with the gate's real start time; the
+snapshot carries no `trace` key (correct — the primer is untraced).
+
+**"Render AND answer" (§11's actual wording) was tested, not assumed.** Taking the `callId` from
+the snapshot *alone* and POSTing it to `/api/chat/approve` returned `{"status":"approved"}` / HTTP
+200, and the run proceeded to `DONE`. So the affordance is genuinely actionable from the snapshot,
+not merely displayed.
+
+#### S2 live leg — kill/restart, plain · **VERIFIED**
+
+Two runs existed at kill time, which gave a control pair rather than a single positive:
+
+| run | state at kill | after restart |
+|---|---|---|
+| `9321a87b` | `LLM_STREAMING` (parked at a gate), `resumable=false` | `interruptedAt=2026-08-14T11:20:54.247Z` — **stamped** |
+| `9b6cdded` | `DONE` (terminal) | `interruptedAt=null` — **correctly not stamped** |
+
+The Head was hard-killed (`Stop-Process -Force`) with the run parked; on-disk `meta.json` confirmed
+no `interruptedAt` key before the restart. After restart, `state` and `resumable` are **byte-identical
+to their pre-kill values** on both rows — the additive property (§5.2) holds in the field, not just in
+`doesNotTouchTheResumeSeed`.
+
+**Idempotency across boots:** a second stop/start left the timestamp at `11:20:54.247Z`, unmoved.
+
+#### S2 live leg — encrypted, locked at boot · **VERIFIED (the trap this exists to close)**
+
+On the same (throwaway) dev-data: `POST /api/conversations/encryption/setup`, then a new run
+`2da969cd` parked at a gate. Its `meta.json` on disk begins `JSEv1:0ZR6UIx/T3N5F99…` — genuinely
+sealed, not a plaintext file in an encrypted store. Head hard-killed while parked.
+
+1. **Restart, locked at boot** (lock-on-launch). `GET /api/chat/sessions` → `{"sessions":[]}`; the
+   sealed `meta.json` mtime stayed `11:21:50` (its pre-kill write). So the boot pass **read nothing
+   and wrote nothing** — exactly the silent no-op a boot-only design would have shipped as its whole
+   answer on encrypted installs.
+2. **`POST /api/conversations/encryption/unlock`** → the run was stamped
+   `interruptedAt=2026-08-14T11:22:32.333Z`, observed **~36 ms after unlock returned**. That is
+   `UnlockDeferredScan` completing the work the boot pass could not — and the 36 ms is also evidence
+   the hand-off really is off-monitor and prompt, not a blocked key lifecycle.
+3. **Idempotency across the encryption boundary:** the unlock pass left `9321a87b`'s earlier
+   `11:20:54.247Z` untouched, and `9b6cdded` (`DONE`) is still `null` after **three boot passes and
+   one unlock pass**.
+
+#### Honest limits of the live legs
+
+- **Only two of the four `InterruptedRunPresentation` rows were exercised live**: `FINISHED` (the
+  `DONE` run) and `FORK_ONLY`. Every interrupted run above classifies `FORK_ONLY` because the
+  checkpoint at gate-park time persists `state="LLM_STREAMING"`, which is outside
+  `isResumableState`. `RESUMABLE` / `RESUMABLE_AT_APPROVAL` remain **unit-tier only**
+  (`InterruptedRunPresentationTest`); no live run reached them.
+- **`LLM_STREAMING` is a persisted state with no `LifecycleState` constant**
+  (`AgentStepRunner.java:449`), so `LifecycleState.parse` maps it to `READY_FOR_LLM`. It is
+  non-terminal either way, so reconciliation is correct here — but this means design **R7's downgrade
+  hazard already exists in the persisted vocabulary**, independently of this slice. Logged to the
+  observations inbox; out of scope for S1/S2.
+- The GPU runtime had to be provisioned into this worktree
+  (`modules/ui/native-bin/llama-server/variants/cuda12`, copied from the main checkout's staged copy
+  after `stageLlamaCudaVariant`'s download failed on an SSL handshake). `RuntimeActivationService`
+  resolves `variantsRoot` **once at construction**, so the copy only takes effect after a restart.
+
+**Teardown** (verified, not assumed): `quick_health running:false`; no `llama-server.exe`; no
+JustSearch java; no dev-runner; 0 listeners on 7710/5173/8080. One `llama-server` was orphaned by the
+hard-kill of its parent Head and was reaped explicitly.
+
+Still untouched by design (S5's job): no FE consumer reads the three new snapshot fields or
 `interruptedAt` yet — `RetrospectivePanel`'s four interruption rows are §8's S2 row but sit on the FE
 seam, and the generated types are the substrate they will bind to.
 
