@@ -105,7 +105,7 @@ withTempRoot((root) => {
   assert.equal(res.status, 0, res.stderr);
   assert.equal(JSON.parse(fs.readFileSync(outJson, 'utf8')).totals.errors, 1);
   assert.match(fs.readFileSync(outMd, 'utf8'), /GammaTest/);
-  assert.match(fs.readFileSync(summary, 'utf8'), /Unit test attribution/);
+  assert.match(fs.readFileSync(summary, 'utf8'), /Test attribution \(gamma-lane\)/);
   assert.equal(JSON.parse(res.stdout).lane, 'gamma-lane');
   assert.equal(JSON.parse(res.stdout).runner.imageVersion, 'v-test');
 });
@@ -132,6 +132,101 @@ withTempRoot((root) => {
   const report = buildReport({ root, top: 5 });
   assert.equal(report.totals.tests, 1);
   assert.equal(report.modules[0].module, 'modules/real');
+});
+
+// Tempdoc 829 R5 — flaky-test extraction. Fixture modeled on the real
+// IngestionDiagnosticsContractTest shape from run 31742266298: a Develocity retry
+// re-executes a class whose @BeforeAll stalled, so the synthetic "initializationError"
+// testcase appears twice in the same <testsuite> — once with a nested <failure>, once
+// clean/self-closing. The suite's own tests= attribute (3) counts both attempts plus the
+// one real passing test.
+withTempRoot((root) => {
+  const longMessage = `java.util.concurrent.TimeoutException: ${'boot stalled past the fixture budget. '.repeat(6)}`;
+  const suiteXmlRaw = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<testsuite name="io.justsearch.systemtests.api.IngestionDiagnosticsContractTest"',
+    ' tests="3" skipped="0" failures="0" errors="0" time="37.3">',
+    '<testcase classname="io.justsearch.systemtests.api.IngestionDiagnosticsContractTest"',
+    ` name="initializationError" time="30.1"><failure message="${longMessage}"`,
+    ' type="java.util.concurrent.TimeoutException">stack trace omitted</failure></testcase>',
+    '<testcase classname="io.justsearch.systemtests.api.IngestionDiagnosticsContractTest"',
+    ' name="initializationError" time="6.1"/>',
+    '<testcase classname="io.justsearch.systemtests.api.IngestionDiagnosticsContractTest"',
+    ' name="testDiagnosticsEndpointReturnsShape" time="1.1"/>',
+    '</testsuite>',
+    '',
+  ].join('\n');
+  write(
+    path.join(root, 'modules/system-tests/build/test-results/test/TEST-io.justsearch.systemtests.api.IngestionDiagnosticsContractTest.xml'),
+    suiteXmlRaw,
+  );
+
+  const report = buildReport({ root, top: 20 });
+  assert.equal(report.totals.tests, 3, 'both retry attempts still count toward the (inflated) totals');
+  assert.equal(report.flakyTests.length, 1);
+  const [flaky] = report.flakyTests;
+  assert.equal(flaky.classname, 'io.justsearch.systemtests.api.IngestionDiagnosticsContractTest');
+  assert.equal(flaky.name, 'initializationError');
+  assert.equal(flaky.module, 'modules/system-tests');
+  assert.equal(flaky.attempts, 2);
+  assert.ok(flaky.firstFailureMessage.length <= 200, 'truncated to ~200 chars');
+  assert.ok(flaky.firstFailureMessage.startsWith('java.util.concurrent.TimeoutException'));
+  assert.ok(longMessage.length > 200, 'fixture message must actually exceed the truncation length to prove truncation fired');
+
+  const md = renderMarkdown(report);
+  assert.match(md, /Flaky tests \(self-recovered on Develocity retry\): 1\./);
+  assert.match(md, /Caution: retried executions inflate the timing\/test-count totals/);
+  assert.match(md, /initializationError/);
+});
+
+// Negative case — a test failing on every attempt (no clean retry) is a genuine failure,
+// not a flake, and must NOT appear in flakyTests even though it also produces repeated
+// <testcase> entries with the same classname+name.
+withTempRoot((root) => {
+  const suiteXmlRaw = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<testsuite name="io.justsearch.systemtests.api.GenuinelyBrokenTest"',
+    ' tests="2" skipped="0" failures="2" errors="0" time="4.0">',
+    '<testcase classname="io.justsearch.systemtests.api.GenuinelyBrokenTest"',
+    ' name="testAlwaysFails" time="2.0"><failure message="expected true but was false"',
+    ' type="org.opentest4j.AssertionFailedError">stack1</failure></testcase>',
+    '<testcase classname="io.justsearch.systemtests.api.GenuinelyBrokenTest"',
+    ' name="testAlwaysFails" time="2.0"><failure message="expected true but was false"',
+    ' type="org.opentest4j.AssertionFailedError">stack2</failure></testcase>',
+    '</testsuite>',
+    '',
+  ].join('\n');
+  write(
+    path.join(root, 'modules/system-tests/build/test-results/test/TEST-io.justsearch.systemtests.api.GenuinelyBrokenTest.xml'),
+    suiteXmlRaw,
+  );
+
+  const report = buildReport({ root, top: 20 });
+  assert.equal(report.totals.failures, 2);
+  assert.deepEqual(report.flakyTests, [], 'two failed attempts with no clean pass is not a flake');
+
+  const md = renderMarkdown(report);
+  assert.match(md, /Flaky tests \(self-recovered on Develocity retry\): 0\./);
+  assert.doesNotMatch(md, /Caution: retried executions inflate/);
+});
+
+// PR #447 review fix — the integration-tests lane (`:modules:system-tests:integrationTest`)
+// writes JUnit XML under build/test-results/integrationTest/, not build/test-results/test/.
+// Before the isJUnitResultPath / modulePathFor generalization, this layout was invisible to
+// walk() (never discovered) and, if discovered by some other path, would report module
+// `<unknown>` instead of `modules/system-tests`. Assert both: the file is picked up at all,
+// and its module resolves correctly.
+withTempRoot((root) => {
+  write(
+    path.join(root, 'modules/system-tests/build/test-results/integrationTest/TEST-example.IntegrationOnlyTest.xml'),
+    suiteXml({ name: 'example.IntegrationOnlyTest', tests: 1, skipped: 0, failures: 0, errors: 0, time: 3.2 }),
+  );
+
+  const report = buildReport({ root, lane: 'integration-tests', top: 20 });
+  assert.equal(report.totals.suites, 1, 'integrationTest-layout XML must be discovered by walk()');
+  assert.equal(report.totals.tests, 1);
+  assert.equal(report.modules.length, 1);
+  assert.equal(report.modules[0].module, 'modules/system-tests', 'module must resolve, not fall back to <unknown>');
 });
 
 console.log('test-report-unit-test-attribution: PASS');

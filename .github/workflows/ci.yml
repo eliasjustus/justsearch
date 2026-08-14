@@ -566,6 +566,18 @@ jobs:
       - name: Integration tier (Golden Corpus, relevance, isolated-backend E2E)
         run: ./gradlew.bat :modules:system-tests:integrationTest -PskipWebBuild=true --console=plain
 
+      # PR #447 review fix: R3 (failOnPassedAfterRetry=false for this advisory lane, above in
+      # modules/system-tests/build.gradle.kts) keeps a self-recovered boot flake from reddening
+      # this job, but that alone drops ALL automated surfacing of the flake class — it would
+      # only be visible via manual log/XML archaeology in the uploaded artifact below. This step
+      # closes that gap the same way the unit-tests matrix already does (R5, same PR): extract
+      # flakyTests from the just-produced JUnit XML into an attribution report. No budget step
+      # here deliberately — report-unit-test-budget.mjs throws when a lane isn't declared in
+      # unit-test-shard-policy.v1.json, and integration-tests isn't a unit-test shard.
+      - name: Report integration-test attribution
+        if: always()
+        run: node scripts/ci/report-unit-test-attribution.mjs --lane integration-tests --runner-label windows-latest --out-json build/ci/integration-test-attribution.json --out-md build/ci/integration-test-attribution.md --top 20 --allow-empty
+
       - name: Upload integration-test results
         if: always()
         uses: actions/upload-artifact@v7
@@ -575,6 +587,8 @@ jobs:
             modules/system-tests/build/test-results/integrationTest/TEST-*.xml
             modules/system-tests/build/reports/tests/integrationTest/**
             modules/system-tests/build/reports/isolated-backend/**
+            build/ci/integration-test-attribution.json
+            build/ci/integration-test-attribution.md
           if-no-files-found: warn
 
   secret-scan:
