@@ -1325,6 +1325,15 @@ public final class HeadAssembly implements AutoCloseable {
     return this.capabilities;
   }
 
+  /**
+   * Tempdoc 832 (lane D) — the agent-owned {@link KnowledgeHttpApiAdapter} (the one behind
+   * {@code IngestTool}/MCP {@code justsearch_ingest}), exposed so the composition site can bind its
+   * scan-progress registry + rollup ledger. {@code null} on the test-only fallback constructor.
+   */
+  public KnowledgeHttpApiAdapter agentSearchAdapter() {
+    return this.agentSearchAdapter;
+  }
+
   /** §6 typed substrate graph built once at end of constructor. */
   public io.justsearch.app.services.bootstrap.SubstrateGraph substrate() {
     return this.substrateGraph != null ? this.substrateGraph : assembleSubstrateGraph();
