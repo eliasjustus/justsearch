@@ -102,6 +102,7 @@ function renderHookEntry(hookDir, catalog, b) {
   if ('if' in b) out.if = b.if;
   if ('timeout' in b) out.timeout = b.timeout;
   if ('async' in b) out.async = b.async;
+  if ('asyncRewake' in b) out.asyncRewake = b.asyncRewake;
   return out;
 }
 

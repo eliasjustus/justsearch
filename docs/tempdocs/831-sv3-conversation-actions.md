@@ -194,6 +194,28 @@ second to nobody. The region is emptied on the request and filled when the remov
 - **No confirmation or undo on discard.** Already flagged under "Not verified"; still a product
   question for the owner.
 
+## Catching up onto main (2026-08-14)
+
+Merged `origin/main` after #450 (the degradation form) and #449 (registers + close-out) landed.
+Git resolved `SearchV3View.ts` automatically — the two streams touch disjoint concerns (their uiMode
+subscription, `degradation` getter and two render bindings; my `runGate`, `onSessionRemove` and the
+sidebar's remove binding) — and the merged file was read whole to confirm it rather than trusting the
+clean auto-merge. The one real conflict was this session's observation shard, resolved as a union
+(theirs first, mine after; nothing dropped).
+
+Post-merge: typecheck clean, **421 files / 5109 tests green** — their 32 degradation cases and my
+action cases coexist (the window's own subset is now 22 files / 556 tests). The D1/D2 live harness was
+re-run against the merged tree and is unchanged: zero title overlap in all 12 cells across both
+sidebar widths, the post-discard focus contract, the same-title announcement sequence, and rename
+focus on both routes. A live boot shows both features in one page — their composer band notice and
+Simple/Detailed control, my revealed row actions and a working discard.
+
+Not done live: driving their banner to a degraded state in the browser. It projects from an
+observed-state verdict a backendless boot never produces, and a hand-built `AiState` partial enough
+to fake it crashes unrelated render sites that read its other fields — a harness fault, not a product
+one. Their 32-case degradation suite covers the banner; what the live pass shows is that the merged
+window boots with their wiring in it and claims no degradation it was not told about.
+
 ## Tests changed rather than added, and why
 
 Three existing cases pinned the ONE-pin shape. Their intent survives; the literal did not:

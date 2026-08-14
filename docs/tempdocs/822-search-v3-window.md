@@ -1,7 +1,7 @@
 # 822 — Search v3: a dev-gated conversational window + citation-chain remediation
 
 ```
-status: ACTIVE
+status: COMPLETE
 created: 2026-08-12
 updated: 2026-08-14
 related: 818 (Search v2 — route-registration recipe reused; untouched), 820 (feel
@@ -108,3 +108,8 @@ sweep prerequisites are recorded in the governance registers.
   zero page errors; 144 A/B dispatches with zero surviving out-of-range brackets.
 - 2026-08-14 — publication re-cut onto current main; the working-history corpus
   retained locally per the curated-narrative policy (ADR-0045).
+- 2026-08-14 — CLOSED. Merged to main as `fe1344f9` (#444). The Tier-B follow-up
+  sittings (degradation form, then conversation actions) proceed as their own
+  tempdocs, 830 and 831, on the ratified order. Register updates the close rule
+  requires (search-quality; inference-runtime assessed) were done in this
+  close-out.

@@ -734,6 +734,7 @@ export class Sv3Main extends JfElement {
       hasChanged: (value: unknown, old: unknown) => value !== old || value !== null,
     },
     currentModelLabel: { attribute: false },
+    detailed: { type: Boolean, reflect: true },
     copiedTurnId: { state: true },
     expandedSources: { state: true },
   };
@@ -775,6 +776,16 @@ export class Sv3Main extends JfElement {
    * decides neither, it is given both and asks the one derivation (`sv3TailModelLabel`).
    */
   declare currentModelLabel: string | null;
+  /**
+   * The app-wide Simple/Detailed authority's answer (inventory E3), handed down by the window.
+   *
+   * It gates ONE thing here: whether the frame line names the MODEL. The model is a technical
+   * identifier — the shipped window reached the same conclusion and gates the same fact the same way
+   * (`views/UnifiedChatView.ts:5040`). What it never gates is an honesty fact: the grounding verdict
+   * and the duration are in both modes, because "how much of this is backed by your documents" is
+   * the thing a Simple reader most needs and least knows to ask for.
+   */
+  declare detailed: boolean;
   /** The turn whose answer was just copied — the confirmation, and the only state this region owns. */
   declare copiedTurnId: string | null;
   /**
@@ -803,6 +814,7 @@ export class Sv3Main extends JfElement {
     this.lockedRefusal = false;
     this.reasoning = null;
     this.currentModelLabel = null;
+    this.detailed = false;
     this.copiedTurnId = null;
     this.expandedSources = new Set();
   }
@@ -1105,7 +1117,7 @@ export class Sv3Main extends JfElement {
    * second tab stop per turn (tempdoc 822 F11 §2.6).
    */
   private tailFacts(turn: Sv3Turn): TemplateResult | typeof nothing {
-    const frame = projectSv3AnswerFrame(turn, this.currentModelLabel);
+    const frame = projectSv3AnswerFrame(turn, this.currentModelLabel, this.detailed);
     if (frame === null) return nothing;
     const verdict = frame.verdict ?? '';
     const label =
