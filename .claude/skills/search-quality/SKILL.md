@@ -875,6 +875,34 @@ above)*
   refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
   was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
 
+### F-048: in-corpus paraphrase bridging is HOST-DILUTION-bound, not query-shape-bound — tier D resolves Q-019: agents' 4-token queries cost dense only ~9 pts top-1 on email-length hosts, while host length collapses bridge@10 from 0.995 (isolated) to 0.78 (2.5 KB emails) to 0.25 (CLERC-length); the hero q0 failure is a dilution-marginal doc (dense rank 16 at question form) that query shape pushes to rank 42–76 (tempdoc 796 §Tier D, 2026-08-14)
+
+- **Answer:** the deferred 796 tier-D pass ran (CPU-only, exact commands + sanity checks per 796
+  §Deferred; 450 rows over `en-email-enron-raw-1k-{verbose,short-natural}` + `en-legal-clerc-1k-verbose`,
+  3 query forms × 50 queries/member, 1000-candidate pools). Dense per-form on enron:
+  question 0.57/0.80 (top1/top10), descriptor 0.54/0.76, keyword 0.48/0.78 — **query shape is a
+  real but SECONDARY amplifier**, nowhere near tier-P's step function. Against tier-S's 0.995
+  bridge@10 in isolation, in-corpus bridge@10 is 0.78 on ~2.5 KB emails and **0.25** on ~7×-longer
+  CLERC hosts — **host dilution of a short planted payload is the dominant mechanism**
+  (the F-031/F-040 context-starvation shape, now measured at production granularity). The q0 hero
+  anchor (`power station → reactor`, 0/6 hero cells) is explained mechanistically: dense rank 16
+  in question form (just outside the agent-visible top-10), 42 descriptor, 76 keyword, while the
+  q16 control anchor is rank 1 in all six cells — retrieval marginality, not encoder incapability
+  (the pair bridges at tiers P and S, F-044). Secondary: `splade-idf` (inference-free query mode)
+  collapses in-corpus (MRR 0.05 vs 0.16 onnx); lexical 0–1/450 rows top-10 (by construction).
+- **Consequence:** 788 §3.A (delivery) and §3.B.10 (engine bridging) do NOT collapse into one
+  problem — the (a)-dominant scenario did not obtain. The engine lever for q0-class cells stays
+  context-bearing long-host representations (F-031/F-040 lane); the agent-visible lever is
+  depth/evidence delivery. No encoder swap is re-licensed (F-034 stands).
+- **Conditions/caveats:** offline exact-NN suite (F-040 inversion warning — deltas, never absolute
+  ranks, are load-bearing); EN 1k members only, no 10k tier-D cells; single run; tier-P/S were
+  regenerated EN-only this session (the committed DE pair-register half is untouched — see the
+  instrument-defect note in 796 §Tier D: `pairs` at default `--langs en` rewrites the committed
+  register in place and silently drops DE; restored via single-file checkout, follow-up in 832).
+- **Evidence:** tempdoc 796 §Tier D (tables, anchors, defects); artifacts
+  `tmp/paraphrase-bridge/tier-d.{enron1k,clerc1k}.v1.json` + `report.v1.json` (session machine,
+  gitignored per 708's convention); driver `tmp/paraphrase-bridge/tier-d-driver.ps1`.
+
 ### F-047: the assembled RAG context headed its sections with an UNNUMBERED label, so the model invented the `[n]` ordinals it was asked to cite — one canonical `[n] label` formatter now defines the numbering, and section ⇔ citation ⇔ sources-array position is test-pinned (tempdoc 822 S1/§3a, 2026-08-14)
 
 - **Defect:** the prompt demands `[1]`, `[2]` citations and the FE labels source *i* as `i + 1`, but
@@ -2713,10 +2741,24 @@ above)*
   unreproducible. This does not answer (a)–(d), but it says at least part of the DE deficit is
   present before any corpus, scale or host-dilution effect, which 748's experiment ordering should
   account for.
+- **§G.1 EXECUTED (2026-08-14, tempdoc 748 §G.1 result / tempdoc 832 lane A):** the standing
+  confound is REMOVED — at matched payload.v2 construction (both members defillered, instrument-
+  confirmed filler-free, n=50/cell, pool-cap 100) the gap persists: EN-legal bridge P@1 **0.84** /
+  margin **+0.046** (reproducing the §E.3 EN band exactly) vs DE-miracl **0.30** / margin
+  **−0.026**. Per the pre-registered decision rule, **hypothesis (a) — German representation
+  quality — survives as a real, scoped secondary cause**; DE-v2 lands *below* the leaky v1 figure
+  (0.55), so the `_FILLER` block had inflated even the pool-only v1 measurement. (c) task-shape
+  remains dominant at scale. Q-018 stays OPEN pending §G.2 (DE exact-NN scale curve) and §G.3
+  (fidelity re-measure, needs eval backend). Artifact:
+  `scripts/jseval/tmp/748/gold-bridge-pair-v2.json`.
 
-### Q-019: In the real corpus, does paraphrase bridging survive the query SHAPE agents actually issue — and is that what cost the hero campaign q0?
+### Q-019: In the real corpus, does paraphrase bridging survive the query SHAPE agents actually issue — and is that what cost the hero campaign q0? → ANSWERED → F-048
 
-- **Question:** F-044 measured bridging in isolation (tier P) and at sentence granularity (tier S)
+- **Disposition (2026-08-14, tempdoc 796 §Tier D / tempdoc 832 lane A):** the tier-D pass ran —
+  answer **(b) host dilution dominant, (a) query shape secondary**; q0 was a dilution-marginal doc
+  pushed out of the visible window by keyword-shaped queries. See F-048 for numbers, consequence
+  (788 §3.A vs §3.B.10 stay separate problems), and caveats.
+- **Question (historical):** F-044 measured bridging in isolation (tier P) and at sentence granularity (tier S)
   and found both anchors bridging, including `power station → reactor`, whose hero cells failed 6/6
   in both arms. The in-corpus tier (**tier D**: injected sentences inside real host documents, at
   production doc- and chunk-granularity, over the full 1000-doc dataset) is implemented and scripted
