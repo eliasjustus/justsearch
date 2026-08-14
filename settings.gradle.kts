@@ -88,7 +88,11 @@ develocity {
     if (System.getenv("CI") != null) {
       termsOfUseUrl.set("https://gradle.com/help/legal-terms-of-use")
       termsOfUseAgree.set("yes")
-      publishing.onlyIf { true }
+      // 829 R6: stop auto-publishing to public scans.gradle.com — ~600 unread link-public
+      // scans/day, no server to host them privately, and flake signal is now tracked in-repo
+      // (flakyTests extraction) instead. Terms-acceptance stays so a deliberate manual
+      // `--scan` in CI could still publish if this is ever re-enabled.
+      publishing.onlyIf { false }
       uploadInBackground.set(false)
       tag("CI")
       // Add a link back to the GH Actions run when available

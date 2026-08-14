@@ -12,7 +12,7 @@
 If you discover a security vulnerability in JustSearch, please report it privately.
 **Do not disclose it as a public issue.**
 
-**Preferred:** Use GitHub's [private vulnerability reporting](https://github.com/eliasjustus/justsearch/security/advisories/new) to submit a security advisory.
+**Preferred:** Use GitHub's [private vulnerability reporting](https://github.com/justsearch-app/justsearch/security/advisories/new) to submit a security advisory.
 
 **Alternative:** Email security concerns to the repository owner via their GitHub profile.
 

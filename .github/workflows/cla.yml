@@ -53,10 +53,10 @@ jobs:
           PERSONAL_ACCESS_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
         with:
           path-to-signatures: 'signatures/version1/cla.json'
-          path-to-document: 'https://github.com/eliasjustus/justsearch/blob/main/CLA.md'
+          path-to-document: 'https://github.com/justsearch-app/justsearch/blob/main/CLA.md'
           branch: 'cla-signatures'
           # Maintainer and bots never need to sign.
           allowlist: 'eliasjustus,dependabot[bot]'
           custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
-          custom-notsigned-prcomment: 'Thank you for your pull request! Before we can merge it, please read our [Contributor License Agreement](https://github.com/eliasjustus/justsearch/blob/main/CLA.md) (you keep your copyright; it just keeps the project''s licensing options open) and sign it by posting exactly the comment below.'
+          custom-notsigned-prcomment: 'Thank you for your pull request! Before we can merge it, please read our [Contributor License Agreement](https://github.com/justsearch-app/justsearch/blob/main/CLA.md) (you keep your copyright; it just keeps the project''s licensing options open) and sign it by posting exactly the comment below.'
           custom-allsigned-prcomment: 'All contributors have signed the CLA.'

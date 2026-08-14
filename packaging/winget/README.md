@@ -30,7 +30,7 @@ pushed and its `SHA256SUMS` is published:
 
 1. **`PackageVersion`** (all three files, must match exactly) — the released version, e.g. `0.2.0`.
 2. **`InstallerUrl`** — replace `<VERSION>` with the real version in
-   `https://github.com/eliasjustus/justsearch/releases/download/v<VERSION>/JustSearch_<VERSION>_x64-setup.exe`.
+   `https://github.com/justsearch-app/justsearch/releases/download/v<VERSION>/JustSearch_<VERSION>_x64-setup.exe`.
 3. **`InstallerSha256`** — the installer's hash from that release's `SHA256SUMS`
    (`scripts/ci/build-release-assets.ps1`), **uppercased** (winget-pkgs convention; `SHA256SUMS`
    itself is lowercase).

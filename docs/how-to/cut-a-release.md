@@ -444,7 +444,7 @@ each release's convergence tempdoc + its GitHub Release):
 
 | Version | Date | Sandbox verdict | Notes | Links |
 |---|---|---|---|---|
-| v0.1.0 | 2026-06-25 | (pre-pipeline) | Prerelease/alpha. **No MCP endpoint.** Installer built locally, not via CI. | [release](https://github.com/eliasjustus/justsearch/releases/tag/v0.1.0) |
+| v0.1.0 | 2026-06-25 | (pre-pipeline) | Prerelease/alpha. **No MCP endpoint.** Installer built locally, not via CI. | [release](https://github.com/justsearch-app/justsearch/releases/tag/v0.1.0) |
 | v0.2.x | pending | rounds 1-13 run. Rounds 1-6 confirmed the dense-retrieval + capability-gate fixes and `core.workflow-run` (tempdoc 744), but round 6 was **DO-NOT-QUALIFY** (golden-query parity regression, plus a HIGH-severity RAG chunk-retrieval bug, tempdoc 749). Rounds 7-13 converged those and later findings. **Round 13 (2026-08-04) found no blocking product defect** — it failed on harness state only: the coverage gate at 25/26 (an unreachable `core.extract` route pointer) and finding R13-F2, both fixed in tempdoc 807 / PR #366. Next step: **one fresh-install confirmation round** against the fixed build to qualify. | First cut with the MCP endpoint + the hash-consistent asset pipeline. | tempdoc 734, tempdoc 749, tempdoc 807 |
 
 ## See also

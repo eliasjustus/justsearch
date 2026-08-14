@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/eliasjustus/justsearch/blob/main/governance/registry.v1.schema.json",
+  "$id": "https://github.com/justsearch-app/justsearch/blob/main/governance/registry.v1.schema.json",
   "title": "Discipline-gate registry — tempdoc 530",
   "description": "Schema for governance/registry.v1.json. Polish §13 of tempdoc 530.",
   "type": "object",

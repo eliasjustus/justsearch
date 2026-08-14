@@ -48,9 +48,9 @@ function actionableUnreachableMessage(tried) {
     'JustSearch desktop app (Windows). To fix this:',
     '',
     '  1. Install JustSearch if you have not: download the installer from',
-    '     https://github.com/eliasjustus/justsearch/releases and follow the',
+    '     https://github.com/justsearch-app/justsearch/releases and follow the',
     '     "Install (Windows)" section of the README',
-    '     (https://github.com/eliasjustus/justsearch#install-windows).',
+    '     (https://github.com/justsearch-app/justsearch#install-windows).',
     '  2. Launch JustSearch and wait for the window to load.',
     '  3. Retry from your MCP client (e.g. toggle the connector in Claude Desktop).',
     '',
@@ -418,7 +418,7 @@ async function main() {
       handleClientMessage(message).catch((err) => {
         const unreachable = Array.isArray(err.tried);
         const text = unreachable
-          ? 'JustSearch is not running. Launch the JustSearch desktop app and retry (install: https://github.com/eliasjustus/justsearch/releases).'
+          ? 'JustSearch is not running. Launch the JustSearch desktop app and retry (install: https://github.com/justsearch-app/justsearch/releases).'
           : `JustSearch bridge error: ${err.message}`;
         failRequest(message, text);
         if (unreachable) {

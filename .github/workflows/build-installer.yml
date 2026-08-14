@@ -457,7 +457,7 @@ jobs:
           ### Verify your download
           Before running the installer, verify its integrity with the accompanying ``SHA256SUMS``.
           Full instructions are in
-          [verify-your-download](https://github.com/eliasjustus/justsearch/blob/main/docs/how-to/verify-your-download.md).
+          [verify-your-download](https://github.com/justsearch-app/justsearch/blob/main/docs/how-to/verify-your-download.md).
           "@ | Set-Content -LiteralPath $notes -Encoding UTF8
 
           $existingJson = gh release view $tag --json isDraft 2>$null
