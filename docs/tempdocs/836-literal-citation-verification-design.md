@@ -992,3 +992,199 @@ registry hash for `citation-model.onnx`.
 | P3 hazard confirmation | **PARTIAL (live)** | Fabrication confirmed on the wire; severity **refuted** — under-marking, not wrong marks. Chunk-0-collision case unmeasured |
 | P5 Q-021 quality | parked | after S1 + S2/S3 |
 | P6 live cost cross-check | parked | needs the stall (§9.9) resolved to drive real summarize turns |
+
+---
+
+## 10. S1 live verification (2026-08-14, real Worker + real cross-encoder)
+
+Run against PR #466's code. Stack: this worktree's dist (`distFrom`), own lease, pinned API port
+57843, torn down and verified afterwards (§10.9). Corpus: `docs/explanation` (35 docs). Scorer: the
+shipped `ms-marco-MiniLM-L-6-v2`, SHA-256 `a13ec391…` — the same registry model §9.10 used
+(`Citation scorer enabled: threshold=0.5, maxSeqLen=512, deadline=2000ms`). Instrument:
+`POST /api/knowledge/match-citations`, which S1 extends with an optional per-ref `passage_text`
+plus `scorer` / `sentences_scored` / `scoring_incomplete` / `took_ms` / per-match `text_source`.
+Without that field the seam had **no** live-exercisable caller at all: the only supplying path is
+selection-summarize, which still stalls (§9.9).
+
+### 10.1 Instrument correction (recorded, per interrogate-results)
+
+Round 1 used the selection range §9.8 used, `[15000,17500)`, and reported near-zero scores for
+sentences about pagination. That was a **wrong probe premise, not a finding**: at this revision of
+`18-adapters-lucene-deep-dive.md` that range is mostly a Markdown table of field-type mappings —
+the pagination prose lives at ~`[14050,15150)`. The cross-encoder was right to score those
+sentences low. Round 1 also ran the chunk-lookup control while `chunkEmbeddingReady` was still
+`false`, so a null lookup and a non-supporting lookup were indistinguishable. Round 2 fixed both:
+real prose as the selection, and a **positive** lookup control that must score HIGH before any
+negative lookup result is allowed to mean anything.
+
+### 10.2 The seam works end to end
+
+```
+sentence about the TRUE selected passage, text SUPPLIED
+  "Cursor-based pagination uses Lucene's searchAfter with an encoded cursor string."
+     scorer=CROSS_ENCODER  text_source=SUPPLIED  sim=0.9984  scored=1/1  took=37ms
+  "Requesting one more document than the limit determines hasMore without an extra query."
+     scorer=CROSS_ENCODER  text_source=SUPPLIED  sim=0.7851  scored=1/1  took=33ms
+
+off-topic controls vs the same supplied passage (saffron / penguins / sourdough)
+     3 of 3 returned NO match at threshold 0.001
+```
+
+A separate smoke used `parent_doc_id: "probe-doc"` — a document **not in the index at all** — and
+still scored 0.9997 from supplied text. A lookup could not have produced that: it is direct
+evidence the supplied path bypasses the index entirely.
+
+### 10.3 Provenance and coverage are on the wire, on every path
+
+`scorer` was `CROSS_ENCODER` on every response; `text_source` was `SUPPLIED` when text was
+supplied and `CHUNK_LOOKUP` when it was not; `sentences_scored` / `scoring_incomplete` tracked the
+budget (§10.6). The positive lookup control returned `text_source=CHUNK_LOOKUP` at **0.9996**,
+proving the fallback path is live rather than silently returning nothing.
+
+### 10.4 P3 sharpened — the chunk-0 collision, re-measured with TRUE text available
+
+Each sentence scored three ways: true passage supplied | document opening supplied | chunk-0
+lookup (the pre-S1 path). The opening is the file's abstract (HNSW / SPLADE / hybrid fusion),
+semantically disjoint from the pagination passage.
+
+```
+sentence                                    true      openingSupplied   chunk0Lookup
+"Cursor-based pagination uses searchAfter"  0.9984        0.0647           0.0549
+"Requesting one more document than limit"   0.7851        (none)           (none)
+reverse: sentence about the OPENING, scored against the TRUE passage -> (none)
+```
+
+**Verdict.** With the true text supplied, supported claims clear 0.5 decisively (0.79–0.998) while
+the wrong text sits at 0.05–0.06 — a ~15x gap, ordering CORRECT on both sentences. Two
+consequences:
+
+- **The pre-S1 path would have dropped both claims** (0.0549 / none against chunk 0). That is
+  §9.8.2's silent under-marking, reproduced live — and S1 removes it: the same claims now mark.
+- **The rev-2 "wrong marks" hazard did not reproduce here.** §9.8.2 had observed one INVERTED
+  ordering (chunk 0 outscoring the true chunk); on this passage the ordering is correct both times
+  and the collision never approaches 0.5. So the chunk-0 collision remains **unproven as a
+  mark-minting hazard**, on top of being moot once true text is supplied. Honest limit: one
+  document, one selection, two sentences.
+
+### 10.5 The back-map holds live on a multi-window source
+
+A 14,081-char passage (≈10 windows) whose supporting text sits in the **last** window, behind a
+short unrelated source at position 0:
+
+```
+match: source_index=1  similarity=0.4682  text_source=SUPPLIED
+       parent_doc_id == chunk_refs[1]  -> true
+```
+
+A window-ordinal pass-through would have reported ~9. It reported **1**. This is the §5.4 contract
+observed on the wire, not only in the property test.
+
+**Side finding — window-boundary dilution.** The same sentence scored 0.9984 against the bare
+1,100-char passage but **0.4682** once that text was the tail of a 1500-char window shared with
+filler. A claim whose support straddles or shares a window can fall *below* the 0.5 threshold. The
+window size is a correctness floor for truncation (§9 P1c) but it is also, unavoidably, a
+score-dilution knob. Not addressed by S1; relevant to P5 and to FW-009.
+
+### 10.6 P6 — live cost cross-check, and the decision cell now PASSES
+
+Idle machine (a sibling worktree's Gradle suite overlapped an earlier round; that round was
+discarded and the grid re-run at CPU ~0%). Worker budget 2000 ms.
+
+```
+ L(chars) | N | S  | windows | uncapped-pairs | took_ms | scored | incomplete
+     2000 | 1 |  5 |       2 |             10 |     212 |  5/5   | false
+     2000 | 1 | 15 |       2 |             30 |     650 | 15/15  | false
+     2000 | 1 | 40 |       2 |             80 |    1740 | 40/40  | false
+     2000 | 5 |  5 |      10 |             50 |    1150 |  5/5   | false
+     2000 | 5 | 15 |      10 |            150 |    1692 | 15/15  | false
+    10000 | 1 |  5 |       7 |             35 |     769 |  5/5   | false
+    10000 | 1 | 15 |       7 |            105 |    1723 | 15/15  | false   <- decision cell
+    10000 | 1 | 40 |       7 |            280 |    1762 | 40/40  | false
+    10000 | 5 |  5 |      35 |            175 |    1922 |  5/5   | false
+    10000 | 5 | 40 |      35 |           1400 |    1776 | 40/40  | false
+    50000 | 1 | 15 |      34 |            510 |    1735 | 15/15  | false
+    50000 | 5 | 15 |     170 |           2550 |    1763 | 15/15  | false
+   200000 | 1 | 15 |     134 |           2010 |    1766 | 15/15  | false
+```
+
+Against §9.5's offline grid (same cells, pre-S1):
+
+| cell | offline (pre-S1) | live (post-S1) |
+|---|---|---|
+| **10000/1/15 (the pre-registered decision cell)** | 2045 ms, **12/15 MISS** | 1723 ms, **15/15 OK** |
+| 2000/5/15 | 2166 ms, 9/15 MISS | 1692 ms, 15/15 OK |
+| 10000/5/5 | 2556 ms, 3/5 MISS | 1922 ms, 5/5 OK |
+| 50000/1/15 | 2566 ms, 3/15 MISS | 1735 ms, 15/15 OK |
+| 50000/5/15 | 4482 ms, 1/15 MISS | 1763 ms, 15/15 OK |
+| 200000/1/15 | 3357 ms, 1/15 MISS | 1766 ms, 15/15 OK |
+| 200000/5/5 | **49,770 ms**, 1/5 MISS | no live counterpart above ~1.9 s |
+
+**§3.2's pre-registered rule is answered: the cell that fired offline now passes.** Every cell
+completes inside the budget with FULL sentence coverage, and the 49.8 s catastrophe (§3.4: work
+the Head had already abandoned) has no live counterpart. The mechanism is confirmed from the
+Worker's own log, not inferred from timings:
+
+```
+Citation admission control: scoring  5 of  34 windows (15 sentences, 2000ms budget)
+Citation admission control: scoring  5 of 170 windows (15 sentences, 2000ms budget)
+Citation admission control: scoring  5 of 134 windows (15 sentences, 2000ms budget)
+Citation admission control: scoring 16 of  35 windows ( 5 sentences, 2000ms budget)
+Citation admission control: scoring  2 of  35 windows (40 sentences, 2000ms budget)
+Citation scoring deadline exceeded after 11 of 15 sentences        (contended round)
+```
+
+`floor(2000/25)=80` pairs, divided by the sentence count — 80/15 = 5, 80/5 = 16, 80/40 = 2 — the
+§3.5 cap arithmetic, observed live.
+
+### 10.7 Two honesty gaps the live leg exposed (NEW — not in the design)
+
+Both follow from admission control preserving *sentence* coverage by cutting *windows*, and
+neither is visible to a caller.
+
+1. **`scoring_incomplete: false` can mean "I scored every sentence against 4% of your text."**
+   At 200 KB the response reports `sentences_scored = 15/15, scoring_incomplete = false` while the
+   Worker scored **5 of 134 windows**. §3.6 made `sentences_scored` the honest denominator for the
+   *sentence* axis, and it is — but windowing added a second coverage axis that the wire does not
+   carry. §3.3 says whole-document verification is out of scope; the live surface now reports it
+   as complete. Candidate fix: `windows_scored` / `windows_considered` on the response, and a
+   coverage state that is a function of both axes.
+2. **A source can be starved of every window and still look merely unsupported.** At
+   `10000/5/40` the cap was 2 windows across 5 sources: three sources received no window at all.
+   The per-source round-robin guarantees representation only *while slots remain*. Those sources
+   are uncitable for reasons of budget, reported identically to "nothing in this source supports
+   the claim."
+
+Both are S2/S3 material — the FE coverage line (§3.6) is where they would surface — and neither
+changes S1's correctness claim.
+
+### 10.8 Not exercised live, stated plainly
+
+- **The cosine fallback arm.** The 4 GB embedding blob was not provisioned into this worktree, so
+  chunk *content* indexed but the cosine producer never ran. Both branches are covered by the
+  parameterized unit tests; the live leg is cross-encoder only.
+- **`INVALID_ARGUMENT` on a length mismatch.** The REST instrument builds all three arrays from
+  one list and cannot emit a mismatched request; covered by `GrpcSearchServicePassageTextsRejectTest`.
+- **The 200000 × 5 cell** returned HTTP 413 — a ~1 MB REST body limit on the probe instrument, not
+  a Worker or seam limit. The 200 KB single-source cell did go through (1766 ms, 15/15).
+- **The selection-summarize route** still stalls after `rag.citations` (§9.9), so the seam was
+  driven through `documents.matchCitations` directly, as §9.8.2 did.
+
+### 10.9 Teardown
+
+Stopped via the dev tool (`portsClosed: true`, `devRunnerOk: true`, exit 0). Verified afterwards:
+no `llama-server.exe`, no `IndexerWorker`, no `HeadlessApp`, no `dev-runner` process; ports 57843
+and 5173 closed; `quick_health` reports `running: false`; no JustSearch process on the GPU. Model
+files were read-only sources — the worktree copy of `citation-scorer` proved redundant, since the
+dev-runner resolves models from the repo root (`F:\justsearch-public\models\onnx\citation-scorer`,
+SHA-256 verified identical).
+
+### 10.10 Probe status after this round
+
+| Probe | Status | Result |
+|---|---|---|
+| P1 truncation | DONE (offline) | unchanged; window = 1500 chars |
+| P2 cost grid | DONE (offline) | superseded live by §10.6 |
+| P3 hazard confirmation | **DONE (live, S1)** | Pre-S1 under-marking reproduced (0.0549 at chunk 0) and **removed** (0.9984 with true text). Wrong-mark hazard did **not** reproduce: ordering correct, collision ≤0.065 |
+| P4 fallback prevalence | DONE (live) | unchanged |
+| P6 live cost cross-check | **DONE (live, S1)** | Decision cell PASSES (1723 ms, 15/15); 49.8 s catastrophe gone; admission arithmetic confirmed in the Worker log. CPU-contention variant (llama-server running) still unmeasured |
+| P5 Q-021 quality | parked | after S2/S3; §10.5's window dilution and §10.7's coverage gaps are inputs to it |
