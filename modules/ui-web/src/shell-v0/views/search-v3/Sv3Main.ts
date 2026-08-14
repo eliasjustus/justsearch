@@ -286,6 +286,24 @@ export class Sv3Main extends JfElement {
         --border-subtle: var(--border);
         --accent-tint: var(--primary);
         --accent-on-tint: var(--primary-foreground);
+        /* Tempdoc 822 citation-mark presentation §5.2/§5.3 — a selected citation is a NEUTRAL
+           foreground wash, never the accent: charter law 5 keeps colour for act-now / in-motion /
+           broken, and '--primary' is also '--message-action', the composer's send button. Painting a
+           resting selection with the act-now material spends it on a state. Three rungs of one
+           system: region 5% → mark 9% → edge 14%. The mark's INK is deliberately not re-pointed —
+           that channel belongs to the grounding tier. The rest padding is the one geometry the
+           window opts into: it reserves the selected mark's width at rest, so selecting a citation
+           stops reflowing prose by 6px. '--md-cite-pad-x' and '--md-cite-radius' are named at the
+           value they already default to — the window makes no pixel judgement about a 13px chip
+           here; a '--md-*' name the cite rules own simply has no other definition site (the
+           renderer's ':host' block belongs to the block-geometry workstream, whose containment proof
+           enumerates its fifteen names exactly). */
+        --md-cite-selected-bg: var(--sv3-selected);
+        --md-cite-selected-edge: var(--sv3-selected-edge);
+        --md-cite-region-bg: var(--sv3-selected-region);
+        --md-cite-pad-x-rest: 0.25em;
+        --md-cite-pad-x: 0.25em;
+        --md-cite-radius: 0.25em;
         --accent-warning: var(--warning-foreground);
         --text-warning: var(--warning-foreground);
         --text-command: var(--foreground);

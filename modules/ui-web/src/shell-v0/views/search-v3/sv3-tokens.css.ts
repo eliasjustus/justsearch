@@ -74,6 +74,17 @@ export const sv3Tokens = css`
        a name the shipped vocabulary does not use (tempdoc 822 Phase F9, audit DEFECT-6). */
     --accent-surface: color-mix(in srgb, var(--color-white) 4%, transparent);
     --accent-surface-foreground: var(--color-neutral-100);
+    /* Selection material (tempdoc 822 citation-mark presentation §5.1). Donor command-palette idiom
+       (t3code-system.md:592,601 — 6% selected / 9% highlighted, and never two competing fills). The
+       MARK takes the upper rung and the large sentence region the lower: the donor spends 6% on a
+       full-width row, and a ~13x14px glyph is a fraction of that area — an alpha wash loses
+       legibility as the area it covers shrinks. Law 11 improve-don't-copy, deviation stated rather
+       than drifted into. Keyed to --foreground, so the same three declarations catch light in dark
+       and cast shadow in light (donor law 6 by construction) — which is why the light block below
+       repeats them verbatim rather than inverting them, exactly as --dialog-border does. */
+    --sv3-selected: color-mix(in srgb, var(--foreground) 9%, transparent);
+    --sv3-selected-region: color-mix(in srgb, var(--foreground) 5%, transparent);
+    --sv3-selected-edge: color-mix(in srgb, var(--foreground) 14%, transparent);
     --primary: var(--color-teal-accent);
     --primary-foreground: var(--color-teal-accent-ink);
     /* Three named intents on one value: a future divergence is a one-line change, not a grep. */
@@ -320,6 +331,12 @@ export const sv3Tokens = css`
     --muted-foreground: var(--color-zinc-500);
     --accent-surface: var(--color-zinc-100);
     --accent-surface-foreground: var(--color-zinc-900);
+    /* The same three, restated so the light palette is complete at its own selector rather than
+       leaning on the dark block (the --dialog-border precedent below). Identical by construction:
+       --foreground is what inverts, so the wash inverts with it. */
+    --sv3-selected: color-mix(in srgb, var(--foreground) 9%, transparent);
+    --sv3-selected-region: color-mix(in srgb, var(--foreground) 5%, transparent);
+    --sv3-selected-edge: color-mix(in srgb, var(--foreground) 14%, transparent);
     --primary: oklch(45% 0.18 180);
     --primary-foreground: oklch(99% 0.01 180);
     --placeholder: var(--muted-foreground);

@@ -264,6 +264,21 @@ const MD_PROSE = [
 /** The shipped ramp steps the variant's headings read directly — h1/h2/h3 (h4-h6 take `-sm`). */
 const MD_PROSE_RAMP = ['--font-size-xl', '--font-size-lg', '--font-size-md'] as const;
 
+/**
+ * The citation mark's own vocabulary (tempdoc 822 citation-mark presentation §5.2/§5.3). Unlike the
+ * block geometry above these are declared as inline `var(name, default)` fallbacks in the cite rules
+ * themselves, not on the renderer's `:host` — that block belongs to the block-geometry workstream,
+ * whose containment proof enumerates its fifteen names exactly.
+ */
+const MD_CITE = [
+  '--md-cite-pad-x',
+  '--md-cite-pad-x-rest',
+  '--md-cite-radius',
+  '--md-cite-region-bg',
+  '--md-cite-selected-bg',
+  '--md-cite-selected-edge',
+] as const;
+
 const reasons = (names: readonly string[], why: string): Record<string, string> =>
   Object.fromEntries(names.map((name) => [name, why]));
 
@@ -303,6 +318,14 @@ describe('the three imported components read NO token the window leaves unbridge
             'defaults on the renderer\'s own `:host([prose])`, and the ramp steps its headings read ' +
             'directly — applies to no element in the trace. Re-pointing them from this bridge would ' +
             'dress a surface that cannot render.',
+        ),
+        ...reasons(
+          MD_CITE,
+          'the citation-mark vocabulary (tempdoc 822 citation-mark presentation) is UNREACHABLE ' +
+            'here for the same reason: `ReasoningBlock.ts:181` renders the block with no ' +
+            '`.citations`, so `decorateCitations` never runs and no `.cite-ref` / `.cite-sentence` ' +
+            'element exists in the trace. A reasoning trace cites nothing — it is the model ' +
+            'thinking, not an answer with sources.',
         ),
       },
     );

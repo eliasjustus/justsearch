@@ -214,16 +214,40 @@ export class MarkdownBlock extends JfElement {
   }
 
   /**
+   * Tempdoc 822 §5.6 — the ONE accessible name of a citation mark. Both the initial render
+   * (`makeMarker`) and every later selection change (`applyCitationHighlight`) read it, so the two
+   * cannot drift into announcing different things for the same state.
+   */
+  private citeAriaLabel(label: string, selected: boolean): string {
+    return selected
+      ? `Citation ${label} — selected; open the cited passage`
+      : `Citation ${label} — open the cited passage`;
+  }
+
+  /**
    * Tempdoc 565 §12.3.E — toggle the `.cite-selected` class on the inline marks to match the
    * cross-surface selection, without rebuilding them (decorateCitations early-returns once markers
    * exist). Each marker carries its source identity in `data-cite-key`.
+   *
+   * Tempdoc 822 §5.3/§5.6 — and with it the two things the class alone never carried: the cited
+   * SENTENCES of the focused source (F4 — the payload, not just the handle), and the state's
+   * existence for assistive tech (F6 — `aria-current` plus a label that says "selected").
    */
   private applyCitationHighlight(): void {
     const root = this.renderRoot.querySelector('.md-content');
     if (!root) return;
     const selected = getSelectedSource();
     for (const m of root.querySelectorAll<HTMLElement>('.cite-ref')) {
-      m.classList.toggle('cite-selected', !!selected && m.dataset.citeKey === selected);
+      const isSelected = !!selected && m.dataset.citeKey === selected;
+      m.classList.toggle('cite-selected', isSelected);
+      // REMOVED, not `aria-current="false"`: the false value is still announced by some screen
+      // readers as a present-but-off property, which is noise on every unselected mark in the answer.
+      if (isSelected) m.setAttribute('aria-current', 'true');
+      else m.removeAttribute('aria-current');
+      m.setAttribute('aria-label', this.citeAriaLabel(m.textContent ?? '', isSelected));
+    }
+    for (const s of root.querySelectorAll<HTMLElement>('.cite-sentence')) {
+      s.classList.toggle('cite-sentence-selected', !!selected && s.dataset.citeKey === selected);
     }
   }
 
@@ -347,6 +371,15 @@ export class MarkdownBlock extends JfElement {
     }
     .cite-sentence.grounding-ungrounded {
       border-bottom: 1px dotted var(--accent-warning);
+    }
+    /* Tempdoc 822 citation-mark presentation §5.3 — what selection is FOR: the sentences the focused
+       source supports, not just the handle that opened it (F4). Surface, so it composes with the
+       tier underlines above rather than competing — a weakly-grounded sentence inside a selected
+       region keeps its dotted rule. Default transparent ⇒ invisible on every shipped surface; a
+       window opts in by re-pointing '--md-cite-region-bg'. */
+    .cite-sentence-selected {
+      background: var(--md-cite-region-bg, transparent);
+      border-radius: var(--md-cite-radius, 0.25em);
     }
     .md-content p {
       margin: var(--md-block-gap) 0;
@@ -575,6 +608,14 @@ export class MarkdownBlock extends JfElement {
       .cursor { animation: none; }
     }
     /* Tempdoc 565 §3.C — inline citation superscript (mirrors StreamingTextBlock .cite-ref). */
+    /* Tempdoc 822 citation-mark presentation §5.2 — the mark's own geometry, named so a window can
+       re-point it. These names are the CITE rules' own; they are deliberately NOT declared in the
+       ':host' block above, which is the block-geometry workstream's (S4) and whose containment proof
+       enumerates exactly fifteen '--md-*' names. The rest padding defaults to 0 ON PURPOSE: today
+       only the SELECTED mark is padded, so a mark widens mid-sentence by 6px on click (F5).
+       Reserving the space at rest closes that, but doing it by default would move every citation
+       mark in the shipped window — the opposite of the containment S4 established. v3 opts in; the
+       shipped window's geometry stays byte-identical. */
     .cite-ref {
       font-size: var(--font-size-xs);
       vertical-align: super;
@@ -583,6 +624,8 @@ export class MarkdownBlock extends JfElement {
       margin-left: 0.1em;
       font-weight: 600;
       user-select: none;
+      padding: 0 var(--md-cite-pad-x-rest, 0);
+      border-radius: var(--md-cite-radius, 0.25em);
     }
     .cite-ref:hover {
       text-decoration: underline;
@@ -602,13 +645,19 @@ export class MarkdownBlock extends JfElement {
       color: var(--text-warning);
     }
     /* Tempdoc 565 §12.3.E — the cross-surface selection: this mark cites the source the user focused
-       (in the answer or the evidence rail), highlighted in sync with the rail card. */
+       (in the answer or the evidence rail), highlighted in sync with the rail card.
+       Tempdoc 822 citation-mark presentation §4/§5.2 — SELECTION PAINTS SURFACE ONLY; 'color' belongs
+       to the grounding tier. This rule used to set 'color' at the same specificity as .cite-weak /
+       .cite-ungrounded and later in source, so selecting a mark REPAINTED it: clicking the amber
+       "not supported" numeral hid that it was unsupported (F2). Two declarations therefore left this
+       rule and must not come back — the 'color' (so the tier survives selection) and the
+       text-decoration override that cancelled the hover underline, so the mark most likely to be
+       re-clicked keeps confirming that it is clickable (F8). No ink-override
+       token is minted alongside the surface ones: an ink escape hatch is an F2 escape hatch. */
     .cite-ref.cite-selected {
-      background: var(--accent-tint);
-      color: var(--accent-on-tint);
-      border-radius: 0.25em;
-      padding: 0 0.25em;
-      text-decoration: none;
+      padding: 0 var(--md-cite-pad-x, 0.25em);
+      background: var(--md-cite-selected-bg, var(--accent-tint));
+      box-shadow: inset 0 0 0 1px var(--md-cite-selected-edge, transparent);
     }
     /* Tempdoc 577 §2.12 Move 3 — a model-authored citation-shaped token in an UNGROUNDED answer:
        muted inline text (NOT the accent superscript of a real cite-ref), so it cannot pose as a
@@ -702,6 +751,10 @@ export class MarkdownBlock extends JfElement {
       // cross-element extract — the DOM is never corrupted). Process the spanned nodes LAST→FIRST so
       // each split keeps earlier nodes' offsets valid.
       const cls = `cite-sentence grounding-${groundingClass(cite.similarity)}`;
+      // Tempdoc 822 §5.3 — the sentence carries the SAME source identity the mark does, so selecting
+      // a source can highlight the sentences it supports. Computed through the one `sourceKey`
+      // authority `makeMarker` uses: a second key function here would silently never match.
+      const sentenceKey = sourceKey(cite.detail.parentDocId, cite.detail.startLine);
       const spanned = ranges
         .filter((r) => r.end > startIndex && r.start < endIndex)
         .sort((a, b) => b.start - a.start);
@@ -712,6 +765,10 @@ export class MarkdownBlock extends JfElement {
           segStart > r.start ? r.node.splitText(segStart - r.start) : r.node;
         const wrap = document.createElement('span');
         wrap.className = cls;
+        wrap.dataset.citeKey = sentenceKey;
+        // A re-render rebuilds these spans, so a region already selected has to come back selected —
+        // the same reason `makeMarker` reads the store at construction.
+        if (sentenceKey === getSelectedSource()) wrap.classList.add('cite-sentence-selected');
         seg.parentNode?.insertBefore(wrap, seg);
         wrap.appendChild(seg);
       }
@@ -766,7 +823,10 @@ export class MarkdownBlock extends JfElement {
     span.textContent = String(cite.label);
     span.setAttribute('role', 'button');
     span.setAttribute('tabindex', '0');
-    span.setAttribute('aria-label', `Citation ${cite.label} — open the cited passage`);
+    // Tempdoc 822 §5.6 — a mark rendered into an already-selected state announces it from the start,
+    // not only after the next selection change.
+    if (isSelected) span.setAttribute('aria-current', 'true');
+    span.setAttribute('aria-label', this.citeAriaLabel(String(cite.label), isSelected));
     span.title = cite.hover.title
       ? `${cite.hover.title} — open the cited passage`
       : 'Open the cited passage';
