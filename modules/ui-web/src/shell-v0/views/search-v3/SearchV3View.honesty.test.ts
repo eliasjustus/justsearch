@@ -24,6 +24,7 @@ import {
 } from '../../state/aiStateStore.js';
 import type { StatusSnapshot } from '../../utils/statusPoll.js';
 import { reasonFor } from '../../state/readinessNotice.js';
+import { __resetUiModeForTest, setUiMode } from '../../state/uiModeState.js';
 import { answerFrameLabel } from '../../components/chat/evidenceProjection.js';
 import { claimsToCitations } from '../../components/chat/citationResolve.js';
 import { exportConversationMarkdown } from '../../state/conversationListStore.js';
@@ -145,6 +146,7 @@ afterEach(() => {
   __resetAiStateForTest();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  __resetUiModeForTest();
 });
 
 async function settle(el: Mounted): Promise<void> {
@@ -369,6 +371,9 @@ describe('a settled answer carries its basis, its duration and its model', () =>
   });
 
   it('re-states the model in the tail when it is NOT the one the composer names', async () => {
+    // Inventory E3 — a model id is a Detailed-mode fact, so the re-statement this case is about can
+    // only be observed there. The Simple direction has its own case in `SearchV3View.degradation.test.ts`.
+    setUiMode('advanced');
     feed();
     const stream = stubStream();
     const el = await mount();

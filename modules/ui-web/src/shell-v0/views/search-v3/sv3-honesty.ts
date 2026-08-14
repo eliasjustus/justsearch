@@ -127,7 +127,9 @@ export function sv3ReceiptTail(durationMs: number | null, modelLabel: string | n
  *  - the TAIL is the turn's own measured duration and, when it is still needed, the model recorded AT
  *    ITS TERMINAL — never the model that happens to be loaded when the transcript is re-read. Since
  *    Phase F11 the model's ordinary home is the composer, so the stamp is named here only when it
- *    differs from what the composer is currently saying ({@link sv3TailModelLabel}).
+ *    differs from what the composer is currently saying ({@link sv3TailModelLabel}) — and only for a
+ *    reader in Detailed mode (inventory E3). The DURATION is not gated: "how long it took" is plain,
+ *    and the grounding verdict is an honesty fact, so neither is a disclosure decision.
  *
  * The LABEL arrives as one string and is rendered as two ({@link splitSv3FrameLabel}): the verdict
  * rests, the elaboration extends (L14). Both halves are the authority's own substrings.
@@ -178,8 +180,17 @@ export function splitSv3FrameLabel(label: string): { verdict: string; elaboratio
  *  - same model  → `null`: the composer already says it, and saying it twice is the duplicated fact.
  *  - different   → the STAMPED one: this answer was not written by what the composer names.
  *  - current unknown → the stamped one: "not said" is not "the same".
+ *
+ * And ahead of all three (inventory E3): a model id is a TECHNICAL fact, so Simple mode never names
+ * one. `detailed` has no default — every caller states which mode it is rendering for, because a
+ * disclosure decision made by omission is the one that silently stops being made.
  */
-export function sv3TailModelLabel(stamped: string | null, current: string | null): string | null {
+export function sv3TailModelLabel(
+  stamped: string | null,
+  current: string | null,
+  detailed: boolean,
+): string | null {
+  if (!detailed) return null;
   if (stamped === null || stamped === '') return null;
   return stamped === current ? null : stamped;
 }
@@ -187,6 +198,7 @@ export function sv3TailModelLabel(stamped: string | null, current: string | null
 export function projectSv3AnswerFrame(
   turn: Sv3Turn,
   currentModelLabel: string | null,
+  detailed: boolean,
 ): Sv3AnswerFrame | null {
   // Only a COMPLETED ask carries a frame. A halted, refused or failed turn has its own note saying
   // what became of it, and framing the grounding of an answer that never landed would be a claim
@@ -194,7 +206,7 @@ export function projectSv3AnswerFrame(
   if (turn.kind !== 'ask' || turn.status !== 'complete') return null;
   const tail = sv3ReceiptTail(
     turn.durationMs,
-    sv3TailModelLabel(turn.modelLabel, currentModelLabel),
+    sv3TailModelLabel(turn.modelLabel, currentModelLabel, detailed),
   );
   const evidence = turn.evidence;
   if (evidence === null) {

@@ -14,12 +14,29 @@
  *    (this session's prior run, OR a concurrent session's sink), no-op. The sink
  *    is a SHARED, persistent daemon — concurrent sessions all emit into the one
  *    receiver appending to tmp/agent-telemetry/otlp/.
- *  - Detached: spawn the sink unref'd with ignored stdio so it OUTLIVES this hook
- *    (a 5s SessionStart hook can't host a long-lived server) and survives across
- *    sessions. There is intentionally NO SessionEnd kill — killing it would drop
- *    capture for every other live session.
- *  - Fail-open: runHook() catches everything → exit 0. If python is absent or the
- *    port probe errors, the session proceeds; capture is best-effort.
+ *  - Detached: spawn the sink unref'd so it OUTLIVES this hook (a 5s SessionStart
+ *    hook can't host a long-lived server) and survives across sessions. There is
+ *    intentionally NO SessionEnd kill — killing it would drop capture for every
+ *    other live session.
+ *  - Fail-open for BUGS in this hook: runHook() catches everything → exit 0. If
+ *    the port probe itself errors unexpectedly, the session proceeds; capture is
+ *    best-effort. This is DIFFERENT from the fail-LOUD path below, which is a
+ *    normal (non-exceptional) outcome of this hook doing its job and finding the
+ *    sink dead — it deliberately does NOT go through the catch/exit(0) path.
+ *  - Fail-LOUD on sink death (tempdoc 829 R8): a scoop/python bump silently wiped
+ *    site-packages on ~2026-07-29, so every spawn crashed instantly on
+ *    `ModuleNotFoundError: No module named 'opentelemetry'` — for ~2 weeks,
+ *    invisibly, because this hook was fire-and-forget with no re-check. It now
+ *    waits LIVENESS_RECHECK_MS after spawning and re-probes the port; if the sink
+ *    is still down, it writes a loud one-line warning + exits 2. This binding is
+ *    `asyncRewake: true` (not plain `async: true`) — per Claude Code's hook
+ *    contract, a plain-async hook's exit code/output is discarded once the
+ *    SessionStart event has already moved on (nobody polls it), so a background
+ *    hook needs `asyncRewake` specifically to have Claude "woken" with the
+ *    stderr shown as a system reminder when it later exits 2. SessionStart's
+ *    exit-2 handling is NON-blocking ("Can block?" = No in the harness's own
+ *    table) — the session is never held up by this, satisfying fail-open for
+ *    session FLOW while still being fail-LOUD for the human/agent watching.
  *  - CI-safe: runHook() returns early under JUSTSEARCH_DISABLE_HOOKS=1, which the
  *    hook-integrity load-test sets — so the gate never spawns a stray sink.
  *  - Main-checkout-rooted output (fix, tempdoc 743): otlp-sink.py's `--out`
@@ -33,8 +50,18 @@
  *    shared with the dev-runner's supervisor-state root) and pass an explicit
  *    absolute `--out` under it, so telemetry always lands in one durable place
  *    regardless of which worktree happened to start the sink first.
+ *  - Captured launch stderr (tempdoc 829 R8): the child's stderr is redirected
+ *    to a small truncate-on-write log file (not `stdio: 'ignore'` for stderr
+ *    anymore) so a failed re-probe — or the NEXT session's cold start — can
+ *    quote the actual crash traceback instead of a bare "still down". stdout
+ *    stays ignored; only crash output matters here.
+ *  - Stale-data watchdog: even when something IS listening on the port, if the
+ *    newest file under the sink's output dir is >7 days old, that is a signal
+ *    worth a (softer) notice too — e.g. a stray unrelated process bound the
+ *    port, or the sink is stuck. Uses the same asyncRewake/exit-2 channel.
  */
 
+import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -47,6 +74,14 @@ const PYTHON = process.platform === 'win32' ? 'python' : 'python3';
 // Absolute, main-checkout-rooted output dir — never the relative default,
 // which would resolve against a worktree's ephemeral `tmp/` (see header).
 const SINK_OUT_DIR = path.join(mainRepoRoot, 'tmp', 'agent-telemetry', 'otlp');
+// Truncate-on-write launch log — only the MOST RECENT spawn attempt's stderr
+// matters; a re-probe or the next session's cold start reads its tail.
+const LAUNCH_LOG = path.join(mainRepoRoot, 'tmp', 'agent-telemetry', 'otlp-sink-launch.log');
+// How long to wait after spawning before re-probing the port. A crash-on-import
+// (the ModuleNotFoundError class this closes) fails near-instantly; 1.2s is
+// generous headroom without eating meaningfully into the 5s hook timeout.
+const LIVENESS_RECHECK_MS = 1200;
+const STALE_DATA_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Resolve true iff something is already listening on the sink port (probe). */
 function isSinkListening() {
@@ -66,26 +101,138 @@ function isSinkListening() {
   });
 }
 
-/** Spawn the sink detached so it outlives this hook and the session. */
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Open the launch log for a fresh (truncated) write; falls back to 'ignore' on any FS error. */
+function openLaunchLogForWrite() {
+  try {
+    fs.mkdirSync(path.dirname(LAUNCH_LOG), { recursive: true });
+    return fs.openSync(LAUNCH_LOG, 'w');
+  } catch {
+    return 'ignore';
+  }
+}
+
+/** Spawn the sink detached so it outlives this hook and the session; stderr → LAUNCH_LOG. */
 function startSink() {
+  const stderrTarget = openLaunchLogForWrite();
   const child = spawn(
     PYTHON,
     [SINK_SCRIPT, '--port', String(SINK_PORT), '--out', SINK_OUT_DIR],
     {
       cwd: repoRoot,
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', 'ignore', stderrTarget],
       windowsHide: true,
     }
   );
+  if (typeof stderrTarget === 'number') {
+    try { fs.closeSync(stderrTarget); } catch { /* child already holds its own handle */ }
+  }
+  // A spawn failure (e.g. PYTHON not on PATH) emits an ASYNC 'error' event — previously
+  // harmless because the hook exited near-instantly after spawn(), often before Node even
+  // delivered it. Now that main() awaits LIVENESS_RECHECK_MS, the event loop stays alive
+  // long enough for that error to actually fire — an unhandled EventEmitter 'error' throws,
+  // which would crash this process with an uncaught exception instead of the clean fail-loud
+  // exit 2 below. The post-spawn re-probe (not this event) is the source of truth for
+  // "did it come up", so swallow it here.
+  child.on('error', () => {});
   child.unref();
 }
 
+/** Last `n` non-empty lines of `filePath`, reading at most `maxBytes` from the tail. Never throws. */
+export function tailFileLines(filePath, { n = 3, maxBytes = 4096 } = {}) {
+  try {
+    const stat = fs.statSync(filePath);
+    if (stat.size === 0) return [];
+    const start = Math.max(0, stat.size - maxBytes);
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      const buf = Buffer.alloc(stat.size - start);
+      fs.readSync(fd, buf, 0, buf.length, start);
+      return buf.toString('utf8').split(/\r?\n/).filter(Boolean).slice(-n);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return [];
+  }
+}
+
+/** Newest mtime (ms) of any file directly under `dir`, or null if the dir is missing/empty. */
+export function newestFileMtimeMs(dir) {
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    let newest = null;
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const stat = fs.statSync(path.join(dir, entry.name));
+      if (newest === null || stat.mtimeMs > newest) newest = stat.mtimeMs;
+    }
+    return newest;
+  } catch {
+    return null;
+  }
+}
+
+/** Pure message builder for the sink-death warning (tempdoc 829 R8), exported for unit testing. */
+export function buildDeathWarning({ python, sinkScript, tailLines }) {
+  const tailSuffix = tailLines && tailLines.length ? ` Last stderr: ${tailLines.join(' | ')}` : '';
+  return (
+    `[otlp-sink-ensure] OTel sink FAILED to start — telemetry is NOT being captured this session. ` +
+    `Run \`${python} ${sinkScript}\` manually to see the error (likely missing python deps after a ` +
+    `scoop/python bump; try \`pip install opentelemetry-proto\`).${tailSuffix}`
+  );
+}
+
+/** Pure message builder for the stale-data notice, or null if not stale. Exported for unit testing. */
+export function buildStalenessNotice({ newestMtimeMs, nowMs, outDir, staleMs }) {
+  if (newestMtimeMs == null) return null; // no data yet — freshly empty, not "stale"
+  const ageMs = nowMs - newestMtimeMs;
+  if (ageMs < staleMs) return null;
+  const ageDays = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+  return (
+    `[otlp-sink-ensure] Something is listening on :${SINK_PORT} but the newest file under ${outDir} ` +
+    `is ${ageDays}d old — possible wrong-port listener or a stalled sink. Verify with ` +
+    `\`curl -sf http://${SINK_HOST}:${SINK_PORT}\` and check the directory directly.`
+  );
+}
+
 async function main() {
-  if (await isSinkListening()) return; // already up (this or a concurrent session)
+  if (await isSinkListening()) {
+    // Already up (this or a concurrent session) — no [re]spawn needed. Still worth a
+    // (softer) notice if the data it's producing looks stale.
+    const notice = buildStalenessNotice({
+      newestMtimeMs: newestFileMtimeMs(SINK_OUT_DIR),
+      nowMs: Date.now(),
+      outDir: SINK_OUT_DIR,
+      staleMs: STALE_DATA_MS,
+    });
+    if (notice) {
+      process.stderr.write(notice + '\n');
+      process.exitCode = 2; // asyncRewake: shows this stderr to the agent as a system reminder
+    }
+    return;
+  }
+
   startSink();
+  await delay(LIVENESS_RECHECK_MS);
+  if (await isSinkListening()) return; // came up cleanly — silent, exit 0
+
+  const warning = buildDeathWarning({
+    python: PYTHON,
+    sinkScript: SINK_SCRIPT,
+    tailLines: tailFileLines(LAUNCH_LOG),
+  });
+  process.stderr.write(warning + '\n');
+  process.exitCode = 2; // asyncRewake: shows this stderr to the agent as a system reminder
 }
 
 runHook(import.meta.url, main);
 
-export { isSinkListening, SINK_PORT, SINK_SCRIPT, SINK_OUT_DIR, mainRepoRoot };
+export {
+  isSinkListening, SINK_PORT, SINK_SCRIPT, SINK_OUT_DIR, LAUNCH_LOG, STALE_DATA_MS,
+  LIVENESS_RECHECK_MS, mainRepoRoot,
+};

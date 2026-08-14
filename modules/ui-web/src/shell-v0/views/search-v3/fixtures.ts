@@ -233,6 +233,37 @@ export const CORPUS_ADD_FOLDERS = 'Add folders in Library to start searching';
 /** Where {@link CORPUS_ADD_FOLDERS} goes. The surface that OWNS folder management, not one hop short. */
 export const CORPUS_REMEDY_TARGET = 'core.library-surface';
 
+/* ── The degradation banner (inventory E1/E2/E3) ───────────────────────────────────────────────
+ *
+ * The banner's HEADLINE, BODY, CAUSES and REMEDY LABEL are all the readiness authority's
+ * (`state/readinessNotice.ts`) and appear nowhere in this file — this window words no state. What
+ * IS written here is the disclosure's own two labels and the ids/geometry the composer needs, which
+ * are chrome, not claims.
+ */
+
+/**
+ * The disclosure's accessible name in each direction. Named, not inlined, because it is the ONE
+ * affordance standing between a Simple reader and the worded causes: an unlabelled chevron would put
+ * an honesty fact behind a control that says nothing about what it opens.
+ */
+export const SV3_DEGRADATION_MORE = 'Show what is reduced';
+export const SV3_DEGRADATION_LESS = 'Hide what is reduced';
+
+/**
+ * The headline's id. The send's `aria-describedby` names it when the banner has taken the slot's one
+ * line from the availability notice, so a refusal's explanation is reachable either way.
+ */
+export const SV3_DEGRADATION_HEADLINE_ID = 'sv3-degradation-headline';
+
+/** The disclosed region's id, named by `aria-controls` only while it exists. */
+export const SV3_DEGRADATION_DETAIL_ID = 'sv3-degradation-detail';
+
+/**
+ * The banner's two glyphs (severity mark, disclosure chevron) at the tail's own glyph size, so the
+ * one line reads as composer chrome rather than as an alert dialog that landed in the band.
+ */
+export const SV3_DEGRADATION_GLYPH_SIZE = 13;
+
 /**
  * The per-turn copy action and its confirmation (inventory A9). Since Phase F11 the control is
  * ICON-ONLY (the spec's copy button), so {@link TURN_COPY_LABEL} is its ACCESSIBLE
