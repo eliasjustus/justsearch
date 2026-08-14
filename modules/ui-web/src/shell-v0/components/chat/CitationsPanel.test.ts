@@ -4,13 +4,19 @@
  * Slice 493 — CitationsPanel tests (trust-tier rendering).
  */
 
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   CitationsPanel,
   type CitationMatch,
   type RetrievalCitation,
 } from './CitationsPanel.js';
 import './CitationsPanel.js';
+import {
+  getSelectedSource,
+  setSelectedSource,
+  sourceKey,
+  __resetSelectedSource,
+} from '../../state/selectedSource.js';
 
 async function settle(el: Element): Promise<void> {
   await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
@@ -291,4 +297,163 @@ describe('CitationsPanel', () => {
       el.remove();
     });
   }
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * Tempdoc 822 citation-mark presentation §5.4 (F1) — THE FAR SIDE OF THE SELECTION.
+ *
+ * `MarkdownBlock.ts` promises the selected mark is "highlighted in sync with the rail card". In the
+ * Search v3 window the counterpart surface is THIS panel, and it carried zero references to
+ * `selectedSource`: selecting a citation lit the inline mark and left its source card identical to
+ * every other card. The store's whole justification is relating two surfaces; it rendered on one.
+ *
+ * The key is computed through the ONE `sourceKey` authority over the SAME two fields
+ * `MarkdownBlock.makeMarker` uses — a second key function here would silently never agree.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════ */
+describe('CitationsPanel 822 §5.4 — the source card is the selection’s far side', () => {
+  beforeEach(() => {
+    __resetSelectedSource();
+  });
+
+  const A = { parentDocId: 'doc.alpha', startLine: 11 };
+  const B = { parentDocId: 'doc.beta', startLine: 42 };
+
+  /** Two cards from two DIFFERENT docs, disclosed, through the flat (no-grade) path. */
+  async function mountTwo(): Promise<CitationsPanel> {
+    const el = document.createElement('jf-citations-panel') as CitationsPanel;
+    el.sources = [
+      fakeSource({ ...A, excerpt: 'Alpha excerpt.' }),
+      fakeSource({ ...B, excerpt: 'Beta excerpt.' }),
+    ];
+    el.citations = [];
+    document.body.appendChild(el);
+    await settle(el);
+    return el;
+  }
+
+  const cards = (el: CitationsPanel): HTMLElement[] =>
+    Array.from(el.shadowRoot?.querySelectorAll('button.source') ?? []) as HTMLElement[];
+
+  /** The nth card, or a failure — an absent card must never read as a passing assertion. */
+  const cardAt = (el: CitationsPanel, i: number): HTMLElement => {
+    const c = cards(el)[i];
+    if (!c) throw new Error(`no source card at index ${i}`);
+    return c;
+  };
+
+  it('marks ONLY the card whose source key is selected', async () => {
+    const el = await mountTwo();
+    expect(cards(el)).toHaveLength(2);
+    expect(cards(el).filter((c) => c.hasAttribute('data-selected'))).toHaveLength(0);
+
+    setSelectedSource(sourceKey(B.parentDocId, B.startLine));
+    await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+
+    const marked = cards(el).map((c) => c.hasAttribute('data-selected'));
+    expect(marked).toEqual([false, true]);
+
+    // The key is the (parentDocId, startLine) PAIR: the same doc at another line is a different
+    // source, so a card must not light for its neighbour's passage.
+    setSelectedSource(sourceKey(B.parentDocId, B.startLine + 1));
+    await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    expect(cards(el).filter((c) => c.hasAttribute('data-selected'))).toHaveLength(0);
+    el.remove();
+  });
+
+  it('clicking a card publishes that source as the cross-surface selection', async () => {
+    const el = await mountTwo();
+    expect(getSelectedSource()).toBeNull();
+
+    let dispatched = 0;
+    el.addEventListener('citation-select', () => {
+      dispatched += 1;
+    });
+    cardAt(el, 0).click();
+
+    // The store now holds the clicked card's key...
+    expect(getSelectedSource()).toBe(sourceKey(A.parentDocId, A.startLine));
+    // ...and the existing deep-link dispatch still fires: the selection is an ADDED line, not a
+    // replacement for what the card already did.
+    expect(dispatched).toBe(1);
+
+    await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    expect(cardAt(el, 0).hasAttribute('data-selected')).toBe(true);
+    el.remove();
+  });
+
+  it('unsubscribes from the store on disconnect (no leaked listener)', async () => {
+    const el = await mountTwo();
+    setSelectedSource(sourceKey(A.parentDocId, A.startLine));
+    await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    expect(cardAt(el, 0).hasAttribute('data-selected')).toBe(true);
+
+    el.remove();
+    setSelectedSource(null);
+    await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    // A live subscription would have re-rendered the detached panel and dropped the attribute.
+    expect(cardAt(el, 0).hasAttribute('data-selected')).toBe(true);
+
+    // NON-VACUITY: a detached Lit element still renders when asked, so the stale attribute above
+    // means "no notification arrived", not "updates stopped working". Ask directly and it clears.
+    el.requestUpdate();
+    await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    expect(cardAt(el, 0).hasAttribute('data-selected')).toBe(false);
+  });
+
+  it('renders a selected card IDENTICALLY to an unselected one with no --cp-* tokens set (the shipped-containment proof)', async () => {
+    const el = await mountTwo();
+    // Sentinel values for the two tokens the BASE `.citation, .source` rule declares, so the
+    // equality below is a comparison of real colours rather than of two empty strings.
+    el.style.setProperty('--surface-2', 'rgb(1, 2, 3)');
+    el.style.setProperty('--border-subtle', 'rgb(4, 5, 6)');
+    setSelectedSource(sourceKey(A.parentDocId, A.startLine));
+    await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    const selected = cardAt(el, 0);
+    const unselected = cardAt(el, 1);
+    expect(selected.hasAttribute('data-selected')).toBe(true);
+    expect(unselected.hasAttribute('data-selected')).toBe(false);
+
+    // `.source[data-selected]` is (0,2,0) and OUTRANKS the base `.citation, .source` at (0,1,0), so
+    // its fallbacks are not decoration — they are what a selected card resolves to in every consumer
+    // that does not opt in (search-v2, SummarizeView, where `MarkdownBlock` marks and `SourcesPane`
+    // both write the store, so `data-selected` IS reachable). Defaulting them to the base rule's own
+    // `--surface-2` / `--border-subtle` is what makes "shipped is unaffected" true: the two cards
+    // must be indistinguishable. A `transparent` default would blank the selected card instead.
+    const sel = getComputedStyle(selected);
+    const unsel = getComputedStyle(unselected);
+    expect(unsel.backgroundColor).toBe('rgb(1, 2, 3)');
+    expect(unsel.borderTopColor).toBe('rgb(4, 5, 6)');
+    expect(sel.backgroundColor).toBe(unsel.backgroundColor);
+    expect(sel.borderTopColor).toBe(unsel.borderTopColor);
+    expect(sel.borderLeftColor).toBe(unsel.borderLeftColor);
+    el.remove();
+  });
+
+  it('freezes the selected card’s un-overridden fill and edge at the base rule’s own tokens', () => {
+    // Source-level, deliberately, and for the reason `MarkdownBlock.test.ts:791` records: happy-dom
+    // ABANDONS a declaration whose value contains a nested var() fallback, which both of these are —
+    // so the sentinel half of this proof (set `--cp-selected-region`, watch only the selected card
+    // take it) is not expressible here and belongs to the live browser check. What IS checkable, and
+    // is the actual invariant, is that the two fallbacks name the SAME tokens the base rule paints
+    // with: that is why the computed equality above holds, and it would break the moment either
+    // default drifted back toward `transparent`.
+    const cssText = (CitationsPanel.styles as unknown as { cssText: string }).cssText;
+    expect(cssText).toContain('background: var(--cp-selected-region, var(--surface-2));');
+    expect(cssText).toContain('border-color: var(--cp-selected-edge, var(--border-subtle));');
+    // …and those ARE the base rule's values, read off the base rule itself rather than assumed.
+    const base = /\.citation,\s*\.source\s*\{([^}]*)\}/.exec(cssText)![1]!;
+    expect(base).toContain('background: var(--surface-2);');
+    expect(base).toContain('border: 1px solid var(--border-subtle);');
+  });
+
+  it('leaves the hover edge on its shipped default (--cp-hover-edge is opt-in only)', () => {
+    const cssText = (CitationsPanel.styles as unknown as { cssText: string }).cssText;
+    // The accent is still the FALLBACK, so the shipped hover border is byte-identical; only a
+    // window that declares `--cp-hover-edge` takes it off the accent (822 §5.4).
+    expect(cssText).toContain('border-color: var(--cp-hover-edge, var(--accent-tint))');
+    // Donor precedence: the selected rules come AFTER `.source:hover`, so the selected edge wins on
+    // a card that is both. If this order is ever flipped the hover edge would re-take a selected
+    // card and the two surfaces would disagree about what "selected" looks like.
+    expect(cssText.indexOf('.source:hover')).toBeLessThan(cssText.indexOf('.source[data-selected]'));
+  });
 });

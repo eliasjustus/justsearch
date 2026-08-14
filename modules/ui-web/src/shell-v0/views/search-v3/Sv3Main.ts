@@ -127,6 +127,17 @@ const TAIL_GLYPH_SIZE = 12;
 /** The disclosure's target, per turn — the ids live in this element's shadow root and nowhere else. */
 const sourcesBodyId = (turnId: string): string => `sv3-sources-${turnId}`;
 
+/**
+ * Tempdoc 822 §5.7 (F7) — the ONE line that names the answer's mark vocabulary. Sentence case, like
+ * every other string this window says: v3 uses UPPERCASE nowhere. It exists mostly for the two greys
+ * — a `.pseudo-cite` and a `.cite-weak` look identical and mean "the model invented this reference"
+ * versus "a real reference the evidence supports weakly" — and it says what selection is FOR, which
+ * is the question §5.3's sentence region answers but nothing on screen asks.
+ */
+const CITE_LEGEND =
+  'Select a source to see the sentences it supports. A dotted underline marks a sentence the ' +
+  'evidence supports weakly; amber marks one it does not support. A grey number is a weak reference.';
+
 export class Sv3Main extends JfElement {
   static styles = [
     sv3Shared,
@@ -304,6 +315,38 @@ export class Sv3Main extends JfElement {
         --md-cite-pad-x-rest: 0.25em;
         --md-cite-pad-x: 0.25em;
         --md-cite-radius: 0.25em;
+        /* §5.3 (F2) — the sentence region's horizontal breathing room. Flush to the glyphs the wash
+           read as a text-selection smear rather than a designed region; the inset cancels the padding
+           exactly, so it paints ~3px wider on each side and occupies the same width — not one glyph
+           moves. Horizontal only: the grounding tiers' dotted 'border-bottom' rides this same
+           element, and vertical padding would drop a selected sentence's underline below its
+           neighbours'. Both names default to 0 in the renderer, so no other window changes. */
+        --md-cite-region-pad-x: 0.25em;
+        --md-cite-region-inset-x: -0.25em;
+        /* §5.4 — the SAME three rungs on the FAR side of that selection. This window renders
+           'jf-citations-panel' where the shipped window renders the rail card, so without these the
+           mark lit and its source card stayed identical to every other card (F1) — the state's whole
+           justification is relating two surfaces. The panel's own defaults are the card's EXISTING
+           fill and edge ('--surface-2' / '--border-subtle'), not transparent — its '[data-selected]'
+           rule outranks the base one, so a nothing-default would blank a selected card wherever the
+           store is already written. Shipped cards are therefore untouched and this window is the
+           only one that washes them; these names have no other definition site, exactly
+           like the '--md-cite-*' block above. '--cp-hover-edge' is the panel's one accent spend
+           recovered: a hover edge is a pointer's shadow, not an act-now signal.
+
+           The panel's rungs sit ONE STEP UP from the mark's, and the reason is measured, not
+           stylistic: a mark is painted on the window BACKGROUND (0 %), but a source card already
+           carries '--muted' — a 4 % white fill. Spending the mark's 5 % region rung on a card is a
+           ONE-POINT step (4 % -> 5 %), which a real-browser capture showed to be invisible: the
+           selected card was indistinguishable from its neighbours even though '[data-selected]' was
+           correctly set. The donor's own 6/9 idiom assumes a TRANSPARENT resting row, so it has to be
+           re-based against the surface it actually lands on. Hence 4 % resting -> 9 % selected ->
+           14 % selected+hover, preserving donor law "when a row is both, it takes the higher wash,
+           and never two competing fills" (t3code-system.md:601). */
+        --cp-selected-region: var(--sv3-selected);
+        --cp-selected-edge: var(--sv3-selected-edge);
+        --cp-selected: var(--sv3-selected-edge);
+        --cp-hover-edge: var(--sv3-selected-edge);
         --accent-warning: var(--warning-foreground);
         --text-warning: var(--warning-foreground);
         --text-command: var(--foreground);
@@ -375,6 +418,17 @@ export class Sv3Main extends JfElement {
         margin: var(--space-2) 0 0;
       }
       .answer-empty {
+        color: var(--secondary-label);
+      }
+      /* Tempdoc 822 §5.7 (F7) — the mark legend. A reader can meet five mark types in one answer
+         plus two dotted underlines with no key anywhere, and the two GREYS mean opposite things:
+         '.pseudo-cite' is "the model invented this reference", '.cite-weak' is "a real reference the
+         evidence supports weakly". It lives INSIDE the Sources disclosure, so it is already gated and
+         costs zero resting chrome against the fit audit's 16. Existing tokens only, no new colour,
+         no icon — a legend that needed its own swatch would be a sixth mark type. */
+      .cite-legend {
+        margin: var(--space-2) 0 0;
+        font-size: var(--font-size-sv3-xs);
         color: var(--secondary-label);
       }
 
@@ -1283,7 +1337,11 @@ export class Sv3Main extends JfElement {
   private citations(turn: Sv3Turn): TemplateResult | typeof nothing {
     if (!this.panelSpeaks(turn) || turn.evidence === null) return nothing;
     if (!this.expandedSources.has(turn.id)) return nothing;
-    return html`<jf-citations-panel
+    // §5.7 — the legend renders ONLY while the disclosure is open, which is what makes it free: the
+    // reader who is looking at sources is exactly the reader who needs the key. It sits beside the
+    // panel rather than wrapping it because the trigger's `aria-controls` names the PANEL's id.
+    return html`<p class="cite-legend" data-testid="sv3-cite-legend">${CITE_LEGEND}</p>
+    <jf-citations-panel
       class="sv3-citations"
       id=${sourcesBodyId(turn.id)}
       data-testid="sv3-turn-citations"

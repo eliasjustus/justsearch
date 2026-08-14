@@ -766,6 +766,66 @@ describe('822 §5.3 — selection highlights the sentences the source supports',
     expect(second.classList.contains('cite-sentence-selected')).toBe(true);
     el.remove();
   });
+
+  /* The region's horizontal inset (F2). Live at 3x the wash painted flush to the glyphs and read as
+     a text-selection smear rather than a designed region. The fix is a tokenized padding cancelled
+     by an equal negative margin: it paints wider and occupies the same width. happy-dom has NO
+     layout engine (offsetWidth / getBoundingClientRect are 0 for everything), so — like `padX` above
+     — the invariant is asserted on the computed box, never on a measured width. */
+  it('T5b: the region inset is 0 by default and cancels its own padding when a window opts in', async () => {
+    const shipped = await mountCites(ONE, [citeAt(ONE, WEAK, 1, DOC_A)]);
+    setSelectedSource(sourceKey(DOC_A, 1));
+    const shippedRegion = shipped.renderRoot.querySelector('.cite-sentence-selected') as HTMLElement;
+    expect(shippedRegion).not.toBeNull();
+
+    // CONTAINMENT: no `--md-cite-region-*` set, so the region occupies exactly the glyphs — every
+    // shipped surface (search-v2, SummarizeView) is byte-identical to before.
+    const shippedCs = getComputedStyle(shippedRegion);
+    expect(shippedCs.paddingLeft).toBe('0px');
+    expect(shippedCs.paddingRight).toBe('0px');
+    expect(shippedCs.marginLeft).toBe('0px');
+    expect(shippedCs.marginRight).toBe('0px');
+    shipped.remove();
+
+    __resetSelectedSource();
+
+    // OPT-IN: the two names `Sv3Main.ts` bridges. Padding and inset are equal in magnitude and
+    // opposite in sign — the "paints wider, occupies the same width" invariant. If either token were
+    // ever changed alone the wash would start shifting glyphs, which is the whole thing this buys.
+    const v3 = await mountCites(ONE, [citeAt(ONE, WEAK, 1, DOC_A)], {
+      '--md-cite-region-pad-x': '0.25em',
+      '--md-cite-region-inset-x': '-0.25em',
+    });
+    setSelectedSource(sourceKey(DOC_A, 1));
+    const region = v3.renderRoot.querySelector('.cite-sentence-selected') as HTMLElement;
+    const cs = getComputedStyle(region);
+    const padL = parseFloat(cs.paddingLeft);
+    const padR = parseFloat(cs.paddingRight);
+    const marL = parseFloat(cs.marginLeft);
+    const marR = parseFloat(cs.marginRight);
+    expect(padL).toBeGreaterThan(0); // non-vacuity: the opt-in really computed
+    expect(padR).toBe(padL);
+    expect(marL).toBe(-padL);
+    expect(marR).toBe(-padR);
+
+    // HORIZONTAL ONLY. `.grounding-weak` / `.grounding-ungrounded` draw their dotted `border-bottom`
+    // on THIS element, so vertical padding would sit a selected sentence's underline lower than an
+    // unselected one's — a real regression, not a nicety.
+    expect(region.className).toContain('grounding-weak');
+    expect(cs.paddingTop).toBe('0px');
+    expect(cs.paddingBottom).toBe('0px');
+    v3.remove();
+  });
+
+  it('leaves box-decoration-break at slice (a wrapped sentence is one highlight, not pills)', () => {
+    // `slice` rounds the start of the first line-fragment and the end of the last, giving one
+    // continuous region; `clone` would repeat the full box per fragment.
+    const cssText = (MarkdownBlockClass.styles as { cssText: string }).cssText;
+    const rule = /\.cite-sentence-selected\s*\{([^}]*)\}/.exec(cssText)![1]!;
+    expect(rule).not.toMatch(/box-decoration-break/);
+    expect(rule).toContain('padding: 0 var(--md-cite-region-pad-x, 0);');
+    expect(rule).toContain('margin: 0 var(--md-cite-region-inset-x, 0);');
+  });
 });
 
 describe('822 §5.2 — frozen defaults: the shipped window is unmoved (S4-style containment)', () => {

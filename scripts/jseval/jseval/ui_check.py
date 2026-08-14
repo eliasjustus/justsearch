@@ -321,6 +321,56 @@ async def _await_turn_count(page, expected: int, *, timeout_ms: int = 15_000) ->
     )
 
 
+# Tempdoc 822 citation-mark presentation §7 — the measured half of `sv3-citation-selected`.
+#
+# The three probes below run in the page, over COMPUTED style, because the defect they guard is a
+# CASCADE-ORDER defect: `.cite-selected` set `color` at the same specificity as the grounding tiers
+# and later in source, which no stylesheet-text or source-level check can see. They are the same
+# shadow-piercing walk `_await_turn_count` uses (the marks live several shadow roots deep: the
+# renderer's, inside the window's, inside the surface's), fed to `wait_for_function` so a wrong
+# render RAISES instead of being photographed as a right one.
+_JS_DEEP_WALK = """
+    const deepAll = (root, acc, depth) => {
+        root = root || document; acc = acc || []; depth = depth || 0;
+        if (depth > 40) return acc;
+        for (const el of root.querySelectorAll('*')) {
+            acc.push(el);
+            if (el.shadowRoot) deepAll(el.shadowRoot, acc, depth + 1);
+        }
+        return acc;
+    };
+    const painted = (c) => !!c && c !== 'transparent' && !/^rgba\\(\\s*0,\\s*0,\\s*0,\\s*0\\s*\\)$/.test(c);
+"""
+
+# The grounding tier's ink, read BEFORE anything is selected. Assertion 2 compares the selected
+# mark's `color` against this exact string, so it needs no second same-tier mark on screen.
+_JS_FIRST_CITE_COLOR = """() => {
+""" + _JS_DEEP_WALK + """
+    const mark = deepAll().find((el) => el.matches('.cite-ref'));
+    return mark ? getComputedStyle(mark).color : null;
+}"""
+
+# 1 + 2: the selected mark wears a real fill, announces itself current, and its INK is untouched.
+_JS_SELECTED_MARK_OK = """(args) => {
+""" + _JS_DEEP_WALK + """
+    const mark = deepAll().find((el) => el.matches('.cite-ref.cite-selected'));
+    if (!mark) return false;
+    const cs = getComputedStyle(mark);
+    if (!painted(cs.backgroundColor)) return false;
+    if (mark.getAttribute('aria-current') !== 'true') return false;
+    // THE HEADLINE (F2): selection paints SURFACE; `color` belongs to the grounding tier. Before the
+    // repair this read the selection's own foreground and the honesty tier was erased on click.
+    return cs.color === args.ink;
+}"""
+
+# 3: the sentences the selected source supports are tinted — the payload, not just the handle (F4).
+_JS_SELECTED_REGION_OK = """() => {
+""" + _JS_DEEP_WALK + """
+    const region = deepAll().find((el) => el.matches('.cite-sentence-selected'));
+    return !!region && painted(getComputedStyle(region).backgroundColor);
+}"""
+
+
 # ---------------------------------------------------------------------------
 # Step registry — all screenshots declared here
 # ---------------------------------------------------------------------------
@@ -1276,6 +1326,78 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         await page.locator(S.CSS_ACTIVITY_CONTEXT).first.wait_for(state="visible", timeout=10_000)
         await asyncio.sleep(0.3)
 
+    async def setup_sv3_citation_selected(page):
+        # Tempdoc 822 citation-mark presentation §7.1 — THE STATE NOTHING COULD ENTER.
+        #
+        # F1/F2 survived eleven slices for one structural reason: no step in this harness ever
+        # SELECTED a citation, so no capture, no measurement and no audit could look at the selected
+        # mark. (§3: zero tests asserted `.cite-selected`, the fit audit's five measured states
+        # contain no selected-citation state, and the inventory has no sv3 entry at all.) This step
+        # closes that: it drives the Search v3 window to a grounded answer, opens the Sources
+        # disclosure and clicks a source CARD — the far side of the selection — then asserts what the
+        # two surfaces render.
+        #
+        # LIVE-STACK, NOT `--fixtures`, and this is a property of the window rather than a shortcut
+        # not taken: a v3 turn's `evidence` is the shared resolver's output over the LIVE stream's
+        # claims and is `null` on every record path (`views/search-v3/sv3-record.ts:101-104`), so no
+        # thread fixture can mount the panel. Like the `citation-highlight` chain it therefore needs
+        # the dev stack + `ai_activate`, and it is deliberately NOT registered in
+        # `governance/ui-proportion-baseline.v1.json` — that gate captures under `--fixtures` with no
+        # backend, where this step cannot reach its state and would report a capture ERROR.
+        #
+        # The three assertions below are the regression this slice exists to prevent, evaluated
+        # against COMPUTED style in a real engine (the cascade order was the defect, and no
+        # source-level check can see cascade order):
+        #   1. the selected mark carries a real fill AND `aria-current="true"` (F6 — the state was
+        #      visual-only);
+        #   2. its `color` is UNCHANGED by selection (F2 — the headline: `.cite-selected` used to set
+        #      `color` at the same specificity as `.cite-weak` / `.cite-ungrounded` and later in
+        #      source, so clicking the amber "not supported" numeral hid that it was unsupported);
+        #   3. the sentence region the source grounds is tinted (§5.3 — the payload, not the handle).
+        # Each is a condition-poll that RAISES on timeout, the same mechanism `_await_turn_count`
+        # uses, so a wrong render fails the step instead of being photographed as a right one.
+        await page.goto(demo, wait_until="domcontentloaded", timeout=timeout_ms)
+        # Hidden DEEPLINK surface, dev audience, no rail entry — the hash route is the only way in.
+        await page.evaluate(
+            "() => { location.hash = 'justsearch://surface/core.search-v3-surface'; }"
+        )
+        await page.locator("jf-sv3-window").first.wait_for(state="visible", timeout=20_000)
+        ta = page.locator('[data-testid="sv3-composer-input"]').first
+        await ta.wait_for(state="visible", timeout=15_000)
+        await ta.click()
+        # The same retrieval-grounded prompt shape `setup_streaming` uses: the answer must run a
+        # search tool (so the turn gets sources) AND ground its sentences in those passages (so the
+        # matcher emits citations) — both are required before a single `.cite-ref` mark renders.
+        await ta.fill(
+            "Search the indexed documents and summarize how indexing reaches the head process, "
+            "citing the specific sources you used."
+        )
+        await ta.press("Enter")
+        # The marks attach only after the stream completes and the matcher has spoken; the 9B model
+        # plus an agent loop on a possibly-contended GPU is the reason for the wide window.
+        await page.locator(".cite-ref").first.wait_for(state="visible", timeout=300_000)
+        # The tier's ink BEFORE any selection — assertion 2 compares against this exact value, so the
+        # comparison is self-contained and does not need a second mark of the same tier on screen.
+        tier_ink = await page.evaluate(_JS_FIRST_CITE_COLOR)
+        if not tier_ink:
+            raise RuntimeError("sv3-citation-selected: no .cite-ref mark to read a tier colour from")
+        # Open the window's own Sources disclosure, then click the CARD (not the mark): the card is
+        # the surface F1 says never rendered the state, so selecting FROM it proves the binding is
+        # two-ended rather than the mark simply highlighting itself.
+        await page.locator('[data-testid="sv3-turn-sources"]').first.click(timeout=15_000)
+        card = page.locator('[data-testid="sv3-turn-citations"] button.source').first
+        await card.wait_for(state="visible", timeout=15_000)
+        await card.click(timeout=10_000)
+        # 1 + 2: the mark wears a fill and says it is current, and its INK never moved.
+        await page.wait_for_function(_JS_SELECTED_MARK_OK, arg={"ink": tier_ink}, timeout=15_000)
+        # 3: the sentences that source supports are tinted.
+        await page.wait_for_function(_JS_SELECTED_REGION_OK, timeout=15_000)
+        # ...and the card itself is marked, which is the whole §5.4 repair.
+        await page.locator("button.source[data-selected]").first.wait_for(
+            state="visible", timeout=10_000
+        )
+        await asyncio.sleep(0.3)
+
     async def setup_responsive(page):
         await page.goto(demo, wait_until="domcontentloaded", timeout=timeout_ms)
         await _type_and_search(page)
@@ -1494,6 +1616,14 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # error-retryable / context-details-expanded retired (615 §6.1b): demo-error injection
         # (`demo_error`) is inert and the React context-details panel has no shell-v0 equivalent.
         Step("qa-response",              setup=setup_qa,              isolated=True, init_scripts=[ai_init]),
+        # --- Tempdoc 822 §7.1: the SELECTED-citation state, in the Search v3 window ---
+        # The gap that let F1/F2 survive eleven slices — nothing in this harness ever entered the
+        # state, so nothing could see it. Live stack + `ai_activate` (a v3 turn's evidence comes only
+        # from the live stream — see the setup), and NOT registered in the proportion baseline, whose
+        # gate captures under `--fixtures` where this state is unreachable. `required=False` for the
+        # same reason the AI chain is fragile: a contended GPU must not fail the whole batch.
+        Step("sv3-citation-selected", setup=setup_sv3_citation_selected, isolated=True,
+             required=False, init_scripts=[ai_init]),
         Step("responsive-collapsed",     setup=setup_responsive,      isolated=True),
         # action-panel-open / action-panel-filtered retired (615 §6.1b) — no shell-v0 equivalent.
 

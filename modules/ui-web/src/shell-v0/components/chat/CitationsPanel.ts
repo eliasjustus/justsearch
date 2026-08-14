@@ -21,6 +21,17 @@ import '../Control.js';
 import { setMenuAnchor } from '../../utils/selectionAnchor.js';
 // Tempdoc 565 §29 Tier-3 — open the cited LOCAL file (the uniquely-local citation affordance).
 import { openLocalFile } from '../../plugin-api/capabilities/platform.js';
+// Tempdoc 822 citation-mark presentation §5.4 — the FAR SIDE of the inline mark's selection. The
+// store's whole justification is relating two surfaces; until now it rendered on one (F1), so in the
+// v3 window — where this panel IS the rail card's counterpart — selecting a citation lit the mark and
+// left every source card identical. The SAME four imports `MarkdownBlock.ts` uses, and the same
+// `sourceKey` authority: a second key function here would silently never agree with the marks.
+import {
+  getSelectedSource,
+  setSelectedSource,
+  subscribeSelectedSource,
+  sourceKey,
+} from '../../state/selectedSource.js';
 import {
   toEvidenceItem,
   evidenceScore,
@@ -80,6 +91,8 @@ export class CitationsPanel extends JfElement {
    */
   declare externalDisclosure: boolean;
 
+  private selectedSourceUnsub: (() => void) | null = null;
+
   constructor() {
     super();
     this.citations = [];
@@ -88,6 +101,21 @@ export class CitationsPanel extends JfElement {
     this.showWeak = false;
     this.sourcesExpanded = false;
     this.externalDisclosure = false;
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    // Tempdoc 565 §12.3.E / 822 §5.4 — re-render the card highlight when the cross-surface selection
+    // changes (an inline `[n]` mark or another card was focused). Lifecycle mirrored EXACTLY from
+    // `MarkdownBlock.ts` (its counterpart on the near side): store the unsubscribe fn here, call and
+    // null it in `disconnectedCallback` — a leaked subscription would keep a detached panel alive.
+    this.selectedSourceUnsub = subscribeSelectedSource(() => this.requestUpdate());
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.selectedSourceUnsub?.();
+    this.selectedSourceUnsub = null;
   }
 
   static styles = css`
@@ -164,7 +192,27 @@ export class CitationsPanel extends JfElement {
     }
     .source:hover {
       background: var(--surface-3);
-      border-color: var(--accent-tint);
+      /* 822 §5.4 — the panel's one accent spend, recovered: a hover edge is not an act-now signal,
+         so the window that wants it neutral re-points it. Default unchanged. */
+      border-color: var(--cp-hover-edge, var(--accent-tint));
+    }
+    /* Tempdoc 822 §5.4 — the selected source card. Containment means every --cp-* name defaults to
+       TODAY'S VALUE, not to nothing: this selector's (0,2,0) outranks the base '.citation, .source'
+       at (0,1,0), so a 'transparent' default would blank a selected card's fill and edge in the
+       shipped windows (search-v2, SummarizeView) where 'data-selected' is reachable. Defaulting to
+       the base rule's own '--surface-2' / '--border-subtle' makes an un-tokenized selected card
+       byte-identical to an unselected one, and the v3 window opts in from Sv3Main.ts. These rules
+       sit AFTER .source:hover on purpose: they share its (0,2,0) specificity, so source order is what
+       decides the border of a card that is both hovered and selected — and the SELECTED edge is the
+       one that should win. Donor precedence (t3code-system.md:592,601): a row that is both takes the
+       HIGHER wash and never shows two competing fills, which is why [data-selected]:hover restates
+       background alone at (0,3,0) rather than layering a second fill under the hover. */
+    .source[data-selected] {
+      background: var(--cp-selected-region, var(--surface-2));
+      border-color: var(--cp-selected-edge, var(--border-subtle));
+    }
+    .source[data-selected]:hover {
+      background: var(--cp-selected, var(--surface-3));
     }
     .source .preview {
       display: none;
@@ -295,6 +343,11 @@ export class CitationsPanel extends JfElement {
         setMenuAnchor({ top: rect.top, left: rect.left, bottom: rect.bottom, right: rect.right });
       }
     }
+    // Tempdoc 822 §5.4 — mark this source the cross-surface selection BEFORE the existing deep-link
+    // dispatch, exactly as its sibling `components/SourcesPane.ts:130` already does. That is the line
+    // this panel was missing; adding it is what makes the binding two-ended, which is the only thing
+    // that justifies the state existing at all. Nothing below changes.
+    setSelectedSource(sourceKey(source.parentDocId, source.startLine));
     const detail: CitationSelectDetail = {
       parentDocId: source.parentDocId,
       startLine: source.startLine,
@@ -340,10 +393,15 @@ export class CitationsPanel extends JfElement {
     const item = toEvidenceItem(s);
     // Tempdoc 565 §29 Tier-3 — the cited file's basename, for the open-file affordance below the card.
     const docName = s.parentDocId.split('/').pop() ?? s.parentDocId;
+    // Tempdoc 822 §5.4 — the SAME two fields `MarkdownBlock.makeMarker` keys its marks on
+    // (`parentDocId` + `startLine`, through the one `sourceKey` authority), so the card and the
+    // inline `[n]` resolve to one identity and the two surfaces cannot silently disagree.
+    const selected = getSelectedSource() === sourceKey(s.parentDocId, s.startLine);
     return html`
       <div class="source-card">
         <button
           class="source"
+          ?data-selected=${selected}
           @click=${(e: MouseEvent) => this.onSourceClick(s, e)}
         >
           <div class="header">

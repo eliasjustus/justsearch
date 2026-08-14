@@ -337,6 +337,29 @@ describe('the disclosure is the window\'s own, per turn, and it opens the SHARED
     expect(trigger.querySelector('.tail-chevron')?.getAttribute('width')).toBe('14');
   });
 
+  // Tempdoc 822 §5.7 (F7) — five mark types and two dotted underlines with no key anywhere, and the
+  // two GREYS mean opposite things. The legend lives INSIDE this disclosure, so it costs zero
+  // resting chrome; a legend that rendered while the disclosure was shut would be a 16th chrome row.
+  it('keys the marks — but only while the disclosure is OPEN', async () => {
+    const el = await mountMain([turn()]);
+    expect(q(el, 'sv3-cite-legend')).toBeNull();
+
+    (q(el, 'sv3-turn-sources') as HTMLButtonElement).click();
+    await el.updateComplete;
+    const legend = q(el, 'sv3-cite-legend') as HTMLElement;
+    expect(text(legend)).toBe(
+      'Select a source to see the sentences it supports. A dotted underline marks a sentence the ' +
+        'evidence supports weakly; amber marks one it does not support. A grey number is a weak ' +
+        'reference.',
+    );
+    // Sentence case, per the window's copy law: v3 uses UPPERCASE nowhere.
+    expect(text(legend)).not.toMatch(/\b[A-Z]{2,}\b/);
+
+    (q(el, 'sv3-turn-sources') as HTMLButtonElement).click();
+    await el.updateComplete;
+    expect(q(el, 'sv3-cite-legend')).toBeNull();
+  });
+
   it('is PER TURN: opening one leaves the other collapsed', async () => {
     const el = await mountMain([turn(), turn({ id: 't2' })]);
     const triggers = all(el, 'sv3-turn-sources') as HTMLButtonElement[];

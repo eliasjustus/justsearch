@@ -275,6 +275,8 @@ const MD_CITE = [
   '--md-cite-pad-x-rest',
   '--md-cite-radius',
   '--md-cite-region-bg',
+  '--md-cite-region-inset-x',
+  '--md-cite-region-pad-x',
   '--md-cite-selected-bg',
   '--md-cite-selected-edge',
 ] as const;

@@ -377,9 +377,18 @@ export class MarkdownBlock extends JfElement {
        tier underlines above rather than competing — a weakly-grounded sentence inside a selected
        region keeps its dotted rule. Default transparent ⇒ invisible on every shipped surface; a
        window opts in by re-pointing '--md-cite-region-bg'. */
+    /* §5.3 (F2) — HORIZONTAL breathing room, tokenized and defaulting to 0 so shipped is unchanged.
+       The inset cancels the padding exactly, so the wash extends past the text without moving a
+       glyph. Horizontal ONLY, on purpose: '.grounding-weak' / '.grounding-ungrounded' draw their
+       border-bottom on THIS element, so vertical padding would push a selected sentence's dotted
+       underline lower than an unselected one's. 'box-decoration-break' is left at 'slice' for the
+       same reason it is right: a wrapped sentence reads as one continuous highlight, rounded at the
+       start of the first fragment and the end of the last — 'clone' would render it as pills. */
     .cite-sentence-selected {
       background: var(--md-cite-region-bg, transparent);
       border-radius: var(--md-cite-radius, 0.25em);
+      padding: 0 var(--md-cite-region-pad-x, 0);
+      margin: 0 var(--md-cite-region-inset-x, 0);
     }
     .md-content p {
       margin: var(--md-block-gap) 0;
