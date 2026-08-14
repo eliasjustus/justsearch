@@ -403,6 +403,8 @@ final class SearchRpcOps {
      * @param answerText the full LLM answer text
      * @param chunkDocIds parent doc IDs of chunks used as context
      * @param chunkIndices chunk indices within their parent docs
+     * @param passageTexts literal passage text per source (tempdoc 836 §1.4) — either empty, or
+     *     exactly as long as {@code chunkDocIds}; a blank entry means "look this one up"
      * @param threshold minimum cosine similarity threshold
      * @return response containing matched citations
      */
@@ -410,11 +412,13 @@ final class SearchRpcOps {
             String answerText,
             List<String> chunkDocIds,
             List<Integer> chunkIndices,
+            List<String> passageTexts,
             double threshold) {
         MatchCitationsRequest request = MatchCitationsRequest.newBuilder()
                 .setAnswerText(answerText)
                 .addAllChunkDocIds(chunkDocIds)
                 .addAllChunkIndices(chunkIndices)
+                .addAllPassageTexts(passageTexts)
                 .setSimilarityThreshold(threshold)
                 .build();
         return rpc.execute(

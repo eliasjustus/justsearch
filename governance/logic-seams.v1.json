@@ -200,6 +200,19 @@
       "law": "record(docId, content, total, from, windows) folds a slice into the document's running sum ONLY when from == the tracked resume point and the content fingerprint matches; it returns the new resume point. complete(docId) = L2Normalize(sum / windowsAccumulated), which is exactly OnnxEmbeddingEncoder.meanPoolChunks over the same windows, and drops the entry. nextWindow(docId, content) = 0 whenever nothing is tracked OR the fingerprint differs. Every failure here is a silent WRONG VECTOR that indexes cleanly: double-counting a slice (accepting a non-matching from) skews the mean, blending two content revisions embeds a document that never existed, and a resume point that does not advance re-embeds windows forever.",
       "guard": "test:CombinedEnrichmentLongDocumentTest",
       "note": "Round-15 post-round finding: the cross-cycle accumulator that lets a long document's windowed embedding resume instead of restarting every scheduler cycle."
+    },
+    {
+      "id": "passage-windows",
+      "gradlePath": ":modules:worker-services",
+      "targetClass": "io.justsearch.indexerworker.services.PassageWindows",
+      "targetTests": [
+        "io.justsearch.indexerworker.services.PassageWindowsTest",
+        "io.justsearch.indexerworker.services.PassageWindowsPropertyTest"
+      ],
+      "pure": true,
+      "law": "A window is scored; a SOURCE is reported. For every prepared request: 0 <= windowToSource[w] < sourceCount for every window w, windowDocIds[w] == chunkDocIds[windowToSource[w]], and suppliedBySource[i] is true iff passageTexts[i] was non-blank. split() tiles a passage into non-overlapping windows of at most WINDOW_CHARS whose concatenation is the passage (the tail is never dropped). admissionCap(sentences, deadlineMs) = max(1, floor(deadlineMs/UNIT_COST_MS)/max(1,sentences)) and the admitted window count never exceeds it, never exceeds windowsConsidered, and keeps at least one window per text-bearing source while slots remain.",
+      "guard": "test:PassageWindowsTest + test:PassageWindowsPropertyTest",
+      "note": "Tempdoc 836 §1.3 — windowing adds a SECOND ordinal space beside the one the wire reports, which is the F-049 shape. A back-map slip silently attributes a claim to the wrong source; an admission slip silently scores work the Head has already abandoned (§3.4, measured 49.8s for a discarded result)."
     }
   ]
 }

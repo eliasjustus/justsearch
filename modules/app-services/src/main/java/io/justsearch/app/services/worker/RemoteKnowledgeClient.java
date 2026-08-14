@@ -578,8 +578,13 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
     }
 
     public MatchCitationsResponse matchCitations(
-        String answerText, List<String> chunkDocIds, List<Integer> chunkIndices, double threshold) {
-        return searchRpcOps.matchCitations(answerText, chunkDocIds, chunkIndices, threshold);
+        String answerText,
+        List<String> chunkDocIds,
+        List<Integer> chunkIndices,
+        List<String> passageTexts,
+        double threshold) {
+        return searchRpcOps.matchCitations(
+            answerText, chunkDocIds, chunkIndices, passageTexts, threshold);
     }
 
     /**

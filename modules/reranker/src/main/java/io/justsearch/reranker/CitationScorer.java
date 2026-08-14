@@ -38,6 +38,13 @@ import org.slf4j.LoggerFactory;
 public final class CitationScorer implements Closeable {
   private static final Logger log = LoggerFactory.getLogger(CitationScorer.class);
 
+  /**
+   * Passages per ONNX call. The deadline is only checkable BETWEEN calls, so this is the
+   * granularity at which a scoring pass can be stopped (tempdoc 836 §1.3 / §9 P2c). Sized so one
+   * sub-batch costs a few hundred milliseconds at the measured ~25 ms/pair.
+   */
+  static final int SCORING_SUB_BATCH = 16;
+
   // Session management (delegated to SessionHandle — tempdoc 397 §14.5 PR 2).
   private final SessionHandle sessions;
   private final OrtEnvironment env;
@@ -118,11 +125,12 @@ public final class CitationScorer implements Closeable {
         deadlineMs > 0 ? startNanos + deadlineMs * 1_000_000L : Long.MAX_VALUE;
 
     if (sentences.isEmpty() || chunkTexts.isEmpty()) {
-      return new ScoringResult(List.of(), sentences.size(), 0, 0);
+      return new ScoringResult(List.of(), sentences.size(), 0, 0, 0);
     }
 
     List<ScoredMatch> matches = new ArrayList<>();
     int sentencesMatched = 0;
+    int sentencesScored = 0;
     String[] chunksArray = chunkTexts.toArray(new String[0]);
 
     for (int si = 0; si < sentences.size(); si++) {
@@ -138,46 +146,99 @@ public final class CitationScorer implements Closeable {
       }
 
       try {
-        List<Float> scores = scoreSentenceAgainstChunks(sentence, chunksArray);
-
-        // Find best matching chunk, skipping empty chunks
-        double bestScore = 0.0;
-        int bestChunkIdx = -1;
-        for (int ci = 0; ci < scores.size(); ci++) {
-          if (chunksArray[ci] == null || chunksArray[ci].isBlank()) {
-            continue;
-          }
-          double score = scores.get(ci);
-          if (score > bestScore) {
-            bestScore = score;
-            bestChunkIdx = ci;
-          }
+        BestOf best =
+            scoreSentence(chunksArray, deadlineNanos, sub -> scoreSentenceAgainstChunks(sentence, sub));
+        if (!best.complete()) {
+          // The deadline cut this sentence's sweep short. It is NOT reported as scored, and it
+          // mints no match: a partial sweep's "best" is the best of an arbitrary prefix of the
+          // passages, which would read as an evidence judgement when it is a budget artifact.
+          log.debug("Citation scoring deadline exceeded mid-sentence at sentence {}", si);
+          break;
         }
+        sentencesScored++;
 
-        if (bestChunkIdx >= 0 && bestScore >= threshold) {
+        if (best.index() >= 0 && best.score() >= threshold) {
           sentencesMatched++;
           matches.add(
               new ScoredMatch(
                   si,
                   sentence,
-                  bestChunkIdx,
-                  bestChunkIdx < chunkDocIds.size() ? chunkDocIds.get(bestChunkIdx) : "",
-                  bestScore));
+                  best.index(),
+                  best.index() < chunkDocIds.size() ? chunkDocIds.get(best.index()) : "",
+                  best.score()));
         }
       } catch (OrtException e) {
         log.warn("Citation scoring failed for sentence {}", si, e);
+      } catch (RerankerTokenizer.PairTooLongException e) {
+        // Tempdoc 836 §1.3(b): the caller windows passages so this cannot happen. If it does, the
+        // pair is malformed (truncated before its closing [SEP]) and scoring it would report a
+        // number about text the model never saw. Skip the sentence and let sentencesScored say so.
+        log.warn("Citation scoring skipped sentence {}: {}", si, e.getMessage());
       }
     }
 
     long totalMs = (System.nanoTime() - startNanos) / 1_000_000;
     log.debug(
-        "Citation scoring completed: {} sentences, {} chunks, {} matches in {}ms",
+        "Citation scoring completed: {} of {} sentences scored against {} passages, {} matches"
+            + " in {}ms",
+        sentencesScored,
         sentences.size(),
         chunkTexts.size(),
         matches.size(),
         totalMs);
-    return new ScoringResult(matches, sentences.size(), sentencesMatched, totalMs);
+    return new ScoringResult(matches, sentences.size(), sentencesMatched, totalMs, sentencesScored);
   }
+
+  /**
+   * Scores one sentence against all chunks in deadline-bounded sub-batches.
+   *
+   * <p>Tempdoc 836 §1.3 — a PRECONDITION, not a tuning knob. Scoring a sentence against every
+   * passage in one ONNX call is uninterruptible: measured at 400 windows with a 2000 ms budget it
+   * ran 12,763 ms, and at 600 windows a single call took 49,770 ms — long after the Head's 5 s cap
+   * had abandoned the result. Because cost is linear in pair count (~25 ms/pair, batching does not
+   * amortize), splitting the sweep into sub-batches costs approximately nothing and lets the
+   * deadline actually bind.
+   */
+  static BestOf scoreSentence(String[] chunks, long deadlineNanos, BatchScorer batchScorer)
+      throws OrtException {
+    double bestScore = 0.0;
+    int bestIdx = -1;
+
+    for (int offset = 0; offset < chunks.length; offset += SCORING_SUB_BATCH) {
+      if (offset > 0 && System.nanoTime() > deadlineNanos) {
+        return new BestOf(bestIdx, bestScore, false);
+      }
+      int end = Math.min(chunks.length, offset + SCORING_SUB_BATCH);
+      String[] subBatch = java.util.Arrays.copyOfRange(chunks, offset, end);
+      List<Float> scores = batchScorer.score(subBatch);
+      for (int i = 0; i < scores.size(); i++) {
+        // The sub-batch is scored in its own index space; the winner is recorded in the CALLER's.
+        int ci = offset + i;
+        if (chunks[ci] == null || chunks[ci].isBlank()) {
+          continue;
+        }
+        double score = scores.get(i);
+        if (score > bestScore) {
+          bestScore = score;
+          bestIdx = ci;
+        }
+      }
+    }
+    return new BestOf(bestIdx, bestScore, true);
+  }
+
+  /** Scores one sub-batch of passages against the sentence the sweep is about. */
+  @FunctionalInterface
+  interface BatchScorer {
+    List<Float> score(String[] subBatch) throws OrtException;
+  }
+
+  /**
+   * Best passage found for one sentence.
+   *
+   * @param complete false when the deadline stopped the sweep before every passage was scored
+   */
+  record BestOf(int index, double score, boolean complete) {}
 
   /**
    * Scores one sentence against all chunks in a single batch.
@@ -187,7 +248,7 @@ public final class CitationScorer implements Closeable {
   private List<Float> scoreSentenceAgainstChunks(String sentence, String[] chunks)
       throws OrtException {
 
-    RerankerTokenizer.EncodedBatch batch = tokenizer.encodePairs(sentence, chunks);
+    RerankerTokenizer.EncodedBatch batch = tokenizer.encodePairsStrict(sentence, chunks);
 
     int batchSize = batch.batchSize();
     int seqLength = batch.seqLength();
@@ -285,7 +346,14 @@ public final class CitationScorer implements Closeable {
    * @param sentencesTotal total sentences in the answer
    * @param sentencesMatched number of sentences with at least one match
    * @param latencyMs total processing time in milliseconds
+   * @param sentencesScored sentences whose passage sweep actually completed (tempdoc 836 §3.6) —
+   *     below {@code sentencesTotal} whenever the deadline stopped the pass early. {@code
+   *     sentencesMatched <= sentencesScored <= sentencesTotal} always holds
    */
   public record ScoringResult(
-      List<ScoredMatch> matches, int sentencesTotal, int sentencesMatched, long latencyMs) {}
+      List<ScoredMatch> matches,
+      int sentencesTotal,
+      int sentencesMatched,
+      long latencyMs,
+      int sentencesScored) {}
 }

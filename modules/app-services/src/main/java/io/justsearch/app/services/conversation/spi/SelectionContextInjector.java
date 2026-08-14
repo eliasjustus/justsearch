@@ -106,7 +106,7 @@ public final class SelectionContextInjector implements ContextInjector {
       case SelectionPayload.TextRange tr -> injectTextRange(ctx, tr);
       case SelectionPayload.Item item -> injectItem(ctx, item);
       case SelectionPayload.Citation cit -> injectCitation(ctx, cit);
-      case SelectionPayload.ResultSet rs -> injectResultSet(rs);
+      case SelectionPayload.ResultSet rs -> injectResultSet(ctx, rs);
       case SelectionPayload.HealthCondition hc -> injectHealthCondition(hc);
       case SelectionPayload.SearchTrace st -> injectSearchTrace(st);
     };
@@ -197,7 +197,7 @@ public final class SelectionContextInjector implements ContextInjector {
             0,
             "",
             0);
-    stashCitation(ctx, citation);
+    stashCitation(ctx, citation, truncated);
     return InjectorResult.of(List.of(message), List.of(citationsEvent(citation, startChar, endChar)));
   }
 
@@ -224,7 +224,7 @@ public final class SelectionContextInjector implements ContextInjector {
         userMessage("Use the following document for context:\n\n", truncated);
     ContextCitation citation =
         new ContextCitation(docId, 0, 1, 0, truncated.length(), 1.0f, truncate(truncated, 200), 0, 0, "", 0);
-    stashCitation(ctx, citation);
+    stashCitation(ctx, citation, truncated);
     return InjectorResult.of(
         List.of(message), List.of(citationsEvent(citation, 0, truncated.length())));
   }
@@ -261,7 +261,7 @@ public final class SelectionContextInjector implements ContextInjector {
             0,
             "",
             0);
-    stashCitation(ctx, citation);
+    stashCitation(ctx, citation, truncated);
     return InjectorResult.of(
         List.of(message), List.of(citationsEvent(citation, startChar, endChar)));
   }
@@ -272,16 +272,24 @@ public final class SelectionContextInjector implements ContextInjector {
         userMessage("Use the following cited passage as context:\n\n", content);
     ContextCitation citation =
         new ContextCitation(docId, 0, 1, 0, content.length(), 1.0f, truncate(content, 200), 0, 0, "", 0);
-    stashCitation(ctx, citation);
+    stashCitation(ctx, citation, content);
     return InjectorResult.of(
         List.of(message), List.of(citationsEvent(citation, 0, content.length())));
   }
 
-  private InjectorResult injectResultSet(SelectionPayload.ResultSet rs) {
+  /**
+   * Tempdoc 836 §A.5 — this arm emitted a {@code rag.citations} event from a hand-built map but
+   * never stashed anything, so it set neither {@code ATTR_CITATIONS} nor {@code ATTR_USED_RAG} and
+   * its citations were invisible to every downstream consumer. With the other three arms supplying
+   * literal text it would have been the only starved arm of the same class, reachable from the
+   * same menu — so it stashes here too, with the per-doc text it actually injected.
+   */
+  private InjectorResult injectResultSet(ConversationContext ctx, SelectionPayload.ResultSet rs) {
     List<SelectionPayload.ResultRef> refs = rs.items();
     if (refs.isEmpty()) return InjectorResult.empty();
     StringBuilder concat = new StringBuilder();
     List<Map<String, Object>> citations = new ArrayList<>();
+    List<DocumentService.VerificationSource> sources = new ArrayList<>();
     int taken = 0;
     for (SelectionPayload.ResultRef ref : refs) {
       if (taken >= MAX_RESULT_SET_DOCS) break;
@@ -298,12 +306,19 @@ public final class SelectionContextInjector implements ContextInjector {
       citation.put("score", 1.0f);
       citation.put("excerpt", truncate(truncated, 200));
       citations.add(citation);
+      sources.add(
+          new DocumentService.VerificationSource(
+              new ContextCitation(
+                  ref.id(), 0, 1, 0, truncated.length(), 1.0f, truncate(truncated, 200), 0, 0, "",
+                  0),
+              truncated));
       taken++;
     }
     if (concat.length() == 0) {
       return InjectorResult.terminalError(
           errorEvent("None of the selected documents had fetchable content", "DOC_UNAVAILABLE"));
     }
+    stashCitations(ctx, sources);
     String prefix =
         rs.query() != null && !rs.query().isBlank()
             ? "The user picked these documents from a search for '" + rs.query() + "':\n\n"
@@ -398,9 +413,32 @@ public final class SelectionContextInjector implements ContextInjector {
     return Math.max(lo, Math.min(hi, v));
   }
 
-  private static void stashCitation(ConversationContext ctx, ContextCitation citation) {
-    ctx.attributes().put(RAGContext.ATTR_CITATIONS, List.of(citation));
+  /**
+   * Stashes the sources for this turn, each paired with the literal text this injector put in the
+   * user message (tempdoc 836 §1.1).
+   *
+   * <p>The literal text is what makes verification honest here. A selected passage has no chunk
+   * ordinal — the {@code 0} these citations carry is a fabrication, and a matcher that re-fetched
+   * "chunk 0" would score the answer against the document's opening instead of the selection
+   * (measured live: tempdoc 836 §9.8.1). Supplying the text stops {@code chunkIndex=0} being
+   * load-bearing rather than correcting it to another number a selection does not have.
+   *
+   * <p>{@link RAGContext#ATTR_CITATIONS} is derived from the same list, so the citation a consumer
+   * reads and the text it is verified against cannot drift apart.
+   */
+  private static void stashCitations(
+      ConversationContext ctx, List<DocumentService.VerificationSource> sources) {
+    ctx.attributes().put(RAGContext.ATTR_VERIFICATION_SOURCES, List.copyOf(sources));
+    ctx.attributes()
+        .put(
+            RAGContext.ATTR_CITATIONS,
+            sources.stream().map(DocumentService.VerificationSource::citation).toList());
     ctx.attributes().put(RAGContext.ATTR_USED_RAG, true);
+  }
+
+  private static void stashCitation(
+      ConversationContext ctx, ContextCitation citation, String literalText) {
+    stashCitations(ctx, List.of(new DocumentService.VerificationSource(citation, literalText)));
   }
 
   private static SseEvent citationsEvent(ContextCitation citation, int startChar, int endChar) {

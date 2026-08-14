@@ -297,6 +297,13 @@ public class RetrieveContextController {
       response.put("ok", true);
       response.put("sentences_total", result.sentencesTotal());
       response.put("sentences_matched", result.sentencesMatched());
+      // Tempdoc 836 §3.6 / §4 — how much was actually scored, and which producer scored it. The
+      // two producers write `similarity` on measurably incomparable scales, so a reader of these
+      // numbers needs to know which one arrived; and a matched/total ratio that silently omits a
+      // budget shortfall attributes a deadline to the evidence.
+      response.put("sentences_scored", result.sentencesScored());
+      response.put("scoring_incomplete", result.scoringIncomplete());
+      response.put("scorer", result.scorer().name());
 
       List<Map<String, Object>> matches = result.matches().stream()
           .map(m -> {
@@ -309,6 +316,8 @@ public class RetrieveContextController {
             entry.put("source_index", m.sourceIndex());
             entry.put("parent_doc_id", m.parentDocId());
             entry.put("similarity", m.similarity());
+            // Which TEXT this score is about: the caller's literal passage, or a re-fetched chunk.
+            entry.put("text_source", m.textSource().name());
             return entry;
           })
           .toList();
