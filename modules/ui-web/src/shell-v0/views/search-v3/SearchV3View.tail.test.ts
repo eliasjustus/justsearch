@@ -310,8 +310,17 @@ describe('the disclosure is the window\'s own, per turn, and it opens the SHARED
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
     const panel = q(el, 'sv3-turn-citations');
     expect(panel).not.toBeNull();
-    // The trigger points AT the thing it opened.
-    expect(trigger.getAttribute('aria-controls')).toBe(panel?.id);
+    // The trigger points AT everything it opened. The disclosure reveals TWO elements — the mark
+    // legend and the panel — so naming only the panel put the key outside the announced
+    // relationship: a reader following `aria-controls` landed past the legend, which sits before it.
+    // `aria-controls` is an ID LIST, so both are named, in DOM order.
+    const legend = q(el, 'sv3-cite-legend');
+    expect(legend).not.toBeNull();
+    expect(trigger.getAttribute('aria-controls')).toBe(`${legend?.id} ${panel?.id}`);
+    for (const id of (trigger.getAttribute('aria-controls') ?? '').split(' ')) {
+      expect(id, 'every id named by aria-controls resolves in this shadow root').not.toBe('');
+      expect(el.renderRoot.querySelector(`#${id}`), `#${id}`).not.toBeNull();
+    }
 
     trigger.click();
     await el.updateComplete;
@@ -335,6 +344,29 @@ describe('the disclosure is the window\'s own, per turn, and it opens the SHARED
     expect(glyph()).toBe(CHEVRON_DOWN);
     // ...and the chevron is sized at the spec's 14px, one step up from the 12px text beside it.
     expect(trigger.querySelector('.tail-chevron')?.getAttribute('width')).toBe('14');
+  });
+
+  // Tempdoc 822 §5.7 (F7) — five mark types and two dotted underlines with no key anywhere, and the
+  // two GREYS mean opposite things. The legend lives INSIDE this disclosure, so it costs zero
+  // resting chrome; a legend that rendered while the disclosure was shut would be a 16th chrome row.
+  it('keys the marks — but only while the disclosure is OPEN', async () => {
+    const el = await mountMain([turn()]);
+    expect(q(el, 'sv3-cite-legend')).toBeNull();
+
+    (q(el, 'sv3-turn-sources') as HTMLButtonElement).click();
+    await el.updateComplete;
+    const legend = q(el, 'sv3-cite-legend') as HTMLElement;
+    expect(text(legend)).toBe(
+      'Select a source to see the sentences it supports. A dotted underline marks a sentence the ' +
+        'evidence supports weakly; amber marks one it does not support. A grey number is a weak ' +
+        'reference.',
+    );
+    // Sentence case, per the window's copy law: v3 uses UPPERCASE nowhere.
+    expect(text(legend)).not.toMatch(/\b[A-Z]{2,}\b/);
+
+    (q(el, 'sv3-turn-sources') as HTMLButtonElement).click();
+    await el.updateComplete;
+    expect(q(el, 'sv3-cite-legend')).toBeNull();
   });
 
   it('is PER TURN: opening one leaves the other collapsed', async () => {
