@@ -15,6 +15,8 @@ import io.justsearch.app.api.DocumentService.CitationMatchEntry;
 import io.justsearch.app.api.DocumentService.CitationMatchResult;
 import io.justsearch.app.api.DocumentService.ContextCitation;
 import io.justsearch.app.api.DocumentService.DocumentRecord;
+import io.justsearch.app.api.DocumentService.ScorerKind;
+import io.justsearch.app.api.DocumentService.TextSource;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -116,8 +118,8 @@ final class StreamingCitationMatcherTest {
     @DisplayName("emits rag.citation_matches from authoritative matcher")
     void emitsAuthoritativeMatches() {
       var matchResult = new CitationMatchResult(
-          List.of(new CitationMatchEntry(0, "Sentence.", 0, 0.9, "doc-1")),
-          1, 1, 10L);
+          List.of(new CitationMatchEntry(0, "Sentence.", 0, 0.9, "doc-1", TextSource.SUPPLIED)),
+          1, 1, 10L, 1, ScorerKind.CROSS_ENCODER);
       var matcher = new StreamingCitationMatcher(stubDocs(matchResult));
       var ctx = ctxWithCitations(List.of(citation("doc-1", 0, "excerpt")));
 
@@ -132,8 +134,8 @@ final class StreamingCitationMatcherTest {
     @DisplayName("the matches payload carries sourceIndex, never chunkIndex")
     void matchPayloadUsesSourceIndex() {
       var matchResult = new CitationMatchResult(
-          List.of(new CitationMatchEntry(0, "Sentence.", 2, 0.9, "doc-1")),
-          1, 1, 10L);
+          List.of(new CitationMatchEntry(0, "Sentence.", 2, 0.9, "doc-1", TextSource.SUPPLIED)),
+          1, 1, 10L, 1, ScorerKind.CROSS_ENCODER);
       var matcher = new StreamingCitationMatcher(stubDocs(matchResult));
       var ctx = ctxWithCitations(List.of(citation("doc-1", 41, "excerpt")));
 
@@ -386,8 +388,10 @@ final class StreamingCitationMatcherTest {
       }
 
       @Override
-      public CompletionStage<CitationMatchResult> matchCitations(
-          String answerText, List<ContextCitation> citations, double threshold) {
+      public CompletionStage<CitationMatchResult> matchCitationsAgainst(
+          String answerText,
+          List<DocumentService.VerificationSource> sources,
+          double threshold) {
         sink[0] = threshold;
         return CompletableFuture.completedFuture(null);
       }
@@ -402,8 +406,10 @@ final class StreamingCitationMatcherTest {
       }
 
       @Override
-      public CompletionStage<CitationMatchResult> matchCitations(
-          String answerText, List<ContextCitation> citations, double threshold) {
+      public CompletionStage<CitationMatchResult> matchCitationsAgainst(
+          String answerText,
+          List<DocumentService.VerificationSource> sources,
+          double threshold) {
         return CompletableFuture.completedFuture(result);
       }
     };
@@ -417,8 +423,10 @@ final class StreamingCitationMatcherTest {
       }
 
       @Override
-      public CompletionStage<CitationMatchResult> matchCitations(
-          String answerText, List<ContextCitation> citations, double threshold) {
+      public CompletionStage<CitationMatchResult> matchCitationsAgainst(
+          String answerText,
+          List<DocumentService.VerificationSource> sources,
+          double threshold) {
         return CompletableFuture.failedFuture(new RuntimeException("down"));
       }
     };

@@ -801,6 +801,23 @@ public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImpl
       StreamObserver<io.justsearch.ipc.MatchCitationsResponse> responseObserver) {
     awaitModelsReady("matchCitations");
     try (var ignored = openRequestMdc()) {
+      // Tempdoc 836 §1.4 — a passage_texts length that is neither 0 nor sources.size() is a caller
+      // bug. It must fail loudly, never be absorbed by a Math.min: a silently-shortened passage
+      // list would mis-align text to sources, which is the F-049 mis-targeting class re-opened
+      // through the back door.
+      int sourceCount = request.getChunkDocIdsCount();
+      int passageCount = request.getPassageTextsCount();
+      if (passageCount != 0 && passageCount != sourceCount) {
+        responseObserver.onError(
+            io.grpc.Status.INVALID_ARGUMENT
+                .withDescription(
+                    "passage_texts must be empty or exactly chunk_doc_ids.size() ("
+                        + sourceCount
+                        + "), got "
+                        + passageCount)
+                .asException());
+        return;
+      }
       try {
         double threshold = request.getSimilarityThreshold() > 0
             ? request.getSimilarityThreshold()
@@ -809,6 +826,7 @@ public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImpl
             request.getAnswerText(),
             request.getChunkDocIdsList(),
             request.getChunkIndicesList(),
+            request.getPassageTextsList(),
             threshold));
         responseObserver.onCompleted();
       } catch (RuntimeException e) {

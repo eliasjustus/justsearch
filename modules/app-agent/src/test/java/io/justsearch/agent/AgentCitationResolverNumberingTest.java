@@ -52,10 +52,14 @@ class AgentCitationResolverNumberingTest {
   void positionAddressesTheSourceList() {
     var result =
         new DocumentService.CitationMatchResult(
-            List.of(new DocumentService.CitationMatchEntry(0, "A sentence.", 1, 0.9, "doc-1")),
+            List.of(
+                new DocumentService.CitationMatchEntry(
+                    0, "A sentence.", 1, 0.9, "doc-1", DocumentService.TextSource.CHUNK_LOOKUP)),
             1,
             1,
-            5L);
+            5L,
+            1,
+            DocumentService.ScorerKind.CROSS_ENCODER);
 
     var cites =
         new AgentCitationResolver(docsReturning(result)).resolve("A sentence.", twoPassagesOfOneDoc());
@@ -72,10 +76,14 @@ class AgentCitationResolverNumberingTest {
   void outOfRangeDropsTheCite() {
     var result =
         new DocumentService.CitationMatchResult(
-            List.of(new DocumentService.CitationMatchEntry(0, "A sentence.", 59, 0.9, "doc-1")),
+            List.of(
+                new DocumentService.CitationMatchEntry(
+                    0, "A sentence.", 59, 0.9, "doc-1", DocumentService.TextSource.CHUNK_LOOKUP)),
             1,
             1,
-            5L);
+            5L,
+            1,
+            DocumentService.ScorerKind.CROSS_ENCODER);
 
     var cites =
         new AgentCitationResolver(docsReturning(result)).resolve("A sentence.", twoPassagesOfOneDoc());

@@ -128,16 +128,14 @@ public final class StreamingCitationMatcher implements StreamConsumer {
     if (fullText == null || fullText.isBlank()) {
       return StreamConsumerResult.empty();
     }
-    @SuppressWarnings("unchecked")
-    List<ContextCitation> citations =
-        (List<ContextCitation>) ctx.attributes().get(RAGContext.ATTR_CITATIONS);
-    if (citations == null || citations.isEmpty()) {
+    List<DocumentService.VerificationSource> sources = verificationSources(ctx);
+    if (sources.isEmpty()) {
       return StreamConsumerResult.empty();
     }
     try {
       CitationMatchResult result =
           documents
-              .matchCitations(fullText, citations, threshold)
+              .matchCitationsAgainst(fullText, sources, threshold)
               .toCompletableFuture()
               .get(timeout.toMillis(), TimeUnit.MILLISECONDS);
       if (result == null || result.matches().isEmpty()) {
@@ -157,6 +155,31 @@ public final class StreamingCitationMatcher implements StreamConsumer {
       LOG.debug("Authoritative citation matching failed (non-fatal): {}", e.getMessage());
       return StreamConsumerResult.empty();
     }
+  }
+
+  /**
+   * The sources to verify against (tempdoc 836 §1.4).
+   *
+   * <p>An injector that holds the literal text it showed the model publishes {@link
+   * RAGContext#ATTR_VERIFICATION_SOURCES}; retrieval publishes only {@link
+   * RAGContext#ATTR_CITATIONS}, whose chunk ordinals are true, so those sources carry no text and
+   * the Worker looks them up exactly as before.
+   */
+  @SuppressWarnings("unchecked")
+  private static List<DocumentService.VerificationSource> verificationSources(
+      ConversationContext ctx) {
+    Object supplied = ctx.attributes().get(RAGContext.ATTR_VERIFICATION_SOURCES);
+    if (supplied instanceof List<?> list && !list.isEmpty()) {
+      return (List<DocumentService.VerificationSource>) list;
+    }
+    List<ContextCitation> citations =
+        (List<ContextCitation>) ctx.attributes().get(RAGContext.ATTR_CITATIONS);
+    if (citations == null || citations.isEmpty()) {
+      return List.of();
+    }
+    return citations.stream()
+        .map(c -> new DocumentService.VerificationSource(c, ""))
+        .toList();
   }
 
   // -- Sentence segmentation --

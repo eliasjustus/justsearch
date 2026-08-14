@@ -509,22 +509,38 @@ public final class RemoteDocumentService implements DocumentService {
     }
   }
 
+  /**
+   * The one site that unpacks {@link VerificationSource} into the wire's positional arrays
+   * (tempdoc 836 §1.1). The three arrays are built in a single loop from one source list, so they
+   * cannot desync; a length the Worker does not expect is rejected there with INVALID_ARGUMENT
+   * rather than absorbed.
+   */
   @Override
-  public CompletionStage<CitationMatchResult> matchCitations(
-      String answerText, List<ContextCitation> citations, double threshold) {
+  public CompletionStage<CitationMatchResult> matchCitationsAgainst(
+      String answerText, List<VerificationSource> sources, double threshold) {
     return CompletableFuture.supplyAsync(() -> {
-      if (answerText == null || answerText.isBlank() || citations == null || citations.isEmpty()) {
-        return new CitationMatchResult(List.of(), 0, 0, 0);
+      if (answerText == null || answerText.isBlank() || sources == null || sources.isEmpty()) {
+        return new CitationMatchResult(List.of(), 0, 0, 0, 0, ScorerKind.NONE);
       }
       try {
-        List<String> chunkDocIds = new ArrayList<>(citations.size());
-        List<Integer> chunkIndices = new ArrayList<>(citations.size());
-        for (ContextCitation c : citations) {
+        List<String> chunkDocIds = new ArrayList<>(sources.size());
+        List<Integer> chunkIndices = new ArrayList<>(sources.size());
+        List<String> passageTexts = new ArrayList<>(sources.size());
+        boolean anyText = false;
+        for (VerificationSource s : sources) {
+          ContextCitation c = s.citation();
           chunkDocIds.add(c.parentDocId());
           chunkIndices.add(c.chunkIndex());
+          passageTexts.add(s.literalText());
+          anyText |= s.suppliesText();
         }
         MatchCitationsResponse resp =
-            clientSupplier.get().matchCitations(answerText, chunkDocIds, chunkIndices, threshold);
+            clientSupplier.get().matchCitations(
+                answerText,
+                chunkDocIds,
+                chunkIndices,
+                anyText ? passageTexts : List.of(),
+                threshold);
         List<CitationMatchEntry> entries = new ArrayList<>(resp.getMatchesCount());
         for (var m : resp.getMatchesList()) {
           entries.add(new CitationMatchEntry(
@@ -532,13 +548,19 @@ public final class RemoteDocumentService implements DocumentService {
               m.getSentenceText(),
               m.getSourceIndex(),
               m.getSimilarity(),
-              m.getParentDocId()));
+              m.getParentDocId(),
+              TextSource.fromWire(m.getTextSource())));
         }
         return new CitationMatchResult(
-            entries, resp.getSentencesTotal(), resp.getSentencesMatched(), resp.getTookMs());
+            entries,
+            resp.getSentencesTotal(),
+            resp.getSentencesMatched(),
+            resp.getTookMs(),
+            resp.getSentencesScored(),
+            ScorerKind.fromWire(resp.getScorer()));
       } catch (Exception e) {
         log.warn("Citation matching via gRPC failed", e);
-        return new CitationMatchResult(List.of(), 0, 0, 0);
+        return new CitationMatchResult(List.of(), 0, 0, 0, 0, ScorerKind.NONE);
       }
     });
   }

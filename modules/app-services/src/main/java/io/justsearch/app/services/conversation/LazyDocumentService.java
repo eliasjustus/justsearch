@@ -80,4 +80,15 @@ public final class LazyDocumentService implements DocumentService {
       String answerText, List<ContextCitation> citations, double threshold) {
     return resolve(d -> d.matchCitations(answerText, citations, threshold));
   }
+
+  /**
+   * Tempdoc 836 §1.1 — this proxy must forward the literal-text overload too. Without the
+   * override the call would land on {@link io.justsearch.app.api.DocumentService}'s empty default
+   * and return a zero result: a green build with a silently inert seam.
+   */
+  @Override
+  public CompletionStage<CitationMatchResult> matchCitationsAgainst(
+      String answerText, List<VerificationSource> sources, double threshold) {
+    return resolve(d -> d.matchCitationsAgainst(answerText, sources, threshold));
+  }
 }
