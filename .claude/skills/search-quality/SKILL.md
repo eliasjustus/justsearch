@@ -875,6 +875,173 @@ above)*
   refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
   was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
 
+### F-047: the assembled RAG context headed its sections with an UNNUMBERED label, so the model invented the `[n]` ordinals it was asked to cite — one canonical `[n] label` formatter now defines the numbering, and section ⇔ citation ⇔ sources-array position is test-pinned (tempdoc 822 S1/§3a, 2026-08-14)
+
+- **Defect:** the prompt demands `[1]`, `[2]` citations and the FE labels source *i* as `i + 1`, but
+  the context the model actually read carried no numbers on its section headers. The model had
+  nothing to count against, so it minted plausible-looking ordinals — the root cause of
+  out-of-range and mis-targeted citation brackets, upstream of every resolver fix in F-048/F-049.
+- **Fix:** `ContextBudgeter.sectionHeader(int oneBasedIndex, String label)` renders `"[n] label\n"`
+  and is the single definition of the numbering
+  (`modules/indexing/src/main/java/io/justsearch/indexing/rag/ContextBudgeter.java:36-38`, contract
+  javadoc :23-35). Four context emitters carry that shape: the two budgeters call it —
+  `ContextBudgeter#appendSection` (:112) and `TokenAwareBudgeter#appendSection`
+  (`TokenAwareBudgeter.java:130`), reached in production by `RagContextOps#searchChunksWithMeta`
+  (`modules/worker-services/.../RagContextOps.java:640` token-budget / :669 char-budget) and
+  `RemoteDocumentService#retrieveContextFallback` (`.../worker/RemoteDocumentService.java:480`).
+- **Two of the four MIRROR the format rather than call it, by module constraint — say "one canonical
+  definition", not "one call site":** `DocumentService#retrieveContextWithMeta`'s no-RAG fallback
+  (`modules/app-api/.../DocumentService.java:138-151`) and `McpToolSurface`'s concise re-render
+  (`modules/ui/.../mcp/McpToolSurface.java:771-779`) build `[n] label\n` inline because
+  `:modules:app-api` cannot depend on `:modules:indexing` (the same constraint `SECTION_SEPARATOR`
+  is mirrored under; stated at `ContextBudgeter.java:33-34` and at both mirror sites). A future
+  change to the header shape must be applied at three places, and only the pins below would catch a
+  drift.
+- **The invariant, pinned:** header number *n* ⇔ `sections[n-1]` ⇔ `chunks[n-1]` (the array the FE
+  renders as `sources`) — nested class `NumberingContract` (:679) in
+  `modules/worker-services/src/test/.../GrpcSearchServiceRetrieveContextTest.java`, test
+  `headerNumberMatchesSectionAndCitationPosition` (:711). Its fixtures deliberately index chunks
+  **5/6/7** of their parents, so a header numbered from `chunkIndex` would print `[6]` where the
+  contract requires `[1]` — the test distinguishes the right reason from a passing coincidence.
+  Unit-level shape + 1-based numbering: `numbersSectionsFromOne` in
+  `modules/indexing/src/test/.../ContextBudgeterTest.java:32-59`.
+- **Holds by construction, tested anyway:** the worker's budget loop appends to the used-hit list and
+  to the section list in one iteration, so the equality is structural today; the test exists because
+  a future reorder (a filter on one list, a sort of the other) would break it **silently**.
+- **Evidence:** tempdoc 822 §3a (S1). No retrieval metric moves — this is prompt-context assembly,
+  not retrieval; no register baseline is affected.
+
+### F-048: claim scores were `Math.max`-ed across two producers measuring different quantities — word overlap read as "grounded"; scores now carry their producer and only cross-encoder-verified ones reach a grounding tier (tempdoc 822 S2/§3d, 2026-08-14)
+
+- **Defect:** one `score` field on the FE's per-sentence claim model was fed by two events that do
+  not measure the same thing — `rag.citation_matches` carries a **cross-encoder relevance
+  probability**, `rag.citation_delta` carries the **streaming lexical matcher's word-overlap
+  coverage ratio** (`hits / significantWords`, whose denominator is the passage's vocabulary size).
+  `Math.max`-ing them fed word overlap into thresholds calibrated on the cross-encoder cutoff, so a
+  2-of-4-word passage read "grounded"
+  (`modules/ui-web/src/shell-v0/components/chat/citationTypes.ts:20-26`). No monotone mapping
+  between the two scales exists, so no rescaling fix was available.
+- **Fix — the gate is structural, not a check:** `Claim.verifiedScore: number | null`
+  (`citationTypes.ts:36`) and `Claim.lexicalScore: number` (:42) are separate fields with separate
+  standing, and the gate sits at the one place a `Claim` becomes a `Citation`:
+  `claimsToCitations` drops the claim whole (`citationResolve.ts:39` —
+  `if (typeof cl.verifiedScore !== 'number') continue;`) and populates `Citation.similarity` only
+  from `verifiedScore` (:55). There is **no field on `Citation` a lexical score could be written
+  into** (:13-18), so the tier consumers cannot see one: `groundingClass`
+  (`evidenceProjection.ts:302`) is the single tier authority for both the inline mark and the
+  sentence underline, and it reads `Citation.similarity`, declared "cross-encoder similarity"
+  (`MarkdownBlock.ts:46`, call sites :704 and :765).
+- **Fails CLOSED:** the check is `typeof … !== 'number'`, not `!== null` — an untyped/legacy claim
+  object carrying no verified score at all is treated exactly like an explicit null
+  (`citationResolve.ts:35-39`). A missing producer is not a verified one.
+- **The summarize surface is honestly markless, and that is the correct output, not a regression:**
+  `core.summarize`'s declared event vocabulary is `chunk, reasoning_chunk, rag.citations,
+  rag.citation_delta, done, error` — **no `rag.citation_matches`**
+  (`modules/app-services/.../conversation/shapes/SummarizeShape.java:46-47`). Every claim that
+  surface holds is therefore lexically scored and sets `verifiedScore: null`
+  (`modules/ui-web/src/shell-v0/views/SummarizeView.ts:361-372`), so under the gate it mints no
+  marks. Owner-accepted (822 decision ledger). **Backlogged, and it is a backend question, not a
+  render fix:** giving the summarize tier real marks means adding a cross-encoder pass to that
+  shape — see Q-021.
+- **Ungrounded renders in the WARNING role, distinct from grounded, in both consumers:** the tier
+  vocabulary is grounded ⇒ no mark (well-grounded prose is plain — mark the exception, not the
+  rule), weak ⇒ `--text-secondary`, ungrounded ⇒ `--accent-warning`
+  (`MarkdownBlock.ts:342-350`); the ref chip mirrors it with the warning role's text member,
+  `.cite-ref.cite-ungrounded` ⇒ `--text-warning` (:601-602), so mark and underline agree. The
+  second consumer, the Search v3 window, bridges both tokens to `--warning-foreground`
+  (`modules/ui-web/src/shell-v0/views/search-v3/Sv3Main.ts:289-290`, and per-scope at :386, :404,
+  :434, :438), so the two windows render one tier vocabulary rather than two palettes.
+- **Presentation consequence (tempdoc-recorded, not code-derivable):** the per-sentence underline
+  wall fell from **98.5% of sentences to verdict-only** once lexical scores stopped clearing the
+  cross-encoder-calibrated thresholds — i.e. the old wall was mostly an artifact of the scale
+  mismatch, not of genuinely weak grounding. Number recorded in tempdoc 822 §3d; not reproducible
+  from source.
+- **Evidence:** tempdoc 822 §3d (S2); `citationTypes.ts` + `citationResolve.ts` (the gate),
+  `SummarizeShape.java` (the shape that has no verified producer), `MarkdownBlock.ts` +
+  `Sv3Main.ts` (tier rendering).
+
+### F-049: a citation match carried the chunk's ordinal INSIDE ITS PARENT DOCUMENT where every consumer indexed the turn's sources array, and an unresolvable index fell back to another source — the mis-targeted mark is now unconstructible, not merely fixed (tempdoc 822 S3/§3b, 2026-08-14)
+
+- **The contract, now stated on the wire:** a match's index is the matched source's **POSITION in
+  this turn's `rag.citations` array** — the thing the `[n]` labels and the sources panel index by.
+  A chunk's ordinal inside its parent document is a different fact and never travels on a match.
+  Renamed `chunk_index` → `source_index` on `CitationMatchEntry`
+  (`modules/ipc-common/src/main/proto/indexing.proto:505-511`) with the **field number unchanged**,
+  so the head↔worker wire is untouched and the rename is a breaking-check-clean documentation of
+  intent. FE mirrors: `CitationMatch.sourceIndex` (`modules/ui-web/src/api/streams.ts:27`, contract
+  comment :20-22; `citationTypes.ts:67`, :57-63). Note the register's own caveat: the *retrieval*
+  citation shape still carries a genuine `chunkIndex` (`citationTypes.ts:76`) — that one really is
+  the document-relative ordinal, which is why the two had to stop sharing a name.
+- **The wrong-target fallback is gone, replaced by an honest drop:** `sources[refIdx] ?? sources[0]`
+  became "no ref, no citation" (`citationResolve.ts:40-52`). A claim resolves ONLY through a ref the
+  **authoritative** matcher supplied (`Claim.verifiedRefs`, `citationTypes.ts:48`); the streaming
+  matcher's guesses live on `lexicalRefs` (:54) and are never a resolution source — deltas arrive
+  first, so a single merged ref list had been making the first ref of any doubly-matched sentence the
+  lexical one. An index addressing no source mints no citation, so no `.cite-ref` can carry another
+  source's `parentDocId`: **the wrong-target deep link is not fixed here, it is unconstructible.**
+- **Coverage degrades honestly rather than silently:** the dropped claim is visible because coverage
+  counts what renders, so the answer frame degrades to `partially-grounded` — the evidence genuinely
+  degraded, and the surface says so instead of manufacturing a mark (`citationResolve.ts:44-46`).
+  This is the deliberate trade: fewer marks, none of them lying.
+- **Same defect class, same fix, in the agent-tier resolver:**
+  `modules/app-agent/src/main/java/io/justsearch/agent/AgentCitationResolver.java:82-90` — the old
+  `(parentDocId, chunkIndex)` re-derivation compared a positional index against a DOCUMENT-relative
+  ordinal and fell back to "first source of the same document"; it now indexes `sources` directly
+  and an out-of-range index is dropped: `if (sourceIndex >= 0 && sourceIndex < sources.size())`,
+  "out of range ⇒ no mark, never a fallback". The FE's agent-answer resolver drops the same way
+  (`citationResolve.ts:87-88`).
+- **Live round (2026-08-13/14, tempdoc-recorded):** in-range grounded marks, 0% underline on a
+  partly-grounded answer, the citation pane opening the true cited doc, zero page errors; **144 A/B
+  dispatches with zero surviving out-of-range brackets**. Not a retrieval measurement — no register
+  baseline moves.
+- **Evidence:** tempdoc 822 §3b (S3).
+
+### F-050: the answer-shape prompt grammar was REFUSED by its own four-criterion acceptance gate across three interleaved 48-dispatch A/B campaigns — built, registered opt-in, default OFF; the deciding evidence is that prompt-driven answer compression starves per-sentence citation matching (tempdoc 822 S6/§1.5, 2026-08-14)
+
+- **What it is, precisely:** `AnswerShapeGrammar` is a **`PromptContributor`** — a prompt fragment
+  telling the model what *shape* the answer should take — **not** a decoding/GBNF grammar and not an
+  inference-runtime lever. Class at
+  `modules/app-services/.../conversation/spi/AnswerShapeGrammar.java:42`; fragment text :91-103;
+  priority 20, after the identity/style preamble at 10. Registered on the ask shape only, after
+  `RAGQAStyle`
+  (`RAGAskShape.java:64-66`); `RAGQAStyle` remains the single citation authority and its text was
+  not edited, so the A/B is an arm switch rather than a fork of the prompt.
+- **Default OFF and inert for every real request:** the fragment reaches the model only when a
+  request explicitly sets `answerShapeGrammar` (`ARM_SWITCH_KEY`, :71); `enabled()` returns false
+  for an absent key and for any non-`true` value (:116-125) and `contribute()` then returns
+  `Optional.empty()` (:133-135). No shipped caller sends the key. **Flipping this default is the act
+  of shipping the grammar, and it is gated on a passing A/B, not on a code review** (:52-55).
+- **Why refused — the mechanism was structural, not stylistic:** cycle 0 failed 2 of the 4
+  acceptance criteria over 48 runs. The fragment LED with "Plain paragraphs are the default" and the
+  9B model applied that first clause to **every** answer: arm B's headings did not rise (2/12
+  multi-part, identical to the control) while its length fell in 18 of 24 twins and its list lines
+  fell in 11 twins and rose in none (:76-89). Cycle 0 had also assumed a baseline emitting no markup
+  — the control emitted backticks in 18 of 24 runs, so "put … in backticks" was a no-op against a
+  baseline already doing it. Cycle 1 reordered rather than rewrote (multi-part case leads, the
+  plain-paragraph default scoped to the single-fact case); the wording loop is bounded at 3 cycles
+  by its own design (:76).
+- **The deciding evidence, and why this finding lives in a SEARCH-QUALITY register:** across the
+  three campaigns (48 dispatches each, 144 total, interleaved A,B,A,B per prompt to remove drift)
+  the lever's cost landed on **grounding**: prompt-driven answer compression starves per-sentence
+  citation matching. So the same campaign that was supposed to improve answer *shape* degraded the
+  citation chain F-048/F-049 had just repaired. (The tempdoc states the effect; the intermediate
+  mechanism — how compression reduces what the matcher can match on — is not separately measured,
+  so do not cite one.) A presentation lever paid for in grounding is a search-quality trade, which is why
+  it is recorded here rather than in the inference-runtime register (whose scope is GPU/ORT/VRAM,
+  model loading, CPU/GPU routing, and the LLM latency/throughput ratchet F-012 — it carries no
+  prompt-composition content). The per-campaign numbers live in tempdoc 822 §1.5; the class javadoc
+  is the durable in-code record of cycle 0.
+- **Don't re-run casually:** the gate and its evidence ship with the code. Revisiting is
+  **model-upgrade territory** — the failure was a 9B model over-applying a leading clause, so the
+  experiment is worth repeating against a materially stronger model, not against a reworded
+  fragment. Extending the contributor to the summarize or agent tiers is a one-line registration
+  plus a per-tier re-run of the same A/B, deliberately not done (:38-40).
+- **Evidence:** tempdoc 822 §1.2-1.3, §1.5 (S6); `AnswerShapeGrammar.java` (contributor + arm
+  switch + cycle-0 record), `AnswerShapeGrammarTest` (id, default-off, arm-switch parsing, and
+  `#citationAuthorityMatchesSectionHeaders` :251-266 — a pin that the ask prompt's citation
+  instruction names the same bracketed 1-based ordinals `ContextBudgeter.sectionHeader` emits, so a
+  change to the S1 header shape breaks the S6 prompt test; the S1 ⇔ S6 coupling).
+
 ### F-046: every multi-leg retrieval path silently ignored the request's `query_syntax` — a `lucene` request retrieved a SIMPLE (escaped) parse on hybrid/BM25+SPLADE/3-way; fixed and coupled to the counts, SIMPLE-default retrieval unchanged (tempdoc 821 §P, 2026-08-13; the real defect behind 821 §N's facets inversion)
 
 - **Defect:** only the sparse-only shortcut honoured `query_syntax`
@@ -2595,6 +2762,26 @@ above)*
   scifact: quote the multi-word key phrase, require the rare term) and score it against the same
   qrels as the SIMPLE original, so the comparison is syntax-only. Needs a jseval flag to send
   `querySyntax` per query — it has none today.
+
+### Q-021: Should the summarize tier get a cross-encoder citation pass, so it can be grounded rather than honestly markless? (opened by F-048, 2026-08-14)
+
+- **Question:** `core.summarize` declares `rag.citation_delta` and no `rag.citation_matches`
+  (`SummarizeShape.java:46-47`), so every claim it holds is scored by the streaming LEXICAL matcher.
+  Under F-048's provenance gate those claims mint no marks — correct behaviour, and owner-accepted,
+  but it means the summarize surface shows no grounding at all. Is a cross-encoder pass on that
+  shape worth its latency, and does it actually produce in-range, useful marks on summary prose?
+- **Why it matters:** it is the difference between "this tier cannot lie about grounding" (today)
+  and "this tier can show grounding". The gate is not the obstacle — the missing authoritative
+  producer is. Adding one is a **backend** change (emit `rag.citation_matches` from the summarize
+  path), not a render fix: no FE change can promote a lexical score, by construction.
+- **Prior art:** F-048 (why lexical scores are excluded); F-041 (evidence-coherent CE input — a
+  summary's sentences are the query side here, so the same preview-blindness caution applies);
+  FW-009 (the citation-scorer threshold is itself uncalibrated on real content, and summary prose is
+  a content type no calibration has seen).
+- **Suggested approach:** register the matcher on the summarize shape behind a default-off flag,
+  then measure on real summaries — in-range rate, mark density, and added latency — before
+  considering a default flip. Do not assume the ask-tier threshold transfers: summary sentences are
+  compressed restatements, exactly the shape F-050 found starves per-sentence matching.
 
 ---
 

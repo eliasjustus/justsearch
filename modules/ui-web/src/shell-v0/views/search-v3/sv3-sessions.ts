@@ -690,6 +690,61 @@ export function toggleSessionPin(list: Sv3SessionList, id: string): Sv3SessionLi
 }
 
 /**
+ * What the window knows about work in flight, as the two facts a session cannot derive on its own
+ * (tempdoc 831). Both are the WINDOW's: the search store's process-wide busy flag, and which
+ * conversation owns a delegated run that is parked on the reader. Passed in rather than read here,
+ * for the same reason everything else in this module is pure.
+ */
+export interface Sv3RunGate {
+  readonly searching: boolean;
+  readonly awaitingDecisionIn: string | null;
+}
+
+/**
+ * Is something in flight in this conversation (tempdoc 831)? ONE predicate, consulted by both the
+ * row projection (which paints the colour and withholds the destructive action) and
+ * {@link removeSession} (which refuses it) — so what the sidebar SHOWS and what the list ALLOWS
+ * cannot disagree. A second copy of this expression is the drift that would let a row offer a
+ * delete the store then silently declined, or refuse one the row was still offering.
+ *
+ * Three ways to be live, and they are three different things: a delegated run parked on the reader's
+ * decision (act-now — parked is not finished), a turn still streaming, and the process-wide search
+ * flag, which only the ACTIVE session may claim because the store cannot say who asked.
+ */
+export function sv3SessionIsLive(
+  list: Sv3SessionList,
+  id: string,
+  { searching, awaitingDecisionIn }: Sv3RunGate,
+): boolean {
+  const session = sessionById(list, id);
+  if (session === null) return false;
+  if (awaitingDecisionIn === id) return true;
+  if (session.turns.at(-1)?.status === 'streaming') return true;
+  return list.activeId === id && searching;
+}
+
+/**
+ * The reader discards a conversation (tempdoc 831). Destructive and therefore GATED: a conversation
+ * with work in flight is never removed, because the run outlives the row — deleting the row would
+ * leave a stream writing to a session nobody can see, and the reader would have been told the work
+ * was gone when it was still running. The refusal is a no-op returning the same list, so a caller
+ * that took a different route in cannot get a delete the row refused to offer.
+ *
+ * Local removal only: EXISTENCE is the conversation store's (see the persistence boundary at the top
+ * of this file), so the caller writes the deletion through to it. This function decides what leaves
+ * THIS window's list, and the claim goes with it — a list cannot stay pointed at a row it no longer
+ * holds.
+ */
+export function removeSession(list: Sv3SessionList, id: string, gate: Sv3RunGate): Sv3SessionList {
+  if (sessionById(list, id) === null) return list;
+  if (sv3SessionIsLive(list, id, gate)) return list;
+  return {
+    sessions: list.sessions.filter((session) => session.id !== id),
+    activeId: list.activeId === id ? null : list.activeId,
+  };
+}
+
+/**
  * What an edited title should DO, decided before anything is written (tempdoc 822 Phase F5). The
  * design spec's own three-way rule, ported verbatim
  * ("trim, reject empty (the caller toasts), and skip the mutation when nothing changed") — it is one
@@ -807,6 +862,12 @@ export interface Sv3SessionRowView {
   readonly pinned: boolean;
   /** Something finished here while the reader was elsewhere, and they have not been back since. */
   readonly unread: boolean;
+  /**
+   * Work is in flight in this conversation ({@link sv3SessionIsLive}) — the row withholds its
+   * destructive action while it is. Carried on the ROW rather than re-derived from the status
+   * colour, so the affordance and the list's own refusal read the same fact.
+   */
+  readonly live: boolean;
 }
 
 export interface Sv3SessionGroup {
@@ -875,14 +936,18 @@ export function projectSv3Sessions(
     // Two axes reach the same three colours. The CONVERSATIONAL one is the session's own: its last
     // turn is streaming, or it broke — a property of THIS session, true whichever row is claimed.
     // The SEARCH one is the process-wide store flag, which only the active session can own (the
-    // store cannot say who asked), and which A2's semantics already limited that way.
-    const running = last?.status === 'streaming' || (active && searching);
+    // store cannot say who asked), and which A2's semantics already limited that way. Both axes are
+    // {@link sv3SessionIsLive}'s, read here rather than re-expressed, so the colour and the
+    // destructive action's gate cannot drift apart (tempdoc 831): outside act-now, `live` IS the
+    // in-motion condition, which is why one predicate can decide both.
+    const live = sv3SessionIsLive(list, session.id, { searching, awaitingDecisionIn });
     const broken = last?.status === 'failed' || last?.status === 'refused';
     return {
       id: session.id,
       label: session.title,
-      status: awaiting ? 'act-now' : running ? 'in-motion' : broken ? 'broken' : 'resting',
-      meta: awaiting || running ? '' : sv3RelativeTime(session.updatedAt, now),
+      status: awaiting ? 'act-now' : live ? 'in-motion' : broken ? 'broken' : 'resting',
+      meta: live ? '' : sv3RelativeTime(session.updatedAt, now),
+      live,
       active,
       pinned: session.pinned,
       // Unread is a comparison, not a flag anything sets: something finished after the last visit.
