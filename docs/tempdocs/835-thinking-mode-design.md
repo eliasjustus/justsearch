@@ -1187,8 +1187,10 @@ verbatim (`ServerPropsOpsTest`), the manifest field's additive contract
 (`ConversationEngineTokenCeilingTest`).
 
 **Tier 2 (§4 measurement) and Tier 3 (§9g live round) were PENDING at implementation
-time** — both need a dev-stack lease and an indexed corpus. §10e records the supervised
-round that ran them: **Tier 3 verified (with one arm still open), Tier 2 still open.**
+time** — both need a dev-stack lease and an indexed corpus. Two supervised rounds ran them:
+§10e (Tier 3's Standard and Quick legs verified; Tier 2 contaminated by a foreign run on the
+shared GPU), then §10g after the §10f amendment — **Tier 3 complete on all three rungs, and
+the Tier-2 merge gate MET 12/12 on an idle machine.**
 
 ### 10e. Live round, 2026-08-14 (supervised, dev-stack lease held)
 
@@ -1359,3 +1361,84 @@ so the overflow explains itself. Guarded by
 Thorough rung's passage count and token ceiling *ctx-aware* so the request is never built
 too large — is **not** taken here and is logged to the observations inbox instead: it is a
 product decision about a rung's parameters, not a diagnostic defect.
+
+### 10g. Tier-2 rerun on an idle machine — **the merge gate is MET**
+
+Idleness asserted the way §10e said it must be, by process list + `nvidia-smi` rather than
+`quick_health`: GPU **2% / 374 MiB of 12282**, no `llama-server.exe`, no foreign Head or
+Worker. Stack rebuilt from this branch (the amendment must be what is measured), own data
+dir, same 81-document corpus; llama-server PID 22416, parent = Head PID 28392, argv carrying
+`--reasoning-budget 512 -c 8192`; manifest `ai.thinkingSupport: SUPPORTED`. Client rewritten
+on raw `node:http` so no body timeout can abort a slow turn — the flaw that killed §10e.
+
+#### The amendment, measured per turn
+
+`reasoning-budget: activated` lines diffed around each dispatch, so the count is attributable
+to the turn rather than to the round:
+
+| Turn | LLM calls | reasoning activations |
+|---|---|---|
+| First-turn ask | 1 | 1 |
+| **Follow-up ask** (history present → query rewrite fires) | **2** | **1** |
+
+The follow-up is the decisive one: two LLM calls, one of them thinking. The rewrite is
+plumbing and no longer pays for a reasoning pass, while the answer still thinks. Compare
+§10e's round-level 95 activations across 101 requests. Same question as §10e's Standard leg:
+**13.5s, versus 38.4s before the amendment** (and 243s under contention).
+
+#### The battery: 6 questions × 2 arms, 12/12 completed
+
+Identical `maxTokens: 1024` in both arms, so thinking is the only variable.
+
+| Question | 512-default: frames / compTok / chars / cites | suppressed: compTok / chars / cites |
+|---|---|---|
+| worker-role | 512 / 732 / 1100 / 5 | 268 / 1279 / 5 |
+| head-lucene | 512 / 802 / 1361 / 5 | 194 / 870 / 5 |
+| hybrid-fusion | **408** / 684 / 1085 / 5 | 259 / 1094 / 5 |
+| multilingual | **473** / 718 / 1092 / 5 | 94 / 413 / 5 |
+| inference-runtime | **452** / 855 / 1776 / 5 | 555 / 2471 / 5 |
+| frontend-stack | 512 / 800 / 1091 / 5 | 278 / 1274 / 5 |
+
+**Merge bar: zero empty answers and zero truncated answers at the Standard configuration —
+met, 12/12.** Every dispatch in both arms produced a non-empty, non-truncated answer with
+**5 citations**, and **zero `<think>` residue** appeared anywhere.
+
+#### What this settles about §9b's caveat
+
+The caveat was built on a single free-chat prompt that consumed the full budget 5/5, implying
+512 always truncates. On real grounded asks it does **not**: **three of six questions finished
+reasoning naturally at 408, 452 and 473 frames**, below the cap. Where the cap did bind, the
+answer was unaffected — completion tokens landed at 684-855 against the 1024 ceiling, i.e.
+~170-340 tokens of headroom, exactly the margin the C probe predicted.
+
+**Answer quality did not degrade under truncated thinking — the comparison the design asked
+for.** Read rather than counted: the thinking arm's answers were consistently the more
+complete and better structured, and the suppressed arm produced the round's thinnest answer
+(multilingual, 413 chars / 94 completion tokens). On that same question both arms **correctly
+abstained** — the corpus held the ADR's title but not its body, and both said so rather than
+inventing content — so the length gap there is honest abstention, not a quality failure. No
+question produced a worse answer with thinking on.
+
+**Latency is the real cost, and it is now bounded to the answer call**: 11.3-13.6s with
+thinking versus 1.7-9.4s without, on a 9B model at `-c 8192`. That is the number a Thorough
+rung's description should quote if the product ever states one.
+
+#### Thorough, the leg §10e left owed: **PASS at `-c 8192`**
+
+`{enableThinking:true, maxTokens:3072, topK:12}` — 512 reasoning frames, a 2086-char answer,
+**12 citations** (the rung's topK honored), `promptTokens` 6017 + `completionTokens` 1004 =
+7021 inside the 8192 window, no error, no think residue. The §10e failure was the 4096-context
+dev configuration, as diagnosed — not the rung.
+
+#### Teardown
+
+No `llama-server.exe`, no dev-runner node process, ports closed, `quick_health` →
+`running:false`, GPU back to **374 MiB / 0%** (its pre-run baseline).
+
+#### What remains open
+
+1. **The rendered `jf-reasoning-block`** — every leg here reads the wire. §9d's no-FE-change
+   claim still rests on the untouched ui-web suite, not on a screenshot.
+2. **The `UNSUPPORTED` relaunch path** — b8571 accepts the flag, so the build floor's
+   fail-closed branch stays unit-tested only; it needs a rejecting build to exercise live.
+3. **Per-model variance** — one model (`Qwen3.5-9B-Q4_K_M`), one build (b8571), as before.
