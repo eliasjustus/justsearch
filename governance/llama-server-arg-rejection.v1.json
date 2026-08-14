@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "tempdoc": 835,
+  "note": "The single declared marker for llama-server's launch-argument rejection of --reasoning-budget. Two consumers used to pattern-match this independently and drifted: the CI decision script matched the full b8185 string 'error while handling argument \"--reasoning-budget\": invalid value', while the bundled b8571 emits 'error while handling argument \"--reasoning-budget\": invalid stoi argument' — so the detector could not fire on the build actually shipped. Match the PREFIX (the argument name), never the suffix (the parser's per-build wording). Consumers: (1) the runtime launch path, LlamaServerOps.isReasoningBudgetRejection — the authoritative signal that a build cannot honour the flag; (2) scripts/ci/lib/llama-server-arg-rejection.mjs, which reads THIS file at runtime, so the JS side holds no copy. The Java constant is pinned to this file by LlamaServerArgRejectionContractTest — drift fails the build.",
+  "reasoningBudget": {
+    "flag": "--reasoning-budget",
+    "rejectionMarker": "error while handling argument \"--reasoning-budget\"",
+    "observedSuffixes": [
+      { "build": "b8185", "suffix": ": invalid value" },
+      { "build": "b8571", "suffix": ": invalid stoi argument" }
+    ],
+    "guards": [
+      "io.justsearch.app.inference.LlamaServerArgRejectionContractTest",
+      "scripts/ci/lib/llama-server-arg-rejection.mjs"
+    ]
+  }
+}

@@ -88,7 +88,8 @@ class RuntimeManifestControllerRedactionTest {
             .readyAt("2026-05-20T20:01:00Z")
             .build();
     RuntimeManifest.AiInfo ai =
-        new RuntimeManifest.AiInfo("READY", true, null, "2026-05-20T20:02:00Z", "b8571", "b8571");
+        new RuntimeManifest.AiInfo(
+            "READY", true, null, "2026-05-20T20:02:00Z", "b8571", "b8571", "SUPPORTED");
     RuntimeManifest manifest =
         RuntimeManifestBuilder.builder()
             .schemaVersion(1)
@@ -110,6 +111,8 @@ class RuntimeManifestControllerRedactionTest {
     // Tempdoc 682 Item 2: the build-pin pair is not a credential — it must survive projection.
     assertEquals("b8571", publicView.ai().serverBuildExpected());
     assertEquals("b8571", publicView.ai().serverBuildActual());
+    // Tempdoc 835: the thinking-capability verdict is a capability fact, not a credential.
+    assertEquals("SUPPORTED", publicView.ai().thinkingSupport());
     assertNull(publicView.head().sessionToken());
   }
 

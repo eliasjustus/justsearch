@@ -113,7 +113,12 @@ public enum EnvRegistry {
     /** Enables thinking mode (reasoning_content parsing, --reasoning-format deepseek). Default true. */
     USE_THINKING("justsearch.llm.use_thinking", "JUSTSEARCH_USE_THINKING"),
 
-    /** Reasoning token budget for llama-server (--reasoning-budget). Default 0 (disabled). -1 = unlimited. */
+    /**
+     * Reasoning token budget for llama-server (--reasoning-budget). Default 512 (bounded reasoning,
+     * on — tempdoc 835). 0 disables reasoning. Unbounded (-1) and any value >= the engine's default
+     * completion ceiling are refused and clamped back to the default: reasoning shares the
+     * completion budget with the answer, so those shapes silently return empty answers.
+     */
     REASONING_BUDGET("justsearch.llm.reasoning_budget", "JUSTSEARCH_REASONING_BUDGET"),
 
     /** Enable deterministic context compression for older agent tool outputs. */

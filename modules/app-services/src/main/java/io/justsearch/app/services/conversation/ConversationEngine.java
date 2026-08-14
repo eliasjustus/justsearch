@@ -62,7 +62,10 @@ import tools.jackson.databind.ObjectMapper;
 public final class ConversationEngine {
 
   private static final Logger LOG = LoggerFactory.getLogger(ConversationEngine.class);
-  private static final int DEFAULT_MAX_TOKENS = 1024;
+  // Package-private, not private: the reasoning-budget clamp in ResolvedConfigBuilder mirrors this
+  // ceiling (the configuration module cannot depend on app-services) and a test pins the two
+  // together — tempdoc 835 §9f.
+  static final int DEFAULT_MAX_TOKENS = 1024;
   private static final int MAX_ITERATIONS_HARD_CAP = 20;
   private static final ObjectMapper SCHEMA_MAPPER = new ObjectMapper();
 
@@ -392,6 +395,12 @@ public final class ConversationEngine {
         if (usage.totalTokens() != null) {
           mergedDoneEntries.put("totalTokens", usage.totalTokens());
         }
+      }
+      // Tempdoc 835 §9c.4 — completionTokens was captured on AiUsage and dropped here. It is the
+      // denominator for every reasoning-budget decision (reasoning and answer tokens share this
+      // number), so a turn's cost is unmeasurable without it.
+      if (usage != null && usage.completionTokens() != null) {
+        mergedDoneEntries.put("completionTokens", usage.completionTokens());
       }
       // Tempdoc 610 §I.2 — the per-phase split rides the done payload alongside the real total.
       mergedDoneEntries.put("contextBreakdown", contextBreakdown);
@@ -799,8 +808,8 @@ public final class ConversationEngine {
    * validate-retry loop still guards correctness, so a bad schema degrades rather than fails.
    *
    * <p>Structured extraction wants near-deterministic, non-thinking output; when the caller supplied
-   * no explicit sampling we base the constrained params on {@link SamplingParams#DETERMINISTIC} with
-   * thinking disabled (mirroring the QueryUnderstanding structured-output preset).
+   * no explicit sampling we base the constrained params on {@link SamplingParams#DETERMINISTIC},
+   * which carries {@code enable_thinking:false} for every mechanical call (tempdoc 835 §10f).
    */
   private static SamplingParams applySchemaConstraint(
       SamplingParams sampling, Map<String, Object> body) {
@@ -817,8 +826,7 @@ public final class ConversationEngine {
           e.getMessage());
       return sampling;
     }
-    SamplingParams base =
-        sampling != null ? sampling : SamplingParams.DETERMINISTIC.withEnableThinking(false);
+    SamplingParams base = sampling != null ? sampling : SamplingParams.DETERMINISTIC;
     // The codebase-standard schema→GBNF response_format form (QueryUnderstandingService +
     // OnlineModeOps' non-streaming path): a response_format-enforcing llama.cpp build converts this to
     // a server-side grammar so the FIRST emission is schema-valid. On a build that does NOT enforce it,

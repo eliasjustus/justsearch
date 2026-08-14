@@ -94,7 +94,8 @@ public final class RuntimeManifestListenerWiring {
                 curr == CapabilityHealth.READY,
                 ls.name(),
                 bootstrap.expectedLlamaServerBuild(),
-                bootstrap.actualLlamaServerBuild());
+                bootstrap.actualLlamaServerBuild(),
+                bootstrap.llamaServerThinkingSupport());
             publisher.publishMode(modeIntent, realizedMode(workCap, infCap));
           } catch (Exception e) {
             log.warn("Runtime manifest publishAi (listener) failed (non-fatal)", e);
@@ -159,7 +160,8 @@ public final class RuntimeManifestListenerWiring {
           infCap.health() == CapabilityHealth.READY,
           ls.name(),
           bootstrap.expectedLlamaServerBuild(),
-          bootstrap.actualLlamaServerBuild());
+          bootstrap.actualLlamaServerBuild(),
+          bootstrap.llamaServerThinkingSupport());
     } catch (Exception e) {
       log.warn("Runtime manifest initial-AI publish failed (non-fatal)", e);
     }
