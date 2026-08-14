@@ -357,10 +357,10 @@ export class Sv3Main extends JfElement {
            carries '--muted' — a 4 % white fill. Spending the mark's 5 % region rung on a card is a
            ONE-POINT step (4 % -> 5 %), which a real-browser capture showed to be invisible: the
            selected card was indistinguishable from its neighbours even though '[data-selected]' was
-           correctly set. The donor's own 6/9 idiom assumes a TRANSPARENT resting row, so it has to be
+           correctly set. The spec's own 6/9 idiom assumes a TRANSPARENT resting row, so it has to be
            re-based against the surface it actually lands on. Hence 4 % resting -> 9 % selected ->
-           14 % selected+hover, preserving donor law "when a row is both, it takes the higher wash,
-           and never two competing fills" (t3code-system.md:601). */
+           14 % selected+hover, preserving the spec’s rule that a row which is both takes the higher
+           wash, and never two competing fills. */
         --cp-selected-region: var(--sv3-selected-region);
         --cp-selected-edge: var(--sv3-selected-edge-strong);
         --cp-selected: var(--sv3-selected-region);

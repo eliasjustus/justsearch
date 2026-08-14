@@ -204,7 +204,7 @@ export class CitationsPanel extends JfElement {
        byte-identical to an unselected one, and the v3 window opts in from Sv3Main.ts. These rules
        sit AFTER .source:hover on purpose: they share its (0,2,0) specificity, so source order is what
        decides the border of a card that is both hovered and selected — and the SELECTED edge is the
-       one that should win. Donor precedence (t3code-system.md:592,601): a row that is both takes the
+       one that should win. The design spec’s precedence rule: a row that is both takes the
        HIGHER wash and never shows two competing fills, which is why [data-selected]:hover restates
        background alone at (0,3,0) rather than layering a second fill under the hover. */
     .source[data-selected] {

@@ -74,13 +74,13 @@ export const sv3Tokens = css`
        a name the shipped vocabulary does not use (tempdoc 822 Phase F9, audit DEFECT-6). */
     --accent-surface: color-mix(in srgb, var(--color-white) 4%, transparent);
     --accent-surface-foreground: var(--color-neutral-100);
-    /* Selection material (tempdoc 822 citation-mark presentation §5.1). Donor command-palette idiom
-       (t3code-system.md:592,601 — 6% selected / 9% highlighted, and never two competing fills). The
-       MARK takes the upper rung and the large sentence region the lower: the donor spends 6% on a
+    /* Selection material (tempdoc 822 citation-mark presentation §5.1). The design spec’s command-palette idiom
+       (the design spec: 6% selected / 9% highlighted, and never two competing fills). The
+       MARK takes the upper rung and the large sentence region the lower: the spec spends 6% on a
        full-width row, and a ~13x14px glyph is a fraction of that area — an alpha wash loses
        legibility as the area it covers shrinks. Law 11 improve-don't-copy, deviation stated rather
        than drifted into. Keyed to --foreground, so the same three declarations catch light in dark
-       and cast shadow in light (donor law 6 by construction) — which is why the light block below
+       and cast shadow in light (the spec’s elevation-inversion rule, by construction) — which is
        repeats them verbatim rather than inverting them, exactly as --dialog-border does. */
     --sv3-selected: color-mix(in srgb, var(--foreground) 9%, transparent);
     --sv3-selected-region: color-mix(in srgb, var(--foreground) 5%, transparent);
