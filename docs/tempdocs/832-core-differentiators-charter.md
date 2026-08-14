@@ -80,6 +80,19 @@ measurement requires paid cells; only content-coverage was measurable at $0 (don
    staged_recall_accounting). Entity-carriage live smoke rides the same stack window.
 4. **Founder-gated spend:** 789 naturalistic launch and/or 791 campaign v2, designed to
    include an entity-carriage arm. Not launched without explicit owner go-ahead.
+   **OWNER DECISION 2026-08-14: "dont do any runs costing money for now"** — the lane
+   stays parked; free/GPU work only.
+
+### Owner decisions (2026-08-14, in-session)
+
+- Paid agent-utility runs: **no** (above).
+- Q-010 ratchet tier: **keep agent-invoked** (register disposition recorded).
+- v0.2.0 MCPB asset: **rebuild + refresh now** — `build-installer.yml` triggered on main
+  (run 31780573795); orchestrator hands artifacts to owner for upload (no release touch
+  without separate authorization).
+- `registerLateBound`/`AgentToolFactory` dedup: **approved, do now** (worker delegated).
+- Dev-stack note: idle stack held by session `edfec71b` (822 arc) taken down under the
+  tool's own IDLE_HOLD/takeover-warn verdict to free GPU for lane-B work.
 
 ## §3 Coordination / collision notes (checked 2026-08-14)
 
@@ -147,6 +160,25 @@ measurement requires paid cells; only content-coverage was measurable at $0 (don
   (d) eliminated — only §G.3 (eval-backend fidelity re-measure) remains, folded into
   this charter's GPU-lane slot alongside the miracl-fr SPLADE fix + 803 re-baseline.
   Recorded in 748 §G.2 + register Q-018.
+- 2026-08-14: **Owner-decision batch executed.** PR #457 (pairs merge-preserve + first
+  resources/read tests + Q-010/owner-decision docs) and PR #458 (tool-bundle single
+  construction authority) merged, main CI green. v0.2.0 assets rebuilt via
+  build-installer.yml run 31780573795 and hash-verified (`justsearch-mcp.mcpb` sha256
+  `b5013baf…` = server.json entry) — staged at `tmp/832-v020-assets/windows-installer/`
+  for owner upload; no release touched. Tooling lesson: `run-gh checks-wait` does NOT
+  re-resolve the PR head after a mid-wait push — it can report PASS for a superseded
+  head (bit twice); after any catch-up push, confirm the new head's checks are pending
+  (`gh pr checks` exit 8) before re-arming. Also: PR numbers race under parallel
+  agents — parse the number from `pr create` output, never assume next-int (a chained
+  preview/merge briefly targeted a sibling's PR; no harm — it was already merged).
+- 2026-08-14: **miracl-fr SPLADE blocker ROOT-CAUSED AND FIXED (delegated opus worker;
+  803 §RESOLVED).** "P4 Jean Mérieux" — Tika NetPBM-magic misrouting of French prose to
+  an image parser → content-less shell → triple enrichment failure → SPLADE
+  zero-tolerance readiness red. The 803 eval-vs-API asymmetry was a false lead. Fix:
+  `TextNameMagicConflictDetector` (narrow: binary-magic + text-name + strict-UTF-8
+  probe), 5 adversarial tests, docId-logging on terminal SPLADE escalations; live
+  verification 5408/5408 / comparable / hybrid 0.8844 = 802's prediction. **The 803
+  re-baseline is unblocked** — next: merge the fix, then run the 5-corpus campaign.
 - 2026-08-14: **796 tier-D launched** (CPU load 23% < 60 precondition; detached
   `Start-Process` driver `tmp/paraphrase-bridge/tier-d-driver.ps1` with per-stage markers,
   since tracked background tasks die at ~60 min). `pairs.v1.json` was absent (tmp cleared)
