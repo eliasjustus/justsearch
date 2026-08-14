@@ -20,12 +20,12 @@ const repo = {
 
 function report(pr, repoOverride = repo) {
   return buildSquashMessagePreview({
-    repoSlug: 'eliasjustus/justsearch',
+    repoSlug: 'justsearch-app/justsearch',
     repo: repoOverride,
     pr: {
       number: 123,
       title: 'docs: improve publication guidance',
-      url: 'https://github.com/eliasjustus/justsearch/pull/123',
+      url: 'https://github.com/justsearch-app/justsearch/pull/123',
       headRefName: 'codex/example',
       isDraft: false,
       state: 'OPEN',

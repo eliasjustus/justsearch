@@ -6,7 +6,7 @@
 # is done (m1-operator-checklist item 3).
 #
 # The v0.1.0 hash below was verified 2026-07-14 against the actual asset downloaded from
-# https://github.com/eliasjustus/justsearch/releases/tag/v0.1.0 (852,874,628 bytes;
+# https://github.com/justsearch-app/justsearch/releases/tag/v0.1.0 (852,874,628 bytes;
 # identical to the local build). The owner should attach this file to that release.
 # Verify on Windows with:
 #   certutil -hashfile JustSearch_0.1.0_x64-setup.exe SHA256

@@ -95,7 +95,7 @@ function detectRepoSlug() {
   } catch {
     // Fall through to repository default.
   }
-  return 'eliasjustus/justsearch';
+  return 'justsearch-app/justsearch';
 }
 
 function workflowName(run) {

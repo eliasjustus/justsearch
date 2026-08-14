@@ -1,7 +1,7 @@
 # JustSearch — competitive comparison survey
 
 > All facts verified 2026-07-14 unless noted; this is a living document — corrections via
-> [issues](https://github.com/eliasjustus/justsearch/issues) are welcome and will be credited. Every cell is
+> [issues](https://github.com/justsearch-app/justsearch/issues) are welcome and will be credited. Every cell is
 > sourced in the per-row footnote blocks; "Not documented" means we checked official sources and found no
 > statement — it is not a euphemism for "no".
 >
@@ -31,7 +31,7 @@ Legend: **Offline** = no cloud calls after initial setup/model download. "Option
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | **JustSearch 0.1.0 (alpha)** | Yes (after ~9 GB model download) | Hybrid: BM25 + dense embeddings + SPLADE learned-sparse | Yes, cross-encoder | Yes (scanned PDFs, images) | Claimed 70+ languages; **benchmarked only EN (BEIR/SciFact, Enron-QA, CLERC), DE (MIRACL-de), FR (MIRACL-fr)** | Yes (answers with cited passages) | Native server (5 tools) | PDF, email, Office, "hundreds of formats" (claimed, not independently verified) | **Windows only** | Apache-2.0 / free | **Alpha.** Repo created 2026-06-23; 2 stars; unsigned installer; unproven |
 
-Sources: https://github.com/eliasjustus/justsearch (README) and https://api.github.com/repos/eliasjustus/justsearch — accessed 2026-07-14.
+Sources: https://github.com/justsearch-app/justsearch (README) and https://api.github.com/repos/justsearch-app/justsearch — accessed 2026-07-14.
 
 ### Tier A — local file search and desktop RAG apps
 

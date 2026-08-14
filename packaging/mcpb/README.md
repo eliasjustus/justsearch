@@ -37,7 +37,7 @@ bundle must not betray it.
 
 The bundle does **not** contain JustSearch itself. The desktop app
 (Windows-only) must be installed and running:
-<https://github.com/eliasjustus/justsearch/releases>.
+<https://github.com/justsearch-app/justsearch/releases>.
 
 ## Files
 
@@ -114,7 +114,7 @@ Operator steps:
 ## Registry publish (operator — do not run without approval)
 
 Prereqs: the release asset above is live; the repo README contains the
-ownership marker `<!-- mcp-name: io.github.eliasjustus/justsearch -->`
+ownership marker `<!-- mcp-name: io.github.justsearch-app/justsearch -->`
 (added on this branch); you can complete a GitHub device login as
 `eliasjustus` (GitHub auth is what authorizes the `io.github.eliasjustus/*`
 namespace).
@@ -126,7 +126,7 @@ mcp-publisher login github
 # 3. From packaging/mcpb/ (where server.json lives):
 mcp-publisher publish
 # 4. Verify:
-curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.eliasjustus/justsearch"
+curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.justsearch-app/justsearch"
 ```
 
 Note the registry is in preview (breaking changes / data resets possible).

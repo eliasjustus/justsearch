@@ -42,14 +42,14 @@ function makeFixture({ fileSha256, version, identifier, serverJs } = {}) {
   fs.writeFileSync(path.join(mcpbDir, 'server', 'index.js'), serverJs ?? '// fixture bridge\n');
   const trueHash = packMcpb(root).sha256;
   const server = {
-    name: 'io.github.eliasjustus/justsearch',
+    name: 'io.github.justsearch-app/justsearch',
     version: version ?? '0.2.0',
     packages: [
       {
         registryType: 'mcpb',
         identifier:
           identifier ??
-          'https://github.com/eliasjustus/justsearch/releases/download/v0.2.0/justsearch-mcp.mcpb',
+          'https://github.com/justsearch-app/justsearch/releases/download/v0.2.0/justsearch-mcp.mcpb',
         fileSha256: fileSha256 ?? trueHash,
         transport: { type: 'stdio' },
       },
@@ -116,7 +116,7 @@ function run(root, args = []) {
 {
   const root = makeFixture({
     version: '0.3.0',
-    identifier: 'https://github.com/eliasjustus/justsearch/releases/download/v0.2.0/justsearch-mcp.mcpb',
+    identifier: 'https://github.com/justsearch-app/justsearch/releases/download/v0.2.0/justsearch-mcp.mcpb',
   });
   const r = run(root, ['--release-version', '0.3.0']);
   ok('asset-URL tag mismatch exits 1', r.status === 1);

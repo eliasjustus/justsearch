@@ -73,7 +73,7 @@ function detectRepoSlug() {
   } catch {
     // Fall through to the public repo default.
   }
-  return 'eliasjustus/justsearch';
+  return 'justsearch-app/justsearch';
 }
 
 export function requiredStatusChecksFromPolicy(policy) {

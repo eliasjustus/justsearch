@@ -87,13 +87,13 @@ const readManifest = (root) => fs.readFileSync(path.join(root, 'packaging', 'mcp
 function withServerJson(root, { fileSha256, version, identifier, extraPkgFields } = {}) {
   const p = path.join(root, 'packaging', 'mcpb', 'server.json');
   const server = {
-    name: 'io.github.eliasjustus/justsearch',
+    name: 'io.github.justsearch-app/justsearch',
     version: version ?? '0.2.0',
-    repository: { url: 'https://github.com/eliasjustus/justsearch', source: 'github' },
+    repository: { url: 'https://github.com/justsearch-app/justsearch', source: 'github' },
     packages: [
       {
         registryType: 'mcpb',
-        identifier: identifier ?? 'https://github.com/eliasjustus/justsearch/releases/download/v0.2.0/justsearch-mcp.mcpb',
+        identifier: identifier ?? 'https://github.com/justsearch-app/justsearch/releases/download/v0.2.0/justsearch-mcp.mcpb',
         fileSha256: fileSha256 ?? 'x',
         transport: { type: 'stdio' },
         ...(extraPkgFields || {}),

@@ -83,7 +83,7 @@ For noisy or dependency PRs, preview the default public squash message before
 merge:
 
 ```powershell
-node scripts/ci/preview-squash-message.mjs --repo eliasjustus/justsearch --pr <number>
+node scripts/ci/preview-squash-message.mjs --repo justsearch-app/justsearch --pr <number>
 ```
 
 Rare non-squash publication is a maintainer exception, not a standing lane. Use
@@ -96,5 +96,5 @@ The expected repository settings are declared in
 with:
 
 ```powershell
-node scripts/ci/check-repo-history-policy.mjs --repo eliasjustus/justsearch --branch main
+node scripts/ci/check-repo-history-policy.mjs --repo justsearch-app/justsearch --branch main
 ```

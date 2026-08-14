@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/eliasjustus/justsearch/blob/main/governance/agent-hooks.v1.schema.json",
+  "$id": "https://github.com/justsearch-app/justsearch/blob/main/governance/agent-hooks.v1.schema.json",
   "title": "Agent-hooks manifest — single authority for hook wiring (tempdoc 592)",
   "type": "object",
   "required": ["kind", "version", "hookDir", "hooks", "bindings"],

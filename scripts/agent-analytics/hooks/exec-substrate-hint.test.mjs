@@ -32,7 +32,7 @@ function run(label, fn) {
 // [command, expectedClass]  (null = must stay silent)
 const CORPUS = [
   // --- should-fire: call-operator (real-failure paste class) ---
-  ['& "F:\\scoop\\apps\\gh\\2.90.0\\bin\\gh.exe" pr list --repo eliasjustus/justsearch', 'call-operator'],
+  ['& "F:\\scoop\\apps\\gh\\2.90.0\\bin\\gh.exe" pr list --repo justsearch-app/justsearch', 'call-operator'],
   ["& 'C:\\tools\\gh\\gh.exe' pr view 42", 'call-operator'],
 
   // --- should-fire: wait-shaped gh pr checks / gh run watch ---

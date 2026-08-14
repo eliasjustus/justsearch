@@ -92,7 +92,7 @@ If you'd rather not run a downloaded binary at all, JustSearch builds from sourc
 and **Node.js** — no GPU, no Rust toolchain, and no model download needed just to build:
 
 ```bash
-git clone https://github.com/eliasjustus/justsearch && cd justsearch
+git clone https://github.com/justsearch-app/justsearch && cd justsearch
 ./gradlew.bat build
 ```
 

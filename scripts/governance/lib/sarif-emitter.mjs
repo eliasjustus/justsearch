@@ -16,7 +16,7 @@
 const SARIF_SCHEMA =
   'https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/Schemata/sarif-schema-2.1.0.json';
 const RUNNER_VERSION = '0.1.0';
-const RUNNER_INFO_URI = 'https://github.com/eliasjustus/justsearch';
+const RUNNER_INFO_URI = 'https://github.com/justsearch-app/justsearch';
 
 /**
  * @typedef {Object} Finding
