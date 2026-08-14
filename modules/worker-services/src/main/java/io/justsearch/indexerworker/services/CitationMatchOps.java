@@ -39,6 +39,17 @@ final class CitationMatchOps {
 
   static final double DEFAULT_SIMILARITY_THRESHOLD = 0.5;
 
+  /** Scoring budget used when no {@link CitationScorerConfig} has been wired. */
+  static final long DEFAULT_DEADLINE_MS = 2000;
+
+  // Tempdoc 836 §4 — the provenance vocabulary carried on the wire. Two producers write one
+  // `similarity` field on measurably incomparable scales; these say which one did.
+  static final String SCORER_CROSS_ENCODER = "CROSS_ENCODER";
+  static final String SCORER_EMBEDDING_COSINE = "EMBEDDING_COSINE";
+  static final String SCORER_NONE = "NONE";
+  static final String TEXT_SOURCE_SUPPLIED = "SUPPLIED";
+  static final String TEXT_SOURCE_CHUNK_LOOKUP = "CHUNK_LOOKUP";
+
   private final ReadPathOps readPathOps;
   private final CommitOps commitOps;
   private volatile EmbeddingProvider embeddingProvider;
@@ -47,6 +58,26 @@ final class CitationMatchOps {
   // root builds the scorer eagerly; this class is a pure consumer. No lazy construction path.
   private volatile CitationScorerConfig citationScorerConfig;
   private volatile CitationScorer citationScorer;
+  private volatile CrossEncoderProducer crossEncoderProducer;
+
+  /**
+   * The cross-encoder producer as a function of its inputs.
+   *
+   * <p>Seam, not indirection for its own sake: {@code worker-services} deliberately excludes the
+   * ONNX runtime from its classpath, so a {@link CitationScorer} cannot be constructed in this
+   * module's tests and the cross-encoder branch would otherwise be unreachable by any test here.
+   * Production still wires a real scorer through {@link #setCitationScorer}; tests install a
+   * deterministic producer through {@link #setCrossEncoderProducer} and exercise the same branch.
+   */
+  @FunctionalInterface
+  interface CrossEncoderProducer {
+    CitationScorer.ScoringResult scoreAll(
+        List<String> sentences,
+        List<String> passages,
+        List<String> passageDocIds,
+        double threshold,
+        long deadlineMs);
+  }
 
   CitationMatchOps(ReadPathOps readPathOps, CommitOps commitOps, EmbeddingProvider embeddingProvider) {
     this.readPathOps = readPathOps;
@@ -80,6 +111,7 @@ final class CitationMatchOps {
    */
   void setCitationScorer(CitationScorer scorer) {
     this.citationScorer = scorer;
+    setCrossEncoderProducer(scorer == null ? null : scorer::scoreAll);
     if (scorer != null && citationScorerConfig != null) {
       var config = citationScorerConfig;
       // Tempdoc 374 sandbox round 4 issue H: resolve via ModelManifest so the
@@ -119,71 +151,117 @@ final class CitationMatchOps {
   }
 
   /**
-   * Executes citation matching: maps answer sentences to source chunks.
+   * Installs the producer the cross-encoder branch calls. Production reaches this through {@link
+   * #setCitationScorer}; tests install a deterministic producer directly. See {@link
+   * CrossEncoderProducer} for why the branch is expressed as a function.
+   */
+  void setCrossEncoderProducer(CrossEncoderProducer producer) {
+    this.crossEncoderProducer = producer;
+  }
+
+  /**
+   * The cross-encoder producer, or {@code null} when there is none to run.
    *
-   * <p>Tries CPU-based cross-encoder first (no GPU contention), falls back to
-   * embedding-based cosine similarity if the scorer is unavailable or fails.
+   * <p>Tempdoc 836 §4 corrects a common misreading: {@code isAvailable()} is merely {@code
+   * !closed}, so it is true for any live scorer. The real triggers for the cosine fallback are a
+   * scorer that was never wired and the catch-all around the scoring call.
+   */
+  private CrossEncoderProducer availableCrossEncoder() {
+    CitationScorer scorer = getCitationScorer();
+    if (scorer != null && !scorer.isAvailable()) {
+      return null;
+    }
+    return crossEncoderProducer;
+  }
+
+  /**
+   * Executes citation matching: maps answer sentences to sources, verifying against literal
+   * passage text where the caller supplied it (tempdoc 836 §1).
    *
+   * <p>Text resolution, windowing and admission control happen ONCE, before the producer branch,
+   * so the cross-encoder path and the cosine fallback verify the same text. That shared
+   * preparation is the structural half of the fix: a change that pointed only one branch at
+   * supplied text would leave the other silently re-fetching chunks.
+   *
+   * @param passageTexts literal text per source — either empty, or exactly as long as {@code
+   *     chunkDocIds} (validated at the gRPC boundary); a blank entry means "look this one up"
    * @return a fully-built MatchCitationsResponse for all paths (success, fallback, error)
    */
   MatchCitationsResponse execute(
       String answerText,
       List<String> chunkDocIds,
       List<Integer> chunkIndices,
+      List<String> passageTexts,
       double threshold) {
     long startTime = System.currentTimeMillis();
 
-    log.debug("MatchCitations request: answerLen={}, chunks={}, threshold={}",
-        answerText.length(), chunkDocIds.size(), threshold);
+    log.debug("MatchCitations request: answerLen={}, chunks={}, supplied={}, threshold={}",
+        answerText.length(), chunkDocIds.size(), countSupplied(passageTexts), threshold);
 
     if (answerText.isBlank() || chunkDocIds.isEmpty()) {
-      return MatchCitationsResponse.newBuilder()
-          .setSentencesTotal(0)
-          .setSentencesMatched(0)
-          .setTookMs(System.currentTimeMillis() - startTime)
-          .build();
+      return emptyResponse(startTime, "");
     }
 
-    // Try CPU-based cross-encoder first (no GPU contention), fall back to embedding similarity
-    CitationScorer scorer = getCitationScorer();
-    if (scorer != null && scorer.isAvailable()) {
+    List<String> sentenceList = splitSentences(answerText.trim());
+    var csConfig = citationScorerConfig;
+    long deadlineMs = csConfig != null ? csConfig.deadlineBudgetMs() : DEFAULT_DEADLINE_MS;
+
+    CrossEncoderProducer crossEncoder = availableCrossEncoder();
+    if (crossEncoder == null && !embeddingProvider.isAvailable()) {
+      // Neither producer exists: nothing is scored, and the response says so rather than
+      // reporting an empty result that reads like "nothing was grounded".
+      return emptyResponse(startTime, "EMBEDDING_UNAVAILABLE");
+    }
+
+    PassageWindows.Prepared prepared;
+    try {
+      prepared =
+          prepareWindows(
+              chunkDocIds, chunkIndices, passageTexts, sentenceList.size(), deadlineMs, answerText);
+    } catch (Exception e) {
+      log.warn("MatchCitations passage preparation failed", e);
+      return errorResponse(startTime, e);
+    }
+
+    if (prepared.admissionTruncated()) {
+      // Tempdoc 836 §3.4 — refusing work the deadline cannot pay for, up front, instead of
+      // producing a result the Head has already abandoned.
+      log.info(
+          "Citation admission control: scoring {} of {} windows ({} sentences, {}ms budget)",
+          prepared.windowTexts().size(),
+          prepared.windowsConsidered(),
+          sentenceList.size(),
+          deadlineMs);
+    }
+
+    if (crossEncoder != null) {
       try {
-        commitOps.maybeRefresh();
-
-        List<String> sentenceList = splitSentences(answerText.trim());
-
-        // Look up chunk content from index
-        int chunkCount = Math.min(chunkDocIds.size(), chunkIndices.size());
-        List<String> chunkTexts = new ArrayList<>(chunkCount);
-        List<String> resolvedChunkDocIds = new ArrayList<>(chunkCount);
-        for (int i = 0; i < chunkCount; i++) {
-          String chunkContent = lookupChunkContent(chunkDocIds.get(i), chunkIndices.get(i));
-          chunkTexts.add(chunkContent != null ? chunkContent : "");
-          resolvedChunkDocIds.add(chunkDocIds.get(i));
-        }
-
-        var csConfig = citationScorerConfig;
-        long deadlineMs = csConfig != null ? csConfig.deadlineBudgetMs() : 2000;
         CitationScorer.ScoringResult result =
-            scorer.scoreAll(sentenceList, chunkTexts, resolvedChunkDocIds, threshold, deadlineMs);
+            crossEncoder.scoreAll(
+                sentenceList,
+                prepared.windowTexts(),
+                prepared.windowDocIds(),
+                threshold,
+                deadlineMs);
 
-        List<CitationMatchEntry> matches = new ArrayList<>();
+        List<CitationMatchEntry> matches = new ArrayList<>(result.matches().size());
         for (CitationScorer.ScoredMatch match : result.matches()) {
-          matches.add(CitationMatchEntry.newBuilder()
-              .setSentenceIndex(match.sentenceIndex())
-              .setSentenceText(match.sentenceText())
-              // 822 §3b — `ScoredMatch.chunkIndex` is the position in the request arrays the scorer
-              // was handed (it never sees a document ordinal), which IS the contract's sourceIndex.
-              .setSourceIndex(match.chunkIndex())
-              .setSimilarity(match.score())
-              .setParentDocId(match.parentDocId())
-              .build());
+          matches.add(
+              entry(
+                  prepared,
+                  chunkDocIds,
+                  match.sentenceIndex(),
+                  match.sentenceText(),
+                  match.chunkIndex(),
+                  match.score()));
         }
 
         return MatchCitationsResponse.newBuilder()
             .addAllMatches(matches)
             .setSentencesTotal(result.sentencesTotal())
             .setSentencesMatched(result.sentencesMatched())
+            .setSentencesScored(result.sentencesScored())
+            .setScorer(SCORER_CROSS_ENCODER)
             .setTookMs(System.currentTimeMillis() - startTime)
             .build();
 
@@ -195,73 +273,47 @@ final class CitationMatchOps {
 
     // Fallback: embedding-based cosine similarity
     if (!embeddingProvider.isAvailable()) {
-      return MatchCitationsResponse.newBuilder()
-          .setSentencesTotal(0)
-          .setSentencesMatched(0)
-          .setTookMs(System.currentTimeMillis() - startTime)
-          .setError("EMBEDDING_UNAVAILABLE")
-          .build();
+      return emptyResponse(startTime, "EMBEDDING_UNAVAILABLE");
     }
 
     try {
-      commitOps.maybeRefresh();
-
-      // 1. Split answer into sentences using BreakIterator (handles abbreviations, decimals)
-      List<String> sentenceList = splitSentences(answerText.trim());
-
-      // 2. Embed each sentence
       List<float[]> sentenceVectors = new ArrayList<>(sentenceList.size());
       for (String sentence : sentenceList) {
-        float[] vec = embeddingProvider.embedQuery(sentence);
-        sentenceVectors.add(vec);
+        sentenceVectors.add(embeddingProvider.embedQuery(sentence));
       }
 
-      // 3. Look up chunk content and embed each chunk
-      int chunkCount = Math.min(chunkDocIds.size(), chunkIndices.size());
-      List<float[]> chunkVectors = new ArrayList<>(chunkCount);
-      List<String> resolvedChunkDocIds = new ArrayList<>(chunkCount);
-      for (int i = 0; i < chunkCount; i++) {
-        String chunkContent = lookupChunkContent(chunkDocIds.get(i), chunkIndices.get(i));
-        if (chunkContent != null && !chunkContent.isBlank()) {
-          float[] vec = embeddingProvider.embedDocument(chunkContent);
-          chunkVectors.add(vec);
-          resolvedChunkDocIds.add(chunkDocIds.get(i));
-        } else {
-          chunkVectors.add(null);
-          resolvedChunkDocIds.add(chunkDocIds.get(i));
-        }
+      List<String> windows = prepared.windowTexts();
+      List<float[]> windowVectors = new ArrayList<>(windows.size());
+      for (String window : windows) {
+        windowVectors.add(embeddingProvider.embedDocument(window));
       }
 
-      // 4. Compute cosine similarity and find best matches
       List<CitationMatchEntry> matches = new ArrayList<>();
       int sentencesMatched = 0;
+      int sentencesScored = 0;
       for (int si = 0; si < sentenceList.size(); si++) {
         float[] sentenceVec = sentenceVectors.get(si);
         if (sentenceVec == null || sentenceVec.length == 0) {
           continue;
         }
+        sentencesScored++;
         double bestSim = 0.0;
-        int bestChunkIdx = -1;
-        for (int ci = 0; ci < chunkVectors.size(); ci++) {
-          float[] chunkVec = chunkVectors.get(ci);
-          if (chunkVec == null || chunkVec.length == 0) {
+        int bestWindow = -1;
+        for (int wi = 0; wi < windowVectors.size(); wi++) {
+          float[] windowVec = windowVectors.get(wi);
+          if (windowVec == null || windowVec.length == 0) {
             continue;
           }
-          double sim = VectorUtils.cosine(sentenceVec, chunkVec);
+          double sim = VectorUtils.cosine(sentenceVec, windowVec);
           if (sim > bestSim) {
             bestSim = sim;
-            bestChunkIdx = ci;
+            bestWindow = wi;
           }
         }
-        if (bestChunkIdx >= 0 && bestSim >= threshold) {
+        if (bestWindow >= 0 && bestSim >= threshold) {
           sentencesMatched++;
-          matches.add(CitationMatchEntry.newBuilder()
-              .setSentenceIndex(si)
-              .setSentenceText(sentenceList.get(si))
-              .setSourceIndex(bestChunkIdx)
-              .setSimilarity(bestSim)
-              .setParentDocId(resolvedChunkDocIds.get(bestChunkIdx))
-              .build());
+          matches.add(
+              entry(prepared, chunkDocIds, si, sentenceList.get(si), bestWindow, bestSim));
         }
       }
 
@@ -269,18 +321,102 @@ final class CitationMatchOps {
           .addAllMatches(matches)
           .setSentencesTotal(sentenceList.size())
           .setSentencesMatched(sentencesMatched)
+          .setSentencesScored(sentencesScored)
+          .setScorer(SCORER_EMBEDDING_COSINE)
           .setTookMs(System.currentTimeMillis() - startTime)
           .build();
 
     } catch (Exception e) {
       log.warn("MatchCitations failed", e);
-      return MatchCitationsResponse.newBuilder()
-          .setSentencesTotal(0)
-          .setSentencesMatched(0)
-          .setTookMs(System.currentTimeMillis() - startTime)
-          .setError(e.getMessage() == null ? "UNKNOWN" : e.getMessage())
-          .build();
+      return errorResponse(startTime, e);
     }
+  }
+
+  /**
+   * Builds a match entry, mapping the scored WINDOW ordinal back to the SOURCE position it must be
+   * reported as (tempdoc 836 §1.3). {@code parentDocId} is read from the request array at that
+   * source position rather than echoed from the scorer, so {@code parent_doc_id ==
+   * chunk_doc_ids[source_index]} holds by construction.
+   */
+  private static CitationMatchEntry entry(
+      PassageWindows.Prepared prepared,
+      List<String> chunkDocIds,
+      int sentenceIndex,
+      String sentenceText,
+      int windowOrdinal,
+      double score) {
+    int sourceIndex = prepared.sourceOf(windowOrdinal);
+    return CitationMatchEntry.newBuilder()
+        .setSentenceIndex(sentenceIndex)
+        .setSentenceText(sentenceText)
+        .setSourceIndex(sourceIndex)
+        .setSimilarity(score)
+        .setParentDocId(chunkDocIds.get(sourceIndex))
+        .setTextSource(
+            prepared.suppliedAt(sourceIndex) ? TEXT_SOURCE_SUPPLIED : TEXT_SOURCE_CHUNK_LOOKUP)
+        .build();
+  }
+
+  private PassageWindows.Prepared prepareWindows(
+      List<String> chunkDocIds,
+      List<Integer> chunkIndices,
+      List<String> passageTexts,
+      int sentenceCount,
+      long deadlineMs,
+      String answerText) {
+    boolean anyLookupNeeded = false;
+    int sourceCount = Math.min(chunkDocIds.size(), chunkIndices.size());
+    for (int i = 0; i < sourceCount; i++) {
+      String supplied = i < passageTexts.size() ? passageTexts.get(i) : "";
+      if (supplied == null || supplied.isBlank()) {
+        anyLookupNeeded = true;
+        break;
+      }
+    }
+    if (anyLookupNeeded) {
+      // Only a request that will actually read the index pays for a reader refresh.
+      commitOps.maybeRefresh();
+    }
+    return PassageWindows.prepare(
+        chunkDocIds,
+        chunkIndices,
+        passageTexts,
+        i -> lookupChunkContent(chunkDocIds.get(i), chunkIndices.get(i)),
+        sentenceCount,
+        deadlineMs,
+        answerText);
+  }
+
+  private static int countSupplied(List<String> passageTexts) {
+    int n = 0;
+    for (String t : passageTexts) {
+      if (t != null && !t.isBlank()) {
+        n++;
+      }
+    }
+    return n;
+  }
+
+  private MatchCitationsResponse emptyResponse(long startTime, String error) {
+    return MatchCitationsResponse.newBuilder()
+        .setSentencesTotal(0)
+        .setSentencesMatched(0)
+        .setSentencesScored(0)
+        .setScorer(SCORER_NONE)
+        .setTookMs(System.currentTimeMillis() - startTime)
+        .setError(error)
+        .build();
+  }
+
+  private MatchCitationsResponse errorResponse(long startTime, Exception e) {
+    return MatchCitationsResponse.newBuilder()
+        .setSentencesTotal(0)
+        .setSentencesMatched(0)
+        .setSentencesScored(0)
+        .setScorer(SCORER_NONE)
+        .setTookMs(System.currentTimeMillis() - startTime)
+        .setError(e.getMessage() == null ? "UNKNOWN" : e.getMessage())
+        .build();
   }
 
   /**

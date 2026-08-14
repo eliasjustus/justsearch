@@ -298,6 +298,10 @@ public interface DocumentService {
    * Post-hoc citation matching: matches LLM answer sentences to source chunks
    * via embedding similarity on the Worker side.
    *
+   * <p>Convenience overload for callers that have no literal text to verify against: every
+   * citation is mapped to a {@link VerificationSource} with blank text, so the Worker re-fetches
+   * the chunk by {@code (parentDocId, chunkIndex)} exactly as before.
+   *
    * @param answerText the full LLM answer text
    * @param citations the context citations from RAG retrieval
    * @param threshold minimum cosine similarity (0.0-1.0)
@@ -305,21 +309,126 @@ public interface DocumentService {
    */
   default CompletionStage<CitationMatchResult> matchCitations(
       String answerText, List<ContextCitation> citations, double threshold) {
-    return CompletableFuture.completedFuture(
-        new CitationMatchResult(List.of(), 0, 0, 0));
+    List<VerificationSource> sources =
+        citations == null
+            ? List.of()
+            : citations.stream().map(c -> new VerificationSource(c, "")).toList();
+    return matchCitationsAgainst(answerText, sources, threshold);
   }
 
-  /** Result of post-hoc citation matching. */
+  /**
+   * Post-hoc citation matching against sources that may carry their own literal text
+   * (tempdoc 836 §1.4).
+   *
+   * <p>This is the real method; the {@link #matchCitations(String, List, double)} overload
+   * delegates here. A source whose {@link VerificationSource#literalText()} is non-blank is
+   * verified against THAT text; a blank one is looked up from the index by its citation's
+   * {@code (parentDocId, chunkIndex)}. The choice is per source, never all-or-nothing.
+   *
+   * @param answerText the full LLM answer text
+   * @param sources the sources to verify against, in the order the UI numbers them
+   * @param threshold minimum similarity (0.0-1.0)
+   * @return result containing matched sentence-to-source mappings
+   */
+  default CompletionStage<CitationMatchResult> matchCitationsAgainst(
+      String answerText, List<VerificationSource> sources, double threshold) {
+    return CompletableFuture.completedFuture(
+        new CitationMatchResult(List.of(), 0, 0, 0, 0, ScorerKind.NONE));
+  }
+
+  /**
+   * A source the matcher may verify against: its citation identity plus, optionally, the literal
+   * text that was actually shown to the model (tempdoc 836 §1.4).
+   *
+   * <p>One position authority instead of parallel lists kept equal by discipline. {@code
+   * literalText} blank means "this source supplies no text" — look it up.
+   */
+  record VerificationSource(ContextCitation citation, String literalText) {
+    public VerificationSource {
+      literalText = literalText == null ? "" : literalText;
+    }
+
+    /** True when this source carries text to verify against, rather than a lookup key. */
+    public boolean suppliesText() {
+      return !literalText.isBlank();
+    }
+  }
+
+  /**
+   * Which producer wrote the {@code similarity} on a match (tempdoc 836 §4). The two scoring
+   * producers are on measurably incomparable scales (P4: cross-encoder is bimodal at 0.89-0.999
+   * vs below 0.001; cosine is compressed into 0.38-0.72 with the classes interleaving), so
+   * "which one ran" is not a diagnostic detail — it is part of reading the number.
+   */
+  enum ScorerKind {
+    /** CPU cross-encoder, sigmoid-normalized relevance. */
+    CROSS_ENCODER,
+    /** Embedding cosine fallback, raw cosine. */
+    EMBEDDING_COSINE,
+    /** Nothing scored (no producer available, or no input). */
+    NONE;
+
+    /** Parses the wire string, mapping anything unrecognized to {@link #NONE}. */
+    public static ScorerKind fromWire(String wire) {
+      if (wire == null || wire.isBlank()) {
+        return NONE;
+      }
+      try {
+        return valueOf(wire);
+      } catch (IllegalArgumentException e) {
+        return NONE;
+      }
+    }
+  }
+
+  /** Which text a match was scored against (tempdoc 836 §4). */
+  enum TextSource {
+    /** The caller's literal passage text. */
+    SUPPLIED,
+    /** Chunk text re-fetched from the index by {@code (parentDocId, chunkIndex)}. */
+    CHUNK_LOOKUP;
+
+    /** Parses the wire string, mapping anything unrecognized to {@link #CHUNK_LOOKUP}. */
+    public static TextSource fromWire(String wire) {
+      if (wire == null || wire.isBlank()) {
+        return CHUNK_LOOKUP;
+      }
+      try {
+        return valueOf(wire);
+      } catch (IllegalArgumentException e) {
+        return CHUNK_LOOKUP;
+      }
+    }
+  }
+
+  /**
+   * Result of post-hoc citation matching.
+   *
+   * @param sentencesScored how many sentences were actually scored — below {@code sentencesTotal}
+   *     whenever the deadline or the admission cap cut the pass short (tempdoc 836 §3.6). It is
+   *     the honest denominator for a coverage claim; {@code sentencesMatched} over
+   *     {@code sentencesTotal} attributes a budget shortfall to the evidence.
+   * @param scorer which producer wrote the similarities (tempdoc 836 §4)
+   */
   record CitationMatchResult(
       List<CitationMatchEntry> matches,
       int sentencesTotal,
       int sentencesMatched,
-      long tookMs) {
+      long tookMs,
+      int sentencesScored,
+      ScorerKind scorer) {
     public CitationMatchResult {
       matches = matches == null ? List.of() : List.copyOf(matches);
       sentencesTotal = Math.max(0, sentencesTotal);
       sentencesMatched = Math.max(0, sentencesMatched);
       tookMs = Math.max(0, tookMs);
+      sentencesScored = Math.max(0, sentencesScored);
+      scorer = scorer == null ? ScorerKind.NONE : scorer;
+    }
+
+    /** True when the pass did not reach every sentence — a scoring-incomplete state, not a ratio. */
+    public boolean scoringIncomplete() {
+      return sentencesScored < sentencesTotal;
     }
   }
 
@@ -337,10 +446,12 @@ public interface DocumentService {
       String sentenceText,
       int sourceIndex,
       double similarity,
-      String parentDocId) {
+      String parentDocId,
+      TextSource textSource) {
     public CitationMatchEntry {
       sentenceText = sentenceText == null ? "" : sentenceText;
       parentDocId = parentDocId == null ? "" : parentDocId;
+      textSource = textSource == null ? TextSource.CHUNK_LOOKUP : textSource;
     }
   }
 

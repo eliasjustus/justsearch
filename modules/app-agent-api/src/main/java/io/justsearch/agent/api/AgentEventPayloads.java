@@ -201,15 +201,49 @@ public final class AgentEventPayloads {
       case AgentEvent.HandoffExecuted e ->
           Map.of("fromAgentId", e.fromAgentId(), "toAgentId", e.toAgentId());
       case AgentEvent.ReasoningChunk e -> Map.of("text", e.text());
-      case AgentEvent.StateSnapshot e ->
-          Map.of(
-              "iteration", e.iteration(),
-              "budgetRemaining", e.budgetRemaining(),
-              "toolCallsExecuted", e.toolCallsExecuted(),
-              "messageCount", e.messageCount(),
-              // Guarded like HandoffProposed.reason — a null agent id would NPE Map.of.
-              "activeAgentId", e.activeAgentId() != null ? e.activeAgentId() : "");
+      case AgentEvent.StateSnapshot e -> {
+        // Tempdoc 834 §6.3.2: a LinkedHashMap, not Map.of — Map.of caps at 10 pairs and rejects
+        // nulls, so `park` could not be ABSENT (its "not parked" encoding) under Map.of.
+        var snapshot = new LinkedHashMap<String, Object>();
+        snapshot.put("iteration", e.iteration());
+        snapshot.put("budgetRemaining", e.budgetRemaining());
+        snapshot.put("toolCallsExecuted", e.toolCallsExecuted());
+        snapshot.put("messageCount", e.messageCount());
+        // Guarded like HandoffProposed.reason — a null agent id would NPE Map.of.
+        snapshot.put("activeAgentId", e.activeAgentId() != null ? e.activeAgentId() : "");
+        // Tempdoc 834 §6.3.3: ALWAYS emitted (empty list = "none pending"). A legacy events.ndjson
+        // record simply LACKS the key, and absent must read as UNKNOWN — never as "none".
+        snapshot.put(
+            "pendingApprovals", e.pendingApprovals().stream().map(AgentEventPayloads::approvalMap).toList());
+        snapshot.put("autonomyLevel", e.autonomyLevel());
+        if (e.park() != null) {
+          snapshot.put("park", parkMap(e.park()));
+        }
+        yield snapshot;
+      }
     };
+  }
+
+  /** Tempdoc 834 §6.2 — one held approval gate, in the same shape {@code tool_call_pending} uses. */
+  private static Map<String, Object> approvalMap(AgentEvent.PendingApproval approval) {
+    var m = new LinkedHashMap<String, Object>();
+    m.put("callId", approval.callId());
+    m.put("toolName", approval.toolName());
+    m.put("arguments", approval.arguments());
+    m.put("risk", approval.risk());
+    if (approval.gateBehavior() != null) {
+      m.put("gateBehavior", approval.gateBehavior());
+    }
+    return m;
+  }
+
+  /** Tempdoc 834 §6.2 — why the run is stopped; only emitted when the run IS parked. */
+  private static Map<String, Object> parkMap(AgentEvent.ParkSnapshot park) {
+    var m = new LinkedHashMap<String, Object>();
+    m.put("kind", park.kind());
+    m.put("sinceEpochMs", park.sinceEpochMs());
+    m.put("detail", park.detail() != null ? park.detail() : "");
+    return m;
   }
 
   /**

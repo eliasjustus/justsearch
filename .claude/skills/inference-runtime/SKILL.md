@@ -548,6 +548,8 @@ When `USE_THINKING=true`, `LlamaServerOps` adds `--reasoning-format deepseek` to
 
 `AgentLlmCaller` (the agent loop's LLM-caller collaborator) accumulates reasoning chunks into a `StringBuilder` and logs the full reasoning at DEBUG level after each agent turn. Reasoning is not exposed in the UI response.
 
+On the conversation path, `ConversationEngine` forwards each reasoning chunk to the SSE sink as a `reasoning_chunk` event, which the chat surfaces render as a collapsible reasoning block while the turn streams. Reasoning is **not persisted** to the conversation record — a reloaded conversation shows the turn without its trace, which is the accepted behaviour, not a defect.
+
 ### Sampling Parameters
 
 `SamplingParams` (`modules/app-api`) defines per-workload presets injected into HTTP request bodies at 3 injection points in `OnlineModeOps` (`streamChatWithTools`, `streamChat`, `sendChatRequest`):
@@ -563,10 +565,12 @@ When `SamplingParams` is null, no sampling parameters are sent (server defaults 
 
 ### Think-Tag Handling
 
-Despite `--reasoning-format deepseek`, `<think>` tags can leak into content in edge cases (llama.cpp bug [#13189](https://github.com/ggml-org/llama.cpp/issues/13189), non-streaming responses, or chunk boundaries in streaming). Two defenses:
+Despite `--reasoning-format deepseek`, `<think>` tags can leak into content in edge cases (llama.cpp bug [#13189](https://github.com/ggml-org/llama.cpp/issues/13189), non-streaming responses, or a build that renders thinking inline). Both defenses live in `OnlineModeOps`, one per transport:
 
-1. **`OnlineModeOps.sendChatRequest()`** — Strips `<think>...</think>` via regex from non-streaming responses before returning.
-2. **`AgentLlmCaller.callLlmWithTools()`** — Strips `<think>` tags from accumulated streaming responses before adding to conversation history.
+1. **`sendChatRequest()`** — strips `<think>...</think>` via regex from non-streaming responses before returning.
+2. **`ThinkTagStreamFilter`** — a stateful filter over the streaming content channel. It is *not* a per-chunk regex: tags straddle SSE frame boundaries (`<thi` + `nk>`), so it holds back only a suffix that could still become a tag. Captured thinking is **rerouted to the reasoning channel**, not deleted, so a build that leaks inline behaves like one that emits `reasoning_content`. Content with no tags passes through byte-identically.
+
+The agent loop no longer strips tags of its own — two strippers over the same fact is two authorities, and only the stream-level one can see a tag that arrived in two pieces.
 
 ### VDU Reasoning Suppression
 
@@ -582,13 +586,21 @@ Suppression avoids the "long-wrong trajectory" problem where thinking chains deg
 
 ### Reasoning Budget
 
-`llama-server` accepts `--reasoning-budget N` to control reasoning token generation at the template level. Default: **0** (disabled via `JUSTSEARCH_REASONING_BUDGET` env var / `-Djustsearch.llm.reasoning_budget`).
+`llama-server` accepts `--reasoning-budget N` to control reasoning token generation at the template level. Default: **512** — bounded reasoning, on (`JUSTSEARCH_REASONING_BUDGET` env var / `-Djustsearch.llm.reasoning_budget`).
 
-With `--reasoning-budget 0`, the server injects a `/no_think` equivalent at the chat template level, which is more reliable than prompt-level suppression alone. The system prompt's `/no_think` directive is kept as defense-in-depth.
+**The budget is shared with the answer.** Reasoning tokens and answer tokens come out of the same completion ceiling (`max_tokens`, default 1024 in the conversation engine); the server spends it on reasoning first. That is why the number matters more than the switch:
 
-**Why reasoning is disabled by default for agent workloads**: A thinking-capable chat model can generate 2000-2500 reasoning tokens for complex queries (measured on the prior `Qwen3VL-8B-Thinking` default). With a shared `max_tokens` budget (OpenAI-style, no separate reasoning budget), this exhausts the generation budget before producing any content — causing empty responses (the "B6" failure mode). Setting `--reasoning-budget 0` eliminates this class of failure entirely (0/12 empty responses vs 4/12 without it).
+| Budget | Measured behaviour (b8571, Qwen3.5-9B, default ceiling) |
+|---|---|
+| `0` | No reasoning. The server injects a `/no_think` equivalent at the chat template level — more reliable than prompt-level suppression, and the system prompt's `/no_think` stays as defense-in-depth. |
+| `512` (default) | Binds at exactly 512 reasoning tokens and leaves room for a complete answer (3/3 non-empty at the parameterless configuration). |
+| `-1` (unbounded) | Reasoning consumed the entire completion budget and **not one answer token was produced**, 4/4 — terminating with a normal `done` event and no error. |
 
-**Re-enabling reasoning**: Set `JUSTSEARCH_REASONING_BUDGET=-1` for unlimited reasoning. Use prompt-level `/think`/`/no_think` for per-step control within the same session. The most recent directive wins in multi-turn Qwen3 conversations.
+Because that failure is silent, config resolution **refuses** an unbounded budget and any value at or above the engine's default completion ceiling, clamping back to 512 with a WARN. Raise `max_tokens` rather than the budget if a workload needs longer thinking.
+
+**Per-request control.** `chat_template_kwargs.enable_thinking` reaches the chat template (it shifts prompt rendering) but cannot authorise reasoning generation while the server budget is 0 — upstream computes `enable_thinking = use_jinja && reasoning_budget != 0 && …`, an AND a request cannot satisfy. So a request can *suppress* thinking (`enableThinking: false`, used by the agent loop and the Quick effort rung) but not enable it against a zero-budget server. Prompt-level `/think` / `/no_think` remains available for per-step control within a session; the most recent directive wins in multi-turn Qwen3 conversations.
+
+**Build compatibility.** Support for a finite budget varies by llama-server build (b8185 accepted only `-1` / `0`; b8571 accepts arbitrary finite values), and `/props` does not advertise it — `chat_template_caps` carries `supports_preserve_reasoning` but no `supports_enable_thinking`. The authoritative signal is therefore launch-argument acceptance: a build that rejects `--reasoning-budget` is relaunched without the flag, and the verdict is published on the runtime manifest as `ai.thinkingSupport` (`SUPPORTED` / `UNSUPPORTED` / `DISABLED` / `UNKNOWN`). Thinking fails closed; inference does not.
 
 ### Operational Findings (Tested)
 

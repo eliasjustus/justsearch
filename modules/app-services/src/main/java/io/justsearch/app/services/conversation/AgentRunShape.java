@@ -166,13 +166,22 @@ public final class AgentRunShape {
               EventField.string("fromAgentId"),
               EventField.string("toAgentId")),
           // Tempdoc 585 §D Phase 2 (C4) — the one-shot state primer for a (re)attaching observer.
+          // Tempdoc 834 §6 enriches it into the RECOVERY authority: every fact required to ACT on a
+          // run lives here, because the replay ring evicts and the primer never does.
           EventDescriptor.ofTraced(
               "state_snapshot",
               EventField.number("iteration"),
               EventField.number("budgetRemaining"),
               EventField.number("toolCallsExecuted"),
               EventField.number("messageCount"),
-              EventField.string("activeAgentId")),
+              EventField.string("activeAgentId"),
+              // Optional NOT because the producer elides it — it always emits the key — but because
+              // a legacy events.ndjson record predates it. Absent must therefore read as UNKNOWN on
+              // the FE, never as "none pending" (834 §6.3.3).
+              EventField.arrayOfObject("pendingApprovals", "PendingApproval").asOptional(),
+              EventField.string("autonomyLevel").asOptional(),
+              // Genuinely conditional: emitted only while the run IS parked.
+              EventField.object("park", "ParkSnapshot").asOptional()),
           // Emitted by the composed URLExtractor StreamConsumer (not an AgentEvent variant, so
           // outside the AgentEvent conformance check). Payload fields typed in Phase 2.
           EventDescriptor.nameOnly("intent.resolution"));

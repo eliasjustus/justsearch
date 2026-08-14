@@ -165,6 +165,12 @@ jobs:
       - name: Outward benchmark numbers cite the canonical release
         run: node scripts/ci/check-outward-number-citations.mjs
 
+      # Tempdoc 835: the shared llama-server argument-rejection predicate. Its previous form was a
+      # string literal inside one CI script that silently stopped matching when the bundled build's
+      # wording changed — so the reader of the register gets a test, not just a comment.
+      - name: Test llama-server argument-rejection predicate
+        run: node scripts/ci/lib/llama-server-arg-rejection.test.mjs
+
       - name: Test deterministic MCPB packer
         run: node scripts/ci/pack-mcpb.test.mjs
 

@@ -272,7 +272,8 @@ final class StreamingCitationIntegrationTest {
         List<DocumentService.ContextCitation> citations,
         double threshold) {
       return CompletableFuture.completedFuture(
-          new CitationMatchResult(List.of(), 0, 0, 0));
+          new CitationMatchResult(
+              List.of(), 0, 0, 0, 0, DocumentService.ScorerKind.NONE));
     }
   }
 }

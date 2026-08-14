@@ -66,6 +66,18 @@ public final class RAGContext implements ContextInjector {
   public static final String ATTR_FILE_COUNT = "rag.fileCount";
 
   /**
+   * The sources a citation matcher should verify against, WITH the literal text that was actually
+   * put in front of the model (tempdoc 836 §1.4). Set by injectors that hold that text; the
+   * retrieval path leaves it unset, because its citations carry true chunk ordinals and the
+   * Worker's lookup resolves the right text for them.
+   *
+   * <p>Holds {@code List<DocumentService.VerificationSource>}. It is not a second copy of {@link
+   * #ATTR_CITATIONS}: each entry CONTAINS its citation, so the two can never disagree about which
+   * source is at position i.
+   */
+  public static final String ATTR_VERIFICATION_SOURCES = "rag.verificationSources";
+
+  /**
    * Tempdoc 610 §J.3 — the conversation's hidden-source ids (unit-separator-joined parentDocId +
    * chunkIndex), seeded onto the context by the engine from the ConversationStore. RAGContext threads
    * them to retrieval so the Worker drops those chunks pre-search. A {@code List<String>}; absent = none.

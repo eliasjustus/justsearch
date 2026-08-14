@@ -56,6 +56,8 @@ public final class CrossEncoderReranker implements Closeable {
   private final RerankerTokenizer tokenizer;
   private final boolean needsTokenTypeIds;
   private final int maxSequenceLength;
+  private final java.util.concurrent.atomic.AtomicBoolean truncationReported =
+      new java.util.concurrent.atomic.AtomicBoolean();
 
   /**
    * Tempdoc 397 §14.24 FD primary constructor. All construction inputs are pre-built by the
@@ -199,6 +201,34 @@ public final class CrossEncoderReranker implements Closeable {
     return docs;
   }
 
+  /**
+   * Makes the tokenizer's own truncation visible (tempdoc 836 §1.3(b), §9 Q6). A default-sized
+   * indexed chunk already overflows the 512-token pair window on real prose, so this fires on
+   * ordinary traffic — it is reported once at WARN and thereafter at DEBUG, because the fix
+   * (chunk-side headroom, or windowing at scoring time) is a separate change with its own owner,
+   * and a per-query WARN would bury every other line in the log.
+   */
+  private void reportTruncation(RerankerTokenizer.EncodedBatch batch) {
+    if (batch.truncatedPairs() == 0) {
+      return;
+    }
+    if (truncationReported.compareAndSet(false, true)) {
+      log.warn(
+          "Reranker pair truncation: {} of {} pairs exceed maxSeqLen={} (longest {} tokens) — the"
+              + " tail of those documents is not seen by the model",
+          batch.truncatedPairs(),
+          batch.batchSize(),
+          batch.seqLength(),
+          batch.longestPairTokens());
+    } else {
+      log.debug(
+          "Reranker pair truncation: {} of {} pairs exceed maxSeqLen={}",
+          batch.truncatedPairs(),
+          batch.batchSize(),
+          batch.seqLength());
+    }
+  }
+
   private RerankedResult rerankInSpan(
       String query, List<String> documents, long deadlineMs, long startNanos) {
 
@@ -209,6 +239,7 @@ public final class CrossEncoderReranker implements Closeable {
       // Tokenize query-document pairs
       RerankerTokenizer.EncodedBatch batch =
           tokenizer.encodePairs(query, documents.toArray(new String[0]));
+      reportTruncation(batch);
 
       long tokenizeMs = (System.nanoTime() - startNanos) / 1_000_000;
       if (tokenizeMs > deadlineMs * 0.5) {

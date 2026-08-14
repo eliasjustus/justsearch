@@ -191,6 +191,14 @@ public record RuntimeManifest(
    * no server yet). Divergent non-null values are the visible expected-vs-actual drift
    * signal; the producer also logs it loudly. No schema bump: nullable additive fields under
    * {@code @JsonInclude(NON_NULL)}.
+   *
+   * <p>Tempdoc 835 §9c.2 — {@code thinkingSupport} is the running server's reasoning-capability
+   * verdict: {@code SUPPORTED} (launched with {@code --reasoning-budget} and healthy),
+   * {@code UNSUPPORTED} (the build rejected the flag; relaunched without it — inference stays up,
+   * thinking does not), {@code DISABLED} (switched off by configuration) or {@code UNKNOWN}
+   * (nothing launched by us, e.g. an adopted server). Nullable and additive, same as the build
+   * pin: this is where "what can this installation do" is already read from, so a surface can
+   * disable a thinking control with a reason instead of promising what the build cannot do.
    */
   @RecordBuilder
   @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -200,7 +208,8 @@ public record RuntimeManifest(
       String pendingReason,
       String readyAt,
       String serverBuildExpected,
-      String serverBuildActual) {
+      String serverBuildActual,
+      String thinkingSupport) {
 
     /**
      * Public projection (tempdoc 501 §13.4.5 audience axis). AI carries no

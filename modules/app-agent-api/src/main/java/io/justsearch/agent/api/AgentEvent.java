@@ -438,8 +438,27 @@ public sealed interface AgentEvent {
       int toolCallsExecuted,
       int messageCount,
       String activeAgentId,
+      List<PendingApproval> pendingApprovals,
+      String autonomyLevel,
+      ParkSnapshot park,
       TraceContext trace)
       implements AgentEvent {
+
+    /**
+     * Tempdoc 834 §6.1 — the recovery law: every fact required to ACT on a run lives in the
+     * snapshot; the ring carries narrative only. {@code pendingApprovals} is empty-never-null (an
+     * empty list means "none pending"; an ABSENT key on a legacy persisted record means "unknown"),
+     * {@code autonomyLevel} is never null, and {@code park} is nullable — absent means not parked.
+     */
+    public StateSnapshot {
+      pendingApprovals = pendingApprovals == null ? List.of() : List.copyOf(pendingApprovals);
+      autonomyLevel =
+          autonomyLevel == null
+              ? io.justsearch.agent.api.registry.AutonomyLevel.DEFAULT.name()
+              : autonomyLevel;
+    }
+
+    /** Pre-834 convenience overload — no approvals, the default dial, not parked. */
     public StateSnapshot(
         int iteration,
         int budgetRemaining,
@@ -447,7 +466,39 @@ public sealed interface AgentEvent {
         int messageCount,
         String activeAgentId) {
       this(iteration, budgetRemaining, toolCallsExecuted, messageCount, activeAgentId,
+          List.of(), io.justsearch.agent.api.registry.AutonomyLevel.DEFAULT.name(), null,
           TraceContext.none());
     }
+
+    /** Pre-834 trace-carrying overload — no approvals, the default dial, not parked. */
+    public StateSnapshot(
+        int iteration,
+        int budgetRemaining,
+        int toolCallsExecuted,
+        int messageCount,
+        String activeAgentId,
+        TraceContext trace) {
+      this(iteration, budgetRemaining, toolCallsExecuted, messageCount, activeAgentId,
+          List.of(), io.justsearch.agent.api.registry.AutonomyLevel.DEFAULT.name(), null, trace);
+    }
   }
+
+  /**
+   * Tempdoc 834 §6.2 — one tool call held at an approval gate, carried ON the snapshot so a
+   * reattacher can render and ANSWER the gate even after the {@code tool_call_pending} frame that
+   * announced it has been evicted from the replay ring. The five fields are exactly what
+   * {@code AgentToolDispatcher} already emits on {@link ToolCallPendingApproval} one statement
+   * before it opens the gate; {@code risk} / {@code gateBehavior} carry the lowercase wire tokens
+   * that event's payload uses ({@code gateBehavior} is null when no evaluator was available).
+   */
+  record PendingApproval(
+      String callId, String toolName, String arguments, String risk, String gateBehavior) {}
+
+  /**
+   * Tempdoc 834 §1.5 / §6.2 — why a run is currently stopped. {@code kind} is one of
+   * {@code approval} / {@code budget} / {@code context} / {@code unobserved};
+   * {@code sinceEpochMs} is when the park began, or {@code 0} when the park has no recorded start
+   * (the zero-observer park is derived from an observer count, not from a transition).
+   */
+  record ParkSnapshot(String kind, long sinceEpochMs, String detail) {}
 }

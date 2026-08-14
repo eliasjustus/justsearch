@@ -262,7 +262,17 @@ final class AgentToolDispatcher {
         new AgentEvent.ToolCallPendingApproval(
             call.id(), call.toolName(), call.arguments(), risk, gateBehavior));
 
-    CompletableFuture<Boolean> gate = session.createApprovalGate(call.id());
+    // Tempdoc 834 §6.2 — the SAME five values ride into the gate, so a reattacher whose replay ring
+    // no longer holds the frame above still gets the open gate on the state snapshot.
+    CompletableFuture<Boolean> gate =
+        session.createApprovalGate(
+            call.id(),
+            new AgentEvent.PendingApproval(
+                call.id(),
+                call.toolName(),
+                call.arguments(),
+                risk == null ? null : risk.name().toLowerCase(java.util.Locale.ROOT),
+                gateBehavior == null ? null : gateBehavior.name().toLowerCase(java.util.Locale.ROOT)));
     try {
       return gate.get(APPROVAL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     } catch (Exception e) {

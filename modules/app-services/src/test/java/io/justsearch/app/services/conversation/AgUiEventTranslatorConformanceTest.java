@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.agent.api.AgentEvent;
+import io.justsearch.agent.api.TraceContext;
 import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.agent.api.conversation.SseEvent;
@@ -58,7 +59,21 @@ class AgUiEventTranslatorConformanceTest {
           new AgentEvent.SessionStarted("sid"),
           new AgentEvent.HandoffProposed("a", "b", "why"),
           new AgentEvent.HandoffExecuted("a", "b"),
-          new AgentEvent.StateSnapshot(2, 1500, 3, 7, "primary"));
+          // Tempdoc 834 §6.5 — one entry carries a POPULATED TraceContext (every other entry uses a
+          // convenience constructor, so all of them carry TraceContext.none() and the trace/runId
+          // half of the projection would otherwise be untested), plus the three 834 fields with a
+          // held approval gate and an active park.
+          new AgentEvent.StateSnapshot(
+              2,
+              1500,
+              3,
+              7,
+              "primary",
+              List.of(
+                  new AgentEvent.PendingApproval("call-1", "core_write", "{}", "high", "confirm")),
+              "WATCH",
+              new AgentEvent.ParkSnapshot("approval", 1_700_000_000_000L, "call-1"),
+              new TraceContext("run-1", "step-1", "span-000002", null, "primary", "call-1", 2)));
 
   @Test
   @DisplayName("ALL_VARIANTS covers every AgentEvent permit")
