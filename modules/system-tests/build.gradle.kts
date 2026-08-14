@@ -283,6 +283,49 @@ val integrationTest = tasks.register<Test>("integrationTest") {
       "justsearch.worker.lib.dir",
       project(":modules:indexer-worker").layout.buildDirectory
           .dir("install/indexer-worker/lib").get().asFile.absolutePath)
+
+  // Tempdoc 829 R3 — this lane is advisory (ci.yml `continue-on-error: true`) and absent
+  // from `required_status_checks.contexts`, so a self-recovered flake here cannot change
+  // mergeability; it only reddens the check and invites a pointless `gh run rerun --failed`
+  // (F1: 12 such reruns measured 2026-08-13, every attempt-1 already `success`). The
+  // convention plugin sets failOnPassedAfterRetry=true for every Test task, in CI, to keep
+  // flakes loud (JvmBaseConventionsPlugin.kt:119-143) — correct for required lanes, wrong
+  // here. Override it to false for THIS task only, using the same reflective pattern (the
+  // Develocity 4.x testRetry extension type is shaded, so it can't be referenced directly).
+  // maxRetries is left untouched, so retry itself still runs. This task-level configuration
+  // action is registered after the convention plugin's project-wide
+  // `tasks.withType<Test>().configureEach { ... }`, so it applies last and wins — the same
+  // ordering this file already relies on for other Test-wide convention overrides (e.g.
+  // `maxHeapSize` below for systemTest/soakTest vs. the convention's 384m default).
+  // Flake VISIBILITY does not disappear: it moves to the flaky-test extraction in
+  // unit-test attribution (tempdoc 829 R5, same PR). Revisit when this lane joins required
+  // contexts (tempdoc 825 §3 is that path).
+  val retryExt = extensions.findByName("develocity")?.let { devExt ->
+    try {
+      devExt.javaClass.getMethod("getTestRetry").invoke(devExt)
+    } catch (_: Exception) {
+      null
+    }
+  } ?: extensions.findByName("retry")
+  if (retryExt != null) {
+    try {
+      val failOnPassedProp = retryExt.javaClass.getMethod("getFailOnPassedAfterRetry").invoke(retryExt)
+      @Suppress("UNCHECKED_CAST")
+      (failOnPassedProp as org.gradle.api.provider.Property<Boolean>).set(false)
+    } catch (e: ReflectiveOperationException) {
+      logger.warn("Could not configure test retry via reflection: ${e.message}")
+    } catch (e: ClassCastException) {
+      logger.warn("Test retry extension has unexpected type: ${e.message}")
+    }
+  } else {
+    // Neither the Develocity 4.x `develocity.testRetry` nor the deprecated 3.x `retry`
+    // extension was found on this task, so the failOnPassedAfterRetry=false override above
+    // is a silent no-op: the convention plugin's project-wide failOnPassedAfterRetry=true
+    // (JvmBaseConventionsPlugin.kt:119-143) would still apply, and a self-recovered flake in
+    // this advisory lane would redden the job exactly as R3 intended to prevent.
+    logger.warn("Test retry extension not found (develocity.testRetry / retry) — R3's " +
+        "failOnPassedAfterRetry=false override for integrationTest did not apply")
+  }
 }
 
 // System test task (Chaos Suite)
