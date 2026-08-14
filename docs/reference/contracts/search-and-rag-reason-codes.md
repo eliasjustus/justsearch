@@ -97,6 +97,8 @@ Payload shape:
 
 Reason codes are validated by the CI checks `scripts/ci/check-readiness-reason-codes.mjs` (lifecycle / readiness reason codes) and `scripts/ci/check-search-degradation-reason-codes.mjs` (search-degradation reason codes), which cross-check the Java enums (`LifecycleReasonCode.java`, `SearchReasonCode.java`) against their FE consumers.
 
+`check-readiness-reason-codes.mjs` additionally enforces a **producer direction** (tempdoc 837): every `LifecycleReasonCode` member must be referenced by at least one `modules/**/src/main` Java source outside the enum's own file — by enum name or quoted code string, matched after comment-stripping. A code nothing can emit is a phantom: its wording row is unreachable UI and the vocabulary claims a state the system cannot report. The direction runs with no exemption list; adding a code with no emit site fails the build. Honest limit: a *reference* is not an *emission*, so the check catches the zero-reference class rather than proving every code is reachable.
+
 **Case convention:** Java source uses `UPPER_CASE` IDs; FE/wire equivalents use `lower_snake_case` (`no_embedding_service` ↔ `NO_EMBEDDING_SERVICE`). The mapping is a trivial case-fold. The contract test allowlists in `GrpcSearchServiceReasonCodeContractTest` serve as the compile-time safety net.
 
 **Category design:** `embedding` (5 codes) covers search execution failures from `GrpcSearchService`. `embedding_compat` (8 codes) covers lifecycle states from `EmbeddingCompatibilityController`.

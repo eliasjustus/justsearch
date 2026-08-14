@@ -113,6 +113,18 @@ function hostTokens(cssText: string): Map<string, string> {
   return declarations(body);
 }
 
+/**
+ * The LIGHT set (`:host([theme='light'])`), which {@link hostTokens} deliberately skips. A palette
+ * whose contrast is only ever computed in its default theme is half-checked: the light set inverts
+ * `--foreground`, so every alpha wash keyed to it composites the other way and the subdued text
+ * roles sit at completely different ratios (measurably the WORSE ones — see the tier-ink case below).
+ */
+function lightTokens(cssText: string): Map<string, string> {
+  const at = cssText.indexOf(":host([theme='light']) {");
+  if (at < 0) throw new Error('no light token block');
+  return declarations(cssText.slice(at, cssText.indexOf('\n  }', at)));
+}
+
 /** `--name: value;` pairs, comments stripped. */
 function declarations(body: string): Map<string, string> {
   const out = new Map<string, string>();
@@ -137,6 +149,7 @@ function bridgeFor(cssText: string, tag: string): Map<string, string> {
 }
 
 const TOKENS = hostTokens(sv3Tokens.cssText);
+const LIGHT = lightTokens(sv3Tokens.cssText);
 const MAIN = ownStyles(Sv3Main);
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -148,8 +161,12 @@ function color(expr: string, scope: Map<string, string>): Rgba {
   const value = expr.trim();
   if (value === 'transparent') return { rgb: [0, 0, 0], a: 0 };
   if (value.startsWith('var(')) {
-    const name = splitTop(argsOf(value, 'var'))[0] as string;
-    const next = scope.get(name) ?? TOKENS.get(name);
+    // The FALLBACK arm matters, it is not convenience: the cite rules are authored as
+    // `var(--md-cite-…, <today's value>)`, so a bridge line DELETED from the window does not raise —
+    // it silently falls back and repaints. A resolver that threw on the missing name would report
+    // that regression as an error rather than as the wrong colour it actually is.
+    const [name, fallback] = splitTop(argsOf(value, 'var')) as [string, string | undefined];
+    const next = scope.get(name) ?? TOKENS.get(name) ?? fallback;
     if (next === undefined) throw new Error(`unresolved ${name}`);
     return color(next, scope);
   }
@@ -264,6 +281,25 @@ const MD_PROSE = [
 /** The shipped ramp steps the variant's headings read directly — h1/h2/h3 (h4-h6 take `-sm`). */
 const MD_PROSE_RAMP = ['--font-size-xl', '--font-size-lg', '--font-size-md'] as const;
 
+/**
+ * The citation mark's own vocabulary (tempdoc 822 citation-mark presentation §5.2/§5.3). Unlike the
+ * block geometry above these are declared as inline `var(name, default)` fallbacks in the cite rules
+ * themselves, not on the renderer's `:host` — that block belongs to the block-geometry workstream,
+ * whose containment proof enumerates its fifteen names exactly.
+ */
+const MD_CITE = [
+  '--md-cite-pad-x',
+  '--md-cite-pad-x-rest',
+  '--md-cite-radius',
+  '--md-cite-region-bg',
+  '--md-cite-region-inset-x',
+  '--md-cite-region-pad-x',
+  '--md-cite-selected-bg',
+  '--md-cite-selected-edge',
+  '--md-cite-ungrounded-color',
+  '--md-cite-weak-color',
+] as const;
+
 const reasons = (names: readonly string[], why: string): Record<string, string> =>
   Object.fromEntries(names.map((name) => [name, why]));
 
@@ -303,6 +339,14 @@ describe('the three imported components read NO token the window leaves unbridge
             'defaults on the renderer\'s own `:host([prose])`, and the ramp steps its headings read ' +
             'directly — applies to no element in the trace. Re-pointing them from this bridge would ' +
             'dress a surface that cannot render.',
+        ),
+        ...reasons(
+          MD_CITE,
+          'the citation-mark vocabulary (tempdoc 822 citation-mark presentation) is UNREACHABLE ' +
+            'here for the same reason: `ReasoningBlock.ts:181` renders the block with no ' +
+            '`.citations`, so `decorateCitations` never runs and no `.cite-ref` / `.cite-sentence` ' +
+            'element exists in the trace. A reasoning trace cites nothing — it is the model ' +
+            'thinking, not an answer with sources.',
         ),
       },
     );
@@ -438,6 +482,154 @@ describe('every text/surface pair those components can paint clears WCAG AA on t
       { what: 'excerpt', text: 'var(--text-secondary)', on: ['var(--surface-2)'] },
       { what: 'match score', text: 'var(--text-muted)', on: ['var(--surface-2)'] },
     ]);
+  });
+});
+
+/* ── 2b. The v3 selection bridge — the lines the whole citation-mark design hangs from ────────── */
+
+/**
+ * Tempdoc 822 citation-mark presentation §5.2/§5.3/§5.4, hardened after independent review.
+ *
+ * Every rule the design touches is authored as `var(--name, <today's value>)`, which is what makes
+ * the shipped windows byte-identical — and it is also why DELETING any one of these bridge lines is
+ * silent: the rule falls back, the mark reverts to `--accent-tint` (= `--primary`, the composer's
+ * send button — the act-now spend the whole design exists to avoid), and every other test in the
+ * repo stays green. That is the same shape as the defect this slice was written to fix, so the
+ * bridge itself needs an assertion, not just the things it feeds.
+ */
+const CITE_BRIDGE: Readonly<Record<string, string>> = {
+  '--md-cite-selected-bg': 'var(--sv3-selected)',
+  '--md-cite-selected-edge': 'var(--sv3-selected-edge)',
+  '--md-cite-weak-color': 'var(--sv3-cite-weak)',
+  '--md-cite-ungrounded-color': 'var(--sv3-cite-ungrounded)',
+  '--md-cite-region-bg': 'var(--sv3-selected-region)',
+  '--md-cite-pad-x-rest': '0.25em',
+  '--md-cite-pad-x': '0.25em',
+  '--md-cite-radius': '0.25em',
+  '--md-cite-region-pad-x': '0.25em',
+  '--md-cite-region-inset-x': '-0.25em',
+  '--cp-selected-region': 'var(--sv3-selected-region)',
+  '--cp-selected-edge': 'var(--sv3-selected-edge-strong)',
+  '--cp-selected': 'var(--sv3-selected-region)',
+  '--cp-hover-edge': 'var(--sv3-selected-edge)',
+  '--cp-selected-hover-edge': 'var(--sv3-selected-edge-strong)',
+};
+
+describe('the citation-selection bridge exists and points at the window\'s own material', () => {
+  const scope = bridgeFor(MAIN, '\\.sv3-citations');
+
+  it('declares every bridged name, at the value the design assigns it', () => {
+    for (const [name, value] of Object.entries(CITE_BRIDGE)) {
+      expect(scope.get(name), `${name} is missing from the .sv3-markdown/.sv3-citations bridge`).toBe(
+        value,
+      );
+    }
+  });
+
+  it('bridges EXACTLY the selection names the two components read — no more, no fewer', () => {
+    // The components' own sources are the checklist (same discipline as `assertClosed`), so a name
+    // added to a cite rule without a bridge line, or a bridge line left behind after its rule went
+    // away, both fail here instead of drifting.
+    const read = new Set<string>();
+    for (const file of ['MarkdownBlock.ts', 'CitationsPanel.ts']) {
+      for (const m of componentSource(file).matchAll(/var\((--(?:md-cite|cp)-[\w-]+)/g)) {
+        read.add(m[1] as string);
+      }
+    }
+    expect([...read].sort(), 'the selection vocabulary the components actually read').toEqual(
+      Object.keys(CITE_BRIDGE).sort(),
+    );
+  });
+
+  it('resolves every bridged colour through the token sheet in BOTH themes', () => {
+    // A `--sv3-*` target that does not exist would leave the property invalid-at-computed-value and
+    // the rule would paint its fallback — the silent revert again, one layer down.
+    const colours = Object.keys(CITE_BRIDGE).filter((n) => !CITE_BRIDGE[n]?.endsWith('em'));
+    for (const theme of ['dark', 'light'] as const) {
+      const themed = themeScope(theme, scope);
+      for (const name of colours) {
+        expect(() => color(`var(${name})`, themed), `${name} on the ${theme} window`).not.toThrow();
+      }
+    }
+  });
+});
+
+/* ── 2c. The tier ink survives the wash painted behind it (the §7.5 item) ─────────────────────── */
+
+/** Token lookup for one theme, with a component bridge layered on top. */
+function themeScope(theme: 'dark' | 'light', bridge: Map<string, string>): Map<string, string> {
+  const base = theme === 'light' ? [...TOKENS, ...LIGHT] : [...TOKENS];
+  return new Map<string, string>([...base, ...bridge]);
+}
+
+describe('a SELECTED citation mark keeps its grounding tier above the AA floor', () => {
+  /**
+   * The slice's thesis is that the honesty signal must survive the moment of scrutiny. It survived
+   * in HUE — `.cite-selected` no longer sets `color` — and broke in CONTRAST: selecting a low tier
+   * paints a 9 % wash behind a 12 px numeral, and both subdued tiers were measured under 4.5:1 on
+   * that composite (dark grey 4.22, light grey 3.97, light amber 4.14). A naive foreground-on-
+   * BACKGROUND check passes all four and sees none of it, so the wash has to be composited first.
+   *
+   * The declarations are written the way the renderer writes them — fallback included — so removing
+   * the bridge line does not error, it computes the un-lifted value and fails on the ratio.
+   */
+  const TIERS = [
+    { what: 'weak (grey)', ink: 'var(--md-cite-weak-color, var(--text-secondary))' },
+    { what: 'ungrounded (amber)', ink: 'var(--md-cite-ungrounded-color, var(--text-warning))' },
+  ] as const;
+  const NORMAL = 'var(--text-tint)';
+  const SELECTED_MARK = ['var(--md-cite-selected-bg, var(--accent-tint))'] as const;
+
+  const ratioOn = (ink: string, layers: readonly string[], scope: Map<string, string>): number => {
+    const bg = surface(layers, scope);
+    return contrastRatio(composite(color(ink, scope), bg), bg);
+  };
+
+  for (const theme of ['dark', 'light'] as const) {
+    for (const tier of TIERS) {
+      // One case per (theme × tier) on purpose: a single loop stops at the first failure, and the
+      // review found FOUR distinct measurements — three failing — that each need to be seen.
+      it(`clears AA on the ${theme} window for the ${tier.what} tier, resting AND selected`, () => {
+        const scope = themeScope(theme, bridgeFor(MAIN, '\\.sv3-citations'));
+        const resting = ratioOn(tier.ink, [], scope);
+        const selected = ratioOn(tier.ink, SELECTED_MARK, scope);
+        expect(
+          resting,
+          `${theme} — ${tier.what} at rest (${resting.toFixed(2)}:1)`,
+        ).toBeGreaterThanOrEqual(WCAG_AA);
+        expect(
+          selected,
+          `${theme} — ${tier.what} SELECTED, over the composited wash (${selected.toFixed(2)}:1)`,
+        ).toBeGreaterThanOrEqual(WCAG_AA);
+      });
+    }
+
+    it(`keeps a weak mark reading as WEAK on the ${theme} window`, () => {
+      // The lift is a floor repair, not a promotion: clearing AA by repainting the subdued tiers at
+      // the normal mark's strength would close the contrast defect by re-opening F2 in slower motion.
+      const scope = themeScope(theme, bridgeFor(MAIN, '\\.sv3-citations'));
+      const normal = ratioOn(NORMAL, SELECTED_MARK, scope);
+      for (const tier of TIERS.slice(0, 1)) {
+        const selected = ratioOn(tier.ink, SELECTED_MARK, scope);
+        expect(
+          selected,
+          `${theme} — ${tier.what} (${selected.toFixed(2)}:1) must stay below a normal mark (${normal.toFixed(2)}:1)`,
+        ).toBeLessThan(normal);
+      }
+    });
+  }
+
+  it('carries the lift on the TIER, never on the wash (the design\'s named remedy, §7.5)', () => {
+    // "The weak tier's colour moves, not the wash." The three rungs are measured material the panel
+    // and the region share; raising them to rescue a 12px glyph would repaint every selected surface
+    // in the window. So the rungs are pinned here, beside the ratios they are allowed to constrain.
+    expect(TOKENS.get('--sv3-selected')).toBe('color-mix(in srgb, var(--foreground) 9%, transparent)');
+    expect(LIGHT.get('--sv3-selected')).toBe('color-mix(in srgb, var(--foreground) 9%, transparent)');
+    // …and the tier inks are keyed to --foreground, the wash's own anchor, so the lift tracks a
+    // theme change instead of being a second hand-picked grey per palette.
+    for (const set of [TOKENS, LIGHT]) {
+      expect(set.get('--sv3-cite-weak')).toMatch(/^color-mix\(in srgb, var\(--muted-foreground\) \d+%, var\(--foreground\)\)$/);
+    }
   });
 });
 
