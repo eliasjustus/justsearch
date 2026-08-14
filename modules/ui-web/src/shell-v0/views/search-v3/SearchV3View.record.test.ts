@@ -133,6 +133,18 @@ function stubFetch(): void {
         },
       };
     }
+    // Tempdoc 838 — a name is a fact the BACKEND holds now, so the fake one holds it too: the write
+    // lands on the row the list then serves, which is what makes the reload assertions below a test
+    // of durability rather than of a browser-local cache.
+    if (href.includes('/api/chat/conversations') && href.endsWith('/title')) {
+      const id = decodeURIComponent(href.slice(0, -'/title'.length).split('/').pop() ?? '');
+      const row = backend.conversations.find((c) => c.sessionId === id);
+      if (row === undefined) return { ok: false, status: 404, json: () => Promise.resolve({}) };
+      const sent = JSON.parse(String((init as { body?: unknown }).body ?? '{}'));
+      row.title = sent.title;
+      row.titleSource = sent.source;
+      return { ok: true, status: 200, json: () => Promise.resolve({ ok: true, ...sent }) };
+    }
     if (href.includes('/api/chat/conversations')) {
       return { ok: true, status: 200, json: () => Promise.resolve({ sessions: backend.conversations }) };
     }
@@ -307,16 +319,8 @@ describe('a v3 session IS a conversation in the app-wide store (A1 + A4)', () =>
     const el = await mount();
     await ask(el, 'why did the renewal fail?');
     const id = el.sessions.sessions[0]?.id ?? '';
-    el.shadowRoot
-      ?.querySelector('jf-sv3-sidebar')
-      ?.dispatchEvent(
-        new CustomEvent('sv3-session-rename', {
-          detail: { id, phase: 'commit', title: 'Lease terms' },
-          bubbles: true,
-          composed: true,
-        }),
-      );
-    await settle(el);
+    // The conversation exists server-side from its first appended message, which the ask above just
+    // made — so the rename below is a write against a row the backend already has.
     backend.conversations = [
       {
         sessionId: id,
@@ -327,10 +331,74 @@ describe('a v3 session IS a conversation in the app-wide store (A1 + A4)', () =>
         shapeId: 'core.rag-ask',
       },
     ];
+    el.shadowRoot
+      ?.querySelector('jf-sv3-sidebar')
+      ?.dispatchEvent(
+        new CustomEvent('sv3-session-rename', {
+          detail: { id, phase: 'commit', title: 'Lease terms' },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    await settle(el);
+    // Tempdoc 838 — the name reached the BACKEND, which is the whole point: it is not in a browser
+    // map any more, and it carries the provenance that stops the next ask renaming it.
+    expect(backend.conversations[0]?.title).toBe('Lease terms');
+    expect(backend.conversations[0]?.titleSource).toBe('user');
+
     el.remove();
     const reloaded = await mount();
     // The store persists titles; the reloaded window shows the chosen one, not the question.
     expect(await rowLabels(reloaded)).toEqual(['Lease terms']);
+  });
+
+  it('puts a REFUSED rename back, and says so — the row never keeps a name nothing remembers', async () => {
+    const el = await mount();
+    await ask(el, 'why did the renewal fail?');
+    const id = el.sessions.sessions[0]?.id ?? '';
+    backend.conversations = [
+      {
+        sessionId: id,
+        createdAtMs: 1,
+        lastActiveAtMs: 2,
+        messageCount: 2,
+        firstUserMessage: 'why did the renewal fail?',
+        shapeId: 'core.rag-ask',
+      },
+    ];
+    // The store's data key is locked, so the write 423s — the one refusal this product already has a
+    // vocabulary for.
+    fetchMock.mockImplementationOnce(async () => ({
+      ok: false,
+      status: 423,
+      json: () => Promise.resolve({ errorCode: 'STORE_LOCKED', locked: true }),
+    }));
+    const toasts: string[] = [];
+    const handler = (event: Event): void => {
+      toasts.push((event as CustomEvent<{ message: string }>).detail.message);
+    };
+    document.addEventListener(EPHEMERAL_TOAST_EVENT, handler);
+    try {
+      el.shadowRoot?.querySelector('jf-sv3-sidebar')?.dispatchEvent(
+        new CustomEvent('sv3-session-rename', {
+          detail: { id, phase: 'commit', title: 'Lease terms' },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+      await settle(el);
+    } finally {
+      document.removeEventListener(EPHEMERAL_TOAST_EVENT, handler);
+    }
+
+    expect(backend.conversations[0]?.title).toBeUndefined();
+    expect(await rowLabels(el)).toEqual(['why did the renewal fail?']);
+    // The lock is named by the ONE reason vocabulary, not re-phrased here.
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]).toContain('encrypted and locked');
+    // A refused rename must not leave the row flagged as renamed — that flag outranks auto-titling,
+    // and it would be claiming a rename that never landed.
+    expect(el.sessions.sessions[0]?.renamed).toBe(false);
   });
 });
 
