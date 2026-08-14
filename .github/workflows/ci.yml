@@ -207,6 +207,16 @@ jobs:
       - name: Install API routes are documented
         run: node scripts/ci/check-install-api-contract.mjs
 
+      # Tempdoc 837 §5.1: this gate has existed since 600 but no workflow ever invoked it — it lived
+      # in the pre-merge table and three tempdocs only. That is how four ORT_CUDA_* reason codes with
+      # no producer survived, two of them carrying user-facing wording for a state that cannot occur.
+      # A gate nobody runs is prose, not enforcement.
+      - name: Test the readiness-reason-codes gate
+        run: node scripts/ci/check-readiness-reason-codes.test.mjs
+
+      - name: Readiness reason codes are worded and produced
+        run: node scripts/ci/check-readiness-reason-codes.mjs
+
       - name: Verify frontend-stack claims
         run: node scripts/docs/check-frontend-stack-claims.mjs
 
