@@ -260,6 +260,15 @@ public class InferenceLifecycleManager
     return serverOps.actualServerBuild();
   }
 
+  /**
+   * Tempdoc 835 §9c.2: whether the running llama-server can honour reasoning generation —
+   * {@code SUPPORTED} / {@code UNSUPPORTED} / {@code DISABLED} / {@code UNKNOWN}, decided by
+   * launch-argument acceptance. Published on the runtime manifest's {@code ai.thinkingSupport}.
+   */
+  public String llamaServerThinkingSupport() {
+    return serverOps.thinkingSupport();
+  }
+
   public long getLastStartupDurationMs() {
     return runner.view().lastStartupDurationMs();
   }

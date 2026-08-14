@@ -92,6 +92,25 @@ final class SubstrateDrivenEngineTest {
   }
 
   @Test
+  @DisplayName("done payload carries the full token triple, completionTokens included")
+  void donePayloadCarriesCompletionTokens() {
+    // Tempdoc 835 §9c.4: AiUsage always carried completionTokens and the engine dropped it, so
+    // "how much of the completion budget did reasoning eat?" was unanswerable — reasoning and
+    // answer tokens share this number, making it the denominator for every budget decision.
+    var llm = new UsageReportingAi("the response", 48, 512, 560);
+    var engine = newEngine(oneShotShape(List.of(), List.of(), List.of()),
+        List.of(), List.of(), List.of(), List.of(), llm);
+
+    var events = new ArrayList<SseEvent>();
+    engine.run(SHAPE_ID, Map.of(), Audience.USER, events::add);
+
+    SseEvent done = events.stream().filter(e -> "done".equals(e.name())).findFirst().orElseThrow();
+    assertEquals(48, done.payload().get("promptTokens"));
+    assertEquals(512, done.payload().get("completionTokens"));
+    assertEquals(560, done.payload().get("totalTokens"));
+  }
+
+  @Test
   @DisplayName(
       "tempdoc 569 Phase 5: a request-body schema is promoted to a server-side response_format"
           + " constraint so iteration-1 is schema-valid by construction")
@@ -1449,6 +1468,44 @@ final class SubstrateDrivenEngineTest {
   }
 
   /** Scripted OnlineAiService that returns a sequence of text responses. */
+  /** ScriptedAi that also reports token usage, like a real stream with {@code include_usage}. */
+  private static final class UsageReportingAi implements OnlineAiService {
+    private final String response;
+    private final io.justsearch.app.api.OnlineAiService.AiUsage usage;
+
+    UsageReportingAi(String response, Integer prompt, Integer completion, Integer total) {
+      this.response = response;
+      this.usage = new io.justsearch.app.api.OnlineAiService.AiUsage(prompt, completion, total);
+    }
+
+    @Override
+    public boolean isAvailable() {
+      return true;
+    }
+
+    @Override
+    public boolean isStartingUp() {
+      return false;
+    }
+
+    @Override
+    public CompletableFuture<String> summarize(String content) {
+      return CompletableFuture.failedFuture(new UnsupportedOperationException("unused in test"));
+    }
+
+    @Override
+    public CompletableFuture<String> askQuestion(String question, String context) {
+      return CompletableFuture.failedFuture(new UnsupportedOperationException("unused in test"));
+    }
+
+    @Override
+    public void stream(StreamRequest request, StreamSink sink) {
+      sink.onContent().accept(response);
+      sink.onUsage().accept(usage);
+      sink.onComplete().accept("stop");
+    }
+  }
+
   private static final class ScriptedAi implements OnlineAiService {
     final List<String> responses;
     final AtomicInteger callIndex = new AtomicInteger(0);

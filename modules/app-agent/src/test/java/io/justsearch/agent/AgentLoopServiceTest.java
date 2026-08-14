@@ -1209,11 +1209,17 @@ class AgentLoopServiceTest {
   }
 
   // ---------------------------------------------------------------------------
-  // Think tag stripping from accumulated text
+  // Think tag hygiene lives upstream, in the inference layer
   // ---------------------------------------------------------------------------
 
   @Test
-  void thinkTags_strippedFromFinalResponse() {
+  void thinkTags_areNotStrippedHere_becauseTheStreamFilterOwnsThat() {
+    // Tempdoc 835 §5.3: the agent used to run its own strip over the accumulated text — a second
+    // authority over the same fact, and one that could only see whole tags after the stream ended.
+    // The single authority is now ThinkTagStreamFilter in OnlineModeOps' streaming parse (tag
+    // straddles across SSE frames, reasoning rerouted to the reasoning channel), so by the time
+    // text reaches this accumulator it carries no tags. This scripted service bypasses that layer,
+    // which is exactly what makes it able to witness that the agent no longer double-strips.
     var ai = new ScriptedAiService(List.of(
         ScriptedResponse.textOnly("<think>internal reasoning here</think>Clean answer")));
     var service = buildService(ai, new StubTool("search", RiskTier.LOW, "r"));
@@ -1222,7 +1228,7 @@ class AgentLoopServiceTest {
 
     var done = lastEventOfType(events, AgentEvent.AgentDone.class);
     assertNotNull(done, "Should emit AgentDone");
-    assertEquals("Clean answer", done.finalResponse());
+    assertEquals("<think>internal reasoning here</think>Clean answer", done.finalResponse());
   }
 
   // ---------------------------------------------------------------------------

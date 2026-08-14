@@ -33,6 +33,7 @@ final class ServerPropsOps {
 
   private final AtomicReference<String> observedServerBuild = new AtomicReference<>(null);
   private final AtomicReference<String> lastBuildMismatchWarned = new AtomicReference<>(null);
+  private final AtomicReference<String> lastReasoningCapsLogged = new AtomicReference<>(null);
 
   // ==================== External Server Adoption Diagnostics ====================
 
@@ -69,7 +70,40 @@ final class ServerPropsOps {
     applyContextInsightsFromProps(root);
     applyVisionCapabilityFromProps(root);
     applyBuildInsightsFromProps(root);
+    applyReasoningCapabilityFromProps(root);
     applyExternalAdoptionInsightsFromProps(root);
+  }
+
+  /**
+   * Tempdoc 835 §5.2 signal 2 — records the running build's chat-template capabilities. This is a
+   * <em>secondary</em> signal on purpose: b8571's {@code chat_template_caps} carries
+   * {@code supports_preserve_reasoning} but no {@code supports_enable_thinking}, so per-request
+   * thinking support is not advertised and cannot be read here. Launch-argument acceptance
+   * ({@code LlamaServerOps}) remains the authoritative verdict; this only says "the build is
+   * reasoning-aware". De-duplicated so repeated {@code /props} reads do not spam.
+   */
+  private void applyReasoningCapabilityFromProps(JsonNode root) {
+    boolean capsPresent = hasChatTemplateCaps(root);
+    boolean preserveReasoning = supportsPreserveReasoning(root);
+    String signature = capsPresent + "|" + preserveReasoning;
+    if (!signature.equals(lastReasoningCapsLogged.getAndSet(signature))) {
+      LOG.info(
+          "llama-server chat-template capabilities: chat_template_caps={}, "
+              + "supports_preserve_reasoning={} (recorded, not gating)",
+          capsPresent,
+          preserveReasoning);
+    }
+  }
+
+  /** True when {@code /props} carries a {@code chat_template_caps} object at all. */
+  static boolean hasChatTemplateCaps(JsonNode root) {
+    return root != null && root.path("chat_template_caps").isObject();
+  }
+
+  /** True when the build advertises {@code chat_template_caps.supports_preserve_reasoning}. */
+  static boolean supportsPreserveReasoning(JsonNode root) {
+    return root != null
+        && root.path("chat_template_caps").path("supports_preserve_reasoning").asBoolean(false);
   }
 
   /**

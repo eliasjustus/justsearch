@@ -18,23 +18,44 @@
  *    never reach `wordCauses`, so a row would be dead UI; PART X.)
  *  - BACKWARD (no dead/typo rows): every `CAUSE_ROWS` code is a real enum member OR
  *    a declared `feDerived` code (e.g. `no_documents`, 596 §17).
+ *  - PRODUCER (no phantoms; tempdoc 837 §5): every enum member is referenced by at
+ *    least one Java source under a `modules/<module>/src/main` tree, outside the enum's
+ *    own file. See `checkProducers` for why, and for what it deliberately does not prove.
  *
- * Honest limit (as with the sibling gates): the producer↔composite mapping is
- * captured by the curated `noWordingExempt` allow-list, not computed from Java —
- * a wrong future exemption is reviewable, far better than silent hand-sync.
+ * Honest limits (as with the sibling gates):
+ *  - the producer↔composite mapping is captured by the curated `noWordingExempt`
+ *    allow-list, not computed from Java — a wrong future exemption is reviewable,
+ *    far better than silent hand-sync;
+ *  - a *reference* is not an *emission* (see `checkProducers`).
  */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 const REGISTER = 'governance/readiness-reason-codes.v1.json';
 
+/**
+ * Extract `NAME("code.string")` enum members from the LifecycleReasonCode source as
+ * `{ name, code }` rows. The FORWARD/BACKWARD directions only need the code; the
+ * PRODUCER direction also matches on the enum NAME, so this is the one extraction
+ * authority and `extractEnumCodes` is a projection of it.
+ */
+export function extractEnumRows(javaSrc) {
+  const rows = [];
+  const seen = new Set();
+  // Match enum constants of the shape  IDENT("some.code")  — the only `IDENT("...")` form in this file.
+  const re = /\b([A-Z][A-Z0-9_]*)\s*\(\s*"([^"]+)"\s*\)/g;
+  let m;
+  while ((m = re.exec(javaSrc)) !== null) {
+    if (seen.has(m[2])) continue;
+    seen.add(m[2]);
+    rows.push({ name: m[1], code: m[2] });
+  }
+  return rows;
+}
+
 /** Extract `NAME("code.string")` enum-member code strings from the LifecycleReasonCode source. */
 export function extractEnumCodes(javaSrc) {
-  const codes = new Set();
-  // Match enum constants of the shape  IDENT("some.code")  — the only `IDENT("...")` form in this file.
-  const re = /\b[A-Z][A-Z0-9_]*\s*\(\s*"([^"]+)"\s*\)/g;
-  let m;
-  while ((m = re.exec(javaSrc)) !== null) codes.add(m[1]);
-  return codes;
+  return new Set(extractEnumRows(javaSrc).map((r) => r.code));
 }
 
 /** Extract `code: '...'` values from the CAUSE_ROWS array of readinessNotice.ts. */
@@ -83,9 +104,151 @@ export function checkCorrespondence({ enumCodes, causeRowCodes, noWordingExempt,
   return failures;
 }
 
+/**
+ * Blank out Java comments (line comments to end-of-line, and block comments) while
+ * preserving string and char literals — including text blocks — so that a `//` inside a
+ * literal (`"http://…"`) does not swallow the rest of the line.
+ *
+ * Replacing comment bytes with spaces rather than deleting them keeps offsets stable,
+ * which is what makes "strip, then match" safe: nothing new can be spliced together
+ * across a removed comment.
+ */
+export function stripJavaComments(src) {
+  const out = Array.from(src);
+  const blank = (from, to) => {
+    for (let k = from; k < to; k += 1) if (out[k] !== '\n') out[k] = ' ';
+  };
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === '/' && src[i + 1] === '/') {
+      let j = i;
+      while (j < src.length && src[j] !== '\n') j += 1;
+      blank(i, j);
+      i = j;
+    } else if (c === '/' && src[i + 1] === '*') {
+      let j = src.indexOf('*/', i + 2);
+      j = j === -1 ? src.length : j + 2;
+      blank(i, j);
+      i = j;
+    } else if (c === '"' && src.startsWith('"""', i)) {
+      let j = src.indexOf('"""', i + 3);
+      i = j === -1 ? src.length : j + 3;
+    } else if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < src.length && src[j] !== c && src[j] !== '\n') {
+        j += src[j] === '\\' ? 2 : 1;
+      }
+      i = j + 1;
+    } else {
+      i += 1;
+    }
+  }
+  return out.join('');
+}
+
+/**
+ * PRODUCER (tempdoc 837 §5) — every non-feDerived enum code must be referenced by at least one
+ * Java source under a `modules/<module>/src/main` tree, outside the enum's own file, by enum
+ * NAME (`LifecycleReasonCode.<NAME>`) or by its quoted code string.
+ *
+ * Why: a code nothing can emit is a phantom. It cannot degrade anything, its `CAUSE_ROWS`
+ * wording is unreachable UI, and it makes the vocabulary lie about what this system can
+ * report. Four `ORT_CUDA_*` codes lived here for months, two of them with user-facing
+ * wording for a state that could not occur (837 §4).
+ *
+ * Sources are comment-stripped BEFORE matching. A plain substring scan would count javadoc
+ * mentions as producers, and this codebase is dense with them — so a comment-blind check
+ * would certify precisely the bug this direction exists to catch.
+ *
+ * Name-matching is the primary signal (837 §5.2 measured 0 codes as string-literal-only).
+ * String-matching is defense in depth for a future producer that emits the literal without
+ * ever naming the enum — the shape `TikaOcrRuntime` / `VduCapabilityState` already have on
+ * their producing side.
+ *
+ * HONEST LIMIT — a reference is not an emission. `WORKER_RESTART_EXHAUSTED.code().equals(…)`
+ * is a *consumer* reference and satisfies this check; `LifecycleSnapshotTap` references many
+ * codes as map keys. Syntactic emit-shape detection was considered and rejected as brittle.
+ * This direction catches the ZERO-reference class, which is the class that actually occurred
+ * (4/4 of the real phantoms). Do not mistake it for stronger than it is.
+ *
+ * @param enumRows      `{ name, code }[]` from `extractEnumRows`
+ * @param mainSources   `{ path, text }[]` — raw Java sources; comments stripped here
+ * @param feDerived     FE-only codes (the only exemption; `noWordingExempt` deliberately does
+ *                      NOT exempt from this direction — the two lists answer different questions)
+ */
+export function checkProducers({ enumRows, mainSources, feDerived }) {
+  const fe = new Set(feDerived);
+  const haystacks = mainSources.map((s) => stripJavaComments(s.text));
+  const failures = [];
+
+  for (const { name, code } of enumRows) {
+    if (fe.has(code)) continue;
+    const byName = `LifecycleReasonCode.${name}`;
+    const byString = `"${code}"`;
+    // `\b` after the name so a longer sibling cannot satisfy a shorter code: without it,
+    // a reference to WORKER_LOST_PERMANENTLY would mark WORKER_LOST as produced. Enum names
+    // are [A-Z][A-Z0-9_]* so they carry no regex metacharacters and need no escaping.
+    const nameRe = new RegExp(`LifecycleReasonCode\\.${name}\\b`);
+    const found = haystacks.some((h) => nameRe.test(h) || h.includes(byString));
+    if (found) continue;
+    failures.push(
+      `producer: reason code \`${code}\` (${name}) has NO emit site — no file under ` +
+        `modules/*/src/main references \`${byName}\` or the literal ${byString}. A code nothing ` +
+        `emits is a phantom: its CAUSE_ROWS wording is unreachable UI and the vocabulary claims a ` +
+        `state this system cannot report. PRODUCE it (add the emit site) or DELETE it (enum member ` +
+        `+ CAUSE_ROWS row + any ${REGISTER} entry — the full sweep). If it is FE-only, declare it ` +
+        `in \`feDerived\` with a one-line rationale.`,
+    );
+  }
+  return failures;
+}
+
+/**
+ * Walk `modules/` for every `.java` file whose path contains a `src/main` segment, skipping
+ * `build/` output (generated sources are not authored emit sites) and the enum's own
+ * declaration file. Reads the tree directly rather than shelling out to `git grep`, so the
+ * check behaves identically in CI and on a dirty worktree.
+ */
+export function collectMainSources(root = 'modules', excludePath = '') {
+  const exclude = excludePath.replace(/\\/g, '/');
+  const sources = [];
+  const walk = (dir) => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name === 'build' || e.name === 'node_modules' || e.name === '.gradle') continue;
+        walk(p);
+      } else if (e.isFile() && e.name.endsWith('.java')) {
+        const norm = p.replace(/\\/g, '/');
+        if (!norm.includes('/src/main/')) continue;
+        if (exclude && norm.endsWith(exclude)) continue;
+        sources.push({ path: norm, text: readFileSync(p, 'utf8') });
+      }
+    }
+  };
+  if (statSyncSafe(root)) walk(root);
+  return sources;
+}
+
+function statSyncSafe(p) {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 function main() {
   const reg = JSON.parse(readFileSync(REGISTER, 'utf8'));
-  const enumCodes = extractEnumCodes(readFileSync(reg.producer.file, 'utf8'));
+  const enumRows = extractEnumRows(readFileSync(reg.producer.file, 'utf8'));
+  const enumCodes = new Set(enumRows.map((r) => r.code));
   const causeRowCodes = extractCauseRowCodes(readFileSync(reg.consumer.file, 'utf8'));
 
   if (enumCodes.size === 0 || causeRowCodes.size === 0) {
@@ -97,11 +260,12 @@ function main() {
     process.exit(1);
   }
 
+  const feDerived = (reg.feDerived ?? []).map((e) => e.code);
   const failures = checkCorrespondence({
     enumCodes,
     causeRowCodes,
     noWordingExempt: (reg.noWordingExempt ?? []).map((e) => e.code),
-    feDerived: (reg.feDerived ?? []).map((e) => e.code),
+    feDerived,
   });
 
   if (failures.length > 0) {
@@ -111,10 +275,33 @@ function main() {
     );
     process.exit(1);
   }
+
+  const mainSources = collectMainSources('modules', reg.producer.file);
+  if (mainSources.length === 0) {
+    console.error(
+      `✗ readiness-reason-codes gate FAILED (producer direction, tempdoc 837): found no ` +
+        `modules/**/src/main Java sources to scan — the tree layout moved, and an empty corpus ` +
+        `would pass this direction vacuously.`,
+    );
+    process.exit(1);
+  }
+
+  const producerFailures = checkProducers({ enumRows, mainSources, feDerived });
+  if (producerFailures.length > 0) {
+    console.error(
+      '✗ readiness-reason-codes gate FAILED (producer direction, tempdoc 837):\n' +
+        producerFailures.map((x) => '  - ' + x).join('\n'),
+    );
+    process.exit(1);
+  }
+
+  const exemptCount = enumRows.filter((r) => feDerived.includes(r.code)).length;
   console.log(
     `✓ readiness-reason-codes gate OK — producer↔CAUSE_ROWS correspond ` +
       `(${enumCodes.size} emittable codes, ${causeRowCodes.size} worded rows); no raw code can reach the ` +
-      `degradation banner.`,
+      `degradation banner. Producer direction OK — all ${enumRows.length - exemptCount} codes have ≥1 ` +
+      `emit-site reference across ${mainSources.length} modules/**/src/main sources; ` +
+      `${exemptCount} exempt.`,
   );
 }
 

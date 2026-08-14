@@ -81,12 +81,12 @@ public final class QueryUnderstandingService {
     }
     RESPONSE_FORMAT_SCHEMA = schema;
 
-    // Build sampling params: deterministic, no thinking, response_format
+    // Build sampling params: deterministic (which now carries enable_thinking:false — tempdoc 835
+    // §10f) plus the response_format schema.
     if (RESPONSE_FORMAT_SCHEMA != null) {
       QU_SAMPLING =
-          SamplingParams.DETERMINISTIC
-              .withEnableThinking(false)
-              .withResponseFormat(Map.of("type", "json_object", "schema", RESPONSE_FORMAT_SCHEMA));
+          SamplingParams.DETERMINISTIC.withResponseFormat(
+              Map.of("type", "json_object", "schema", RESPONSE_FORMAT_SCHEMA));
     } else {
       QU_SAMPLING = null;
     }

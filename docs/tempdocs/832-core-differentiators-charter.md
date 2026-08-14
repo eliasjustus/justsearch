@@ -179,6 +179,22 @@ measurement requires paid cells; only content-coverage was measurable at $0 (don
   probe), 5 adversarial tests, docId-logging on terminal SPLADE escalations; live
   verification 5408/5408 / comparable / hybrid 0.8844 = 802's prediction. **The 803
   re-baseline is unblocked** — next: merge the fix, then run the 5-corpus campaign.
+- 2026-08-14: **803 RE-BASELINE CAMPAIGN EXECUTED AND COMPOSED.** Fix merged (PR #459);
+  campaign queued behind the 822 session's active stack via a lease-heartbeat monitor,
+  dispatched into the free window; five corpora × four leg modes, detached driver, all
+  runs comparable with empty reasons; miracl-fr acceptance test PASSED (5408/5408, first
+  certifiable fr run). One incident: a sibling session pulled main into the shared
+  checkout mid-campaign (scifact at `6fe7a182`, rest at `32d6a0a0` → compose refused the
+  split cohort, correctly); scifact re-run at `32d6a0a0` (repro within 0.0014 — a free
+  stability check). Composed release `832-rebaseline-2026-08-14` (cohort `6cc38211db51`,
+  git `32d6a0a0`): hybrid nDCG@10 scifact **0.7572**, enron **0.7957**, legal **0.5780**,
+  miracl-de **0.8575**, miracl-fr **0.8844** — the first release scored on the corrected
+  delivered-rank basis. Floors re-project automatically (pointer mechanism); README table
+  + scorecard regenerated and gate-checked; register rows + F-001/F-006 rider updates
+  recorded. Deltas vs the fused-order numbers carry 802's measured per-corpus CE-ordering
+  terms with the right signs (enron +, legal −) — the ordering channel is now IN the
+  published numbers. Remaining open in this charter: 748 §G.3 + entity-carriage smoke
+  (next stack window); paid campaign parked per owner.
 - 2026-08-14: **796 tier-D launched** (CPU load 23% < 60 precondition; detached
   `Start-Process` driver `tmp/paraphrase-bridge/tier-d-driver.ps1` with per-stage markers,
   since tracked background tasks die at ~60 min). `pairs.v1.json` was absent (tmp cleared)

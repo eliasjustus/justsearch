@@ -208,17 +208,6 @@ const CAUSE_ROWS: ReadonlyArray<{
     wording: 'The knowledge server stopped responding and could not be recovered',
     severity: 'error',
   },
-  // GPU acceleration unavailable ⇒ CPU fallback: slower, not broken (info).
-  {
-    code: 'ort_cuda.missing_dlls',
-    wording: 'GPU acceleration is unavailable (missing CUDA DLLs)',
-    severity: 'info',
-  },
-  {
-    code: 'ort_cuda.provider_failed',
-    wording: 'GPU acceleration failed to initialize',
-    severity: 'info',
-  },
   // Tempdoc 600 PART X — the GPU-saturation readiness code (aiFeatures composite). When retrieval is
   // independently degraded, the verdict appends this as a SECONDARY cause; without a row it rendered the
   // raw `Degraded: gpu.saturated` (reproduced live). A transient performance dip, not a broken

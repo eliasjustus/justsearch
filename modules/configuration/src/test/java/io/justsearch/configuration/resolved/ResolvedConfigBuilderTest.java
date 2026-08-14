@@ -276,6 +276,113 @@ final class ResolvedConfigBuilderTest {
       assertEquals(0, config.ai().reranker().maxAvgDocLengthChars());
     }
 
+    // ==================== Reasoning budget (tempdoc 835 §9f) ====================
+    //
+    // These guard a SILENT failure: reasoning and answer tokens share one completion ceiling, so an
+    // unbounded reasoning budget lets reasoning consume all of it and the turn ends with a normal
+    // `done` event, no error, and an empty answer (reproduced 4/4 on b8571 / Qwen3.5-9B). The point
+    // of the clamp is that this configuration cannot be reached by accident, so these tests are
+    // named for the failure they prevent, not for the numbers they check.
+
+    @Test
+    @DisplayName("reasoning budget defaults to a bounded 512 — thinking on, answer intact")
+    void reasoningBudgetDefaultsToBounded512() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.contributeEnvRegistry();
+
+      ResolvedConfig config = builder.build();
+
+      assertEquals(ResolvedConfigBuilder.DEFAULT_REASONING_BUDGET, config.ai().reasoningBudget());
+      assertEquals(512, config.ai().reasoningBudget());
+    }
+
+    @Test
+    @DisplayName("unbounded budget (-1) cannot reach the launch path — the 4/4 empty-answer config")
+    void unboundedBudgetCannotProduceTheEmptyAnswerConfiguration() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.put(
+          "justsearch.llm.reasoning_budget",
+          ResolvedConfigBuilder.ORDINAL_ENV_VAR,
+          "env_var",
+          "JUSTSEARCH_REASONING_BUDGET",
+          "-1");
+
+      ResolvedConfig config = builder.build();
+
+      assertEquals(ResolvedConfigBuilder.DEFAULT_REASONING_BUDGET, config.ai().reasoningBudget());
+    }
+
+    @Test
+    @DisplayName("a budget at or above the engine's completion ceiling is refused, from any source")
+    void budgetAtOrAboveTheCompletionCeilingIsRefused() {
+      for (String raw :
+          new String[] {
+            Integer.toString(ResolvedConfigBuilder.ENGINE_DEFAULT_MAX_TOKENS),
+            Integer.toString(ResolvedConfigBuilder.ENGINE_DEFAULT_MAX_TOKENS + 2048)
+          }) {
+        ResolvedConfigBuilder envBuilder = new ResolvedConfigBuilder();
+        envBuilder.put(
+            "justsearch.llm.reasoning_budget",
+            ResolvedConfigBuilder.ORDINAL_ENV_VAR,
+            "env_var",
+            "JUSTSEARCH_REASONING_BUDGET",
+            raw);
+        assertEquals(
+            ResolvedConfigBuilder.DEFAULT_REASONING_BUDGET,
+            envBuilder.build().ai().reasoningBudget(),
+            "env var " + raw + " must be refused");
+
+        ResolvedConfigBuilder jvmBuilder = new ResolvedConfigBuilder();
+        jvmBuilder.put(
+            "justsearch.llm.reasoning_budget",
+            ResolvedConfigBuilder.ORDINAL_JVM_ARG,
+            "jvm_arg",
+            "justsearch.llm.reasoning_budget",
+            raw);
+        assertEquals(
+            ResolvedConfigBuilder.DEFAULT_REASONING_BUDGET,
+            jvmBuilder.build().ai().reasoningBudget(),
+            "jvm arg " + raw + " must be refused");
+      }
+    }
+
+    @Test
+    @DisplayName("0 stays representable — explicitly disabling reasoning is not catastrophic")
+    void zeroBudgetIsPreserved() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.put(
+          "justsearch.llm.reasoning_budget",
+          ResolvedConfigBuilder.ORDINAL_ENV_VAR,
+          "env_var",
+          "JUSTSEARCH_REASONING_BUDGET",
+          "0");
+
+      assertEquals(0, builder.build().ai().reasoningBudget());
+    }
+
+    @Test
+    @DisplayName("a bounded operator override below the ceiling is honored")
+    void boundedOverrideIsHonored() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.put(
+          "justsearch.llm.reasoning_budget",
+          ResolvedConfigBuilder.ORDINAL_ENV_VAR,
+          "env_var",
+          "JUSTSEARCH_REASONING_BUDGET",
+          "256");
+
+      assertEquals(256, builder.build().ai().reasoningBudget());
+    }
+
+    @Test
+    @DisplayName("the default is itself below the completion ceiling — the invariant it enforces")
+    void defaultIsBelowTheCompletionCeiling() {
+      assertTrue(
+          ResolvedConfigBuilder.DEFAULT_REASONING_BUDGET
+              < ResolvedConfigBuilder.ENGINE_DEFAULT_MAX_TOKENS,
+          "the clamp's fallback must satisfy the invariant the clamp enforces");
+    }
+
     @Test
     @DisplayName("embedGpuMemMb honors explicit override")
     void embedGpuMemMbExplicitOverride() {

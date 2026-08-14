@@ -132,7 +132,8 @@ class RuntimeManifestSchemaCompatibilityTest {
 
     // Omitted fields stay null and are omitted on write (NON_NULL) — older readers unaffected.
     RuntimeManifest.AiInfo bare =
-        new RuntimeManifest.AiInfo("OFFLINE", false, "Inference not configured", null, null, null);
+        new RuntimeManifest.AiInfo(
+            "OFFLINE", false, "Inference not configured", null, null, null, null);
     String written = TOLERANT.writeValueAsString(bare);
     assertTrue(
         !written.contains("serverBuild"),
@@ -140,6 +141,42 @@ class RuntimeManifestSchemaCompatibilityTest {
     RuntimeManifest.AiInfo reparsed = TOLERANT.readValue(written, RuntimeManifest.AiInfo.class);
     assertEquals(null, reparsed.serverBuildExpected());
     assertEquals(null, reparsed.serverBuildActual());
+  }
+
+  @Test
+  void aiThinkingSupportRoundTripsAndStaysOptional() throws Exception {
+    // Tempdoc 835 §9c.2: thinkingSupport is a new OPTIONAL AiInfo field carrying the running
+    // server's reasoning-capability verdict. Same additive contract as the build pin — a body
+    // carrying it round-trips, a body omitting it parses with null, and null is not written.
+    String withVerdict =
+        "{\n"
+            + "  \"schemaVersion\": 1,\n"
+            + "  \"instanceId\": \"00000000-0000-0000-0000-000000000835\",\n"
+            + "  \"pid\": 835,\n"
+            + "  \"startedAt\": \"2026-08-14T00:00:00Z\",\n"
+            + "  \"dataDir\": \"/tmp/835\",\n"
+            + "  \"head\": {\n"
+            + "    \"apiPort\": 40835,\n"
+            + "    \"apiBaseUrl\": \"http://127.0.0.1:40835\",\n"
+            + "    \"readyAt\": \"2026-08-14T00:00:01Z\"\n"
+            + "  },\n"
+            + "  \"ai\": {\"phase\": \"READY\", \"required\": true,\n"
+            + "    \"thinkingSupport\": \"SUPPORTED\"}\n"
+            + "}";
+
+    RuntimeManifest parsed = TOLERANT.readValue(withVerdict, RuntimeManifest.class);
+    assertNotNull(parsed.ai());
+    assertEquals("SUPPORTED", parsed.ai().thinkingSupport());
+
+    RuntimeManifest.AiInfo unknownVerdict =
+        new RuntimeManifest.AiInfo("READY", true, null, null, null, null, null);
+    String written = TOLERANT.writeValueAsString(unknownVerdict);
+    assertTrue(
+        !written.contains("thinkingSupport"),
+        "an absent verdict must be omitted (NON_NULL): " + written);
+    assertEquals(
+        null,
+        TOLERANT.readValue(written, RuntimeManifest.AiInfo.class).thinkingSupport());
   }
 
   @Test
