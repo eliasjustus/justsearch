@@ -5,7 +5,6 @@ import io.justsearch.agent.api.registry.HandlerRegistry;
 import io.justsearch.app.api.IndexingService;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.agent.tools.BrowseTool;
-import io.justsearch.agent.tools.FileOperationLog;
 import io.justsearch.agent.tools.FileOperationsTool;
 import io.justsearch.agent.tools.IngestTool;
 import io.justsearch.agent.tools.SearchTool;
@@ -20,8 +19,6 @@ import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
 import io.justsearch.app.services.worker.RemoteKnowledgeClient;
 import java.nio.file.Path;
-import java.util.List;
-import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,9 +32,9 @@ import org.slf4j.LoggerFactory;
  *       provided up front (typical of test paths). Registers only the tool instances supplied
  *       (each may be null).
  *   <li>{@link #registerLateBound} — connect-time registration after the worker channel comes
- *       up. Builds the SearchTool / BrowseTool / IngestTool / FileOperationsTool instances
- *       internally from the supplied dependencies. Idempotent: skipped if SEARCH_INDEX is
- *       already registered.
+ *       up. Delegates composition of the tool bundle to {@link AgentToolFactory} (tempdoc 832: one
+ *       construction authority) and registers what it returns. Idempotent: skipped if SEARCH_INDEX
+ *       is already registered.
  * </ul>
  */
 public final class AgentToolHandlers {
@@ -73,8 +70,8 @@ public final class AgentToolHandlers {
   }
 
   /**
-   * Late-bound registration: build the four tool instances from the supplied dependencies and
-   * register them. Returns true if registration ran; false if it was skipped (idempotence
+   * Late-bound registration: obtain the four tool instances from {@link AgentToolFactory#assemble}
+   * and register them. Returns true if registration ran; false if it was skipped (idempotence
    * check or missing prerequisites).
    */
   public static boolean registerLateBound(
@@ -105,47 +102,29 @@ public final class AgentToolHandlers {
       log.warn("registerAgentToolHandlers skipped: dataDir not initialized");
       return false;
     }
-    KnowledgeHttpApiAdapter adapter =
-        existingAdapter != null
-            ? existingAdapter
-            : new KnowledgeHttpApiAdapter(knowledgeServer, onlineAiService, lambdaMartReranker);
-    // Tempdoc 832 (lane D): bind scan observability onto whichever adapter the ingest tool ends up
-    // driving. On the normal boot the Worker connects asynchronously, so the eager
-    // AgentToolFactory.build produced nothing and the adapter is FRESHLY built right above —
-    // binding only the eager one would leave the common path emitting no scan-progress SSE and no
-    // rollup row.
-    AgentToolFactory.bindScanObservability(adapter, scanProgressRegistry, scanRollupLedger);
-    FileOperationLog fileOperationLog = new FileOperationLog(dataDir.resolve("file-operations"));
-    FileOperationsTool fileOperationsTool =
-        new FileOperationsTool(
-            indexingService::getWatchedPaths,
-            knowledgeClient::updateDocumentPaths,
-            fileOperationLog);
-    Supplier<List<BrowseTool.RootInfo>> rootsSupplier =
-        () ->
-            indexingService.getWatchedRoots().stream()
-                .map(
-                    r ->
-                        new BrowseTool.RootInfo(
-                            r.path().toAbsolutePath().normalize().toString(),
-                            r.path().getFileName().toString()))
-                .toList();
-    SearchTool searchTool = new SearchTool(adapter::search, rootsSupplier);
-    BrowseTool browseTool = new BrowseTool(adapter::listFolders, adapter::listFolderFiles, rootsSupplier);
-    IngestTool ingestTool =
-        new IngestTool(
-            adapter::ingest,
-            adapter::scanRoot,
-            rootsSupplier,
-            () -> AgentToolFactory.rootBindings(indexingService));
+    // Tempdoc 832: one construction authority. This path used to duplicate AgentToolFactory's
+    // assembly, which is how the lane-D scan-observability wiring reached only one of the two
+    // copies. Registration is this method's job; composition is the factory's.
+    AgentToolFactory.Output tools =
+        AgentToolFactory.assemble(
+            dataDir,
+            knowledgeServer,
+            knowledgeClient,
+            indexingService,
+            onlineAiService,
+            lambdaMartReranker,
+            existingAdapter,
+            scanProgressRegistry,
+            scanRollupLedger);
     operationHandlers.register(
-        AgentToolsOperationCatalog.SEARCH_INDEX, new SearchOperationHandler(searchTool));
+        AgentToolsOperationCatalog.SEARCH_INDEX, new SearchOperationHandler(tools.searchTool()));
     operationHandlers.register(
-        AgentToolsOperationCatalog.BROWSE_FOLDERS, new BrowseOperationHandler(browseTool));
+        AgentToolsOperationCatalog.BROWSE_FOLDERS, new BrowseOperationHandler(tools.browseTool()));
     operationHandlers.register(
-        AgentToolsOperationCatalog.INGEST_FILES, new IngestOperationHandler(ingestTool));
+        AgentToolsOperationCatalog.INGEST_FILES, new IngestOperationHandler(tools.ingestTool()));
     operationHandlers.register(
-        AgentToolsOperationCatalog.FILE_OPERATIONS, new FileOperationsHandler(fileOperationsTool));
+        AgentToolsOperationCatalog.FILE_OPERATIONS,
+        new FileOperationsHandler(tools.fileOperationsTool()));
     // Tempdoc 561 P-E: the learning producer — core_remember persists durable facts into the shared
     // single-authority MemoryStore (the same instance /api/memory reads).
     if (memoryStore != null) {

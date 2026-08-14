@@ -2523,8 +2523,14 @@ picking up items here over inventing new experiments.
 - **Status (561 P-A4):** surfaced the signals only as an explicitly RELATIVE, UNCALIBRATED transparency tooltip (`retrievalSignals.ts`) — deliberately NOT a confidence verdict — pending this validation. A validated calibration would be a producer-owned field (the Worker owns the score scheme), not an FE re-derivation.
 - **Suggested approach:** Build a small labeled (query, context, answer-supported?) set as in Q-007; measure whether `best_chunk_score`/`score_gap` (CE branch only) separate well-grounded from weak answers before exposing any absolute confidence.
 
-### Q-010: Should the engine have a relevance ratchet to match the presentation gates?
+### Q-010: Should the engine have a relevance ratchet to match the presentation gates? → DECIDED → keep agent-invoked
 
+- **Disposition (2026-08-14, owner decision via tempdoc 832):** presented with the three tiers
+  (CI-blocking on engine paths / nightly scheduled run / keep agent-invoked) after the 803
+  re-baseline plan made the floors trustworthy again, the owner chose **keep agent-invoked** —
+  the ratchets stay nudged by the `search-engine-hint` hook, with no CI wiring added. The
+  stagnation-asymmetry argument stands recorded; revisit only on a new owner decision or a
+  measured recurrence of silent regression.
 - **Question:** Presentation (`ui-web`) is continuously serviced because every edit trips a discipline gate; relevance quality is gated only by an opt-in `jseval` run a human must remember. Should an engine-edit-triggered (or nightly) `jseval gate` fail the build when nDCG@10 drops beyond tolerance vs a pinned baseline, giving retrieval the same continuous-servicing pressure the UI has?
 - **Why it matters:** Under attention scarcity the gated surface crowds out the ungated one. Tempdoc 580 §1 measured the result: ~46k lines of presentation+governance churn over a window in which the retrieval engine moved 0 lines, baselines unrevalidated since 2026-04-19. A relevance ratchet would make silent stagnation/regression *fail loudly* instead of coasting invisibly.
 - **Prior art:** `jseval gate` + `calibrate-drift-baseline` already exist (tempdoc 400 LR4-g) but are manual-CI-only; the cohort envelope (`envelope.json`, ±2σ) already separates signal from noise. The missing piece is wiring, baseline-pinning, and the asymmetry argument — not new measurement tech.
