@@ -11,6 +11,14 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Merge-queue readiness (tempdoc 829 R4). GitHub only reports a required check on a
+  # queued merge group if the workflow producing it also fires on `merge_group`; a
+  # required check that never reports on the `refs/heads/gh-readonly-queue/...` ref
+  # stalls the group until the queue times it out. Inert until the repo is
+  # organization-owned and a queue is configured — no merge_group event can be
+  # delivered before then, so this adds zero runs today.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -19,7 +27,14 @@ permissions:
   actions: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # One in-flight run per pull request, per merge group, per ref — in that order.
+  # `github.event.pull_request.number` is empty on a merge_group event, so the merge
+  # group's head SHA is named EXPLICITLY rather than leaning on the `github.ref`
+  # fallback: two queued groups must never cancel each other, and that guarantee
+  # should not rest on GitHub's ref-naming scheme. Inert for the existing events —
+  # pull_request still keys on the PR number, push still falls through to github.ref
+  # (both merge_group fields are empty there).
+  group: ci-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -206,6 +221,16 @@ jobs:
 
       - name: Install API routes are documented
         run: node scripts/ci/check-install-api-contract.mjs
+
+      # Tempdoc 837 §5.1: this gate has existed since 600 but no workflow ever invoked it — it lived
+      # in the pre-merge table and three tempdocs only. That is how four ORT_CUDA_* reason codes with
+      # no producer survived, two of them carrying user-facing wording for a state that cannot occur.
+      # A gate nobody runs is prose, not enforcement.
+      - name: Test the readiness-reason-codes gate
+        run: node scripts/ci/check-readiness-reason-codes.test.mjs
+
+      - name: Readiness reason codes are worded and produced
+        run: node scripts/ci/check-readiness-reason-codes.mjs
 
       - name: Verify frontend-stack claims
         run: node scripts/docs/check-frontend-stack-claims.mjs
@@ -591,20 +616,59 @@ jobs:
             build/ci/integration-test-attribution.md
           if-no-files-found: warn
 
+  # Runs the MIT-licensed gitleaks CLI directly instead of gitleaks/gitleaks-action.
+  # The action is a wrapper that (a) demands a paid GITLEAKS_LICENSE secret as soon as
+  # the repository owner is an organization — with no public-repo exemption — and
+  # (b) hard-exits on any event outside push/pull_request/workflow_dispatch/schedule,
+  # which includes merge_group. Both would turn this REQUIRED check red the day the
+  # repo moves to an org and a merge queue is enabled. The CLI has neither limit.
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      # Pin the release and verify its checksum: the binary is fetched from a
+      # third-party release page into a job that reads the whole repository.
+      GITLEAKS_VERSION: "8.30.1"
+      GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
+      - name: Install pinned gitleaks CLI
+        run: |
+          set -euo pipefail
+          asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL --retry 3 --retry-delay 2 -o "${RUNNER_TEMP}/${asset}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${asset}"
+          echo "${GITLEAKS_SHA256}  ${RUNNER_TEMP}/${asset}" | sha256sum --check --strict -
+          tar -xzf "${RUNNER_TEMP}/${asset}" -C "${RUNNER_TEMP}" gitleaks
+          "${RUNNER_TEMP}/gitleaks" version
+
+      # `dir` scans the checked-out tree rather than a commit range. Every PR lands on
+      # main as a single squashed commit (ADR-0045), so the tree that this job scans is
+      # exactly the content that would land — and main's history stays clean by
+      # induction. The binary and its archive live in RUNNER_TEMP so they are not
+      # themselves scanned. Any finding exits non-zero and fails this required check.
       - name: Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/gitleaks" dir . \
+            --config .gitleaks.toml \
+            --redact \
+            --no-banner \
+            --report-format sarif \
+            --report-path "${RUNNER_TEMP}/gitleaks-results.sarif"
+
+      - name: Upload gitleaks SARIF
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gitleaks-results.sarif
+          path: ${{ runner.temp }}/gitleaks-results.sarif
+          if-no-files-found: warn
 
   # Advisory only — NOT a required check (see workflow-signal-policy.v1.json
   # requiredStatusChecks; do not add this job's name there). Runs after every

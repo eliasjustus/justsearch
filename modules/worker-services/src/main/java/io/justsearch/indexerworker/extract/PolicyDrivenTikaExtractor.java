@@ -18,7 +18,6 @@ import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
 import org.apache.tika.Tika;
-import org.apache.tika.config.TikaConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -67,8 +66,9 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
     this.policy = policy == null ? TikaExtractionPolicy.defaults() : policy;
     this.ocrConfig = ocrConfig == null ? OcrRoutingConfig.disabled() : ocrConfig;
     this.ocrMetricCatalog = ocrMetricCatalog == null ? OcrMetricCatalog.noop() : ocrMetricCatalog;
-    TikaConfig config = TikaConfig.getDefaultConfig();
-    this.tika = new Tika(config);
+    // The MIME this extractor detects drives OCR/VDU routing, so it must agree with the detector
+    // the structured extractor parses under (tempdoc 803).
+    this.tika = new Tika(TextNameMagicConflictDetector.wrapDefault());
     this.tika.setMaxStringLength(this.policy.maxExtractedChars());
     this.structuredExtractor = new StructuredContentExtractor(this.policy.maxExtractedChars());
     this.ocrEngine = PdfOcrEngine.create(this.ocrConfig, log);

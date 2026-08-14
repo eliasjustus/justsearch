@@ -160,6 +160,120 @@ class StructuredContentExtractorTest {
     }
   }
 
+  /**
+   * Tempdoc 803 blocker: one document of 5,408 in {@code mixed/miracl-fr-2k} indexed with EMPTY
+   * content, which failed embed + SPLADE + NER and made the whole corpus incomparable. The document
+   * is ordinary French prose whose first two bytes happen to be {@code P4} — the NetPBM binary
+   * bitmap magic number. Tika's content detection prefers a magic hit over the {@code .txt} name
+   * hint when the two types are unrelated, so the file was parsed as an image and yielded no text.
+   *
+   * <p>These tests pin the general rule, not the one document: a file whose NAME says text and
+   * whose BYTES decode as text is extracted as text, whatever binary format its opening bytes
+   * resemble.
+   */
+  @Nested
+  class TextNameVersusBinaryMagic {
+
+    /** The exact document from tempdoc 803, byte-for-byte. */
+    private static final String MIRACL_FR_1455689 =
+        "P4 Jean Merieux\r\n\r\nLes principaux agents de classe 4 sont des virus generant"
+            + " soit des fievres hemorragiques, comme Ebola, Lassa, Marburg, Congo-Crimee,"
+            + " soit des maladies infectieuses a haut pouvoir de dissemination, et a haut"
+            + " taux de mortalite, comme la variole.";
+
+    @Test
+    void extractsProseWhoseFirstBytesAreThePbmMagicNumber() throws Exception {
+      Path file = tempDir.resolve("1455689.txt");
+      Files.writeString(file, MIRACL_FR_1455689);
+
+      var extractor = new StructuredContentExtractor();
+      ExtractionResult result = extractor.extract(file);
+
+      // Assert on body text, not merely non-empty: an image parser can still emit metadata-only
+      // output, which "content is not blank" would accept.
+      assertTrue(
+          result.content().contains("fievres hemorragiques"),
+          "expected the document body, got: " + result.content());
+      assertTrue(
+          result.content().contains("variole"),
+          "expected the document tail, got: " + result.content());
+    }
+
+    @Test
+    void detectsTextPlainForProseWhoseFirstBytesAreThePbmMagicNumber() throws Exception {
+      Path file = tempDir.resolve("1455689-mime.txt");
+      Files.writeString(file, MIRACL_FR_1455689);
+
+      var extractor = new StructuredContentExtractor();
+      String mime = extractor.detectMimeType(file);
+      assertTrue(mime.startsWith("text/"), "Expected text/* MIME type, got: " + mime);
+    }
+
+    /**
+     * The whole PNM magic family, so the fix cannot be a one-magic special case. {@code P1}-{@code
+     * P6} are the NetPBM magic numbers; each is followed by whitespace in a real bitmap, which is
+     * exactly what a sentence beginning "P4 Jean ..." looks like.
+     */
+    @Test
+    void extractsProseForEveryPnmMagicNumber() throws Exception {
+      for (int variant = 1; variant <= 6; variant++) {
+        String text = "P" + variant + " Jean Merieux ecrit sur les fievres hemorragiques.";
+        Path file = tempDir.resolve("pnm-" + variant + ".txt");
+        Files.writeString(file, text);
+
+        var extractor = new StructuredContentExtractor();
+        ExtractionResult result = extractor.extract(file);
+
+        assertTrue(
+            result.content().contains("fievres hemorragiques"),
+            "P" + variant + " prose lost its body: " + result.content());
+      }
+    }
+
+    /**
+     * Pins the conflict the fix resolves, so the fix cannot be deleted as "unnecessary": Tika's
+     * OWN default detector really does call this prose a bitmap. If a future Tika release changes
+     * that, this test fails and says so — which is the signal to reconsider the wrapper, not to
+     * weaken it.
+     */
+    @Test
+    void tikasDefaultDetectorMisreadsThisProseAsABitmap() throws Exception {
+      Path file = tempDir.resolve("1455689-default.txt");
+      Files.writeString(file, MIRACL_FR_1455689);
+
+      org.apache.tika.metadata.Metadata metadata = new org.apache.tika.metadata.Metadata();
+      metadata.set(
+          org.apache.tika.metadata.TikaCoreProperties.RESOURCE_NAME_KEY,
+          file.getFileName().toString());
+      try (var in =
+          org.apache.tika.io.TikaInputStream.get(java.nio.file.Files.newInputStream(file))) {
+        var defaultType =
+            org.apache.tika.config.TikaConfig.getDefaultConfig()
+                .getDetector()
+                .detect(in, metadata);
+        assertEquals(
+            "image/x-portable-bitmap",
+            defaultType.toString(),
+            "the conflict this detector exists to resolve no longer reproduces");
+      }
+    }
+
+    /** A genuine binary must NOT be dragged into the text path by a misleading extension. */
+    @Test
+    void doesNotTreatRealBinaryAsTextEvenWithATextExtension() throws Exception {
+      Path file = tempDir.resolve("actually-a-bitmap.txt");
+      // Minimal valid 8x1 binary PBM: magic, dimensions, then a raw packed byte row.
+      byte[] pbm = new byte[] {'P', '4', '\n', '8', ' ', '1', '\n', (byte) 0xF0};
+      Files.write(file, pbm);
+
+      var extractor = new StructuredContentExtractor();
+      String mime = extractor.detectMimeType(file);
+      assertFalse(
+          mime.startsWith("text/"),
+          "A real binary bitmap must not be reclassified as text, got: " + mime);
+    }
+  }
+
   @Nested
   class FrontmatterTitle {
 
