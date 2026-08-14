@@ -167,7 +167,7 @@ describe('the answer frame is derived from the shared authority, never worded he
 
   it('speaks the SHARED authority\'s wording — compared against its own output, not a literal', () => {
     // Sources attached, settled, no per-sentence match ⇒ the authority's `sourced` frame.
-    const frame = projectSv3AnswerFrame(turn(), null);
+    const frame = projectSv3AnswerFrame(turn(), null, true);
     expect(whole(frame!)).toBe(answerFrameLabel('sourced', false));
     expect(frame?.verdict).not.toBeNull();
     expect(frame?.tail).toBe('45.7 s · Qwen3');
@@ -177,7 +177,7 @@ describe('the answer frame is derived from the shared authority, never worded he
     // Tempdoc 822 §3b — the coverage is read from the RESOLVED MARKS (what the reader can see),
     // so the fixture supplies marks: the frame follows what renders, not what the stream reported.
     const marks = [{ similarity: 0.9 }] as unknown as Sv3TurnEvidence['marks'];
-    const frame = projectSv3AnswerFrame(turn({ evidence: evidence({ marks }) }), null);
+    const frame = projectSv3AnswerFrame(turn({ evidence: evidence({ marks }) }), null, true);
     expect(frame?.verdict).toBeNull();
     expect(frame?.elaboration).toBe('');
     expect(frame?.tail).toBe('45.7 s · Qwen3');
@@ -190,39 +190,39 @@ describe('the answer frame is derived from the shared authority, never worded he
     const matches = [
       { sentenceIndex: 0, sentenceText: 'Because the lock held.', similarity: 0.9, sourceIndex: 59 },
     ] as unknown as CitationMatch[];
-    const frame = projectSv3AnswerFrame(turn({ evidence: evidence({ matches, marks: [] }) }), null);
+    const frame = projectSv3AnswerFrame(turn({ evidence: evidence({ matches, marks: [] }) }), null, true);
     expect(whole(frame!)).toBe(answerFrameLabel('sourced', false));
   });
 
   it('refuses to frame a turn the backend never sent evidence for', () => {
     // The probe for the tempting shortcut: treating `evidence === null` as zero sources would print
     // "searched your documents but found nothing to cite" over a search that may never have run.
-    const frame = projectSv3AnswerFrame(turn({ evidence: null }), null);
+    const frame = projectSv3AnswerFrame(turn({ evidence: null }), null, true);
     expect(frame?.verdict).toBeNull();
     expect(frame?.tail).toBe('45.7 s · Qwen3');
   });
 
   it('frames a settled answer with sources but no citable sentence as SOURCED, not grounded', () => {
-    const frame = projectSv3AnswerFrame(turn(), null);
+    const frame = projectSv3AnswerFrame(turn(), null, true);
     expect(whole(frame!)).not.toBe(answerFrameLabel('grounded', false));
     expect(whole(frame!)).toBe(answerFrameLabel('sourced', false));
   });
 
   it('frames an answer with no sources at all as searched-but-uncitable', () => {
-    const frame = projectSv3AnswerFrame(turn({ evidence: evidence({ sources: [] }) }), null);
+    const frame = projectSv3AnswerFrame(turn({ evidence: evidence({ sources: [] }) }), null, true);
     expect(whole(frame!)).toBe(answerFrameLabel('ungrounded', true));
   });
 
   it('frames nothing at all for a turn that is not a completed ask', () => {
-    expect(projectSv3AnswerFrame(turn({ status: 'streaming' }), null)).toBeNull();
-    expect(projectSv3AnswerFrame(turn({ status: 'halted' }), null)).toBeNull();
-    expect(projectSv3AnswerFrame(turn({ status: 'failed' }), null)).toBeNull();
-    expect(projectSv3AnswerFrame(turn({ kind: 'agent' }), null)).toBeNull();
+    expect(projectSv3AnswerFrame(turn({ status: 'streaming' }), null, true)).toBeNull();
+    expect(projectSv3AnswerFrame(turn({ status: 'halted' }), null, true)).toBeNull();
+    expect(projectSv3AnswerFrame(turn({ status: 'failed' }), null, true)).toBeNull();
+    expect(projectSv3AnswerFrame(turn({ kind: 'agent' }), null, true)).toBeNull();
   });
 
   it('is null when there is neither a label nor anything measured to say', () => {
     expect(
-      projectSv3AnswerFrame(turn({ evidence: null, durationMs: null, modelLabel: null }), null),
+      projectSv3AnswerFrame(turn({ evidence: null, durationMs: null, modelLabel: null }), null, true),
     ).toBeNull();
   });
 
@@ -261,19 +261,19 @@ describe('the answer frame is derived from the shared authority, never worded he
   });
 
   it("names the turn's model only when the composer would otherwise mislabel the answer", () => {
-    expect(sv3TailModelLabel('Qwen3', 'Qwen3')).toBeNull();
-    expect(sv3TailModelLabel('Qwen3', 'Llama-4')).toBe('Qwen3');
+    expect(sv3TailModelLabel('Qwen3', 'Qwen3', true)).toBeNull();
+    expect(sv3TailModelLabel('Qwen3', 'Llama-4', true)).toBe('Qwen3');
     // "Not said" is not "the same": an unknown current model cannot vouch for a stamped one.
-    expect(sv3TailModelLabel('Qwen3', null)).toBe('Qwen3');
+    expect(sv3TailModelLabel('Qwen3', null, true)).toBe('Qwen3');
     // Nothing was stamped, so there is nothing to re-state — never a fabricated name.
-    expect(sv3TailModelLabel(null, 'Qwen3')).toBeNull();
-    expect(sv3TailModelLabel('', 'Qwen3')).toBeNull();
+    expect(sv3TailModelLabel(null, 'Qwen3', true)).toBeNull();
+    expect(sv3TailModelLabel('', 'Qwen3', true)).toBeNull();
   });
 
   it('drops the model from the tail when the composer is already naming it', () => {
     // The mutation probe for the suppression: remove the equality check and the model stays here.
-    expect(projectSv3AnswerFrame(turn(), 'Qwen3')?.tail).toBe('45.7 s');
-    expect(projectSv3AnswerFrame(turn(), 'Llama-4')?.tail).toBe('45.7 s · Qwen3');
+    expect(projectSv3AnswerFrame(turn(), 'Qwen3', true)?.tail).toBe('45.7 s');
+    expect(projectSv3AnswerFrame(turn(), 'Llama-4', true)?.tail).toBe('45.7 s · Qwen3');
   });
 });
 

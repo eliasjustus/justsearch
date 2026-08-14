@@ -43,6 +43,11 @@ import {
   CORPUS_ADD_FOLDERS,
   CORPUS_REMEDY_TARGET,
   HERO_HEADLINE,
+  SV3_DEGRADATION_DETAIL_ID,
+  SV3_DEGRADATION_GLYPH_SIZE,
+  SV3_DEGRADATION_HEADLINE_ID,
+  SV3_DEGRADATION_LESS,
+  SV3_DEGRADATION_MORE,
   type Sv3ComposerState,
 } from './fixtures.js';
 import {
@@ -59,6 +64,7 @@ import {
   type Sv3Corpus,
   type Sv3RemedyDetail,
 } from './sv3-honesty.js';
+import { sv3ComposerReason, type Sv3Degradation } from './sv3-degradation.js';
 
 /** Raised when the composer asks the window for the other state; the window owns the morph. */
 export const SV3_COMPOSER_STATE_REQUEST = 'sv3-composer-state-request';
@@ -236,6 +242,99 @@ export class Sv3Composer extends JfElement {
         color: var(--foreground);
         font-size: var(--font-size-sv3-xs);
         line-height: 1.5;
+      }
+
+      /* ── Reduced capability, at summary height (inventory E1/E3) ──────────
+         The SAME slot and the same box as the .notice box above — one banner idiom, not two — so the
+         degradation and the availability reason cannot read as two different kinds of chrome. What
+         it adds is a ROW: a severity mark, the resting headline, the remedy, the disclosure. Its
+         resting height is one line by construction (the detail is a sibling that only exists when
+         opened), which is the founding constraint this window is built against. */
+      .degradation {
+        margin-bottom: var(--space-2);
+        padding: var(--space-2) var(--space-4);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-3xl);
+        background: var(--muted);
+        color: var(--foreground);
+        font-size: var(--font-size-sv3-xs);
+        line-height: 1.5;
+      }
+      .degradation-line {
+        display: flex;
+        gap: var(--space-2);
+        align-items: center;
+        margin: 0;
+      }
+      /* The severity mark is the only colour the banner spends, and it spends it on the tier the
+         verdict actually reported — amber for an impairment, red for a failure. */
+      .degradation-mark {
+        flex: none;
+        color: var(--warning);
+      }
+      .degradation[data-severity='error'] .degradation-mark {
+        color: var(--destructive);
+      }
+      /* The honesty fact. It takes the row's slack and ellipsizes rather than wrapping, because a
+         second line here is the height this banner exists not to spend; the whole sentence stays
+         reachable as the accessible name of the region it heads and in the disclosed detail. */
+      .degradation-headline {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      /* The one-click fix, in the composer's own text-button idiom (.corpus-remedy) — a filled
+         button in a one-line banner would out-weigh the send. */
+      .degradation-remedy {
+        flex: none;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: var(--foreground);
+        font-family: inherit;
+        font-size: inherit;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+        cursor: pointer;
+      }
+      .degradation-remedy:hover {
+        color: var(--primary);
+      }
+      .degradation-disclosure {
+        display: inline-flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: var(--icon-muted);
+        cursor: pointer;
+      }
+      .degradation-disclosure:hover {
+        color: var(--foreground);
+      }
+      .degradation-remedy:focus-visible,
+      .degradation-disclosure:focus-visible {
+        outline: 2px solid var(--ring);
+        outline-offset: 2px;
+        border-radius: var(--control-radius);
+      }
+      .degradation-detail {
+        /* Aligned under the headline, past the mark's own column (the glyph plus the row's gap), so
+           the elaboration reads as belonging to the line above it rather than as a second banner. */
+        margin-top: var(--space-1);
+        padding-left: var(--space-5);
+        color: var(--secondary-label);
+      }
+      .degradation-body {
+        margin: 0;
+      }
+      .degradation-causes {
+        margin: 0;
+        padding-left: var(--space-4);
       }
 
       /* ── The glass: ONE node carrying the whole recipe ────────────────────
@@ -674,11 +773,14 @@ export class Sv3Composer extends JfElement {
     steerable: { type: Boolean, reflect: true },
     unavailableReason: { type: String, attribute: 'unavailable-reason' },
     delegateUnavailableReason: { type: String, attribute: 'delegate-unavailable-reason' },
+    degradation: { attribute: false },
+    detailed: { type: Boolean, reflect: true },
     corpus: { attribute: false },
     effort: { type: String, reflect: true },
     modelLabel: { type: String, reflect: true, attribute: 'model-label' },
     draft: { state: true },
     effortMenuOpen: { state: true },
+    degradationOpen: { state: true },
   };
 
   declare state: Sv3ComposerState;
@@ -712,6 +814,22 @@ export class Sv3Composer extends JfElement {
    */
   declare delegateUnavailableReason: string;
   /**
+   * Reduced capability, from the shared readiness authority (inventory E1) — already projected by
+   * `sv3-degradation.ts`, so the composer neither reads the verdict nor words a cause. `null` is the
+   * ordinary state and costs no chrome.
+   *
+   * It shares the ONE banner slot with {@link unavailableReason}, and the two cannot state the same
+   * fact twice: `sv3ComposerReason` drops the affordance-scoped reason when this banner already
+   * words its code.
+   */
+  declare degradation: Sv3Degradation | null;
+  /**
+   * The app-wide Simple/Detailed authority's answer (inventory E3), handed down by the window so the
+   * composer holds no second copy of the preference. Detailed opens the banner's causes; Simple
+   * keeps the resting line and offers them behind the disclosure.
+   */
+  declare detailed: boolean;
+  /**
    * What the next question can be answered from (tempdoc 822 Phase F7; inventory E10). Handed down
    * already DERIVED by the window's one projection (`sv3-honesty.ts`), so the composer decides
    * nothing about the corpus — including whether "not reported" counts as zero, which is exactly the
@@ -742,6 +860,12 @@ export class Sv3Composer extends JfElement {
    * (`SearchV3View.onHostKeydown`).
    */
   declare effortMenuOpen: boolean;
+  /**
+   * The reader's own disclosure of the banner's detail, in Simple mode. Window-local and forgotten
+   * on unmount: nothing is remembered per cause-set, so a banner never opens itself because an
+   * earlier one was opened. Detailed mode does not read this at all — it opens the causes outright.
+   */
+  declare degradationOpen: boolean;
 
   constructor() {
     super();
@@ -755,11 +879,14 @@ export class Sv3Composer extends JfElement {
     this.steerable = false;
     this.unavailableReason = '';
     this.delegateUnavailableReason = '';
+    this.degradation = null;
+    this.detailed = false;
     this.corpus = SV3_CORPUS_UNKNOWN;
     this.effort = SV3_EFFORT_DEFAULT;
     this.modelLabel = '';
     this.draft = '';
     this.effortMenuOpen = false;
+    this.degradationOpen = false;
   }
 
   private request(next: Sv3ComposerState): void {
@@ -855,13 +982,17 @@ export class Sv3Composer extends JfElement {
     // Soft, never `disabled`: the availability authority's contract is that the reason stays
     // reachable, and a natively-disabled control is not even focusable (`state/availability.ts:6-20`).
     const unavailable = this.unavailableReason !== '';
+    // The ONE banner slot, shared. The affordance-scoped reason yields whenever the degradation
+    // banner already words its code, so the same fact never stands in the slot twice.
+    const reason = sv3ComposerReason(this.degradation, this.unavailableReason);
     return html`
       <div class="band" data-testid="sv3-composer-band">
         ${this.state === 'hero' ? this.landing() : nothing}
-        ${this.unavailableReason === ''
+        ${this.degradationBanner()}
+        ${reason === ''
           ? nothing
           : html`<p class="notice" id="sv3-composer-notice" role="status" data-testid="sv3-composer-notice">
-              ${this.unavailableReason}
+              ${reason}
             </p>`}
         <div class="glass" data-testid="sv3-composer-shell">
           <div class="field">
@@ -888,7 +1019,7 @@ export class Sv3Composer extends JfElement {
             <div class="controls" @focusout=${this.onControlsFocusOut}>
               ${this.effortControl()}${this.modelLabelFact()}
             </div>
-            ${this.primaryAction(empty, unavailable)}
+            ${this.primaryAction(empty, unavailable, this.refusalDescribedBy(reason))}
           </div>
         </div>
       </div>
@@ -1105,6 +1236,137 @@ export class Sv3Composer extends JfElement {
   }
 
   /**
+   * Which node in the ONE banner slot explains a refusal (inventory E1).
+   *
+   * The send's `aria-describedby` used to name the availability notice unconditionally, which would
+   * now point at a node that yielded its line to the banner. It names whichever node is actually in
+   * the slot, and nothing when the composer is not refusing — a dangling reference is read out as
+   * silence, which is the one outcome the reachable-reason contract rules out.
+   */
+  private refusalDescribedBy(reason: string): string | null {
+    if (this.unavailableReason === '') return null;
+    if (reason !== '') return 'sv3-composer-notice';
+    return this.degradation === null ? null : SV3_DEGRADATION_HEADLINE_ID;
+  }
+
+  /**
+   * REDUCED CAPABILITY, at summary height (inventory E1/E3).
+   *
+   * One line rests: the severity mark, the headline the readiness authority worded, and the one-click
+   * remedy. Everything else — the consequence sentence and the worded causes — is DISCLOSURE, opened
+   * by the reader or, for a reader who has told the app they want detail, by Detailed mode.
+   *
+   * That split is the whole point. The shipped window's banner is a block: headline, body, a bulleted
+   * cause list and a remedy, permanently in flow. Here the honesty fact ("capability is reduced, and
+   * here is the fix") rests and the elaboration extends — the same L14 boundary the answer frame
+   * draws, and the reason this window's degradation costs one line instead of an eighth of the
+   * window. Nothing is behind HOVER: the disclosure is a real button with a real expanded state.
+   */
+  private degradationBanner(): TemplateResult | typeof nothing {
+    const degradation = this.degradation;
+    if (degradation === null) return nothing;
+    const open = this.detailed || this.degradationOpen;
+    const hasDetail = degradation.body !== '' || degradation.causes.length > 0;
+    return html`<div
+      class="degradation"
+      data-testid="sv3-degradation"
+      data-severity=${degradation.severity}
+      data-open=${String(open)}
+    >
+      <p class="degradation-line" role="status" data-testid="sv3-degradation-line">
+        ${icon({
+          name: degradation.severity === 'error' ? 'alert-circle' : 'alert-triangle',
+          size: SV3_DEGRADATION_GLYPH_SIZE,
+          className: 'degradation-mark',
+        })}
+        <span
+          class="degradation-headline"
+          id=${SV3_DEGRADATION_HEADLINE_ID}
+          data-testid="sv3-degradation-headline"
+          >${degradation.headline}</span
+        >
+        <button
+          type="button"
+          class="degradation-remedy"
+          data-testid="sv3-degradation-remedy"
+          @click=${this.takeDegradationRemedy}
+        >
+          ${degradation.remedy.label}
+        </button>
+        ${hasDetail ? this.degradationDisclosure(open) : nothing}
+      </p>
+      ${open && hasDetail ? this.degradationDetail(degradation) : nothing}
+    </div>`;
+  }
+
+  /**
+   * The disclosure. Hidden in Detailed mode, which is not a hidden control but an ABSENT one: there
+   * is nothing left to disclose, and a toggle whose only state is "already open" is the dead control
+   * the shipped window learned to drop.
+   */
+  private degradationDisclosure(open: boolean): TemplateResult | typeof nothing {
+    if (this.detailed) return nothing;
+    return html`<button
+      type="button"
+      class="degradation-disclosure"
+      data-testid="sv3-degradation-disclosure"
+      aria-expanded=${open ? 'true' : 'false'}
+      aria-controls=${open ? SV3_DEGRADATION_DETAIL_ID : nothing}
+      aria-label=${open ? SV3_DEGRADATION_LESS : SV3_DEGRADATION_MORE}
+      title=${open ? SV3_DEGRADATION_LESS : SV3_DEGRADATION_MORE}
+      @click=${this.toggleDegradation}
+    >
+      ${icon({
+        name: open ? 'chevron-down' : 'chevron-right',
+        size: SV3_DEGRADATION_GLYPH_SIZE,
+      })}
+    </button>`;
+  }
+
+  /** The elaboration: the consequence sentence, then the causes — one line each, deduped by code. */
+  private degradationDetail(degradation: Sv3Degradation): TemplateResult {
+    return html`<div
+      class="degradation-detail"
+      id=${SV3_DEGRADATION_DETAIL_ID}
+      data-testid="sv3-degradation-detail"
+    >
+      ${degradation.body === ''
+        ? nothing
+        : html`<p class="degradation-body" data-testid="sv3-degradation-body">
+            ${degradation.body}
+          </p>`}
+      ${degradation.causes.length === 0
+        ? nothing
+        : html`<ul class="degradation-causes" data-testid="sv3-degradation-causes">
+            ${degradation.causes.map(
+              (cause) => html`<li data-code=${cause.code}>${cause.wording}</li>`,
+            )}
+          </ul>`}
+    </div>`;
+  }
+
+  private toggleDegradation(): void {
+    this.degradationOpen = !this.degradationOpen;
+  }
+
+  /**
+   * The remedy, taken. It leaves through the window's ONE remedy exit (`SV3_REMEDY`) exactly as the
+   * corpus remedy does — the composer announces where the reader asked to go and the window performs
+   * the navigation, so this element still reaches the app's router in exactly zero places.
+   */
+  private takeDegradationRemedy(): void {
+    const target = this.degradation?.remedy.target ?? '';
+    if (target === '') return;
+    this.dispatchEvent(
+      new CustomEvent<Sv3RemedyDetail>(SV3_REMEDY, {
+        detail: { target },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  /**
    * The primary slot holds EXACTLY ONE control — a switch with four arms, not four conditionals that
    * could each independently decide to render. The design spec early-returns its one action
    * and never disables the loser behind the winner; F1
@@ -1114,7 +1376,11 @@ export class Sv3Composer extends JfElement {
    * routing (Enter vs Ctrl+Enter, or that Enter now steers) is explained here and nowhere else, which
    * is what "no new chrome" means in practice — the composer gained a tier without gaining a band.
    */
-  private primaryAction(empty: boolean, unavailable: boolean): TemplateResult {
+  private primaryAction(
+    empty: boolean,
+    unavailable: boolean,
+    describedBy: string | null,
+  ): TemplateResult {
     switch (this.slotKind) {
       case 'answer':
         return html`
@@ -1172,7 +1438,7 @@ export class Sv3Composer extends JfElement {
                 aria-label=${this.slotReason}
                 title=${this.slotReason}
                 data-unavailable=${String(unavailable)}
-                aria-describedby=${unavailable ? 'sv3-composer-notice' : nothing}
+                aria-describedby=${describedBy ?? nothing}
                 data-testid="sv3-composer-send"
                 @click=${() => this.submit('ask')}
               >
