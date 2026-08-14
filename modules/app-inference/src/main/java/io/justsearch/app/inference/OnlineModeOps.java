@@ -408,6 +408,10 @@ final class OnlineModeOps {
 
                 boolean[] sawDone = {false};
                 String[] lastFinishReason = {null};
+                // Tempdoc 835 §5.3: one stateful, frame-straddle-safe think-tag filter for every
+                // streaming shape. This path has no reasoning handler, so captured thinking is
+                // discarded — exactly what it already does with reasoning_content below.
+                ThinkTagStreamFilter thinkFilter = new ThinkTagStreamFilter(null);
                 try (java.util.stream.Stream<String> lines = response.body()) {
                   lines.forEach(
                       line -> {
@@ -441,7 +445,10 @@ final class OnlineModeOps {
 
                             String content = delta.path("content").asText("");
                             if (!content.isEmpty()) {
-                              onChunk.accept(content);
+                              String visible = thinkFilter.accept(content);
+                              if (!visible.isEmpty()) {
+                                onChunk.accept(visible);
+                              }
                             }
 
                             // Consume reasoning_content so it isn't silently lost.
@@ -460,6 +467,11 @@ final class OnlineModeOps {
                           }
                         }
                       });
+                }
+
+                String tail = thinkFilter.flush();
+                if (!tail.isEmpty()) {
+                  onChunk.accept(tail);
                 }
 
                 if (sawDone[0]) {
@@ -644,6 +656,10 @@ final class OnlineModeOps {
 
                 boolean[] sawDone = {false};
                 String[] lastFinishReason = {null};
+                // Tempdoc 835 §5.3: the same stateful filter, here with the reasoning channel
+                // wired — inline <think> markup from a leaking build is rerouted to the reasoning
+                // sink, so the product behaves identically on both build families.
+                ThinkTagStreamFilter thinkFilter = new ThinkTagStreamFilter(onReasoningChunk);
                 try (java.util.stream.Stream<String> lines = response.body()) {
                   lines.forEach(
                       line -> {
@@ -680,7 +696,10 @@ final class OnlineModeOps {
                             // Text content
                             String content = delta.path("content").asText("");
                             if (!content.isEmpty()) {
-                              onChunk.accept(content);
+                              String visible = thinkFilter.accept(content);
+                              if (!visible.isEmpty()) {
+                                onChunk.accept(visible);
+                              }
                             }
 
                             // Reasoning content (emitted by --reasoning-format deepseek)
@@ -703,6 +722,11 @@ final class OnlineModeOps {
                           }
                         }
                       });
+                }
+
+                String tail = thinkFilter.flush();
+                if (!tail.isEmpty()) {
+                  onChunk.accept(tail);
                 }
 
                 if (sawDone[0]) {

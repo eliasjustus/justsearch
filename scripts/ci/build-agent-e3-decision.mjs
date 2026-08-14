@@ -2,6 +2,7 @@
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { isReasoningBudgetRejection } from './lib/llama-server-arg-rejection.mjs';
 
 function usage() {
   console.error(
@@ -217,6 +218,21 @@ async function summarizeJudgeDir(judgeDir) {
   return summary;
 }
 
+/**
+ * The runtime's own thinking-support verdict for a run, from `<dataDir>/runtime/manifest.json`
+ * (`ai.thinkingSupport`, tempdoc 835 §9c.2). Returns null when the run published no verdict —
+ * an older run, or one whose manifest is gone — which is the only case the log scan handles.
+ */
+async function readThinkingSupportVerdict(dataDir) {
+  try {
+    const doc = await readJson(path.join(dataDir, 'runtime', 'manifest.json'));
+    const verdict = doc?.ai?.thinkingSupport;
+    return typeof verdict === 'string' && verdict.length > 0 ? verdict : null;
+  } catch {
+    return null;
+  }
+}
+
 async function summarizeManifestErrorsFromScorecard(scorecardDoc) {
   const historyDir = scorecardDoc?.historyDir ? path.resolve(String(scorecardDoc.historyDir)) : null;
   const out = {
@@ -253,11 +269,22 @@ async function summarizeManifestErrorsFromScorecard(scorecardDoc) {
 
     const dataDir = typeof doc?.run?.dataDir === 'string' ? doc.run.dataDir : null;
     if (!dataDir) continue;
+    // Tempdoc 835 §5.2/§9e: prefer the runtime's own verdict — the launch path decides whether this
+    // build honours --reasoning-budget and publishes it on the runtime manifest. Fall back to the
+    // log scan for runs predating the verdict, using the shared marker (never a local copy: this
+    // detector drifted once by matching b8185's suffix, which b8571 does not emit).
+    // eslint-disable-next-line no-await-in-loop
+    const verdict = await readThinkingSupportVerdict(dataDir);
+    if (verdict === 'UNSUPPORTED') {
+      out.reasoningBudgetUnsupportedCount += 1;
+      continue;
+    }
+    if (verdict != null) continue;
     const llamaLog = path.join(dataDir, 'logs', 'llama-server.log');
     try {
       // eslint-disable-next-line no-await-in-loop
       const text = await fsp.readFile(llamaLog, 'utf8');
-      if (text.includes('error while handling argument "--reasoning-budget": invalid value')) {
+      if (isReasoningBudgetRejection(text)) {
         out.reasoningBudgetUnsupportedCount += 1;
       }
     } catch {

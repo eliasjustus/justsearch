@@ -404,6 +404,45 @@ class OnlineModeOpsTest {
   }
 
   @Test
+  void streamChatWithTools_reroutesInlineThinkTagsSplitAcrossFrames() throws Exception {
+    // Tempdoc 835 §5.3 — the wiring, not just the filter: a build that leaks inline reasoning emits
+    // the tag across SSE frame boundaries ("<thi" + "nk>"), which a per-chunk replaceAll passes
+    // through verbatim. Answer text must stay clean and the thinking must reach the reasoning
+    // channel, so a leaking build behaves like a reasoning_content one.
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+          exchange.sendResponseHeaders(200, 0);
+          var os = exchange.getResponseBody();
+          for (String piece : List.of("Answer: <thi", "nk>hidden", " thought</thi", "nk>42")) {
+            os.write(
+                ("data: {\"choices\":[{\"delta\":{\"content\":\"" + piece + "\"}}]}\n\n")
+                    .getBytes(StandardCharsets.UTF_8));
+            os.flush();
+          }
+          os.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
+          os.flush();
+          os.close();
+        });
+
+    StringBuilder content = new StringBuilder();
+    StringBuilder reasoning = new StringBuilder();
+    CountDownLatch completeLatch = new CountDownLatch(1);
+
+    ops.streamChatWithTools(
+        List.of(Map.of("role", "user", "content", "test")), List.of(), 100,
+        content::append, toolDelta -> {}, reasoning::append, null,
+        fr -> completeLatch.countDown(), t -> {},
+        SamplingParams.DETERMINISTIC);
+
+    assertTrue(completeLatch.await(5, TimeUnit.SECONDS));
+    assertEquals("Answer: 42", content.toString(), "think markup must not reach answer text");
+    assertEquals("hidden thought", reasoning.toString(), "thinking must be rerouted, not deleted");
+  }
+
+  @Test
   void streamChatWithTools_injectsToolChoice() throws Exception {
     AtomicReference<String> capturedBody = new AtomicReference<>();
     server.removeContext("/v1/chat/completions");

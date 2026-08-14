@@ -75,6 +75,22 @@ public final class ResolvedConfigBuilder {
   /** Programmatic default — hardcoded fallback. */
   public static final int ORDINAL_DEFAULT = 100;
 
+  // ==================== Reasoning Budget (tempdoc 835) ====================
+
+  /**
+   * Default llama-server {@code --reasoning-budget}: bounded reasoning, on. Chosen by measurement,
+   * not preference — see {@link #resolveReasoningBudget()}.
+   */
+  public static final int DEFAULT_REASONING_BUDGET = 512;
+
+  /**
+   * The conversation engine's default completion ceiling ({@code
+   * ConversationEngine.DEFAULT_MAX_TOKENS}), which reasoning and answer tokens share. Mirrored here
+   * because the configuration module cannot depend on app-services; {@code
+   * ConversationEngineTokenCeilingTest} fails the build if the two drift.
+   */
+  public static final int ENGINE_DEFAULT_MAX_TOKENS = 1024;
+
   // ==================== Static Factories ====================
 
   /**
@@ -1019,7 +1035,7 @@ public final class ResolvedConfigBuilder {
         resolveString("justsearch.vlm.model", ""),
         resolveString("justsearch.mmproj.model", ""),
         resolveBoolean("justsearch.llm.use_thinking", true),
-        resolveInt("justsearch.llm.reasoning_budget", 0),
+        resolveReasoningBudget(),
         resolveString("justsearch.onnxruntime.variantId", ""),
         resolveString("justsearch.server.exe.source", ""),
         resolveLong("justsearch.vram.threshold.12gb", 0L),
@@ -1037,6 +1053,40 @@ public final class ResolvedConfigBuilder {
         resolveBoolean("justsearch.dev.hotreload", false),
         buildBackfillPacing(),
         resolveBoolean("justsearch.models.capability_contract_strict", false));
+  }
+
+  /**
+   * Resolves {@code justsearch.llm.reasoning_budget} — the llama-server {@code --reasoning-budget}
+   * flag — and refuses the shapes that silently produce empty answers (tempdoc 835 §9b/§9f).
+   *
+   * <p>Reasoning tokens and answer tokens share one completion ceiling. Measured on b8571 /
+   * Qwen3.5-9B: at an unbounded budget ({@code -1}) against the engine's default ceiling, reasoning
+   * consumed all 1024 completion tokens and the turn produced <em>zero</em> answer tokens 4/4 —
+   * terminating with a normal {@code done} event and no error, i.e. a silent empty answer. At
+   * {@value #DEFAULT_REASONING_BUDGET} the same configuration answered completely 3/3. So the
+   * catastrophic shapes are made unrepresentable here rather than documented: an unbounded budget,
+   * or one large enough to crowd out the answer at {@link #ENGINE_DEFAULT_MAX_TOKENS}, is clamped
+   * to the safe default with a loud WARN naming what it would have caused.
+   *
+   * <p>{@code 0} stays representable — it is the explicit "no reasoning" configuration, not a
+   * catastrophic one.
+   */
+  private int resolveReasoningBudget() {
+    int resolved = resolveInt("justsearch.llm.reasoning_budget", DEFAULT_REASONING_BUDGET);
+    if (resolved == 0 || (resolved > 0 && resolved < ENGINE_DEFAULT_MAX_TOKENS)) {
+      return resolved;
+    }
+    LOG.warn(
+        "justsearch.llm.reasoning_budget={} refused and overridden to {}: reasoning shares the"
+            + " completion budget with the answer, so an unbounded (-1) or >= {}-token reasoning"
+            + " budget lets reasoning consume the engine's entire default max_tokens and the turn"
+            + " returns an empty answer with no error (tempdoc 835 §9f, reproduced 4/4). Set 0 to"
+            + " disable reasoning, or a value below {}.",
+        resolved,
+        DEFAULT_REASONING_BUDGET,
+        ENGINE_DEFAULT_MAX_TOKENS,
+        ENGINE_DEFAULT_MAX_TOKENS);
+    return DEFAULT_REASONING_BUDGET;
   }
 
   /**

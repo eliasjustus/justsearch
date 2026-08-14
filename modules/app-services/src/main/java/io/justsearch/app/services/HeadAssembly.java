@@ -931,6 +931,14 @@ public final class HeadAssembly implements AutoCloseable {
     return this.inferenceManager == null ? null : this.inferenceManager.actualLlamaServerBuild();
   }
 
+  /**
+   * Tempdoc 835 §9c.2: the running llama-server's thinking-capability verdict; null when there is
+   * no inference manager (thinking-capability is then simply unknown).
+   */
+  public String llamaServerThinkingSupport() {
+    return this.inferenceManager == null ? null : this.inferenceManager.llamaServerThinkingSupport();
+  }
+
   /** F6: rebuild the held ServiceGraph. Reads prior services from the existing held graph. */
   private io.justsearch.app.api.ServiceGraph rebuildServiceGraph() {
     return assembleServiceGraph(

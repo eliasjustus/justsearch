@@ -189,6 +189,41 @@ class ServerPropsOpsTest {
   }
 
   @Test
+  void chatTemplateCaps_readFromB8571PropsVerbatim() throws Exception {
+    // Tempdoc 835 Q4 — captured verbatim from the bundled b8571. The load-bearing observation is
+    // the ABSENCE of supports_enable_thinking: per-request thinking support is not advertised, so
+    // this signal can only say "reasoning-aware build" and launch-argument acceptance stays the
+    // authoritative verdict.
+    JsonNode root =
+        MAPPER.readTree(
+            "{\"model_alias\":\"test\",\"n_ctx\":4096,\"build_info\":\"b8571-e397d3885\","
+                + "\"chat_template_caps\":{\"supports_object_arguments\":true,"
+                + "\"supports_parallel_tool_calls\":true,\"supports_preserve_reasoning\":true,"
+                + "\"supports_string_content\":true,\"supports_system_role\":true,"
+                + "\"supports_tool_calls\":true,\"supports_tools\":true,"
+                + "\"supports_typed_content\":false}}");
+
+    assertTrue(ServerPropsOps.hasChatTemplateCaps(root));
+    assertTrue(ServerPropsOps.supportsPreserveReasoning(root));
+    assertTrue(root.path("chat_template_caps").path("supports_enable_thinking").isMissingNode());
+
+    ops.updateFromPropsBestEffort(root);
+    assertEquals("b8571", ops.actualServerBuild());
+  }
+
+  @Test
+  void chatTemplateCaps_absentOnOlderBuildsIsNotAFailure() throws Exception {
+    JsonNode root = MAPPER.readTree("{\"model_alias\":\"test\",\"n_ctx\":4096}");
+
+    assertFalse(ServerPropsOps.hasChatTemplateCaps(root));
+    assertFalse(ServerPropsOps.supportsPreserveReasoning(root));
+    assertFalse(ServerPropsOps.hasChatTemplateCaps(null));
+    assertFalse(ServerPropsOps.supportsPreserveReasoning(null));
+
+    ops.updateFromPropsBestEffort(root);
+  }
+
+  @Test
   void looksLikeLlamaServerProps_falseForEmptyOrMissing() throws Exception {
     assertFalse(ServerPropsOps.looksLikeLlamaServerProps(null));
     assertFalse(
