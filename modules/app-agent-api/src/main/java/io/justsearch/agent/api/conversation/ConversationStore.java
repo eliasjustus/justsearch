@@ -49,6 +49,22 @@ public interface ConversationStore {
   String EMPTY_PREFIX_SENTINEL = "__empty_prefix__";
 
   /**
+   * Tempdoc 838 — {@code titleSource} values, pinned on the interface the same way
+   * {@link #THROWAWAY_SESSION_PREFIX} is, so the producer (the FE rename / auto-title write-through),
+   * the validator (the controller) and the consumer (the list projection) share one spelling.
+   *
+   * <p>{@code user} means a reader typed the name; {@code auto} means the model summarised the
+   * conversation into one. The distinction is not decoration: it is what lets the window refuse to
+   * auto-title a conversation the reader already named, ACROSS A RELOAD — before this field the
+   * provenance lived only in the tab's memory, so the next ask after a reload overwrote the reader's
+   * name with the model's.
+   */
+  String TITLE_SOURCE_USER = "user";
+
+  /** Tempdoc 838 — the model named it. See {@link #TITLE_SOURCE_USER}. */
+  String TITLE_SOURCE_AUTO = "auto";
+
+  /**
    * Load the message history for an existing session. Returns an empty list if
    * the session doesn't exist (first request creates it).
    */
@@ -173,6 +189,23 @@ public interface ConversationStore {
     return List.of();
   }
 
+  /**
+   * Tempdoc 838 — name this conversation, durably. A {@code null} or blank {@code title} CLEARS the
+   * name; {@code titleSource} is one of {@link #TITLE_SOURCE_USER} / {@link #TITLE_SOURCE_AUTO} and
+   * records who chose it.
+   *
+   * <p>Before this seam the name was the one fact about a conversation the browser owned
+   * ({@code localStorage['jf-conversation-titles']}), so it did not survive a cleared site-data, a
+   * second client or a profile change — and it sat in plaintext outside the encryption boundary while
+   * the conversation it named was sealed. The title is conversation CONTENT (an auto-title is the
+   * model's summary of the messages; a reader's title is a sentence about them), so an implementation
+   * that seals content seals this too.
+   *
+   * <p>Implementations MUST NOT materialise a session for an unknown id — a titled zero-message
+   * conversation is a list row that names nothing. No-op for stores without persistence.
+   */
+  default void setTitle(String sessionId, String title, String titleSource) {}
+
   /** Summary of a persisted session for list UIs. */
   record SessionSummary(
       String sessionId,
@@ -188,7 +221,15 @@ public interface ConversationStore {
       String contextFloor,
       // Tempdoc 610 Phase D — the compaction summary attached to the floor
       // (null for a plain rewind). Surfaced so the FE divider can show it.
-      String contextFloorSummary) {
+      String contextFloorSummary,
+      // Tempdoc 838 — the conversation's name (null when it has none, and blank
+      // rather than null when the store is sealed + locked, exactly like
+      // firstUserMessage). This is the durable authority a rename writes to.
+      String title,
+      // Tempdoc 838 — who named it: TITLE_SOURCE_USER or TITLE_SOURCE_AUTO
+      // (null when there is no title). Structural, not content: it is a
+      // provenance bit, so it stays readable while the conversation is locked.
+      String titleSource) {
 
     /** Backward-compat constructor — sessions without branch metadata. */
     public SessionSummary(
@@ -199,7 +240,7 @@ public interface ConversationStore {
         int messageCount,
         String firstUserMessage) {
       this(sessionId, shapeId, createdAtMs, lastActiveAtMs, messageCount, firstUserMessage,
-          null, null, null, null);
+          null, null, null, null, null, null);
     }
 
     /** Backward-compat constructor — branch metadata but no context floor. */
@@ -213,7 +254,7 @@ public interface ConversationStore {
         String parentSessionId,
         String branchPointMessageId) {
       this(sessionId, shapeId, createdAtMs, lastActiveAtMs, messageCount, firstUserMessage,
-          parentSessionId, branchPointMessageId, null, null);
+          parentSessionId, branchPointMessageId, null, null, null, null);
     }
 
     /** Backward-compat constructor — floor but no attached summary. */
@@ -228,7 +269,7 @@ public interface ConversationStore {
         String branchPointMessageId,
         String contextFloor) {
       this(sessionId, shapeId, createdAtMs, lastActiveAtMs, messageCount, firstUserMessage,
-          parentSessionId, branchPointMessageId, contextFloor, null);
+          parentSessionId, branchPointMessageId, contextFloor, null, null, null);
     }
   }
 

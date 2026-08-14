@@ -264,12 +264,18 @@ public final class FileConversationStore implements ConversationStore {
           // look deleted) and do NOT fail the whole list. Opening the conversation surfaces the locked notice.
           String firstUserMessage = (String) meta.getOrDefault("firstUserMessage", "");
           String floorSummary = meta.get("contextFloorSummary") instanceof String fs ? fs : null;
+          // Tempdoc 838 — the title is sealed content, so it hides with the rest while locked; the
+          // provenance bit beside it is structural and stays readable.
+          String title = meta.get("title") instanceof String t ? t : null;
+          Object source = meta.get("titleSource");
           try {
             firstUserMessage = cipher.open(firstUserMessage);
             if (floorSummary != null) floorSummary = cipher.open(floorSummary);
+            if (title != null) title = cipher.open(title);
           } catch (io.justsearch.agent.api.encryption.KeyLockedException locked) {
             firstUserMessage = "";
             floorSummary = null;
+            title = null;
           }
           summaries.add(new SessionSummary(
               sessionDir.getFileName().toString(),
@@ -281,7 +287,9 @@ public final class FileConversationStore implements ConversationStore {
               parent instanceof String p ? p : null,
               branchPoint instanceof String bp ? bp : null,
               floor instanceof String f ? f : null,
-              floorSummary));
+              floorSummary,
+              title,
+              source instanceof String ts ? ts : null));
         }
       }
     } catch (IOException e) {
@@ -346,6 +354,11 @@ public final class FileConversationStore implements ConversationStore {
     Object branchPoint = meta.get("branchPointMessageId");
     Object floor = meta.get("contextFloor");
     Object floorSummary = meta.get("contextFloorSummary");
+    // Tempdoc 838 — readMeta already decrypted the content fields (title among them) or propagated
+    // KeyLockedException; the asymmetry with listSessions is deliberate and pre-existing (the history
+    // endpoint must 423, the list must not).
+    Object title = meta.get("title");
+    Object titleSource = meta.get("titleSource");
     return Optional.of(new SessionSummary(
         sessionId,
         metaShape,
@@ -356,7 +369,9 @@ public final class FileConversationStore implements ConversationStore {
         parent instanceof String p ? p : null,
         branchPoint instanceof String bp ? bp : null,
         floor instanceof String f ? f : null,
-        floorSummary instanceof String fs ? fs : null));
+        floorSummary instanceof String fs ? fs : null,
+        title instanceof String t ? t : null,
+        titleSource instanceof String ts ? ts : null));
   }
 
   @Override
@@ -383,6 +398,29 @@ public final class FileConversationStore implements ConversationStore {
       meta.putIfAbsent("createdAtMs", System.currentTimeMillis());
     }
     writeMetaAtomic(sessionDir, meta, sessionId);
+  }
+
+  @Override
+  public void setTitle(String sessionId, String title, String titleSource) {
+    // Tempdoc 838 — the scalar-meta-field write, mirroring setContextFloor, with ONE deliberate
+    // divergence: an unknown session is left alone rather than materialised. setContextFloor mints a
+    // meta for an id it has never seen; doing that here would create a zero-message conversation that
+    // listSessions then lists — a row that names nothing. The controller answers 404 for that case.
+    Map<String, Object> existing = readMeta(sessionId);
+    if (existing == null) return;
+    Map<String, Object> meta = new LinkedHashMap<>(existing);
+    if (title == null || title.isBlank()) {
+      meta.remove("title");
+      meta.remove("titleSource");
+    } else {
+      String trimmed = title.trim();
+      meta.put(
+          "title",
+          trimmed.length() > MAX_TITLE_LENGTH ? trimmed.substring(0, MAX_TITLE_LENGTH) : trimmed);
+      meta.put(
+          "titleSource", TITLE_SOURCE_AUTO.equals(titleSource) ? TITLE_SOURCE_AUTO : TITLE_SOURCE_USER);
+    }
+    writeMetaAtomic(resolveSessionDir(sessionId), meta, sessionId);
   }
 
   @Override
@@ -554,7 +592,16 @@ public final class FileConversationStore implements ConversationStore {
   // context-floor summary). Seal just those fields (not the whole file) so the conversation LIST keeps
   // working while locked: structural fields (ids, counts, timestamps) stay plaintext, and listSessions
   // catches a locked content field per-session instead of failing the whole list.
-  private static final String[] META_CONTENT_FIELDS = {"firstUserMessage", "contextFloorSummary"};
+  // Tempdoc 838 — `title` joins them: an auto-title is the model's summary of the messages and a
+  // reader's title is a sentence about them, so either one leaks the subject of a sealed
+  // conversation. `titleSource` deliberately does NOT join them — it is a provenance bit, not
+  // content, and the window needs it while the store is locked.
+  private static final String[] META_CONTENT_FIELDS = {
+    "firstUserMessage", "contextFloorSummary", "title"
+  };
+
+  /** Tempdoc 838 — the stored-title cap, the same 200 chars the firstUserMessage preview uses. */
+  private static final int MAX_TITLE_LENGTH = 200;
 
   /** Return a copy of {@code meta} with the content fields sealed (no-op when encryption is disabled). */
   private Map<String, Object> withSealedMeta(Map<String, Object> meta) {

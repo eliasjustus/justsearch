@@ -862,6 +862,15 @@ const titleCalls = (): unknown[][] =>
     String((call[1] as { body?: unknown } | undefined)?.body ?? '').includes('_title_'),
   );
 
+/**
+ * Tempdoc 838 — every name written THROUGH to the conversation's own record, in order, for one
+ * conversation. This is where a title lives now; the browser-local map it replaced is gone.
+ */
+const titleWrites = (id: string): Array<{ title: string; source: string }> =>
+  fetchMock.mock.calls
+    .filter((call) => String(call[0]).endsWith(`/conversations/${encodeURIComponent(id)}/title`))
+    .map((call) => JSON.parse(String((call[1] as { body: string }).body)));
+
 describe('a conversation gets a model-generated name, and a rename beats it', () => {
   it('asks the store\'s naming authority once the first answer has landed', async () => {
     feed();
@@ -990,12 +999,65 @@ describe('a conversation gets a model-generated name, and a rename beats it', ()
     release();
     await settle(el);
 
-    // The store's persisted title is the READER'S, not the one that landed after they had answered.
-    const persisted = JSON.parse(localStorage.getItem('jf-conversation-titles') ?? '{}') as Record<
-      string,
-      string
-    >;
-    expect(persisted[id]).toBe('Renewal postmortem');
+    // Tempdoc 838 — the name the STORE was told last is the reader's, not the one that landed after
+    // they had answered. This used to read a browser-local map; the durable authority is the
+    // conversation's own record now, so the assertion is on what was written to it — and it carries
+    // the `user` provenance, which is what keeps a later reload's first ask from renaming it back.
+    const written = titleWrites(id);
+    expect(written.at(-1)).toEqual({ title: 'Renewal postmortem', source: 'user' });
+    expect(el.sessions.sessions[0]?.title).toBe('Renewal postmortem');
+    // And nothing was left in the retired localStorage map — that key is gone, not merely unread.
+    expect(localStorage.getItem('jf-conversation-titles')).toBeNull();
+  });
+
+  it('never re-names a conversation the reader named BEFORE a reload (tempdoc 838)', async () => {
+    // The regression this reproduces: `renamed` was a fact only the tab's memory held, so a
+    // conversation merged back from the store after a reload started unflagged — and the next ask in
+    // it handed the model the right to overwrite the name the reader had chosen. The provenance is on
+    // the wire now, and the merge seeds the flag from it.
+    feed();
+    const stream = stubStream();
+    const answerFetch = fetchMock.getMockImplementation();
+    const listed = {
+      sessionId: 'uc-reloaded',
+      createdAtMs: 1,
+      lastActiveAtMs: 2,
+      messageCount: 2,
+      firstUserMessage: 'why did the renewal fail?',
+      shapeId: 'core.rag-ask',
+      title: 'Renewal postmortem',
+      titleSource: 'user',
+    };
+    fetchMock.mockImplementation(async (url: unknown, init: unknown) => {
+      if (String(url).includes('/api/chat/conversations?')) {
+        return { ok: true, status: 200, body: null, json: async () => ({ sessions: [listed] }) };
+      }
+      return (answerFetch as (u: unknown, i: unknown) => Promise<unknown>)(url, init);
+    });
+
+    // A FRESH window — the tab that did the renaming is gone, exactly as after a reload.
+    const el = await mount();
+    await settle(el);
+    expect(el.sessions.sessions.map((s) => s.id)).toEqual(['uc-reloaded']);
+    expect(el.sessions.sessions[0]?.renamed).toBe(true);
+
+    (await region(el, 'jf-sv3-sidebar')).dispatchEvent(
+      new CustomEvent('sv3-session-select', {
+        detail: { id: 'uc-reloaded' },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await settle(el);
+    await ask(el, 'and what did the renewal cost?');
+    stream.emit('chunk', { text: 'Nine months.' });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+
+    // The model was never asked to name it, and the reader's name is still on the row.
+    expect(titleCalls()).toHaveLength(0);
+    expect(titleWrites('uc-reloaded')).toEqual([]);
     expect(el.sessions.sessions[0]?.title).toBe('Renewal postmortem');
   });
 
