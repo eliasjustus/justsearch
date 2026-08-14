@@ -399,6 +399,13 @@ final class CoreApiAssembly {
             new io.justsearch.app.services.observability.WorkerEncoderRuntimeCache(
                 b.knowledgeServer::client));
       }
+      // Tempdoc 824 §3.3c: same binding ServicePhase makes for the bootstrap-owned instance —
+      // without it this branch's install status would report every capability "unknown" and the
+      // reconciliation would silently never fire (the wrong-gate shape).
+      if (aiInstallHelper != null) {
+        aiInstallHelper.setFunctionalStatusSource(
+            runtimeActivationHelper::functionalStatusByPackage);
+      }
     }
     AiRuntimeController aiRuntimeController =
         new AiRuntimeController(runtimeActivationHelper, telemetry);

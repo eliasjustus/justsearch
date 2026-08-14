@@ -378,6 +378,15 @@ final class OnlineModeOps {
                 if (sampling != null) {
                   body.put("temperature", sampling.temperature());
                   body.put("top_p", sampling.topP());
+                  // Tempdoc 835 §10f: this transport dropped enableThinking entirely — the only one
+                  // of the three that did — so a caller's suppression was silently discarded and
+                  // the server-wide budget applied anyway. Query expansion and section summarize
+                  // both arrive here.
+                  if (sampling.enableThinking() != null) {
+                    body.put(
+                        "chat_template_kwargs",
+                        Map.of("enable_thinking", sampling.enableThinking()));
+                  }
                 }
 
                 String json = objectMapper.writeValueAsString(body);
@@ -398,16 +407,19 @@ final class OnlineModeOps {
                 LOG.debug("LLM Stream Response: status={}", response.statusCode());
 
                 if (response.statusCode() != 200) {
-                  LOG.warn(
-                      "LLM Error: status={} - check llama-server logs for details",
-                      response.statusCode());
+                  String errorBody = readErrorBody(response);
+                  LOG.warn("LLM Error: status={} body={}", response.statusCode(), errorBody);
                   trackedOnError.accept(
-                      new LlmServerException(response.statusCode(), null));
+                      new LlmServerException(response.statusCode(), errorBody));
                   return;
                 }
 
                 boolean[] sawDone = {false};
                 String[] lastFinishReason = {null};
+                // Tempdoc 835 §5.3: one stateful, frame-straddle-safe think-tag filter for every
+                // streaming shape. This path has no reasoning handler, so captured thinking is
+                // discarded — exactly what it already does with reasoning_content below.
+                ThinkTagStreamFilter thinkFilter = new ThinkTagStreamFilter(null);
                 try (java.util.stream.Stream<String> lines = response.body()) {
                   lines.forEach(
                       line -> {
@@ -441,7 +453,10 @@ final class OnlineModeOps {
 
                             String content = delta.path("content").asText("");
                             if (!content.isEmpty()) {
-                              onChunk.accept(content);
+                              String visible = thinkFilter.accept(content);
+                              if (!visible.isEmpty()) {
+                                onChunk.accept(visible);
+                              }
                             }
 
                             // Consume reasoning_content so it isn't silently lost.
@@ -460,6 +475,11 @@ final class OnlineModeOps {
                           }
                         }
                       });
+                }
+
+                String tail = thinkFilter.flush();
+                if (!tail.isEmpty()) {
+                  onChunk.accept(tail);
                 }
 
                 if (sawDone[0]) {
@@ -634,16 +654,19 @@ final class OnlineModeOps {
                 LOG.debug("LLM Tool Stream Response: status={}", response.statusCode());
 
                 if (response.statusCode() != 200) {
-                  LOG.warn(
-                      "LLM Error: status={} - check llama-server logs for details",
-                      response.statusCode());
+                  String errorBody = readErrorBody(response);
+                  LOG.warn("LLM Error: status={} body={}", response.statusCode(), errorBody);
                   trackedOnError.accept(
-                      new LlmServerException(response.statusCode(), null));
+                      new LlmServerException(response.statusCode(), errorBody));
                   return;
                 }
 
                 boolean[] sawDone = {false};
                 String[] lastFinishReason = {null};
+                // Tempdoc 835 §5.3: the same stateful filter, here with the reasoning channel
+                // wired — inline <think> markup from a leaking build is rerouted to the reasoning
+                // sink, so the product behaves identically on both build families.
+                ThinkTagStreamFilter thinkFilter = new ThinkTagStreamFilter(onReasoningChunk);
                 try (java.util.stream.Stream<String> lines = response.body()) {
                   lines.forEach(
                       line -> {
@@ -680,7 +703,10 @@ final class OnlineModeOps {
                             // Text content
                             String content = delta.path("content").asText("");
                             if (!content.isEmpty()) {
-                              onChunk.accept(content);
+                              String visible = thinkFilter.accept(content);
+                              if (!visible.isEmpty()) {
+                                onChunk.accept(visible);
+                              }
                             }
 
                             // Reasoning content (emitted by --reasoning-format deepseek)
@@ -703,6 +729,11 @@ final class OnlineModeOps {
                           }
                         }
                       });
+                }
+
+                String tail = thinkFilter.flush();
+                if (!tail.isEmpty()) {
+                  onChunk.accept(tail);
                 }
 
                 if (sawDone[0]) {
@@ -967,26 +998,43 @@ final class OnlineModeOps {
   }
 
 
+  /**
+   * Re-tags the assembled RAG context as {@code <passage id="n" source="label">} blocks for the
+   * online path.
+   *
+   * <p>The passage id is the number the context header already carries ({@code "[n] label\n"},
+   * ContextBudgeter.sectionHeader), not a running counter of this loop: that ordinal is what the
+   * prompt asks the model to cite and what the FE resolves against {@code sources[n - 1]}, so a
+   * second, independently-derived numbering here could silently disagree with it (tempdoc 822
+   * §3a). A section whose header does not parse falls back to the running counter.
+   */
   static String formatContextAsNumberedPassages(String rawContext) {
     if (rawContext == null || rawContext.isBlank()) {
       return "";
     }
     String[] sections = rawContext.split(DocumentService.SECTION_SEPARATOR);
     StringBuilder sb = new StringBuilder();
-    int passageNum = 0;
+    int sectionOrdinal = 0;
     for (String section : sections) {
       String trimmed = section.trim();
       if (trimmed.isEmpty()) {
         continue;
       }
-      passageNum++;
+      sectionOrdinal++;
+      int passageNum = sectionOrdinal;
       String source = "unknown";
       String content = trimmed;
-      if (trimmed.startsWith("[From: ")) {
-        int end = trimmed.indexOf("]\n");
-        if (end > 7) {
-          source = trimmed.substring(7, end);
-          content = trimmed.substring(end + 2);
+      int headerEnd = trimmed.indexOf('\n');
+      if (trimmed.startsWith("[") && headerEnd > 0) {
+        int close = trimmed.indexOf("] ");
+        if (close > 1 && close < headerEnd) {
+          String digits = trimmed.substring(1, close);
+          int parsed = parsePositiveIntOrZero(digits);
+          if (parsed > 0) {
+            passageNum = parsed;
+            source = trimmed.substring(close + 2, headerEnd);
+            content = trimmed.substring(headerEnd + 1);
+          }
         }
       }
       if (sb.length() > 0) {
@@ -1003,12 +1051,43 @@ final class OnlineModeOps {
     return sb.toString();
   }
 
+  /** Returns the value of an all-digit string, or 0 when it is empty, non-numeric or overflows. */
+  private static int parsePositiveIntOrZero(String digits) {
+    if (digits.isEmpty() || digits.length() > 9) {
+      return 0;
+    }
+    for (int i = 0; i < digits.length(); i++) {
+      if (digits.charAt(i) < '0' || digits.charAt(i) > '9') {
+        return 0;
+      }
+    }
+    return Integer.parseInt(digits);
+  }
+
   /**
    * Extracts OpenAI-compatible usage information from a streamed chat completion SSE chunk.
    *
    * <p>llama-server emits a final chunk with {@code choices: []} and a {@code usage} object when
    * {@code stream_options.include_usage=true}. Other chunks typically omit {@code usage}.
    */
+  /**
+   * Reads a failed streaming response's body so the reason survives to the caller (tempdoc 835
+   * §10f). The streaming paths request {@code BodyHandlers.ofLines()} and previously passed
+   * {@code null} as the body, which turned llama-server's own explanation — e.g. {@code request
+   * (5878 tokens) exceeds the available context size (4096 tokens), try increasing it} — into a
+   * bare "Server returned status 400" on the surface, with "check llama-server logs" as the only
+   * lead. Consuming the stream here also closes it instead of leaking it on the error path.
+   */
+  private static String readErrorBody(HttpResponse<java.util.stream.Stream<String>> response) {
+    try (java.util.stream.Stream<String> lines = response.body()) {
+      String body = lines.limit(20).collect(java.util.stream.Collectors.joining("\n")).strip();
+      return body.isEmpty() ? null : body.substring(0, Math.min(1000, body.length()));
+    } catch (Exception e) {
+      LOG.debug("Failed to read LLM error body: {}", e.getMessage());
+      return null;
+    }
+  }
+
   static AiUsage extractUsageFromChatChunk(JsonNode root) {
     if (root == null) return null;
     JsonNode usage = root.get("usage");

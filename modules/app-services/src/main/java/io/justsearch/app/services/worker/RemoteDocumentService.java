@@ -285,7 +285,7 @@ public final class RemoteDocumentService implements DocumentService {
                 params.fileKind(), params.autoEntityExtract(), params.contextFormat(),
                 params.metaSource(), params.metaAuthor(), params.metaCategory(),
                 params.metaPublishedAt(), params.returnFullDocuments(),
-                params.excludedSourceIds());
+                params.excludedSourceIds(), params.collection());
           }
         }
 
@@ -335,10 +335,18 @@ public final class RemoteDocumentService implements DocumentService {
           || !params.entityLocations().isEmpty()
           || !params.metaSource().isEmpty()
           || !params.metaAuthor().isEmpty()
-          || !params.metaCategory().isEmpty();
+          || !params.metaCategory().isEmpty()
+          // Tempdoc 821 §3-C2: the pre-search discovers the doc universe the RAG request is then
+          // scoped to, so it must carry the same collection scope. Without it an explicit
+          // agent-history ASK pre-searched under the DEFAULT scope, which excludes agent-history,
+          // and discovered zero parents.
+          || !params.collection().isEmpty();
 
       if (hasFilters || params.modifiedAt().isSet() || params.metaPublishedAt().isSet()) {
         var filtersBuilder = io.justsearch.ipc.SearchFilters.newBuilder();
+        if (!params.collection().isEmpty()) {
+          filtersBuilder.addAllCollection(params.collection());
+        }
         if (!params.pathPrefix().isEmpty()) {
           filtersBuilder.setPathPrefix(params.pathPrefix());
         }
@@ -501,36 +509,58 @@ public final class RemoteDocumentService implements DocumentService {
     }
   }
 
+  /**
+   * The one site that unpacks {@link VerificationSource} into the wire's positional arrays
+   * (tempdoc 836 §1.1). The three arrays are built in a single loop from one source list, so they
+   * cannot desync; a length the Worker does not expect is rejected there with INVALID_ARGUMENT
+   * rather than absorbed.
+   */
   @Override
-  public CompletionStage<CitationMatchResult> matchCitations(
-      String answerText, List<ContextCitation> citations, double threshold) {
+  public CompletionStage<CitationMatchResult> matchCitationsAgainst(
+      String answerText, List<VerificationSource> sources, double threshold) {
     return CompletableFuture.supplyAsync(() -> {
-      if (answerText == null || answerText.isBlank() || citations == null || citations.isEmpty()) {
-        return new CitationMatchResult(List.of(), 0, 0, 0);
+      if (answerText == null || answerText.isBlank() || sources == null || sources.isEmpty()) {
+        return new CitationMatchResult(List.of(), 0, 0, 0, 0, ScorerKind.NONE);
       }
       try {
-        List<String> chunkDocIds = new ArrayList<>(citations.size());
-        List<Integer> chunkIndices = new ArrayList<>(citations.size());
-        for (ContextCitation c : citations) {
+        List<String> chunkDocIds = new ArrayList<>(sources.size());
+        List<Integer> chunkIndices = new ArrayList<>(sources.size());
+        List<String> passageTexts = new ArrayList<>(sources.size());
+        boolean anyText = false;
+        for (VerificationSource s : sources) {
+          ContextCitation c = s.citation();
           chunkDocIds.add(c.parentDocId());
           chunkIndices.add(c.chunkIndex());
+          passageTexts.add(s.literalText());
+          anyText |= s.suppliesText();
         }
         MatchCitationsResponse resp =
-            clientSupplier.get().matchCitations(answerText, chunkDocIds, chunkIndices, threshold);
+            clientSupplier.get().matchCitations(
+                answerText,
+                chunkDocIds,
+                chunkIndices,
+                anyText ? passageTexts : List.of(),
+                threshold);
         List<CitationMatchEntry> entries = new ArrayList<>(resp.getMatchesCount());
         for (var m : resp.getMatchesList()) {
           entries.add(new CitationMatchEntry(
               m.getSentenceIndex(),
               m.getSentenceText(),
-              m.getChunkIndex(),
+              m.getSourceIndex(),
               m.getSimilarity(),
-              m.getParentDocId()));
+              m.getParentDocId(),
+              TextSource.fromWire(m.getTextSource())));
         }
         return new CitationMatchResult(
-            entries, resp.getSentencesTotal(), resp.getSentencesMatched(), resp.getTookMs());
+            entries,
+            resp.getSentencesTotal(),
+            resp.getSentencesMatched(),
+            resp.getTookMs(),
+            resp.getSentencesScored(),
+            ScorerKind.fromWire(resp.getScorer()));
       } catch (Exception e) {
         log.warn("Citation matching via gRPC failed", e);
-        return new CitationMatchResult(List.of(), 0, 0, 0);
+        return new CitationMatchResult(List.of(), 0, 0, 0, 0, ScorerKind.NONE);
       }
     });
   }

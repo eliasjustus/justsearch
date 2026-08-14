@@ -109,10 +109,7 @@ public final class SearchPlanner {
 
     // SparseShortcut path (sparse-only request).
     if (sparseOnlyRequest) {
-      LuceneRuntimeTypes.QuerySyntax runtimeSyntax =
-          request.getQuerySyntax() == SearchQuerySyntax.SEARCH_QUERY_SYNTAX_LUCENE
-              ? LuceneRuntimeTypes.QuerySyntax.LUCENE
-              : LuceneRuntimeTypes.QuerySyntax.SIMPLE;
+      LuceneRuntimeTypes.QuerySyntax runtimeSyntax = inputs.runtimeSyntax();
       boolean correctionRetryEnabled =
           runtimeSyntax == LuceneRuntimeTypes.QuerySyntax.SIMPLE
               && resolvedConfigSupplier.get().search().corrections().enabled();
@@ -188,7 +185,7 @@ public final class SearchPlanner {
         planChunkMerge(inputs, limit, queryString);
 
     return new SearchDecision.MultiLegDecision(
-        legs, hybridFallback, spladeSkip, facets, chunkMerge);
+        inputs.runtimeSyntax(), legs, hybridFallback, spladeSkip, facets, chunkMerge);
   }
 
   private static int clampLimit(int requested) {

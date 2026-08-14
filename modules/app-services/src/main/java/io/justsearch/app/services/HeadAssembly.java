@@ -86,6 +86,9 @@ public final class HeadAssembly implements AutoCloseable {
   private final io.justsearch.app.services.vdu.OfflineCoordinator offlineCoordinator;
   private final Telemetry telemetry;
   private final KnowledgeHttpApiAdapter agentSearchAdapter;
+  // Tempdoc 832 (lane D): published by LocalApiServer (its owner) before connectKnowledgeServer, so
+  // the late-bound agent ingest adapter can be bound to the same scan-progress stream.
+  private volatile io.justsearch.app.services.worker.ScanProgressRegistry scanProgressRegistry;
   // §31 Step 1.1: ExcludesService constructed by ServicePhase (first dissolution of LateBoundServices).
   private final io.justsearch.app.api.ExcludesService excludes;
   // §31 Phase 3: ServicePhase output held to feed assembleServiceGraph + expose helpers to
@@ -492,6 +495,19 @@ public final class HeadAssembly implements AutoCloseable {
               return restored;
             }));
 
+    // Tempdoc 834 §5.2 — a run the previous process left mid-flight still reads as live forever
+    // (nothing recomputes `resumable` across a restart). Stamp those runs now...
+    var agentRunReconciler = new io.justsearch.agent.AgentRunReconciler(agentRunStore);
+    agentRunReconciler.reconcile();
+    // ...and AGAIN on unlock, because with at-rest encryption on and the store locked, readMeta
+    // returns null and the boot pass above is a silent no-op on exactly the encrypted installs
+    // (834 R5). UnlockDeferredScan owns the two DataKeyManager constraints — listeners run under
+    // the key monitor, and `fire` swallows their throws — so the scan lands off-monitor and cannot
+    // vanish. The pass is idempotent, so boot + unlock + re-unlock are all safe.
+    new io.justsearch.app.services.encryption.UnlockDeferredScan(
+            "agent-run-reconciler", agentRunReconciler::reconcile)
+        .attachTo(this.dataKeyManager);
+
     // §4 Phase 4 — SubstratePhase: composes operation registry + catalogs + resource/metric/
     // operation/health substrate init + indexing-jobs bridge + rule runner.
     final SearchTool searchToolFinal = searchToolInstance;
@@ -766,7 +782,9 @@ public final class HeadAssembly implements AutoCloseable {
                     this.services.inference().onlineAi(),
                     this.lambdaMartReranker,
                     this.agentSearchAdapter,
-                    this.memoryStore));
+                    this.memoryStore,
+                    this.scanProgressRegistry,
+                    scanRollupLedgerOrNull()));
     bootTraceBuilder.record(
         io.justsearch.app.services.bootstrap.PhaseRecord.lazyPending(
             "agent-tools-registration",
@@ -924,6 +942,14 @@ public final class HeadAssembly implements AutoCloseable {
    */
   public String actualLlamaServerBuild() {
     return this.inferenceManager == null ? null : this.inferenceManager.actualLlamaServerBuild();
+  }
+
+  /**
+   * Tempdoc 835 §9c.2: the running llama-server's thinking-capability verdict; null when there is
+   * no inference manager (thinking-capability is then simply unknown).
+   */
+  public String llamaServerThinkingSupport() {
+    return this.inferenceManager == null ? null : this.inferenceManager.llamaServerThinkingSupport();
   }
 
   /** F6: rebuild the held ServiceGraph. Reads prior services from the existing held graph. */
@@ -1323,6 +1349,27 @@ public final class HeadAssembly implements AutoCloseable {
   /** §4 Phase 2 typed output. */
   public io.justsearch.app.services.bootstrap.CapabilityGraph capabilities() {
     return this.capabilities;
+  }
+
+  /**
+   * Tempdoc 832 (lane D) — publishes the process-wide scan-progress registry (owned by
+   * {@code LocalApiServer}, which constructs it) so the agent-owned ingest adapter gets the same
+   * scan observability the controller-owned one has: without it, an agent- or MCP-driven directory
+   * ingest emitted no scan-progress SSE and left no rollup ledger row.
+   *
+   * <p>Called before {@link #connectKnowledgeServer}, which is where the late-bound registration
+   * builds the adapter that {@code IngestTool} actually drives on the normal (async-Worker) boot.
+   * The eager-path adapter, when one exists, is bound here directly.
+   */
+  public void setScanProgressRegistry(
+      io.justsearch.app.services.worker.ScanProgressRegistry registry) {
+    this.scanProgressRegistry = registry;
+    io.justsearch.app.services.bootstrap.phases.AgentToolFactory.bindScanObservability(
+        this.agentSearchAdapter, registry, scanRollupLedgerOrNull());
+  }
+
+  private io.justsearch.app.observability.ledger.ScanRollupLedger scanRollupLedgerOrNull() {
+    return this.substrateOut == null ? null : this.substrateOut.operationOut().scanRollupLedger();
   }
 
   /** §6 typed substrate graph built once at end of constructor. */

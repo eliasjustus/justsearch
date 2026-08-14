@@ -139,7 +139,7 @@ describe('818 askClient — the stream', () => {
         {
           sentenceIndex: 0,
           sentenceText: 'Payment terms moved to net-45.',
-          citations: [{ chunkIndex: 0, score: 0.4 }],
+          citations: [{ sourceIndex: 0, score: 0.4 }],
         },
       ],
       [
@@ -149,7 +149,7 @@ describe('818 askClient — the stream', () => {
             {
               sentenceIndex: 0,
               sentenceText: 'Payment terms moved to net-45.',
-              chunkIndex: 0,
+              sourceIndex: 0,
               similarity: 0.77,
               parentDocId: 'Contracts/Northfield.pdf',
             },
@@ -178,10 +178,13 @@ describe('818 askClient — the stream', () => {
     expect(done?.promptTokens).toBe(1234);
     // L6 — the counts are the payload's, never counted here.
     expect(done?.grounding).toEqual({ sentencesMatched: 1, sentencesTotal: 2 });
-    // The delta and the authoritative match merge into ONE claim, keeping the higher score.
+    // The delta and the authoritative match merge into ONE claim — but tempdoc 822 §3d keeps the two
+    // scores APART instead of maxing them into one number: the delta's 0.4 is a lexical word-overlap
+    // ratio, the match's 0.77 is a cross-encoder probability, and only the latter may reach a tier.
     expect(done?.claims).toHaveLength(1);
-    expect(done?.claims[0]?.score).toBeCloseTo(0.77);
-    expect(done?.claims[0]?.sourceRefs).toEqual([0]);
+    expect(done?.claims[0]?.verifiedScore).toBeCloseTo(0.77);
+    expect(done?.claims[0]?.lexicalScore).toBeCloseTo(0.4);
+    expect(done?.claims[0]?.verifiedRefs).toEqual([0]);
   });
 
   it('a turn the backend never citation-matched reports NO grounding (never a fabricated zero)', async () => {

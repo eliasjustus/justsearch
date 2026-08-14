@@ -3,7 +3,7 @@ title: Search Quality Register
 type: reference
 status: stable
 created: 2026-03-19
-updated: 2026-06-15
+updated: 2026-08-14
 description: "Shared decision register for search quality. Read before starting search work. Update before finishing."
 ---
 
@@ -33,8 +33,11 @@ tempdoc agent must read this before starting and update it before closing.
   if you re-ran or validated a dataset
 
 **Replaces:** the former `search-quality.md` (SRQ-) and `retrieval-quality.md` (RAG-)
-issue files, which have been retired. Remaining open items from those files were
-triaged into this register's sections or retired to `decisions.md`.
+issue files, and — since tempdoc 821 §7 D5 (2026-08-12) — the rest of the
+`docs/reference/issues/` register set, which was retired wholesale. Open items were
+triaged into this register's sections or routed into `docs/observations.md`; promote a
+search-quality condition from there into a section below rather than re-creating a
+standalone issue file.
 
 ---
 
@@ -116,27 +119,27 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 > The (config × mode) ablation tables in each corpus block stay hand-authored. Reproduction tolerance
 > is the within-machine ±2σ envelope, scoped to equivalent hardware/setup (tempdoc 623 F-α).
 
-**Release:** `715-rebaseline-2026-07-16` · default mode `hybrid` · NVIDIA GeForce RTX 4070 · driver 610.62 · ORT 1.24.3
+**Release:** `832-rebaseline-2026-08-14` · default mode `hybrid` · NVIDIA GeForce RTX 4070 · driver 610.88 · ORT 1.24.3
 
 **Coverage:** retrieval ranking quality (per-corpus metrics above) — **does NOT measure** document extraction / OCR / VDU routing quality (see tempdoc 623 §F — extraction-quality sibling).
 
 | Corpus | Ours (mode) | nDCG@10 | Published baselines (cited, side-by-side) |
 |---|---|---|---|
-| beir/scifact | hybrid | 0.760 | BM25 (multifield) 0.665, SPLADE++ EnsembleDistil 0.710, ColBERTv2 0.693 |
-| mixed/enron-qa | hybrid | 0.736 | — |
-| mixed/legal-clerc-200 | hybrid | 0.598 | BM25 0.054, Contriever-MSMarco (zero-shot dense) 0.042 |
-| mixed/miracl-de-2k | hybrid | 0.862 | BGE-M3 Dense 0.567 (dev) |
-| mixed/miracl-fr-2k | hybrid | 0.873 | BM25 0.183 (dev), mDPR (zero-shot) 0.435 (dev), Hybrid (BM25+mDPR) 0.523 (dev) |
+| beir/scifact | hybrid | 0.757 | BM25 (multifield) 0.665, SPLADE++ EnsembleDistil 0.710, ColBERTv2 0.693 |
+| mixed/enron-qa | hybrid | 0.796 | — |
+| mixed/legal-clerc-200 | hybrid | 0.578 | BM25 0.054, Contriever-MSMarco (zero-shot dense) 0.042 |
+| mixed/miracl-de-2k | hybrid | 0.857 | BGE-M3 Dense 0.567 (dev) |
+| mixed/miracl-fr-2k | hybrid | 0.884 | BM25 0.183 (dev), mDPR (zero-shot) 0.435 (dev), Hybrid (BM25+mDPR) 0.523 (dev) |
 
 **Engine performance** (relative-ratchet guarded — tempdoc 640):
 
 | Corpus | CE p50 (ms) | Index docs/s | Enrich docs/s | Resident (GB) |
 |---|---|---|---|---|
-| beir/scifact | 171 | 89.8 | 20.5 | 2.02 |
-| mixed/enron-qa | 161 | 64.5 | 6.2 | 2.02 |
-| mixed/legal-clerc-200 | 226 | 29.3 | 1.0 | 2.02 |
-| mixed/miracl-de-2k | 175 | 97.2 | 33.4 | 2.02 |
-| mixed/miracl-fr-2k | 174 | 60.0 | 23.3 | 2.02 |
+| beir/scifact | 142 | 76.1 | 1.3 | 2.02 |
+| mixed/enron-qa | 147 | 63.8 | 3.6 | 2.02 |
+| mixed/legal-clerc-200 | 165 | 18.6 | 0.8 | 2.02 |
+| mixed/miracl-de-2k | 133 | 125.6 | 34.1 | 2.02 |
+| mixed/miracl-fr-2k | 143 | 151.7 | 46.6 | 2.02 |
 
 <!-- generated:end -->
 
@@ -174,6 +177,7 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 | (HEAD default) | (default) | default-hybrid | hybrid | 0.758 | 0.627 | 0.896 | cross_encoder + dense + splade + query_classification | A | f91e269bc | 580 |
 | (HEAD default) | CE-off | (default) | full | 0.708 | 0.577 | 0.833 | dense + splade + query_classification (CE off) | B | f91e269bc | 580 |
 | (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump) | (default) | (default) | hybrid | 0.7604 | 0.637 | 0.888 | cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
+| (**832 re-baseline — first cohort scored on the corrected delivered-rank harness**, 803) | (default) | (default) | hybrid | 0.7572 | 0.627 | 0.894 | cross_encoder+dense+hybrid+query_classification | A | 32d6a0a0 | 832 |
 
 **Best known:** splade-ml+gte / gte-ml-reranker / default-hybrid / **hybrid** = **0.754** (391, 6-run median across two 3-run sets on 2026-04-18 and 2026-04-19; range 0.7527–0.7571, CV 0.1–0.3%). Full mode best known remains splade-ml+gte / gte-ml-reranker / bm25-dom / full = **0.736** (343 Phase D).
 **Note:** GTE-ModernBERT CE produces identical result (0.722 — noise). Mode breakdown now complete.
@@ -207,6 +211,7 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 | (774 Stage-1 chunk-lever A/B set, flags non-default) | (default) | (default) | hybrid | 0.7476 | 0.597 | 0.877 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 |
 | (**`search.evidence_preview.enabled=true`**, default-off flag) | (default) | (default) | hybrid | **0.7882** | 0.643 | 0.913 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 / F-041 |
 | (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump) | (default) | (default) | hybrid | 0.7845 | 0.640 | 0.910 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
+| (**832 re-baseline — first cohort scored on the corrected delivered-rank harness**, 803; the +0.011 vs the fused-order 0.7845 is consistent with 802's measured +0.0184 CE-ordering term on this corpus) | (default) | (default) | hybrid | **0.7957** | 0.667 | 0.913 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 32d6a0a0 | 832 |
 
 **Best known:** bge-m3 / minilm-512 / balanced / bm25_splade = **0.830**
 **Note:** CE hurts EnronQA by 3-5% across all modes (CE-on vs CE-off isolation). Model swaps are quality-neutral on English email (CE-off post-swap matches pre-swap exactly). Confirms FW-001: corpus-adaptive CE gating needed.
@@ -256,6 +261,7 @@ catalog — see Corpus provenance note above)*
 | (774 Stage-1 chunk-lever A/B set, flags non-default) | (default) | (default) | hybrid | 0.5448 | 0.420 | 0.685 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 |
 | (**`search.evidence_preview.enabled=true`**, default-off flag) | (default) | (default) | hybrid | **0.6388** | 0.465 | 0.810 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 / F-041 |
 | (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump) | (default) | (default) | hybrid | **0.6362** | 0.460 | 0.810 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
+| (**832 re-baseline — first cohort scored on the corrected delivered-rank harness**, 803; the −0.058 vs the fused-order 0.6362 carries 802's measured −0.0418 CE-ordering term on this corpus plus single-run wobble) | (default) | (default) | hybrid | **0.5780** | 0.355 | 0.810 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 32d6a0a0 | 832 |
 
 **Best known (at shipped defaults):** the flips-ON row above — hybrid = **0.6362** (be7fef6b, 775 §I;
 reproduces the F-041 flag-on 0.6388 within noise, now as the default). Prior defaults best:
@@ -311,6 +317,7 @@ corpus as currently committed)*
 | splade-ml+gte | gte-ml-reranker | bm25-dom | bm25_splade | 0.582 | 0.384 | 0.816 | bm25+splade+CE | A | 5d19ff2c1 | 343 D |
 | splade-ml+gte | gte-ml-reranker | bm25-dom | full | 0.696 | 0.469 | 0.908 | bm25+splade+dense+CE | A | 5d19ff2c1 | 343 D |
 | (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump; post-2026-07-01 corpus) | (default) | (default) | hybrid | 0.8591 | 0.679 | 0.997 | cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
+| (**832 re-baseline — first cohort scored on the corrected delivered-rank harness**, 803) | (default) | (default) | hybrid | 0.8575 | 0.666 | 0.997 | cross_encoder+dense+hybrid+query_classification | A | 32d6a0a0 | 832 |
 
 **Best known:** bge-m3 / minilm-512 / balanced / full = **0.734**
 **Note:** SPLADE multilingual (0.733) nearly matches BGE-M3 sparse (0.669→0.733 = +9.6%). Massive improvement over SPLADE-v3 English-only (0.485→0.733 = +51.1%). Full mode 0.696 vs pre-swap 0.619 (+12.4%).
@@ -331,6 +338,7 @@ corpus as currently committed)*
 | bge-m3 | minilm-512 | balanced | bm25_splade | 0.515 | — | — | bm25+splade | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | balanced | full | **0.706** | — | — | bm25+sparse+dense | A | dc4f79a | 309 §37 |
 | (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump; post-2026-07-01 corpus) | (default) | (default) | hybrid | 0.8726 | 0.706 | 1.000 | cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
+| (**832 re-baseline — first cohort scored on the corrected delivered-rank harness**, 803; first certifiable fr run — the 803-era SPLADE blocker is fixed, PR #459) | (default) | (default) | hybrid | **0.8844** | 0.720 | 1.000 | cross_encoder+dense+hybrid+query_classification | A | 32d6a0a0 | 832 |
 
 **Best known:** bge-m3 / minilm-512 / balanced / full = **0.706**
 **Note:** Same pattern as German — balanced weights, `splade` (0.660) strongest single retriever for non-English.
@@ -862,6 +870,326 @@ above)*
 - **Evidence:** tempdoc 708 (final table, protocol application, sign tests, run pointers); F-030(678)
   refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
   was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
+
+### F-048: in-corpus paraphrase bridging is HOST-DILUTION-bound, not query-shape-bound — tier D resolves Q-019: agents' 4-token queries cost dense only ~9 pts top-1 on email-length hosts, while host length collapses bridge@10 from 0.995 (isolated) to 0.78 (2.5 KB emails) to 0.25 (CLERC-length); the hero q0 failure is a dilution-marginal doc (dense rank 16 at question form) that query shape pushes to rank 42–76 (tempdoc 796 §Tier D, 2026-08-14)
+
+- **Answer:** the deferred 796 tier-D pass ran (CPU-only, exact commands + sanity checks per 796
+  §Deferred; 450 rows over `en-email-enron-raw-1k-{verbose,short-natural}` + `en-legal-clerc-1k-verbose`,
+  3 query forms × 50 queries/member, 1000-candidate pools). Dense per-form on enron:
+  question 0.57/0.80 (top1/top10), descriptor 0.54/0.76, keyword 0.48/0.78 — **query shape is a
+  real but SECONDARY amplifier**, nowhere near tier-P's step function. Against tier-S's 0.995
+  bridge@10 in isolation, in-corpus bridge@10 is 0.78 on ~2.5 KB emails and **0.25** on ~7×-longer
+  CLERC hosts — **host dilution of a short planted payload is the dominant mechanism**
+  (the F-031/F-040 context-starvation shape, now measured at production granularity). The q0 hero
+  anchor (`power station → reactor`, 0/6 hero cells) is explained mechanistically: dense rank 16
+  in question form (just outside the agent-visible top-10), 42 descriptor, 76 keyword, while the
+  q16 control anchor is rank 1 in all six cells — retrieval marginality, not encoder incapability
+  (the pair bridges at tiers P and S, F-044). Secondary: `splade-idf` (inference-free query mode)
+  collapses in-corpus (MRR 0.05 vs 0.16 onnx); lexical 0–1/450 rows top-10 (by construction).
+- **Consequence:** 788 §3.A (delivery) and §3.B.10 (engine bridging) do NOT collapse into one
+  problem — the (a)-dominant scenario did not obtain. The engine lever for q0-class cells stays
+  context-bearing long-host representations (F-031/F-040 lane); the agent-visible lever is
+  depth/evidence delivery. No encoder swap is re-licensed (F-034 stands).
+- **Conditions/caveats:** offline exact-NN suite (F-040 inversion warning — deltas, never absolute
+  ranks, are load-bearing); EN 1k members only, no 10k tier-D cells; single run; tier-P/S were
+  regenerated EN-only this session (the committed DE pair-register half is untouched — see the
+  instrument-defect note in 796 §Tier D: `pairs` at default `--langs en` rewrites the committed
+  register in place and silently drops DE; restored via single-file checkout, follow-up in 832).
+- **Evidence:** tempdoc 796 §Tier D (tables, anchors, defects); artifacts
+  `tmp/paraphrase-bridge/tier-d.{enron1k,clerc1k}.v1.json` + `report.v1.json` (session machine,
+  gitignored per 708's convention); driver `tmp/paraphrase-bridge/tier-d-driver.ps1`.
+
+### F-047: the assembled RAG context headed its sections with an UNNUMBERED label, so the model invented the `[n]` ordinals it was asked to cite — one canonical `[n] label` formatter now defines the numbering, and section ⇔ citation ⇔ sources-array position is test-pinned (tempdoc 822 S1/§3a, 2026-08-14)
+
+- **Defect:** the prompt demands `[1]`, `[2]` citations and the FE labels source *i* as `i + 1`, but
+  the context the model actually read carried no numbers on its section headers. The model had
+  nothing to count against, so it minted plausible-looking ordinals — the root cause of
+  out-of-range and mis-targeted citation brackets, upstream of every resolver fix in F-048/F-049.
+- **Fix:** `ContextBudgeter.sectionHeader(int oneBasedIndex, String label)` renders `"[n] label\n"`
+  and is the single definition of the numbering
+  (`modules/indexing/src/main/java/io/justsearch/indexing/rag/ContextBudgeter.java:36-38`, contract
+  javadoc :23-35). Four context emitters carry that shape: the two budgeters call it —
+  `ContextBudgeter#appendSection` (:112) and `TokenAwareBudgeter#appendSection`
+  (`TokenAwareBudgeter.java:130`), reached in production by `RagContextOps#searchChunksWithMeta`
+  (`modules/worker-services/.../RagContextOps.java:640` token-budget / :669 char-budget) and
+  `RemoteDocumentService#retrieveContextFallback` (`.../worker/RemoteDocumentService.java:480`).
+- **Two of the four MIRROR the format rather than call it, by module constraint — say "one canonical
+  definition", not "one call site":** `DocumentService#retrieveContextWithMeta`'s no-RAG fallback
+  (`modules/app-api/.../DocumentService.java:138-151`) and `McpToolSurface`'s concise re-render
+  (`modules/ui/.../mcp/McpToolSurface.java:771-779`) build `[n] label\n` inline because
+  `:modules:app-api` cannot depend on `:modules:indexing` (the same constraint `SECTION_SEPARATOR`
+  is mirrored under; stated at `ContextBudgeter.java:33-34` and at both mirror sites). A future
+  change to the header shape must be applied at three places, and only the pins below would catch a
+  drift.
+- **The invariant, pinned:** header number *n* ⇔ `sections[n-1]` ⇔ `chunks[n-1]` (the array the FE
+  renders as `sources`) — nested class `NumberingContract` (:679) in
+  `modules/worker-services/src/test/.../GrpcSearchServiceRetrieveContextTest.java`, test
+  `headerNumberMatchesSectionAndCitationPosition` (:711). Its fixtures deliberately index chunks
+  **5/6/7** of their parents, so a header numbered from `chunkIndex` would print `[6]` where the
+  contract requires `[1]` — the test distinguishes the right reason from a passing coincidence.
+  Unit-level shape + 1-based numbering: `numbersSectionsFromOne` in
+  `modules/indexing/src/test/.../ContextBudgeterTest.java:32-59`.
+- **Holds by construction, tested anyway:** the worker's budget loop appends to the used-hit list and
+  to the section list in one iteration, so the equality is structural today; the test exists because
+  a future reorder (a filter on one list, a sort of the other) would break it **silently**.
+- **Evidence:** tempdoc 822 §3a (S1). No retrieval metric moves — this is prompt-context assembly,
+  not retrieval; no register baseline is affected.
+
+### F-048: claim scores were `Math.max`-ed across two producers measuring different quantities — word overlap read as "grounded"; scores now carry their producer and only cross-encoder-verified ones reach a grounding tier (tempdoc 822 S2/§3d, 2026-08-14)
+
+- **Defect:** one `score` field on the FE's per-sentence claim model was fed by two events that do
+  not measure the same thing — `rag.citation_matches` carries a **cross-encoder relevance
+  probability**, `rag.citation_delta` carries the **streaming lexical matcher's word-overlap
+  coverage ratio** (`hits / significantWords`, whose denominator is the passage's vocabulary size).
+  `Math.max`-ing them fed word overlap into thresholds calibrated on the cross-encoder cutoff, so a
+  2-of-4-word passage read "grounded"
+  (`modules/ui-web/src/shell-v0/components/chat/citationTypes.ts:20-26`). No monotone mapping
+  between the two scales exists, so no rescaling fix was available.
+- **Fix — the gate is structural, not a check:** `Claim.verifiedScore: number | null`
+  (`citationTypes.ts:36`) and `Claim.lexicalScore: number` (:42) are separate fields with separate
+  standing, and the gate sits at the one place a `Claim` becomes a `Citation`:
+  `claimsToCitations` drops the claim whole (`citationResolve.ts:39` —
+  `if (typeof cl.verifiedScore !== 'number') continue;`) and populates `Citation.similarity` only
+  from `verifiedScore` (:55). There is **no field on `Citation` a lexical score could be written
+  into** (:13-18), so the tier consumers cannot see one: `groundingClass`
+  (`evidenceProjection.ts:302`) is the single tier authority for both the inline mark and the
+  sentence underline, and it reads `Citation.similarity`, declared "cross-encoder similarity"
+  (`MarkdownBlock.ts:46`, call sites :704 and :765).
+- **Fails CLOSED:** the check is `typeof … !== 'number'`, not `!== null` — an untyped/legacy claim
+  object carrying no verified score at all is treated exactly like an explicit null
+  (`citationResolve.ts:35-39`). A missing producer is not a verified one.
+- **The summarize surface is honestly markless, and that is the correct output, not a regression:**
+  `core.summarize`'s declared event vocabulary is `chunk, reasoning_chunk, rag.citations,
+  rag.citation_delta, done, error` — **no `rag.citation_matches`**
+  (`modules/app-services/.../conversation/shapes/SummarizeShape.java:46-47`). Every claim that
+  surface holds is therefore lexically scored and sets `verifiedScore: null`
+  (`modules/ui-web/src/shell-v0/views/SummarizeView.ts:361-372`), so under the gate it mints no
+  marks. Owner-accepted (822 decision ledger). **Backlogged, and it is a backend question, not a
+  render fix:** giving the summarize tier real marks means adding a cross-encoder pass to that
+  shape — see Q-021.
+- **Ungrounded renders in the WARNING role, distinct from grounded, in both consumers:** the tier
+  vocabulary is grounded ⇒ no mark (well-grounded prose is plain — mark the exception, not the
+  rule), weak ⇒ `--text-secondary`, ungrounded ⇒ `--accent-warning`
+  (`MarkdownBlock.ts:342-350`); the ref chip mirrors it with the warning role's text member,
+  `.cite-ref.cite-ungrounded` ⇒ `--text-warning` (:601-602), so mark and underline agree. The
+  second consumer, the Search v3 window, bridges both tokens to `--warning-foreground`
+  (`modules/ui-web/src/shell-v0/views/search-v3/Sv3Main.ts:289-290`, and per-scope at :386, :404,
+  :434, :438), so the two windows render one tier vocabulary rather than two palettes.
+- **Presentation consequence (tempdoc-recorded, not code-derivable):** the per-sentence underline
+  wall fell from **98.5% of sentences to verdict-only** once lexical scores stopped clearing the
+  cross-encoder-calibrated thresholds — i.e. the old wall was mostly an artifact of the scale
+  mismatch, not of genuinely weak grounding. Number recorded in tempdoc 822 §3d; not reproducible
+  from source.
+- **Evidence:** tempdoc 822 §3d (S2); `citationTypes.ts` + `citationResolve.ts` (the gate),
+  `SummarizeShape.java` (the shape that has no verified producer), `MarkdownBlock.ts` +
+  `Sv3Main.ts` (tier rendering).
+
+### F-049: a citation match carried the chunk's ordinal INSIDE ITS PARENT DOCUMENT where every consumer indexed the turn's sources array, and an unresolvable index fell back to another source — the mis-targeted mark is now unconstructible, not merely fixed (tempdoc 822 S3/§3b, 2026-08-14)
+
+- **The contract, now stated on the wire:** a match's index is the matched source's **POSITION in
+  this turn's `rag.citations` array** — the thing the `[n]` labels and the sources panel index by.
+  A chunk's ordinal inside its parent document is a different fact and never travels on a match.
+  Renamed `chunk_index` → `source_index` on `CitationMatchEntry`
+  (`modules/ipc-common/src/main/proto/indexing.proto:505-511`) with the **field number unchanged**,
+  so the head↔worker wire is untouched and the rename is a breaking-check-clean documentation of
+  intent. FE mirrors: `CitationMatch.sourceIndex` (`modules/ui-web/src/api/streams.ts:27`, contract
+  comment :20-22; `citationTypes.ts:67`, :57-63). Note the register's own caveat: the *retrieval*
+  citation shape still carries a genuine `chunkIndex` (`citationTypes.ts:76`) — that one really is
+  the document-relative ordinal, which is why the two had to stop sharing a name.
+- **The wrong-target fallback is gone, replaced by an honest drop:** `sources[refIdx] ?? sources[0]`
+  became "no ref, no citation" (`citationResolve.ts:40-52`). A claim resolves ONLY through a ref the
+  **authoritative** matcher supplied (`Claim.verifiedRefs`, `citationTypes.ts:48`); the streaming
+  matcher's guesses live on `lexicalRefs` (:54) and are never a resolution source — deltas arrive
+  first, so a single merged ref list had been making the first ref of any doubly-matched sentence the
+  lexical one. An index addressing no source mints no citation, so no `.cite-ref` can carry another
+  source's `parentDocId`: **the wrong-target deep link is not fixed here, it is unconstructible.**
+- **Coverage degrades honestly rather than silently:** the dropped claim is visible because coverage
+  counts what renders, so the answer frame degrades to `partially-grounded` — the evidence genuinely
+  degraded, and the surface says so instead of manufacturing a mark (`citationResolve.ts:44-46`).
+  This is the deliberate trade: fewer marks, none of them lying.
+- **Same defect class, same fix, in the agent-tier resolver:**
+  `modules/app-agent/src/main/java/io/justsearch/agent/AgentCitationResolver.java:82-90` — the old
+  `(parentDocId, chunkIndex)` re-derivation compared a positional index against a DOCUMENT-relative
+  ordinal and fell back to "first source of the same document"; it now indexes `sources` directly
+  and an out-of-range index is dropped: `if (sourceIndex >= 0 && sourceIndex < sources.size())`,
+  "out of range ⇒ no mark, never a fallback". The FE's agent-answer resolver drops the same way
+  (`citationResolve.ts:87-88`).
+- **Live round (2026-08-13/14, tempdoc-recorded):** in-range grounded marks, 0% underline on a
+  partly-grounded answer, the citation pane opening the true cited doc, zero page errors; **144 A/B
+  dispatches with zero surviving out-of-range brackets**. Not a retrieval measurement — no register
+  baseline moves.
+- **Evidence:** tempdoc 822 §3b (S3).
+
+### F-050: the answer-shape prompt grammar was REFUSED by its own four-criterion acceptance gate across three interleaved 48-dispatch A/B campaigns — built, registered opt-in, default OFF; the deciding evidence is that prompt-driven answer compression starves per-sentence citation matching (tempdoc 822 S6/§1.5, 2026-08-14)
+
+- **What it is, precisely:** `AnswerShapeGrammar` is a **`PromptContributor`** — a prompt fragment
+  telling the model what *shape* the answer should take — **not** a decoding/GBNF grammar and not an
+  inference-runtime lever. Class at
+  `modules/app-services/.../conversation/spi/AnswerShapeGrammar.java:42`; fragment text :91-103;
+  priority 20, after the identity/style preamble at 10. Registered on the ask shape only, after
+  `RAGQAStyle`
+  (`RAGAskShape.java:64-66`); `RAGQAStyle` remains the single citation authority and its text was
+  not edited, so the A/B is an arm switch rather than a fork of the prompt.
+- **Default OFF and inert for every real request:** the fragment reaches the model only when a
+  request explicitly sets `answerShapeGrammar` (`ARM_SWITCH_KEY`, :71); `enabled()` returns false
+  for an absent key and for any non-`true` value (:116-125) and `contribute()` then returns
+  `Optional.empty()` (:133-135). No shipped caller sends the key. **Flipping this default is the act
+  of shipping the grammar, and it is gated on a passing A/B, not on a code review** (:52-55).
+- **Why refused — the mechanism was structural, not stylistic:** cycle 0 failed 2 of the 4
+  acceptance criteria over 48 runs. The fragment LED with "Plain paragraphs are the default" and the
+  9B model applied that first clause to **every** answer: arm B's headings did not rise (2/12
+  multi-part, identical to the control) while its length fell in 18 of 24 twins and its list lines
+  fell in 11 twins and rose in none (:76-89). Cycle 0 had also assumed a baseline emitting no markup
+  — the control emitted backticks in 18 of 24 runs, so "put … in backticks" was a no-op against a
+  baseline already doing it. Cycle 1 reordered rather than rewrote (multi-part case leads, the
+  plain-paragraph default scoped to the single-fact case); the wording loop is bounded at 3 cycles
+  by its own design (:76).
+- **The deciding evidence, and why this finding lives in a SEARCH-QUALITY register:** across the
+  three campaigns (48 dispatches each, 144 total, interleaved A,B,A,B per prompt to remove drift)
+  the lever's cost landed on **grounding**: prompt-driven answer compression starves per-sentence
+  citation matching. So the same campaign that was supposed to improve answer *shape* degraded the
+  citation chain F-048/F-049 had just repaired. (The tempdoc states the effect; the intermediate
+  mechanism — how compression reduces what the matcher can match on — is not separately measured,
+  so do not cite one.) A presentation lever paid for in grounding is a search-quality trade, which is why
+  it is recorded here rather than in the inference-runtime register (whose scope is GPU/ORT/VRAM,
+  model loading, CPU/GPU routing, and the LLM latency/throughput ratchet F-012 — it carries no
+  prompt-composition content). The per-campaign numbers live in tempdoc 822 §1.5; the class javadoc
+  is the durable in-code record of cycle 0.
+- **Don't re-run casually:** the gate and its evidence ship with the code. Revisiting is
+  **model-upgrade territory** — the failure was a 9B model over-applying a leading clause, so the
+  experiment is worth repeating against a materially stronger model, not against a reworded
+  fragment. Extending the contributor to the summarize or agent tiers is a one-line registration
+  plus a per-tier re-run of the same A/B, deliberately not done (:38-40).
+- **Evidence:** tempdoc 822 §1.2-1.3, §1.5 (S6); `AnswerShapeGrammar.java` (contributor + arm
+  switch + cycle-0 record), `AnswerShapeGrammarTest` (id, default-off, arm-switch parsing, and
+  `#citationAuthorityMatchesSectionHeaders` :251-266 — a pin that the ask prompt's citation
+  instruction names the same bracketed 1-based ordinals `ContextBudgeter.sectionHeader` emits, so a
+  change to the S1 header shape breaks the S6 prompt test; the S1 ⇔ S6 coupling).
+
+### F-046: every multi-leg retrieval path silently ignored the request's `query_syntax` — a `lucene` request retrieved a SIMPLE (escaped) parse on hybrid/BM25+SPLADE/3-way; fixed and coupled to the counts, SIMPLE-default retrieval unchanged (tempdoc 821 §P, 2026-08-13; the real defect behind 821 §N's facets inversion)
+
+- **Defect:** only the sparse-only shortcut honoured `query_syntax`
+  (`SearchExecutor.java:147`, `decision.runtimeSyntax()`). Every other retrieval path — `Bm25Only`,
+  `Bm25Splade`, `ThreeWay` via `TextQueryOps#searchText`, and `Bm25Dense`/hybrid via
+  `#searchTextWithFilter` — parsed with a hardcoded SIMPLE, so a `query_syntax: "lucene"` request
+  had its operators ESCAPED and retrieved a token-OR of its own syntax. Exact phrases and
+  AND/OR/NOT are advertised to agents in the MCP tool description, so the advertised capability was
+  inert on the default (hybrid) pipeline: the only requests that ever got Lucene parsing were
+  sparse-only ones. 821 §L.3 had measured the inversion of its own premise (the facet/count rebuild
+  sites were CONSISTENT with the legs, both SIMPLE) and shipped a coupling constant
+  (`MULTI_LEG_LEXICAL_SYNTAX`) plus a bidirectional test pinning "counts follow the leg"; this
+  finding is the leg half it deliberately deferred.
+- **Fix (821 §P):** the request's syntax is carried on `SearchDecision.MultiLegDecision.runtimeSyntax()`
+  (projected once, by `SearchInputs#runtimeSyntax`) and threaded into every lexical leg
+  (`TextQueryOps#searchText` / `#searchTextWithFilter`, `HybridSearchOps#searchHybrid*`). The
+  **same** decision component is read by the two count rebuilds in `SearchResponseBuilder` (facet
+  scan + `computeMatchCount`), so 821's coupling invariant survives in its per-request form ("same
+  value per request" instead of "same constant") and the constant itself was deleted — it had no
+  consumers left, and its javadoc claim ("these legs are SIMPLE-only") had become false.
+  A malformed LUCENE query now mirrors the sparse shortcut's `INVALID_ARGUMENT` signal instead of
+  answering 0 hits: the parse is probed once in `runMultiLeg`, gated on `LegSet#hasLexicalLeg`, so
+  legs inside fusion futures never throw and SIMPLE requests take no extra parse.
+  The chunk leg (`ChunkSearchOps#searchChunksText`) stays escape-based **by reachability, not
+  omission**: the planner skips chunk merge outright for LUCENE requests
+  (`SearchPlanner#planChunkMerge` → `SKIPPED_QUERY_SYNTAX`), and chunk merge is its only caller — a
+  parse branch there would be unreachable code pretending to be a feature (documented at the method).
+- **SIMPLE-neutrality (the load-bearing no-regression argument):** SIMPLE is the default on the wire
+  and the default of every syntax-less entry point, and for `syntax == SIMPLE` the leg takes the
+  untouched SIMPLE branch of `buildMultiFieldQuery` with the same enum value the deleted constant
+  held — the diff moves where that value comes from, not what it is. Pinned in
+  `TextSearchIntegrationTest#searchTextHonoursTheCallersQuerySyntax`: the SIMPLE-built `Query` still
+  carries the SIMPLE-only prefix expansion (`alpha*`) and still differs from the LUCENE-built one for
+  the same text (a divergence pin, which a tautological "both overloads agree" comparison would not
+  give). **Every number in this register is a SIMPLE-syntax number:** jseval's retriever sends no
+  `querySyntax` (`scripts/jseval/jseval/retriever.py`), so nothing measured here changes parse. The
+  only LUCENE sender in jseval is `metadata_eval.py`'s `*:*` facet probe, which sends no pipeline and
+  so rides whatever the Head's default preset resolves to — on any multi-leg resolution that probe
+  was matching the literal string `\*\:\*` before this fix (unverified for the sparse-only
+  resolution, where it always worked).
+- **NOT syntax-neutral, and outside every eval:** the Head re-issues a **LUCENE** request when LLM
+  query expansion fires, and expansion runs only for SIMPLE requests
+  (`KnowledgeSearchEngine.java:644-645`). So expansion-path retrieval genuinely CHANGES for every
+  expanded query: the `^0.3` variant boosts, previously escaped into literal text, now apply as
+  intended. That path needs the LLM, so the AI-off evals above do not cover it and no number here
+  measures it. The user's half of that merged query is now escaped
+  (`KnowledgeSearchEngine#escapeLuceneSyntax`), so a typed `-` or `:` stays literal instead of
+  silently becoming a NOT / field query once the legs honour syntax.
+- **Measured (gate):** `jseval run --dataset scifact --modes hybrid --pipeline --start-backend
+  --clean --json` on the fix worktree (`git_sha 66898d70`, full enrichment: embed/chunk/ner/splade
+  all `stage_complete` before querying; observed legs `cross_encoder+dense+hybrid+
+  query_classification`; 300/300 queries) → **nDCG@10 0.7543** (P@1 0.627, R@10 0.888, RR@10 0.716).
+  Run `scripts/jseval/tmp/eval-results/20260813T132736_scifact` (worktree, gitignored — the
+  `summary.json` values quoted here are the durable record; `comparable: true`,
+  `comparability_reasons: []`, `ann_proof_status: PASS`, `error_count: 0`).
+  `jseval relevance-gate --data-dir tmp --dataset beir/scifact` → **exit 0**, `ndcg10-no-regression:
+  ok` (baseline 0.7604, floor 0.7404). Δ vs the 775 §I baseline is **−0.0061**, inside the ratchet's
+  ±0.02 tolerance and within the documented single-run wobble band — **no cause established**. (An
+  earlier draft of this entry attributed it to a CPU cross-encoder after a `reranker_cpu_only`
+  startup capability warning; the run's own `summary.json` contradicts that — `models.reranker_gpu:
+  true`, `comparability_reasons: []` — so the attribution was withdrawn rather than kept as a
+  plausible-sounding cause.) **Interpretation, stated honestly:** the eval CONFIRMS the structural claim rather than
+  carrying it. For `syntax == SIMPLE` the leg passes the identical enum value the deleted constant
+  held into the identical `buildTextQuery`/`buildMultiFieldQuery` call, so the SIMPLE query object is
+  unchanged by construction (byte-asserted in the adapters-lucene test); a −0.006 delta on a rerun is
+  not attributable to this diff, and a delta that WAS attributable would have to appear on a path the
+  diff touches — none of which a SIMPLE request enters differently.
+- **Unmeasured, named:** LUCENE-syntax retrieval QUALITY. No LUCENE-syntax eval corpus or query set
+  exists (see Q-020) — this finding establishes that a LUCENE request now retrieves what it asked
+  for, NOT that asking in Lucene syntax retrieves better. Do not read it as a quality claim.
+- **Rode along (both halves of the same defect):** the Head's LLM query-expansion re-search sets
+  LUCENE syntax on a query that embedded the RAW user text (`KnowledgeSearchEngine.java:788-796`).
+  Honouring syntax on the legs makes that reachable in two ways, and both are fixed here:
+  **(a) misparse** — `covid -vaccine` would silently invert to an exclusion and `error:timeout`
+  would become a query against a non-existent field, `expansionApplied=true`, no degradation
+  signal; the user's half is now escaped in `mergeExpansion` via `#escapeLuceneSyntax`, with
+  `-term` / `field:value` / `c++ (crash)` regression tests. **(b) crash** — a malformed parse now
+  returns `INVALID_ARGUMENT`, and the block's documented contract ("falls back to base results on
+  timeout or error") caught only the checked exceptions, so it would have failed the whole search;
+  now caught and degraded to the base response with `expansionSkipReason=FAILED`.
+- **Evidence:** tempdoc 821 §P (investigation, threading design, merge-order notes);
+  `SearchDecision.MultiLegDecision.runtimeSyntax()` + `SearchPlanner` (set-site) +
+  `SearchExecutor` (leg dispatch) + `TextQueryOps#searchText`/`#searchTextWithFilter` +
+  `HybridSearchOps` (per-hit provenance pin) + `FacetCompute.FromFreshBm25` /
+  `SearchResponseBuilder` (count-site coupling) + `KnowledgeSearchEngine#mergeExpansion` /
+  `#escapeLuceneSyntax`. Tests: `TextSearchIntegrationTest` (syntax honoured, quoted phrase
+  phrase-matched not token-OR'd), `HybridSearchIntegrationTest#hybridEntryPointsForwardQuerySyntax
+  ToTheTextLeg`, `FacetQuerySyntaxCouplingTest` (bidirectional counts-follow-the-leg, malformed
+  fail-fast for every multi-leg shape incl. no-lexical-leg), `KnowledgeHttpApiAdapterExpansionTest`
+  (escape + `-term`/`field:value`/`c++ (crash)` + every metacharacter), and the four
+  `SSOT/schemas/search-decisions/multi-leg-*.v1.json` approval fixtures (`runtime_syntax` pinned).
+  Caller-visible contract recorded in `docs/reference/api-contract-map.md` (Knowledge Search API,
+  `querySyntax`).
+
+### F-045: the default rerank branch silently DROPPED candidates on a short cross-encoder sorted-indices list — fixed count-preserving; well-formed runs bit-identical (tempdoc 821 §L.3, 2026-08-12)
+
+- **Answer:** In `KnowledgeSearchEngine`, the default (judge-blend-off) rerank application emitted
+  exactly `sortedIndices.size()` window hits and re-appended only indices >= topK — a Worker response
+  with fewer sorted indices than topK silently shrank the result set (the exact hazard the
+  judge-blend branch's own comment defends against; the two branches are now unified). Fixed by
+  routing BOTH CE branches AND the LambdaMART reorder through one pure count-preserving helper
+  `applyRerankOrder` (order-covered prefix, omitted in-window fill in original pre-rerank order,
+  beyond-window tail unchanged); malformed (duplicate / out-of-range) indices no longer throw or
+  drop — previously an out-of-range index threw `IndexOutOfBoundsException` straight out of
+  `doSearch`.
+- **Baseline relevance:** for a well-formed full-window permutation (the normal Worker response, and
+  the judge-blend branch by construction) the output is element-identical to the old loop — pinned by
+  a legacy-equivalence test asserting against a verbatim copy of the pre-fix loop — so register
+  baselines cannot move except on runs that actually hit a short list (where the old code was
+  truncating the result set). A live same-session A/B was closed by the live measurement below.
+- **Live verification (2026-08-12):** measured on THIS branch (git `5977f043`) — beir/scifact,
+  hybrid, full enrichment, CE active in observed legs, `comparable: true`, `chunk_completeness:
+  chunk-free` (legitimate for the short-doc corpus): **nDCG@10 0.7543** (P@1 0.627, R@10 0.8876) vs
+  register baseline 0.7604 — `jseval relevance-gate` verdict **ok** (floor 0.7404); dead-on the 391
+  6-run median (0.754) and inside the documented single-run wobble band. Run
+  `scripts/jseval/tmp/eval-results/20260812T204136_scifact` (worktree, gitignored — summary values
+  quoted here are the durable record). Machine caveat: concurrent worker builds ran during
+  enrichment; the query phase was not contended.
+- **Trace caveat:** fill-pass-recovered candidates appear with `crossEncoderApplied=true` but no
+  CROSS_ENCODER HitStage (they were never judged) — a consumer must not read stage presence as
+  "every returned hit was scored."
+- **Evidence:** tempdoc 821 §L.3; `KnowledgeSearchEngine.applyRerankOrder` (:273-320) +
+  `KnowledgeSearchEngineRerankOrderTest` (8 cases incl. legacy equivalence + window clamp), commits
+  7e9b0a71 + 503f4129.
 
 ### F-044: paraphrase bridging is a steep step function of isolated pair cosine (knee ≈0.65) and the generator's own synonym pools straddle it; the lexical control bridges 0/180 pairs; the hero's `reactor` anchor does NOT fail at the descriptor level (tempdoc 796, 2026-07-29; the standing metric 788 §3.B.10 asked for)
 
@@ -1851,6 +2179,7 @@ above)*
 - **Evidence:** tempdoc 309 §43
 - **Conditions/caveats:** Tested on EnronQA (verbose QA questions, single-user inbox). CE may still matter on academic/legal corpora (SciFact, CourtListener).
 - **⚠ Measurement caveat (2026-07-31, 800):** The eval harness scores each hit by its **pre-rerank fusion score**, so `ir_measures` re-sorts the delivered list back into fusion order and the CE's *ordering* is discarded; only its *selection* (which 10 of the 20-candidate window survive the trim) reaches the number. A CE model swap changes both, but two rerankers agree far more on selection than on ordering — so "zero difference, within noise" is also exactly what a metric outputs when the differing part has been deleted. **This finding is not refuted, but it cannot be distinguished from an artifact using the old numbers.** Treat as *unmeasured*, not *measured as zero*, until a re-run on a corrected harness. Mechanism and measurements: tempdoc 800.
+- **UPDATE (2026-08-14, 832):** the corrected-harness substrate now exists — release `832-rebaseline-2026-08-14` (5 corpora, delivered-rank scoring, cohort `32d6a0a0`) re-pins every default-config baseline. The CE **model-swap** comparison this finding is about has still not been re-run on that basis, so the verdict stays *unmeasured* — but any future swap A/B now has a certifiable, ordering-sensitive baseline to run against.
 
 ### F-002: CE actively hurts on personal email
 
@@ -1895,6 +2224,7 @@ above)*
 - **Evidence:** tempdoc 309 §41 (SciFact, CL-200, MIRACL/de), §43 (EnronQA)
 - **Conditions/caveats:** Generalizes F-001 beyond email. Root cause: BGE-M3 produces strong enough top-K rankings that CE reranking is marginal — the `bm25_splade` → `full` gap is only 1-4%, which is the maximum possible CE contribution regardless of CE model quality.
 - **⚠ Measurement caveat (2026-07-31, 800):** Inherits F-001's caveat, and more strongly — this finding generalizes "zero difference" across *all* corpora, which is the signature an apparatus produces when the CE's ordering channel is discarded on every corpus alike. The stated root cause (retrieval is strong enough to make CE marginal) is not established by these numbers: they cannot see the CE's ordering contribution at all. Independently, measurement on the **published** corpora (tempdoc 802, ir_measures, all five re-run) puts that contribution at **−0.0418 to +0.0184 nDCG@10** — larger than the 1–4% `bm25_splade`→`full` gap this finding cites as the CE's maximum possible contribution, and therefore not marginal. Treat as *unmeasured* pending a corrected re-run; tempdocs 800, 802. (An earlier version of this rider cited the 781-certification cells at ±0.06; those are certification corpora, not the published ones — the published figures above supersede them.)
+- **UPDATE (2026-08-14, 832):** default-config baselines are re-pinned on the corrected delivered-rank harness (release `832-rebaseline-2026-08-14`, cohort `32d6a0a0`); the generalization this finding makes (CE model swaps ≈ 0 across corpora) still awaits its own swap ablations on that basis and remains *unmeasured*.
 
 ### F-007: Cross-language noise is minimal in mixed multilingual corpus
 
@@ -2200,8 +2530,14 @@ picking up items here over inventing new experiments.
 - **Status (561 P-A4):** surfaced the signals only as an explicitly RELATIVE, UNCALIBRATED transparency tooltip (`retrievalSignals.ts`) — deliberately NOT a confidence verdict — pending this validation. A validated calibration would be a producer-owned field (the Worker owns the score scheme), not an FE re-derivation.
 - **Suggested approach:** Build a small labeled (query, context, answer-supported?) set as in Q-007; measure whether `best_chunk_score`/`score_gap` (CE branch only) separate well-grounded from weak answers before exposing any absolute confidence.
 
-### Q-010: Should the engine have a relevance ratchet to match the presentation gates?
+### Q-010: Should the engine have a relevance ratchet to match the presentation gates? → DECIDED → keep agent-invoked
 
+- **Disposition (2026-08-14, owner decision via tempdoc 832):** presented with the three tiers
+  (CI-blocking on engine paths / nightly scheduled run / keep agent-invoked) after the 803
+  re-baseline plan made the floors trustworthy again, the owner chose **keep agent-invoked** —
+  the ratchets stay nudged by the `search-engine-hint` hook, with no CI wiring added. The
+  stagnation-asymmetry argument stands recorded; revisit only on a new owner decision or a
+  measured recurrence of silent regression.
 - **Question:** Presentation (`ui-web`) is continuously serviced because every edit trips a discipline gate; relevance quality is gated only by an opt-in `jseval` run a human must remember. Should an engine-edit-triggered (or nightly) `jseval gate` fail the build when nDCG@10 drops beyond tolerance vs a pinned baseline, giving retrieval the same continuous-servicing pressure the UI has?
 - **Why it matters:** Under attention scarcity the gated surface crowds out the ungated one. Tempdoc 580 §1 measured the result: ~46k lines of presentation+governance churn over a window in which the retrieval engine moved 0 lines, baselines unrevalidated since 2026-04-19. A relevance ratchet would make silent stagnation/regression *fail loudly* instead of coasting invisibly.
 - **Prior art:** `jseval gate` + `calibrate-drift-baseline` already exist (tempdoc 400 LR4-g) but are manual-CI-only; the cohort envelope (`envelope.json`, ±2σ) already separates signal from noise. The missing piece is wiring, baseline-pinning, and the asymmetry argument — not new measurement tech.
@@ -2409,10 +2745,36 @@ above)*
   unreproducible. This does not answer (a)–(d), but it says at least part of the DE deficit is
   present before any corpus, scale or host-dilution effect, which 748's experiment ordering should
   account for.
+- **§G.1 EXECUTED (2026-08-14, tempdoc 748 §G.1 result / tempdoc 832 lane A):** the standing
+  confound is REMOVED — at matched payload.v2 construction (both members defillered, instrument-
+  confirmed filler-free, n=50/cell, pool-cap 100) the gap persists: EN-legal bridge P@1 **0.84** /
+  margin **+0.046** (reproducing the §E.3 EN band exactly) vs DE-miracl **0.30** / margin
+  **−0.026**. Per the pre-registered decision rule, **hypothesis (a) — German representation
+  quality — survives as a real, scoped secondary cause**; DE-v2 lands *below* the leaky v1 figure
+  (0.55), so the `_FILLER` block had inflated even the pool-only v1 measurement. (c) task-shape
+  remains dominant at scale. Q-018 stays OPEN pending §G.2 (DE exact-NN scale curve) and §G.3
+  (fidelity re-measure, needs eval backend). Artifact:
+  `scripts/jseval/tmp/748/gold-bridge-pair-v2.json`.
+- **§G.2 EXECUTED (2026-08-14, tempdoc 748 §G.2 result / tempdoc 832 lane A):** corpus
+  re-materialized bit-identical to the commitment (digests match); payload-offset check shows the
+  512-token truncation trap does NOT bite on DE (100% payloads in-window) — whole-doc condition
+  valid. DE exact-NN scale curve **R@100 0.48→0.14** (1k→10k) replicates EN's F-040 collapse
+  (0.50→0.20) on a method with no ANN and no candidate cut-off → **hypothesis (b) REFUTED on the
+  DE member by direct measurement**; §G.4's re-open trigger does not fire. Decomposition: host
+  dilution dominant (gold among only the 100 injected docs: rank 29 vs payload-only rank 3 — the
+  same context-starvation mechanism F-048 measured on EN), sibling crowding secondary. Balance
+  after §G.1+§G.2: **(c) task-shape dominant, (a) German representation a measured secondary
+  cause, (b) refuted, (d) eliminated** — Q-018 stays OPEN only for §G.3 (does the engine leave DE
+  headroom unexploited? its recorded union-recall sits near this offline ceiling, unlike EN).
+  Artifacts: `scripts/jseval/tmp/748/{payload-offset-check,bridge-scale-de-miracl-v2}.json`.
 
-### Q-019: In the real corpus, does paraphrase bridging survive the query SHAPE agents actually issue — and is that what cost the hero campaign q0?
+### Q-019: In the real corpus, does paraphrase bridging survive the query SHAPE agents actually issue — and is that what cost the hero campaign q0? → ANSWERED → F-048
 
-- **Question:** F-044 measured bridging in isolation (tier P) and at sentence granularity (tier S)
+- **Disposition (2026-08-14, tempdoc 796 §Tier D / tempdoc 832 lane A):** the tier-D pass ran —
+  answer **(b) host dilution dominant, (a) query shape secondary**; q0 was a dilution-marginal doc
+  pushed out of the visible window by keyword-shaped queries. See F-048 for numbers, consequence
+  (788 §3.A vs §3.B.10 stay separate problems), and caveats.
+- **Question (historical):** F-044 measured bridging in isolation (tier P) and at sentence granularity (tier S)
   and found both anchors bridging, including `power station → reactor`, whose hero cells failed 6/6
   in both arms. The in-corpus tier (**tier D**: injected sentences inside real host documents, at
   production doc- and chunk-granularity, over the full 1000-doc dataset) is implemented and scripted
@@ -2437,6 +2799,47 @@ above)*
   suite scores three query forms (`question` / `descriptor` / `keyword`, all derived from the pair
   register) against the same cached document encodings, so the shape comparison is nearly free once
   the corpus is encoded, and encoding is block-checkpointed and resumable.
+
+### Q-020: What is LUCENE-syntax retrieval QUALITY? (opened by F-046, 2026-08-13)
+
+- **Question:** F-046 made `query_syntax: "lucene"` actually reach every retrieval leg (it was
+  silently downgraded to SIMPLE on all multi-leg paths). Every number in this register — every
+  baseline, every finding — was measured with the DEFAULT (SIMPLE) syntax, because jseval's
+  retriever sends no `querySyntax` (`scripts/jseval/jseval/retriever.py`; the only LUCENE sender is
+  `metadata_eval.py`'s `*:*` facet probe). So the retrieval quality of the LUCENE path is
+  **unmeasured**: we know it now parses what the caller asked for, not whether phrase/boolean
+  queries retrieve better or worse than the SIMPLE parse of the same intent.
+- **Why it matters:** the MCP tool description advertises exact phrases and AND/OR/NOT to agents,
+  so an agent's syntax choice is a live retrieval-quality decision with no evidence behind it. It is
+  also the one operator-facing lever that bypasses the prefix expansion and operator-escaping the
+  SIMPLE path applies, so it can plausibly beat SIMPLE on precision and lose on recall.
+- **Prior art / do not re-run:** F-046 (the plumbing + the SIMPLE-neutrality gate). No LUCENE-syntax
+  query set exists for any corpus in the Dataset Catalog — that missing artifact, not a missing run,
+  is what blocks this.
+- **Suggested approach:** derive a LUCENE-syntax variant of an existing qrelled query set (e.g.
+  scifact: quote the multi-word key phrase, require the rare term) and score it against the same
+  qrels as the SIMPLE original, so the comparison is syntax-only. Needs a jseval flag to send
+  `querySyntax` per query — it has none today.
+
+### Q-021: Should the summarize tier get a cross-encoder citation pass, so it can be grounded rather than honestly markless? (opened by F-048, 2026-08-14)
+
+- **Question:** `core.summarize` declares `rag.citation_delta` and no `rag.citation_matches`
+  (`SummarizeShape.java:46-47`), so every claim it holds is scored by the streaming LEXICAL matcher.
+  Under F-048's provenance gate those claims mint no marks — correct behaviour, and owner-accepted,
+  but it means the summarize surface shows no grounding at all. Is a cross-encoder pass on that
+  shape worth its latency, and does it actually produce in-range, useful marks on summary prose?
+- **Why it matters:** it is the difference between "this tier cannot lie about grounding" (today)
+  and "this tier can show grounding". The gate is not the obstacle — the missing authoritative
+  producer is. Adding one is a **backend** change (emit `rag.citation_matches` from the summarize
+  path), not a render fix: no FE change can promote a lexical score, by construction.
+- **Prior art:** F-048 (why lexical scores are excluded); F-041 (evidence-coherent CE input — a
+  summary's sentences are the query side here, so the same preview-blindness caution applies);
+  FW-009 (the citation-scorer threshold is itself uncalibrated on real content, and summary prose is
+  a content type no calibration has seen).
+- **Suggested approach:** register the matcher on the summarize shape behind a default-off flag,
+  then measure on real summaries — in-range rate, mark density, and added latency — before
+  considering a default flip. Do not assume the ask-tier threshold transfers: summary sentences are
+  compressed restatements, exactly the shape F-050 found starves per-sentence matching.
 
 ---
 

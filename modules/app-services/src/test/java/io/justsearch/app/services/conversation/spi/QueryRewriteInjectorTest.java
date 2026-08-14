@@ -56,6 +56,24 @@ final class QueryRewriteInjectorTest {
   }
 
   @Test
+  void rewriteCallSuppressesThinking() {
+    // Tempdoc 835 §10f: the rewrite is plumbing — its output feeds retrieval, never a reader. With
+    // the server-wide reasoning budget on by default, a null enableThinking here would buy a full
+    // reasoning pass per follow-up turn for a one-sentence rewrite.
+    StubAi ai = new StubAi(true, "Why an ephemeral port and not a fixed one?");
+    var injector = new QueryRewriteInjector(() -> ai);
+    var ctx = stubCtx(Map.of("question", "why that?", "context", HISTORY));
+
+    injector.inject(ctx);
+
+    assertEquals(1, ai.calls);
+    assertEquals(
+        Boolean.FALSE,
+        ai.lastSampling.enableThinking(),
+        "query rewrite must send chat_template_kwargs.enable_thinking=false");
+  }
+
+  @Test
   void aiUnavailableFallsBackToRawQuestion() {
     StubAi ai = new StubAi(false, "REWRITTEN");
     var injector = new QueryRewriteInjector(() -> ai);
@@ -102,6 +120,7 @@ final class QueryRewriteInjectorTest {
     private final boolean available;
     private final String result; // null => never-completing future (simulates timeout)
     int calls = 0;
+    SamplingParams lastSampling;
 
     StubAi(boolean available, String result) {
       this.available = available;
@@ -132,6 +151,7 @@ final class QueryRewriteInjectorTest {
     public CompletableFuture<String> chatCompletion(
         List<Map<String, Object>> messages, int maxTokens, SamplingParams sampling) {
       calls++;
+      lastSampling = sampling;
       return result == null ? new CompletableFuture<>() : CompletableFuture.completedFuture(result);
     }
   }

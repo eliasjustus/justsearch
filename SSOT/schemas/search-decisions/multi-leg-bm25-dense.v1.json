@@ -4,6 +4,7 @@
   "effective_mode" : "HYBRID",
   "legs" : "bm25_dense",
   "chunk_merge_kind" : "eligible_apply",
+  "runtime_syntax" : "SIMPLE",
   "legs_detail" : {
     "kind" : "bm25_dense",
     "effective_mode_label" : "HYBRID",

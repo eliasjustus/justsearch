@@ -400,6 +400,12 @@ message RetrieveContextRequest {
   // The Worker drops these chunks BEFORE ranking (a MUST_NOT pre-search filter), so over-retrieval
   // refills top-K from the remaining candidates. Empty = no exclusion (backward-compatible default).
   repeated ChunkRef excluded_chunks = 24;
+
+  // Tempdoc 821 §3-C2 — scope RAG retrieval to Lucene collection tag(s). Shape mirrors
+  // SearchFilters.collection (field 16) so the ASK path and the SEARCH path model scope identically.
+  // Non-empty = a POSITIVE include of exactly those collections; EMPTY = the DEFAULT scope (the
+  // MUST_NOT agent-history exclusion of tempdoc 585 D4b), never "match nothing".
+  repeated string collection = 25;
 }
 
 // Tempdoc 610 §J.3 — a structured (parentDocId, chunkIndex) reference to one retrieved chunk.
@@ -494,14 +500,34 @@ message MatchCitationsRequest {
   repeated string chunk_doc_ids = 2;     // Parent doc IDs of chunks used as context
   repeated int32 chunk_indices = 3;      // Chunk indices within their parent docs
   double similarity_threshold = 4;       // Min cosine similarity (default 0.5 if 0)
+  // Tempdoc 836 §1.4 — literal passage text per source, so a caller that already HAS the text it
+  // showed the model can be verified against that text instead of a chunk re-fetched by
+  // (parent_doc_id, chunk_index). `chunk_doc_ids` / `chunk_indices` keep their meaning: the
+  // provenance of source i, and the fallback lookup key.
+  //
+  // Length contract: `passage_texts` is either EMPTY (no source supplies text) or EXACTLY
+  // `chunk_doc_ids.size()` — any other length is INVALID_ARGUMENT. A BLANK entry means "this
+  // source supplies no text", so the Worker looks it up; a lookup that then fails yields a blank
+  // passage, which the scorer skips, and the source is reported as unverifiable rather than
+  // unmatched. The three facts the empty string carries (not-supplied / lookup-failed / skip) are
+  // distinguished by WHERE the blank appears, never by a shortened array.
+  repeated string passage_texts = 5;
 }
 
 message CitationMatchEntry {
   int32 sentence_index = 1;       // 0-based sentence position in answer
   string sentence_text = 2;       // The sentence text
-  int32 chunk_index = 3;          // Which context chunk matched (index into request arrays)
+  // Tempdoc 822 §3b (the numbering contract) — renamed from `chunk_index`, field NUMBER unchanged so
+  // the head<->worker wire is untouched. The value is the matched source's POSITION in the request
+  // arrays; a chunk's ordinal inside its parent document is a different fact and never travels here.
+  int32 source_index = 3;
   double similarity = 4;          // Cosine similarity score
   string parent_doc_id = 5;       // Parent document ID for the matched chunk
+  // Tempdoc 836 §4 — which TEXT this score is about: SUPPLIED (the caller's literal passage) or
+  // CHUNK_LOOKUP (text re-fetched by parent_doc_id + chunk_index). Per-match, because the
+  // supplied/looked-up choice is per source and a response-level answer would be a lie for a
+  // mixed request.
+  string text_source = 6;
 }
 
 message MatchCitationsResponse {
@@ -510,6 +536,14 @@ message MatchCitationsResponse {
   int32 sentences_matched = 3;         // Sentences that had at least one match above threshold
   int64 took_ms = 4;                   // Processing time
   string error = 5;                    // Non-empty if matching failed (graceful degradation)
+  // Tempdoc 836 §4 — which PRODUCER wrote `similarity`: CROSS_ENCODER (sigmoid-normalized
+  // relevance) | EMBEDDING_COSINE (raw cosine) | NONE (nothing scored). The two scales are not
+  // comparable, and before this field nothing on the wire said which one arrived.
+  string scorer = 6;
+  // Tempdoc 836 §3.6 — how many sentences were actually SCORED. Below `sentences_total` whenever
+  // the deadline or the admission cap stopped the pass early. It is the honest denominator for a
+  // coverage claim: "12 of 15 scored" is a statement about the budget, not about the evidence.
+  int32 sentences_scored = 7;
 }
 
 // === Folder Browse ===
@@ -785,7 +819,42 @@ message EnrichmentCoverage {
   // Move 2 item 4 — previously unobservable; batchTiming/enrichmentCompleted counters froze in
   // individual mode with no signal explaining why).
   string backfill_mode = 15;
-  // Next available field number: 16
+  // Tempdoc 821 §3-C3: per-stage completeness audit. A PROJECTION over the counts above plus the
+  // artifact-presence walks — not a second authority. Answers "did every document this stage
+  // applies to actually get its artifact?", which the coverage percentages above cannot: they
+  // divide by every document, so a stage that silently lost a sub-population reads the same as
+  // one with nothing to do.
+  repeated StageCompleteness completeness = 16;
+  // Thresholds the auditor OWNS and publishes so off-process oracles (jseval) read them here
+  // instead of mirroring the Java constants and drifting.
+  int32 chunk_min_chars = 17;      // ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS
+  double vector_ready_percent = 18; // the bar ChunkCoverage.vectors_ready is evaluated against
+  // Documents whose ner_status is terminal-FAILED. The other three stages have carried a
+  // failed_count since 354; NER reported only pending/completed until 821 §3-C3. int64 to match
+  // those siblings (FeatureCoverage.failed_count) and the app-api view, not the int32 the
+  // neighbouring pending/completed_ner_count fields happen to use.
+  int64 failed_ner_count = 19;
+  // Next available field number: 20
+}
+
+// One enrichment stage's completeness audit (tempdoc 821 §3-C3).
+message StageCompleteness {
+  // "embed" | "splade" | "ner" | "chunk_embed". The first three match the enrichment_completed /
+  // batch_timing map keys (BatchTimingKeys); chunk embedding has no timing key of its own because
+  // it rides the "embed" stage.
+  string stage_id = 1;
+  // How "present" was established:
+  //   ARTIFACT — the artifact itself was counted (the KNN vector values), so a status field that
+  //              lies cannot inflate it.
+  //   STATUS   — only the bookkeeping status field was counted. Declared honestly because no
+  //              artifact proxy exists: the `splade` field is a postings/feature field with
+  //              docValues:false (fields.v1.json) and NER writes no countable per-doc artifact.
+  string tier = 2;
+  int64 expected = 3; // docs in scope that CARRY the stage's status field (absent => N/A, post-798)
+  int64 present = 4;  // ARTIFACT: docs carrying the artifact; STATUS: docs at a terminal SUCCESS
+  int64 missing = 5;  // expected - present - failed, floored at 0
+  int64 failed = 6;   // docs at the terminal FAILED value
+  // Next available field number: 7
 }
 
 // Reusable ORT CUDA probe result for per-subsystem GPU diagnostics.

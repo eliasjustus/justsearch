@@ -195,11 +195,31 @@ val integrationTest = tasks.register<Test>("integrationTest") {
     }
   }
 
-  // Time limit: 10 minutes default, 30 for agent tests, configurable for AI runs.
+  // Time limit: 30 minutes default, 30 for agent tests, configurable for AI runs.
+  //
+  // Tempdoc 821 P4 — this task timeout, not the job budget (ci.yml:529), is the binding
+  // ceiling, and Gradle enforces it by killing the forked test JVM. That destroys the fixture's
+  // diagnostics exactly like the 30s @BeforeAll cap below did, so it has to clear the
+  // retry-amplified worst case rather than the happy-path wall.
+  //
+  // Arithmetic: Develocity sets maxRetries=2 in CI (JvmBaseConventionsPlugin.kt:135), so a class
+  // whose @BeforeAll stalls is booted 3 times. That is not hypothetical — OperationPreviewE2ETest
+  // exhausted all 3 attempts, ~100s apart, in run 31730197618 on 2026-08-13. The fixture worst
+  // case per boot is now ~400s (PORT_FILE 60s + HEALTH 240s + WORKER_READY 90s + HttpClient send
+  // overshoot), up from ~250s when HEALTH was 90s, so 3 boots cost ~20 min on top of the ~8.5 min
+  // this tier takes to run everything else (measured: the Gradle step of run 31716264505 ran
+  // 8m28s) = ~28.5 min. 22 min held the old ~250s worst case with ~1 min margin but cannot hold
+  // this one; 30 min clears it with ~1.5 min margin.
+  //
+  // Cost note: the extra budget is spent only when a boot genuinely stalls three times. The
+  // common case is unchanged (~8.5 min), and a dead backend still fails in seconds via the
+  // fixture's process.isAlive() check rather than burning any of it.
+  //
+  // The AI and agent branches are already >= this and need no change.
   val integrationTestTimeoutMinutes = when {
     includeAiTests -> ragEvalTimeoutMinutes
     includeAgentTests -> 30
-    else -> 10
+    else -> 30
   }
   timeout.set(Duration.ofMinutes(integrationTestTimeoutMinutes.toLong()))
 
@@ -207,6 +227,46 @@ val integrationTest = tasks.register<Test>("integrationTest") {
     events("passed", "skipped", "failed")
     showStandardStreams = true
   }
+
+  // Tempdoc 821 P4 — hosted-runner init-timeout flakes.
+  //
+  // `conventions.jvm-base` sets junit.jupiter.execution.timeout.default=30s for every Test
+  // task (JvmBaseConventionsPlugin.kt:117). A class-level @Timeout covers *testable* methods
+  // only, never lifecycle methods, so every IsolatedBackendFixture @BeforeAll ran under that
+  // 30s cap regardless of its class annotation — proven on 2026-08-13 by IngestStarvationE2ETest
+  // ("Two-batch ingest starvation"), annotated @Timeout(6, MINUTES) at the class (:52) and dying
+  // at t0+30.10s in run 31726924465.
+  //
+  // That cap is far SHORTER than the fixture's own layered boot budget (PORT_FILE 60s +
+  // HEALTH 90s + WORKER_READY 90s, IsolatedBackendFixture.java:65-73), so it always fired
+  // first and reported a bare java.util.concurrent.TimeoutException with no message or cause —
+  // the fixture never reaches the point of naming the budget it blew. Five such
+  // initializationError failures landed in five separate PR runs on 2026-08-13 (31718400614,
+  // 31719369201, 31724706479, 31726924465, 31727436857) across four test classes, every one of
+  // them passing on the automatic retry — red only because failOnPassedAfterRetry keeps flakes
+  // visible.
+  //
+  // Headroom: measured boot-to-ready on windows-latest is min 6.54s / p50 7.17s / max 15.39s
+  // (48 samples across that day's 8 integration-tier runs) — the old cap left under 2x over the
+  // observed max.
+  //
+  // This value must stay ABOVE the fixture's own layered budget, or it fires first and reports a
+  // bare TimeoutException with no message or cause, hiding which phase stalled. That budget is
+  // now PORT_FILE 60s + HEALTH 240s + WORKER_READY 90s = 390s
+  // (IsolatedBackendFixture.java:65-91), plus HttpClient send overshoot; 420s clears it. It moved
+  // with HEALTH: 300s cleared the old 250s sum but would now cut the health phase off at ~t0+300s
+  // and undo the diagnostics this tier just gained.
+  systemProperty("junit.jupiter.execution.timeout.beforeall.method.default", "420s")
+
+  // Tempdoc 821 P4 follow-up — hand the fixture a workspace-relative destination for the boot
+  // logs it preserves on failure. It defaulted to java.io.tmpdir, which a hosted runner discards
+  // when the job ends, so the 2026-08-13 flakes (runs 31730197618, 31732439890) printed
+  // "log preserved at C:\Users\RUNNER~1\AppData\Local\Temp\..." and the logs were unreachable.
+  // Under build/reports the existing "Upload integration-test results" step (ci.yml) archives
+  // them with the rest of the tier's output.
+  systemProperty(
+      "isolatedBackend.failureLogDir",
+      layout.buildDirectory.dir("reports/isolated-backend").get().asFile.absolutePath)
 
   // Forward API port system property for HTTP tests
   System.getProperty("justsearch.api.port")?.let { systemProperty("justsearch.api.port", it) }
@@ -223,6 +283,49 @@ val integrationTest = tasks.register<Test>("integrationTest") {
       "justsearch.worker.lib.dir",
       project(":modules:indexer-worker").layout.buildDirectory
           .dir("install/indexer-worker/lib").get().asFile.absolutePath)
+
+  // Tempdoc 829 R3 — this lane is advisory (ci.yml `continue-on-error: true`) and absent
+  // from `required_status_checks.contexts`, so a self-recovered flake here cannot change
+  // mergeability; it only reddens the check and invites a pointless `gh run rerun --failed`
+  // (F1: 12 such reruns measured 2026-08-13, every attempt-1 already `success`). The
+  // convention plugin sets failOnPassedAfterRetry=true for every Test task, in CI, to keep
+  // flakes loud (JvmBaseConventionsPlugin.kt:119-143) — correct for required lanes, wrong
+  // here. Override it to false for THIS task only, using the same reflective pattern (the
+  // Develocity 4.x testRetry extension type is shaded, so it can't be referenced directly).
+  // maxRetries is left untouched, so retry itself still runs. This task-level configuration
+  // action is registered after the convention plugin's project-wide
+  // `tasks.withType<Test>().configureEach { ... }`, so it applies last and wins — the same
+  // ordering this file already relies on for other Test-wide convention overrides (e.g.
+  // `maxHeapSize` below for systemTest/soakTest vs. the convention's 384m default).
+  // Flake VISIBILITY does not disappear: it moves to the flaky-test extraction in
+  // unit-test attribution (tempdoc 829 R5, same PR). Revisit when this lane joins required
+  // contexts (tempdoc 825 §3 is that path).
+  val retryExt = extensions.findByName("develocity")?.let { devExt ->
+    try {
+      devExt.javaClass.getMethod("getTestRetry").invoke(devExt)
+    } catch (_: Exception) {
+      null
+    }
+  } ?: extensions.findByName("retry")
+  if (retryExt != null) {
+    try {
+      val failOnPassedProp = retryExt.javaClass.getMethod("getFailOnPassedAfterRetry").invoke(retryExt)
+      @Suppress("UNCHECKED_CAST")
+      (failOnPassedProp as org.gradle.api.provider.Property<Boolean>).set(false)
+    } catch (e: ReflectiveOperationException) {
+      logger.warn("Could not configure test retry via reflection: ${e.message}")
+    } catch (e: ClassCastException) {
+      logger.warn("Test retry extension has unexpected type: ${e.message}")
+    }
+  } else {
+    // Neither the Develocity 4.x `develocity.testRetry` nor the deprecated 3.x `retry`
+    // extension was found on this task, so the failOnPassedAfterRetry=false override above
+    // is a silent no-op: the convention plugin's project-wide failOnPassedAfterRetry=true
+    // (JvmBaseConventionsPlugin.kt:119-143) would still apply, and a self-recovered flake in
+    // this advisory lane would redden the job exactly as R3 intended to prevent.
+    logger.warn("Test retry extension not found (develocity.testRetry / retry) — R3's " +
+        "failOnPassedAfterRetry=false override for integrationTest did not apply")
+  }
 }
 
 // System test task (Chaos Suite)

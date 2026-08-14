@@ -25,6 +25,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class OnlineModeOpsTest {
@@ -111,7 +112,7 @@ class OnlineModeOpsTest {
 
   @Test
   void formatContextAsNumberedPassages_singlePassageWithSource() {
-    String input = "[From: doc.pdf]\nSome content";
+    String input = "[1] doc.pdf\nSome content";
     String result = OnlineModeOps.formatContextAsNumberedPassages(input);
     assertEquals("<passage id=\"1\" source=\"doc.pdf\">\nSome content\n</passage>", result);
   }
@@ -119,15 +120,61 @@ class OnlineModeOpsTest {
   @Test
   void formatContextAsNumberedPassages_multiplePassages() {
     String input =
-        "[From: first.pdf]\nFirst content"
+        "[1] first.pdf\nFirst content"
             + DocumentService.SECTION_SEPARATOR
-            + "[From: second.txt]\nSecond content";
+            + "[2] second.txt\nSecond content";
     String result = OnlineModeOps.formatContextAsNumberedPassages(input);
     String expected =
         "<passage id=\"1\" source=\"first.pdf\">\nFirst content\n</passage>"
             + "\n\n"
             + "<passage id=\"2\" source=\"second.txt\">\nSecond content\n</passage>";
     assertEquals(expected, result);
+  }
+
+  @Test
+  @DisplayName("passage id is the header's number, not this loop's running counter")
+  void formatContextAsNumberedPassages_keysPassageIdToHeaderNumber() {
+    // Non-sequential ordinals are the only way to tell the two apart: a running counter would
+    // renumber these 1 and 2 and silently break the model's [n] -> sources[n-1] mapping
+    // (tempdoc 822 §3a). ContextBudgeterTest pins the emitter side of the same "[n] label\n"
+    // shape — app-api/app-inference cannot depend on :modules:indexing, so it is mirrored, as
+    // SECTION_SEPARATOR already is.
+    String input =
+        "[3] third.pdf\nThird content"
+            + DocumentService.SECTION_SEPARATOR
+            + "[7] seventh.txt\nSeventh content";
+
+    String result = OnlineModeOps.formatContextAsNumberedPassages(input);
+
+    assertEquals(
+        "<passage id=\"3\" source=\"third.pdf\">\nThird content\n</passage>"
+            + "\n\n"
+            + "<passage id=\"7\" source=\"seventh.txt\">\nSeventh content\n</passage>",
+        result);
+  }
+
+  @Test
+  @DisplayName("a label containing brackets or a dash survives the header parse")
+  void formatContextAsNumberedPassages_labelWithPunctuation() {
+    String label = "TechCrunch — \"Twitch [ends] 70/30 split\"";
+    String result =
+        OnlineModeOps.formatContextAsNumberedPassages("[2] " + label + "\nBody text");
+    assertEquals("<passage id=\"2\" source=\"" + label + "\">\nBody text\n</passage>", result);
+  }
+
+  @Test
+  @DisplayName("a section whose header does not parse falls back to the running ordinal")
+  void formatContextAsNumberedPassages_unparseableHeaderFallsBack() {
+    String input =
+        "[1] doc.pdf\nFirst content"
+            + DocumentService.SECTION_SEPARATOR
+            + "no header at all";
+    String result = OnlineModeOps.formatContextAsNumberedPassages(input);
+    assertEquals(
+        "<passage id=\"1\" source=\"doc.pdf\">\nFirst content\n</passage>"
+            + "\n\n"
+            + "<passage id=\"2\" source=\"unknown\">\nno header at all\n</passage>",
+        result);
   }
 
   // ==================== extractUsageFromChatChunk ====================
@@ -288,6 +335,114 @@ class OnlineModeOpsTest {
   }
 
   @Test
+  void chatCompletion_deterministicPresetSuppressesThinkingOnTheWire() throws Exception {
+    // Tempdoc 835 §10f — the auxiliary-call guarantee, asserted where it is actually delivered:
+    // in the request body llama-server sees. DETERMINISTIC is what query rewrite, query
+    // understanding, filter normalization, context sufficiency and query expansion all pass; with
+    // the server-wide budget on, an absent kwarg means every one of them thinks.
+    AtomicReference<String> capturedBody = new AtomicReference<>();
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          capturedBody.set(
+              new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+          byte[] body =
+              "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}".getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().add("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, body.length);
+          exchange.getResponseBody().write(body);
+          exchange.close();
+        });
+
+    ops.chatCompletion(
+            List.of(Map.of("role", "user", "content", "test")), 100, SamplingParams.DETERMINISTIC)
+        .get(5, TimeUnit.SECONDS);
+
+    JsonNode requestJson = MAPPER.readTree(capturedBody.get());
+    assertFalse(
+        requestJson.path("chat_template_kwargs").path("enable_thinking").asBoolean(true),
+        "DETERMINISTIC must send chat_template_kwargs.enable_thinking=false: " + capturedBody.get());
+  }
+
+  @Test
+  void streamChat_deterministicPresetSuppressesThinkingOnTheWire() throws Exception {
+    // The same guarantee on the streaming transport — query expansion (KnowledgeSearchEngine) and
+    // section summarize (HierarchicalShapeRunner) reach llama-server this way, not via chatCompletion.
+    AtomicReference<String> capturedBody = new AtomicReference<>();
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          capturedBody.set(
+              new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+          exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+          exchange.sendResponseHeaders(200, 0);
+          var os = exchange.getResponseBody();
+          os.write(
+              "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"
+                  .getBytes(StandardCharsets.UTF_8));
+          os.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
+          os.flush();
+          os.close();
+        });
+
+    CountDownLatch done = new CountDownLatch(1);
+    ops.streamChat(
+        List.of(Map.of("role", "user", "content", "test")), 100,
+        chunk -> {}, null, fr -> done.countDown(), t -> done.countDown(),
+        SamplingParams.DETERMINISTIC);
+
+    assertTrue(done.await(5, TimeUnit.SECONDS));
+    JsonNode requestJson = MAPPER.readTree(capturedBody.get());
+    assertFalse(
+        requestJson.path("chat_template_kwargs").path("enable_thinking").asBoolean(true),
+        "DETERMINISTIC must suppress thinking on the streaming path too: " + capturedBody.get());
+  }
+
+  @Test
+  void streamChat_serverErrorBodyReachesTheCaller() throws Exception {
+    // Tempdoc 835 §10f: the streaming paths used to pass null as the error body, so a context
+    // overflow — llama-server's own "exceeds the available context size" explanation — surfaced as
+    // a bare "Server returned status 400" with "check llama-server logs" as the only lead.
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          byte[] body =
+              ("{\"error\":{\"code\":400,\"message\":\"request (5878 tokens) exceeds the available"
+                      + " context size (4096 tokens), try increasing it\"}}")
+                  .getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().add("Content-Type", "application/json");
+          exchange.sendResponseHeaders(400, body.length);
+          exchange.getResponseBody().write(body);
+          exchange.close();
+        });
+
+    AtomicReference<Throwable> error = new AtomicReference<>();
+    CountDownLatch done = new CountDownLatch(1);
+    ops.streamChat(
+        List.of(Map.of("role", "user", "content", "test")), 100,
+        chunk -> {},
+        null,
+        fr -> done.countDown(),
+        t -> {
+          error.set(t);
+          done.countDown();
+        },
+        SamplingParams.DETERMINISTIC);
+
+    assertTrue(done.await(5, TimeUnit.SECONDS));
+    assertNotNull(error.get());
+    assertTrue(
+        error.get() instanceof LlmServerException lse && lse.httpStatus() == 400,
+        "expected a typed 400: " + error.get());
+    assertTrue(
+        error.get().getMessage().contains("exceeds the available context size"),
+        "the server's explanation must survive to the caller: " + error.get().getMessage());
+  }
+
+  @Test
   void chatCompletion_omitsSamplingWhenNull() throws Exception {
     AtomicReference<String> capturedBody = new AtomicReference<>();
     server.removeContext("/v1/chat/completions");
@@ -354,6 +509,45 @@ class OnlineModeOpsTest {
         "DETERMINISTIC preset should inject temperature=0.1");
     assertEquals(0.9, requestJson.path("top_p").asDouble(), 0.001,
         "DETERMINISTIC preset should inject top_p=0.9");
+  }
+
+  @Test
+  void streamChatWithTools_reroutesInlineThinkTagsSplitAcrossFrames() throws Exception {
+    // Tempdoc 835 §5.3 — the wiring, not just the filter: a build that leaks inline reasoning emits
+    // the tag across SSE frame boundaries ("<thi" + "nk>"), which a per-chunk replaceAll passes
+    // through verbatim. Answer text must stay clean and the thinking must reach the reasoning
+    // channel, so a leaking build behaves like a reasoning_content one.
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+          exchange.sendResponseHeaders(200, 0);
+          var os = exchange.getResponseBody();
+          for (String piece : List.of("Answer: <thi", "nk>hidden", " thought</thi", "nk>42")) {
+            os.write(
+                ("data: {\"choices\":[{\"delta\":{\"content\":\"" + piece + "\"}}]}\n\n")
+                    .getBytes(StandardCharsets.UTF_8));
+            os.flush();
+          }
+          os.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
+          os.flush();
+          os.close();
+        });
+
+    StringBuilder content = new StringBuilder();
+    StringBuilder reasoning = new StringBuilder();
+    CountDownLatch completeLatch = new CountDownLatch(1);
+
+    ops.streamChatWithTools(
+        List.of(Map.of("role", "user", "content", "test")), List.of(), 100,
+        content::append, toolDelta -> {}, reasoning::append, null,
+        fr -> completeLatch.countDown(), t -> {},
+        SamplingParams.DETERMINISTIC);
+
+    assertTrue(completeLatch.await(5, TimeUnit.SECONDS));
+    assertEquals("Answer: 42", content.toString(), "think markup must not reach answer text");
+    assertEquals("hidden thought", reasoning.toString(), "thinking must be rerouted, not deleted");
   }
 
   @Test

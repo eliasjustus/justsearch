@@ -553,11 +553,15 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
             jobQueue.enqueueEntries(
                 validPaths.stream().map(JobQueue.EnqueueEntry::stat).toList(), collection);
 
-        // Mark paths for force reindex if requested (bypasses "unchanged" check)
+        // Mark paths for force reindex if requested (bypasses "unchanged" check).
+        // The key must be the one JobBatchExtractor looks the forced set up by — the envelope's —
+        // so it is derived through the shared PathNormalizer#normalizeKey rather than re-spelled
+        // here. sanitizePath currently keeps a `..` or relative shape from ever reaching this line,
+        // which is what made the old hand-rolled derivation agree by accident; that agreement is now
+        // structural and survives a change to either side (tempdoc 821 §P/P3).
         if (request.getForceReindex() && accepted > 0) {
-          List<String> normalizedPaths = validPaths.stream()
-              .map(p -> PathNormalizer.normalizePath(p.toAbsolutePath().toString()))
-              .toList();
+          List<String> normalizedPaths =
+              validPaths.stream().map(PathNormalizer::normalizeKey).toList();
           indexingLoop.markForced(normalizedPaths);
           log.info("Marked {} paths for force reindex", normalizedPaths.size());
         }
@@ -1845,7 +1849,12 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
         isCancelled = () -> false;
       }
       try {
-        new WorkerScanOps(jobQueue, queueDepth, isCancelled)
+        // Tempdoc 821 §3-C3 — a FORCE_REINDEX scan marks its admitted paths through the SAME
+        // forced-path set submitBatch's force_reindex flag feeds (see #submitBatch above).
+        // A lambda, not `indexingLoop::markForced`: a method reference dereferences its receiver
+        // when the sink is CREATED, which would make every ordinary scan depend on a field only
+        // the forced branch actually uses.
+        new WorkerScanOps(jobQueue, queueDepth, isCancelled, paths -> indexingLoop.markForced(paths))
             .scan(scanRequest, responseObserver::onNext);
         responseObserver.onCompleted();
       } catch (java.io.IOException e) {

@@ -208,17 +208,6 @@ const CAUSE_ROWS: ReadonlyArray<{
     wording: 'The knowledge server stopped responding and could not be recovered',
     severity: 'error',
   },
-  // GPU acceleration unavailable ⇒ CPU fallback: slower, not broken (info).
-  {
-    code: 'ort_cuda.missing_dlls',
-    wording: 'GPU acceleration is unavailable (missing CUDA DLLs)',
-    severity: 'info',
-  },
-  {
-    code: 'ort_cuda.provider_failed',
-    wording: 'GPU acceleration failed to initialize',
-    severity: 'info',
-  },
   // Tempdoc 600 PART X — the GPU-saturation readiness code (aiFeatures composite). When retrieval is
   // independently degraded, the verdict appends this as a SECONDARY cause; without a row it rendered the
   // raw `Degraded: gpu.saturated` (reproduced live). A transient performance dip, not a broken
@@ -329,6 +318,16 @@ const CAUSE_ROWS: ReadonlyArray<{
       'The index was corrupted and is being rebuilt from your files — results are temporarily incomplete.',
     severity: 'warn',
   },
+  // An in-place embedding rebuild (embeddingCompatState=REBUILDING): the Worker refuses dense
+  // queries until it finishes, so ONLY the semantic leg is affected — keyword results stay
+  // complete. Nothing to click (it is already running) ⇒ Open-Health fallback; impairing but
+  // self-healing ⇒ `warn`, matching index.rebuilding.
+  {
+    code: 'index.embedding_rebuilding',
+    wording:
+      'Semantic search is being rebuilt — keyword results are complete, semantic ranking resumes when it finishes.',
+    severity: 'warn',
+  },
   {
     code: 'index.embedding_mismatch',
     wording: 'The embedding model changed — rebuild the index to restore semantic search.',
@@ -403,6 +402,9 @@ const RETRIEVAL_IMPAIRING_CODES: ReadonlySet<string> = new Set([
   'worker.health.embedding_probe_missing',
   // The index is being rebuilt from source: results are temporarily incomplete on both legs.
   'index.rebuilding',
+  // An in-place embedding rebuild: the Worker refuses dense queries (REBUILD_IN_PROGRESS) until it
+  // finishes, so search is genuinely serving keyword-only for its duration.
+  'index.embedding_rebuilding',
   // The knowledge server is not serving (or not serving yet): retrieval as a whole is impaired, so
   // the "search is fully working" claim would be flatly false.
   'worker.starting',

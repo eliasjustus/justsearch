@@ -44,8 +44,8 @@ MCP server on?" is exactly "which port is the API on?":
 An MCPB bundle (`justsearch-mcp.mcpb`, sources in
 [`packaging/mcpb/`](../../packaging/mcpb/README.md)) will be attached to
 JustSearch releases **starting with the next release** — it is not on any
-published release yet, and the v0.1.0 app predates the `/mcp` endpoint, so
-the bundle cannot work against it. Once shipped: download the `.mcpb` from
+published release yet, and it needs an app build that serves `POST /mcp`,
+which the v0.1.0 release may predate. Once shipped: download the `.mcpb` from
 the release page and open it with Claude Desktop (Settings → Extensions) —
 one click, no JSON editing. The bundle is a thin local stdio bridge to the
 running app's `/mcp` endpoint; it handles port discovery via `api-port.txt`
@@ -104,6 +104,17 @@ In all three: replace `8080` with the port from
 `%APPDATA%\io.justsearch.shell\runtime\api-port.txt` if `8080` was taken on your machine
 (see [Which port?](#which-port)).
 
+Every flow above needs a build that serves `POST /mcp`; the v0.1.0 installer release may predate it.
+If a client reports no tools, probe the endpoint before debugging the client — it should answer with
+the six tools, and a 404 means the running build has no MCP endpoint (use a newer release or a
+from-source build):
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/mcp -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
 ### Claude Code: headless / non-interactive approval
 
 Project-scope MCP servers in Claude Code (added with `claude mcp add` at the default project
@@ -126,11 +137,55 @@ Streamable HTTP on the existing Javalin server (loopback-only,
 `127.0.0.1`). No separate process — the MCP endpoint runs in the
 same JVM as the Head process. No Node.js required.
 
+**Transport security.** The spec's Streamable-HTTP security clause ("Servers **MUST** validate the
+`Origin` header on all incoming connections to prevent DNS rebinding attacks... If the `Origin`
+header is present and invalid, servers **MUST** respond with HTTP 403 Forbidden") is enforced on
+every method served at `/mcp` — **and on `GET /api/mcp/token`**, the session-token bootstrap — by
+`ApiSecurityFilters.setupMcpOriginValidation`. The rules:
+
+| `Origin` on the request | Outcome |
+|---|---|
+| absent | served — native MCP hosts (Claude Code, Claude Desktop, Cursor) are HTTP clients, not browsers, and send none |
+| loopback (`http(s)://127.0.0.1`, `localhost`, `[::1]`, any port) | served |
+| desktop shell (`tauri://localhost`, `http(s)://tauri.localhost`) | served |
+| `null` (sandboxed/`file://` context) | **403** — no host to verify, and no MCP client produces it |
+| anything else | **403**, JSON-RPC error body with no `id` (plain `{error, errorCode}` on the token route, which is not a JSON-RPC endpoint) |
+
+The value is parsed as a URI and its **host component** compared for equality, so a lookalike such
+as `http://127.0.0.1.evil.com` is rejected. This composes with — and does not replace — the
+API-wide `Host`-header allowlist and the loopback bind; see
+[`security/threat-model.md`](security/threat-model.md).
+
+**Methods on `/mcp`.** The spec requires the single endpoint to support both `POST` and `GET`,
+answering a `GET` with either a `text/event-stream` SSE stream or **405 Method Not Allowed** when
+the server offers none:
+
+| Method | Response |
+|---|---|
+| `POST` | JSON-RPC request/response — the whole protocol surface |
+| `DELETE` | `204`, ends the session named by `Mcp-Session-Id` |
+| `GET` | **405** with `Allow: POST, DELETE, OPTIONS` and a JSON-RPC error body (`MCP_METHOD_NOT_ALLOWED`) |
+| `OPTIONS` | CORS preflight, served by the API-wide catch-all |
+
+JustSearch serves **no SSE stream** at `/mcp`: every response is the direct reply to a `POST`, and
+nothing pushes unsolicited JSON-RPC to a connected client. Adding one would need a per-session push
+channel plus the spec's resumability machinery (`Last-Event-ID`, event ids) — a **product**
+decision, not a conformance one. 405 is the spec's own answer for a server without such a stream,
+so **the GET/SSE clause is now conformant**. (Before this, `GET /mcp` returned 404 — live-verified
+2026-08-12 — which told a probing client nothing about the endpoint.)
+
+That is one clause, not the whole transport. **Known remaining gap:** the spec's *Protocol Version
+Header* section requires the server to validate the `MCP-Protocol-Version` **request** header on
+every non-`initialize` request and answer `400 Bad Request` on an unsupported or invalid value.
+`McpProtocolHandler` only ever *emits* a version — at `initialize`
+(`McpProtocolHandler.java:37,217`) — and never reads that request header, so an unsupported version
+is silently accepted rather than rejected. Tracked; not addressed by this change.
+
 Protocol version: `2025-11-25`. Capabilities: tools, resources,
 prompts. Curated tool-surface version (single-sourced from
 `McpContractVersions.TOOL_SURFACE_VERSION`, reported as
 `serverInfo._meta["io.justsearch/toolSurfaceVersion"]` and as the runtime
-manifest's `mcpToolSurfaceVersion`): `0.5.0`. MCP `serverInfo.version` is the
+manifest's `mcpToolSurfaceVersion`): `0.6.0`. MCP `serverInfo.version` is the
 **build** version (bound to `EnvRegistry.APP_VERSION`) — a host that logs or
 gates on server version must see this build's number, not the tool surface's.
 

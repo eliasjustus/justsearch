@@ -178,6 +178,12 @@
       "openerId": "fetch-stream-shape",
       "class": "lazy",
       "note": "Tempdoc 818 slice 2 — the Search v2 window's ONE ask issuance site delegates to consumeShapeStream (core.rag-ask). Same demand shape as the UnifiedChatView row: open only while the (dev-gated) Search v2 window is mounted and a committed turn is streaming, closed at the terminal event. The two windows are siblings during the 818 comparison phase, never both driving a turn; the sunset criterion retires one of these rows with its window."
+    },
+    {
+      "file": "modules/ui-web/src/shell-v0/views/search-v3/sv3-ask.ts",
+      "openerId": "fetch-stream-shape",
+      "class": "lazy",
+      "note": "Tempdoc 822 Phase F1 — the Search v3 window's ONE ask issuance site delegates to consumeShapeStream (core.rag-ask). Same demand shape as the search-v2 row: open only while the (dev-gated, hidden-deeplink) Search v3 window is mounted and a turn is streaming, closed at the terminal event or at the reader's Stop (the window aborts on unmount and on New session, so an unwatched stream cannot outlive its window). The three windows are siblings during the 822 comparison phase, never both driving a turn; the Phase-D cutover retires two of these rows with their windows."
     }
   ]
 }

@@ -114,6 +114,28 @@ fires. The pattern is named-question, not generic-dashboard (419 C3 explicit non
   enumerate. A consumer must treat an ABSENT field (older backend) as "fall back to
   `indexedDocuments`" and a reported `0` as a real value.
 
+**Enrichment completeness (post tempdoc 821 §3-C3, 2026-08-13):** the coverage percentages under
+`worker.enrichment` divide by every document, so a stage that silently lost a *sub-population*
+reads the same as a stage with nothing to do. Four additive fields close that:
+- `worker.enrichment.completeness: StageCompletenessView[]` — one entry per stage
+  (`stageId` ∈ `embed`|`splade`|`ner`|`chunk_embed`) with `{expected, present, missing, failed}`,
+  plus an honesty `tier`: **`ARTIFACT`** when `present` counted the artifact itself (a lying status
+  field cannot inflate it) and **`STATUS`** when only the bookkeeping field was countable — SPLADE's
+  feature field is `docValues:false` and NER writes no per-document artifact, so those two declare
+  the weaker tier rather than implying a verification they cannot perform. `expected` is scoped to
+  the documents that carry the stage's status field (absent = not applicable), so `present` and
+  `failed` are drawn from the same denominator; `missing` is `expected - present - failed` floored
+  at 0. Derived in `IndexCountOps` (adapters-lucene) — a projection over counts the worker already
+  holds, not a second authority.
+- `worker.enrichment.failedNerCount: long` — NER reported only pending/completed; the other three
+  stages have carried a failure count since 354, so a stalled NER sub-population was invisible here.
+- `worker.enrichment.chunkMinChars: int`, `worker.enrichment.vectorReadyPercent: double` — the two
+  thresholds the auditor OWNS, published so off-process oracles read them instead of mirroring the
+  Java constants. jseval's chunk-completeness guard consumes `chunkMinChars` and its local 2000-char
+  mirror is deleted (`docs/reference/jseval-pipeline-reference.md` §Chunk-completeness validity
+  guard). A consumer must treat a non-positive/absent `chunkMinChars` (older backend — proto3
+  scalars arrive as `0`, never absent) as "cannot evaluate", not as a licence to guess.
+
 Each metric-backed field declares `surfacedAt(StatusEndpoint, fieldName)` on its
 `MetricDefinition`; `MetricSurfaceContractTest` (worker-services) and
 `HeadMetricSurfaceContractTest` (app-services) fail CI if the catalog declaration drifts
@@ -345,6 +367,7 @@ Request fields:
 - `query` (required)
 - `return_full_documents` (bool, proto field 23) — when true, skips chunk search and returns full document content (366)
 - Filter fields: same as search (entity + metadata filters scoped via two-stage parent-doc pre-filter) (362)
+- `filters.collection` (string array, proto field 25) — scope retrieval to Lucene collection tag(s), same wire key and semantics as the search endpoint's `filters.collection`. Non-empty = a positive include of exactly those collections; absent/empty = the default scope (the `agent-history` MUST_NOT exclusion of 585 D4b), never "match nothing". Applied on the chunk branch by `QueryFilterBuilder#buildChunkFilterQuery`, so a collection-only request does **not** route through the doc-level parent pre-filter (821 §3-C2)
 
 Response includes:
 
@@ -380,10 +403,12 @@ Dynamic dispatch endpoint (reads `shapeId` from body):
 
 Conversation management (slice 513 + 515):
 
-- `GET /api/chat/conversations?shapeId=<id>&limit=<N>` — List recent sessions (most-recent first, capped at 100). Each row: `sessionId`, `shapeId`, `createdAtMs`, `lastActiveAtMs`, `messageCount`, `firstUserMessage`, optional `parentSessionId` + `branchPointMessageId` (slice 513 branch metadata).
+- `GET /api/chat/conversations?shapeId=<id>&limit=<N>` — List recent sessions (most-recent first, capped at 100). Each row: `sessionId`, `shapeId`, `createdAtMs`, `lastActiveAtMs`, `messageCount`, `firstUserMessage`, optional `parentSessionId` + `branchPointMessageId` (slice 513 branch metadata), optional `title` + `titleSource` (`"user"` | `"auto"`, tempdoc 838). `title` is a sealed content field: it is omitted while the conversation store is encrypted and locked, exactly like `firstUserMessage`; `titleSource` is structural and stays present.
 - `GET /api/chat/conversations/{sessionId}/history` — Load message history. Response: `messages[{role, content, id, hash}]`; for branched sessions also includes `parentSessionId`, `branchPointMessageId`, and (slice 515 FIX-8) `parentFirstUserMessage` preview. `loadHistory` walks parent chain lazily.
 - `DELETE /api/chat/conversations/{sessionId}` — Delete a session. **409 Conflict** with `childSessionIds[]` body if the session has child branches (slice 515 FIX-3); the client must delete branches first or implement cascade deletion.
 - `POST /api/chat/conversations/{sessionId}/branch?fromMsgId=<id>` — Create a branch from an existing session at the given message id. Response: `{sessionId, parentSessionId, branchPointMessageId}`. **400** if `fromMsgId` doesn't exist in the parent's resolved history (slice 515 FIX-2). The branch carries no messages of its own; loadHistory resolves the parent prefix on every call.
+- `POST /api/chat/conversations/{sessionId}/title` — Name a conversation durably (tempdoc 838). Body: `{title, source?}` where `source` is `"user"` (default) or `"auto"`. Response: `{ok, title, titleSource}` — `title` is what was STORED, trimmed and capped at 200 characters. **400** on a blank title (clearing is `DELETE`) or an unrecognised `source`; **404** when the session has no `meta.json` (a rename must not mint a zero-message conversation); **423** when the conversation store's data key is locked, via the global `KeyLockedException` mapping.
+- `DELETE /api/chat/conversations/{sessionId}/title` — Clear the name (tempdoc 838). Idempotent: a conversation with no name, or no such conversation, is a no-op `{ok: true}`.
 
 Header: `X-JustSearch-Audience` (optional; defaults to `USER`).
 
@@ -395,7 +420,7 @@ Source: slices 491 (substrate), 496 (FreeChat + Extract), 497 (dynamic dispatch)
 
 **Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java`
 
-**Transport:** Streamable HTTP at `POST /mcp` on the existing Javalin server (loopback-only). Protocol version `2025-11-25` (single-sourced in `io.justsearch.app.api.mcp.McpContractVersions`). No separate process. The `/mcp` endpoint + curated tool set is one of the three **Runtime Contract** public surfaces (tempdoc 654); `serverInfo.version` carries the BUILD version and `serverInfo._meta["io.justsearch/toolSurfaceVersion"]` the SemVer tool-surface version — see [Runtime Contract](runtime-contract.md).
+**Transport:** Streamable HTTP at `/mcp` on the existing Javalin server (loopback-only) — `POST` carries the whole JSON-RPC surface, `DELETE` ends the session named by `Mcp-Session-Id`, and `GET` returns `405` with `Allow: POST, DELETE, OPTIONS` (no server-initiated SSE stream is offered; see [MCP production server](mcp-production-server.md#transport)). Protocol version `2025-11-25` (single-sourced in `io.justsearch.app.api.mcp.McpContractVersions`). No separate process. The `/mcp` endpoint + curated tool set is one of the three **Runtime Contract** public surfaces (tempdoc 654); `serverInfo.version` carries the BUILD version and `serverInfo._meta["io.justsearch/toolSurfaceVersion"]` the SemVer tool-surface version — see [Runtime Contract](runtime-contract.md).
 
 6-tool curated surface (tempdoc 500, adapted from eval-validated 4-tool TS server in tempdoc 366):
 
@@ -439,7 +464,11 @@ Source: tempdoc 500, ADR-0015, tempdoc 366.
 `POST /api/knowledge/search` accepts a JSON body with required `query` and optional fields:
 
 - `limit`, `mode`, `sort`, `cursor`
-- `querySyntax` (or `query_syntax` alias)
+- `querySyntax` (or `query_syntax` alias) — since tempdoc 821 §P / register F-046, `lucene` is
+  honoured on **every** retrieval path (previously only the sparse-only one; multi-leg legs escaped
+  the operators and retrieved a SIMPLE parse), so a malformed `lucene` query now fails the request
+  with HTTP `400` / `INVALID_REQUEST` (Worker gRPC `INVALID_ARGUMENT`) instead of being silently
+  parsed as plain text.
 - `projection[]`
 - `filters` (`mime`, `mimeBase`, `fileKind`, `language`, `pathPrefix`, `includeChunks`, `modifiedAt`)
 - Entity filter fields: `entityPersons`, `entityOrganizations`, `entityLocations` (repeated string) (362)
@@ -849,6 +878,38 @@ Other debug endpoints: `/api/debug/commit-metadata`, `/api/debug/effective-confi
 ### AI Runtime Status
 
 `GET /api/ai/runtime/status` returns ONNX feature status including a `modelActive: boolean` field per feature entry, derived from the actual ORT session state (not file discovery). This is the canonical source of truth for "is this model loaded and running". Both reranker (via `OrtCudaStatus`) and citation-scorer (via `CitationScorer.isAvailable()`) report runtime session state through this field. See [ADR-0023](../decisions/0023-api-responses-declare-runtime-context.md) for the general principle: endpoints whose behavior varies by runtime mode must declare that mode in the response.
+
+### AI install (`/api/ai/install/*`)
+
+**Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/routes/AiRoutes.java` (routes),
+`modules/ui/src/main/java/io/justsearch/ui/api/AiInstallController.java` (handlers),
+`modules/ui/src/test/java/io/justsearch/ui/api/AiInstallApiContractTest.java` (error-body contract).
+
+| Route | Method | Request | Success | Errors |
+|---|---|---|---|---|
+| `/api/ai/install/manifest` | GET | – | `ModelRegistry` | 500 `MANIFEST_UNAVAILABLE` |
+| `/api/ai/install/plan-preview` | GET | – | `InstallPlanPreview` | 500 `MANIFEST_UNAVAILABLE` |
+| `/api/ai/install/status` | GET | – | `AiInstallStatus` | – |
+| `/api/ai/install/start` | POST | `{"acceptTerms": true}` | `AiInstallStatus` | 400 `TERMS_REQUIRED`, 403 `DOWNLOADS_DISABLED`, 409 `INSTALL_ALREADY_RUNNING`, 500 `INSTALL_START_FAILED` |
+| `/api/ai/install/cancel` | POST | – | `AiInstallStatus` | 500 `INSTALL_CANCEL_FAILED` |
+| `/api/ai/install/repair` | POST | `{"acceptTerms": true}` | `AiInstallStatus` | same set as `start`, plus 500 `INSTALL_REPAIR_FAILED` |
+
+Every error body on this family is the project's standard envelope —
+`{"error": string, "errorCode": string, "errorClass": string, "retryable": boolean, "requestId"?: string}`
+(`ApiErrorHandler.toResponse`). A `400` here is **not** body-less: `AiInstallApiContractTest`
+asserts the raw bytes of a `POST … {}` carry `errorCode: "TERMS_REQUIRED"`.
+
+**`repair` IS `start`.** `AiInstallService.repair` delegates straight to `startInstall`: it re-plans
+against disk and downloads only what is missing, and it therefore requires `acceptTerms` exactly
+like a first install. Calling it with an empty body is the 400 above, not a server fault.
+
+`AiInstallStatus` carries two truth claims that answer different questions and must not be
+collapsed: `installedFully` (no **required** file is missing) and `repairNeeded` (a **required**
+file is missing). `optionalGaps: [{packageId, fileName}]` reports registry files marked
+`"required": false` that are absent — surfaced, never a reason to offer Repair. Per package,
+`functionalStatus` (`active` | `inactive` | `unknown`) projects what `GET /api/ai/runtime/status`
+observes, and `terminalReason: "TRANSPORT_UNAVAILABLE"` with `attempts`/`url`/`targetPath` says that
+automatic repair has stopped working and names the manual fallback.
 
 ### Install plan preview (tempdoc 657)
 

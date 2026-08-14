@@ -21,6 +21,17 @@ import '../Control.js';
 import { setMenuAnchor } from '../../utils/selectionAnchor.js';
 // Tempdoc 565 §29 Tier-3 — open the cited LOCAL file (the uniquely-local citation affordance).
 import { openLocalFile } from '../../plugin-api/capabilities/platform.js';
+// Tempdoc 822 citation-mark presentation §5.4 — the FAR SIDE of the inline mark's selection. The
+// store's whole justification is relating two surfaces; until now it rendered on one (F1), so in the
+// v3 window — where this panel IS the rail card's counterpart — selecting a citation lit the mark and
+// left every source card identical. The SAME four imports `MarkdownBlock.ts` uses, and the same
+// `sourceKey` authority: a second key function here would silently never agree with the marks.
+import {
+  getSelectedSource,
+  setSelectedSource,
+  subscribeSelectedSource,
+  sourceKey,
+} from '../../state/selectedSource.js';
 import {
   toEvidenceItem,
   evidenceScore,
@@ -53,7 +64,8 @@ export class CitationsPanel extends JfElement {
     sources: { type: Array, attribute: false },
     retrievalMode: { type: String, attribute: false },
     showWeak: { state: true },
-    sourcesExpanded: { state: true },
+    sourcesExpanded: { type: Boolean, attribute: false },
+    externalDisclosure: { type: Boolean, attribute: false },
   };
 
   declare citations: CitationMatch[];
@@ -63,7 +75,23 @@ export class CitationsPanel extends JfElement {
   // Tempdoc 559 Authority IV (C-1): sources are disclosed on demand, not
   // expanded by default — a short answer stays short (the ReasoningBlock
   // disclosure pattern). The header is the toggle; the body renders only when open.
+  //
+  // Promoted from `state: true` to a public property by tempdoc 822 Phase F11 so an
+  // `externalDisclosure` host can drive it. Default and reactivity are unchanged.
   declare sourcesExpanded: boolean;
+  /**
+   * The HOST owns the disclosure, so this panel renders BODY ONLY (tempdoc 822 Phase F11).
+   *
+   * Default `false` — every shipped consumer (`views/search-v2/SearchV2View.ts`,
+   * `views/SummarizeView.ts`) is byte-identical to before. Search v3 sets it because its answer tail
+   * is ONE 24px row: a component-owned header on its own line makes that two rows, and the panel's
+   * uppercase `▸ N SOURCES` is a second disclosure dialect for an act the window already declares.
+   * When true, ALL THREE header paths are suppressed and ALL THREE bodies are gated on
+   * {@link sourcesExpanded} — a host that hides the toggle must not leave a body permanently open.
+   */
+  declare externalDisclosure: boolean;
+
+  private selectedSourceUnsub: (() => void) | null = null;
 
   constructor() {
     super();
@@ -72,6 +100,22 @@ export class CitationsPanel extends JfElement {
     this.retrievalMode = '';
     this.showWeak = false;
     this.sourcesExpanded = false;
+    this.externalDisclosure = false;
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    // Tempdoc 565 §12.3.E / 822 §5.4 — re-render the card highlight when the cross-surface selection
+    // changes (an inline `[n]` mark or another card was focused). Lifecycle mirrored EXACTLY from
+    // `MarkdownBlock.ts` (its counterpart on the near side): store the unsubscribe fn here, call and
+    // null it in `disconnectedCallback` — a leaked subscription would keep a detached panel alive.
+    this.selectedSourceUnsub = subscribeSelectedSource(() => this.requestUpdate());
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.selectedSourceUnsub?.();
+    this.selectedSourceUnsub = null;
   }
 
   static styles = css`
@@ -148,7 +192,41 @@ export class CitationsPanel extends JfElement {
     }
     .source:hover {
       background: var(--surface-3);
-      border-color: var(--accent-tint);
+      /* 822 §5.4 — the panel's one accent spend, recovered: a hover edge is not an act-now signal,
+         so the window that wants it neutral re-points it. Default unchanged. */
+      border-color: var(--cp-hover-edge, var(--accent-tint));
+    }
+    /* Tempdoc 822 §5.4 — the selected source card. Containment means every --cp-* name defaults to
+       TODAY'S VALUE, not to nothing: this selector's (0,2,0) outranks the base '.citation, .source'
+       at (0,1,0), so a 'transparent' default would blank a selected card's fill and edge in the
+       shipped windows (search-v2, SummarizeView) where 'data-selected' is reachable. Defaulting to
+       the base rule's own '--surface-2' / '--border-subtle' makes an un-tokenized selected card
+       byte-identical to an unselected one, and the v3 window opts in from Sv3Main.ts. These rules
+       sit AFTER .source:hover on purpose: they share its (0,2,0) specificity, so source order is what
+       decides the border of a card that is both hovered and selected — and the SELECTED edge is the
+       one that should win. The design spec’s precedence rule: a row that is both takes the
+       HIGHER wash and never shows two competing fills, which is why [data-selected]:hover restates
+       background alone at (0,3,0) rather than layering a second fill under the hover. */
+    .source[data-selected] {
+      background: var(--cp-selected-region, var(--surface-2));
+      border-color: var(--cp-selected-edge, var(--border-subtle));
+    }
+    .source[data-selected]:hover {
+      background: var(--cp-selected, var(--surface-3));
+      /* The hover EDGE has to be restated here, and its absence was a shipped regression rather than
+         a v3 nicety: '.source:hover' and '.source[data-selected]' are both (0,2,0), so the selected
+         rule — later in source — took the border of every card the pointer was over. Before this
+         slice 'data-selected' was unreachable and every hovered card showed the hover edge; the
+         moment the store was wired up, the card you had just CLICKED became the one card in the
+         panel with no hover feedback, in search-v2, SummarizeView and v3 alike. Restating it keeps
+         the source order's meaning intact — when a card is both, it still takes the HIGHER wash —
+         while letting the pointer's own signal survive the selection it just made. */
+      /* Its own name, falling through to the plain hover edge: a consumer whose selected edge
+         is STRONGER than its hover edge (v3 spends 34 % on selection and 14 % on hover) would
+         otherwise WEAKEN the edge on hover, reading as "less selected" the moment the pointer
+         arrives. Shipped consumers set neither name and fall through to the accent edge exactly as
+         before. */
+      border-color: var(--cp-selected-hover-edge, var(--cp-hover-edge, var(--accent-tint)));
     }
     .source .preview {
       display: none;
@@ -279,6 +357,11 @@ export class CitationsPanel extends JfElement {
         setMenuAnchor({ top: rect.top, left: rect.left, bottom: rect.bottom, right: rect.right });
       }
     }
+    // Tempdoc 822 §5.4 — mark this source the cross-surface selection BEFORE the existing deep-link
+    // dispatch, exactly as its sibling `components/SourcesPane.ts:130` already does. That is the line
+    // this panel was missing; adding it is what makes the binding two-ended, which is the only thing
+    // that justifies the state existing at all. Nothing below changes.
+    setSelectedSource(sourceKey(source.parentDocId, source.startLine));
     const detail: CitationSelectDetail = {
       parentDocId: source.parentDocId,
       startLine: source.startLine,
@@ -324,10 +407,29 @@ export class CitationsPanel extends JfElement {
     const item = toEvidenceItem(s);
     // Tempdoc 565 §29 Tier-3 — the cited file's basename, for the open-file affordance below the card.
     const docName = s.parentDocId.split('/').pop() ?? s.parentDocId;
+    // Tempdoc 822 §5.4 — the SAME two fields `MarkdownBlock.makeMarker` keys its marks on
+    // (`parentDocId` + `startLine`, through the one `sourceKey` authority), so the card and the
+    // inline `[n]` resolve to one identity and the two surfaces cannot silently disagree.
+    const selected = getSelectedSource() === sourceKey(s.parentDocId, s.startLine);
+    // `data-selected` is a STYLING hook and nothing more — it is invisible to assistive tech, so a
+    // card marked with it alone repeats on the far side the exact "state was visual-only" defect
+    // (F6) that this slice fixed on the mark. `aria-current` is what announces it, matching
+    // `MarkdownBlock.applyCitationHighlight`. REMOVED when unselected rather than set to "false":
+    // some screen readers announce the false value as a present-but-off property, which would be
+    // noise on every other card in the list.
+    //
+    // `data-cite-key` publishes the SAME identity the inline mark carries in its own dataset. The
+    // panel renders every retrieved source while marks exist only for the ones a claim referenced,
+    // so a positional (`.first`) correspondence between the two surfaces is not one — the harness
+    // step that selects a card and then looks for its mark has to match on the key, or it can pick a
+    // retrieved-but-uncited card and wait forever for a mark that was never rendered.
     return html`
       <div class="source-card">
         <button
           class="source"
+          data-cite-key=${sourceKey(s.parentDocId, s.startLine)}
+          ?data-selected=${selected}
+          aria-current=${selected ? 'true' : nothing}
           @click=${(e: MouseEvent) => this.onSourceClick(s, e)}
         >
           <div class="header">
@@ -377,21 +479,34 @@ export class CitationsPanel extends JfElement {
 
     // Fallback: citation-match-only rendering (no retrieval-time sources)
     return html`
-      <div class="panel-header">
-        ${this.citations.length}
-        ${this.citations.length === 1 ? 'citation' : 'citations'}
-      </div>
-      <div class="citations">
-        ${this.citations.map(
-          (c) => html`
-            <div class="citation">
-              <div class="header">${this.renderScore(evidenceScore(c.similarity))}</div>
-              <div class="sentence">${c.sentenceText}</div>
-            </div>
-          `,
-        )}
-      </div>
+      ${this.externalDisclosure
+        ? nothing
+        : html`<div class="panel-header">
+            ${this.citations.length}
+            ${this.citations.length === 1 ? 'citation' : 'citations'}
+          </div>`}
+      ${this.bodyOpen
+        ? html`<div class="citations">
+            ${this.citations.map(
+              (c) => html`
+                <div class="citation">
+                  <div class="header">${this.renderScore(evidenceScore(c.similarity))}</div>
+                  <div class="sentence">${c.sentenceText}</div>
+                </div>
+              `,
+            )}
+          </div>`
+        : nothing}
     `;
+  }
+
+  /**
+   * Whether the BODY renders. Only an `externalDisclosure` host can close the two always-open
+   * paths — with the panel's own header present, the header IS the toggle and the body follows it,
+   * exactly as before.
+   */
+  private get bodyOpen(): boolean {
+    return !this.externalDisclosure || this.sourcesExpanded;
   }
 
   /**
@@ -401,13 +516,17 @@ export class CitationsPanel extends JfElement {
    */
   private renderFlatSources(): TemplateResult {
     return html`
-      <div class="panel-header">
-        ${this.sources.length}
-        ${this.sources.length === 1 ? 'source retrieved' : 'sources retrieved'}
-      </div>
-      <div class="citations">
-        ${this.sources.map((s) => this.renderSourceCard(s, null))}
-      </div>
+      ${this.externalDisclosure
+        ? nothing
+        : html`<div class="panel-header">
+            ${this.sources.length}
+            ${this.sources.length === 1 ? 'source retrieved' : 'sources retrieved'}
+          </div>`}
+      ${this.bodyOpen
+        ? html`<div class="citations">
+            ${this.sources.map((s) => this.renderSourceCard(s, null))}
+          </div>`
+        : nothing}
     `;
   }
 
@@ -455,16 +574,18 @@ export class CitationsPanel extends JfElement {
     };
 
     return html`
-      <button
-        class="panel-header"
-        aria-expanded=${this.sourcesExpanded ? 'true' : 'false'}
-        aria-controls="citations-body"
-        @click=${() => (this.sourcesExpanded = !this.sourcesExpanded)}
-      >
-        <span class="disclosure-chevron ${this.sourcesExpanded ? 'open' : ''}">▸</span>
-        ${this.sources.length}
-        ${this.sources.length === 1 ? 'source' : 'sources'}
-      </button>
+      ${this.externalDisclosure
+        ? nothing
+        : html`<button
+            class="panel-header"
+            aria-expanded=${this.sourcesExpanded ? 'true' : 'false'}
+            aria-controls="citations-body"
+            @click=${() => (this.sourcesExpanded = !this.sourcesExpanded)}
+          >
+            <span class="disclosure-chevron ${this.sourcesExpanded ? 'open' : ''}">▸</span>
+            ${this.sources.length}
+            ${this.sources.length === 1 ? 'source' : 'sources'}
+          </button>`}
       ${this.sourcesExpanded
         ? html`<div class="citations" id="citations-body">
         ${high.length > 0

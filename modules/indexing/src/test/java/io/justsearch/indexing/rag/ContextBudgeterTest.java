@@ -18,7 +18,7 @@ class ContextBudgeterTest {
 
     // First section: no separator
     assertEquals(ContextBudgeter.AppendResult.APPENDED, b.appendSection("a.txt", "hello"));
-    assertEquals("[From: a.txt]\nhello", b.build());
+    assertEquals("[1] a.txt\nhello", b.build());
 
     // Second section: will require separator + header and should truncate content to fit exactly.
     ContextBudgeter.AppendResult r = b.appendSection("b.txt", "WORLDWORLDWORLD");
@@ -26,14 +26,69 @@ class ContextBudgeterTest {
 
     assertEquals(41, b.build().length(), "Output must never exceed maxChars");
     assertTrue(b.build().contains(ContextBudgeter.SECTION_SEPARATOR), "Second section should include separator");
-    assertTrue(b.build().contains("[From: b.txt]\n"), "Second section should include header");
+    assertTrue(b.build().contains("[2] b.txt\n"), "Second section should include header");
+  }
+
+  @Test
+  @DisplayName("numbers sections 1..n so the model's [n] resolves to section n (tempdoc 822 §3a)")
+  void numbersSectionsFromOne() {
+    assertEquals("[1] x\n", ContextBudgeter.sectionHeader(1, "x"), "canonical header shape");
+
+    ContextBudgeter b = new ContextBudgeter(1000);
+    b.appendSection("a.txt", "alpha");
+    b.appendSection("b.txt", "bravo");
+    b.appendSection("c.txt", "charlie");
+
+    assertEquals(
+        "[1] a.txt\nalpha"
+            + ContextBudgeter.SECTION_SEPARATOR
+            + "[2] b.txt\nbravo"
+            + ContextBudgeter.SECTION_SEPARATOR
+            + "[3] c.txt\ncharlie",
+        b.build());
+
+    // The n-th appended section's printed number is n, and its record's 0-based sectionIndex is
+    // n-1 — the two must stay one apart or a cited [n] lands on the wrong source.
+    for (int i = 0; i < b.sections().size(); i++) {
+      ContextBudgeter.Section section = b.sections().get(i);
+      assertEquals(i, section.sectionIndex(), "sectionIndex is the 0-based position");
+      assertTrue(
+          b.build().contains(ContextBudgeter.sectionHeader(i + 1, section.sourceLabel())),
+          "section " + i + " must be printed with the 1-based header " + (i + 1));
+    }
+  }
+
+  @Test
+  @DisplayName("a multi-digit header's extra digits are charged to the budget (exact boundary)")
+  void multiDigitHeaderCountsItsDigits() {
+    // Sections 1-9 render as "[n] s\n" + "x" = 7 chars; section 10 renders as "[10] s\nx" = 8.
+    int sep = ContextBudgeter.SECTION_SEPARATOR.length();
+    int firstNine = 9 * 7 + 8 * sep;
+    int tenth = sep + 8;
+
+    ContextBudgeter exact = new ContextBudgeter(firstNine + tenth);
+    for (int i = 1; i <= 10; i++) {
+      assertEquals(
+          ContextBudgeter.AppendResult.APPENDED, exact.appendSection("s", "x"), "section " + i);
+    }
+    assertEquals(firstNine + tenth, exact.build().length(), "budget consumed exactly");
+    assertTrue(exact.build().endsWith("[10] s\nx"), exact.build());
+
+    // One char less and the 10th no longer fits: the digit that widened the header is the one
+    // that pushed it over, so the arithmetic must not silently overflow the cap.
+    ContextBudgeter tight = new ContextBudgeter(firstNine + tenth - 1);
+    for (int i = 1; i <= 9; i++) {
+      tight.appendSection("s", "x");
+    }
+    assertEquals(ContextBudgeter.AppendResult.STOPPED_BUDGET, tight.appendSection("s", "x"));
+    assertEquals(firstNine, tight.build().length(), "nothing was written past the budget");
   }
 
   @Test
   @DisplayName("stops when remaining budget cannot fit separator+header")
   void stopsWhenHeaderDoesNotFit() {
-    ContextBudgeter b = new ContextBudgeter(10);
-    // Header alone is longer than 10, so nothing can be appended.
+    ContextBudgeter b = new ContextBudgeter(9);
+    // Header "[1] a.txt\n" alone is 10 chars, so nothing can be appended.
     assertEquals(ContextBudgeter.AppendResult.STOPPED_BUDGET, b.appendSection("a.txt", "hi"));
     assertEquals("", b.build());
   }
@@ -41,14 +96,14 @@ class ContextBudgeterTest {
   @Test
   @DisplayName("truncation never orphans a surrogate pair (tempdoc 554 §B.1)")
   void truncationIsSurrogateSafe() {
-    // Header "[From: x]\n" = 10 chars overhead; budget 13 leaves 3 chars for content.
+    // Header "[1] x\n" = 6 chars overhead; budget 9 leaves 3 chars for content.
     // Content "ab😀" is 4 UTF-16 units, so it truncates — and the cut at 3 would split the emoji.
-    ContextBudgeter b = new ContextBudgeter(13);
+    ContextBudgeter b = new ContextBudgeter(9);
     ContextBudgeter.AppendResult r = b.appendSection("x", "ab😀");
 
     assertEquals(ContextBudgeter.AppendResult.APPENDED_TRUNCATED, r);
     String out = b.build();
-    assertTrue(out.length() <= 13, "budget still respected");
+    assertTrue(out.length() <= 9, "budget still respected");
     assertFalse(
         Character.isHighSurrogate(out.charAt(out.length() - 1)),
         "output must not end in an orphaned high surrogate");

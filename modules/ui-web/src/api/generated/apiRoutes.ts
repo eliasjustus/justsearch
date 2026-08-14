@@ -136,6 +136,7 @@ export const API_ROUTES = {
   "GET /api/ui/ready": { method: "GET", path: "/api/ui/ready", cohort: "other", requiredCapabilities: [] },
   "GET /infra/capabilities": { method: "GET", path: "/infra/capabilities", cohort: "infra", requiredCapabilities: [] },
   "GET /infra/capabilities/stream": { method: "GET", path: "/infra/capabilities/stream", cohort: "infra", requiredCapabilities: [] },
+  "GET /mcp": { method: "GET", path: "/mcp", cohort: "mcp", requiredCapabilities: [] },
   "GET /v1/models": { method: "GET", path: "/v1/models", cohort: "openai-compat", requiredCapabilities: [] },
   "HEAD /api/runtime/live": { method: "HEAD", path: "/api/runtime/live", cohort: "runtime", requiredCapabilities: [] },
   "HEAD /api/runtime/ready": { method: "HEAD", path: "/api/runtime/ready", cohort: "runtime", requiredCapabilities: [] },

@@ -17,12 +17,28 @@ package io.justsearch.configuration.model;
  *     the archive's filename) skips re-download on subsequent installs. Used by the alpha.15
  *     CUDA-runtime package (tempdoc 374) — bundled DLLs are too large for the NSIS installer
  *     payload, so they ship via Install AI as a downloaded + extracted archive instead.
+ * @param required whether the capability this package delivers needs this file to work (tempdoc
+ *     824 §3.3a). Defaults to TRUE and every absent-in-JSON entry is required — the axis exists to
+ *     stop an 872-byte metadata file producing the same terminal red as a missing 500 MB model
+ *     (round 16: {@code splade/config.json} absent while SPLADE ran 1 660 CUDA inferences), and a
+ *     misclassification in the other direction hides a real gap, so unclassifiable is required.
  */
 public record SupportingFile(
-    String filename, String sha256, long sizeBytes, String downloadUrl, boolean extract) {
+    String filename,
+    String sha256,
+    long sizeBytes,
+    String downloadUrl,
+    boolean extract,
+    boolean required) {
 
-  /** Backwards-compat constructor — non-extracted file (existing behavior). */
+  /** Backwards-compat constructor — non-extracted, required file (existing behavior). */
   public SupportingFile(String filename, String sha256, long sizeBytes, String downloadUrl) {
-    this(filename, sha256, sizeBytes, downloadUrl, false);
+    this(filename, sha256, sizeBytes, downloadUrl, false, true);
+  }
+
+  /** Backwards-compat constructor — required file with an explicit extract flag. */
+  public SupportingFile(
+      String filename, String sha256, long sizeBytes, String downloadUrl, boolean extract) {
+    this(filename, sha256, sizeBytes, downloadUrl, extract, true);
   }
 }

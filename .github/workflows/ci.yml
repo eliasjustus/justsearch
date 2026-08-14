@@ -11,6 +11,14 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Merge-queue readiness (tempdoc 829 R4). GitHub only reports a required check on a
+  # queued merge group if the workflow producing it also fires on `merge_group`; a
+  # required check that never reports on the `refs/heads/gh-readonly-queue/...` ref
+  # stalls the group until the queue times it out. Inert until the repo is
+  # organization-owned and a queue is configured — no merge_group event can be
+  # delivered before then, so this adds zero runs today.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -19,7 +27,14 @@ permissions:
   actions: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # One in-flight run per pull request, per merge group, per ref — in that order.
+  # `github.event.pull_request.number` is empty on a merge_group event, so the merge
+  # group's head SHA is named EXPLICITLY rather than leaning on the `github.ref`
+  # fallback: two queued groups must never cancel each other, and that guarantee
+  # should not rest on GitHub's ref-naming scheme. Inert for the existing events —
+  # pull_request still keys on the PR number, push still falls through to github.ref
+  # (both merge_group fields are empty there).
+  group: ci-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -150,6 +165,12 @@ jobs:
       - name: Outward benchmark numbers cite the canonical release
         run: node scripts/ci/check-outward-number-citations.mjs
 
+      # Tempdoc 835: the shared llama-server argument-rejection predicate. Its previous form was a
+      # string literal inside one CI script that silently stopped matching when the bundled build's
+      # wording changed — so the reader of the register gets a test, not just a comment.
+      - name: Test llama-server argument-rejection predicate
+        run: node scripts/ci/lib/llama-server-arg-rejection.test.mjs
+
       - name: Test deterministic MCPB packer
         run: node scripts/ci/pack-mcpb.test.mjs
 
@@ -198,6 +219,25 @@ jobs:
       - name: Registered Tauri plugins have a base config block
         run: node scripts/ci/check-tauri-plugin-config.mjs
 
+      # Round 16 (tempdoc 823/824 F4) hit a 400 from POST /api/ai/install/repair with nowhere to
+      # look: the whole /api/ai/install/* family had shipped since alpha without ever appearing in
+      # the API contract map. Nothing compared bound routes against documented ones.
+      - name: Test the install-API contract-doc gate
+        run: node scripts/ci/check-install-api-contract.test.mjs
+
+      - name: Install API routes are documented
+        run: node scripts/ci/check-install-api-contract.mjs
+
+      # Tempdoc 837 §5.1: this gate has existed since 600 but no workflow ever invoked it — it lived
+      # in the pre-merge table and three tempdocs only. That is how four ORT_CUDA_* reason codes with
+      # no producer survived, two of them carrying user-facing wording for a state that cannot occur.
+      # A gate nobody runs is prose, not enforcement.
+      - name: Test the readiness-reason-codes gate
+        run: node scripts/ci/check-readiness-reason-codes.test.mjs
+
+      - name: Readiness reason codes are worded and produced
+        run: node scripts/ci/check-readiness-reason-codes.mjs
+
       - name: Verify frontend-stack claims
         run: node scripts/docs/check-frontend-stack-claims.mjs
 
@@ -237,7 +277,16 @@ jobs:
           java-version: |
             21
             ${{ env.JAVA_VERSION }}
-          cache: gradle
+
+      # Gradle caching is owned by setup-gradle, not by setup-java's `cache: gradle`
+      # (tempdoc 829 R2+R7). On Windows lanes the Gradle daemon is still alive at
+      # post-job save time and holds mandatory locks on ~/.gradle/caches/**/*.lock, so
+      # the cache tar exited 2 (EBUSY) and the cache was NEVER saved — every Windows
+      # run was a cold cache (actions/setup-java#633, workaround-only upstream).
+      # setup-gradle stops daemons in its own post-action and defaults to
+      # cache-read-only off the default branch, so only `main` writes entries (R7).
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -281,7 +330,9 @@ jobs:
           java-version: |
             21
             ${{ env.JAVA_VERSION }}
-          cache: gradle
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -384,7 +435,9 @@ jobs:
           java-version: |
             21
             ${{ env.JAVA_VERSION }}
-          cache: gradle
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Unit tests with model-dependent tests self-skipping
         id: gradle-test
@@ -434,7 +487,9 @@ jobs:
           java-version: |
             21
             ${{ env.JAVA_VERSION }}
-          cache: gradle
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Windows-only tests (@Tag windows) for the Linux-migrated modules
         run: ./gradlew.bat :modules:app-util:test :modules:app-agent:test :modules:app-services:test :modules:adapters-lucene:test :modules:app-inference:test -PwindowsOnly=true --console=plain
@@ -517,7 +572,10 @@ jobs:
   integration-tests:
     name: Integration tests (system-tests tier)
     runs-on: windows-latest
-    timeout-minutes: 25
+    # Must stay above the Gradle task timeout (modules/system-tests/build.gradle.kts, 30 min),
+    # or the job is killed first and the artifact-upload step below never runs. 30 min + the
+    # measured 1m26s of checkout/setup/post steps (run 31716264505) leaves ~3.5 min of margin.
+    timeout-minutes: 35
     continue-on-error: true
     steps:
       - name: Checkout
@@ -530,12 +588,26 @@ jobs:
           java-version: |
             21
             ${{ env.JAVA_VERSION }}
-          cache: gradle
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
 
       # No model blobs on a public checkout, so the model-dependent cases self-skip via their
       # own assumeTrue guards; the Golden Corpus cases use frozen vectors and need no model.
       - name: Integration tier (Golden Corpus, relevance, isolated-backend E2E)
         run: ./gradlew.bat :modules:system-tests:integrationTest -PskipWebBuild=true --console=plain
+
+      # PR #447 review fix: R3 (failOnPassedAfterRetry=false for this advisory lane, above in
+      # modules/system-tests/build.gradle.kts) keeps a self-recovered boot flake from reddening
+      # this job, but that alone drops ALL automated surfacing of the flake class — it would
+      # only be visible via manual log/XML archaeology in the uploaded artifact below. This step
+      # closes that gap the same way the unit-tests matrix already does (R5, same PR): extract
+      # flakyTests from the just-produced JUnit XML into an attribution report. No budget step
+      # here deliberately — report-unit-test-budget.mjs throws when a lane isn't declared in
+      # unit-test-shard-policy.v1.json, and integration-tests isn't a unit-test shard.
+      - name: Report integration-test attribution
+        if: always()
+        run: node scripts/ci/report-unit-test-attribution.mjs --lane integration-tests --runner-label windows-latest --out-json build/ci/integration-test-attribution.json --out-md build/ci/integration-test-attribution.md --top 20 --allow-empty
 
       - name: Upload integration-test results
         if: always()
@@ -545,22 +617,64 @@ jobs:
           path: |
             modules/system-tests/build/test-results/integrationTest/TEST-*.xml
             modules/system-tests/build/reports/tests/integrationTest/**
+            modules/system-tests/build/reports/isolated-backend/**
+            build/ci/integration-test-attribution.json
+            build/ci/integration-test-attribution.md
           if-no-files-found: warn
 
+  # Runs the MIT-licensed gitleaks CLI directly instead of gitleaks/gitleaks-action.
+  # The action is a wrapper that (a) demands a paid GITLEAKS_LICENSE secret as soon as
+  # the repository owner is an organization — with no public-repo exemption — and
+  # (b) hard-exits on any event outside push/pull_request/workflow_dispatch/schedule,
+  # which includes merge_group. Both would turn this REQUIRED check red the day the
+  # repo moves to an org and a merge queue is enabled. The CLI has neither limit.
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      # Pin the release and verify its checksum: the binary is fetched from a
+      # third-party release page into a job that reads the whole repository.
+      GITLEAKS_VERSION: "8.30.1"
+      GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
+      - name: Install pinned gitleaks CLI
+        run: |
+          set -euo pipefail
+          asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL --retry 3 --retry-delay 2 -o "${RUNNER_TEMP}/${asset}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${asset}"
+          echo "${GITLEAKS_SHA256}  ${RUNNER_TEMP}/${asset}" | sha256sum --check --strict -
+          tar -xzf "${RUNNER_TEMP}/${asset}" -C "${RUNNER_TEMP}" gitleaks
+          "${RUNNER_TEMP}/gitleaks" version
+
+      # `dir` scans the checked-out tree rather than a commit range. Every PR lands on
+      # main as a single squashed commit (ADR-0045), so the tree that this job scans is
+      # exactly the content that would land — and main's history stays clean by
+      # induction. The binary and its archive live in RUNNER_TEMP so they are not
+      # themselves scanned. Any finding exits non-zero and fails this required check.
       - name: Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/gitleaks" dir . \
+            --config .gitleaks.toml \
+            --redact \
+            --no-banner \
+            --report-format sarif \
+            --report-path "${RUNNER_TEMP}/gitleaks-results.sarif"
+
+      - name: Upload gitleaks SARIF
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gitleaks-results.sarif
+          path: ${{ runner.temp }}/gitleaks-results.sarif
+          if-no-files-found: warn
 
   # Advisory only — NOT a required check (see workflow-signal-policy.v1.json
   # requiredStatusChecks; do not add this job's name there). Runs after every

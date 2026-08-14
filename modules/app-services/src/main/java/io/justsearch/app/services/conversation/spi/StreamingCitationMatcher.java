@@ -128,16 +128,14 @@ public final class StreamingCitationMatcher implements StreamConsumer {
     if (fullText == null || fullText.isBlank()) {
       return StreamConsumerResult.empty();
     }
-    @SuppressWarnings("unchecked")
-    List<ContextCitation> citations =
-        (List<ContextCitation>) ctx.attributes().get(RAGContext.ATTR_CITATIONS);
-    if (citations == null || citations.isEmpty()) {
+    List<DocumentService.VerificationSource> sources = verificationSources(ctx);
+    if (sources.isEmpty()) {
       return StreamConsumerResult.empty();
     }
     try {
       CitationMatchResult result =
           documents
-              .matchCitations(fullText, citations, threshold)
+              .matchCitationsAgainst(fullText, sources, threshold)
               .toCompletableFuture()
               .get(timeout.toMillis(), TimeUnit.MILLISECONDS);
       if (result == null || result.matches().isEmpty()) {
@@ -157,6 +155,31 @@ public final class StreamingCitationMatcher implements StreamConsumer {
       LOG.debug("Authoritative citation matching failed (non-fatal): {}", e.getMessage());
       return StreamConsumerResult.empty();
     }
+  }
+
+  /**
+   * The sources to verify against (tempdoc 836 §1.4).
+   *
+   * <p>An injector that holds the literal text it showed the model publishes {@link
+   * RAGContext#ATTR_VERIFICATION_SOURCES}; retrieval publishes only {@link
+   * RAGContext#ATTR_CITATIONS}, whose chunk ordinals are true, so those sources carry no text and
+   * the Worker looks them up exactly as before.
+   */
+  @SuppressWarnings("unchecked")
+  private static List<DocumentService.VerificationSource> verificationSources(
+      ConversationContext ctx) {
+    Object supplied = ctx.attributes().get(RAGContext.ATTR_VERIFICATION_SOURCES);
+    if (supplied instanceof List<?> list && !list.isEmpty()) {
+      return (List<DocumentService.VerificationSource>) list;
+    }
+    List<ContextCitation> citations =
+        (List<ContextCitation>) ctx.attributes().get(RAGContext.ATTR_CITATIONS);
+    if (citations == null || citations.isEmpty()) {
+      return List.of();
+    }
+    return citations.stream()
+        .map(c -> new DocumentService.VerificationSource(c, ""))
+        .toList();
   }
 
   // -- Sentence segmentation --
@@ -268,7 +291,11 @@ public final class StreamingCitationMatcher implements StreamConsumer {
           hits >= MIN_WORD_HITS || (significantWords <= 3 && hits >= 1) || overlap >= 0.5;
       if (isMatch) {
         Map<String, Object> entry = new LinkedHashMap<>();
-        entry.put("chunkIndex", c.chunkIndex());
+        // Tempdoc 822 §3b (the numbering contract) — a MATCH carries the source's POSITION in this
+        // turn's `rag.citations` array (the loop index), never `c.chunkIndex()`, which is the chunk's
+        // ordinal inside its parent document. Emitting the ordinal is what let a 5-source answer show
+        // a "[59]" mark that deep-linked to source 1 through the resolver's old fallback.
+        entry.put("sourceIndex", i);
         entry.put("parentDocId", c.parentDocId());
         entry.put("score", Math.round(overlap * 100.0) / 100.0);
         matched.add(Map.copyOf(entry));
@@ -289,7 +316,7 @@ public final class StreamingCitationMatcher implements StreamConsumer {
       Map<String, Object> entry = new LinkedHashMap<>();
       entry.put("sentenceIndex", m.sentenceIndex());
       entry.put("sentenceText", m.sentenceText());
-      entry.put("chunkIndex", m.chunkIndex());
+      entry.put("sourceIndex", m.sourceIndex());
       entry.put("similarity", m.similarity());
       entry.put("parentDocId", m.parentDocId());
       matches.add(Map.copyOf(entry));

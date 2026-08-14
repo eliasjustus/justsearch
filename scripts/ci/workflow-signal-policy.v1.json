@@ -7,7 +7,7 @@
       "name": "CI",
       "path": ".github/workflows/ci.yml",
       "class": "public-hosted-fact-lanes",
-      "expectedTriggers": ["workflow_dispatch", "pull_request", "push"],
+      "expectedTriggers": ["workflow_dispatch", "pull_request", "push", "merge_group"],
       "owner": "ADR-0044 / public hosted CI fact lanes",
       "failureDefault": "product-regression",
       "staleDays": 14,
@@ -29,7 +29,7 @@
       "name": "CLA Assistant",
       "path": ".github/workflows/cla.yml",
       "class": "contributor-provenance",
-      "expectedTriggers": ["issue_comment", "pull_request_target"],
+      "expectedTriggers": ["issue_comment", "pull_request_target", "merge_group"],
       "owner": "CLA.md / CONTRIBUTING.md",
       "failureDefault": "contributor-policy",
       "staleDays": 14,
@@ -47,6 +47,17 @@
       "staleDays": 14,
       "blocking": true,
       "advisory": false
+    },
+    {
+      "name": "Sign Vendored Mirrors",
+      "path": ".github/workflows/sign-vendored-mirrors.yml",
+      "class": "release-gate",
+      "expectedTriggers": ["workflow_dispatch"],
+      "owner": "tempdoc 760/772 SS-K sign-once-per-upstream-bump",
+      "failureDefault": "release-blocking-failure",
+      "staleDays": 365,
+      "blocking": false,
+      "advisory": true
     },
     {
       "name": "Docs lint",

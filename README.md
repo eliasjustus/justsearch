@@ -32,22 +32,23 @@ retrieval quality is benchmarked on English, German, and French (see [Benchmarks
 
 ## Install (Windows)
 
-1. **Download** [`JustSearch_0.1.0_x64-setup.exe`](https://github.com/eliasjustus/justsearch/releases/download/v0.1.0/JustSearch_0.1.0_x64-setup.exe)
-   (853 MB) from the [v0.1.0 release](https://github.com/eliasjustus/justsearch/releases/tag/v0.1.0).
-2. **Run it.** Windows SmartScreen will warn "Windows protected your PC" — click **More info → Run anyway**.
-   That warning appears because the installer is unsigned (solo-dev alpha; code signing is planned — see
-   [Status](#status)); it says nothing else about the binary. The install is per-user; no admin rights needed.
+1. **Download** [`JustSearch_0.2.0_x64-setup.exe`](https://github.com/eliasjustus/justsearch/releases/download/v0.2.0/JustSearch_0.2.0_x64-setup.exe)
+   (249 MB) from the [v0.2.0 release](https://github.com/eliasjustus/justsearch/releases/tag/v0.2.0).
+2. **Run it.** The installer is **code-signed** — the publisher shown is **Elias Justus**. Windows
+   SmartScreen may still show a reputation prompt while the signing certificate is new (reputation
+   accrues with downloads); if it does, the "More info" panel names the verified publisher. The
+   install is per-user; no admin rights needed.
 3. **Launch JustSearch** and point it at a folder. On first launch the app asks consent to download its AI
    models (**~9 GB**, one time, from GitHub Releases + Hugging Face) — after that it runs **fully offline**.
 
-Installer SHA-256 (also in [`SHA256SUMS`](SHA256SUMS)):
+Installer SHA-256 (also in [`SHA256SUMS`](https://github.com/eliasjustus/justsearch/releases/download/v0.2.0/SHA256SUMS)):
 
 ```text
-f6336a668b8f6abd66b1ff483def6ae17ac34f64d406a8edab16b45d2b61ae38  JustSearch_0.1.0_x64-setup.exe
+cba354165c38c90628082020d40fe00986814a3fa57da49c62dd18acb0f11772  JustSearch_0.2.0_x64-setup.exe
 ```
 
-<!-- hash verified 2026-07-14 against the asset downloaded from the v0.1.0 GitHub release
-     (identical to the local build). -->
+<!-- hash verified 2026-08-13 against the asset downloaded from the published v0.2.0 GitHub
+     release (Authenticode Valid, CN=Elias Justus, timestamped; size 249.1 MB measured). -->
 
 Full walkthrough (hash verification, why SmartScreen/Smart App Control react to an unsigned
 installer, build-from-source alternative): [`docs/how-to/verify-your-download.md`](docs/how-to/verify-your-download.md).
@@ -57,7 +58,7 @@ installer, build-from-source alternative): [`docs/how-to/verify-your-download.md
 | | |
 |---|---|
 | **OS** | **Windows 10 or 11, 64-bit (x64) only** — macOS/Linux are not in the current scope ([NON-GOALS](NON-GOALS.md)). Verified on Windows 11; Windows 10 x64 is the expected WebView2 baseline but is not yet explicitly tested. WebView2, the VC++ runtime, and a Java runtime are bundled by the installer; there is nothing to install first. |
-| **Disk** | 853 MB installer + ~0.7 GB installed + **~9 GB one-time model download** + the search index (grows with your corpus). Plan for **≥ 15 GB free**. |
+| **Disk** | 249 MB installer + ~0.7 GB installed + **~9 GB one-time model download** + the search index (grows with your corpus). Plan for **≥ 15 GB free**. |
 | **RAM** | **16 GB recommended.** 8 GB is a conservative floor for keyword/semantic search only (not a benchmarked minimum). The on-device chat model (~5.9 GB file) is loaded into RAM when answering on CPU. |
 | **GPU** | **Optional.** Everything runs on CPU by default. An NVIDIA GPU with **≥ 8 GB VRAM** enables CUDA acceleration for chat and reranking (the app requires ~7.5 GB free VRAM before it will run the chat model on GPU; below that it stays on CPU). |
 | **Network** | Only for the one-time model download. Nothing else, ever — see [Privacy](#privacy). |
@@ -82,6 +83,10 @@ variable before launching; the actual port in use is always written to
   ```json
   { "mcpServers": { "justsearch": { "command": "npx", "args": ["mcp-remote", "http://127.0.0.1:8080/mcp"] } } }
   ```
+
+All three need an app build that serves `POST /mcp`, which the v0.1.0 installer release may predate — if your
+client lists no tools, POST a `tools/list` JSON-RPC request at the URL above before debugging the client; a 404
+means that build has no MCP endpoint, so use a newer release or a from-source build.
 
 Six tools: `justsearch_answer` (RAG, primary), `justsearch_search`, `justsearch_browse`, `justsearch_ingest`,
 `justsearch_status`, `justsearch_runtime_manifest`. Your documents never leave the machine — only the agent's
@@ -119,16 +124,17 @@ that ships **{true hybrid retrieval × fully offline × multilingual × OCR}** o
 ## Benchmarks
 
 Retrieval quality (nDCG@10) from one reproducible release run (`scripts/jseval/release.v1.json`, RTX 4070,
-~300 queries/corpus; measured on the canonical 2026-07-16 release tree). Numbers are
+~300 queries/corpus; measured on the canonical 2026-08-14 release tree — the first release scored on the
+corrected delivered-ranking basis, tempdoc 803). Numbers are
 the **default `hybrid` config** unless noted:
 
 | Corpus | nDCG@10 | Note |
 |---|---|---|
-| BEIR / SciFact | **0.760** | in the range of published single-model retrievers (ColBERTv2 0.693, SPLADE++ 0.71) — but read this as *system vs. component*: ours is a full hybrid+rerank pipeline, theirs are single models |
-| Enron-QA | 0.736 | |
-| MIRACL-de (German) | 0.862 | multilingual — no per-language tuning |
-| MIRACL-fr (French) | 0.873 | |
-| Legal (CLERC case-retrieval) | 0.598 | citation-retrieval task on real US federal case law; replaces an earlier bespoke legal corpus that had no reproducible construction path (tempdoc 666) |
+| BEIR / SciFact | **0.757** | in the range of published single-model retrievers (ColBERTv2 0.693, SPLADE++ 0.71) — but read this as *system vs. component*: ours is a full hybrid+rerank pipeline, theirs are single models |
+| Enron-QA | 0.796 | |
+| MIRACL-de (German) | 0.857 | multilingual — no per-language tuning |
+| MIRACL-fr (French) | 0.884 | |
+| Legal (CLERC case-retrieval) | 0.578 | citation-retrieval task on real US federal case law; replaces an earlier bespoke legal corpus that had no reproducible construction path (tempdoc 666) |
 
 External-baseline figures are cited from published papers (SIGIR/NAACL; sources + split caveats in
 `release.v1.json`) — **not** re-run by us, and not directly apples-to-apples: a hybrid+rerank *system* is
@@ -197,8 +203,9 @@ Nothing leaves your machine, and you can check:
 
 ## Status
 
-**Alpha** (`0.1.0`), **Windows-only** (macOS/Linux are not in the current scope). The installer is currently **unsigned**,
-so Windows SmartScreen shows an "unknown publisher" warning on first run — signing is in progress. In active
+**Alpha** (`0.2.0`), **Windows-only** (macOS/Linux are not in the current scope). The installer is
+**code-signed** (publisher: Elias Justus) as of v0.2.0; SmartScreen reputation for the new certificate
+accrues with downloads, so an early reputation prompt is possible and names the verified publisher. In active
 development since 2025; published 2026. Built in the open with heavy AI-agent assistance — the development
 tooling, the governance/discipline gates, and the design history (`docs/tempdocs/`) all live in this repo, and
 commits are co-authored.

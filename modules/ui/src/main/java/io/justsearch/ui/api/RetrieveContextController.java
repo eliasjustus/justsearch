@@ -97,9 +97,14 @@ public class RetrieveContextController {
     List<String> metaAuthor = List.of();
     List<String> metaCategory = List.of();
     RetrieveContextParams.TimeRange metaPublishedAt = RetrieveContextParams.TimeRange.UNSET;
+    // Tempdoc 821 §3-C2 — the collection scope. Same wire key as the search endpoint's filter block
+    // (`collection`, see KnowledgeSearchController#parseFilters), so one scope name spans both
+    // surfaces. Absent/empty = the default scope, not "match nothing".
+    List<String> collection = List.of();
 
     if (filters != null) {
       pathPrefix = getString(filters, "path_prefix", "");
+      collection = getStringList(filters, "collection");
       fileKind = getStringList(filters, "file_kind");
       entityPersons = getStringList(filters, "entity_persons");
       entityOrganizations = getStringList(filters, "entity_organizations");
@@ -177,7 +182,7 @@ public class RetrieveContextController {
         modifiedAt, false, pathPrefix, fileKind,
         autoEntityExtract, format,
         metaSource, metaAuthor, metaCategory, metaPublishedAt, returnFullDocuments,
-        java.util.List.of());
+        java.util.List.of(), collection);
 
     try {
       ContextResult result = documentService()
@@ -274,17 +279,21 @@ public class RetrieveContextController {
 
     double threshold = getDouble(body, "threshold", 0.5);
 
-    // Convert chunk_refs to ContextCitation list for the service call
-    List<DocumentService.ContextCitation> citations = chunkRefs.stream()
-        .map(ref -> new DocumentService.ContextCitation(
-            (String) ref.get("parent_doc_id"),
-            getInt(ref, "chunk_index", 0),
-            1, 0, 0, 0f, "", 0, 0, "", 0))
+    // Convert chunk_refs to verification sources. Tempdoc 836 §1.4: a ref may carry the literal
+    // `passage_text` it wants verified, instead of only the (parent_doc_id, chunk_index) key the
+    // Worker would look up. Omitting it keeps the historical lookup behaviour exactly.
+    List<DocumentService.VerificationSource> sources = chunkRefs.stream()
+        .map(ref -> new DocumentService.VerificationSource(
+            new DocumentService.ContextCitation(
+                (String) ref.get("parent_doc_id"),
+                getInt(ref, "chunk_index", 0),
+                1, 0, 0, 0f, "", 0, 0, "", 0),
+            ref.get("passage_text") instanceof String s ? s : ""))
         .toList();
 
     try {
       var result = documentService()
-          .matchCitations(answerText, citations, threshold)
+          .matchCitationsAgainst(answerText, sources, threshold)
           .toCompletableFuture()
           .get(CITATIONS_TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
@@ -292,15 +301,28 @@ public class RetrieveContextController {
       response.put("ok", true);
       response.put("sentences_total", result.sentencesTotal());
       response.put("sentences_matched", result.sentencesMatched());
+      // Tempdoc 836 §3.6 / §4 — how much was actually scored, and which producer scored it. The
+      // two producers write `similarity` on measurably incomparable scales, so a reader of these
+      // numbers needs to know which one arrived; and a matched/total ratio that silently omits a
+      // budget shortfall attributes a deadline to the evidence.
+      response.put("sentences_scored", result.sentencesScored());
+      response.put("scoring_incomplete", result.scoringIncomplete());
+      response.put("scorer", result.scorer().name());
+      response.put("took_ms", result.tookMs());
 
       List<Map<String, Object>> matches = result.matches().stream()
           .map(m -> {
             Map<String, Object> entry = new HashMap<>();
             entry.put("sentence_index", m.sentenceIndex());
             entry.put("sentence_text", m.sentenceText());
-            entry.put("chunk_index", m.chunkIndex());
+            // Tempdoc 822 §3b — the match carries the POSITION of the matched entry in the request's
+            // `chunk_refs` array, not a document-relative chunk ordinal. It was published under the
+            // input field's name (`chunk_index`), which invited exactly that misreading.
+            entry.put("source_index", m.sourceIndex());
             entry.put("parent_doc_id", m.parentDocId());
             entry.put("similarity", m.similarity());
+            // Which TEXT this score is about: the caller's literal passage, or a re-fetched chunk.
+            entry.put("text_source", m.textSource().name());
             return entry;
           })
           .toList();

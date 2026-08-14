@@ -267,14 +267,14 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         // for the watched-root walk and registers Worker-side watchers via WatchRoot/UnwatchRoot.
         // Backpressure stays Head-side (between progress events); batching, admission, and
         // enqueue happen Worker-side via WorkerScanOps.
+        // Tempdoc 821 §3-C2 — forward the root's collection into the scan RPC (the wire and the
+        // Worker have carried it all along; only this lambda dropped it).
+        // Tempdoc 821 §3-C3 — same defect on the mode: this lambda hard-coded
+        // SCAN_MODE_INITIAL, so a force-reindex arrived at the Worker indistinguishable from an
+        // ordinary rewalk. The caller decides the mode now; this lambda only carries it.
         RootLifecycleOps.ScanRootFn scanRootFn =
-            (rootPath, excludeGlobs, progressConsumer) ->
-                scanRoot(
-                    rootPath,
-                    null,
-                    io.justsearch.ipc.ScanMode.SCAN_MODE_INITIAL,
-                    excludeGlobs,
-                    progressConsumer);
+            (rootPath, collection, mode, excludeGlobs, progressConsumer) ->
+                scanRoot(rootPath, collection, mode, excludeGlobs, progressConsumer);
         RootLifecycleOps.WorkerWatchFn workerWatchFn =
             new RootLifecycleOps.WorkerWatchFn() {
                 @Override
@@ -345,9 +345,13 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
      * Test seam (683): wires a prebuilt channel (e.g. in-process) into the search path so
      * {@link #search(io.justsearch.core.dto.Query)} runs without {@link ManagedChannelBuilder}
      * and without signal-bus port re-discovery. Production callers use {@link #connect(int)}.
+     *
+     * <p>Tempdoc 821 §3-C2 — the ingest stub is pinned too, so {@link #scanRoot} (and with it the
+     * watched-root scan arm's ScanRootRequest) is exercisable over an in-process server.
      */
     void connectForTesting(Channel channel) {
         searchStub = SearchServiceGrpc.newBlockingStub(channel);
+        ingestStub = IngestServiceGrpc.newBlockingStub(channel);
         testChannelPinned = true;
     }
 
@@ -465,10 +469,6 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         return ingestStub.withDeadlineAfter(deadline(category), TimeUnit.MILLISECONDS);
     }
 
-    private HealthServiceGrpc.HealthServiceBlockingStub healthStubWithDeadline(RpcDeadlineCategory category) {
-        return healthStub.withDeadlineAfter(deadline(category), TimeUnit.MILLISECONDS);
-    }
-
     private <T> T executeSearchRpc(
             String operation,
             RpcDeadlineCategory category,
@@ -493,9 +493,18 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
             String operation,
             RpcDeadlineCategory category,
             java.util.function.Function<HealthServiceGrpc.HealthServiceBlockingStub, T> rpc) {
+        return executeHealthRpc(operation, deadline(category), rpc);
+    }
+
+    private <T> T executeHealthRpc(
+            String operation,
+            long callDeadlineMs,
+            java.util.function.Function<HealthServiceGrpc.HealthServiceBlockingStub, T> rpc) {
         ensureConnected();
         reconnect();
-        return executeWithCircuitBreaker(operation, () -> rpc.apply(healthStubWithDeadline(category)));
+        return executeWithCircuitBreaker(
+            operation,
+            () -> rpc.apply(healthStub.withDeadlineAfter(callDeadlineMs, TimeUnit.MILLISECONDS)));
     }
 
     private DeleteByPathResponse executeDeleteByPath(Path normalizedPath) {
@@ -569,8 +578,13 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
     }
 
     public MatchCitationsResponse matchCitations(
-        String answerText, List<String> chunkDocIds, List<Integer> chunkIndices, double threshold) {
-        return searchRpcOps.matchCitations(answerText, chunkDocIds, chunkIndices, threshold);
+        String answerText,
+        List<String> chunkDocIds,
+        List<Integer> chunkIndices,
+        List<String> passageTexts,
+        double threshold) {
+        return searchRpcOps.matchCitations(
+            answerText, chunkDocIds, chunkIndices, passageTexts, threshold);
     }
 
     /**
@@ -807,18 +821,14 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
     /**
      * Checks if the Knowledge Server is healthy.
      *
-     * <p>This method performs a gRPC health check on the existing connection.
-     * It does NOT re-read the signal bus (unlike most other methods) to avoid
-     * false negatives from transient signal bus read issues.
+     * <p>Like every health RPC this goes through {@link #executeHealthRpc}, which calls
+     * {@link #reconnect()} — a no-op unless the signal bus reports a DIFFERENT port, in which case
+     * the channel genuinely must be rebuilt. The existing connection is reused otherwise.
      *
      * @return true if serving
      */
     public boolean isHealthy() {
         try {
-            // Note: We intentionally do NOT call reconnect() here.
-            // If we're already connected, we should just check the existing connection.
-            // Re-reading the signal bus can cause false negatives due to timing issues
-            // with memory-mapped file visibility across processes on Windows.
             HealthCheckRequest request = HealthCheckRequest.newBuilder().build();
             HealthCheckResponse response = executeHealthRpc(
                 "isHealthy",
@@ -839,14 +849,28 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
      *
      * <p>Prefer this over {@link #isHealthy()} when you need details like {@code worker_state} or {@code pid}.
      *
-     * <p>This method performs a gRPC health check on the existing connection without
-     * re-reading the signal bus, to avoid false failures from timing issues.
+     * <p>Same connection handling as {@link #isHealthy()}: the shared health-RPC path re-reads the
+     * signal bus and rebuilds the channel only when the reported port has actually changed.
      */
     public HealthCheckResponse getHealthCheck() {
-        // Note: We intentionally do NOT call reconnect() here - same rationale as isHealthy().
+        return getHealthCheck(deadline(RpcDeadlineCategory.STANDARD));
+    }
+
+    /**
+     * Health check with an explicit per-call gRPC deadline, for callers that own a total budget and
+     * must be able to spend it over several attempts.
+     *
+     * <p>Boot-time PID validation is the motivating caller: its whole window equals the STANDARD
+     * deadline, so a single slow cold call (the worker-side check touches SQLite and Lucene, which
+     * are expensive on first contact) consumed the entire budget and its retry loop never iterated.
+     * Passing a per-attempt deadline keeps the retry loop a retry loop.
+     *
+     * @param callDeadlineMs the gRPC deadline for this one call, in milliseconds
+     */
+    public HealthCheckResponse getHealthCheck(long callDeadlineMs) {
         HealthCheckResponse response = executeHealthRpc(
             "getHealthCheck",
-            RpcDeadlineCategory.STANDARD,
+            callDeadlineMs,
             stub -> stub.check(HealthCheckRequest.newBuilder().build()));
         // Update last-known-good ONNX model cache from Worker's startup-time discovery (D-4).
         // executeHealthRpc never returns null — it throws on failure, so cache is only updated
@@ -879,8 +903,7 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
      */
     public String getVersion() {
         try {
-            // Note: We intentionally do NOT call reconnect() here - same rationale as isHealthy().
-            HealthCheckResponse response = executeHealthRpc(
+                HealthCheckResponse response = executeHealthRpc(
                 "getVersion",
                 RpcDeadlineCategory.STANDARD,
                 stub -> stub.check(HealthCheckRequest.newBuilder().build()));
@@ -1565,8 +1588,10 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
             java.util.function.Consumer<io.justsearch.ipc.ScanRootProgress> progressConsumer) {
         Objects.requireNonNull(rootPath, "rootPath");
         Objects.requireNonNull(progressConsumer, "progressConsumer");
-        ensureConnected();
-        reconnect();
+        if (!testChannelPinned) {
+            ensureConnected();
+            reconnect();
+        }
         io.justsearch.ipc.ScanRootRequest.Builder builder =
                 io.justsearch.ipc.ScanRootRequest.newBuilder()
                         .setRootPath(rootPath)

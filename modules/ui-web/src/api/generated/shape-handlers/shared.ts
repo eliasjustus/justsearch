@@ -56,3 +56,35 @@ export interface AgentSentenceCite {
   sourceIndex: number;
   similarity: number;
 }
+
+/**
+ * Tempdoc 834 §6.2 — one tool call currently held at an approval gate (an element of the
+ * `state_snapshot` event's `pendingApprovals` array). Mirrors the backend
+ * `AgentEvent.PendingApproval`, which carries the same five values the `tool_call_pending` event
+ * announced. It rides the SNAPSHOT because the replay ring evicts: after a long run parks at a
+ * gate, the announcing frame may be gone while the gate is still open and answerable.
+ *
+ * The array itself is optional on the payload, and that distinction is load-bearing: `undefined`
+ * means UNKNOWN (a legacy `events.ndjson` record written before 834), while `[]` means none are
+ * pending. Rendering "no approvals pending" for the former is the bug the optionality prevents.
+ */
+export interface PendingApproval {
+  callId: string;
+  toolName: string;
+  arguments: string;
+  risk: string;
+  /** Absent when no gate evaluator was available at emit time. */
+  gateBehavior?: string;
+}
+
+/**
+ * Tempdoc 834 §1.5 / §6.2 — why a run is currently stopped (the `state_snapshot` event's `park`,
+ * present only while the run IS parked). Mirrors the backend `AgentEvent.ParkSnapshot`.
+ */
+export interface ParkSnapshot {
+  /** `approval` | `budget` | `context` | `unobserved`. */
+  kind: string;
+  /** When the park began, or `0` when it has no recorded start (the zero-observer park). */
+  sinceEpochMs: number;
+  detail: string;
+}

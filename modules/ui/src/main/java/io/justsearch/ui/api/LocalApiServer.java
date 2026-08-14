@@ -67,6 +67,21 @@ public class LocalApiServer {
   /** Header name for the desktop session token (used in prod mode to protect non-GET endpoints). */
   public static final String SESSION_TOKEN_HEADER = "X-JustSearch-Session";
 
+  /**
+   * The MCP Streamable-HTTP endpoint path. Shared with {@link
+   * ApiSecurityFilters#setupMcpOriginValidation} so the guarded path and the routed path cannot
+   * drift — moving the endpoint without moving the guard would silently unguard it.
+   */
+  public static final String MCP_ENDPOINT_PATH = "/mcp";
+
+  /**
+   * The MCP session-token bootstrap path. Shared with {@link
+   * ApiSecurityFilters#setupMcpOriginValidation} for the same reason as {@link #MCP_ENDPOINT_PATH}:
+   * this route hands out the credential that gates every mutating call, so the guarded path and the
+   * routed path must not be able to drift apart.
+   */
+  public static final String MCP_TOKEN_PATH = "/api/mcp/token";
+
   // Tempdoc 374 alpha.21 Bug O: not final because the explicit-port-bind-failure
   // fallback rebuilds a fresh Javalin instance — Javalin/Jetty's lifecycle prohibits
   // re-starting a failed instance. Volatile for safe publication after constructor
@@ -291,6 +306,14 @@ public class LocalApiServer {
             ? new ConversationBackupController(
                 this.HeadAssemblyRef, this.HeadAssemblyRef.dataKeyManager())
             : null;
+    // Tempdoc 832 (lane D): publish the registry the setters below bind onto the controller-owned
+    // adapter, so the AGENT-owned ingest adapter gets the same scan observability — an agent- or
+    // MCP-driven directory ingest emitted no scan-progress SSE and left no rollup row. Done here
+    // (not in AgentToolFactory.build) because the registry does not exist during the service phase,
+    // and this runs before connectKnowledgeServer builds the late-bound agent adapter.
+    if (this.HeadAssemblyRef != null) {
+      this.HeadAssemblyRef.setScanProgressRegistry(this.scanProgressRegistry);
+    }
     this.configuredPort = resolveConfiguredPort();
     ConfigStore cs = ConfigStore.globalOrNull();
     this.prodMode = cs != null && cs.get().policy().prodMode();
@@ -613,10 +636,14 @@ public class LocalApiServer {
     if (convApi.resolveAddressController() != null) {
       app.post("/api/document/{id}/resolve-address", convApi.resolveAddressController()::handle);
     }
-    app.get("/api/mcp/token", this::handleMcpToken);
+    app.get(MCP_TOKEN_PATH, this::handleMcpToken);
     if (convApi.mcpProtocolHandler() != null) {
-      app.post("/mcp", convApi.mcpProtocolHandler()::handlePost);
-      app.delete("/mcp", convApi.mcpProtocolHandler()::handleDelete);
+      app.post(MCP_ENDPOINT_PATH, convApi.mcpProtocolHandler()::handlePost);
+      app.delete(MCP_ENDPOINT_PATH, convApi.mcpProtocolHandler()::handleDelete);
+      // Streamable-HTTP conformance: the single endpoint must answer GET. Registered inside this
+      // branch so the 405's `Allow` can never name POST/DELETE while they are unbound (its third
+      // entry, OPTIONS, comes from the API-wide CORS preflight catch-all, not from here).
+      app.get(MCP_ENDPOINT_PATH, io.justsearch.ui.api.mcp.McpProtocolHandler::handleGet);
     }
 
     // Tempdoc 374 alpha.17 R5: OpenAI-compatible surface. Proxies to the

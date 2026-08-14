@@ -13,8 +13,8 @@
   "files": [
     {
       "path": "tesseract.exe",
-      "sha256": "ccd044d6cf16eaaad151260e1fcc5e3e1504cd1b8644e940b4f7ae3e315dd0d3",
-      "sizeBytes": 86152
+      "sha256": "879ef6b565d753b24e5c05c41e21fc96b45f2c318e15d9427856d98b14290213",
+      "sizeBytes": 82248
     },
     {
       "path": "tessdata/eng.traineddata",

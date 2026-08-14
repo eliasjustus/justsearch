@@ -433,6 +433,13 @@ public final class CombinedEnrichmentBackfillOps {
       // intermediate retry bumps below are not (see CombinedOutcome#progressed).
       int blankContentTerminal = 0;
 
+      // Tempdoc 803 blocker: a document that reaches the terminal SPLADE FAILED state removes
+      // itself from the pending population forever and fails the readiness gate for the whole
+      // index, but nothing named it — 803 could report "1 of 5,408 failed" and not which one.
+      // Every terminal SPLADE escalation below records `docId(reason)` here and the batch logs
+      // them once at WARN.
+      List<String> spladeTerminalFailures = new ArrayList<>();
+
       // Round-15 post-round finding: how many documents Phase 3c would actually run NER on. Uses
       // Phase 3c's OWN predicate (absent status defaults to PENDING there) rather than the raw read
       // used for embed/SPLADE enrollment, so the budget reservation below fires in exactly the
@@ -535,7 +542,10 @@ public final class CombinedEnrichmentBackfillOps {
               Map<String, Object> escalation =
                   SpladeBackfillOps.computeSpladeFailureUpdate(
                       parseRetryCountOrZero(docFields.get(SchemaFields.SPLADE_RETRY_COUNT)));
-              if (escalation.containsKey(SchemaFields.SPLADE_STATUS)) blankContentTerminal++;
+              if (escalation.containsKey(SchemaFields.SPLADE_STATUS)) {
+                blankContentTerminal++;
+                spladeTerminalFailures.add(docId + "(blank-content)");
+              }
               updates.putAll(escalation);
             }
           }
@@ -963,7 +973,12 @@ public final class CombinedEnrichmentBackfillOps {
             Map<String, String> spladeDocFields = batchedFields.getOrDefault(spladeDocId, Map.of());
             int currentRetryCount =
                 parseRetryCountOrZero(spladeDocFields.get(SchemaFields.SPLADE_RETRY_COUNT));
-            docUpdates.putAll(SpladeBackfillOps.computeSpladeFailureUpdate(currentRetryCount));
+            Map<String, Object> escalation =
+                SpladeBackfillOps.computeSpladeFailureUpdate(currentRetryCount);
+            docUpdates.putAll(escalation);
+            if (escalation.containsKey(SchemaFields.SPLADE_STATUS)) {
+              spladeTerminalFailures.add(spladeDocId + "(encode-failure)");
+            }
             stillFailed++;
           }
           spladeFailed = stillFailed;
@@ -971,6 +986,14 @@ public final class CombinedEnrichmentBackfillOps {
         unitsDone++;
       }
       spladeMs = (System.nanoTime() - tSplade) / 1_000_000;
+      if (!spladeTerminalFailures.isEmpty()) {
+        context
+            .log()
+            .warn(
+                "Combined backfill: {} document(s) reached terminal SPLADE FAILED: {}",
+                spladeTerminalFailures.size(),
+                spladeTerminalFailures);
+      }
 
       // Phase 3c: NER (per-doc GPU inference — batching tested in item 22, regressed due to
       // padding waste exceeding the 467us/call overhead. Per-doc at 2.0ms/call is near-optimal.)

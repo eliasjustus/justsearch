@@ -6,6 +6,8 @@ import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.EmbeddingCounts;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.SpladeFeatureCounts;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.ChunkVectorPresence;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.RootCoverageCounts;
+import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.StageCompletenessCounts;
+import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.StageCounts;
 import io.justsearch.indexing.SchemaFields;
 import java.io.IOException;
 import java.util.Map;
@@ -52,6 +54,11 @@ public final class IndexCountOps {
   // profile so the per-query serve-time gate does not re-iterate vectors on every search.
   private volatile ChunkVectorPresence cachedChunkVectorPresence;
   private volatile long cachedChunkVectorPresenceVersion = -1L;
+  // Tempdoc 821 §3-C3: the completeness auditor's counts are refreshed on every /api/status poll
+  // (jseval polls at 2s through the indexing window), so they get the same reader-version cache as
+  // the corpus profile rather than re-issuing 16 counts per poll.
+  private volatile StageCompletenessCounts cachedStageCompleteness;
+  private volatile long cachedStageCompletenessVersion = -1L;
   // Tempdoc 813 §13: per-root coverage is refreshed on the Library live tick (seconds), so it gets
   // the same reader-version cache as the corpus profile — keyed by prefix because there is one
   // entry per watched root. Bounded so a caller passing unbounded distinct prefixes (an ad-hoc
@@ -524,6 +531,136 @@ public final class IndexCountOps {
       log.debug("Failed to compute root coverage counts: {}", e.getMessage());
       return null;
     }
+  }
+
+  /**
+   * Index-wide per-stage completeness counts (tempdoc 821 §3-C3) — the whole-index counterpart of
+   * {@link #queryRootCoverageCounts(String)}'s per-root numbers, reusing the same {@link
+   * #countWithField}/{@link #countSettled} primitives so the two cannot drift.
+   *
+   * <p>Every count comes from ONE searcher acquisition, so all four stages describe the same
+   * reader snapshot and their buckets can be subtracted from one another. The whole result is
+   * reader-version cached (like {@link #getOrComputeCorpusProfile()}) because the status path is
+   * polled every couple of seconds during exactly the window this measures.
+   *
+   * <p><b>Scoping — the property that makes the numbers subtractable.</b> {@code expected} is the
+   * documents that CARRY the stage's status field, not every document: an absent status field
+   * means the stage does not apply to that document (post-798), and a document the backfill can
+   * never select must not sit in a denominator forever. {@code artifactPresent} is counted over
+   * that SAME population — a doc carrying the artifact but no status field is outside the stage
+   * entirely, and counting it would let an installed-base index written before the status field
+   * existed report more present than expected.
+   *
+   * <p>{@code artifactPresent} additionally excludes terminal-FAILED documents. A FAILED write is
+   * an RMW that resets the status while LEAVING the vector in place ({@code EmbeddingBackfillOps}),
+   * so "has an artifact" and "is failed" genuinely overlap on disk; counting such a doc in both
+   * would make {@code expected - present - failed} understate the repair backlog by one per
+   * overlap. With the exclusion, and because a status field is single-valued, {@code
+   * artifactPresent}, {@code failed} and the remainder PARTITION {@code expected} exactly — so the
+   * projection needs no clamp, and a violation cannot hide behind a floor.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   *
+   * @return the counts, or {@link StageCompletenessCounts#EMPTY} when the reader could not be read
+   */
+  public StageCompletenessCounts queryStageCompletenessCounts() {
+    long currentVersion = getReaderVersion();
+    StageCompletenessCounts cached = cachedStageCompleteness;
+    if (cached != null && cachedStageCompletenessVersion == currentVersion) {
+      return cached;
+    }
+    StageCompletenessCounts computed = computeStageCompleteness();
+    if (computed == null) {
+      // The query failed; report absence without poisoning the entry for this reader version.
+      return StageCompletenessCounts.EMPTY;
+    }
+    cachedStageCompleteness = computed;
+    cachedStageCompletenessVersion = currentVersion;
+    return computed;
+  }
+
+  /** @return the counts, or {@code null} when the query failed (never a zeroed stand-in). */
+  private StageCompletenessCounts computeStageCompleteness() {
+    try {
+      return bridge.withSearcher(searcher -> {
+        Query isChunk = new TermQuery(new Term(SchemaFields.IS_CHUNK, "true"));
+        Query parentDocs = new BooleanQuery.Builder()
+            .add(new MatchAllDocsQuery(), BooleanClause.Occur.FILTER)
+            .add(isChunk, BooleanClause.Occur.MUST_NOT)
+            .build();
+        Query chunkDocs = new BooleanQuery.Builder()
+            .add(new MatchAllDocsQuery(), BooleanClause.Occur.FILTER)
+            .add(isChunk, BooleanClause.Occur.FILTER)
+            .build();
+
+        // embedding_status has no COMPLETED_EMPTY member (SchemaFields declares PENDING /
+        // COMPLETED / FAILED only), so its terminal-success set is one-valued; splade_status and
+        // ner_status both add COMPLETED_EMPTY as a terminal success.
+        StageCounts embedding = new StageCounts(
+            countWithField(searcher, parentDocs, SchemaFields.EMBEDDING_STATUS),
+            countSettled(searcher, parentDocs, SchemaFields.EMBEDDING_STATUS,
+                SchemaFields.EMBEDDING_STATUS_COMPLETED),
+            countSettled(searcher, parentDocs, SchemaFields.EMBEDDING_STATUS,
+                SchemaFields.EMBEDDING_STATUS_FAILED),
+            countArtifactPresent(searcher, parentDocs, SchemaFields.EMBEDDING_STATUS,
+                SchemaFields.EMBEDDING_STATUS_FAILED, SchemaFields.VECTOR));
+        StageCounts splade = new StageCounts(
+            countWithField(searcher, parentDocs, SchemaFields.SPLADE_STATUS),
+            countSettled(searcher, parentDocs, SchemaFields.SPLADE_STATUS,
+                SchemaFields.SPLADE_STATUS_COMPLETED, SchemaFields.SPLADE_STATUS_COMPLETED_EMPTY),
+            countSettled(searcher, parentDocs, SchemaFields.SPLADE_STATUS,
+                SchemaFields.SPLADE_STATUS_FAILED),
+            // No countable artifact: the `splade` field is a postings/feature field with
+            // docValues:false (fields.v1.json), so FieldExistsQuery cannot see it. The consumer
+            // declares the weaker STATUS tier rather than implying a verification it cannot do.
+            0);
+        StageCounts ner = new StageCounts(
+            countWithField(searcher, parentDocs, SchemaFields.NER_STATUS),
+            countSettled(searcher, parentDocs, SchemaFields.NER_STATUS,
+                SchemaFields.NER_STATUS_COMPLETED, SchemaFields.NER_STATUS_COMPLETED_EMPTY),
+            countSettled(searcher, parentDocs, SchemaFields.NER_STATUS,
+                SchemaFields.NER_STATUS_FAILED),
+            0); // NER writes no countable per-document artifact.
+        StageCounts chunkEmbedding = new StageCounts(
+            countWithField(searcher, chunkDocs, SchemaFields.CHUNK_EMBEDDING_STATUS),
+            countSettled(searcher, chunkDocs, SchemaFields.CHUNK_EMBEDDING_STATUS,
+                SchemaFields.EMBEDDING_STATUS_COMPLETED),
+            countSettled(searcher, chunkDocs, SchemaFields.CHUNK_EMBEDDING_STATUS,
+                SchemaFields.EMBEDDING_STATUS_FAILED),
+            countArtifactPresent(searcher, chunkDocs, SchemaFields.CHUNK_EMBEDDING_STATUS,
+                SchemaFields.EMBEDDING_STATUS_FAILED, SchemaFields.CHUNK_VECTOR));
+
+        return new StageCompletenessCounts(embedding, splade, ner, chunkEmbedding);
+      });
+    } catch (IOException e) {
+      log.debug("Failed to compute stage completeness counts: {}", e.getMessage());
+      return null;
+    }
+  }
+
+  /**
+   * Counts docs in {@code scope} that carry {@code statusField}, are NOT at {@code failedValue},
+   * and actually carry {@code artifactField} — the artifact-truthful numerator for a stage whose
+   * artifact is countable (tempdoc 821 §3-C3, the F-032 "status lies" containment).
+   *
+   * <p>{@link FieldExistsQuery} sees a KNN vector field (Lucene 10 supports doc values, points,
+   * norms and vectors), and {@code IndexSearcher.count} intersects with {@code liveDocs} — so a
+   * deleted-but-unmerged doc cannot inflate this even though the KNN structures keep its vector
+   * until merge (tempdoc 717 §Derisk U2). A segment that never indexed the field matches nothing.
+   */
+  private static int countArtifactPresent(
+      IndexSearcher searcher,
+      Query scope,
+      String statusField,
+      String failedValue,
+      String artifactField)
+      throws IOException {
+    return searcher.count(new BooleanQuery.Builder()
+        .add(scope, BooleanClause.Occur.FILTER)
+        .add(new FieldExistsQuery(statusField), BooleanClause.Occur.FILTER)
+        .add(new FieldExistsQuery(artifactField), BooleanClause.Occur.FILTER)
+        .add(new TermQuery(new Term(statusField, failedValue)), BooleanClause.Occur.MUST_NOT)
+        .build());
   }
 
   /**

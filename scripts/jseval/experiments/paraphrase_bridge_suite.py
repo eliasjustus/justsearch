@@ -917,6 +917,33 @@ def cmd_pairs(args) -> None:
     # without re-deriving it or having the datasets.
     register = Path(args.register) if args.register else DEFAULT_REGISTER
     register.parent.mkdir(parents=True, exist_ok=True)
+    new_langs = {lang: {"pairs": d["pairs"], "mismatches": d["mismatches"],
+                        "n_observations": len(d["observations"]),
+                        "n_members": d["n_members"]}
+                 for lang, d in docs.items()}
+    # Merge-preserve (tempdoc 832 §4): a bare `pairs` run only regenerates --langs (default
+    # "en"). Overwriting the register with `new_langs` alone would silently DELETE every
+    # language section this run didn't touch -- measured once losing the committed German
+    # half (1,807 lines). Load whatever is already committed and keep any language section
+    # this run did not regenerate byte-intact.
+    merged_langs = dict(new_langs)
+    preserved = []
+    if register.exists():
+        try:
+            existing_langs = json.loads(register.read_text(encoding="utf-8")).get("langs", {})
+        except (json.JSONDecodeError, OSError) as exc:
+            print(f"WARNING: could not read existing register {register} ({exc}); "
+                  "prior language sections will NOT be preserved this run", file=sys.stderr)
+            existing_langs = {}
+        for lang, section in existing_langs.items():
+            if lang not in merged_langs:
+                merged_langs[lang] = section
+                preserved.append(lang)
+    if preserved:
+        print(f"NOTE: preserved {len(preserved)} existing register language section(s) not "
+              f"regenerated this run: {', '.join(sorted(preserved))} "
+              f"(pass --langs {','.join(sorted(preserved))} to regenerate them instead)",
+              file=sys.stderr)
     # Bytes, not write_text: on Windows text mode rewrites "\n" to "\r\n", which would make
     # regenerating this committed file show up as a diff on every run.
     register.write_bytes(json.dumps({
@@ -929,10 +956,7 @@ def cmd_pairs(args) -> None:
                 "(test_sem_pools_are_root_disjoint) -- that is what makes the suite's lexical "
                 "arm a control rather than a weak baseline.",
         "tempdoc": 796,
-        "langs": {lang: {"pairs": d["pairs"], "mismatches": d["mismatches"],
-                         "n_observations": len(d["observations"]),
-                         "n_members": d["n_members"]}
-                  for lang, d in docs.items()},
+        "langs": merged_langs,
     }, indent=1, ensure_ascii=False).encode("utf-8") + b"\n")
     print(f"wrote {register}")
 

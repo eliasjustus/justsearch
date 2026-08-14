@@ -114,6 +114,10 @@ final class ConversationApiAssembly {
         new java.util.ArrayList<>();
     promptContributors.add(io.justsearch.app.services.conversation.spi.SummarizationStyle.INSTANCE);
     promptContributors.add(io.justsearch.app.services.conversation.spi.RAGQAStyle.INSTANCE);
+    // Tempdoc 822 §1.3 (S6) — answer-shape guidance for the ask tier. Must be registered here
+    // or ConversationEngine.resolveContributors throws for core.rag-ask.
+    promptContributors.add(
+        io.justsearch.app.services.conversation.spi.AnswerShapeGrammar.INSTANCE);
     List<io.justsearch.agent.api.conversation.StreamConsumer> streamConsumers =
         new java.util.ArrayList<>();
     streamConsumers.add(io.justsearch.app.services.conversation.spi.SummaryDoneEnricher.INSTANCE);

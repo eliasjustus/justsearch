@@ -29,6 +29,23 @@ public interface AiInstallService {
   AiInstallStatus getStatus();
 
   /**
+   * Whether an install run is in flight — the one bit, without the cost of {@link #getStatus()}.
+   *
+   * <p>Separate from the status read because that read does real work (a boot-time disk recompute,
+   * a staleness reap, and since tempdoc 824 §3.3c a runtime-observation projection that can issue
+   * Worker RPCs on a cache miss). Callers that only need "is an install running" — notably
+   * {@code RuntimeActivationService}'s per-directory leftover-variant probe — must not pay for it,
+   * and must not re-enter the service the projection reads.
+   *
+   * <p>The default derives the bit from {@link #getStatus()} so an implementation without a cheaper
+   * answer stays correct; the production implementation overrides it with a field read.
+   */
+  default boolean isInstallRunning() {
+    AiInstallStatus status = getStatus();
+    return status != null && "running".equals(status.state);
+  }
+
+  /**
    * Compute a side-effect-free preview of the download plan grouped by capability tier (tempdoc
    * 657), for the current hardware + install intent. Runs no downloads; drives the pre-install
    * honest weight breakdown in the UI.

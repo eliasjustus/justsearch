@@ -805,8 +805,8 @@ final class StatusRecordSchemaTest {
                 "embedding",
                 new ReadinessComponentView("READY", null, "worker", "2025-01-01T00:00:00Z", false, 0)),
             Map.of(
-                "retrieval", new ReadinessCompositeView("READY", List.of()),
-                "aiFeatures", new ReadinessCompositeView("READY", List.of()))),
+                "retrieval", new ReadinessCompositeView("READY", List.of(), false, 0),
+                "aiFeatures", new ReadinessCompositeView("READY", List.of(), false, 0))),
         true,
         true,
         // 330 §4: Grouped sub-objects (fixed timestamps for reproducible fixture)

@@ -385,6 +385,41 @@ public final class AgentRunStore {
   }
 
   /**
+   * Tempdoc 834 §5.2 — stamp {@code interruptedAt} on a run whose owning process died. ADDITIVE:
+   * {@code state} and {@code resumable} are deliberately left UNTOUCHED.
+   *
+   * <p>{@code state} is the RESUME SEED — {@code handleResumeSessionStream} replays from the
+   * checkpoint it names — so overwriting it to record "not running" destroys the very thing that
+   * makes the run resumable. Two facts, two fields. Nor is there a new {@code INTERRUPTED} enum
+   * constant: {@link io.justsearch.agent.api.lifecycle.LifecycleState#parse} maps unknown values to
+   * {@code READY_FOR_LLM}, so an older build reading a newer record would silently DOWNGRADE the
+   * run to "ready to call the LLM" instead of failing loudly.
+   *
+   * <p>Idempotent: a run already carrying the stamp keeps its original timestamp, so boot + unlock +
+   * re-unlock can all run the pass safely. Returns whether this call stamped the run.
+   */
+  public synchronized boolean markInterrupted(String sessionId, Instant at) {
+    if (!isEnabled() || sessionId == null || sessionId.isBlank()) {
+      return false;
+    }
+    try {
+      var meta = readMeta(sessionId);
+      if (meta == null) {
+        return false; // absent, or the store is sealed-and-locked (readMeta returns null)
+      }
+      if (meta.get("interruptedAt") instanceof String existing && !existing.isBlank()) {
+        return false;
+      }
+      meta.put("interruptedAt", (at == null ? Instant.now() : at).toString());
+      writeMeta(sessionId, meta);
+      return true;
+    } catch (Exception e) {
+      LOG.warn("Failed to mark run {} interrupted", sessionId, e);
+      return false;
+    }
+  }
+
+  /**
    * Tempdoc 561 P-D2 — the presence projection: the full meta of every BACKGROUND run whose
    * {@code updatedAt} is strictly after {@code since}. This is the render-on-return inbox's source —
    * "what completed while you were away" — a read-time projection of the ONE durable run record, never
@@ -475,6 +510,9 @@ public final class AgentRunStore {
     s.put("totalTokensUsed", meta.get("totalTokensUsed"));
     s.put("activeAgentId", meta.get("activeAgentId"));
     s.put("terminationReason", meta.get("terminationReason"));
+    // Tempdoc 834 §5.3 — always present (null when the run was never interrupted), so the four
+    // presentation cases are derivable from (state, resumable, interruptedAt) with no inference.
+    s.put("interruptedAt", meta.get("interruptedAt"));
     s.put("preview", derivePreview(meta));
     return s;
   }

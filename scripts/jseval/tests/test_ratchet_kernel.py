@@ -145,6 +145,27 @@ def test_assert_chunk_completeness_chunk_free_is_silent(tmp_path):
     rk.assert_chunk_completeness(rd)  # no raise
 
 
+def test_assert_chunk_completeness_unevaluable_passes_but_warns_loudly(tmp_path, capsys):
+    # Tempdoc 821 §3-C3. This verdict means the guard could not run at all (the backend published
+    # no chunk threshold). It must pass — gating on absent telemetry is wrong — but it must NOT be
+    # silent: a silent pass is exactly how a genuinely degenerate build on a threshold-less
+    # backend would sail through, the failure mode this guard exists to prevent.
+    rd = _run_dir_with_chunk_completeness(tmp_path, "unevaluable")
+    rk.assert_chunk_completeness(rd)  # no raise
+    captured = capsys.readouterr()
+    assert "STOOD DOWN" in captured.err
+    assert captured.out == "", "the warning belongs on stderr, not in the gate's stdout payload"
+
+
+def test_assert_chunk_completeness_chunk_free_stays_silent_unlike_unevaluable(tmp_path, capsys):
+    # Precision: the two pass-verdicts are NOT interchangeable. A legitimately chunk-free corpus
+    # says nothing; a stand-down says something. If `unevaluable` collapsed back into
+    # `chunk-free`, this pair would stop distinguishing them.
+    rd = _run_dir_with_chunk_completeness(tmp_path, "chunk-free")
+    rk.assert_chunk_completeness(rd)
+    assert capsys.readouterr().err == ""
+
+
 def test_assert_chunk_completeness_missing_block_skips(tmp_path):
     # A run predating the guard (no chunk_completeness block at all) — backward-compatible.
     rd = tmp_path / "old_run"

@@ -4,6 +4,7 @@
   "effective_mode" : "TEXT",
   "legs" : "splade_only",
   "chunk_merge_kind" : "eligible_apply",
+  "runtime_syntax" : "SIMPLE",
   "legs_detail" : {
     "kind" : "splade_only",
     "effective_mode_label" : "TEXT",

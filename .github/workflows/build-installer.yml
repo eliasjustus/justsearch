@@ -20,6 +20,15 @@ on:
           takes its version from gradle.properties as before.
         type: string
         default: ''
+      sign:
+        description: >-
+          Authenticode-sign this build using the configured JUSTSEARCH_CODESIGN_* secrets.
+          OFF by default: eSigner signings are metered (~101 per build until the signed
+          mirrors of tempdoc 760/772 §K are populated), so only candidate/release builds
+          should spend them. A dispatch against a v* tag ref signs regardless of this
+          input — a release cut is never unsigned by accident.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -135,7 +144,9 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
-          cache: gradle
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -192,12 +203,27 @@ jobs:
         env:
           METADATA_PRIVATE_KEY_PEM: ${{ secrets.JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PEM }}
           METADATA_PUBLIC_KEY_PEM: ${{ vars.JUSTSEARCH_RELEASE_METADATA_PUBLIC_KEY_PEM }}
+          RELEASE_DESCRIPTOR_URL: ${{ vars.JUSTSEARCH_RELEASE_DESCRIPTOR_URL }}
         run: |
           if (-not $env:METADATA_PRIVATE_KEY_PEM) {
             throw "JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PEM is required for a tag release."
           }
           if (-not $env:METADATA_PUBLIC_KEY_PEM) {
             throw "JUSTSEARCH_RELEASE_METADATA_PUBLIC_KEY_PEM is required for a tag release."
+          }
+          # The descriptor URL is a compile-time option_env! pin (updater.rs pinned_release_value):
+          # unset, the build stays GREEN while every update check in the shipped app fails at
+          # runtime (tempdoc 801 D14.a item 2 — the one silent member of the trust-input set;
+          # provisioning audit 2026-08-13, trap b). Assert it here, in the same guard as the keys,
+          # with the same shape rules updater.rs enforces (ensure_https + release.v1.json suffix).
+          if (-not $env:RELEASE_DESCRIPTOR_URL) {
+            throw "JUSTSEARCH_RELEASE_DESCRIPTOR_URL is required for a tag release (compile-pinned; unset = runtime-dead updater in the shipped app)."
+          }
+          if (-not $env:RELEASE_DESCRIPTOR_URL.StartsWith("https://")) {
+            throw "JUSTSEARCH_RELEASE_DESCRIPTOR_URL must be HTTPS (updater.rs ensure_https rejects it at runtime otherwise)."
+          }
+          if (-not $env:RELEASE_DESCRIPTOR_URL.EndsWith("release.v1.json")) {
+            throw "JUSTSEARCH_RELEASE_DESCRIPTOR_URL must end with release.v1.json (updater.rs derives latest.json from that suffix)."
           }
           $utf8 = New-Object System.Text.UTF8Encoding($false)
           $privatePath = Join-Path $env:RUNNER_TEMP "justsearch-release-metadata-private.pem"
@@ -268,9 +294,18 @@ jobs:
           JUSTSEARCH_CODESIGN_TIMESTAMP_URL: ${{ secrets.JUSTSEARCH_CODESIGN_TIMESTAMP_URL }}
           JUSTSEARCH_CODESIGN_THUMBPRINT: ${{ secrets.JUSTSEARCH_CODESIGN_THUMBPRINT }}
           JUSTSEARCH_CODESIGN_COMMAND: ${{ secrets.JUSTSEARCH_CODESIGN_COMMAND }}
+          # CodeSignTool.bat resolves its bundled JRE and jar RELATIVE TO CWD unless
+          # CODE_SIGN_TOOL_PATH points at its install dir; sign-windows.ps1 runs the command
+          # template from the repo checkout, so without this the tool dies with "The system
+          # cannot find the path specified" (run 31603929359; reproduced locally against the
+          # same zip sha256). Inert for pfx/store modes and secrets-absent builds.
+          CODE_SIGN_TOOL_PATH: ${{ runner.temp }}\CodeSignTool
           # Compile-time gate read by updater.rs `sandbox_test_mode()` (option_env!). Empty on a
           # normal build, so the production trust pins stay non-overridable.
           JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE: ${{ inputs.sandboxTestMode && '1' || '' }}
+          # Signing opt-in (hoisted like the secrets above; the boolean is computed in the run
+          # script next to $signConfigured).
+          SIGN_REQUESTED: ${{ inputs.sign && '1' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.JUSTSEARCH_TAURI_UPDATER_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.JUSTSEARCH_TAURI_UPDATER_PRIVATE_KEY_PASSWORD }}
           JUSTSEARCH_RELEASE_DESCRIPTOR_URL: ${{ vars.JUSTSEARCH_RELEASE_DESCRIPTOR_URL }}
@@ -308,14 +343,19 @@ jobs:
               $extra['MetadataPublicKeyPath'] = $env:JUSTSEARCH_RELEASE_METADATA_PUBLIC_KEY_PATH
             }
           }
-          # Engage signing only when a credential for the configured mode is present (pfx b64 /
-          # store thumbprint / command template). Secrets absent => no -Sign => unsigned build,
-          # identical to today. (Tempdoc 760 Phase 2 item 4.)
+          # Engage signing only when BOTH hold: a credential for the configured mode is present
+          # (pfx b64 / store thumbprint / command template), AND signing was requested — via the
+          # `sign` dispatch input or a v* tag ref (a release cut always signs). Requested-but-
+          # unconfigured stays a no-op (secrets-absent forks build unsigned, as before).
+          # Opt-in default per owner decision 2026-08-12: eSigner signings are metered, so
+          # ordinary dispatches must not spend them (supersedes 760 item 4's auto-engage).
           $signConfigured = `
             ($env:JUSTSEARCH_CODESIGN_PFX_B64 -and $env:JUSTSEARCH_CODESIGN_PFX_B64.Trim()) -or `
             ($env:JUSTSEARCH_CODESIGN_THUMBPRINT -and $env:JUSTSEARCH_CODESIGN_THUMBPRINT.Trim()) -or `
             ($env:JUSTSEARCH_CODESIGN_COMMAND -and $env:JUSTSEARCH_CODESIGN_COMMAND.Trim())
-          if ($signConfigured) { $extra['Sign'] = $true }
+          $signRequested = ($env:SIGN_REQUESTED -eq '1') -or ($env:GITHUB_REF -like 'refs/tags/v*')
+          if ($signConfigured -and $signRequested) { $extra['Sign'] = $true }
+          elseif ($signConfigured) { Write-Host "Signing credentials present but not requested (sign input false, non-tag ref) - building UNSIGNED." }
           # Signed-mirror pins (packaging/signed-mirrors.v1.json; tempdoc 760/772 §K sign-once). When a
           # vendored payload has a committed, COMPLETE signed-mirror entry, point the matching gradle
           # download-override property pair at the once-signed re-hosted copy so the build fetches it
@@ -404,6 +444,12 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          # The round-trip verify below passes these two to app-release-assets.mjs. They were
+          # previously step-scoped env on "Build installer" ONLY, so here they were unset and the
+          # first stable tag would have died at "Downloaded authenticated updater set failed
+          # verification" AFTER the draft Release existed (provisioning audit 2026-08-13, trap c).
+          JUSTSEARCH_RELEASE_METADATA_ROOT_PUBLIC_KEY: ${{ vars.JUSTSEARCH_RELEASE_METADATA_ROOT_PUBLIC_KEY }}
+          JUSTSEARCH_RELEASE_METADATA_ROOT_KEY_ID: ${{ vars.JUSTSEARCH_RELEASE_METADATA_ROOT_KEY_ID }}
         run: |
           $tag = $env:GITHUB_REF.Substring('refs/tags/'.Length)
           $notes = Join-Path $env:RUNNER_TEMP "release-notes.md"

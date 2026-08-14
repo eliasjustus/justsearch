@@ -44,6 +44,12 @@ public enum LifecycleReasonCode {
   // detected corrupt, backed up, and is being rebuilt). Distinct from the BLOCKED_* reindex codes:
   // here the rebuild is already running — the cause is "the index was corrupt", remedy is to wait.
   INDEX_REBUILDING("index.rebuilding"),
+  // An in-place embedding rebuild is running (`embeddingCompatState=REBUILDING`): the Worker
+  // refuses dense queries with `REBUILD_IN_PROGRESS` until it finishes, so keyword results are
+  // complete but semantic ranking is off. Distinct from INDEX_REBUILDING, whose cause is "the
+  // index was corrupt" — reusing that code would tell the user their index is damaged when it
+  // is merely re-embedding.
+  INDEX_EMBEDDING_REBUILDING("index.embedding_rebuilding"),
   INDEX_EMBEDDING_LEGACY("index.embedding_legacy"),
   INDEX_EMBEDDING_MISMATCH("index.embedding_mismatch"),
   // Tempdoc 598 reopen (B-3): dense/semantic retrieval cannot run for a reason a rebuild does NOT
@@ -60,7 +66,7 @@ public enum LifecycleReasonCode {
   // reached this closed taxonomy — RuntimeActivationService already detected these causes precisely
   // but only reported them to the immediate ai_activate RPC caller, never to InferenceCapability, so
   // the runtime manifest's ai.pendingReason stayed on generic prose. These mirror the existing
-  // VDU_MISSING_MMPROJ / ORT_CUDA_MISSING_DLLS precedent for "a required artifact is absent".
+  // VDU_MISSING_MMPROJ precedent for "a required artifact is absent".
   INFERENCE_MODEL_NOT_CONFIGURED("inference.model_not_configured"),
   INFERENCE_MODEL_NOT_FOUND("inference.model_not_found"),
   INFERENCE_RUNTIME_NOT_INSTALLED("inference.runtime_not_installed"),
@@ -82,12 +88,6 @@ public enum LifecycleReasonCode {
   TELEMETRY_METRICS_STALE("telemetry.metrics.stale"),
   TELEMETRY_METRICS_HIGH_FAILURE_RATE("telemetry.metrics.high_failure_rate"),
   TELEMETRY_DISK_SPACE_LOW("telemetry.disk_space_low"),
-
-  // --- F1: ORT CUDA (GPU reranking) ---
-  ORT_CUDA_NOT_CONFIGURED("ort_cuda.not_configured"),
-  ORT_CUDA_READY("ort_cuda.ready"),
-  ORT_CUDA_MISSING_DLLS("ort_cuda.missing_dlls"),
-  ORT_CUDA_PROVIDER_FAILED("ort_cuda.provider_failed"),
 
   // --- Chunk Embedding (Phase 2 backfill) ---
   CHUNK_EMBEDDING_NOT_READY("chunk_embedding.not_ready"),

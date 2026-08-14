@@ -571,9 +571,14 @@ def _compute_chunk_completeness(
     Offline expectation is read from the run's `corpus.jsonl` (golden/mixed self-demo corpora
     only — a BEIR dataset has no local corpus.jsonl, so `expected_chunk_docs` gracefully
     returns 0 and this resolves to the harmless `chunk-free` verdict, never gating a BEIR run).
+
+    The chunk threshold the expectation is computed against comes from the SAME status snapshot
+    (tempdoc 821 §3-C3): the worker's enrichment auditor publishes `chunkMinChars`, so this
+    oracle no longer mirrors the Java constant. A backend that predates that field reports 0 for
+    it (proto3 scalar — never absent), which yields the `unevaluable` verdict: non-gating, but
+    distinct from `chunk-free` and warned about at the gate seam.
     """
     dataset_dir = (base_dir or corpora._default_base_dir()) / dataset_name
-    expected = chunk_completeness_mod.expected_chunk_docs(dataset_dir / "corpus.jsonl")
 
     # Observed: worker.enrichment.chunk.* from the run-completion /api/status snapshot
     # (readiness.py already reads this same nested path — flatten_status merges it to the
@@ -581,6 +586,11 @@ def _compute_chunk_completeness(
     flat_status = readiness.flatten_status(dict(status_snapshot)) if status_snapshot else {}
     observed_chunk_doc_count = flat_status.get("chunkDocCount", 0)
     observed_coverage_pct = flat_status.get("chunkVectorCoveragePercent")
+
+    threshold_chars = chunk_completeness_mod.resolve_chunk_threshold_chars(flat_status)
+    expected = chunk_completeness_mod.expected_chunk_docs(
+        dataset_dir / "corpus.jsonl", threshold_chars
+    )
 
     # chunk_merge corroborator: only meaningful when `vector` mode actually ran this run (it's
     # a query-time signal from vector-mode retrieval). A run that only exercises e.g. `lexical`
@@ -609,14 +619,29 @@ def _compute_chunk_completeness(
     else:
         chunk_merge_observed = True
 
-    result = chunk_completeness_mod.chunk_completeness_verdict(
-        expected, observed_chunk_doc_count, observed_coverage_pct, chunk_merge_observed,
-    )
+    if threshold_chars is None:
+        # Stand down as its OWN verdict rather than borrowing `chunk-free`, whose reason asserts
+        # "no corpus doc reaches the chunk threshold" — a fact this path never computed and one
+        # that is affirmatively wrong on a degenerate build. `chunkMinChars` is a proto3 scalar,
+        # so an old backend does not omit it: it arrives as 0. Name the observed shape, not an
+        # absence. Non-blocking (821 §3-C3 back-compat), but ratchet_kernel warns on stderr.
+        result = chunk_completeness_mod.unevaluable_result(
+            observed_chunk_doc_count,
+            "worker.enrichment.chunkMinChars is missing or non-positive in the status snapshot "
+            "(a backend predating tempdoc 821 §3-C3 reports 0) — the offline chunk expectation "
+            "could not be computed, so this run is NOT gated on chunk completeness",
+        )
+    else:
+        result = chunk_completeness_mod.chunk_completeness_verdict(
+            expected, observed_chunk_doc_count, observed_coverage_pct, chunk_merge_observed,
+        )
     return {
         "expected": result.expected,
         "observed": result.observed,
         "verdict": result.verdict,
-        "reasons": result.reasons,
+        "reasons": list(result.reasons),
+        # Provenance: which threshold the expectation was computed against (null = none published).
+        "threshold_chars": threshold_chars,
     }
 
 

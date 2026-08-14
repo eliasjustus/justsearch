@@ -85,6 +85,14 @@ public final class McpToolSurface {
           + "When the matching documents carry them, the response also returns top facet values "
           + "(sources, categories, authors, and person/organization/location entities) to use as "
           + "filters. "
+          // Tempdoc 821 §L.3, worded cause-neutrally: facetsTruncated's causes are not fixed —
+          // today the maxDocsScanned cap, and 821's facets-engine work extends it to a mid-scan
+          // failure too — so this clause names the effect (an incomplete scan), not a specific
+          // cause. On a broad query the per-value counts (and even which values appear at all)
+          // can be a lower bound rather than exact.
+          + "Facet counts may be partial: when the response's facetsTruncated flag is true, the "
+          + "scan did not cover every matching document, so treat the returned values and counts "
+          + "as a lower-bound sample rather than an exhaustive list. "
           + "Set query_syntax: \"lucene\" for exact-phrase (\"...\") and boolean (AND/OR/NOT) "
           + "queries; the default is plain-text search. "
           + "Set detail: true to also receive per-hit ranking provenance (stage participation and "
@@ -275,7 +283,11 @@ public final class McpToolSurface {
                 "meta_category", propStringArray("Filter by category"),
                 "entity_persons", propStringArray("Filter by person entity"),
                 "entity_organizations", propStringArray("Filter by organization entity"),
-                "entity_locations", propStringArray("Filter by location entity")),
+                "entity_locations", propStringArray("Filter by location entity"),
+                // Tempdoc 821 §3-C2: the search-scope tag, now honoured on the ANSWER path too.
+                // Declared lean (F-016: schema complexity degrades small-model tool use) — one
+                // string array, one sentence, same style as the entity keys above.
+                "collection", propStringArray("Restrict to these collections (omit for default)")),
             List.of());
     // Keep the natural-language guidance the old opaque "object" prop carried (ADR-0015:
     // descriptions are load-bearing for small-model tool use) alongside the now-declared shape.
@@ -499,7 +511,7 @@ public final class McpToolSurface {
               true,
               // Tempdoc 725 W2b: LABELED is the only format the Worker's ContextBudgeter actually
               // renders — RagContextOps never reads contextFormat off the wire, and ContextBudgeter
-              // has no XML/PLAIN branch at all (it unconditionally emits "[From: label]\n" +
+              // has no XML/PLAIN branch at all (it unconditionally emits "[n] label\n" +
               // content). Requesting XML here was a dead orphan (tempdoc 725 orphan #5): the param
               // was serialized onto the gRPC request correctly, but nothing downstream consumed it,
               // so every caller has always received LABELED regardless of what it asked for.
@@ -510,7 +522,9 @@ public final class McpToolSurface {
               toStringList(rawFilters, "meta_category"),
               RetrieveContextParams.TimeRange.UNSET,
               false,
-              List.of());
+              List.of(),
+              // Tempdoc 821 §3-C2 — the collection scope reaches the Lucene filter from here.
+              toStringList(rawFilters, "collection"));
 
       DocumentService.ContextResult result =
           facade
@@ -568,7 +582,7 @@ public final class McpToolSurface {
     // Tempdoc 725 W2a: N/M come from the in-hand result: N is the citation count (== chunksUsed;
     // both are derived from the same worker-reported chunk list —
     // RemoteDocumentService.mapRetrieveContextResponse), which equals the number of rendered
-    // "[From: ...]" sections in result.context() for both the chunk-RAG and virtual-chunk-fallback
+    // "[n] label" sections in result.context() for both the chunk-RAG and virtual-chunk-fallback
     // paths.
     //
     // Tempdoc 725 review fix: RemoteDocumentService.retrieveContextFallback (FULLTEXT_FALLBACK
@@ -754,9 +768,14 @@ public final class McpToolSurface {
       if (i > 0) sb.append(DocumentService.SECTION_SEPARATOR);
       McpSearchResultFormatter.Window window =
           McpSearchResultFormatter.windowStartingAt(section.content(), 0, 600);
-      sb.append("[From: ")
+      // Same "[n] label\n" header the assembled context carries (ContextBudgeter.sectionHeader,
+      // tempdoc 822 §3a) — concise re-renders the sections detailed mode passes through verbatim,
+      // so the two densities must not disagree about a section's ordinal.
+      sb.append('[')
+          .append(section.sectionIndex() + 1)
+          .append("] ")
           .append(section.sourceLabel())
-          .append("]\n")
+          .append('\n')
           .append(McpSearchResultFormatter.stripControlChars(window.text()));
       if (window.truncated()) sb.append(McpSearchResultFormatter.TRUNCATION_REMEDY);
     }
@@ -873,9 +892,35 @@ public final class McpToolSurface {
       return McpDeliveryGovernor.govern(
           resp.results().size(), includeDetail, resolveDeliveryBudgetBytes(), MAPPER, view);
     } catch (Exception e) {
-      log.warn("MCP search failed", e);
+      // The AGENT-facing message (below) keeps the query — the agent sent it. This SERVER log does
+      // not: a rejected LUCENE-syntax search surfaces a Lucene ParseException whose message quotes
+      // the query verbatim, and the Head log is bundled into the diagnostics export. Full detail
+      // stays available at TRACE, matching SearchExecutor:160-168's deliberate split.
+      log.warn("MCP search failed: {}: {}", e.getClass().getSimpleName(), withoutQuotedQuery(e.getMessage()));
+      log.trace("MCP search failure detail", e);
       return errorContent(toolFailureMessage("Search", e));
     }
+  }
+
+  /**
+   * Strips the quoted user query out of an error message before it reaches a server-side log.
+   *
+   * <p>Lucene's {@code ParseException} renders as {@code Cannot parse '<query>': Encountered ...},
+   * which the Worker propagates as the {@code INVALID_ARGUMENT} description. Everything between the
+   * first and last quote is replaced (over-redacting is the safe direction) and the result is
+   * length-capped; the diagnostic shape survives. The agent's own copy is untouched.
+   */
+  static String withoutQuotedQuery(String message) {
+    if (message == null || message.isBlank()) {
+      return "(no message)";
+    }
+    int first = message.indexOf('\'');
+    int last = message.lastIndexOf('\'');
+    String out =
+        (first >= 0 && last > first)
+            ? message.substring(0, first + 1) + "[REDACTED]" + message.substring(last)
+            : message;
+    return out.length() > 200 ? out.substring(0, 200) + "..." : out;
   }
 
   /**
@@ -1005,6 +1050,9 @@ public final class McpToolSurface {
 
     int shownCount = resp.results() == null ? 0 : resp.results().size();
     boolean truncated = resp.totalHits() > shownCount;
+    // Facets-truncation MCP relay (tempdoc 821 §L.3): resp.facetsTruncated() is a nullable Boolean
+    // upstream (KnowledgeSearchResponse) — collapse null/false to false, same as `truncated` above.
+    boolean facetsTruncated = Boolean.TRUE.equals(resp.facetsTruncated());
 
     // Hints
     var hints = new ArrayList<String>();
@@ -1056,6 +1104,7 @@ public final class McpToolSurface {
         truncated,
         hits,
         resp.facets(),
+        facetsTruncated,
         hints,
         evidenceHeader,
         absenceNote);
@@ -1168,7 +1217,18 @@ public final class McpToolSurface {
 
     // Facets
     if (content.facets() != null && !content.facets().isEmpty()) {
-      sb.append("\n\nFacets (use as filter values):\n");
+      sb.append("\n\nFacets (use as filter values");
+      // Facets-truncation MCP relay (tempdoc 821 §L.3): the flag that never reached this tier
+      // before — the scan did not cover every match, so counts are a lower bound and some values
+      // may be missing entirely. Cause-neutral wording (the causes are not fixed — today the
+      // maxDocsScanned cap, and 821's facets-engine work extends it to a mid-scan failure too)
+      // — the claim is the effect, not a specific cause. Surfaced in the text tier too, not just
+      // structuredContent, so a text-only MCP client sees it (McpEvidenceProjection carries the
+      // structured counterpart).
+      if (content.facetsTruncated()) {
+        sb.append("; counts are partial — the scan did not cover every match");
+      }
+      sb.append("):\n");
       for (var entry : content.facets().entrySet()) {
         String facetName = entry.getKey().replace("_raw", "");
         sb.append("  ").append(facetName).append(": ");
@@ -1611,7 +1671,8 @@ public final class McpToolSurface {
         sb.append("embeddingCoverage: ").append(String.format("%.1f%%", n.doubleValue())).append("\n");
       if (extras.get("spladeCoveragePercent") instanceof Number n)
         sb.append("spladeCoverage: ").append(String.format("%.1f%%", n.doubleValue())).append("\n");
-      return Map.of("contents", List.of(Map.of("uri", uri, "mimeType", "text/plain", "text", sb.toString())));
+      return Map.of("contents",
+          List.of(orderedMap("uri", uri, "mimeType", "text/plain", "text", sb.toString())));
     } catch (Exception e) {
       return resourceError(uri, e.getMessage());
     }
@@ -1624,7 +1685,8 @@ public final class McpToolSurface {
       @SuppressWarnings("unchecked")
       var content = (List<Map<String, Object>>) result.get("content");
       String text = content != null && !content.isEmpty() ? (String) content.get(0).get("text") : "No roots";
-      return Map.of("contents", List.of(Map.of("uri", uri, "mimeType", "text/plain", "text", text)));
+      return Map.of("contents",
+          List.of(orderedMap("uri", uri, "mimeType", "text/plain", "text", text)));
     } catch (Exception e) {
       return resourceError(uri, e.getMessage());
     }
@@ -1641,7 +1703,8 @@ public final class McpToolSurface {
           null, null, null, null);
       var resp = ctrl.getAdapter().search(req);
       String text = resp.facets() != null ? MAPPER.writeValueAsString(resp.facets()) : "{}";
-      return Map.of("contents", List.of(Map.of("uri", uri, "mimeType", "application/json", "text", text)));
+      return Map.of("contents",
+          List.of(orderedMap("uri", uri, "mimeType", "application/json", "text", text)));
     } catch (Exception e) {
       return resourceError(uri, e.getMessage());
     }
@@ -1660,7 +1723,8 @@ public final class McpToolSurface {
           null, null, null, null);
       var resp = ctrl.getAdapter().search(req);
       String text = resp.facets() != null ? MAPPER.writeValueAsString(resp.facets()) : "{}";
-      return Map.of("contents", List.of(Map.of("uri", uri, "mimeType", "application/json", "text", text)));
+      return Map.of("contents",
+          List.of(orderedMap("uri", uri, "mimeType", "application/json", "text", text)));
     } catch (Exception e) {
       return resourceError(uri, e.getMessage());
     }
@@ -1790,7 +1854,7 @@ public final class McpToolSurface {
   }
 
   private static Map<String, Object> resourceError(String uri, String message) {
-    return Map.of("contents", List.of(Map.of(
+    return Map.of("contents", List.of(orderedMap(
         "uri", uri, "mimeType", "text/plain", "text", "Error: " + message)));
   }
 
