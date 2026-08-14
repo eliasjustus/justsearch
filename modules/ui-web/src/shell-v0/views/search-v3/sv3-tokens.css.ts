@@ -74,6 +74,33 @@ export const sv3Tokens = css`
        a name the shipped vocabulary does not use (tempdoc 822 Phase F9, audit DEFECT-6). */
     --accent-surface: color-mix(in srgb, var(--color-white) 4%, transparent);
     --accent-surface-foreground: var(--color-neutral-100);
+    /* Selection material (tempdoc 822 citation-mark presentation §5.1). The design spec’s command-palette idiom
+       (the design spec: 6% selected / 9% highlighted, and never two competing fills). The
+       MARK takes the upper rung and the large sentence region the lower: the spec spends 6% on a
+       full-width row, and a ~13x14px glyph is a fraction of that area — an alpha wash loses
+       legibility as the area it covers shrinks. Law 11 improve-don't-copy, deviation stated rather
+       than drifted into. Keyed to --foreground, so the same three declarations catch light in dark
+       and cast shadow in light (the spec’s elevation-inversion rule, by construction) — which is
+       repeats them verbatim rather than inverting them, exactly as --dialog-border does. */
+    --sv3-selected: color-mix(in srgb, var(--foreground) 9%, transparent);
+    --sv3-selected-region: color-mix(in srgb, var(--foreground) 5%, transparent);
+    --sv3-selected-edge: color-mix(in srgb, var(--foreground) 14%, transparent);
+    /* The CARD rung. A source card already carries a fill, and a fill sits BEHIND TEXT:
+       raising it to 9% measured three NEW serious axe color-contrast failures on the card body
+       (3.63:1, axe A/B against the live window), while 5% was invisible. A border carries no text,
+       so the card spends its selection signal on the EDGE instead of the fill. */
+    --sv3-selected-edge-strong: color-mix(in srgb, var(--foreground) 34%, transparent);
+    /* The two SUBDUED citation tiers, lifted so they survive the 9% wash painted behind a selected
+       mark. The design named this remedy in advance (§7.5 — "the weak tier's colour moves, not the
+       wash") and the first cut shipped the wash without it: the grey tier measured 5.08 resting and
+       4.22 SELECTED, under the AA floor at the exact moment the reader clicks to check. The move is
+       toward --foreground, the same anchor the wash itself is keyed to, so the lift tracks the theme
+       instead of being a second hand-picked grey; and it is the SMALLEST step that clears the floor
+       with margin, so a weak mark still reads as weak (4.93:1 selected, against 6.24:1 for a normal
+       blue mark on the same wash). The amber tier needs no move in dark — it already computes
+       9.55:1 on the wash — so it is named at its resting value rather than nudged for symmetry. */
+    --sv3-cite-weak: color-mix(in srgb, var(--muted-foreground) 90%, var(--foreground));
+    --sv3-cite-ungrounded: var(--warning-foreground);
     --primary: var(--color-teal-accent);
     --primary-foreground: var(--color-teal-accent-ink);
     /* Three named intents on one value: a future divergence is a one-line change, not a grep. */
@@ -320,6 +347,24 @@ export const sv3Tokens = css`
     --muted-foreground: var(--color-zinc-500);
     --accent-surface: var(--color-zinc-100);
     --accent-surface-foreground: var(--color-zinc-900);
+    /* The same three, restated so the light palette is complete at its own selector rather than
+       leaning on the dark block (the --dialog-border precedent below). Identical by construction:
+       --foreground is what inverts, so the wash inverts with it. */
+    --sv3-selected: color-mix(in srgb, var(--foreground) 9%, transparent);
+    --sv3-selected-region: color-mix(in srgb, var(--foreground) 5%, transparent);
+    --sv3-selected-edge: color-mix(in srgb, var(--foreground) 14%, transparent);
+    /* The CARD rung. A source card already carries a fill, and a fill sits BEHIND TEXT:
+       raising it to 9% measured three NEW serious axe color-contrast failures on the card body
+       (3.63:1, axe A/B against the live window), while 5% was invisible. A border carries no text,
+       so the card spends its selection signal on the EDGE instead of the fill. */
+    --sv3-selected-edge-strong: color-mix(in srgb, var(--foreground) 34%, transparent);
+    /* The tier lift, restated at this selector because the numbers are NOT the dark set's. Light is
+       the worse case: both subdued tiers already sat near the floor at rest (grey 4.71, amber 4.90)
+       and fell through it under the wash (3.97 / 4.14). The mix runs toward --foreground here too —
+       which is a DARK ink in this palette, so the same declaration darkens where the dark set
+       brightens — and each percentage is the smallest 5% step clearing 4.8:1 on the composite. */
+    --sv3-cite-weak: color-mix(in srgb, var(--muted-foreground) 80%, var(--foreground));
+    --sv3-cite-ungrounded: color-mix(in srgb, var(--warning-foreground) 85%, var(--foreground));
     --primary: oklch(45% 0.18 180);
     --primary-foreground: oklch(99% 0.01 180);
     --placeholder: var(--muted-foreground);
