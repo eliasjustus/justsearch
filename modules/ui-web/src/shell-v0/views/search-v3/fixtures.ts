@@ -101,6 +101,14 @@ export const SV3_DRAFT_KEY = 'search-v3.composer';
 /** The surface key the one-shot "Draft kept" hint is remembered against (tempdoc 609 §R T1.4). */
 export const SV3_SURFACE_KEY = 'core.search-v3-surface';
 
+/**
+ * A rename the conversation store refused, worded (tempdoc 838). The row is put back, so the message
+ * only has to say that the NAME did not stick — the reader can see which name it was. The locked case
+ * is worded by `readinessNotice`'s ONE reason vocabulary instead, so this surface cannot drift from
+ * how the rest of the product names an encrypted-and-locked store.
+ */
+export const SV3_RENAME_FAILED = "Couldn't save that name — the conversation kept its old one.";
+
 /* ── Phase F1: the transcript's fixed copy ─────────────────────────────────────────────────── */
 
 /**

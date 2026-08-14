@@ -34,6 +34,13 @@ failures inside the omnibus job took about 17-18 minutes to become actionable.
 The public repository's standard GitHub-hosted CI lane runs automatically on `pull_request`
 and `push` to `main`, and it may also be dispatched manually with `workflow_dispatch`.
 
+Every workflow that produces a required status check also declares `merge_group`, so the
+check still reports if a GitHub merge queue is ever enabled. A required check that never
+reports on a merge-group ref stalls the queue until it times out, so the trigger is declared
+ahead of the queue rather than after the first stall. It changes nothing until the repository
+is organization-owned and a queue is configured, because no `merge_group` event can be
+delivered before then.
+
 The CI workflow is organized as stable **fact lanes**:
 
 - contributor provenance is enforced by the CLA Assistant check;

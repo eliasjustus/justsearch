@@ -8,9 +8,19 @@
 
 import { authorizedFetch } from '../api/authorizedFetch.js';
 
+/** Tempdoc 838 — who named a conversation. `null` when it has no name. */
+export type ConversationTitleSource = 'user' | 'auto';
+
 export interface Conversation {
   id: string;
   title: string | null;
+  /**
+   * Tempdoc 838 — provenance for `title`, straight off the wire. It is what lets a surface refuse to
+   * auto-title a conversation the reader already named ACROSS A RELOAD: before this field the
+   * provenance lived only in the tab's memory, so the next ask after a reload replaced the reader's
+   * name with the model's.
+   */
+  titleSource: ConversationTitleSource | null;
   createdAt: number;
   lastActiveAt: number;
   messageCount: number;
@@ -88,19 +98,52 @@ function emit(): void {
   for (const l of listeners) l(state);
 }
 
+/**
+ * Tempdoc 838 — the LEGACY title map, now read-only and self-erasing. It was the only authority for a
+ * conversation's name until the backend grew one (`POST .../title`), and it is a tempdoc-562-class
+ * defect in its own right: a plaintext name for a conversation whose every other content field is
+ * sealed. {@link adoptLegacyTitles} writes each surviving entry through to the backend and deletes it
+ * on a confirmed 2xx; when the map empties the key is removed and this reader returns `{}` forever.
+ */
 function loadTitles(): Record<string, string> {
   try {
-    return JSON.parse(localStorage.getItem(TITLES_KEY) ?? '{}');
+    const parsed: unknown = JSON.parse(localStorage.getItem(TITLES_KEY) ?? '{}');
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const clean: Record<string, string> = {};
+    for (const [id, title] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof title === 'string' && title !== '') clean[id] = title;
+    }
+    return clean;
   } catch { return {}; }
 }
 
-function saveTitle(id: string, title: string): void {
+/** Drop one adopted entry, and the whole key once the last one is gone — migration is COMPLETE. */
+function forgetLegacyTitle(id: string): void {
   try {
     const titles = loadTitles();
-    titles[id] = title;
-    localStorage.setItem(TITLES_KEY, JSON.stringify(titles));
+    if (!(id in titles)) return;
+    delete titles[id];
+    if (Object.keys(titles).length === 0) localStorage.removeItem(TITLES_KEY);
+    else localStorage.setItem(TITLES_KEY, JSON.stringify(titles));
   } catch { /* */ }
 }
+
+/**
+ * Names the backend has not accepted yet, keyed by conversation id (tempdoc 838).
+ *
+ * A rename can land in the sub-second window between a conversation being OPENED and its first
+ * message being appended — before that append there is no `meta.json`, and the endpoint answers 404
+ * rather than minting a zero-message conversation that would list as a row naming nothing. The name
+ * is held here and re-sent once from the next successful {@link loadConversations}, which runs at
+ * every completed ask.
+ */
+const pendingTitles = new Map<string, { title: string; source: ConversationTitleSource }>();
+
+/**
+ * Sessions whose legacy-title adopt hit a locked store (423). Retrying up to twenty of those on every
+ * list refresh would be a per-poll burst that cannot succeed; the next reload tries again.
+ */
+const adoptBlockedIds = new Set<string>();
 
 export function setConversationApiBase(base: string): void {
   apiBase = base;
@@ -125,11 +168,17 @@ export async function loadConversations(): Promise<void> {
     const res = await authorizedFetch(`${apiBase}/api/chat/conversations?limit=20`);
     if (!res.ok) { state = { ...state, loading: false }; emit(); return; }
     const data = await res.json();
-    const titles = loadTitles();
+    // The backend is the authority for a name now; the legacy browser map is only consulted for rows
+    // the backend has no title for, and each such entry is written through and erased below.
+    const legacy = loadTitles();
     const conversations: Conversation[] = (data.sessions ?? []).map(
       (s: Record<string, unknown>) => ({
         id: s.sessionId as string,
-        title: titles[s.sessionId as string] ?? null,
+        title:
+          typeof s.title === 'string' && s.title !== ''
+            ? (s.title as string)
+            : (legacy[s.sessionId as string] ?? null),
+        titleSource: readTitleSource(s),
         createdAt: s.createdAtMs as number,
         lastActiveAt: s.lastActiveAtMs as number,
         messageCount: s.messageCount as number,
@@ -145,9 +194,68 @@ export async function loadConversations(): Promise<void> {
     );
     state = { ...state, conversations, loading: false };
     emit();
+    // Both write-throughs the list makes possible, fired AFTER the list has rendered so neither one
+    // delays it: the names the backend refused with a 404 while the conversation was still being
+    // created, and the legacy browser-local names this migration is retiring.
+    void flushPendingTitles(conversations);
+    void adoptLegacyTitles(conversations, legacy);
   } catch {
     state = { ...state, loading: false };
     emit();
+  }
+}
+
+/** The wire's `titleSource`, narrowed — an unknown value is no provenance rather than a wrong one. */
+function readTitleSource(row: Record<string, unknown>): ConversationTitleSource | null {
+  const raw = row.titleSource;
+  return raw === 'user' || raw === 'auto' ? raw : null;
+}
+
+/**
+ * Re-send the names held by the §1d create-race, ONCE each (tempdoc 838). The conversation exists
+ * server-side from its first appended message, so by the time a list refresh runs the 404 is gone;
+ * the entry is dropped either way, because a name that fails twice is a name the row is no longer
+ * showing — this refresh already replaced it with whatever the backend holds.
+ */
+async function flushPendingTitles(conversations: readonly Conversation[]): Promise<void> {
+  if (pendingTitles.size === 0) return;
+  const listed = new Set(conversations.map((c) => c.id));
+  for (const [id, held] of [...pendingTitles]) {
+    if (!listed.has(id)) continue;
+    pendingTitles.delete(id);
+    const outcome = await postTitle(id, held.title, held.source);
+    if (outcome.ok) applyTitle(id, held.title, held.source);
+  }
+}
+
+/**
+ * Tempdoc 838 migration — adopt on list, once, and only on a confirmed write.
+ *
+ * For every listed row the backend has no name for while the legacy map does: the reader keeps
+ * seeing the name they know (it was already merged in above), the backend is told, and the local
+ * entry is deleted ONLY on a 2xx. A locked store answers 423, the entry survives, and the next
+ * unlocked list adopts it — so the migration cannot lose a name to a lock, and it cannot leave one
+ * behind either. It is complete when `jf-conversation-titles` is gone.
+ */
+async function adoptLegacyTitles(
+  conversations: readonly Conversation[],
+  legacy: Record<string, string>,
+): Promise<void> {
+  if (Object.keys(legacy).length === 0) return;
+  for (const c of conversations) {
+    const inherited = legacy[c.id];
+    if (inherited === undefined || adoptBlockedIds.has(c.id)) continue;
+    // Only rows the BACKEND cannot name: a backend title always wins, and its presence means this
+    // entry is stale rather than unadopted.
+    if (c.titleSource !== null) {
+      forgetLegacyTitle(c.id);
+      continue;
+    }
+    // Adopted as the READER's: an existing name is one somebody chose to keep, and treating it as
+    // auto-generated would license the next ask to overwrite it.
+    const outcome = await postTitle(c.id, inherited, 'user');
+    if (outcome.ok) forgetLegacyTitle(c.id);
+    else if (outcome.status === 423) adoptBlockedIds.add(c.id);
   }
 }
 
@@ -181,15 +289,89 @@ export function siblingSessionsAt(
   return [baseId, ...branches];
 }
 
-export function setConversationTitle(id: string, title: string): void {
-  saveTitle(id, title);
+/** The in-memory half of a rename: the list re-renders NOW, whatever the network is about to do. */
+function applyTitle(
+  id: string,
+  title: string | null,
+  titleSource: ConversationTitleSource | null,
+): void {
   state = {
     ...state,
     conversations: state.conversations.map((c) =>
-      c.id === id ? { ...c, title } : c,
+      c.id === id ? { ...c, title, titleSource } : c,
     ),
   };
   emit();
+}
+
+/**
+ * The outcome of a title write (tempdoc 838). `status` is the HTTP status the Head answered, or `0`
+ * when the request never reached it; `423` is the store refusing because its data key is locked.
+ */
+export interface ConversationTitleWrite {
+  readonly ok: boolean;
+  readonly status: number;
+}
+
+/** The one write. `status` is 0 when the request never reached the Head. */
+async function postTitle(
+  id: string,
+  title: string,
+  source: ConversationTitleSource,
+): Promise<{ ok: boolean; status: number }> {
+  try {
+    const res = await authorizedFetch(
+      `${apiBase}/api/chat/conversations/${encodeURIComponent(id)}/title`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, source }),
+      },
+    );
+    return { ok: res.ok, status: res.status };
+  } catch {
+    return { ok: false, status: 0 };
+  }
+}
+
+/**
+ * Name a conversation, durably (tempdoc 838). Optimistic, then authoritative:
+ *
+ *  1. The list renames SYNCHRONOUSLY, because a name that flickered while a request was in flight
+ *     would be worse than one that can fail.
+ *  2. The backend is told. It is the only writer of record — there is deliberately NO localStorage
+ *     mirror any more: the title is a sealed meta field now, so a plaintext browser copy of it would
+ *     show a locked conversation's subject while every other content field of that conversation
+ *     refuses to render (the tempdoc 562 defect, in a second key). And there is no offline case to
+ *     serve: every row in this list came from the Head, so if the Head is unreachable there is
+ *     nothing on screen to rename.
+ *  3. A failure REVERTS the row and returns false, so the caller can say so. The one exception is
+ *     the 404 of a conversation whose first message has not landed yet ({@link pendingTitles}):
+ *     that name is kept on screen and re-sent from the next list refresh, because it is a race with
+ *     creation rather than a refusal.
+ *
+ * `status` rides along with the outcome rather than being reported as a bare `false`, because the
+ * caller has to word a LOCKED store (`423`) differently from any other failure — a boolean cannot
+ * carry the difference, and re-deriving it with a second request would be a second authority.
+ */
+export async function setConversationTitle(
+  id: string,
+  title: string,
+  source: ConversationTitleSource = 'user',
+): Promise<ConversationTitleWrite> {
+  const before = state.conversations.find((c) => c.id === id);
+  applyTitle(id, title, source);
+  const outcome = await postTitle(id, title, source);
+  if (outcome.ok) {
+    pendingTitles.delete(id);
+    return { ok: true, status: outcome.status };
+  }
+  if (outcome.status === 404) {
+    pendingTitles.set(id, { title, source });
+    return { ok: true, status: outcome.status };
+  }
+  if (before !== undefined) applyTitle(id, before.title, before.titleSource);
+  return { ok: false, status: outcome.status };
 }
 
 export function createConversationId(): string {
@@ -249,8 +431,11 @@ export async function generateConversationTitle(
     void deleteThrowaway(throwawayId);
     title = title.trim().replace(/^["']|["']$/g, '');
     if (title.length === 0 || title.length >= 80) return null;
-    setConversationTitle(sessionId, title);
-    return title;
+    // Tempdoc 838 — awaited, and reported honestly: a name the store refused is not a name, and the
+    // caller decides what to do about that. `auto` is the provenance, which is what keeps the next
+    // reader rename from being treated as something the model may overwrite later.
+    const written = await setConversationTitle(sessionId, title, 'auto');
+    return written.ok ? title : null;
   } catch {
     void deleteThrowaway(throwawayId);
     return null;
@@ -661,4 +846,6 @@ export function __resetConversationListForTest(): void {
   state = { conversations: [], activeId: null, loading: false };
   listeners.clear();
   apiBase = '';
+  pendingTitles.clear();
+  adoptBlockedIds.clear();
 }

@@ -128,27 +128,27 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 > The (config × mode) ablation tables in each corpus block stay hand-authored. Reproduction tolerance
 > is the within-machine ±2σ envelope, scoped to equivalent hardware/setup (tempdoc 623 F-α).
 
-**Release:** `715-rebaseline-2026-07-16` · default mode `hybrid` · NVIDIA GeForce RTX 4070 · driver 610.62 · ORT 1.24.3
+**Release:** `832-rebaseline-2026-08-14` · default mode `hybrid` · NVIDIA GeForce RTX 4070 · driver 610.88 · ORT 1.24.3
 
 **Coverage:** retrieval ranking quality (per-corpus metrics above) — **does NOT measure** document extraction / OCR / VDU routing quality (see tempdoc 623 §F — extraction-quality sibling).
 
 | Corpus | Ours (mode) | nDCG@10 | Published baselines (cited, side-by-side) |
 |---|---|---|---|
-| beir/scifact | hybrid | 0.760 | BM25 (multifield) 0.665, SPLADE++ EnsembleDistil 0.710, ColBERTv2 0.693 |
-| mixed/enron-qa | hybrid | 0.736 | — |
-| mixed/legal-clerc-200 | hybrid | 0.598 | BM25 0.054, Contriever-MSMarco (zero-shot dense) 0.042 |
-| mixed/miracl-de-2k | hybrid | 0.862 | BGE-M3 Dense 0.567 (dev) |
-| mixed/miracl-fr-2k | hybrid | 0.873 | BM25 0.183 (dev), mDPR (zero-shot) 0.435 (dev), Hybrid (BM25+mDPR) 0.523 (dev) |
+| beir/scifact | hybrid | 0.757 | BM25 (multifield) 0.665, SPLADE++ EnsembleDistil 0.710, ColBERTv2 0.693 |
+| mixed/enron-qa | hybrid | 0.796 | — |
+| mixed/legal-clerc-200 | hybrid | 0.578 | BM25 0.054, Contriever-MSMarco (zero-shot dense) 0.042 |
+| mixed/miracl-de-2k | hybrid | 0.857 | BGE-M3 Dense 0.567 (dev) |
+| mixed/miracl-fr-2k | hybrid | 0.884 | BM25 0.183 (dev), mDPR (zero-shot) 0.435 (dev), Hybrid (BM25+mDPR) 0.523 (dev) |
 
 **Engine performance** (relative-ratchet guarded — tempdoc 640):
 
 | Corpus | CE p50 (ms) | Index docs/s | Enrich docs/s | Resident (GB) |
 |---|---|---|---|---|
-| beir/scifact | 171 | 89.8 | 20.5 | 2.02 |
-| mixed/enron-qa | 161 | 64.5 | 6.2 | 2.02 |
-| mixed/legal-clerc-200 | 226 | 29.3 | 1.0 | 2.02 |
-| mixed/miracl-de-2k | 175 | 97.2 | 33.4 | 2.02 |
-| mixed/miracl-fr-2k | 174 | 60.0 | 23.3 | 2.02 |
+| beir/scifact | 142 | 76.1 | 1.3 | 2.02 |
+| mixed/enron-qa | 147 | 63.8 | 3.6 | 2.02 |
+| mixed/legal-clerc-200 | 165 | 18.6 | 0.8 | 2.02 |
+| mixed/miracl-de-2k | 133 | 125.6 | 34.1 | 2.02 |
+| mixed/miracl-fr-2k | 143 | 151.7 | 46.6 | 2.02 |
 
 <!-- generated:end -->
 
@@ -186,6 +186,7 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 | (HEAD default) | (default) | default-hybrid | hybrid | 0.758 | 0.627 | 0.896 | cross_encoder + dense + splade + query_classification | A | f91e269bc | 580 |
 | (HEAD default) | CE-off | (default) | full | 0.708 | 0.577 | 0.833 | dense + splade + query_classification (CE off) | B | f91e269bc | 580 |
 | (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump) | (default) | (default) | hybrid | 0.7604 | 0.637 | 0.888 | cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
+| (**832 re-baseline — first cohort scored on the corrected delivered-rank harness**, 803) | (default) | (default) | hybrid | 0.7572 | 0.627 | 0.894 | cross_encoder+dense+hybrid+query_classification | A | 32d6a0a0 | 832 |
 
 **Best known:** splade-ml+gte / gte-ml-reranker / default-hybrid / **hybrid** = **0.754** (391, 6-run median across two 3-run sets on 2026-04-18 and 2026-04-19; range 0.7527–0.7571, CV 0.1–0.3%). Full mode best known remains splade-ml+gte / gte-ml-reranker / bm25-dom / full = **0.736** (343 Phase D).
 **Note:** GTE-ModernBERT CE produces identical result (0.722 — noise). Mode breakdown now complete.
@@ -219,6 +220,7 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 | (774 Stage-1 chunk-lever A/B set, flags non-default) | (default) | (default) | hybrid | 0.7476 | 0.597 | 0.877 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 |
 | (**`search.evidence_preview.enabled=true`**, default-off flag) | (default) | (default) | hybrid | **0.7882** | 0.643 | 0.913 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 / F-041 |
 | (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump) | (default) | (default) | hybrid | 0.7845 | 0.640 | 0.910 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
+| (**832 re-baseline — first cohort scored on the corrected delivered-rank harness**, 803; the +0.011 vs the fused-order 0.7845 is consistent with 802's measured +0.0184 CE-ordering term on this corpus) | (default) | (default) | hybrid | **0.7957** | 0.667 | 0.913 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 32d6a0a0 | 832 |
 
 **Best known:** bge-m3 / minilm-512 / balanced / bm25_splade = **0.830**
 **Note:** CE hurts EnronQA by 3-5% across all modes (CE-on vs CE-off isolation). Model swaps are quality-neutral on English email (CE-off post-swap matches pre-swap exactly). Confirms FW-001: corpus-adaptive CE gating needed.
@@ -268,6 +270,7 @@ catalog — see Corpus provenance note above)*
 | (774 Stage-1 chunk-lever A/B set, flags non-default) | (default) | (default) | hybrid | 0.5448 | 0.420 | 0.685 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 |
 | (**`search.evidence_preview.enabled=true`**, default-off flag) | (default) | (default) | hybrid | **0.6388** | 0.465 | 0.810 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 / F-041 |
 | (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump) | (default) | (default) | hybrid | **0.6362** | 0.460 | 0.810 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
+| (**832 re-baseline — first cohort scored on the corrected delivered-rank harness**, 803; the −0.058 vs the fused-order 0.6362 carries 802's measured −0.0418 CE-ordering term on this corpus plus single-run wobble) | (default) | (default) | hybrid | **0.5780** | 0.355 | 0.810 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 32d6a0a0 | 832 |
 
 **Best known (at shipped defaults):** the flips-ON row above — hybrid = **0.6362** (be7fef6b, 775 §I;
 reproduces the F-041 flag-on 0.6388 within noise, now as the default). Prior defaults best:
@@ -323,6 +326,7 @@ corpus as currently committed)*
 | splade-ml+gte | gte-ml-reranker | bm25-dom | bm25_splade | 0.582 | 0.384 | 0.816 | bm25+splade+CE | A | 5d19ff2c1 | 343 D |
 | splade-ml+gte | gte-ml-reranker | bm25-dom | full | 0.696 | 0.469 | 0.908 | bm25+splade+dense+CE | A | 5d19ff2c1 | 343 D |
 | (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump; post-2026-07-01 corpus) | (default) | (default) | hybrid | 0.8591 | 0.679 | 0.997 | cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
+| (**832 re-baseline — first cohort scored on the corrected delivered-rank harness**, 803) | (default) | (default) | hybrid | 0.8575 | 0.666 | 0.997 | cross_encoder+dense+hybrid+query_classification | A | 32d6a0a0 | 832 |
 
 **Best known:** bge-m3 / minilm-512 / balanced / full = **0.734**
 **Note:** SPLADE multilingual (0.733) nearly matches BGE-M3 sparse (0.669→0.733 = +9.6%). Massive improvement over SPLADE-v3 English-only (0.485→0.733 = +51.1%). Full mode 0.696 vs pre-swap 0.619 (+12.4%).
@@ -343,6 +347,7 @@ corpus as currently committed)*
 | bge-m3 | minilm-512 | balanced | bm25_splade | 0.515 | — | — | bm25+splade | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | balanced | full | **0.706** | — | — | bm25+sparse+dense | A | dc4f79a | 309 §37 |
 | (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump; post-2026-07-01 corpus) | (default) | (default) | hybrid | 0.8726 | 0.706 | 1.000 | cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
+| (**832 re-baseline — first cohort scored on the corrected delivered-rank harness**, 803; first certifiable fr run — the 803-era SPLADE blocker is fixed, PR #459) | (default) | (default) | hybrid | **0.8844** | 0.720 | 1.000 | cross_encoder+dense+hybrid+query_classification | A | 32d6a0a0 | 832 |
 
 **Best known:** bge-m3 / minilm-512 / balanced / full = **0.706**
 **Note:** Same pattern as German — balanced weights, `splade` (0.660) strongest single retriever for non-English.
@@ -2183,6 +2188,7 @@ above)*
 - **Evidence:** tempdoc 309 §43
 - **Conditions/caveats:** Tested on EnronQA (verbose QA questions, single-user inbox). CE may still matter on academic/legal corpora (SciFact, CourtListener).
 - **⚠ Measurement caveat (2026-07-31, 800):** The eval harness scores each hit by its **pre-rerank fusion score**, so `ir_measures` re-sorts the delivered list back into fusion order and the CE's *ordering* is discarded; only its *selection* (which 10 of the 20-candidate window survive the trim) reaches the number. A CE model swap changes both, but two rerankers agree far more on selection than on ordering — so "zero difference, within noise" is also exactly what a metric outputs when the differing part has been deleted. **This finding is not refuted, but it cannot be distinguished from an artifact using the old numbers.** Treat as *unmeasured*, not *measured as zero*, until a re-run on a corrected harness. Mechanism and measurements: tempdoc 800.
+- **UPDATE (2026-08-14, 832):** the corrected-harness substrate now exists — release `832-rebaseline-2026-08-14` (5 corpora, delivered-rank scoring, cohort `32d6a0a0`) re-pins every default-config baseline. The CE **model-swap** comparison this finding is about has still not been re-run on that basis, so the verdict stays *unmeasured* — but any future swap A/B now has a certifiable, ordering-sensitive baseline to run against.
 
 ### F-002: CE actively hurts on personal email
 
@@ -2227,6 +2233,7 @@ above)*
 - **Evidence:** tempdoc 309 §41 (SciFact, CL-200, MIRACL/de), §43 (EnronQA)
 - **Conditions/caveats:** Generalizes F-001 beyond email. Root cause: BGE-M3 produces strong enough top-K rankings that CE reranking is marginal — the `bm25_splade` → `full` gap is only 1-4%, which is the maximum possible CE contribution regardless of CE model quality.
 - **⚠ Measurement caveat (2026-07-31, 800):** Inherits F-001's caveat, and more strongly — this finding generalizes "zero difference" across *all* corpora, which is the signature an apparatus produces when the CE's ordering channel is discarded on every corpus alike. The stated root cause (retrieval is strong enough to make CE marginal) is not established by these numbers: they cannot see the CE's ordering contribution at all. Independently, measurement on the **published** corpora (tempdoc 802, ir_measures, all five re-run) puts that contribution at **−0.0418 to +0.0184 nDCG@10** — larger than the 1–4% `bm25_splade`→`full` gap this finding cites as the CE's maximum possible contribution, and therefore not marginal. Treat as *unmeasured* pending a corrected re-run; tempdocs 800, 802. (An earlier version of this rider cited the 781-certification cells at ±0.06; those are certification corpora, not the published ones — the published figures above supersede them.)
+- **UPDATE (2026-08-14, 832):** default-config baselines are re-pinned on the corrected delivered-rank harness (release `832-rebaseline-2026-08-14`, cohort `32d6a0a0`); the generalization this finding makes (CE model swaps ≈ 0 across corpora) still awaits its own swap ablations on that basis and remains *unmeasured*.
 
 ### F-007: Cross-language noise is minimal in mixed multilingual corpus
 

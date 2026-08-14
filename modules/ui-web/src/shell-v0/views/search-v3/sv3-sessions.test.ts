@@ -21,7 +21,9 @@ import {
   removeSession,
   renameSession,
   resolveSv3Rename,
+  restoreSessionTitle,
   sessionById,
+  sv3ShouldGenerateTitle,
   sv3SessionIsLive,
   setTurnEvidence,
   settleAgentTurn,
@@ -35,6 +37,7 @@ import {
   SV3_UNTITLED_CONVERSATION,
   type Sv3Adoption,
   type Sv3RunGate,
+  type Sv3Session,
   type Sv3SessionGroup,
   type Sv3SessionList,
   type Sv3SessionProjection,
@@ -720,6 +723,85 @@ describe('the app-wide conversation store, folded in (tempdoc 822 Phase F6 / inv
     expect(mergeStoreConversations(mine, [])).toBe(mine);
     expect(mergeStoreConversations(mine, [row({ id: 'uc-mine' })])).toBe(mine);
   });
+
+  it('seeds `renamed` from the wire, so a reader\'s name survives a reload (tempdoc 838)', () => {
+    // The defect this closes: `renamed` used to be hard-coded false on a merged-in row, because the
+    // provenance was not on the wire — so the next ask after a reload auto-titled over the name the
+    // reader had chosen. It IS on the wire now.
+    const merged = mergeStoreConversations(SV3_SESSIONS_EMPTY, [
+      row({ id: 'uc-named', title: 'Renewal postmortem', titleSource: 'user' }),
+      row({ id: 'uc-auto', title: 'Renewal Lock Failure', titleSource: 'auto' }),
+      row({ id: 'uc-plain', firstUserMessage: 'why did the renewal fail?' }),
+    ]);
+    expect(merged.sessions.map((s) => s.renamed)).toEqual([true, false, false]);
+  });
+
+  it('never auto-titles a conversation whose stored name is the reader\'s', () => {
+    // The consequence of the seeding above, at the guard that consumes it: a completed ask in a
+    // reloaded conversation the reader named is refused a model-generated title.
+    const merged = mergeStoreConversations(SV3_SESSIONS_EMPTY, [
+      row({ id: 'uc-named', title: 'Renewal postmortem', titleSource: 'user' }),
+      row({ id: 'uc-auto', title: 'Renewal Lock Failure', titleSource: 'auto' }),
+    ]);
+    const answer = (list: Sv3SessionList, id: string): Sv3SessionList => {
+      // Claimed first: the reader opened the row, so the ask lands IN it rather than opening a new
+      // conversation that would carry none of the merged row's provenance.
+      const asked = submitInSession(focusSession(list, id, T0), 'and what did it cost?', T0, 'ask', id);
+      const ref = latestTurnRef(asked) as Sv3TurnRef;
+      return settleTurn(appendTurnDelta(asked, ref, 'Nine months.'), ref, 'complete', T0 + MINUTE);
+    };
+    const named = sessionById(answer(merged, 'uc-named'), 'uc-named') as Sv3Session;
+    const auto = sessionById(answer(merged, 'uc-auto'), 'uc-auto') as Sv3Session;
+    expect(sv3ShouldGenerateTitle(named)).toBe(false);
+    // ...and the guard is a refusal, not a breakage: an auto-named conversation is still nameable.
+    expect(sv3ShouldGenerateTitle(auto)).toBe(true);
+  });
+});
+
+describe('a rename the store refused, put back (tempdoc 838)', () => {
+  it('restores the previous title AND the previous flag', () => {
+    const named = renameSession(
+      submitInSession(SV3_SESSIONS_EMPTY, 'my question', T0, 'ask', 'uc-a'),
+      'uc-a',
+      'Lease terms',
+    );
+    expect(sessionById(named, 'uc-a')?.renamed).toBe(true);
+
+    const back = restoreSessionTitle(named, 'uc-a', 'my question', false);
+    expect(sessionById(back, 'uc-a')?.title).toBe('my question');
+    // The flag goes back too: a refused rename must not outrank auto-titling on the strength of a
+    // write that never landed.
+    expect(sessionById(back, 'uc-a')?.renamed).toBe(false);
+  });
+
+  it('restores a conversation that never had a name — what renameSession would refuse', () => {
+    const list = mergeStoreConversations(SV3_SESSIONS_EMPTY, [row838('uc-a')]);
+    const attempted = renameSession(list, 'uc-a', 'Lease terms');
+    expect(sessionById(attempted, 'uc-a')?.title).toBe('Lease terms');
+    // renameSession rejects an empty title by design (it is the reader's decision point); a revert is
+    // not a reader decision, so it can put back the placeholder the row actually had.
+    const back = restoreSessionTitle(attempted, 'uc-a', SV3_UNTITLED_CONVERSATION, false);
+    expect(sessionById(back, 'uc-a')?.title).toBe(SV3_UNTITLED_CONVERSATION);
+  });
+
+  it('is identity for an unknown id and for a restore that changes nothing', () => {
+    const named = renameSession(
+      submitInSession(SV3_SESSIONS_EMPTY, 'my question', T0, 'ask', 'uc-a'),
+      'uc-a',
+      'Lease terms',
+    );
+    expect(restoreSessionTitle(named, 'uc-missing', 'anything', false)).toBe(named);
+    expect(restoreSessionTitle(named, 'uc-a', 'Lease terms', true)).toBe(named);
+  });
+});
+
+/** A store row, for the revert cases above (the merge block has its own local `row`). */
+const row838 = (id: string): Sv3StoreConversation => ({
+  id,
+  title: null,
+  firstUserMessage: '',
+  createdAt: T0,
+  lastActiveAt: T0,
 });
 
 describe('the canonical record, applied to a conversation (Phase F6 / inventory D1)', () => {
