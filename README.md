@@ -84,6 +84,10 @@ variable before launching; the actual port in use is always written to
   { "mcpServers": { "justsearch": { "command": "npx", "args": ["mcp-remote", "http://127.0.0.1:8080/mcp"] } } }
   ```
 
+All three need an app build that serves `POST /mcp`, which the v0.1.0 installer release may predate — if your
+client lists no tools, POST a `tools/list` JSON-RPC request at the URL above before debugging the client; a 404
+means that build has no MCP endpoint, so use a newer release or a from-source build.
+
 Six tools: `justsearch_answer` (RAG, primary), `justsearch_search`, `justsearch_browse`, `justsearch_ingest`,
 `justsearch_status`, `justsearch_runtime_manifest`. Your documents never leave the machine — only the agent's
 answer does.
