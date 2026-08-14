@@ -4,10 +4,10 @@
 
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![CI](https://github.com/eliasjustus/justsearch/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/eliasjustus/justsearch/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/eliasjustus/justsearch?include_prereleases&label=release)](https://github.com/eliasjustus/justsearch/releases)
+[![CI](https://github.com/justsearch-app/justsearch/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/justsearch-app/justsearch/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/justsearch-app/justsearch?include_prereleases&label=release)](https://github.com/justsearch-app/justsearch/releases)
 <!-- badges: <<nDCG benchmark badge>> — deferred: no workflow publishes a benchmark badge yet -->
-<!-- mcp-name: io.github.eliasjustus/justsearch -->
+<!-- mcp-name: io.github.justsearch-app/justsearch -->
 <!-- ^ Official MCP Registry ownership marker (modelcontextprotocol.io/registry/package-types);
      must match "name" in packaging/mcpb/server.json. Do not remove. -->
 
@@ -32,8 +32,8 @@ retrieval quality is benchmarked on English, German, and French (see [Benchmarks
 
 ## Install (Windows)
 
-1. **Download** [`JustSearch_0.2.0_x64-setup.exe`](https://github.com/eliasjustus/justsearch/releases/download/v0.2.0/JustSearch_0.2.0_x64-setup.exe)
-   (249 MB) from the [v0.2.0 release](https://github.com/eliasjustus/justsearch/releases/tag/v0.2.0).
+1. **Download** [`JustSearch_0.2.0_x64-setup.exe`](https://github.com/justsearch-app/justsearch/releases/download/v0.2.0/JustSearch_0.2.0_x64-setup.exe)
+   (249 MB) from the [v0.2.0 release](https://github.com/justsearch-app/justsearch/releases/tag/v0.2.0).
 2. **Run it.** The installer is **code-signed** — the publisher shown is **Elias Justus**. Windows
    SmartScreen may still show a reputation prompt while the signing certificate is new (reputation
    accrues with downloads); if it does, the "More info" panel names the verified publisher. The
@@ -41,7 +41,7 @@ retrieval quality is benchmarked on English, German, and French (see [Benchmarks
 3. **Launch JustSearch** and point it at a folder. On first launch the app asks consent to download its AI
    models (**~9 GB**, one time, from GitHub Releases + Hugging Face) — after that it runs **fully offline**.
 
-Installer SHA-256 (also in [`SHA256SUMS`](https://github.com/eliasjustus/justsearch/releases/download/v0.2.0/SHA256SUMS)):
+Installer SHA-256 (also in [`SHA256SUMS`](https://github.com/justsearch-app/justsearch/releases/download/v0.2.0/SHA256SUMS)):
 
 ```text
 cba354165c38c90628082020d40fe00986814a3fa57da49c62dd18acb0f11772  JustSearch_0.2.0_x64-setup.exe
@@ -110,7 +110,7 @@ offline operation, multilingual models, and OCR — if you deploy and configure 
 JustSearch aims at the gap between those worlds: as far as we know, the only **single-install desktop app**
 that ships **{true hybrid retrieval × fully offline × multilingual × OCR}** out of the box — here is the
 [sourced comparison](docs/comparison.md) behind that sentence, and if we've missed a tool, please
-[open an issue](https://github.com/eliasjustus/justsearch/issues) and we'll list it.
+[open an issue](https://github.com/justsearch-app/justsearch/issues) and we'll list it.
 
 - **Hybrid retrieval, not single-model RAG** — BM25 + dense vectors + SPLADE learned-sparse, fused and reranked
   by a cross-encoder. Most local RAG tools use one embedding model and basic chunking.
@@ -173,7 +173,7 @@ Accepted publication `agent-utility-hero-2026-07-28` (record `c5a75457b264`, pol
 > download**; the ~9 GB models below are runtime-only (fetched on first *run* of the app).
 
 ```bash
-git clone https://github.com/eliasjustus/justsearch && cd justsearch
+git clone https://github.com/justsearch-app/justsearch && cd justsearch
 ./gradlew.bat build              # build (Windows; use ./gradlew on *nix once cross-platform)
 ```
 

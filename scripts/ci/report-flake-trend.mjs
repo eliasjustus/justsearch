@@ -64,7 +64,7 @@ function detectRepoSlug() {
   } catch {
     // Fall through to the repository default.
   }
-  return 'eliasjustus/justsearch';
+  return 'justsearch-app/justsearch';
 }
 
 function usage() {

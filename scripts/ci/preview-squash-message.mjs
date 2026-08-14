@@ -57,7 +57,7 @@ function usage() {
     'title/body when repository settings are PR_TITLE / PR_BODY.',
     '',
     'Options:',
-    '  --repo owner/repo     GitHub repository (default: detected origin, then eliasjustus/justsearch)',
+    '  --repo owner/repo     GitHub repository (default: detected origin, then justsearch-app/justsearch)',
     '  --pr N                Pull request number to preview',
     '  --repo-json file      Read repository settings from fixture JSON',
     '  --pr-json file        Read PR data from fixture JSON',
@@ -91,7 +91,7 @@ function detectRepoSlug() {
   } catch {
     // Fall through to the public repo default.
   }
-  return 'eliasjustus/justsearch';
+  return 'justsearch-app/justsearch';
 }
 
 function loadRepo(opts) {

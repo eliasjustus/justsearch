@@ -400,7 +400,7 @@ gh run view <id>                                    # inspect a specific run
 
 Main branch protection requires the stable public check names declared in
 `scripts/ci/workflow-signal-policy.v1.json`. Run
-`node scripts/ci/check-branch-protection.mjs --repo eliasjustus/justsearch --branch main`
+`node scripts/ci/check-branch-protection.mjs --repo justsearch-app/justsearch --branch main`
 with a maintainer token after changing CI job names or branch-protection settings; the default
 pull-request `GITHUB_TOKEN` cannot read branch-protection settings.
 

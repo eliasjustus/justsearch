@@ -12,7 +12,7 @@ Decision tree for diagnosing CI and build failures. Match the symptom, follow th
 Before interpreting a GitHub Actions failure, run:
 
 ```bash
-node scripts/ci/workflow-signal-health.mjs --repo eliasjustus/justsearch --md
+node scripts/ci/workflow-signal-health.mjs --repo justsearch-app/justsearch --md
 ```
 
 Use the computed failure class to route the public hosted `CI` fact lanes and the active manual specialty workflows: `docs-lint.yml`, `build-installer.yml`, `codeql.yml`.

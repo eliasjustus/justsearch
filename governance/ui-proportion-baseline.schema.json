@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/eliasjustus/justsearch/blob/main/governance/ui-proportion-baseline.schema.json",
+  "$id": "https://github.com/justsearch-app/justsearch/blob/main/governance/ui-proportion-baseline.schema.json",
   "title": "Chrome proportion shrink-only baseline — tempdoc 697",
   "description": "Schema for governance/ui-proportion-baseline.v1.json. Registers persistent-chrome elements (per ui-shot step) whose rendered height must not GROW beyond a recorded ceiling. Shrinking is always allowed. Mirrors ui-a11y-baseline.schema.json's shape (draft-07, additionalProperties: false).",
   "type": "object",

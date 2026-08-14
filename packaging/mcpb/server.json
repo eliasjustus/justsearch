@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.eliasjustus/justsearch",
+  "name": "io.github.justsearch-app/justsearch",
   "title": "JustSearch",
   "description": "Private retrieval backend for AI agents: hybrid search and cited answers over your local files, 100% on your machine (Windows). Requires the JustSearch desktop app running.",
   "repository": {
-    "url": "https://github.com/eliasjustus/justsearch",
+    "url": "https://github.com/justsearch-app/justsearch",
     "source": "github"
   },
   "version": "0.2.0",
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/eliasjustus/justsearch/releases/download/v0.2.0/justsearch-mcp.mcpb",
-      "fileSha256": "b5013baf91ad8ea8bdfab9911e5d5488363908ec1feb9429402ab2da3f9b652e",
+      "identifier": "https://github.com/justsearch-app/justsearch/releases/download/v0.2.0/justsearch-mcp.mcpb",
+      "fileSha256": "0475bca306fe4fb9775a132a127f25b71798c59d3d7aeb6c76660af7d2828de6",
       "transport": {
         "type": "stdio"
       }

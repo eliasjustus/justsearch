@@ -13,9 +13,9 @@ Publisher: TODO-OWNER-PUBLISHER-NAME
 # tempdoc 760 Phase 1 finding) -- the GitHub repo is the closest thing until one does.
 PublisherUrl: TODO-GA-PUBLISHER-URL
 PackageName: JustSearch
-PackageUrl: https://github.com/eliasjustus/justsearch
+PackageUrl: https://github.com/justsearch-app/justsearch
 License: Apache-2.0
-LicenseUrl: https://github.com/eliasjustus/justsearch/blob/main/LICENSE
+LicenseUrl: https://github.com/justsearch-app/justsearch/blob/main/LICENSE
 ShortDescription: A local-first hybrid search engine and cited on-device AI assistant for your files.
 Description: >-
   JustSearch indexes local documents (PDF, email, Office, and most common document formats) and

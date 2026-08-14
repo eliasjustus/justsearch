@@ -208,7 +208,7 @@ function setServerVersion(repoRoot, version, { dryRun = false } = {}) {
   const { p, obj } = readServerJson(repoRoot);
   const repoUrl = (obj.repository && typeof obj.repository.url === 'string'
     ? obj.repository.url
-    : 'https://github.com/eliasjustus/justsearch'
+    : 'https://github.com/justsearch-app/justsearch'
   ).replace(/\/+$/, '');
   const url = `${repoUrl}/releases/download/v${version}/justsearch-mcp.mcpb`;
   const changed = obj.version !== version || obj.packages[0].identifier !== url;
