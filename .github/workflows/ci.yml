@@ -246,7 +246,16 @@ jobs:
           java-version: |
             21
             ${{ env.JAVA_VERSION }}
-          cache: gradle
+
+      # Gradle caching is owned by setup-gradle, not by setup-java's `cache: gradle`
+      # (tempdoc 829 R2+R7). On Windows lanes the Gradle daemon is still alive at
+      # post-job save time and holds mandatory locks on ~/.gradle/caches/**/*.lock, so
+      # the cache tar exited 2 (EBUSY) and the cache was NEVER saved — every Windows
+      # run was a cold cache (actions/setup-java#633, workaround-only upstream).
+      # setup-gradle stops daemons in its own post-action and defaults to
+      # cache-read-only off the default branch, so only `main` writes entries (R7).
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -290,7 +299,9 @@ jobs:
           java-version: |
             21
             ${{ env.JAVA_VERSION }}
-          cache: gradle
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -393,7 +404,9 @@ jobs:
           java-version: |
             21
             ${{ env.JAVA_VERSION }}
-          cache: gradle
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Unit tests with model-dependent tests self-skipping
         id: gradle-test
@@ -443,7 +456,9 @@ jobs:
           java-version: |
             21
             ${{ env.JAVA_VERSION }}
-          cache: gradle
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Windows-only tests (@Tag windows) for the Linux-migrated modules
         run: ./gradlew.bat :modules:app-util:test :modules:app-agent:test :modules:app-services:test :modules:adapters-lucene:test :modules:app-inference:test -PwindowsOnly=true --console=plain
@@ -542,7 +557,9 @@ jobs:
           java-version: |
             21
             ${{ env.JAVA_VERSION }}
-          cache: gradle
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
 
       # No model blobs on a public checkout, so the model-dependent cases self-skip via their
       # own assumeTrue guards; the Golden Corpus cases use frozen vectors and need no model.

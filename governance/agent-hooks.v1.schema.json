@@ -64,7 +64,8 @@
                   "hookId": { "type": "string" },
                   "if": { "type": "string" },
                   "timeout": { "type": "number" },
-                  "async": { "type": "boolean" }
+                  "async": { "type": "boolean" },
+                  "asyncRewake": { "type": "boolean" }
                 }
               }
             }
