@@ -1,8 +1,9 @@
 # 838 — Conversation title authority: design (833 W7)
 
 ```
-status: IMPLEMENTED — unit + gate tiers green; the §8d live round is PENDING a
-  dev-stack lease (see §10)
+status: IMPLEMENTED — unit + gate tiers green; the §8d live round ran 2026-08-14
+  and verified the whole seam against a real store EXCEPT the three
+  LLM-dependent legs and four FE-rendering checks (see §10e/§10f)
 created: 2026-08-14
 updated: 2026-08-14
 related: 833 (§W7, the theorization this designs), 822 (the Search v3 window —
@@ -650,13 +651,102 @@ cases (`ChatControllerTitleTest`), 9 store-level TS cases
 (`conversationListStore.test.ts`), 5 pure-module cases (`sv3-sessions.test.ts`),
 2 view-level cases (`SearchV3View.honesty.test.ts`, `SearchV3View.record.test.ts`).
 
-### 10e. What is NOT done
+### 10e. The §8d live round — run 2026-08-14, VERIFIED except the LLM legs
 
-- **The §8d live round is PENDING.** It was not run: the dev stack is the
-  orchestrator's to lease and this work was told not to start one. The seven-step
-  script in §8d stands unmodified and is the remaining acceptance gate — in
-  particular step 6 (the clobber regression against a real restart) and step 7
-  (the locked leg), which unit tiers can only approximate.
+Run under supervision on the shared stack, from this worktree's own dist
+(`start { distFrom: <this worktree>, skipBuild: true }`, after
+`:modules:ui:installDist :modules:indexer-worker:installDist`). Two runs, because
+the round restarts the Head on purpose: `29ddf984` on API port 57625, then
+`8688e308` on API port 53167, both against the same
+`modules/ui-web/.dev-data`.
+
+**The blocked prerequisite.** `ai_activate { variantId: "cuda12" }` failed —
+`RUNTIME_VARIANT_NOT_INSTALLED`, `installedVariants: []`, and
+`GET /api/ai/install/status` reports `packages: []`, `installedFully: false`,
+`repairNeeded: true`. The shared GPU runtime itself IS provisioned
+(`F:/justsearch-public/modules/ui/native-bin/llama-server/variants/cuda12/llama-server.exe`);
+what this fresh dev-data has no record of is any installed AI *package*, and
+provisioning one is a machine-level download outside this slice's authority. So
+no `llama-server.exe` was ever launched this round — which also means the
+constant-8081 adoption hazard never applied (there was no server to adopt, and
+`Get-Process llama-server` returned NONE throughout).
+
+Everything not requiring the model was run against the real store. Observed
+values, verbatim:
+
+| §8d step | verdict | observed |
+|---|---|---|
+| 1 — lease + start from this worktree's dist | **PASS** | `quick_health` `running:false` before start (no owner, no takeover); started `ready_worker:true` |
+| 2 — `ai_activate` cuda12 | **BLOCKED** | `RUNTIME_VARIANT_NOT_INSTALLED` — see above |
+| 3a — auto-title after a settled ask | **BLOCKED** | needs the model (the `_title_*` throwaway dispatch is a real LLM round-trip) |
+| 3b — rename the row | **PASS** | `POST .../uc-838-live/title {"title":"Renewal postmortem","source":"user"}` → `200 {"ok":true,"title":"Renewal postmortem","titleSource":"user"}` |
+| 4 — the write landed server-side | **PASS** | `GET /api/chat/conversations?limit=5` → the row carries `"title":"Renewal postmortem","titleSource":"user"` |
+| 5 — survives a Head restart | **PASS** | stopped (pids 17456/34224/3756 killed), restarted as a new process on a new port; the list on 53167 returned the same `title` + `titleSource` |
+| 6 — the clobber regression, live | **PARTIAL** | its *input* is verified — after the real restart the wire still says `titleSource:"user"`, which is exactly what `mergeStoreConversations` seeds `renamed` from. Its *consequence* (a completed second ask that must not re-title) needs the model, and stays unit-tier only |
+| 7 — locked leg | **PASS** | see the encryption block below |
+
+Four checks beyond the script, each cheap once the stack was up:
+
+- **Absence really is "no title."** Before any rename the row carried neither
+  `title` nor `titleSource` — the conditional projection omits, it does not send
+  empties.
+- **404 mints nothing.** `POST .../uc-never-existed/title` → `404
+  {"errorCode":"NOT_FOUND"}`, and `find .dev-data -type d -name "uc-*"` still
+  listed exactly one directory. No ghost row, on the wire or on disk.
+- **The 400s are real refusals.** `{"title":"   "}` → `400 INVALID_REQUEST`;
+  `{"source":"imported"}` → `400 INVALID_REQUEST` — and the previously stored
+  title was still intact after both.
+- **The cap and the append path.** A 400-character title stored back as exactly
+  200. A second `appendMessage` (message count 1 → 2, `lastActiveAtMs` advanced)
+  left `title` and `titleSource` untouched — §1a's "`updateMeta` is safe by
+  construction" claim, verified against a real store rather than argued.
+
+**The encryption leg, which is the whole privacy argument.** With
+`POST /api/conversations/encryption/setup` and one more title write, `meta.json`
+on disk read:
+
+```
+"firstUserMessage":"JSEv1:Hlr2Jsz0IXps/…","schemaVersion":1,
+"title":"JSEv1:/v+59pbGG/CW8l2S7bUi00+…","titleSource":"user"
+```
+
+— the name sealed beside the first message, the provenance bit plaintext next to
+it, and `schemaVersion` still `1`. Then `POST .../lock`:
+
+- the list **still returned the row** (not dropped, not a failed list) with
+  `"firstUserMessage":""`, **no `title` key at all**, and `"titleSource":"user"`
+  still present;
+- `POST .../title` answered **`423 {"errorCode":"STORE_LOCKED","locked":true,"error":"locked"}`**
+  — through the global mapping, with no lock arm in the controller, exactly as
+  §1a predicted;
+- `POST .../unlock` brought `"title":"Renewal postmortem"` back, and a final
+  `DELETE .../title` → `200 {"ok":true}` left the row with neither field.
+
+**Nothing deviated from the unit-tier predictions.** Every live value matched
+what the Java and TS tests assert.
+
+**What the live round still could not reach.** Browser automation was
+unavailable this session, so the *frontend* halves are unverified live: the
+sidebar rendering the restored name, `localStorage['jf-conversation-titles']`
+being absent, the row reverting on a 423, and the locked wording in the window.
+Those are the four things `SearchV3View.record.test.ts` and
+`SearchV3View.honesty.test.ts` cover at unit tier (including the 423 → revert →
+"encrypted and locked" toast case), and the 423 they key off is now confirmed
+against the real Head.
+
+Teardown: `stop { clean: "hard" }`, then verified — `quick_health` `running:false`,
+no `llama-server.exe`, all six process ids from both runs gone, ports 57625 /
+53167 / 5173 closed, and the dev data dir (which by then held an encrypted store
+behind a throwaway passphrase) destroyed.
+
+### 10f. What is NOT done
+
+- **The three LLM-dependent legs** (§8d step 2, the auto-title half of step 3,
+  and the consequence half of step 6) remain outstanding, blocked on an AI
+  package being installed in the dev-data. They are the only part of the design
+  never exercised end-to-end.
+- **The four frontend-rendering checks** listed above, blocked on browser
+  automation.
 - **§5 (pins / shelves / unread) is untouched**, as dispositioned: it remains an
   owner question with zero implementation.
 
