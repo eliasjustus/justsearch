@@ -267,17 +267,27 @@ export class Sv3Composer extends JfElement {
         margin: 0;
       }
       /* The severity mark is the only colour the banner spends, and it spends it on the tier the
-         verdict actually reported — amber for an impairment, red for a failure. */
+         verdict actually reported — amber for an impairment, red for a failure. The colour is on the
+         wrapper and the glyph inherits it through currentColor, so the svg can be aria-hidden
+         without the tone moving off the element the tone rules select (830 audit A6). */
       .degradation-mark {
+        display: inline-flex;
         flex: none;
+        align-items: center;
         color: var(--warning);
       }
       .degradation[data-severity='error'] .degradation-mark {
         color: var(--destructive);
       }
       /* The honesty fact. It takes the row's slack and ellipsizes rather than wrapping, because a
-         second line here is the height this banner exists not to spend; the whole sentence stays
-         reachable as the accessible name of the region it heads and in the disclosed detail. */
+         second line here is the height this banner exists not to spend.
+
+         Ellipsis clips PIXELS, not text: the element's text content is always the whole sentence, so
+         the accessible name is unaffected and assistive tech never sees a truncated fact. The
+         SIGHTED route to the clipped tail is the element's title attribute (830 audit D2 — the
+         earlier version of this comment claimed the disclosed detail carried the headline, which it
+         does not, and claimed a named region that does not exist). Below roughly 640px the widest
+         authority headline stops fitting; at 520px and under every one of them does. */
       .degradation-headline {
         flex: 1 1 auto;
         min-width: 0;
@@ -1261,6 +1271,15 @@ export class Sv3Composer extends JfElement {
    * here is the fix") rests and the elaboration extends — the same L14 boundary the answer frame
    * draws, and the reason this window's degradation costs one line instead of an eighth of the
    * window. Nothing is behind HOVER: the disclosure is a real button with a real expanded state.
+   *
+   * NO LIVE REGION HERE (830 audit D1). The row was `role="status"`, which got the announcement
+   * exactly backwards in both directions: the region is created *together with* its content (one
+   * childList mutation adds the whole subtree), so the appearance does not reliably announce — while
+   * the two BUTTONS inside it made every disclosure toggle fire six attribute mutations in an
+   * `atomic` polite region, re-announcing "Semantic search degraded. Open Health Hide what is
+   * reduced" on each open and close. The state change is already announced, correctly, by the
+   * shell's always-mounted verdict announcer ("All systems operational" → "Service degraded"), so
+   * this banner is a rendering of that fact and not a second announcer of it.
    */
   private degradationBanner(): TemplateResult | typeof nothing {
     const degradation = this.degradation;
@@ -1273,15 +1292,25 @@ export class Sv3Composer extends JfElement {
       data-severity=${degradation.severity}
       data-open=${String(open)}
     >
-      <p class="degradation-line" role="status" data-testid="sv3-degradation-line">
-        ${icon({
-          name: degradation.severity === 'error' ? 'alert-circle' : 'alert-triangle',
-          size: SV3_DEGRADATION_GLYPH_SIZE,
-          className: 'degradation-mark',
-        })}
+      <p class="degradation-line" data-testid="sv3-degradation-line">
+        ${/* Decorative (830 audit A6): the severity is carried by the headline's words and by the
+              tone, so the glyph adds nothing to the accessible name and is hidden from AT. */ ''}
+        <span class="degradation-mark" aria-hidden="true"
+          >${icon({
+            name: degradation.severity === 'error' ? 'alert-circle' : 'alert-triangle',
+            size: SV3_DEGRADATION_GLYPH_SIZE,
+          })}</span
+        >
+        ${/* 830 audit D2 — the pointer recovery for a CLIPPED headline. The element's text is always
+              the whole sentence (CSS ellipsis clips pixels, not the accessible name), so AT is
+              unaffected either way; below ~640px the widest authority headline no longer fits the
+              row and a sighted reader needs a route to the rest. Same idiom, and the same accepted
+              residual, as the answer frame's `title` (`Sv3Main.tailFacts`): a sighted keyboard-only
+              reader sees the clipped line. */ ''}
         <span
           class="degradation-headline"
           id=${SV3_DEGRADATION_HEADLINE_ID}
+          title=${degradation.headline}
           data-testid="sv3-degradation-headline"
           >${degradation.headline}</span
         >

@@ -324,6 +324,60 @@ describe('the banner rests at one line and discloses the rest', () => {
   });
 });
 
+/* ── 830 audit D1/D2/A6: what the measured audit found, pinned ───────────────────────────────── */
+
+describe('the banner announces nothing and hides nothing (830 audit)', () => {
+  const banner = (): Sv3Degradation =>
+    projectSv3Degradation(snapshotFor(degraded(['worker.health.embedding_not_ready'])))!;
+
+  afterEach(() => {
+    for (const child of [...document.body.children]) child.remove();
+  });
+
+  it('D1 — wraps its CONTROLS in no live region, in either disclosure state', async () => {
+    // The measured defect: as `role="status"` the row was created together with its content (so the
+    // appearance did not reliably announce) while the two buttons inside it re-announced the whole
+    // concatenated line on every toggle. Both halves are pinned: no live region anywhere in the
+    // banner, and specifically none containing either button.
+    const el = await mountComposer({ degradation: banner() });
+    const assertQuiet = (): void => {
+      const root = q(el, 'sv3-degradation')!;
+      const live = [
+        ...root.querySelectorAll('[role="status"],[role="alert"],[role="log"],[aria-live]'),
+      ];
+      expect(live).toEqual([]);
+      expect(root.getAttribute('role')).toBeNull();
+      expect(root.getAttribute('aria-live')).toBeNull();
+      for (const control of root.querySelectorAll('button')) {
+        expect(control.closest('[aria-live],[role="status"],[role="alert"]')).toBeNull();
+      }
+    };
+    assertQuiet();
+    (q(el, 'sv3-degradation-disclosure') as HTMLButtonElement).click();
+    await el.updateComplete;
+    // The buttons the toggle re-rendered are still outside any live region.
+    expect(q(el, 'sv3-degradation-detail')).not.toBeNull();
+    assertQuiet();
+  });
+
+  it('D2 — the clipped headline keeps a sighted recovery route, and a whole accessible name', async () => {
+    // The CSS ellipsis clips pixels, not text — so the assertion is on both halves of the claim the
+    // stylesheet now makes: the element's text is the whole sentence AND `title` carries it.
+    const el = await mountComposer({ degradation: banner() });
+    const headline = q(el, 'sv3-degradation-headline')!;
+    expect(headline.textContent?.trim()).toBe(banner().headline);
+    expect(headline.getAttribute('title')).toBe(banner().headline);
+  });
+
+  it('A6 — the severity glyph is decorative, so it is hidden from assistive tech', async () => {
+    const el = await mountComposer({ degradation: banner() });
+    const mark = q(el, 'sv3-degradation')!.querySelector('.degradation-mark')!;
+    expect(mark.getAttribute('aria-hidden')).toBe('true');
+    // ...and the tone still lands on the element the severity rules select.
+    expect(mark.querySelector('svg')).not.toBeNull();
+  });
+});
+
 describe('Simple and Detailed decide how much banner (E3)', () => {
   const banner = (): Sv3Degradation =>
     projectSv3Degradation(snapshotFor(degraded(['worker.health.embedding_not_ready'])))!;

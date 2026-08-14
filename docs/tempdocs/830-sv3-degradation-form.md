@@ -1,7 +1,7 @@
 ---
 title: "830 — Search v3 degradation form (E1 readiness banner, E2 code-dedup, E3 mode-gated disclosure)"
 type: tempdocs
-status: "IMPLEMENTED (2026-08-14) — inventory rows E1/E2/E3 landed on branch sv3-degradation-form; unit suite + ui-web gate set green; live-verified backendless."
+status: "IMPLEMENTED + AUDITED (2026-08-14) — inventory rows E1/E2/E3 landed on branch sv3-degradation-form (PR #450). Independent measured a11y audit ran and found two defects (D1 live-region misuse, D2 false truncation claim); both fixed and pinned by mutation-probed tests. Unit suite + ui-web gate set green; live-verified backendless."
 created: 2026-08-14
 updated: 2026-08-14
 author: agent session bccfc163-7b8f-4b1a-b9e4-0c011632d8a1
@@ -128,13 +128,13 @@ render site reads `isAdvancedMode()` live, so nothing is copied into element sta
 | `sv3-honesty.ts` | `sv3TailModelLabel` / `projectSv3AnswerFrame` gained the required `detailed` parameter. |
 | `SearchV3View.ts` | `subscribeUiMode`; the `degradation` getter; both props handed down. |
 | `fixtures.ts` | The disclosure's two labels + the banner's ids/glyph size. No state wording — that is all the authority's. |
-| `SearchV3View.degradation.test.ts` (new) | 29 cases. |
+| `SearchV3View.degradation.test.ts` (new) | 32 cases (29 + 3 from the audit fixes). |
 
 ## 4. Verification
 
-**Unit suite.** `npm run typecheck` clean; `npm run test:unit:run` — **5072 tests / 420
-files, all passing**, of which **29 are new** (`SearchV3View.degradation.test.ts`). The
-search-v3 directory alone: 519 passing across 21 files.
+**Unit suite.** `npm run typecheck` clean, `eslint` clean; `npm run test:unit:run` — **5075
+tests / 420 files, all passing**, of which **32 are new** (`SearchV3View.degradation.test.ts`;
+29 for E1/E2/E3 plus 3 pinning the audit fixes).
 
 Mutation-probed pairs (each fails if the condition inverts):
 
@@ -150,6 +150,11 @@ Mutation-probed pairs (each fails if the condition inverts):
 - E3 both directions, both surfaces: banner causes closed in Simple / open in Detailed;
   frame line without the model in Simple / with it in Detailed; and the app-wide mode
   followed without a re-mount.
+- **D1 and D2 were mutation-probed by hand, not merely asserted.** Re-adding `role="status"`
+  to the row fails the D1 pin ("wraps its CONTROLS in no live region, in either disclosure
+  state", which also re-checks after the toggle re-renders both buttons); removing the
+  headline's `title` fails the D2 pin. Both mutations were applied, observed failing, and
+  reverted.
 
 **Wording is compared against the authority's own output**, never a literal — a wording
 change in `readinessNotice.ts` moves the test and the code together.
@@ -181,33 +186,113 @@ forbids the token anywhere in the search-v3 directory, so the new module and its
 reason codes that do not carry it.
 
 **Live (backendless vite, port 5175, Chrome 1280×790).** Route
-`#justsearch://surface/core.search-v3-surface`, window found by shadow-piercing walk:
+`#justsearch://surface/core.search-v3-surface`, window found by a shadow-piercing walk. The
+degraded state is fed through the **real store** (`__feedForTest` with a genuine
+`readiness.composites` payload, reached by a static `<script type="module">` import — see the
+methodology note in §6), so the verdict on screen is the production derivation's:
 
-| State | Banners | Resting height | Headline | Remedy |
-|---|---|---|---|---|
-| Resting (`verdict: connecting`) | 0 | — | — | — |
-| Degraded (`worker.health.embedding_not_ready`) | 1 | 36px (line 18px) of 722px | "Semantic search degraded." | "Open Health" |
-| Disclosed | 1 | 76px | same | same |
+| State | Verdict | Banners | Height | Headline | Remedy |
+|---|---|---|---|---|---|
+| Resting | `connecting` | 0 | — | — | — |
+| Degraded (`worker.health.embedding_not_ready`) | `degraded` | 1 | 36px (line 18px) of 722px | "Semantic search degraded." | "Open Health" |
+| Disclosed | `degraded` | 1 | 76px | same | same, cause row `data-code="worker.health.embedding_not_ready"` |
 
 Zero `pageerror`s. The 53 console errors are all backendless fetch failures
 (`ERR_CONNECTION_REFUSED` / a 502 from the dev proxy) plus one unhandled rejection from the
 same cause — none originate in this branch's code. The resting screenshot is unchanged from
 before the change: only the pre-existing availability line ("The local AI model is still
-starting"). Severity mark computes to `oklch(0.769 0.188 70.08)` (`--warning`).
+starting").
 
-## 5. Honest limits
+The three audit fixes were re-measured live in the same run, in both disclosure states:
 
-- The live degraded state was injected by writing the window's `aiSnapshot` field, not by
-  driving the store: SES lockdown in the shell rejects a dynamic `import()` inside an
-  evaluated page script, so `__feedForTest` is out of reach in the browser. The
-  store → verdict → banner chain *is* covered end to end in the unit suite (the mounted-window
-  case feeds a real `readiness.composites` snapshot). What the live run proves is the render
-  and the geometry.
-- No measured accessibility audit (axe / contrast oracle) was run against the new banner.
-  The a11y-shaped gates in the recipe (`check-a11y-closure`, `check-controls-a11y`) pass,
-  and the disclosure/remedy carry names and `aria-expanded`/`aria-controls`, but the
-  `ux-audit-closure` discipline (independent, measured, auditor ≠ committer) is **not**
-  satisfied by this branch.
+| Probe | Measured |
+|---|---|
+| D1 — live regions inside the banner | `[]` (none), `buttonsInsideLiveRegion: 0`, banner `role: null` |
+| D2 — headline recovery route | `title === "Semantic search degraded."` |
+| A6 — severity glyph | `aria-hidden="true"`, tone still `oklch(0.769 0.188 70.08)` (`--warning`) |
+
+## 5. Independent measured a11y audit (2026-08-14)
+
+An independent auditor (≠ committer) ran a measured whole-surface audit — axe, a contrast
+oracle, keyboard traversal, and independent geometry reproduction — satisfying the
+`ux-audit-closure` discipline for this work.
+
+**Validated:** axe 0 violations / 0 incomplete in every state; every contrast ratio passes
+(headline 16.95:1, severity marks 8.66:1 and 5.24:1, focus ring 9.05:1); keyboard traversal
+clean; geometry independently reproduced at 36px collapsed / 76px disclosed; E2 dedup
+confirmed live.
+
+**Two defects found and fixed on this branch:**
+
+### D1 — `role="status"` was inert for announcing and active for noise
+
+The row carried `role="status"`. Measured, that got announcement backwards in both
+directions at once:
+
+- The live region is created *together with* its content — a single `childList` mutation
+  adds the whole subtree on healthy → degraded — so the banner's **appearance** does not
+  reliably announce.
+- Meanwhile the region really is `{live: polite, atomic: true}` and **both buttons sit
+  inside it**, so toggling the disclosure fires six mutations within it (`aria-expanded`,
+  `aria-controls`, `aria-label`, `title`, chevron path) and re-announces the concatenated
+  line *"Semantic search degraded. Open Health Hide what is reduced"* on **every** open and
+  close.
+
+The state change is already announced correctly by the shell's always-mounted verdict
+announcer ("All systems operational" → "Service degraded", measured). **Fix:** the live
+region is gone; this banner renders the fact, it does not announce it
+(`Sv3Composer.ts:1295`).
+
+### D2 — the ellipsis justification comment was factually false
+
+The comment claimed the full sentence "stays reachable as the accessible name of the region
+it heads and in the disclosed detail". Measured: the banner container has `role=null` and
+`aria-label=null` (no region, no name), and the disclosed detail carries body + causes only,
+never the headline. Truncation is real — at ≤520px the headline box is 57px and all seven
+authority headlines truncate; the longest truncates already at 640px — and a sighted reader
+had no recovery route.
+
+**Fix:** the claim was made *true* rather than deleted. The headline carries
+`title=${degradation.headline}` (`Sv3Composer.ts:1313`) — the same idiom, and the same
+explicitly accepted residual, as the answer frame's `title` in `Sv3Main.tailFacts`. The
+corrected comment (`Sv3Composer.ts:283-289`) now states what is actually true: CSS ellipsis
+clips pixels rather than text, so the accessible name was never truncated and AT was never
+affected; the gap was sighted-only, and the `title` is its route. **Residual, stated
+plainly:** a sighted keyboard-only reader still sees the clipped line.
+
+### A6 (advisory, fixed)
+
+The severity `<svg>` had neither `role` nor `aria-hidden`. It is decorative — the headline's
+words and the tone carry the fact — so it is now wrapped in an `aria-hidden="true"` span
+that also holds the tone colour, letting the glyph inherit through `currentColor` without
+moving the tone off the element the severity rules select (`Sv3Composer.ts:1298`).
+
+### Recorded for the owner — design calls, not defects
+
+Left unactioned by direction; they are questions about the whole screen or about a
+deliberate idiom, not things this branch should decide:
+
+| # | Finding |
+|---|---|
+| A1 | The 13×13 disclosure target conforms only via the spacing exception. |
+| A2 | Screen-wide the degradation fact appears **4×** — this banner, the verdict announcer, the status pill, the status badge. A whole-screen budget question, not a banner question. |
+| A3 | Body text contrast is 4.74:1 — passing, but only 0.24 of margin. Note the token coupling: `--secondary-label` == `--icon-muted`, so moving one moves the other. |
+| A4 | The banner box is nearly invisible against its surround (1.07:1) — the intentional quiet idiom versus the floating-text critique. |
+| A5 | Defensible as-is (auditor's own verdict); no change. |
+| A7 | Forced-colors mode keeps the amber mark rather than adopting the system palette. |
+| A8 | ~482px gap between the headline and the remedy at wide widths, from the headline's `flex-grow`. |
+
+## 6. Honest limits
+
+- **Methodology correction (adopted, and the limit is now gone).** An earlier version of this
+  note claimed SES lockdown makes the store unreachable in a live browser. That is **wrong**
+  and must not propagate to future agents: SES rejects a *dynamic* `import()` inside an
+  evaluated page script, but a `<script type="module">` **static** import is not blocked. The
+  auditor drove the real `__feedForTest` / `setUiMode` that way; this branch's live harness has
+  since been switched to the same technique (`page.addScriptTag({type: 'module', …})`), so the
+  live run no longer hand-writes a verdict onto the view — it feeds a real
+  `readiness.composites` payload and the production derivation computes the verdict. **The
+  store → verdict → banner chain is therefore verified live as well as in the unit suite.**
 - `degradationOpen` is not reset when the verdict changes, so a reader who opened banner A
   sees banner B open. This matches the shipped window's `degradationBannerExpanded`
   behaviour; it is a deliberate consistency choice, not an oversight.
@@ -215,3 +300,12 @@ starting"). Severity mark computes to `oklch(0.769 0.188 70.08)` (`--warning`).
   producers that exist today (the degradation banner and the documents-affordance
   availability reason). A third future producer would need to join `sv3ComposerReason`'s
   decision rather than render beside it.
+
+## 7. Log
+
+- **2026-08-14** — E1/E2/E3 implemented; PR #450 opened as draft.
+- **2026-08-14** — Independent measured a11y audit ran: axe 0/0 in every state, all contrast
+  ratios pass, keyboard clean, geometry independently reproduced. D1 and D2 found; both
+  fixed on the same branch and pinned by tests that were mutation-probed (re-adding
+  `role="status"` fails the D1 pin; removing the `title` fails the D2 pin). Six further
+  findings recorded above as owner design calls.
