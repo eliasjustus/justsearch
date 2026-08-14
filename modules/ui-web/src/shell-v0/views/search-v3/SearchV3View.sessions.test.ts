@@ -617,3 +617,303 @@ describe('shelves and the pin action (tempdoc 822 Phase F3)', () => {
     expect((await rowsOf(el)).find((r) => r.label === 'the slow one')?.unread).toBe(false);
   });
 });
+
+/**
+ * The row's action set, end to end (tempdoc 831). Every case is a MUTATION probe: the affordance is
+ * pressed the way a pointer presses it, and what is asserted afterwards is the state it claimed to
+ * change — the stored title, shelf membership, the list itself, the authority it was written to.
+ * A control that raised its event into nothing would pass a "the event fired" case and fail these.
+ */
+describe('the row actions each change the state they name', () => {
+  const actionOf = (row: Sv3SessionRow, name: string): HTMLButtonElement => {
+    const button = row.shadowRoot?.querySelector<HTMLButtonElement>(
+      `[data-testid="sv3-session-row-${name}"]`,
+    );
+    if (!button) throw new Error(`no ${name} action in the row`);
+    return button;
+  };
+
+  const deleteCalls = (): string[] =>
+    fetchMock.mock.calls
+      .filter(([, init]) => (init as { method?: string } | undefined)?.method === 'DELETE')
+      .map(([url]) => String(url));
+
+  it('renames the conversation from the row action, and the title is the stored one', async () => {
+    const el = await mount();
+    await ask(el, 'first question');
+
+    actionOf((await rowsOf(el))[0] as Sv3SessionRow, 'rename').click();
+    await settle(el);
+    const editing = (await rowsOf(el))[0] as Sv3SessionRow;
+    const input = editing.shadowRoot?.querySelector<HTMLInputElement>(
+      '[data-testid="sv3-session-row-rename-input"]',
+    );
+    if (!input) throw new Error('the rename action opened no editor');
+    input.value = 'northfield lease review';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await settle(el);
+
+    // The MUTATION: the row's label comes from the session list, so a changed label is a changed
+    // record — not an input that kept its own text.
+    expect((await rowsOf(el)).map((r) => r.label)).toEqual(['northfield lease review']);
+  });
+
+  it('moves the conversation between shelves from the row action', async () => {
+    const el = await mount();
+    await ask(el, 'first question');
+    actionOf((await rowsOf(el))[0] as Sv3SessionRow, 'pin').click();
+    await settle(el);
+    expect(await groupLabelsOf(el)).toEqual(['Pinned']);
+    actionOf((await rowsOf(el))[0] as Sv3SessionRow, 'pin').click();
+    await settle(el);
+    expect(await groupLabelsOf(el)).toEqual(['Recent']);
+  });
+
+  it('discards the conversation and deletes it at the authority that owns its existence', async () => {
+    const el = await mount();
+    await ask(el, 'first question');
+    await newSession(el);
+    await ask(el, 'second question');
+    expect(deleteCalls()).toEqual([]);
+
+    const older = (await rowsOf(el))[1] as Sv3SessionRow;
+    actionOf(older, 'remove').click();
+    await settle(el);
+
+    // Gone from the list...
+    expect((await rowsOf(el)).map((r) => r.label)).toEqual(['second question']);
+    // ...and gone at the conversation store, which is where a conversation EXISTS: a window that
+    // only dropped its own row would resurrect it on the next list load.
+    expect(deleteCalls()).toHaveLength(1);
+    expect(deleteCalls()[0]).toContain('/api/chat/conversations/');
+    // The claim did not move to the survivor as a side effect of someone else being discarded.
+    expect((await rowsOf(el)).filter((r) => r.active).map((r) => r.label)).toEqual([
+      'second question',
+    ]);
+  });
+
+  it('returns the window to the hero when the conversation ON SCREEN is discarded', async () => {
+    const el = await mount();
+    await ask(el, 'the only one');
+    actionOf((await rowsOf(el))[0] as Sv3SessionRow, 'remove').click();
+    await settle(el);
+
+    expect(await rowsOf(el)).toHaveLength(0);
+    // The transcript went with it — a window still rendering the turns of a conversation it just
+    // discarded would be showing the reader something that no longer exists.
+    expect(await questionsOf(el)).toEqual([]);
+    expect(deleteCalls()).toHaveLength(1);
+  });
+
+  /**
+   * Where the KEYBOARD ends up after a discard (tempdoc 831 D2, from the independent measured
+   * audit). Lit reuses the row nodes, so the button the reader pressed stays under their finger and
+   * silently becomes the NEXT conversation's Delete: the reproduction was 4 rows → Enter → 3 rows →
+   * Enter → 2 rows, a conversation deleted that was never chosen. Every case here presses ENTER on
+   * the control, which is what a keyboard reader actually does, rather than calling `.click()`.
+   */
+  describe('the keyboard lands somewhere safe after a discard', () => {
+    /** Enter on a focused native button IS a click; happy-dom does not synthesize it, so both. */
+    const pressEnter = (button: HTMLButtonElement): void => {
+      button.focus();
+      button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      button.click();
+    };
+
+    /**
+     * The focused node, walked down through the shadow roots — and the element whose root holds it.
+     * Only the focus CHAIN is walked: happy-dom throws on `shadowRoot.activeElement` for a root
+     * that has none, so a sweep over every row would report an exception rather than a place.
+     */
+    const deepFocus = (): { node: Element | null; host: Element | null } => {
+      let node: Element | null = document.activeElement;
+      let host: Element | null = null;
+      while (node?.shadowRoot?.activeElement != null) {
+        host = node;
+        node = node.shadowRoot.activeElement;
+      }
+      return { node, host };
+    };
+
+    const focusedTestId = (_el: Mounted): string | null =>
+      deepFocus().node?.getAttribute('data-testid') ?? null;
+
+    const focusedRowOf = (): Sv3SessionRow | null => {
+      const { host } = deepFocus();
+      return host?.tagName.toLowerCase() === 'jf-sv3-session-row' ? (host as Sv3SessionRow) : null;
+    };
+
+    const announcement = async (el: Mounted): Promise<string> => {
+      const bar = await region(el, 'jf-sv3-sidebar');
+      return (
+        bar.shadowRoot
+          ?.querySelector('[data-testid="sv3-sidebar-announcer"]')
+          ?.textContent?.trim() ?? ''
+      );
+    };
+
+    /** Three settled conversations; rows render newest-first, so this is ['third','second','first']. */
+    async function threeConversations(el: Mounted): Promise<void> {
+      for (const question of ['first', 'second', 'third']) {
+        await newSession(el);
+        await ask(el, question);
+      }
+    }
+
+    it('moves to the SUCCESSOR row button — never its Delete — when a middle row goes', async () => {
+      const el = await mount();
+      await threeConversations(el);
+      expect((await rowsOf(el)).map((r) => r.label)).toEqual(['third', 'second', 'first']);
+
+      pressEnter(actionOf((await rowsOf(el))[1] as Sv3SessionRow, 'remove'));
+      await settle(el);
+
+      expect((await rowsOf(el)).map((r) => r.label)).toEqual(['third', 'first']);
+      // The row BUTTON, so a repeat of the same key claims a conversation instead of deleting one.
+      expect(focusedTestId(el)).toBe('sv3-session-row-button');
+      const focusedRow = focusedRowOf() as Sv3SessionRow;
+      expect(focusedRow.label).toBe('first');
+    });
+
+    it('cannot delete a second conversation from a second Enter', async () => {
+      // The reproduction, run forwards: 3 → Enter → 2 → Enter → still 2.
+      const el = await mount();
+      await threeConversations(el);
+      pressEnter(actionOf((await rowsOf(el))[0] as Sv3SessionRow, 'remove'));
+      await settle(el);
+      expect((await rowsOf(el)).map((r) => r.label)).toEqual(['second', 'first']);
+
+      const landed = document.activeElement as Element | null;
+      let deep: Element | null = landed;
+      while (deep?.shadowRoot?.activeElement != null) deep = deep.shadowRoot.activeElement;
+      (deep as HTMLElement | null)?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      );
+      (deep as HTMLElement | null)?.click();
+      await settle(el);
+
+      // Nothing else was discarded, and exactly one deletion reached the authority.
+      expect((await rowsOf(el)).map((r) => r.label)).toEqual(['second', 'first']);
+      expect(deleteCalls()).toHaveLength(1);
+    });
+
+    it('falls back to the PREDECESSOR when the last row in the list goes', async () => {
+      const el = await mount();
+      await threeConversations(el);
+      pressEnter(actionOf((await rowsOf(el))[2] as Sv3SessionRow, 'remove'));
+      await settle(el);
+
+      expect((await rowsOf(el)).map((r) => r.label)).toEqual(['third', 'second']);
+      const focusedRow = focusedRowOf() as Sv3SessionRow;
+      expect(focusedRow.label).toBe('second');
+    });
+
+    it('falls back to the new-search control when the list empties, rather than dropping focus', async () => {
+      const el = await mount();
+      await ask(el, 'the only one');
+      pressEnter(actionOf((await rowsOf(el))[0] as Sv3SessionRow, 'remove'));
+      await settle(el);
+
+      expect(await rowsOf(el)).toHaveLength(0);
+      expect(focusedTestId(el)).toBe('sv3-sidebar-new');
+    });
+
+    it('announces the deletion politely, and says WHICH conversation went', async () => {
+      const el = await mount();
+      await threeConversations(el);
+      expect(await announcement(el)).toBe('');
+
+      pressEnter(actionOf((await rowsOf(el))[1] as Sv3SessionRow, 'remove'));
+      await settle(el);
+      expect(await announcement(el)).toBe('second deleted');
+
+      // The region is a LEAF holding text: a live region wrapped around controls re-announces its
+      // whole subtree on every render, which is noise rather than news.
+      const bar = await region(el, 'jf-sv3-sidebar');
+      const announcer = bar.shadowRoot?.querySelector('[data-testid="sv3-sidebar-announcer"]');
+      expect(announcer?.getAttribute('aria-live')).toBe('polite');
+      expect(announcer?.querySelectorAll('button, [role="button"], input')).toHaveLength(0);
+    });
+
+    it('MUTATES the region for every discard, even two conversations with the same title', async () => {
+      // A live region speaks on mutation. Setting the same string twice is silence — so the region
+      // is emptied on the request and filled when the removal lands, and both steps are observed
+      // here rather than inferred from the final text.
+      const el = await mount();
+      for (const _ of [0, 1]) {
+        await newSession(el);
+        await ask(el, 'same title');
+      }
+      const bar = await region(el, 'jf-sv3-sidebar');
+      const announcer = bar.shadowRoot?.querySelector('[data-testid="sv3-sidebar-announcer"]');
+      if (!announcer) throw new Error('no announcer');
+      const seen: string[] = [];
+      new MutationObserver(() => seen.push(announcer.textContent?.trim() ?? '')).observe(announcer, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+
+      pressEnter(actionOf((await rowsOf(el))[0] as Sv3SessionRow, 'remove'));
+      await settle(el);
+      pressEnter(actionOf((await rowsOf(el))[0] as Sv3SessionRow, 'remove'));
+      await settle(el);
+
+      expect((await rowsOf(el)).map((r) => r.label)).toEqual([]);
+      // Said, cleared, said again. The region starts empty, so the first clear is a no-op; what
+      // matters is the clear BETWEEN the two identical announcements, without which the second
+      // discard would set a string the region already held and say nothing at all.
+      expect(seen).toEqual(['same title deleted', '', 'same title deleted']);
+    });
+  });
+
+  it('puts the keyboard back on the row after a rename is committed or cancelled', async () => {
+    // Audit advisory: both keyboard routes out of the edit dropped focus to <body>, because the
+    // input holding it is removed when the edit closes.
+    const el = await mount();
+    await ask(el, 'first question');
+    const inputOf = async (): Promise<HTMLInputElement> => {
+      const row = (await rowsOf(el))[0] as Sv3SessionRow;
+      const field = row.shadowRoot?.querySelector<HTMLInputElement>(
+        '[data-testid="sv3-session-row-rename-input"]',
+      );
+      if (!field) throw new Error('no rename editor');
+      return field;
+    };
+
+    for (const key of ['Enter', 'Escape']) {
+      actionOf((await rowsOf(el))[0] as Sv3SessionRow, 'rename').click();
+      await settle(el);
+      const field = await inputOf();
+      field.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      await settle(el);
+      const row = (await rowsOf(el))[0] as Sv3SessionRow;
+      expect(
+        row.shadowRoot?.activeElement?.getAttribute('data-testid'),
+        `focus after ${key}`,
+      ).toBe('sv3-session-row-button');
+    }
+  });
+
+  it('offers NO discard while the conversation is streaming, and offers one the moment it settles', async () => {
+    const el = await mount();
+    await send(el, 'the slow one');
+    await settle(el);
+    const running = (await rowsOf(el))[0] as Sv3SessionRow;
+    // The window projected the run state onto the row, so the control is not there to press.
+    expect(running.live).toBe(true);
+    expect(
+      running.shadowRoot?.querySelector('[data-testid="sv3-session-row-remove"]'),
+    ).toBeNull();
+
+    router.emit('done', {});
+    router.end();
+    await settle(el);
+    const settled = (await rowsOf(el))[0] as Sv3SessionRow;
+    expect(settled.live).toBe(false);
+    actionOf(settled, 'remove').click();
+    await settle(el);
+    expect(await rowsOf(el)).toHaveLength(0);
+    expect(deleteCalls()).toHaveLength(1);
+  });
+});

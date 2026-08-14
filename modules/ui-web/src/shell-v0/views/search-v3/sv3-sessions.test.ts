@@ -18,9 +18,11 @@ import {
   latestTurnRef,
   mergeStoreConversations,
   projectSv3Sessions,
+  removeSession,
   renameSession,
   resolveSv3Rename,
   sessionById,
+  sv3SessionIsLive,
   setTurnEvidence,
   settleAgentTurn,
   settleTurn,
@@ -32,6 +34,7 @@ import {
   SV3_SESSIONS_EMPTY,
   SV3_UNTITLED_CONVERSATION,
   type Sv3Adoption,
+  type Sv3RunGate,
   type Sv3SessionGroup,
   type Sv3SessionList,
   type Sv3SessionProjection,
@@ -804,6 +807,107 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
     const before = settled();
     expect(applySv3Record(before, 'uc-a', [])).toBe(before);
     expect(applySv3Record(before, 'uc-nope', [recordTurn({ id: 'evt-1' })])).toBe(before);
+  });
+});
+
+/**
+ * The row's DISCARD, as semantics (tempdoc 831). The affordance's own cases live in
+ * `Sv3SessionRow.actions.test.ts` and the window's write-through in `SearchV3View.sessions.test.ts`;
+ * what is decided here is which conversations may leave the list at all, and what leaves with them.
+ */
+describe('a conversation can be discarded, unless work is in flight in it', () => {
+  const ask = (list: Sv3SessionList, text: string, at: number): Sv3SessionList => {
+    const next = submit(list, text, at);
+    const ref = latestTurnRef(next);
+    return ref === null ? next : settleTurn(next, ref, 'complete', at);
+  };
+  const twoSettled = (): Sv3SessionList => {
+    const one = ask(SV3_SESSIONS_EMPTY, 'first', T0);
+    return ask(startNewSession(one), 'second', T0 + MINUTE);
+  };
+  const open: Sv3RunGate = { searching: false, awaitingDecisionIn: null };
+
+  it('deletes the record and leaves every other row exactly where it was', () => {
+    const list = twoSettled();
+    const goneId = list.sessions[1]?.id ?? '';
+    const after = removeSession(list, goneId, open);
+    expect(after.sessions.map((s) => s.title)).toEqual(['second']);
+    expect(sessionById(after, goneId)).toBeNull();
+    // The survivor is the SAME record, not a rebuilt one: a discard is not a reason to re-derive
+    // anyone else's turns, pin or unread bit.
+    expect(after.sessions[0]).toBe(list.sessions[0]);
+  });
+
+  it('drops the claim with the conversation it was pointing at, and only then', () => {
+    const list = twoSettled();
+    const activeId = list.activeId ?? '';
+    expect(removeSession(list, activeId, open).activeId).toBeNull();
+    // Discarding a DIFFERENT row leaves the reader where they were.
+    expect(removeSession(list, list.sessions[1]?.id ?? '', open).activeId).toBe(activeId);
+  });
+
+  it('refuses a conversation whose turn is still streaming', () => {
+    // The run outlives the row: deleting it would leave a stream writing to a session nobody can
+    // see, and would have told the reader the work was gone while it was still running.
+    const running = submit(twoSettled(), 'and then?', T0 + 2 * MINUTE);
+    const id = running.activeId ?? '';
+    expect(removeSession(running, id, open)).toBe(running);
+    // It becomes discardable the moment the turn reaches a terminal — including a failure.
+    const failed = settleTurn(running, latestTurnRef(running) as Sv3TurnRef, 'failed', T0 + 3 * MINUTE);
+    expect(removeSession(failed, id, open).sessions.map((s) => s.title)).toEqual(['first']);
+  });
+
+  it('refuses a conversation whose delegated run is parked on the reader', () => {
+    const list = twoSettled();
+    const parkedId = list.sessions[1]?.id ?? '';
+    const gate: Sv3RunGate = { searching: false, awaitingDecisionIn: parkedId };
+    expect(removeSession(list, parkedId, gate)).toBe(list);
+    // Parked is not finished — but it only protects ITS OWN conversation, not the whole list.
+    expect(removeSession(list, list.sessions[0]?.id ?? '', gate).sessions.map((s) => s.title)).toEqual([
+      'first',
+    ]);
+  });
+
+  it('refuses the ACTIVE conversation while the process-wide search flag is up, and no other', () => {
+    // The store cannot say who asked, so the busy flag may only ever speak for the claimed row —
+    // the same limit the in-motion colour is under.
+    const list = twoSettled();
+    const gate: Sv3RunGate = { searching: true, awaitingDecisionIn: null };
+    expect(removeSession(list, list.activeId ?? '', gate)).toBe(list);
+    expect(removeSession(list, list.sessions[1]?.id ?? '', gate).sessions.map((s) => s.title)).toEqual(
+      ['second'],
+    );
+  });
+
+  it('invents nothing for an unknown id', () => {
+    const list = twoSettled();
+    expect(removeSession(list, 'sv3-session-nope', open)).toBe(list);
+  });
+
+  it('answers the row projection with the SAME judgement it refuses a removal by', () => {
+    // The anti-drift case: a row that offers a discard the list would decline (or withholds one it
+    // would allow) is the two-authority defect this predicate exists to make impossible. Every
+    // live shape is walked, and each is checked BOTH ways.
+    const settled = twoSettled();
+    const streaming = submit(settled, 'and then?', T0 + 2 * MINUTE);
+    const cases: readonly { list: Sv3SessionList; gate: Sv3RunGate }[] = [
+      { list: settled, gate: { searching: false, awaitingDecisionIn: null } },
+      { list: settled, gate: { searching: true, awaitingDecisionIn: null } },
+      { list: settled, gate: { searching: false, awaitingDecisionIn: settled.sessions[1]?.id ?? '' } },
+      { list: streaming, gate: { searching: false, awaitingDecisionIn: null } },
+    ];
+    let sawLive = false;
+    for (const { list, gate } of cases) {
+      for (const row of flatRows(projectSv3Sessions(list, { ...gate, now: T0 + 3 * MINUTE }))) {
+        expect(row.live).toBe(sv3SessionIsLive(list, row.id, gate));
+        // ...and the colour agrees too: live IS act-now or in-motion, never a resting row.
+        expect(row.live).toBe(row.status === 'act-now' || row.status === 'in-motion');
+        expect(removeSession(list, row.id, gate) === list).toBe(row.live);
+        if (row.live) sawLive = true;
+      }
+    }
+    // A matrix that never produced a live row would have passed on vacuity alone.
+    expect(sawLive).toBe(true);
   });
 });
 
