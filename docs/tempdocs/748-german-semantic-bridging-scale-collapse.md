@@ -451,6 +451,23 @@ the residual German offset in §E.3 was payload-version, not language, and hypot
 eliminated. If the gap persists at matched payload version, (a) is a real secondary cause and earns
 a scoped claim.
 
+**§G.1 RESULT (2026-08-14, session 7eb0297f / tempdoc 832 lane A; artifact
+`scripts/jseval/tmp/748/gold-bridge-pair-v2.json`, exact command above, pool-cap 100, n=50/cell,
+CPU exact-cosine):** the gap PERSISTS at matched payload version — **hypothesis (a) survives as a
+real, scoped secondary cause.** EN-legal-v2: bridge P@1 **0.84**, margin mean **+0.046** (positive
+share 0.84), gold rank median 1.0 / p90 2.0 — reproduces §E.3's EN band exactly (0.84-0.88 /
+0.042-0.046), which is the control that makes the arms comparable. DE-miracl-v2 (defillered
+payload.v2 rebuild): bridge P@1 **0.30**, margin mean **−0.026** (positive share 0.30), gold rank
+median 3.0 / p90 18.1, recall@10 0.78. Both cells confirmed filler-free by the instrument
+(`docs_with_filler_before: 0`). Two honest notes: (1) DE-v2 scores BELOW the §E.3 DE-v1 figure
+(P@1 0.55, margin +0.014..0.016) — consistent with the English `_FILLER` block having inflated
+even the pool-only v1 measurement, so the §E.3 Fisher gap was, if anything, understated; (2) the
+mean margin is *negative* — at matched construction the median German gold doc scores below its
+best same-pool distractor, i.e. the fabricated DE bridge starts underwater before any corpus,
+scale, or host-dilution effect. Interpretation unchanged in rank: (c) task-shape remains the
+dominant collapse mechanism at 10k (the EN member collapses too); (a) is now a measured,
+unconfounded secondary cause specific to DE. Q-018 stays OPEN pending §G.2/§G.3.
+
 ### §G.2 The DE-side exact-NN scale curve (no backend, CPU, ~1 h)
 
 The EN half of this is already answered by F-040 (§E.4); what is missing is the German replication,
