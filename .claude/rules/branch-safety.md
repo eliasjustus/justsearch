@@ -149,10 +149,10 @@ an upstream "do X" as covering the whole downstream merge/publish chain.
 1. **Branch verification (required):** In your worktree, run <!-- rule:pre-merge-gradle-build -->
    `./gradlew.bat build -x test` before marking a PR ready.
 2. Open/update a PR; title/body, review, CI are the durable record.
-3. Squash after required checks pass. Use the PR title/body; keep checkpoint,
-   investigation, and retry commits off `main`.
-   If `origin/main` moves after push, catch up with `git merge`, not
-   `git rebase` (agent-lessons.md; tempdoc 695).
+3. `gh pr merge <N>` (no flag) enqueues once checks pass; the queue runs
+   `merge-group` CI and squash-merges. A rejection means CI failed —
+   investigate before retrying. Keep checkpoint/retry commits off `main`;
+   use the PR title/body.
 4. After merge, update local `main` and run `./gradlew.bat build -x test`.
    Also fold any pending observation shards: `node scripts/agent-analytics/fold-observations.mjs --apply`
    (tempdoc 618 §P1.2's proposed boundary, tempdoc 665 wires it — the natural point since the agent is

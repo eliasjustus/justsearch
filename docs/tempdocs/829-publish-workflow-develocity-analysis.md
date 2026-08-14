@@ -197,6 +197,21 @@ genuinely good — it just measures a broken-cache baseline and lacks retry awar
   confirm the PR_TITLE/PR_BODY squash contract, which rests on a staff comment,
   not docs). Until then, F3's mitigations are R1 (fewer wait cycles) and
   batching PRs.
+  - **Postscript (2026-08-14, EXECUTED):** the owner-decision path above was
+    taken. The repo transferred to an organization; ruleset `main-merge-queue`
+    now gates `main` (SQUASH method, `merge_group` wired into `ci.yml` +
+    workflow-signal-policy, a `cla-assistant` no-op job on the merge_group
+    event); `strict` (require-branches-up-to-date-before-merging) is now
+    `false`; `allow_auto_merge=true`. Validated live end-to-end by PR #468:
+    merge-group CI ran and passed, CLA no-op job passed, and the
+    PR_TITLE/PR_BODY squash-message contract was confirmed against the actual
+    merged commit. `gh pr merge <n>` now enqueues (no strategy flag) rather
+    than merging directly. This closes F3 (the serial re-CI tax is gone — a
+    queued PR integrates against the moving base itself, no `update-branch`
+    cycles) and reduces F4's WAITING tax at the source (fewer wait cycles per
+    batch, per R1's lever). Process docs swept in the same pass: `/publish`
+    skill, `agent-guide.md` §3.7, `branch-safety.md` Merge Workflow,
+    `agent-lessons.md`'s rebase-vs-merge lesson.
 - **R5 (cheap Develocity value without a server):** teach
   `report-unit-test-attribution.mjs` to parse repeated `<testcase>` entries and emit
   a `flakyTests` list + dedupe rerun phantom records — the flake signal from data CI
