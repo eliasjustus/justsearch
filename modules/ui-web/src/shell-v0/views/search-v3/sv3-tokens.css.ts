@@ -85,6 +85,11 @@ export const sv3Tokens = css`
     --sv3-selected: color-mix(in srgb, var(--foreground) 9%, transparent);
     --sv3-selected-region: color-mix(in srgb, var(--foreground) 5%, transparent);
     --sv3-selected-edge: color-mix(in srgb, var(--foreground) 14%, transparent);
+    /* The CARD rung. A source card already carries a fill, and a fill sits BEHIND TEXT:
+       raising it to 9% measured three NEW serious axe color-contrast failures on the card body
+       (3.63:1, axe A/B against the live window), while 5% was invisible. A border carries no text,
+       so the card spends its selection signal on the EDGE instead of the fill. */
+    --sv3-selected-edge-strong: color-mix(in srgb, var(--foreground) 34%, transparent);
     --primary: var(--color-teal-accent);
     --primary-foreground: var(--color-teal-accent-ink);
     /* Three named intents on one value: a future divergence is a one-line change, not a grep. */
@@ -337,6 +342,11 @@ export const sv3Tokens = css`
     --sv3-selected: color-mix(in srgb, var(--foreground) 9%, transparent);
     --sv3-selected-region: color-mix(in srgb, var(--foreground) 5%, transparent);
     --sv3-selected-edge: color-mix(in srgb, var(--foreground) 14%, transparent);
+    /* The CARD rung. A source card already carries a fill, and a fill sits BEHIND TEXT:
+       raising it to 9% measured three NEW serious axe color-contrast failures on the card body
+       (3.63:1, axe A/B against the live window), while 5% was invisible. A border carries no text,
+       so the card spends its selection signal on the EDGE instead of the fill. */
+    --sv3-selected-edge-strong: color-mix(in srgb, var(--foreground) 34%, transparent);
     --primary: oklch(45% 0.18 180);
     --primary-foreground: oklch(99% 0.01 180);
     --placeholder: var(--muted-foreground);

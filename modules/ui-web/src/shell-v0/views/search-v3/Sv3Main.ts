@@ -343,9 +343,9 @@ export class Sv3Main extends JfElement {
            re-based against the surface it actually lands on. Hence 4 % resting -> 9 % selected ->
            14 % selected+hover, preserving donor law "when a row is both, it takes the higher wash,
            and never two competing fills" (t3code-system.md:601). */
-        --cp-selected-region: var(--sv3-selected);
-        --cp-selected-edge: var(--sv3-selected-edge);
-        --cp-selected: var(--sv3-selected-edge);
+        --cp-selected-region: var(--sv3-selected-region);
+        --cp-selected-edge: var(--sv3-selected-edge-strong);
+        --cp-selected: var(--sv3-selected-region);
         --cp-hover-edge: var(--sv3-selected-edge);
         --accent-warning: var(--warning-foreground);
         --text-warning: var(--warning-foreground);
