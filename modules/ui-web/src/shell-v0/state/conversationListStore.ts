@@ -406,7 +406,14 @@ export async function generateConversationTitle(
     const res = await authorizedFetch(`${apiBase}/api/chat/dispatch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shapeId: 'core.free-chat', prompt, sessionId: throwawayId }),
+      // 835 §10f: title generation is plumbing, not an answer. The server-wide reasoning budget is
+      // on by default, so without this a 3-5 word title costs a full reasoning pass.
+      body: JSON.stringify({
+        shapeId: 'core.free-chat',
+        prompt,
+        sessionId: throwawayId,
+        enableThinking: false,
+      }),
     });
     if (!res.ok || !res.body) {
       void deleteThrowaway(throwawayId);

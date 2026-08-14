@@ -1322,6 +1322,15 @@ production sources). A rag-ask turn's non-answer calls, all of which pass the sa
 | Section summarize (map step) | `HierarchicalShapeRunner.java:355` | `streamChat` |
 | Schema-constrained extract fallback | `ConversationEngine.java:829` | streaming |
 | Legacy `summarize` / `askQuestion` | `OnlineModeOps.java:266`, `:279` | `chatCompletion` |
+| **Auto-title generation** | `conversationListStore.ts:403-414` | FE `core.free-chat` dispatch |
+
+The last row arrived *after* the amendment, in the merge that brought tempdoc 838's conversation
+titles onto this branch, and it is the one auxiliary call the preset cannot reach: it is an
+FE-initiated shape dispatch, so the request body is the only lever. Without it a 3-5 word title
+buys a full reasoning pass. Fixed at the dispatch with `enableThinking: false`, guarded by
+`conversationListStore.test.ts` ("suppresses thinking on the throwaway title turn"). Worth
+stating as a standing consequence: **every new FE shape dispatch that is plumbing rather than an
+answer must pass `enableThinking:false` explicitly**, because the server default is now on.
 
 **One authority, not eight patches.** All of them pass `SamplingParams.DETERMINISTIC`, and
 three had *already* hand-applied `.withEnableThinking(false)` — the duplication is itself the

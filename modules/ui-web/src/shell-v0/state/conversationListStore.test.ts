@@ -21,6 +21,7 @@ import {
   getConversationListState,
   loadConversations,
   setConversationTitle,
+  generateConversationTitle,
   type Conversation,
   __resetConversationListForTest,
 } from './conversationListStore.js';
@@ -570,5 +571,32 @@ describe('tempdoc 838 — conversation titles are written through to the backend
     // An unrecognised value is NO provenance rather than a wrong one.
     expect([b?.title, b?.titleSource]).toEqual(['Named', null]);
     expect([c?.title, c?.titleSource]).toEqual([null, null]);
+  });
+});
+
+describe('tempdoc 835 §10f — auto-title generation is plumbing, not an answer', () => {
+  beforeEach(() => {
+    __resetConversationListForTest();
+    setConversationApiBase('');
+  });
+
+  it('suppresses thinking on the throwaway title turn', async () => {
+    // The reasoning budget is on server-wide, so a dispatch that omits enableThinking buys a full
+    // reasoning pass — here, to produce a 3-5 word title. The kwarg must be false on the wire.
+    const calls = mockFetch((url) => {
+      if (url.includes('/api/chat/dispatch')) {
+        return new Response('event: chunk\ndata: {"text":"Lease terms"}\n\n', {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      }
+      return jsonResponse({});
+    });
+
+    await generateConversationTitle('sess-1', 'What are the lease terms?', 'They run 12 months.');
+
+    const dispatch = calls.find((c) => c.url.includes('/api/chat/dispatch'));
+    expect(dispatch).toBeDefined();
+    expect(JSON.parse(dispatch!.body).enableThinking).toBe(false);
   });
 });
