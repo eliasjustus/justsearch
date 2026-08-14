@@ -261,6 +261,33 @@ public final class ConversationEngine {
       Map<String, Object> body,
       Audience audience,
       Consumer<SseEvent> sink) {
+    // Tempdoc 834 §4.3 — the turn-open marker is cleared HERE, in a finally around the whole
+    // dispatch body, because that body has EIGHT exits (injector terminated, AI unavailable,
+    // LlmStreamException, consumer onDone threw, controller next threw, STOP_SUCCESS, STOP_ERROR,
+    // iteration hard cap). Clearing at selected exits would leave every cleanly-errored run marked
+    // "interrupted" — the inverse dishonesty. Only a process death leaves the mark set, which is
+    // exactly the condition it encodes.
+    var openTurnKey = new AtomicReference<String>();
+    try {
+      dispatchSubstrateDrivenBody(shape, body, audience, sink, openTurnKey);
+    } finally {
+      String key = openTurnKey.get();
+      if (key != null && conversationStore != null) {
+        try {
+          conversationStore.setTurnOpen(key, false);
+        } catch (RuntimeException e) {
+          LOG.warn("Failed to clear the turn-open marker for conversation {}", key, e);
+        }
+      }
+    }
+  }
+
+  private void dispatchSubstrateDrivenBody(
+      ConversationShape shape,
+      Map<String, Object> body,
+      Audience audience,
+      Consumer<SseEvent> sink,
+      AtomicReference<String> openTurnKey) {
     LOG.debug("Dispatching substrate-driven {} (audience={})", shape.id().value(), audience);
 
     // Resolve SPI implementations from registries.
@@ -353,6 +380,27 @@ public final class ConversationEngine {
     }
 
     int hardCap = shape.iterationMode() == IterationMode.ONE_SHOT ? 1 : MAX_ITERATIONS_HARD_CAP;
+
+    // Tempdoc 834 §4.3 — open the turn marker before iteration 0, for ITERATING shapes only. The
+    // assistant-turn persistence below sits INSIDE this loop, so a WITHIN_TURN_ITERATION shape
+    // writes one assistant turn per iteration and a crash at iteration 3 of 8 leaves three
+    // persisted turns reading as a finished answer. A ONE_SHOT ask has no such gap: it persists
+    // once, complete, so a dropped ask loses nothing and needs no marker.
+    String turnRecordKey = sessionId != null ? sessionId : threadId;
+    if (shape.iterationMode() != IterationMode.ONE_SHOT
+        && turnRecordKey != null
+        && conversationStore != null) {
+      try {
+        conversationStore.setTurnOpen(turnRecordKey, true);
+        // Only after the write succeeded — the store writes meta.json atomically, so a failure
+        // leaves nothing to clear, and arming the finally anyway would just log a second failure.
+        openTurnKey.set(turnRecordKey);
+      } catch (RuntimeException e) {
+        // The marker is diagnostic; the answer is the product. Failing to record it must not kill
+        // the run (this mirrors the guard on the clearing side).
+        LOG.warn("Failed to set the turn-open marker for conversation {}", turnRecordKey, e);
+      }
+    }
 
     String accumulatedFinalText = "";
     Map<String, Object> mergedDoneEntries = new LinkedHashMap<>();

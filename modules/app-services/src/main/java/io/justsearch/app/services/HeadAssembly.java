@@ -495,6 +495,19 @@ public final class HeadAssembly implements AutoCloseable {
               return restored;
             }));
 
+    // Tempdoc 834 §5.2 — a run the previous process left mid-flight still reads as live forever
+    // (nothing recomputes `resumable` across a restart). Stamp those runs now...
+    var agentRunReconciler = new io.justsearch.agent.AgentRunReconciler(agentRunStore);
+    agentRunReconciler.reconcile();
+    // ...and AGAIN on unlock, because with at-rest encryption on and the store locked, readMeta
+    // returns null and the boot pass above is a silent no-op on exactly the encrypted installs
+    // (834 R5). UnlockDeferredScan owns the two DataKeyManager constraints — listeners run under
+    // the key monitor, and `fire` swallows their throws — so the scan lands off-monitor and cannot
+    // vanish. The pass is idempotent, so boot + unlock + re-unlock are all safe.
+    new io.justsearch.app.services.encryption.UnlockDeferredScan(
+            "agent-run-reconciler", agentRunReconciler::reconcile)
+        .attachTo(this.dataKeyManager);
+
     // §4 Phase 4 — SubstratePhase: composes operation registry + catalogs + resource/metric/
     // operation/health substrate init + indexing-jobs bridge + rule runner.
     final SearchTool searchToolFinal = searchToolInstance;

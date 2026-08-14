@@ -32,7 +32,18 @@ final class AgentSession {
       JsonMapper.builder().enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS).build();
 
   private final List<Map<String, Object>> messages;
-  private final Map<String, CompletableFuture<Boolean>> approvalGates = new ConcurrentHashMap<>();
+
+  /**
+   * Tempdoc 834 §6.2 — a held approval gate now carries the DETAIL of the call it holds, not just
+   * the future. The detail already existed one statement earlier in {@code AgentToolDispatcher}
+   * (the {@code ToolCallPendingApproval} it emits before opening the gate); keeping it here is what
+   * lets {@link AgentEvent.StateSnapshot} carry enough to ANSWER the gate after the announcing
+   * frame has been evicted from the replay ring.
+   */
+  record PendingGate(
+      AgentEvent.PendingApproval detail, long sinceEpochMs, CompletableFuture<Boolean> future) {}
+
+  private final Map<String, PendingGate> approvalGates = new ConcurrentHashMap<>();
   /**
    * Tempdoc 508 §11.5 / §13.5 Phase B — futures keyed by callId for
    * {@code vop_*} virtual tool invocations. When the LLM calls a
@@ -179,7 +190,7 @@ final class AgentSession {
 
   void cancel() {
     cancelled = true;
-    approvalGates.values().forEach(f -> f.complete(false));
+    approvalGates.values().forEach(g -> g.future().complete(false));
     // §13.5 Phase B — cancel pending virtual-tool waits with a
     // structured cancelled result so the loop unblocks promptly.
     virtualToolFutures.values().forEach(
@@ -304,10 +315,14 @@ final class AgentSession {
     return value instanceof Number n ? n.intValue() : 0;
   }
 
-  /** Create an approval gate for a pending tool call. Returns a future that completes on approve/reject. */
-  CompletableFuture<Boolean> createApprovalGate(String callId) {
+  /**
+   * Create an approval gate for a pending tool call. Returns a future that completes on
+   * approve/reject. Tempdoc 834 §6.2 — {@code detail} is the same call description the caller just
+   * emitted as {@code tool_call_pending}, retained so the state snapshot can carry the open gate.
+   */
+  CompletableFuture<Boolean> createApprovalGate(String callId, AgentEvent.PendingApproval detail) {
     var gate = new CompletableFuture<Boolean>();
-    approvalGates.put(callId, gate);
+    approvalGates.put(callId, new PendingGate(detail, System.currentTimeMillis(), gate));
     return gate;
   }
 
@@ -315,7 +330,7 @@ final class AgentSession {
   boolean approve(String callId) {
     var gate = approvalGates.remove(callId);
     if (gate != null) {
-      gate.complete(true);
+      gate.future().complete(true);
       return true;
     }
     return false;
@@ -325,10 +340,52 @@ final class AgentSession {
   boolean reject(String callId) {
     var gate = approvalGates.remove(callId);
     if (gate != null) {
-      gate.complete(false);
+      gate.future().complete(false);
       return true;
     }
     return false;
+  }
+
+  /**
+   * Tempdoc 834 §6.2 — the tool calls currently held at an approval gate, oldest first. Empty means
+   * NONE are pending (the snapshot's key is always emitted, so absent-on-the-wire can keep meaning
+   * "unknown" for legacy records).
+   */
+  List<AgentEvent.PendingApproval> pendingApprovals() {
+    return approvalGates.values().stream()
+        .sorted(java.util.Comparator.comparingLong(PendingGate::sinceEpochMs))
+        .map(PendingGate::detail)
+        .filter(java.util.Objects::nonNull)
+        .toList();
+  }
+
+  /**
+   * Tempdoc 834 §6.1/§6.2 — why this run is currently stopped, or {@code null} when it is running.
+   * Derived from the four park sources in the order §11 lists them: the budget gate, the context
+   * gate, a held approval gate, then the posture-graded zero-observer policy.
+   */
+  AgentEvent.ParkSnapshot parkSnapshot() {
+    if (budgetGateHeld()) {
+      return new AgentEvent.ParkSnapshot("budget", budgetGateSinceEpochMs, "budget gate held");
+    }
+    if (contextGateHeld()) {
+      return new AgentEvent.ParkSnapshot("context", contextGateSinceEpochMs, "context gate held");
+    }
+    var held =
+        approvalGates.values().stream()
+            .min(java.util.Comparator.comparingLong(PendingGate::sinceEpochMs))
+            .orElse(null);
+    if (held != null) {
+      String callIds =
+          approvalGates.keySet().stream().sorted().collect(java.util.stream.Collectors.joining(","));
+      return new AgentEvent.ParkSnapshot("approval", held.sinceEpochMs(), callIds);
+    }
+    if (zeroObserverPolicy() == ZeroObserverPolicy.PARK) {
+      // No transition to timestamp — the zero-observer park is DERIVED from an observer count, so
+      // 0 honestly says "start unknown" rather than inventing now().
+      return new AgentEvent.ParkSnapshot("unobserved", 0L, "no observers attached");
+    }
+    return null;
   }
 
   // --- Budget gate (tempdoc 577 §2.12 Move 2) ---
@@ -344,6 +401,9 @@ final class AgentSession {
   }
 
   private volatile CompletableFuture<BudgetGateDecision> budgetGate;
+  // Tempdoc 834 §6.2 — when the current budget park began, so the snapshot's ParkSnapshot can say
+  // "parked since", not just "parked".
+  private volatile long budgetGateSinceEpochMs;
 
   /**
    * Tempdoc 577 Move 2 — park the run at the budget boundary as a HELD decision (the budget
@@ -354,6 +414,7 @@ final class AgentSession {
   CompletableFuture<BudgetGateDecision> createBudgetGate() {
     var gate = new CompletableFuture<BudgetGateDecision>();
     budgetGate = gate;
+    budgetGateSinceEpochMs = System.currentTimeMillis();
     return gate;
   }
 
@@ -395,6 +456,8 @@ final class AgentSession {
   }
 
   private volatile CompletableFuture<ContextGateDecision> contextGate;
+  // Tempdoc 834 §6.2 — the context park's start, mirroring budgetGateSinceEpochMs.
+  private volatile long contextGateSinceEpochMs;
   // The context gate fires AT MOST ONCE per run: once the user decides (continue/summarize), the run
   // is not re-parked every iteration. A renewed pressure spike after a summarize is covered by the
   // hard budget gate. Loop-thread-only, so a plain boolean suffices.
@@ -408,6 +471,7 @@ final class AgentSession {
   CompletableFuture<ContextGateDecision> createContextGate() {
     var gate = new CompletableFuture<ContextGateDecision>();
     contextGate = gate;
+    contextGateSinceEpochMs = System.currentTimeMillis();
     contextGateFired = true;
     return gate;
   }
@@ -628,7 +692,7 @@ final class AgentSession {
    * as a defensive safeguard against future loop restructuring.
    */
   void clearPendingApprovals() {
-    approvalGates.values().forEach(f -> f.complete(false));
+    approvalGates.values().forEach(g -> g.future().complete(false));
     approvalGates.clear();
   }
 
