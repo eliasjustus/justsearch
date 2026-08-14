@@ -105,7 +105,12 @@
     },
     "otlp-sink-ensure": {
       "file": "otlp-sink-ensure.mjs",
-      "role": "telemetry"
+      "role": "telemetry",
+      "bite": {
+        "kind": "unit",
+        "test": "scripts/agent-analytics/hooks/otlp-sink-ensure.test.mjs",
+        "note": "829 R8: not blocking (role stays telemetry, enforcer skips non-blocking bite), but exercises the death-warning/staleness-notice message builders + launch-log tail reader so the fail-loud path (asyncRewake + exit 2, see the SessionStart binding) has a regression guard, not just the manual negative probe"
+      }
     },
     "governance-precommit-hint": {
       "file": "governance-precommit-hint.mjs",
@@ -305,7 +310,7 @@
           {
             "hookId": "otlp-sink-ensure",
             "timeout": 5,
-            "async": true
+            "asyncRewake": true
           }
         ]
       }
