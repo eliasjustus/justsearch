@@ -1186,7 +1186,116 @@ verbatim (`ServerPropsOpsTest`), the manifest field's additive contract
 (`RuntimeManifestSchemaCompatibilityTest`), and the ceiling pin
 (`ConversationEngineTokenCeilingTest`).
 
-**Tier 2 (§4 measurement) and Tier 3 (§9g live round) are PENDING** — both need a
-dev-stack lease and an indexed corpus, which this slice deliberately did not take. Tier 2
-remains the stated merge gate: zero empty and zero truncated answers at the Standard
-configuration, plus the 512-versus-`-1` quality comparison that settles §10c.
+**Tier 2 (§4 measurement) and Tier 3 (§9g live round) were PENDING at implementation
+time** — both need a dev-stack lease and an indexed corpus. §10e records the supervised
+round that ran them: **Tier 3 verified (with one arm still open), Tier 2 still open.**
+
+### 10e. Live round, 2026-08-14 (supervised, dev-stack lease held)
+
+Stack: this branch's own dist (`distFrom` = this worktree), own `.dev-data`, corpus
+ingested from `docs/explanation` + `docs/decisions` → **81 searchable documents**. Two runs:
+`a3319f7a` at `-c 4096`, then `232a5da5` at `-c 8192` after the finding in leg 3.
+
+**Ownership proven per §2.2a, by argv rather than the launch log** (the campaign's own
+recommendation — this run also wrote no `Starting server with command:` line):
+
+```
+llama-server.exe -m ...\Qwen_Qwen3.5-9B-Q4_K_M.gguf --jinja --reasoning-format deepseek
+  --reasoning-budget 512 --host 127.0.0.1 --metrics --port 8082 -c 8192 -ngl 99 -fa on
+```
+
+PID 8132, parent = this run's Head (PID 36172, the `pid` in its own runtime manifest);
+`llama-server.exe` verified absent twice *before* start; zero occurrences of the adoption
+warning (`already responding on port`) in the log. So the flag under test is this stack's.
+
+**The 512 came from the shipped default, not from the environment.** Nothing set the
+sysprop or env var, and the argv above carries `--reasoning-budget 512`. One correction to
+§9g step 2: `/api/debug/effective-config` reports `source: "none"` for
+`justsearch.llm.reasoning_budget`, **not** `source: "default"` — the key registers no
+ordinal-100 EnvRegistry default, so the built-in `resolveInt` fallback wins with no source
+entry to name. `none` + the argv is the pass signature here; `env_var`/`jvm_arg` would be
+the failure signature.
+
+**The build floor's verdict is live on the manifest** — `ai.thinkingSupport: "SUPPORTED"`,
+beside `serverBuildActual: "b8571"` (and no `serverBuildExpected`: the shared cuda12 binary
+carries no `runtime-version.txt`, the documented unknown-tolerant path). b8571 accepted the
+finite budget at launch, so the relaunch-without-the-flag path was not exercised live — it
+remains unit-tested only, which is the honest state for a path that needs a rejecting build.
+
+#### Tier 3 — rag-ask through the real chain: **PASS on two legs, one leg open**
+
+Same question (`What is the role of the Worker process in the JustSearch architecture?`)
+against the indexed corpus, read off the raw SSE stream:
+
+| Leg | Body | `reasoning_chunk` | answer | citations | `<think>` in `chunk` | completionTokens |
+|---|---|---|---|---|---|---|
+| Standard | `{}` | **446 frames** | 1445 chars | 5 | **0** | 782 |
+| Quick | `{enableThinking:false, maxTokens:512}` | **0** | 1137 chars | 5 | 0 | 236 |
+| Thorough | `{enableThinking:true, maxTokens:3072, topK:12}` | — | **error** | — | — | — |
+
+- **The chain is live end-to-end on `core.rag-ask`** — the leg the probe campaign could
+  never run (it fell back to `core.free-chat` for want of a corpus). Reasoning frames arrive,
+  the answer is complete and cited, and `completionTokens` (this slice's ride-along) reads
+  782 = 446 reasoning + ~336 answer, which is the budget accounting the §4 measurement wanted.
+- **Per-request suppression works on the ask path**, not just the agent path: Quick produced
+  exactly zero reasoning frames against a thinking-enabled server (5.8s vs 38.4s).
+- **The think-tag filter had nothing to strip and stripped nothing**: zero `<think>` /
+  `</think>` occurrences in answer text across every dispatch of this round, consistent with
+  the campaign's 21 dispatches. It stays defence-in-depth, not an active fix.
+- **Thorough failed for a reason unrelated to thinking, and is still unverified.** At the
+  dev stack's `contextLength: 4096`, the rung's 12 passages plus `maxTokens: 3072` overflow
+  the window — llama-server logged `request (5878 tokens) exceeds the available context size
+  (4096 tokens)` and returned HTTP 400, surfacing as a bare `LLM_ERROR` with an empty turn.
+  Prompt + `max_tokens` versus `n_ctx` is arithmetic that budget 0 would fail identically, so
+  this is not a regression from this slice — but **the Thorough arm was not re-run after the
+  stack moved to `-c 8192`**, so its end-to-end pass is still owed. (The product default for
+  `justsearch.context.size` is 8192; this dev data dir carried 4096.)
+- **Not exercised: the rendered `jf-reasoning-block`.** This round verified the wire, not the
+  screen; §9d's no-FE-change claim still rests on the untouched ui-web suite.
+
+#### Tier 2 — the merge gate: **NOT MET, and not refuted — the round was contaminated**
+
+Design: 6 grounded questions × 2 arms (server default 512 vs per-request
+`enableThinking:false`) at an identical `maxTokens: 1024`, so thinking is the only variable.
+**1 of 12 dispatches completed**; the other 11 aborted with an undici 300s body timeout.
+
+| Question | Arm | frames | completionTokens | answer | citations | empty | `<think>` | wall |
+|---|---|---|---|---|---|---|---|---|
+| q1 worker-role | 512 default | **512 (capped)** | 709 | 943 chars | 5 | no | 0 | 243s |
+| all others | both | — | — | — | — | — | — | aborted |
+
+**Cause, established before reporting rather than assumed**: a foreign
+`runHeadlessEval` Head + Worker (API port 33221, started 11:30:12, outside the dev-runner's
+lease and therefore invisible to `quick_health`) was driving the shared GPU to **100%
+utilisation and 11174 MiB of 12282 MiB**. The same question that answered in 38s uncontended
+took 243s inside the battery. A latency-sensitive measurement under that load measures the
+neighbour, so the numbers were discarded rather than reported.
+
+What survives the contamination, because it is structural rather than timing-dependent:
+
+- **The one completed Standard-configuration dispatch is a green data point for the merge
+  bar**: reasoning capped at exactly 512, and the answer still arrived complete (943 chars)
+  and cited (5) — no empty, no truncation. n=1, which is a data point, not a measurement.
+- **A server-wide budget makes the *auxiliary* pipeline calls think too.** Across the round
+  llama-server logged **95 `reasoning-budget: activated` against 101
+  `/v1/chat/completions` requests** — a rag-ask turn is ~6 LLM calls (query rewrite, answer,
+  claim matching), and only the answer call carries the request's `enableThinking`. This is
+  §8's "consequence to verify on Branch 2", now observed: the latency cost of the default is
+  multiplied across the pipeline, not paid once per turn. Terminal states seen: 2 `budget
+  exhausted`, 3 `deactivated (natural end)`, 2 `forced sequence complete`.
+
+**Tier 2 therefore remains the open merge gate**, and needs an idle GPU. Two amendments for
+whoever runs it: give the HTTP client no body timeout (or one well above a contended turn),
+and assert the machine is idle by process + `nvidia-smi`, not by `quick_health` — the
+dev-runner lease cannot see a run it did not start (the §7a Attempt-1 hazard, recurring).
+
+**One comparison from §4 is now unreachable by design, and that is correct.** "512 versus
+`-1`" cannot be run through configuration any more: §9f's clamp refuses `-1` and returns 512,
+which is exactly the point of making the empty-answer configuration unrepresentable. B3's 4/4
+already settled that comparison; re-running it would mean removing the guard.
+
+#### Teardown
+
+Stopped through the dev-runner; verified after: no `llama-server.exe`, no dev-runner node
+process, ports 8081/8082/API/5173 closed, `quick_health` → `running: false`. The residual
+2683 MiB of GPU memory belongs to the foreign eval run, which was left alone.
