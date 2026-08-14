@@ -535,6 +535,12 @@ export function adoptRunSession(
 export interface Sv3StoreConversation {
   readonly id: string;
   readonly title: string | null;
+  /**
+   * Who named it (tempdoc 838), or null when nobody has. Optional because a row this window
+   * SYNTHESISES for a conversation it has just opened has no provenance to report yet — only a row
+   * that came off the wire does.
+   */
+  readonly titleSource?: 'user' | 'auto' | null;
   /** Lock-safe (tempdoc 562): the store returns "" while the conversation store is encrypted. */
   readonly firstUserMessage: string;
   readonly createdAt: number;
@@ -579,10 +585,11 @@ export function mergeStoreConversations(
     .map<Sv3Session>((c) => ({
       id: c.id,
       title: titleFor(c, ''),
-      // Whether the store's title came from a rename or from auto-titling is not on the wire, and
-      // this window only auto-titles conversations IT opened — so a merged-in row starts unflagged
-      // rather than claiming a provenance the store cannot report.
-      renamed: false,
+      // Tempdoc 838 — the provenance IS on the wire now, and seeding from it is what makes "a
+      // reader's name is never overwritten" true rather than true-until-reload. A conversation
+      // merged back from the store after a reload used to start unflagged, so the next ask in it
+      // auto-titled over the name the reader had chosen.
+      renamed: c.titleSource === 'user',
       turns: [],
       createdAt: c.createdAt,
       updatedAt: c.lastActiveAt,
@@ -788,6 +795,30 @@ export function renameSession(list: Sv3SessionList, id: string, title: string): 
     sessions: list.sessions.map((s) =>
       s.id === id ? { ...s, title: resolution.title, renamed: true } : s,
     ),
+  };
+}
+
+/**
+ * Put a rename BACK (tempdoc 838). The store refused the write — a locked key, an unreachable Head —
+ * so the row must stop showing a name nothing will remember.
+ *
+ * Not {@link renameSession} with the old value: that is the READER's decision, and it would both
+ * refuse an empty restore (a conversation that never had a name) and leave `renamed` raised, which
+ * would then outrank auto-titling on the strength of a rename that never happened. A revert restores
+ * the flag it found, because the question "did the reader name this?" has the same answer it had
+ * before the attempt.
+ */
+export function restoreSessionTitle(
+  list: Sv3SessionList,
+  id: string,
+  title: string,
+  renamed: boolean,
+): Sv3SessionList {
+  const session = sessionById(list, id);
+  if (session === null || (session.title === title && session.renamed === renamed)) return list;
+  return {
+    ...list,
+    sessions: list.sessions.map((s) => (s.id === id ? { ...s, title, renamed } : s)),
   };
 }
 
