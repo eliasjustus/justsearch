@@ -55,21 +55,23 @@ public final class AgUiEventTranslator {
           agui(
               "TOOL_CALL_RESULT",
               Map.of("toolCallId", nz(e.callId()), "content", e.result() == null ? "" : nz(e.result().message())));
-      case AgentEvent.StateSnapshot e ->
-          agui(
-              "STATE_SNAPSHOT",
-              Map.of(
-                  "snapshot",
-                  Map.of(
-                      "iteration", e.iteration(),
-                      "budgetRemaining", e.budgetRemaining(),
-                      "toolCallsExecuted", e.toolCallsExecuted(),
-                      "messageCount", e.messageCount(),
-                      "activeAgentId", nz(e.activeAgentId()))));
+      // Tempdoc 834 §6.3.4 — the AG-UI snapshot carries the new act-on-the-run facts too, and is a
+      // LinkedHashMap for the same reason base() is: `park` is ABSENT when the run is not parked.
+      case AgentEvent.StateSnapshot e -> agui("STATE_SNAPSHOT", Map.of("snapshot", snapshotOf(e)));
       // Our richer gating/approval/budget/context/handoff/directive/virtual/batch events have no AG-UI
       // lifecycle analogue → the AG-UI CUSTOM catch-all (original name + canonical payload).
       default -> agui("CUSTOM", Map.of("name", AgentEventPayloads.name(event), "value", AgentEventPayloads.base(event)));
     };
+  }
+
+  /**
+   * The AG-UI {@code STATE_SNAPSHOT} body. Delegates the two nested shapes to {@link
+   * AgentEventPayloads} so the AG-UI projection cannot drift from the canonical one.
+   */
+  private static Map<String, Object> snapshotOf(AgentEvent.StateSnapshot e) {
+    // base() already null-guards activeAgentId to "" exactly as nz() does, so this is the same five
+    // keys it emitted before 834, plus the three new ones.
+    return new LinkedHashMap<>(AgentEventPayloads.base(e));
   }
 
   /** Build an AG-UI SseEvent: the wire name is the AG-UI type, also echoed in the payload {@code type}. */

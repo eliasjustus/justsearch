@@ -80,8 +80,20 @@ final class AgentEventPayloadConformanceTest {
           new AgentEvent.SessionStarted("sid"),
           new AgentEvent.HandoffProposed("from", "to", "reason"),
           new AgentEvent.HandoffExecuted("from", "to"),
-          // Tempdoc 585 §D Phase 2 (C4) — the state primer (all fields populated).
-          new AgentEvent.StateSnapshot(2, 1500, 3, 7, "primary", NO_TRACE));
+          // Tempdoc 585 §D Phase 2 (C4) — the state primer (all fields populated). Tempdoc 834 §6:
+          // maximal means a held approval gate (so `pendingApprovals` is non-empty) AND an active
+          // park (so the conditional `park` key is emitted).
+          new AgentEvent.StateSnapshot(
+              2,
+              1500,
+              3,
+              7,
+              "primary",
+              List.of(
+                  new AgentEvent.PendingApproval("id", "tool", "args", "high", "confirm")),
+              "WATCH",
+              new AgentEvent.ParkSnapshot("approval", 1_700_000_000_000L, "id"),
+              NO_TRACE));
 
   @Test
   @DisplayName("MAXIMAL_VARIANTS lists every AgentEvent permit")

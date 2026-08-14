@@ -815,6 +815,30 @@
             "objectType": null
           },
           {
+            "name": "pendingApprovals",
+            "type": "ARRAY",
+            "optional": true,
+            "enumValues": [],
+            "elementType": "OBJECT",
+            "objectType": "PendingApproval"
+          },
+          {
+            "name": "autonomyLevel",
+            "type": "STRING",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "park",
+            "type": "OBJECT",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": "ParkSnapshot"
+          },
+          {
             "name": "trace",
             "type": "OBJECT",
             "optional": true,

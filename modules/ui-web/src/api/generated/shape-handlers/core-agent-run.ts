@@ -7,7 +7,7 @@
  *   node scripts/codegen/gen-shape-handlers.mjs
  */
 
-import type { AgentSentenceCite, AgentSource, ProposedCall, TracePayload } from './shared.js';
+import type { AgentSentenceCite, AgentSource, ParkSnapshot, PendingApproval, ProposedCall, TracePayload } from './shared.js';
 
 /** Payload of the `session_started` event. */
 export interface CoreAgentRunSessionStartedPayload {
@@ -182,6 +182,9 @@ export interface CoreAgentRunStateSnapshotPayload {
   toolCallsExecuted: number;
   messageCount: number;
   activeAgentId: string;
+  pendingApprovals?: PendingApproval[];
+  autonomyLevel?: string;
+  park?: ParkSnapshot;
   trace?: TracePayload;
 }
 

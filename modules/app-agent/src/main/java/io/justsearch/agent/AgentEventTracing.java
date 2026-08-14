@@ -83,7 +83,7 @@ final class AgentEventTracing {
       case AgentEvent.StateSnapshot e ->
           new AgentEvent.StateSnapshot(
               e.iteration(), e.budgetRemaining(), e.toolCallsExecuted(), e.messageCount(),
-              e.activeAgentId(), trace);
+              e.activeAgentId(), e.pendingApprovals(), e.autonomyLevel(), e.park(), trace);
     };
   }
 
