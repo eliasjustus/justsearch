@@ -54,8 +54,11 @@ public final class StructuredContentExtractor implements ContentExtractorProvide
   }
 
   public StructuredContentExtractor(int maxContentLength) {
-    this.parser = new AutoDetectParser();
-    this.tika = new Tika();
+    // Text-named, text-byte files must not be routed to a binary parser by a magic-number
+    // collision — see TextNameMagicConflictDetector (tempdoc 803).
+    org.apache.tika.detect.Detector detector = TextNameMagicConflictDetector.wrapDefault();
+    this.parser = new AutoDetectParser(detector);
+    this.tika = new Tika(detector);
     this.maxContentLength = maxContentLength;
   }
 
