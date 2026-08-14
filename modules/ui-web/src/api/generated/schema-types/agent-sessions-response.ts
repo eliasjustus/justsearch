@@ -13,6 +13,7 @@ import { z } from 'zod';
 export interface AgentSessionsResponse {
   sessions?: ({
     activeAgentId?: string | null;
+    interruptedAt?: string | null;
     iterationsUsed?: number | null;
     preview?: string | null;
     resumable?: boolean | null;
@@ -32,6 +33,7 @@ export interface AgentSessionsResponse {
 export const agentSessionsResponseSchema = z.strictObject({
   "sessions": z.array(z.strictObject({
     "activeAgentId": z.string().nullable().optional(),
+    "interruptedAt": z.string().nullable().optional(),
     "iterationsUsed": z.number().int().nullable().optional(),
     "preview": z.string().nullable().optional(),
     "resumable": z.boolean().nullable().optional(),

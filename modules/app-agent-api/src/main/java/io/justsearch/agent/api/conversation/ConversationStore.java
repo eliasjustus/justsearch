@@ -173,6 +173,30 @@ public interface ConversationStore {
     return List.of();
   }
 
+  /**
+   * Tempdoc 834 §4.3 — mark this conversation as having a turn OPEN (generation in flight), or
+   * clear the mark when the turn closes.
+   *
+   * <p>Why only iterating shapes need it: {@code ConversationEngine} persists the assistant turn
+   * INSIDE its iteration loop, so a {@code WITHIN_TURN_ITERATION} shape writes one assistant turn
+   * per iteration. A crash at iteration 3 of 8 therefore leaves three persisted turns that read as
+   * a finished answer. A ONE_SHOT ask has no such gap — it persists once, complete.
+   *
+   * <p>The mark must be cleared in a {@code finally}, never at selected exits: the dispatch body has
+   * eight of them, and clearing at only some would render every cleanly-errored run "interrupted" —
+   * the inverse dishonesty. Only a process death then leaves it set, which is exactly the condition
+   * it encodes. No-op for stores without persistence.
+   */
+  default void setTurnOpen(String sessionId, boolean open) {}
+
+  /**
+   * Tempdoc 834 §4.3 — whether this conversation has a turn left open by a process that died
+   * mid-generation. {@code false} for stores without persistence.
+   */
+  default boolean isTurnOpen(String sessionId) {
+    return false;
+  }
+
   /** Summary of a persisted session for list UIs. */
   record SessionSummary(
       String sessionId,

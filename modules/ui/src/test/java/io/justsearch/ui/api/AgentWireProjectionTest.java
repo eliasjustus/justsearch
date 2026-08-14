@@ -45,6 +45,27 @@ final class AgentWireProjectionTest {
     m.put("totalTokensUsed", 120);
     m.put("activeAgentId", "planner");
     m.put("terminationReason", termination);
+    // Tempdoc 834 §5.3 — toSessionSummary ALWAYS emits the key (null for a run that was never
+    // interrupted), so the record projection must too or the wire JSON changes.
+    m.put("interruptedAt", null);
+    m.put("preview", "find files");
+    return m;
+  }
+
+  /** Mirrors {@code AgentRunStore.toSessionSummary} for a run a restart found mid-flight. */
+  private static Map<String, Object> interruptedSessionSummaryMap() {
+    var m = new LinkedHashMap<String, Object>();
+    m.put("sessionId", "s-2");
+    m.put("startedAt", "2026-04-28T10:00:00Z");
+    m.put("updatedAt", "2026-04-28T10:01:00Z");
+    m.put("state", "WAITING_APPROVAL");
+    m.put("resumable", true);
+    m.put("iterationsUsed", 2);
+    m.put("toolCallsExecuted", 1);
+    m.put("totalTokensUsed", 120);
+    m.put("activeAgentId", "planner");
+    m.put("terminationReason", null);
+    m.put("interruptedAt", "2026-04-28T10:05:00Z");
     m.put("preview", "find files");
     return m;
   }
@@ -68,6 +89,21 @@ final class AgentWireProjectionTest {
   void sessionsRoundTrip() {
     Map<String, Object> map = sessionSummaryMap();
     AgentSessionSummary record = MAPPER.convertValue(map, AgentSessionSummary.class);
+    JsonNode fromRecord = MAPPER.valueToTree(new AgentSessionsResponse(List.of(record)));
+    JsonNode fromMap = MAPPER.valueToTree(Map.of("sessions", List.of(map)));
+    assertEquals(fromMap, fromRecord, "AgentSessionSummary projection must not change the wire JSON");
+  }
+
+  @Test
+  @DisplayName("interrupted row: interruptedAt survives the Map → record projection")
+  void interruptedRowRoundTrip() {
+    Map<String, Object> map = interruptedSessionSummaryMap();
+    AgentSessionSummary record = MAPPER.convertValue(map, AgentSessionSummary.class);
+    assertEquals("2026-04-28T10:05:00Z", record.interruptedAt());
+    // 834 §5.2: the marker is ADDITIVE — the resume seed and the resumable flag are untouched, so
+    // the run can still be resumed from exactly where it stopped.
+    assertEquals("WAITING_APPROVAL", record.state());
+    assertEquals(Boolean.TRUE, record.resumable());
     JsonNode fromRecord = MAPPER.valueToTree(new AgentSessionsResponse(List.of(record)));
     JsonNode fromMap = MAPPER.valueToTree(Map.of("sessions", List.of(map)));
     assertEquals(fromMap, fromRecord, "AgentSessionSummary projection must not change the wire JSON");

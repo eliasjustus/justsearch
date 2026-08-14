@@ -869,6 +869,349 @@ final class SubstrateDrivenEngineTest {
         "RAGContext must see the persisted exclusion seeded from the conversationId/threadId");
   }
 
+  // --- Tempdoc 834 §4.3: the turn-open marker ---------------------------------------------------
+
+  /**
+   * The eight exits of {@code dispatchSubstrateDriven}, each as a fully-wired scenario. A spot check
+   * on two of them is exactly the bug the design named: clearing at selected exits would leave every
+   * cleanly-errored run marked "interrupted", the inverse dishonesty of not marking at all.
+   */
+  private static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> theEightExits() {
+    return java.util.stream.Stream.of(
+        org.junit.jupiter.params.provider.Arguments.of("injector terminated", Exit.INJECTOR_TERMINATED),
+        org.junit.jupiter.params.provider.Arguments.of("AI unavailable", Exit.AI_UNAVAILABLE),
+        org.junit.jupiter.params.provider.Arguments.of("LlmStreamException", Exit.LLM_STREAM_ERROR),
+        org.junit.jupiter.params.provider.Arguments.of("consumer onDone threw", Exit.CONSUMER_THREW),
+        org.junit.jupiter.params.provider.Arguments.of("controller next threw", Exit.CONTROLLER_THREW),
+        org.junit.jupiter.params.provider.Arguments.of("STOP_SUCCESS", Exit.STOP_SUCCESS),
+        org.junit.jupiter.params.provider.Arguments.of("STOP_ERROR", Exit.STOP_ERROR),
+        org.junit.jupiter.params.provider.Arguments.of("iteration hard cap", Exit.HARD_CAP));
+  }
+
+  private enum Exit {
+    INJECTOR_TERMINATED,
+    AI_UNAVAILABLE,
+    LLM_STREAM_ERROR,
+    CONSUMER_THREW,
+    CONTROLLER_THREW,
+    STOP_SUCCESS,
+    STOP_ERROR,
+    HARD_CAP
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest(name = "exit: {0}")
+  @org.junit.jupiter.params.provider.MethodSource("theEightExits")
+  @DisplayName("tempdoc 834 §4.3: the turn-open marker is cleared on every one of the eight exits")
+  void turnOpenMarkerIsClearedOnEveryExit(String label, Exit exit) {
+    var store = new TurnMarkerStore();
+    var engine = engineForExit(exit, store);
+
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("sessionId", "conv-1");
+    engine.run(SHAPE_ID, body, Audience.USER, ev -> {});
+
+    assertTrue(store.open.isEmpty(), label + ": the turn-open marker must be cleared, not left set");
+  }
+
+  @Test
+  @DisplayName("tempdoc 834 §4.3: an ITERATING shape opens the marker; a ONE_SHOT ask never does")
+  void onlyIteratingShapesOpenTheMarker() {
+    // The gap is per-iteration persistence: an iterating shape writes one assistant turn per
+    // iteration, so a crash at iteration 3 of 8 leaves three turns reading as a finished answer.
+    // A ONE_SHOT ask persists once, complete — no gap, so no marker (834 §4.1 vs §4.3).
+    var iterating = new TurnMarkerStore();
+    var controller = new BoundedController("core.two-iter", 2);
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("sessionId", "conv-1");
+    newEngineWithStore(
+            persistentIteratingShape(controller.id()),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(controller),
+            new ScriptedAi(List.of("a", "b")),
+            iterating)
+        .run(SHAPE_ID, body, Audience.USER, ev -> {});
+    assertEquals(List.of(true, false), iterating.transitions, "opened before iteration 0, then cleared");
+
+    var oneShot = new TurnMarkerStore();
+    newEngineWithStore(
+            persistentOneShotShape(),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(SingleHopController.INSTANCE),
+            new ScriptedAi(List.of("a")),
+            oneShot)
+        .run(SHAPE_ID, body, Audience.USER, ev -> {});
+    assertEquals(List.of(), oneShot.transitions, "a one-shot ask needs no marker at all");
+  }
+
+  @Test
+  @DisplayName("tempdoc 834 §4.3: the marker is genuinely SET while generation is in flight")
+  void theMarkerIsSetDuringGeneration() {
+    // The falsifier for the eight-exit test: if setTurnOpen(true) never happened, "always cleared"
+    // would pass vacuously. A process killed at THIS instant — mid-iteration, with an assistant
+    // turn already persisted and more to come — leaves the marker set on disk, which is exactly
+    // the condition it encodes. That is unreachable in-process because a `finally` also runs on a
+    // throw, so the honest test is to observe the state at the moment of maximum exposure.
+    var store = new TurnMarkerStore();
+    var openDuringGeneration = new java.util.concurrent.atomic.AtomicBoolean();
+    var probe =
+        new StreamConsumer() {
+          @Override
+          public String id() {
+            return "core.mid-run-probe";
+          }
+
+          @Override
+          public StreamConsumerResult onChunk(String chunkText, ConversationContext ctx) {
+            return StreamConsumerResult.empty();
+          }
+
+          @Override
+          public StreamConsumerResult onDone(String fullText, ConversationContext ctx) {
+            openDuringGeneration.set(store.isTurnOpen("conv-1"));
+            return StreamConsumerResult.empty();
+          }
+        };
+    var controller = new BoundedController("core.two-iter", 2);
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("sessionId", "conv-1");
+    newEngineWithStore(
+            persistentIteratingShape(controller.id(), List.of(), List.of(probe.id())),
+            List.of(),
+            List.of(),
+            List.of(probe),
+            List.of(controller),
+            new ScriptedAi(List.of("a", "b")),
+            store)
+        .run(SHAPE_ID, body, Audience.USER, ev -> {});
+
+    assertTrue(openDuringGeneration.get(), "the marker must be set while the turn is still open");
+    assertTrue(store.open.isEmpty(), "and cleared once the run finishes");
+  }
+
+  private ConversationEngine engineForExit(Exit exit, ConversationStore store) {
+    List<ContextInjector> injectors = List.of();
+    List<StreamConsumer> consumers = List.of();
+    OnlineAiService llm = new ScriptedAi(List.of("a", "b", "c"));
+    IterationController controller = new BoundedController("core.bounded", 1);
+
+    switch (exit) {
+      case INJECTOR_TERMINATED -> injectors = List.of(new TerminalInjector());
+      case AI_UNAVAILABLE -> llm = new UnavailableAi();
+      case LLM_STREAM_ERROR -> llm = new FailingAi(new IllegalStateException("stream blew up"));
+      case CONSUMER_THREW -> consumers = List.of(new ThrowingConsumer());
+      case CONTROLLER_THREW -> controller = new ThrowingController();
+      case STOP_SUCCESS -> controller = new BoundedController("core.stop-success", 1);
+      case STOP_ERROR -> controller = new FixedController("core.stop-error", IterationDecision.STOP_ERROR);
+      case HARD_CAP -> {
+        controller = new FixedController("core.infinite", IterationDecision.CONTINUE);
+        var responses = new ArrayList<String>();
+        for (int i = 0; i < 25; i++) {
+          responses.add("tick-" + i);
+        }
+        llm = new ScriptedAi(responses);
+      }
+    }
+    return newEngineWithStore(
+        persistentIteratingShape(
+            controller.id(),
+            injectors.stream().map(ContextInjector::id).toList(),
+            consumers.stream().map(StreamConsumer::id).toList()),
+        List.of(),
+        injectors,
+        consumers,
+        List.of(controller),
+        llm,
+        store);
+  }
+
+  /** Records every setTurnOpen transition and the current open set. */
+  private static final class TurnMarkerStore implements ConversationStore {
+    final List<Boolean> transitions = new ArrayList<>();
+    final java.util.Set<String> open = new java.util.LinkedHashSet<>();
+
+    @Override
+    public void setTurnOpen(String sessionId, boolean isOpen) {
+      transitions.add(isOpen);
+      if (isOpen) {
+        open.add(sessionId);
+      } else {
+        open.remove(sessionId);
+      }
+    }
+
+    @Override
+    public boolean isTurnOpen(String sessionId) {
+      return open.contains(sessionId);
+    }
+
+    @Override
+    public List<Map<String, Object>> loadHistory(String sessionId) {
+      return List.of();
+    }
+
+    @Override
+    public void appendMessage(String sessionId, String shapeId, Map<String, Object> message) {}
+
+    @Override
+    public List<SessionSummary> listSessions(String shapeId, int limit) {
+      return List.of();
+    }
+
+    @Override
+    public Optional<SessionSummary> getSessionMeta(String sessionId) {
+      return Optional.empty();
+    }
+
+    @Override
+    public void deleteSession(String sessionId) {}
+
+    @Override
+    public void branchFrom(String parentSessionId, String branchPointMessageId, String newSessionId) {}
+
+    @Override
+    public void setContextFloor(String sessionId, String floorMessageId) {}
+
+    @Override
+    public List<Map<String, Object>> loadEffectiveContext(String sessionId) {
+      return List.of();
+    }
+
+    @Override
+    public void compactContext(String sessionId, String floorMessageId, String summaryText) {}
+
+    @Override
+    public void excludeMessage(String sessionId, String messageId, boolean excluded) {}
+
+    @Override
+    public List<String> excludedMessageIds(String sessionId) {
+      return List.of();
+    }
+  }
+
+  private static final class TerminalInjector implements ContextInjector {
+    @Override
+    public String id() {
+      return "core.terminal-injector";
+    }
+
+    @Override
+    public io.justsearch.agent.api.conversation.InjectorResult inject(ConversationContext ctx) {
+      return io.justsearch.agent.api.conversation.InjectorResult.terminalError(
+          new SseEvent("error", Map.of("error", "missing input", "errorCode", "BAD_REQUEST")));
+    }
+  }
+
+  private static final class ThrowingConsumer implements StreamConsumer {
+    @Override
+    public String id() {
+      return "core.throwing-consumer";
+    }
+
+    @Override
+    public StreamConsumerResult onChunk(String chunkText, ConversationContext ctx) {
+      return StreamConsumerResult.empty();
+    }
+
+    @Override
+    public StreamConsumerResult onDone(String fullText, ConversationContext ctx) {
+      throw new IllegalStateException("consumer blew up");
+    }
+  }
+
+  private static final class ThrowingController implements IterationController {
+    @Override
+    public String id() {
+      return "core.throwing-controller";
+    }
+
+    @Override
+    public IterationDecision next(ConversationContext ctx) {
+      throw new IllegalStateException("controller blew up");
+    }
+  }
+
+  private static final class FixedController implements IterationController {
+    private final String id;
+    private final IterationDecision decision;
+
+    FixedController(String id, IterationDecision decision) {
+      this.id = id;
+      this.decision = decision;
+    }
+
+    @Override
+    public String id() {
+      return id;
+    }
+
+    @Override
+    public IterationDecision next(ConversationContext ctx) {
+      return decision;
+    }
+  }
+
+  private static final class UnavailableAi implements OnlineAiService {
+    @Override
+    public boolean isAvailable() {
+      return false;
+    }
+
+    @Override
+    public boolean isStartingUp() {
+      return false;
+    }
+
+    @Override
+    public CompletableFuture<String> summarize(String content) {
+      return CompletableFuture.failedFuture(new UnsupportedOperationException("offline"));
+    }
+
+    @Override
+    public CompletableFuture<String> askQuestion(String question, String context) {
+      return CompletableFuture.failedFuture(new UnsupportedOperationException("offline"));
+    }
+
+    @Override
+    public void stream(StreamRequest request, StreamSink sink) {
+      throw new UnsupportedOperationException("the engine must not reach an unavailable AI");
+    }
+  }
+
+  private static ConversationShape persistentIteratingShape(String controllerId) {
+    return persistentIteratingShape(controllerId, List.of(), List.of());
+  }
+
+  private static ConversationShape persistentIteratingShape(
+      String controllerId, List<String> injIds, List<String> consumerIds) {
+    return persistentShape(IterationMode.WITHIN_TURN_ITERATION, controllerId, injIds, consumerIds);
+  }
+
+  private static ConversationShape persistentOneShotShape() {
+    return persistentShape(IterationMode.ONE_SHOT, SingleHopController.ID, List.of(), List.of());
+  }
+
+  private static ConversationShape persistentShape(
+      IterationMode mode, String controllerId, List<String> injIds, List<String> consumerIds) {
+    return new ConversationShape(
+        SHAPE_ID,
+        new Presentation(
+            new I18nKey("test.label"), new I18nKey("test.desc"), Optional.empty(), Optional.empty()),
+        Audience.USER,
+        Provenance.core("v1"),
+        ExecutionMode.SUBSTRATE_DRIVEN,
+        mode,
+        PersistenceMode.PERSISTENT,
+        List.of(),
+        injIds,
+        consumerIds,
+        controllerId,
+        List.of());
+  }
+
   private ConversationEngine newEngine(
       ConversationShape shape,
       List<PromptContributor> contributors,

@@ -432,6 +432,35 @@ public final class FileConversationStore implements ConversationStore {
     return readStringList(sessionId, "excludedSourceIds");
   }
 
+  @Override
+  public void setTurnOpen(String sessionId, boolean open) {
+    // Tempdoc 834 §4.3 — one boolean on meta.json, written through the same atomic path the floor
+    // and exclusion toggles use. Written only for sessions that already exist (a turn cannot be
+    // open on a conversation with no record); clearing an unknown session is a no-op.
+    if (sessionId == null || sessionId.isBlank()) {
+      return;
+    }
+    Map<String, Object> existing = readMeta(sessionId);
+    if (existing == null && !open) {
+      return;
+    }
+    Map<String, Object> meta =
+        existing == null ? new LinkedHashMap<>() : new LinkedHashMap<>(existing);
+    if (open) {
+      meta.put("turnOpen", true);
+      meta.putIfAbsent("createdAtMs", System.currentTimeMillis());
+    } else {
+      meta.remove("turnOpen");
+    }
+    writeMetaAtomic(resolveSessionDir(sessionId), meta, sessionId);
+  }
+
+  @Override
+  public boolean isTurnOpen(String sessionId) {
+    Map<String, Object> meta = readMeta(sessionId);
+    return meta != null && Boolean.TRUE.equals(meta.get("turnOpen"));
+  }
+
   /** Tempdoc 610 — add/remove a string id in a meta.json list field (atomic write). */
   private void toggleStringInMeta(String sessionId, String key, String value, boolean present) {
     if (value == null || value.isBlank()) return;

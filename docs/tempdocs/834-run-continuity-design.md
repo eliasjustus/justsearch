@@ -941,3 +941,127 @@ marker is clear in every one.
 
 **Done when:** the above are green, and a live kill-restart cycle shows `interruptedAt` on the
 sessions list — repeated with encryption enabled and the store locked at boot.
+
+---
+
+## 12. Implementation log — S1 and S2
+
+Landed 2026-08-14 on branch `run-continuity-s1-s2`, based on `origin/main` at `781b1a53`. Scope was
+§11's S1 and S2 only; **nothing from S3a/S3b/S4/S5 is in this branch** — no `RunChannelRegistry`, no
+`RunStreamWriter`, no endpoint changes, no `RunEventHub` deletion, no `ApiSecurityFilters` change.
+
+### 12.1 S1 — as built
+
+| §11 item | landed | note |
+|---|---|---|
+| 1. `AgentEvent.StateSnapshot` + nested records | `AgentEvent.java:435-506` | 9 components; `PendingApproval` / `ParkSnapshot` nested but **not** implementing `AgentEvent`, so `getPermittedSubclasses().length` stays 22 and `AgentEventSealedTest:134` needed no bump |
+| 2. `base()` arm as `LinkedHashMap` | `AgentEventPayloads.java:204-222` | plus `approvalMap` / `parkMap` helpers at `:226-247` |
+| 3. `approvalGates` → `Map<String, PendingGate>` | `AgentSession.java:36-46,192,318-390` | `pendingApprovals()` at `:352`; the two bulk sweeps at `:192` and `:700` follow |
+| 4. dispatcher passes the detail | `AgentToolDispatcher.java:265-276` | the same five values the `ToolCallPendingApproval` at `:261-263` already carries |
+| 5. park derivation | `AgentSession.parkSnapshot():363` | budget → context → approval → zero-observer, in §11's order |
+| 6. arity sites | see 12.2 | |
+| new coverage test | `AgentEventPayloadsCoverageTest.java` | 4 tests |
+
+### 12.2 Anchors that had drifted, and one design/handoff conflict
+
+Per §11's own instruction to verify each anchor:
+
+- **`hasBudgetGate()` / `hasContextGate()` do not exist.** The real methods are
+  `AgentSession.budgetGateHeld():432` and `contextGateHeld():484`. Used those.
+- **`AgentEventSchemaConformanceTest.java:53`** (§11 said `:56`) needed **no edit**: §11 item 1 also
+  mandates keeping the 5-arg convenience overload, which is what that list uses, so it compiles
+  unchanged. Same for `AgentRunStoreTest.java:356`, which switches on type only. Two of the six
+  named arity sites were therefore no-ops — recorded rather than silently skipped.
+- **A 6-arg trace-carrying overload was also required.** `AgentEventTracing` and the payload
+  conformance test both construct `StateSnapshot(…, TraceContext)`; §11 named only the 5-arg one.
+- **`PendingApproval.arguments` is `String`, not `Map<String,Object>`.** §6.2's sketch says
+  `Map<String,Object>`, but it is contradicted by the two places that pin the actual value: §6.2's
+  own source citation (`call.arguments()`, a `String`) and §11 item 4 ("the same five values already
+  being emitted"), plus §5.1's `PendingApprovalView.argumentsJson`. Resolved in favour of the
+  source-verified `String`; a `Map` would have required parsing JSON the emitter never parses.
+- **`sinceEpochMs` needed a source.** Nothing recorded when a park began, so `PendingGate` carries a
+  creation stamp and the budget/context gates each got a `…SinceEpochMs` field. The zero-observer
+  park is derived from an observer *count*, not a transition, so it honestly reports `0` ("start
+  unknown") rather than inventing `now()`.
+
+### 12.3 Two chains §11 did not mention but the build enforces
+
+Both are real gates, discovered by running them, not by reading:
+
+1. **`AgentRunShape`'s `state_snapshot` `EventDescriptor`** (`AgentRunShape.java:168-186`).
+   `AgentEventPayloadConformanceTest.everyEmittedFieldIsDeclared` fails on any emitted-but-undeclared
+   key. The three new fields are declared `.asOptional()` — `pendingApprovals` and `autonomyLevel`
+   **not** because the producer elides them (it always writes them) but because a legacy
+   `events.ndjson` record predates them, which is precisely what makes §6.3.3's absent-means-unknown
+   representable on the generated FE type (`pendingApprovals?: PendingApproval[]`).
+   Chain run: `-Dupdate.shapes.fixture=true` → `scripts/codegen/shapes.fixture.json` →
+   `node scripts/codegen/gen-shape-handlers.mjs` → `core-agent-run.ts`, plus the two hand-written
+   leaf interfaces in `shape-handlers/shared.ts`. `check-shape-handler-regen` passes.
+2. **`AgentSessionSummary` → JSON Schema → TS/Zod** for S2's `interruptedAt`. The generated Zod is a
+   `z.strictObject`, so shipping the field on the wire *without* the regen would have made the FE
+   reject every sessions response. Chain run: `:modules:app-api:updateSchemas` →
+   `SSOT/schemas/agent-sessions-response.v1.json` → `node scripts/codegen/gen-wire-schema-types.mjs`.
+
+### 12.4 S2 — as built
+
+| §11 item | landed |
+|---|---|
+| 1. `markInterrupted` + summary field | `AgentRunStore.java:387-421`, `toSessionSummary:512-514` |
+| 2. `AgentSessionSummary.interruptedAt` + regen | `AgentSessionSummary.java:24-29`; schema + TS/Zod regenerated |
+| 3. `AgentRunReconciler` | new file, `modules/app-agent/.../AgentRunReconciler.java` |
+| 4. boot pass + unlock listener | `HeadAssembly.java:498-508`, via `UnlockDeferredScan` |
+| 5. turn-open marker with its `finally` | `ConversationEngine.java:256-280` (wrapper + finally), `:377-389` (open), `ConversationStore.setTurnOpen/isTurnOpen`, `FileConversationStore.java:435-462` |
+| four presentation cases as data | new `InterruptedRunPresentation` (app-api) |
+
+Two deliberate shapes:
+
+- **`UnlockDeferredScan`** (`app-services/.../encryption/`) exists as a named class rather than an
+  inline lambda in `HeadAssembly` because its two properties are only testable if there is something
+  to hold. `UnlockDeferredScanTest` asserts that `unlock()` **returns while the scan is still
+  running** (a latch proves the key monitor was released — an inline scan would have deadlocked the
+  test) and that a **throwing scan** breaks neither `unlock()` nor the *next* scan. Both matter
+  because `DataKeyManager.fire` runs listeners inside `synchronized unlock()` and swallows their
+  throws, so getting this wrong is invisible exactly where it hurts.
+- **The turn-open marker is scoped to iterating shapes.** §4.1 says a ONE_SHOT ask's crash gap is
+  already closed (it persists once, complete), and §4.3 scopes the marker to
+  `WITHIN_TURN_ITERATION`. `onlyIteratingShapesOpenTheMarker` pins both halves.
+
+One test was rewritten mid-implementation after it failed for a reason that invalidated it: a
+"process death" falsifier that threw an `Error` inside the dispatch body. A `finally` runs on a
+throw too, so that scenario proved nothing about a killed process. Replaced with
+`theMarkerIsSetDuringGeneration`, which observes the marker from inside `StreamConsumer.onDone` — the
+moment of maximum exposure — and is the honest falsifier for the eight-exit test's "always cleared".
+
+### 12.5 Verification
+
+- `./gradlew.bat spotlessApply` then `build -x test -PskipWebBuild=true` — **BUILD SUCCESSFUL**.
+- `:modules:{app-agent-api,app-agent,app-api,app-services,ui}:test` — **all green**, including the
+  four named conformance tests (`AgentEventSealedTest`, `AgentEventPayloadConformanceTest`,
+  `AgentEventSchemaConformanceTest`, `AgUiEventTranslatorConformanceTest`) and
+  `AgentWireProjectionTest`.
+- FE untouched by hand, but proven: `npm run typecheck` clean; `npm run test:unit:run` —
+  **421 files / 5140 tests passed**.
+- `node scripts/ci/check-shape-handler-regen.mjs` — passes.
+
+**Mutation probe on the new coverage test.** Deleted `snapshot.put("autonomyLevel", …)` from
+`AgentEventPayloads.base()`. `AgentEventPayloadsCoverageTest` went **2 failed / 4** —
+`everyComponentIsCarried` (the reflective assertion, `:89`) and `unknownIsNotNone` (`:149`). It fails
+on the reflective assertion, i.e. for the right reason: a component with no payload key. Restored;
+green again. Note that `AgentEventSchemaConformanceTest` and `AgentEventPayloadConformanceTest`
+**stayed green** under the mutation — they pin names and declared-superset, so a *dropped* field is
+invisible to them. That is the gap §6.3.1 named and this test closes.
+
+### 12.6 Deferred — NOT done in this branch
+
+Both of §11's "done when" clauses have a live leg that needs a running stack; no dev stack was used:
+
+- **S1 live leg** — attach to a run parked at an approval gate and confirm the snapshot alone
+  carries enough to render and answer the gate. **PENDING.**
+- **S2 live leg** — start a run, kill the Head, restart, read the sessions list; then repeat with
+  encryption enabled and the store locked at boot. **PENDING.** The locked-store branch is covered
+  at unit tier by `AgentRunReconcilerTest.lockedStoreIsANoOpUntilUnlock`, which is the adverse
+  precondition, but that is not the same as a real kill-restart.
+
+Also untouched by design (S5's job): no FE consumer reads the three new snapshot fields or
+`interruptedAt` yet — `RetrospectivePanel`'s four interruption rows are §8's S2 row but sit on the FE
+seam, and the generated types are the substrate they will bind to.

@@ -10,6 +10,9 @@
           "activeAgentId" : {
             "type" : [ "string", "null" ]
           },
+          "interruptedAt" : {
+            "type" : [ "string", "null" ]
+          },
           "iterationsUsed" : {
             "type" : [ "integer", "null" ]
           },

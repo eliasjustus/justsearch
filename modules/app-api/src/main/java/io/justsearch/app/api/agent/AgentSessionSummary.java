@@ -22,4 +22,10 @@ public record AgentSessionSummary(
     Integer totalTokensUsed,
     String activeAgentId,
     AgentTerminationReason terminationReason,
+    // Tempdoc 834 §5.2/§5.3 — ISO-8601 instant at which a reconciliation pass found this run
+    // non-terminal with no owning process; null for every run that was never interrupted.
+    // Additive on purpose: `state` stays the RESUME SEED and `resumable` stays genuinely true, so
+    // the four presentation cases are derivable from (state, resumable, interruptedAt) with no
+    // inference — see InterruptedRunPresentation.
+    String interruptedAt,
     String preview) {}
