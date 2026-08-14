@@ -42,11 +42,16 @@
  *     continue-on-error integration tests) reads as FAIL and triggers a rerun that cannot
  *     possibly matter: 829 F1 found 12/12 lane reruns on 2026-08-13 were unnecessary because
  *     the one failing lane was never in the required set — every attempt-1 run was already
- *     mergeable. The no-checks-yet pre-poll heuristic (`isUnregistered`) is unaffected: `gh`
- *     emits the same "no checks reported" text regardless of `--required`, so the same text
- *     match covers both invocation shapes. The bitwise exit contract itself is unchanged by
- *     the flag — only which checks feed into it. Omitting the flag is byte-identical to the
- *     pre-829 behavior (all reported checks, required and advisory alike).
+ *     mergeable. The no-checks-yet pre-poll heuristic (`isUnregistered`) covers both invocation
+ *     shapes, but `gh` does NOT emit identical text across them (cli/cli pkg/cmd/pr/checks/checks.go,
+ *     gh 2.90.0): without `--required` it emits "no checks reported on the '%s' branch" when
+ *     `statusCheckRollup.Nodes` is empty; with `--required` it can instead emit "no required checks
+ *     reported on the '%s' branch" — checks ARE registered, but zero of them are in the required
+ *     set yet (e.g. one required context, like cla-assistant, reporting from a different workflow
+ *     run than the rest — a real staggered-registration window, not a hypothetical). Both variants
+ *     are exit 1 and both are treated as not-yet-registered by the same regex. The bitwise exit
+ *     contract itself is unchanged by the flag — only which checks feed into it. Omitting the flag
+ *     is byte-identical to the pre-829 behavior (all reported checks, required and advisory alike).
  *
  *     Exit codes of `checks-wait` itself: 0 = all checks passed, 1 = a check failed,
  *     3 = TIMEOUT (bounded by --timeout-sec, default 1800), 2 = an unexpected `gh` error
@@ -92,7 +97,7 @@ function runGhCaptured(bin, args) {
  */
 export function isUnregistered(result) {
   const text = `${result.stdout || ''}${result.stderr || ''}`;
-  if (result.status === 1 && /no checks reported/i.test(text)) return true;
+  if (result.status === 1 && /no (required )?checks reported/i.test(text)) return true;
   // A completely empty result with a non-zero/non-standard status also reads as "not up yet"
   // rather than a decodable bitwise verdict.
   if (!text.trim() && result.status !== 0) return true;
@@ -183,12 +188,18 @@ async function checksWait(bin, prNumber, timeoutSec, requiredOnly) {
   }
 }
 
-function parseTimeoutSec(args) {
+/** Extract the `--timeout-sec N` flag. Pure; unit-tested. */
+export function parseTimeoutSec(args) {
   const i = args.indexOf('--timeout-sec');
   if (i === -1) return { timeoutSec: DEFAULT_TIMEOUT_SEC, rest: args };
   const value = Number(args[i + 1]);
-  const rest = [...args.slice(0, i), ...args.slice(i + 2)];
-  return { timeoutSec: Number.isFinite(value) && value > 0 ? value : DEFAULT_TIMEOUT_SEC, rest };
+  const hasValidValue = Number.isFinite(value) && value > 0;
+  // Only consume the next token if it actually parses as a positive number — otherwise it's
+  // a different flag (or nothing), and eating it would silently drop that argument.
+  const rest = hasValidValue
+    ? [...args.slice(0, i), ...args.slice(i + 2)]
+    : [...args.slice(0, i), ...args.slice(i + 1)];
+  return { timeoutSec: hasValidValue ? value : DEFAULT_TIMEOUT_SEC, rest };
 }
 
 /** Extract the boolean `--required-only` flag (829 R1). Pure; unit-tested. */
