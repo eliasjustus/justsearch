@@ -649,4 +649,118 @@ final class FileConversationStoreTest {
     assertEquals("user", store.loadEffectiveContext("s").get(0).get("role"),
         "no summary message after rewind");
   }
+
+  // ── Tempdoc 838: the conversation's NAME is a fact of the store ────────────────────────────────
+
+  @Test
+  @DisplayName("Tempdoc 838: a title round-trips, with its provenance, and DELETE clears both")
+  void titleRoundTrips(@TempDir Path tmp) {
+    var store = new FileConversationStore(tmp);
+    store.appendMessage("s", "core.free-chat", userMsg("why did the renewal fail?"));
+
+    store.setTitle("s", "Renewal postmortem", ConversationStore.TITLE_SOURCE_USER);
+    ConversationStore.SessionSummary named = store.getSessionMeta("s").orElseThrow();
+    assertEquals("Renewal postmortem", named.title());
+    assertEquals("user", named.titleSource());
+    assertEquals("Renewal postmortem", store.listSessions("core.free-chat", 10).get(0).title());
+
+    // A blank title is the CLEAR — the provenance goes with it, because there is nothing left to
+    // have a provenance about.
+    store.setTitle("s", null, null);
+    ConversationStore.SessionSummary cleared = store.getSessionMeta("s").orElseThrow();
+    assertNull(cleared.title());
+    assertNull(cleared.titleSource());
+  }
+
+  @Test
+  @DisplayName("Tempdoc 838: an appended message does not strip or re-seal the stored title")
+  void titleSurvivesAppendMessage(@TempDir Path tmp) {
+    var key = new FakeKey();
+    var cipher = new io.justsearch.agent.api.encryption.StoreCipher(key);
+    var store = new FileConversationStore(tmp, cipher);
+    store.appendMessage("s", "core.free-chat", userMsg("why did the renewal fail?"));
+    store.setTitle("s", "Renewal postmortem", ConversationStore.TITLE_SOURCE_USER);
+
+    // The per-message append path reads RAW meta and re-writes it; a sealed value must pass through
+    // untouched rather than being decrypted-and-re-encrypted, or worse dropped.
+    store.appendMessage("s", "core.free-chat", assistantMsg("the lock held"));
+    store.appendMessage("s", "core.free-chat", userMsg("and what did it cost?"));
+    assertEquals("Renewal postmortem", store.getSessionMeta("s").orElseThrow().title());
+    assertEquals("user", store.getSessionMeta("s").orElseThrow().titleSource());
+  }
+
+  @Test
+  @DisplayName("Tempdoc 838: a v1 meta written before the field reads as no title, no upcaster")
+  void absentTitleReadsAsNull(@TempDir Path tmp) throws Exception {
+    Path session = tmp.resolve("legacy");
+    Files.createDirectories(session);
+    Files.writeString(
+        session.resolve("meta.json"),
+        "{\"schemaVersion\":1,\"shapeId\":\"core.free-chat\",\"messageCount\":2}");
+
+    var store = new FileConversationStore(tmp);
+    assertNull(store.getSessionMeta("legacy").orElseThrow().title());
+    assertNull(store.getSessionMeta("legacy").orElseThrow().titleSource());
+    assertNull(store.listSessions("core.free-chat", 10).get(0).title());
+  }
+
+  @Test
+  @DisplayName("Tempdoc 838: the title is SEALED — hidden while locked, back after unlock")
+  void titleIsSealedAndHiddenWhileLocked(@TempDir Path tmp) throws Exception {
+    var key = new FakeKey();
+    var cipher = new io.justsearch.agent.api.encryption.StoreCipher(key);
+    var store = new FileConversationStore(tmp, cipher);
+    store.appendMessage("s", "core.free-chat", userMsg("first"));
+    store.setTitle("s", "SENSITIVE-conversation-name", ConversationStore.TITLE_SOURCE_USER);
+
+    // A reader's name is a sentence about the conversation, so it is content: not plaintext on disk.
+    String meta = Files.readString(tmp.resolve("s").resolve("meta.json"), StandardCharsets.UTF_8);
+    assertFalse(meta.contains("SENSITIVE-conversation-name"), "the title is not plaintext at rest");
+    // The provenance beside it is structural, and stays readable.
+    assertTrue(meta.contains("\"titleSource\":\"user\""), "provenance is not sealed");
+
+    key.locked = true;
+    List<ConversationStore.SessionSummary> locked = store.listSessions("core.free-chat", 10);
+    assertEquals(1, locked.size(), "the locked session stays in the list");
+    assertNull(locked.get(0).title(), "the name is hidden while locked, like every other content field");
+    assertEquals("user", locked.get(0).titleSource(), "but the window can still tell who named it");
+
+    key.locked = false;
+    assertEquals("SENSITIVE-conversation-name", store.listSessions("core.free-chat", 10).get(0).title());
+  }
+
+  @Test
+  @DisplayName("Tempdoc 838: naming an unknown session creates NOTHING — no ghost row in the list")
+  void setTitleOnUnknownSessionCreatesNothing(@TempDir Path tmp) {
+    var store = new FileConversationStore(tmp);
+    store.setTitle("never-existed", "Renewal postmortem", ConversationStore.TITLE_SOURCE_USER);
+
+    assertFalse(Files.exists(tmp.resolve("never-existed")), "no session directory was materialised");
+    assertTrue(store.getSessionMeta("never-existed").isEmpty());
+    assertTrue(store.listSessions(null, 10).isEmpty(), "and nothing to list");
+  }
+
+  @Test
+  @DisplayName("Tempdoc 838: an over-long title is capped at 200 characters, trimmed first")
+  void titleIsCappedAndTrimmed(@TempDir Path tmp) {
+    var store = new FileConversationStore(tmp);
+    store.appendMessage("s", "core.free-chat", userMsg("first"));
+
+    store.setTitle("s", "  Renewal postmortem  ", ConversationStore.TITLE_SOURCE_USER);
+    assertEquals("Renewal postmortem", store.getSessionMeta("s").orElseThrow().title());
+
+    store.setTitle("s", "x".repeat(400), ConversationStore.TITLE_SOURCE_USER);
+    assertEquals(200, store.getSessionMeta("s").orElseThrow().title().length());
+  }
+
+  @Test
+  @DisplayName("Tempdoc 838: an unrecognised provenance is stored as the reader's, never verbatim")
+  void unknownProvenanceFallsBackToUser(@TempDir Path tmp) {
+    var store = new FileConversationStore(tmp);
+    store.appendMessage("s", "core.free-chat", userMsg("first"));
+    store.setTitle("s", "Renewal postmortem", "something-else");
+    // The controller rejects an unknown source with a 400; the store still refuses to persist one,
+    // because a value outside the two legal ones would be read back as no provenance at all.
+    assertEquals("user", store.getSessionMeta("s").orElseThrow().titleSource());
+  }
 }

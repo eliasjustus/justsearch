@@ -403,10 +403,12 @@ Dynamic dispatch endpoint (reads `shapeId` from body):
 
 Conversation management (slice 513 + 515):
 
-- `GET /api/chat/conversations?shapeId=<id>&limit=<N>` — List recent sessions (most-recent first, capped at 100). Each row: `sessionId`, `shapeId`, `createdAtMs`, `lastActiveAtMs`, `messageCount`, `firstUserMessage`, optional `parentSessionId` + `branchPointMessageId` (slice 513 branch metadata).
+- `GET /api/chat/conversations?shapeId=<id>&limit=<N>` — List recent sessions (most-recent first, capped at 100). Each row: `sessionId`, `shapeId`, `createdAtMs`, `lastActiveAtMs`, `messageCount`, `firstUserMessage`, optional `parentSessionId` + `branchPointMessageId` (slice 513 branch metadata), optional `title` + `titleSource` (`"user"` | `"auto"`, tempdoc 838). `title` is a sealed content field: it is omitted while the conversation store is encrypted and locked, exactly like `firstUserMessage`; `titleSource` is structural and stays present.
 - `GET /api/chat/conversations/{sessionId}/history` — Load message history. Response: `messages[{role, content, id, hash}]`; for branched sessions also includes `parentSessionId`, `branchPointMessageId`, and (slice 515 FIX-8) `parentFirstUserMessage` preview. `loadHistory` walks parent chain lazily.
 - `DELETE /api/chat/conversations/{sessionId}` — Delete a session. **409 Conflict** with `childSessionIds[]` body if the session has child branches (slice 515 FIX-3); the client must delete branches first or implement cascade deletion.
 - `POST /api/chat/conversations/{sessionId}/branch?fromMsgId=<id>` — Create a branch from an existing session at the given message id. Response: `{sessionId, parentSessionId, branchPointMessageId}`. **400** if `fromMsgId` doesn't exist in the parent's resolved history (slice 515 FIX-2). The branch carries no messages of its own; loadHistory resolves the parent prefix on every call.
+- `POST /api/chat/conversations/{sessionId}/title` — Name a conversation durably (tempdoc 838). Body: `{title, source?}` where `source` is `"user"` (default) or `"auto"`. Response: `{ok, title, titleSource}` — `title` is what was STORED, trimmed and capped at 200 characters. **400** on a blank title (clearing is `DELETE`) or an unrecognised `source`; **404** when the session has no `meta.json` (a rename must not mint a zero-message conversation); **423** when the conversation store's data key is locked, via the global `KeyLockedException` mapping.
+- `DELETE /api/chat/conversations/{sessionId}/title` — Clear the name (tempdoc 838). Idempotent: a conversation with no name, or no such conversation, is a no-op `{ok: true}`.
 
 Header: `X-JustSearch-Audience` (optional; defaults to `USER`).
 
