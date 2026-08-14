@@ -309,3 +309,28 @@ than twice, badly, with a hole in it.
   between those two ingest paths.
 - **Do not reach for `--allow-incomparable`.** It composes a five-corpus release by overriding the
   only mechanism that noticed the problem.
+
+## RESOLVED (2026-08-14, tempdoc 832 lane B — the parked fr blocker is root-caused and fixed)
+
+The failing document is `1455689%2310.txt` — 272 bytes of ordinary French prose beginning
+**"P4 Jean Mérieux"**. `P4` + whitespace is the NetPBM binary-bitmap magic number; Tika's
+`MimeTypes.detect` prefers the magic hit over the `.txt` name hint (text/plain is not a
+specialization of image/x-portable-bitmap), so `AutoDetectParser` handed French prose to an image
+parser, which emitted nothing — the document indexed as a content-less shell and terminally failed
+embed + SPLADE + NER (`CombinedEnrichmentBackfillOps` escalation), which SPLADE's zero-tolerance
+readiness clause turned into the run-level failure. **The eval-vs-API asymmetry recorded above was
+a false lead** — nothing is path-specific; the earlier API-path non-repro measured a different
+directory, and a dev stack's AI/VDU tier can paper over an empty extraction where the AI-off eval
+backend cannot. The data-integrity question this section raised is answered: every prior index of
+this corpus carried the doc content-less; at one doc in 5,408 the aggregate effect is below noise
+(hybrid 0.8844 before and after the fix), so no published number moves.
+
+Fix: `TextNameMagicConflictDetector` (worker-services extract package) — promotes to the name-based
+type only when the delegate's answer is non-textual AND the name says `text/*` AND the leading 8 KB
+strict-decode as UTF-8 text; wired into all three Tika sites. Deliberately NOT routed through the
+790 dropout chain (its tiers are image-recovery; this text was lost to routing, not rendering).
+Plus: terminal SPLADE FAILED escalations now log `docId(reason)` — the observability gap that made
+this a two-investigation bug. Live verification on the eval path: **5408/5408 all three stages,
+failed 0, run `comparable: true`, reasons `[]`**; hybrid 0.8844 reproduces this document's §
+measurement and 802's prediction to four decimals, now certifiable. The re-baseline this document
+deferred is unblocked; it proceeds under tempdoc 832.

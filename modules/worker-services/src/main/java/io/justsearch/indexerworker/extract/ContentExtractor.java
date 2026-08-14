@@ -58,7 +58,9 @@ public final class ContentExtractor implements ContentExtractorProvider {
    * @param maxContentLength Maximum characters to extract from any document
    */
   public ContentExtractor(int maxContentLength) {
-    this.tika = new Tika();
+    // Same detector as the structured extractor, so this flat fallback cannot disagree with it
+    // about what is text (tempdoc 803).
+    this.tika = new Tika(TextNameMagicConflictDetector.wrapDefault());
     this.maxContentLength = maxContentLength;
     // Set default max string length for Tika parser
     this.tika.setMaxStringLength(maxContentLength);
