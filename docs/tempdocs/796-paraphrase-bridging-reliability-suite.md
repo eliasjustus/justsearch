@@ -302,3 +302,53 @@ observations), `tier-p.v1.json`, `tier-s.v1.json`, `tier-d.<tag>.v1.json`, `repo
 tests `scripts/jseval/tests/test_paraphrase_bridge_suite.py` (extraction, disjointness invariant,
 join-vs-generator cross-check, proxies, control-arm behaviour, curve/bucketing, checkpoint resume,
 query-form derivation — all CI-runnable, no model blobs needed).
+
+## Tier D EXECUTED (2026-08-14, session 7eb0297f / tempdoc 832 lane A — the deferred pass ran)
+
+Run shape: exactly the §Deferred commands (detached driver, CPU-only, load 23% at launch; cold
+start — the July cache and tmp artifacts were gone, so `pairs`/tier-P/tier-S were regenerated
+**EN-only** first; wall-clock: enron pair ~45 min, clerc ~2.5 h). Sanity checks all pass:
+`n_rows` 300 (enron, 2 members × 3 forms × 50) / 150 (clerc), `candidates == 1000`, lexical ≈0
+outside question form. Artifacts: `tmp/paraphrase-bridge/tier-d.{enron1k,clerc1k}.v1.json` +
+`report.v1.json` (D:enron1k, D:clerc1k tiers).
+
+**Headline: the pre-registered hypothesis resolves to (b) host dilution as the DOMINANT
+mechanism, with (a) query shape a real but secondary amplifier.**
+
+| member (dense arm) | question top1/top10 | descriptor | keyword |
+|---|---|---|---|
+| enron-1k (both members pooled, n=100/form) | 0.57 / 0.80 | 0.54 / 0.76 | 0.48 / 0.78 |
+| clerc-1k (n=50/form, aggregate top1/top10) | — pooled: 0.127 / 0.253 — | | |
+
+- **(a) shape:** question→keyword costs dense only ~9 pts top-1 and ~nothing at top-10 on enron —
+  nowhere near the tier-P step function. The 4-token forms agents type still bridge in-corpus on
+  email-length hosts.
+- **(b) dilution:** tier-S isolation bridges at 0.995@10 (F-044); in-corpus that falls to 0.78@10
+  on ~2.5 KB emails and **0.25@10** on ~7× longer CLERC hosts — bridging thins with host length,
+  the F-031/F-040 context-starvation shape, now measured on the production-granularity suite.
+- **q0 anchor (the hero 6/6 failure):** dense rank **16** in question form (just outside the
+  agent-visible top-10), degrading to 42 (descriptor) and **76** (keyword); the q16 control anchor
+  is rank 1 in all six cells. So q0 is a dilution-marginal case that query shape pushes far out of
+  the window — retrieval marginality, not encoder incapability (its pair bridges at tiers P/S).
+- **splade-idf** (inference-free query mode) collapses in-corpus (MRR 0.05 vs onnx-splade 0.16 on
+  enron) — F-044(3) re-confirmed at production granularity. Lexical 0-1/450 rows top-10 (by
+  construction).
+
+**Consequence for 788 §3.A vs §3.B.10:** since the answer is NOT (a)-dominant, the delivery lane
+and the engine lane do **not** collapse into one problem. The engine-side lever remains
+context-bearing representations for long hosts (F-031/F-040 lane); the agent-visible fix for
+q0-class cells is depth/evidence delivery, not more bridging capacity, and no encoder swap is
+re-licensed (F-034 stands).
+
+**Caveats:** offline exact-NN suite (F-040's inversion warning applies — an offline rank is not an
+engine rank; deltas between arms/forms are the load-bearing result); EN 1k members only (no 10k
+tier-D cells); single run, no variance estimate; tier-P/S regenerated EN-only this session.
+
+**Two instrument defects found while running (fixed forward as notes, not code):** (1) the
+driver's `report` step failed on first pass — `cmd_report` hard-requires `tier-p.v1.json`/
+`tier-s.v1.json`, which are session-local tmp; regenerating them is cheap but undocumented in
+§Deferred. (2) `pairs` defaults to `--langs en` and **rewrites the committed
+`scripts/jseval/796-paraphrase-pairs/paraphrase-pairs.v1.json` in place**, silently deleting the
+German half (1,807 lines) when run at defaults — caught in `git status`, restored via single-file
+checkout. Follow-up chartered in 832: `pairs` should fail closed or merge-preserve languages it
+cannot regenerate.
