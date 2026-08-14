@@ -17,9 +17,7 @@
     { "code": "telemetry.unavailable", "why": "TELEMETRY dimension -> 'telemetry' composite, which the verdict never reads" },
     { "code": "telemetry.metrics.stale", "why": "telemetry composite, not verdict-consumed" },
     { "code": "telemetry.metrics.high_failure_rate", "why": "telemetry composite, not verdict-consumed" },
-    { "code": "telemetry.disk_space_low", "why": "telemetry composite, not verdict-consumed" },
-    { "code": "ort_cuda.not_configured", "why": "search/RAG reason code; not emitted by the readiness producer (grep-confirmed)" },
-    { "code": "ort_cuda.ready", "why": "search/RAG reason code; not emitted by the readiness producer" }
+    { "code": "telemetry.disk_space_low", "why": "telemetry composite, not verdict-consumed" }
   ],
   "feDerived": [
     { "code": "no_documents", "why": "Tempdoc 596 §17 — FE-only control-availability code; not emitted by the readiness producer" },
