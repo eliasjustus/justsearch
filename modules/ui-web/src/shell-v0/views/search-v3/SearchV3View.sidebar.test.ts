@@ -336,7 +336,7 @@ describe('the icon rail', () => {
     const sheets = Sv3SessionRow.styles as ReadonlyArray<{ cssText: string }>;
     const css = sheets.map((sheet) => sheet.cssText).join('\n');
     // The compact rules name exactly the three things that yield.
-    expect(css).toMatch(/:host\(\[compact\]\)\s*\.row-label,\s*:host\(\[compact\]\)\s*\.meta,\s*:host\(\[compact\]\)\s*button\.pin\s*\{\s*display:\s*none/);
+    expect(css).toMatch(/:host\(\[compact\]\)\s*\.row-label,\s*:host\(\[compact\]\)\s*\.meta,\s*:host\(\[compact\]\)\s*\.actions\s*\{\s*display:\s*none/);
     // And the status slot is repositioned, not hidden: no rule may take the dot away.
     expect(css).not.toMatch(/:host\(\[compact\]\)[^{]*\.dot[^{]*\{[^}]*display:\s*none/);
     expect(css).not.toMatch(/:host\(\[compact\]\)[^{]*\.status-slot[^{]*\{[^}]*display:\s*none/);

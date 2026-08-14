@@ -617,3 +617,113 @@ describe('shelves and the pin action (tempdoc 822 Phase F3)', () => {
     expect((await rowsOf(el)).find((r) => r.label === 'the slow one')?.unread).toBe(false);
   });
 });
+
+/**
+ * The row's action set, end to end (tempdoc 831). Every case is a MUTATION probe: the affordance is
+ * pressed the way a pointer presses it, and what is asserted afterwards is the state it claimed to
+ * change — the stored title, shelf membership, the list itself, the authority it was written to.
+ * A control that raised its event into nothing would pass a "the event fired" case and fail these.
+ */
+describe('the row actions each change the state they name', () => {
+  const actionOf = (row: Sv3SessionRow, name: string): HTMLButtonElement => {
+    const button = row.shadowRoot?.querySelector<HTMLButtonElement>(
+      `[data-testid="sv3-session-row-${name}"]`,
+    );
+    if (!button) throw new Error(`no ${name} action in the row`);
+    return button;
+  };
+
+  const deleteCalls = (): string[] =>
+    fetchMock.mock.calls
+      .filter(([, init]) => (init as { method?: string } | undefined)?.method === 'DELETE')
+      .map(([url]) => String(url));
+
+  it('renames the conversation from the row action, and the title is the stored one', async () => {
+    const el = await mount();
+    await ask(el, 'first question');
+
+    actionOf((await rowsOf(el))[0] as Sv3SessionRow, 'rename').click();
+    await settle(el);
+    const editing = (await rowsOf(el))[0] as Sv3SessionRow;
+    const input = editing.shadowRoot?.querySelector<HTMLInputElement>(
+      '[data-testid="sv3-session-row-rename-input"]',
+    );
+    if (!input) throw new Error('the rename action opened no editor');
+    input.value = 'northfield lease review';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await settle(el);
+
+    // The MUTATION: the row's label comes from the session list, so a changed label is a changed
+    // record — not an input that kept its own text.
+    expect((await rowsOf(el)).map((r) => r.label)).toEqual(['northfield lease review']);
+  });
+
+  it('moves the conversation between shelves from the row action', async () => {
+    const el = await mount();
+    await ask(el, 'first question');
+    actionOf((await rowsOf(el))[0] as Sv3SessionRow, 'pin').click();
+    await settle(el);
+    expect(await groupLabelsOf(el)).toEqual(['Pinned']);
+    actionOf((await rowsOf(el))[0] as Sv3SessionRow, 'pin').click();
+    await settle(el);
+    expect(await groupLabelsOf(el)).toEqual(['Recent']);
+  });
+
+  it('discards the conversation and deletes it at the authority that owns its existence', async () => {
+    const el = await mount();
+    await ask(el, 'first question');
+    await newSession(el);
+    await ask(el, 'second question');
+    expect(deleteCalls()).toEqual([]);
+
+    const older = (await rowsOf(el))[1] as Sv3SessionRow;
+    actionOf(older, 'remove').click();
+    await settle(el);
+
+    // Gone from the list...
+    expect((await rowsOf(el)).map((r) => r.label)).toEqual(['second question']);
+    // ...and gone at the conversation store, which is where a conversation EXISTS: a window that
+    // only dropped its own row would resurrect it on the next list load.
+    expect(deleteCalls()).toHaveLength(1);
+    expect(deleteCalls()[0]).toContain('/api/chat/conversations/');
+    // The claim did not move to the survivor as a side effect of someone else being discarded.
+    expect((await rowsOf(el)).filter((r) => r.active).map((r) => r.label)).toEqual([
+      'second question',
+    ]);
+  });
+
+  it('returns the window to the hero when the conversation ON SCREEN is discarded', async () => {
+    const el = await mount();
+    await ask(el, 'the only one');
+    actionOf((await rowsOf(el))[0] as Sv3SessionRow, 'remove').click();
+    await settle(el);
+
+    expect(await rowsOf(el)).toHaveLength(0);
+    // The transcript went with it — a window still rendering the turns of a conversation it just
+    // discarded would be showing the reader something that no longer exists.
+    expect(await questionsOf(el)).toEqual([]);
+    expect(deleteCalls()).toHaveLength(1);
+  });
+
+  it('offers NO discard while the conversation is streaming, and offers one the moment it settles', async () => {
+    const el = await mount();
+    await send(el, 'the slow one');
+    await settle(el);
+    const running = (await rowsOf(el))[0] as Sv3SessionRow;
+    // The window projected the run state onto the row, so the control is not there to press.
+    expect(running.live).toBe(true);
+    expect(
+      running.shadowRoot?.querySelector('[data-testid="sv3-session-row-remove"]'),
+    ).toBeNull();
+
+    router.emit('done', {});
+    router.end();
+    await settle(el);
+    const settled = (await rowsOf(el))[0] as Sv3SessionRow;
+    expect(settled.live).toBe(false);
+    actionOf(settled, 'remove').click();
+    await settle(el);
+    expect(await rowsOf(el)).toHaveLength(0);
+    expect(deleteCalls()).toHaveLength(1);
+  });
+});

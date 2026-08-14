@@ -69,6 +69,7 @@ import {
 import { projectSv3Results, type Sv3ResultsView } from './sv3-results.js';
 import {
   type Sv3SessionPin,
+  type Sv3SessionRemove,
   type Sv3SessionRename,
   type Sv3SessionSelect,
 } from './Sv3Sidebar.js';
@@ -103,6 +104,7 @@ import {
   toggleSessionPin,
   latestTurnRef,
   projectSv3Sessions,
+  removeSession,
   sessionById,
   setTurnEvidence,
   setTurnReasoning,
@@ -113,6 +115,7 @@ import {
   submitInSession,
   sv3ShouldGenerateTitle,
   SV3_SESSIONS_EMPTY,
+  type Sv3RunGate,
   type Sv3SessionList,
 } from './sv3-sessions.js';
 // The window's honesty derivations (tempdoc 822 Phase F7): the lock, the corpus, and the ONE remedy
@@ -141,6 +144,7 @@ import {
 // mints none of them.
 import {
   createConversationId,
+  deleteConversation,
   exportConversationMarkdown,
   generateConversationTitle,
   loadConversations,
@@ -1841,6 +1845,55 @@ export class SearchV3View extends JfElement {
   }
 
   /**
+   * What the window knows about work in flight (tempdoc 831), read in ONE place and handed to both
+   * the projection that paints the rows and the removal that refuses a live one. Two callers of one
+   * expression, rather than two expressions — the row's affordance and the list's refusal have to be
+   * the same judgement or the reader gets offered a delete that silently does nothing.
+   */
+  private runGate(run: Sv3RunView | null = this.projectRun()): Sv3RunGate {
+    const snapshot = this.searchSnapshot;
+    // `isRefining` counts too: the store runs a re-query BEHIND displayed results quietly
+    // (`state/searchState.ts:611` — no skeleton, so the content surface keeps the old rows), and the
+    // row's dot is then the only thing on screen saying the session is running a pass.
+    const searching =
+      this.asked && (snapshot?.isSearching === true || snapshot?.isRefining === true);
+    const local = this.run;
+    // The render pass HANDS IN the projection it already made: projecting the feed a second time per
+    // frame would be the same answer at twice the cost.
+    const pendingPrompt = (run?.prompts.length ?? 0) > 0;
+    return {
+      searching,
+      // Named by session, not by flag: only the conversation that OPENED the parked run may wear the
+      // act-now colour, whichever row the reader happens to be looking at.
+      awaitingDecisionIn: pendingPrompt && local !== null ? local.sessionId : null,
+    };
+  }
+
+  /**
+   * The reader discards a conversation (tempdoc 831). `removeSession` decides — including the
+   * refusal for a conversation with work in flight, which is why nothing is re-checked here — and
+   * the deletion is WRITTEN THROUGH to the conversation store, the authority for a conversation's
+   * existence (the same shape the rename write-through takes). If the authority declines, the next
+   * list load projects the row back: the window never claims a deletion that did not happen.
+   *
+   * Removing the conversation ON SCREEN routes through New session first, so the window leaves the
+   * transcript the way every other exit from it does — an emptied pane and nothing claimed — rather
+   * than through a second, partial teardown that would be free to forget one of the pointers.
+   */
+  private onSessionRemove(event: Event): void {
+    const id = (event as CustomEvent<Sv3SessionRemove>).detail?.id ?? '';
+    const gate = this.runGate();
+    // Asked TWICE, deliberately: the first call is the decision (an unchanged list is the refusal,
+    // and nothing else may happen on a refusal), and the second is the write — because the New-
+    // session exit in between replaces the list this one would otherwise have been computed from.
+    if (removeSession(this.sessions, id, gate) === this.sessions) return;
+    if (this.sessions.activeId === id) this.onSessionNew();
+    if (this.renamingId === id) this.renamingId = null;
+    this.sessions = removeSession(this.sessions, id, gate);
+    void deleteConversation(id);
+  }
+
+  /**
    * New session: back to the hero with an empty draft and nothing claimed about the corpus. The
    * sessions so far stay in the list — starting one is not ending the others. An in-flight response
    * IS ended, because its own session is no longer the one on screen and a stream nobody is watching
@@ -1947,12 +2000,6 @@ export class SearchV3View extends JfElement {
 
   render(): TemplateResult {
     const results: Sv3ResultsView = projectSv3Results(this.searchSnapshot, this.asked);
-    // Relative timestamps are computed HERE, on render, and never ticked: a sidebar that re-renders
-    // itself every second is continuous motion at rest, which the spec's duty-cycle law rules out.
-    // `isRefining` counts too: the store runs a re-query BEHIND displayed results quietly
-    // (`state/searchState.ts:611` — no skeleton, so the content surface keeps the old rows), and the
-    // row's dot is then the only thing on screen saying the session is running a pass.
-    const snapshot = this.searchSnapshot;
     const run = this.projectRun();
     const turns = activeTurns(this.sessions);
     const pendingPrompt = run !== null && run.prompts.length > 0;
@@ -1965,11 +2012,10 @@ export class SearchV3View extends JfElement {
         run?.phase === 'holding',
       followUp: turns.length > 0,
     });
+    // Relative timestamps are computed HERE, on render, and never ticked: a sidebar that re-renders
+    // itself every second is continuous motion at rest, which the spec's duty-cycle law rules out.
     const sessionGroups = projectSv3Sessions(this.sessions, {
-      searching: this.asked && (snapshot?.isSearching === true || snapshot?.isRefining === true),
-      // Named by session, not by flag: only the conversation that OPENED the parked run may wear the
-      // act-now colour, whichever row the reader happens to be looking at.
-      awaitingDecisionIn: pendingPrompt && this.run !== null ? this.run.sessionId : null,
+      ...this.runGate(run),
       now: Date.now(),
     });
     return html`
@@ -1980,6 +2026,7 @@ export class SearchV3View extends JfElement {
         data-testid="sv3-sidebar"
         @sv3-session-select=${this.onSessionSelect}
         @sv3-session-pin=${this.onSessionPin}
+        @sv3-session-remove=${this.onSessionRemove}
         @sv3-session-new=${this.onSessionNew}
         @sv3-session-rename=${this.onSessionRename}
         @sv3-sidebar-toggle=${this.onSidebarToggle}

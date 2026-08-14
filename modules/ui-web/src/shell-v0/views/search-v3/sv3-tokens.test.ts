@@ -404,28 +404,47 @@ describe('the session row spends one fill and three colours, by construction', (
     expect(sv3Shared.cssText).not.toContain(':host(:has(');
   });
 
-  it('reserves the pin gutter at REST for the statuses that never yield', () => {
+  it('reserves the ACTION gutter at REST for the statuses that never yield', () => {
     // Reserved at rest, not on hover: a gutter that appeared under the pointer would move the dot,
-    // which is the jitter the slot floor exists to prevent.
+    // which is the jitter the slot floor exists to prevent. The figure is the action set's own
+    // width (tempdoc 831) — reserved through the token rather than as a copy of it, so growing or
+    // shrinking the set cannot leave the never-yields gutter measuring the old one.
     const reserved = ruleFor(":host([status='act-now']) .status-slot");
-    expect(reserved).toContain('padding-inline-end: var(--space-7)');
+    expect(reserved).toContain('padding-inline-end: var(--sv3-row-actions-inline)');
     expect(styles).toContain(":host([status='broken']) .status-slot");
+    // And the token is the SET's width, off the spacing ladder: three squares, or two on a
+    // conversation with work in flight, which offers no discard.
+    expect(ruleFor(':host {')).toContain('--sv3-row-actions-inline: calc(3 * var(--space-6))');
+    expect(ruleFor(':host([live])')).toContain(
+      '--sv3-row-actions-inline: calc(2 * var(--space-6))',
+    );
   });
 
-  it('keeps the pin action out of the pointer\'s way at rest, but never out of the tab order', () => {
-    const pin = ruleFor('button.pin {');
-    expect(pin).toContain('opacity: 0');
+  it('keeps every row action out of the pointer\'s way at rest, but never out of the tab order', () => {
+    const act = ruleFor('button.act {');
+    expect(act).toContain('opacity: 0');
     // `pointer-events: none` and not `display: none` / `visibility: hidden`: those two would take
     // the control out of the tab order, and the swap has to be reachable by keyboard.
-    expect(pin).toContain('pointer-events: none');
-    expect(pin).not.toContain('display: none');
-    expect(pin).not.toContain('visibility: hidden');
-    expect(ruleFor(':host(:hover) button.pin')).toContain('opacity: 1');
-    // Keyboard reveal, in two halves — the row focused, and the action itself focused.
-    expect(styles).toContain('button.row:focus-visible ~ button.pin');
-    expect(styles).toContain('button.pin:focus-visible');
-    // Its pressed state is foreground weight, not a fourth colour.
+    expect(act).toContain('pointer-events: none');
+    expect(act).not.toContain('display: none');
+    expect(act).not.toContain('visibility: hidden');
+    // The rest state is worn by the SHARED class, so a fourth action cannot be added visible-at-rest
+    // by forgetting a rule — every action in the set is `button.act`.
+    expect(styleTextOf(Sv3SessionRow)).not.toMatch(/\n\s*button\.(pin|rename|remove)\s*\{/);
+    expect(ruleFor(':host(:hover) button.act')).toContain('opacity: 1');
+    // Keyboard reveal, in two halves — the row focused, and an action itself focused.
+    expect(styles).toContain('button.row:focus-visible ~ .actions button.act');
+    expect(styles).toContain('button.act:focus-visible');
+    // The pin's pressed state is foreground weight, not a fourth colour.
     expect(ruleFor(':host([pinned]) button.pin')).toContain('color: var(--sidebar-foreground)');
+  });
+
+  it('never lets the action GROUP take a hit the row should have had', () => {
+    // The set is an absolutely-positioned box over the row's trailing strip. Left targetable, it
+    // would swallow the claim click there even at rest, when it shows nothing to press — the row's
+    // right-hand edge would simply stop working. Live-measured with `elementFromPoint` (831); pinned
+    // here because CI has no browser.
+    expect(ruleFor('.actions {')).toContain('pointer-events: none');
   });
 });
 

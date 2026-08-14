@@ -16,12 +16,17 @@
  * Status colour is a 3-budget: act-now, in-motion, broken. A resting row spends none
  * of it — its slot carries a muted timestamp instead, so colour keeps meaning "attend to this".
  *
- * The trailing slot SWAPS (tempdoc 822 Phase F3): status at rest, the pin action on
- * hover or keyboard focus, hidden state out of flow, one width floor so nothing jitters. With one
- * exception, which is the whole reason the rule is quotable: an act-now or broken status never
- * yields — the spec's PR badge stays visible and clickable while the row is hovered, and only the
- * time label yields. Those two statuses are this window's honesty facts, so the pin appears beside
- * them instead of on top of them.
+ * The trailing slot SWAPS (tempdoc 822 Phase F3, extended to an action SET in tempdoc 831): status
+ * at rest, the row's actions on hover or keyboard focus, hidden state out of flow, one width floor
+ * so nothing jitters. With one exception, which is the whole reason the rule is quotable: an act-now
+ * or broken status never yields — the spec's PR badge stays visible and clickable while the row is
+ * hovered, and only the time label yields. Those two statuses are this window's honesty facts, so
+ * the actions appear beside them instead of on top of them.
+ *
+ * Three actions, each backed by an operation the session list really has: rename (the F5 triad,
+ * reached by pointer here and by F2 from the keyboard), pin (the F3 shelf move), and discard. The
+ * discard is WITHHELD, not disabled, while work is in flight — a control that is present but inert
+ * asks the reader to find out by pressing it.
  *
  * Side-effect registers <jf-sv3-session-row>.
  */
@@ -53,8 +58,15 @@ export interface Sv3SessionRenameCommit {
   readonly title: string;
 }
 
-/** Lucide "bookmark" — the shared icon set's pin glyph, at the slim row's control size. */
-const PIN_GLYPH_SIZE = 14;
+/**
+ * The row asks to be discarded (tempdoc 831). Like the pin, it names no session — the panel knows
+ * which row this is, and the window owns the list and the authority the deletion is written to.
+ * A row only ever raises this when it OFFERS the action, which a live conversation does not.
+ */
+export const SV3_SESSION_REMOVE_REQUEST = 'sv3-session-remove-request';
+
+/** The shared icon set's glyphs, at the slim row's control size. */
+const ACTION_GLYPH_SIZE = 14;
 
 export class Sv3SessionRow extends JfElement {
   static styles = [
@@ -62,10 +74,17 @@ export class Sv3SessionRow extends JfElement {
     css`
       :host {
         display: block;
-        /* The containing block for the pin action, which overlays the row's trailing slot. The pin
-           is a SIBLING of the row button rather than a child: a button inside a button is invalid,
-           and the claim control must stay the row's one big target. */
+        /* The containing block for the action set, which overlays the row's trailing slot. The
+           actions are SIBLINGS of the row button rather than children: a button inside a button is
+           invalid, and the claim control must stay the row's one big target. */
         position: relative;
+        /* The action set's width, as a token because the never-yields gutter below has to reserve
+           exactly it (tempdoc 831) — three squares, and one narrower where the discard is withheld.
+           Host-scoped, like every other measure this window authors. */
+        --sv3-row-actions-inline: calc(3 * var(--space-6));
+      }
+      :host([live]) {
+        --sv3-row-actions-inline: calc(2 * var(--space-6));
       }
 
       button.row {
@@ -201,7 +220,7 @@ export class Sv3SessionRow extends JfElement {
         inset-inline-end: 0;
         opacity: 0;
       }
-      /* Keyboard, in two halves: the row itself focused, and the action focused. The pin is a
+      /* Keyboard, in two halves: the row itself focused, and an action focused. The action set is a
          FOLLOWING SIBLING of the row button, so the second half is a :has() on a plain element. */
       :host(:not([compact]):not([status='act-now']):not([status='broken']))
         button.row:focus-visible
@@ -211,7 +230,7 @@ export class Sv3SessionRow extends JfElement {
         opacity: 0;
       }
       :host(:not([compact]):not([status='act-now']):not([status='broken']))
-        button.row:has(~ button.pin:focus-visible)
+        button.row:has(~ .actions button.act:focus-visible)
         .slot-content {
         position: absolute;
         inset-inline-end: 0;
@@ -221,19 +240,38 @@ export class Sv3SessionRow extends JfElement {
          clickable while the row is hovered. Only the time/jump label yields"). Act-now and broken are
          this window's PR badge: one says the run is blocked on the reader, the other that it failed,
          and a fact that only shows itself when the pointer is elsewhere is not a fact the reader can
-         rely on. So the status keeps its place and the pin appears BESIDE it, in a gutter reserved at
-         rest — reserving it on hover instead would move the dot, which is the jitter the floor
+         rely on. So the status keeps its place and the actions appear BESIDE it, in a gutter reserved
+         at rest — reserving it on hover instead would move the dot, which is the jitter the floor
          exists to prevent. */
       :host([status='act-now']) .status-slot,
       :host([status='broken']) .status-slot {
-        padding-inline-end: var(--space-7);
+        padding-inline-end: var(--sv3-row-actions-inline);
       }
 
-      button.pin {
+      /* ── The ACTION SET (tempdoc 831) ────────────────────────────────────────
+         The slot swaps for a SET, not a single control: rename, pin, and — only where it is safe —
+         discard. One flex group, absolutely positioned over the row's trailing edge, so the whole
+         set is out of the flow and the swap cannot change the row's height by construction.
+
+         Its width is the --sv3-row-actions-inline token declared on the host above, because the
+         never-yields gutter has to reserve exactly it — and a conversation with work in flight
+         offers no discard, so the set is one square narrower there. Reserving the wider figure for
+         both would leave a gutter with nothing in it, which is width taken from the title for no
+         fact. */
+      .actions {
         position: absolute;
         inset-inline-end: var(--sidebar-row-content-inset);
         top: 50%;
         transform: translateY(-50%);
+        display: flex;
+        align-items: center;
+        /* The GROUP is never a target — only its buttons are, and only once revealed. A group box
+           that took the hit would make the row's trailing strip dead to the claim click even at
+           rest, when there is nothing there to press. A child re-enabling itself still receives
+           events, which is exactly what the reveal below does. */
+        pointer-events: none;
+      }
+      button.act {
         display: flex;
         align-items: center;
         justify-content: center;
@@ -252,22 +290,26 @@ export class Sv3SessionRow extends JfElement {
         pointer-events: none;
         transition: opacity var(--duration-sv3-micro) var(--ease-sv3-enter);
       }
-      :host(:hover) button.pin {
+      /* Three SEPARATE reveal rules, never one list with a nested :has() in it (the F3 defect
+         quoted above): the pointer, the row's own focus, and the action's focus each stand alone,
+         so an invalid member cannot take the other two down with it. */
+      :host(:hover) button.act {
         opacity: 1;
         pointer-events: auto;
       }
-      button.row:focus-visible ~ button.pin,
-      button.pin:focus-visible {
+      button.row:focus-visible ~ .actions button.act {
         opacity: 1;
         pointer-events: auto;
       }
-      button.pin:hover {
-        background: var(--sidebar-row-active);
-        color: var(--sidebar-foreground);
-      }
-      button.pin:focus-visible {
+      button.act:focus-visible {
+        opacity: 1;
+        pointer-events: auto;
         outline: 2px solid var(--ring);
         outline-offset: -1px;
+      }
+      button.act:hover {
+        background: var(--sidebar-row-active);
+        color: var(--sidebar-foreground);
       }
       /* Pressed state as foreground weight, not a hue: the 3-colour budget is for status only. */
       :host([pinned]) button.pin {
@@ -332,7 +374,7 @@ export class Sv3SessionRow extends JfElement {
       }
       :host([compact]) .row-label,
       :host([compact]) .meta,
-      :host([compact]) button.pin {
+      :host([compact]) .actions {
         display: none;
       }
       :host([compact]) .status-slot {
@@ -380,7 +422,7 @@ export class Sv3SessionRow extends JfElement {
 
       @media (prefers-reduced-motion: reduce) {
         button.row,
-        button.pin,
+        button.act,
         .slot-content,
         .glyph {
           transition: none;
@@ -399,6 +441,7 @@ export class Sv3SessionRow extends JfElement {
     unread: { type: Boolean, reflect: true },
     inflight: { type: Boolean, reflect: true },
     pinned: { type: Boolean, reflect: true },
+    live: { type: Boolean, reflect: true },
     compact: { type: Boolean, reflect: true },
     renaming: { type: Boolean, reflect: true },
   };
@@ -412,6 +455,13 @@ export class Sv3SessionRow extends JfElement {
   declare unread: boolean;
   declare inflight: boolean;
   declare pinned: boolean;
+  /**
+   * Work is in flight in this conversation (tempdoc 831). The row does not decide this — the window
+   * projects it ({@link file://./sv3-sessions.ts} `sv3SessionIsLive`), and the same predicate refuses
+   * the removal downstream, so a row that offers no discard and a list that would decline one are
+   * saying the same thing.
+   */
+  declare live: boolean;
   /** The sidebar is on its collapsed icon rail; the row is a 32px square. */
   declare compact: boolean;
   /** The reader is editing this row's title (tempdoc 822 Phase F5). */
@@ -428,17 +478,39 @@ export class Sv3SessionRow extends JfElement {
     this.unread = false;
     this.inflight = false;
     this.pinned = false;
+    this.live = false;
     this.compact = false;
     this.renaming = false;
   }
 
   /**
    * The pin is a SECOND action inside one row, so the claim must not also fire: a reader pinning a
-   * conversation is not asking to be taken into it.
+   * conversation is not asking to be taken into it. Every action in the set stops the same way, for
+   * the same reason — acting ON a row is not asking to be taken into it.
    */
   private togglePin(event: Event): void {
     event.stopPropagation();
     this.dispatchEvent(new CustomEvent(SV3_SESSION_PIN_TOGGLE, { bubbles: true, composed: true }));
+  }
+
+  /** The pointer's route to the rename the keyboard reaches with F2 — one intent, two affordances. */
+  private startRename(event: Event): void {
+    event.stopPropagation();
+    if (this.renaming) return;
+    this.dispatchEvent(new CustomEvent(SV3_SESSION_RENAME_START, { bubbles: true, composed: true }));
+  }
+
+  /**
+   * The discard — named for the intent rather than `remove`, which on an HTMLElement subclass would
+   * shadow the DOM's own `Element.remove()`. It is raised UNCONDITIONALLY because the control only exists on a row
+   * that may be discarded — a guard repeated at the dispatch site would be a second place for the
+   * rule to be wrong, and the window refuses a live removal in the list itself regardless.
+   */
+  private discard(event: Event): void {
+    event.stopPropagation();
+    this.dispatchEvent(
+      new CustomEvent(SV3_SESSION_REMOVE_REQUEST, { bubbles: true, composed: true }),
+    );
   }
 
   /**
@@ -448,7 +520,7 @@ export class Sv3SessionRow extends JfElement {
    */
   private onRowDoubleClick(event: MouseEvent): void {
     if (this.renaming || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    if ((event.target as HTMLElement | null)?.closest('button.pin') !== null) return;
+    if ((event.target as HTMLElement | null)?.closest('.actions') !== null) return;
     event.preventDefault();
     this.dispatchEvent(
       new CustomEvent(SV3_SESSION_RENAME_START, { bubbles: true, composed: true }),
@@ -537,6 +609,15 @@ export class Sv3SessionRow extends JfElement {
     `;
   }
 
+  /**
+   * An action's accessible name says WHICH conversation it acts on: a screen reader walking the set
+   * hears three "Delete" buttons otherwise, one per row, and cannot tell them apart. The visible
+   * tooltip stays the bare verb — the row it is sitting on is already on screen.
+   */
+  private named(verb: string): string {
+    return this.label === '' ? `${verb} conversation` : `${verb} ${this.label}`;
+  }
+
   render(): TemplateResult {
     if (this.renaming) return this.renameRow();
     const colored = this.status !== 'resting';
@@ -573,16 +654,43 @@ export class Sv3SessionRow extends JfElement {
           </span>
         </span>
       </button>
-      <button
-        type="button"
-        class="pin"
-        aria-pressed=${this.pinned ? 'true' : 'false'}
-        aria-label=${this.label === '' ? 'Pin conversation' : `Pin ${this.label}`}
-        data-testid="sv3-session-row-pin"
-        @click=${this.togglePin}
-      >
-        ${icon({ name: 'bookmark', size: PIN_GLYPH_SIZE })}
-      </button>
+      <div class="actions" data-testid="sv3-session-row-actions">
+        <button
+          type="button"
+          class="act rename"
+          aria-label=${this.named('Rename')}
+          title="Rename"
+          data-testid="sv3-session-row-rename"
+          @click=${this.startRename}
+        >
+          ${icon({ name: 'pencil', size: ACTION_GLYPH_SIZE })}
+        </button>
+        <button
+          type="button"
+          class="act pin"
+          aria-pressed=${this.pinned ? 'true' : 'false'}
+          aria-label=${this.label === '' ? 'Pin conversation' : `Pin ${this.label}`}
+          title="Pin"
+          data-testid="sv3-session-row-pin"
+          @click=${this.togglePin}
+        >
+          ${icon({ name: 'bookmark', size: ACTION_GLYPH_SIZE })}
+        </button>
+        ${this.live
+          ? nothing
+          : html`
+              <button
+                type="button"
+                class="act remove"
+                aria-label=${this.named('Delete')}
+                title="Delete"
+                data-testid="sv3-session-row-remove"
+                @click=${this.discard}
+              >
+                ${icon({ name: 'trash-2', size: ACTION_GLYPH_SIZE })}
+              </button>
+            `}
+      </div>
     `;
   }
 }

@@ -44,6 +44,17 @@ export interface Sv3SessionPin {
   readonly id: string;
 }
 
+/**
+ * Asks the window to discard a session (tempdoc 831) — the row raises it, the panel says which row,
+ * and the window is the only thing that may act: existence is the conversation store's, so a delete
+ * is a write-through the panel has no business making.
+ */
+export const SV3_SESSION_REMOVE = 'sv3-session-remove';
+
+export interface Sv3SessionRemove {
+  readonly id: string;
+}
+
 /** Asks the window to start a fresh session — back to the hero, previous sessions kept. */
 export const SV3_SESSION_NEW = 'sv3-session-new';
 
@@ -246,6 +257,21 @@ export class Sv3Sidebar extends JfElement {
     );
   }
 
+  /**
+   * The row's discard request, named. Whether it is ALLOWED is the window's call, not the panel's.
+   * `discard` rather than `remove`: the latter would shadow `Element.remove()` on this host.
+   */
+  private discard(id: string, event: Event): void {
+    event.stopPropagation();
+    this.dispatchEvent(
+      new CustomEvent<Sv3SessionRemove>(SV3_SESSION_REMOVE, {
+        detail: { id },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
   private toggleCollapsed(): void {
     this.dispatchEvent(new CustomEvent(SV3_SIDEBAR_TOGGLE, { bubbles: true, composed: true }));
   }
@@ -321,10 +347,13 @@ export class Sv3Sidebar extends JfElement {
                             ?active=${row.active}
                             ?pinned=${row.pinned}
                             ?unread=${row.unread}
+                            ?live=${row.live}
                             ?compact=${this.collapsed}
                             ?renaming=${this.renamingId === row.id}
                             @click=${() => this.select(row.id)}
                             @sv3-session-pin-toggle=${(event: Event) => this.pin(row.id, event)}
+                            @sv3-session-remove-request=${(event: Event) =>
+                              this.discard(row.id, event)}
                             @sv3-session-rename-start=${(event: Event) =>
                               this.rename(row.id, 'start', event)}
                             @sv3-session-rename-commit=${(event: Event) =>
