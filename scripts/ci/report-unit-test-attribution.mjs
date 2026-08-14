@@ -11,6 +11,11 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+// KIND is deliberately NOT renamed to be lane-generic even though this script now also
+// covers the integration-tests lane: it's a consumer-facing schema identifier (JSON
+// structure/field-shape contract), not a lane label, and renaming it would break any
+// existing consumer keyed on this string for no structural reason. Lane identity lives in
+// the `lane` field and (for humans) the Markdown header below.
 const KIND = 'justsearch-unit-test-attribution.v1';
 
 function repoRootFromCwd() {
@@ -101,12 +106,20 @@ function asInt(value) {
   return Math.trunc(asNumber(value, 0));
 }
 
+// Gradle names the results directory after the Test TASK, not a fixed "test" literal —
+// build/test-results/test/ for the default `test` task, build/test-results/integrationTest/
+// for `:modules:system-tests:integrationTest`, etc. Any task-name segment must be accepted
+// here, or a whole tier's XML is silently invisible to attribution (tempdoc 829 follow-up).
+const TEST_RESULTS_TASK_DIR = '[^/]+';
+
 function isJUnitResultPath(root, absPath) {
   const rel = normalizeRel(root, absPath);
   const rootBase = path.basename(path.resolve(root));
-  if (rel.startsWith('modules/')) return /^modules\/[^/]+\/build\/test-results\/test\/TEST-.+\.xml$/i.test(rel);
-  if (rootBase === 'modules') return /^[^/]+\/build\/test-results\/test\/TEST-.+\.xml$/i.test(rel);
-  return /^build\/test-results\/test\/TEST-.+\.xml$/i.test(rel);
+  if (rel.startsWith('modules/'))
+    return new RegExp(`^modules/[^/]+/build/test-results/${TEST_RESULTS_TASK_DIR}/TEST-.+\\.xml$`, 'i').test(rel);
+  if (rootBase === 'modules')
+    return new RegExp(`^[^/]+/build/test-results/${TEST_RESULTS_TASK_DIR}/TEST-.+\\.xml$`, 'i').test(rel);
+  return new RegExp(`^build/test-results/${TEST_RESULTS_TASK_DIR}/TEST-.+\\.xml$`, 'i').test(rel);
 }
 
 function walk(dir, root = dir, out = []) {
@@ -125,10 +138,38 @@ function walk(dir, root = dir, out = []) {
 
 function modulePathFor(root, filePath) {
   const rel = normalizeRel(root, filePath);
-  const match = /^(modules\/[^/]+)\/build\/test-results\/test\//.exec(rel);
+  const match = new RegExp(`^(modules/[^/]+)/build/test-results/${TEST_RESULTS_TASK_DIR}/`).exec(rel);
   if (match) return match[1];
-  const buildIndex = rel.indexOf('/build/test-results/test/');
-  return buildIndex === -1 ? '<unknown>' : rel.slice(0, buildIndex);
+  const buildIndexMatch = new RegExp(`/build/test-results/${TEST_RESULTS_TASK_DIR}/`).exec(rel);
+  return buildIndexMatch ? rel.slice(0, buildIndexMatch.index) : '<unknown>';
+}
+
+// Develocity's test-retry extension re-executes a flaky test in place: the retried
+// attempt is written as ANOTHER <testcase> entry with the same classname+name inside the
+// SAME <testsuite> (the failed attempt carries a nested <failure>/<error>, the passing
+// retry is bare or self-closing). The suite's own `tests=` attribute counts every attempt,
+// so retries silently inflate totals/module/slowestSuites below unless the duplicate
+// testcase entries are parsed and grouped explicitly (tempdoc 829 F5/R5).
+function parseTestcases(text) {
+  const testcases = [];
+  const re = /<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g;
+  for (const match of text.matchAll(re)) {
+    const attrs = attrsFrom(match[1]);
+    const body = match[2] || '';
+    const failureTagMatch = /<(failure|error)\b([^>]*)>/.exec(body);
+    let failureMessage = null;
+    if (failureTagMatch) {
+      const tagAttrs = attrsFrom(failureTagMatch[2]);
+      failureMessage = tagAttrs.message || null;
+    }
+    testcases.push({
+      classname: attrs.classname || '',
+      name: attrs.name || '',
+      failed: failureTagMatch !== null,
+      failureMessage,
+    });
+  }
+  return testcases;
 }
 
 function parseSuite(root, filePath) {
@@ -145,7 +186,46 @@ function parseSuite(root, filePath) {
     failures: asInt(attrs.failures),
     errors: asInt(attrs.errors),
     timeSeconds: asNumber(attrs.time),
+    testcases: parseTestcases(text),
   };
+}
+
+function truncate(text, maxLength) {
+  if (!text) return null;
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+}
+
+// Group testcase entries by (file, classname, name) — scoped to one suite file, since a
+// retry re-executes within the same JUnit XML run. N>1 entries with at least one
+// failed+one clean = flaky (self-recovered). N>1 entries that are ALL failed is a
+// genuinely failing test, not a flake, and is excluded.
+function detectFlakyTests(rawSuites) {
+  const groups = new Map();
+  for (const suite of rawSuites) {
+    for (const testcase of suite.testcases) {
+      const key = `${suite.file}::${testcase.classname}::${testcase.name}`;
+      const entries = groups.get(key) || [];
+      entries.push({ ...testcase, module: suite.module });
+      groups.set(key, entries);
+    }
+  }
+  const flakyTests = [];
+  for (const entries of groups.values()) {
+    if (entries.length < 2) continue;
+    const hasFailure = entries.some((entry) => entry.failed);
+    const hasClean = entries.some((entry) => !entry.failed);
+    if (!hasFailure || !hasClean) continue;
+    const firstFailure = entries.find((entry) => entry.failed);
+    flakyTests.push({
+      classname: entries[0].classname,
+      name: entries[0].name,
+      module: entries[0].module,
+      attempts: entries.length,
+      firstFailureMessage: truncate(firstFailure?.failureMessage, 200),
+    });
+  }
+  flakyTests.sort((a, b) => a.classname.localeCompare(b.classname) || a.name.localeCompare(b.name));
+  return flakyTests;
 }
 
 function runnerInfo(opts, env = process.env) {
@@ -164,9 +244,11 @@ function round3(n) {
 }
 
 export function buildReport({ root, lane = null, top = 20, runner = runnerInfo({}) }) {
-  const suites = walk(root)
+  const rawSuites = walk(root)
     .map((filePath) => parseSuite(root, filePath))
     .filter(Boolean);
+  const flakyTests = detectFlakyTests(rawSuites);
+  const suites = rawSuites.map(({ testcases: _testcases, ...suite }) => suite);
   const modules = new Map();
   const totals = {
     suites: suites.length,
@@ -215,6 +297,7 @@ export function buildReport({ root, lane = null, top = 20, runner = runnerInfo({
       .map(rounded)
       .sort((a, b) => b.timeSeconds - a.timeSeconds || a.name.localeCompare(b.name))
       .slice(0, top),
+    flakyTests,
   };
 }
 
@@ -224,8 +307,13 @@ function fmtSeconds(n) {
 }
 
 export function renderMarkdown(report) {
+  // Lane-aware heading — this script now runs for both the unit-tests matrix and the
+  // integration-tests lane, so a hardcoded "Unit test attribution" title misdescribes the
+  // latter's report even though the underlying JSON `KIND` stays a stable schema id (see
+  // the KIND comment above).
+  const laneLabel = report.lane || 'unknown lane';
   const lines = [
-    '### Unit test attribution',
+    `### Test attribution (${laneLabel})`,
     '',
     `Generated: ${report.generatedAt}`,
     '',
@@ -244,6 +332,26 @@ export function renderMarkdown(report) {
   lines.push('', '| Slow suite | Module | Tests | Skipped | Failures | Errors | Time |', '|---|---|---:|---:|---:|---:|---:|');
   for (const suite of report.slowestSuites) {
     lines.push(`| ${suite.name} | ${suite.module} | ${suite.tests} | ${suite.skipped} | ${suite.failures} | ${suite.errors} | ${fmtSeconds(suite.timeSeconds)} |`);
+  }
+
+  const flakyTests = report.flakyTests || [];
+  lines.push('', `Flaky tests (self-recovered on Develocity retry): ${flakyTests.length}.`);
+  if (flakyTests.length > 0) {
+    lines.push(
+      '',
+      // Tempdoc 829 F5/R5: each flaky test below re-executed via the Develocity retry
+      // extension, and every attempt is counted in the `Total`/module/slow-suite figures
+      // above — those sums are inflated by the retried attempts, not just the flake count.
+      'Caution: retried executions inflate the timing/test-count totals above — every retry ' +
+        'attempt is a separate `<testcase>` entry that the totals sum over.',
+      '',
+      '| Test | Module | Attempts | First failure |',
+      '|---|---|---:|---|',
+    );
+    for (const flaky of flakyTests) {
+      const message = (flaky.firstFailureMessage || '').replaceAll('|', '\\|').replaceAll('\n', ' ');
+      lines.push(`| ${flaky.classname}.${flaky.name} | ${flaky.module} | ${flaky.attempts} | ${message} |`);
+    }
   }
   lines.push('');
   return `${lines.join('\n')}\n`;

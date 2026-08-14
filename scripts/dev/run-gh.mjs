@@ -17,7 +17,7 @@
  *     (`.claude/skills/publish/SKILL.md` "Registration race" bullet) as a runnable command
  *     instead of a hand-rolled poll loop:
  *
- *     `node scripts/dev/run-gh.mjs checks-wait <pr-number> [--timeout-sec N]`
+ *     `node scripts/dev/run-gh.mjs checks-wait <pr-number> [--timeout-sec N] [--required-only]`
  *
  *     `gh pr checks <pr>` exit-code contract (cli/cli#7866, verified live on gh 2.90.0 —
  *     tempdoc 743 R3 derisk): the exit code is a BITWISE combination —
@@ -33,6 +33,25 @@
  *     alone. This wrapper pre-polls (every 15s) until the output stops looking like the
  *     no-checks-yet case before it starts trusting the bitwise contract, which is the fix
  *     #7401 itself never shipped.
+ *
+ *     `--required-only` (tempdoc 829 R1): passes `--required` through to every underlying
+ *     `gh pr checks` call, so the bitwise verdict above is computed over ONLY the contexts
+ *     registered in the branch protection rule's `required_status_checks.contexts` — verified
+ *     working on gh 2.90.0, filters to exactly the required contexts. Advisory (non-required)
+ *     lanes cannot change mergeability, so without this flag a flaky advisory lane (e.g.
+ *     continue-on-error integration tests) reads as FAIL and triggers a rerun that cannot
+ *     possibly matter: 829 F1 found 12/12 lane reruns on 2026-08-13 were unnecessary because
+ *     the one failing lane was never in the required set — every attempt-1 run was already
+ *     mergeable. The no-checks-yet pre-poll heuristic (`isUnregistered`) covers both invocation
+ *     shapes, but `gh` does NOT emit identical text across them (cli/cli pkg/cmd/pr/checks/checks.go,
+ *     gh 2.90.0): without `--required` it emits "no checks reported on the '%s' branch" when
+ *     `statusCheckRollup.Nodes` is empty; with `--required` it can instead emit "no required checks
+ *     reported on the '%s' branch" — checks ARE registered, but zero of them are in the required
+ *     set yet (e.g. one required context, like cla-assistant, reporting from a different workflow
+ *     run than the rest — a real staggered-registration window, not a hypothetical). Both variants
+ *     are exit 1 and both are treated as not-yet-registered by the same regex. The bitwise exit
+ *     contract itself is unchanged by the flag — only which checks feed into it. Omitting the flag
+ *     is byte-identical to the pre-829 behavior (all reported checks, required and advisory alike).
  *
  *     Exit codes of `checks-wait` itself: 0 = all checks passed, 1 = a check failed,
  *     3 = TIMEOUT (bounded by --timeout-sec, default 1800), 2 = an unexpected `gh` error
@@ -78,7 +97,7 @@ function runGhCaptured(bin, args) {
  */
 export function isUnregistered(result) {
   const text = `${result.stdout || ''}${result.stderr || ''}`;
-  if (result.status === 1 && /no checks reported/i.test(text)) return true;
+  if (result.status === 1 && /no (required )?checks reported/i.test(text)) return true;
   // A completely empty result with a non-zero/non-standard status also reads as "not up yet"
   // rather than a decodable bitwise verdict.
   if (!text.trim() && result.status !== 0) return true;
@@ -101,9 +120,19 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function checksWait(bin, prNumber, timeoutSec) {
+/**
+ * Build the `gh pr checks` argument vector. Pure; unit-tested. With `requiredOnly`, appends
+ * `--required` so the bitwise verdict only reflects `required_status_checks.contexts` (829 R1).
+ */
+export function buildChecksArgs(prNumber, requiredOnly) {
+  const args = ['pr', 'checks', String(prNumber)];
+  if (requiredOnly) args.push('--required');
+  return args;
+}
+
+async function checksWait(bin, prNumber, timeoutSec, requiredOnly) {
   const deadline = Date.now() + timeoutSec * 1000;
-  const checksArgs = ['pr', 'checks', String(prNumber)];
+  const checksArgs = buildChecksArgs(prNumber, requiredOnly);
 
   // Phase 1: pre-poll until checks register (cli/cli#7401 mitigation).
   let last = runGhCaptured(bin, checksArgs);
@@ -159,12 +188,26 @@ async function checksWait(bin, prNumber, timeoutSec) {
   }
 }
 
-function parseTimeoutSec(args) {
+/** Extract the `--timeout-sec N` flag. Pure; unit-tested. */
+export function parseTimeoutSec(args) {
   const i = args.indexOf('--timeout-sec');
   if (i === -1) return { timeoutSec: DEFAULT_TIMEOUT_SEC, rest: args };
   const value = Number(args[i + 1]);
-  const rest = [...args.slice(0, i), ...args.slice(i + 2)];
-  return { timeoutSec: Number.isFinite(value) && value > 0 ? value : DEFAULT_TIMEOUT_SEC, rest };
+  const hasValidValue = Number.isFinite(value) && value > 0;
+  // Only consume the next token if it actually parses as a positive number — otherwise it's
+  // a different flag (or nothing), and eating it would silently drop that argument.
+  const rest = hasValidValue
+    ? [...args.slice(0, i), ...args.slice(i + 2)]
+    : [...args.slice(0, i), ...args.slice(i + 1)];
+  return { timeoutSec: hasValidValue ? value : DEFAULT_TIMEOUT_SEC, rest };
+}
+
+/** Extract the boolean `--required-only` flag (829 R1). Pure; unit-tested. */
+export function parseRequiredOnly(args) {
+  const i = args.indexOf('--required-only');
+  if (i === -1) return { requiredOnly: false, rest: args };
+  const rest = [...args.slice(0, i), ...args.slice(i + 1)];
+  return { requiredOnly: true, rest };
 }
 
 async function main() {
@@ -172,13 +215,14 @@ async function main() {
   const bin = resolveGhBin();
 
   if (argv[0] === 'checks-wait') {
-    const { timeoutSec, rest } = parseTimeoutSec(argv.slice(1));
+    const { timeoutSec, rest: afterTimeout } = parseTimeoutSec(argv.slice(1));
+    const { requiredOnly, rest } = parseRequiredOnly(afterTimeout);
     const prNumber = rest[0];
     if (!prNumber) {
       process.stderr.write('run-gh checks-wait: missing <pr-number>\n');
       process.exit(2);
     }
-    const code = await checksWait(bin, prNumber, timeoutSec);
+    const code = await checksWait(bin, prNumber, timeoutSec, requiredOnly);
     process.exit(code);
   }
 
