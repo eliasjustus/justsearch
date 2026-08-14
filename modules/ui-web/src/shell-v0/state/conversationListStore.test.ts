@@ -18,6 +18,10 @@ import {
   siblingSessionsAt,
   getRecentSessions,
   recordRecentSession,
+  getConversationListState,
+  loadConversations,
+  setConversationTitle,
+  generateConversationTitle,
   type Conversation,
   __resetConversationListForTest,
 } from './conversationListStore.js';
@@ -26,6 +30,7 @@ function conv(id: string, opts: Partial<Conversation> = {}): Conversation {
   return {
     id,
     title: null,
+    titleSource: null,
     createdAt: 0,
     lastActiveAt: 0,
     messageCount: 0,
@@ -66,6 +71,8 @@ describe('Tempdoc 610 Phase B — siblingSessionsAt', () => {
 interface RecordedCall {
   url: string;
   method: string;
+  /** The request body as sent, or '' for a bodyless request. */
+  body: string;
 }
 
 function mockFetch(handler: (url: string, method: string) => Response): RecordedCall[] {
@@ -73,7 +80,7 @@ function mockFetch(handler: (url: string, method: string) => Response): Recorded
   globalThis.fetch = vi.fn((url: RequestInfo | URL, init?: RequestInit) => {
     const u = url.toString();
     const method = init?.method ?? 'GET';
-    calls.push({ url: u, method });
+    calls.push({ url: u, method, body: String(init?.body ?? '') });
     return Promise.resolve(handler(u, method));
   }) as typeof fetch;
   return calls;
@@ -370,5 +377,226 @@ describe('deleteConversationWithCascade (Slice 517 FIX-U1)', () => {
     expect(result.ok).toBe(false);
     // parent was attempted exactly once — no retry after child failure.
     expect(parentAttempt).toBe(1);
+  });
+});
+
+/* ── Tempdoc 838 — the title is the BACKEND's fact now ───────────────────────────────────────── */
+
+const TITLES_KEY = 'jf-conversation-titles';
+
+/** One row of `GET /api/chat/conversations`, in the shape the Head emits. */
+function wireRow(id: string, over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    sessionId: id,
+    shapeId: 'core.rag-ask',
+    createdAtMs: 1,
+    lastActiveAtMs: 2,
+    messageCount: 2,
+    firstUserMessage: 'why did the renewal fail?',
+    ...over,
+  };
+}
+
+const titlePosts = (calls: readonly RecordedCall[]): RecordedCall[] =>
+  calls.filter((c) => c.url.endsWith('/title') && c.method === 'POST');
+
+describe('tempdoc 838 — conversation titles are written through to the backend', () => {
+  beforeEach(() => {
+    __resetConversationListForTest();
+    setConversationApiBase('');
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it('renames optimistically, then POSTs the name and its provenance', async () => {
+    const calls = mockFetch((url) =>
+      url.endsWith('/title')
+        ? jsonResponse({ ok: true, title: 'Lease terms' })
+        : jsonResponse({ sessions: [wireRow('uc-a')] }),
+    );
+    await loadConversations();
+
+    const write = setConversationTitle('uc-a', 'Lease terms');
+    // SYNCHRONOUSLY renamed — the row does not wait for the network, because a name that flickered
+    // for the length of a request would be worse than one that can fail.
+    expect(getConversationListState().conversations[0]?.title).toBe('Lease terms');
+    expect(await write).toEqual({ ok: true, status: 200 });
+
+    const posts = titlePosts(calls);
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.url).toBe('/api/chat/conversations/uc-a/title');
+    expect(JSON.parse(posts[0]?.body ?? '{}')).toEqual({ title: 'Lease terms', source: 'user' });
+    // And NOTHING was mirrored into the retired browser map — the whole point of the seam.
+    expect(localStorage.getItem(TITLES_KEY)).toBeNull();
+  });
+
+  it('URL-encodes the session id and carries an auto-title as `auto`', async () => {
+    const calls = mockFetch((url) =>
+      url.endsWith('/title') ? jsonResponse({ ok: true }) : jsonResponse({ sessions: [] }),
+    );
+    await setConversationTitle('weird/id', 'Named by the model', 'auto');
+    expect(calls[0]?.url).toBe('/api/chat/conversations/weird%2Fid/title');
+    expect(JSON.parse(calls[0]?.body ?? '{}').source).toBe('auto');
+  });
+
+  it('REVERTS the row when the store refuses, and reports the status so the caller can word it', async () => {
+    mockFetch((url) =>
+      url.endsWith('/title')
+        ? jsonResponse({ errorCode: 'STORE_LOCKED', locked: true }, 423)
+        : jsonResponse({ sessions: [wireRow('uc-a', { title: 'Lease terms', titleSource: 'user' })] }),
+    );
+    await loadConversations();
+    expect(getConversationListState().conversations[0]?.title).toBe('Lease terms');
+
+    const written = await setConversationTitle('uc-a', 'Renewal postmortem');
+    expect(written).toEqual({ ok: false, status: 423 });
+    // Back to the name the store actually holds — a refused write must not leave a name on screen
+    // that nothing remembers.
+    expect(getConversationListState().conversations[0]?.title).toBe('Lease terms');
+    expect(getConversationListState().conversations[0]?.titleSource).toBe('user');
+  });
+
+  it('reverts on an unreachable Head too, and calls that status 0', async () => {
+    mockFetch(() => jsonResponse({ sessions: [wireRow('uc-a')] }));
+    await loadConversations();
+    globalThis.fetch = vi.fn(() => Promise.reject(new Error('offline'))) as typeof fetch;
+
+    expect(await setConversationTitle('uc-a', 'Lease terms')).toEqual({ ok: false, status: 0 });
+    expect(getConversationListState().conversations[0]?.title).toBeNull();
+  });
+
+  it('holds a name the conversation was too young for (404) and re-sends it on the next list', async () => {
+    // The §1d race: a rename between opening a conversation and its first message being appended.
+    // The endpoint answers 404 rather than minting a zero-message row that would name nothing.
+    let created = false;
+    const calls = mockFetch((url) => {
+      if (url.endsWith('/title')) {
+        return created ? jsonResponse({ ok: true }) : jsonResponse({ error: 'no such' }, 404);
+      }
+      return jsonResponse({ sessions: created ? [wireRow('uc-young')] : [] });
+    });
+
+    const written = await setConversationTitle('uc-young', 'Lease terms');
+    // Not reported as a failure: it is a race with creation, not a refusal, so the name STAYS.
+    expect(written).toEqual({ ok: true, status: 404 });
+    expect(titlePosts(calls)).toHaveLength(1);
+
+    created = true;
+    await loadConversations();
+    await new Promise<void>((r) => setTimeout(r, 0));
+    expect(titlePosts(calls)).toHaveLength(2);
+    expect(JSON.parse(titlePosts(calls)[1]?.body ?? '{}')).toEqual({
+      title: 'Lease terms',
+      source: 'user',
+    });
+    expect(getConversationListState().conversations[0]?.title).toBe('Lease terms');
+  });
+
+  it('adopts a legacy browser-local title, then ERASES the key — the migration completes', async () => {
+    localStorage.setItem(TITLES_KEY, JSON.stringify({ 'uc-a': 'Lease terms' }));
+    const calls = mockFetch((url) =>
+      url.endsWith('/title') ? jsonResponse({ ok: true }) : jsonResponse({ sessions: [wireRow('uc-a')] }),
+    );
+
+    await loadConversations();
+    // No regression in what the reader sees: the legacy name renders immediately, before any write.
+    expect(getConversationListState().conversations[0]?.title).toBe('Lease terms');
+    await new Promise<void>((r) => setTimeout(r, 0));
+
+    const posts = titlePosts(calls);
+    expect(posts).toHaveLength(1);
+    // Adopted as the READER's: an existing name is one somebody kept, and calling it auto-generated
+    // would license the next ask to overwrite it.
+    expect(JSON.parse(posts[0]?.body ?? '{}')).toEqual({ title: 'Lease terms', source: 'user' });
+    // The last entry is gone, so the whole key is gone — the plaintext-at-rest defect with it.
+    expect(localStorage.getItem(TITLES_KEY)).toBeNull();
+  });
+
+  it('does NOT erase a legacy title the locked store refused, and stops re-POSTing it', async () => {
+    localStorage.setItem(TITLES_KEY, JSON.stringify({ 'uc-a': 'Lease terms', 'uc-b': 'Renewal' }));
+    const calls = mockFetch((url) =>
+      url.endsWith('/title')
+        ? jsonResponse({ errorCode: 'STORE_LOCKED' }, 423)
+        : jsonResponse({ sessions: [wireRow('uc-a'), wireRow('uc-b')] }),
+    );
+
+    await loadConversations();
+    await new Promise<void>((r) => setTimeout(r, 0));
+    expect(titlePosts(calls)).toHaveLength(2);
+    // Nothing was lost to the lock: the next unlocked list adopts them.
+    expect(JSON.parse(localStorage.getItem(TITLES_KEY) ?? '{}')).toEqual({
+      'uc-a': 'Lease terms',
+      'uc-b': 'Renewal',
+    });
+
+    // ...but this session stops asking. Twenty 423s per list refresh is a burst that cannot succeed.
+    await loadConversations();
+    await new Promise<void>((r) => setTimeout(r, 0));
+    expect(titlePosts(calls)).toHaveLength(2);
+  });
+
+  it('drops a legacy entry the backend has already outgrown, without a second write', async () => {
+    localStorage.setItem(TITLES_KEY, JSON.stringify({ 'uc-a': 'Stale local name' }));
+    const calls = mockFetch((url) =>
+      url.endsWith('/title')
+        ? jsonResponse({ ok: true })
+        : jsonResponse({ sessions: [wireRow('uc-a', { title: 'Lease terms', titleSource: 'user' })] }),
+    );
+
+    await loadConversations();
+    await new Promise<void>((r) => setTimeout(r, 0));
+    // The backend's name wins outright, and the local one is not re-adopted over it.
+    expect(getConversationListState().conversations[0]?.title).toBe('Lease terms');
+    expect(titlePosts(calls)).toHaveLength(0);
+    expect(localStorage.getItem(TITLES_KEY)).toBeNull();
+  });
+
+  it('reads title + provenance off the wire, and narrows an unknown provenance to none', async () => {
+    mockFetch(() =>
+      jsonResponse({
+        sessions: [
+          wireRow('uc-a', { title: 'Lease terms', titleSource: 'auto' }),
+          wireRow('uc-b', { title: 'Named', titleSource: 'something-else' }),
+          wireRow('uc-c'),
+        ],
+      }),
+    );
+    await loadConversations();
+    const [a, b, c] = getConversationListState().conversations;
+    expect([a?.title, a?.titleSource]).toEqual(['Lease terms', 'auto']);
+    // An unrecognised value is NO provenance rather than a wrong one.
+    expect([b?.title, b?.titleSource]).toEqual(['Named', null]);
+    expect([c?.title, c?.titleSource]).toEqual([null, null]);
+  });
+});
+
+describe('tempdoc 835 §10f — auto-title generation is plumbing, not an answer', () => {
+  beforeEach(() => {
+    __resetConversationListForTest();
+    setConversationApiBase('');
+  });
+
+  it('suppresses thinking on the throwaway title turn', async () => {
+    // The reasoning budget is on server-wide, so a dispatch that omits enableThinking buys a full
+    // reasoning pass — here, to produce a 3-5 word title. The kwarg must be false on the wire.
+    const calls = mockFetch((url) => {
+      if (url.includes('/api/chat/dispatch')) {
+        return new Response('event: chunk\ndata: {"text":"Lease terms"}\n\n', {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      }
+      return jsonResponse({});
+    });
+
+    await generateConversationTitle('sess-1', 'What are the lease terms?', 'They run 12 months.');
+
+    const dispatch = calls.find((c) => c.url.includes('/api/chat/dispatch'));
+    expect(dispatch).toBeDefined();
+    expect(JSON.parse(dispatch!.body).enableThinking).toBe(false);
   });
 });

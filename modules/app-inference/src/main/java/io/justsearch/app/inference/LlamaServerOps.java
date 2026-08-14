@@ -114,6 +114,13 @@ final class LlamaServerOps {
   private volatile String vramDetectionSource = "none";
   private volatile String cudaRuntimeWarning = null;
 
+  // Thinking capability (tempdoc 835 §5.2): launch-argument acceptance is the authoritative signal.
+  private final AtomicReference<ThinkingSupport> thinkingSupport =
+      new AtomicReference<>(ThinkingSupport.UNKNOWN);
+  private volatile boolean reasoningBudgetRequested;
+  private volatile List<String> lastLaunchCommand = List.of();
+  private volatile long lastLaunchLogOffset;
+
   // Crash recovery
   private final AtomicInteger crashCount = new AtomicInteger(0);
   private final ScheduledExecutorService recoveryScheduler =
@@ -241,17 +248,21 @@ final class LlamaServerOps {
     // When thinking mode is enabled, emit reasoning_content as a separate SSE field
     // instead of inline <think> tags in content. Requires llama.cpp build >=b4215.
     ResolvedConfig rc = ConfigStore.global().get();
+    boolean reasoningRequested = false;
     if (rc.ai().useThinking()) {
       command.add("--reasoning-format");
       command.add("deepseek");
 
-      // Control reasoning token generation. Default 0 = disabled (no reasoning tokens).
-      // Prevents reasoning from exhausting the shared max_tokens budget (B6 bug).
-      // Set to -1 for unrestricted reasoning when thinking output is needed.
+      // Control reasoning token generation. The default is a bounded budget (tempdoc 835): the
+      // budget is shared with the answer, so 0 disables reasoning entirely and an unbounded budget
+      // starves the answer — ResolvedConfigBuilder refuses the shapes that do.
       int reasoningBudget = rc.ai().reasoningBudget();
       command.add("--reasoning-budget");
       command.add(String.valueOf(reasoningBudget));
+      reasoningRequested = reasoningBudget != 0;
     }
+    this.reasoningBudgetRequested = reasoningRequested;
+    thinkingSupport.set(reasoningRequested ? ThinkingSupport.UNKNOWN : ThinkingSupport.DISABLED);
 
     // Defense-in-depth: force loopback bind for owned llama-server (BYO binaries may differ).
     command.add("--host");
@@ -366,7 +377,26 @@ final class LlamaServerOps {
     }
   }
 
+  /**
+   * Waits for the freshly launched (or adopted) server to report healthy.
+   *
+   * <p>Tempdoc 835 §9c.2: a build that cannot honour {@code --reasoning-budget} exits immediately
+   * with a launch-argument rejection. That must cost thinking, not inference — so the rejection is
+   * detected here, the server is relaunched once without the flag, and the verdict is recorded for
+   * the runtime manifest. Any other startup failure propagates unchanged.
+   */
   void waitForServerHealth() throws ModeTransitionException {
+    try {
+      awaitServerHealth();
+    } catch (ModeTransitionException e) {
+      if (!relaunchWithoutReasoningBudget(e)) {
+        throw e;
+      }
+      awaitServerHealth();
+    }
+  }
+
+  private void awaitServerHealth() throws ModeTransitionException {
     LOG.info("Waiting for server health (timeout={}ms)...", HEALTH_CHECK_TIMEOUT_MS);
     long startTime = System.currentTimeMillis();
     long deadline = startTime + HEALTH_CHECK_TIMEOUT_MS;
@@ -411,6 +441,10 @@ final class LlamaServerOps {
       HealthProbe probe = probeHealth(ADOPTION_HEALTH_TIMEOUT);
       if (probe.ok()) {
         LOG.info("Server healthy");
+        // The build accepted --reasoning-budget: it started and serves with the flag present.
+        if (reasoningBudgetRequested) {
+          thinkingSupport.compareAndSet(ThinkingSupport.UNKNOWN, ThinkingSupport.SUPPORTED);
+        }
         logHealthBodyBestEffort(probe.body());
         logServerProperties(); // Log actual server config for debugging
         return;
@@ -433,6 +467,85 @@ final class LlamaServerOps {
     throw new ModeTransitionException(
         ModeTransitionException.Reason.HEALTH_CHECK_TIMEOUT,
         "Server health check timeout after " + HEALTH_CHECK_TIMEOUT_MS + "ms");
+  }
+
+  /**
+   * Fail-closed-on-thinking recovery: when the startup failure was llama-server refusing
+   * {@code --reasoning-budget}, relaunch the same command without that flag and record the
+   * {@link ThinkingSupport#UNSUPPORTED} verdict. Returns false — leaving the original failure to
+   * propagate — for every other cause, and if the relaunch itself cannot be attempted.
+   */
+  private boolean relaunchWithoutReasoningBudget(ModeTransitionException failure) {
+    if (failure.reason() != ModeTransitionException.Reason.PROCESS_EXITED
+        || !reasoningBudgetRequested
+        || thinkingSupport.get() == ThinkingSupport.UNSUPPORTED
+        || !lastLaunchCommand.contains("--reasoning-budget")) {
+      return false;
+    }
+    if (!LlamaServerArgRejection.isReasoningBudgetRejection(readLaunchOutputBestEffort())) {
+      return false;
+    }
+
+    LOG.warn(
+        "llama-server rejected --reasoning-budget: this build cannot generate reasoning. Retrying"
+            + " without the flag — inference stays available, thinking does not. Reasoning"
+            + " requests will be answered without a reasoning trace.");
+    thinkingSupport.set(ThinkingSupport.UNSUPPORTED);
+    reasoningBudgetRequested = false;
+
+    List<String> retry = new ArrayList<>();
+    for (int i = 0; i < lastLaunchCommand.size(); i++) {
+      if ("--reasoning-budget".equals(lastLaunchCommand.get(i))) {
+        i++; // also drop the value
+        continue;
+      }
+      retry.add(lastLaunchCommand.get(i));
+    }
+    if (crashMonitor != null) {
+      crashMonitor.cancel(true);
+      crashMonitor = null;
+    }
+    try {
+      LOG.debug("Restarting server without --reasoning-budget: {}", String.join(" ", retry));
+      launchManagedLlamaServer(retry);
+      return true;
+    } catch (IOException | ModeTransitionException e) {
+      LOG.error("Relaunch without --reasoning-budget failed: {}", e.getMessage());
+      return false;
+    }
+  }
+
+  /** llama-server output written since the last launch — empty when the log is unreadable. */
+  private String readLaunchOutputBestEffort() {
+    try {
+      Path logFile = resolveLlamaServerLogFile();
+      if (!Files.exists(logFile)) {
+        return "";
+      }
+      long size = Files.size(logFile);
+      long from = Math.max(lastLaunchLogOffset, size - DIAG_TAIL_BYTES);
+      if (size <= from) {
+        return "";
+      }
+      try (var channel = Files.newByteChannel(logFile)) {
+        channel.position(from);
+        byte[] buf = new byte[(int) Math.min(size - from, DIAG_TAIL_BYTES)];
+        java.nio.ByteBuffer bb = java.nio.ByteBuffer.wrap(buf);
+        int read = channel.read(bb);
+        return read <= 0 ? "" : new String(buf, 0, read, java.nio.charset.StandardCharsets.UTF_8);
+      }
+    } catch (IOException e) {
+      LOG.debug("Failed to read llama-server launch output: {}", e.getMessage());
+      return "";
+    }
+  }
+
+  /**
+   * Whether the running server can honour reasoning generation (tempdoc 835) — published on the
+   * runtime manifest's {@code ai.thinkingSupport}.
+   */
+  String thinkingSupport() {
+    return thinkingSupport.get().name();
   }
 
   // ==================== External Server Adoption ====================
@@ -478,6 +591,9 @@ final class LlamaServerOps {
   private void adoptExternalServer(PropsProbe probe) {
     usingExternal = true;
     process = null;
+    // We launched nothing, so launch-argument acceptance says nothing about this server.
+    reasoningBudgetRequested = false;
+    thinkingSupport.set(ThinkingSupport.UNKNOWN);
     propsOps.resetExternalAdoptionState(
         probe.looksLikeLlamaServer(), probe.looksLikeLlamaServer() ? null : probe.error());
     // Monitor adopted servers too; recovery behavior differs (we can't restart without a handle).
@@ -519,6 +635,7 @@ final class LlamaServerOps {
               + exe
               + ". Try 'Repair AI' or reinstall the AI runtime, then retry Online Mode.");
     }
+    lastLaunchCommand = List.copyOf(command);
     ProcessBuilder pb = new ProcessBuilder(command);
     // Ensure the DLL search path includes the llama-server directory and the bundled runtime/bin
     // directory (which often contains the VC++ runtime DLLs inside our packaged headless runtime
@@ -570,6 +687,9 @@ final class LlamaServerOps {
     // Persist llama-server logs to a file under the user-writable app home/data dir.
     Path logFile = resolveLlamaServerLogFile();
     Files.createDirectories(logFile.getParent());
+    // Remember where this launch starts writing, so launch-argument rejections are read from THIS
+    // run's output rather than a previous run's tail (the log is append-only across restarts).
+    lastLaunchLogOffset = Files.exists(logFile) ? Files.size(logFile) : 0L;
     pb.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile.toFile()));
     pb.redirectError(ProcessBuilder.Redirect.appendTo(logFile.toFile()));
     return logFile;

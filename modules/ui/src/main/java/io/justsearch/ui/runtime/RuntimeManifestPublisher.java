@@ -495,6 +495,9 @@ public final class RuntimeManifestPublisher implements AutoCloseable {
    * <p>Tempdoc 682 Item 2: {@code serverBuildExpected} / {@code serverBuildActual} carry the
    * staged llama-server build pin vs the {@code /props}-reported running build; either may be
    * null (unknown — a supported state, e.g. externally-adopted servers carry no pin).
+   *
+   * <p>Tempdoc 835 §9c.2: {@code thinkingSupport} carries the reasoning-capability verdict decided
+   * by launch-argument acceptance; null when no inference manager exists.
    */
   public synchronized RuntimeManifest publishAi(
       String phase,
@@ -503,7 +506,8 @@ public final class RuntimeManifestPublisher implements AutoCloseable {
       boolean readyNow,
       String lifecycle,
       String serverBuildExpected,
-      String serverBuildActual)
+      String serverBuildActual,
+      String thinkingSupport)
       throws IOException {
     RuntimeManifest previous = current.get();
     if (previous == null) {
@@ -515,7 +519,13 @@ public final class RuntimeManifestPublisher implements AutoCloseable {
             : previous.ai() == null ? null : previous.ai().readyAt();
     RuntimeManifest.AiInfo aiInfo =
         new RuntimeManifest.AiInfo(
-            phase, required, pendingReason, readyAt, serverBuildExpected, serverBuildActual);
+            phase,
+            required,
+            pendingReason,
+            readyAt,
+            serverBuildExpected,
+            serverBuildActual,
+            thinkingSupport);
     RuntimeManifest manifest =
         RuntimeManifestBuilder.builder(previous)
             .ai(aiInfo)

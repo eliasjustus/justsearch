@@ -72,11 +72,10 @@ public final class ContextSufficiencyService {
     RESPONSE_FORMAT_SCHEMA = schema;
 
     if (RESPONSE_FORMAT_SCHEMA != null) {
+      // DETERMINISTIC carries enable_thinking:false for every mechanical call (tempdoc 835 §10f).
       SAMPLING =
-          SamplingParams.DETERMINISTIC
-              .withEnableThinking(false)
-              .withResponseFormat(
-                  Map.of("type", "json_object", "schema", RESPONSE_FORMAT_SCHEMA));
+          SamplingParams.DETERMINISTIC.withResponseFormat(
+              Map.of("type", "json_object", "schema", RESPONSE_FORMAT_SCHEMA));
     } else {
       SAMPLING = null;
     }

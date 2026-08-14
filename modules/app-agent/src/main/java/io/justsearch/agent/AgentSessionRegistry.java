@@ -200,13 +200,20 @@ final class AgentSessionRegistry {
     // BEFORE the buffered-event replay, so a late attacher (especially a precise B1 reconnect that
     // replays only newer events) reconstructs "where the run stands" without the full history. The
     // primer carries no trace span, so it is not part of the Last-Event-ID sequence.
+    // Tempdoc 834 §6.1 — the primer is pushed BEFORE the replay, so it is the one frame guaranteed
+    // to arrive; every fact needed to ACT on the run (open approval gates, the autonomy dial, why
+    // the run is parked) therefore rides HERE rather than in the evictable ring.
     eventConsumer.accept(
         new AgentEvent.StateSnapshot(
             session.iterationsUsed(),
             session.budgetRemaining(),
             session.toolCallsExecuted(),
             session.messages().size(),
-            session.activeAgentId()));
+            session.activeAgentId(),
+            session.pendingApprovals(),
+            session.autonomyLevel().name(),
+            session.parkSnapshot(),
+            io.justsearch.agent.api.TraceContext.none()));
     var done = new java.util.concurrent.CountDownLatch(1);
     // The observer forwards every event and trips the latch on the terminal event (which the loop
     // publishes through the hub BEFORE evicting the session), so the attach handler unblocks exactly

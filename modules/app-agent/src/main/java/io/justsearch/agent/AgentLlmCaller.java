@@ -24,7 +24,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.ToIntFunction;
-import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
@@ -45,8 +44,6 @@ final class AgentLlmCaller {
 
   private static final Logger LOG = LoggerFactory.getLogger(AgentLlmCaller.class);
   private static final ObjectMapper MAPPER = new ObjectMapper();
-  private static final Pattern THINK_TAGS =
-      Pattern.compile("<think>.*?</think>", Pattern.DOTALL);
 
   /** Per-call completion-token cap. */
   static final int DEFAULT_MAX_TOKENS =
@@ -300,21 +297,12 @@ final class AgentLlmCaller {
         }
       }
 
-      // Strip leaked <think> tags from accumulated text (cleans conversation history)
-      String text = rawText;
-      String stripped = THINK_TAGS.matcher(text).replaceAll("").strip();
-      // Also strip lone opening/closing think tags (model outputs </think> with --reasoning-budget 0)
-      stripped = stripped.replace("</think>", "").replace("<think>", "").strip();
-      if (stripped.length() < text.length()) {
-        LOG.warn(
-            "Stripped <think> tags from streamed response ({} -> {} chars)",
-            text.length(),
-            stripped.length());
-        text = stripped;
-      }
-
+      // Think-tag hygiene is upstream now (tempdoc 835 §5.3): OnlineModeOps' streaming parse runs a
+      // stateful, frame-straddle-safe filter over content and reroutes captured thinking to the
+      // reasoning channel, so the accumulator here never sees tags. The strip that used to live at
+      // this point was the second authority over the same fact.
       chatSpan.setStatus(StatusCode.OK);
-      return new LlmCallResult(text, toolCalls);
+      return new LlmCallResult(rawText, toolCalls);
     } catch (RuntimeException e) {
       chatSpan.recordException(e);
       chatSpan.setStatus(StatusCode.ERROR, "llm-call-failed");

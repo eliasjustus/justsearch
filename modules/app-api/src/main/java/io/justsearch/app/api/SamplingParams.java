@@ -104,8 +104,21 @@ public record SamplingParams(
   /** Recommended for thinking/reasoning models (Qwen3.5 defaults: temp=0.7, top_p=0.8). */
   public static final SamplingParams THINKING = new SamplingParams(0.7, 0.8);
 
-  /** Near-deterministic output for structured extraction and factual responses. */
-  public static final SamplingParams DETERMINISTIC = new SamplingParams(0.1, 0.9);
+  /**
+   * Near-deterministic output for structured extraction and factual responses — the preset the
+   * pipeline's mechanical calls use (query rewrite, query understanding, filter normalization,
+   * context sufficiency, query expansion, section summarize).
+   *
+   * <p>Thinking is disabled here, not at each call site (tempdoc 835 §10f). Once the server-wide
+   * reasoning budget is on by default, every call that leaves {@code enableThinking} null inherits
+   * it: a measured rag-ask turn logged 95 reasoning activations across 101 completion requests,
+   * i.e. roughly six thinking calls per turn where only one produces an answer a user reads. These
+   * calls either discard {@code reasoning_content} outright or feed a parser, so reasoning on them
+   * is pure latency and pure token cost. Three sites had already hand-applied
+   * {@code withEnableThinking(false)}, which is the duplication this default retires. Calls that
+   * SHOULD think use {@link #THINKING}, or the conversation path's request-derived params.
+   */
+  public static final SamplingParams DETERMINISTIC = new SamplingParams(0.1, 0.9, null, null, false);
 
   /**
    * Deterministic preset for vision document understanding (VDU).

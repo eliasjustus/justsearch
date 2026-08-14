@@ -202,6 +202,13 @@ public final class ChatController {
       if (s.branchPointMessageId() != null) {
         m.put("branchPointMessageId", s.branchPointMessageId());
       }
+      // Tempdoc 838 — the conversation's durable name, and who chose it. Conditional like the parent
+      // pointers: absence means "no title", and a sealed title reads absent while the store is locked
+      // (the row still lists, with the FE's placeholder — the same answer firstUserMessage gives).
+      if (s.title() != null && !s.title().isEmpty()) m.put("title", s.title());
+      if (s.titleSource() != null && !s.titleSource().isEmpty()) {
+        m.put("titleSource", s.titleSource());
+      }
       return m;
     }).toList();
     ctx.json(Map.of("sessions", result));
@@ -295,6 +302,81 @@ public final class ChatController {
     String sessionId = ctx.pathParam("sessionId");
     conversationStore.setContextFloor(sessionId, null);
     ctx.json(Map.of("ok", true));
+  }
+
+  /**
+   * Tempdoc 838 — POST /api/chat/conversations/{sessionId}/title with body
+   * {@code {"title": "...", "source": "user"|"auto"}}. Names the conversation durably: the title
+   * becomes a sealed field of the session's meta.json, so it survives a cleared site-data, a second
+   * client and a profile change, and it stops sitting in browser plaintext outside the encryption
+   * boundary while the conversation it names is sealed.
+   *
+   * <p>POST-to-set / DELETE-to-clear is the conversation family's house style (context-floor,
+   * compact, exclude), so a blank title here is a 400 rather than a second spelling of "clear".
+   * A locked store answers 423 through the global {@code KeyLockedException} mapping — the store's
+   * own read raises it, so there is no lock arm in this method.
+   */
+  public void handleSetTitle(Context ctx) {
+    String sessionId = ctx.pathParam("sessionId");
+    String title = null;
+    String source = ConversationStore.TITLE_SOURCE_USER;
+    try {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> body = ctx.bodyAsClass(Map.class);
+      if (body != null) {
+        Object t = body.get("title");
+        if (t instanceof String s) title = s;
+        Object src = body.get("source");
+        if (src instanceof String s) source = s;
+      }
+    } catch (RuntimeException ignored) {
+      // fall through to the 400 below
+    }
+    if (title == null || title.isBlank()) {
+      badRequest(ctx, "Missing required field: title");
+      return;
+    }
+    if (!ConversationStore.TITLE_SOURCE_USER.equals(source)
+        && !ConversationStore.TITLE_SOURCE_AUTO.equals(source)) {
+      badRequest(ctx, "Unknown title source: " + source);
+      return;
+    }
+    // A rename of a conversation that does not exist must not MINT one — a titled zero-message
+    // session is a list row that names nothing. The FE's own retry covers the sub-second race
+    // between opening a conversation and its first message landing.
+    if (conversationStore.getSessionMeta(sessionId).isEmpty()) {
+      Map<String, Object> err = new LinkedHashMap<>();
+      err.put("error", "No such conversation: " + sessionId);
+      err.put("errorCode", ApiErrorCode.NOT_FOUND.name());
+      ctx.status(404).json(err);
+      return;
+    }
+    conversationStore.setTitle(sessionId, title, source);
+    // Echo what was actually STORED, not what was sent: the store caps the name at 200 characters,
+    // and a response that repeated an over-long input would be telling the client something untrue.
+    String stored =
+        conversationStore
+            .getSessionMeta(sessionId)
+            .map(ConversationStore.SessionSummary::title)
+            .orElse(title.trim());
+    ctx.json(Map.of("ok", true, "title", stored, "titleSource", source));
+  }
+
+  /**
+   * Tempdoc 838 — DELETE /api/chat/conversations/{sessionId}/title. Removes the name (the row falls
+   * back to its opening message, then to the FE placeholder). Idempotent: clearing the name of a
+   * conversation that has none, or of one that does not exist, is a no-op success.
+   */
+  public void handleClearTitle(Context ctx) {
+    conversationStore.setTitle(ctx.pathParam("sessionId"), null, null);
+    ctx.json(Map.of("ok", true));
+  }
+
+  private static void badRequest(Context ctx, String message) {
+    Map<String, Object> err = new LinkedHashMap<>();
+    err.put("error", message);
+    err.put("errorCode", ApiErrorCode.INVALID_REQUEST.name());
+    ctx.status(400).json(err);
   }
 
   /**

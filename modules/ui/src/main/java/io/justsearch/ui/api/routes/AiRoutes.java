@@ -97,6 +97,10 @@ public final class AiRoutes {
     app.post(
         "/api/chat/conversations/{sessionId}/sources/exclude",
         chatController::handleToggleSourceExcluded);
+    // Tempdoc 838 — the conversation's name: set / clear. The one durable authority for a title,
+    // which the browser used to own alone.
+    app.post("/api/chat/conversations/{sessionId}/title", chatController::handleSetTitle);
+    app.delete("/api/chat/conversations/{sessionId}/title", chatController::handleClearTitle);
     app.get("/api/preview", previewController::handlePreview);
 
     app.get("/api/ai/install/manifest", aiInstallController::handleGetManifest);

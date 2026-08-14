@@ -105,6 +105,7 @@ import {
   latestTurnRef,
   projectSv3Sessions,
   removeSession,
+  restoreSessionTitle,
   sessionById,
   setTurnEvidence,
   setTurnReasoning,
@@ -208,12 +209,14 @@ import { setAiActivity, subscribeAiState, type AiState } from '../../state/aiSta
 import { projectAvailability } from '../../state/availability.js';
 import { reasonFor } from '../../state/readinessNotice.js';
 import { isAdvancedMode, subscribeUiMode } from '../../state/uiModeState.js';
+import { emitEphemeralToast } from '../../components/advisory/ephemeralToast.js';
 import { projectSv3Degradation, type Sv3Degradation } from './sv3-degradation.js';
 import {
   PANE_LABEL,
   SV3_COMMAND_EXPORT_MARKDOWN,
   SV3_COMMAND_SEARCH_TEXT,
   SV3_DRAFT_KEY,
+  SV3_RENAME_FAILED,
   SV3_SURFACE_KEY,
 } from './fixtures.js';
 import { type Sv3PaletteRun } from './Sv3Palette.js';
@@ -1464,7 +1467,9 @@ export class SearchV3View extends JfElement {
     const generated = await generateConversationTitle(sessionId, turn.question, turn.answer);
     if (generated === null) return;
     const after = sessionById(this.sessions, sessionId);
-    if (after !== null && after.renamed) setConversationTitle(sessionId, after.title);
+    // The reader's name goes back as THEIRS, not as the model's: adopting the auto provenance here
+    // would license the next reload's first ask to name the conversation over them (tempdoc 838).
+    if (after !== null && after.renamed) void setConversationTitle(sessionId, after.title, 'user');
   }
 
   /**
@@ -1843,14 +1848,42 @@ export class SearchV3View extends JfElement {
     }
     this.renamingId = null;
     if (detail.phase !== 'commit') return;
-    const before = sessionById(this.sessions, detail.id)?.title ?? '';
+    const previous = sessionById(this.sessions, detail.id);
+    const before = previous?.title ?? '';
+    const wasRenamed = previous?.renamed ?? false;
     this.sessions = renameSession(this.sessions, detail.id, detail.title ?? '');
     const after = sessionById(this.sessions, detail.id)?.title ?? '';
-    // WRITTEN THROUGH to the conversation store, which persists titles (`conversationListStore.ts:184`
-    // → `jf-conversation-titles`) — so the name survives the process and every surface listing this
-    // conversation shows the one the reader chose. Derived from the pure module's OUTCOME rather than
-    // re-deciding here: `resolveSv3Rename` stays the one place an empty or unchanged title is judged.
-    if (after !== before) setConversationTitle(detail.id, after);
+    // WRITTEN THROUGH to the conversation store, which is where a name now LIVES (tempdoc 838: a
+    // sealed `title` on the conversation's own record, not a browser-local map) — so it survives the
+    // process, a cleared site-data and a second client, and every surface listing this conversation
+    // shows the one the reader chose. Derived from the pure module's OUTCOME rather than re-deciding
+    // here: `resolveSv3Rename` stays the one place an empty or unchanged title is judged.
+    if (after !== before) void this.writeTitleThrough(detail.id, after, before, wasRenamed);
+  }
+
+  /**
+   * The write half of a rename, and the one thing the optimistic update owes the reader: a name the
+   * store REFUSED is put back and said out loud (tempdoc 838). The store reverts the row itself; this
+   * reverts the window's own list, which is a separate copy, and words the two cases the same way
+   * every other mutation in this product words them — a `423` is the lock, in the ONE reason
+   * vocabulary, and anything else is a plain failure that names the status rather than hiding it.
+   */
+  private async writeTitleThrough(
+    id: string,
+    title: string,
+    before: string,
+    wasRenamed: boolean,
+  ): Promise<void> {
+    const written = await setConversationTitle(id, title, 'user');
+    if (written.ok) return;
+    this.sessions = restoreSessionTitle(this.sessions, id, before, wasRenamed);
+    emitEphemeralToast({
+      message:
+        written.status === 423
+          ? `${reasonFor('conversations.locked').wording} — that name was not saved.`
+          : SV3_RENAME_FAILED,
+      severity: 'warning',
+    });
   }
 
   /**

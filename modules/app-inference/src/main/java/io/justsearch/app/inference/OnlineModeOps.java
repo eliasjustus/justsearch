@@ -378,6 +378,15 @@ final class OnlineModeOps {
                 if (sampling != null) {
                   body.put("temperature", sampling.temperature());
                   body.put("top_p", sampling.topP());
+                  // Tempdoc 835 §10f: this transport dropped enableThinking entirely — the only one
+                  // of the three that did — so a caller's suppression was silently discarded and
+                  // the server-wide budget applied anyway. Query expansion and section summarize
+                  // both arrive here.
+                  if (sampling.enableThinking() != null) {
+                    body.put(
+                        "chat_template_kwargs",
+                        Map.of("enable_thinking", sampling.enableThinking()));
+                  }
                 }
 
                 String json = objectMapper.writeValueAsString(body);
@@ -398,16 +407,19 @@ final class OnlineModeOps {
                 LOG.debug("LLM Stream Response: status={}", response.statusCode());
 
                 if (response.statusCode() != 200) {
-                  LOG.warn(
-                      "LLM Error: status={} - check llama-server logs for details",
-                      response.statusCode());
+                  String errorBody = readErrorBody(response);
+                  LOG.warn("LLM Error: status={} body={}", response.statusCode(), errorBody);
                   trackedOnError.accept(
-                      new LlmServerException(response.statusCode(), null));
+                      new LlmServerException(response.statusCode(), errorBody));
                   return;
                 }
 
                 boolean[] sawDone = {false};
                 String[] lastFinishReason = {null};
+                // Tempdoc 835 §5.3: one stateful, frame-straddle-safe think-tag filter for every
+                // streaming shape. This path has no reasoning handler, so captured thinking is
+                // discarded — exactly what it already does with reasoning_content below.
+                ThinkTagStreamFilter thinkFilter = new ThinkTagStreamFilter(null);
                 try (java.util.stream.Stream<String> lines = response.body()) {
                   lines.forEach(
                       line -> {
@@ -441,7 +453,10 @@ final class OnlineModeOps {
 
                             String content = delta.path("content").asText("");
                             if (!content.isEmpty()) {
-                              onChunk.accept(content);
+                              String visible = thinkFilter.accept(content);
+                              if (!visible.isEmpty()) {
+                                onChunk.accept(visible);
+                              }
                             }
 
                             // Consume reasoning_content so it isn't silently lost.
@@ -460,6 +475,11 @@ final class OnlineModeOps {
                           }
                         }
                       });
+                }
+
+                String tail = thinkFilter.flush();
+                if (!tail.isEmpty()) {
+                  onChunk.accept(tail);
                 }
 
                 if (sawDone[0]) {
@@ -634,16 +654,19 @@ final class OnlineModeOps {
                 LOG.debug("LLM Tool Stream Response: status={}", response.statusCode());
 
                 if (response.statusCode() != 200) {
-                  LOG.warn(
-                      "LLM Error: status={} - check llama-server logs for details",
-                      response.statusCode());
+                  String errorBody = readErrorBody(response);
+                  LOG.warn("LLM Error: status={} body={}", response.statusCode(), errorBody);
                   trackedOnError.accept(
-                      new LlmServerException(response.statusCode(), null));
+                      new LlmServerException(response.statusCode(), errorBody));
                   return;
                 }
 
                 boolean[] sawDone = {false};
                 String[] lastFinishReason = {null};
+                // Tempdoc 835 §5.3: the same stateful filter, here with the reasoning channel
+                // wired — inline <think> markup from a leaking build is rerouted to the reasoning
+                // sink, so the product behaves identically on both build families.
+                ThinkTagStreamFilter thinkFilter = new ThinkTagStreamFilter(onReasoningChunk);
                 try (java.util.stream.Stream<String> lines = response.body()) {
                   lines.forEach(
                       line -> {
@@ -680,7 +703,10 @@ final class OnlineModeOps {
                             // Text content
                             String content = delta.path("content").asText("");
                             if (!content.isEmpty()) {
-                              onChunk.accept(content);
+                              String visible = thinkFilter.accept(content);
+                              if (!visible.isEmpty()) {
+                                onChunk.accept(visible);
+                              }
                             }
 
                             // Reasoning content (emitted by --reasoning-format deepseek)
@@ -703,6 +729,11 @@ final class OnlineModeOps {
                           }
                         }
                       });
+                }
+
+                String tail = thinkFilter.flush();
+                if (!tail.isEmpty()) {
+                  onChunk.accept(tail);
                 }
 
                 if (sawDone[0]) {
@@ -1039,6 +1070,24 @@ final class OnlineModeOps {
    * <p>llama-server emits a final chunk with {@code choices: []} and a {@code usage} object when
    * {@code stream_options.include_usage=true}. Other chunks typically omit {@code usage}.
    */
+  /**
+   * Reads a failed streaming response's body so the reason survives to the caller (tempdoc 835
+   * §10f). The streaming paths request {@code BodyHandlers.ofLines()} and previously passed
+   * {@code null} as the body, which turned llama-server's own explanation — e.g. {@code request
+   * (5878 tokens) exceeds the available context size (4096 tokens), try increasing it} — into a
+   * bare "Server returned status 400" on the surface, with "check llama-server logs" as the only
+   * lead. Consuming the stream here also closes it instead of leaking it on the error path.
+   */
+  private static String readErrorBody(HttpResponse<java.util.stream.Stream<String>> response) {
+    try (java.util.stream.Stream<String> lines = response.body()) {
+      String body = lines.limit(20).collect(java.util.stream.Collectors.joining("\n")).strip();
+      return body.isEmpty() ? null : body.substring(0, Math.min(1000, body.length()));
+    } catch (Exception e) {
+      LOG.debug("Failed to read LLM error body: {}", e.getMessage());
+      return null;
+    }
+  }
+
   static AiUsage extractUsageFromChatChunk(JsonNode root) {
     if (root == null) return null;
     JsonNode usage = root.get("usage");
