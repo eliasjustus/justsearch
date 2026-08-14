@@ -128,6 +128,16 @@ const TAIL_GLYPH_SIZE = 12;
 const sourcesBodyId = (turnId: string): string => `sv3-sources-${turnId}`;
 
 /**
+ * The legend's own id, because the disclosure reveals TWO elements and `aria-controls` has to name
+ * both. Naming only the panel left the key unreachable by the very relationship that exists to lead
+ * a reader to it: the legend is a sibling BEFORE the panel, so a reader following `aria-controls`
+ * from the trigger landed past it. `aria-controls` takes an ID list, so the region is described in
+ * DOM order rather than restructured — the alternative, wrapping both in one element, would change
+ * the tail's box model for an ARIA fix.
+ */
+const citeLegendId = (turnId: string): string => `sv3-cite-legend-${turnId}`;
+
+/**
  * Tempdoc 822 §5.7 (F7) — the ONE line that names the answer's mark vocabulary. Sentence case, like
  * every other string this window says: v3 uses UPPERCASE nowhere. It exists mostly for the two greys
  * — a `.pseudo-cite` and a `.cite-weak` look identical and mean "the model invented this reference"
@@ -311,6 +321,14 @@ export class Sv3Main extends JfElement {
            enumerates its fifteen names exactly). */
         --md-cite-selected-bg: var(--sv3-selected);
         --md-cite-selected-edge: var(--sv3-selected-edge);
+        /* The wash and the tier ink are ONE decision, taken together (§7.5). A window that paints a
+           wash behind a 12px numeral changes the background that numeral's contrast is measured
+           against, so the two SUBDUED tiers are re-pointed here at the same time — a wash bridged
+           without them puts the grey tier at 4.22:1 in dark and 3.97:1 in light, i.e. it breaks AA
+           at the exact moment the design exists to survive. Values and their reasons live at the
+           token sheet; 'Sv3Main.imports.test.ts' asserts the composite, both themes, both tiers. */
+        --md-cite-weak-color: var(--sv3-cite-weak);
+        --md-cite-ungrounded-color: var(--sv3-cite-ungrounded);
         --md-cite-region-bg: var(--sv3-selected-region);
         --md-cite-pad-x-rest: 0.25em;
         --md-cite-pad-x: 0.25em;
@@ -347,6 +365,9 @@ export class Sv3Main extends JfElement {
         --cp-selected-edge: var(--sv3-selected-edge-strong);
         --cp-selected: var(--sv3-selected-region);
         --cp-hover-edge: var(--sv3-selected-edge);
+        /* Hover must never read as LESS selected: a selected card holds its strong edge under the
+           pointer, while an unselected card still gets the subtle one above. */
+        --cp-selected-hover-edge: var(--sv3-selected-edge-strong);
         --accent-warning: var(--warning-foreground);
         --text-warning: var(--warning-foreground);
         --text-command: var(--foreground);
@@ -1231,7 +1252,9 @@ export class Sv3Main extends JfElement {
       class="tail-sources"
       data-testid="sv3-turn-sources"
       aria-expanded=${expanded ? 'true' : 'false'}
-      aria-controls=${expanded ? sourcesBodyId(turn.id) : nothing}
+      aria-controls=${expanded
+        ? `${citeLegendId(turn.id)} ${sourcesBodyId(turn.id)}`
+        : nothing}
       aria-label=${`${trigger}: ${count}`}
       @click=${() => this.toggleSources(turn.id)}
     >
@@ -1338,9 +1361,14 @@ export class Sv3Main extends JfElement {
     if (!this.panelSpeaks(turn) || turn.evidence === null) return nothing;
     if (!this.expandedSources.has(turn.id)) return nothing;
     // §5.7 — the legend renders ONLY while the disclosure is open, which is what makes it free: the
-    // reader who is looking at sources is exactly the reader who needs the key. It sits beside the
-    // panel rather than wrapping it because the trigger's `aria-controls` names the PANEL's id.
-    return html`<p class="cite-legend" data-testid="sv3-cite-legend">${CITE_LEGEND}</p>
+    // reader who is looking at sources is exactly the reader who needs the key. It sits BEFORE the
+    // panel and carries its own id, which the trigger's `aria-controls` names first: the disclosure
+    // reveals two elements, so naming one of them left the key outside the announced relationship.
+    return html`<p
+      class="cite-legend"
+      id=${citeLegendId(turn.id)}
+      data-testid="sv3-cite-legend"
+    >${CITE_LEGEND}</p>
     <jf-citations-panel
       class="sv3-citations"
       id=${sourcesBodyId(turn.id)}

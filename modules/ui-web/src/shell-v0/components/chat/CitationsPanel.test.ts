@@ -341,10 +341,55 @@ describe('CitationsPanel 822 §5.4 — the source card is the selection’s far 
     return c;
   };
 
+  /* ── Reading the cascade out of the sheet itself ────────────────────────────────────────────
+     happy-dom ABANDONS any declaration whose value carries a var() FALLBACK, and every rule this
+     section governs is written that way — so a computed-style comparison of a selected card against
+     an unselected one is passed by ANY fallback, right or wrong (probed: pointing the selected
+     card's fill at the destructive role instead of the base surface stayed green). It cannot see
+     `:hover` either. The
+     invariants therefore have to be read off the stylesheet as STRUCTURE, related to each other,
+     rather than pinned as literal strings on one side only — a literal pins the sheet against a
+     copy of itself in the test, whereas relating the two rules breaks if EITHER side drifts. */
+
+  const CSS = (CitationsPanel.styles as unknown as { cssText: string }).cssText;
+  /** Comments stripped, so a WHY-comment between two declarations cannot hide one from the parse. */
+  const CSS_BARE = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  /** The declaration block of one rule, by its selector (regex source), or a failure. */
+  const ruleBody = (selector: string): string => {
+    const found = new RegExp(`(?:^|[\\s}])${selector}\\s*\\{([^}]*)\\}`).exec(CSS_BARE);
+    if (!found?.[1]) throw new Error(`no rule for ${selector}`);
+    return found[1];
+  };
+
+  /** Every `var(--…)` name a property's value mentions, outermost first. */
+  const tokensOf = (body: string, property: string): string[] => {
+    const decl = new RegExp(`(?:^|;)\\s*${property}\\s*:([^;]+);`).exec(body)?.[1];
+    if (decl === undefined) throw new Error(`no '${property}' declaration in: ${body.trim()}`);
+    const names = [...decl.matchAll(/var\((--[\w-]+)/g)].map((m) => m[1] as string);
+    if (names.length === 0) throw new Error(`'${property}' names no token: ${decl}`);
+    return names;
+  };
+
+  /** The opt-in knob (outermost var) and the value it falls back to (innermost var). */
+  const knobOf = (body: string, property: string): string => tokensOf(body, property)[0] as string;
+  const fallbackOf = (body: string, property: string): string => {
+    const names = tokensOf(body, property);
+    return names[names.length - 1] as string;
+  };
+
   it('marks ONLY the card whose source key is selected', async () => {
     const el = await mountTwo();
     expect(cards(el)).toHaveLength(2);
     expect(cards(el).filter((c) => c.hasAttribute('data-selected'))).toHaveLength(0);
+    // Each card publishes the identity its inline mark carries in `dataset.citeKey`, from the ONE
+    // `sourceKey` authority. Positional correspondence between the two surfaces is not one — the
+    // panel renders every retrieved source, marks exist only for cited ones — so anything relating
+    // a card to a mark (the `sv3-citation-selected` harness step) has to match on this.
+    expect(cards(el).map((c) => c.dataset.citeKey)).toEqual([
+      sourceKey(A.parentDocId, A.startLine),
+      sourceKey(B.parentDocId, B.startLine),
+    ]);
 
     setSelectedSource(sourceKey(B.parentDocId, B.startLine));
     await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
@@ -400,6 +445,28 @@ describe('CitationsPanel 822 §5.4 — the source card is the selection’s far 
     expect(cardAt(el, 0).hasAttribute('data-selected')).toBe(false);
   });
 
+  it('announces the selected card to assistive tech, and only that card', async () => {
+    // `data-selected` is a styling hook; it is invisible to a screen reader. Marking the card with
+    // it alone reproduced, on the far side, the exact "state was visual-only" defect (F6) the slice
+    // had just fixed on the inline mark. The idiom is `MarkdownBlock.ts`'s: present-and-true when
+    // selected, REMOVED otherwise — never "false", which some readers announce as a present-but-off
+    // property (noise on every other card in the list).
+    const el = await mountTwo();
+    expect(cards(el).filter((c) => c.hasAttribute('aria-current'))).toHaveLength(0);
+
+    setSelectedSource(sourceKey(B.parentDocId, B.startLine));
+    await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+
+    expect(cardAt(el, 1).getAttribute('aria-current')).toBe('true');
+    expect(cardAt(el, 0).hasAttribute('aria-current')).toBe(false);
+    expect(cards(el).filter((c) => c.hasAttribute('aria-current'))).toHaveLength(1);
+
+    setSelectedSource(null);
+    await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    expect(cards(el).filter((c) => c.hasAttribute('aria-current'))).toHaveLength(0);
+    el.remove();
+  });
+
   it('renders a selected card IDENTICALLY to an unselected one with no --cp-* tokens set (the shipped-containment proof)', async () => {
     const el = await mountTwo();
     // Sentinel values for the two tokens the BASE `.citation, .source` rule declares, so the
@@ -419,6 +486,20 @@ describe('CitationsPanel 822 §5.4 — the source card is the selection’s far 
     // both write the store, so `data-selected` IS reachable). Defaulting them to the base rule's own
     // `--surface-2` / `--border-subtle` is what makes "shipped is unaffected" true: the two cards
     // must be indistinguishable. A `transparent` default would blank the selected card instead.
+    //
+    // THE DISCRIMINATING HALF. The computed comparison below cannot see this: happy-dom abandons the
+    // nested-fallback declarations outright, so the selected card falls through to the base rule no
+    // matter WHAT the fallback names, and a wrong one stayed green. Relating the two rules' token
+    // names is what actually proves the claim in the title — and it breaks from either direction,
+    // whether the selected rule's fallback drifts or the base rule is repainted out from under it.
+    const base = ruleBody('\\.citation,\\s*\\.source');
+    const selectedRule = ruleBody('\\.source\\[data-selected\\]');
+    expect(fallbackOf(selectedRule, 'background')).toBe(fallbackOf(base, 'background'));
+    expect(fallbackOf(selectedRule, 'border-color')).toBe(fallbackOf(base, 'border'));
+    // …and each one is opt-in through a `--cp-*` knob, which is what lets v3 wash the card at all.
+    expect(knobOf(selectedRule, 'background')).toMatch(/^--cp-/);
+    expect(knobOf(selectedRule, 'border-color')).toMatch(/^--cp-/);
+
     const sel = getComputedStyle(selected);
     const unsel = getComputedStyle(unselected);
     expect(unsel.backgroundColor).toBe('rgb(1, 2, 3)');
@@ -451,9 +532,44 @@ describe('CitationsPanel 822 §5.4 — the source card is the selection’s far 
     // The accent is still the FALLBACK, so the shipped hover border is byte-identical; only a
     // window that declares `--cp-hover-edge` takes it off the accent (822 §5.4).
     expect(cssText).toContain('border-color: var(--cp-hover-edge, var(--accent-tint))');
-    // Donor precedence: the selected rules come AFTER `.source:hover`, so the selected edge wins on
-    // a card that is both. If this order is ever flipped the hover edge would re-take a selected
-    // card and the two surfaces would disagree about what "selected" looks like.
+    // Donor precedence, and it is about the WASH: `.source[data-selected]` sits after `.source:hover`
+    // at the same (0,2,0), so a card that is both takes the selected fill; and the (0,3,0)
+    // `[data-selected]:hover` after it raises that to the higher rung rather than layering a second
+    // one under it. Flip this order and a hovered selected card would paint the plain hover fill.
     expect(cssText.indexOf('.source:hover')).toBeLessThan(cssText.indexOf('.source[data-selected]'));
+    expect(cssText.indexOf('.source[data-selected] ')).toBeLessThan(
+      cssText.indexOf('.source[data-selected]:hover'),
+    );
+  });
+
+  it('keeps hover feedback on a card that is ALREADY selected', () => {
+    // A shipped regression the containment claim denied. `.source:hover` and `.source[data-selected]`
+    // are both (0,2,0) and the selected rule is later, so it took the border of any card the pointer
+    // was over. While `data-selected` was unreachable that never showed; the moment this slice wired
+    // the store up, the card the reader had just CLICKED became the one card in the panel with no
+    // pointer feedback — in search-v2, SummarizeView and UnifiedChatView alike. So the more specific
+    // (0,3,0) rule has to restate the hover edge, not the background alone.
+    const hovered = ruleBody('\\.source\\[data-selected\\]:hover');
+    const resting = ruleBody('\\.source\\[data-selected\\]');
+    // A selected+hovered card's border differs from a selected+unhovered one's: different knob…
+    expect(knobOf(hovered, 'border-color')).not.toBe(knobOf(resting, 'border-color'));
+    // …and, UNBRIDGED, the same ultimate colour `.source:hover` paints: a shipped consumer that
+    // sets no --cp-* name sees hover mean one thing on every card, selected or not.
+    expect(fallbackOf(hovered, 'border-color')).toBe(
+      fallbackOf(ruleBody('\\.source:hover'), 'border-color'),
+    );
+    // The plain hover knob stays IN the chain, so an unbridged consumer still gets exactly the edge
+    // '.source:hover' paints — that is what shipped parity rests on.
+    expect(tokensOf(hovered, 'border-color')).toContain(
+      knobOf(ruleBody('\\.source:hover'), 'border-color'),
+    );
+    // But its OWN knob comes first, deliberately: a consumer whose selected edge is STRONGER than
+    // its hover edge (v3 spends 34% on selection and 14% on hover) would otherwise WEAKEN the edge
+    // the moment the pointer arrived — reading as "less selected" exactly when the reader is acting
+    // on it.
+    expect(knobOf(hovered, 'border-color')).not.toBe(
+      knobOf(ruleBody('\\.source:hover'), 'border-color'),
+    );
+    expect(fallbackOf(hovered, 'border-color')).not.toBe(fallbackOf(resting, 'border-color'));
   });
 });

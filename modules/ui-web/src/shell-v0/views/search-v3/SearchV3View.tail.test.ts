@@ -310,8 +310,17 @@ describe('the disclosure is the window\'s own, per turn, and it opens the SHARED
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
     const panel = q(el, 'sv3-turn-citations');
     expect(panel).not.toBeNull();
-    // The trigger points AT the thing it opened.
-    expect(trigger.getAttribute('aria-controls')).toBe(panel?.id);
+    // The trigger points AT everything it opened. The disclosure reveals TWO elements — the mark
+    // legend and the panel — so naming only the panel put the key outside the announced
+    // relationship: a reader following `aria-controls` landed past the legend, which sits before it.
+    // `aria-controls` is an ID LIST, so both are named, in DOM order.
+    const legend = q(el, 'sv3-cite-legend');
+    expect(legend).not.toBeNull();
+    expect(trigger.getAttribute('aria-controls')).toBe(`${legend?.id} ${panel?.id}`);
+    for (const id of (trigger.getAttribute('aria-controls') ?? '').split(' ')) {
+      expect(id, 'every id named by aria-controls resolves in this shadow root').not.toBe('');
+      expect(el.renderRoot.querySelector(`#${id}`), `#${id}`).not.toBeNull();
+    }
 
     trigger.click();
     await el.updateComplete;

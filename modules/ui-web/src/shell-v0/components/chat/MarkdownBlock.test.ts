@@ -532,20 +532,38 @@ describe('MarkdownBlock 822 §3c — the ungrounded mark has its own color', () 
       expect(c, `${selector} must declare a color`).not.toBeNull();
       return c![1]!.trim();
     };
-    const grounded = colorOf('.cite-ref');
-    const weak = colorOf('.cite-ref.cite-weak');
-    const ungrounded = colorOf('.cite-ref.cite-ungrounded');
+    // The two subdued tiers are opt-in tokens now (the contrast repair: a wash painted behind the
+    // glyph changes what its colour is measured against, so a window that paints one also lifts the
+    // ink). What identifies the tier is therefore the token it ULTIMATELY falls back to — the
+    // shipped ink — not the outermost name.
+    const shippedInk = (selector: string): string => {
+      const names = [...colorOf(selector).matchAll(/var\((--[\w-]+)/g)].map((m) => m[1] as string);
+      expect(names.length, `${selector} must name a token`).toBeGreaterThan(0);
+      return names[names.length - 1] as string;
+    };
+    const grounded = shippedInk('.cite-ref');
+    const weak = shippedInk('.cite-ref.cite-weak');
+    const ungrounded = shippedInk('.cite-ref.cite-ungrounded');
     expect(new Set([grounded, weak, ungrounded]).size).toBe(3);
     // The warning role's TEXT member — `check-accent-as-text` forbids an `--accent-*` fill token as a
     // text color, and sv3 bridges `--text-warning` and `--accent-warning` to one `--warning-foreground`.
-    expect(ungrounded).toBe('var(--text-warning)');
+    expect(ungrounded).toBe('--text-warning');
+    expect(weak).toBe('--text-secondary');
+    // …and the opt-in knobs are the cite vocabulary's own, so a window re-points the INK without
+    // touching `--text-secondary` / `--text-warning`, which dress half the renderer besides.
+    expect(colorOf('.cite-ref.cite-weak')).toBe('var(--md-cite-weak-color, var(--text-secondary))');
+    expect(colorOf('.cite-ref.cite-ungrounded')).toBe(
+      'var(--md-cite-ungrounded-color, var(--text-warning))',
+    );
   });
 
   it('keeps the mark palette and the sentence-body palette saying the same thing', () => {
     const cssText = (MarkdownBlockClass.styles as { cssText: string }).cssText;
     // The body channel's weakest tier is already the warning role; the mark now agrees with it.
     expect(cssText).toContain('1px dotted var(--accent-warning)');
-    expect(cssText).toMatch(/\.cite-ref\.cite-ungrounded\s*\{\s*color:\s*var\(--text-warning\);/);
+    expect(cssText).toMatch(
+      /\.cite-ref\.cite-ungrounded\s*\{\s*color:\s*var\(--md-cite-ungrounded-color, var\(--text-warning\)\);/,
+    );
   });
 });
 
@@ -618,24 +636,48 @@ describe('822 F2 — a selected mark keeps its grounding tier', () => {
     __resetSelectedSource();
   });
 
+  /**
+   * The tier ink each subdued rule falls back to, read off the sheet.
+   *
+   * WHY this is not `getComputedStyle`: the contrast repair made both subdued tiers opt-in
+   * (`var(--md-cite-<tier>-color, var(--text-…))`), and happy-dom ABANDONS any declaration whose
+   * value carries a `var()` fallback — probed at every shape, including a flat literal fallback and
+   * an indirection through a second custom property. So the two halves of T1/T2 split: the ink is
+   * pinned at source, and the invariant that selection does NOT change it stays computed, which is
+   * where its whole power lay — a `color` restored to `.cite-selected` is a flat declaration that
+   * happy-dom resolves, so the equality still breaks on exactly the F2 regression.
+   */
+  const shippedInk = (selector: string): string => {
+    const cssText = (MarkdownBlockClass.styles as { cssText: string }).cssText;
+    const rule = new RegExp(`${selector.replace(/\./g, '\\.')}\\s*\\{([^}]*)\\}`).exec(cssText);
+    const decl = /color:\s*([^;]+);/.exec(rule?.[1] ?? '')?.[1];
+    const names = [...(decl ?? '').matchAll(/var\((--[\w-]+)/g)].map((m) => m[1] as string);
+    expect(names.length, `${selector} must declare a color naming a token`).toBeGreaterThan(0);
+    return names[names.length - 1] as string;
+  };
+
   it('T1: a WEAK mark computes the same color selected as unselected', async () => {
     const el = await mountCites(ONE, [citeAt(ONE, WEAK, 1, DOC_A)]);
     const ref = el.renderRoot.querySelector('.cite-ref') as HTMLElement;
     expect(ref.className).toContain('cite-weak');
+    // NON-VACUITY, the half happy-dom cannot compute: the weak rule exists and its shipped ink is
+    // the secondary role — not the base `.cite-ref` blue it would fall through to if the rule were
+    // ever deleted, which is the failure the computed equality below could not tell apart.
+    expect(shippedInk('.cite-ref.cite-weak')).toBe('--text-secondary');
+    expect(shippedInk('.cite-ref.cite-weak')).not.toBe(shippedInk('.cite-ref'));
     const resting = getComputedStyle(ref).color;
-    expect(resting).toBe(INK['--text-secondary']);
 
     setSelectedSource(sourceKey(DOC_A, 1));
     // The state really was entered AND the selected rule really applied — otherwise the equality
     // below is vacuous. `padX` moving is that rule's own declaration computing. Its FILL is not
-    // readable here: happy-dom abandons a declaration whose value contains a nested var() fallback,
-    // which the un-overridden default is — the frozen-defaults test below covers the fill at source
-    // level, and the design's §7 live check covers it in a real browser.
+    // readable here for the same reason as the ink — the frozen-defaults test below covers the fill
+    // at source level, and the design's §7 live check covers it in a real browser.
     expect(ref.classList.contains('cite-selected')).toBe(true);
     expect(padX(ref)).toBeGreaterThan(0);
 
     // THE HEADLINE. Before the fix this read `--accent-on-tint` (#00231c): the honesty tier was
-    // erased by the selection fill.
+    // erased by the selection fill. A `color` back in `.cite-selected` is a flat declaration, so
+    // happy-dom computes it and this equality still fails the moment F2 returns.
     expect(getComputedStyle(ref).color).toBe(resting);
     el.remove();
   });
@@ -644,8 +686,9 @@ describe('822 F2 — a selected mark keeps its grounding tier', () => {
     const el = await mountCites(ONE, [citeAt(ONE, UNGROUNDED, 1, DOC_A)]);
     const ref = el.renderRoot.querySelector('.cite-ref') as HTMLElement;
     expect(ref.className).toContain('cite-ungrounded');
+    expect(shippedInk('.cite-ref.cite-ungrounded')).toBe('--text-warning');
+    expect(shippedInk('.cite-ref.cite-ungrounded')).not.toBe(shippedInk('.cite-ref'));
     const resting = getComputedStyle(ref).color;
-    expect(resting).toBe(INK['--text-warning']);
 
     setSelectedSource(sourceKey(DOC_A, 1));
     expect(ref.classList.contains('cite-selected')).toBe(true);
@@ -698,7 +741,7 @@ describe('822 F6 — the selection exists for assistive tech', () => {
     __resetSelectedSource();
   });
 
-  it('T4: aria-current is on the selected mark and ABSENT on the others; the label says so', async () => {
+  it('T4: aria-current is on the selected mark and ABSENT on the others; the NAME never moves', async () => {
     const el = await mountCites(`${ONE} ${TWO}`, [
       citeAt(ONE, WEAK, 1, DOC_A),
       citeAt(TWO, WEAK, 2, DOC_B),
@@ -714,10 +757,15 @@ describe('822 F6 — the selection exists for assistive tech', () => {
     expect(selected.getAttribute('aria-current')).toBe('true');
     // Removed, not `aria-current="false"` — the false value is still an announced property.
     expect(other.hasAttribute('aria-current')).toBe(false);
-    expect(selected.getAttribute('aria-label')).toContain('selected');
+    // The state lives in `aria-current` and NOWHERE ELSE. The first cut also appended "— selected"
+    // to the accessible name, so a reader met the state twice in one announcement — a state in the
+    // NAME plus a real ARIA state is the standard double-announcement anti-pattern, and it makes the
+    // name (what a voice-control user speaks to click the mark) move under them. So both marks keep
+    // the same, stable name whether selected or not.
+    expect(selected.getAttribute('aria-label')).toBe('Citation 1 — open the cited passage');
     expect(other.getAttribute('aria-label')).toBe('Citation 2 — open the cited passage');
 
-    // Deselecting takes the state back off, label included.
+    // Deselecting takes the state back off — and, again, leaves the name where it was.
     setSelectedSource(null);
     expect(selected.hasAttribute('aria-current')).toBe(false);
     expect(selected.getAttribute('aria-label')).toBe('Citation 1 — open the cited passage');
@@ -729,7 +777,9 @@ describe('822 F6 — the selection exists for assistive tech', () => {
     const el = await mountCites(ONE, [citeAt(ONE, WEAK, 1, DOC_A)]);
     const ref = el.renderRoot.querySelector('.cite-ref') as HTMLElement;
     expect(ref.getAttribute('aria-current')).toBe('true');
-    expect(ref.getAttribute('aria-label')).toContain('selected');
+    // …through the property, not the name: a mark built straight into the selected state announces
+    // the state exactly the way one toggled into it does.
+    expect(ref.getAttribute('aria-label')).toBe('Citation 1 — open the cited passage');
     el.remove();
   });
 });

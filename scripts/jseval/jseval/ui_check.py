@@ -342,19 +342,41 @@ _JS_DEEP_WALK = """
     const painted = (c) => !!c && c !== 'transparent' && !/^rgba\\(\\s*0,\\s*0,\\s*0,\\s*0\\s*\\)$/.test(c);
 """
 
-# The grounding tier's ink, read BEFORE anything is selected. Assertion 2 compares the selected
-# mark's `color` against this exact string, so it needs no second same-tier mark on screen.
-_JS_FIRST_CITE_COLOR = """() => {
+# The mark this run will drive the selection FROM, chosen BEFORE anything is selected.
+#
+# Deliberately not "the first one": the state has to survive on the SUBDUED tiers, whose ink sits
+# closest to the floor once a wash is painted behind it, so a low tier is picked when the answer
+# contains one and the caller is told when it does not. Its ink is captured here so assertion 2 can
+# compare against the exact resting value without needing a second same-tier mark on screen, and its
+# `data-cite-key` is what ties the card, the mark and the sentence region to ONE source below.
+_JS_PICK_CITE_MARK = """() => {
 """ + _JS_DEEP_WALK + """
-    const mark = deepAll().find((el) => el.matches('.cite-ref'));
-    return mark ? getComputedStyle(mark).color : null;
+    const marks = deepAll().filter((el) => el.matches('.cite-ref'));
+    if (marks.length === 0) return null;
+    const pick =
+        marks.find((m) => m.classList.contains('cite-ungrounded')) ||
+        marks.find((m) => m.classList.contains('cite-weak')) ||
+        marks[0];
+    return {
+        key: pick.dataset.citeKey || null,
+        tier: pick.classList.contains('cite-ungrounded')
+            ? 'ungrounded'
+            : pick.classList.contains('cite-weak') ? 'weak' : 'grounded',
+        ink: getComputedStyle(pick).color,
+        label: (pick.textContent || '').trim(),
+        total: marks.length,
+    };
 }"""
 
-# 1 + 2: the selected mark wears a real fill, announces itself current, and its INK is untouched.
+# 1 + 2: THAT mark — not merely some selected mark — wears a real fill, announces itself current,
+# and its INK is untouched.
 _JS_SELECTED_MARK_OK = """(args) => {
 """ + _JS_DEEP_WALK + """
-    const mark = deepAll().find((el) => el.matches('.cite-ref.cite-selected'));
+    const mark = deepAll().find(
+        (el) => el.matches('.cite-ref') && el.dataset.citeKey === args.key,
+    );
     if (!mark) return false;
+    if (!mark.classList.contains('cite-selected')) return false;
     const cs = getComputedStyle(mark);
     if (!painted(cs.backgroundColor)) return false;
     if (mark.getAttribute('aria-current') !== 'true') return false;
@@ -363,10 +385,12 @@ _JS_SELECTED_MARK_OK = """(args) => {
     return cs.color === args.ink;
 }"""
 
-# 3: the sentences the selected source supports are tinted — the payload, not just the handle (F4).
-_JS_SELECTED_REGION_OK = """() => {
+# 3: the sentences THAT source supports are tinted — the payload, not just the handle (F4).
+_JS_SELECTED_REGION_OK = """(args) => {
 """ + _JS_DEEP_WALK + """
-    const region = deepAll().find((el) => el.matches('.cite-sentence-selected'));
+    const region = deepAll().find(
+        (el) => el.matches('.cite-sentence-selected') && el.dataset.citeKey === args.key,
+    );
     return !!region && painted(getComputedStyle(region).backgroundColor);
 }"""
 
@@ -1376,26 +1400,52 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # The marks attach only after the stream completes and the matcher has spoken; the 9B model
         # plus an agent loop on a possibly-contended GPU is the reason for the wide window.
         await page.locator(".cite-ref").first.wait_for(state="visible", timeout=300_000)
-        # The tier's ink BEFORE any selection — assertion 2 compares against this exact value, so the
-        # comparison is self-contained and does not need a second mark of the same tier on screen.
-        tier_ink = await page.evaluate(_JS_FIRST_CITE_COLOR)
-        if not tier_ink:
-            raise RuntimeError("sv3-citation-selected: no .cite-ref mark to read a tier colour from")
+        # Choose the mark to drive from, preferring a SUBDUED tier: the wash is painted behind the
+        # numeral, so the weak/ungrounded inks are the ones whose legibility the state can cost, and
+        # a run that exercised only a normal blue mark would watch the wrong thing.
+        pick = await page.evaluate(_JS_PICK_CITE_MARK)
+        if not pick or not pick.get("key"):
+            raise RuntimeError(
+                "sv3-citation-selected: no .cite-ref mark carrying a data-cite-key to select from"
+            )
+        if pick["tier"] == "grounded":
+            # Said out loud rather than passed over: this run's answer was fully grounded, so the
+            # capture cannot show the low-tier state and the axe pass over it proves nothing about
+            # the subdued inks. The unit contrast matrix (Sv3Main.imports.test.ts) still covers them.
+            print(
+                "sv3-citation-selected: WARNING — no weak/ungrounded mark in this answer "
+                f"({pick['total']} mark(s), all grounded); the SUBDUED-tier selection state is NOT "
+                "exercised by this run."
+            )
         # Open the window's own Sources disclosure, then click the CARD (not the mark): the card is
         # the surface F1 says never rendered the state, so selecting FROM it proves the binding is
         # two-ended rather than the mark simply highlighting itself.
+        #
+        # By KEY, never `.first`: the panel renders every retrieved source, while marks exist only for
+        # the ones a claim referenced — so on the fallback path the first card is routinely a
+        # retrieved-but-uncited source with no mark, and all three assertions below would time out
+        # against a card that was never going to light anything.
+        cite_key = pick["key"]
         await page.locator('[data-testid="sv3-turn-sources"]').first.click(timeout=15_000)
-        card = page.locator('[data-testid="sv3-turn-citations"] button.source').first
+        card = page.locator(
+            '[data-testid="sv3-turn-citations"] button.source'
+            f'[data-cite-key="{cite_key}"]'
+        ).first
         await card.wait_for(state="visible", timeout=15_000)
         await card.click(timeout=10_000)
-        # 1 + 2: the mark wears a fill and says it is current, and its INK never moved.
-        await page.wait_for_function(_JS_SELECTED_MARK_OK, arg={"ink": tier_ink}, timeout=15_000)
-        # 3: the sentences that source supports are tinted.
-        await page.wait_for_function(_JS_SELECTED_REGION_OK, timeout=15_000)
-        # ...and the card itself is marked, which is the whole §5.4 repair.
-        await page.locator("button.source[data-selected]").first.wait_for(
-            state="visible", timeout=10_000
+        # 1 + 2: that mark wears a fill and says it is current, and its INK never moved.
+        await page.wait_for_function(
+            _JS_SELECTED_MARK_OK, arg={"ink": pick["ink"], "key": cite_key}, timeout=15_000
         )
+        # 3: the sentences that source supports are tinted.
+        await page.wait_for_function(
+            _JS_SELECTED_REGION_OK, arg={"key": cite_key}, timeout=15_000
+        )
+        # ...and the card itself is marked and ANNOUNCED, which is the whole §5.4 repair — the far
+        # side got `data-selected` first, which is a styling hook no screen reader can see.
+        await page.locator(
+            f'button.source[data-cite-key="{cite_key}"][data-selected][aria-current="true"]'
+        ).first.wait_for(state="visible", timeout=10_000)
         await asyncio.sleep(0.3)
 
     async def setup_responsive(page):
@@ -1620,10 +1670,15 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # The gap that let F1/F2 survive eleven slices — nothing in this harness ever entered the
         # state, so nothing could see it. Live stack + `ai_activate` (a v3 turn's evidence comes only
         # from the live stream — see the setup), and NOT registered in the proportion baseline, whose
-        # gate captures under `--fixtures` where this state is unreachable. `required=False` for the
-        # same reason the AI chain is fragile: a contended GPU must not fail the whole batch.
+        # gate captures under `--fixtures` where this state is unreachable.
+        #
+        # REQUIRED. It was declared `required=False` out of the same caution the AI chain gets, but
+        # `EvalResult.ok` only consults required steps — so the one step in the harness that can see
+        # this regression could not fail a run, which is the property that let the defect survive
+        # eleven slices in the first place. A step whose verdict is discarded is a screenshot, not a
+        # check.
         Step("sv3-citation-selected", setup=setup_sv3_citation_selected, isolated=True,
-             required=False, init_scripts=[ai_init]),
+             init_scripts=[ai_init]),
         Step("responsive-collapsed",     setup=setup_responsive,      isolated=True),
         # action-panel-open / action-panel-filtered retired (615 §6.1b) — no shell-v0 equivalent.
 

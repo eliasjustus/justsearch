@@ -214,14 +214,18 @@ export class MarkdownBlock extends JfElement {
   }
 
   /**
-   * Tempdoc 822 §5.6 — the ONE accessible name of a citation mark. Both the initial render
-   * (`makeMarker`) and every later selection change (`applyCitationHighlight`) read it, so the two
-   * cannot drift into announcing different things for the same state.
+   * Tempdoc 822 §5.6 — the ONE accessible name of a citation mark: what the control IS and what
+   * activating it does, and deliberately NOT what state it is in.
+   *
+   * The first cut appended "— selected" here as well as setting `aria-current`, so a reader met the
+   * state twice in one announcement. Encoding a state in the accessible NAME alongside a real ARIA
+   * state is the standard anti-pattern: the name is meant to be stable (it is what a voice-control
+   * user says out loud to click the thing, and what a name-change announcement is measured against),
+   * while the state is what `aria-current` exists to carry. Selection therefore moves the property
+   * and leaves the name alone — which is also why this is a plain function of the label now.
    */
-  private citeAriaLabel(label: string, selected: boolean): string {
-    return selected
-      ? `Citation ${label} — selected; open the cited passage`
-      : `Citation ${label} — open the cited passage`;
+  private citeAriaLabel(label: string): string {
+    return `Citation ${label} — open the cited passage`;
   }
 
   /**
@@ -231,7 +235,9 @@ export class MarkdownBlock extends JfElement {
    *
    * Tempdoc 822 §5.3/§5.6 — and with it the two things the class alone never carried: the cited
    * SENTENCES of the focused source (F4 — the payload, not just the handle), and the state's
-   * existence for assistive tech (F6 — `aria-current` plus a label that says "selected").
+   * existence for assistive tech (F6 — `aria-current`). The accessible NAME is deliberately not
+   * touched here: it is a stable description of the control, not a second channel for the state
+   * (see {@link citeAriaLabel}).
    */
   private applyCitationHighlight(): void {
     const root = this.renderRoot.querySelector('.md-content');
@@ -244,7 +250,6 @@ export class MarkdownBlock extends JfElement {
       // readers as a present-but-off property, which is noise on every unselected mark in the answer.
       if (isSelected) m.setAttribute('aria-current', 'true');
       else m.removeAttribute('aria-current');
-      m.setAttribute('aria-label', this.citeAriaLabel(m.textContent ?? '', isSelected));
     }
     for (const s of root.querySelectorAll<HTMLElement>('.cite-sentence')) {
       s.classList.toggle('cite-sentence-selected', !!selected && s.dataset.citeKey === selected);
@@ -383,7 +388,20 @@ export class MarkdownBlock extends JfElement {
        border-bottom on THIS element, so vertical padding would push a selected sentence's dotted
        underline lower than an unselected one's. 'box-decoration-break' is left at 'slice' for the
        same reason it is right: a wrapped sentence reads as one continuous highlight, rounded at the
-       start of the first fragment and the end of the last — 'clone' would render it as pills. */
+       start of the first fragment and the end of the last — 'clone' would render it as pills.
+
+       ACCEPTED TRADE-OFF, recorded rather than left to be re-discovered (independent review): the
+       horizontal padding sits on the element that also draws that border-bottom, so a SELECTED weak
+       or ungrounded sentence's dotted rule runs one pad-x past its glyphs at each end. No glyph
+       moves and the tier still reads; what changes is the rule's LENGTH while selected. It is kept
+       because every way to separate the two costs more than it buys: a border-bottom spans the
+       border box, so padding, a transparent side-border and an outline all extend it alike; drawing
+       the wash on a pseudo-element or an inner wrapper breaks the wrapped-sentence case that
+       'box-decoration-break: slice' exists to serve (an absolutely-positioned ::before collapses a
+       three-line sentence into one union rect); and moving the tier rule to a content-box background
+       gradient would repaint every weakly-grounded sentence in the SHIPPED windows to fix 4px in
+       this one. The cheap alternative — dropping the inset — restores the smear the live capture
+       rejected. */
     .cite-sentence-selected {
       background: var(--md-cite-region-bg, transparent);
       border-radius: var(--md-cite-radius, 0.25em);
@@ -639,8 +657,14 @@ export class MarkdownBlock extends JfElement {
     .cite-ref:hover {
       text-decoration: underline;
     }
+    /* The tier INK is tokenized for one reason only, and it is not taste (independent review of the
+       822 citation-mark slice): the selected mark paints a wash BEHIND this glyph, and a subdued tier
+       colour that clears AA on the bare background can drop under it on the composite. The remedy the
+       design named is "the weak tier's colour moves, not the wash" (§7.5) — so a window that opts
+       into a selection wash also opts into a tier ink lifted far enough to survive it. Defaults are
+       today's values ⇒ shipped rendering byte-identical. */
     .cite-ref.cite-weak {
-      color: var(--text-secondary);
+      color: var(--md-cite-weak-color, var(--text-secondary));
     }
     /* Tempdoc 822 §3c — the missing weakest-tier rule (the citation-mark presentation session's line
        range; landed here under the design's crossing-1 default). Without it cite-ungrounded fell
@@ -651,7 +675,7 @@ export class MarkdownBlock extends JfElement {
        --text-warning is the AA-checked foreground of the same role (sv3 bridges both to
        --warning-foreground, so the two are literally one color there). */
     .cite-ref.cite-ungrounded {
-      color: var(--text-warning);
+      color: var(--md-cite-ungrounded-color, var(--text-warning));
     }
     /* Tempdoc 565 §12.3.E — the cross-surface selection: this mark cites the source the user focused
        (in the answer or the evidence rail), highlighted in sync with the rail card.
@@ -835,7 +859,7 @@ export class MarkdownBlock extends JfElement {
     // Tempdoc 822 §5.6 — a mark rendered into an already-selected state announces it from the start,
     // not only after the next selection change.
     if (isSelected) span.setAttribute('aria-current', 'true');
-    span.setAttribute('aria-label', this.citeAriaLabel(String(cite.label), isSelected));
+    span.setAttribute('aria-label', this.citeAriaLabel(String(cite.label)));
     span.title = cite.hover.title
       ? `${cite.hover.title} — open the cited passage`
       : 'Open the cited passage';

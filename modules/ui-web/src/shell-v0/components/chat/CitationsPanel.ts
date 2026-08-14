@@ -213,6 +213,20 @@ export class CitationsPanel extends JfElement {
     }
     .source[data-selected]:hover {
       background: var(--cp-selected, var(--surface-3));
+      /* The hover EDGE has to be restated here, and its absence was a shipped regression rather than
+         a v3 nicety: '.source:hover' and '.source[data-selected]' are both (0,2,0), so the selected
+         rule — later in source — took the border of every card the pointer was over. Before this
+         slice 'data-selected' was unreachable and every hovered card showed the hover edge; the
+         moment the store was wired up, the card you had just CLICKED became the one card in the
+         panel with no hover feedback, in search-v2, SummarizeView and v3 alike. Restating it keeps
+         the source order's meaning intact — when a card is both, it still takes the HIGHER wash —
+         while letting the pointer's own signal survive the selection it just made. */
+      /* Its own name, falling through to the plain hover edge: a consumer whose selected edge
+         is STRONGER than its hover edge (v3 spends 34 % on selection and 14 % on hover) would
+         otherwise WEAKEN the edge on hover, reading as "less selected" the moment the pointer
+         arrives. Shipped consumers set neither name and fall through to the accent edge exactly as
+         before. */
+      border-color: var(--cp-selected-hover-edge, var(--cp-hover-edge, var(--accent-tint)));
     }
     .source .preview {
       display: none;
@@ -397,11 +411,25 @@ export class CitationsPanel extends JfElement {
     // (`parentDocId` + `startLine`, through the one `sourceKey` authority), so the card and the
     // inline `[n]` resolve to one identity and the two surfaces cannot silently disagree.
     const selected = getSelectedSource() === sourceKey(s.parentDocId, s.startLine);
+    // `data-selected` is a STYLING hook and nothing more — it is invisible to assistive tech, so a
+    // card marked with it alone repeats on the far side the exact "state was visual-only" defect
+    // (F6) that this slice fixed on the mark. `aria-current` is what announces it, matching
+    // `MarkdownBlock.applyCitationHighlight`. REMOVED when unselected rather than set to "false":
+    // some screen readers announce the false value as a present-but-off property, which would be
+    // noise on every other card in the list.
+    //
+    // `data-cite-key` publishes the SAME identity the inline mark carries in its own dataset. The
+    // panel renders every retrieved source while marks exist only for the ones a claim referenced,
+    // so a positional (`.first`) correspondence between the two surfaces is not one — the harness
+    // step that selects a card and then looks for its mark has to match on the key, or it can pick a
+    // retrieved-but-uncited card and wait forever for a mark that was never rendered.
     return html`
       <div class="source-card">
         <button
           class="source"
+          data-cite-key=${sourceKey(s.parentDocId, s.startLine)}
           ?data-selected=${selected}
+          aria-current=${selected ? 'true' : nothing}
           @click=${(e: MouseEvent) => this.onSourceClick(s, e)}
         >
           <div class="header">
