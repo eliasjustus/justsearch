@@ -3,19 +3,27 @@ package io.justsearch.app.services.bootstrap.phases;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import io.justsearch.agent.api.registry.HandlerRegistry;
+import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.observability.ledger.ScanRollupLedger;
+import io.justsearch.app.services.lifecycle.WorkerCapability;
+import io.justsearch.app.services.worker.RemoteKnowledgeClient;
 import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
 import io.justsearch.app.services.worker.ScanProgressRegistry;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.configuration.resolved.TestResolvedConfigHelper;
 import java.lang.reflect.Field;
+import java.nio.file.Path;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Tempdoc 832 (lane D) — the agent-owned adapter's scan observability. {@code IngestTool} calls
@@ -80,6 +88,39 @@ final class AgentToolFactoryScanWiringTest {
     try (ScanProgressRegistry registry = new ScanProgressRegistry()) {
       assertDoesNotThrow(
           () -> AgentToolFactory.bindScanObservability(null, registry, mock(ScanRollupLedger.class)));
+    }
+  }
+
+  @Test
+  @DisplayName("the late-bound registration binds the adapter its IngestTool drives")
+  void lateBoundRegistrationBinds(@TempDir Path dataDir) {
+    // The wrong-gate this guards: on the normal boot the Worker connects asynchronously, so the
+    // eager AgentToolFactory.build produces nothing and THIS registration is what builds the
+    // adapter behind core.ingest-files (MCP justsearch_ingest / the agent loop).
+    KnowledgeHttpApiAdapter adapter = agentAdapter();
+    WorkerCapability capability = mock(WorkerCapability.class);
+    when(capability.available()).thenReturn(true);
+
+    try (ScanProgressRegistry registry = new ScanProgressRegistry()) {
+      ScanRollupLedger ledger = mock(ScanRollupLedger.class);
+      boolean registered =
+          AgentToolHandlers.registerLateBound(
+              new HandlerRegistry(),
+              mock(KnowledgeServerBootstrap.class),
+              mock(RemoteKnowledgeClient.class),
+              capability,
+              dataDir,
+              mock(RemoteKnowledgeClient.class),
+              OnlineAiService.unavailable(),
+              null,
+              adapter,
+              null,
+              registry,
+              ledger);
+
+      assertTrue(registered, "registration ran (prerequisites met)");
+      assertSame(registry, boundField(adapter, "scanProgressRegistry"));
+      assertSame(ledger, boundField(adapter, "scanRollupLedger"));
     }
   }
 

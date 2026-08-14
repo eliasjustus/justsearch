@@ -306,16 +306,13 @@ public class LocalApiServer {
             ? new ConversationBackupController(
                 this.HeadAssemblyRef, this.HeadAssemblyRef.dataKeyManager())
             : null;
-    // Tempdoc 832 (lane D): bind scan observability onto the AGENT-owned adapter too. The setters
-    // below (lateBindKnowledgeServer) only ever reached the controller-owned adapter, so a directory
-    // ingest driven by the agent loop / MCP justsearch_ingest emitted no scan-progress SSE and left
-    // no rollup row. Bound here, not in AgentToolFactory.build, because neither collaborator exists
-    // during the service phase; the two adapters stay separate instances.
+    // Tempdoc 832 (lane D): publish the registry the setters below bind onto the controller-owned
+    // adapter, so the AGENT-owned ingest adapter gets the same scan observability — an agent- or
+    // MCP-driven directory ingest emitted no scan-progress SSE and left no rollup row. Done here
+    // (not in AgentToolFactory.build) because the registry does not exist during the service phase,
+    // and this runs before connectKnowledgeServer builds the late-bound agent adapter.
     if (this.HeadAssemblyRef != null) {
-      io.justsearch.app.services.bootstrap.phases.AgentToolFactory.bindScanObservability(
-          this.HeadAssemblyRef.agentSearchAdapter(),
-          this.scanProgressRegistry,
-          this.HeadAssemblyRef.substrate().conversation().scanRollupLedger());
+      this.HeadAssemblyRef.setScanProgressRegistry(this.scanProgressRegistry);
     }
     this.configuredPort = resolveConfiguredPort();
     ConfigStore cs = ConfigStore.globalOrNull();
