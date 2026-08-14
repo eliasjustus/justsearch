@@ -1,6 +1,7 @@
 package io.justsearch.indexerworker.embed;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.configuration.FieldCatalogDef;
@@ -12,6 +13,8 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -49,12 +52,20 @@ import org.junit.jupiter.api.Test;
  *       {@link #theOrderCheckerBitesOnThePreFixArrangement()} proves that checker bites by running
  *       it against the pre-fix arrangement.
  * </ul>
+ *
+ * <p>Tempdoc 821 §O.1 added the third arm —
+ * {@link #aFreshProfileThatNeverEmbedsMustNotStampAndMustStayRecoverable()} — because fixing the
+ * ORDER re-opened the zero-evidence hole it was supposed to close: the empty-index stamp permit
+ * survived the arrival of documents, so a fresh profile with a broken embedding runtime stamped an
+ * attestation over vector-less documents and closed its own recovery path forever.
  */
 class EmbeddingCompatibilityBootOrderingTest {
 
   private static final String FP = "boot-ordering-embed-fp-sha256";
   private static final String SIBLING_FP = "boot-ordering-splade-fp-sha256";
   private static final CommitMetadataValidator PERMISSIVE = metadata -> {};
+  private static final String STAMP_KEY = EmbeddingCompatibilityController.COMMIT_META_KEY;
+  private static final float[] VEC = vec();
 
   /** The bundled help batch: `ssot/docs/help/*.md`, five files, ingested on first boot. */
   private static final int HELP_DOC_COUNT = 5;
@@ -69,8 +80,9 @@ class EmbeddingCompatibilityBootOrderingTest {
   @Test
   @DisplayName(
       "Production order (post-fix): the controller resolves against the still-empty index BEFORE "
-          + "the help batch commits — COMPATIBLE / NEW_INDEX_NO_FINGERPRINT, and the batch's own "
-          + "commit carries the fingerprint, so the next boot reads FINGERPRINT_MATCH")
+          + "the help batch commits — COMPATIBLE / NEW_INDEX_NO_FINGERPRINT — but the batch's own "
+          + "commit withholds the fingerprint until an embedding actually succeeds; once the "
+          + "backfill drains, the stamp is earned and the next boot reads FINGERPRINT_MATCH")
   void productionOrderKeepsAFreshProfileCompatibleAndStampsIt() throws Exception {
     EmbeddingFingerprint.setForTesting(FP);
     Path dir = Files.createTempDirectory("embed-fp-boot-order-production");
@@ -103,8 +115,9 @@ class EmbeddingCompatibilityBootOrderingTest {
       assertEquals("NEW_INDEX_NO_FINGERPRINT", ecc.reasonCode());
 
       // ...and ONLY NOW does the Head's help batch arrive over gRPC and get committed by the
-      // indexing loop. This is the commit that used to precede the controller entirely.
-      indexHelpBatch(runtime);
+      // indexing loop. This is the commit that used to precede the controller entirely. Each
+      // write notifies the controller exactly as JobBatchWriter.write() does in production.
+      indexHelpBatch(runtime, ecc);
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();
 
@@ -117,9 +130,38 @@ class EmbeddingCompatibilityBootOrderingTest {
           (int) docCountOrThrow(runtime),
           "sanity: the batch really is visible to the same live count refresh() reads — otherwise"
               + " the COMPATIBLE above would be a tautology of an index that never filled");
+
+      // The documents exist but carry no vectors yet, so the empty-index permit is spent and no
+      // other evidence has been earned: this commit must NOT have attested anything (tempdoc 821
+      // §O.1 — the pre-fix code stamped here, over five vector-less documents).
+      assertTrue(
+          ecc.fingerprintToStamp().isEmpty(),
+          "documents with no embeddings must not earn the attestation");
+      assertTrue(
+          embeddingStampOnDisk(runtime).isEmpty(),
+          "and the commit that just landed must not carry " + STAMP_KEY);
+
+      // The embedding backfill now drains: every help document gets a real vector.
+      simulateBackfillEmbedAll(runtime);
+      runtime.commitOps().maybeRefreshBlocking();
+      assertEquals(
+          HELP_DOC_COUNT,
+          completedEmbeddingsOrThrow(runtime),
+          "sanity: the backfill really marked every document COMPLETED");
+
+      assertTrue(
+          ecc.reconcileStampEvidence(),
+          "the loop-side reconcile must see the backfill's successes and latch the evidence");
+
+      runtime.commitOps().commitAndTrack();
+      runtime.commitOps().maybeRefreshBlocking();
+      assertEquals(
+          FP,
+          embeddingStampOnDisk(runtime).orElse(null),
+          "the first commit AFTER evidence exists is the one that persists the attestation");
     }
 
-    // Restart: the help batch's own commit carried the fingerprint, so this is a normal
+    // Restart: the post-backfill commit carried the fingerprint, so this is a normal
     // FINGERPRINT_MATCH boot — no BLOCKED_LEGACY, no auto-rescue, no full re-embed.
     Supplier<CommitMetadataSource> noStamp =
         EmbeddingMetadataOverlay.createSupplier(Optional::empty);
@@ -147,6 +189,95 @@ class EmbeddingCompatibilityBootOrderingTest {
 
   @Test
   @DisplayName(
+      "Tempdoc 821 §O.1 item 1: a fresh profile whose embedding runtime is broken indexes the help "
+          + "batch with ZERO vectors — the attestation must be withheld, because stamping here "
+          + "would permanently close the recovery path and serve dense retrieval over zero vectors")
+  void aFreshProfileThatNeverEmbedsMustNotStampAndMustStayRecoverable() throws Exception {
+    EmbeddingFingerprint.setForTesting(FP);
+    Path dir = Files.createTempDirectory("embed-fp-boot-order-no-vectors");
+
+    AtomicReference<Supplier<Optional<String>>> fpSupplierRef =
+        new AtomicReference<>(Optional::empty);
+    Supplier<CommitMetadataSource> productionWiredOverlay =
+        EmbeddingMetadataOverlay.createSupplier(
+            () -> fpSupplierRef.get().get(), () -> Optional.of(SIBLING_FP));
+
+    try (var runtime =
+        io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(
+                FieldCatalogDef.forTesting(768), productionWiredOverlay, PERMISSIVE)
+            .atPath(dir)
+            .open()) {
+      var ecc =
+          new EmbeddingCompatibilityController(
+              runtime::latestCommitUserDataBestEffort,
+              () -> docCountOrThrow(runtime),
+              () -> completedEmbeddingsOrThrow(runtime));
+      ecc.refresh();
+      fpSupplierRef.set(ecc::fingerprintToStamp);
+
+      assertEquals(
+          EmbeddingCompatibilityController.State.COMPATIBLE,
+          ecc.state(),
+          "the empty index still takes the fast path — that part is correct");
+      assertEquals("NEW_INDEX_NO_FINGERPRINT", ecc.reasonCode());
+
+      // The ORT/CUDNN failure tempdoc 819 documents: the help batch is written, but not one
+      // embedding ever completes. Two commits, as the loop's idle cadence would produce.
+      indexHelpBatch(runtime, ecc);
+      runtime.commitOps().commitAndTrack();
+      runtime.commitOps().maybeRefreshBlocking();
+      runtime.commitOps().commitAndTrack();
+      runtime.commitOps().maybeRefreshBlocking();
+
+      assertEquals(
+          HELP_DOC_COUNT,
+          (int) docCountOrThrow(runtime),
+          "sanity: the documents really are in the index — otherwise the withholding below would"
+              + " be the trivially-empty case, not the dangerous one");
+      assertEquals(
+          0,
+          completedEmbeddingsOrThrow(runtime),
+          "sanity: and not one of them carries a vector");
+
+      assertTrue(
+          ecc.fingerprintToStamp().isEmpty(),
+          "the attestation must be withheld — there is nothing to attest to");
+      assertFalse(
+          ecc.reconcileStampEvidence(),
+          "and the loop-side reconcile must find no evidence in the index either");
+      assertTrue(
+          embeddingStampOnDisk(runtime).isEmpty(),
+          "so no commit may carry " + STAMP_KEY);
+    }
+
+    // The whole point: the next boot still sees an unattested index, so the BLOCKED_LEGACY
+    // recovery path is OPEN and the auto-rescue re-embeds. Had the stamp landed above, this would
+    // read FINGERPRINT_MATCH forever and dense/hybrid retrieval would be served over zero vectors.
+    Supplier<CommitMetadataSource> noStamp =
+        EmbeddingMetadataOverlay.createSupplier(Optional::empty);
+    try (var reopened =
+        io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(
+                FieldCatalogDef.forTesting(768), noStamp, PERMISSIVE)
+            .atPath(dir)
+            .open()) {
+      assertEquals(HELP_DOC_COUNT, (int) docCountOrThrow(reopened), "sanity: documents on disk");
+      var freshEcc =
+          new EmbeddingCompatibilityController(
+              reopened::latestCommitUserDataBestEffort,
+              () -> docCountOrThrow(reopened),
+              () -> completedEmbeddingsOrThrow(reopened));
+      freshEcc.refresh();
+
+      assertEquals(EmbeddingCompatibilityController.State.BLOCKED_LEGACY, freshEcc.state());
+      assertEquals("LEGACY_INDEX_NO_FINGERPRINT", freshEcc.reasonCode());
+      assertTrue(
+          freshEcc.maybeAutoStartRebuildForBlockedLegacy(HELP_DOC_COUNT),
+          "and the auto-rescue must still be able to fire — the recovery path stayed open");
+    }
+  }
+
+  @Test
+  @DisplayName(
       "Pre-fix order (the defect): the same fresh profile, but the help batch commits BEFORE the "
           + "controller is constructed — refresh() sees docCount>0 with no stored fingerprint and "
           + "resolves BLOCKED_LEGACY, which the auto-rescue then converts into a full re-embed")
@@ -167,8 +298,9 @@ class EmbeddingCompatibilityBootOrderingTest {
             .open()) {
       // The indexing loop started first (KnowledgeServer.java:702, synchronous) and the Head's
       // help batch landed while initDeferredModels was still composing ONNX sessions on the
-      // ForkJoinPool thread. Nothing offers a fingerprint yet — fpSupplierRef is still empty.
-      indexHelpBatch(runtime);
+      // ForkJoinPool thread. Nothing offers a fingerprint yet — fpSupplierRef is still empty, and
+      // there is no controller to notify either (the null argument IS the pre-fix arrangement).
+      indexHelpBatch(runtime, null);
       runtime.commitOps().commitAndTrack();
       // Make the commit visible to the count/query reads, as the loop's NRT refresh cadence does
       // in production — the live log recorded `docCount=7` at the moment refresh() ran.
@@ -310,7 +442,15 @@ class EmbeddingCompatibilityBootOrderingTest {
     throw new AssertionError("could not locate KnowledgeServer.java from user.dir=" + here);
   }
 
-  private static void indexHelpBatch(io.justsearch.adapters.lucene.runtime.RunningRuntime runtime) {
+  /**
+   * Writes the help batch the way production does: primary indexing defers the embedding to the
+   * backfill ({@code embedding_status=PENDING}, no vector), and every write notifies the
+   * compatibility controller — the {@code JobBatchWriter.write()} seam. A {@code null} controller
+   * models the pre-fix boot order, where the batch lands before the controller exists at all.
+   */
+  private static void indexHelpBatch(
+      io.justsearch.adapters.lucene.runtime.RunningRuntime runtime,
+      EmbeddingCompatibilityController ecc) {
     for (int i = 0; i < HELP_DOC_COUNT; i++) {
       runtime
           .indexingCoordinator()
@@ -318,8 +458,42 @@ class EmbeddingCompatibilityBootOrderingTest {
               new IndexDocument(
                   Map.of(
                       SchemaFields.DOC_ID, "help-" + i,
-                      SchemaFields.DOC_UID, "help-" + i + "#0")));
+                      SchemaFields.DOC_UID, "help-" + i + "#0",
+                      SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING)));
+      if (ecc != null) {
+        ecc.noteDocumentIndexed();
+      }
     }
+  }
+
+  /** The embedding backfill succeeding: every help document gets a real vector. */
+  private static void simulateBackfillEmbedAll(
+      io.justsearch.adapters.lucene.runtime.RunningRuntime runtime) {
+    List<Map.Entry<String, Map<String, Object>>> updates = new ArrayList<>(HELP_DOC_COUNT);
+    for (int i = 0; i < HELP_DOC_COUNT; i++) {
+      updates.add(
+          Map.entry(
+              "help-" + i,
+              Map.of(
+                  SchemaFields.VECTOR, VEC,
+                  SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED)));
+    }
+    runtime.indexingCoordinator().updateDocumentsBatch(updates);
+  }
+
+  /** The embedding attestation actually persisted in the latest commit's metadata, if any. */
+  private static Optional<String> embeddingStampOnDisk(
+      io.justsearch.adapters.lucene.runtime.LuceneRuntime r) {
+    Map<String, String> meta = r.latestCommitUserDataBestEffort();
+    String fp = meta == null ? null : meta.get(STAMP_KEY);
+    return fp == null || fp.isBlank() ? Optional.empty() : Optional.of(fp);
+  }
+
+  /** A dense vector for the backfill's COMPLETED writes (tempdoc 798 rejects a vector-less one). */
+  private static float[] vec() {
+    float[] v = new float[768];
+    java.util.Arrays.fill(v, 0.05f);
+    return v;
   }
 
   private static long docCountOrThrow(io.justsearch.adapters.lucene.runtime.LuceneRuntime r) {

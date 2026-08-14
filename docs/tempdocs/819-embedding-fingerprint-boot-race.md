@@ -1,7 +1,7 @@
 ---
 title: "Embedding-fingerprint lifecycle: the fresh-profile boot race that makes the empty-index fast path unreachable, and certification of a rebuild with zero successful embeddings"
 type: tempdocs
-status: "open — reproduced live 2026-08-10; implementation in progress"
+status: "READY FOR MERGE (2026-08-14) — implemented + live-verified 2026-08-10; caught up to main conflict-free and the 821 §O.1 merge-review brief executed (see §E): item 1 confirmed real and fixed, item 2 closed, item 3's premise corrected and a genuinely-regressing behavioural test added (revert-probe: 4 tests across 2 modules). 826 F1-F3 deliberately out of scope."
 created: 2026-08-10
 author: "agent (diagnostic session abd79263, GPU-saturation investigation)"
 related:
@@ -216,6 +216,69 @@ production order is correct. The part that actually regresses is a **source-orde
 `KnowledgeServer.start()`'s body, with a self-test proving the checker can go red; red→green was
 demonstrated by temporarily moving the call. That is a structural guard, not a behavioural one — the true
 end-to-end guarantee is the live check above, which is not automated.
+
+*(Superseded in part by §E below: the suite now also carries a behavioural test that genuinely regresses
+— proven by revert-probe — for the defect-B arm.)*
+
+## §E — Merge review outcome (821 §O.1), 2026-08-14
+
+Merge review executed against `main` under owner-authorized takeover (the original session went quiet).
+The catch-up merge of `origin/main` (62 commits, incl. PR #439 boot resilience) was **conflict-free**:
+this branch touches the *worker-side* `indexer-worker/.../server/KnowledgeServer.java`, not
+`KnowledgeServerBootstrap.java` / `HeadlessApp.java`, so the predicted composition risk did not
+materialize. `git diff origin/main HEAD` is exactly this branch's 19 files.
+
+**Item 1 — CONFIRMED, real, and fixed.** `emptyIndexAtRefresh` was a boot-long sticky latch: set by
+`refresh()` on a fresh empty index and never cleared (`refresh()` runs once per boot). Because
+`checkRebuildCompletion()` returns early unless state is REBUILDING (`:355-357`), the IO-backed evidence
+check `observeEmbeddingSuccessEvidence()` **never runs on the fresh-COMPATIBLE path** — so the stale
+permit was the *only* evidence there. A fresh profile whose embedding runtime is broken (the exact live
+ORT/CUDNN failure this tempdoc documents) therefore wrote the Head's 5 help docs with zero vectors and
+stamped the attestation on the very next commit. The following boot then read FINGERPRINT_MATCH, so it
+never went BLOCKED_LEGACY, never rescued, never rebuilt — **the recovery path was permanently closed**,
+and `allowQueryEmbeddings()` served dense/hybrid over zero vectors. That is defect B re-entered through
+the new latch, and strictly worse than the pre-fix behaviour, which at least retried every boot.
+
+Fix: the permit is now revocable and evidence is genuinely pulled from the index.
+- `noteDocumentIndexed()` (IO-free) revokes the permit the instant a document exists — an empty index is
+  safe to attest to only while it stays empty. Called from `JobBatchWriter.write()` right after
+  `indexingCoordinator.indexSingle(doc)`, the sole production parent-doc write path.
+- `reconcileStampEvidence()` (IO-allowed, loop-side **only** — never the commit path) latches real
+  success from the live COMPLETED count. It is the pull-side that covers the embedding backfill, which
+  is the dominant production success path, without touching `EmbeddingBackfillOps` or its context record.
+- `tryFinalizeFreshCompatibleStamp()` gains that guard: once COMPATIBLE-without-evidence became
+  reachable, its forced commit would have persisted nothing and refired on every drain — a commit storm.
+
+`fingerprintToStamp()` stays contractually IO-free; only flag reads happen there.
+
+**Item 2 — CONFIRMED and closed.** `noteSuccessfulEmbeddingObserved()` had no production caller (3 test
+call sites only). It now has one in `JobBatchWriter` (the migration/blue-green inline-embed path, where
+the written document carries `EMBEDDING_STATUS=COMPLETED`), and the flag is additionally latched in
+production by `reconcileStampEvidence()`.
+
+**Item 3 — premise partly outdated, but the real problem was worse.** The suite already had a
+*behavioural* pair against a live Lucene runtime with a negative control, not merely a source-order
+assertion. However `productionOrderKeepsAFreshProfileCompatibleAndStampsIt` was green **because of** the
+item-1 hole: its `indexHelpBatch` helper wrote 5 documents with no `EMBEDDING_STATUS` at all, and the
+test then asserted the reopened index reads FINGERPRINT_MATCH — i.e. it asserted that an attestation
+gets stamped over five vector-less documents. The test encoded the defect. It was rewritten to model the
+real sequence (docs arrive → stamp withheld → backfill succeeds → stamp earned → FINGERPRINT_MATCH), and
+a new arm `aFreshProfileThatNeverEmbedsMustNotStampAndMustStayRecoverable` pins the §O.1 case: no stamp,
+nothing on disk, and the reopen still resolves BLOCKED_LEGACY so the auto-rescue retries.
+
+**Revert-probe (independently re-run by the reviewing session, not only the implementer).** Reducing
+`noteDocumentIndexed()` to a no-op — nothing else changed — turns **4 tests across 2 modules** red:
+both boot-ordering arms (`:137`, `:242`) and both controller arms (`:185`, `:205`). Restoring the
+one-line body returns them to green. The guard bites for the right reason.
+
+**Review nit found and removed during the pass.** The first cut of this fix also added a public
+`stampEvidenceEarned()` probe that ended up with **no production caller** (the lifecycle guard uses
+`reconcileStampEvidence()`, which subsumes it) — the very defect class item 2 flagged. It was deleted
+rather than shipped; its test assertions were redundant with adjacent `fingerprintToStamp()` ones.
+
+**Out of scope (826 F1–F3, deliberately NOT pulled in):** resumable-rebuild persistence
+(`embedding_rebuild_model_sha256`), the `fingerprintToStamp` STAMP/PRESERVE/CLEAR tri-state, and
+chunk-vector certification. This branch closes origination; 826 closes recovery.
 
 ### Design note — the correction that mattered
 

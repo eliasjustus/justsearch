@@ -164,6 +164,78 @@ final class EmbeddingCompatibilityControllerTest {
   }
 
   @Test
+  void noteDocumentIndexedRevokesTheEmptyIndexStampPermit() throws Exception {
+    // Tempdoc 821 §O.1: the empty-index permit is sound only because an empty index has no vectors
+    // to lie about. refresh() runs once per boot and never re-reads the count, so without an
+    // explicit revocation the permit outlives its justification and the first help batch — written
+    // with zero vectors when the embedding runtime is broken — gets stamped anyway.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(Map::of, () -> 0L, () -> 0);
+    controller.refresh();
+    assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
+    assertEquals(
+        "fake-sha256-for-test",
+        controller.fingerprintToStamp().orElse(null),
+        "precondition: while the index is still empty the stamp is permitted");
+
+    controller.noteDocumentIndexed();
+
+    assertTrue(
+        controller.fingerprintToStamp().isEmpty(),
+        "a document now exists — the vacuous attestation is no longer vacuous, so it must be"
+            + " earned rather than assumed");
+    assertEquals(
+        EmbeddingCompatibilityController.State.COMPATIBLE,
+        controller.state(),
+        "revoking the permit withholds the stamp; it does not change state");
+  }
+
+  @Test
+  void noteSuccessfulEmbeddingObservedReEarnsTheStampAfterRevocation() throws Exception {
+    // The other half of §O.1: once an embedding really succeeds, the attestation is earned on its
+    // own merits and the revoked empty-index permit is irrelevant.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(Map::of, () -> 0L, () -> 0);
+    controller.refresh();
+    controller.noteDocumentIndexed();
+    assertTrue(controller.fingerprintToStamp().isEmpty(), "precondition: permit revoked");
+
+    controller.noteSuccessfulEmbeddingObserved();
+
+    assertEquals("fake-sha256-for-test", controller.fingerprintToStamp().orElse(null));
+  }
+
+  @Test
+  void noteDocumentIndexedDoesNotRevokeAnAlreadyStampedIndexsPermit() throws Exception {
+    // Non-regression for the FINGERPRINT_MATCH boot: a healthy stamped index keeps indexing
+    // documents forever. If noteDocumentIndexed() withheld the stamp there, the next commit would
+    // strip the fingerprint and the following boot would re-derive BLOCKED_LEGACY and re-embed the
+    // whole corpus — strictly worse than the defect being fixed.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(
+            () -> Map.of(
+                EmbeddingCompatibilityController.COMMIT_META_KEY, "fake-sha256-for-test"),
+            () -> 5L,
+            () -> 0 /* no embedding runs this boot */);
+    controller.refresh();
+    assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
+    assertEquals("FINGERPRINT_MATCH", controller.reasonCode());
+
+    controller.noteDocumentIndexed();
+
+    assertEquals(
+        "fake-sha256-for-test",
+        controller.fingerprintToStamp().orElse(null),
+        "the attestation is already on disk for THIS model — indexing more documents must not"
+            + " withhold it, or the next commit would strip the fingerprint");
+  }
+
+  @Test
   void refreshFailsClosedWhenTheDocCountCannotBeRead() throws Exception {
     // Tempdoc 819 defect B: IndexCountOps.docCount() swallows IOException to 0, and 0 is exactly
     // the value refresh() reads as "new empty index — safe to stamp". A supplier that throws must
