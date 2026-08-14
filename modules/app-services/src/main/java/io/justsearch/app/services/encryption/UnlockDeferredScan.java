@@ -79,9 +79,11 @@ public final class UnlockDeferredScan implements AutoCloseable {
   }
 
   /**
-   * Block until every scheduled scan has finished, or {@code timeout} elapses. Test seam — a
-   * detached scan is otherwise unobservable, which is exactly how the encrypted-install bug this
-   * class prevents would hide.
+   * Block until every scheduled scan has finished, or {@code timeout} elapses. The queue is FIFO on
+   * a single thread, so a no-op task completing means every scan queued before it has run.
+   *
+   * <p>Used by {@link #close} to drain, and by the tests — a detached scan is otherwise
+   * unobservable, which is exactly how the encrypted-install bug this class prevents would hide.
    */
   boolean awaitQuiescence(Duration timeout) {
     try {
@@ -94,8 +96,10 @@ public final class UnlockDeferredScan implements AutoCloseable {
     }
   }
 
+  /** Drain briefly, then stop. A scan already writing gets to finish rather than being interrupted. */
   @Override
   public void close() {
+    awaitQuiescence(Duration.ofSeconds(5));
     executor.shutdownNow();
   }
 }

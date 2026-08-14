@@ -1065,3 +1065,28 @@ Both of §11's "done when" clauses have a live leg that needs a running stack; n
 Also untouched by design (S5's job): no FE consumer reads the three new snapshot fields or
 `interruptedAt` yet — `RetrospectivePanel`'s four interruption rows are §8's S2 row but sit on the FE
 seam, and the generated types are the substrate they will bind to.
+
+### 12.7 Critical-analysis pass — two findings, both fixed
+
+Run after the two commits, walking the diff with "what would catch what the tests missed?":
+
+1. **Asymmetric guard on the turn-open marker.** The clearing side (in the `finally`) caught
+   `RuntimeException`; the opening side did not. `FileConversationStore.writeMetaAtomic` throws
+   `UncheckedIOException`, and sealing throws `KeyLockedException` on a locked store — so a store
+   fault would have killed the *run* over a diagnostic marker. Guarded symmetrically
+   (`ConversationEngine.java:383-395`), and `openTurnKey` is armed only after the write succeeds, so
+   the `finally` never chases a mark that was never made (meta.json is written atomically, so there
+   is no partial state to clean up).
+2. **`UnlockDeferredScan.awaitQuiescence` was dead code in main.** `UnreferencedCodeTest` (app-launcher
+   ArchUnit) failed: the method was referenced only from its test. Fixed at the root rather than
+   suppressed — `close()` now drains through it before `shutdownNow()`, so a scan already writing
+   finishes instead of being interrupted. Better behaviour AND a real main-code reference.
+
+Also re-checked, no change needed: `AgentRunReconciler` catches `RuntimeException` around
+`listSessions`, which covers `CorruptDurableStoreException` (it extends `IllegalStateException`) and
+the upcaster's `UnsupportedOperationException` — so one corrupt run directory degrades the pass to a
+logged no-op instead of breaking Head boot. `createApprovalGate` has exactly one call site
+(`AgentToolDispatcher:268`) and every `approvalGates` access is inside `AgentSession`, so the
+`Map<String, PendingGate>` change has no missed consumer.
+
+Full unit suite (`./gradlew.bat test -PskipWebBuild=true`): **BUILD SUCCESSFUL**.

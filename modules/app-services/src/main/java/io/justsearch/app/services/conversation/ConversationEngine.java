@@ -387,8 +387,16 @@ public final class ConversationEngine {
     if (shape.iterationMode() != IterationMode.ONE_SHOT
         && turnRecordKey != null
         && conversationStore != null) {
-      conversationStore.setTurnOpen(turnRecordKey, true);
-      openTurnKey.set(turnRecordKey);
+      try {
+        conversationStore.setTurnOpen(turnRecordKey, true);
+        // Only after the write succeeded — the store writes meta.json atomically, so a failure
+        // leaves nothing to clear, and arming the finally anyway would just log a second failure.
+        openTurnKey.set(turnRecordKey);
+      } catch (RuntimeException e) {
+        // The marker is diagnostic; the answer is the product. Failing to record it must not kill
+        // the run (this mirrors the guard on the clearing side).
+        LOG.warn("Failed to set the turn-open marker for conversation {}", turnRecordKey, e);
+      }
     }
 
     String accumulatedFinalText = "";
