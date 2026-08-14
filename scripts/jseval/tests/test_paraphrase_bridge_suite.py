@@ -14,6 +14,7 @@ repo never tracks.  Their inputs and outputs are the tiers' JSON artifacts.
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -345,4 +346,79 @@ def test_production_recipe_constants_match_the_java_side():
     assert (pbs.EMBED_WINDOW, pbs.EMBED_OVERLAP, pbs.EMBED_CTX) == (512, 128, 2048)
     assert (pbs.CHUNK_TOKENS, pbs.CHUNK_OVERLAP) == (500, 50)
     assert pbs.SPLADE_MAXSEQ == 512
+
+
+# ---------------------------------------------------------------------------
+# `pairs` merge-preserve (tempdoc 832 §4): a bare `--langs en` run must not
+# delete the committed "de" section — measured once losing 1,807 lines.
+# ---------------------------------------------------------------------------
+
+def _pairs_args(tmp_path, register, langs="en"):
+    return argparse.Namespace(langs=langs, corpora=str(CORPORA), out=str(tmp_path / "out"),
+                              register=str(register))
+
+
+def test_cmd_pairs_preserves_a_lang_section_it_does_not_regenerate(tmp_path):
+    register = tmp_path / "register.json"
+    fake_de = {"pairs": [{"pair_id": "de:type:00"}], "mismatches": [], "n_observations": 5,
+               "n_members": 8}
+    register.write_bytes(json.dumps({
+        "schema": "paraphrase-pairs.v1", "tempdoc": 796, "langs": {"de": fake_de},
+    }, ensure_ascii=False).encode("utf-8"))
+
+    pbs.cmd_pairs(_pairs_args(tmp_path, register, langs="en"))
+
+    written = json.loads(register.read_bytes())
+    assert written["langs"]["de"] == fake_de  # byte-identical, not touched
+    assert "en" in written["langs"]
+    assert written["langs"]["en"]["pairs"]  # freshly regenerated, non-empty
+
+
+def test_cmd_pairs_overwrites_a_lang_section_it_does_regenerate(tmp_path):
+    register = tmp_path / "register.json"
+    register.write_bytes(json.dumps({
+        "schema": "paraphrase-pairs.v1", "tempdoc": 796,
+        "langs": {"en": {"pairs": ["stale"], "mismatches": [], "n_observations": 0,
+                          "n_members": 0}},
+    }, ensure_ascii=False).encode("utf-8"))
+
+    pbs.cmd_pairs(_pairs_args(tmp_path, register, langs="en"))
+
+    written = json.loads(register.read_bytes())
+    assert written["langs"]["en"]["pairs"] != ["stale"]
+
+
+def test_cmd_pairs_with_no_existing_register_writes_only_the_regenerated_langs(tmp_path):
+    register = tmp_path / "register.json"  # does not exist yet
+
+    pbs.cmd_pairs(_pairs_args(tmp_path, register, langs="en"))
+
+    written = json.loads(register.read_bytes())
+    assert set(written["langs"]) == {"en"}
+
+
+def test_cmd_pairs_notes_preserved_langs_on_stderr(tmp_path, capsys):
+    register = tmp_path / "register.json"
+    register.write_bytes(json.dumps({
+        "schema": "paraphrase-pairs.v1", "tempdoc": 796,
+        "langs": {"de": {"pairs": [], "mismatches": [], "n_observations": 0, "n_members": 0}},
+    }, ensure_ascii=False).encode("utf-8"))
+
+    pbs.cmd_pairs(_pairs_args(tmp_path, register, langs="en"))
+
+    err = capsys.readouterr().err
+    assert "de" in err
+    assert "preserved" in err.lower()
+
+
+def test_cmd_pairs_with_a_corrupt_existing_register_still_writes_the_regenerated_lang(tmp_path,
+                                                                                       capsys):
+    register = tmp_path / "register.json"
+    register.write_bytes(b"not json")
+
+    pbs.cmd_pairs(_pairs_args(tmp_path, register, langs="en"))
+
+    written = json.loads(register.read_bytes())
+    assert set(written["langs"]) == {"en"}
+    assert "WARNING" in capsys.readouterr().err
     assert pbs.SPLADE_SKIP_IDS == {0, 100, 101, 102, 103}
