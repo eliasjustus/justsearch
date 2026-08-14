@@ -139,6 +139,14 @@ measurement requires paid cells; only content-coverage was measurable at $0 (don
   Q-019 disposition. Driver incident: `report` hard-requires session-local tier-p/s
   artifacts — regenerated EN-only, then green; my driver also stamped OK despite
   report=1 on the first pass (marker not gated on the report step — noted, one-off).
+- 2026-08-14: **748 §G.2 EXECUTED (delegated opus worker).** Corpus re-materialized
+  digest-identical to the commitment; truncation trap measured absent on DE; scale curve
+  R@100 0.48→0.14 replicates EN's F-040 collapse → hypothesis (b) refuted on DE;
+  host-dilution decomposition cross-confirms F-048's mechanism from an independent
+  instrument. Q-018 balance now: (c) dominant, (a) measured secondary, (b) refuted,
+  (d) eliminated — only §G.3 (eval-backend fidelity re-measure) remains, folded into
+  this charter's GPU-lane slot alongside the miracl-fr SPLADE fix + 803 re-baseline.
+  Recorded in 748 §G.2 + register Q-018.
 - 2026-08-14: **796 tier-D launched** (CPU load 23% < 60 precondition; detached
   `Start-Process` driver `tmp/paraphrase-bridge/tier-d-driver.ps1` with per-stage markers,
   since tracked background tasks die at ~60 min). `pairs.v1.json` was absent (tmp cleared)

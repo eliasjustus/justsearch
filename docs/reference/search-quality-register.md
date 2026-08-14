@@ -2742,6 +2742,18 @@ above)*
   remains dominant at scale. Q-018 stays OPEN pending §G.2 (DE exact-NN scale curve) and §G.3
   (fidelity re-measure, needs eval backend). Artifact:
   `scripts/jseval/tmp/748/gold-bridge-pair-v2.json`.
+- **§G.2 EXECUTED (2026-08-14, tempdoc 748 §G.2 result / tempdoc 832 lane A):** corpus
+  re-materialized bit-identical to the commitment (digests match); payload-offset check shows the
+  512-token truncation trap does NOT bite on DE (100% payloads in-window) — whole-doc condition
+  valid. DE exact-NN scale curve **R@100 0.48→0.14** (1k→10k) replicates EN's F-040 collapse
+  (0.50→0.20) on a method with no ANN and no candidate cut-off → **hypothesis (b) REFUTED on the
+  DE member by direct measurement**; §G.4's re-open trigger does not fire. Decomposition: host
+  dilution dominant (gold among only the 100 injected docs: rank 29 vs payload-only rank 3 — the
+  same context-starvation mechanism F-048 measured on EN), sibling crowding secondary. Balance
+  after §G.1+§G.2: **(c) task-shape dominant, (a) German representation a measured secondary
+  cause, (b) refuted, (d) eliminated** — Q-018 stays OPEN only for §G.3 (does the engine leave DE
+  headroom unexploited? its recorded union-recall sits near this offline ceiling, unlike EN).
+  Artifacts: `scripts/jseval/tmp/748/{payload-offset-check,bridge-scale-de-miracl-v2}.json`.
 
 ### Q-019: In the real corpus, does paraphrase bridging survive the query SHAPE agents actually issue — and is that what cost the hero campaign q0? → ANSWERED → F-048
 

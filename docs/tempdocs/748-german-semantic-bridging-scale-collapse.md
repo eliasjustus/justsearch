@@ -495,6 +495,39 @@ Two things whoever runs this must handle, both learned the hard way in this pass
    whole-doc truncation. This is exactly why the EN run was retired in favour of F-040's
    already-recorded chunk-MaxP numbers rather than re-run here.
 
+**§G.2 RESULT (2026-08-14, session 7eb0297f / tempdoc 832 lane A; artifacts
+`scripts/jseval/tmp/748/{payload-offset-check,bridge-scale-de-miracl-v2,*.perquery}.json`):**
+
+- **Provenance:** `datasets/` held none of these cells; the corpus was re-materialized from the
+  committed recipes against the local `ir_datasets` MIRACL cache — host-pool sha256 `bb2d828b…`
+  and assembled digest `06f7725a…` both match the commitment exactly (bit-identical to the
+  certified cell). Gold via `qrels/test.tsv` keyed by `query_family_id`: 50/50 resolved (gotcha 1
+  handled). **Gotcha 2 measured NOT to bite on DE:** MIRACL-de hosts are Wikipedia passages —
+  payload start-token median 64 / p90 105 / max 167, gold doc max 386 tokens; 100% of payloads
+  inside the 512 window, 0% truncation — whole-doc condition valid, chunk-MaxP unnecessary by
+  construction.
+- **Scale curve** (gte-multilingual-base fp32 exact cosine, CPU, n=50):
+  R@10 0.14/0.14/0.12/0.10 and **R@100 0.48/0.36/0.26/0.14** at pools 1000/2000/5000/10000;
+  nDCG@10 0.092→0.064; margin mean −0.119→−0.148; gold-rank *percentile* invariant (~9.5–11%),
+  i.e. rank grows linearly with pool — proportional dilution, not disproportionate crowding.
+- **Decision: hypothesis (b) is REFUTED on the DE member by direct measurement.** On R@100 — the
+  metric F-040 reports — DE replicates the EN collapse almost exactly (EN 0.50→0.20, DE
+  0.48→0.14): a method with no ANN and no candidate cut-off collapses the same way, so §G.4's
+  re-open trigger ("DE exact-NN holds flat while the engine collapses") does NOT fire. R@10 is the
+  misleading view (floor-pinned at 1k already; same 7 carrier queries, no churn).
+- **Mechanism decomposition (per-query recomputation reproduces the curve exactly):**
+  (i) **host dilution dominates** — ranking gold among ONLY the 100 injected docs (no real
+  distractors) gives median rank 29 vs §G.1's payload-only rank 3 on the same 100: wrapping the
+  identical payload in ~170 tokens of unrelated real German does most of the damage before any
+  corpus scale is involved — the same context-starvation mechanism tier-D/F-048 measured on EN;
+  (ii) **sibling self-crowding real but secondary** (injected docs 2.5×→8.6× enriched in top-10
+  vs their pool share at 1k→10k).
+- **Open hypothesis for §G.3 (recorded, not claimed):** the engine's recorded DE union-recall
+  (0.40→0.10, fillered v1 cells, different depth metric) sits very close to this offline
+  exact-NN ceiling (0.48→0.14) — unlike EN, where the engine BEAT its offline ceiling (F-040).
+  Whether the engine leaves DE headroom unexploited is exactly what the §G.3 fidelity re-measure
+  on the rebuilt cells will disambiguate.
+
 ### §G.3 Fidelity re-measurement of the rebuilt DE cells (backend, alternate port)
 
 ```bash
