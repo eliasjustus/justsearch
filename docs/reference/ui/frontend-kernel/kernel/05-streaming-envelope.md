@@ -83,16 +83,24 @@ Field semantics:
 Stream identifiers are kind-prefixed slugs of the form
 `<kind>:<id>` where:
 
-- `<kind>` ∈ `{registry, surface, system}`:
+- `<kind>` ∈ `{registry, surface, system, run}`:
   - `registry` — catalog-shaped streams (e.g.,
     `registry:capabilities`).
   - `surface` — UI-rendered surfaces (e.g., `surface:health-events`,
     `surface:operation-history`).
   - `system` — system-level streams (e.g., `system:runtime-context`).
-- `<id>` matches `[a-z][a-z0-9-]*`.
+  - `run` — per-run observation streams (e.g., `run:run-4f3c9a10`).
+    Unlike the other three, which are process-lifetime singletons one
+    per catalog, a `run` stream is per-instance and N-at-a-time. The
+    kind is accepted by the substrate as of tempdoc 834 S3a; the run
+    channels that use it land in S3b.
+- `<id>` matches `[a-z][a-z0-9-]*` — letter-initial for every kind,
+  which is why run ids are minted `run-<uuid>` rather than a bare
+  UUID (a UUID may start with a digit).
 
 Validation lives in `StreamId.PATTERN`
-(`modules/app-api/.../stream/StreamId.java`).
+(`modules/app-api/.../stream/StreamId.java`), mirrored on the wire by
+`stream.proto`'s `stream_id` pattern constraint.
 
 ## Resume semantics
 
@@ -114,6 +122,16 @@ Per slice 436 §B.B Fix B, the empty-buffer guard is essential: a
 client whose token references seq from a previous server lifetime
 must not receive a false-positive "you're up to date" response when
 the new server's buffer is empty.
+
+Case 1 is **atomic** as of tempdoc 834 S3a: the window check, the
+replay snapshot and the listener registration happen under one
+channel write lock (`SseStreamChannel.subscribeAndReplay`), which
+`publish` excludes via the read lock, so a frame broadcast mid-attach
+reaches the client either through the replay or through the live
+fan-out — never both, never neither. The replay itself is written
+**outside** the lock (two-phase handoff: buffer while draining, flip
+to pass-through under the lock with the buffer empty), so a
+slow-but-alive reattacher cannot stall publishers behind its socket.
 
 `resumeToken` is opaque on the wire (base64-URL-encoded
 `(streamId, seq)` tuple internally; consumers MUST NOT parse it).
@@ -140,6 +158,37 @@ process (one per change-registry). The channel owns:
 - A `StreamSequenceTracker` (atomic monotonic counter, starts at 1).
 - A `FrameHistoryRingBuffer` (default capacity 9000 frames).
 - A listener set (`Set<Consumer<SseEnvelope>>`).
+- A `ReentrantReadWriteLock` guarding the publish-vs-subscribe
+  boundary only (the ring keeps its own monitor). `publish` takes the
+  read lock once per frame; `subscribeAndReplay` takes the write lock
+  once per connection.
+
+### Retention bounds
+
+`FrameRetentionPolicy` carries the buffer's bounds. Every catalog
+stream runs on `FrameRetentionPolicy.DEFAULT` — 9000 frames, **no**
+byte bound, **no** evidence slot — under which no frame is ever
+sized and behaviour is identical to the pre-834 buffer. Two further
+axes exist for streams that need them (tempdoc 834 §2, consumed by
+the run channels in S3b):
+
+- **`maxBytes`** — a byte bound on the narrative ring, evicting
+  oldest-first. A lone frame larger than the whole budget is still
+  retained; the buffer degrades to holding that frame, never to
+  holding nothing.
+- **Evidence slot** — frames a policy's `EvidenceClassifier` keys are
+  held in a latest-wins map under their own `maxEvidenceBytes`
+  budget instead of the narrative ring, so one large replace-only
+  frame cannot evict thousands of narrative frames. Replay returns
+  evidence first in seq order, then the narrative tail.
+  `oldestSeqOrZero()` answers from the narrative ring whenever it
+  holds anything: a stale evidence frame surviving in the slot does
+  not make the narrative gap back to its seq replayable.
+
+Byte accounting is an **estimate** — fixed per-frame overhead plus
+payload string content (`FrameRetentionSizer`), not wire size.
+Tempdoc 834's probe P2 (retained bytes per answer) has not been run,
+so the overhead constant is provisional.
 
 Frame discipline:
 
@@ -175,10 +224,13 @@ The `attach` orchestrator sequences:
 
 1. Emit `connected` lifecycle.
 2. Read `?since=<token>` from `client.ctx()` (null-safe).
-3. `attemptResume(token)`; on miss emit `reset`.
+3. `attemptResumeAndSubscribe(token)` — replays AND subscribes
+   atomically; on miss (nothing replayed, no listener registered)
+   emit `reset`.
 4. If not replayed, build snapshot via the supplied supplier and
    emit `snapshot` lifecycle.
-5. Subscribe to channel for live UPDATE forwarding.
+5. Subscribe to channel for live UPDATE forwarding — only when step 3
+   did not already do so.
 6. Schedule heartbeat at the supplied cadence.
 7. Register `onClose` to unsubscribe + cancel heartbeat.
 8. Call `client.keepAlive()`.
@@ -203,13 +255,25 @@ endpoint shape). FE consumers feature-detect to fall back gracefully.
 A version bump signals a wire-incompatible envelope change; field
 additions within v1 are non-breaking per the LSP soft-fail discipline.
 
-## Known limitation: snapshot-vs-subscribe race
+## Known limitation: snapshot-vs-subscribe race (no-cursor path only)
 
-Between snapshot generation and `channel.subscribe()`, broadcasts can
-fire and be missed by the new subscriber. The window is small
-(single-thread function call) but real. Closure requires a
-subscribe-before-snapshot + queue-and-filter pattern — out of scope
-for V1; tracked in slice 436 §B.B Fix F.
+On a **fresh connect with no `?since=`** — 17 of the 18 production
+routes' normal case — the snapshot is built from a caller-supplied
+supplier and only then is `channel.subscribe()` called, so a
+broadcast in between can be missed. The window is small
+(single-thread function call) but real.
+
+This window stays open deliberately (tempdoc 834 §1.3.1): closing it
+means invoking `snapshotExtras.get()` under the channel monitor —
+lock inversion across 18 controllers, each free to take its own locks
+inside that supplier. A catalog self-corrects at its next snapshot,
+so the cost of the race is bounded there.
+
+The **resume path is no longer affected** — see "Resume semantics"
+case 1. A stream that cannot tolerate a dropped frame (a run stream,
+whose lost `chunk` yields a permanently corrupted answer) therefore
+makes "absent cursor ⇒ replay from 0" a protocol requirement and
+never takes the no-cursor path.
 
 ## Cross-references
 
