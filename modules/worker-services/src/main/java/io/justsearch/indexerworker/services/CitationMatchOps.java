@@ -262,6 +262,7 @@ final class CitationMatchOps {
             .setSentencesMatched(result.sentencesMatched())
             .setSentencesScored(result.sentencesScored())
             .setScorer(SCORER_CROSS_ENCODER)
+            .addAllSourceCoverage(sourceCoverage(prepared, true))
             .setTookMs(System.currentTimeMillis() - startTime)
             .build();
 
@@ -273,7 +274,9 @@ final class CitationMatchOps {
 
     // Fallback: embedding-based cosine similarity
     if (!embeddingProvider.isAvailable()) {
-      return emptyResponse(startTime, "EMBEDDING_UNAVAILABLE");
+      // Windows were prepared but nothing scored them: every source reports scored == 0, which is
+      // the "never examined" state (tempdoc 836 S2S3-A.1), not "examined and unsupported".
+      return emptyResponse(startTime, "EMBEDDING_UNAVAILABLE", sourceCoverage(prepared, false));
     }
 
     try {
@@ -323,13 +326,38 @@ final class CitationMatchOps {
           .setSentencesMatched(sentencesMatched)
           .setSentencesScored(sentencesScored)
           .setScorer(SCORER_EMBEDDING_COSINE)
+          .addAllSourceCoverage(sourceCoverage(prepared, true))
           .setTookMs(System.currentTimeMillis() - startTime)
           .build();
 
     } catch (Exception e) {
       log.warn("MatchCitations failed", e);
-      return errorResponse(startTime, e);
+      return errorResponse(startTime, e, sourceCoverage(prepared, false));
     }
+  }
+
+  /**
+   * The per-source examination facts (tempdoc 836 S2S3-A.1).
+   *
+   * <p>{@code considered} comes from preparation, {@code scored} from the ADMITTED back-map — so
+   * {@code considered > 0 && scored == 0} says "this source's text existed and the budget gave it
+   * no window", which a caller must not report as "nothing here supports the claim". When the pass
+   * that would have scored the admitted windows did not run (no producer, or it threw), {@code
+   * scored} is reported as 0 for every source rather than as the admitted count: nothing was
+   * examined, and the response says so.
+   */
+  private static List<io.justsearch.ipc.SourceCoverage> sourceCoverage(
+      PassageWindows.Prepared prepared, boolean scored) {
+    List<io.justsearch.ipc.SourceCoverage> out = new ArrayList<>(prepared.sourceCount());
+    for (int i = 0; i < prepared.sourceCount(); i++) {
+      out.add(
+          io.justsearch.ipc.SourceCoverage.newBuilder()
+              .setSourceIndex(i)
+              .setWindowsConsidered(prepared.windowsConsideredAt(i))
+              .setWindowsScored(scored ? prepared.windowsScoredAt(i) : 0)
+              .build());
+    }
+    return out;
   }
 
   /**
@@ -381,7 +409,11 @@ final class CitationMatchOps {
         chunkDocIds,
         chunkIndices,
         passageTexts,
-        i -> lookupChunkContent(chunkDocIds.get(i), chunkIndices.get(i)),
+        // Tempdoc 836 §8.4 — a NEGATIVE chunk index is the document-level sentinel (the absence of
+        // a chunk ordinal, mirroring AgentSession.DOC_LEVEL_SENTINEL), not an ordinal to look up.
+        // A source that supplies no text and has no ordinal is unverifiable; searching for chunk
+        // "-1" would return nothing anyway, and asking is what makes a fabricated 0 tempting.
+        i -> chunkIndices.get(i) < 0 ? null : lookupChunkContent(chunkDocIds.get(i), chunkIndices.get(i)),
         sentenceCount,
         deadlineMs,
         answerText);
@@ -397,23 +429,40 @@ final class CitationMatchOps {
     return n;
   }
 
+  /**
+   * An early return taken BEFORE preparation ran: the coverage list is empty because nothing is
+   * known about the sources yet — which is a different statement from an entry reporting zero
+   * (tempdoc 836 S2S3-A.1).
+   */
   private MatchCitationsResponse emptyResponse(long startTime, String error) {
+    return emptyResponse(startTime, error, List.of());
+  }
+
+  private MatchCitationsResponse emptyResponse(
+      long startTime, String error, List<io.justsearch.ipc.SourceCoverage> coverage) {
     return MatchCitationsResponse.newBuilder()
         .setSentencesTotal(0)
         .setSentencesMatched(0)
         .setSentencesScored(0)
         .setScorer(SCORER_NONE)
+        .addAllSourceCoverage(coverage)
         .setTookMs(System.currentTimeMillis() - startTime)
         .setError(error)
         .build();
   }
 
   private MatchCitationsResponse errorResponse(long startTime, Exception e) {
+    return errorResponse(startTime, e, List.of());
+  }
+
+  private MatchCitationsResponse errorResponse(
+      long startTime, Exception e, List<io.justsearch.ipc.SourceCoverage> coverage) {
     return MatchCitationsResponse.newBuilder()
         .setSentencesTotal(0)
         .setSentencesMatched(0)
         .setSentencesScored(0)
         .setScorer(SCORER_NONE)
+        .addAllSourceCoverage(coverage)
         .setTookMs(System.currentTimeMillis() - startTime)
         .setError(e.getMessage() == null ? "UNKNOWN" : e.getMessage())
         .build();

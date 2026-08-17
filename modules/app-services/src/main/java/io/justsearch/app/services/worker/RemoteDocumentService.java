@@ -520,7 +520,7 @@ public final class RemoteDocumentService implements DocumentService {
       String answerText, List<VerificationSource> sources, double threshold) {
     return CompletableFuture.supplyAsync(() -> {
       if (answerText == null || answerText.isBlank() || sources == null || sources.isEmpty()) {
-        return new CitationMatchResult(List.of(), 0, 0, 0, 0, ScorerKind.NONE);
+        return new CitationMatchResult(List.of(), 0, 0, 0, 0, ScorerKind.NONE, List.of());
       }
       try {
         List<String> chunkDocIds = new ArrayList<>(sources.size());
@@ -551,16 +551,27 @@ public final class RemoteDocumentService implements DocumentService {
               m.getParentDocId(),
               TextSource.fromWire(m.getTextSource())));
         }
+        // Tempdoc 836 S2S3-A.1 — the per-source examination facts ride through verbatim. Nothing is
+        // aggregated here: the response-level ratio is derived by whoever needs it, so one fact
+        // never acquires a second producer on the way to the browser.
+        List<DocumentService.SourceCoverage> coverage =
+            resp.getSourceCoverageList().stream()
+                .map(
+                    c ->
+                        new DocumentService.SourceCoverage(
+                            c.getSourceIndex(), c.getWindowsConsidered(), c.getWindowsScored()))
+                .toList();
         return new CitationMatchResult(
             entries,
             resp.getSentencesTotal(),
             resp.getSentencesMatched(),
             resp.getTookMs(),
             resp.getSentencesScored(),
-            ScorerKind.fromWire(resp.getScorer()));
+            ScorerKind.fromWire(resp.getScorer()),
+            coverage);
       } catch (Exception e) {
         log.warn("Citation matching via gRPC failed", e);
-        return new CitationMatchResult(List.of(), 0, 0, 0, 0, ScorerKind.NONE);
+        return new CitationMatchResult(List.of(), 0, 0, 0, 0, ScorerKind.NONE, List.of());
       }
     });
   }
