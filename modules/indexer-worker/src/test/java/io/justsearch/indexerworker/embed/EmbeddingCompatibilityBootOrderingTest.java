@@ -115,9 +115,8 @@ class EmbeddingCompatibilityBootOrderingTest {
       assertEquals("NEW_INDEX_NO_FINGERPRINT", ecc.reasonCode());
 
       // ...and ONLY NOW does the Head's help batch arrive over gRPC and get committed by the
-      // indexing loop. This is the commit that used to precede the controller entirely. Each
-      // write notifies the controller exactly as JobBatchWriter.write() does in production.
-      indexHelpBatch(runtime, ecc);
+      // indexing loop. This is the commit that used to precede the controller entirely.
+      indexHelpBatch(runtime);
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();
 
@@ -131,9 +130,9 @@ class EmbeddingCompatibilityBootOrderingTest {
           "sanity: the batch really is visible to the same live count refresh() reads — otherwise"
               + " the COMPATIBLE above would be a tautology of an index that never filled");
 
-      // The documents exist but carry no vectors yet, so the empty-index permit is spent and no
-      // other evidence has been earned: this commit must NOT have attested anything (tempdoc 821
-      // §O.1 — the pre-fix code stamped here, over five vector-less documents).
+      // The documents exist but carry no vectors yet and no evidence has been earned (the
+      // empty-index permit no longer exists at all — #470 D2): this commit must NOT have attested
+      // anything (tempdoc 821 §O.1 — the pre-fix code stamped here, over five vector-less docs).
       assertTrue(
           ecc.fingerprintToStamp().isEmpty(),
           "documents with no embeddings must not earn the attestation");
@@ -223,7 +222,7 @@ class EmbeddingCompatibilityBootOrderingTest {
 
       // The ORT/CUDNN failure tempdoc 819 documents: the help batch is written, but not one
       // embedding ever completes. Two commits, as the loop's idle cadence would produce.
-      indexHelpBatch(runtime, ecc);
+      indexHelpBatch(runtime);
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();
       runtime.commitOps().commitAndTrack();
@@ -300,7 +299,7 @@ class EmbeddingCompatibilityBootOrderingTest {
       // help batch landed while initDeferredModels was still composing ONNX sessions on the
       // ForkJoinPool thread. Nothing offers a fingerprint yet — fpSupplierRef is still empty, and
       // there is no controller to notify either (the null argument IS the pre-fix arrangement).
-      indexHelpBatch(runtime, null);
+      indexHelpBatch(runtime);
       runtime.commitOps().commitAndTrack();
       // Make the commit visible to the count/query reads, as the loop's NRT refresh cadence does
       // in production — the live log recorded `docCount=7` at the moment refresh() ran.
@@ -444,13 +443,12 @@ class EmbeddingCompatibilityBootOrderingTest {
 
   /**
    * Writes the help batch the way production does: primary indexing defers the embedding to the
-   * backfill ({@code embedding_status=PENDING}, no vector), and every write notifies the
-   * compatibility controller — the {@code JobBatchWriter.write()} seam. A {@code null} controller
-   * models the pre-fix boot order, where the batch lands before the controller exists at all.
+   * backfill ({@code embedding_status=PENDING}, no vector). Since #470 D2 removed the empty-index
+   * stamp permit, the write path no longer needs to notify the controller about bare document
+   * writes — a PENDING write contributes no attestation evidence, and the stamp stays withheld
+   * until the backfill produces the first real success.
    */
-  private static void indexHelpBatch(
-      io.justsearch.adapters.lucene.runtime.RunningRuntime runtime,
-      EmbeddingCompatibilityController ecc) {
+  private static void indexHelpBatch(io.justsearch.adapters.lucene.runtime.RunningRuntime runtime) {
     for (int i = 0; i < HELP_DOC_COUNT; i++) {
       runtime
           .indexingCoordinator()
@@ -460,9 +458,6 @@ class EmbeddingCompatibilityBootOrderingTest {
                       SchemaFields.DOC_ID, "help-" + i,
                       SchemaFields.DOC_UID, "help-" + i + "#0",
                       SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING)));
-      if (ecc != null) {
-        ecc.noteDocumentIndexed();
-      }
     }
   }
 

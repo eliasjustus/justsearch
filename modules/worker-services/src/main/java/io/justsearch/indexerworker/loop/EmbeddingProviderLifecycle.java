@@ -448,7 +448,7 @@ public final class EmbeddingProviderLifecycle {
     }
     if (docCount <= 0) return false;
 
-    // Tempdoc 821 §O.1: since noteDocumentIndexed() revokes the empty-index permit, COMPATIBLE
+    // Tempdoc 821 §O.1 (+ #470 D2: the empty-index permit is gone entirely), so COMPATIBLE
     // without stamp evidence is reachable — and there the stamp supplier returns empty, so the
     // forced commit below would persist NOTHING and refire on every drain (a commit storm).
     // reconcileStampEvidence() is also the pull-side that latches the embedding backfill's

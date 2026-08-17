@@ -125,10 +125,11 @@ public final class JobBatchWriter {
 
       long writeStart = System.currentTimeMillis();
       indexingCoordinator.indexSingle(doc);
-      // Tempdoc 819 / 821 §O.1: the ECC's empty-index stamp permit is sound only while the index is
-      // empty — there are then no vectors to lie about. This write ends that, so revoke it here;
-      // and when the document actually carries a completed embedding (the migration/blue-green
-      // inline-embed path), that IS the success evidence the attestation must be earned from.
+      // Tempdoc 819 / 821 §O.1 (+ #470 D2): when the document carries a completed embedding (the
+      // migration/blue-green inline-embed path), that IS the success evidence the attestation must
+      // be earned from — feed it to the ECC. (The empty-index stamp permit this call once revoked
+      // was deleted outright: a document-less commit could spend it first, granting a permanent
+      // unearned attestation.)
       notifyEmbeddingCompatibility(doc);
       indexedDelta.accept(1L);
       batchStats.recordIndexed(1);
@@ -205,14 +206,13 @@ public final class JobBatchWriter {
 
   /**
    * Tells the embedding compatibility controller what this write means for the attestation
-   * (tempdoc 819 / 821 §O.1): a document now exists (revoking the empty-index permit), and — if
-   * this document carries a completed embedding — that at least one embedding really succeeded.
-   * Null-safe: the controller is wired after the runtime opens and may not exist yet.
+   * (tempdoc 819 / 821 §O.1): if this document carries a completed embedding, at least one
+   * embedding really succeeded — the fact the stamp must be earned from. Null-safe: the controller
+   * is wired after the runtime opens and may not exist yet.
    */
   private void notifyEmbeddingCompatibility(IndexDocument doc) {
     var controller = embeddingLifecycle.embeddingCompatController();
     if (controller == null) return;
-    controller.noteDocumentIndexed();
     var fields = doc.fields();
     if (fields != null
         && SchemaFields.EMBEDDING_STATUS_COMPLETED.equals(

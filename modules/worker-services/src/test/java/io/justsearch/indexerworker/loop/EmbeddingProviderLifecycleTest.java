@@ -77,9 +77,9 @@ class EmbeddingProviderLifecycleTest {
 
   @Test
   void doesNotFireWhenTheStampEvidenceIsNotYetEarned() {
-    // Tempdoc 821 §O.1: once noteDocumentIndexed() revokes the empty-index permit, COMPATIBLE
-    // without evidence is reachable — and there fingerprintToStamp() returns empty, so a forced
-    // commit would persist NOTHING and refire on every drain (~once/sec). Decline instead.
+    // Tempdoc 821 §O.1 (+ #470 D2: no empty-index permit exists), so COMPATIBLE without evidence
+    // is the normal fresh-install state — and there fingerprintToStamp() returns empty, so a
+    // forced commit would persist NOTHING and refire on every drain (~once/sec). Decline instead.
     CommitOps commitOps = mock(CommitOps.class);
     IndexCountOps indexCountOps = mock(IndexCountOps.class);
     when(indexCountOps.docCount()).thenReturn(5L);

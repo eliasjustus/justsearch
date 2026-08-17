@@ -158,51 +158,28 @@ final class EmbeddingCompatibilityControllerTest {
 
     assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
     assertEquals("NEW_INDEX_NO_FINGERPRINT", controller.reasonCode());
-    // An empty index is the `parentDocCount == 0` arm of the stamp-evidence rule: there is no
-    // vector of unknown provenance to lie about, so the first commit may stamp.
-    assertEquals("fake-sha256-for-test", controller.fingerprintToStamp().orElse(null));
-  }
-
-  @Test
-  void noteDocumentIndexedRevokesTheEmptyIndexStampPermit() throws Exception {
-    // Tempdoc 821 §O.1: the empty-index permit is sound only because an empty index has no vectors
-    // to lie about. refresh() runs once per boot and never re-reads the count, so without an
-    // explicit revocation the permit outlives its justification and the first help batch — written
-    // with zero vectors when the embedding runtime is broken — gets stamped anyway.
-    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
-
-    EmbeddingCompatibilityController controller =
-        new EmbeddingCompatibilityController(Map::of, () -> 0L, () -> 0);
-    controller.refresh();
-    assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
-    assertEquals(
-        "fake-sha256-for-test",
-        controller.fingerprintToStamp().orElse(null),
-        "precondition: while the index is still empty the stamp is permitted");
-
-    controller.noteDocumentIndexed();
-
+    // #470 D2: emptiness alone earns NOTHING. The old empty-index permit was the only mechanism
+    // able to grant an unearned durable attestation — a document-less commit (delete/reset RPCs,
+    // the background commit timer racing the write path's revocation) could spend it before the
+    // first write, permanently stamping a fingerprint no embedding ever earned. So a fresh empty
+    // index is COMPATIBLE (writes may proceed) but the stamp is withheld until real evidence.
     assertTrue(
         controller.fingerprintToStamp().isEmpty(),
-        "a document now exists — the vacuous attestation is no longer vacuous, so it must be"
-            + " earned rather than assumed");
-    assertEquals(
-        EmbeddingCompatibilityController.State.COMPATIBLE,
-        controller.state(),
-        "revoking the permit withholds the stamp; it does not change state");
+        "a fresh empty index must NOT stamp on emptiness alone — the stamp is earned by the first"
+            + " successful embedding, never granted vacuously");
   }
 
   @Test
-  void noteSuccessfulEmbeddingObservedReEarnsTheStampAfterRevocation() throws Exception {
-    // The other half of §O.1: once an embedding really succeeds, the attestation is earned on its
-    // own merits and the revoked empty-index permit is irrelevant.
+  void firstSuccessfulEmbeddingEarnsTheStampOnAFreshIndex() throws Exception {
+    // The positive half of #470 D2: once an embedding really succeeds, the attestation is earned
+    // on its own merits and the very next commit may stamp.
     EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
 
     EmbeddingCompatibilityController controller =
         new EmbeddingCompatibilityController(Map::of, () -> 0L, () -> 0);
     controller.refresh();
-    controller.noteDocumentIndexed();
-    assertTrue(controller.fingerprintToStamp().isEmpty(), "precondition: permit revoked");
+    assertTrue(
+        controller.fingerprintToStamp().isEmpty(), "precondition: no evidence, stamp withheld");
 
     controller.noteSuccessfulEmbeddingObserved();
 
@@ -210,11 +187,12 @@ final class EmbeddingCompatibilityControllerTest {
   }
 
   @Test
-  void noteDocumentIndexedDoesNotRevokeAnAlreadyStampedIndexsPermit() throws Exception {
+  void anAlreadyStampedIndexKeepsStampingWithoutFreshEvidence() throws Exception {
     // Non-regression for the FINGERPRINT_MATCH boot: a healthy stamped index keeps indexing
-    // documents forever. If noteDocumentIndexed() withheld the stamp there, the next commit would
-    // strip the fingerprint and the following boot would re-derive BLOCKED_LEGACY and re-embed the
-    // whole corpus — strictly worse than the defect being fixed.
+    // documents forever, often with zero embedding runs in a given boot. If the stamp were
+    // withheld there, the next commit would strip the fingerprint and the following boot would
+    // re-derive BLOCKED_LEGACY and re-embed the whole corpus — strictly worse than the defect
+    // being fixed. The on-disk attestation for THIS model is itself the earned evidence.
     EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
     EmbeddingCompatibilityController controller =
         new EmbeddingCompatibilityController(
@@ -226,13 +204,11 @@ final class EmbeddingCompatibilityControllerTest {
     assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
     assertEquals("FINGERPRINT_MATCH", controller.reasonCode());
 
-    controller.noteDocumentIndexed();
-
     assertEquals(
         "fake-sha256-for-test",
         controller.fingerprintToStamp().orElse(null),
-        "the attestation is already on disk for THIS model — indexing more documents must not"
-            + " withhold it, or the next commit would strip the fingerprint");
+        "the attestation is already on disk for THIS model — later commits must keep offering it,"
+            + " or the next commit would strip the fingerprint");
   }
 
   @Test

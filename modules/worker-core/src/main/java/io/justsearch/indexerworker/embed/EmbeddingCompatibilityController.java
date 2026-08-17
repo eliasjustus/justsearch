@@ -47,14 +47,19 @@ import org.slf4j.LoggerFactory;
  * <ul>
  *   <li>the attestation is already persisted on disk and matches the current model — withholding it
  *       from later commits would <i>un-stamp</i> a healthy index, which is strictly worse;</li>
- *   <li>the index was empty when {@link #refresh()} resolved it AND no document has been indexed
- *       since (read via a supplier that THROWS on failure, so a swallowed IO error cannot
- *       masquerade as "empty"; revoked by {@link #noteDocumentIndexed()} the instant a document
- *       exists, because an empty index is safe to attest to only while it stays empty);</li>
  *   <li>at least one successful embedding has been observed (monotone latch); or</li>
  *   <li>the stamp was explicitly waived for a caller that can prove provenance structurally
  *       ({@link #permitStampWithoutEmbeddingEvidence}).</li>
  * </ul>
+ *
+ * <p>Deliberately NOT a permitting fact: "the index was empty at {@link #refresh()}". An
+ * empty-index permit was the only mechanism able to grant an <i>unearned durable</i> attestation —
+ * a document-less commit (delete/reset RPCs, the background commit timer) could spend it before the
+ * first write revoked it, permanently stamping a fingerprint no embedding ever earned (#470
+ * adversarial review, D2). An empty index needs no stamp: the next boot re-derives
+ * {@code NEW_INDEX_NO_FINGERPRINT} from {@code docCount == 0}, and the stamp lands the moment real
+ * evidence exists (inline embed via the write path, or the backfill via
+ * {@code reconcileStampEvidence}).
  */
 public final class EmbeddingCompatibilityController {
   private static final Logger log = LoggerFactory.getLogger(EmbeddingCompatibilityController.class);
@@ -101,11 +106,6 @@ public final class EmbeddingCompatibilityController {
 
   /** Monotone: set the first time a successful embedding is observed. Never cleared. */
   private volatile boolean anySuccessfulEmbeddingObserved = false;
-  /**
-   * The index held zero documents when {@link #refresh()} last resolved it (trustworthy read) AND
-   * nothing has been indexed since — {@link #noteDocumentIndexed()} clears it (tempdoc 821 §O.1).
-   */
-  private volatile boolean emptyIndexAtRefresh = false;
   /** The current model's fingerprint was already persisted in the index's commit metadata. */
   private volatile boolean attestationAlreadyOnDisk = false;
   /** Evidence waived by a caller that can prove provenance structurally. */
@@ -211,19 +211,20 @@ public final class EmbeddingCompatibilityController {
 
     if (storedFp == null || storedFp.isBlank()) {
       attestationAlreadyOnDisk = false;
-      // If the index is empty (fresh install / new generation), it's safe to start writing vectors
-      // and stamp the fingerprint on the first commit. `docs < 0` means the count could not be read
+      // If the index is empty (fresh install / new generation), it's safe to start writing vectors.
+      // The stamp is NOT pre-permitted (no empty-index permit — see the class javadoc, #470 D2):
+      // it lands once real embedding evidence exists. `docs < 0` means the count could not be read
       // (tempdoc 819 defect B): that must NOT read as "empty" — fall through to BLOCKED_LEGACY.
       long docs = safeDocCount();
       if (docs == 0L) {
-        emptyIndexAtRefresh = true;
         state.set(State.COMPATIBLE);
         reasonCode.set("NEW_INDEX_NO_FINGERPRINT");
-        log.info("Embedding compatibility: COMPATIBLE (new/empty index; fingerprint will be stamped on commit)");
+        log.info(
+            "Embedding compatibility: COMPATIBLE (new/empty index; fingerprint will be stamped"
+                + " once the first embedding succeeds)");
         return;
       }
 
-      emptyIndexAtRefresh = false;
       state.set(State.BLOCKED_LEGACY);
       reasonCode.set("LEGACY_INDEX_NO_FINGERPRINT");
       log.warn(
@@ -233,8 +234,6 @@ public final class EmbeddingCompatibilityController {
           docs);
       return;
     }
-
-    emptyIndexAtRefresh = false;
 
     if (storedFp.equals(current.get())) {
       // The attestation is already persisted for THIS model. Later commits must keep offering it —
@@ -411,25 +410,6 @@ public final class EmbeddingCompatibilityController {
   }
 
   /**
-   * Records that a document was written to the index, revoking the empty-index stamp permit
-   * (tempdoc 819 / 821 §O.1).
-   *
-   * <p><b>Why this exists.</b> {@code emptyIndexAtRefresh} permits the stamp only because an empty
-   * index has no vectors to lie about — the attestation is vacuously true. That justification
-   * expires the instant a document exists: from then on the attestation claims "these documents'
-   * vectors came from this model", which is exactly the claim that must be earned. {@link
-   * #refresh()} runs once per boot and never re-reads the doc count, so without this call the
-   * permit outlives its reason for the whole process lifetime — a fresh profile whose embedding
-   * runtime is broken would index documents with zero vectors and still stamp, and the next boot
-   * would read {@code FINGERPRINT_MATCH} and never open the BLOCKED_LEGACY recovery path again.
-   *
-   * <p>IO-free and idempotent — safe to call once per indexed document from the write path.
-   */
-  public void noteDocumentIndexed() {
-    emptyIndexAtRefresh = false;
-  }
-
-  /**
    * Loop-side reconciliation: if no in-process evidence exists yet, ask the INDEX whether any
    * embedding has completed, latching a positive answer (tempdoc 821 §O.1).
    *
@@ -474,12 +454,9 @@ public final class EmbeddingCompatibilityController {
         reason);
   }
 
-  /** IO-free: has the stamp been earned? See the class javadoc for the four permitting facts. */
+  /** IO-free: has the stamp been earned? See the class javadoc for the three permitting facts. */
   private boolean hasStampEvidence() {
-    return attestationAlreadyOnDisk
-        || emptyIndexAtRefresh
-        || anySuccessfulEmbeddingObserved
-        || stampEvidenceWaived;
+    return attestationAlreadyOnDisk || anySuccessfulEmbeddingObserved || stampEvidenceWaived;
   }
 
   /** Consults the in-process facts first, then the index. Latches a PRESENT result. */
@@ -548,9 +525,8 @@ public final class EmbeddingCompatibilityController {
    *   <li>State is COMPATIBLE (already matches), or state is REBUILDING and rebuild has
    *       completed; AND</li>
    *   <li>the attestation has been earned — see {@link #hasStampEvidence()} and the class javadoc
-   *       (tempdoc 819 defect B). The empty-index arm holds only while the index was empty when
-   *       {@link #refresh()} resolved it AND no document has been indexed since ({@link
-   *       #noteDocumentIndexed()} revokes it).</li>
+   *       (tempdoc 819 defect B; a fresh/empty index earns it via its first successful embedding,
+   *       never by emptiness alone — #470 D2).</li>
    * </ul>
    *
    * <p><b>Must stay IO-free.</b> {@code CommitOps.commit()} consults this on EVERY commit,
@@ -561,8 +537,13 @@ public final class EmbeddingCompatibilityController {
     State s = state.get();
     if (s == State.COMPATIBLE || (s == State.REBUILDING && rebuildCompleted)) {
       if (!hasStampEvidence()) {
-        if (stampRefusalLogged.compareAndSet(false, true)) {
-          log.error(
+        // Fresh install (NEW_INDEX_NO_FINGERPRINT): evidence is legitimately absent between the
+        // first document commit and the backfill's first successful embedding — withholding here
+        // is the design working, not a fault, so it logs nothing (#470 D3). Any other state
+        // reaching this point without evidence is worth a once-per-boot warning.
+        if (!"NEW_INDEX_NO_FINGERPRINT".equals(reasonCode.get())
+            && stampRefusalLogged.compareAndSet(false, true)) {
+          log.warn(
               "Embedding compatibility: state={} but no evidence that any embedding succeeded —"
                   + " withholding {} from commit metadata rather than attesting to vectors that do"
                   + " not exist (tempdoc 819). Logged once per boot.",
