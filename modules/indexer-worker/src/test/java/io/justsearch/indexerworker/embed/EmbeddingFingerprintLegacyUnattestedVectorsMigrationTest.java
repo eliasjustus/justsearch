@@ -108,7 +108,9 @@ class EmbeddingFingerprintLegacyUnattestedVectorsMigrationTest {
     try (var r2 = openRuntime(dir, productionWiredOverlay)) {
       var ecc =
           new EmbeddingCompatibilityController(
-              r2::latestCommitUserDataBestEffort, () -> r2.indexCountOps().docCount());
+              r2::latestCommitUserDataBestEffort,
+              () -> docCountOrThrow(r2),
+              () -> completedEmbeddingsOrThrow(r2));
       // Production wiring, post-A1-revert: KnowledgeServer.java:1022-1023.
       fpSupplierRef.set(ecc::fingerprintToStamp);
       ecc.refresh();
@@ -237,7 +239,9 @@ class EmbeddingFingerprintLegacyUnattestedVectorsMigrationTest {
     try (var r2 = openRuntime(dir, stamped)) {
       var ecc =
           new EmbeddingCompatibilityController(
-              r2::latestCommitUserDataBestEffort, () -> r2.indexCountOps().docCount());
+              r2::latestCommitUserDataBestEffort,
+              () -> docCountOrThrow(r2),
+              () -> completedEmbeddingsOrThrow(r2));
       ecc.refresh();
 
       assertEquals(
@@ -283,7 +287,9 @@ class EmbeddingFingerprintLegacyUnattestedVectorsMigrationTest {
     try (var r2 = openRuntime(dir, noStamp)) {
       var ecc =
           new EmbeddingCompatibilityController(
-              r2::latestCommitUserDataBestEffort, () -> r2.indexCountOps().docCount());
+              r2::latestCommitUserDataBestEffort,
+              () -> docCountOrThrow(r2),
+              () -> completedEmbeddingsOrThrow(r2));
       ecc.refresh();
       assertEquals(EmbeddingCompatibilityController.State.BLOCKED_LEGACY, ecc.state());
       assertEquals(
@@ -334,6 +340,35 @@ class EmbeddingFingerprintLegacyUnattestedVectorsMigrationTest {
   private static int countByStatus(
       io.justsearch.adapters.lucene.runtime.RunningRuntime r, String status) {
     return r.indexCountOps().countByField(SchemaFields.EMBEDDING_STATUS, status);
+  }
+
+  /**
+   * The production doc-count supplier shape (tempdoc 819): PROPAGATES a reader failure instead of
+   * swallowing it to 0, because 0 is what {@code refresh()} reads as "new empty index, safe to
+   * stamp".
+   */
+  private static long docCountOrThrow(io.justsearch.adapters.lucene.runtime.RunningRuntime r) {
+    try {
+      return r.indexCountOps().docCountOrThrow();
+    } catch (java.io.IOException e) {
+      throw new java.io.UncheckedIOException(e);
+    }
+  }
+
+  /**
+   * The production success-evidence supplier shape (tempdoc 819 defect B): certification requires
+   * at least one COMPLETED embedding, read live from the index — so these tests exercise the real
+   * evidence path rather than asserting it away.
+   */
+  private static int completedEmbeddingsOrThrow(
+      io.justsearch.adapters.lucene.runtime.RunningRuntime r) {
+    try {
+      return r.indexCountOps()
+          .countByFieldOrThrow(
+              SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
+    } catch (java.io.IOException e) {
+      throw new java.io.UncheckedIOException(e);
+    }
   }
 
   /** Marks every currently-PENDING parent doc COMPLETED, as the embedding backfill would. */

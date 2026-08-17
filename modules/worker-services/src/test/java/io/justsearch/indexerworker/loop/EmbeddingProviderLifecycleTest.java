@@ -63,6 +63,7 @@ class EmbeddingProviderLifecycleTest {
     when(ecc.state()).thenReturn(EmbeddingCompatibilityController.State.COMPATIBLE);
     when(ecc.storedFingerprint()).thenReturn(null);
     when(ecc.currentFingerprint()).thenReturn("fake-sha256");
+    when(ecc.reconcileStampEvidence()).thenReturn(true);
 
     EmbeddingProviderLifecycle lifecycle =
         newLifecycle(mock(JobQueue.class), indexCountOps, commitOps);
@@ -72,6 +73,31 @@ class EmbeddingProviderLifecycleTest {
 
     assertTrue(fired, "must fire the forced commit: COMPATIBLE + docs + no stored fingerprint");
     verify(commitOps).commitAndTrack(CommitReason.INDEXING_LOOP_FRESH_STAMP);
+  }
+
+  @Test
+  void doesNotFireWhenTheStampEvidenceIsNotYetEarned() {
+    // Tempdoc 821 §O.1 (+ #470 D2: no empty-index permit exists), so COMPATIBLE without evidence
+    // is the normal fresh-install state — and there fingerprintToStamp() returns empty, so a
+    // forced commit would persist NOTHING and refire on every drain (~once/sec). Decline instead.
+    CommitOps commitOps = mock(CommitOps.class);
+    IndexCountOps indexCountOps = mock(IndexCountOps.class);
+    when(indexCountOps.docCount()).thenReturn(5L);
+
+    EmbeddingCompatibilityController ecc = mock(EmbeddingCompatibilityController.class);
+    when(ecc.state()).thenReturn(EmbeddingCompatibilityController.State.COMPATIBLE);
+    when(ecc.storedFingerprint()).thenReturn(null);
+    when(ecc.currentFingerprint()).thenReturn("fake-sha256");
+    when(ecc.reconcileStampEvidence()).thenReturn(false);
+
+    EmbeddingProviderLifecycle lifecycle =
+        newLifecycle(mock(JobQueue.class), indexCountOps, commitOps);
+    lifecycle.setEmbeddingCompatController(ecc);
+
+    assertFalse(
+        lifecycle.tryFinalizeFreshCompatibleStamp(),
+        "no evidence yet — the commit would stamp nothing, so it must not be forced");
+    verifyNoInteractions(commitOps);
   }
 
   @Test
@@ -113,6 +139,7 @@ class EmbeddingProviderLifecycleTest {
     when(ecc.state()).thenReturn(EmbeddingCompatibilityController.State.COMPATIBLE);
     when(ecc.storedFingerprint()).thenReturn(null);
     when(ecc.currentFingerprint()).thenReturn("fake-sha256");
+    when(ecc.reconcileStampEvidence()).thenReturn(true);
 
     EmbeddingProviderLifecycle lifecycle =
         newLifecycle(mock(JobQueue.class), indexCountOps, commitOps);
@@ -142,6 +169,7 @@ class EmbeddingProviderLifecycleTest {
     when(ecc.storedFingerprint()).thenReturn(null);
     when(ecc.currentFingerprint()).thenReturn("fake-sha256");
     when(ecc.state()).thenReturn(EmbeddingCompatibilityController.State.COMPATIBLE);
+    when(ecc.reconcileStampEvidence()).thenReturn(true);
 
     EmbeddingProviderLifecycle lifecycle =
         newLifecycle(mock(JobQueue.class), indexCountOps, commitOps);
