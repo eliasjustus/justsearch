@@ -11,6 +11,7 @@ import io.justsearch.app.api.ModeChangeListener;
 import io.justsearch.app.api.ModeTransitionException;
 import io.justsearch.app.api.OnlineAiLifecycleControl;
 import io.justsearch.app.api.lifecycle.CapabilityHealth;
+import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
 import io.justsearch.app.inference.InferenceLifecycleManager;
 import io.justsearch.app.services.lifecycle.InferenceCapability;
 import io.justsearch.app.services.runtimestate.RuntimeGpuLease;
@@ -66,6 +67,9 @@ final class InferenceCapabilityWiringTest {
   }
 
   @Test
+  // Tempdoc 837 S4: converted from the prose "Inference offline". Same state, same intent — the
+  // OFFLINE arm still yields the generic cause (crash vs user-deactivate needs the TransitionReason
+  // S5 threads); it is now the CODE the consumer forwards instead of prose it had to discard.
   void offlineUnchanged() {
     InferenceLifecycleManager manager = mock(InferenceLifecycleManager.class);
     when(manager.getCurrentMode()).thenReturn(Mode.OFFLINE);
@@ -74,7 +78,7 @@ final class InferenceCapabilityWiringTest {
     InferenceCapabilityWiring.attachInferenceModeListener(manager, cap, specStore(true), null);
 
     assertEquals(CapabilityHealth.OFFLINE, cap.health());
-    assertEquals("Inference offline", cap.pendingReason());
+    assertEquals(LifecycleReasonCode.INFERENCE_OFFLINE.code(), cap.pendingReason());
   }
 
   @Test
@@ -86,7 +90,8 @@ final class InferenceCapabilityWiringTest {
     InferenceCapabilityWiring.attachInferenceModeListener(manager, cap, specStore(true), null);
 
     assertEquals(CapabilityHealth.DEGRADED, cap.health());
-    assertEquals("GPU allocated to indexing", cap.pendingReason());
+    assertEquals(
+        LifecycleReasonCode.INFERENCE_GPU_YIELDED_TO_INDEXING.code(), cap.pendingReason());
   }
 
   @Test
@@ -98,7 +103,7 @@ final class InferenceCapabilityWiringTest {
     InferenceCapabilityWiring.attachInferenceModeListener(manager, cap, specStore(true), null);
 
     assertEquals(CapabilityHealth.RECOVERING, cap.health());
-    assertEquals("Inference transitioning", cap.pendingReason());
+    assertEquals(LifecycleReasonCode.INFERENCE_STARTING.code(), cap.pendingReason());
   }
 
   @Test

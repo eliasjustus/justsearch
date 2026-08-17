@@ -1386,3 +1386,294 @@ two slices delete codes nothing emitted and add a build-time check, so
 - The producer direction proves *reference*, not *emission*; a consumer-only reference
   satisfies it. Stated in the script header and in the register so nobody later
   mistakes the gate for stronger than it is.
+
+---
+
+## Appendix C — implementation log: S3 + S4 (2026-08-18)
+
+Branch `reason-codes-s3-s4`, based on `origin/main` @ `010d59f8`. Scope was exactly S3
+and S4 from §6. S5 (`TransitionReason` threading, `INFERENCE_CRASHED` /
+`INFERENCE_DEACTIVATED`, the general §1.4 precedence rule, UR-4) and S6
+(`migrationSource`) are untouched.
+
+### C.1 — The typed slot (D-1, taken)
+
+§0.2(ii) argued the typed slot over a disciplined string, because a string-only sweep
+degrades the Health-event message from `"Health check failed after 4200ms"` to
+`"worker.lost"`. Implemented as the minimal version of that: `pendingReason()` keeps its
+`String` type but is now **only** a code, and a sibling
+`Capability.pendingDetail()` (default `null`,
+`modules/app-api/src/main/java/io/justsearch/app/api/lifecycle/Capability.java:16-41`)
+carries the sentence.
+
+| Consumer | Before | After |
+|---|---|---|
+| `CapabilityHealthBridge.pushCondition` (`:107-150`) | Condition `message` = the reason slot (prose by accident) | `message` = `pendingDetail()`, falling back to the code when there is no sentence |
+| `ApiSecurityFilters` 503 body (`:447-458`) | `"reason"` = prose or code | `"reason"` = code, **new** `"detail"` = sentence (additive; the body is an ad-hoc map, not a schema'd contract) |
+
+`WorkerCapability` implements the pair; `InferenceCapability` inherits the interface
+default (`null`) — S5 gives it a detail when it gains the reason signal.
+
+### C.2 — S3: all 13 reason-bearing worker `transition(` sites
+
+The §3.2 invariant is now a fact of the enumerated sweep, not an assertion: 15 worker
+`transition(` sites in non-test sources, two of which set `READY` with a null reason,
+leaving 13 that carry a reason — every one passes a `LifecycleReasonCode`.
+
+| Site | Code | Detail |
+|---|---|---|
+| `KnowledgeServerBootstrap.java:160` | `WORKER_STARTING` | "Worker starting" |
+| `KnowledgeServerBootstrap.java:208` (`onRecovering`) | `WORKER_RECOVERING` | the supervisor's sentence |
+| `KnowledgeServerBootstrap.java:216` (`onGaveUp`) | `WORKER_RESTART_EXHAUSTED` | the supervisor's sentence (was dropped on the floor) |
+| `KnowledgeServerBootstrap.java:263` (health budget elapsed) | `WORKER_SPAWN_FAILED` via `workerDownCode` | "Health check failed after …ms" |
+| `KnowledgeServerBootstrap.java:274` (start threw) | `WORKER_SPAWN_FAILED` via `workerDownCode` | "Start failed: …" |
+| `KnowledgeServerBootstrap.java:314` (retry budget) | `WORKER_SPAWN_FAILED` via `workerDownCode` | "Start failed: …" |
+| `KnowledgeServerBootstrap.java:652` (`!healthy && current == READY`) | **`WORKER_LOST`** via `workerDownCode` | "Health check failed" |
+| `KnowledgeServerBootstrap.java:704` (`closeForUpgrade`) | **`WORKER_SHUT_DOWN`** | "Worker shut down" |
+| `KnowledgeServerHealthMonitor.java:111` (tick threw while READY) | **`WORKER_LOST`** | "Health monitor tick exception: …" |
+| `CoreApiAssembly.java:533` / `:542` | `WORKER_NOT_CONFIGURED` / `WORKER_SPAWN_FAILED` | the prose that was the reason |
+| `HeadlessApp.java:452` / `:459` | `WORKER_SPAWN_FAILED` / `WORKER_NOT_CONFIGURED` | same |
+| `WorkerCapability.java:30` (field default) | **`WORKER_NOT_CONNECTED`** | none |
+
+`workerDownReason(String)` → `workerDownCode(LifecycleReasonCode, String)` returning a
+`WorkerDown(code, detail)` pair (`KnowledgeServerBootstrap.java:593-632`), applied by
+`transitionWorkerDown`. §3.1's shape holds exactly: **5 sites × 2 axes**, axis 1 decided by
+the call site, axis 2 (corruption) inside the shared helper. The corrupt-index remedy
+paragraph is now `INDEX_CORRUPT_DETAIL` — it moved, it was not deleted.
+
+**Consumer.** `resolveWorkerReasonCode(cap, fallback)`
+(`StatusLifecycleHandler.java:1056-1071`) replaces the inlined one-code special case;
+the DEGRADED arm falls back to `WORKER_SPAWN_FAILED`, the OFFLINE arm to
+`WORKER_NOT_CONFIGURED`. `worker.spawn.failed` is TRUE for the first time.
+
+### C.3 — The latch (the load-bearing part), and why it is narrower than §1.4's rule
+
+§6 assigns the **general** precedence rule to S5 and asks S3 for "the corrupt-marker latch
+test". That split is deliberate here, and the reason is a wrong-gate §1.4's literal wording
+would have shipped: rule 2 retains the held reason whenever it is "a different known code",
+and S3 converts `KnowledgeServerBootstrap.java:160` from prose to `WORKER_STARTING` — so
+under the literal rule, the very next `PENDING → DEGRADED(worker.spawn.failed)` would
+retain **`worker.starting`** and report a starting worker as the cause of a spawn failure.
+
+Implemented instead exactly what §3.1's sentence asks for and nothing more
+(`WorkerCapability.java:83-121`): while health is non-READY, a held `WORKER_INDEX_CORRUPT`
+is retained against any incoming reason; `READY` clears it. That is the "retained … for the
+lifetime of the capability's non-READY state (cleared on READY)" bound, and it is what makes
+the fix *work* — the real corruption sequence is `worker.lost` → supervisor
+`worker.recovering` → `worker.restart_exhausted`, and both of the latter are downstream
+symptoms that would otherwise bury the cause with the marker already deleted. S5 still owns
+the general rule; it should re-derive rule 2 against the `worker.starting` case above.
+
+Listener firing follows the *effective* change, per §1.4: health changes always notify; a
+rejected reason with no health change does not (asserted).
+
+### C.4 — S4: the no-signal inference codes
+
+| Arm | Was | Now |
+|---|---|---|
+| `ONLINE` + `chatEnabled=false` (`InferenceCapabilityWiring.java:117-120`) | `RuntimeStatus.REASON_ENGINE_UP_FOR_BACKGROUND` (internal string) | the same constant, whose **value** is now `INFERENCE_UP_FOR_BACKGROUND.code()` |
+| `INDEXING` (`:129-133`) | `"GPU allocated to indexing"` | `INFERENCE_GPU_YIELDED_TO_INDEXING` |
+| `TRANSITIONING` (`:124-126`) | `"Inference transitioning"` | `INFERENCE_STARTING` (reuse, per §6) |
+| `OFFLINE` (`:121-123`) | `"Inference offline"` | `INFERENCE_OFFLINE` |
+
+The `OFFLINE` arm is not on §6's S4 list; it is included because it needs no new signal and
+no new code (the generic code carries exactly the information the prose did), and leaving it
+would keep prose on `ai.pendingReason` for the most common non-READY state — defeating MF-1
+for the slice. S5 replaces it with `offlineCode(reason)` as designed.
+
+`RuntimeStatus.REASON_ENGINE_UP_FOR_BACKGROUND` (`RuntimeStatus.java:97-108`) is now defined
+*as* the enum code, so §1.3's "the two surfaces go on agreeing" is true by construction and
+`InferenceCapabilityWiringTest:65,143` keep asserting the shared constant, exactly as §3.5
+predicted. Checked before changing it: no FE or contract consumer compares that value
+(`grep` across `*.ts`/`*.json` found only `RuntimeStatus.java` and one test comment). The
+**neighbouring** constant `REASON_GPU_YIELDED_TO_INDEXING` **is** equality-compared in the FE
+(`aiStateStore.ts:489`, `aiVerdict.ts:224`) and was deliberately left alone.
+
+**`AI_MODEL_UNAVAILABLE_CODES` reconciliation (§1.5).** Neither new code joins the set, and
+the decision is recorded in the set's own doc comment: `inference.up_for_background`
+describes an engine that is UP, and `inference.gpu_yielded_to_indexing` is the scheduled,
+self-clearing sibling of the excluded policy cases. Both ship at `info`, and `readinessNotice`
+short-circuits on an info-only verdict before `classifyConsequence` runs, so membership is
+only ever consulted when one rides alongside a `warn` cause — where the calmer class must not
+be inferred from a code that is not evidence for it. (`inference.crashed` joining the set is
+S5's job, and remains required.)
+
+### C.5 — FE rows and set memberships
+
+Six new `CAUSE_ROWS` rows (`readinessNotice.ts`), each worded to be true in the state that
+emits it:
+
+| Code | Wording | Severity |
+|---|---|---|
+| `worker.lost` | The knowledge server stopped responding | `error` |
+| `worker.index_corrupt` | The search index is corrupt and could not be repaired automatically | `error` |
+| `worker.shut_down` | The knowledge server has shut down | `info` |
+| `worker.not_connected` | The knowledge server has not connected yet | `info` |
+| `inference.gpu_yielded_to_indexing` | The GPU is indexing your files — chat resumes when it finishes | `info` |
+| `inference.up_for_background` | Chat is turned off; the AI engine is running background document processing | `info` |
+
+All four worker codes join `RETRIEVAL_IMPAIRING_CODES` — §3.3's rationale ("a non-serving
+knowledge server genuinely impairs retrieval") applies identically to the shutdown and
+not-yet-connected states, which are the exact siblings of the already-listed
+`worker.starting`. `worker.index_corrupt` declares **no** remedy, so the banner supplies the
+Open-Health reference (the `vdu.missing_mmproj` precedent); pointing at a `core.rebuild-index`
+operation would be pointing at something that does not implement
+`index.recovery.policy=BACKUP_REBUILD`.
+
+### C.6 — §3.4 tap rows (the third silent seam)
+
+An unmapped `(dim, state, code)` key emits **no Condition**, only a once-per-startup WARN — so
+every new code that can reach the readiness envelope needed a row or a recorded reason.
+
+| Key | Mapping | Why |
+|---|---|---|
+| `WORKER_CONTROL_PLANE / NOT_READY / worker.lost` | `index.start-error`, worker, ERROR | the same Condition this state produced when it was collapsed onto `worker.spawn.failed` — behaviour-preserving; only the Condition's `reason` (`WorkerLost`) gets more precise |
+| `WORKER_CONTROL_PLANE / NOT_READY / worker.index_corrupt` | `index.start-error`, worker, ERROR | same |
+| `INDEX_SERVING / NOT_CONFIGURED / worker.shut_down` | `index.unavailable`, worker, WARNING | mirrors `worker.not_configured`, which is the verdict this state used to produce |
+
+Two recorded non-rows: **`worker.not_connected`** cannot reach the envelope (the PENDING arm
+publishes `worker.starting` unconditionally, `StatusLifecycleHandler.java:1140-1141`); and
+`WORKER_CONTROL_PLANE / DEGRADED / worker.shut_down` has no row **because its predecessor
+`worker.not_configured` has none either** — an OFFLINE worker produced no control-plane
+Condition before this change and produces none after. Residual, honestly stated: the
+conditionId `index.start-error` now also covers a worker that started fine and died. Renaming
+it or minting a new catalog id is a health-event **catalog** change (`§A.2` + the canonical ID
+list in `HealthEventEmitCoverageTest`) and is out of S3's scope; the id is a machine key, the
+`reason` field carries the truth, and the alternative (`index.unavailable` on
+`WORKER_CONTROL_PLANE`) would collide with `INDEX_SERVING`'s own `index.unavailable/worker`
+key and flap the two dimensions against each other every tick — which is exactly why the
+table's comment keeps `WORKER_CONTROL_PLANE` minimal.
+
+### C.7 — MF-1: the observable wire change
+
+| Surface | Before | After |
+|---|---|---|
+| `/api/runtime/manifest` `ai.pendingReason` (`RuntimeManifestListenerWiring.java:90-97,155-162`) | `"Inference offline"` / `"GPU allocated to indexing"` / `"Inference transitioning"` / `engine-up-for-background-processing` | `inference.offline` / `inference.gpu_yielded_to_indexing` / `inference.starting` / `inference.up_for_background` |
+| `/api/runtime/manifest` worker-failure reason (`:137-142`) | `"Health check failed after 4200ms"` / `"Start failed: …"` / `"Worker shut down"` / `"Worker not configured"` | `worker.lost` / `worker.spawn.failed` / `worker.index_corrupt` / `worker.shut_down` / `worker.not_configured` |
+| `/api/status` + `/api/health` `components.worker.reason_code` | `worker.spawn.failed` for every DEGRADED cause but one; `worker.not_configured` for every OFFLINE cause | the specific cause |
+| `/api/health` `lifecycle.reason_code` | as above (it forwards the worker component, `StatusLifecycleHandler.java:1202-1214`) | the specific cause |
+| `/api/status` `inference.engineReason` (soft-off only) | `engine-up-for-background-processing` | `inference.up_for_background` |
+| capability-gated 503 body | `"reason"` prose | `"reason"` code + new `"detail"` prose |
+| Health Condition `message` | the sentence (because the sentence was the reason) | the sentence (explicitly, via `pendingDetail()`) |
+
+**`scripts/dev/doctor.mjs:207` re-read, not assumed.** It computes
+`manifest?.ai?.pendingReason ?? status.components?.inference?.reason_code ?? null` and prints
+it verbatim (`ai=${report.live.aiReason}`) — no parsing, no branching on the value. Behaviour
+is therefore unchanged; the printed string becomes a code, which is what the 656 onramp
+already assumed.
+
+**Inference-side prose that S3/S4 do NOT convert** (stated so it is not mistaken for done):
+`InferenceCapability.java:21,30`'s two defaults — `"Inference not yet activated"` and
+`"Inference not configured"` — are still prose on `ai.pendingReason` in the PENDING /
+unconfigured window. They are not on §6's S4 list and picking a code for them
+(`INFERENCE_MODEL_NOT_CONFIGURED` is about a missing *model*, not an unconfigured capability)
+is a vocabulary decision, not a mechanical sweep. Carried to S5.
+
+### C.8 — Converted tests (§3.5), not deleted
+
+| Test | Now asserts |
+|---|---|
+| `WorkerCapabilityBridgeTest.java:47` | `WORKER_NOT_CONNECTED.code()` + a null detail |
+| `InferenceCapabilityWiringTest.java:77` | `INFERENCE_OFFLINE.code()` |
+| `InferenceCapabilityWiringTest.java:89` | `INFERENCE_GPU_YIELDED_TO_INDEXING.code()` |
+| `InferenceCapabilityWiringTest.java:101` | `INFERENCE_STARTING.code()` |
+| `InferenceCapabilityWiringTest.java:65,143` | unchanged — they assert the shared constant, which is now a real code (§3.5's prediction, confirmed) |
+
+New: `WorkerCapabilityCorruptLatchTest` (5 tests: both orderings, READY clears, rejected-write
+fires no listener, prose never latches), `KnowledgeServerWorkerDownCodeTest` (5 tests: the two
+axis-1 codes, the corruption override + marker deletion, a non-corruption fatal reason, and the
+end-to-end latch across a restart sequence), `StatusLifecycleWorkerReasonTest` (8 tests: the
+wire `reason_code` per producer state), 3 `LifecycleSnapshotTapTest` rows, 6
+`readinessNotice.test.ts` cases.
+
+### C.9 — Mutation probe: the latch is reachable-red
+
+`unreachable-seed-green`. Disabled the latch (`newHealth != READY` → `false`,
+`WorkerCapability.java:103-105`) and re-ran the two suites:
+
+```
+WorkerCapabilityCorruptLatchTest > ordering 1: corrupt observed first …            FAILED
+WorkerCapabilityCorruptLatchTest > a rejected reason write … fires no listener     FAILED
+KnowledgeServerWorkerDownCodeTest > end-to-end latch: … restart-then-give-up       FAILED
+17 tests completed, 3 failed
+```
+
+Ordering 2 (`corrupt overwrites an earlier generic cause`) correctly stayed **green** — it
+asserts the non-latched direction, so a latch-only mutation must not move it. That asymmetry
+is the test-precision signal: the suite fails for the right reason, not for any reason. Latch
+restored and the full suite re-run green.
+
+### C.10 — Verification
+
+| Check | Result |
+|---|---|
+| `./gradlew.bat spotlessApply` then `build -x test -PskipWebBuild=true` | BUILD SUCCESSFUL (run bare — no piped exit masking) |
+| `./gradlew.bat test` (full unit suite, all modules) | BUILD SUCCESSFUL |
+| `:modules:app-services:test` + `:modules:ui:test` + `:modules:app-api:test` | BUILD SUCCESSFUL |
+| `check-readiness-reason-codes.mjs` | green — **50 emittable codes, 46 worded rows, 0 exempt**; producer direction green with all six new codes having real emit sites |
+| `check-readiness-reason-codes.test.mjs` | green, 19 assertions |
+| `cd modules/ui-web && npm run typecheck` | clean |
+| `npm run test:unit:run` | **421 files / 5163 tests passed** |
+| ui-web gate set (27 scripts) + 6 kernel gates | 3 pre-existing reds (below); all others green |
+| UTF-8 check | every added non-ASCII character is intentional typography (em-dash, `§`, `→`, `≥`) matching file conventions; zero mojibake sequences in the diff |
+
+**Pre-existing reds, confirmed not caused by this change** — `check-theme-token-closure`,
+`check-accent-as-text` (both in `expected-state.v1.json`), `check-controls-a11y`
+(`UnifiedChatView.ts:2096`) and `strip-token-fallbacks --check` (`ActionLedgerView.ts`,
+`RecentsMenu.ts`). Every finding is confined to files this diff does not touch — the only
+`modules/ui-web` files changed are `readinessNotice.ts` and its test. Identical to the set
+S1/S2 recorded in §B.5.
+
+### C.11 — Governed-region consults (no doc change needed)
+
+- **`ApiSecurityFilters.java`** (threat-model region): the edit adds a `"detail"` field to an
+  existing 503 diagnostic body on an already loopback-only surface. No CSP, Host/Origin, token
+  filter, or egress behaviour changes, so
+  `docs/reference/security/threat-model.md` needs no revision. The one thing worth a reviewer's
+  eye is that `detail` can carry an exception message — the same class of content the Condition
+  `message` and the log already carry on the same loopback surface.
+- **`modules/ui-web/src/shell-v0/**`** (Lit / presentation-kernel region): rows added to an
+  existing `CAUSE_ROWS` table and codes added to existing sets. No new presentation authority,
+  no new component, no React — ADR-0032 and
+  `docs/explanation/27-frontend-presentation-kernel.md` are unaffected.
+
+### C.12 — Not verified (live scenarios), with the scripted procedure
+
+§6 names S3's live check as a lease-window item; no dev stack was taken in this session, so
+**both S3 scenarios and both S4 scenarios are PENDING, not passed.** The procedure, ready to
+run inside one ~10-minute lease:
+
+1. `quick_health`; if free, `justsearch_dev_start` with `leaseDurationSec: 900`.
+2. Wait for worker READY: `fetch_api_json /api/health` until
+   `components.worker.state == LIFECYCLE_STATE_READY`.
+3. **S3 scenario 1 (lost):** kill the Worker process
+   (`Get-Process java | Where-Object { $_.CommandLine -match 'IndexerWorker' }` → `Stop-Process`),
+   then poll `/api/health` and assert `components.worker.reason_code == "worker.lost"` —
+   **not** `worker.spawn.failed`, which is what this scenario reported before S3. Keep polling:
+   the supervisor's restart must flip it to `worker.recovering`, then back to READY with a null
+   reason.
+4. **S3 scenario 2 (never started):** restart the stack with a deliberately unresolvable worker
+   path and assert `worker.spawn.failed`.
+5. **S4 scenario 1:** `ai_activate`, then `ingest` a corpus to drive `Mode.INDEXING`, and assert
+   `components.inference.reason_code == "inference.gpu_yielded_to_indexing"` and that the banner
+   does **not** claim the model is offline.
+6. **S4 scenario 2 (the harder one, §6 permits recording it as deferred):** hold the engine ONLINE
+   under a VDU procedure with `chatEnabled=false` and assert `inference.up_for_background` on both
+   `components.inference.reason_code` and `inference.engineReason` — the cross-surface agreement
+   §1.3 is about.
+7. `justsearch_dev_stop`.
+
+The corrupt-index path is covered by `KnowledgeServerWorkerDownCodeTest` writing a real
+`WorkerFatalReasonMarker` and asserting the Head reads, clears and latches it — the marker
+contract end-to-end minus the dying worker itself.
+
+### C.13 — Carried forward to S5
+
+- The general §1.4 precedence rule, with the `worker.starting` wrong-gate in C.3 re-derived
+  before it is written.
+- `INFERENCE_CRASHED` must join `AI_MODEL_UNAVAILABLE_CODES` (§1.5's mandatory companion edit) —
+  S4 touched that set's doc comment but added nothing to it.
+- UR-4 (`verdictBody`'s "Retrieval is degraded" for a chat-only outage) is untouched and still
+  needs deciding before S5 ships `inference.crashed` at `warn`.
+- `InferenceCapability`'s two prose defaults (C.7).
+- The live scenarios in C.12.

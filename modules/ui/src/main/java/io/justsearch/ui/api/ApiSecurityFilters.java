@@ -445,11 +445,17 @@ final class ApiSecurityFilters {
               required == RouteCapabilityPolicy.Capability.WORKER ? workerCap : inferenceCap;
           if (!cap.available()) {
             ctx.status(503);
-            ctx.json(Map.of(
-                "error", required.errorLabel,
-                "unavailable", cap.name(),
-                "health", cap.health().name(),
-                "reason", cap.pendingReason() != null ? cap.pendingReason() : ""));
+            // Tempdoc 837 §0.2: `reason` is the machine-readable LifecycleReasonCode; the human
+            // sentence that used to occupy it (an exception message, the corrupt-index remedy)
+            // rides alongside in `detail` — a debug body is exactly where prose belongs, so the
+            // sweep moves it rather than deleting it.
+            java.util.Map<String, String> body = new java.util.LinkedHashMap<>();
+            body.put("error", required.errorLabel);
+            body.put("unavailable", cap.name());
+            body.put("health", cap.health().name());
+            body.put("reason", cap.pendingReason() != null ? cap.pendingReason() : "");
+            body.put("detail", cap.pendingDetail() != null ? cap.pendingDetail() : "");
+            ctx.json(body);
             throw new io.javalin.http.HttpResponseException(503, required.haltMessage);
           }
         }

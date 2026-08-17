@@ -157,7 +157,8 @@ public final class KnowledgeServerBootstrap implements Closeable {
             throw new IllegalStateException("KnowledgeServerBootstrap already started");
         }
 
-        workerCapability.transition(CapabilityHealth.PENDING, "Worker starting");
+        workerCapability.transition(
+            CapabilityHealth.PENDING, LifecycleReasonCode.WORKER_STARTING.code(), "Worker starting");
         log.info("Starting Knowledge Server integration...");
 
         try {
@@ -202,13 +203,20 @@ public final class KnowledgeServerBootstrap implements Closeable {
                     // capability-health bridge (a synchronous transition listener) attaches it to the
                     // worker.restart-attempted occurrence.
                     workerCapability.setRecoveryContext(ctx);
-                    workerCapability.transition(CapabilityHealth.RECOVERING, reason);
+                    // Tempdoc 837 S3: the supervisor's sentence is the DETAIL; the reason slot carries
+                    // the code the /api/status RECOVERING arm already publishes.
+                    workerCapability.transition(
+                        CapabilityHealth.RECOVERING,
+                        LifecycleReasonCode.WORKER_RECOVERING.code(),
+                        reason);
                 }
 
                 @Override
                 public void onGaveUp(String reason) {
                     workerCapability.transition(
-                        CapabilityHealth.DEGRADED, LifecycleReasonCode.WORKER_RESTART_EXHAUSTED.code());
+                        CapabilityHealth.DEGRADED,
+                        LifecycleReasonCode.WORKER_RESTART_EXHAUSTED.code(),
+                        reason);
                 }
             });
             int port = spawner.start();
@@ -251,7 +259,10 @@ public final class KnowledgeServerBootstrap implements Closeable {
                 }
                 completeReadyInitialization();
             } else {
-                workerCapability.transition(CapabilityHealth.DEGRADED, workerDownReason("Health check failed after " + healthCheckElapsedMs + "ms"));
+                // Tempdoc 837 §3.1: the start-time health budget elapsed — the worker NEVER started.
+                transitionWorkerDown(
+                    LifecycleReasonCode.WORKER_SPAWN_FAILED,
+                    "Health check failed after " + healthCheckElapsedMs + "ms");
                 log.warn("Knowledge Server health check failed after {}ms budget; auxiliary services not initialized — background monitor will retry",
                         healthCheckElapsedMs);
             }
@@ -260,8 +271,8 @@ public final class KnowledgeServerBootstrap implements Closeable {
             // Read supervision's verdict BEFORE close() drops the spawner that holds it.
             supervisionEngagedOnLastAttempt = spawner != null && spawner.supervisionEngaged();
             if (!retryPending) {
-                workerCapability.transition(
-                    CapabilityHealth.DEGRADED, workerDownReason("Start failed: " + e.getMessage()));
+                transitionWorkerDown(
+                    LifecycleReasonCode.WORKER_SPAWN_FAILED, "Start failed: " + e.getMessage());
             }
             log.error("Failed to start Knowledge Server integration", e);
             close();
@@ -300,8 +311,8 @@ public final class KnowledgeServerBootstrap implements Closeable {
         } catch (Exception e) {
             // The per-attempt narration was suppressed; the final verdict lands exactly once, here.
             retryPending = false;
-            workerCapability.transition(
-                CapabilityHealth.DEGRADED, workerDownReason("Start failed: " + e.getMessage()));
+            transitionWorkerDown(
+                LifecycleReasonCode.WORKER_SPAWN_FAILED, "Start failed: " + e.getMessage());
             throw e;
         } finally {
             retryPending = false;
@@ -578,21 +589,46 @@ public final class KnowledgeServerBootstrap implements Closeable {
      *
      * @return true if healthy
      */
+    /** The remedy sentence for a corrupt index — the detail the user needs, not a reason code. */
+    private static final String INDEX_CORRUPT_DETAIL =
+        "The search index is corrupt and the worker could not auto-recover under the"
+            + " fail-closed policy. Set index.recovery.policy=BACKUP_REBUILD (or remove the index"
+            + " directory) to rebuild it from your files.";
+
+    /** A worker-down verdict: the reason CODE plus the human sentence behind it (tempdoc 837 §0.2). */
+    private record WorkerDown(LifecycleReasonCode code, String detail) {}
+
     /**
-     * tempdoc 628 Stage D-part2: enrich a worker-down reason with the corruption cause when the worker
+     * tempdoc 628 Stage D-part2: enrich a worker-down verdict with the corruption cause when the worker
      * exited fatally because the index was corrupt and could not be auto-recovered (the opt-in
      * FAIL_CLOSED policy — G2's self-heal default keeps it alive). Lets the Head surface "worker down:
      * the index is corrupt — rebuild to recover" instead of a generic/silent restart-loop. The dying
      * worker stamps {@link io.justsearch.ipc.WorkerFatalReasonMarker}; this reads + clears it.
+     *
+     * <p>Tempdoc 837 §3.1: corruption is an orthogonal AXIS, not a call site. Each of the four callers
+     * passes the axis-1 code it already knows to be true — {@code WORKER_SPAWN_FAILED} where the worker
+     * never started, {@code WORKER_LOST} where it was READY and stopped answering — and this helper
+     * overrides it only when the marker says the index is corrupt. The remedy paragraph that used to BE
+     * the reason is now the detail, so it still reaches the Health-event message and the 503 body while
+     * the reason slot stays a code.
+     *
+     * <p>{@code readAndClear} deletes the marker, so this observation is unrepeatable — see
+     * {@link io.justsearch.app.services.lifecycle.WorkerCapability#transition} for the latch that keeps
+     * a later generic transition from destroying it.
      */
-    private String workerDownReason(String generic) {
+    private WorkerDown workerDownCode(LifecycleReasonCode generic, String detail) {
         String fatal = io.justsearch.ipc.WorkerFatalReasonMarker.readAndClear(config.dataDir());
         if (io.justsearch.ipc.WorkerFatalReasonMarker.INDEX_CORRUPT.equals(fatal)) {
-            return "The search index is corrupt and the worker could not auto-recover under the"
-                + " fail-closed policy. Set index.recovery.policy=BACKUP_REBUILD (or remove the index"
-                + " directory) to rebuild it from your files.";
+            return new WorkerDown(LifecycleReasonCode.WORKER_INDEX_CORRUPT, INDEX_CORRUPT_DETAIL);
         }
-        return generic;
+        return new WorkerDown(generic, detail);
+    }
+
+    /** Applies a {@link #workerDownCode} verdict to the capability as DEGRADED. Visible for tests. */
+    void transitionWorkerDown(LifecycleReasonCode generic, String detail) {
+        WorkerDown down = workerDownCode(generic, detail);
+        workerCapability.transition(
+            CapabilityHealth.DEGRADED, down.code().code(), down.detail());
     }
 
     public boolean checkHealth() {
@@ -611,7 +647,9 @@ public final class KnowledgeServerBootstrap implements Closeable {
             workerCapability.transition(CapabilityHealth.READY, null);
             log.info("Knowledge Server recovered to READY state");
         } else if (!healthy && current == CapabilityHealth.READY) {
-            workerCapability.transition(CapabilityHealth.DEGRADED, workerDownReason("Health check failed"));
+            // Tempdoc 837 §3.1: this branch is guarded on current == READY, so the worker WAS serving
+            // and stopped answering — worker.lost, never worker.spawn.failed.
+            transitionWorkerDown(LifecycleReasonCode.WORKER_LOST, "Health check failed");
             log.warn("Knowledge Server health check failed");
         }
         return healthy;
@@ -663,7 +701,10 @@ public final class KnowledgeServerBootstrap implements Closeable {
             // Suppressed between boot attempts: a retry would immediately re-enter PENDING, and the
             // OFFLINE flap in between is narration of a state the Head was never actually in.
             if (!retryPending) {
-                workerCapability.transition(CapabilityHealth.OFFLINE, "Worker shut down");
+                workerCapability.transition(
+                    CapabilityHealth.OFFLINE,
+                    LifecycleReasonCode.WORKER_SHUT_DOWN.code(),
+                    "Worker shut down");
             }
         } finally {
             // Must clear even if a capability listener throws: a stranded started=true would make
