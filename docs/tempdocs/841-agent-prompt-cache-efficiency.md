@@ -1,7 +1,7 @@
 ---
 title: "Prompt-cache efficiency of agent sessions: hit rate is fine, context size is the bill — invalidation anatomy, delegation cache economics (which inverted under measurement), and the pricing gap that hid all of it"
 type: tempdocs
-status: "investigated + reader SHIPPED (2026-08-18, session 0a20e5bf). `scripts/agent-analytics/cache-efficiency.mjs` + 19 tests land the analysis as a repeatable reader; every number below is now reproduced by it. Two findings from the hand-probe pass INVERTED when the reader applied correct last-wins dedup — see §5 and §10. NOT fixed: the opus-5 pricing row (blocked, needs published rates) and the subagent-TTL design question (owner call)."
+status: "investigated + reader SHIPPED + pricing FIXED (2026-08-18, session 0a20e5bf). `scripts/agent-analytics/cache-efficiency.mjs` lands the analysis as a repeatable reader; every number below is reproduced by it. Three pricing defects fixed in `lib/transcript-cost.mjs` (§6) — the corpus reprices $9,050 -> $15,067, and a Sonnet-5 cliff that would have fired on 2026-09-01 is defused. Full analytics suite green (32/32). Findings that DIED during the work: two inverted under correct dedup (§5), one case study died at n=2,900 (§4), and two 'issues' are retracted outright (§7). Remaining: the subagent-TTL design question (owner call) and the unidentified in-TTL invalidation trigger (needs an experiment)."
 created: 2026-08-18
 updated: 2026-08-18
 author: agent session 0a20e5bf (Opus 5, 1M context)
@@ -41,16 +41,20 @@ and produced an inverted headline. See §10.
 Corpus-wide read:write = **38.9 : 1**. In hit-rate terms caching is healthy and
 there is no "we forgot to cache" story to tell.
 
-The cost structure is the story (priceable subset — see §6):
+The cost structure is the story:
 
 | Cost line | $ | Share |
 |---|---:|---:|
-| cache_read | 5,730 | **63.3%** |
-| cache_write | 2,656 | **29.3%** |
-| output | 662 | 7.3% |
-| input | 1 | 0.0% |
+| cache_read | 9,785 | **64.9%** |
+| cache_write | 3,998 | **26.5%** |
+| output | 1,281 | 8.5% |
+| input | 2 | 0.0% |
+| **total** | **15,067** | |
 
-**92.7% of priceable spend is re-presenting context, not generating tokens.**
+**91.5% of priceable spend is re-presenting context, not generating tokens.**
+
+(These are the post-fix figures. Before §6's pricing repair the same corpus
+reported **$9,050** — the missing Opus 5 row hid a third of all spend.)
 Prompt-cache efficiency here is not a caching question — it is a context-size
 question wearing a caching costume. A 10× cache discount on a 1M-token prefix
 re-read across thousands of turns is still the dominant bill.
@@ -182,20 +186,43 @@ parallelism, avoided compaction — is not visible in cache columns. The routing
 rule's own falsifier (cost-per-shipped-merge over ~2 months) needs the
 merge-outcome join `record-merge.mjs` provides. Separate work.
 
-## 6. The pricing gap that hid all of this
+## 6. The pricing gap that hid all of this — FIXED
 
-**`claude-opus-5` is absent from `PRICING` in
-`scripts/agent-analytics/lib/transcript-cost.mjs:63`.** `findPricing` fails
-closed (correctly, per 745 bug 4) and returns null — so **36,514 turns and
-7,927M cache-read tokens, 51.9% of all cache-read, price at $0.** Every
-`baseline-economics` / `cost-session` total silently excludes the dominant model.
-The $9,050 in §2 is the *priceable minority*. There is also no >200k
-long-context tier despite sessions running near 1M.
+Rates re-verified against `platform.claude.com/docs/en/about-claude/pricing`
+(2026-08-18). Checking one missing row surfaced **three** defects:
 
-The reader now prints this as a loud `!!` block on every run, so the gap
-announces itself rather than hiding behind a plausible total. **Adding the row
-itself is blocked** — it needs published Opus 5 rates, and inventing one is
-precisely the failure 745 bug 4 fixed.
+**a. `claude-opus-5` was absent from `PRICING`.** `findPricing` fails closed
+(correctly, per 745 bug 4), so it did not mis-price — it priced **36,514 turns
+and 7,927M cache-read tokens, 51.9% of all cache-read, at exactly $0**, and every
+`baseline-economics` / `cost-session` total silently excluded the busiest model.
+Opus 5's rates are **identical to Opus 4.8** (`OPUS_CURRENT`), so the fix was one
+line. Repricing the corpus moved it from $9,050 to **$15,067** — a third of all
+spend had been invisible.
+
+**b. Sonnet-5's dated price cliff was a live time bomb.** The table carried a
+`schedule` raising Sonnet 5 from $2/$10 to $3/$15 on **2026-09-01** — about two
+weeks out. That increase was **cancelled**: the pricing page now states the
+introductory rate "is now the standard price" and the scheduled increase "will
+not occur". Left alone it would have overpriced every Sonnet-5 turn by 50% with
+no symptom — the totals would simply have been bigger, and still plausible. The
+schedule is deleted rather than re-dated, and the test that asserted the cliff is
+**inverted to lock it out**.
+
+**c. The fast-mode table was wrong in both directions.** `claude-opus-4-7` had a
+$30/$150 row, but fast mode is not available on Opus 4.7 at all (those requests
+error) — the row priced an impossible state at 3× the real premium. Meanwhile
+`claude-opus-5` supports fast mode ($10/$50) and had no row. Both corrected;
+inert today (zero fast turns corpus-wide) but asserted so neither returns.
+
+**A claim this tempdoc got wrong.** Its first version said there was no >200k
+long-context tier "despite sessions running near 1M". **There is nothing to
+add** — Claude 4.6 and later include the full 1M window at standard pricing.
+Retracted.
+
+The reader prints unpriced models as a loud `!!` block on every run, so a future
+gap announces itself rather than hiding behind a plausible total. Coverage is now
+100% of real models (the only residue is a `<synthetic>` sentinel carrying zero
+tokens).
 
 **The one governed surface is the cheapest lever.**
 `always-loaded-budget.v1.json` ratchets CLAUDE.md + `.claude/rules/*` to 55,287
@@ -209,28 +236,40 @@ rest and are budgeted nowhere.
 
 1. `scripts/agent-analytics/cache-efficiency.mjs` — hit ratio, write-cause split,
    invalidation attribution, TTL tier by kind, delegation economics, pricing
-   coverage. 19 tests, auto-discovered into CI by `run-all-tests.mjs`.
-
-**Actionable, blocked on an input:**
-
-2. **Add the opus-5 pricing row** (+ a >200k long-context tier). Needs published
-   rates. Until then every economics figure in the repo understates by ~half.
+   coverage. Tests auto-discovered into CI by `run-all-tests.mjs`.
+2. **The three pricing defects in §6**, with tests. This is the item that mattered
+   most: it restores a third of the repo's cost picture and defuses a dated bug
+   two weeks from firing.
 
 **Actionable, owner call:**
 
-3. **The subagent 5m-TTL penalty** (28.2M, 118 events, concentrated in workers
+3. **The subagent 5m-TTL penalty** (28.5M, 119 events, concentrated in workers
    idling across long builds). Whether long builds belong inside a delegated
-   worker's window touches CLAUDE.md's routing rule.
+   worker's window touches CLAUDE.md's routing rule. Magnitude is modest —
+   roughly $150 at measured rates — so this is tidiness more than economics.
 
 **Not actionable on current evidence:**
 
-4. The ~87% undetermined in-TTL invalidations. Needs 622's request-layer spans.
-   Do not guess a cause.
+4. The in-TTL invalidations whose trigger is unidentified (§4). Closing it likely
+   needs a controlled experiment, against ~$700 of measured waste. Do not guess
+   a cause.
 
-**The convergence worth noticing:** invalidations cost the whole conversation
-body, and context re-presentation is 92.7% of spend. Neither is fixed by better
-caching — both shrink with **smaller working contexts**, the lever currently
-governed only at its cheapest 11%.
+**Two things this tempdoc originally called issues and now retracts:**
+
+- *"92.7% of spend is context re-presentation"* as a defect — near-tautological
+  for any transformer (§10, item 6). Useful for navigation, not evidence of waste.
+- *"The always-loaded ratchet governs only the cheapest 11%"* — **wrong**.
+  Measured: the governed surface (~13.7k tok) is **21% of the median main
+  cold start (66k) and 53% of the median floor (26k)**; for subagents 24% and
+  71% (56k / 19k). The byte ratchet is proportionate, not misdirected. What is
+  genuinely ungoverned is the *on-demand* skill pool — 33 skills, ~137k tokens if
+  all loaded — which is a loading-discipline question, not a cold-start one.
+  (The earlier 11% came from a probe whose subagent regex died to shell escaping
+  and classified all 844 transcripts as "main" — 856 of them, more than exist.)
+
+**What survives as the real lever:** invalidation cost is proportional to prefix
+size, and below ~50k it did not occur once. Smaller working contexts shrink both
+the odds and the blast radius — without needing the mechanism identified.
 
 ## 8. Reproducing
 
