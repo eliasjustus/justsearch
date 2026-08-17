@@ -108,15 +108,43 @@ believed:
   dumps, but those all came from one browser-heavy session. Generalised, first-use
   of a new tool family explains **12.5% of events / 9.0% of rewrite**.
 
-**What remains undetermined:** ~87% of in-TTL invalidations have no cause visible
-in the data. **Transcripts record token *usage*, not the prompt prefix**, so
-client-side breakpoint re-anchoring and server-side eviction are
-indistinguishable here. Remaining candidates, none confirmed: breakpoint
-re-anchoring as the body grows, capacity eviction before TTL, concurrent-session
-contention (this repo routinely runs 3–4 agents at once). Settling it needs
-request-layer visibility — tempdoc 622's native OTel `claude_code.llm_request`
-spans. The reader labels these `in-ttl-undetermined` and that label is honest,
-not a placeholder someone forgot to fill in.
+**Where they happen — established (second pass, corpus-wide):**
+
+- **81% of in-TTL invalidations (245/301) occur at a USER-TURN boundary.** Given
+  a user turn, invalidation probability is 8.8% against a 0.48% base rate —
+  lift 18.3. The mechanism is tied to whatever the client does when a new user
+  turn begins, not to anything the assistant does mid-turn.
+- **A user turn is necessary-ish but nowhere near sufficient**: ~91% of user
+  turns invalidate nothing.
+- **Session-state changes are NOT the discriminator.** `relocated` (a cwd change
+  / worktree entry) looked compelling in a ground-truth case study of this
+  session — the markers sat exactly at the invalidating turn — but corpus-wide
+  only 53 of 2,900 `relocated` markers coincide with one (1.8%), and the
+  *without*-relocated subset scores **higher** (lift 18.8 vs 18.3). Killed.
+  Same for `mode` / `permission-mode` / `ai-title` / `worktree-state` (lift 3–4,
+  all explained by co-occurrence with user turns).
+- **A small context never loses one: 0 of 159 user turns below a 50k prefix
+  invalidated.** Rate peaks at 100–400k (~17%) and *falls* above 700k (5.8%) —
+  non-monotonic, and most likely **survivorship**: a session only accumulates a
+  700k prefix if invalidations are not resetting it, so the large buckets are
+  enriched with stable sessions. Causation cannot be read off this.
+
+**What remains undetermined:** what separates the ~9% of user turns that
+invalidate from the 91% that do not. **Transcripts record token *usage*, not the
+prompt prefix**, so client-side breakpoint re-anchoring and server-side eviction
+stay indistinguishable. Note the earlier claim that tempdoc 622's OTel spans are
+"the escape hatch" is **overstated** — those spans most likely carry the same
+token counts, not the prefix structure; nothing observed so far shows Claude Code
+logs the system/tools/breakpoint layout anywhere. Closing this probably needs a
+**controlled experiment** (drive a session to ~200k, then vary one factor per
+user turn), not more archaeology. The reader labels these
+`in-ttl-undetermined` and that label is honest, not a placeholder someone forgot
+to fill in.
+
+**The one actionable consequence today** is the same lever as everything else:
+invalidation cost is proportional to prefix size, and below ~50k it did not
+happen at all in this corpus. Shorter working contexts shrink both the
+probability and the blast radius, without needing the mechanism identified.
 
 ## 5. Delegation cache economics — the finding inverted
 
@@ -242,6 +270,24 @@ Recorded because the failure pattern is repeatable, not for confession value.
 4. **"Subagents burn 2.6× the read per output token"** — inverted by correct
    last-wins dedup (§5). It had been written into the tempdoc, the commit
    message, and a verbal summary before the reader caught it.
+5. **"Working-directory relocation invalidates the prefix"** — a ground-truth
+   case study (this session: `relocated` + `worktree-state` markers sitting
+   exactly at the one invalidating turn, 6 other user turns clean) that looked
+   airtight at n=1 and died at n=2,900. **A case study with known ground truth is
+   still n=1.**
+6. **"92.7% of spend is context re-presentation" as an ISSUE** — retracted as a
+   finding. It is near-tautological: every transformer turn re-reads its context,
+   which is why caching exists. It is a useful *navigational* fact (output-side
+   tuning is pointless here) but it is not evidence of waste. Establishing waste
+   needs a different measurement — what fraction of a long context is never
+   referenced again — which this tempdoc did not do.
+
+**A correction to correction #1.** The first lift analysis (`~hook-injected-
+context`, lift 16.1) was dismissed as pure confounding. That over-corrected: it
+was pointing at the right *location* — user-turn boundaries — while mislabelling
+the *mechanism* as hooks. The signal was real; the causal story was not.
+Retracting a whole result because its explanation is wrong throws away the part
+that was right.
 
 **What caught #3 and #4 was productizing the analysis.** Both survived the
 hand-probe pass; neither survived being rebuilt as a tool that had to run over
