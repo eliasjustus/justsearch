@@ -1596,7 +1596,8 @@ about. A KNOWN non-cross-encoder producer fails closed. Pinned by
 **A.6 tests.** a/b/c + the no-text and no-producer cases:
 `CitationMatchOpsCoverageTest` (5 tests, worker-services). d:
 `StreamingCitationMatcherPayloadTest` (4, app-services). e + the A.6a/A.6c projection halves +
-the A.6b source-state half + the gate: `evidenceProjection.coverage.test.ts` (20, ui-web). f:
+the A.6b source-state half + the gate: `evidenceProjection.coverage.test.ts` (20, ui-web) and 3
+added to `citationResolve.test.ts` for the resolve-site gate. f:
 `UnifiedChatView.test.ts` (4 new). Plus `DocAccessCitationTest` (6) for stage 3 and
 `CitationMatchesDeclarationTest` (2) for §5.11.
 
@@ -1616,7 +1617,7 @@ from the PERSISTED-REPLAY site only fails the same test. Restored; 199/199 green
 551/561 P-A property under test: neither half alone satisfies it.
 
 **Suites.** `./gradlew.bat build -x test -PskipWebBuild=true` green; `./gradlew.bat test` green
-(full unit suite, 4m17s). `npm run typecheck` clean; `npm run test:unit:run` **422 files / 5181
+(full unit suite, 4m17s). `npm run typecheck` clean; `npm run test:unit:run` **422 files / 5184
 tests, 0 failures** (baseline before this work: 421 / 5157).
 
 **Gates.** The full `ui-web-gates` recipe + shell-v0 subsets + the kernel set
@@ -1626,6 +1627,22 @@ Three gates are RED and were RED on `origin/main` before this branch:
 `check-theme-token-closure` and `check-accent-as-text` (both in `expected-state.v1.json`), and
 `check-controls-a11y` (**not** in expected-state — verified pre-existing by stashing this branch's
 `UnifiedChatView.ts` and re-running; logged to the observations inbox).
+
+### IMPL.5b Post-implementation critical-analysis pass — two findings, both fixed
+
+Run per `critical-analysis-pass` after the suites were green.
+
+1. **The resolver's producer gate was passing for the wrong reason.** A.7 item 19 asks for the §4
+   gate in `claimsToCitations`, and the test that appeared to cover it asserted `resolved === []`
+   for a cosine payload — but the write sites had already refused to set a verified score, so the
+   EXISTING score gate is what dropped the claim. The producer gate could have been absent and the
+   test would still pass. Fixed by testing the resolver directly with a fully-formed claim (numeric
+   score, valid ref, cosine producer); mutation-probed — removing the gate fails 2 tests.
+2. **`SummarizeView` stored a coverage it never rendered.** The handler set `this.coverage` and
+   nothing read it — substrate without a consumer, on the very surface S2 exists to make honest.
+   Whole-document summarize is §3.3's out-of-envelope case, so a markless answer there is usually a
+   budget fact, and saying nothing leaves the reader to conclude the document supports none of it.
+   The view now renders the same `coverageNote` the chat window does, through the same projection.
 
 ### IMPL.6 The live leg — PENDING, with the caveat A.8 asked for
 

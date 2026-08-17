@@ -41,6 +41,8 @@ import type { CoreSummarizeHandlers } from '../../api/generated/shape-handlers/c
 import type { Claim, SourceCoverage } from '../components/chat/citationTypes.js';
 import {
   coverageHonesty,
+  coverageNote,
+  groundingCoverage,
   isVerifiedProducer,
   type CoverageHonesty,
 } from '../components/chat/evidenceProjection.js';
@@ -199,6 +201,13 @@ export class SummarizeView extends JfElement {
       flex-direction: column;
       gap: 0.75rem;
     }
+    /* Tempdoc 836 S2S3-A.2 — the coverage line: a quiet fact about the run, at the same ambient
+       altitude as the chat window's answer-frame receipt. It renders only when verification did
+       not fully happen, so it is never permanent chrome. */
+    .coverage-note {
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+    }
     .error {
       padding: 0.5rem 0.75rem;
       background: var(--accent-danger-08);
@@ -252,6 +261,14 @@ export class SummarizeView extends JfElement {
               ?is-streaming=${this.isStreaming}
             ></jf-markdown-block>`
           : nothing}
+        ${/* Tempdoc 836 S2S3-A.2 — the coverage line, present ONLY when the run reported that
+            verification did not fully happen. Whole-document summarize is the case the amendment
+            was written for: 836 §3.3 puts it two orders of magnitude outside the per-turn envelope,
+            so a markless answer here is usually a budget fact, and saying nothing would leave the
+            reader to conclude the document supports none of it. */ ''}
+        ${this.coverageNoteText()
+          ? html`<div class="coverage-note" role="note">${this.coverageNoteText()}</div>`
+          : nothing}
         ${this.sources.length > 0 || this.citations.length > 0
           ? html`<jf-citations-panel
               .sources=${this.sources}
@@ -282,6 +299,21 @@ export class SummarizeView extends JfElement {
         @composer-cancel=${() => this.abortController?.abort()}
       ></jf-composer>
     `;
+  }
+
+  /**
+   * Tempdoc 836 S2S3-A.2 — the coverage line for this run, or null when there is nothing extra to
+   * say. Read through the same projection every other surface reads, so this view cannot phrase the
+   * fact differently from the chat window.
+   */
+  private coverageNoteText(): string | null {
+    return coverageNote(
+      groundingCoverage(
+        claimsToCitations(this.claims, this.sources),
+        this.streamingText,
+        this.coverage,
+      ),
+    );
   }
 
   override disconnectedCallback(): void {
