@@ -13,7 +13,7 @@ package io.justsearch.indexerworker.services;
  * {@code docs/reference/contracts/search-and-rag-reason-codes.md}:
  *
  * <ul>
- *   <li><b>8 embedding-compat codes</b> — produced upstream by {@code
+ *   <li><b>9 embedding-compat codes</b> — produced upstream by {@code
  *       EmbeddingCompatibilityController} and mapped at the orchestrator boundary
  *       via {@link #fromCompatString(String)}.
  *   <li><b>5 search-routing codes</b> — emitted for vector/hybrid degradation
@@ -21,7 +21,7 @@ package io.justsearch.indexerworker.services;
  *   <li><b>11 chunk-merge codes</b> — emitted by chunk-augmentation gating.
  * </ul>
  *
- * <p>Plus a 25th member {@link #EMBEDDING_COMPATIBILITY_UNKNOWN} as the
+ * <p>Plus a 26th member {@link #EMBEDDING_COMPATIBILITY_UNKNOWN} as the
  * fall-through for unrecognised compat strings.
  *
  * <p>This type is package-private to {@code services/} — minimum-surface
@@ -39,8 +39,15 @@ public enum SearchReasonCode {
   FINGERPRINT_MISMATCH,
   REBUILD_IN_PROGRESS,
   REBUILD_COMPLETED,
+  /**
+   * Tempdoc 819 defect B: the rebuild drained ({@code pending_embedding == 0}) but not one
+   * embedding succeeded, so the fingerprint attestation was refused rather than stamped over an
+   * index with zero vectors. Terminal for the boot — the state stays REBUILDING and dense/hybrid
+   * stays blocked until the embedding runtime is fixed and the worker restarts.
+   */
+  REBUILD_FAILED_NO_VECTORS,
 
-  /** 25th member: fall-through for unrecognised compat strings via {@link #fromCompatString}. */
+  /** 26th member: fall-through for unrecognised compat strings via {@link #fromCompatString}. */
   EMBEDDING_COMPATIBILITY_UNKNOWN,
 
   // === 5 search-routing codes ===

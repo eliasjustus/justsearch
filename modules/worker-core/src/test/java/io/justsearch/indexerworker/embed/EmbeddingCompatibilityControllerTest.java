@@ -123,9 +123,16 @@ final class EmbeddingCompatibilityControllerTest {
     // keeps the global queueDepth > 0. Certification must NOT depend on it: pending_embedding==0
     // alone certifies. On the OLD code (`queueDepth==0 && pendingEmbeddingCount==0`) this call with
     // queueDepth=7 returned false and REBUILDING persisted forever (the sandbox hang, reproduced 3x).
+    //
+    // Tempdoc 819 defect B NARROWS this test rather than deleting it. The queue-depth-doesn't-gate
+    // intent above is intact and is what this still pins; what it must no longer assert is that
+    // pending==0 is SUFFICIENT on its own — it isn't (failed docs are not pending, so an
+    // all-failed rebuild satisfies it). The successful-embedding precondition is now supplied
+    // explicitly, so the assertion below distinguishes "certified because the queue didn't gate"
+    // from "certified because pending==0 was taken as proof of success".
     EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
     EmbeddingCompatibilityController controller =
-        new EmbeddingCompatibilityController(Map::of, () -> 5L);
+        new EmbeddingCompatibilityController(Map::of, () -> 5L, () -> 4 /* completed */);
     controller.refresh();
     controller.maybeAutoStartRebuildForBlockedLegacy(5L);
     assertEquals(EmbeddingCompatibilityController.State.REBUILDING, controller.state());
@@ -133,6 +140,238 @@ final class EmbeddingCompatibilityControllerTest {
     boolean completed = controller.checkRebuildCompletion(7L /* non-empty job queue */, 0);
 
     assertTrue(completed);
+    assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
+    assertEquals("fake-sha256-for-test", controller.fingerprintToStamp().orElse(null));
+  }
+
+  @Test
+  void refreshResolvesCompatibleOnAGenuinelyEmptyIndex() throws Exception {
+    // Tempdoc 819 defect A coverage gap: EVERY other test in this class constructs the controller
+    // with a non-zero docCount, so the empty-index fast path — the one a fresh install must take —
+    // had no test at all. It shipped structurally unreachable in production (the Head's bundled
+    // help batch committed before the controller existed) and nothing here noticed.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(Map::of, () -> 0L, () -> 0);
+    controller.refresh();
+
+    assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
+    assertEquals("NEW_INDEX_NO_FINGERPRINT", controller.reasonCode());
+    // #470 D2: emptiness alone earns NOTHING. The old empty-index permit was the only mechanism
+    // able to grant an unearned durable attestation — a document-less commit (delete/reset RPCs,
+    // the background commit timer racing the write path's revocation) could spend it before the
+    // first write, permanently stamping a fingerprint no embedding ever earned. So a fresh empty
+    // index is COMPATIBLE (writes may proceed) but the stamp is withheld until real evidence.
+    assertTrue(
+        controller.fingerprintToStamp().isEmpty(),
+        "a fresh empty index must NOT stamp on emptiness alone — the stamp is earned by the first"
+            + " successful embedding, never granted vacuously");
+  }
+
+  @Test
+  void firstSuccessfulEmbeddingEarnsTheStampOnAFreshIndex() throws Exception {
+    // The positive half of #470 D2: once an embedding really succeeds, the attestation is earned
+    // on its own merits and the very next commit may stamp.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(Map::of, () -> 0L, () -> 0);
+    controller.refresh();
+    assertTrue(
+        controller.fingerprintToStamp().isEmpty(), "precondition: no evidence, stamp withheld");
+
+    controller.noteSuccessfulEmbeddingObserved();
+
+    assertEquals("fake-sha256-for-test", controller.fingerprintToStamp().orElse(null));
+  }
+
+  @Test
+  void anAlreadyStampedIndexKeepsStampingWithoutFreshEvidence() throws Exception {
+    // Non-regression for the FINGERPRINT_MATCH boot: a healthy stamped index keeps indexing
+    // documents forever, often with zero embedding runs in a given boot. If the stamp were
+    // withheld there, the next commit would strip the fingerprint and the following boot would
+    // re-derive BLOCKED_LEGACY and re-embed the whole corpus — strictly worse than the defect
+    // being fixed. The on-disk attestation for THIS model is itself the earned evidence.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(
+            () -> Map.of(
+                EmbeddingCompatibilityController.COMMIT_META_KEY, "fake-sha256-for-test"),
+            () -> 5L,
+            () -> 0 /* no embedding runs this boot */);
+    controller.refresh();
+    assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
+    assertEquals("FINGERPRINT_MATCH", controller.reasonCode());
+
+    assertEquals(
+        "fake-sha256-for-test",
+        controller.fingerprintToStamp().orElse(null),
+        "the attestation is already on disk for THIS model — later commits must keep offering it,"
+            + " or the next commit would strip the fingerprint");
+  }
+
+  @Test
+  void refreshFailsClosedWhenTheDocCountCannotBeRead() throws Exception {
+    // Tempdoc 819 defect B: IndexCountOps.docCount() swallows IOException to 0, and 0 is exactly
+    // the value refresh() reads as "new empty index — safe to stamp". A supplier that throws must
+    // therefore resolve BLOCKED_LEGACY, never the fast path.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(
+            Map::of,
+            () -> {
+              throw new java.io.UncheckedIOException(new java.io.IOException("reader gone"));
+            },
+            () -> 0);
+    controller.refresh();
+
+    assertEquals(EmbeddingCompatibilityController.State.BLOCKED_LEGACY, controller.state());
+    assertEquals("LEGACY_INDEX_NO_FINGERPRINT", controller.reasonCode());
+    assertTrue(controller.fingerprintToStamp().isEmpty());
+  }
+
+  @Test
+  void checkRebuildCompletionRefusesWhenEveryEmbeddingFailed() throws Exception {
+    // Tempdoc 819 defect B, reproduced live: embeddingDocCount=5 completed=0 pending=0 failed=5
+    // coverage=0% certified COMPATIBLE and stamped the fingerprint over an index with zero vectors,
+    // permanently closing the BLOCKED_LEGACY recovery path. Failed documents are not pending, so
+    // pending==0 is the absence of outstanding work — not evidence of success.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(Map::of, () -> 5L, () -> 0 /* none completed */);
+    controller.refresh();
+    controller.maybeAutoStartRebuildForBlockedLegacy(5L);
+    assertEquals(EmbeddingCompatibilityController.State.REBUILDING, controller.state());
+
+    boolean completed = controller.checkRebuildCompletion(0L, 0 /* nothing pending: all FAILED */);
+
+    assertFalse(completed);
+    assertEquals(
+        EmbeddingCompatibilityController.State.REBUILDING,
+        controller.state(),
+        "a rebuild that produced nothing must not flip COMPATIBLE");
+    assertEquals(
+        EmbeddingCompatibilityController.REBUILD_FAILED_NO_VECTORS, controller.reasonCode());
+    assertTrue(
+        controller.fingerprintToStamp().isEmpty(),
+        "and the attestation must not reach commit metadata either");
+  }
+
+  @Test
+  void checkRebuildCompletionStopsReAttemptingAfterARefusal() throws Exception {
+    // The refusal is terminal for the boot: refresh() is called exactly once per boot and the
+    // backfill only picks up PENDING documents, so nothing within this process can change the
+    // outcome. Re-attempting would re-log the ERROR on every loop tick.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+    java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(
+            Map::of,
+            () -> 5L,
+            () -> {
+              reads.incrementAndGet();
+              return 0;
+            });
+    controller.refresh();
+    controller.maybeAutoStartRebuildForBlockedLegacy(5L);
+
+    assertFalse(controller.checkRebuildCompletion(0L, 0));
+    assertFalse(controller.checkRebuildCompletion(0L, 0));
+    assertFalse(controller.checkRebuildCompletion(0L, 0));
+
+    assertEquals(1, reads.get(), "the index must be consulted once, not once per tick");
+  }
+
+  @Test
+  void checkRebuildCompletionStillCertifiesThePoisonPillDistribution() throws Exception {
+    // Tempdoc 813's "settled numerator" case, which the 819 narrowing must NOT break: some
+    // documents embedded successfully, some are permanently FAILED. That rebuild genuinely
+    // produced current-model vectors, so the attestation IS earned — "at least one success", not
+    // "no failures", is the condition.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(Map::of, () -> 5L, () -> 3 /* 3 ok, 2 FAILED */);
+    controller.refresh();
+    controller.maybeAutoStartRebuildForBlockedLegacy(5L);
+
+    assertTrue(controller.checkRebuildCompletion(0L, 0));
+    assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
+    assertEquals("REBUILD_COMPLETED", controller.reasonCode());
+    assertEquals("fake-sha256-for-test", controller.fingerprintToStamp().orElse(null));
+  }
+
+  @Test
+  void checkRebuildCompletionRefusesButStaysRetryableWhenTheCountCannotBeRead() throws Exception {
+    // A read failure is NOT the same fact as "zero completed": it must refuse (fail closed) without
+    // burning the terminal refusal, so the next loop tick can try again once the reader recovers.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+    java.util.concurrent.atomic.AtomicBoolean broken =
+        new java.util.concurrent.atomic.AtomicBoolean(true);
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(
+            Map::of,
+            () -> 5L,
+            () -> {
+              if (broken.get()) {
+                throw new java.io.UncheckedIOException(new java.io.IOException("reader gone"));
+              }
+              return 2;
+            });
+    controller.refresh();
+    controller.maybeAutoStartRebuildForBlockedLegacy(5L);
+
+    assertFalse(controller.checkRebuildCompletion(0L, 0), "unreadable count must not certify");
+    assertEquals(EmbeddingCompatibilityController.State.REBUILDING, controller.state());
+    assertEquals(
+        "REBUILD_IN_PROGRESS",
+        controller.reasonCode(),
+        "an unreadable count is not the terminal zero-vector verdict");
+
+    broken.set(false);
+    assertTrue(controller.checkRebuildCompletion(0L, 0), "the retry must be able to succeed");
+    assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
+  }
+
+  @Test
+  void anAlreadyStampedIndexKeepsOfferingItsFingerprintWithoutFreshEmbeddings() throws Exception {
+    // Tempdoc 819 defect B guard-rail: the evidence gate governs the FIRST persistence of an
+    // attestation, never the preservation of one already earned. A healthy stamped index that
+    // simply restarts embeds nothing new — if fingerprintToStamp() demanded fresh evidence there,
+    // the next timer commit would strip the fingerprint and the following boot would re-derive
+    // BLOCKED_LEGACY and re-embed the whole corpus.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(
+            () -> Map.of(
+                EmbeddingCompatibilityController.COMMIT_META_KEY, "fake-sha256-for-test"),
+            () -> 5L,
+            () -> 0 /* no embedding runs this boot */);
+    controller.refresh();
+
+    assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
+    assertEquals("fake-sha256-for-test", controller.fingerprintToStamp().orElse(null));
+  }
+
+  @Test
+  void waivedEvidenceCertifiesWithoutConsultingTheIndex() throws Exception {
+    // Tempdoc 819: the corruption-recovery rebuild waives the evidence requirement — the green is
+    // rebuilt from source so its vectors are current-model by construction, and refusing there
+    // would strand the user on the EMPTY blue the adapter recovered.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(
+            Map::of,
+            () -> 5L,
+            () -> {
+              throw new AssertionError("waived evidence must not consult the index");
+            });
+    controller.refresh();
+    controller.permitStampWithoutEmbeddingEvidence("corrupt_index_rebuild");
+    controller.maybeAutoStartRebuildForBlockedLegacy(5L);
+
+    assertTrue(controller.checkRebuildCompletion(0L, 0));
     assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
     assertEquals("fake-sha256-for-test", controller.fingerprintToStamp().orElse(null));
   }
@@ -192,7 +431,7 @@ final class EmbeddingCompatibilityControllerTest {
     // embedding_model_sha256 (no race with the indexing-loop thread).
     EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
     EmbeddingCompatibilityController controller =
-        new EmbeddingCompatibilityController(Map::of, () -> 5L);
+        new EmbeddingCompatibilityController(Map::of, () -> 5L, () -> 5 /* all embedded */);
     controller.refresh();
     controller.maybeAutoStartRebuildForBlockedLegacy(5L);
     assertEquals(EmbeddingCompatibilityController.State.REBUILDING, controller.state());

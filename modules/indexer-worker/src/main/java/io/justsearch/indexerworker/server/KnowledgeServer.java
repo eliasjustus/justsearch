@@ -172,6 +172,13 @@ public final class KnowledgeServer implements Closeable {
   private Thread migrationCutoverThread;
   private volatile boolean running;
   private int migrationCutoverMaxFailedJobs = -1;
+  /**
+   * Tempdoc 819: set when this boot started a corruption-recovery rebuild (the active generation
+   * was recovered to EMPTY and a green is being rebuilt from source). Read once, when the embedding
+   * compatibility controller is constructed, to waive its zero-evidence stamp refusal — see
+   * {@code EmbeddingCompatibilityController.permitStampWithoutEmbeddingEvidence}.
+   */
+  private boolean corruptionRecoveryRebuildStarted;
 
   // Migration enumerator progress (best-effort observability)
   private final AtomicBoolean migrationEnumeratorRunning = new AtomicBoolean(false);
@@ -236,6 +243,7 @@ public final class KnowledgeServer implements Closeable {
    *   <li>Open signal bus (MMF)</li>
    *   <li>Open job queue (SQLite)</li>
    *   <li>Initialize Lucene runtime</li>
+   *   <li>Resolve the embedding compatibility controller — must precede any commit (tempdoc 819)</li>
    *   <li>Start gRPC server on port 0</li>
    *   <li>Write bound port to signal bus</li>
    *   <li>Start indexing loop</li>
@@ -534,6 +542,15 @@ public final class KnowledgeServer implements Closeable {
                     .open();
             startMigrationEnumeratorBestEffort(rc);
             IndexRecoveryMarker.clear(activeIndexPath);
+            // Tempdoc 819: remember that BLUE is an index recovered to EMPTY. The green being built
+            // here is rebuilt from source, so its vectors are current-model by construction — the
+            // embedding fingerprint attestation is sound even if zero embeddings succeed. Without
+            // this waiver the zero-evidence refusal would block the cutover, and since blue holds
+            // nothing the user would be left with an empty index (unlike the normal cutover, where
+            // keeping blue costs nothing). The marker was just cleared, so the recovery branch will
+            // not re-fire; the FAILED migration does resume next boot (see the `inProgress` gate
+            // above), but it resumes into the same refusal until the embedding runtime is fixed.
+            this.corruptionRecoveryRebuildStarted = true;
           }
 
           // 312 Phase 4: Check for embedding model fingerprint mismatch.
@@ -666,6 +683,17 @@ public final class KnowledgeServer implements Closeable {
       // supplier + embedding telemetry at ctor time (last 2 setters eliminated).
       appServices = newAppServices();
       wireAppServicesPostConstruction(appServices);
+
+      // 3.6 Embedding compatibility — MUST resolve BEFORE anything can commit (tempdoc 819 A).
+      // This used to live in initDeferredModels() (async, behind multi-second ONNX composition),
+      // while startIndexingLoop() below runs synchronously. On a fresh profile the Head's bundled
+      // help batch was therefore ingested AND COMMITTED before refresh() ever ran, so refresh()
+      // saw docCount>0 with no stored fingerprint and took BLOCKED_LEGACY — making the empty-index
+      // fast path structurally unreachable on every first launch. refresh() needs only
+      // EmbeddingFingerprint.get() (a cached file SHA, no loaded model — EmbeddingFingerprint.java:37-43),
+      // so nothing from initDeferredModels is required here. The AUTO-RESCUE deliberately stays
+      // late: it needs a RunningRuntime for the re-mark and the runtime may still be deferred here.
+      initEmbeddingCompatibilityController();
 
       // Dev hot-reload manager (Phase 2, tempdoc 305)
       if (ConfigStore.global().get().ai().devHotReload()) {
@@ -805,6 +833,17 @@ public final class KnowledgeServer implements Closeable {
     // path safely (returns null → empty array on the receiver side).
     if (telemetry instanceof LocalTelemetry lt) {
       svc.grpcIngestService().setRrdStoreSupplier(lt::getRrdStore);
+    }
+
+    // Tempdoc 819: the ECC is now resolved BEFORE the first appServices reconstruction
+    // (DeferredRuntime.upgradeWriter -> reconstructAppServicesAfterDeferredUpgrade), which
+    // previously ran ahead of the ECC's only wire site. Re-wire it on every reconstruction so a
+    // fresh DefaultWorkerAppServices does not start its indexing loop with a null controller.
+    // Null on the boot-time call (the ECC is constructed just after) — the boot path wires it
+    // explicitly in initEmbeddingCompatibilityController().
+    var ecc = embeddingCompatController;
+    if (ecc != null) {
+      svc.wireEmbeddingCompatController(ecc);
     }
   }
 
@@ -1001,35 +1040,12 @@ public final class KnowledgeServer implements Closeable {
         log.info("No embedding model found - vector search disabled");
       }
 
-      // EmbeddingCompatibilityController (depends on Lucene + embedding)
-      var ecc =
-          new EmbeddingCompatibilityController(
-              ingestLifecycle::latestCommitUserDataBestEffort,
-              () -> ingestLifecycle.indexCountOps().docCount());
-      ecc.refresh();
-      embeddingCompatController = ecc;
-      // Tempdoc 730 A1 REVERTED (post-review): the unconditional EmbeddingFingerprint::get
-      // supplier was refuted by adversarial review. A forced reindex is in-place/incremental
-      // (JobBatchExtractor.java:193-212 — no wipe), so an interrupted BLOCKED_MISMATCH/
-      // BLOCKED_LEGACY -> REBUILDING run can hold a MIXED index (old-model vectors alongside
-      // new-model vectors). Stamping unconditionally on model availability means an ordinary
-      // commit mid-rebuild persists the NEW model's fingerprint over that mixed index; restart
-      // then resolves COMPATIBLE and silently serves the mixture. `ecc::fingerprintToStamp`
-      // (gated on state() == COMPATIBLE or (REBUILDING && rebuildCompleted)) is restored: the
-      // *serving* decision (allowEmbeddingWrites/allowQueryEmbeddings) is unaffected either way
-      // — it was always ECC-state-driven — but the *stamp* must also stay withheld while mixed,
-      // i.e. BLOCKED_MISMATCH is the correct outcome for that case, not a silent COMPATIBLE.
-      // The real gap the original A1 was reacting to (a completed rebuild, or a fresh-COMPATIBLE
-      // index, whose fingerprint stamp never gets a chance to persist because the worker stops
-      // before any further commit) is closed at the completion-guarantee call sites instead:
-      // EmbeddingProviderLifecycle.tryFinalizeRebuild() (already fires the moment
-      // checkRebuildCompletion flips state, via the now-restored gated supplier) and
-      // IndexingLoop.finalizeShutdownCommit() (tempdoc 730 review item 2 — guarantees that call,
-      // plus tryFinalizeFreshCompatibleStamp(), runs at shutdown too, not just on the next
-      // idle/batch iteration). See docs/tempdocs/730-worker-lifecycle-integrity.md's dated
-      // post-review note for the full review finding.
-      embeddingFingerprintSupplier.set(ecc::fingerprintToStamp);
-      appServices.wireEmbeddingCompatController(ecc);
+      // EmbeddingCompatibilityController is constructed + refreshed + wired SYNCHRONOUSLY in
+      // start(), before startIndexingLoop() (tempdoc 819 A — see initEmbeddingCompatibilityController).
+      // Only the auto-rescue stays here: it needs a RunningRuntime for the re-mark
+      // (EmbeddingRecoveryOps.java:90-97) and returns SKIPPED without one, which the early site
+      // cannot guarantee (the runtime may still be a DeferredRuntime there). The early refresh sets
+      // the correct STATE; this late rescue keeps its writer.
       maybeAutoStartEmbeddingRebuildForBlockedLegacyBestEffort();
 
       // NER — surface-provided assembly wraps in NerService.
@@ -1289,6 +1305,96 @@ public final class KnowledgeServer implements Closeable {
   private void maybeAutoStartEmbeddingRebuildForBlockedLegacyBestEffort() {
     io.justsearch.indexerworker.loop.ops.EmbeddingRecoveryOps.rescueBlockedLegacyIndex(
         embeddingCompatController, ingestLifecycle, 1000, log);
+  }
+
+  /**
+   * Constructs, refreshes and wires the {@link EmbeddingCompatibilityController} (tempdoc 819 A).
+   *
+   * <p>Called synchronously from {@link #start()} BEFORE {@code startIndexingLoop()}, because a
+   * commit that lands before the controller exists cannot carry the embedding fingerprint, and a
+   * {@code refresh()} that runs after such a commit sees {@code docCount > 0} with no stored
+   * fingerprint and resolves BLOCKED_LEGACY. On a fresh profile the Head's bundled help batch is
+   * exactly such a commit, which made the empty-index fast path unreachable on every first launch.
+   *
+   * <p>Both index-reading suppliers RE-READ {@code ingestLifecycle} on every call rather than
+   * binding the runtime's ops at construction time: {@code DeferredRuntime.upgradeWriter()}
+   * (DeferredRuntime.java:70-93) builds a NEW {@code RuntimeSession} and closes the old one, so a
+   * bound method reference captured here would later read a closed session.
+   *
+   * <p>Both count suppliers use the {@code …OrThrow} variants: the plain {@code IndexCountOps}
+   * accessors swallow {@code IOException} to 0, and 0 is exactly the value that reads as "empty
+   * index — safe to stamp" / "no successful embedding". They must fail closed, not fail empty.
+   */
+  private void initEmbeddingCompatibilityController() {
+    var ecc =
+        new EmbeddingCompatibilityController(
+            () -> {
+              LuceneRuntime rt = this.ingestLifecycle;
+              return rt == null ? Map.of() : rt.latestCommitUserDataBestEffort();
+            },
+            this::trustworthyDocCountOrThrow,
+            this::trustworthyCompletedEmbeddingCountOrThrow);
+    ecc.refresh();
+    embeddingCompatController = ecc;
+    if (corruptionRecoveryRebuildStarted) {
+      ecc.permitStampWithoutEmbeddingEvidence("corrupt_index_rebuild");
+    }
+    // Tempdoc 730 A1 REVERTED (post-review): the unconditional EmbeddingFingerprint::get
+    // supplier was refuted by adversarial review. A forced reindex is in-place/incremental
+    // (JobBatchExtractor.java:193-212 — no wipe), so an interrupted BLOCKED_MISMATCH/
+    // BLOCKED_LEGACY -> REBUILDING run can hold a MIXED index (old-model vectors alongside
+    // new-model vectors). Stamping unconditionally on model availability means an ordinary
+    // commit mid-rebuild persists the NEW model's fingerprint over that mixed index; restart
+    // then resolves COMPATIBLE and silently serves the mixture. `ecc::fingerprintToStamp`
+    // (gated on state() == COMPATIBLE or (REBUILDING && rebuildCompleted), plus the tempdoc 819
+    // stamp-evidence gate) is restored: the *serving* decision
+    // (allowEmbeddingWrites/allowQueryEmbeddings) is unaffected either way — it was always
+    // ECC-state-driven — but the *stamp* must also stay withheld while mixed, i.e.
+    // BLOCKED_MISMATCH is the correct outcome for that case, not a silent COMPATIBLE.
+    // The real gap the original A1 was reacting to (a completed rebuild, or a fresh-COMPATIBLE
+    // index, whose fingerprint stamp never gets a chance to persist because the worker stops
+    // before any further commit) is closed at the completion-guarantee call sites instead:
+    // EmbeddingProviderLifecycle.tryFinalizeRebuild() and IndexingLoop.finalizeShutdownCommit()
+    // (tempdoc 730 review item 2). See docs/tempdocs/730-worker-lifecycle-integrity.md's dated
+    // post-review note for the full review finding.
+    //
+    // Tempdoc 819: the supplier moves here WITH the controller. Leaving it in initDeferredModels
+    // would reopen the same hole from the other side — every commit between the loop starting and
+    // the models finishing (the help batch again) would omit the fingerprint, so the index the
+    // early refresh just certified COMPATIBLE would still persist unstamped.
+    embeddingFingerprintSupplier.set(ecc::fingerprintToStamp);
+    appServices.wireEmbeddingCompatController(ecc);
+  }
+
+  /**
+   * Doc count that PROPAGATES a reader failure. See
+   * {@link #initEmbeddingCompatibilityController()} for why swallowing to 0 is unsafe here.
+   */
+  private long trustworthyDocCountOrThrow() {
+    LuceneRuntime rt = this.ingestLifecycle;
+    if (rt == null) {
+      throw new IllegalStateException("ingest runtime unavailable; doc count unreadable");
+    }
+    try {
+      return rt.indexCountOps().docCountOrThrow();
+    } catch (IOException e) {
+      throw new java.io.UncheckedIOException("doc count read failed", e);
+    }
+  }
+
+  /** Completed-embedding count that PROPAGATES a reader failure (tempdoc 819 defect B). */
+  private int trustworthyCompletedEmbeddingCountOrThrow() {
+    LuceneRuntime rt = this.ingestLifecycle;
+    if (rt == null) {
+      throw new IllegalStateException("ingest runtime unavailable; embedding count unreadable");
+    }
+    try {
+      return rt.indexCountOps()
+          .countByFieldOrThrow(
+              SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
+    } catch (IOException e) {
+      throw new java.io.UncheckedIOException("completed-embedding count read failed", e);
+    }
   }
 
   private long safeJobQueueDepth() {
