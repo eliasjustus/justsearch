@@ -1584,7 +1584,8 @@ fires no listener, prose never latches), `KnowledgeServerWorkerDownCodeTest` (5 
 axis-1 codes, the corruption override + marker deletion, a non-corruption fatal reason, and the
 end-to-end latch across a restart sequence), `StatusLifecycleWorkerReasonTest` (8 tests: the
 wire `reason_code` per producer state), 3 `LifecycleSnapshotTapTest` rows, 6
-`readinessNotice.test.ts` cases.
+`readinessNotice.test.ts` cases, and one `StatusLifecycleHandlerTest` case pinning that an
+orderly shutdown reaches `INDEX_SERVING` as `NOT_CONFIGURED` (C.9's second probe).
 
 ### C.9 — Mutation probe: the latch is reachable-red
 
@@ -1602,6 +1603,16 @@ Ordering 2 (`corrupt overwrites an earlier generic cause`) correctly stayed **gr
 asserts the non-latched direction, so a latch-only mutation must not move it. That asymmetry
 is the test-precision signal: the suite fails for the right reason, not for any reason. Latch
 restored and the full suite re-run green.
+
+**Second probe — the `worker.shut_down` branch (found by the critical-analysis pass).** The
+`INDEX_SERVING` `NOT_CONFIGURED` branch keys on the worker reason code, and S3 changes what an
+orderly teardown puts there; if the branch had not been widened, a shutdown would fall through
+to the ERROR-shaped branches and C.6's tap row would be **dead on arrival** — a wrong-gate the
+tap test alone could not catch, because it asserts the mapping given the key, not that the key
+is produced. Removed the `|| WORKER_SHUT_DOWN` clause
+(`StatusLifecycleHandler.java:1395-1396`): `StatusLifecycleHandlerTest > tempdoc 837: an
+orderly shutdown reaches INDEX_SERVING as NOT_CONFIGURED, not an error` went **RED**, and it is
+the only test that moved. Restored; green.
 
 ### C.10 — Verification
 

@@ -420,6 +420,32 @@ final class StatusLifecycleHandlerTest {
     assertTrue(env.composites().get("aiFeatures").reasonCodes().contains("vdu.missing_mmproj"));
   }
 
+  @Test
+  @DisplayName("tempdoc 837: an orderly shutdown reaches INDEX_SERVING as NOT_CONFIGURED, not an error")
+  void workerShutDownIsANotConfiguredVerdictNotAnError() {
+    StatusLifecycleHandler handler = newHandler();
+    LifecycleSnapshotV1.Component ready =
+        new LifecycleSnapshotV1.Component(LifecycleState.LIFECYCLE_STATE_READY);
+    // The worker component as the OFFLINE arm now publishes it after an orderly teardown.
+    LifecycleSnapshotV1.Component shutDown =
+        new LifecycleSnapshotV1.Component(
+            LifecycleState.LIFECYCLE_STATE_DEGRADED, "worker.shut_down");
+    LifecycleSnapshotV1 snapshot =
+        LifecycleSnapshotV1.now(
+            new LifecycleSnapshotV1.Lifecycle(LifecycleState.LIFECYCLE_STATE_DEGRADED),
+            new LifecycleSnapshotV1.Components(ready, shutDown, ready));
+
+    ReadinessEnvelopeView env =
+        handler.buildReadinessEnvelope(
+            compatWorkerView(CompatibilityStatusView.empty()), snapshot, freshContact());
+
+    // The branch that used to key on worker.not_configured alone: without shut_down joining it, an
+    // orderly teardown would fall through to the ERROR-shaped branches and the tap row for
+    // (INDEX_SERVING, NOT_CONFIGURED, worker.shut_down) would be dead on arrival.
+    assertEquals("NOT_CONFIGURED", env.components().get("indexServing").state());
+    assertEquals("worker.shut_down", env.components().get("indexServing").reasonCode());
+  }
+
   /** Worker answered during this response build — the provenance these state/reason tests assume. */
   private static StatusLifecycleHandler.WorkerContact freshContact() {
     return StatusLifecycleHandler.WorkerContact.observed(System.currentTimeMillis());
