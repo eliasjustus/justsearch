@@ -19,7 +19,7 @@
  */
 import type { Claim, RetrievalCitation } from './citationTypes.js';
 import type { Citation } from './MarkdownBlock.js';
-import { filenameOf } from './evidenceProjection.js';
+import { filenameOf, isVerifiedProducer } from './evidenceProjection.js';
 import type {
   AgentSource,
   AgentSentenceCite,
@@ -37,6 +37,12 @@ export function claimsToCitations(
     // check is `typeof number`, not `!== null`: an untyped/legacy claim object carries no verified
     // score at all, and a missing score must fail closed (no mark) exactly like an explicit null.
     if (typeof cl.verifiedScore !== 'number') continue;
+    // Tempdoc 836 §4 — the PRODUCER gate, beside the score gate and for the same reason. A cosine
+    // fallback score is a number on a different scale (its supported and unsupported bands overlap
+    // at a 0.0049 margin, §9.7), so admitting it here would put it straight into
+    // `Citation.similarity` — the field every downstream tier reads as a cross-encoder
+    // probability. Same authority the write sites use, so the two cannot diverge.
+    if (!isVerifiedProducer(cl.scorer)) continue;
     // 822 §3b — the REF gate, and the honest failure that replaced `sources[refIdx] ?? sources[0]`.
     // A claim resolves ONLY through a ref the authoritative matcher supplied (`lexicalRefs` are the
     // streaming guess and may not target a mark), and an index that addresses no source mints NO

@@ -52,6 +52,13 @@ export interface Claim {
    * input. Same producer, same standing.
    */
   lexicalRefs: number[];
+  /**
+   * Tempdoc 836 §4 — which producer wrote {@link verifiedScore}: `CROSS_ENCODER` |
+   * `EMBEDDING_COSINE` | `NONE`. Carried on the claim so the resolver can enforce the producer gate
+   * where a claim becomes a `Citation`, not only where the claim was built. Absent on a claim from
+   * a record persisted before the field existed.
+   */
+  scorer?: string;
 }
 
 /**
@@ -68,6 +75,27 @@ export interface CitationMatch {
   similarity: number;
   parentDocId: string;
   excerpt?: string;
+  /**
+   * Tempdoc 836 §4 — which TEXT was scored: `SUPPLIED` (the literal passage the caller showed the
+   * model) or `CHUNK_LOOKUP` (text re-fetched by chunk identity). Optional: absent on a record
+   * persisted before the field existed.
+   */
+  textSource?: string;
+}
+
+/**
+ * Tempdoc 836 S2S3-A.1 — how much of ONE source's text the matcher actually looked at.
+ *
+ * <p>Admission control preserves SENTENCE coverage by cutting WINDOWS, so "every sentence scored"
+ * can be true while most of a source's text was never read. `windowsConsidered > 0 &&
+ * windowsScored === 0` is the discriminator: that source was NEVER EXAMINED, which is a budget
+ * fact, not the evidence verdict "this source supports nothing". Both produce the same empty match
+ * list, and without this they are indistinguishable.
+ */
+export interface SourceCoverage {
+  sourceIndex: number;
+  windowsConsidered: number;
+  windowsScored: number;
 }
 
 /** Retrieval-time citation from rag.citations event. */

@@ -27,6 +27,26 @@ export interface CitationMatch {
   sourceIndex: number;
   similarity: number;
   parentDocId: string;
+  /**
+   * Tempdoc 836 §4 — which TEXT this score is about: `SUPPLIED` (the caller's literal passage) or
+   * `CHUNK_LOOKUP` (text re-fetched by parentDocId + chunkIndex). Per match, because the choice is
+   * per source. Optional: a record persisted before the field existed carries none.
+   */
+  textSource?: string;
+}
+
+/**
+ * Tempdoc 836 S2S3-A.1 — how much of ONE source's text was actually examined.
+ *
+ * Admission control preserves SENTENCE coverage by cutting WINDOWS, so `sentencesScored ===
+ * sentencesTotal` can hold while most of a source's text was never looked at. `windowsConsidered >
+ * 0 && windowsScored === 0` is the discriminator that keeps "the budget never examined this source"
+ * apart from "this source supports nothing" — the same empty match list otherwise.
+ */
+export interface SourceCoverage {
+  sourceIndex: number;
+  windowsConsidered: number;
+  windowsScored: number;
 }
 
 /** Payload for the citation_matches SSE event (sent after done). */
@@ -35,6 +55,19 @@ export interface CitationMatchesPayload {
   sentencesTotal: number;
   sentencesMatched: number;
   tookMs: number;
+  /**
+   * Tempdoc 836 §4 — which PRODUCER wrote the similarities: `CROSS_ENCODER` | `EMBEDDING_COSINE` |
+   * `NONE`. The two scales are measurably incomparable, so a threshold calibrated on one must not
+   * read the other. Optional: absent on records persisted before the field existed.
+   */
+  scorer?: string;
+  /**
+   * Tempdoc 836 §3.6 — sentences actually SCORED (the backend's `BreakIterator` count is the
+   * authority for the denominator; the frontend regex counter is a fallback, not a second one).
+   */
+  sentencesScored?: number;
+  /** Tempdoc 836 S2S3-A.1 — the per-source TEXT-coverage axis. */
+  sourceCoverage?: SourceCoverage[];
 }
 
 export interface ContextCitation {

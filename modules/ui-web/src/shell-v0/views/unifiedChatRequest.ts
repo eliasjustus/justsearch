@@ -10,7 +10,8 @@
 import { type ZoneDecl } from '../primitives/compositionLayout.js';
 import type { SelectionPayload } from '../../api/types/selection.js';
 import type { CitationMatch, RetrievalCitation } from '../components/chat/CitationsPanel.js';
-import type { Claim } from '../components/chat/citationTypes.js';
+import type { Claim, SourceCoverage } from '../components/chat/citationTypes.js';
+import type { CoverageHonesty } from '../components/chat/evidenceProjection.js';
 import type { RagMetaPayload } from '../../api/streams.js';
 import type { CoreInteractionShapeId } from '../plugin-api/coreInteractionShapes.js';
 
@@ -36,6 +37,14 @@ export interface ThreadMessage {
   citations?: CitationMatch[];
   sources?: RetrievalCitation[];
   claims?: Claim[];
+  /**
+   * Tempdoc 836 S2S3-A.2 — the turn's coverage facts (which axes of verification actually ran).
+   * Carried on the message so the LIVE render and the RELOADED render read the same facts; absent
+   * for a producer that reported none.
+   */
+  coverage?: CoverageHonesty | null;
+  /** Tempdoc 836 S2S3-A.3 — per-source examination facts, for the sources panel's third state. */
+  sourceCoverage?: SourceCoverage[];
   ragMeta?: RagMetaPayload;
   isExtract?: boolean;
   // Tempdoc 603 C2 — the decontextualized standalone question this follow-up's retrieval ran on

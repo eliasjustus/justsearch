@@ -5749,3 +5749,147 @@ describe('Tempdoc 822 §3d — the shipped window keeps lexical and verified sco
     view.remove();
   });
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * Tempdoc 836 S2S3-A.6f — the coverage facts reach BOTH render paths, and the producer gate
+ * applies to both.
+ *
+ * The window has TWO sites that write `Claim.verifiedScore`: the live `rag.citation_matches`
+ * handler and `claimsFromRecord` (the persisted replay). A gate applied to only one of them is the
+ * 561 P-A divergence — the same payload would mark differently before and after a reload — so
+ * every assertion here runs the SAME payload through both.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════ */
+describe('Tempdoc 836 S2S3 — coverage honesty and the producer gate on both render paths', () => {
+  interface RagHandlers {
+    onRagCitations?(p: unknown): void;
+    onRagCitationMatches?(p: unknown): void;
+  }
+
+  async function askAndCaptureHandlers(view: UnifiedChatView): Promise<RagHandlers> {
+    view.affordance = 'documents';
+    view.inputDraft = 'why did the renewal fail?';
+    await view.updateComplete;
+    view.shadowRoot?.querySelector('jf-composer')?.dispatchEvent(new CustomEvent('composer-submit'));
+    await view.updateComplete;
+    const onEvent = vi.mocked(consumeShapeStream).mock.calls.at(-1)![2] as (
+      e: string,
+      p: unknown,
+    ) => void;
+    const dispatchMock = vi.mocked(dispatchShapeEventToHandlers);
+    dispatchMock.mockClear();
+    onEvent('probe', {});
+    return dispatchMock.mock.calls.at(-1)![0] as RagHandlers;
+  }
+
+  const claimsOf = (view: UnifiedChatView): readonly Claim[] =>
+    (view as unknown as { claims: Claim[] }).claims;
+
+  const matchPayload = (scorer: string) => ({
+    scorer,
+    sentencesTotal: 4,
+    sentencesScored: 4,
+    sourceCoverage: [{ sourceIndex: 0, windowsConsidered: 12, windowsScored: 3 }],
+    matches: [
+      {
+        sentenceIndex: 0,
+        sentenceText: 'The lock held.',
+        sourceIndex: 0,
+        similarity: 0.82,
+        parentDocId: 'docs/a.md',
+        textSource: 'SUPPLIED',
+      },
+    ],
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+  });
+
+  it('A.6f — the same payload yields identical claims live and on persisted replay', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    const h = await askAndCaptureHandlers(view);
+    h.onRagCitationMatches?.(matchPayload('CROSS_ENCODER'));
+    await view.updateComplete;
+    const live = claimsOf(view);
+
+    const replayed = (
+      view as unknown as { claimsFromRecord(cm: unknown): Claim[] }
+    ).claimsFromRecord(matchPayload('CROSS_ENCODER'));
+
+    expect(replayed).toEqual([...live]);
+    expect(live[0]!.verifiedScore).toBe(0.82);
+    expect(live[0]!.verifiedRefs).toEqual([0]);
+    view.remove();
+  });
+
+  it('A.6f — a cosine-fallback payload mints no verified score on EITHER path', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    const h = await askAndCaptureHandlers(view);
+    h.onRagCitationMatches?.(matchPayload('EMBEDDING_COSINE'));
+    await view.updateComplete;
+    const live = claimsOf(view);
+
+    const replayed = (
+      view as unknown as { claimsFromRecord(cm: unknown): Claim[] }
+    ).claimsFromRecord(matchPayload('EMBEDDING_COSINE'));
+
+    // The claim still EXISTS — it is what arrived — but its score is on a scale the grounding
+    // thresholds are not calibrated for, so it may not become a verified score on either path.
+    expect(live[0]!.verifiedScore).toBeNull();
+    expect(live[0]!.verifiedRefs).toEqual([]);
+    expect(replayed).toEqual([...live]);
+    // …and the resolver mints no mark from it.
+    const resolved = (
+      view as unknown as {
+        resolveClaimCitations(c: readonly Claim[], s: readonly unknown[]): unknown[];
+      }
+    ).resolveClaimCitations(live, (view as unknown as { sources: unknown[] }).sources);
+    expect(resolved).toEqual([]);
+    view.remove();
+  });
+
+  it('a record written before the producer field existed keeps its marks (absence is not a verdict)', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    const legacy = {
+      matches: [
+        {
+          sentenceIndex: 0,
+          sentenceText: 'The lock held.',
+          sourceIndex: 2,
+          similarity: 0.9,
+          parentDocId: 'docs/a.md',
+        },
+      ],
+    };
+    const replayed = (
+      view as unknown as { claimsFromRecord(cm: unknown): Claim[] }
+    ).claimsFromRecord(legacy);
+    expect(replayed[0]!.verifiedScore).toBe(0.9);
+    expect(replayed[0]!.verifiedRefs).toEqual([2]);
+    view.remove();
+  });
+
+  it('the coverage facts land on the view, live', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    const h = await askAndCaptureHandlers(view);
+    h.onRagCitationMatches?.(matchPayload('CROSS_ENCODER'));
+    await view.updateComplete;
+
+    const v = view as unknown as {
+      coverage: { textIncomplete: boolean; sentencesTotal: number } | null;
+      sourceCoverage: Array<{ windowsConsidered: number; windowsScored: number }>;
+    };
+    expect(v.coverage).not.toBeNull();
+    expect(v.coverage!.textIncomplete).toBe(true);
+    expect(v.coverage!.sentencesTotal).toBe(4);
+    expect(v.sourceCoverage).toEqual([
+      { sourceIndex: 0, windowsConsidered: 12, windowsScored: 3 },
+    ]);
+    view.remove();
+  });
+});

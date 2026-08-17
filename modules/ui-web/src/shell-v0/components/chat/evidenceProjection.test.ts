@@ -342,8 +342,8 @@ describe('sourceGrounding — faithfulness join by ARRAY POSITION (603 C1 / PART
   });
 
   it('sourceGroundingLabel: count when cited, honest "not cited" otherwise', () => {
-    expect(sourceGroundingLabel({ cited: true, groundedSentences: 1, similarity: 0.8, tier: 'high' as never })).toBe('Grounds 1 sentence');
-    expect(sourceGroundingLabel({ cited: true, groundedSentences: 3, similarity: 0.8, tier: 'high' as never })).toBe('Grounds 3 sentences');
-    expect(sourceGroundingLabel({ cited: false, groundedSentences: 0, similarity: 0, tier: 'low' as never })).toBe('Retrieved · not cited');
+    expect(sourceGroundingLabel({ cited: true, groundedSentences: 1, similarity: 0.8, tier: 'high' as never, state: 'cited' })).toBe('Grounds 1 sentence');
+    expect(sourceGroundingLabel({ cited: true, groundedSentences: 3, similarity: 0.8, tier: 'high' as never, state: 'cited' })).toBe('Grounds 3 sentences');
+    expect(sourceGroundingLabel({ cited: false, groundedSentences: 0, similarity: 0, tier: 'low' as never, state: 'examined-uncited' })).toBe('Retrieved · not cited');
   });
 });
