@@ -30,9 +30,13 @@ import io.justsearch.app.services.runtimestate.RuntimeStatus;
 import io.justsearch.app.services.worker.OnnxModelStatus;
 import io.justsearch.app.services.worker.WorkerFeatureCache;
 import io.justsearch.configuration.EnvRegistry;
+import io.justsearch.configuration.ModelPathSource;
+import io.justsearch.app.api.inference.RealizedChatIdentity;
+import io.justsearch.configuration.model.ChatModelProfile;
 import io.justsearch.configuration.model.InstallContract;
 import io.justsearch.configuration.model.InstallContractIO;
 import io.justsearch.configuration.resolved.ConfigStore;
+import io.justsearch.configuration.resolved.ResolvedPathResolver;
 import io.justsearch.configuration.PlatformPaths;
 import io.justsearch.configuration.persistence.AtomicFileWrites;
 import io.justsearch.app.services.config.ConfigStoreRebuilder;
@@ -62,6 +66,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -94,18 +99,31 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
   // Mirror SettingsController behavior for server exe sysprop ownership.
   private static final String SERVER_EXE_SYS_PROP = "justsearch.server.exe";
   private static final String SERVER_EXE_SOURCE_PROP = "justsearch.server.exe.source";
-  private static final String SOURCE_UI_SETTINGS = "ui_settings";
 
   /**
-   * Tempdoc 374 alpha.16 fix A: source label written by both
-   * {@link io.justsearch.ui.HeadlessApp#maybeAutoSelectCuda12Variant} (boot-time) and
-   * {@link io.justsearch.ui.ai.install.AiInstallService#applyCudaServerExe} (Install AI
-   * follow-up). Pre-alpha.16 the activation API treated this source as a third-party operator
-   * lock and rejected POST /api/ai/runtime/activate even after the self-test passed
-   * — the round-6 sandbox agent flagged it. Now recognized as system-owned alongside
-   * {@link #SOURCE_UI_SETTINGS}.
+   * Ownership markers this service recognizes on the server-executable sysprop.
+   *
+   * <p>Tempdoc 842: these were two private string literals here, a third private copy in
+   * {@code EffectiveConfigController}, and the writers' own literals elsewhere — four copies of one
+   * vocabulary. They now name the shared {@link ModelPathSource} constants (tempdoc 374 alpha.16
+   * fix A's finding was exactly that a divergent copy silently reclassified the boot-time
+   * CUDA auto-select as a third-party operator lock and rejected every activation).
+   *
+   * <p>Deliberately NOT {@link ModelPathSource#isSystemOwned}: that predicate also admits
+   * {@link ModelPathSource#PROFILE_RESOLVED}, which is a claim about the <em>model path</em> and
+   * says nothing about who owns the server executable. Widening this gate for free is how an
+   * ownership check quietly stops being a check.
    */
-  private static final String SOURCE_AUTO_SELECTED_CUDA12 = "auto_selected_cuda12";
+  private static final String SOURCE_UI_SETTINGS = ModelPathSource.UI_SETTINGS;
+
+  private static final String SOURCE_AUTO_SELECTED_CUDA12 = ModelPathSource.AUTO_SELECTED_CUDA12;
+
+  /**
+   * Chat-profile selection key (tempdoc 842 §2.3). A profile activation writes it so a later
+   * same-JVM {@code InferenceConfig} rebuild resolves the same (model, mmproj) pair the engine was
+   * just switched to, instead of falling back to the standard pair and half-reverting the switch.
+   */
+  private static final String CHAT_PROFILE_SYS_PROP = EnvRegistry.CHAT_PROFILE.sysProp();
 
   // Tempdoc 374 alpha.17 R1: route through the same sysprop as
   // LlamaServerOps.HEALTH_CHECK_TIMEOUT_MS so the activation self-test honours operator
@@ -164,6 +182,57 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
   /** Late-binds the observed per-encoder runtime view used by {@link #getStatus()}. */
   public void setEncoderRuntimeCache(EncoderRuntimeCache cache) {
     this.encoderRuntimeCache = cache;
+  }
+
+  /**
+   * Realized chat identity of the RUNNING engine (tempdoc 842 §2.5). Late-bound for the same
+   * reason {@link #encoderRuntimeCache} is: the authority behind it (the inference lifecycle
+   * manager) is assembled after this service exists.
+   *
+   * <p>Defaults to "no observation", which reports as absent fields — never as a positive claim
+   * about which model is loaded. A supplier that returns null (engine offline) reports the same
+   * way, so an offline engine cannot leave a stale identity standing.
+   */
+  private volatile Supplier<RealizedChatIdentity> realizedChatIdentitySource = () -> null;
+
+  /**
+   * Late-binds the realized chat-identity projection used by {@link #getStatus()}.
+   *
+   * @param source supplier over the running engine, or null to clear back to "no observation"
+   */
+  public void setRealizedChatIdentitySource(Supplier<RealizedChatIdentity> source) {
+    this.realizedChatIdentitySource = source == null ? () -> null : source;
+  }
+
+  /**
+   * Test-only override for the GPU self-test (the {@code setUsingExternalServerForTest} idiom the
+   * inference runtime already uses).
+   *
+   * <p>The real self-test spawns llama-server on an ephemeral port and gates on an NVML VRAM delta,
+   * so it can only ever return {@code inconclusive} on a GPU-less runner and {@code failed} against
+   * a stub executable — a verdict the activation flow (correctly) refuses to act on. Without a seam
+   * the entire post-self-test half of {@link #runActivate} — the profile apply, the settings
+   * writes, the rollback bracket — is untestable, which is exactly where this feature lives.
+   *
+   * <p>The override receives the (exe, model) pair the flow resolved, so a test can also assert
+   * WHICH model the self-test was pointed at. Null (the default) runs the real self-test.
+   */
+  private volatile java.util.function.BiFunction<Path, Path, SelfTestResult> selfTestOverrideForTest;
+
+  /** Installs the test-only self-test override. Production code never calls this. */
+  void setSelfTestOverrideForTest(
+      java.util.function.BiFunction<Path, Path, SelfTestResult> override) {
+    this.selfTestOverrideForTest = override;
+  }
+
+  /** Reads the late-bound realized identity, tolerating a throwing/absent source. */
+  private RealizedChatIdentity realizedChatIdentity() {
+    try {
+      return realizedChatIdentitySource.get();
+    } catch (Exception e) {
+      log.debug("Realized chat identity unavailable (best-effort): {}", e.toString());
+      return null;
+    }
   }
 
   /**
@@ -356,6 +425,11 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
     Long vramFree = gpuSnap != null ? gpuSnap.effective().freeVramBytes() : null;
     List<String> effectiveFlags = lastSelfTestEffectiveFlags;
 
+    // Tempdoc 842 §2.5: the realized axis beside the requested one. Read once so the three fields
+    // describe ONE engine snapshot — reading per-field could report a profile from before a swap
+    // next to a model path from after it.
+    RealizedChatIdentity realizedChat = realizedChatIdentity();
+
     return new AiRuntimeStatusResponse(
         activation,
         installed,
@@ -367,7 +441,10 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
             vramTier,
             effectiveFlags,
             vramTotal,
-            vramFree),
+            vramFree,
+            realizedChat == null ? null : realizedChat.profileId(),
+            realizedChat == null ? null : realizedChat.modelPath(),
+            realizedChat == null ? null : Boolean.valueOf(realizedChat.mmprojActive())),
         resolveOnnxFeatures());
   }
 
@@ -588,11 +665,26 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
     return null;
   }
 
+  @Override
   public void startActivate(String variantId) {
+    startActivate(variantId, null);
+  }
+
+  /**
+   * Tempdoc 842 §2.4: activation is when llama-server spawns, so it is the natural switch point for
+   * the chat-model profile.
+   *
+   * @param variantId the GPU runtime variant to activate (unchanged semantics)
+   * @param chatProfile optional {@code ChatModelProfile} id ({@code "standard"} | {@code
+   *     "compact"} | ...). A null/blank value means "do not touch the chat model" and the flow is
+   *     byte-for-byte the pre-842 one — every existing caller keeps its exact behavior.
+   */
+  public void startActivate(String variantId, String chatProfile) {
     String v = variantId == null ? "" : variantId.trim();
     if (v.isBlank()) {
       throw new IllegalArgumentException("variantId is required");
     }
+    String profileRaw = chatProfile == null || chatProfile.isBlank() ? null : chatProfile.trim();
     synchronized (lock) {
       if (running.get()) {
         throw new IllegalStateException("Runtime activation already running");
@@ -608,7 +700,8 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       status.selfTestPort = null;
       touch();
     }
-    startLeasedThread("ai.runtime-activate", "ai-runtime-activate", () -> runActivate(v));
+    startLeasedThread(
+        "ai.runtime-activate", "ai-runtime-activate", () -> runActivate(v, profileRaw));
   }
 
   public void startDeactivate() {
@@ -660,7 +753,7 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
     // snapshot() already bridged policy sysprops to app-services enforcement points.
   }
 
-  private void runActivate(String variantId) {
+  private void runActivate(String variantId, String chatProfileRaw) {
     try {
       enforceActivationPolicy();
     } catch (IllegalStateException e) {
@@ -688,23 +781,39 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
     }
 
     UiSettings current = settingsStore.load();
-    String modelPath = current.getLlmModelPath();
+
+    // Tempdoc 842 §2.4: a named profile selects the (model, mmproj) pair as one unit. It is
+    // resolved BEFORE the settings/contract chain and short-circuits it — a stored llmModelPath is
+    // a system-owned, re-derivable copy of the standard model on every installed and dev data dir,
+    // so consulting it here would make every profile switch silently inert (§2.3 precedence rule).
+    ChatModelProfile profile = chatProfileRaw == null ? null : ChatModelProfile.resolve(chatProfileRaw);
+    Path model;
     boolean modelPathFromContract = false;
-    if (modelPath == null || modelPath.isBlank()) {
-      modelPath = resolveChatModelFromInstallContract();
-      modelPathFromContract = modelPath != null && !modelPath.isBlank();
-    }
-    if (modelPath == null || modelPath.isBlank()) {
-      fail(
-          "MODEL_PATH_REQUIRED",
-          "No chat model configured. Run Install AI to download one, or import a models pack.",
-          null);
-      return;
-    }
-    Path model = Path.of(modelPath.trim());
-    if (!Files.isRegularFile(model)) {
-      fail("MODEL_NOT_FOUND", "Configured model does not exist: " + model, null);
-      return;
+    if (profile != null) {
+      Path resolved = resolveProfileModelPath(profile);
+      if (!Files.isRegularFile(resolved)) {
+        fail("MODEL_NOT_FOUND", missingProfileModelMessage(profile, resolved), null);
+        return;
+      }
+      model = resolved;
+    } else {
+      String modelPath = current.getLlmModelPath();
+      if (modelPath == null || modelPath.isBlank()) {
+        modelPath = resolveChatModelFromInstallContract();
+        modelPathFromContract = modelPath != null && !modelPath.isBlank();
+      }
+      if (modelPath == null || modelPath.isBlank()) {
+        fail(
+            "MODEL_PATH_REQUIRED",
+            "No chat model configured. Run Install AI to download one, or import a models pack.",
+            null);
+        return;
+      }
+      model = Path.of(modelPath.trim());
+      if (!Files.isRegularFile(model)) {
+        fail("MODEL_NOT_FOUND", "Configured model does not exist: " + model, null);
+        return;
+      }
     }
 
     updateState("running", "self_test", "Running GPU self-test…", null);
@@ -739,6 +848,11 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
     UiSettings prevSettings = settingsStore.load();
     String prevSys = System.getProperty(SERVER_EXE_SYS_PROP, "");
     String prevSysSource = System.getProperty(SERVER_EXE_SOURCE_PROP, "");
+    // Tempdoc 842: the profile sysprop joins the rollback bracket. It is captured as null-vs-value
+    // (not "" for absent) because clearing it and setting it to "" are different states to
+    // InferenceConfig: absent falls back to the STANDARD default, blank would too, but a rollback
+    // must restore *absence* rather than invent a blank claim.
+    String prevChatProfileProp = System.getProperty(CHAT_PROFILE_SYS_PROP);
 
     try {
       // Persist settings (so activation survives restart) AND apply sysprop (so reload works immediately).
@@ -750,6 +864,12 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       // The engine is started from settings (applyRuntimeOverridesBestEffort reads
       // next.getLlmModelPath()), so a model path recovered from the install contract has to land in
       // settings or the activation would bring the engine up with no model.
+      //
+      // Tempdoc 842 §2.3: a PROFILE activation deliberately does NOT write llmModelPath. A profile
+      // choice is a claim about which bundle to resolve, not a stored user path; persisting the
+      // resolved file here would turn one session's dev profile into a permanent operator-looking
+      // setting that outlives it. Boot-time resolution (InferenceConfig + the chat-profile key)
+      // owns persistence semantics for profiles.
       if (modelPathFromContract) {
         next.setLlmModelPath(model.toAbsolutePath().toString());
       }
@@ -773,7 +893,14 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
         activationProcedureBegun = true;
       }
       try {
-        applyRuntimeOverridesBestEffort(next);
+        if (profile != null) {
+          // Publish the selection BEFORE the apply: applyChatProfile restarts the engine, and any
+          // config rebuild racing that restart in this JVM must already agree on the profile.
+          System.setProperty(CHAT_PROFILE_SYS_PROP, profile.id());
+          applyChatProfileOrThrow(profile);
+        } else {
+          applyRuntimeOverridesBestEffort(next);
+        }
 
         // Rebuild ConfigStore so readers see updated server EXE / GPU layers.
         ConfigStoreRebuilder.rebuild(ConfigStore.globalOrNull(), next);
@@ -800,6 +927,7 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
     } catch (Exception e) {
       log.warn("Runtime activation failed; attempting rollback", e);
       updateState("running", "rollback", "Activation failed; rolling back…", null);
+      restoreChatProfileProp(prevChatProfileProp);
       boolean rolledBack = rollback(prevSettings, prevSys, prevSysSource);
       if (!rolledBack) {
         fail("RUNTIME_ROLLBACK_FAILED", "Rollback failed after activation error: " + safeMsg(e), e);
@@ -883,6 +1011,81 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
     }
   }
 
+  /**
+   * Resolves a profile's model file against the CONFIGURED models directory (tempdoc 842 §2.3).
+   *
+   * <p>Mirrors {@code OnlineAiServiceImpl.applyChatProfile} deliberately: a profile's
+   * {@code modelFile()} is a registry {@code targetDir}-relative name, meaningful only under the
+   * models root. Resolving it against the currently-running model's parent (an arbitrary directory
+   * that happens to hold one GGUF when an operator named a path) would point the existence check at
+   * a file that was never installed there — and the self-test would then validate a different file
+   * than the engine loads.
+   */
+  private static Path resolveProfileModelPath(ChatModelProfile profile) {
+    return resolveModelsDir().resolve(profile.modelFile());
+  }
+
+  /** The configured models directory, or the process working dir when no config store exists. */
+  private static Path resolveModelsDir() {
+    ConfigStore cs = ConfigStore.globalOrNull();
+    if (cs == null) {
+      return Path.of(".");
+    }
+    var rc = cs.get();
+    Path baseDir = ResolvedPathResolver.resolveBaseDir(rc, System.getProperty("user.dir"));
+    return ResolvedPathResolver.resolveModelsDir(rc, baseDir);
+  }
+
+  /**
+   * Failure text for a profile whose model file is not on disk.
+   *
+   * <p>Names a remedy that exists (the tempdoc 804 §B2 rule): the compact bundle is a dev-only
+   * package excluded from user install plans, so "Run Install AI" would send the reader somewhere
+   * that will never fetch it. The fetch script is the only thing that puts that file on disk.
+   */
+  private static String missingProfileModelMessage(ChatModelProfile profile, Path resolved) {
+    String remedy =
+        profile == ChatModelProfile.COMPACT
+            ? " Run `node scripts/dev/fetch-compact-model.mjs` to download it."
+            : " Run Install AI to download it.";
+    return "Chat profile '" + profile.id() + "' model does not exist: " + resolved + "." + remedy;
+  }
+
+  /**
+   * Applies a profile as one atomic (model, mmproj, profile-id) unit.
+   *
+   * <p>Deliberately NOT {@link #applyRuntimeOverridesBestEffort}: that routes through the bare-path
+   * {@code applyRuntimeOverrides}, which clears the profile claim and nulls the projector — the
+   * exact defect (dev stacks running silently text-only) tempdoc 842 §2.3 exists to fix. A control
+   * surface that cannot apply pairs throws {@link UnsupportedOperationException} rather than
+   * half-applying, and that propagates into the rollback bracket.
+   */
+  private void applyChatProfileOrThrow(ChatModelProfile profile) {
+    OnlineAiService onlineAi = this.onlineAi;
+    if (!(onlineAi instanceof OnlineAiRuntimeControl control)) {
+      // Same graceful degradation as applyRuntimeOverridesBestEffort: no control surface means
+      // there is no engine to switch, and activation of the GPU variant still succeeded.
+      return;
+    }
+    try {
+      control.applyChatProfile(profile, OnlineAiRuntimeControl.RestartPolicy.RESTART_ALWAYS);
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to apply chat profile '" + profile.id() + "'", e);
+    }
+  }
+
+  /**
+   * Restores the chat-profile sysprop to its pre-activation state. Absent stays absent: a rollback
+   * that wrote "" would leave a blank claim behind that no writer ever creates.
+   */
+  private static void restoreChatProfileProp(String previous) {
+    if (previous == null) {
+      System.clearProperty(CHAT_PROFILE_SYS_PROP);
+    } else {
+      System.setProperty(CHAT_PROFILE_SYS_PROP, previous);
+    }
+  }
+
   private void applyRuntimeOverridesBestEffort(UiSettings settings) {
     OnlineAiService onlineAi = this.onlineAi;
     if (!(onlineAi instanceof OnlineAiRuntimeControl control)) {
@@ -930,6 +1133,10 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
   }
 
   private SelfTestResult runSelfTest(Path exe, Path model, UiSettings settings) {
+    var override = this.selfTestOverrideForTest;
+    if (override != null) {
+      return override.apply(exe, model);
+    }
     // Require NVML for self-test gating (v3 safety posture).
     GpuCapabilities snap = gpuCapabilitiesService.snapshot();
     if (snap == null || snap.nvml() == null || !snap.nvml().available()) {
@@ -1568,7 +1775,7 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
     return m;
   }
 
-  private record SelfTestResult(
+  record SelfTestResult(
       String result,
       Integer port,
       Long vramBefore,

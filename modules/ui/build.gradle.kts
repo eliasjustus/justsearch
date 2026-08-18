@@ -2022,6 +2022,7 @@ val HEADLESS_AI_ENV_VARS = listOf(
     "JUSTSEARCH_AI_AUTOSTART_ENABLED",  // 369: eval LLM autostart
     "JUSTSEARCH_AI_AUTOSTART_DISABLED", // 369: eval LLM autostart
     "JUSTSEARCH_CONTEXT_SIZE",          // 366: LLM context window for eval
+    "JUSTSEARCH_CHAT_PROFILE",          // 842: chat model profile (standard|compact)
     // Tempdoc 410 §13 / Slice B (operator-configurable IngestionSkipPolicy).
     // Production env-inheritance works naturally; eval mode needs explicit
     // forwarding because applyHeadlessEvalContract whitelist-filters env vars.

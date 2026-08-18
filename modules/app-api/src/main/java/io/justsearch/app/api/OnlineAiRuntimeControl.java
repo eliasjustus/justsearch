@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.api;
 
+import io.justsearch.configuration.model.ChatModelProfile;
+
 /**
  * Operator/runtime control surface for the Online AI runtime.
  *
@@ -60,6 +62,40 @@ public interface OnlineAiRuntimeControl {
       Integer gpuLayers,
       RestartPolicy restartPolicy) {
     applyRuntimeOverrides(llmModelPath, contextLength, gpuLayers, restartPolicy);
+  }
+
+  /**
+   * Applies a chat model profile — the profile-driven counterpart of
+   * {@link #applyRuntimeOverrides(String, Integer, Integer, RestartPolicy)} (tempdoc 842 §2.3).
+   *
+   * <p>Both methods change which model llama-server loads, and the difference between them is the
+   * whole point:
+   *
+   * <ul>
+   *   <li>{@code applyRuntimeOverrides} takes a <b>bare path</b>. A bare path genuinely has no
+   *       known projector, so that call stays defensive and drops the mmproj — which is correct
+   *       there, and is exactly why dev stacks ran silently text-only when it was used for
+   *       everything.
+   *   <li>{@code applyChatProfile} takes a <b>named bundle</b>. Model, projector, and profile id
+   *       are applied together as one unit, so a half-swap (new model, stale or dropped projector)
+   *       is unrepresentable and vision survives the switch.
+   * </ul>
+   *
+   * <p>Everything the profile does not name — context size, GPU layers, port, server executable —
+   * is carried over from the running configuration untouched. If the profile's projector file is
+   * missing on disk the runtime warns and starts text-only rather than failing the switch;
+   * llama-server refuses to start on a projector path that does not resolve.
+   *
+   * @param profile the profile to apply; must not be null
+   * @param restartPolicy restart behavior, as for {@link #applyRuntimeOverrides}
+   * @throws UnsupportedOperationException if this control surface cannot apply profiles
+   */
+  default void applyChatProfile(ChatModelProfile profile, RestartPolicy restartPolicy) {
+    // Deliberately NOT a fallback onto applyRuntimeOverrides(profile.modelFile(), ...): that would
+    // re-enter the bare-path branch, silently drop the projector, and reintroduce the exact defect
+    // this method exists to fix. An implementation that cannot apply pairs must say so.
+    throw new UnsupportedOperationException(
+        "applyChatProfile is not supported by " + getClass().getName());
   }
 
   /**

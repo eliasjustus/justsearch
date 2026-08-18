@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.services.bootstrap.phases;
 
+import io.justsearch.app.api.inference.RealizedChatIdentity;
 import io.justsearch.app.api.status.InferenceFailureView;
 import io.justsearch.app.api.status.InferenceRuntimeView;
 import io.justsearch.app.api.status.LifecycleCounters;
@@ -23,6 +24,9 @@ import io.justsearch.app.services.runtimestate.RuntimeStatus;
  *   <li>{@link #projectInferenceSnapshot} — typed projection of
  *       {@link InferenceLifecycleManager} into {@link InferenceRuntimeView} for status
  *       endpoints. OFFLINE/unavailable view when manager is null.
+ *   <li>{@link #projectRealizedChatIdentity} — typed projection of the RUNNING engine's chat
+ *       identity into {@link RealizedChatIdentity} for the manifest + runtime-status honesty
+ *       surfaces (tempdoc 842 §2.5). Null when no engine is up.
  *   <li>{@link #renderConditionContext} — natural-language render of the current
  *       condition-recovery snapshot, used by AgentLoopService at prompt-construction time.
  * </ul>
@@ -30,6 +34,30 @@ import io.justsearch.app.services.runtimestate.RuntimeStatus;
 public final class BootstrapProjections {
 
   private BootstrapProjections() {}
+
+  /**
+   * Tempdoc 842 §2.5: projects the chat identity the engine is <em>actually</em> running.
+   *
+   * <p>The one authority is {@code InferenceLifecycleManager.currentConfig()} — the config a live
+   * llama-server was started with, carrying its chat-profile claim, its model file and whether a
+   * projector is attached. Settings, system properties and the install contract are all
+   * <em>declared</em> state and are deliberately not consulted here; the whole point of the
+   * projection is that it can disagree with them.
+   *
+   * <p>Returns {@code null} — not a stale last-known value — when there is no manager, no config,
+   * or the engine is not online. An offline engine has no realized identity, and reporting the
+   * last one it had is exactly the lie 805 was written about.
+   */
+  public static RealizedChatIdentity projectRealizedChatIdentity(InferenceLifecycleManager mgr) {
+    if (mgr == null || !mgr.isOnline()) {
+      return null;
+    }
+    var cfg = mgr.currentConfig();
+    if (cfg == null) {
+      return null;
+    }
+    return RealizedChatIdentity.of(cfg.chatProfileId(), cfg.modelPath(), cfg.mmprojPath());
+  }
 
   /**
    * Tempdoc 412 Phase 3: projects the {@link InferenceLifecycleManager}'s typed accessor surface

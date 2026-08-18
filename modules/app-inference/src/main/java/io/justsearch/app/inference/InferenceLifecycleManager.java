@@ -911,7 +911,10 @@ public class InferenceLifecycleManager
                       newPort,
                       oldConfig.contextSize(),
                       oldConfig.gpuLayers(),
-                      oldConfig.vduMode());
+                      oldConfig.vduMode(),
+                      // Port-only change: the (model, mmproj) pair is identical, so the profile
+                      // claim carries. Dropping it here would make a detach look like a model swap.
+                      oldConfig.chatProfileId());
               next.validate();
 
               serverOps.setUsingExternal(false);

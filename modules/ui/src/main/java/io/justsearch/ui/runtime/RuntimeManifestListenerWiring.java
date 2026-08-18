@@ -97,6 +97,10 @@ public final class RuntimeManifestListenerWiring {
                 bootstrap.actualLlamaServerBuild(),
                 bootstrap.llamaServerThinkingSupport());
             publisher.publishMode(modeIntent, realizedMode(workCap, infCap));
+            // Tempdoc 842 §2.5: the realized chat identity rides the SAME listener that keeps
+            // `mode` fresh. Every engine start, stop and profile switch is an inference transition,
+            // so the block appears, updates and clears with the engine it describes.
+            publisher.publishChat(bootstrap.realizedChatIdentity());
           } catch (Exception e) {
             log.warn("Runtime manifest publishAi (listener) failed (non-fatal)", e);
           }
@@ -171,6 +175,16 @@ public final class RuntimeManifestListenerWiring {
       publisher.publishMode(modeIntent, realizedMode(workCap, infCap));
     } catch (Exception e) {
       log.warn("Runtime manifest initial-mode publish failed (non-fatal)", e);
+    }
+
+    // Initial chat publish (tempdoc 842 §2.5). Almost always a no-op at boot — the engine is not
+    // online yet, so the projection is null and publishChat short-circuits — but it makes the
+    // adopted-engine case (a stack that inherits an already-running llama-server) carry its
+    // identity without waiting for the next transition.
+    try {
+      publisher.publishChat(bootstrap.realizedChatIdentity());
+    } catch (Exception e) {
+      log.warn("Runtime manifest initial-chat publish failed (non-fatal)", e);
     }
   }
 

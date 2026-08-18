@@ -3,14 +3,14 @@
   "unit": "bytes",
   "$comment": "Always-loaded agent-doc budget RATCHET (tempdoc 620 Move 3). Every session loads CLAUDE.md + .claude/rules/*.md unconditionally; this caps that context. Each file's size must stay <= its ceiling, and the ceiling only ratchets DOWN: run `node scripts/ci/check-always-loaded-budget.mjs --rebalance` after content migrates out (Moves 1/2: generation, the consult-register, skill/doc relocation) to shrink the ceiling to the new size. A net-new always-loaded addition that regrows a file past its ceiling fails the check — UNLESS the growth is justified and declared via `node scripts/ci/check-always-loaded-budget.mjs --bump <file> --reason \"<why>\"`, which raises that ceiling to current size and records the reason in `bumps` (tempdoc 618 §13: an explicit, auditable raise, not silent ceiling surgery). ~tokens = bytes/4. Wiring: WIRED into .github/workflows/ci.yml (public-claims job) as of tempdoc 799 — before that it ran nowhere and the set drifted 18.5% past ceiling across four sessions that each logged it red. Kept as a CI lint rather than a kernel gate per 582 R3 (extend the proven meta-gate, do NOT author a new kernel gate).",
   "ceilings": {
-    "CLAUDE.md": 22221,
+    "CLAUDE.md": 22364,
     ".claude/rules/agent-lessons.md": 9247,
     ".claude/rules/branch-safety.md": 13193,
     ".claude/rules/context-efficiency.md": 1934,
     ".claude/rules/hooks-reference.md": 2836,
     ".claude/rules/slice-execution.md": 4667
   },
-  "totalCeiling": 54098,
+  "totalCeiling": 54241,
   "bumps": [
     {
       "file": "CLAUDE.md",
@@ -123,6 +123,13 @@
       "to": 2942,
       "reason": "799 L.2: 202 B over — migration overhead exceeds the saving, and the file is already the minimal fire-time-delivery pointer (681 removed its per-hook catalog). Declared growth.",
       "ts": "2026-07-30T19:34:36.935Z"
+    },
+    {
+      "file": "CLAUDE.md",
+      "from": 22221,
+      "to": 22364,
+      "reason": "tempdoc 842: chat-model-profile amendment to rule:use-every-verification-tier (compact vs standard verification tiers); paragraph compressed -100B first, residual growth declared",
+      "ts": "2026-08-18T16:20:29.173Z"
     }
   ]
 }

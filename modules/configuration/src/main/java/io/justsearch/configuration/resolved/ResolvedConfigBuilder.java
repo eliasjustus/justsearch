@@ -1034,6 +1034,7 @@ public final class ResolvedConfigBuilder {
         resolveInt("justsearch.context.size", 8192),
         resolveString("justsearch.vlm.model", ""),
         resolveString("justsearch.mmproj.model", ""),
+        resolveString("justsearch.chat.profile", "standard"),
         resolveBoolean("justsearch.llm.use_thinking", true),
         resolveReasoningBudget(),
         resolveString("justsearch.onnxruntime.variantId", ""),

@@ -336,6 +336,74 @@ class InstallPlannerTest {
         "a requiresCuda=false RUNTIME package must download even without CUDA");
   }
 
+  @Test
+  void devOnlyPackage_isNeverPlanned_forAnyHardwareOrIntent() {
+    // Tempdoc 842: chat-compact exists for dev stacks only. The skip is unconditional — no intent
+    // wants it and no hardware permits it — so a devOnly package must be absent from the downloads
+    // of every (hardware × intent) combination, and present in skipped() with a reason naming why.
+    ModelRegistry registry = registryWithDevOnlyChat();
+
+    for (HardwareProfile hw :
+        List.of(
+            HardwareProfile.gpuFull(12_000_000_000L),
+            new HardwareProfile(true, true, 6_000_000_000L),
+            HardwareProfile.cpuOnly())) {
+      for (InstallIntent intent : InstallIntent.values()) {
+        InstallPlan plan = InstallPlanner.plan(registry, hw, intent, tempDir, tempDir);
+        String where = hw.downloadProfile() + "/" + intent.id();
+        assertTrue(
+            plan.downloads().stream().noneMatch(d -> d.packageId().equals("chat-compact")),
+            "devOnly package must never be downloaded (" + where + ")");
+        assertTrue(
+            plan.skipped().stream()
+                .anyMatch(
+                    sk ->
+                        sk.packageId().equals("chat-compact")
+                            && sk.reason().contains("development-only")),
+            "devOnly skip must be recorded with a naming reason (" + where + ")");
+        assertFalse(
+            plan.alreadyInstalled().contains("chat-compact"),
+            "a skipped devOnly package is not 'already installed' (" + where + ")");
+        assertFalse(
+            InstallPlanner.isIncludedByPlan(registry.findPackage("chat-compact"), intent, hw),
+            "isIncludedByPlan must agree with the planner loop (" + where + ")");
+      }
+    }
+  }
+
+  @Test
+  void devOnlyPackage_contributesNoBytes_soConsentTotalsAreUnaffected() {
+    // The devOnly skip must happen before any byte accounting: a user consenting to the plan must
+    // never see the dev model's size in the total, even on the most capable hardware.
+    HardwareProfile hw = HardwareProfile.gpuFull(12_000_000_000L);
+
+    InstallPlan withoutDevOnly = InstallPlanner.plan(registryWithTiers(), hw, tempDir);
+    InstallPlan withDevOnly = InstallPlanner.plan(registryWithDevOnlyChat(), hw, tempDir);
+
+    assertEquals(withoutDevOnly.totalBytes(), withDevOnly.totalBytes());
+    assertEquals(withoutDevOnly.downloads().size(), withDevOnly.downloads().size());
+  }
+
+  /**
+   * {@link #registryWithTiers()} plus a devOnly LLM-tier package — the shape of the real
+   * {@code chat-compact} entry (tempdoc 842): wanted by tier, permitted by hardware, and still
+   * never planned.
+   */
+  private ModelRegistry registryWithDevOnlyChat() {
+    ModelPackage chatCompact = new ModelPackage(
+        "chat-compact", "Chat model (compact)", "Dev-only small chat model", "compact",
+        List.of(
+            new ModelVariant("compact.gguf", ModelPrecision.GGUF, ExecutionProvider.LLAMA_SERVER,
+                "HHHH", 2_700_000_000L, "https://example.com/compact-gguf")),
+        List.of(
+            new SupportingFile(
+                "compact-mmproj.gguf", "IIII", 670_000_000L, "https://example.com/compact-mmproj")),
+        0, null, null, null, CapabilityTier.LLM, false, true);
+    List<ModelPackage> packages = new java.util.ArrayList<>(registryWithTiers().packages());
+    packages.add(chatCompact);
+    return new ModelRegistry(2, "test registry", packages);
+  }
+
   /**
    * A registry carrying a hypothetical hardware-independent RUNTIME-tier package (tempdoc 772 Q3):
    * RUNTIME tier but {@code requiresCuda=false}, so the planner's CUDA gate never skips it. Does not

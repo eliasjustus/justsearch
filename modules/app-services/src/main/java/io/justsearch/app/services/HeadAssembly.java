@@ -952,6 +952,19 @@ public final class HeadAssembly implements AutoCloseable {
     return this.inferenceManager == null ? null : this.inferenceManager.llamaServerThinkingSupport();
   }
 
+  /**
+   * Tempdoc 842 §2.5: the chat identity the engine is <em>actually</em> running — profile claim,
+   * loaded model file, projector attached — or {@code null} when no engine is up.
+   *
+   * <p>Same projection the runtime-status endpoint publishes ({@code
+   * BootstrapProjections.projectRealizedChatIdentity}), so the manifest and {@code
+   * /api/ai/runtime/status} cannot disagree about which model this stack is talking to.
+   */
+  public io.justsearch.app.api.inference.RealizedChatIdentity realizedChatIdentity() {
+    return io.justsearch.app.services.bootstrap.phases.BootstrapProjections
+        .projectRealizedChatIdentity(this.inferenceManager);
+  }
+
   /** F6: rebuild the held ServiceGraph. Reads prior services from the existing held graph. */
   private io.justsearch.app.api.ServiceGraph rebuildServiceGraph() {
     return assembleServiceGraph(

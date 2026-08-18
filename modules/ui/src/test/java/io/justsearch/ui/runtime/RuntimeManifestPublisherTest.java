@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -307,5 +308,83 @@ class RuntimeManifestPublisherTest {
         publisher.current().worker(),
         "worker must remain unset because the failed publishWorkerReady did not commit");
     assertNull(notified.get(), "listener must not fire on a failed write");
+  }
+
+  // ------------------------------------------------- tempdoc 842 §2.5 realized chat identity
+
+  @Test
+  void publishChatProjectsRealizedIdentityAndClearsItWhenTheEngineGoesDown(@TempDir Path tmp)
+      throws IOException {
+    RuntimeManifestPublisher publisher = new RuntimeManifestPublisher(tmp);
+    publisher.publishHead(54321, null);
+    assertNull(publisher.current().chat(), "no chat block before the first publish");
+
+    RuntimeManifest up =
+        publisher.publishChat(
+            io.justsearch.app.api.inference.RealizedChatIdentity.of(
+                "compact",
+                tmp.resolve("models").resolve("compact").resolve("Qwen3.5-4B-Q4_K_M.gguf"),
+                tmp.resolve("models").resolve("compact").resolve("mmproj-F16.gguf")));
+
+    assertNotNull(up.chat());
+    assertEquals("compact", up.chat().profileId());
+    assertEquals(
+        "Qwen3.5-4B-Q4_K_M.gguf",
+        up.chat().modelFile(),
+        "the manifest carries a bare file name, never the directory layout");
+    assertEquals(Boolean.TRUE, up.chat().mmprojActive());
+    assertEquals(54321, up.head().apiPort(), "publishing chat must not disturb the head block");
+
+    // Engine goes down: the block must be CLEARED. A stale "compact, vision on" standing over a
+    // dead engine is the exact declared-vs-realized lie this block exists to prevent.
+    RuntimeManifest down = publisher.publishChat(null);
+    assertNull(down.chat(), "a downed engine has no realized identity");
+  }
+
+  @Test
+  void publishChatIsANoOpWhenTheIdentityIsUnchanged(@TempDir Path tmp) throws IOException {
+    RuntimeManifestPublisher publisher = new RuntimeManifestPublisher(tmp);
+    publisher.publishHead(54321, null);
+    var identity =
+        io.justsearch.app.api.inference.RealizedChatIdentity.of(
+            "standard", tmp.resolve("Qwen_Qwen3.5-9B-Q4_K_M.gguf"), tmp.resolve("mmproj-F16.gguf"));
+
+    RuntimeManifest first = publisher.publishChat(identity);
+    AtomicReference<RuntimeManifest> seen = new AtomicReference<>();
+    publisher.addListener(seen::set);
+    RuntimeManifest second = publisher.publishChat(identity);
+
+    assertSame(first, second, "an unchanged identity must not rewrite the manifest");
+    assertNull(seen.get(), "an unchanged identity must not notify listeners");
+  }
+
+  @Test
+  void publishChatReportsADroppedProjectorRatherThanOmittingIt(@TempDir Path tmp)
+      throws IOException {
+    RuntimeManifestPublisher publisher = new RuntimeManifestPublisher(tmp);
+    publisher.publishHead(54321, null);
+
+    RuntimeManifest m =
+        publisher.publishChat(
+            io.justsearch.app.api.inference.RealizedChatIdentity.of(
+                null, tmp.resolve("bare-operator-model.gguf"), null));
+
+    assertNotNull(m.chat(), "an engine IS up, so there is a realized identity to report");
+    assertEquals(Boolean.FALSE, m.chat().mmprojActive(), "the dropped projector must be visible");
+    assertNull(
+        m.chat().profileId(),
+        "a bare path carries no profile claim, and null must not be filled in with the default");
+  }
+
+  @Test
+  void publishChatBeforePublishHeadThrows(@TempDir Path tmp) {
+    RuntimeManifestPublisher publisher = new RuntimeManifestPublisher(tmp);
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            publisher.publishChat(
+                io.justsearch.app.api.inference.RealizedChatIdentity.of(
+                    "compact", tmp.resolve("m.gguf"), null)),
+        "same ordering contract every other publish* method has");
   }
 }

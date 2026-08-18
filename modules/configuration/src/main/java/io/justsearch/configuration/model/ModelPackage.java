@@ -38,6 +38,10 @@ import java.util.List;
  *     hardware-eligible package); false (default) means this package's hardware-eligibility is
  *     governed by tier/VRAM only. Added for RUNTIME-tier packages that may need to be
  *     hardware-independent (tempdoc 772 Q3).
+ * @param devOnly true if this package exists for development stacks only and is never part of a
+ *     user install plan (tempdoc 842) — unconditional, independent of intent, tier and hardware.
+ *     Dev tooling fetches it directly from the registry; false (default) is every user-facing
+ *     package, so registries predating the field are unchanged.
  */
 public record ModelPackage(
     String id,
@@ -51,7 +55,8 @@ public record ModelPackage(
     String installRoot,
     String license,
     CapabilityTier tier,
-    boolean requiresCuda) {
+    boolean requiresCuda,
+    boolean devOnly) {
 
   /** Compact constructor — normalize nulls to empty lists. */
   public ModelPackage {
@@ -124,7 +129,29 @@ public record ModelPackage(
       CapabilityTier tier) {
     this(
         id, label, description, targetDir, variants, supportingFiles, minVramBytes, termsUrl,
-        installRoot, license, tier, false);
+        installRoot, license, tier, false, false);
+  }
+
+  /**
+   * Backwards-compat constructor — no devOnly (predates tempdoc 842's dev-only exclusion flag);
+   * defaults to false, so every existing caller keeps producing a user-installable package.
+   */
+  public ModelPackage(
+      String id,
+      String label,
+      String description,
+      String targetDir,
+      List<ModelVariant> variants,
+      List<SupportingFile> supportingFiles,
+      long minVramBytes,
+      String termsUrl,
+      String installRoot,
+      String license,
+      CapabilityTier tier,
+      boolean requiresCuda) {
+    this(
+        id, label, description, targetDir, variants, supportingFiles, minVramBytes, termsUrl,
+        installRoot, license, tier, requiresCuda, false);
   }
 
   /** Returns true if this package requires a minimum VRAM threshold to be useful. */

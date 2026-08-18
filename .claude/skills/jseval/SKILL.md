@@ -26,6 +26,15 @@ keep it there.
   (cross-model generalization + an accuracy claim) is gated on budget *and* a contamination-resistant corpus
   (tempdoc 635). Lead with token-efficiency — it is contamination-robust and already significant at floor scale.
 
+**`tier2-eval` quality runs must be attributable to a real chat model (tempdoc 842).** It records the local
+LLM's `served_model` and hard-errors if that model is a compact dev-tier profile, so a poisoned baseline
+can't happen by accident. Pass `--allow-compact-model` only for plumbing/smoke runs whose numbers you do
+NOT intend to compare against standard-model baselines — activate the standard profile
+(`ai_activate {chatProfile:"standard"}`) for any quality-sensitive tier-2 run instead.
+Note: an ambient `JUSTSEARCH_CHAT_PROFILE` in your shell reaches `runHeadlessEval`
+backends through the env whitelist — leave it unset for quality campaigns (the
+served-model guard is the backstop, not the primary control).
+
 <!-- generated:start — do not edit between markers; run: node scripts/docs/skills-sync.mjs -->
 
 <!-- source: docs/reference/jseval-pipeline-reference.md -->
