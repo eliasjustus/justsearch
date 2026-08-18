@@ -1724,3 +1724,158 @@ but any `observerCount`/lifecycle assertion run direct (P4).
    S3b's scope, but if any run stream is ever fanned in through it, the race returns for run
    traffic — where it is not self-correcting. Add a note at
    `MultiplexedSseWriter.java:99` if S3b does not close it.
+
+---
+
+## 16. Implementation log — S3b (run substrate, endpoints, hub deletion)
+
+Landed 2026-08-18 on `run-continuity-s3b`, based on `origin/main` at `6c422442`, with §14 and §15
+cherry-picked as the first two commits so the probe evidence rides the PR. Scope held to §15.1's
+five stages. Nothing from S4 or S5 is here: no `GET /api/chat/runs/live`, no `LiveRunsResponse`, no
+`ApiSecurityFilters` change, and `activeRunPointer` is still the FE's discovery authority (labelled,
+not retired — §15.3 stages that).
+
+### 16.1 As built
+
+| §15.1 stage | as built |
+|---|---|
+| 0 — close the S3a residual | `SseStreamChannel.java:60-68` — the generation-counter fallback paragraph replaced with D2's measured result; §13.2 residual 3 closed. `MultiplexedSseWriter.java:98-105` — §15.4 Q4's note, at the call site, saying why it must not be reused for a run stream |
+| 1 — the run substrate | new package `io.justsearch.app.observability.stream.run`: `RunId`, `RunDescriptor`, `RunFrame`, `RunStateSnapshot`, `ParkState`, `RunChannelPolicy`, sealed `RunChannel` + `SteppedRunChannel` / `OneShotRunChannel` (two impls over a shared `AbstractRunChannel`), `RunChannelRegistry`, `RunChannelCapacityExceededException`. `SseStreamChannel.listenerCount()` added as the observer-count authority |
+| 2 — `RunStreamWriter` | `modules/ui/.../RunStreamWriter.java`, sibling to `SseEnvelopeWriter`; the five §15.1.2 protocol requirements, each a test |
+| 3 — endpoints + wiring | `RunStreamController` + `RunRoutes` (`POST /api/chat/runs`, `POST /api/chat/runs/{runId}/observe`); `ChatController.runToSink` routes the three catch arms through the sink; `ConversationApiAssembly` owns the ONE `RunChannelRegistry` |
+| 4 — hub deletion sweep | `RunEventHub.java` + `RunEventHubTest.java` deleted; the `RunObservation` SPI (app-agent-api) + `RunChannelObservation` (app-observability) replace them; the map-input `AgUiEventTranslator` overload + its equivalence gate |
+
+**Sweep completion.** `grep -rn RunEventHub` over the tree returns only *labelled* mentions: two in
+the replacements' javadoc saying what they replaced, one in `SseStreamChannelAtomicSubscribeTest`
+naming the law it inherited. Every live reference (`AgentSession`, `AgentSessionRegistry`,
+`AgentLoopService`, `AgentService`, `AgentController`, `AgentSseWriter`, `SseWriter`,
+`activeRunPointer.ts`, `AgentSessionController.ts`) is gone or re-documented in channel terms.
+
+### 16.2 Where the build forced a shape §15 did not name
+
+1. **`RunObservation` — an SPI §15 did not ask for, and why it is not scope creep.** §1.3 says the
+   session "gains an injected `Consumer<AgentEvent>` publish sink" and an `IntSupplier`. Two JDK
+   types are not enough: a run also needs `observe`, `retire`, the snapshot supplier and the retire
+   hook, and putting the registry itself in `app-agent` would be the module edge §1.4 forbids. One
+   interface in `app-agent-api` (JDK + `AgentEvent` only) carries all of it, and the concrete
+   channel-backed implementation lives beside the channels.
+2. **The initiating observer is delivered to DIRECTLY, not through the channel.** `runAgent` hands
+   the caller typed `AgentEvent`s while the journal carries the wire projection (§1.3.2), so it
+   cannot be a channel listener without changing `runAgent`'s signature and rippling into
+   `ToolIteratingShapeRunner`. `AgentSession` therefore holds it and evicts it on a throw, and
+   `observerCount()` is `channel listeners + (initiator alive ? 1 : 0)`. The R4 property is
+   preserved exactly: a dead initiating socket still drops the count to 0 and still parks a WATCH
+   run — `AgentLoopServiceTest:713-780` passes unchanged in substance.
+3. **`RunObservation.NONE.observerCount()` is 0, not 1.** The first draft answered 1 ("no substrate
+   ⇒ unknown, don't park"). `AgentSessionBudgetTest` failed, and the test was right: with no
+   substrate there is no channel a second observer could ever attach to, so answering "someone is
+   watching" would let a WATCH run proceed UNSUPERVISED on a misconfigured wiring. Parking fails
+   loudly and recoverably; the other direction fails silently and unsafely.
+4. **`RunId.streamId()` derives its slug** as `"r-" + lowercase(value)`. §3.2 aliases an agent
+   `RunId` to its `sessionId`, which is a UUID — digit-initial roughly six times in ten — while
+   `StreamId` requires a letter-initial slug. One unconditional derivation, injective over the id
+   alphabet, rather than a branch or a mapping table.
+5. **`RunChannel.observe` returns `Optional<Subscription>`** where §1.5's sketch returned a bare
+   handle. §15.1.2's requirement 2 makes the window miss something the writer MUST see; a bare
+   handle would have hidden it.
+6. **Frame order: the primer precedes the replay in BOTH branches.** §15.1.2 puts the snapshot after
+   `replay_truncated`; §6.1 is the stronger statement (the primer is the one frame guaranteed to
+   arrive), and emitting it after a successful replay would put it behind thousands of narrative
+   frames on exactly the reattach that needs it first.
+7. **`app-agent`'s TEST suite gained `app-observability`.** Main code publishes through the SPI and
+   gains nothing; the attach and park tests drive the REAL substrate, because a double for
+   evict-on-throw + bounded replay would be a reimplementation of the mechanism they exist to pin.
+   The lockfile change is scoped to `modules/app-agent/gradle.lockfile`; `resolveAndLockAll` also
+   wanted to add an unrelated `dependencyAnalysisKotlinMetadataClasspath` line to all 33 lockfiles
+   (plugin drift already latent on `main`) — reverted, as it is not this slice's.
+
+### 16.3 One sweep row deliberately not executed, with the reason
+
+§7-S3b's table says `AgentSseWriter`'s `writeOrEvict` / `evictIfGone` / `SseObserverGoneException`
+are "obsolete once `onClose` owns disconnect". That holds for the run-stream family, which runs on a
+MANAGED `SseClient`. It does not hold for the raw `Context`-based attach routes (`/api/chat/agent`,
+`/api/chat/agent/{id}/attach`, `/ag-ui`, resume, fork), which §1.6 keeps during migration and which
+have no `onClose` at all: for them a failed write is the ONLY disconnect signal, so deleting the
+throw would silently make their `observerCount` permanently non-zero and a WATCH run would proceed
+unwatched — the exact safety goal §2.14 Root I exists to meet. The seam and
+`AgentControllerSseEvictionTest` are kept and re-documented to say when they retire (with those
+routes, in S5). Deleting a guard whose consumer still exists is not a sweep.
+
+The `id:` line those same routes emit IS now unconsumed — §1.6 retired `Last-Event-ID` and
+`AgentController.parseLastEventId` is gone, replaced by `parseSinceSeq`. Labelled at
+`AgentSseWriter.writeOrEvict` rather than removed, because it is part of those routes' existing wire
+and they retire as a unit.
+
+### 16.4 Verification
+
+- `./gradlew.bat spotlessApply` then `build -x test -PskipWebBuild=true` — **BUILD SUCCESSFUL**.
+- `./gradlew.bat test -PskipWebBuild=true` — **BUILD SUCCESSFUL; 1336 suites / 7822 tests / 26
+  skipped / 0 failures**.
+- The four named conformance tests are green, including the two new equivalence cases on
+  `AgUiEventTranslatorConformanceTest`. No sealed-permit count changed: `run_started`,
+  `replay_truncated` and `heartbeat` are LIFECYCLE frames, not `AgentEvent` permits (§3.2), so the
+  7+ site cascade never fires.
+- New tests: `RunChannelRegistryTest` (16), `RunChannelPolicyTest` (8), `RunStreamWriterTest` (12),
+  `RunStreamControllerTest` (12), plus 5 run-stream cases on `streams.test.ts`.
+- FE: `npm run typecheck` clean; `npm run test:unit:run` — **422 files / 5195 tests passed**.
+- Governance kernel: 35 gates, **5 fail / 70 findings** — `npm-audit`, `ts-any`, `dead-code`,
+  `contract-projection`, `config-surface`, all pre-existing and none naming a file from this slice
+  (S3a recorded the same set plus `module-deps`, which fails only for a missing preflight input;
+  generating it makes it pass). `wire`: pass — no contract touched.
+- ui-web gate set: all pass except the two known-RED-on-main (`theme-token-closure`,
+  `accent-as-text`) and `check-controls-a11y`, which is RED on `main` for a `UnifiedChatView.ts:2143`
+  finding this branch does not touch and which is NOT in `expected-state.v1.json`'s known-red list —
+  logged to the inbox.
+
+**Mutation probes** (each applied, run, restored, re-verified green):
+
+1. *Swallow the window miss* — `RunStreamWriter.subscribeFrom` returns `resumed.orElse(() -> {})`
+   instead of announcing + re-subscribing. `req 2` failed with
+   `expected: <[run_started, replay_truncated, chunk]> but was: <[run_started]>` — i.e. the client
+   held a permanently DEAD stream, which is precisely the failure mode the requirement names.
+2. *Drop a primer component* — `session.pendingApprovals()` → `List.of()` in the snapshot supplier.
+   `attachToRun_replaysHistoryThenStreamsToASecondObserverUntilTerminal` failed on "the held gate is
+   ACTIONABLE from the primer alone". This is the guard §15.1.4 asks for: dropping the S1 fields on
+   the way through the channel would silently undo S1, and nothing else in the suite notices.
+3. *Break the AG-UI rename* — `translateFromMap` reads `body.get("message")` instead of
+   `body.get("output")` for `TOOL_CALL_RESULT`. BOTH equivalence cases failed on
+   `ToolExecutionCompleted`. §6.5 calls this gate "the whole mitigation" for a second hand-written
+   switch; the probe shows it bites.
+
+### 16.5 Live legs — PENDING, DIRECT TOPOLOGY ONLY (P4)
+
+No dev stack was taken. Per §15.0's second qualification, every lifecycle leg below must run
+**against the API port, not through `npm run dev`**: probe D1(c) measured `onClose` NEVER firing
+through the Vite proxy (471 s and still counting), so a green result there is meaningless.
+
+1. **Park detection via heartbeat.** Start a WATCH agent run; kill the observing client without a
+   clean close; assert `observerCount` reaches 0 and the run narrates `run_unobserved_parked` within
+   ONE heartbeat interval (15 s), not instantly — D1(b) bounds detection by the stream's own write
+   cadence.
+2. **Reattach replay.** `POST /api/chat/runs` with an ask; mid-answer, `POST` to
+   `/api/chat/runs/{runId}/observe` from a second client; assert it receives `run_started`, then the
+   full replay, then the same live tail as the first — and that the first is unaffected.
+3. **Observer count.** With two observers attached, close one; assert the count drops by exactly one
+   within a heartbeat interval and the run continues.
+4. **`run_started` first.** Assert the first frame on both routes carries
+   `{runId, shapeId, conversationId}` and that no `id:` line appears anywhere on the stream.
+5. **Retired 404.** Let a run finish, wait past the 60 s linger, then observe it; assert
+   `404 {reason: "retired", recordHint: "/api/chat/conversations/…"}` — not a 200 with an empty
+   stream.
+6. **Ask survival, live.** Start an ask, kill the client immediately, then read the conversation
+   transcript; assert the assistant message persisted in full.
+
+Also still pending from §13.4: the browser-`EventSource` reconnect leg for the 18 envelope routes.
+And P2 was still not run, so `FRAME_OVERHEAD_BYTES = 200` and both §2 budgets remain provisional.
+
+### 16.6 Residuals
+
+1. **`AgentSessionRegistry.attachToRun` registers an `onRetire` latch per attach and never
+   unregisters it.** Bounded by attaches-per-run and cleared at retirement; on a desktop deployment
+   with 0–1 concurrent sessions it is not reachable. Named rather than engineered away.
+2. **`RunChannel.park()` is refreshed when the snapshot is taken**, not on a separate push, because
+   taking the snapshot is the one moment fresh session state is in hand. S4's enumeration reads the
+   snapshot anyway; a consumer that reads `park()` alone would see the last-taken value.
+3. **The 32-channel cap is per-registry and there is one registry**, so an agent run and a
+   conversational run share the budget. §2's cap is generous by two orders of magnitude against the
+   observed 0–1 concurrency, so this is a note, not a risk.

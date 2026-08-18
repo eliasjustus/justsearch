@@ -194,3 +194,117 @@ describe('consumeShapeStream', () => {
     }
   });
 });
+
+// Tempdoc 834 §1.6 / §2 — the run-stream half of the reader: the cursor grammar, the
+// truncation notice, and the typed 404.
+describe('consumeShapeStream — run streams (834 S3b)', () => {
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('sends the cursor as ?sinceSeq=, never as ?since=', async () => {
+    mockFetchSse(sseStream('event: done\ndata: {}\n\n'));
+
+    const { consumeShapeStream } = await import('./streams');
+    await consumeShapeStream(
+      'http://localhost/api/chat/runs/run-1/observe',
+      {},
+      () => {},
+      undefined,
+      { sinceSeq: 42 },
+    );
+
+    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const url = calls[0]![0];
+    expect(url).toBe('http://localhost/api/chat/runs/run-1/observe?sinceSeq=42');
+    // ?since= carries a ResumeTokenCodec token on the envelope family; reusing the name for a raw
+    // integer would be a silent grammar fork, and the backend refuses it outright.
+    expect(String(url)).not.toContain('?since=');
+    expect(String(url)).not.toContain('&since=');
+  });
+
+  it('omits the cursor entirely when it is absent or zero (replay from 0)', async () => {
+    mockFetchSse(sseStream('event: done\ndata: {}\n\n'));
+
+    const { consumeShapeStream } = await import('./streams');
+    await consumeShapeStream('http://localhost/api/chat/runs', {}, () => {}, undefined, {
+      sinceSeq: 0,
+    });
+
+    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const url = calls[0]![0];
+    expect(url).toBe('http://localhost/api/chat/runs');
+  });
+
+  it('delivers replay_truncated to the caller and keeps reading — it is not terminal', async () => {
+    mockFetchSse(
+      sseStream(
+        'event: replay_truncated\ndata: {"sinceSeq":5,"oldestRetainedSeq":40}\n\n',
+        'event: chunk\ndata: {"text":"rest of the window"}\n\n',
+        'event: done\ndata: {}\n\n',
+      ),
+    );
+
+    const { consumeShapeStream, REPLAY_TRUNCATED_EVENT } = await import('./streams');
+    const seen: Array<[string, unknown]> = [];
+    await consumeShapeStream('http://localhost/api/chat/runs/run-1/observe', {}, (event, payload) => {
+      seen.push([event, payload]);
+    });
+
+    expect(seen.map((e) => e[0])).toEqual([REPLAY_TRUNCATED_EVENT, 'chunk', 'done']);
+    expect(seen[0]![1]).toEqual({ sinceSeq: 5, oldestRetainedSeq: 40 });
+  });
+
+  it('surfaces the typed 404 body so "this run is over" is distinguishable from an error', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      body: null,
+      text: async () =>
+        JSON.stringify({
+          runId: 'run-gone',
+          reason: 'retired',
+          recordHint: '/api/chat/conversations/conv-42',
+        }),
+    } as unknown as Response);
+
+    const { consumeShapeStream } = await import('./streams');
+    try {
+      await consumeShapeStream('http://localhost/api/chat/runs/run-gone/observe', {}, () => {});
+      expect.fail('should have thrown');
+    } catch (e) {
+      const err = e as Error & { status?: number; runNotFound?: { reason: string; recordHint: string } };
+      expect(err.status).toBe(404);
+      expect(err.runNotFound?.reason).toBe('retired');
+      expect(err.runNotFound?.recordHint).toBe('/api/chat/conversations/conv-42');
+    }
+  });
+
+  it('leaves a non-typed 404 as a plain HTTP error', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      headers: new Headers(),
+      body: null,
+      text: async () => 'Not Found',
+    } as unknown as Response);
+
+    const { consumeShapeStream } = await import('./streams');
+    try {
+      await consumeShapeStream('http://localhost/api/chat/runs/x/observe', {}, () => {});
+      expect.fail('should have thrown');
+    } catch (e) {
+      const err = e as Error & { status?: number; runNotFound?: unknown };
+      expect(err.status).toBe(404);
+      expect(err.runNotFound).toBeUndefined();
+    }
+  });
+});

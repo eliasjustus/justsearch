@@ -162,10 +162,11 @@ final class AgentSessionBudgetTest {
   void zeroObserverPolicyParksWatchWithoutAWatcher() {
     var s = session(8192);
     s.setAutonomyLevel(io.justsearch.agent.api.registry.AutonomyLevel.WATCH);
-    // No observer subscribed to the hub yet ⇒ a Watch run must PARK (don't run unsupervised).
+    // No observer attached yet ⇒ a Watch run must PARK (don't run unsupervised).
     assertEquals(AgentSession.ZeroObserverPolicy.PARK, s.zeroObserverPolicy());
-    // An attached observer ⇒ PROCEED.
-    s.eventHub().subscribe(e -> {});
+    // An attached observer ⇒ PROCEED. Tempdoc 834 §1.3: the session-local hub is gone, so this is
+    // the initiating observer; a reattaching one is counted by the observation substrate instead.
+    s.attachInitiatingObserver(e -> {});
     assertEquals(AgentSession.ZeroObserverPolicy.PROCEED, s.zeroObserverPolicy());
   }
 

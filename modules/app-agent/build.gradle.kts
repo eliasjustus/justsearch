@@ -23,6 +23,12 @@ testing {
       useJUnitJupiter()
       dependencies {
         implementation(project())
+        // Tempdoc 834 §1.3 — TEST scope only. The run observation substrate lives in
+        // app-observability; main code here publishes through the RunObservation SPI and gains no
+        // dependency on it. The attach/park tests drive the REAL substrate rather than a test
+        // double, because a double for evict-on-throw + bounded replay would be a reimplementation
+        // of the very mechanism they exist to pin (`static-green != live-working`).
+        implementation(project(":modules:app-observability"))
         implementation(testFixtures(project(":modules:configuration")))
         implementation(testFixtures(project(":modules:telemetry")))
         implementation(platform(libs.junit.bom))

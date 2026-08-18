@@ -26,9 +26,10 @@ import org.junit.jupiter.api.Timeout;
 /**
  * Tempdoc 834 S3a — the atomic subscribe-and-replay contract on the RESUME path.
  *
- * <p>The property under test is {@code RunEventHub}'s stated law, hoisted onto the shared
- * substrate: a frame published while a client is attaching reaches it <em>either</em> via
- * the replay <em>or</em> via the live fan-out — never both, never neither.
+ * <p>The property under test is the law the deleted per-run event hub used to state, hoisted onto
+ * the shared substrate (S3b retired that hub entirely): a frame published while a client is
+ * attaching reaches it <em>either</em> via the replay <em>or</em> via the live fan-out — never
+ * both, never neither.
  */
 @DisplayName("SseStreamChannel — atomic subscribe-and-replay (834 S3a)")
 final class SseStreamChannelAtomicSubscribeTest {
