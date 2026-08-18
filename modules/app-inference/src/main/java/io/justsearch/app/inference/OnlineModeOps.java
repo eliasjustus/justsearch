@@ -69,12 +69,42 @@ final class OnlineModeOps {
   // Package-private for test override (avoids 2-minute waits in unit tests).
   Duration visionLockDeadline = HTTP_TIMEOUT;
 
+  /**
+   * Idle read deadline for a streaming response body. {@code HTTP_TIMEOUT} on the request bounds
+   * only header arrival; without this, a server that answers 200 and then goes silent parks the
+   * single streaming thread — and the online-request lock — indefinitely. Package-private for test
+   * override.
+   */
+  Duration streamIdleDeadline = HTTP_TIMEOUT;
+
   // Priority queue for Online Mode (Chat > VDU)
   private final ReentrantLock onlineRequestLock = new ReentrantLock();
   private final ExecutorService vduExecutor =
       Executors.newSingleThreadExecutor(
           r -> {
             Thread t = new Thread(r, "VDU-Background");
+            t.setDaemon(true);
+            return t;
+          });
+
+  /**
+   * Consumer callbacks run here, off the online-request lock, one thread per in-flight stream (see
+   * {@link StreamCallbackPump}). A blocked consumer therefore delays only its own stream instead of
+   * every inference request in the process.
+   */
+  private final ExecutorService callbackExecutor =
+      Executors.newCachedThreadPool(
+          r -> {
+            Thread t = new Thread(r, "VDU-Callbacks");
+            t.setDaemon(true);
+            return t;
+          });
+
+  /** Ticks the per-stream {@link StreamIdleWatchdog}s. */
+  private final java.util.concurrent.ScheduledExecutorService streamWatchdogScheduler =
+      Executors.newSingleThreadScheduledExecutor(
+          r -> {
+            Thread t = new Thread(r, "VDU-StreamWatchdog");
             t.setDaemon(true);
             return t;
           });
@@ -364,6 +394,17 @@ final class OnlineModeOps {
     var unused =
         CompletableFuture.runAsync(
             () -> {
+              // The lock covers the llama-server exchange only; consumer callbacks are pumped off
+              // it, and the body read carries an idle deadline so it can never park forever.
+              StreamCallbackPump pump = new StreamCallbackPump(callbackExecutor);
+              // Tempdoc 835 §5.3: one stateful, frame-straddle-safe think-tag filter for every
+              // streaming shape. This path has no reasoning handler, so captured thinking is
+              // discarded — exactly what it already does with reasoning_content below.
+              ThinkTagStreamFilter thinkFilter = new ThinkTagStreamFilter(null);
+              boolean[] sawDone = {false};
+              String[] lastFinishReason = {null};
+              Throwable failure = null;
+
               onlineRequestLock.lock();
               emitRequestStarted(RequestKind.STREAM, enqueueNanos);
               try {
@@ -401,117 +442,191 @@ final class OnlineModeOps {
                     buildJsonPostRequest(
                         serverPort.get(), PATH_CHAT_COMPLETIONS, json, HTTP_TIMEOUT);
 
-                HttpResponse<java.util.stream.Stream<String>> response =
-                    httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
+                HttpResponse<java.io.InputStream> response =
+                    httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
 
                 LOG.debug("LLM Stream Response: status={}", response.statusCode());
 
                 if (response.statusCode() != 200) {
                   String errorBody = readErrorBody(response);
                   LOG.warn("LLM Error: status={} body={}", response.statusCode(), errorBody);
-                  trackedOnError.accept(
-                      new LlmServerException(response.statusCode(), errorBody));
-                  return;
-                }
-
-                boolean[] sawDone = {false};
-                String[] lastFinishReason = {null};
-                // Tempdoc 835 §5.3: one stateful, frame-straddle-safe think-tag filter for every
-                // streaming shape. This path has no reasoning handler, so captured thinking is
-                // discarded — exactly what it already does with reasoning_content below.
-                ThinkTagStreamFilter thinkFilter = new ThinkTagStreamFilter(null);
-                try (java.util.stream.Stream<String> lines = response.body()) {
-                  lines.forEach(
-                      line -> {
-                        if (line.equals("data: [DONE]")) {
-                          sawDone[0] = true;
-                        } else if (line.startsWith("data: ")) {
-                          try {
-                            String jsonData = line.substring(6);
-                            JsonNode node = objectMapper.readTree(jsonData);
-                            String fr =
-                                node.path("choices")
-                                    .path(0)
-                                    .path("finish_reason")
-                                    .asText(null);
-                            if (fr != null) {
-                              lastFinishReason[0] = fr;
-                            }
-                            if (onUsage != null) {
-                              AiUsage usage = extractUsageFromChatChunk(node);
-                              if (usage != null) {
-                                try {
-                                  onUsage.accept(usage);
-                                } catch (java.util.concurrent.CancellationException cancelled) {
-                                  throw cancelled;
-                                } catch (Exception ignored) {
-                                  // best-effort: never let usage parsing break streaming
-                                }
-                              }
-                            }
-                            JsonNode delta = node.path("choices").path(0).path("delta");
-
-                            String content = delta.path("content").asText("");
-                            if (!content.isEmpty()) {
-                              String visible = thinkFilter.accept(content);
-                              if (!visible.isEmpty()) {
-                                onChunk.accept(visible);
-                              }
-                            }
-
-                            // Consume reasoning_content so it isn't silently lost.
-                            // streamChat callers (summary, Q&A, map-reduce) don't need
-                            // reasoning — only streamChatWithTools exposes it.
-                            String reasoning = delta.path("reasoning_content").asText("");
-                            if (!reasoning.isEmpty() && LOG.isDebugEnabled()) {
-                              LOG.debug(
-                                  "streamChat: discarding {} reasoning chars (no handler)",
-                                  reasoning.length());
-                            }
-                          } catch (java.util.concurrent.CancellationException cancelled) {
-                            throw cancelled;
-                          } catch (Exception e) {
-                            LOG.debug("Failed to parse SSE chunk: {}", line);
-                          }
-                        }
-                      });
-                }
-
-                String tail = thinkFilter.flush();
-                if (!tail.isEmpty()) {
-                  onChunk.accept(tail);
-                }
-
-                if (sawDone[0]) {
-                  trackedOnComplete.accept(lastFinishReason[0]);
-                } else if (requireSentinel) {
-                  LOG.warn(
-                      "LLM stream ended without [DONE] sentinel (finish_reason={})",
-                      lastFinishReason[0]);
-                  trackedOnError.accept(new StreamTruncatedException(lastFinishReason[0]));
+                  failure = new LlmServerException(response.statusCode(), errorBody);
                 } else {
-                  LOG.debug(
-                      "LLM stream ended without [DONE] (lenient mode, finish_reason={})",
-                      lastFinishReason[0]);
-                  trackedOnComplete.accept(lastFinishReason[0]);
-                }
+                  boolean bodyEnded =
+                      consumeStreamBody(
+                          response,
+                          line -> {
+                            RuntimeException callbackFailure = pump.failure();
+                            if (callbackFailure != null) {
+                              throw callbackFailure;
+                            }
+                            if (line.equals("data: [DONE]")) {
+                              sawDone[0] = true;
+                            } else if (line.startsWith("data: ")) {
+                              try {
+                                String jsonData = line.substring(6);
+                                JsonNode node = objectMapper.readTree(jsonData);
+                                String fr =
+                                    node.path("choices")
+                                        .path(0)
+                                        .path("finish_reason")
+                                        .asText(null);
+                                if (fr != null) {
+                                  lastFinishReason[0] = fr;
+                                }
+                                if (onUsage != null) {
+                                  AiUsage usage = extractUsageFromChatChunk(node);
+                                  if (usage != null) {
+                                    pump.dispatch(() -> acceptUsageBestEffort(onUsage, usage));
+                                  }
+                                }
+                                JsonNode delta = node.path("choices").path(0).path("delta");
 
-              } catch (java.util.concurrent.CancellationException cancelled) {
-                LOG.debug("Stream chat cancelled: {}", cancelled.getMessage());
-                try {
-                  trackedOnError.accept(cancelled);
-                } catch (Exception ignored) {
-                  // best-effort
+                                String content = delta.path("content").asText("");
+                                if (!content.isEmpty()) {
+                                  String visible = thinkFilter.accept(content);
+                                  if (!visible.isEmpty()) {
+                                    pump.dispatch(() -> onChunk.accept(visible));
+                                  }
+                                }
+
+                                // Consume reasoning_content so it isn't silently lost.
+                                // streamChat callers (summary, Q&A, map-reduce) don't need
+                                // reasoning — only streamChatWithTools exposes it.
+                                String reasoning = delta.path("reasoning_content").asText("");
+                                if (!reasoning.isEmpty() && LOG.isDebugEnabled()) {
+                                  LOG.debug(
+                                      "streamChat: discarding {} reasoning chars (no handler)",
+                                      reasoning.length());
+                                }
+                              } catch (java.util.concurrent.CancellationException cancelled) {
+                                throw cancelled;
+                              } catch (Exception e) {
+                                LOG.debug("Failed to parse SSE chunk: {}", line);
+                              }
+                            }
+                          });
+                  if (!bodyEnded) {
+                    failure = new StreamStalledException(streamIdleDeadline);
+                  } else {
+                    String tail = thinkFilter.flush();
+                    if (!tail.isEmpty()) {
+                      pump.dispatch(() -> onChunk.accept(tail));
+                    }
+                  }
                 }
               } catch (Exception e) {
-                LOG.error("Stream chat failed", e);
-                trackedOnError.accept(e);
+                failure = e;
               } finally {
                 onlineRequestLock.unlock();
+              }
+
+              // Outside the lock: deliver every queued callback, then exactly one terminal event.
+              failure = finishStream(pump, failure);
+              if (failure != null) {
+                reportStreamFailure("Stream chat", failure, trackedOnError);
+              } else if (sawDone[0]) {
+                trackedOnComplete.accept(lastFinishReason[0]);
+              } else if (requireSentinel) {
+                LOG.warn(
+                    "LLM stream ended without [DONE] sentinel (finish_reason={})",
+                    lastFinishReason[0]);
+                trackedOnError.accept(new StreamTruncatedException(lastFinishReason[0]));
+              } else {
+                LOG.debug(
+                    "LLM stream ended without [DONE] (lenient mode, finish_reason={})",
+                    lastFinishReason[0]);
+                trackedOnComplete.accept(lastFinishReason[0]);
               }
             },
             vduExecutor);
     unused.isDone(); // mark as observed; fire-and-forget
+  }
+
+  /**
+   * Consumes a streaming response body line by line under {@link #streamIdleDeadline}.
+   *
+   * @return {@code true} if the body ended on its own, {@code false} if the idle deadline elapsed
+   *     and the read was abandoned.
+   */
+  private boolean consumeStreamBody(
+      HttpResponse<java.io.InputStream> response, Consumer<String> onLine) throws java.io.IOException {
+    try (java.io.InputStream body = response.body();
+        java.io.BufferedReader reader =
+            new java.io.BufferedReader(
+                new java.io.InputStreamReader(body, java.nio.charset.StandardCharsets.UTF_8))) {
+      StreamIdleWatchdog watchdog =
+          new StreamIdleWatchdog(streamWatchdogScheduler, streamIdleDeadline, () -> closeQuietly(body));
+      try {
+        String line;
+        while ((line = reader.readLine()) != null) {
+          watchdog.touch();
+          onLine.accept(line);
+        }
+      } catch (java.io.IOException | RuntimeException e) {
+        // A read that failed *because* the watchdog aborted the body is a stall, not a transport
+        // fault — the caller reports it as one.
+        if (!watchdog.fired()) {
+          throw e;
+        }
+      } finally {
+        watchdog.close();
+      }
+      return !watchdog.fired();
+    }
+  }
+
+  /**
+   * Drains the pump (so no chunk can arrive after the terminal event) and folds in a failure a
+   * consumer callback raised. Returns the failure to report, or {@code null} if the stream is clean.
+   */
+  private static Throwable finishStream(StreamCallbackPump pump, Throwable failure) {
+    try {
+      pump.awaitDrain();
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return failure != null ? failure : e;
+    }
+    if (failure != null) {
+      return failure;
+    }
+    return pump.failure();
+  }
+
+  /**
+   * Usage callbacks stay best-effort — a caller's accounting must never break streaming — while a
+   * cancellation still aborts the stream, exactly as when this ran inline in the read loop.
+   */
+  private static void acceptUsageBestEffort(Consumer<AiUsage> onUsage, AiUsage usage) {
+    try {
+      onUsage.accept(usage);
+    } catch (java.util.concurrent.CancellationException cancelled) {
+      throw cancelled;
+    } catch (RuntimeException ignored) {
+      // best-effort: never let usage accounting break streaming
+    }
+  }
+
+  private static void reportStreamFailure(
+      String what, Throwable failure, Consumer<Throwable> trackedOnError) {
+    if (failure instanceof java.util.concurrent.CancellationException) {
+      LOG.debug("{} cancelled: {}", what, failure.getMessage());
+    } else {
+      LOG.error("{} failed", what, failure);
+    }
+    try {
+      trackedOnError.accept(failure);
+    } catch (RuntimeException ignored) {
+      // best-effort: the caller's error handler must not resurrect the stream
+    }
+  }
+
+  private static void closeQuietly(java.io.Closeable closeable) {
+    try {
+      closeable.close();
+    } catch (java.io.IOException | RuntimeException e) {
+      LOG.debug("Closing a stalled stream body threw: {}", e.toString());
+    }
   }
 
   // ==================== Tool-Aware Streaming ====================
@@ -594,6 +709,21 @@ final class OnlineModeOps {
     var unused =
         CompletableFuture.runAsync(
             () -> {
+              // The lock covers the llama-server exchange only; consumer callbacks are pumped off
+              // it, and the body read carries an idle deadline so it can never park forever.
+              StreamCallbackPump pump = new StreamCallbackPump(callbackExecutor);
+              // Tempdoc 835 §5.3: the same stateful filter, here with the reasoning channel
+              // wired — inline <think> markup from a leaking build is rerouted to the reasoning
+              // sink, so the product behaves identically on both build families.
+              ThinkTagStreamFilter thinkFilter =
+                  new ThinkTagStreamFilter(
+                      onReasoningChunk == null
+                          ? null
+                          : reasoning -> pump.dispatch(() -> onReasoningChunk.accept(reasoning)));
+              boolean[] sawDone = {false};
+              String[] lastFinishReason = {null};
+              Throwable failure = null;
+
               onlineRequestLock.lock();
               emitRequestStarted(RequestKind.STREAM, enqueueNanos);
               try {
@@ -648,120 +778,108 @@ final class OnlineModeOps {
                     buildJsonPostRequest(
                         serverPort.get(), PATH_CHAT_COMPLETIONS, json, HTTP_TIMEOUT);
 
-                HttpResponse<java.util.stream.Stream<String>> response =
-                    httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
+                HttpResponse<java.io.InputStream> response =
+                    httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
 
                 LOG.debug("LLM Tool Stream Response: status={}", response.statusCode());
 
                 if (response.statusCode() != 200) {
                   String errorBody = readErrorBody(response);
                   LOG.warn("LLM Error: status={} body={}", response.statusCode(), errorBody);
-                  trackedOnError.accept(
-                      new LlmServerException(response.statusCode(), errorBody));
-                  return;
-                }
-
-                boolean[] sawDone = {false};
-                String[] lastFinishReason = {null};
-                // Tempdoc 835 §5.3: the same stateful filter, here with the reasoning channel
-                // wired — inline <think> markup from a leaking build is rerouted to the reasoning
-                // sink, so the product behaves identically on both build families.
-                ThinkTagStreamFilter thinkFilter = new ThinkTagStreamFilter(onReasoningChunk);
-                try (java.util.stream.Stream<String> lines = response.body()) {
-                  lines.forEach(
-                      line -> {
-                        if (line.equals("data: [DONE]")) {
-                          sawDone[0] = true;
-                        } else if (line.startsWith("data: ")) {
-                          try {
-                            String jsonData = line.substring(6);
-                            JsonNode node = objectMapper.readTree(jsonData);
-                            String fr =
-                                node.path("choices")
-                                    .path(0)
-                                    .path("finish_reason")
-                                    .asText(null);
-                            if (fr != null) {
-                              lastFinishReason[0] = fr;
-                            }
-
-                            if (onUsage != null) {
-                              AiUsage usage = extractUsageFromChatChunk(node);
-                              if (usage != null) {
-                                try {
-                                  onUsage.accept(usage);
-                                } catch (java.util.concurrent.CancellationException cancelled) {
-                                  throw cancelled;
-                                } catch (Exception ignored) {
-                                  // best-effort
-                                }
-                              }
-                            }
-
-                            JsonNode delta = node.path("choices").path(0).path("delta");
-
-                            // Text content
-                            String content = delta.path("content").asText("");
-                            if (!content.isEmpty()) {
-                              String visible = thinkFilter.accept(content);
-                              if (!visible.isEmpty()) {
-                                onChunk.accept(visible);
-                              }
-                            }
-
-                            // Reasoning content (emitted by --reasoning-format deepseek)
-                            if (onReasoningChunk != null) {
-                              String reasoning = delta.path("reasoning_content").asText("");
-                              if (!reasoning.isEmpty()) {
-                                onReasoningChunk.accept(reasoning);
-                              }
-                            }
-
-                            // Tool call deltas
-                            JsonNode toolCalls = delta.path("tool_calls");
-                            if (!toolCalls.isMissingNode() && toolCalls.isArray()) {
-                              onToolCallDelta.accept(node);
-                            }
-                          } catch (java.util.concurrent.CancellationException cancelled) {
-                            throw cancelled;
-                          } catch (Exception e) {
-                            LOG.debug("Failed to parse SSE chunk: {}", line);
-                          }
-                        }
-                      });
-                }
-
-                String tail = thinkFilter.flush();
-                if (!tail.isEmpty()) {
-                  onChunk.accept(tail);
-                }
-
-                if (sawDone[0]) {
-                  trackedOnComplete.accept(lastFinishReason[0]);
-                } else if (requireSentinel) {
-                  LOG.warn(
-                      "LLM tool stream ended without [DONE] sentinel (finish_reason={})",
-                      lastFinishReason[0]);
-                  trackedOnError.accept(new StreamTruncatedException(lastFinishReason[0]));
+                  failure = new LlmServerException(response.statusCode(), errorBody);
                 } else {
-                  LOG.debug(
-                      "LLM stream ended without [DONE] (lenient mode, finish_reason={})",
-                      lastFinishReason[0]);
-                  trackedOnComplete.accept(lastFinishReason[0]);
-                }
+                  boolean bodyEnded =
+                      consumeStreamBody(
+                          response,
+                          line -> {
+                            RuntimeException callbackFailure = pump.failure();
+                            if (callbackFailure != null) {
+                              throw callbackFailure;
+                            }
+                            if (line.equals("data: [DONE]")) {
+                              sawDone[0] = true;
+                            } else if (line.startsWith("data: ")) {
+                              try {
+                                String jsonData = line.substring(6);
+                                JsonNode node = objectMapper.readTree(jsonData);
+                                String fr =
+                                    node.path("choices")
+                                        .path(0)
+                                        .path("finish_reason")
+                                        .asText(null);
+                                if (fr != null) {
+                                  lastFinishReason[0] = fr;
+                                }
 
-              } catch (java.util.concurrent.CancellationException cancelled) {
-                LOG.debug("Stream chat with tools cancelled: {}", cancelled.getMessage());
-                try {
-                  trackedOnError.accept(cancelled);
-                } catch (Exception ignored) {
-                  // best-effort
+                                if (onUsage != null) {
+                                  AiUsage usage = extractUsageFromChatChunk(node);
+                                  if (usage != null) {
+                                    pump.dispatch(() -> acceptUsageBestEffort(onUsage, usage));
+                                  }
+                                }
+
+                                JsonNode delta = node.path("choices").path(0).path("delta");
+
+                                // Text content
+                                String content = delta.path("content").asText("");
+                                if (!content.isEmpty()) {
+                                  String visible = thinkFilter.accept(content);
+                                  if (!visible.isEmpty()) {
+                                    pump.dispatch(() -> onChunk.accept(visible));
+                                  }
+                                }
+
+                                // Reasoning content (emitted by --reasoning-format deepseek)
+                                if (onReasoningChunk != null) {
+                                  String reasoning = delta.path("reasoning_content").asText("");
+                                  if (!reasoning.isEmpty()) {
+                                    pump.dispatch(() -> onReasoningChunk.accept(reasoning));
+                                  }
+                                }
+
+                                // Tool call deltas
+                                JsonNode toolCalls = delta.path("tool_calls");
+                                if (!toolCalls.isMissingNode() && toolCalls.isArray()) {
+                                  pump.dispatch(() -> onToolCallDelta.accept(node));
+                                }
+                              } catch (java.util.concurrent.CancellationException cancelled) {
+                                throw cancelled;
+                              } catch (Exception e) {
+                                LOG.debug("Failed to parse SSE chunk: {}", line);
+                              }
+                            }
+                          });
+                  if (!bodyEnded) {
+                    failure = new StreamStalledException(streamIdleDeadline);
+                  } else {
+                    String tail = thinkFilter.flush();
+                    if (!tail.isEmpty()) {
+                      pump.dispatch(() -> onChunk.accept(tail));
+                    }
+                  }
                 }
               } catch (Exception e) {
-                LOG.error("Stream chat with tools failed", e);
-                trackedOnError.accept(e);
+                failure = e;
               } finally {
                 onlineRequestLock.unlock();
+              }
+
+              // Outside the lock: deliver every queued callback, then exactly one terminal event.
+              failure = finishStream(pump, failure);
+              if (failure != null) {
+                reportStreamFailure("Stream chat with tools", failure, trackedOnError);
+              } else if (sawDone[0]) {
+                trackedOnComplete.accept(lastFinishReason[0]);
+              } else if (requireSentinel) {
+                LOG.warn(
+                    "LLM tool stream ended without [DONE] sentinel (finish_reason={})",
+                    lastFinishReason[0]);
+                trackedOnError.accept(new StreamTruncatedException(lastFinishReason[0]));
+              } else {
+                LOG.debug(
+                    "LLM stream ended without [DONE] (lenient mode, finish_reason={})",
+                    lastFinishReason[0]);
+                trackedOnComplete.accept(lastFinishReason[0]);
               }
             },
             vduExecutor);
@@ -1078,9 +1196,13 @@ final class OnlineModeOps {
    * bare "Server returned status 400" on the surface, with "check llama-server logs" as the only
    * lead. Consuming the stream here also closes it instead of leaking it on the error path.
    */
-  private static String readErrorBody(HttpResponse<java.util.stream.Stream<String>> response) {
-    try (java.util.stream.Stream<String> lines = response.body()) {
-      String body = lines.limit(20).collect(java.util.stream.Collectors.joining("\n")).strip();
+  private static String readErrorBody(HttpResponse<java.io.InputStream> response) {
+    try (java.io.BufferedReader reader =
+        new java.io.BufferedReader(
+            new java.io.InputStreamReader(
+                response.body(), java.nio.charset.StandardCharsets.UTF_8))) {
+      String body =
+          reader.lines().limit(20).collect(java.util.stream.Collectors.joining("\n")).strip();
       return body.isEmpty() ? null : body.substring(0, Math.min(1000, body.length()));
     } catch (Exception e) {
       LOG.debug("Failed to read LLM error body: {}", e.getMessage());
@@ -1103,5 +1225,7 @@ final class OnlineModeOps {
 
   void shutdown() {
     vduExecutor.shutdownNow();
+    callbackExecutor.shutdownNow();
+    streamWatchdogScheduler.shutdownNow();
   }
 }
