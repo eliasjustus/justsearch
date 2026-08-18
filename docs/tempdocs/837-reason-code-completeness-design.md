@@ -1648,35 +1648,103 @@ S1/S2 recorded in §B.5.
   no new component, no React — ADR-0032 and
   `docs/explanation/27-frontend-presentation-kernel.md` are unaffected.
 
-### C.12 — Not verified (live scenarios), with the scripted procedure
+### C.12 — Live verification (2026-08-18, supervised lease)
 
-§6 names S3's live check as a lease-window item; no dev stack was taken in this session, so
-**both S3 scenarios and both S4 scenarios are PENDING, not passed.** The procedure, ready to
-run inside one ~10-minute lease:
+Run on the shared dev stack from this worktree's dist (`distFrom`, `skipBuild`), four stack
+lifecycles, ~35 min. Idleness asserted before start: `quick_health` `running:false` **and** a
+process check (0 `llama-server.exe`; the only `java.exe` were this session's Gradle daemon +
+worker daemons, classified by command line — no foreign Head/Worker/`runHeadlessEval`).
 
-1. `quick_health`; if free, `justsearch_dev_start` with `leaseDurationSec: 900`.
-2. Wait for worker READY: `fetch_api_json /api/health` until
-   `components.worker.state == LIFECYCLE_STATE_READY`.
-3. **S3 scenario 1 (lost):** kill the Worker process
-   (`Get-Process java | Where-Object { $_.CommandLine -match 'IndexerWorker' }` → `Stop-Process`),
-   then poll `/api/health` and assert `components.worker.reason_code == "worker.lost"` —
-   **not** `worker.spawn.failed`, which is what this scenario reported before S3. Keep polling:
-   the supervisor's restart must flip it to `worker.recovering`, then back to READY with a null
-   reason.
-4. **S3 scenario 2 (never started):** restart the stack with a deliberately unresolvable worker
-   path and assert `worker.spawn.failed`.
-5. **S4 scenario 1:** `ai_activate`, then `ingest` a corpus to drive `Mode.INDEXING`, and assert
-   `components.inference.reason_code == "inference.gpu_yielded_to_indexing"` and that the banner
-   does **not** claim the model is offline.
-6. **S4 scenario 2 (the harder one, §6 permits recording it as deferred):** hold the engine ONLINE
-   under a VDU procedure with `chatEnabled=false` and assert `inference.up_for_background` on both
-   `components.inference.reason_code` and `inference.engineReason` — the cross-surface agreement
-   §1.3 is about.
-7. `justsearch_dev_stop`.
+| # | Scenario | Verdict |
+|---|---|---|
+| 1 | S3 worker-lost (kill while READY) | **PASS** |
+| 2 | S3 never-started (unstartable worker) | **PASS** |
+| — | Manifest/503/readiness wire changes (MF-1) | **PASS** (observed values below) |
+| 3 | S3 corrupt-marker latch, live | **NOT STAGED** — recorded with what was tried |
+| 4 | S4 GPU-yielded / up-for-background | **NOT STAGEABLE** — no llama-server variant installed |
 
-The corrupt-index path is covered by `KnowledgeServerWorkerDownCodeTest` writing a real
-`WorkerFatalReasonMarker` and asserting the Head reads, clears and latches it — the marker
-contract end-to-end minus the dying worker itself.
+**Scenario 1 — PASS, exactly as the unit tier predicted.** Killed the Worker PID while
+`components.worker.state == LIFECYCLE_STATE_READY`; the whole sequence in ~0.8 s:
+
+```
+READY      / null              (baseline)
+ERROR      / worker.lost       <- 0.8s after the kill; lifecycle.reason_code = worker.lost too
+DEGRADED   / worker.recovering (supervised restart in flight; 627's calm mapping preserved)
+READY      / null              (~10s later)
+```
+
+Pre-S3 the second line read `worker.spawn.failed` for a worker that had been serving. This is the
+headline claim of the slice, confirmed on the wire. `lifecycle.reason_code` also carried
+`worker.lost`, confirming the `resolveOverallReason` forwarding predicted in C.7.
+
+**Scenario 2 — PASS.** Hid the worker's `lib/` (the spawner launches
+`-cp <workerLibDir>/* io.justsearch.indexerworker.IndexerWorker`, so hiding `bin/*.bat` does
+nothing — noted because the first attempt did exactly that and the worker started fine). Boot
+sequence, watcher started *before* the Head:
+
+```
+STARTING / worker.starting      -> readiness.workerControlPlane = worker.starting
+ERROR    / worker.spawn.failed  -> readiness.workerControlPlane = worker.spawn.failed
+```
+
+`worker.spawn.failed` now fires **only** here, which is what makes its existing wording true.
+
+**Wire changes observed (MF-1), not inferred:**
+
+| Surface | Observed |
+|---|---|
+| manifest `ai.pendingReason` | `inference.offline`, later `inference.runtime_not_installed` — codes, where pre-S4 this was the prose `"Inference offline"` |
+| manifest `worker.spawnError` | `worker.recovering` — a code; pre-S3 this field carried prose like `"Health check failed"` |
+| 503 body (`/api/knowledge/search`, `/api/indexing/scan`) | `{"reason":"worker.spawn.failed","detail":"Worker spawn failed: Worker lib directory not found…"}` — the C.1 typed split, live: `reason` = code, `detail` = sentence |
+| 503 body after the supervisor gave up | `{"reason":"worker.restart_exhausted","detail":"restart cap exceeded after 3 attempts"}` — **the `onGaveUp` sentence S3 stopped dropping on the floor** (`KnowledgeServerBootstrap.java:216`), verified live |
+| `readiness.components.workerControlPlane` | `{"state":"NOT_READY","reasonCode":"worker.restart_exhausted","source":"lifecycle_snapshot"}` |
+| `readiness.composites.retrieval.reasonCodes` | `["worker.restart_exhausted","index.not_healthy","lambdamart.not_configured"]` |
+
+The last two close the FE-visible leg: capability reason → `components.worker.reason_code` →
+`workerControlPlane` → the `retrieval` composite, which is what `verdict.reasons` feeds to
+`readinessNotice`'s `CAUSE_ROWS`. `worker.lost` travels that identical single path
+(`StatusLifecycleHandler.java:1355-1360` forwards the component code verbatim), so its wording row
+renders by the same mechanism.
+
+**Scenario 3 — NOT STAGED, and the reason is a finding.** Two staging routes, both blocked:
+
+1. *Marker + kill a running worker* (4 trials). The corruption axis is only read by
+   `checkHealth`'s `!healthy && current == READY` branch and the bootstrap start paths. Killing a
+   running worker is a **race** between that branch and the supervisor's `onRecovering`. The
+   supervisor won 3 of 4 trials (trial 1, scenario 1 above, is the one the health monitor won) —
+   and in all three the marker was **still on disk afterwards** (`markerLeft=true`), i.e. *no
+   down-transition read it at all*. So on the common crash-of-a-running-worker path,
+   `worker.index_corrupt` does not fire; the supervised-restart path never consults the marker.
+2. *Marker written before a stack start.* The marker does not survive `dev-runner start` to reach
+   the boot transitions — demonstrated with a control: on a **healthy** boot (worker reached
+   READY, so no `workerDownCode` could report anything) the marker was gone afterwards. Since
+   `readAndClear` is the only Java deleter (grep: one call site,
+   `KnowledgeServerBootstrap.java:620`), the likeliest reading is that an early transient
+   health-check failure consumed it and the subsequent `READY` cleared the latch — which is the
+   designed behaviour, not a defect, but it makes the marker unstageable this way.
+
+Finding (1) is **pre-existing, not caused by S3**: `workerDownReason` had the identical four
+callers and the identical `current == READY` guard before this slice. Logged to the observations
+shard. It does mean the realistic `worker.index_corrupt` trigger is a corrupt index killing the
+worker *at Head bootstrap* (where `start()`'s catch reads the marker), not a mid-session crash.
+Coverage meanwhile stays at unit tier: `KnowledgeServerWorkerDownCodeTest` writes a **real**
+`WorkerFatalReasonMarker`, drives the **real** helper, and asserts the code, the recovered remedy
+detail, and that the marker was consumed; the latch is mutation-probed (C.9).
+
+**Scenario 4 — NOT STAGEABLE, recorded per §6's own bar.** `ai_runtime_status` reports
+`installedVariants: []`, and `ai_activate` refused with `Variant not installed: cuda12`
+(2.4 s). Both S4 arms need the engine ONLINE — `Mode.INDEXING` is a mode the engine enters, and
+`up_for_background` is ONLINE + `chatEnabled=false` — so neither is reachable without installing
+the runtime, which is far outside a lease window. What *was* confirmed live: the OFFLINE arm S4
+converted publishes `inference.offline` as a **code** on both `components.inference.reason_code`
+and the manifest, and the failed activation surfaced `inference.runtime_not_installed` on both —
+so the inference reason path carries codes end-to-end even though the two new arms are unproven
+live. Their derivation is unit-tested per arm (`InferenceCapabilityWiringTest`).
+
+**Teardown verified:** `justsearch_dev_stop` → `quick_health` `running:false, runId:null`; 0
+`llama-server.exe`; no `IndexerWorker`/Head `java.exe` survivors (only this session's Gradle
+daemons); ports 51020 / 5173 / 58750 / 49543 all closed. Test artifacts removed (the
+`worker-fatal-reason` marker deleted, the worker `lib/` restored — confirmed by listing).
 
 ### C.13 — Carried forward to S5
 
@@ -1687,4 +1755,14 @@ contract end-to-end minus the dying worker itself.
 - UR-4 (`verdictBody`'s "Retrieval is degraded" for a chat-only outage) is untouched and still
   needs deciding before S5 ships `inference.crashed` at `warn`.
 - `InferenceCapability`'s two prose defaults (C.7).
-- The live scenarios in C.12.
+- **S4's two arms are unproven live** (C.12 scenario 4) — re-run them in any window where a
+  llama-server variant is installed: drive `Mode.INDEXING` during an indexing run and assert
+  `inference.gpu_yielded_to_indexing`, and hold the engine ONLINE under a VDU procedure with
+  `chatEnabled=false` and assert `inference.up_for_background` on **both**
+  `components.inference.reason_code` and `inference.engineReason` (the §1.3 cross-surface
+  agreement the promoted `RuntimeStatus` constant is supposed to guarantee).
+- **The supervised-restart path never reads the fatal-reason marker** (C.12 scenario 3) — a
+  pre-existing gap S3 surfaced rather than caused. If `worker.index_corrupt` is meant to fire for a
+  mid-session crash and not only at bootstrap, the corruption read has to move to a site the
+  supervisor's path actually reaches. Logged to the observations shard; not fixed here (out of
+  S3's scope, and it is a behavioural change to 628's contract, not a wording fix).
