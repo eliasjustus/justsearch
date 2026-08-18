@@ -81,7 +81,9 @@ final class RunStreamWriterTest {
     RunChannel run = openAsk("run-live");
     run.publish(new RunFrame("chunk", Map.of("text", "before")));
     Harness h = new Harness(null, null);
-    RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).orElseThrow();
+    assertTrue(
+        RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).isPresent(),
+        "the attach must succeed for this case to mean anything");
 
     run.publish(new RunFrame("chunk", Map.of("text", "after")));
     run.publish(new RunFrame("done", Map.of("finalResponse", "hi")));
@@ -99,7 +101,9 @@ final class RunStreamWriterTest {
     // A cursor from a future / different server lifetime: ahead of the stream, so outside the window.
     Harness h = new Harness("500", null);
 
-    RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).orElseThrow();
+    assertTrue(
+        RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).isPresent(),
+        "the attach must succeed for this case to mean anything");
 
     assertEquals(
         List.of("run_started", "replay_truncated", "chunk"),
@@ -127,7 +131,9 @@ final class RunStreamWriterTest {
     run.publish(new RunFrame("chunk", Map.of("text", "two")));
     Harness h = new Harness("1", null);
 
-    RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).orElseThrow();
+    assertTrue(
+        RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).isPresent(),
+        "the attach must succeed for this case to mean anything");
 
     assertEquals(List.of("run_started", "chunk"), h.eventNames(), "only frames after seq 1");
     assertTrue(h.sent.get(1).data().contains("two"));
@@ -174,7 +180,9 @@ final class RunStreamWriterTest {
     run.publish(new RunFrame("chunk", Map.of("text", "one")));
     Harness h = new Harness(null, null);
 
-    RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).orElseThrow();
+    assertTrue(
+        RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).isPresent(),
+        "the attach must succeed for this case to mean anything");
     run.publish(new RunFrame("done", Map.of()));
 
     verify(h.client, never()).sendEvent(anyString(), any(), anyString());
@@ -188,7 +196,9 @@ final class RunStreamWriterTest {
     RunChannel run = openAsk("run-heartbeat");
     Harness h = new Harness(null, null);
 
-    RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).orElseThrow();
+    assertTrue(
+        RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).isPresent(),
+        "the attach must succeed for this case to mean anything");
 
     verify(h.scheduler)
         .scheduleAtFixedRate(
@@ -222,7 +232,9 @@ final class RunStreamWriterTest {
     run.publish(new RunFrame("chunk", Map.of("text", "one")));
     Harness h = new Harness(null, null);
 
-    RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).orElseThrow();
+    assertTrue(
+        RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).isPresent(),
+        "the attach must succeed for this case to mean anything");
 
     assertEquals("run_started", h.sent.get(0).event());
     String body = h.sent.get(0).data();
@@ -249,7 +261,9 @@ final class RunStreamWriterTest {
     run.publish(new RunFrame("chunk", Map.of("text", "one")));
     Harness h = new Harness(null, null);
 
-    RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).orElseThrow();
+    assertTrue(
+        RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).isPresent(),
+        "the attach must succeed for this case to mean anything");
 
     assertEquals(
         List.of("run_started", "state_snapshot", "chunk"),
@@ -265,7 +279,9 @@ final class RunStreamWriterTest {
     RunChannel run = openAsk("run-unprimed");
     Harness h = new Harness(null, null);
 
-    RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).orElseThrow();
+    assertTrue(
+        RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).isPresent(),
+        "the attach must succeed for this case to mean anything");
 
     assertFalse(h.eventNames().contains("state_snapshot"));
   }
@@ -275,7 +291,9 @@ final class RunStreamWriterTest {
   void retireClosesTheConnection() {
     RunChannel run = openAsk("run-retire");
     Harness h = new Harness(null, null);
-    RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).orElseThrow();
+    assertTrue(
+        RunStreamWriter.attach(h.client, run, h.scheduler, HEARTBEAT_SECONDS).isPresent(),
+        "the attach must succeed for this case to mean anything");
 
     registry.retire(new RunId("run-retire"));
 

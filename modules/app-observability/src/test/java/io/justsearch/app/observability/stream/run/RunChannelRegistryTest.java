@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.app.api.stream.SseEnvelope;
+import io.justsearch.app.observability.stream.SseStreamChannel;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -223,13 +224,16 @@ final class RunChannelRegistryTest {
   void observerCountDropsWhenAThrowingObserverIsEvicted() {
     RunChannel run = openOneShot("run-observed");
     var alive = new ArrayList<SseEnvelope>();
-    run.observe(alive::add, 0).orElseThrow();
-    run.observe(
-            frame -> {
-              throw new IllegalStateException("socket closed");
-            },
-            0)
-        .orElseThrow();
+    // Both handles are held, as a real writer holds them to unsubscribe on close — and the live
+    // one is used at the end to show the eviction was the DEAD observer's, not a blanket drop.
+    SseStreamChannel.Subscription liveSubscription = run.observe(alive::add, 0).orElseThrow();
+    SseStreamChannel.Subscription deadSubscription =
+        run.observe(
+                frame -> {
+                  throw new IllegalStateException("socket closed");
+                },
+                0)
+            .orElseThrow();
 
     assertEquals(2, run.observerCount());
 
@@ -241,6 +245,13 @@ final class RunChannelRegistryTest {
         "the dead socket is evicted on the failed delivery, which is the precondition the "
             + "zero-observer park depends on (R4)");
     assertEquals(1, alive.size(), "the live observer is unaffected by its neighbour dying");
+
+    // Unsubscribing the already-evicted observer is a no-op, and the survivor is still the one
+    // holding the slot — so the count reaches 0 only when the LIVE observer leaves.
+    deadSubscription.unsubscribe();
+    assertEquals(1, run.observerCount());
+    liveSubscription.unsubscribe();
+    assertEquals(0, run.observerCount());
   }
 
   @Test
