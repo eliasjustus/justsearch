@@ -224,10 +224,16 @@ final class ConversationApiAssembly {
             List.of(
                 new io.justsearch.app.services.conversation.spi.DocAccess(docs),
                 new io.justsearch.app.services.conversation.spi.BatchDocAccess(docs),
+                // Tempdoc 845 — the same onlineAiSupplier the engine uses, so the RAG token budget
+                // is computed against the window the running llama-server actually has (observed
+                // n_ctx, else the configured launch window) instead of a hardcoded 8192.
                 ragCfgForCitations == null
-                    ? new io.justsearch.app.services.conversation.spi.RAGContext(docs)
+                    ? new io.justsearch.app.services.conversation.spi.RAGContext(
+                        docs,
+                        io.justsearch.app.services.conversation.spi.RAGContext.DEFAULT_TOP_K,
+                        onlineAiSupplier)
                     : new io.justsearch.app.services.conversation.spi.RAGContext(
-                        docs, ragCfgForCitations.ragTopK()),
+                        docs, ragCfgForCitations.ragTopK(), onlineAiSupplier),
                 io.justsearch.app.services.conversation.spi.UserPromptInjector.INSTANCE,
                 io.justsearch.app.services.conversation.spi.ExternalContextInjector.INSTANCE,
                 // Tempdoc 603 C2 — conversation-aware query decontextualization before RAG retrieval.

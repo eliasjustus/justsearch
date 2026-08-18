@@ -92,17 +92,35 @@ public final class TokenEstimation {
    * Compute a safe input token budget given the server context window and the requested output budget.
    *
    * <p>This is a best-effort guard rail to avoid llama-server 400s when input + output exceeds n_ctx.
-   * Uses formula: {@code raw = (ctx - out - 256 - 256) * 0.9}, with floor of 256.
+   * Uses formula: {@code raw = headroom * 0.9}, where
+   * {@code headroom = ctx - out - 256 - 256}.
+   *
+   * <p>Tempdoc 845: the {@value #MIN_BUDGET}-token floor is clamped by the real headroom. It used to
+   * be applied <em>after</em> the subtraction ({@code max(MIN_BUDGET, raw)}), so a request whose
+   * output reservation approached the window still got 256 tokens of input budget back — e.g.
+   * {@code (4096, 4000)} returned 256, promising 4256 tokens of a 4096-token window. The returned
+   * budget now never exceeds the headroom, and is 0 when there is no headroom at all (a request
+   * reserving more output than the window can hold leaves no room for input, and saying so is the
+   * honest answer).
+   *
+   * <p>{@code outputMaxTokens} is the <em>whole</em> completion reservation. Reasoning tokens are
+   * spent inside it, not alongside it (tempdoc 835: "reasoning tokens and answer tokens share one
+   * ceiling"), so callers must not add a reasoning budget on top — that double-counts.
    *
    * @param nCtx the context window size in tokens
-   * @param outputMaxTokens the maximum output tokens reserved
-   * @return safe input budget in tokens (minimum 256)
+   * @param outputMaxTokens the maximum output tokens reserved (reasoning included)
+   * @return safe input budget in tokens; 0 when the reservation leaves no room, and never more
+   *     than {@code nCtx - outputMaxTokens - 512}
    */
   public static int computeSafeInputBudgetTokens(int nCtx, int outputMaxTokens) {
     int ctx = Math.max(MIN_CONTEXT, nCtx);
     int out = Math.max(0, outputMaxTokens);
-    double raw = (ctx - out - FULL_COVERAGE_OVERHEAD_TOKENS - FULL_COVERAGE_SAFETY_TOKENS) * 0.9;
-    return (int) Math.floor(Math.max(MIN_BUDGET, raw));
+    int headroom = ctx - out - FULL_COVERAGE_OVERHEAD_TOKENS - FULL_COVERAGE_SAFETY_TOKENS;
+    if (headroom <= 0) {
+      return 0;
+    }
+    int budget = (int) Math.floor(headroom * 0.9);
+    return Math.min(headroom, Math.max(MIN_BUDGET, budget));
   }
 
   // ==========================================================================
