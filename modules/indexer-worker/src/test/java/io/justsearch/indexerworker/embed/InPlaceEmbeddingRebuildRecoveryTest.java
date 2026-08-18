@@ -107,7 +107,9 @@ class InPlaceEmbeddingRebuildRecoveryTest {
 
       var ecc =
           new EmbeddingCompatibilityController(
-              r2::latestCommitUserDataBestEffort, () -> r2.indexCountOps().docCount());
+              r2::latestCommitUserDataBestEffort,
+              () -> docCountOrThrow(r2),
+              () -> completedEmbeddingsOrThrow(r2));
       ecc.refresh();
       assertEquals(
           EmbeddingCompatibilityController.State.BLOCKED_LEGACY,
@@ -171,7 +173,9 @@ class InPlaceEmbeddingRebuildRecoveryTest {
     try (var r3 = openRuntime(dir, EmbeddingMetadataOverlay.createSupplier(Optional::empty))) {
       var ecc3 =
           new EmbeddingCompatibilityController(
-              r3::latestCommitUserDataBestEffort, () -> r3.indexCountOps().docCount());
+              r3::latestCommitUserDataBestEffort,
+              () -> docCountOrThrow(r3),
+              () -> completedEmbeddingsOrThrow(r3));
       ecc3.refresh();
       assertEquals(
           EmbeddingCompatibilityController.State.COMPATIBLE,
@@ -222,7 +226,9 @@ class InPlaceEmbeddingRebuildRecoveryTest {
 
       var ecc =
           new EmbeddingCompatibilityController(
-              r2::latestCommitUserDataBestEffort, () -> r2.indexCountOps().docCount());
+              r2::latestCommitUserDataBestEffort,
+              () -> docCountOrThrow(r2),
+              () -> completedEmbeddingsOrThrow(r2));
       ecc.refresh();
       assertEquals(
           EmbeddingCompatibilityController.State.BLOCKED_LEGACY,
@@ -317,6 +323,33 @@ class InPlaceEmbeddingRebuildRecoveryTest {
             FieldCatalogDef.forTesting(768), commitMetadata, PERMISSIVE)
         .atPath(dir)
         .open();
+  }
+
+  /**
+   * The production doc-count supplier shape (tempdoc 819): PROPAGATES a reader failure rather than
+   * swallowing it to 0, since 0 is what {@code refresh()} reads as "new empty index, safe to stamp".
+   */
+  private static long docCountOrThrow(io.justsearch.adapters.lucene.runtime.RunningRuntime r) {
+    try {
+      return r.indexCountOps().docCountOrThrow();
+    } catch (java.io.IOException e) {
+      throw new java.io.UncheckedIOException(e);
+    }
+  }
+
+  /**
+   * The production success-evidence supplier shape (tempdoc 819 defect B): certification requires
+   * at least one COMPLETED embedding, read live from the index.
+   */
+  private static int completedEmbeddingsOrThrow(
+      io.justsearch.adapters.lucene.runtime.RunningRuntime r) {
+    try {
+      return r.indexCountOps()
+          .countByFieldOrThrow(
+              SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
+    } catch (java.io.IOException e) {
+      throw new java.io.UncheckedIOException(e);
+    }
   }
 
   /** Marks every currently-PENDING parent doc COMPLETED, as the embedding backfill would. */

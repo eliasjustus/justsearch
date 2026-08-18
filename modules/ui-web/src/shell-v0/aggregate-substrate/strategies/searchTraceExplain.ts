@@ -137,6 +137,7 @@ export const DEGRADATION_REASON_WORDING: Record<string, string> = {
   FINGERPRINT_MISMATCH: 'the index needs rebuilding',
   REBUILD_IN_PROGRESS: 'the index is rebuilding',
   REBUILD_COMPLETED: 'the index rebuild just finished',
+  REBUILD_FAILED_NO_VECTORS: 'the index rebuild finished without producing any semantic data',
   EMBEDDING_COMPATIBILITY_UNKNOWN: 'embedding compatibility is unknown',
   // live search-routing encode failures
   UNKNOWN: 'the cause is unknown',

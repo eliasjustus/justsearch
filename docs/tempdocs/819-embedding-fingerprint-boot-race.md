@@ -1,0 +1,291 @@
+---
+title: "Embedding-fingerprint lifecycle: the fresh-profile boot race that makes the empty-index fast path unreachable, and certification of a rebuild with zero successful embeddings"
+type: tempdocs
+status: "READY FOR MERGE (2026-08-14) — implemented + live-verified 2026-08-10; caught up to main conflict-free and the 821 §O.1 merge-review brief executed (see §E): item 1 confirmed real and fixed, item 2 closed, item 3's premise corrected and a genuinely-regressing behavioural test added (revert-probe: 4 tests across 2 modules). 826 F1-F3 deliberately out of scope."
+created: 2026-08-10
+author: "agent (diagnostic session abd79263, GPU-saturation investigation)"
+related:
+  - 730   # Issue A (fingerprint durability) — diagnosed the symptom, recorded the cause as UNREPRODUCED; this tempdoc reproduces it
+  - 805   # G.1 gave the Tauri shell its ordered-shutdown-before-force-kill path; dev-runner was not swept
+  - 598   # embedding fingerprint compat controller + first durability regression
+  - 813   # "settled numerator" precedent (terminal = COMPLETED + FAILED) considered and deliberately NOT followed here
+---
+
+# 819 — Embedding-fingerprint boot race and zero-evidence certification
+
+Two defects, both **reproduced live** rather than audited. Discovered while investigating why a dev
+stack saturated the GPU immediately on start: it was re-embedding a 574-doc index that had been stuck
+unstamped since generation `g-20260731-162634`.
+
+This tempdoc closes an open question in **730**, whose frontmatter records Issue A as *"live restart
+anomaly unreproduced under production-fidelity tests"*. 730 fixed the shutdown and completion stamp
+paths; the origination mechanism below was never found, which is why the symptom persisted.
+
+## A — The empty-index fast path is structurally unreachable
+
+`EmbeddingCompatibilityController.refresh()` (`EmbeddingCompatibilityController.java:119-137`) takes a
+fast path when the stored fingerprint is blank **and** `docCount == 0`: state COMPATIBLE, reason
+`NEW_INDEX_NO_FINGERPRINT`, fingerprint stamped on the first commit. Otherwise it takes
+`BLOCKED_LEGACY`, which the auto-rescue converts into a full re-embed.
+
+On a fresh profile the fast path can never fire:
+
+| time | event |
+|---|---|
+| 21:55:38 | bundled help docs (`ssot/docs/help/*.md`, 5 files) ingested **and committed** by the indexing loop |
+| 21:55:44 | `ECC.refresh()` runs → `BLOCKED_LEGACY (index has no embedding fingerprint; docCount=7)` |
+| 21:55:44 | auto-rescue → `REBUILDING` (`parentDocs=5, reMarkedPending=0`) |
+
+Evidence: `modules/ui-web/.dev-data/logs/worker.log:402-405`, on a freshly-emptied data dir, **no kill
+and no prior state involved**.
+
+The ordering is structural, not a race in the timing sense:
+
+- `appServices.startIndexingLoop()` runs **synchronously** at `KnowledgeServer.java:702`.
+- The ECC is constructed and refreshed inside `initDeferredModels()` (`KnowledgeServer.java:1005-1009`),
+  scheduled **asynchronously** at `:719` via `CompletableFuture.supplyAsync` (hence the observed
+  `ForkJoinPool.commonPool-worker-1` thread), behind multi-second ONNX model composition.
+- `docCount` is a **live** query (`IndexCountOps.java:74-81`), so it reflects post-ingestion state.
+- Help ingestion is `KnowledgeServerBootstrap.tryIngestHelpFiles` (`:570-616`, `submitBatch` at `:615`
+  with `force_reindex=true`), fired from `completeReadyInitialization()` (`:262`) on first boot.
+
+**Not dev-only.** `KnowledgeServerBootstrap` ships in `app-services` → `app-launcher`; the only exemption
+is the `justsearch.eval.mode` system property. Every first launch of the desktop app takes this path.
+
+Impact is modest in isolation (5 help docs re-embedded) but the state it produces is the same
+`BLOCKED_LEGACY` that, on a profile with a real corpus, costs a full re-embed on **every** boot until one
+rebuild is allowed to run to completion.
+
+### Why 730 could not reproduce this
+
+730's addendum concluded *"no code-level defect reproduced… on two independent fidelity levels (graceful
+close and genuine hard-kill via `IndexWriter.rollback()`)"* (`730-worker-lifecycle-integrity.md:559-562`)
+and correctly refused to call it a closed non-issue. Its tests were **worker-level**: they index documents
+themselves, then close and reopen.
+
+The missing ingredient is that the trigger is not worker-level at all. `tryIngestHelpFiles` lives in
+`app-services` (`KnowledgeServerBootstrap`) and reaches the Worker over gRPC from the **Head**, during the
+window before `initDeferredModels` has constructed the ECC. A worker-level test never invokes it, so the
+index under test is genuinely empty at `refresh()` time and the fast path fires correctly — the defect
+disappears exactly when you isolate the worker.
+
+Two corroborating details:
+- Eval mode skips help ingest specifically *"so a fresh index truly starts empty"*
+  (`KnowledgeServerBootstrap.java:572-578`). Any reproduction attempt under `justsearch.eval.mode`
+  therefore removes the trigger by construction.
+- 730 asked (`:566-573`) that any re-run capture *"the `EmbeddingCompatibilityController` BLOCKED_LEGACY
+  warn line … which logs `docCount`"*. That is precisely the artifact this session captured:
+  `BLOCKED_LEGACY (index has no embedding fingerprint; docCount=7)`. The non-zero `docCount` on a
+  freshly-emptied profile **is** the finding 730 was asking for.
+
+Consequence for the fix: the regression test must exercise the boot ordering with documents already
+committed the way the Head's help batch commits them. A test that indexes documents from inside the
+worker and reopens will pass both before and after the fix.
+
+## B — Certification on `pending == 0` accepts "everything failed"
+
+`checkRebuildCompletion` (`EmbeddingCompatibilityController.java:238-254`) certifies when
+`pendingEmbeddingCount == 0` and stamps the fingerprint. Failed documents are not pending, so a rebuild
+in which **every** document failed satisfies it.
+
+Observed live: `embeddingDocCount=5 completed=0 pending=0 failed=5 coverage=0%` →
+`embeddingCompatState=COMPATIBLE, FINGERPRINT_MATCH`. The index now asserts an attestation that is false
+and `allowQueryEmbeddings()` (`:286-288`) permits dense/hybrid retrieval against zero vectors.
+
+The trigger in this instance was environmental (`ORT_FAIL … CUDNN failure 1002
+CUDNN_STATUS_SUBLIBRARY_LOADING_FAILED`), but the certification admits it regardless of cause.
+
+The controller's javadoc justifies the rule with *"coverage==100% algebraically implies pending==0"* —
+true, but the converse does not hold under failures, and the javadoc does not claim it does. The
+`pending == 0` condition is the absence of outstanding work, which is **not** evidence of success.
+
+**813's "settled numerator" precedent was considered and does not apply.** There
+(`IndexingService.java:350-352`, `RootCoverageCountsTest.java:75-96`), terminal states count as settled so
+a permanently-failed doc does not pin a *progress* number below 100% — a number nobody acts on. The
+fingerprint is an *attestation that gates serving*. Different obligation; the precedent does not license
+certifying on zero success. It does correctly cover the poison-pill case (some succeeded, some
+permanently failed), which must still certify.
+
+## C — Retries are not real, which is why B is cheap to reach
+
+- `IndexingDocumentOps.java:237-241` marks a doc `FAILED` on the **first** `RuntimeException`, with no
+  retry counter. The 3-strike escalation (`EmbeddingBackfillOps.computeEmbeddingFailureUpdate`,
+  `:300-308`) is backfill-only, and the backfill selects only `PENDING` (`:48`) — so an inline-failed doc
+  is **never retried**.
+- `EmbeddingRecoveryOps.java:151-153` re-marks status but not `embedding_retry_count`, so a doc rescued
+  from FAILED gets exactly **one** attempt per boot before flipping back.
+
+Together these make "every document FAILED" reachable from a single transient fault.
+
+## D — dev-runner force-kill (lower severity, measured NOT to be a cause)
+
+`dev-runner` stops with `taskkill /PID <pid> /T /F` (`scripts/dev/dev-runner.cjs:1910`) and never posts
+`/api/lifecycle/shutdown`, so `IndexingLoop.finalizeShutdownCommit()` (`:739,766`) cannot run.
+
+**Measured**: a stamped index survives `/F` and returns `COMPATIBLE`/`FINGERPRINT_MATCH` on restart. So
+this is not an origination cause — an earlier draft of this investigation claimed it was, and the
+experiment refuted that. What it does remove is the backstop for a rebuild that completes exactly as the
+loop stops. 805 G.1 gave the Tauri shell the ordered path (`modules/shell/src-tauri/src/lib.rs:145-154`);
+the dev-runner was not swept.
+
+Two implementation notes worth keeping, both found in review rather than in the original design:
+
+- **Ordering was load-bearing and initially wrong.** `stopRun` kills the runner first with `taskkill /T`,
+  and the backend is a non-detached child of the runner (`spawnLogged` sets no `detached: true`), so a
+  graceful attempt placed just before the *backend's* own kill would find the JVM already swept away by
+  the runner's tree kill. The graceful POST must precede the entire kill sequence. Confirmed against a
+  captured stop-report predating the change: backend `aliveBeforeKill: false` with
+  `taskkillStderrTail: "process … not found"`.
+- **Suppressing the racing self-exit report needs a cross-process signal.** The supervisor's
+  `backend.on('exit')` handler writes `writeSelfExitStopReport` and guards it with an *in-process*
+  `reaping` flag; a `stop` invocation is a different OS process and cannot set it. A per-run marker file
+  (`<runDir>/graceful-shutdown.json`) carries the signal instead.
+  *Known limitation:* if the `stop` process dies between writing the marker and deleting it, a genuine
+  backend crash later in that same run would be suppressed from the death report — the diagnostic loss
+  730 B2 closed. The window is narrow and contained to one run directory; accepted rather than adding a
+  staleness guard, but it is a real edge and should be revisited if death diagnosability regresses.
+
+## Design
+
+Full rationale, rejected alternatives, and the adversarial review that corrected the first design are in
+the approved plan. Summary of what is being implemented:
+
+1. **Construct + `refresh()` + wire the ECC synchronously before `startIndexingLoop()`.**
+   `EmbeddingFingerprint.get()` is a cached file SHA with no dependency on any loaded model
+   (`EmbeddingFingerprint.java:37-43`), so nothing in `initDeferredModels` is required. The **rescue**
+   (`maybeAutoStartEmbeddingRebuildForBlockedLegacyBestEffort`) stays late — it needs a `RunningRuntime`
+   for the re-mark (`EmbeddingRecoveryOps.java:90-97`). Both ECC suppliers become field-re-reading
+   lambdas, because `DeferredRuntime.upgradeWriter()` builds a new `RuntimeSession`.
+   *Rejected:* capturing an open-time doc count mirroring `RuntimeSession.openTimeCommitUserData` — it
+   fixes the symptom via a proxy, needs cross-cutting surgery, and cannot help a populated profile.
+2. **Permit the stamp iff `parentDocCount == 0` OR at least one successful embedding was observed**,
+   implemented as a monotone `volatile` latch read by `fingerprintToStamp()` (which is on the
+   every-commit hot path via `CommitOps.commit()` — no index query may go there). A failed count read
+   must REFUSE, never read as "empty" (`IndexCountOps` swallows `IOException` to 0). Refusal sets a
+   distinct terminal reason code and logs once at ERROR.
+3. **Make retry real**: route inline failure through the 3-strike escalation; reset
+   `embedding_retry_count` on re-mark.
+4. **dev-runner graceful stop** mirroring the shell (separable).
+
+## Verification — outcome (2026-08-10)
+
+Two coverage gaps are why both defects shipped, and both are now closed:
+- no test booted on a genuinely empty index and asserted COMPATIBLE;
+- no test passed a non-zero `failed` count to `checkRebuildCompletion`.
+
+**Static.** `spotlessApply` clean; `build -x test` green; full `./gradlew.bat test` green (no failures;
+`VduEligibilityPdfFixturesTest`, known-environmental on this machine, did not fail). Diff carries only
+U+2014/U+2026 as non-ASCII — no cp1252 corruption.
+
+**Live — the acceptance criterion, on a genuinely fresh profile (a new worktree data dir):**
+
+```
+Embedding compatibility: COMPATIBLE (new/empty index; fingerprint will be stamped on commit)  22:59:18.975
+Embedding service ready (dimension=768)                                                       22:59:25.015
+```
+
+The controller resolves **6 s before the embedding model is ready**, proving it no longer waits on
+`initDeferredModels`. `/api/status` reported `COMPATIBLE` / `FINGERPRINT_MATCH` with the fingerprint
+stored, against `embeddingDocCount=5` (the help batch). The worker log contains **zero** occurrences of
+`BLOCKED_LEGACY`, `auto-started rebuild`, or `transitioned to REBUILDING` — the pre-fix path is gone, not
+merely masked. Embedding coverage then reached **100%**, so the attestation is earned, not just granted
+by emptiness.
+
+**Restart durability (the `attestationAlreadyOnDisk` arm).** After a force-kill stop and restart with no
+new embeddings, the index stayed `COMPATIBLE`/`FINGERPRINT_MATCH` with the fingerprint intact — i.e. the
+evidence gate did not strip an attestation already earned. This is the failure mode the original design
+would have caused; see §Design note below.
+
+**§D graceful stop.** `POST /api/lifecycle/shutdown` returned **202** and the worker log then showed the
+clean sequence — `Shutting down KnowledgeServer… → Indexing loop stopped → KnowledgeServer shutdown
+complete`. `Indexing loop stopped` is `IndexingLoop.java:741`, immediately after `finalizeShutdownCommit()`
+at `:739`, so the stamp backstop ran. The force-killed run immediately prior left
+`Unclean previous shutdown detected` instead — the direct contrast.
+
+Live verification also caught a defect static checks could not: the exit-wait budget was **5 s**, but the
+ordered close takes **7.3 s** on this machine, so `stop` reported `timeout` and would have force-killed a
+JVM mid-clean-shutdown — destroying the very stamp the path exists to preserve. Raised to 15 s; re-tested
+`outcome: "exited"`, `waitedMs: 7316`. Noted out of scope: the Tauri shell's own budget is 8 s
+(`lib.rs:149`), i.e. 0.7 s of margin here, so the shipped app could plausibly time out on a slower machine.
+
+### Known limitations of the regression guard
+
+The behavioural pair in `EmbeddingCompatibilityBootOrderingTest` constructs both orderings explicitly and
+therefore passes before *and* after the fix — it demonstrates that order decides the outcome, not that the
+production order is correct. The part that actually regresses is a **source-order assertion** over
+`KnowledgeServer.start()`'s body, with a self-test proving the checker can go red; red→green was
+demonstrated by temporarily moving the call. That is a structural guard, not a behavioural one — the true
+end-to-end guarantee is the live check above, which is not automated.
+
+*(Superseded in part by §E below: the suite now also carries a behavioural test that genuinely regresses
+— proven by revert-probe — for the defect-B arm.)*
+
+## §E — Merge review outcome (821 §O.1), 2026-08-14
+
+Merge review executed against `main` under owner-authorized takeover (the original session went quiet).
+The catch-up merge of `origin/main` (62 commits, incl. PR #439 boot resilience) was **conflict-free**:
+this branch touches the *worker-side* `indexer-worker/.../server/KnowledgeServer.java`, not
+`KnowledgeServerBootstrap.java` / `HeadlessApp.java`, so the predicted composition risk did not
+materialize. `git diff origin/main HEAD` is exactly this branch's 19 files.
+
+**Item 1 — CONFIRMED, real, and fixed.** `emptyIndexAtRefresh` was a boot-long sticky latch: set by
+`refresh()` on a fresh empty index and never cleared (`refresh()` runs once per boot). Because
+`checkRebuildCompletion()` returns early unless state is REBUILDING (`:355-357`), the IO-backed evidence
+check `observeEmbeddingSuccessEvidence()` **never runs on the fresh-COMPATIBLE path** — so the stale
+permit was the *only* evidence there. A fresh profile whose embedding runtime is broken (the exact live
+ORT/CUDNN failure this tempdoc documents) therefore wrote the Head's 5 help docs with zero vectors and
+stamped the attestation on the very next commit. The following boot then read FINGERPRINT_MATCH, so it
+never went BLOCKED_LEGACY, never rescued, never rebuilt — **the recovery path was permanently closed**,
+and `allowQueryEmbeddings()` served dense/hybrid over zero vectors. That is defect B re-entered through
+the new latch, and strictly worse than the pre-fix behaviour, which at least retried every boot.
+
+Fix: the permit is now revocable and evidence is genuinely pulled from the index.
+- `noteDocumentIndexed()` (IO-free) revokes the permit the instant a document exists — an empty index is
+  safe to attest to only while it stays empty. Called from `JobBatchWriter.write()` right after
+  `indexingCoordinator.indexSingle(doc)`, the sole production parent-doc write path.
+- `reconcileStampEvidence()` (IO-allowed, loop-side **only** — never the commit path) latches real
+  success from the live COMPLETED count. It is the pull-side that covers the embedding backfill, which
+  is the dominant production success path, without touching `EmbeddingBackfillOps` or its context record.
+- `tryFinalizeFreshCompatibleStamp()` gains that guard: once COMPATIBLE-without-evidence became
+  reachable, its forced commit would have persisted nothing and refired on every drain — a commit storm.
+
+`fingerprintToStamp()` stays contractually IO-free; only flag reads happen there.
+
+**Item 2 — CONFIRMED and closed.** `noteSuccessfulEmbeddingObserved()` had no production caller (3 test
+call sites only). It now has one in `JobBatchWriter` (the migration/blue-green inline-embed path, where
+the written document carries `EMBEDDING_STATUS=COMPLETED`), and the flag is additionally latched in
+production by `reconcileStampEvidence()`.
+
+**Item 3 — premise partly outdated, but the real problem was worse.** The suite already had a
+*behavioural* pair against a live Lucene runtime with a negative control, not merely a source-order
+assertion. However `productionOrderKeepsAFreshProfileCompatibleAndStampsIt` was green **because of** the
+item-1 hole: its `indexHelpBatch` helper wrote 5 documents with no `EMBEDDING_STATUS` at all, and the
+test then asserted the reopened index reads FINGERPRINT_MATCH — i.e. it asserted that an attestation
+gets stamped over five vector-less documents. The test encoded the defect. It was rewritten to model the
+real sequence (docs arrive → stamp withheld → backfill succeeds → stamp earned → FINGERPRINT_MATCH), and
+a new arm `aFreshProfileThatNeverEmbedsMustNotStampAndMustStayRecoverable` pins the §O.1 case: no stamp,
+nothing on disk, and the reopen still resolves BLOCKED_LEGACY so the auto-rescue retries.
+
+**Revert-probe (independently re-run by the reviewing session, not only the implementer).** Reducing
+`noteDocumentIndexed()` to a no-op — nothing else changed — turns **4 tests across 2 modules** red:
+both boot-ordering arms (`:137`, `:242`) and both controller arms (`:185`, `:205`). Restoring the
+one-line body returns them to green. The guard bites for the right reason.
+
+**Review nit found and removed during the pass.** The first cut of this fix also added a public
+`stampEvidenceEarned()` probe that ended up with **no production caller** (the lifecycle guard uses
+`reconcileStampEvidence()`, which subsumes it) — the very defect class item 2 flagged. It was deleted
+rather than shipped; its test assertions were redundant with adjacent `fingerprintToStamp()` ones.
+
+**Out of scope (826 F1–F3, deliberately NOT pulled in):** resumable-rebuild persistence
+(`embedding_rebuild_model_sha256`), the `fingerprintToStamp` STAMP/PRESERVE/CLEAR tri-state, and
+chunk-vector certification. This branch closes origination; 826 closes recovery.
+
+### Design note — the correction that mattered
+
+Gating the stamp on "did an embedding succeed" **alone** would have been actively harmful: a healthy,
+already-stamped index that merely restarts embeds nothing new, so the next timer commit would have
+withheld — and thereby stripped — its fingerprint, and the following boot would re-derive BLOCKED_LEGACY
+and re-embed the whole corpus. The gate needed a third permitting fact,
+`attestationAlreadyOnDisk`, latched from real commit metadata: **the gate governs the first persistence of
+an attestation, never the preservation of one already earned.** Without it this tempdoc's fix would have
+manufactured the defect it set out to remove.
