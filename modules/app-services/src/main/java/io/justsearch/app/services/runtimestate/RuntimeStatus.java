@@ -2,6 +2,7 @@
 package io.justsearch.app.services.runtimestate;
 
 import io.justsearch.app.api.Mode;
+import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -16,9 +17,13 @@ import java.util.Optional;
  * in-flight machine-actor overlay. A procedure is the ONLY sanctioned way a machine actor holds
  * the engine in a non-spec state (§12a); install / activation join {@code VDU_BATCH} later.
  *
- * <p><b>Reason codes are internal strings in this phase.</b> They are NOT wired into
- * {@code LifecycleReasonCode} / {@code check-readiness-reason-codes} yet — that join (which
+ * <p><b>Reason codes are internal strings in this phase, with one exception.</b> They are NOT wired
+ * into {@code LifecycleReasonCode} / {@code check-readiness-reason-codes} yet — that join (which
  * requires paired FE rows) is Phase 3. Where a {@code TransitionReason} name fits, it is reused.
+ * The exception is {@link #REASON_ENGINE_UP_FOR_BACKGROUND}, which tempdoc 837 S4 promoted into the
+ * closed vocabulary because {@code InferenceCapabilityWiring} and this axis were deliberately built
+ * to stamp the SAME string for the same soft-off state (§12c item 2) — half of the Phase-3 join,
+ * done where the two surfaces already agreed.
  */
 public record RuntimeStatus(List<Condition> conditions) {
 
@@ -93,8 +98,14 @@ public record RuntimeStatus(List<Condition> conditions) {
    * Soft-off (§15 decision 1): a background procedure holds the engine UP while the user's spec
    * has chat disabled. The engine is healthy but chat is intentionally NOT offered to the user —
    * the reconciler stamps this reason so the state is legible instead of looking like a bug.
+   *
+   * <p>Tempdoc 837 S4: this is now a real {@link LifecycleReasonCode} member rather than an internal
+   * string. Both stampers (this axis and {@code InferenceCapabilityWiring.deriveAndApply}) keep
+   * referring to this ONE constant, so the two surfaces go on agreeing by construction — and the
+   * value they agree on is now a worded, gate-enforced member of the closed readiness vocabulary.
    */
-  public static final String REASON_ENGINE_UP_FOR_BACKGROUND = "engine-up-for-background-processing";
+  public static final String REASON_ENGINE_UP_FOR_BACKGROUND =
+      LifecycleReasonCode.INFERENCE_UP_FOR_BACKGROUND.code();
   /**
    * Anti-flap hold (item 2): the same foreign flip recurred past the cap inside the window, so the
    * reconciler stopped fighting it and is holding until spec / procedure / policy input changes.

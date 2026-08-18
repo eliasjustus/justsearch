@@ -3,6 +3,7 @@ package io.justsearch.app.services.bootstrap.phases;
 
 import io.justsearch.app.api.Mode;
 import io.justsearch.app.api.lifecycle.CapabilityHealth;
+import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
 import io.justsearch.app.inference.InferenceLifecycleManager;
 import io.justsearch.app.services.lifecycle.InferenceCapability;
 import io.justsearch.app.services.lifecycle.WorkerCapability;
@@ -114,12 +115,21 @@ public final class InferenceCapabilityWiring {
               CapabilityHealth.DEGRADED, RuntimeStatus.REASON_ENGINE_UP_FOR_BACKGROUND);
         }
       }
+      // Tempdoc 837 S5 refines this arm: crash-recovery and user-deactivate both land here and are
+      // NOT distinguishable without a TransitionReason. Until that signal is threaded the generic
+      // code is the honest answer — but it is a CODE now, not prose the consumer has to discard.
       case OFFLINE ->
-          inferenceCapability.transition(CapabilityHealth.OFFLINE, "Inference offline");
+          inferenceCapability.transition(
+              CapabilityHealth.OFFLINE, LifecycleReasonCode.INFERENCE_OFFLINE.code());
       case TRANSITIONING ->
-          inferenceCapability.transition(CapabilityHealth.RECOVERING, "Inference transitioning");
+          inferenceCapability.transition(
+              CapabilityHealth.RECOVERING, LifecycleReasonCode.INFERENCE_STARTING.code());
+      // Tempdoc 837 S4: the GPU went to indexing. Scheduled and self-clearing — the old wording said
+      // the model was "offline", which reads as a fault the user must fix.
       case INDEXING ->
-          inferenceCapability.transition(CapabilityHealth.DEGRADED, "GPU allocated to indexing");
+          inferenceCapability.transition(
+              CapabilityHealth.DEGRADED,
+              LifecycleReasonCode.INFERENCE_GPU_YIELDED_TO_INDEXING.code());
     }
   }
 }

@@ -1054,6 +1054,22 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
     return LifecycleReasonCode.isKnown(reason) ? reason : LifecycleReasonCode.INFERENCE_OFFLINE.code();
   }
 
+  /**
+   * Tempdoc 837 §3.2: the worker twin of {@link #resolveInferenceReasonCode}. Every reason-bearing
+   * worker {@code transition(...)} site now passes a {@link LifecycleReasonCode}, so this forwards
+   * whatever specific cause the producer knew — {@code worker.lost} (it was serving and stopped),
+   * {@code worker.index_corrupt}, {@code worker.restart_exhausted}, {@code worker.shut_down} — and
+   * falls back to the caller's generic code only for an unrecognized reason. Replaces the inlined
+   * one-code special case (tempdoc 627) that could publish exactly {@code worker.restart_exhausted}
+   * and collapsed everything else onto {@code worker.spawn.failed}.
+   */
+  private static String resolveWorkerReasonCode(
+      io.justsearch.app.services.lifecycle.WorkerCapability workerCapability,
+      LifecycleReasonCode fallback) {
+    String reason = workerCapability.pendingReason();
+    return LifecycleReasonCode.isKnown(reason) ? reason : fallback.code();
+  }
+
   static String throughputReadinessReason(WorkerOperationalView workerView) {
     if (workerView == null || !hasActiveIndexWork(workerView)) {
       return null;
@@ -1091,7 +1107,8 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
     return inferenceSnapshotSupplier.get();
   }
 
-  private LifecycleSnapshotV1 computeLifecycleSnapshot() {
+  /** Visible for tests (tempdoc 837 §3.2 asserts the worker arm's reason_code per producer state). */
+  LifecycleSnapshotV1 computeLifecycleSnapshot() {
     Instant now = Instant.now();
 
     // Head component: this process is running if we're in this handler.
@@ -1103,21 +1120,23 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
     // health is always current — even in integration tests that create a real bootstrap.
     LifecycleSnapshotV1.Component worker = switch (workerCapability.health()) {
       case READY -> new LifecycleSnapshotV1.Component(LifecycleState.LIFECYCLE_STATE_READY, null);
-      // Tempdoc 627: a DEGRADED worker carrying the terminal give-up reason (supervisor exhausted its
-      // restart budget) surfaces that distinct, non-self-recovering code; other DEGRADED states keep the
-      // generic spawn-failed code.
+      // Tempdoc 837 §3.2 (was 627's one-code special case): forward whichever specific cause the
+      // producer set — worker.lost, worker.index_corrupt, worker.restart_exhausted — and fall back to
+      // worker.spawn.failed only for an unrecognized reason. worker.spawn.failed thereby becomes TRUE
+      // for the first time: it now fires only when the worker actually failed to start.
       case DEGRADED -> new LifecycleSnapshotV1.Component(
           LifecycleState.LIFECYCLE_STATE_ERROR,
-          LifecycleReasonCode.WORKER_RESTART_EXHAUSTED.code().equals(workerCapability.pendingReason())
-              ? LifecycleReasonCode.WORKER_RESTART_EXHAUSTED.code()
-              : LifecycleReasonCode.WORKER_SPAWN_FAILED.code());
+          resolveWorkerReasonCode(workerCapability, LifecycleReasonCode.WORKER_SPAWN_FAILED));
       // Tempdoc 627: RECOVERING is transient (a supervised restart is in flight). Surface it as a
       // distinct, calm reason (worker.recovering) at DEGRADED severity — NOT ERROR/spawn-failed — so the
       // FE verdict renders a routine self-heal as "Restarting…" instead of "Service degraded".
       case RECOVERING -> new LifecycleSnapshotV1.Component(
           LifecycleState.LIFECYCLE_STATE_DEGRADED, LifecycleReasonCode.WORKER_RECOVERING.code());
+      // Tempdoc 837 S3: OFFLINE covers two different truths — "never set up" (worker.not_configured)
+      // and "we stopped it" (worker.shut_down, on an orderly teardown). Forward the specific one.
       case OFFLINE -> new LifecycleSnapshotV1.Component(
-          LifecycleState.LIFECYCLE_STATE_DEGRADED, LifecycleReasonCode.WORKER_NOT_CONFIGURED.code());
+          LifecycleState.LIFECYCLE_STATE_DEGRADED,
+          resolveWorkerReasonCode(workerCapability, LifecycleReasonCode.WORKER_NOT_CONFIGURED));
       case PENDING -> new LifecycleSnapshotV1.Component(
           LifecycleState.LIFECYCLE_STATE_STARTING, LifecycleReasonCode.WORKER_STARTING.code());
     };
@@ -1370,13 +1389,17 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
         String state;
         String reason;
 
-        if (LifecycleReasonCode.WORKER_NOT_CONFIGURED.code().equals(workerReason)) {
+        // Tempdoc 837 S3: worker.shut_down joins worker.not_configured here — both mean "no worker is
+        // serving and that is not a fault", which is the NOT_CONFIGURED verdict this branch encodes.
+        // Without it an orderly teardown would fall through to the ERROR-shaped branches below.
+        if (LifecycleReasonCode.WORKER_NOT_CONFIGURED.code().equals(workerReason)
+            || LifecycleReasonCode.WORKER_SHUT_DOWN.code().equals(workerReason)) {
           // 821 §3-C1: this one branch derives head-side (the lifecycle snapshot's worker reason),
           // yet the dimension is classified worker-observed as a whole, so it is marked stale here
           // too. Deliberate: over-marking a NOT_CONFIGURED verdict is the safe direction, and
           // splitting the classification per-branch would put the decision back inline.
           state = READINESS_NOT_CONFIGURED;
-          reason = LifecycleReasonCode.WORKER_NOT_CONFIGURED.code();
+          reason = workerReason;
         } else if (compatBlockedReason != null) {
           // Tempdoc 600 Design A: a serving index can be HEALTHY for keyword search yet have its
           // dense/semantic leg BLOCKED (a legacy index with no embedding fingerprint, or a

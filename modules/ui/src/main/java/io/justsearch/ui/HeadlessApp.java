@@ -449,12 +449,15 @@ public class HeadlessApp {
       bootstrap.capabilities().worker()
           .transition(
               io.justsearch.app.api.lifecycle.CapabilityHealth.DEGRADED,
+              io.justsearch.app.api.lifecycle.LifecycleReasonCode.WORKER_SPAWN_FAILED.code(),
               "Worker spawn failed: " + knowledgeServerStartError);
       log.warn("Knowledge Server failed to start: {}", knowledgeServerStartError);
     } else {
       bootstrap.capabilities().worker()
           .transition(
-              io.justsearch.app.api.lifecycle.CapabilityHealth.OFFLINE, "Worker not configured");
+              io.justsearch.app.api.lifecycle.CapabilityHealth.OFFLINE,
+              io.justsearch.app.api.lifecycle.LifecycleReasonCode.WORKER_NOT_CONFIGURED.code(),
+              "Worker not configured");
     }
 
     return new WorkerConnectionResult(knowledgeServer, knowledgeServerStartError, healthMonitor);

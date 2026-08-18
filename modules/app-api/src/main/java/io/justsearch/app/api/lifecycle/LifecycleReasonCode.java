@@ -35,6 +35,25 @@ public enum LifecycleReasonCode {
   // worker.spawn.failed so the FE verdict renders a routine self-heal as a calm "Restarting…" transient
   // (not an alarming "Service degraded"); it self-recovers when the worker comes back.
   WORKER_RECOVERING("worker.recovering"),
+  // Tempdoc 837 S3 (fix c) — the worker WAS serving and stopped answering. Distinct from
+  // worker.spawn.failed, which now means only "it never started": the two states have different
+  // truths (the index was reachable a moment ago) and the collapsed wording told a user whose
+  // worker had just died that it "failed to start". Emitted only where the call site already knows
+  // it was READY (KnowledgeServerBootstrap.checkHealth, KnowledgeServerHealthMonitor's tick).
+  WORKER_LOST("worker.lost"),
+  // Tempdoc 837 S3 — the worker exited fatally because the index is corrupt and could not be
+  // auto-recovered under the fail-closed policy (tempdoc 628 Stage D). The dying worker stamps
+  // WorkerFatalReasonMarker; the Head reads it once (readAndClear DELETES it), so this cause is
+  // observable exactly once per crash and WorkerCapability latches it until READY.
+  WORKER_INDEX_CORRUPT("worker.index_corrupt"),
+  // Tempdoc 837 S3 — orderly teardown (KnowledgeServerBootstrap.closeForUpgrade). Not a failure:
+  // distinguishing it from worker.not_configured keeps "we stopped it" from reading as
+  // "it was never set up".
+  WORKER_SHUT_DOWN("worker.shut_down"),
+  // Tempdoc 837 S3 — the pre-transition default: the Head is up and nothing has been observed about
+  // the worker yet. Distinct from worker.starting (a start was actually attempted); it is the reason
+  // published on the runtime manifest and the 503 body from process start until the first transition.
+  WORKER_NOT_CONNECTED("worker.not_connected"),
 
   // --- Index serving / embedding compatibility (tempdoc 600: Design A + PART IX consolidation) ---
   INDEX_NOT_HEALTHY("index.not_healthy"),
@@ -73,6 +92,16 @@ public enum LifecycleReasonCode {
   INFERENCE_POLICY_ONLINE_AI_DISABLED("inference.policy_online_ai_disabled"),
   INFERENCE_POLICY_GPU_DISABLED("inference.policy_gpu_disabled"),
   INFERENCE_ACTIVATION_FAILED("inference.activation_failed"),
+  // Tempdoc 837 S4 (fix a) — the GPU was handed to indexing (Mode.INDEXING). No new signal was
+  // needed: it is its own mode arm. The collapsed wording said the model was "offline", which
+  // reads as a fault; this state is scheduled, self-clearing, and expected.
+  INFERENCE_GPU_YIELDED_TO_INDEXING("inference.gpu_yielded_to_indexing"),
+  // Tempdoc 837 S4 — engine ONLINE with the user's chat spec off: a background procedure (VDU) is
+  // using the engine while chat is intentionally not offered. The previous wording ("Inference
+  // offline") was FALSE, not merely vague — the engine is up. Also the closed-vocabulary home of
+  // RuntimeStatus.REASON_ENGINE_UP_FOR_BACKGROUND, so the capability and the ENGINE condition
+  // (tempdoc 737 §12c item 2) keep naming this state identically.
+  INFERENCE_UP_FOR_BACKGROUND("inference.up_for_background"),
 
   // --- Visual text extraction (OCR/VDU) ---
   OCR_DISABLED("ocr.disabled"),
