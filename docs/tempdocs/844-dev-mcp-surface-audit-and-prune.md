@@ -1,7 +1,7 @@
 ---
 title: "Dev agent-tool surface audit: what agents actually invoke on the justsearch-dev MCP server, what fails, what nobody has ever called, and the two structural reasons 81% of local-API traffic bypasses the surface entirely"
 type: tempdocs
-status: "OPEN — analysis complete and reproducible (2026-08-18); nothing implemented. Owner decisions pending on D1-D4 (§8). Hot-reload coherence RESOLVED 2026-08-18: verdict INCOHERENT, independently re-verified against source (§5.6). Recommendation REVISED same day from RETIRE to FIX-THEN-SURFACE after owner challenge: the retire estimate did not survive re-examination and the value model (warm models across a code change, not a saved spawn) was never weighed — see §4.2. THEORIZED 2026-08-18 (§11): the endstate thesis is a single run registry as keystone, three tool classes with per-class middleware, and specialization into arbitration over transport; #845 reserved as the candidate registry lane. DIRECTION SET 2026-08-18 (12): the through-line is that the surface asserts what it has not verified (7 instances, 1 property); criterion = a dev tool must not report state it did not verify. 12.3 re-sequences 9 by that criterion and drops P3b (allowlist) + defers P8. IMPLEMENTED 2026-08-18 on branch worktree-844-dev-surface-honesty, NOT merged (see 13 As-built). Shipped: P1 prunes (tool set 16 -> 12), P2 start/preflight truth + DIST_NOT_BUILT, P3a projection honesty, P5 quick_health foreignRuns tri-state, P6 de-fork + check-dev-mcp-doc-sync gate + consult-register, P7 the standing reader. Dropped: P3b. Deferred: P8 (D2). Execution corrected this document three times - 3 was measured on a non-recursive glob that excluded subagents (379 -> 731 calls), 6.3 was a sync generator not a fork, and 5.2 s separator claim is retracted. Adopts 6 inbox conditions (§7) that should be closed by this lane rather than re-logged."
+status: "OPEN — analysis complete and reproducible (2026-08-18); nothing implemented. Owner decisions pending on D1-D4 (§8). Hot-reload coherence RESOLVED 2026-08-18: verdict INCOHERENT, independently re-verified against source (§5.6). Recommendation REVISED same day from RETIRE to FIX-THEN-SURFACE after owner challenge: the retire estimate did not survive re-examination and the value model (warm models across a code change, not a saved spawn) was never weighed — see §4.2. THEORIZED 2026-08-18 (§11): the endstate thesis is a single run registry as keystone, three tool classes with per-class middleware, and specialization into arbitration over transport; #845 reserved as the candidate registry lane. DIRECTION SET 2026-08-18 (12): the through-line is that the surface asserts what it has not verified (7 instances, 1 property); criterion = a dev tool must not report state it did not verify. 12.3 re-sequences 9 by that criterion and drops P3b (allowlist) + defers P8. IMPLEMENTED 2026-08-18 on branch worktree-844-dev-surface-honesty, NOT merged (see 13 As-built). Shipped: P1 prunes (tool set 16 -> 12), P2 start/preflight truth + DIST_NOT_BUILT, P3a projection honesty, P5 quick_health foreignRuns tri-state, P6 de-fork + check-dev-mcp-doc-sync gate + consult-register, P7 the standing reader. Dropped: P3b. ALL FOUR OWNER DECISIONS NOW LANDED (2026-08-19): D1 done incl. the gitignored main-checkout file; D2 = repair, hot reload made coherent (13.7); D3 = full, jseval registers its backend (13.8); D4 = option (b), the harness-vs-browser rule lives in the ui-check skill. Remaining: the 13.6 live validation pass, which needs the shared dev stack. Execution corrected this document three times - 3 was measured on a non-recursive glob that excluded subagents (379 -> 731 calls), 6.3 was a sync generator not a fork, and 5.2 s separator claim is retracted. Adopts 6 inbox conditions (§7) that should be closed by this lane rather than re-logged."
 created: 2026-08-18
 author: agent session b73007cd (Opus 5, 1M context) — chartered by the owner after a session-opening question about the state of dev-related MCP capabilities
 category: agent-process / dev-tooling / mcp
@@ -1227,3 +1227,47 @@ Deliberate judgement calls, so a reviewer can overturn them:
 - **The signal-gate tests are source-structural and labelled as such** in
   `test-dev-mcp-hot-reload.mjs`; what is genuinely exercised is the property they depend on (every
   non-`REDEFINED` outcome is `hotSwapOk: false`). Step 8 above is where they become live.
+
+### 13.8 D3 as-built (jseval run registration)
+
+Owner decision D3 = **full**, which overrode §8's minimum-first recommendation. Because P5 shipped
+first, the layering came out right rather than by luck: **registration is the authoritative path,
+the port probe is the fallback that keeps the register honest about what never registered** — which
+is exactly the caveat §11.3 raised (a register only covers what registers itself).
+
+- `scripts/jseval/jseval/run_register.py` writes one record per backend to
+  `<main>/tmp/dev-runner/foreign/jseval-<pid>.json`, temp-file + `os.replace` so a torn record is
+  never readable. Registration is **best-effort and never raises** — a bookkeeping failure must not
+  fail an eval run; the run then degrades to merely *observed*, i.e. exactly today's P5 behaviour.
+- Registration happens at **spawn**, not after health, inside the single `Popen` site both
+  `start_backend` and `_run_with_cache` route through. The JVM holds ports, the data dir and the
+  GPU from that moment, and that boot window is precisely what a neighbour's "is the machine free?"
+  check must not miss — it is the window that contaminated the measurement in §6.1.
+- **Why the location cannot destabilise the 271/542 lease model:** `dev-runner.cjs` never
+  enumerates its state root. Its `readdir` calls target the *data* directory (two clean paths) and
+  `runs/`; everything else it touches is a named child (`active.json`, `active.lock.json`,
+  `op-leases.json`, `sessions/`, `interference-events.ndjson`). A sibling `foreign/` is invisible to
+  admission, lease and retention logic. Verified against source directly, and pinned by a
+  regression test so a future `readdir` over the state root fails loudly.
+
+**The record makes no liveness claim** — a test enforces that no field says live/ready/running. The
+*reader* decides, and reports four states rather than a boolean: `live` (port answered),
+`unreachable` (port silent, pid alive — booting or wedged), `stale` (port silent and pid gone), and
+`unreadable` (unparseable, or a future `schemaVersion`). A `live` entry whose recorded pid is dead
+additionally carries `identityStale` — the listener is verified, the identity behind it is not.
+
+Two consequences of §12.2 worth naming, because both were the harder choice:
+
+- **Stale records are reported, never deleted.** Deleting another lifecycle's state during a *read*
+  is the confident guess the criterion forbids.
+- **`probe:false` still returns `null` even when records exist.** A record is a claim, not a
+  verification; listing one as a run without probing would reintroduce exactly the false confidence
+  this lane removed. `null` keeps meaning "I did not look".
+
+`gpuBound` is recorded as `"unverified"` — jseval does not measure GPU residency, so it declines to
+claim either way, and a test forbids the reader from upgrading it.
+
+**Not verified without a live backend:** that a real `runHeadlessEval` writes a record (the `Popen`
+path is mocked), and the `mainRepoRoot` join against the real `<main>/tmp/dev-runner/foreign` — the
+worker declined to write into the main checkout, which was correct. Both are covered by §13.6's
+live pass.
