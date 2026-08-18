@@ -33,8 +33,9 @@ public final class RunRoutes {
 
   public static void register(Javalin app, RunStreamController runs, AgentSessionController session) {
     if (session != null) {
-      // Registered BEFORE the {runId} routes: Javalin matches in registration order, and `live` is a
-      // literal that must not be swallowed by a path parameter reading it as a run id.
+      // Registered before the {runId} routes. Nothing today can capture `live` as a run id (the
+      // parameterised routes are POST), but a future GET /api/chat/runs/{runId} would make the
+      // literal-vs-parameter question live, and declaring the literal first is the cheap side.
       app.get(LIVE_PATH, session::handleListLiveRuns);
     }
     if (runs == null) {

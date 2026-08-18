@@ -267,6 +267,37 @@ class LiveRunsEnumerationTest {
   }
 
   @Test
+  @DisplayName("observerCount is read from the channel's listener set — attach raises it, close drops it")
+  void observerCountTracksTheListenerSet() throws Exception {
+    var run =
+        registry.open(
+            new RunId("run-watched"),
+            new RunDescriptor("core.free-chat", "conv-a", T0),
+            RunChannelPolicy.conversational());
+
+    assertEquals(0, only(enumerate("")).observerCount());
+
+    var first = run.observe(env -> {}, 0).orElseThrow();
+    assertEquals(1, only(enumerate("")).observerCount());
+
+    var second = run.observe(env -> {}, 0).orElseThrow();
+    assertEquals(2, only(enumerate("")).observerCount(), "two observers on one run are two");
+
+    // The half of §15.4 Q1 that CAN be a CI test: unsubscribing removes the observer, and the
+    // enumeration is the read surface that makes it visible. The composition — a dead SOCKET being
+    // noticed within one heartbeat interval, so a WATCH run parks — needs a real socket and stays a
+    // direct-topology live leg.
+    second.unsubscribe();
+    assertEquals(1, only(enumerate("")).observerCount());
+
+    first.unsubscribe();
+    assertEquals(
+        0,
+        only(enumerate("")).observerCount(),
+        "reaching zero is the precondition the zero-observer park depends on");
+  }
+
+  @Test
   @DisplayName("no live runs is an empty list, not an error")
   void emptyIsHonest() throws Exception {
     assertTrue(enumerate("").isEmpty());
