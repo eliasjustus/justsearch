@@ -2118,34 +2118,129 @@ proves "with a token it works" is green in exactly the world where the guard was
    WATCH run proceed unwatched — the exact hazard §2.14 Root I exists to prevent. §16.3's "they
    retire in S5" expectation is therefore **not met, and should not have been**: §15.3 stages the
    attach move alone, and deleting a guard whose consumers still exist is not a sweep.
+### 18.5 Live legs — RUN 2026-08-18, DIRECT TOPOLOGY ONLY (P4)
 
-### 18.5 Live legs — NOT RUN, and why
+Run under supervision on this worktree's dist (`distFrom`), API port pinned to **7712**, lease
+3600 s, GPU runtime `cuda12` + `Qwen_Qwen3.5-9B-Q4_K_M.gguf` (activation 17.5 s). Ownership was
+checked three ways before starting — `quick_health` `running:false`, an independent process scan
+(the only `java` PIDs were Gradle daemons; no Head, no Worker, no `llama-server`), and an
+`nvidia-smi` compute-app scan showing no inference process. **Every request below went straight
+to `http://127.0.0.1:7712`**, never through the Vite proxy, per D1(c).
 
-**The direct-topology live round did not happen.** The shared dev stack was held by another agent
-session (`840-download-restructure`) for the entire implementation window, with a 3600 s lease
-renewing continuously (observed sequence 56 → 238). The campaign rule is that a running stack is
-never taken over; the tool's own verdict softened to `IDLE_HOLD` and briefly to
-`TAKEOVER_ABANDONED`, which is exactly the reasoning the rule exists to refuse — the lease was
-still being renewed, so the owning session was alive.
+**Verdicts: 4 of 4 in-scope legs VERIFIED.** Leg 1's blocked sibling (zero-observer park) is
+NOT re-litigated here — §18.5.1 states why it remains out of reach.
 
-So the following remain **unverified**, and are not claimed:
+| leg | verdict | headline evidence |
+|---|---|---|
+| 1a — enumeration end to end | **VERIFIED** | a real run listed with true state/park/snapshot, on both shapes |
+| 1b — unauthenticated GET rejected (prod mode) | **VERIFIED** | `401` in 2 ms, and the scope is provably narrow |
+| 2 — observer count drops on close | **VERIFIED** | `2 → 1` in **263 ms** after an abrupt socket destroy |
+| 3 — interrupted run presented | **VERIFIED** | absent from `live`, `interruptedAt` stamped on the session |
+| 4 — FE discovery on reload | **VERIFIED** | enumeration → managed observe, pointer gone from a real browser |
 
-| leg | status |
+**Leg 1a — the enumeration is true, on both shapes.** A `core.free-chat` run created through
+`POST /api/chat/runs` enumerated as `state:"running"`, `park:null`, `snapshot:null`,
+`observerCount:1` — and the two nulls are the *structural* answer, not a gap: a one-shot pipeline
+has no control point to park at and no stepped state to prime with (§3.4/§6.4).
+`updatedAtEpochMs` advanced with narrative output (`…206522` start → `…208121` → `…209908`),
+confirming the field tracks publishes.
+
+The **agent** run is the one that matters, because it exercises the projection §17.3 fixed. Its
+row carried `runId` identical to the agent `sessionId` (one namespace, §3.2 — no mapping table),
+`shapeId:"core.agent-run"`, and, at t+3.0 s, `state:"parked"` with
+`park:{kind:"approval", sinceEpochMs:…358502, detail:"XotuHUmLqBvuww17c7GxXbetacp7iKss"}` —
+**park non-null on the SAME read that took the snapshot.** That is §17.3's defect observed from
+the outside: before the fix this row would have read `state:"running", park:null` and only
+admitted the park one enumeration later. The snapshot carried all eight components with the
+actionable gate — `pendingApprovals:[{callId:"XotuHUmLqBvuww17c7GxXbetacp7iKss",
+toolName:"core_browse_folders", arguments:"{\"parent_path\":\"\"}", risk:"low",
+gateBehavior:"inline_confirm"}]`, `autonomyLevel:"WATCH"`. §6.1's law is therefore true on the
+wire: **the gate is answerable from the enumeration alone**, with no dependence on a
+`tool_call_pending` frame the ring may have evicted.
+
+**Leg 1b — the auth change, on a real socket.** The dev-runner never sets prod mode, so the stack
+was forced into it by injecting `-Djustsearch.prod=true` into the dist start script (§14.1d's
+technique; a build artifact, reverted immediately after and verified back to 0 occurrences). The
+Head minted a 43-char session token:
+
+| request | result |
 |---|---|
-| 1 — park detection via managed heartbeat, ≤1-interval bound | **NOT RUN** |
-| 2 — observer count decrements on close, read through the enumeration | **NOT RUN** live; the mechanism has a CI test (attach raises the count, unsubscribe drops it to zero) — the *socket timing* is what is missing |
-| 3 — enumeration end to end against a running backend | **NOT RUN**; the auth half IS covered against the real filter chain in `LiveRunsAuthTest` |
-| 4 — FE reload mid-run re-adopts via the enumeration | **NOT RUN** live; covered at unit level with a mocked fetch |
+| `GET /api/chat/runs/live`, **no** token | **401** `{"errorCode":"UI_TOKEN_REQUIRED"}`, `application/json`, 2 ms |
+| same, **wrong** token | **401**, identical body, 1 ms |
+| same, **correct** token | **200** `{"runs":[]}`, 4 ms |
+| control `GET /api/health`, no token | **200** — the ordinary read surface is untouched |
+| control `GET /api/chat/sessions?limit=1`, no token | **200** — the path scope is NARROW |
 
-**What a future live round must know about leg 1.** §16.5.1 found the composition blocked by a
-stale INITIATING observer: `AgentSession` evicts it only when a write to it THROWS, and on the raw
-route `CLIENT_GONE` did not fire even across three iteration boundaries. **S5 does not unblock
-this**, because it moves attach, not dispatch: an agent run's initiator is still a raw socket, so
-`observerCount` = channel listeners + (initiator alive ? 1 : 0) cannot reach 0 while that initiator
-is merely dead-but-unnoticed. The reachable measurement after S5 is leg 2 — a MANAGED second
-observer whose `onClose` fires on its next heartbeat write — and that latency IS the ≤1-interval
-bound. Reaching a true zero-observer park needs the initiating transport on managed SSE too, which
-is the change §16.3 anticipated and §15.3 did not stage.
+The last row is the one worth keeping. It proves the change did not quietly tighten every GET:
+only the run family demands the token, exactly as §1.6 scopes it. This confirms `LiveRunsAuthTest`
+against a real server rather than an in-process Javalin.
+
+**Leg 2 — the observer count is real, and the bound holds with margin.** On a live
+`core.free-chat` run: `observerCount` `1` → `2` when a second observer attached through
+`POST /api/chat/runs/{runId}/observe`, then **back to `1` within 263 ms** of destroying that
+observer's socket abruptly (no graceful close). Against the 15 s heartbeat the ≤1-interval bound
+is satisfied by a factor of ~57.
+
+**State the measurement honestly:** 263 ms is the *streaming-cadence* case, not the worst case.
+`onClose` is write-cadence-bound (§15.0 D1.1), so a densely-streaming run notices a dead client on
+its next token write — which is why this is sub-second rather than near 15 s. The worst case is a
+run whose only write IS the heartbeat, and for that the bound is one interval *by construction*.
+A conversational run is never silent, and the run that would be (a parked one) is reachable only
+through the transport §18.5.1 describes, so the worst case was not separately measured.
+
+**Leg 3 — interruption, and the combined view.** An agent run was left parked at an approval gate
+(`state:"LLM_STREAMING"`, `resumable:false`, `interruptedAt:null`), the stack was killed, and the
+stack restarted. After restart:
+
+- `GET /api/chat/runs/live` → `{"runs":[]}` — **absent**, correctly: an interrupted run is a
+  PERSISTED run and never appears in a live enumeration (§5.1).
+- `GET /api/chat/sessions` → the same session with
+  `interruptedAt:"2026-08-18T16:10:15.001294400Z"`, stamped by the startup reconciler.
+
+The two reads compose exactly as §5.3 designs — the run is in precisely one of them. Classifying
+the triple `(LLM_STREAMING, resumable=false, interruptedAt=set)` through
+`InterruptedRunPresentation.of` yields **FORK_ONLY**, via the *defensive* branch (a non-terminal
+state the store did not mark resumable), not via a budget/context gate. **That surfaced a copy
+defect — see §18.6.**
+
+**Leg 4 — FE discovery, in a real browser.** With a parked agent run live
+(`500f05ad-…`, `state:"parked"`), a Chrome tab was pointed at the shell and reloaded mid-run. The
+network record shows the complete S5 chain:
+
+1. `GET http://127.0.0.1:7712/api/chat/runs/live?shapeId=core.agent-run` → **200** — discovery
+   through the enumeration, with the shape filter, direct to the backend (not the proxy);
+2. `POST http://127.0.0.1:7712/api/chat/runs/500f05ad-…/observe` → **200** — the window re-adopted
+   the run it discovered, through the MANAGED route.
+
+And the retired pointer is gone where it actually counts: `localStorage` in that live session held
+25 `justsearch.*`/`jf*` keys and **no key containing `activeAgentRun`**. The built bundle greps to
+0 as well. A `grep` proves deletion; this proves the running app no longer writes it.
+
+**One thing leg 4 did NOT establish, recorded rather than glossed:** seconds after the browser's
+successful attach, the enumeration reported `observerCount:0` for that run, while a node observer
+attached to the *same* run held it at `1` — so the counting is sound and the browser's observe
+stream had closed rather than staying attached. Whether that is benign (nothing more to receive
+from a parked run until its gate is answered) or the `liveWatchdog` (tempdoc 604) aborting a
+stream that only heartbeats is not established here. Logged to the inbox; it does not affect the
+discovery chain above, which is what leg 4 asserts.
+
+**Also observed:** for an agent run whose only watcher is its raw initiating socket,
+`observerCount` reads **0** — the enumeration counts channel listeners, and the legacy initiator
+is held by `AgentSession`, not by the channel (§16.2). So the field means "managed observers", and
+for agent runs it under-reports by the initiator. Nothing consumes it for a liveness decision
+today; named here so nothing starts to.
+
+#### 18.5.1 Zero-observer park is still out of reach, and S5 did not change that
+
+§18.5's earlier draft predicted this and the live round did not disturb it. The composition needs
+`observerCount` to reach 0 on a *parkable* run, and an agent run's initiator is still a raw socket
+that `AgentSession` evicts only when a write to it THROWS — which §16.5.1 measured as not firing
+across three iteration boundaries. Moving *attach* to the managed writer (S5) does not move
+*dispatch*. The live round confirms the two halves independently — the managed-observer half drops
+to zero correctly (leg 2, and the node-observer probe on the parked agent run showed `1` while
+held), and the park itself is now externally visible (leg 1a) — but their composition still awaits
+the initiating transport moving onto managed SSE, which is the change §16.3 anticipated and §15.3
+did not stage.
 
 ### 18.6 Two late findings, one of them a revert
 
@@ -2184,3 +2279,19 @@ reason: it retires as a UNIT with the other raw-`Context` routes (the initiating
 fork, `/ag-ui`) and with the `AgentSseWriter` eviction seam that serves them. Removing one member
 would leave the seam justified by a smaller consumer set without shrinking it, which is a partial
 sweep — the residue class 742 is about. Recorded so the next sweep finds it already counted.
+
+**A third finding, surfaced by live leg 3: `FORK_ONLY`'s copy asserts a reason it cannot know.**
+`InterruptedRunPresentation.FORK_ONLY` is reached two ways — a `WAITING_BUDGET`/`WAITING_CONTEXT`
+gate, and the *defensive* branch (any non-terminal state the store did not mark resumable). §5.2's
+table wrote the copy for the first route only, and both the Java enum and the FE mirror it:
+*"Interrupted while waiting for your decision about tokens/context. Cannot be resumed — start a new
+run from this transcript."*
+
+The live run took the **second** route: `(state=LLM_STREAMING, resumable=false, interruptedAt=set)`
+— a run interrupted mid-stream that simply is not resumable. It would be told it was waiting for a
+decision about tokens or context, which is false. The remedy is a product decision, not a
+mechanical one — either split the presentation in two (so the defensive route gets its own honest
+sentence) or reword `FORK_ONLY` to stop naming a cause it does not know (e.g. "Interrupted, and
+cannot be resumed — start a new run from this transcript"). Not changed here: §5.2's table is the
+authority for this copy, and rewriting it is the tempdoc owner's call rather than an implementer's.
+The classification itself is correct in both routes; only the sentence over-claims.
