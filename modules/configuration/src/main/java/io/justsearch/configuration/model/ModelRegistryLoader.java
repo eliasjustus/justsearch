@@ -30,8 +30,11 @@ public final class ModelRegistryLoader {
 
   /** Loads the registry from a classpath resource. */
   public static ModelRegistry loadFromClasspath(String resourcePath) {
-    try (InputStream is =
-        Thread.currentThread().getContextClassLoader().getResourceAsStream(resourcePath)) {
+    // Use this class's own loader, not the thread's context classloader: the registry JSON now
+    // ships as a resource inside this module (modules/configuration/src/main/resources/ai/), so
+    // it is guaranteed to be visible here regardless of which classloader happens to be current
+    // on the calling thread.
+    try (InputStream is = ModelRegistryLoader.class.getClassLoader().getResourceAsStream(resourcePath)) {
       if (is == null) {
         throw new IOException("Resource not found: " + resourcePath);
       }

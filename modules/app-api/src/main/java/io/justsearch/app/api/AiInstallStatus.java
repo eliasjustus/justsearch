@@ -109,6 +109,10 @@ public final class AiInstallStatus {
       this.packageId = packageId == null ? "" : packageId;
       this.fileName = fileName == null ? "" : fileName;
     }
+
+    OptionalGap copy() {
+      return new OptionalGap(packageId, fileName);
+    }
   }
 
   // Per-package progress
@@ -171,5 +175,62 @@ public final class AiInstallStatus {
 
     /** Where that file has to land — the manual fallback's destination. */
     public String targetPath = "";
+
+    PackageStatus copy() {
+      PackageStatus c = new PackageStatus();
+      c.packageId = packageId;
+      c.label = label;
+      c.tier = tier;
+      c.state = state;
+      c.bytesDownloaded = bytesDownloaded;
+      c.bytesTotal = bytesTotal;
+      c.skipReason = skipReason;
+      c.error = error;
+      c.resumed = resumed;
+      c.functionalStatus = functionalStatus;
+      c.terminalReason = terminalReason;
+      c.attempts = attempts;
+      c.url = url;
+      c.targetPath = targetPath;
+      return c;
+    }
+  }
+
+  /**
+   * An independent deep copy, safe to hand across a boundary that serializes without the install
+   * lock held.
+   *
+   * <p>The install thread mutates the live instance under a lock — including {@code
+   * packages.clear()} followed by a repopulate — while the {@code GET /api/ai/install/status}
+   * handler serializes at 1 Hz outside it. Returning the live object let Jackson iterate that list
+   * while it was being cleared, i.e. a {@code ConcurrentModificationException} in the one moment the
+   * user is definitely watching the download. Every scalar is copied and every collection is rebuilt
+   * from copied ELEMENTS, because {@link PackageStatus} and {@link OptionalGap} are mutable too — a
+   * shallow list copy would still expose the live elements.
+   */
+  public AiInstallStatus snapshot() {
+    AiInstallStatus c = new AiInstallStatus();
+    c.state = state;
+    c.phase = phase;
+    c.message = message;
+    c.startedAtEpochMs = startedAtEpochMs;
+    c.updatedAtEpochMs = updatedAtEpochMs;
+    c.cancelRequested = cancelRequested;
+    c.lastError = lastError;
+    c.errorCode = errorCode;
+    c.downloadProfile = downloadProfile;
+    c.totalBytes = totalBytes;
+    c.downloadedBytes = downloadedBytes;
+    c.resumableBytes = resumableBytes;
+    c.installedFully = installedFully;
+    c.repairNeeded = repairNeeded;
+    c.pendingRegistryAdditions.addAll(pendingRegistryAdditions);
+    for (OptionalGap gap : optionalGaps) {
+      c.optionalGaps.add(gap.copy());
+    }
+    for (PackageStatus ps : packages) {
+      c.packages.add(ps.copy());
+    }
+    return c;
   }
 }

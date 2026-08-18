@@ -207,6 +207,47 @@ final class InstallCompletenessTest {
     assertTrue(result.repairNeeded());
   }
 
+  /**
+   * Tempdoc 840: {@code packagesWithMissingRequiredFiles()} had NO coverage in this seam's guard test
+   * — it arrived with tempdoc 824 (commit e9d68989) and the strength baseline predates it, so the
+   * ratchet never noticed. Surfaced by a PIT run while registering the sibling {@code
+   * acquisition-rate} seam.
+   *
+   * <p>The property that makes this method distinct from its two neighbours, and the reason 824
+   * introduced it: it is the per-package form of {@link InstallCompleteness#repairNeeded()}, so the
+   * completion MESSAGE is derived from the same authority as {@code installedFully} rather than from
+   * the run's own bookkeeping. Two things must hold — it counts a package once no matter how many of
+   * its required files are gone, and a package whose ONLY casualty is optional must be absent, or the
+   * message would name a package as failed while sitting next to {@code installedFully: true} (the
+   * round-16 defect: an 872-byte metadata sidecar reported as a broken component).
+   */
+  @Test
+  @DisplayName("per-package required gaps: deduped, and an optional-only casualty is not a gap")
+  void packagesWithMissingRequiredFiles_dedupesAndIgnoresOptionalOnly() {
+    InstallPlan.PlannedDownload optionalSidecar =
+        new InstallPlan.PlannedDownload(
+            "splade", "https://example/splade/config.json", "splade/config.json", "sha", 872L,
+            false, false, false);
+    InstallPlan plan =
+        plan(
+            List.of(
+                file("cuda-runtime", "runtime/cuda-runtime-12.4.zip"),
+                file("cuda-runtime", "runtime/ort-native-cuda12-v1.24.3.zip"),
+                optionalSidecar));
+
+    InstallCompleteness result = InstallCompleteness.compute(plan, contract());
+
+    assertEquals(
+        List.of("cuda-runtime"),
+        result.packagesWithMissingRequiredFiles(),
+        "two required files gone from ONE package is one entry, and splade's optional-only gap is none");
+    assertEquals(
+        List.of(new InstallCompleteness.OptionalGap("splade", "config.json")),
+        result.optionalGaps(),
+        "the optional casualty is still reported — shown, never alarming");
+    assertTrue(result.repairNeeded(), "a required file IS missing, so repair is still warranted");
+  }
+
   @Test
   @DisplayName("satisfied files are named from the contract; a package it does not enumerate reports one nameless row")
   void satisfiedFilesCarryContractFileNames() {

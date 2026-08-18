@@ -963,7 +963,7 @@ export class BrainSurface extends JfElement {
   // so a failed/slow FIRST fetch never retried — the structural cause of the live-reproduced
   // "stuck on Connecting… forever" bug (tempdoc 663 §O). Install/runtime/pack status now come from
   // the shared, always-on `aiInstallPoll` (via aiStateStore's subscription above), which retries
-  // unconditionally on a fixed 3s cadence regardless of prior success/failure.
+  // unconditionally on a fixed 1s cadence regardless of prior success/failure.
 
   // Tempdoc 586 §3 — inference status now flows from the shared aiStateStore; this
   // loop polls only the brain-specific transition timeline + trace explorer, which
@@ -1446,12 +1446,8 @@ export class BrainSurface extends JfElement {
     };
     const sc = statusConfig[aiState] ?? statusConfig.offline!;
 
-    let bytesDone = 0,
-      bytesTotal = 0;
-    for (const a of this.installStatus?.packages ?? []) {
-      bytesDone += a?.bytesDownloaded ?? 0;
-      bytesTotal += a?.bytesTotal ?? 0;
-    }
+    const bytesDone = this.installStatus?.downloadedBytes ?? 0;
+    const bytesTotal = this.installStatus?.totalBytes ?? 0;
     const pct = bytesTotal > 0 ? Math.min(100, Math.floor((bytesDone / bytesTotal) * 100)) : null;
 
     // Tempdoc 663 Stage 3 — the primary action's availability is now typed (596), not a bare boolean.

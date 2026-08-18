@@ -5,10 +5,9 @@ import io.javalin.http.Context;
 import io.justsearch.app.api.ApiErrorCode;
 import io.justsearch.app.api.BrainInstallService;
 import io.justsearch.app.api.OnlineAiService;
-import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
 import io.justsearch.telemetry.Telemetry;
 import io.justsearch.app.api.AiInstallException;
-import io.justsearch.app.services.ai.install.AiInstallService;
+import io.justsearch.app.api.AiInstallService;
 import io.justsearch.app.api.EnterprisePolicyService;
 import io.justsearch.app.services.settings.UiSettingsStore;
 import java.util.Map;
@@ -21,7 +20,11 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * v2 AI install controller — hardware-aware, package-based.
  *
- * <p>Same 5 endpoints as v1, same URLs. Uses {@link AiInstallService} internally.
+ * <p>Same 5 endpoints as v1, same URLs. Holds the {@code app-api} {@link AiInstallService} interface,
+ * not the {@code app-services} implementation: everything an HTTP handler here needs is on the
+ * contract. The one thing that was not — the Worker late-bind — was never a controller concern; it is
+ * a composition-root one, and {@code LocalApiServer.lateBindKnowledgeServer} now calls the service
+ * directly instead of forwarding through this class.
  */
 public final class AiInstallController {
   private static final Logger log = LoggerFactory.getLogger(AiInstallController.class);
@@ -34,15 +37,6 @@ public final class AiInstallController {
   public AiInstallController(AiInstallService service, Telemetry telemetry) {
     this.service = service;
     this.telemetry = telemetry;
-  }
-
-  /**
-   * Tempdoc 374 alpha.17 R3: forwarder for {@link AiInstallService#setKnowledgeServer}.
-   * Called from {@code LocalApiServer.lateBindKnowledgeServer} once the Worker
-   * bootstrap completes.
-   */
-  public void setKnowledgeServer(KnowledgeServerBootstrap knowledgeServer) {
-    service.setKnowledgeServer(knowledgeServer);
   }
 
   public void handleGetManifest(Context ctx) {

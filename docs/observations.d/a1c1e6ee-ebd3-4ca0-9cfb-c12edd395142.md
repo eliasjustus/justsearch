@@ -1,0 +1,9 @@
+# Observations shard — session a1c1e6ee-ebd3-4ca0-9cfb-c12edd395142
+
+> Per-session inbox shard (tempdoc 618 Seam C). Append-only; do not share with
+> other sessions. Folded into docs/observations.md `## Inbox` by
+> `node scripts/agent-analytics/fold-observations.mjs`.
+
+- [ ] AiInstallController carries 5 unused imports predating tempdoc 840 (BrainInstallService, OnlineAiService, EnterprisePolicyService, UiSettingsStore, java.util.Map) — surfaced while decoupling the controller onto the app-api interface (840 B3); only the self-orphaned KnowledgeServerBootstrap import was removed — `modules/ui/src/main/java/io/justsearch/ui/api/AiInstallController.java:5-14` (2026-08-17)
+- [ ] consult-register ui-web-gates recipe prescribes `run.mjs --gate a,b,c,... --mode gate` (comma list) but run.mjs's --gate is singular (`--gate <id>  run only the named gate`); the comma form exits non-zero with 'gate id not found', so an agent following the recipe verbatim sees a FAIL that is a syntax error, not a gate result — and could mistake it for a real failure or vice versa. Recipe should list the six gates as separate invocations (all six pass individually) — `governance/consult-register.v1.json` ui-web-gates recipe[1] vs `scripts/governance/run.mjs` --gate (2026-08-17)
+- [ ] In-app updater buffers the ENTIRE NSIS installer in memory before staging (`let bytes = update.download(...)` returns Vec<u8>); for a multi-hundred-MB installer that is a large transient allocation. Not fixable in isolation: tauri-plugin-updater's `Update::download()` hands the caller only `chunk.len()`, never the chunk bytes, and accumulates internally — streaming to disk means bypassing the library method and reimplementing the HTTP GET + Ed25519/pubkey verification path. Documented while wiring download progress (840 U7); left deliberately untouched — `modules/shell/src-tauri/src/updater.rs:370-373` (2026-08-18)
