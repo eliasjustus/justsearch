@@ -38,6 +38,7 @@ final class AcquisitionStage {
   private final LongSupplier nanoClock;
   private final PlacementStage placement;
   private final AcquisitionScheduler.Listener listener;
+  private final AcquisitionScheduler.PauseGate pauseGate;
 
   AcquisitionStage(
       Path modelsDir,
@@ -47,7 +48,8 @@ final class AcquisitionStage {
       BooleanSupplier cancelRequested,
       LongSupplier nanoClock,
       PlacementStage placement,
-      AcquisitionScheduler.Listener listener) {
+      AcquisitionScheduler.Listener listener,
+      AcquisitionScheduler.PauseGate pauseGate) {
     this.modelsDir = modelsDir;
     this.transport = transport;
     this.retryPolicy = retryPolicy;
@@ -56,13 +58,21 @@ final class AcquisitionStage {
     this.nanoClock = nanoClock;
     this.placement = placement;
     this.listener = listener;
+    this.pauseGate =
+        pauseGate == null ? AcquisitionScheduler.PauseGate.open() : pauseGate;
   }
 
-  /** Runs every planned download, in plan order, and returns how the set ended. */
-  AcquisitionScheduler.Summary run(InstallPlan plan) {
+  /**
+   * Runs the given downloads, in plan order, and returns how the set ended.
+   *
+   * <p>Takes the download list rather than the whole {@link InstallPlan} because a staged run gives
+   * it one stage's SLICE of the plan (tempdoc 840 Phase 3); nothing else on the plan was ever read
+   * here.
+   */
+  AcquisitionScheduler.Summary run(List<InstallPlan.PlannedDownload> downloads) {
     Map<String, InstallPlan.PlannedDownload> byTargetPath = new HashMap<>();
     List<AcquisitionScheduler.Item> items = new ArrayList<>();
-    for (InstallPlan.PlannedDownload dl : plan.downloads()) {
+    for (InstallPlan.PlannedDownload dl : downloads) {
       byTargetPath.putIfAbsent(dl.targetPath(), dl);
       items.add(
           new AcquisitionScheduler.Item(dl.targetPath(), dl.packageId(), dl.sizeBytes()));
@@ -74,7 +84,8 @@ final class AcquisitionStage {
             new MemoryLedger(attempts, id -> byTargetPath.get(id).url()),
             listener,
             cancelRequested,
-            nanoClock)
+            nanoClock,
+            pauseGate)
         .run();
   }
 

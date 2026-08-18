@@ -44,12 +44,20 @@ public record RuntimeStatus(List<Condition> conditions) {
    *   <li>{@link #INSTALL_SMOKE_TEST} — the post-install smoke test that briefly needs the engine up
    *       to answer one question, even when the user's spec still has chat disabled (install ≠
    *       enable — the engine converges back down when the procedure ends).
+   *   <li>{@link #INSTALL_ACQUISITION} — the staged model-acquisition window (tempdoc 840 Phase 3).
+   *       Staged acquisition restarts the Worker at each stage boundary and rewrites the engine's
+   *       runtime overrides when the chat model lands, so the install run now churns the runtime
+   *       several times instead of once; ONE procedure over the whole window keeps drift convergence
+   *       suppressed for all of it and returns the engine to spec exactly once, at the end.
+   *       {@link #INSTALL_SMOKE_TEST} nests inside it — overlapping kinds are supported, and the
+   *       smoke test's own bracket stays the thing that requires the engine.
    * </ul>
    */
   public enum ProcedureKind {
     VDU_BATCH,
     ACTIVATION,
-    INSTALL_SMOKE_TEST
+    INSTALL_SMOKE_TEST,
+    INSTALL_ACQUISITION
   }
 
   /** In-flight procedure overlay descriptor (immutable). */

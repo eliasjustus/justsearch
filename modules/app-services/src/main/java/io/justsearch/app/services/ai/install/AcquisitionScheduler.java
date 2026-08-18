@@ -182,6 +182,30 @@ public final class AcquisitionScheduler {
   }
 
   /**
+   * Whether the run may proceed to its next item, blocking while it may not.
+   *
+   * <p>The seam a pause hangs on (tempdoc 840 Phase 3). Consulted between items only — see {@link
+   * AcquisitionPause}, the production implementation, for why halting mid-transfer is deliberately
+   * not offered. {@link #open()} is the "nothing can pause this run" default the scheduler falls
+   * back to, so every existing construction behaves exactly as it did.
+   */
+  @FunctionalInterface
+  public interface PauseGate {
+    /**
+     * Blocks while the run is halted.
+     *
+     * @return true to run the next item; false when the run must stop instead of continuing, which
+     *     the scheduler treats as cancellation — the only reason a halted run stops waiting
+     */
+    boolean awaitRunnable();
+
+    /** A gate that never halts anything. */
+    static PauseGate open() {
+      return () -> true;
+    }
+  }
+
+  /**
    * How the run ended.
    *
    * @param cancelled true when the run stopped early because cancellation was requested; the
@@ -196,6 +220,7 @@ public final class AcquisitionScheduler {
   private final AttemptLedger ledger;
   private final Listener listener;
   private final BooleanSupplier cancelRequested;
+  private final PauseGate pauseGate;
   private final AcquisitionRate rate;
   private final long totalBytes;
 
@@ -211,6 +236,19 @@ public final class AcquisitionScheduler {
       Listener listener,
       BooleanSupplier cancelRequested,
       LongSupplier nanoClock) {
+    this(items, fetcher, placer, ledger, listener, cancelRequested, nanoClock, PauseGate.open());
+  }
+
+  public AcquisitionScheduler(
+      List<Item> items,
+      Fetcher fetcher,
+      Placer placer,
+      AttemptLedger ledger,
+      Listener listener,
+      BooleanSupplier cancelRequested,
+      LongSupplier nanoClock,
+      PauseGate pauseGate) {
+    this.pauseGate = pauseGate == null ? PauseGate.open() : pauseGate;
     this.items = items == null ? List.of() : List.copyOf(items);
     this.fetcher = fetcher;
     this.placer = placer == null ? item -> null : placer;
@@ -248,11 +286,21 @@ public final class AcquisitionScheduler {
    * cancel only raises a flag and never interrupts this thread. A single item's failure is isolated:
    * the run continues to the next item, exactly as the loop this replaces did — the terminal verdict
    * over the set belongs to the caller, not here.
+   *
+   * <p>The {@link PauseGate} is consulted in the same place and for a related reason: a halt has to
+   * land where the set has no in-flight decision to preserve, which is between items. A gate that
+   * refuses to become runnable is a cancelled run, not a stuck one.
    */
   public Summary run() {
     int installed = 0;
     int failed = 0;
     for (Item item : items) {
+      if (cancelRequested.getAsBoolean()) {
+        return new Summary(true, installed, failed, overallBytes);
+      }
+      if (!pauseGate.awaitRunnable()) {
+        return new Summary(true, installed, failed, overallBytes);
+      }
       if (cancelRequested.getAsBoolean()) {
         return new Summary(true, installed, failed, overallBytes);
       }

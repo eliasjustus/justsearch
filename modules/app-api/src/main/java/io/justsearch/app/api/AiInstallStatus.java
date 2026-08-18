@@ -115,6 +115,71 @@ public final class AiInstallStatus {
     }
   }
 
+  /**
+   * The acquisition stage in flight ({@code core} | {@code enrichment} | {@code chat}), or empty
+   * outside a staged run (tempdoc 840 Phase 3).
+   *
+   * <p>The install is delivered in ordered stages so search works after the first ~1.3 GB instead of
+   * after all ~7 GB. A caller that wants to say "search is ready, still downloading enrichment"
+   * reads this together with {@link #stages} and {@link #readyCapabilities}.
+   */
+  public String currentStage = "";
+
+  /**
+   * Every acquisition stage of this run, in run order — including the ones with nothing to do.
+   *
+   * <p>A projection of the plan's own partition, not a second progress authority: a stage's bytes
+   * are its slice of {@link #totalBytes} and its {@code downloadedBytes} is the same acquisition
+   * counter {@link #downloadedBytes} is written from.
+   */
+  public final List<StageStatus> stages = new ArrayList<>();
+
+  /**
+   * Capability-tier ids ({@code retrieval-core}, {@code runtime}, {@code retrieval-enrichment},
+   * {@code llm}) that are already usable — the tiers of every stage that completed, acquired its
+   * files and had the Worker restarted onto them.
+   *
+   * <p>Fail-closed: a stage that ended with a failed package contributes nothing, because a
+   * capability whose model did not land is not usable no matter how far the run got. Empty until the
+   * first stage completes.
+   */
+  public final List<String> readyCapabilities = new ArrayList<>();
+
+  /** One acquisition stage's progress. */
+  public static final class StageStatus {
+    /** Stage id: {@code core} | {@code enrichment} | {@code chat}. */
+    public String stage = "";
+
+    public String label = "";
+
+    /**
+     * {@code pending} | {@code running} | {@code completed} | {@code failed} | {@code skipped} |
+     * {@code cancelled}. {@code skipped} means the stage had nothing to acquire (already installed,
+     * hardware-skipped or user-declined) — distinct from {@code completed}, which means this run
+     * delivered something.
+     */
+    public String state = "pending";
+
+    /** Capability-tier ids this stage delivers. */
+    public final List<String> capabilities = new ArrayList<>();
+
+    public long totalBytes;
+    public long downloadedBytes;
+
+    public StageStatus() {}
+
+    StageStatus copy() {
+      StageStatus c = new StageStatus();
+      c.stage = stage;
+      c.label = label;
+      c.state = state;
+      c.capabilities.addAll(capabilities);
+      c.totalBytes = totalBytes;
+      c.downloadedBytes = downloadedBytes;
+      return c;
+    }
+  }
+
   // Per-package progress
   public final List<PackageStatus> packages = new ArrayList<>();
 
@@ -128,6 +193,14 @@ public final class AiInstallStatus {
      * download by tier (retrieval vs the optional LLM) without hardcoding the package taxonomy.
      */
     public String tier;
+
+    /**
+     * The acquisition stage that delivers this package ({@code core} | {@code enrichment} | {@code
+     * chat}), or null when the run is not staged. A projection of {@link #tier} through the install
+     * run's tier→stage mapping — never independently assigned, so the two cannot disagree.
+     */
+    public String stage;
+
     public String state = "pending";
     public long bytesDownloaded;
     public long bytesTotal;
@@ -181,6 +254,7 @@ public final class AiInstallStatus {
       c.packageId = packageId;
       c.label = label;
       c.tier = tier;
+      c.stage = stage;
       c.state = state;
       c.bytesDownloaded = bytesDownloaded;
       c.bytesTotal = bytesTotal;
@@ -224,6 +298,11 @@ public final class AiInstallStatus {
     c.resumableBytes = resumableBytes;
     c.installedFully = installedFully;
     c.repairNeeded = repairNeeded;
+    c.currentStage = currentStage;
+    c.readyCapabilities.addAll(readyCapabilities);
+    for (StageStatus st : stages) {
+      c.stages.add(st.copy());
+    }
     c.pendingRegistryAdditions.addAll(pendingRegistryAdditions);
     for (OptionalGap gap : optionalGaps) {
       c.optionalGaps.add(gap.copy());
