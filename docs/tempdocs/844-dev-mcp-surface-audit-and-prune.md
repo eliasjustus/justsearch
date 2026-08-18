@@ -1,7 +1,7 @@
 ---
 title: "Dev agent-tool surface audit: what agents actually invoke on the justsearch-dev MCP server, what fails, what nobody has ever called, and the two structural reasons 81% of local-API traffic bypasses the surface entirely"
 type: tempdocs
-status: "OPEN — analysis complete and reproducible (2026-08-18); nothing implemented. Owner decisions pending on D1-D4 (§8). Hot-reload coherence RESOLVED 2026-08-18: verdict INCOHERENT, recommendation RETIRE (§5.6), independently re-verified against source by the orchestrator — D2 is now a go/no-go on the sweep, not an investigation. Adopts 6 inbox conditions (§7) that should be closed by this lane rather than re-logged."
+status: "OPEN — analysis complete and reproducible (2026-08-18); nothing implemented. Owner decisions pending on D1-D4 (§8). Hot-reload coherence RESOLVED 2026-08-18: verdict INCOHERENT, independently re-verified against source (§5.6). Recommendation REVISED same day from RETIRE to FIX-THEN-SURFACE after owner challenge: the retire estimate did not survive re-examination and the value model (warm models across a code change, not a saved spawn) was never weighed — see §4.2. THEORIZED 2026-08-18 (§11): the endstate thesis is a single run registry as keystone, three tool classes with per-class middleware, and specialization into arbitration over transport; #845 reserved as the candidate registry lane. Adopts 6 inbox conditions (§7) that should be closed by this lane rather than re-logged."
 created: 2026-08-18
 author: agent session b73007cd (Opus 5, 1M context) — chartered by the owner after a session-opening question about the state of dev-related MCP capabilities
 category: agent-process / dev-tooling / mcp
@@ -99,11 +99,49 @@ Cost of keeping it: an `npx -y` package fetch + process spawn on every session s
 names in every prompt, for zero capability. The pinned package is also the archived upstream,
 superseded by GitHub's own server.
 
-### 4.2 Hot reload — RETIRE (P8; verdict landed 2026-08-18, awaiting D2)
+### 4.2 Hot reload — FIX-THEN-SURFACE (P8; awaiting D2)
 
 `hotReload: true` on 1 of 92 starts; `reload` invoked 0 times. The §5.6 investigation returned
-**INCOHERENT** and recommends **RETIRE**. Its load-bearing claims were re-verified independently
-against source by the orchestrator (not taken on the auditor's word); all five held.
+**INCOHERENT**, and its load-bearing claims were re-verified independently against source (not
+taken on the auditor's word); all five held. The *diagnosis* below stands in full.
+
+**The recommendation was revised from RETIRE to FIX-THEN-SURFACE** (owner challenge, same day,
+after re-examining the code the retire estimate rested on). Two things did not survive that
+re-examination:
+
+- **The estimate.** RETIRE rested on a "multi-day rebuild" figure driven mainly by the
+  mixed-classpath item. But the Worker is launched with `-cp <workerLibDir>/*`
+  (`WorkerSpawner.java:583-586`), and `addDevHotReloadFlags` already computes the exact classes
+  dir 40 lines below (`:944-947`) and passes it as the sysprop nothing reads. Putting that path
+  ahead of the jar wildcard, inside the existing `DEV_HOTRELOAD` gate, is the fix — which is what
+  305 Phase 2's child classloader was for, reached by classpath ordering instead. Of the six
+  repair items, two are trivial (ownership gate, `withStaleness`), two are small (compile root
+  from the run record; classes-dir ordering), one is small-medium (per-run JDWP port plus an
+  identity check — and the already-computed `DEV_HOTRELOAD_CLASSES_DIR` can serve as the identity
+  token), and the sixth (JBR staging for structural changes) should simply be **dropped**:
+  method-bodies-only is honest and already reported via `structuralChangeDetected`.
+- **The value model.** RETIRE compared hot reload against "a restart" generically. What
+  `DevReloadManager` actually preserves is `ModelContext` — embedding service, compat controller,
+  NER, SPLADE — across a service reconstruction (`DevReloadManager.java:130-150`). In a repo whose
+  warm path is ~40s to worker-ready largely because of ONNX loading, the capability is
+  *keeping models warm across a code change*, not saving a process spawn. That was never weighed.
+
+The zero-usage figure cannot arbitrate this: the feature is off by default and its documentation
+describes a mode that does not exist, so 0/878 measures visibility, not value.
+
+**Conditions attached to the repair**, so this does not become an open-ended rebuild:
+
+1. **A live regression test is now required.** The audit's "a live test would add nothing" was
+   sound *for retiring* — it cannot change an incoherence verdict, and demonstrating the cross-tree
+   case means corrupting a peer's stack. It does not survive the switch to repairing:
+   `DevReloadManager` has never been exercised in 878 transcripts, and "reconstruct services while
+   keeping models alive" is where subtle state bugs live. Per `audit-without-test`, done means a
+   green test that edits a method body, reloads, and asserts new behaviour over HTTP with encoders
+   still warm.
+2. **The ownership gate lands regardless of D2** — §6.2 covers `ingest`, `reindex`, `gc` and
+   migration too, and must not ride on the hot-reload decision.
+3. **Default it on and set a falsifier.** If the reload path is still unused ~6 weeks after the
+   repair ships with `hotReload` defaulted true, retire it then, on clean evidence.
 
 The capability is not merely unused — it is unsafe when used, and its documentation asserts a
 behavior the code refutes:
@@ -123,13 +161,16 @@ behavior the code refutes:
   `withStaleness` call sites end at `server.mjs:1879` / `:2451`; the reload handler begins at
   `:2551`. Confirms `docs/observations.md:354` at the code level.
 
-**Predictable evasion to reject:** "disable it now, sweep the code later." That is exactly the
-follow-up-that-never-comes pattern `retire-with-a-sweep` names, and tempdoc 742's ~350-file corpus
-is what it produces. Sweep in one change or decide to keep it.
+**Predictable evasions to reject, in both directions.** If the decision is to retire: "disable it
+now, sweep the code later" is the follow-up-that-never-comes pattern `retire-with-a-sweep` names,
+and tempdoc 742's ~350-file corpus is what it produces — sweep in one change or keep it. If the
+decision is to repair: "ship the fix, add the test after" is the same move wearing the opposite
+costume, and condition 1 above exists to pre-empt it.
 
-**What retiring does NOT fix:** §6.2. Ownership still gates only `start`, so `ingest`,
-`reindex`, `gc` and the migration endpoints remain callable against a peer's stack after the
-sweep. Removing `reload` removes that hole's sharpest edge, not the hole.
+**Neither path closes §6.2 on its own.** Ownership gates only `start`, so `ingest`, `reindex`,
+`gc` and the migration endpoints stay callable against a peer's stack whether `reload` is repaired
+or removed. Retiring `reload` removes that hole's sharpest edge, not the hole. §11.4 argues the
+class-wide fix is the same work either way.
 
 ### 4.3 `capture_evidence` / `validate_evidence` — retire the tools, KEEP the format (P1)
 
@@ -384,12 +425,14 @@ not that the notes were unclear.
 ## 8. Owner decisions
 
 - **D1 — prune `github` from `.mcp.json`?** Recommend yes (§4.1). No capability is lost; it has none.
-- **D2 — hot reload: sweep it?** No longer blocked. §5.6 returned INCOHERENT; recommend **RETIRE**.
-  Making it coherent needs six changes (compile root from the run record; per-run JDWP port plus an
-  identity handshake; an ownership gate; `withStaleness`; jar/classes-dir reconciliation; JBR
-  staging) — a multi-day rebuild of a capability with 0 invocations in 878 transcripts, competing
-  against `installDist` + restart, which is correct by construction. Keeping it costs four silent
-  corruption paths and a tool description that contradicts the code.
+- **D2 — hot reload: repair or sweep?** No longer blocked. §5.6 returned INCOHERENT; §4.2 now
+  recommends **FIX-THEN-SURFACE** — five scoped items (JBR staging dropped), a required live
+  regression test, default-on, and a ~6-week falsifier. Estimated at a focused day with tests,
+  not the multi-day rebuild the first pass assumed. The capability being bought is warm models
+  across a code change, not a saved process spawn. Choosing RETIRE instead is still defensible if
+  the answer to "does anyone iterate on Worker Java against a live stack?" is no — but that is an
+  empirical question the falsifier settles, and §11.6 argues the repair is mostly Class-C
+  middleware that §6.2 needs regardless.
 - **D3 — unify backend discovery?** Minimum (`quick_health` probes unowned backends) vs full
   (`jseval` registers in the run registry). Recommend the minimum first; it is the half that already
   cost a measurement.
@@ -408,7 +451,7 @@ not that the notes were unclear.
 | P5 | `quick_health` probes for unowned backends (§6.1). | D3 |
 | P6 | De-fork the doc/skill; add a `check-dev-mcp-doc-sync` gate asserting tool list + endpoint keys + allowlist against `server.mjs`; register `scripts/dev/` in the consult register. | P1-P5 |
 | P7 | Repeatable reader in `scripts/agent-analytics/` so §3 is re-derivable after the corpus rolls. | — |
-| P8 | Hot reload sweep (§4.2, §5.6). Inventory to remove in ONE change: tool registration `server.mjs:2549-2662`; `ReloadInputSchema` `schemas.mjs:734-744`; the `hotReload` start param + `--hot-reload` plumbing (`schemas.mjs:101-102`, `cli.mjs:352`, `dev-runner.cjs:154/213/1462-1465`); `scripts/dev/HotSwapPush.java`; `WorkerSpawner.addDevHotReloadFlags` + the `DEV_HOTRELOAD*` `EnvRegistry` rows; `DevReloadManager` + its `KnowledgeServer` gate and sentinel branch (`KnowledgeServer.java:698-702, 1625-1627`); the `worker-services/build.gradle.kts:100-109` doLast hook; the doc rows in `docs/reference/configuration/environment-variables.md` and `runtime-config-ownership-matrix.md`; and the false claim at `server.mjs:623`. Verify with a full `./gradlew.bat build -x test` + the dev-stack smoke, and grep the retiree names to confirm zero residue. | D2 |
+| P8 | Hot reload — act on D2 (§4.2, §5.6). **If FIX-THEN-SURFACE (recommended):** resolve the compile root from the run record (mirror `start`'s swap at `server.mjs:700-721`); put the classes dir ahead of the jar wildcard inside the existing `DEV_HOTRELOAD` gate (`WorkerSpawner.java:583-586`, using the path already computed at `:944-947`); add the ownership gate + `withStaleness` (Class-C middleware, §11.4 — §6.2 needs these regardless); record a per-run JDWP port in `run.json` and have `HotSwapPush` verify the target VM's `DEV_HOTRELOAD_CLASSES_DIR` matches its own source tree before pushing; drop JBR/structural. Then default `hotReload` on, land the live regression test (§4.2 condition 1), and set the ~6-week falsifier. **If RETIRE:** remove in ONE change — tool registration `server.mjs:2549-2662`; `ReloadInputSchema` `schemas.mjs:734-744`; the `hotReload` start param + `--hot-reload` plumbing (`schemas.mjs:101-102`, `cli.mjs:352`, `dev-runner.cjs:154/213/1462-1465`); `scripts/dev/HotSwapPush.java`; `WorkerSpawner.addDevHotReloadFlags` + the `DEV_HOTRELOAD*` `EnvRegistry` rows; `DevReloadManager` + its `KnowledgeServer` gate and sentinel branch (`KnowledgeServer.java:698-702, 1625-1627`); the `worker-services/build.gradle.kts:100-109` doLast hook; the doc rows in `docs/reference/configuration/environment-variables.md` and `runtime-config-ownership-matrix.md`; and the false claim at `server.mjs:623` — then grep the retiree names to confirm zero residue. Either path: full `./gradlew.bat build -x test` + the dev-stack smoke. | D2 |
 
 P6 is the one that must not be dropped: without it, P2-P5 re-drift and this audit gets rewritten
 in six months, as it was rewritten from `254-mcp-dev-tools-issues` (2026-03-03, status done).
@@ -422,3 +465,232 @@ joined result body containing the ok-false or error-object markers, and pull the
 the `code` field. For §5.3, scan `Bash`/`PowerShell` `tool_use` inputs for a `127.0.0.1:<port>`
 prefix followed by a path, and histogram the path. For §6.4, sum result-content lengths (text
 blocks plus `source.data` for images) per tool name.
+
+## 11. Theorization — what the endstate should be
+
+> Not design. This section explores framings, tensions and alternative directions before
+> anything is settled. Several ideas here are recorded because they may be useful later even
+> if they are not the answer. Where a claim is speculative it is marked as such.
+
+### 11.1 The reframe: three control planes over one machine, with no shared model of it
+
+§2 lists the surfaces as if the problem were redundancy. It is not. `justsearch-dev`,
+`jseval` and `dev-runner.cjs` do overlap, but the damage does not come from overlap — it comes
+from the fact that **none of them can see what the others started**. MCP knows only runs it
+spawned; `jseval` knows port 33221; a `runHeadlessEval` JVM is invisible to both.
+
+Read that way, most of §5 and §6 are one defect wearing six costumes:
+
+| Symptom | Underlying absence |
+|---|---|
+| §5.1 `start` fails on a dist it never checked | no authority says which tree a run was built from |
+| §5.6 `reload` compiles in one tree, pushes into another | same |
+| §6.1 `quick_health` reports "free" next to a busy GPU | no authority enumerates unregistered runs |
+| §6.2 ownership gates only `start` | no authority to check at the other call sites |
+| §5.3 agents reach for `curl` | no authority to point a tool at |
+
+That suggests the endstate is not "fewer tools" or "better tools" but **one authority for what is
+running, projected everywhere and re-derived nowhere.**
+
+### 11.2 What is this surface actually *for*? — and a pattern that predicts bypass
+
+Three candidate purposes, and the measured data discriminates between them:
+
+- **Convenience** (saves typing `curl`) — *refuted*. 81% of local-API traffic bypasses it (§5.3).
+- **Legibility** (structured, projected state instead of log-grepping) — *partly supported*.
+  `quick_health` is the third most-used tool at 0% error.
+- **Arbitration** (leases, ownership verdicts, admission control) — *strongly supported*, and it
+  is the only purpose nothing else can serve.
+
+Sorting the tools by altitude — in the sense of the `surface-altitude` axis this repo already
+applies to product surfaces — the pattern is sharp:
+
+| Altitude | Tools | Calls | Error | Bypassed? |
+|---|---|---:|---:|---|
+| Arbitration | `start`, `stop`, `quick_health`, `preflight`, `acquire_when_free` | 239 | 0-11% | no — no alternative exists |
+| Transport | `fetch_api_json`, `api_call` | 62 | 18-45% | yes, ~4:1 by `curl` |
+| Domain | `search_query`, `ingest` | 32 | 13% | yes, by `jseval` |
+
+**Conjecture: tool altitude predicts bypass.** A transport-altitude tool competes directly with
+`curl` and loses on composability — it cannot be piped, filtered, retried in a loop, or embedded
+in a script. A domain-altitude tool competes with `jseval` and loses on depth. An
+arbitration-altitude tool has no competitor, because arbitration requires shared state that only a
+long-lived authority can hold.
+
+If that conjecture survives scrutiny, the endstate is: **specialize hard into arbitration and
+projection; stop competing on transport.** Note this argues *against* part of §5.3 — adding
+allowlist entries may be treating the symptom. See §11.5.
+
+### 11.3 The keystone: a run registry
+
+The single structural idea this document points at. One authority answering, for every
+JustSearch process on the machine:
+
+*what is it, who owns it, which tree was it built from, which ports does it hold, what is its
+health, when was it last touched, and is it GPU-bound?*
+
+Written by whoever spawns a run (`dev-runner`, `jseval`, `runHeadlessEval`, a bare
+`gradlew runHeadless`), read by everything else. Consequences, roughly in order of value:
+
+- `quick_health` reports unregistered neighbours instead of a false "free" (§6.1 — this already
+  cost one measurement round).
+- `reload` and every other mutating operation resolve their inputs from the run record rather
+  than from a cwd frozen at session-inject time (§5.6).
+- `preflight` can check the target tree, not the invoking one (§5.1).
+- Ownership becomes checkable at every call site, not just `start` (§6.2).
+- `ui-shot`'s auto-serve and `serve-worktree-fe` can bind to a known backend rather than sniffing.
+
+This is the same medicine as the `execution-surfaces` register and `553-representation-drift`,
+applied to **runtime state** instead of to types: one canonical source, everything else a
+projection. That parallel is worth taking seriously — it suggests the register pattern this repo
+already trusts for representations generalizes to processes.
+
+Open question: is registration *enforceable*? A register only covers what registers itself. A bare
+`gradlew runHeadless` will always be able to skip it. So the registry probably needs a discovery
+fallback (port scan, or process enumeration by command line) to stay honest — which is also how it
+would surface the neighbours it was never told about. Speculative; unmeasured.
+
+### 11.4 Three tool classes, with enforced middleware per class
+
+If the registry exists, the tool surface falls out of it naturally:
+
+- **Class A — arbitration.** Owns the registry. `start`, `stop`, `acquire_when_free`,
+  `quick_health`, `preflight`. Already the healthiest part of the surface.
+- **Class B — read projections.** Cheap, composable, never fail expensively. Must satisfy: a
+  missing path returns *available keys*, not a raw dump (§5.4); size limits truncate with a notice
+  rather than erroring; every projection carries staleness.
+- **Class C — mutations against a run.** `ingest`, `reindex`, `gc`, `migration/*`,
+  `worker/restart`, and `reload`. Every one of these should pass the same middleware:
+  **run resolution -> ownership check -> staleness projection.** Today each does its own thing or
+  nothing at all.
+
+Class C is the interesting one, because it closes §6.2 and §5.6 with a single mechanism instead of
+per-tool patches. It also gives a principled answer to a question the current design answers
+arbitrarily: *which operations need a lease?* Answer: exactly the ones that mutate a run.
+
+### 11.5 The allowlist may be a tax, not a control
+
+Worth stating plainly because it cuts against §5.3's proposed fix. `api_call` rejects any path not
+on an explicit allowlist. Five of its ten observed failures were rejections of **legitimate dev
+endpoints**. Meanwhile any agent that wants a non-allowlisted endpoint simply uses `curl`, which
+they did 268 times.
+
+**A safety control with a trivial, sanctioned bypass is not a control — it is a tax on the
+compliant path.** The allowlist cannot prevent an agent from calling an endpoint; it can only make
+the good path worse than the bypass.
+
+If the real fear is *accidental destructive calls against someone else's stack*, then the
+mechanism is wrong twice over: the risk is not "which path" but "which run, and whose". That is
+Class C's ownership middleware, not a path list. A plausible endstate: **drop path allowlisting;
+keep the loopback guard; classify operations as read vs mutating; gate mutations on ownership.**
+Fewer moving parts, no maintenance list to drift, and it defends against the thing that can
+actually happen.
+
+Counter-argument worth preserving: an allowlist is also documentation — it tells an agent what is
+*intended* for dev use. That value is real but could be served by a projection ("here are the
+endpoints this stack exposes") rather than by a gate that refuses.
+
+### 11.6 Hot reload is a symptom, not an independent defect
+
+Under §11.3/§11.4, hot reload stops being a special case. Every one of its confirmed failures is
+an instance of a class problem: it resolves its root from the wrong place (no registry), it does
+not check ownership (no Class C middleware), it falsifies a staleness stamp (no staleness
+projection), and it attaches to a port without identity (no run record to identify against).
+
+That reframes the repair. Rather than patching `reload`'s root resolution specifically, give it
+the resolution and middleware that every Class C tool should have — and hot reload gets fixed as a
+side effect of fixing the class.
+
+It also clarifies what is genuinely *good* about it and worth preserving: `DevReloadManager`
+carries `ModelContext` across a service reconstruction, so encoders stay loaded
+(`DevReloadManager.java:130-150`). In a repo whose warm restart is ~40s largely because of ONNX
+model loading, **preserving loaded models across a code change is the actual value proposition** —
+not "avoiding a restart" in the abstract. Any endstate that keeps hot reload should keep it for
+that reason; any endstate that drops it should acknowledge that is the capability being dropped.
+
+Unresolved tension worth flagging honestly: CLAUDE.md routes implementation to delegated workers
+who mostly verify with unit tests plus a build. If very few agents iterate on Worker Java against
+a live stack, hot reload is excellent and almost unused regardless of quality. That is an
+empirical question, not an architectural one, and it should be settled by a falsifier rather than
+by argument.
+
+### 11.7 Alternative direction: allocate instead of arbitrate
+
+A hidden assumption runs through the whole surface: **one dev stack at a time.** The entire
+ownership apparatus — leases, verdicts, takeover policies, `acquire_when_free`, contention
+handling, displaced notices — exists to arbitrate access to a singleton.
+
+But *why* is it a singleton? Memory and ports are the stated reasons; GPU is the real one. A
+no-AI backend on an allocated port may not need to be exclusive at all. If so, a large part of the
+arbitration machinery is solving a self-imposed constraint, and the endstate could be:
+
+- **GPU-bound runs**: arbitrate (the lease model, unchanged — it works, 92/92 adoption).
+- **Everything else**: allocate a port, register it, run as many as fit.
+
+This would dissolve rather than solve most contention friction, and it fits the parallel-agent
+reality (3-4 sessions) better than a queue does. Speculative and unmeasured — the memory ceiling
+on this machine is the obvious thing that could kill it, and nobody has measured how many non-AI
+backends fit. Recorded because it is the kind of assumption that goes unexamined precisely because
+the machinery around it works well.
+
+### 11.8 A better north star than tool count
+
+Tool deferral changes the economics: names are cheap in the prompt, schemas load on demand. So
+"prune to save tokens" is a weak argument — §3's 31%-of-schema-payload figure is real but small.
+
+The dominant cost of a bad tool is not its schema, it is **failure**: a 45%-error tool costs a
+round trip, a recovery decision, and often a fallback to `curl` anyway. So the metric the endstate
+should optimize is **first-call success rate**, not tool count. That reframes several items:
+`api_call` at 45% is a worse problem than five unused tools; `ai_activate` at 43% is worse than
+both. It also gives P7's reader a purpose beyond reproducing this audit — it becomes the standing
+instrument for the metric.
+
+### 11.9 The browser/harness division
+
+`claude-in-chrome` is 68% of tool-result bytes and is mentioned in no repo rule. The endstate
+principle that seems right: **use the instrumented harness for anything you will assert on; use
+the browser for things you are only looking at.** An assertion taken from a screenshot is not
+reproducible and cannot be gated; `jseval ui-shot`'s `.measure.json` is both. That leaves the
+browser owning genuine exploration — external design research, unfamiliar flows, one-off
+debugging — which is what a meaningful share of its use already is.
+
+This is a rule about *evidence*, not about cost, which is why it belongs in the always-loaded layer
+despite the 620 byte ratchet: it changes what counts as verification.
+
+### 11.10 The dev surface should consume the product surface's own research
+
+The most under-exploited asset here. This project has spent several lanes (725, 732, 735, 770)
+measuring what makes an MCP surface legible and cheap for an agent consumer — response shape,
+delivery tiers, truncation cliffs, payload bytes that carry no content, actionable errors. **None
+of it has ever been applied to the dev surface**, which is an MCP surface with agent consumers.
+
+`fetch_api_json` returning a raw text tail on a `jsonPath` miss (§5.4) is the same defect class
+770 measured on the product side. The dev tools' error messages are mostly not actionable, which
+is exactly what 725 fixed for product responses. The endstate should treat the dev surface as a
+*consumer* of those findings — and, more interestingly, as their **testbed**: it is the one MCP
+surface whose agent population is fully observable in transcripts, which the product surface's is
+not. That is a genuinely useful asymmetry and it has never been used.
+
+### 11.11 Hidden assumptions, and what would falsify this
+
+- **"Agents should use MCP tools."** Maybe not. For a coding agent with a shell, a CLI may simply
+  be the better substrate, and the honest endstate might be a *minimal* MCP surface (arbitration
+  only) plus a good CLI. §11.2's altitude conjecture points this way. Falsifier: if transport-tool
+  usage does not recover after §5.4's projection fixes, the tools are not the problem — the
+  modality is.
+- **"Usage reflects value."** Contaminated for anything off-by-default (`hotReload`, 1/92) or
+  undocumented (`apiPort`, 8 uses). Zero usage of an invisible feature measures visibility.
+- **"The singleton is necessary."** §11.7.
+- **"The allowlist protects something."** §11.5 — no evidence of prevented harm; measured evidence
+  of friction.
+- **"This audit is representative."** One machine, one owner, ~6 weeks, a corpus that rolls.
+  Everything here is about *this* development environment.
+
+### 11.12 Candidate follow-up
+
+The run-registry idea (§11.3) is larger than this lane and outlives it — it touches `dev-runner`,
+`jseval`, the MCP surface, `ui-shot`'s auto-serve and the ownership model. If it is worth its own
+lane, **#845 is the next free number** (verified against `world-state.mjs`; note #843 is already
+double-claimed across worktrees, and #840/#842 have live merge-gate collisions). Not created here
+— whether the registry is a lane or just this lane's P5 is an owner call, and creating a second
+tempdoc speculatively is exactly the kind of residue `retire-with-a-sweep` warns about.
