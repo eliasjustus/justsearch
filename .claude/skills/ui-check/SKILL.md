@@ -73,6 +73,28 @@ gate a11y regressions with `ui-a11y-gate` (local-first, ADR-0026 — not CI-wire
 when deliberately iterating on one surface; `ui-critic`/`ui-fuzz` are deeper, situational passes. The
 `ui-shot-hint` PostToolUse hook surfaces the *contextually-relevant* verb when you edit a `shell-v0` file.
 
+## These verbs vs the browser (`claude-in-chrome`) <!-- rule:harness-for-assertions -->
+
+> **Use the instrumented harness for anything you will assert on. Use the browser for things you are
+> only looking at.**
+
+An assertion taken from a screenshot is not reproducible and cannot be gated; `ui-shot`'s
+`.measure.json` is both, and `ui-diff`/`ui-a11y-gate`/`ui-proportion-gate` turn it into an exit code.
+So "the spacing looks wrong" is a browser observation, but *"the header grew 12px"* is a
+`ui-proportion-gate` claim — and only the second one survives review or catches a regression later.
+
+Where the browser is the right tool and this rule does not apply: external design research, an
+unfamiliar third-party flow, reading console/network output during a live debug, or anything with no
+harness step. Those are genuine uses — the rule steers *local dev-UI verification*, not exploration.
+
+Why it is written down (tempdoc 844 §6.4, §12.3 D4): `claude-in-chrome` was measured at ~1,773 calls
+and ~58.7 MB of tool-result bytes — roughly **98% of all MCP result volume** and about two-thirds of
+*all* tool-result bytes including Read and Bash — concentrated in 17 sessions and pointed mostly at
+`127.0.0.1`, i.e. this harness's own territory. It was also the only agent capability mentioned in no
+repo rule at all. This lives here rather than in `CLAUDE.md` because the always-loaded budget is at
+its ceiling and this skill's own trigger ("capturing UI screenshots") already fires at exactly the
+moment the choice is made.
+
 ## Server & data requirements (there is NO mock data)
 | Step kind | Needs | Notes |
 |---|---|---|
