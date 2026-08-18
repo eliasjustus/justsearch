@@ -13,6 +13,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   subscribeAiInstall,
   setAiInstallApiBase,
+  pollIntervalFor,
   __resetAiInstallPollForTest,
   type AiInstallSnapshot,
 } from './aiInstallPoll.js';
@@ -124,5 +125,95 @@ describe('aiInstallPoll — self-healing, always-on poller (tempdoc 663 §O regr
     await vi.advanceTimersByTimeAsync(0);
     expect(fetchMock.mock.calls.length).toBeGreaterThan(callsAfterOneTick);
     unsub2();
+  });
+});
+
+/**
+ * Tempdoc 840 Phase 5 (Task 4) — the poller was always-on at 1 Hz FOREVER: on a machine with a
+ * finished install it spent three requests a second, every second, for the life of the session,
+ * asking three endpoints whose answers do not change. The cadence is now adaptive. The self-healing
+ * property is unchanged and is what the suite above pins; these pin only WHEN the next tick comes.
+ */
+describe('aiInstallPoll — adaptive cadence', () => {
+  afterEach(() => {
+    __resetAiInstallPollForTest();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const idle = (over: Partial<AiInstallSnapshot> = {}): AiInstallSnapshot => ({
+    install: { state: 'idle' },
+    runtime: null,
+    packs: null,
+    ...over,
+  });
+
+  it('stays FAST while an install is running', () => {
+    expect(pollIntervalFor(idle({ install: { state: 'running' } }))).toBe(1000);
+  });
+
+  it('stays FAST while a run is PAUSED — a parked download is still a live subject', () => {
+    expect(pollIntervalFor(idle({ install: { state: 'idle', paused: true } }))).toBe(1000);
+  });
+
+  it('stays FAST while the install status is still UNKNOWN (the self-healing retry window)', () => {
+    expect(pollIntervalFor({ install: null, runtime: null, packs: null })).toBe(1000);
+  });
+
+  it('stays FAST while a runtime activation or a pack import is in flight', () => {
+    expect(pollIntervalFor(idle({ runtime: { activation: { state: 'running' } } }))).toBe(1000);
+    expect(pollIntervalFor(idle({ packs: { state: 'running', phase: 'import' } }))).toBe(1000);
+  });
+
+  it('slows down when everything is settled and idle', () => {
+    expect(pollIntervalFor(idle())).toBe(5000);
+    expect(pollIntervalFor(idle({ install: { state: 'succeeded', installedFully: true } }))).toBe(5000);
+  });
+
+  it('actually spaces the ticks out — an idle machine is not polled at 1 Hz', async () => {
+    vi.useFakeTimers();
+    let installCalls = 0;
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes('/api/ai/install/status')) installCalls += 1;
+      return jsonResponse({ state: 'idle', phase: 'idle' });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    setAiInstallApiBase('http://127.0.0.1:33221');
+    const unsub = subscribeAiInstall(() => {});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(installCalls).toBe(1);
+
+    // The old fixed 1s interval would have fired four more times by now.
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(installCalls).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(installCalls).toBe(2);
+    unsub();
+  });
+
+  it('re-arms the FAST cadence on the very first tick that sees a run start', async () => {
+    vi.useFakeTimers();
+    let installCalls = 0;
+    let state = 'idle';
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes('/api/ai/install/status')) {
+        installCalls += 1;
+        return jsonResponse({ state });
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    setAiInstallApiBase('http://127.0.0.1:33221');
+    const unsub = subscribeAiInstall(() => {});
+    await vi.advanceTimersByTimeAsync(0);
+    state = 'running';
+    await vi.advanceTimersByTimeAsync(5000); // the idle tick observes the start
+    expect(installCalls).toBe(2);
+    await vi.advanceTimersByTimeAsync(1000); // …and the next one is already fast
+    expect(installCalls).toBe(3);
+    unsub();
   });
 });

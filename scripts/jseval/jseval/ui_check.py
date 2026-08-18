@@ -574,7 +574,13 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
 
     def _view_setup(view_name: str, theme: str = "dark"):
         async def setup(page):
-            base = view_name.replace("-advanced", "") if view_name.endswith("-advanced") else view_name
+            # tempdoc 840 Phase 5: a view step may drill INTO a surface (advanced mode, the component
+            # list, the consent dialog). Strip the drill-down suffix to recover the surface it lives on.
+            base = view_name
+            for suffix in ("-advanced", "-components", "-consent"):
+                if base.endswith(suffix):
+                    base = base[: -len(suffix)]
+                    break
             surface_id = S.VIEWS.get(base)
             # tempdoc 615 §6.1b: the live Lit shell lands on the CHAT surface by default (not search,
             # as the retired React app did), so EVERY view step — including home/search — must navigate
@@ -601,6 +607,25 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
                 b = page.get_by_test_id(S.TID_BRAIN_SWITCH_TO_ADVANCED)
                 await b.wait_for(state="visible", timeout=10_000)
                 await b.click(timeout=5_000)
+                if cooldown_ms > 0:
+                    await asyncio.sleep(cooldown_ms / 1000)
+            # tempdoc 840 Phase 5 — the per-component install list: what each piece of the ~7 GB is,
+            # what it costs, and what you lose by declining it. Scroll it into the capture.
+            if view_name == "ai-brain-components":
+                lst = page.get_by_test_id(S.TID_INSTALL_COMPONENT_LIST)
+                await lst.wait_for(state="visible", timeout=10_000)
+                await lst.scroll_into_view_if_needed(timeout=5_000)
+                if cooldown_ms > 0:
+                    await asyncio.sleep(cooldown_ms / 1000)
+            # tempdoc 840 Phase 5 — the consent dialog the primary action opens (size, retained bytes,
+            # per-package licence + terms). Reached by the Simple panel's primary action.
+            if view_name == "ai-brain-consent":
+                b = page.get_by_test_id(S.TID_BRAIN_SIMPLE_ACTION)
+                await b.wait_for(state="visible", timeout=10_000)
+                await b.click(timeout=5_000)
+                await page.get_by_test_id(S.TID_INSTALL_CONSENT_DIALOG).wait_for(
+                    state="visible", timeout=10_000
+                )
                 if cooldown_ms > 0:
                     await asyncio.sleep(cooldown_ms / 1000)
         return setup
@@ -1619,7 +1644,20 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         await page.get_by_role("heading", name="Index", exact=True).scroll_into_view_if_needed()
         await asyncio.sleep(0.5)
 
-    views = ["home", "search", "library", "ai-brain", "ai-brain-advanced", "health", "settings", "security", "help"]
+    views = [
+        "home",
+        "search",
+        "library",
+        "ai-brain",
+        "ai-brain-advanced",
+        # tempdoc 840 Phase 5 — the two install screens the phase authored.
+        "ai-brain-components",
+        "ai-brain-consent",
+        "health",
+        "settings",
+        "security",
+        "help",
+    ]
 
     return [
         # --- Shared-browser chain (demo flow) ---

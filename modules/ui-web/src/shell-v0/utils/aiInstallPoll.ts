@@ -11,13 +11,15 @@
  * "Connecting…" state, live-reproduced as an indefinite stuck panel (tempdoc 663 §O).
  *
  * This module fixes that structurally, mirroring `inferencePoll.ts`'s proven shape: ONE shared,
- * always-on poller (first fetch is eager, then every `INTERVAL_MS`), fanning out to every subscriber.
+ * always-on poller (first fetch is eager, then on an ADAPTIVE cadence — see `pollIntervalFor`),
+ * fanning out to every subscriber.
  * A failed tick retains the last-known-good value per field (never regresses a known field to
  * `null`) and simply tries again on the next tick — "stuck forever" becomes structurally impossible.
  */
 
 import { authorizedFetch } from '../api/authorizedFetch.js';
 import type { AiInstallStatus } from '../../api/generated/schema-types/ai-install-status.js';
+import type { InstallComponentEstimate } from '../state/installComponents.js';
 
 /**
  * The `GET /api/ai/install/status` wire shape.
@@ -53,6 +55,13 @@ export interface InstallPlanPreview {
     totalBytes?: number;
     downloadBytes?: number;
   }>;
+  /**
+   * Tempdoc 840 Phase 4 follow-up — the STANDING per-component list (`ComponentEstimate`), complete
+   * before any install has ever run. It lives on the preview rather than on `status.packages`
+   * because it is a question about the PLAN; `status.packages` is run bookkeeping and is empty on an
+   * idle machine, so asking it "what components are there" would answer "none".
+   */
+  components?: InstallComponentEstimate[];
 }
 
 export interface AiRuntimeStatus {
@@ -115,13 +124,42 @@ type Listener = (snapshot: AiInstallSnapshot) => void;
 
 const listeners = new Set<Listener>();
 let timer: number | null = null;
+let running = false;
 let apiBase = '';
 let last: AiInstallSnapshot = { install: null, runtime: null, packs: null };
 
-// Matches the original per-operation pollers' cadence (1s) — this poller is always-on rather than
-// conditionally-armed, but that should not make download/activation progress feel less responsive
-// than it did before.
-const INTERVAL_MS = 1000;
+// Matches the original per-operation pollers' cadence (1s) while something is actually happening —
+// this poller is always-on rather than conditionally-armed, but that must not make download /
+// activation progress feel less responsive than it did before.
+const FAST_INTERVAL_MS = 1000;
+
+/**
+ * The idle cadence (tempdoc 840 Phase 5, Task 4). This poller is ALWAYS-ON by design — that is what
+ * makes it self-healing — but "always-on" was implemented as "1 Hz forever", so a machine with a
+ * finished install spent three HTTP requests per second, every second, for the life of the session,
+ * asking three endpoints whose answers do not change. 5s keeps a state CHANGE (an install someone
+ * starts from another surface, a runtime activation) visible within one blink while cutting the idle
+ * request rate by 80%, and the first tick after any change immediately re-arms the fast cadence.
+ */
+const SLOW_INTERVAL_MS = 5000;
+
+/**
+ * How long to wait before the next tick, given what the last one saw.
+ *
+ * FAST while anything is in flight — an install running or paused (a paused run is still a live
+ * subject: the user is looking at it and may resume), a runtime activation, a pack import — and also
+ * while the install status is still UNKNOWN, because "we have not heard yet" is precisely the window
+ * the self-healing retry exists for and slowing it would lengthen every first paint and every
+ * recovery from a transient failure.
+ */
+export function pollIntervalFor(snapshot: AiInstallSnapshot): number {
+  const install = snapshot.install;
+  if (install === null) return FAST_INTERVAL_MS;
+  if (install.state === 'running' || install.paused === true) return FAST_INTERVAL_MS;
+  if (snapshot.runtime?.activation?.state === 'running') return FAST_INTERVAL_MS;
+  if (snapshot.packs?.state === 'running') return FAST_INTERVAL_MS;
+  return SLOW_INTERVAL_MS;
+}
 
 async function fetchJson<T>(path: string): Promise<T | null> {
   try {
@@ -150,15 +188,33 @@ async function fetchOnce(): Promise<void> {
   for (const l of listeners) l(last);
 }
 
+/**
+ * Self-rescheduling tick (a timeout chain, not a fixed interval) so each tick's cadence can be
+ * chosen from what the previous one saw. The retry behaviour is unchanged and unconditional: a
+ * failed tick retains last-known-good and schedules the next one exactly like a successful tick, so
+ * no code path can stop retrying because prior attempts failed (tempdoc 663 §O).
+ */
+async function tick(): Promise<void> {
+  timer = null;
+  await fetchOnce();
+  schedule();
+}
+
+function schedule(): void {
+  if (!running || timer !== null) return;
+  timer = window.setTimeout(() => void tick(), pollIntervalFor(last));
+}
+
 function ensureRunning(): void {
-  if (timer !== null) return;
-  void fetchOnce();
-  timer = window.setInterval(() => void fetchOnce(), INTERVAL_MS);
+  if (running) return;
+  running = true;
+  void tick();
 }
 
 function stop(): void {
+  running = false;
   if (timer !== null) {
-    window.clearInterval(timer);
+    window.clearTimeout(timer);
     timer = null;
   }
   last = { install: null, runtime: null, packs: null };
@@ -182,7 +238,7 @@ export function subscribeAiInstall(listener: Listener): () => void {
 export function setAiInstallApiBase(base: string): void {
   if (apiBase !== base) {
     apiBase = base;
-    if (timer !== null) {
+    if (running) {
       stop();
       ensureRunning();
     }

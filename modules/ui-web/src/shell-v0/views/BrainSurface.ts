@@ -51,6 +51,18 @@ import {
   type AiStability,
 } from '../state/aiVerdict.js';
 import { unavailableBecause, AVAILABLE } from '../state/availability.js';
+// Tempdoc 840 Phase 5 — the ONE derivation behind the component list, the honest transfer line and
+// the staged-progress rows. Composed here, rendered below; the composers are unit-tested directly.
+import {
+  composeComponentGroups,
+  composeStageRows,
+  composeTransferLine,
+  friendlyInstallMessage,
+  searchReadyNotice,
+  type ComponentRow,
+} from '../state/installComponents.js';
+import '../components/StatusBadge.js';
+import '../components/Control.js';
 // Tempdoc 613 — coherence: the compat callout words its cause from the ONE canonical reindex
 // vocabulary (the same `reasonFor`/CAUSE_ROWS the Chat degradation banner + 595 verdict use),
 // so the same condition cannot be worded differently across surfaces.
@@ -821,6 +833,114 @@ export class BrainSurface extends JfElement {
       gap: 0.5rem;
       justify-content: flex-end;
     }
+    /* Tempdoc 840 Phase 5 — the component list. A hand-authored flex row in the SystemSelfView
+       row/label shape (what every other small list here does); jf-table is the wrong shape for a
+       7-item list, and no checkbox/toggle atom exists to compose from. */
+    .component-list {
+      margin-top: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.875rem;
+    }
+    .component-lede {
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+    }
+    .component-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .component-group-head {
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .component-consequence {
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+    }
+    .component-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .component-row:last-child {
+      border-bottom: none;
+    }
+    .component-main {
+      flex: 1;
+      min-width: 0;
+    }
+    .component-label {
+      font-size: var(--font-size-sm);
+      font-weight: 500;
+    }
+    .component-desc {
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+      margin-top: 0.125rem;
+    }
+    .component-meta {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 0.125rem;
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+    .component-size {
+      font-family: monospace;
+    }
+    .component-toggle::part(control) {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 3rem;
+      padding: 0.2rem 0.5rem;
+      border: 1px solid var(--border-subtle);
+      border-radius: 9999px;
+      background: var(--surface-tertiary);
+      color: var(--text-primary);
+      font-size: var(--font-size-xs);
+      cursor: pointer;
+    }
+    /* Staged acquisition — which stage is running, and what it is waiting on. */
+    .stage-block {
+      margin-top: 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .stage-transfer {
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+      font-family: monospace;
+    }
+    .stage-ready {
+      font-size: var(--font-size-xs);
+      color: var(--text-success);
+    }
+    .stage-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.5rem;
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+      margin-bottom: 0.25rem;
+    }
+    .stage-label {
+      color: var(--text-primary);
+    }
+    .stage-blocked {
+      margin-top: 0.25rem;
+      font-size: var(--font-size-xs);
+      color: var(--text-warning);
+    }
   `,
   ];
 
@@ -966,7 +1086,8 @@ export class BrainSurface extends JfElement {
   // so a failed/slow FIRST fetch never retried — the structural cause of the live-reproduced
   // "stuck on Connecting… forever" bug (tempdoc 663 §O). Install/runtime/pack status now come from
   // the shared, always-on `aiInstallPoll` (via aiStateStore's subscription above), which retries
-  // unconditionally on a fixed 1s cadence regardless of prior success/failure.
+  // unconditionally regardless of prior success/failure — on an adaptive cadence since tempdoc 840
+  // Phase 5 (fast while something is in flight or still unknown, slower when settled and idle).
 
   // Tempdoc 586 §3 — inference status now flows from the shared aiStateStore; this
   // loop polls only the brain-specific transition timeline + trace explorer, which
@@ -1127,6 +1248,48 @@ export class BrainSurface extends JfElement {
     if (!this.apiBase && this.apiBase !== '') return;
     const preview = await this.fetchJson<InstallPlanPreview>('/api/ai/install/plan-preview');
     if (preview) this.planPreview = preview;
+  }
+
+  /**
+   * Tempdoc 840 Phase 5 — record (or withdraw) the user's decision not to install one component.
+   *
+   * Opt-OUT: the wire call only ever fires from a row that is already selected-by-default, so the
+   * DELETE arm exists to undo a standing decline, not to opt in to something the user never chose.
+   * The preview is re-read afterwards because it — not this surface — owns `declined` and the
+   * recomputed sizes; guessing locally would put a second authority on the row.
+   */
+  private async setComponentDeclined(id: string, declined: boolean): Promise<void> {
+    await this.withBusy(`component:${id}`, async () => {
+      this.runtimeError = null;
+      const res = await authorizedFetch(
+        `${this.base()}/api/ai/install/packages/${encodeURIComponent(id)}/decline`,
+        { method: declined ? 'POST' : 'DELETE' },
+      );
+      if (!res.ok) {
+        this.runtimeError = `Could not record that choice (HTTP ${res.status}).`;
+        return;
+      }
+      await this.refreshInstallPlanPreview();
+    });
+  }
+
+  /**
+   * Pause / resume an in-flight run. NOT a cancel: the run keeps its op-lease and its place in the
+   * set, so this is the affordance for "stop using my bandwidth for a minute", which cancel — which
+   * ends the run — could never be.
+   */
+  private async setInstallPaused(paused: boolean): Promise<void> {
+    await this.withBusy(paused ? 'install-pause' : 'install-resume', async () => {
+      this.runtimeError = null;
+      const data = await this.fetchJson<InstallStatus>(
+        paused ? '/api/ai/install/pause' : '/api/ai/install/resume',
+        { method: 'POST' },
+      );
+      // Both endpoints answer with the post-call status, so a null here is a REFUSAL (or an
+      // unreachable backend) — say so rather than leaving a button that looks like it worked.
+      if (data) this.installStatus = data;
+      else this.runtimeError = `Could not ${paused ? 'pause' : 'resume'} the download.`;
+    });
   }
 
   private async confirmInstall(): Promise<void> {
@@ -1384,10 +1547,16 @@ export class BrainSurface extends JfElement {
       },
       installing: {
         dot: 'installing',
-        label: 'Installing…',
-        sub: this.installStatus?.phase
-          ? `Phase: ${this.installStatus.phase.replace(/_/g, ' ')}`
-          : 'Downloading models',
+        label: this.installStatus?.paused === true ? 'Paused' : 'Installing…',
+        // Tempdoc 840 Phase 5 (U5) — the backend's own message names the download's target PATH
+        // ("Downloading onnx/gte-multilingual-base/model.onnx..."), which reads as machine noise next
+        // to a component list of friendly labels. Map it onto the component's label; the raw phase
+        // remains the fallback when there is no in-flight package to name.
+        sub:
+          friendlyInstallMessage(this.installStatus?.message, this.installStatus?.packages) ||
+          (this.installStatus?.phase
+            ? `Phase: ${this.installStatus.phase.replace(/_/g, ' ')}`
+            : 'Downloading models'),
       },
       // Tempdoc 663 §E — install failure was previously unrepresented as a lifecycle state (folded
       // silently into a generic 'offline'/'not_installed' render, with only a separate dismissable
@@ -1579,18 +1748,23 @@ export class BrainSurface extends JfElement {
           </div>
         </div>
 
-        ${aiState === 'installing' && pct !== null
+        ${aiState === 'installing'
           ? html`
               <div style="margin-top: 1rem">
-                <div class="progress">
-                  <div class="progress-bar" style="width: ${pct}%"></div>
-                </div>
-                <div
-                  style="margin-top: 0.5rem; display:flex; justify-content:space-between; font-size: var(--font-size-xs); color: var(--text-secondary)"
-                >
-                  <span>${this.installStatus?.phase?.replace(/_/g, ' ') ?? 'preparing'}</span>
-                  <span>${formatBytes(bytesDone)} / ${formatBytes(bytesTotal)}</span>
-                </div>
+                ${pct !== null
+                  ? html`
+                      <div class="progress">
+                        <div class="progress-bar" style="width: ${pct}%"></div>
+                      </div>
+                      <div
+                        style="margin-top: 0.5rem; display:flex; justify-content:space-between; font-size: var(--font-size-xs); color: var(--text-secondary)"
+                      >
+                        <span>${this.installStatus?.phase?.replace(/_/g, ' ') ?? 'preparing'}</span>
+                        <span>${formatBytes(bytesDone)} / ${formatBytes(bytesTotal)}</span>
+                      </div>
+                    `
+                  : nothing}
+                ${this.renderStagedProgress()}
                 ${this.installStatus?.packages?.some((p) => p.resumed)
                   ? html`<div
                       style="margin-top: 0.25rem; font-size: var(--font-size-xs); color: var(--text-secondary)"
@@ -1598,9 +1772,28 @@ export class BrainSurface extends JfElement {
                       Resumed from your earlier download — the bytes already on disk were kept.
                     </div>`
                   : nothing}
+                ${/* Tempdoc 840 Phase 5 — pause is NOT cancel: the run keeps its lease and its place,
+                      so "stop using my bandwidth for a minute" finally has an affordance that does not
+                      end the run. */ ''}
+                <div class="row" style="margin-top: 0.75rem">
+                  <jf-button
+                    label=${this.installStatus?.paused === true
+                      ? 'Resume download'
+                      : 'Pause download'}
+                    data-testid="install-pause-toggle"
+                    .availability=${this.busy['install-pause'] || this.busy['install-resume']
+                      ? ({ kind: 'blocked' } as const)
+                      : AVAILABLE}
+                    .onActivate=${() =>
+                      void this.setInstallPaused(this.installStatus?.paused !== true)}
+                  >
+                    ${this.installStatus?.paused === true ? 'Resume download' : 'Pause download'}
+                  </jf-button>
+                </div>
               </div>
             `
           : nothing}
+        ${this.renderComponentList()}
         ${aiState === 'online'
           ? html`
               <div style="margin-top: 1rem; padding: 0.75rem; background: var(--surface-tertiary); border-radius: 0.375rem">
@@ -2202,6 +2395,141 @@ export class BrainSurface extends JfElement {
     `;
   }
 
+  /**
+   * Tempdoc 840 Phase 5 (Task 1) — the component list: what each piece of the ~7 GB IS, what it
+   * costs, where it stands, and — the point of the whole phase — what you lose by saying no.
+   *
+   * Grouped by NECESSITY rather than by capability tier because necessity is the only axis a user can
+   * act on. The rows are sourced from the plan preview's standing `components[]`, so the list is
+   * complete before any install has run.
+   */
+  private renderComponentList(): TemplateResult | typeof nothing {
+    const groups = composeComponentGroups(this.planPreview?.components);
+    if (groups.length === 0) return nothing;
+    return html`
+      <div class="component-list" data-testid="install-component-list">
+        <div class="component-lede">
+          Everything your machine supports is turned on. Turn off anything you do not want — the rest
+          of the list is unaffected.
+        </div>
+        ${groups.map(
+          (g) => html`
+            <div class="component-group" data-testid="component-group-${g.necessity}">
+              <div class="component-group-head">
+                <jf-status-badge
+                  tone=${g.necessity === 'required'
+                    ? 'info'
+                    : g.necessity === 'improves-results'
+                      ? 'warning'
+                      : 'neutral'}
+                  label=${g.heading}
+                  >${g.heading}</jf-status-badge
+                >
+                <span class="component-consequence">${g.consequence}</span>
+              </div>
+              ${g.rows.map((r) => this.renderComponentRow(r))}
+            </div>
+          `,
+        )}
+      </div>
+    `;
+  }
+
+  /**
+   * One component row. The `unavailable` arm is the reason this is its own method: hardware this
+   * machine does not have is NOT a choice, so it renders its reason and NO control — an unticked box
+   * would imply an option that does not exist. The reason itself is read off the row's typed
+   * `availability`, so the string exists in exactly one place.
+   */
+  private renderComponentRow(r: ComponentRow): TemplateResult {
+    const unavailableReason =
+      r.availability.kind === 'unavailable' ? r.availability.reason : null;
+    const busy = !!this.busy[`component:${r.id}`];
+    return html`
+      <div
+        class="component-row"
+        data-testid="component-row-${r.id}"
+        data-state=${r.state}
+        style=${r.selected && r.state !== 'unavailable' && r.state !== 'not-in-mode'
+          ? ''
+          : 'opacity: 0.62'}
+      >
+        <div class="component-main">
+          <div class="component-label">${r.label}</div>
+          ${r.description
+            ? html`<div class="component-desc">${r.description}</div>`
+            : nothing}
+          ${unavailableReason
+            ? html`<div class="component-desc" data-testid="component-unavailable-${r.id}">
+                ${unavailableReason}
+              </div>`
+            : nothing}
+        </div>
+        <div class="component-meta">
+          <span class="component-size">${r.sizeText ?? '—'}</span>
+          <span class="component-state">${r.stateText}</span>
+        </div>
+        ${r.togglable
+          ? html`<jf-control
+              class="component-toggle"
+              data-testid="component-toggle-${r.id}"
+              .availability=${busy ? ({ kind: 'blocked' } as const) : AVAILABLE}
+              label=${r.selected ? `Turn off ${r.label}` : `Turn on ${r.label}`}
+              .onActivate=${() => void this.setComponentDeclined(r.id, r.selected)}
+              >${r.selected ? 'On' : 'Off'}</jf-control
+            >`
+          : nothing}
+      </div>
+    `;
+  }
+
+  /**
+   * Tempdoc 840 Phase 5 (Task 2) — honest progress: the measured rate and horizon, the staged plan,
+   * and the moment search becomes usable while the rest is still downloading.
+   *
+   * Every segment appears only when there is an honest basis for it — `-1` on the wire means UNKNOWN
+   * and the segment is WITHDRAWN, never rendered as "0 B/s" or "0s left" (`composeTransferLine`).
+   */
+  private renderStagedProgress(): TemplateResult | typeof nothing {
+    const status = this.installStatus;
+    const stages = composeStageRows(status);
+    const transfer = composeTransferLine(status);
+    const ready = searchReadyNotice(status);
+    if (stages.length === 0 && transfer === null && ready === null) return nothing;
+    return html`
+      <div class="stage-block" data-testid="install-staged-progress">
+        ${transfer
+          ? html`<div class="stage-transfer" data-testid="install-transfer-line">${transfer}</div>`
+          : nothing}
+        ${ready
+          ? html`<div class="stage-ready" data-testid="install-search-ready">${ready}</div>`
+          : nothing}
+        ${stages.map(
+          (s) => html`
+            <div class="stage-row" data-testid="install-stage-${s.id}">
+              <div class="stage-head">
+                <span class="stage-label">${s.current ? '▶ ' : ''}${s.label}</span>
+                <span class="stage-state"
+                  >${s.stateText}${s.bytesText ? html` · ${s.bytesText}` : nothing}</span
+                >
+              </div>
+              ${s.percent === null
+                ? nothing
+                : html`<div class="progress">
+                    <div class="progress-bar" style="width: ${s.percent}%"></div>
+                  </div>`}
+              ${s.blockedReason
+                ? html`<div class="stage-blocked" data-testid="install-stage-blocked-${s.id}">
+                    ${s.blockedReason}
+                  </div>`
+                : nothing}
+            </div>
+          `,
+        )}
+      </div>
+    `;
+  }
+
   private renderModels(): TemplateResult {
     const features = this.runtimeStatus?.onnxFeatures ?? [];
     const active = features.filter((f) => f.modelActive).length;
@@ -2213,7 +2541,9 @@ export class BrainSurface extends JfElement {
       active > 0 ? (live ? `${active} loaded` : `${active} when last observed`) : null,
       () => html`
         <div style="margin-top: 0.625rem; font-size: var(--font-size-sm)">
-          ${this.renderTierBreakdown()}
+          ${/* Tempdoc 840 Phase 5 — the same component list the Simple panel shows (Simple and
+                Advanced are mutually exclusive, so it is never on screen twice). */ ''}
+          ${this.renderComponentList()} ${this.renderTierBreakdown()}
           ${this.installStatus?.packages?.length
             ? this.installStatus.packages.map(
                 (p) => html`
@@ -2269,6 +2599,7 @@ export class BrainSurface extends JfElement {
     return html`
       <dialog
         class="consent"
+        data-testid="install-consent-dialog"
         aria-labelledby="install-consent-title"
         @cancel=${(e: Event) => {
           e.preventDefault();
@@ -2462,6 +2793,7 @@ export class BrainSurface extends JfElement {
             : nothing}
           ${/* Tempdoc 804 §B8 — a newer version's added artifacts are their own state ("extra AI
                 components are available"), not a retroactive un-install of a complete one. */ ''}
+          ${this.renderStagedProgress()}
           ${this.installStatus?.pendingRegistryAdditions?.length
             ? html`<div data-testid="install-pending-registry-additions">
                 New AI components are available since this install:
