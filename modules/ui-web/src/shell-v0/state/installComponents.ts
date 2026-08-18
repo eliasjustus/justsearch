@@ -75,12 +75,16 @@ const NECESSITY_HEADING: Record<Necessity, string> = {
  * What the category MEANS, in consequence terms. This is the whole point of the necessity axis: a
  * user who turns off the reranker to save 340 MB gets measurably worse search, and no percentage or
  * byte counter can tell them that. The wording is the consequence, never the mechanism.
+ *
+ * A CLAUSE, not a sentence: it rides the group header line (`REQUIRED · search does not work without
+ * this`) rather than occupying a line of its own. Seven components once cost ~18 lines of prose; the
+ * consequence is the part that had to survive the cut, so it moved onto the heading instead.
  */
 export const NECESSITY_CONSEQUENCE: Record<Necessity, string> = {
-  required: 'Search does not work without this.',
-  'improves-results': 'Search works; results are worse without it.',
-  'adds-feature': 'Search is unaffected; you lose chat and summaries.',
-  infrastructure: 'Plumbing, not a capability you use directly.',
+  required: 'search does not work without this',
+  'improves-results': 'results are worse without these',
+  'adds-feature': 'you lose chat and summaries',
+  infrastructure: 'plumbing, not a capability you use directly',
 };
 
 /**
@@ -101,12 +105,20 @@ type ComponentState =
   | 'unavailable'
   | 'not-in-mode';
 
-const COMPONENT_STATE_TEXT: Record<ComponentState, string> = {
-  installed: 'Installed',
+/**
+ * State text is written ONLY where the state DEVIATES from installed — `installed` maps to `null`.
+ *
+ * "Installed" is the resting state of every row on a working machine, so printing it seven times
+ * spends seven lines saying nothing: a label that never varies carries no information, and it crowded
+ * out the facts that do vary (what the component costs, whether it is off). Silence now means
+ * installed, and any text in that slot means something is different from normal.
+ */
+const COMPONENT_STATE_TEXT: Record<ComponentState, string | null> = {
+  installed: null,
   'to-download': 'Will download',
-  declined: 'Turned off',
+  declined: 'Off',
   unavailable: 'Not supported here',
-  'not-in-mode': 'Not used in this mode',
+  'not-in-mode': 'Not in this mode',
 };
 
 /** One rendered component row. Everything a template needs, already decided. */
@@ -116,7 +128,8 @@ export interface ComponentRow {
   readonly description: string;
   readonly necessity: Necessity;
   readonly state: ComponentState;
-  readonly stateText: string;
+  /** Deviation text only — `null` when the component is simply installed (see COMPONENT_STATE_TEXT). */
+  readonly stateText: string | null;
   /** Full footprint at the selected profile, or `null` when the registry declares no size. */
   readonly sizeText: string | null;
   /**
@@ -135,11 +148,21 @@ export interface ComponentRow {
   readonly availability: Availability;
 }
 
-/** One necessity group, with its heading and its consequence sentence. */
+/** One necessity group, with its heading, its consequence clause and what it costs. */
 export interface ComponentGroup {
   readonly necessity: Necessity;
   readonly heading: string;
   readonly consequence: string;
+  /**
+   * "4 components · 1.38 GB" — what this group costs, stated directly.
+   *
+   * This is what the size bar was reaching for and could not deliver: the bar answers "which of these
+   * is bigger", which needs at least two members, while "what does this category cost me?" is a
+   * question every group has an answer to — including the three that hold exactly one component and
+   * therefore render no bar at all.
+   */
+  /** The group's aggregate cost, or `null` for a one-member group (its row already says it). */
+  readonly subtotal: string | null;
   readonly rows: readonly ComponentRow[];
 }
 
@@ -165,6 +188,7 @@ function toComponentState(state: string | null | undefined): ComponentState {
  * already writes user-facing prose naming the actual constraint) and NO control, because an unticked
  * box implies a choice; `declined` — a choice the user really made — keeps its control so it can be
  * undone.
+ *
  */
 export function composeComponentRow(c: InstallComponentEstimate): ComponentRow {
   const state = toComponentState(c.state);
@@ -201,19 +225,59 @@ export function composeComponentRow(c: InstallComponentEstimate): ComponentRow {
 export function composeComponentGroups(
   components: readonly InstallComponentEstimate[] | null | undefined,
 ): ComponentGroup[] {
-  const rows = (components ?? []).map(composeComponentRow);
+  const all = components ?? [];
   const groups: ComponentGroup[] = [];
   for (const necessity of NECESSITY_ORDER) {
-    const inGroup = rows.filter((r) => r.necessity === necessity);
+    const inGroup = all.filter((c) => toNecessity(c.necessity) === necessity);
     if (inGroup.length === 0) continue;
     groups.push({
       necessity,
       heading: NECESSITY_HEADING[necessity],
       consequence: NECESSITY_CONSEQUENCE[necessity],
-      rows: inGroup,
+      subtotal: composeGroupSubtotal(inGroup),
+      rows: inGroup.map((c) => composeComponentRow(c)),
     });
   }
   return groups;
+}
+
+/**
+ * "4 components · 1.38 GB" — the group's own cost line.
+ *
+ * Sums the group's declared footprints, counting the members whether or not they are installed:
+ * unlike the section-wide {@link composeComponentSummary} (a claim about what is ON DISK now), this
+ * answers "what does this category cost me?", which is a property of the category and not of the
+ * current install state. The footprint clause is withdrawn rather than printed as "0 B" when no member
+ * declares a size, so the count still stands alone.
+ */
+function composeGroupSubtotal(inGroup: readonly InstallComponentEstimate[]): string | null {
+  // A one-member group needs no subtotal: the single row below already states that figure, and
+  // printing "1 component · 615.2 MB" directly above "615.2 MB" is the same number twice — noise in
+  // a list whose whole revision was about removing text that repeats what is already on screen. A
+  // subtotal earns its place only where it AGGREGATES something.
+  if (inGroup.length < 2) return null;
+  const count = `${inGroup.length} components`;
+  const bytes = inGroup.reduce((sum, c) => sum + Math.max(0, c.totalBytes ?? 0), 0);
+  return bytes > 0 ? `${count} · ${formatBytes(bytes)}` : count;
+}
+
+/**
+ * The one-line stock-take that replaced seven repetitions of "Installed": how many components are on
+ * disk, and what they cost together.
+ *
+ * This is the trade the per-row "Installed" labels never stated. The footprint counts ONLY installed
+ * components, because "on disk" is a claim about disk — a pending download has not spent anything yet.
+ * Returns `null` when nothing is installed (there is no stock to take, and "0 installed" beside a list
+ * of pending downloads reads as breakage rather than as a fresh machine).
+ */
+export function composeComponentSummary(
+  components: readonly InstallComponentEstimate[] | null | undefined,
+): string | null {
+  const installed = (components ?? []).filter((c) => toComponentState(c.state) === 'installed');
+  if (installed.length === 0) return null;
+  const bytes = installed.reduce((sum, c) => sum + Math.max(0, c.totalBytes ?? 0), 0);
+  const count = `${installed.length} installed`;
+  return bytes > 0 ? `${count} · ${formatBytes(bytes)} on disk` : count;
 }
 
 /**

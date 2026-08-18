@@ -55,13 +55,13 @@ import { unavailableBecause, AVAILABLE } from '../state/availability.js';
 // the staged-progress rows. Composed here, rendered below; the composers are unit-tested directly.
 import {
   composeComponentGroups,
+  composeComponentSummary,
   composeStageRows,
   composeTransferLine,
   friendlyInstallMessage,
   searchReadyNotice,
   type ComponentRow,
 } from '../state/installComponents.js';
-import '../components/StatusBadge.js';
 import '../components/Control.js';
 // Tempdoc 613 — coherence: the compat callout words its cause from the ONE canonical reindex
 // vocabulary (the same `reasonFor`/CAUSE_ROWS the Chat degradation banner + 595 verdict use),
@@ -652,6 +652,14 @@ export class BrainSurface extends JfElement {
       display: flex;
       align-items: center;
       gap: 0.75rem;
+      flex-wrap: wrap;
+      row-gap: 0.5rem;
+    }
+    /* Tempdoc 840 post-review G — the primary action belongs BESIDE the status it acts on. It used to
+       sit after the component list, ~600px below "AI Offline", so the state and the one thing to do
+       about it were never on screen together. */
+    .status-action {
+      margin-left: auto;
     }
     .progress {
       height: 0.5rem;
@@ -833,11 +841,16 @@ export class BrainSurface extends JfElement {
       gap: 0.5rem;
       justify-content: flex-end;
     }
-    /* Tempdoc 840 Phase 5 — the component list. A hand-authored flex row in the SystemSelfView
-       row/label shape (what every other small list here does); jf-table is the wrong shape for a
-       7-item list, and no checkbox/toggle atom exists to compose from. */
+    /* Tempdoc 840 Phase 5 / post-review design pass — the component list.
+       A hand-authored GRID, not a flex row: flex let the name absorb every spare pixel, so on a wide
+       panel ~1100px of void opened between a component's name and its size, and the size/state pair
+       drifted further right the wider the window got. Grid plus a bounded max-width makes the figures
+       a real COLUMN whose position does not depend on the length of any name. */
     .component-list {
       margin-top: 1rem;
+      /* A measure, not a stretch: past ~46rem the eye stops being able to associate a row's name with
+         its number, which is the entire job of this list. */
+      max-width: 46rem;
       display: flex;
       flex-direction: column;
       gap: 0.875rem;
@@ -846,68 +859,128 @@ export class BrainSurface extends JfElement {
       font-size: var(--font-size-xs);
       color: var(--text-secondary);
     }
+    .component-summary {
+      font-size: var(--font-size-sm);
+      color: var(--text-primary);
+      font-variant-numeric: tabular-nums;
+    }
+    /* A group is a CONTAINER — the left rule spans its rows, so the necessity heading visibly governs
+       what follows instead of reading as one more row in a flat list. */
     .component-group {
       display: flex;
       flex-direction: column;
       gap: 0.25rem;
+      border-left: 1px solid var(--border-subtle);
+      padding-left: 0.75rem;
     }
     .component-group-head {
       display: flex;
       align-items: baseline;
-      gap: 0.5rem;
+      column-gap: 0.25rem;
+      row-gap: 0.15rem;
       flex-wrap: wrap;
-    }
-    .component-consequence {
       font-size: var(--font-size-xs);
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+    }
+    /* The consequence is a CLAUSE on the heading line now (840 post-review C.3): same line, lower
+       emphasis, no case transform — it is prose, not a label. */
+    .component-consequence {
+      font-weight: 400;
+      letter-spacing: normal;
+      text-transform: none;
       color: var(--text-secondary);
     }
+    /* What the category costs — the question the bar could only answer where a comparison existed
+       (840 post-review B.3). Right-aligned on the heading line, so it reads as the group's total. */
+    .component-subtotal {
+      margin-left: auto;
+      font-weight: 400;
+      letter-spacing: normal;
+      text-transform: none;
+      color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+    }
+    /* name | figure | control-slot. The THIRD track is always present, even on a row with no
+       toggle — that is what keeps the figures in one column: previously the control was a flex
+       sibling AFTER the meta block, so a row without one slid its number right by the toggle's width. */
     .component-row {
-      display: flex;
-      align-items: flex-start;
-      gap: 0.75rem;
-      padding: 0.5rem 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 4.25rem 3rem;
+      align-items: center;
+      column-gap: 0.75rem;
+      row-gap: 0.125rem;
+      padding: 0.4rem 0;
       border-bottom: 1px solid var(--border-subtle);
     }
     .component-row:last-child {
       border-bottom: none;
     }
-    .component-main {
-      flex: 1;
+    .component-name {
+      grid-column: 1;
       min-width: 0;
+      display: flex;
+      align-items: baseline;
+      gap: 0.4rem;
+      flex-wrap: wrap;
     }
     .component-label {
       font-size: var(--font-size-sm);
       font-weight: 500;
     }
-    .component-desc {
+    /* Only ever rendered when the state DEVIATES from installed, so its presence is the signal. */
+    .component-state {
       font-size: var(--font-size-xs);
       color: var(--text-secondary);
-      margin-top: 0.125rem;
-    }
-    .component-meta {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-end;
-      gap: 0.125rem;
-      font-size: var(--font-size-xs);
-      color: var(--text-secondary);
-      white-space: nowrap;
     }
     .component-size {
+      grid-column: 2;
+      justify-self: end;
       font-family: monospace;
+      font-size: var(--font-size-xs);
+      color: var(--text-primary);
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
     }
+    /* Reserved on EVERY row, occupied on some. An empty cell is the point. */
+    .component-control {
+      grid-column: 3;
+      justify-self: end;
+    }
+    .component-desc {
+      grid-column: 1 / -1;
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+    }
+    /* The switch: track + thumb, state carried by the thumb's POSITION and the track's fill — not by
+       hue — so it survives colour-blindness and the accent-is-not-text rule. */
     .component-toggle::part(control) {
       display: inline-flex;
       align-items: center;
-      justify-content: center;
-      min-width: 3rem;
-      padding: 0.2rem 0.5rem;
+      width: 2.25rem;
+      padding: 0.125rem;
       border: 1px solid var(--border-subtle);
       border-radius: 9999px;
       background: var(--surface-tertiary);
       color: var(--text-primary);
       font-size: var(--font-size-xs);
       cursor: pointer;
+    }
+    .component-toggle[data-on='true']::part(control) {
+      background: var(--text-muted);
+      justify-content: flex-end;
+    }
+    .component-switch-thumb {
+      display: block;
+      width: 0.75rem;
+      height: 0.75rem;
+      border-radius: 9999px;
+      background: var(--text-primary);
+    }
+    .component-toggle[data-on='true'] .component-switch-thumb {
+      background: var(--surface-secondary);
     }
     /* Staged acquisition — which stage is running, and what it is waiting on. */
     .stage-block {
@@ -1746,6 +1819,18 @@ export class BrainSurface extends JfElement {
             </div>
             <div style="font-size: var(--font-size-xs); color: var(--text-secondary)">${sc.sub}</div>
           </div>
+          <div class="status-action">
+            <jf-button
+              variant=${primaryAction.primary ? 'primary' : 'secondary'}
+              .availability=${primaryAction.availability}
+              .onActivate=${primaryAction.onClick}
+              label=${primaryAction.label}
+              data-testid="brain-simple-action"
+              style="min-width: 11rem"
+            >
+              ${icon({ name: primaryAction.iconName, size: 14 })} ${primaryAction.label}
+            </jf-button>
+          </div>
         </div>
 
         ${aiState === 'installing'
@@ -1828,19 +1913,6 @@ export class BrainSurface extends JfElement {
               </div>
             `
           : nothing}
-
-        <div style="margin-top: 1rem">
-          <jf-button
-            variant=${primaryAction.primary ? 'primary' : 'secondary'}
-            .availability=${primaryAction.availability}
-            .onActivate=${primaryAction.onClick}
-            label=${primaryAction.label}
-            data-testid="brain-simple-action"
-            style="min-width: 11rem"
-          >
-            ${icon({ name: primaryAction.iconName, size: 14 })} ${primaryAction.label}
-          </jf-button>
-        </div>
 
         ${aiVerdict.kind === 'install_failed' && aiVerdict.installFailure
           ? html`<jf-error-alert tone="error" style="margin-top: 0.75rem"
@@ -2406,26 +2478,36 @@ export class BrainSurface extends JfElement {
   private renderComponentList(): TemplateResult | typeof nothing {
     const groups = composeComponentGroups(this.planPreview?.components);
     if (groups.length === 0) return nothing;
+    // The stock-take that replaced seven repetitions of "Installed" — one line saying how much is on
+    // disk instead of seven saying nothing (`composeComponentSummary`).
+    const summary = composeComponentSummary(this.planPreview?.components);
     return html`
       <div class="component-list" data-testid="install-component-list">
+        ${summary
+          ? html`<div class="component-summary" data-testid="install-component-summary">
+              ${summary}
+            </div>`
+          : nothing}
         <div class="component-lede">
-          Everything your machine supports is turned on. Turn off anything you do not want — the rest
-          of the list is unaffected.
+          Everything your machine supports is on. Turn off what you do not want.
         </div>
         ${groups.map(
           (g) => html`
             <div class="component-group" data-testid="component-group-${g.necessity}">
+              ${/* A HEADER, not another row: uppercase small caps carrying the group's left rule, with
+                    the consequence as a clause on the same line. A toned badge here read as a seventh
+                    list item and spent colour on a category name, which is not act-now / in-motion /
+                    broken. */ ''}
               <div class="component-group-head">
-                <jf-status-badge
-                  tone=${g.necessity === 'required'
-                    ? 'info'
-                    : g.necessity === 'improves-results'
-                      ? 'warning'
-                      : 'neutral'}
-                  label=${g.heading}
-                  >${g.heading}</jf-status-badge
-                >
-                <span class="component-consequence">${g.consequence}</span>
+                <span>${g.heading}</span>
+                <span class="component-consequence">· ${g.consequence}</span>
+                ${g.subtotal === null
+                  ? nothing
+                  : html`<span
+                      class="component-subtotal"
+                      data-testid="component-subtotal-${g.necessity}"
+                      >${g.subtotal}</span
+                    >`}
               </div>
               ${g.rows.map((r) => this.renderComponentRow(r))}
             </div>
@@ -2436,10 +2518,16 @@ export class BrainSurface extends JfElement {
   }
 
   /**
-   * One component row. The `unavailable` arm is the reason this is its own method: hardware this
-   * machine does not have is NOT a choice, so it renders its reason and NO control — an unticked box
-   * would imply an option that does not exist. The reason itself is read off the row's typed
-   * `availability`, so the string exists in exactly one place.
+   * One component row, as a four-track grid: name · size bar · figure · control slot.
+   *
+   * The `unavailable` arm is the reason this is its own method: hardware this machine does not have is
+   * NOT a choice, so it renders its reason and NO control — an unticked box would imply an option that
+   * does not exist. The reason itself is read off the row's typed `availability`, so the string exists
+   * in exactly one place.
+   *
+   * The control cell is emitted on EVERY row, empty where there is nothing to offer. That is what
+   * makes the size figures a column: with the control as a trailing flex sibling, a row without one
+   * pulled its figure right by the toggle's width, so the numbers zig-zagged down the panel.
    */
   private renderComponentRow(r: ComponentRow): TemplateResult {
     const unavailableReason =
@@ -2454,30 +2542,36 @@ export class BrainSurface extends JfElement {
           ? ''
           : 'opacity: 0.62'}
       >
-        <div class="component-main">
-          <div class="component-label">${r.label}</div>
-          ${r.description
-            ? html`<div class="component-desc">${r.description}</div>`
-            : nothing}
-          ${unavailableReason
-            ? html`<div class="component-desc" data-testid="component-unavailable-${r.id}">
-                ${unavailableReason}
-              </div>`
+        <div class="component-name">
+          <span class="component-label">${r.label}</span>
+          ${/* Rendered ONLY when the state deviates from installed — `stateText` is null otherwise, so
+                the absence of text IS "installed" (840 post-review C.2). */ ''}
+          ${r.stateText
+            ? html`<span class="component-state" data-testid="component-state-${r.id}"
+                >${r.stateText}</span
+              >`
             : nothing}
         </div>
-        <div class="component-meta">
-          <span class="component-size">${r.sizeText ?? '—'}</span>
-          <span class="component-state">${r.stateText}</span>
+        <span class="component-size">${r.sizeText ?? '—'}</span>
+        <div class="component-control">
+          ${r.togglable
+            ? html`<jf-control
+                class="component-toggle"
+                data-testid="component-toggle-${r.id}"
+                data-on=${r.selected ? 'true' : 'false'}
+                .availability=${busy ? ({ kind: 'blocked' } as const) : AVAILABLE}
+                label=${r.label}
+                .pressed=${r.selected}
+                .onActivate=${() => void this.setComponentDeclined(r.id, r.selected)}
+                ><span class="component-switch-thumb"></span
+              ></jf-control>`
+            : nothing}
         </div>
-        ${r.togglable
-          ? html`<jf-control
-              class="component-toggle"
-              data-testid="component-toggle-${r.id}"
-              .availability=${busy ? ({ kind: 'blocked' } as const) : AVAILABLE}
-              label=${r.selected ? `Turn off ${r.label}` : `Turn on ${r.label}`}
-              .onActivate=${() => void this.setComponentDeclined(r.id, r.selected)}
-              >${r.selected ? 'On' : 'Off'}</jf-control
-            >`
+        ${r.description ? html`<div class="component-desc">${r.description}</div>` : nothing}
+        ${unavailableReason
+          ? html`<div class="component-desc" data-testid="component-unavailable-${r.id}">
+              ${unavailableReason}
+            </div>`
           : nothing}
       </div>
     `;
