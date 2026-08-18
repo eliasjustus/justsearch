@@ -1846,6 +1846,13 @@ above)*
   --out tmp/712-splade-check --device cuda --batch-size 8`; artifact `tmp/712-splade-check/results.json`.
   Evidence: tempdoc 712 §Takeover experiment.
 
+> **F-030 numbering-collision note (2026-08-19):** F-030 was assigned twice — the 706 OCR-engine
+> finding directly below and the 678 encoder-domain finding after it. Both were already cited
+> across tempdocs in the disambiguated forms **F-030(706)** / **F-030(678)**, so the collision is
+> resolved by adopting those suffixed IDs as canonical rather than renumbering (a renumber would
+> break the existing citations). Do not assign a bare F-030 to anything new; new findings take the
+> next free bare F-number. Closes the two duplicate-F-030 inbox items (2026-07-10 / 2026-07-12).
+
 ### F-030(706): scanned-PDF OCR execution engine replaced (tempdoc 706, 2026-07-10) — extraction-content comparability boundary
 
 - **Finding:** Tika-internal serial per-page tesseract OCR was replaced by an owned parallel engine
@@ -2368,15 +2375,17 @@ Design choices in the current production pipeline, with rationale.
 - **Closes:** FW-006 (stemming), Q-004 (locale-aware BM25 routing), per-language synonym programs — all **won't-do**. Leaves FW-002 (spell correction; index-term-based, no per-language dict) and language-agnostic levers (FW-008, recipe weights) open on their own merits.
 - **Revisit when:** a *measured large* monolingual gap appears that a uniform mechanism (a better single multilingual model, or a per-deployment model choice) cannot close — never an O(languages) program (581 §5).
 
-### D-004: Query-adaptive leg arbitration on the 2-way CC alpha — SHIPPED (default off)
+### D-004: Query-adaptive leg arbitration on the 2-way CC alpha — SHIPPED (default off; superseded 2026-06-24 → default ON, see status note)
 
+- **STATUS SUPERSEDED — default ON since 2026-06-24 (F-024 user decision; the heading's "default off" and the "Status" bullet below record the 2026-06-23 ship state, kept intact per annotate-don't-rewrite).** One day after this entry's default-off ship, tempdoc 636's grading pass flipped BOTH levers (leg-arbitration + recall-complete pool) to **default-on** by user decision, "accepting the real-email cost" — see F-024, including the combined-default numbers (needle +195%, enron −3.22%) and its open follow-up (pool-aware trigger tightening, "router Item-1"). Shipped code: `ResolvedConfigBuilder.java:1631` (`index.hybrid.leg_arbitration_enabled`, default `true`, "DEFAULT ON" comment) and `:1647` (`index.hybrid.leg_recall_complete_enabled`, default `true`); `docs/reference/configuration/environment-variables.md` records default true for both. **Every default-config baseline measured after 2026-06-24 — including the canonical release `832-rebaseline-2026-08-14` scorecard — is a both-levers-ON measurement.** The **Honest limitation** below stands as analysis (in isolation the lever regresses BM25-dominant corpora ~2–3%); the shipping decision accepted that cost. This note closes `obs:search-quality-register` item 1 (seen 5, first 2026-06-24): the drift was register-internal — code, env-var docs, tempdoc 636, and F-024 already agreed with each other. (Reconciled 2026-08-19.)
 - **Choice:** In the default 2-way `hybrid` path (`HybridSearchOps.executeHybrid` → `fuseWithCC`), make `ccAlpha`
   **per-query adaptive**: raise alpha toward dense (`max(ccAlpha, alphaDiverge)`) — down-weighting the lexical leg —
   **only when all three hold**: (a) dense clears a weak sanity floor (top ≥ 0.5), (b) the legs diverge (top-K
   doc-id Jaccard < 0.1), and (c) **BM25 is incoherent** (its own `top2/top1` ratio ≥ `bm25IncoherenceMin`, i.e. a
   flat top / no clear lexical winner). Condition (c) is the discriminator that protects BM25-dominant corpora
   (legal/email), where BM25 returns a *peaked* winner and is usually right. All signals are rank/ratio-based
-  (score-incomparability). Gated by `JUSTSEARCH_HYBRID_LEG_ARBITRATION_ENABLED` (**default false**) +
+  (score-incomparability). Gated by `JUSTSEARCH_HYBRID_LEG_ARBITRATION_ENABLED` (**default false** at the
+  2026-06-23 ship; **default true since 2026-06-24** — see status note above) +
   `…_ALPHA_DIVERGE` (0.7) + `…_BM25_INCOHERENCE_MIN` (0.9), all env-tunable.
 - **Status:** Shipped behind a **default-off** flag (tempdoc 636 §Review fix #2). A specialized, opt-in lever — see
   the honest limitation below. The concrete instance of the recipe-weight function 580 §10/§13 named; principle
