@@ -1962,3 +1962,90 @@ the main checkout into both the source tree and the dist, then the stack was RES
 3. **The 32-channel cap is per-registry and there is one registry**, so an agent run and a
    conversational run share the budget. §2's cap is generous by two orders of magnitude against the
    observed 0–1 concurrency, so this is a note, not a risk.
+
+---
+
+## 17. Implementation log — S4 (enumeration + auth)
+
+Landed on `run-continuity-s4-s5`, based on `origin/main` at `bc4f6c04` (the S3b merge, #478).
+Scope held to §15.2's four items. A stranded observation shard from a merged sibling worktree
+(`6367fb3b`, its branch already deleted) was cherry-picked as the first commit so the note it
+carries — `prepare-worktree.cjs` leaves an existing `.claude/settings.local.json` untouched, so the
+`hook-integrity` gate #475 added reads red on any worktree seeded before it — is not lost with that
+worktree. Reproduced here immediately: the gate was red on this worktree until the tracked
+`.example` was re-seeded, after which it passes.
+
+### 17.1 As built
+
+| §15.2 item | as built |
+|---|---|
+| 1 — the typed records | new package `io.justsearch.app.api.run`: `LiveRunsResponse`, `LiveRunSummary`, `ParkSummary`, `RunStateSnapshotView`, `PendingApprovalView`. No `Map<String,Object>` anywhere on the surface |
+| 2 — the wire chain | `WireRecordSchemaGenTest.liveRuns` beside the agent precedent → `SSOT/schemas/live-runs-response.v1.json` → `gen-wire-schema-types.mjs` (new entry) → `modules/ui-web/src/api/generated/schema-types/live-runs-response.ts`, a `z.strictObject` validator with no `.loose()` |
+| 3 — the handler | `AgentSessionController.handleListLiveRuns` (the read-axis controller, as §15.2 assigns), projecting `RunChannelRegistry.live()` with `MAPPER.convertValue`; the ONE registry reaches it from `ConversationApiAssembly`, the same instance the agent loop journals through |
+| 4 — the auth change | `ApiSecurityFilters.requiresSessionToken(method, path)` — extracted as the single authority, path-scoped over `RunRoutes.PATH_PREFIX` |
+
+### 17.2 Where the build forced a shape §15.2 did not name
+
+1. **`PendingApprovalView.arguments`, not `argumentsJson`.** §5.1's sketch spelled it `argumentsJson`.
+   The canonical payload key is `arguments` (`AgentEventPayloads.approvalMap`), and the controller
+   projects by component name — so the sketch's spelling would have projected to `null` rather than
+   failing loudly, AND forked the vocabulary from the one `tool_call_pending` already puts on the
+   wire. The type §5.1 actually argued for (a JSON **string**, not a map) is kept exactly.
+2. **`updatedAtEpochMs` needed a source that did not exist.** §5.1's record carries it; the substrate
+   had no last-activity stamp. Added on `RunChannel`, stamped in `publish` only — the heartbeat goes
+   through `lifecycle` and deliberately does not bump it, because a parked run's only write is its
+   heartbeat and counting that as activity would make every parked run look busy. The registry's
+   `Clock` is now threaded into the channels so the property is asserted rather than slept on.
+3. **`state` is a closed two-value vocabulary, and closed by construction.** `live()` returns only
+   un-retired runs, so "finished" is unrepresentable here; what remains is `running` / `parked`.
+   Stated on the record rather than left for the FE to infer.
+4. **The auth rule was a fork waiting to happen.** `LocalApiUiTokenPolicyTest` re-stated the
+   method-based rule inline rather than calling it. A path-scoped requirement added to production
+   only would have left that mirror green while production changed underneath it, so the decision
+   was extracted to `requiresSessionToken` and the mirror now calls it. This is the same
+   projection-vs-fork question the register asks about data, applied to a rule.
+5. **Interruption is NOT on this view**, per §5.1's own refusal of an `interrupted` field. An
+   interrupted run is a persisted run; it surfaces on `AgentSessionSummary.interruptedAt` and is
+   classified by the S2-landed `InterruptedRunPresentation`. The two reads compose because a run is
+   in exactly one of them — that is the combined view, not a merged payload.
+
+### 17.3 One defect the critical-analysis pass caught, and no test would have
+
+`RunChannel.park()` is refreshed as a SIDE EFFECT of taking the snapshot
+(`RunChannelObservation.java:104-115`) — §16.6 residual 2 records this deliberately. The first
+projection read `park()` *before* `snapshot()`, so it saw the previous take's value: on the FIRST
+enumeration of a parked run, none at all. A run stopped at an approval gate would have been
+published as `state: "running"`, `park: null` — the worst lie this endpoint can tell, on exactly the
+run a user is trying to recover.
+
+§16.6 had *named* the hazard ("a consumer that reads `park()` alone would see the last-taken value")
+and the projection still walked into it, because the residual reads as a caveat about a *different*
+consumer. Ordering is now load-bearing and says so at the site. The regression test drives the real
+wiring — park set only from inside the snapshot supplier — and with the ordering reverted it is the
+single failing test.
+
+### 17.4 Verification
+
+- `./gradlew.bat test -PskipWebBuild=true` — **BUILD SUCCESSFUL; 1340 suites / 7863 tests / 26
+  skipped / 0 failures** (S3b's baseline was 1338 / 7847; the delta is exactly this slice's 16).
+- New tests: `LiveRunsEnumerationTest` (11), `LiveRunsAuthTest` (5).
+- Governance kernel: the only findings naming a file of this slice were two `contract-projection`
+  rows — `LiveRunsResponse` was a codegen target that was not a registered wire record, and the FE
+  consumer was undeclared. Both registered in `governance/contract-surfaces.v1.json`. The remaining
+  failing gates (`module-deps`, `dead-code`, `dead-code-jvm`, `config-surface`) produce only
+  `kernel/input-missing` / `input-skipped` results — missing preflight inputs, exactly as §16.4
+  recorded. `wire`: pass, no contract touched.
+
+**Mutation probes** (each applied, run, restored, re-verified green):
+
+1. *Disable the path scope* — the run-family branch of `requiresSessionToken` short-circuited to
+   false. Three of five auth tests failed, including the adverse precondition: the enumeration was
+   served untokened, and the body carried the runId the test plants precisely to prove disclosure.
+   Without this probe the auth item is a claim; with it, the guard is shown to bite.
+2. *Restore the park/snapshot ordering* — `park()` read before the snapshot. Exactly one test failed,
+   the new §17.3 regression, on "a stopped run reported as running is the enumeration's worst
+   possible lie".
+
+**The adverse precondition drives the REAL filter**, not a copy: `LiveRunsAuthTest` installs the
+production `ApiSecurityFilters` chain (the precedent is `McpOriginValidationTest`). A test that only
+proves "with a token it works" is green in exactly the world where the guard was never installed.
