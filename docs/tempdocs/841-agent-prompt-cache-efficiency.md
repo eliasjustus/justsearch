@@ -1,7 +1,7 @@
 ---
 title: "Prompt-cache efficiency of agent sessions: hit rate is fine, context size is the bill — invalidation anatomy, delegation cache economics (which inverted under measurement), and the pricing gap that hid all of it"
 type: tempdocs
-status: "investigated + reader SHIPPED + pricing FIXED (2026-08-18, session 0a20e5bf). `scripts/agent-analytics/cache-efficiency.mjs` lands the analysis as a repeatable reader; every number below is reproduced by it. Three pricing defects fixed in `lib/transcript-cost.mjs` (§6) — the corpus reprices $9,050 -> $15,067, and a Sonnet-5 cliff that would have fired on 2026-09-01 is defused. Full analytics suite green (32/32). Findings that DIED during the work: two inverted under correct dedup (§5), one case study died at n=2,900 (§4), and two 'issues' are retracted outright (§7). Remaining: the subagent-TTL design question (owner call) and the unidentified in-TTL invalidation trigger (needs an experiment)."
+status: "CONCLUDED (2026-08-18, session 0a20e5bf). Bottom line: agentic work here is economically sound — $75.72 per shipped merge (median $84), ~6% identified waste, and NO measurable context bloat (§11, §12). The one real defect was in the measuring instrument, not the behaviour. Detail: reader SHIPPED + pricing FIXED. `scripts/agent-analytics/cache-efficiency.mjs` lands the analysis as a repeatable reader; every number below is reproduced by it. Three pricing defects fixed in `lib/transcript-cost.mjs` (§6) — the corpus reprices $9,050 -> $15,067, and a Sonnet-5 cliff that would have fired on 2026-09-01 is defused. Full analytics suite green (32/32). Findings that DIED during the work: two inverted under correct dedup (§5), one case study died at n=2,900 (§4), and two 'issues' are retracted outright (§7). Remaining: the subagent-TTL design question (owner call) and the unidentified in-TTL invalidation trigger (needs an experiment)."
 created: 2026-08-18
 updated: 2026-08-18
 author: agent session 0a20e5bf (Opus 5, 1M context)
@@ -271,6 +271,80 @@ rest and are budgeted nowhere.
 size, and below ~50k it did not occur once. Smaller working contexts shrink both
 the odds and the blast radius — without needing the mechanism identified.
 
+**But see §11**: the follow-up measurement found no measurable context bloat, so
+"shrink the context" has no identified fat to cut. The lever is real; the target
+for it is not.
+
+## 11. Is the context worth carrying? — measured, and the answer is yes
+
+§2 established that ~91.5% of spend is context re-presentation. That is a
+property of the medium, not a defect (§10 item 6). The question it leaves open —
+and the one that actually matters, because `cache_read` alone is $9,785 — is
+whether that context is *usefully* big or accumulated sludge. Measured directly.
+
+**Unique accumulated content across the corpus: 208.5M chars (~52M tokens).**
+Against 15,283M cache-read tokens, that is an average **re-read multiplier of
+~294×** — every token admitted to a context is paid for roughly 294 times. (The
+average is not the margin: content entering early is re-read far more than
+content entering late, so early admissions are the expensive ones.)
+
+Composition:
+
+| Category | Share |
+|---|---:|
+| tool results | **61.6%** |
+| tool call params | 24.1% |
+| user text | 7.9% |
+| assistant text | 6.3% |
+
+Tool results split (joined on `tool_use_id`, not "last tool seen"): **Read 28.9%,
+Bash 22.6%**, Grep 3.7%, everything else ≤1.4%. Tool *params* are large because
+`Write`/`Edit` inputs carry whole file bodies — Edit 7.0%, Write 5.4%, all other
+inputs 11.7%.
+
+**Waste candidates, all negligible:**
+
+| Candidate | Share of context |
+|---|---:|
+| true duplicate reads (same file, unmodified, **same window**) | **0.3%** (n=246) |
+| failed tool calls (`is_error`) | 0.5% (n=2,029) |
+| legitimate re-read after an edit | 0.7% (n=635) |
+
+**A finding that died here.** A first pass keyed duplicates on filename alone and
+reported **10.2% of all context** as duplicate reads — n=3,948, headed by exactly
+the files `context-efficiency.md` already flags as "known large files (use
+offset/limit)". That was nearly reported as ~$1,000 of waste. Splitting by the
+requested `offset`/`limit` window destroyed it: **94% of those re-reads asked for
+a DIFFERENT region** of the file. That is paging through a large file, not
+duplication. True duplicates are 6% by count, 3% by chars — $30-ish, not $1,000.
+
+**Conclusion: the context is not bloated in any way this corpus can show.** It is
+dominated by tool results that were asked for, mostly non-overlapping reads, with
+negligible duplication and negligible error churn. The largest cost line is
+buying content that was deliberately requested.
+
+Honest limits: chars ÷ 4 is a token proxy (no tokenizer available); `thinking`
+blocks are not persisted in transcripts so their contribution is invisible here;
+and "never referenced again" was only checked by a weak basename-recurrence proxy
+(9% of files read were never mentioned again).
+
+## 12. The value side: cost per shipped merge
+
+`tmp/agent-telemetry/session-merges.ndjson` carries **381 rows → 277 distinct
+merge commits across 71 sessions**. Joined against per-session cost computed from
+transcripts:
+
+- **Cost per shipped merge: $75.72.** Distribution p10 $33, **median $84**, p90 $323.
+- Cost per merge-producing session: $715.
+- Covered sessions account for **$11,433 of the corpus's $15,067** — i.e. ~76% of
+  measured spend belongs to sessions that shipped something.
+
+**Coverage caveat, and it matters:** only **16 of 71** merge-linked sessions still
+have transcripts on disk (55 have been rotated away). Those 16 cover 151 of 277
+merges — so coverage is 22% by session but 55% by merge, biased toward large
+long-running sessions. The per-merge figure should be read as indicative, not
+exact, and it under-represents small cheap merges whose transcripts are gone.
+
 ## 8. Reproducing
 
 ```
@@ -320,6 +394,13 @@ Recorded because the failure pattern is repeatable, not for confession value.
    tuning is pointless here) but it is not evidence of waste. Establishing waste
    needs a different measurement — what fraction of a long context is never
    referenced again — which this tempdoc did not do.
+
+7. **"Duplicate file reads are ~10% of all context"** — died to a window
+   confound (§11). Keyed on filename, 3,948 re-reads looked like duplication and
+   pointed at exactly the files the repo already warns about, which made it feel
+   confirmed. 94% of them requested a different region. **The most convincing
+   version of a finding is the one that agrees with an existing rule** — that is
+   when to look hardest for the confound, not least.
 
 **A correction to correction #1.** The first lift analysis (`~hook-injected-
 context`, lift 16.1) was dismissed as pure confounding. That over-corrected: it
