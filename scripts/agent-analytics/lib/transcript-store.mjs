@@ -196,13 +196,23 @@ function extractToolResults(content) {
  * not duplicated here). A generator, so a caller scanning for one signature
  * can stop early without paying to parse the rest of a large file.
  *
- * Shape: `{ type, timestamp, isSidechain, toolUses:[{name,input}],
- * toolResults:[{isError,text}], userText, assistantText, usage }`.
+ * Shape: `{ type, timestamp, isSidechain, isCompactBoundary, toolUses:[{name,input}],
+ * toolResults:[{isError,text}], userText, assistantText, usage, model,
+ * messageId, requestId }`.
  * `userText`/`assistantText` are `''` (never null) when the entry carries
  * none, so a truthiness check (`if (turn.userText)`) works without a
  * null-guard. `usage` is `entry.message.usage` verbatim on an assistant
  * entry, else `null` — this module does no pricing (see `transcript-cost.mjs`
  * for that).
+ *
+ * `model` / `messageId` / `requestId` / `isCompactBoundary` were added by
+ * tempdoc 841 (cache-efficiency reader). They are ADDITIVE — existing
+ * consumers destructure the fields they need and are unaffected. They exist
+ * so a cost-shaped reader can dedupe on `(messageId, requestId)` and bucket
+ * by model WITHOUT hand-rolling a fourth independent transcript parser, which
+ * is the drift this module was created to stop. `isCompactBoundary` marks the
+ * entries Claude Code writes around a compaction, so a reader can attribute a
+ * prefix reset to compaction rather than guessing.
  */
 export function* iterateTurns(file) {
   let content;
@@ -224,11 +234,17 @@ export function* iterateTurns(file) {
       type: entry.type ?? null,
       timestamp: entry.timestamp ?? null,
       isSidechain: Boolean(entry.isSidechain),
+      isCompactBoundary: Boolean(
+        entry.isCompactSummary || entry.subtype === 'compact_boundary' || entry.compactMetadata,
+      ),
       toolUses: [],
       toolResults: [],
       userText: '',
       assistantText: '',
       usage: null,
+      model: entry.message?.model ?? null,
+      messageId: entry.message?.id ?? null,
+      requestId: entry.requestId ?? null,
     };
 
     const msgContent = entry.message?.content;
