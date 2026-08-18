@@ -164,6 +164,12 @@ final class AgentSessionController {
    * the controller boundary, so the FE validates a generated schema instead of fail-open hand-Zod.
    */
   private static LiveRunSummary toSummary(RunChannel run) {
+    // ORDER IS LOAD-BEARING. `park()` is refreshed as a side effect of taking the snapshot — that is
+    // deliberate one layer down (taking the snapshot is the one moment fresh session state is in
+    // hand, and two setters for one fact is how they drift), and it is recorded as §16.6 residual 2.
+    // Reading park() first would therefore report the value from the PREVIOUS take: on the first
+    // enumeration of a parked run, none at all — so a parked run would be published as `running`.
+    RunStateSnapshotView snapshot = snapshotView(run);
     ParkSummary park =
         run.park()
             .map(p -> new ParkSummary(p.kind().wire(), p.sinceEpochMs(), p.detail()))
@@ -177,7 +183,7 @@ final class AgentSessionController {
         run.descriptor().startedAtEpochMs(),
         run.updatedAtEpochMs(),
         run.observerCount(),
-        snapshotView(run));
+        snapshot);
   }
 
   /**

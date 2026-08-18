@@ -140,6 +140,35 @@ class LiveRunsEnumerationTest {
   }
 
   @Test
+  @DisplayName("a run parked ONLY via the snapshot side effect still reads as parked, first time")
+  void parkRefreshedBySnapshotIsSeenOnTheFirstEnumeration() throws Exception {
+    SteppedRunChannel run =
+        (SteppedRunChannel)
+            registry.open(
+                new RunId("sess-9"),
+                new RunDescriptor("core.agent-run", "conv-a", T0),
+                RunChannelPolicy.agent());
+
+    // This is the REAL wiring (RunChannelObservation): nothing calls setPark on its own — the park
+    // is refreshed as a side effect of TAKING the snapshot (§16.6 residual 2). So a projection that
+    // reads park() before the snapshot sees nothing and publishes a parked run as `running`.
+    run.setSnapshotSupplier(
+        () -> {
+          run.setPark(new ParkState(ParkState.Kind.APPROVAL, T0 + 500, "call-42"));
+          return new RunStateSnapshot(snapshotFields());
+        });
+
+    LiveRunSummary row = only(enumerate(""));
+
+    assertEquals(
+        LiveRunSummary.STATE_PARKED,
+        row.state(),
+        "a stopped run reported as running is the enumeration's worst possible lie");
+    assertNotNull(row.park());
+    assertEquals("call-42", row.park().detail());
+  }
+
+  @Test
   @DisplayName("the snapshot projects from the canonical payload, not a hand-written copy of it")
   void snapshotProjectsFromTheCanonicalPayload() throws Exception {
     // Built by the SAME authority the wire and the durable ledger use. If a field is renamed there
