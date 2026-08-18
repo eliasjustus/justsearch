@@ -84,12 +84,14 @@ async function main() {
       }),
     ]);
     const r = parseTranscriptTokens(file);
-    // (0.1*3.0)+(0.02*15.0)+(0.05*3.75)+(0.2*0.30) = 0.3+0.3+0.1875+0.06 = 0.8475
-    assert.equal(r.cost_usd.toFixed(4), '0.8475');
+    // Sonnet-5 flat $2/$10 (tempdoc 841 — was $3/$15 here while the cancelled
+    // 2026-09-01 cliff made undated turns resolve to the "enduring standard" row):
+    // (0.1*2.0)+(0.02*10.0)+(0.05*2.5)+(0.2*0.20) = 0.2+0.2+0.125+0.04 = 0.565
+    assert.equal(r.cost_usd.toFixed(4), '0.5650');
     assert.equal(r.turns, 1);
     assert.equal(r.model, 'claude-sonnet-5');
     assert.ok(r.by_model['claude-sonnet-5']);
-    assert.equal(r.by_model['claude-sonnet-5'].cost_usd.toFixed(4), '0.8475');
+    assert.equal(r.by_model['claude-sonnet-5'].cost_usd.toFixed(4), '0.5650');
   });
   run('parseTranscriptTokens sums multiple turns and skips unparseable/non-assistant lines', () => {
     const dir = fs.mkdtempSync(path.join(tmp, 'pricing2-'));
@@ -234,6 +236,15 @@ async function main() {
     assert.equal(isFastPricedCorrectly('claude-opus-4-6', 'fast'), false, 'no fast row => must be surfaceable');
     assert.equal(isFastPricedCorrectly('claude-opus-4-6', 'standard'), true);
     assert.equal(isFastPricedCorrectly('claude-sonnet-5', null), true);
+    // tempdoc 841: Opus 5 supports fast mode ($10/$50); Opus 4.7 does NOT — a
+    // "fast" 4.7 request errors, so the old $30/$150 row priced an impossible
+    // state at 3x the real premium. Both directions are asserted so neither
+    // silently comes back.
+    assert.equal(isFastPricedCorrectly('claude-opus-5', 'fast'), true);
+    assert.equal(findPricing('claude-opus-5', null, 'fast').input, 10.0);
+    assert.equal(findPricing('claude-opus-5', null, 'fast').output, 50.0);
+    assert.equal(isFastPricedCorrectly('claude-opus-4-7', 'fast'), false, 'fast mode is unavailable on 4.7');
+    assert.equal(findPricing('claude-opus-4-7', null, 'fast').input, 5.0, 'must fall back to standard, not $30');
     // and the fallback itself must not invent a premium
     assert.equal(findPricing('claude-opus-4-6', null, 'fast').input, 5.0);
   });
@@ -448,25 +459,49 @@ async function main() {
     assert.equal(r.cost_usd.toFixed(4), '0.3750'); // 0.1 * 3.75
   });
 
-  // --- 745 item B bug 4: Sonnet-5's dated price cliff ---
-  run('parseTranscriptTokens prices identical Sonnet-5 usage at $2/$10 before the cliff and $3/$15 after', () => {
+  // --- tempdoc 841: Sonnet-5's dated price cliff was CANCELLED ---
+  // These assertions previously encoded the opposite ($2/$10 before 2026-09-01,
+  // $3/$15 after) per 745 item B bug 4. The external fact changed: the pricing
+  // page now states the introductory rate "is now the standard price" and the
+  // scheduled increase "will not occur". The test is inverted to lock the cliff
+  // OUT — a date-dependent assertion is exactly what would have let the stale
+  // schedule activate silently on 2026-09-01.
+  run('Sonnet-5 is priced flat regardless of date — the cancelled cliff must not fire', () => {
     const dir = fs.mkdtempSync(path.join(tmp, 'cliff-'));
     const usage = { input_tokens: 1_000_000, output_tokens: 1_000_000, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
-    const before = writeTranscript(dir, 'sess-intro', [
+    const before = writeTranscript(dir, 'sess-early', [
       assistantEntry({ id: 'm1', requestId: 'r1', model: 'claude-sonnet-5', timestamp: '2026-07-16T00:00:00.000Z', usage }),
     ]);
-    const after = writeTranscript(dir, 'sess-standard', [
+    const after = writeTranscript(dir, 'sess-late', [
       assistantEntry({ id: 'm2', requestId: 'r2', model: 'claude-sonnet-5', timestamp: '2026-09-15T00:00:00.000Z', usage }),
     ]);
-    assert.equal(parseTranscriptTokens(before).cost_usd.toFixed(2), '12.00'); // $2 + $10 intro
-    assert.equal(parseTranscriptTokens(after).cost_usd.toFixed(2), '18.00');  // $3 + $15 standard
+    assert.equal(parseTranscriptTokens(before).cost_usd.toFixed(2), '12.00'); // $2 + $10
+    assert.equal(parseTranscriptTokens(after).cost_usd.toFixed(2), '12.00');  // SAME — no cliff
   });
-  run('findPricing resolves the Sonnet-5 schedule by timestamp and the standard rate when undated', () => {
+  run('findPricing gives Sonnet-5 the same rate before, after, and without a date', () => {
     assert.equal(findPricing('claude-sonnet-5', Date.parse('2026-08-31T23:59:59.000Z')).input, 2.0);
-    assert.equal(findPricing('claude-sonnet-5', Date.parse('2026-09-01T00:00:00.000Z')).input, 3.0);
-    assert.equal(findPricing('claude-sonnet-5', null).input, 3.0); // undated -> enduring standard rate
+    assert.equal(findPricing('claude-sonnet-5', Date.parse('2026-09-01T00:00:00.000Z')).input, 2.0);
+    assert.equal(findPricing('claude-sonnet-5', Date.parse('2027-06-01T00:00:00.000Z')).input, 2.0);
+    assert.equal(findPricing('claude-sonnet-5', null).input, 2.0);
     assert.equal(findPricing('claude-opus-4-8[1m]').input, 5.0); // suffixed id via longest-prefix match
     assert.equal(findPricing('claude-opus-4-8[1m]').cache_write_1h, 10.0);
+  });
+
+  // --- tempdoc 841: Opus 5 was absent and silently priced at $0 ---
+  run('claude-opus-5 resolves to a real pricing row, bare and suffixed', () => {
+    // The defect this guards: findPricing fails closed, so a missing model does
+    // not mis-price — it prices at $0 and vanishes from every total. 51.9% of
+    // the local corpus's cache-read went missing this way.
+    assert.equal(isKnownModel('claude-opus-5'), true);
+    assert.equal(findPricing('claude-opus-5').input, 5.0);
+    assert.equal(findPricing('claude-opus-5').cache_read, 0.50);
+    assert.equal(findPricing('claude-opus-5').cache_write_1h, 10.0);
+    assert.equal(findPricing('claude-opus-5[1m]').input, 5.0); // the id Claude Code actually records
+    assert.equal(findPricing('claude-opus-5[1m]').output, 25.0);
+  });
+  run('claude-opus-5 does not shadow, and is not shadowed by, the Opus 4.x rows', () => {
+    assert.equal(findPricing('claude-opus-4-8').input, 5.0);
+    assert.equal(findPricing('claude-opus-4-1').input, 15.0); // legacy row still distinct
   });
 
   // --- 745 item B bug 4 (second half) + D5: unknown models fail CLOSED ---
