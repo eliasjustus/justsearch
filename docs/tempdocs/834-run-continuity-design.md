@@ -1214,12 +1214,10 @@ is **provisional pending P2**, which was not run.
    the same bounded, self-correcting exposure the 17 no-cursor connects have.
 2. **The no-cursor path is untouched**, per §1.3.1's own scoping, and the class javadoc +
    `05-streaming-envelope.md` now say so in those terms instead of claiming a fleet-wide fix.
-3. **P8 was not run**, so the doc's primary mechanism (read lock on publish) is what shipped,
-   not the generation-counter fallback. R2 stays open; the fallback is recorded at
-   `SseStreamChannel.java:59-68` so a P8 result has somewhere to land.
-   **RESOLVED (§14/D2): P8 ran and the read-lock primary stands.** R2 is closed. The fallback
-   note at `SseStreamChannel.java:59-68` is now dead speculation and is deleted in S3b stage 0
-   (§15.1) — this residual closes with it.
+3. ~~**P8 was not run**~~ **CLOSED (S3b stage 0, §16.1).** P8 ran (§14/D2) and the read-lock
+   primary stands; R2 is closed. The fallback paragraph at `SseStreamChannel.java:59-68` was
+   deleted and replaced with the measured result, so the class no longer carries speculation
+   about a mechanism that will not be built. This residual closes with it.
 4. **Pre-existing, untouched:** `publish` assigns the seq *before* taking the lock, so two
    concurrent publishers can append to the ring out of seq order. Older than this slice and
    not in its scope; logged to the observations inbox.

@@ -57,15 +57,15 @@ import java.util.function.Consumer;
  * snapshot, whereas a run stream that drops a chunk yields a permanently corrupted answer,
  * and run streams never take the no-cursor path.
  *
- * <p><strong>Lock cost, named.</strong> The listener set is concurrent and only the ring
+ * <p><strong>Lock cost, measured.</strong> The listener set is concurrent and only the ring
  * synchronizes per method, so the channel was lock-free before 834; some streams run at
  * ~30 fps. {@code publish} therefore takes only the READ lock (an uncontended acquire, once
  * per frame, on top of the ring's existing monitor) and {@code subscribeAndReplay} takes the
  * write lock once per connection, held only while snapshotting the frames to replay —
- * never across a socket write (see the two-phase handoff below). Tempdoc 834's probe P8
- * sizes the read-lock acquire at 30 fps; if it is measurable, the doc's named fallback is a
- * publish-generation counter with a retry loop, which needs no lock on the publish path.
- * P8 has NOT been run, so the primary is what ships.
+ * never across a socket write (see the two-phase handoff below). Tempdoc 834's probe P8 ran
+ * (§14/D2): p99 read-lock acquire is 1.1 µs under 153 publishes/s with 228 concurrent
+ * write-lock replays, so the read-lock primary stands and the doc's generation-counter
+ * fallback is not promoted.
  */
 public final class SseStreamChannel {
 
@@ -181,6 +181,18 @@ public final class SseStreamChannel {
     }
     long oldest = oldestRetainedSeq();
     return !(sinceSeq > 0 && (oldest == 0 || sinceSeq < oldest));
+  }
+
+  /**
+   * How many listeners are currently registered.
+   *
+   * <p>This is the OBSERVER-COUNT authority for run channels (tempdoc 834 §3): it reads the live
+   * set, so a listener evicted by {@link #publish}'s evict-on-throw stops being counted the moment
+   * its socket dies. A count maintained separately by a caller would keep a dead observer on the
+   * books, and the zero-observer park would never fire — the exact failure R4 names.
+   */
+  public int listenerCount() {
+    return listeners.size();
   }
 
   /** Subscribes a listener; returns a {@link Subscription} for explicit unsubscribe. */
