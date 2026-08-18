@@ -81,16 +81,18 @@ public final class WorkerCapability implements Capability {
   /**
    * Transition health state, carrying a human {@code detail} sentence alongside the reason code.
    *
-   * <p><b>The corrupt-index latch (tempdoc 837 §1.4/§3.1).</b> {@code WorkerFatalReasonMarker
+   * <p><b>Reason retention (tempdoc 837 §D.1).</b> The decision is
+   * {@link ReasonRetention#retainHeld} — the ONE rule, shared with {@link InferenceCapability}. Its
+   * strongest case is this capability's corrupt-index latch: {@code WorkerFatalReasonMarker
    * .readAndClear} DELETES the marker file as it reads it, so "the worker died because the index is
    * corrupt" is observable exactly once per crash: whichever caller wins the race gets it, and a
    * later overwrite would destroy it PERMANENTLY (a restart cannot re-derive it — the marker is
-   * gone). So while health is non-READY, a held {@link LifecycleReasonCode#WORKER_INDEX_CORRUPT} is
-   * retained against any incoming reason: the supervised-restart narration
+   * gone). So while health is non-READY, a held {@link LifecycleReasonCode#WORKER_INDEX_CORRUPT}
+   * (class {@code STICKY}) is retained against any incoming reason: the supervised-restart narration
    * ({@code worker.recovering}) and the terminal give-up ({@code worker.restart_exhausted}) are
    * downstream symptoms of the corruption, not competing causes.
    *
-   * <p>The latch is bounded by recovery, not by a timer: READY clears the reason outright, so no
+   * <p>The rule is bounded by recovery, not by a timer: READY clears the reason outright, so no
    * stale cause can survive a worker that came back. The new health is ALWAYS applied — only the
    * reason is retained — and a transition whose reason was rejected without a health change does
    * NOT fire listeners (the tempdoc 656 reason-only widening below must not turn a rejected write
@@ -100,9 +102,7 @@ public final class WorkerCapability implements Capability {
       CapabilityHealth newHealth, String newReason, String newDetail) {
     CapabilityHealth prev = this.health;
     String prevReason = this.reason;
-    boolean latched =
-        newHealth != CapabilityHealth.READY
-            && LifecycleReasonCode.WORKER_INDEX_CORRUPT.code().equals(prevReason);
+    boolean latched = ReasonRetention.retainHeld(prevReason, newReason, newHealth);
     String effectiveReason = latched ? prevReason : newReason;
     String effectiveDetail = latched ? this.detail : newDetail;
     this.reason = effectiveReason;

@@ -213,6 +213,26 @@ public final class LifecycleSnapshotTap {
     MAPPING_TABLE.put(
         new MappingKey(ReadinessDimension.AI, "DEGRADED", "inference.offline"),
         new ConditionMapping("ai.not-ready", "inference.ai", Severity.WARNING));
+    // Tempdoc 837 §3.4 / S5: the two causes that used to reach this dimension collapsed onto
+    // inference.offline. An unmapped (dimension, state, code) key emits NO Condition at all — only a
+    // once-per-startup WARN — so refining the code without a row here would delete the Condition
+    // instead of sharpening it. inference.crashed keeps offline's conditionId and WARNING severity
+    // (behaviour-preserving; only the Condition's `reason` gets more precise), while
+    // inference.deactivated drops to INFO: it is the user's own choice, and emitting a WARNING for a
+    // state somebody deliberately selected is the alarm-blindness this slice exists to stop. That
+    // matches its `info` CAUSE_ROWS severity and the sibling inference.starting row above.
+    MAPPING_TABLE.put(
+        new MappingKey(ReadinessDimension.AI, "NOT_READY", "inference.crashed"),
+        new ConditionMapping("ai.not-ready", "inference.ai", Severity.WARNING));
+    MAPPING_TABLE.put(
+        new MappingKey(ReadinessDimension.AI, "DEGRADED", "inference.crashed"),
+        new ConditionMapping("ai.not-ready", "inference.ai", Severity.WARNING));
+    MAPPING_TABLE.put(
+        new MappingKey(ReadinessDimension.AI, "NOT_READY", "inference.deactivated"),
+        new ConditionMapping("ai.not-ready", "inference.ai", Severity.INFO));
+    MAPPING_TABLE.put(
+        new MappingKey(ReadinessDimension.AI, "DEGRADED", "inference.deactivated"),
+        new ConditionMapping("ai.not-ready", "inference.ai", Severity.INFO));
     // UNKNOWN reachable only when the inference component state is null (boot path).
     MAPPING_TABLE.put(
         new MappingKey(ReadinessDimension.AI, "UNKNOWN", null),

@@ -1,6 +1,6 @@
 /**
  * Tempdoc 520 P1b — unit tests for intervene's decision logic: the hot-file
- * cap (previously untested) and large-file limit injection.
+ * cap (previously untested) and the F-7c explicit-limit cap.
  *
  * Run with: `node scripts/agent-analytics/hooks/intervene.test.mjs`
  * Exits non-zero on any failure.
@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { shouldBlockHotFile, shouldInjectLimit, shouldCapExplicitLimit, getOtherPathsWithSameBasename } from './intervene.mjs';
+import { shouldBlockHotFile, shouldCapExplicitLimit, getOtherPathsWithSameBasename } from './intervene.mjs';
 import { telemetryDir } from '../lib/hook-base.mjs';
 
 let passed = 0;
@@ -34,27 +34,10 @@ run('custom cap respected', () => assert.equal(shouldBlockHotFile(3, true, 3), t
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'intervene-test-'));
 try {
-  // --- shouldInjectLimit: large unbounded reads get a limit; small/targeted don't ---
-  run('large file with no offset/limit → inject limit 200', () => {
-    const big = path.join(tmpDir, 'big.txt');
-    fs.writeFileSync(big, 'x'.repeat(20_000));
-    const r = shouldInjectLimit({ file_path: big });
-    assert.ok(r && r.updatedInput.limit === 200, 'expected injection with limit 200');
-  });
-  run('small file → no injection', () => {
-    const small = path.join(tmpDir, 'small.txt');
-    fs.writeFileSync(small, 'tiny');
-    assert.equal(shouldInjectLimit({ file_path: small }), null);
-  });
-  run('large file but caller already set limit → no injection', () => {
-    const big = path.join(tmpDir, 'big2.txt');
-    fs.writeFileSync(big, 'x'.repeat(20_000));
-    assert.equal(shouldInjectLimit({ file_path: big, limit: 50 }), null);
-  });
-  run('missing file_path → no injection', () => {
-    assert.equal(shouldInjectLimit({}), null);
-  });
-
+  // --- the blanket >8KB auto-limit was REMOVED 2026-08-18 (owner decision): a large
+  // unbounded read must now pass through untouched, so the ONLY read protections left
+  // are the hot-file cap (above) and the F-7c explicit-limit cap (below). The
+  // "no explicit offset/limit → declines" case asserts the removal held.
   // --- shouldCapExplicitLimit (tempdoc 727 F-7c): agent-specified offset/limit still capped
   // when the ACTUAL requested slice is too dense, using real per-line measurement rather
   // than a file-wide average (a global average would be skewed by outlier-length lines).
@@ -63,7 +46,7 @@ try {
     fs.writeFileSync(small, 'x'.repeat(100));
     assert.equal(shouldCapExplicitLimit({ file_path: small, offset: 1, limit: 5 }), null);
   });
-  run('large file, no explicit offset/limit → deferred to shouldInjectLimit, not this fn', () => {
+  run('large file, no explicit offset/limit → this fn declines (no-range reads are unmanaged)', () => {
     const big = path.join(tmpDir, 'big-noexplicit.txt');
     fs.writeFileSync(big, 'x'.repeat(20_000));
     assert.equal(shouldCapExplicitLimit({ file_path: big }), null);

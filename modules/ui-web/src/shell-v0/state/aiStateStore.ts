@@ -796,6 +796,10 @@ function buildSnapshot(): AiState {
     phase,
     indexState: status?.worker?.core?.indexState,
     migrationState: migration?.migrationState,
+    // Tempdoc 837 §2.3 — WHY the rebuild is running, carried as an additive facet of the transition
+    // (the reason-code authority for it was retired: it could only be emitted inside the window the
+    // verdict forces to `transitioning`, where the readiness notice returns null).
+    migrationSource: migration?.migrationSource,
     activeGenerationId: migration?.activeGenerationId,
     buildingGenerationId: migration?.buildingGenerationId,
     servingSearchGenerationId: migration?.servingSearchGenerationId,

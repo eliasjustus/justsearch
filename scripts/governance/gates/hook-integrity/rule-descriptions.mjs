@@ -13,6 +13,11 @@ export const HOOK_INTEGRITY_RULE_DESCRIPTIONS = {
   'hook-integrity/orphan-catalog-hook':
     'A manifest.hooks entry is declared but never bound to any event.',
   'hook-integrity/catalog-bound': 'A catalog hook is bound (pass).',
+  'hook-integrity/unwired-hook':
+    'A manifest hook is absent from the live .claude/settings.local.json, so it never fires at runtime — ' +
+    'the manifest agreeing with itself is not the same as the harness reading it. Copy the entry from ' +
+    '.claude/settings.local.json.example, or declare "wiring": "opt-in" + "wiringNote" for a deliberate opt-out.',
+  'hook-integrity/live-wiring': 'A catalog hook is present in the live settings, or is a declared opt-in (pass).',
   'hook-integrity/cwd-relative-command':
     'A hook command in .claude/settings.local.json is cwd-relative (not the ${CLAUDE_PROJECT_DIR} exec-form) — the tempdoc-592 crash class.',
   'hook-integrity/cwd-invariant-command': 'A hook command is cwd-invariant (pass).',

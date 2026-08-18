@@ -180,6 +180,10 @@ When an endpoint is not allowlisted, update the dev MCP implementation and this 
 ## AI Runtime Tools
 
 - Use `justsearch.dev.ai_activate` when an investigation requires the online local AI runtime.
+- **The chat model is runtime-configurable — no installer pack-import or `-D` restart needed.**
+  The dev data dir starts with no chat model, which reads like a blocker but isn't: `POST /api/settings/v2`
+  with `{"llm":{"modelPath":"<gguf>","gpuLayers":99}}`, then `ai_activate`. This unblocked a live
+  verification that had been treated as impossible.
 - Use `justsearch.dev.reload` after backend changes. It reports whether hot swap worked and whether structural changes require a restart.
 - Do not treat embedding readiness and online LLM readiness as the same thing. Embeddings are Worker-side; online chat/QA uses the app inference runtime.
 

@@ -44,7 +44,9 @@ async function main() {
       `is no cheap per-build check (transitive closure is opaque to a build-file diff), so`,
       `run the sound full-resolve LOCALLY before merge and assert no drift:`,
       `  ./gradlew.bat --no-configuration-cache resolveAndLockAll --write-locks && git diff --exit-code -- "**/gradle.lockfile" settings-gradle.lockfile`,
-      `(The pre-merge CI lockfile gate is the backstop.) Load /lockfile for full workflow.`,
+      `Never hand-edit a lockfile, and commit the regenerated files alongside the`,
+      `build.gradle.kts change that caused them. (The pre-merge CI lockfile gate,`,
+      `node scripts/ci/report-lock-skew.mjs, is the backstop.)`,
     ].join('\n');
 
     process.stdout.write(JSON.stringify({

@@ -3,14 +3,14 @@
   "unit": "bytes",
   "$comment": "Always-loaded agent-doc budget RATCHET (tempdoc 620 Move 3). Every session loads CLAUDE.md + .claude/rules/*.md unconditionally; this caps that context. Each file's size must stay <= its ceiling, and the ceiling only ratchets DOWN: run `node scripts/ci/check-always-loaded-budget.mjs --rebalance` after content migrates out (Moves 1/2: generation, the consult-register, skill/doc relocation) to shrink the ceiling to the new size. A net-new always-loaded addition that regrows a file past its ceiling fails the check — UNLESS the growth is justified and declared via `node scripts/ci/check-always-loaded-budget.mjs --bump <file> --reason \"<why>\"`, which raises that ceiling to current size and records the reason in `bumps` (tempdoc 618 §13: an explicit, auditable raise, not silent ceiling surgery). ~tokens = bytes/4. Wiring: WIRED into .github/workflows/ci.yml (public-claims job) as of tempdoc 799 — before that it ran nowhere and the set drifted 18.5% past ceiling across four sessions that each logged it red. Kept as a CI lint rather than a kernel gate per 582 R3 (extend the proven meta-gate, do NOT author a new kernel gate).",
   "ceilings": {
-    "CLAUDE.md": 22850,
-    ".claude/rules/agent-lessons.md": 9680,
+    "CLAUDE.md": 22221,
+    ".claude/rules/agent-lessons.md": 9247,
     ".claude/rules/branch-safety.md": 13193,
-    ".claude/rules/context-efficiency.md": 1955,
-    ".claude/rules/hooks-reference.md": 2942,
+    ".claude/rules/context-efficiency.md": 1934,
+    ".claude/rules/hooks-reference.md": 2836,
     ".claude/rules/slice-execution.md": 4667
   },
-  "totalCeiling": 55287,
+  "totalCeiling": 54098,
   "bumps": [
     {
       "file": "CLAUDE.md",
