@@ -1,7 +1,7 @@
 ---
 title: "Dev agent-tool surface audit: what agents actually invoke on the justsearch-dev MCP server, what fails, what nobody has ever called, and the two structural reasons 81% of local-API traffic bypasses the surface entirely"
 type: tempdocs
-status: "OPEN — analysis complete and reproducible (2026-08-18); nothing implemented. Owner decisions pending on D1-D4 (§8). Hot-reload coherence is under independent investigation (§5.6) — its verdict decides P8. Adopts 6 inbox conditions (§7) that should be closed by this lane rather than re-logged."
+status: "OPEN — analysis complete and reproducible (2026-08-18); nothing implemented. Owner decisions pending on D1-D4 (§8). Hot-reload coherence RESOLVED 2026-08-18: verdict INCOHERENT, recommendation RETIRE (§5.6), independently re-verified against source by the orchestrator — D2 is now a go/no-go on the sweep, not an investigation. Adopts 6 inbox conditions (§7) that should be closed by this lane rather than re-logged."
 created: 2026-08-18
 author: agent session b73007cd (Opus 5, 1M context) — chartered by the owner after a session-opening question about the state of dev-related MCP capabilities
 category: agent-process / dev-tooling / mcp
@@ -99,13 +99,37 @@ Cost of keeping it: an `npx -y` package fetch + process spawn on every session s
 names in every prompt, for zero capability. The pinned package is also the archived upstream,
 superseded by GitHub's own server.
 
-### 4.2 Hot reload — decide, then act (P8, blocked on §5.6)
+### 4.2 Hot reload — RETIRE (P8; verdict landed 2026-08-18, awaiting D2)
 
-`hotReload: true` on 1 of 92 starts; `reload` invoked 0 times. Whether the cause is low
-value or low visibility is exactly what the §5.6 investigation is settling. **Do not prune
-before that verdict** — but do not leave it in limbo either: the outcome is binary
-(surface it properly, e.g. default `hotReload: true`; or sweep it under
-`retire-with-a-sweep` — tool, start param, `HotSwapPush.java`, JDWP wiring, docs).
+`hotReload: true` on 1 of 92 starts; `reload` invoked 0 times. The §5.6 investigation returned
+**INCOHERENT** and recommends **RETIRE**. Its load-bearing claims were re-verified independently
+against source by the orchestrator (not taken on the auditor's word); all five held.
+
+The capability is not merely unused — it is unsafe when used, and its documentation asserts a
+behavior the code refutes:
+
+- **The advertised degraded mode does not exist.** `server.mjs:623` tells agents "Without
+  hotReload on start, reload still pushes bytecode (method-body changes only)". But
+  `WorkerSpawner.addDevHotReloadFlags` returns early unless `EnvRegistry.DEV_HOTRELOAD` is true
+  (`WorkerSpawner.java:940-941`), and that same early return guards the `-agentlib:jdwp` flag
+  (`:952`). With no JDWP listener there is nothing to push to. 91 of 92 starts are in this state.
+- **305 Phase 2 was never built.** `DEV_HOTRELOAD_CLASSES_DIR` is written at
+  `WorkerSpawner.java:947` and declared at `EnvRegistry.java:954-955`. Those are its *only two*
+  references outside build output — nothing reads it. The child classloader the sysprop exists to
+  feed does not exist.
+- **`HotSwapPush` has no target identity check.** It sets hostname `127.0.0.1` and a port and
+  attaches (`HotSwapPush.java:85-91`). Whatever is listening on 5005 receives the bytecode.
+- **`reload` has neither an ownership nor a staleness projection.** `buildOwnershipProjection` /
+  `withStaleness` call sites end at `server.mjs:1879` / `:2451`; the reload handler begins at
+  `:2551`. Confirms `docs/observations.md:354` at the code level.
+
+**Predictable evasion to reject:** "disable it now, sweep the code later." That is exactly the
+follow-up-that-never-comes pattern `retire-with-a-sweep` names, and tempdoc 742's ~350-file corpus
+is what it produces. Sweep in one change or decide to keep it.
+
+**What retiring does NOT fix:** §6.2. Ownership still gates only `start`, so `ingest`,
+`reindex`, `gc` and the migration endpoints remain callable against a peer's stack after the
+sweep. Removing `reload` removes that hole's sharpest edge, not the hole.
 
 ### 4.3 `capture_evidence` / `validate_evidence` — retire the tools, KEEP the format (P1)
 
@@ -220,19 +244,58 @@ temporary files. An agent staged a corpus there, as instructed, and was refused
 (`ingest path must be under repoRoot`). Two agents also passed `path` instead of `paths`.
 Direct rule conflict; allow the session scratchpad, or say why not.
 
-### 5.6 Hot reload — under independent investigation
+### 5.6 Hot reload — INCOHERENT (verdict 2026-08-18)
 
-A shallow read of the `reload` handler (`scripts/dev/justsearch-dev-mcp/server.mjs:2551-2650`)
-suggests it resolves the **target JVM/data dir** from the global active run record
-(`tmp/dev-runner/active.json` under `mainRepoRoot` — whoever holds the lease) while sourcing the
-**classes to push** from the caller's `repoRoot`, over a hardcoded default JDWP port 5005. If that
-holds, then under `distFrom` — 68 of 92 starts — it compiles in one tree and pushes into a JVM
-launched from another, with no ownership check.
+The hypothesis in the first draft of this section — that `reload` resolves its *target* from one
+root and its *bytecode* from another — is **CONFIRMED**, and the picture is worse than the
+hypothesis.
 
-**This is a hypothesis, not a finding.** A dedicated investigation is running to confirm or refute
-it and to answer whether the capability was ever coherent with the worktree + lease model (305
-shipped 2026-03-14, before that model matured). Its verdict decides §4.2. Recorded here so the
-claim is not mistaken for settled fact if this doc is read before the verdict lands.
+`reload` reads `dataDir` from the global run record under `mainRepoRoot`
+(`server.mjs:2573-2576`) but derives `classesDir`, `hotSwapScript` and the Gradle `cwd` from the
+caller's `repoRoot` (`:2582-2583`, `:2592`), which is `process.cwd()` frozen at MCP-server launch
+(`paths.mjs:29-42`; `.mcp.json` sets neither cwd nor env). `start` honours `distFrom` by swapping
+to an effective root (`server.mjs:700-721`); `reload` has no equivalent. Under `distFrom` — 68 of
+92 starts — the two roots are different trees **by construction**.
+
+**The three cases:**
+
+| Case | Outcome |
+|---|---|
+| (a) main-checkout stack, main-checkout caller | works — but only with `hotReload: true`; otherwise silently misfires |
+| (b) `distFrom: A`, caller in worktree A | works only if the MCP server's cwd happened to be A *and* `hotReload: true` — coincidence, not design |
+| (c) `distFrom: A` by agent A, caller agent B in worktree B | **silently misfires**: B's bytecode is redefined into A's JVM, reported as success |
+
+**Four silent failure modes** (none surfaces as an error to either agent):
+
+1. **Cross-tree injection.** `redefineClasses` matches by class *name* only
+   (`HotSwapPush.java:111-118`), so B's divergent bytecode replaces A's in-memory code.
+2. **Falsified build stamp.** On `hotSwapOk` the handler copies the *caller's* dist stamp into the
+   *owner's* data dir (`server.mjs:2632-2640`), defeating 371's stale-JVM detection for everyone
+   afterwards. (Precision: this write *is* gated on `hotSwapOk` — but see #4 for why that gate is
+   weak.)
+3. **Unauthorized service teardown.** The signal write (`:2645-2652`) is gated only on
+   `signalFile` being non-null — **not** on `hotSwapOk`. A deliberate comment at step 3 says
+   "Continue to signal write so service reconstruction still happens", so even a *failed* push
+   quiesces and reconstructs a peer's Worker services.
+4. **False success with zero classes pushed.** If no changed class is loaded in the target VM,
+   `HotSwapPush` prints "None … are loaded", exits 0 and still updates its marker file
+   (`HotSwapPush.java:121-123, 150`) — so the next call sees nothing changed either, and
+   `hotSwapOk` is `true` throughout.
+
+**Mixed-classpath state is reachable even in case (b).** The running Worker's classpath is the
+`installDist` jar set; the push comes from `build/classes/java/main`. Only already-loaded classes
+are redefined; the remainder later load from the **stale jar** — while the stamp says current.
+
+**Was it ever coherent?** Briefly. 305 (2026-03-14) assumed one checkout, one stack, one agent,
+one JDK, and verified exactly that. Four things invalidated it: worktrees + `distFrom` split the
+launch tree from the caller tree; the lease/ownership model added an owner concept `reload` never
+adopted; 696's JDK pinning hard-selects Temurin ≥24 while structural hot-swap needs a JBR that
+nothing in the repo stages, leaving method-bodies-only; and Phase 2's classloader was never built.
+
+**A live test would add nothing.** Every step is statically decidable, and the only way to
+demonstrate case (c) is to corrupt a peer's stack. One item is UNVERIFIED and does not need a run:
+whether this machine's ambient `JAVA_HOME` happens to point at a JBR build — the repo stages none,
+so Temurin is the default.
 
 ## 6. Structural findings
 
@@ -321,8 +384,12 @@ not that the notes were unclear.
 ## 8. Owner decisions
 
 - **D1 — prune `github` from `.mcp.json`?** Recommend yes (§4.1). No capability is lost; it has none.
-- **D2 — hot reload: surface or sweep?** Blocked on §5.6's verdict. Recommend deciding either way
-  rather than leaving it at 1-in-92.
+- **D2 — hot reload: sweep it?** No longer blocked. §5.6 returned INCOHERENT; recommend **RETIRE**.
+  Making it coherent needs six changes (compile root from the run record; per-run JDWP port plus an
+  identity handshake; an ownership gate; `withStaleness`; jar/classes-dir reconciliation; JBR
+  staging) — a multi-day rebuild of a capability with 0 invocations in 878 transcripts, competing
+  against `installDist` + restart, which is correct by construction. Keeping it costs four silent
+  corruption paths and a tool description that contradicts the code.
 - **D3 — unify backend discovery?** Minimum (`quick_health` probes unowned backends) vs full
   (`jseval` registers in the run registry). Recommend the minimum first; it is the half that already
   cost a measurement.
@@ -341,7 +408,7 @@ not that the notes were unclear.
 | P5 | `quick_health` probes for unowned backends (§6.1). | D3 |
 | P6 | De-fork the doc/skill; add a `check-dev-mcp-doc-sync` gate asserting tool list + endpoint keys + allowlist against `server.mjs`; register `scripts/dev/` in the consult register. | P1-P5 |
 | P7 | Repeatable reader in `scripts/agent-analytics/` so §3 is re-derivable after the corpus rolls. | — |
-| P8 | Hot reload: act on the §5.6 verdict. | D2 |
+| P8 | Hot reload sweep (§4.2, §5.6). Inventory to remove in ONE change: tool registration `server.mjs:2549-2662`; `ReloadInputSchema` `schemas.mjs:734-744`; the `hotReload` start param + `--hot-reload` plumbing (`schemas.mjs:101-102`, `cli.mjs:352`, `dev-runner.cjs:154/213/1462-1465`); `scripts/dev/HotSwapPush.java`; `WorkerSpawner.addDevHotReloadFlags` + the `DEV_HOTRELOAD*` `EnvRegistry` rows; `DevReloadManager` + its `KnowledgeServer` gate and sentinel branch (`KnowledgeServer.java:698-702, 1625-1627`); the `worker-services/build.gradle.kts:100-109` doLast hook; the doc rows in `docs/reference/configuration/environment-variables.md` and `runtime-config-ownership-matrix.md`; and the false claim at `server.mjs:623`. Verify with a full `./gradlew.bat build -x test` + the dev-stack smoke, and grep the retiree names to confirm zero residue. | D2 |
 
 P6 is the one that must not be dropped: without it, P2-P5 re-drift and this audit gets rewritten
 in six months, as it was rewritten from `254-mcp-dev-tools-issues` (2026-03-03, status done).
