@@ -240,9 +240,22 @@ fails 43% of the time on a precondition trains agents to accept `AI_OFFLINE` as 
 exact failure the rule exists to prevent. The precondition belongs in `preflight`/`quick_health`,
 not in a post-hoc error.
 
-One of the errors also carries a real bug: a "Configured model does not exist" message rendering
-the path as `F:justsearch-publicmodelsQwen_Qwen3.5-9B-Q4_K_M.gguf` — **path separators eaten**
-somewhere in the message-formatting or config-resolution path.
+One error *appeared* to carry a second bug — a "Configured model does not exist" message rendering
+the path as `F:justsearch-publicmodelsQwen_Qwen3.5-9B-Q4_K_M.gguf`, with the separators gone.
+**Retracted to SUSPECTED-UNCONFIRMED on re-examination, and most likely an artifact of this
+audit's own extraction.** The producing site is
+`RuntimeActivationService.java:814`, which formats `"Configured model does not exist: " + model`
+where `model = Path.of(modelPath.trim())` (`:812`) — `Path.toString()` preserves separators on
+Windows, so the Java side looks correct. The transcript stores that string JSON-escaped
+(`\\` per separator), and §1's extractor did no unescaping, which is a sufficient explanation for
+the observed rendering without any product defect.
+
+Recorded rather than deleted because the distinction matters: a stored `llmModelPath` that really
+had lost its separators would produce the identical symptom. Settling it needs one look at a live
+`GET /api/settings/v2` — cheap, but not done here. **Do not hand this to an implementer as a bug
+to fix.** It is exactly the confirmation trap `interrogate-results` names: the finding matched an
+expectation ("Windows path handling is fragile") and was written down before its cause was
+established.
 
 ### 5.3 The 81% bypass (P3 for coverage; the preference half is §6.1)
 
@@ -454,7 +467,7 @@ not that the notes were unclear.
 | P1 | Prune: `github` server; `agent_chat`, `capture_evidence`, `validate_evidence` wrappers; fold `status` into `quick_health`. Sweep the count in all four inventories (§6.3) in the same change. | D1 |
 | P2 | Fix `start`: real error code for missing dist, `preflight { distFrom }`, bare-worktree-name resolution. | — |
 | P3 | Allowlist gap: `/infra/capabilities`, `/infra/health`, `/mcp`, `/api/mcp/token`, `/api/chat/ask`, `/api/knowledge/retrieve-context`, `/api/memory`. Add `jsonPath` to `api_call`; `jsonPath` misses return available keys; `maxBytes` truncates instead of erroring; `ingest` accepts the session scratchpad. | — |
-| P4 | `ai_activate` preconditions surfaced in `preflight`/`quick_health`; fix the eaten path separators. | — |
+| P4 | `ai_activate` preconditions surfaced in `preflight`/`quick_health` (the runtime-variant check especially). The separator claim is retracted to suspected — see §5.2; not implementer work. | — |
 | P5 | `quick_health` probes for unowned backends (§6.1). | D3 |
 | P6 | De-fork the doc/skill; add a `check-dev-mcp-doc-sync` gate asserting tool list + endpoint keys + allowlist against `server.mjs`; register `scripts/dev/` in the consult register. | P1-P5 |
 | P7 | Repeatable reader in `scripts/agent-analytics/` so §3 is re-derivable after the corpus rolls. | — |
@@ -761,7 +774,7 @@ Applied to §9, the order changes and two items drop out:
 | 1 | **P6** doc/skill de-fork + `check-dev-mcp-doc-sync` gate + consult-register entry | false inventory — and it is the only item that stops every other fix re-drifting | promoted from last to first |
 | 2 | **P5** `quick_health` reports backends it did not start | false "free" — the one that already cost a measurement round | promoted |
 | 3 | **P2** `start` error code + `preflight { distFrom }` | false green, false severity | unchanged |
-| 4 | **P4** `ai_activate` preconditions in `preflight`/`quick_health`; eaten path separators | a mandated tool that surprises 43% of the time | unchanged |
+| 4 | **P4** `ai_activate` preconditions surfaced in `preflight`/`quick_health` | a mandated tool that surprises 43% of the time | narrowed — the separator half is retracted (§5.2) |
 | 5 | **P3a** projection honesty only: `jsonPath` miss returns available keys; `maxBytes` truncates with a notice; `api_call` gains `jsonPath` | dishonesty by omission — a miss currently returns the most expensive possible payload | narrowed |
 | 6 | **P7** repeatable reader in `scripts/agent-analytics/` | nothing — but it is the instrument the falsifier needs | kept, and now load-bearing |
 | 7 | **P1** prunes (`github` server; `agent_chat`, `capture_evidence`, `validate_evidence` wrappers; fold `status`) | nothing — hygiene, but cheap and it shrinks what P6 must keep true | demoted |
