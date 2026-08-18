@@ -2146,3 +2146,41 @@ is merely dead-but-unnoticed. The reachable measurement after S5 is leg 2 — a 
 observer whose `onClose` fires on its next heartbeat write — and that latency IS the ≤1-interval
 bound. Reaching a true zero-observer park needs the initiating transport on managed SSE too, which
 is the change §16.3 anticipated and §15.3 did not stage.
+
+### 18.6 Two late findings, one of them a revert
+
+**A park-retirement mechanism was implemented and then REVERTED, on review.** The idea was sound:
+the primer's `park` is point-in-time, so a run whose loop is seen executing is by definition no
+longer parked, and a set of "the loop moved" frames (`chunk`, `reasoning_chunk`, `budget_update`,
+`tool_exec_*`) would clear it. Its safety argument did not survive checking. It read: *"safe against
+the replay that follows the primer, because a park frame is the newest frame while the run is
+parked — any replayed movement is chronologically BEFORE the park."* The premise is true and the
+conclusion does not follow: **the FE has no way to tell a replayed frame from a live one.** The
+primer is emitted BEFORE the replay (§6.1), so on every reattach to a parked run the retained
+narrative frames arrive next and clear the park — on exactly the reattach the primer exists to
+serve. Verified structurally: `RunStreamWriter` emits `run_started`, optionally `replay_truncated`,
+the primer, then the replayed window, with **no replay-complete boundary frame**, and the run wire
+carries no `id:`/seq the FE could compare (§15.1.2 requirement 4 closed that deliberately).
+
+Scope of the damage had it shipped: narrow but pointed at this slice's purpose. An APPROVAL park
+survives regardless, because `onStateSnapshot` replays snapshot approvals through the same
+`handleToolCallEntry(…, 'pending')` path a live frame takes, so `pendingApprovals` — an independent,
+self-clearing signal — keeps the run `holding` and the gate answerable. A **budget / context /
+unobserved** park has no such second signal, so those are the ones that would have read as
+un-parked after a reattach.
+
+Reverted rather than shipped-with-a-corrected-comment, because the alternative failure is milder
+and self-limiting (a park that ends mid-stream reads as held until that stream ends, while the
+gate-specific signals clear themselves), and because the retirement was in neither §15.3 nor the
+implementation brief. **The correct fix is a backend one**: a replay-boundary lifecycle frame from
+`RunStreamWriter`, after which the FE may trust movement frames as live. That is a change to the
+S3b writer and its five protocol requirements, so it belongs to whoever next opens that file — not
+to a late edit in an FE sweep.
+
+**`POST /api/chat/agent/{sessionId}/attach` now has ZERO FE consumers.** S5 moved the only caller to
+the managed observe route; the emitter of its `attach_not_live` event is still live at
+`AgentController.java:486`, registered at `AgentRoutes.java:53`. It is NOT deleted here, for §16.3's
+reason: it retires as a UNIT with the other raw-`Context` routes (the initiating dispatch, resume,
+fork, `/ag-ui`) and with the `AgentSseWriter` eviction seam that serves them. Removing one member
+would leave the seam justified by a smaller consumer set without shrinking it, which is a partial
+sweep — the residue class 742 is about. Recorded so the next sweep finds it already counted.
