@@ -213,7 +213,9 @@ not changed. A repo-wide grep for `provided documents` / `not in the documents` 
 - Module tests: `:modules:core`, `:modules:app-services`, `:modules:app-inference`, `:modules:ui`.
 - Frontend untouched — `npm run typecheck` + `npm run test:unit:run` prove it.
 
-### Live leg — REQUIRED before the PR leaves draft, currently PENDING
+### Live leg — RUN 2026-08-18. Defect 1 VERIFIED. Defect 2 PARTIAL (see §Live results).
+
+### Live leg — as scripted (superseded by §Live results below)
 
 The shared dev stack was held by another session for the whole of this slice, so the live round was
 scripted, not run. It must be run under the standard supervision rules (SHARED, one at a time;
@@ -306,9 +308,96 @@ probe is the only thing that caught it.
 - `AgentLoopService.java:446` — unboxes `configuredContextTokens()` without a null check; both
   accessors are nullable `Integer` defaults, so a non-Online runtime NPEs there.
 
+## Live results — 2026-08-18
+
+Stack driven by this session end-to-end: `quick_health` `running:false` plus an independent
+process/port/GPU scan before start (only a stale browser tab was retrying the dead port); started
+from **this worktree's** dist (`distFrom`, `skipBuild` after verifying the Head dist jar actually
+contained the new code — `llm.completionReserveTokens` present in
+`modules/ui/build/install/ui/lib/app-services-0.2.0.jar`); stopped by this session and verified.
+
+**Environment.** Chat model `Qwen_Qwen3.5-9B-Q4_K_M.gguf` (standard, not the compact dev default —
+set via `POST /api/settings/v2`), cuda12 GPU runtime, thinking ON, corpus `docs/explanation`
+(30 docs). Raw SSE captures: `tmp/845-live/*.sse` (gitignored).
+
+**The premise, confirmed live.** `/api/inference/status` reported
+`"llmContextTokens": 4096, "configuredContextTokens": 4096` — that is the exact accessor the fix
+reads, observed from `/props`. The old call sites assumed **8192**, i.e. a window twice the real
+one, and asked for **5990** input tokens out of a 4096-token window.
+
+| Arm | reserve | budget (computed) | retrieved | prompt | completion | total | chunks used/found | `context_truncated` | HTTP |
+|---|---|---|---|---|---|---|---|---|---|
+| A1 quick | 512 | 2764 | 2286 | 2430 | 512 | 2942 | 5 / 60 | false | 200 |
+| A2 standard | 1024 | 2304 | 2286 | 2430 | 1024 | 3454 | 5 / 60 | false | 200 |
+| **A3 thorough** | **3072** | **460** | **480** | **585** | **3072** | **3657** | **1 / 146** | **true** | **200** |
+| A4 meta (direct "can you access my files?") | 1024 | 2304 | 1606 | 1587 | 667 | 2254 | 5 / 66 | false | 200 |
+| A5 meta (spontaneous, probe's original shape) | 1024 | 2304 | — | — | — | — | — | false | 200 |
+
+### Verdict 1 — Defect 1 VERIFIED FIXED
+
+- **A3 returns 200, not 400.** The probe's exact payload (`maxTokens 3072`, `topK 12`) now
+  completes with a real answer.
+- **Honest degradation is visible in the numbers**: retrieval found **146** chunks and the budget
+  admitted **1**. Fewer passages, all inside the window — exactly the designed behaviour.
+- **`context_truncated: true` on A3 only.** The OR-ed flag fires precisely where the trim happened
+  and stays false on the arms that fit — the honesty half works and is not stuck on.
+- **The invariant holds on every arm**: `prompt + completion` = 2942 / 3454 / **3657** / 2254, all
+  ≤ 4096. A3's 3657 leaves 439 tokens of headroom against a window the old code overshot outright.
+- **The budget binds where the arithmetic says.** A1/A2 retrieved 2286 against budgets of
+  2764/2304; A3 retrieved 480 against 460. Under the old constants every arm would have been handed
+  5990 — A3's prompt would then have been ≈5990 + 178 system + question ≈ 6.2k, against a 4096
+  window, with 3072 more reserved for completion. That is the 400, arithmetically reconstructed
+  from live numbers.
+
+### Verdict 2 — Defect 2 PARTIAL. Reported, not silently patched.
+
+The deployed jar was confirmed to carry the new prompt (`user's own files`,
+`do not say you lack access` present; `not in the documents` absent), and `RAGQAStyle.ID` is wired
+into `RAGAskShape.definition()`'s contributor list — so this is a real behavioural result, not a
+stale build.
+
+- **A5 — FIXED.** On the probe's original shape (a normal question, no access framing) the answer
+  is *"The provided excerpts do not appear to cover the specific content of your indexed files"* —
+  the prescribed coverage framing, verbatim, with **no denial of access**. The reasoning trace shows
+  the model restating the constraint (*"Do not say I lack access to user files"*) before complying.
+  The spontaneous false-denial move this defect was filed for is gone.
+- **A4 — NOT fixed.** Asked directly *"Can you access my files?"*, the model still answers
+  *"I cannot directly access your files… I cannot access, read, or browse your actual indexed
+  files."* The instruction is present and acknowledged, and overridden anyway.
+- **Confound worth naming before anyone re-words the prompt**: the corpus here is JustSearch's own
+  product documentation, so the retrieved text itself invites a *product-vs-assistant* split
+  ("JustSearch can search your files" / "but I only got excerpts"). A4's reasoning takes exactly
+  that split. Whether A4 is a prompt-wording problem, a corpus artifact, or genuinely out of scope
+  for a prompt fix is **not** settled by this round, and guessing at new wording without a probe
+  that separates those three is how the next round gets wasted.
+
+### Incidental findings (not caused by this change)
+
+- **A1 quick + thinking returns an EMPTY answer**: 512 completion tokens, ~1954 chars of reasoning,
+  **0 answer characters**. This is tempdoc 835's B3 regression reproduced at the Quick rung — and
+  it is independent, direct empirical confirmation of this slice's arithmetic decision: reasoning
+  is spent inside the completion reserve, so a small `maxTokens` with thinking on can leave nothing
+  for the answer. Logged.
+- **A3's `retrieved` (480) slightly exceeds the computed budget (460)** — ~4%. The Head budgets with
+  `TokenEstimation`'s heuristic while the done payload's `contextBreakdown` accounts separately, so
+  small divergence is expected; the binding constraint (`prompt + completion ≤ window`) held with
+  margin on every arm. Logged rather than tuned.
+- **A2 reports `starvedSources: [1,2,3,4]`** — the 836 S2/S3 starved state (citation-matcher window
+  admission), reporting honestly. Untouched by this change; A4/A5 show full coverage.
+
+### Teardown — verified
+
+`stop` killed `[32560, 17648, 28048]`, `portsClosed: true`; `quick_health` `running:false`;
+independent scan: no `llama-server`, **no LISTENING sockets** on 62967/62708/5173 (only `TIME_WAIT`
+and a stale browser tab's failing `SYN_SENT` retries), GPU back to **1210 MiB** vs the **1205 MiB**
+pre-run baseline — inference VRAM fully released. The one surviving `java` PID (15704) is the
+Gradle daemon (`--add-opens`/`--add-exports`, temurin25), not a stack process.
+
+Staging note: cuda12 was **copied** (1 GB) into this worktree rather than junctioned. A junction
+into the *shared* main-checkout runtime would let any recursive worktree cleanup delete through
+into the copy every other worktree depends on.
+
 ### Status
 
-Static work complete; PR **#482** open as a **draft**. It must not leave draft until the live leg
-above is run — that is the one tier this slice could not reach, because the shared dev stack was
-held by another session (fresh 7200s lease, `dist` from the `840-download-restructure` worktree)
-for the slice's whole duration. Not started and not taken over, per instruction.
+Defect 1 is live-verified. Defect 2 is half-verified and the remainder is characterised, not
+guessed at. PR **#482** stays a **draft** pending a decision on A4.
