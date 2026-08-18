@@ -18,6 +18,26 @@ final class StreamIdTest {
   }
 
   @Test
+  @DisplayName("run constructor produces a run-kinded slug (tempdoc 834 S3a)")
+  void runKind() {
+    StreamId id = StreamId.run("run-4f3c9a10");
+    assertEquals("run:run-4f3c9a10", id.value());
+    assertEquals("run", id.kind());
+    assertEquals("run-4f3c9a10", id.id());
+  }
+
+  @Test
+  @DisplayName("run slugs obey the same letter-initial rule as every other kind")
+  void runSlugIsLetterInitial() {
+    // Why `run-<uuid>` and not a bare UUID (tempdoc 834 §3.2): a UUID may start with a
+    // digit, which the shared slug rule rejects.
+    assertThrows(
+        IllegalArgumentException.class, () -> new StreamId("run:4f3c9a10-0000-4000-8000-abc"));
+    assertThrows(IllegalArgumentException.class, () -> new StreamId("run:Run-1"));
+    assertThrows(IllegalArgumentException.class, () -> new StreamId("run:"));
+  }
+
+  @Test
   @DisplayName("kind() and id() split on the colon")
   void kindAndId() {
     StreamId s = StreamId.registry("capabilities");

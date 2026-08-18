@@ -460,3 +460,71 @@ describe('remedy targets resolve to the surface that owns the capability', () =>
     });
   });
 });
+
+/**
+ * Tempdoc 837 S3/S4 — the codes that used to be prose, or used to be collapsed onto a sibling.
+ * Each row is asserted on the bar the tempdoc set for itself: the wording must be TRUE in the state
+ * that emits it, and the consequence-set membership must be a decision, not an omission (omission
+ * silently selects `cosmetic` for an AI code and `impairing` for everything else).
+ */
+describe('readinessNotice — tempdoc 837 worker + inference rows', () => {
+  it('worker.lost words the state it is actually emitted in (it was serving, then stopped)', () => {
+    expect(reasonFor('worker.lost').wording).toBe('The knowledge server stopped responding');
+    // The collapsed code claimed a start failure for a worker that had started fine.
+    expect(reasonFor('worker.spawn.failed').wording).toContain('failed to start');
+    expect(reasonFor('worker.lost').wording).not.toContain('start');
+  });
+
+  it('worker.index_corrupt carries no fake one-click remedy — Open Health, like its precedent', () => {
+    const r = reasonFor('worker.index_corrupt');
+    expect(r.wording).toBe('The search index is corrupt and could not be repaired automatically');
+    // No operation exists for index.recovery.policy=BACKUP_REBUILD, so the row must not invent one:
+    // it declares NO remedy (the vdu.missing_mmproj precedent) and the banner supplies Open Health.
+    expect(r.remedy).toBeUndefined();
+    const n = readinessNotice(degraded('error', ['worker.index_corrupt']));
+    expect(n!.remedy).toEqual({ kind: 'navigate', target: 'core.health-surface', label: 'Open Health' });
+  });
+
+  it('the non-serving worker codes are all retrieval-impairing (omission would over-claim)', () => {
+    for (const code of [
+      'worker.lost',
+      'worker.index_corrupt',
+      'worker.shut_down',
+      'worker.not_connected',
+    ]) {
+      expect(classifyConsequence([code]), code).toBe('retrieval-impaired');
+    }
+  });
+
+  it('severity: a lost/corrupt server is error; a shutdown or a not-yet-connected one is calm', () => {
+    expect(severityForCodes(['worker.lost'])).toBe('error');
+    expect(severityForCodes(['worker.index_corrupt'])).toBe('error');
+    expect(severityForCodes(['worker.shut_down'])).toBe('info');
+    expect(severityForCodes(['worker.not_connected'])).toBe('info');
+    expect(warrantsSearchDegradationBanner(degraded('error', ['worker.lost']))).toBe(true);
+  });
+
+  it('S4: the two new inference codes are calm and stay OUT of the banner', () => {
+    expect(reasonFor('inference.gpu_yielded_to_indexing').wording).toBe(
+      'The GPU is indexing your files — chat resumes when it finishes',
+    );
+    expect(reasonFor('inference.up_for_background').wording).toBe(
+      'Chat is turned off; the AI engine is running background document processing',
+    );
+    expect(severityForCodes(['inference.gpu_yielded_to_indexing'])).toBe('info');
+    expect(severityForCodes(['inference.up_for_background'])).toBe('info');
+    expect(
+      warrantsSearchDegradationBanner(degraded('info', ['inference.gpu_yielded_to_indexing'])),
+    ).toBe(false);
+  });
+
+  it('S4: neither new inference code joins AI_MODEL_UNAVAILABLE_CODES (not "any inference.*")', () => {
+    // up_for_background describes an engine that is UP; gpu_yielded is a scheduled, self-clearing
+    // hand-off. Classifying either as "the AI model is unavailable" would repeat, in the other
+    // direction, the exact over-claim this tempdoc exists to remove.
+    expect(classifyConsequence(['inference.gpu_yielded_to_indexing'])).not.toBe('ai-unavailable');
+    expect(classifyConsequence(['inference.up_for_background'])).not.toBe('ai-unavailable');
+    // …while the genuinely-unavailable sibling still classifies that way.
+    expect(classifyConsequence(['inference.offline'])).toBe('ai-unavailable');
+  });
+});

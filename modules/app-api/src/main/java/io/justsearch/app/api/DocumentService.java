@@ -262,9 +262,23 @@ public interface DocumentService {
       int endLine,
       String headingText,
       int headingLevel) {
+
+    /**
+     * The absence of a chunk ordinal (tempdoc 836 §8.4). A whole-document source has no chunk
+     * position, and {@code 0} is not "unknown" — it is a claim that the text is the document's
+     * FIRST chunk, which is the fabrication that made the 836 defect constructible. This is the
+     * same sentinel the agent tier ({@code AgentSession.DOC_LEVEL_SENTINEL}) and the frontend
+     * ({@code DOC_LEVEL_CHUNK_SENTINEL}) already use, so the absence is modelled once, not thrice.
+     */
+    public static final int CHUNK_INDEX_ABSENT = -1;
+
     public ContextCitation {
       parentDocId = parentDocId == null ? "" : parentDocId;
-      chunkIndex = Math.max(0, chunkIndex);
+      // Any negative ordinal collapses to the ABSENT sentinel; a valid ordinal is kept. The old
+      // `Math.max(0, …)` silently converted "no chunk" into "chunk 0" — it destroyed the very
+      // distinction the sentinel exists to carry (it also erased the agent tier's document-level
+      // sources on their way into a match request).
+      chunkIndex = Math.max(CHUNK_INDEX_ABSENT, chunkIndex);
       chunkTotal = Math.max(1, chunkTotal);
       startChar = Math.max(0, startChar);
       endChar = Math.max(0, endChar);
@@ -333,7 +347,7 @@ public interface DocumentService {
   default CompletionStage<CitationMatchResult> matchCitationsAgainst(
       String answerText, List<VerificationSource> sources, double threshold) {
     return CompletableFuture.completedFuture(
-        new CitationMatchResult(List.of(), 0, 0, 0, 0, ScorerKind.NONE));
+        new CitationMatchResult(List.of(), 0, 0, 0, 0, ScorerKind.NONE, List.of()));
   }
 
   /**
@@ -409,6 +423,10 @@ public interface DocumentService {
    *     the honest denominator for a coverage claim; {@code sentencesMatched} over
    *     {@code sentencesTotal} attributes a budget shortfall to the evidence.
    * @param scorer which producer wrote the similarities (tempdoc 836 §4)
+   * @param sourceCoverage per-source examination facts (tempdoc 836 S2S3-A.1) — the TEXT axis,
+   *     reported beside the sentence axis and never blended into one ratio. Empty when the Worker
+   *     never got as far as preparing passages, which is "nothing is known", not "nothing was
+   *     examined"
    */
   record CitationMatchResult(
       List<CitationMatchEntry> matches,
@@ -416,7 +434,8 @@ public interface DocumentService {
       int sentencesMatched,
       long tookMs,
       int sentencesScored,
-      ScorerKind scorer) {
+      ScorerKind scorer,
+      List<SourceCoverage> sourceCoverage) {
     public CitationMatchResult {
       matches = matches == null ? List.of() : List.copyOf(matches);
       sentencesTotal = Math.max(0, sentencesTotal);
@@ -424,11 +443,62 @@ public interface DocumentService {
       tookMs = Math.max(0, tookMs);
       sentencesScored = Math.max(0, sentencesScored);
       scorer = scorer == null ? ScorerKind.NONE : scorer;
+      sourceCoverage = sourceCoverage == null ? List.of() : List.copyOf(sourceCoverage);
     }
 
     /** True when the pass did not reach every sentence — a scoring-incomplete state, not a ratio. */
     public boolean scoringIncomplete() {
       return sentencesScored < sentencesTotal;
+    }
+
+    /**
+     * True when every source that had any text was examined in full. DERIVED, so the aggregate
+     * never becomes a second authority beside the per-source facts (tempdoc 836 S2S3-A.1). An
+     * absent coverage list is vacuously complete — it makes no claim.
+     */
+    public boolean textCoverageComplete() {
+      return sourceCoverage.stream().allMatch(SourceCoverage::fullyExamined);
+    }
+
+    /**
+     * Positions of the sources the budget starved: text existed, no window survived admission.
+     * These are uncitable for reasons of BUDGET, and a caller must not report them as unsupported.
+     */
+    public List<Integer> starvedSources() {
+      return sourceCoverage.stream()
+          .filter(SourceCoverage::starved)
+          .map(SourceCoverage::sourceIndex)
+          .toList();
+    }
+  }
+
+  /**
+   * How much of ONE source's text the matcher actually looked at (tempdoc 836 S2S3-A.1).
+   *
+   * <p>Admission control preserves SENTENCE coverage by cutting WINDOWS, so an answer can report
+   * every sentence scored while most of the supplied text was never read. This is the axis that
+   * says so — and it is per source because an aggregate cannot express "source 3 got no window at
+   * all", which reads identically to "source 3 supports nothing" without it.
+   *
+   * @param sourceIndex position in the sources list handed to the matcher (the 836 §5.4 contract)
+   * @param windowsConsidered windows this source's text produced, before admission control
+   * @param windowsScored how many survived admission and were actually scored
+   */
+  record SourceCoverage(int sourceIndex, int windowsConsidered, int windowsScored) {
+
+    /** Text existed but the budget gave it no window — never examined, NOT unsupported. */
+    public boolean starved() {
+      return windowsConsidered > 0 && windowsScored == 0;
+    }
+
+    /** No text at all: a blank supply and a failed (or impossible) lookup. Unverifiable. */
+    public boolean noText() {
+      return windowsConsidered == 0;
+    }
+
+    /** Every window this source produced was scored. Only this state supports "unsupported". */
+    public boolean fullyExamined() {
+      return windowsScored >= windowsConsidered;
     }
   }
 

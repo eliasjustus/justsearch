@@ -119,6 +119,18 @@ public final class LifecycleSnapshotTap {
     MAPPING_TABLE.put(
         new MappingKey(ReadinessDimension.WORKER_CONTROL_PLANE, "NOT_READY", "worker.spawn.failed"),
         new ConditionMapping("index.start-error", "worker", Severity.ERROR));
+    // Tempdoc 837 §3.4: worker.lost and worker.index_corrupt are the two causes that USED to reach
+    // this dimension collapsed onto worker.spawn.failed, so they keep the same conditionId and
+    // severity — behaviour-preserving — while the Condition's `reason` field (PascalCase of the code)
+    // now says WorkerLost / WorkerIndexCorrupt instead of the false WorkerSpawnFailed. Without these
+    // rows the lookup misses and the Condition disappears entirely (an unmapped key emits nothing but
+    // a once-per-startup WARN), which would be a silent regression rather than a refinement.
+    MAPPING_TABLE.put(
+        new MappingKey(ReadinessDimension.WORKER_CONTROL_PLANE, "NOT_READY", "worker.lost"),
+        new ConditionMapping("index.start-error", "worker", Severity.ERROR));
+    MAPPING_TABLE.put(
+        new MappingKey(ReadinessDimension.WORKER_CONTROL_PLANE, "NOT_READY", "worker.index_corrupt"),
+        new ConditionMapping("index.start-error", "worker", Severity.ERROR));
 
     // ----- INDEX_SERVING: worker availability + throughput. -----
     MAPPING_TABLE.put(
@@ -126,6 +138,11 @@ public final class LifecycleSnapshotTap {
         new ConditionMapping("index.unavailable", "worker", Severity.WARNING));
     MAPPING_TABLE.put(
         new MappingKey(ReadinessDimension.INDEX_SERVING, "NOT_CONFIGURED", "worker.not_started"),
+        new ConditionMapping("index.unavailable", "worker", Severity.WARNING));
+    // Tempdoc 837 §3.4: an orderly teardown now says worker.shut_down where it used to say
+    // worker.not_configured — same NOT_CONFIGURED verdict, same Condition, more honest reason.
+    MAPPING_TABLE.put(
+        new MappingKey(ReadinessDimension.INDEX_SERVING, "NOT_CONFIGURED", "worker.shut_down"),
         new ConditionMapping("index.unavailable", "worker", Severity.WARNING));
     MAPPING_TABLE.put(
         new MappingKey(ReadinessDimension.INDEX_SERVING, "NOT_READY", "worker.starting"),

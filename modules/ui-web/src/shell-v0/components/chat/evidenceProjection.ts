@@ -27,7 +27,7 @@
  * docs/observations.md — not an FE deliverable. This projection carries the
  * boundary-aware fields (startLine/endLine/headingText) verbatim for navigation.
  */
-import type { RetrievalCitation, CitationMatch } from './citationTypes.js';
+import type { RetrievalCitation, CitationMatch, SourceCoverage } from './citationTypes.js';
 import type { CoreInteractionShapeId } from '../../plugin-api/coreInteractionShapes.js';
 
 /**
@@ -345,14 +345,133 @@ export interface GroundingCoverage {
   readonly cited: number;
   /** ⑤ — the answer's total sentence count (M). Always ≥ `cited`. */
   readonly total: number;
-  /** A human one-liner: "Grounded · 3 of 5 sentences" / "Not grounded". */
+  /** A human one-liner: "Grounded · 3 of 5 sentences" / "Not scored" / "Not grounded". */
   readonly label: string;
+  /**
+   * Tempdoc 836 S2S3-A.2 — zero cited sentences over an INCOMPLETE pass. "Not grounded" is an
+   * EVIDENCE verdict; this says verification did not fully run, which is a different claim about a
+   * different thing. Rendering the verdict over a pass that never ran is the same confident
+   * wrongness the citation work exists to remove, pointed at the answer instead of at a sentence.
+   */
+  readonly notScored: boolean;
+  /**
+   * Tempdoc 836 S2S3-A.2 — the run reported that verification did not fully happen (either axis).
+   * {@link label} carries the reason when this is true, and {@link notScored} is exactly this over
+   * zero cited sentences. A render site shows the line only when there is something extra to say:
+   * a permanent "…and everything was examined" line would be noise, and noise is what gets skipped.
+   */
+  readonly budgetIncomplete: boolean;
+}
+
+/**
+ * Tempdoc 836 §4 — the producer whose scale the grounding thresholds are calibrated on.
+ *
+ * <p>Two producers write the response's `similarity`: the cross-encoder (bimodal — supporting text
+ * 0.89–0.999, off-topic below 0.001) and the embedding-cosine fallback (compressed into 0.38–0.72,
+ * with the supported and unsupported bands measurably INTERLEAVING at a 0.0049 margin, §9.7). One
+ * 0.5 constant is applied to both. Only the first may set a verified score.
+ */
+export const VERIFIED_SCORER = 'CROSS_ENCODER';
+
+/**
+ * May a score from this producer be treated as verified? (Tempdoc 836 §4.)
+ *
+ * <p>ONE authority, read by every write site — the live citation-matches handler, the persisted
+ * replay, and the claim→citation resolver — so the gate cannot be applied on one render path and
+ * not the other (the 561 P-A divergence, which is what makes a reloaded conversation disagree with
+ * the live one).
+ *
+ * <p>An ABSENT producer is admitted, and that is a deliberate, narrow allowance: the field is
+ * emitted on every response since tempdoc 836 S1, so absence means a record persisted BEFORE the
+ * field existed, not an unknown producer today. Treating those as unverified would silently strip
+ * marks from every historical conversation; treating a KNOWN non-cross-encoder producer as
+ * verified is the failure this gate exists to prevent, and it fails closed.
+ */
+export function isVerifiedProducer(scorer: string | null | undefined): boolean {
+  return scorer === undefined || scorer === null || scorer === '' || scorer === VERIFIED_SCORER;
+}
+
+/**
+ * Tempdoc 836 S2S3-A.2 — the two coverage axes an answer can be incomplete on, as FLAGS.
+ *
+ * <p>They are carried as a SET, not collapsed into a precedence chain at the producer, so the one
+ * label function below is the only place they meet — a second classifier cannot appear by a caller
+ * reading "the" incompleteness. The SENTENCE axis (`sentencesScored < sentencesTotal`) says how
+ * much of the ANSWER was checked; the TEXT axis (`textIncomplete` / `unexaminedSources`) says how
+ * much of the SOURCE TEXT was looked at. They are reported separately and never blended into one
+ * ratio — a single number would let a budget shortfall read as an evidence verdict.
+ */
+export interface CoverageHonesty {
+  readonly sentencesScored: number;
+  readonly sentencesTotal: number;
+  /** The deadline stopped the pass before every sentence was scored. */
+  readonly sentencesIncomplete: boolean;
+  /** At least one source was PARTIALLY examined (0 < scored < considered). */
+  readonly textIncomplete: boolean;
+  /** Sources whose text was never examined at all — starved by the budget, or absent. */
+  readonly unexaminedSources: number;
+  /**
+   * Fraction of considered windows actually scored, or `null` when nothing was considered.
+   * Available for a detail view, deliberately NOT in the primary line: "4% of your text" invites
+   * the reader to treat coverage as a quality score, while a count of unexamined sources is
+   * actionable (S2S3-A.2).
+   */
+  readonly textExaminedRatio: number | null;
+}
+
+/**
+ * Read the coverage facts off a `rag.citation_matches` payload.
+ *
+ * <p>Returns `null` when the payload carries none — a producer that says nothing about coverage
+ * must not be reported as having said "complete". Absence of the facts and a fact of zero are
+ * different statements, and only the second is an answer.
+ */
+export function coverageHonesty(
+  payload:
+    | {
+        readonly sentencesScored?: number;
+        readonly sentencesTotal?: number;
+        readonly sourceCoverage?: ReadonlyArray<SourceCoverage>;
+      }
+    | null
+    | undefined,
+): CoverageHonesty | null {
+  if (!payload) return null;
+  const coverage = Array.isArray(payload.sourceCoverage) ? payload.sourceCoverage : [];
+  const scored = typeof payload.sentencesScored === 'number' ? payload.sentencesScored : -1;
+  const totalSentences = typeof payload.sentencesTotal === 'number' ? payload.sentencesTotal : 0;
+  if (scored < 0 && coverage.length === 0) return null;
+  let considered = 0;
+  let examined = 0;
+  let textIncomplete = false;
+  let unexaminedSources = 0;
+  for (const c of coverage) {
+    considered += c.windowsConsidered;
+    examined += c.windowsScored;
+    if (c.windowsScored === 0) unexaminedSources += 1;
+    else if (c.windowsScored < c.windowsConsidered) textIncomplete = true;
+  }
+  const sentencesScored = scored < 0 ? totalSentences : scored;
+  return {
+    sentencesScored,
+    sentencesTotal: totalSentences,
+    sentencesIncomplete: sentencesScored < totalSentences,
+    textIncomplete,
+    unexaminedSources,
+    textExaminedRatio: considered > 0 ? examined / considered : null,
+  };
 }
 
 /**
  * Count an answer's sentences (the M in "N of M") — a best-effort prose split on terminating
  * punctuation followed by whitespace/end. Approximate by design (it is an honesty HINT, not an exact
  * metric); returns ≥ 1 for any non-empty text.
+ *
+ * <p>Tempdoc 836 §3.6 — this is the FALLBACK denominator, no longer an authority. The backend
+ * segments with `BreakIterator` and now reports its count (`sentencesTotal`), so when the coverage
+ * facts are present they decide M. Two counters that disagree, one of them the denominator of a
+ * user-facing honesty claim, is the fork that section closed; this regex is what a producer without
+ * the facts falls back to, never a second opinion about a producer that has them.
  */
 export function countSentences(text: string): number {
   const t = (text ?? '').trim();
@@ -368,6 +487,9 @@ export function countSentences(text: string): number {
 export function groundingCoverage(
   citations: ReadonlyArray<{ readonly similarity: number }>,
   answerText: string,
+  // Tempdoc 836 S2S3-A.2 — the run's coverage facts, when the producer reported them. Absent for a
+  // producer that reports none, which keeps that caller's line exactly as it was.
+  honesty: CoverageHonesty | null = null,
 ): GroundingCoverage {
   let grounded = 0;
   let weak = 0;
@@ -377,10 +499,71 @@ export function groundingCoverage(
     else if (verdict === 'weak') weak += 1;
   }
   const cited = grounded + weak;
-  const total = Math.max(countSentences(answerText), cited);
+  // Tempdoc 836 §3.6 — the backend's BreakIterator count is the authority for M when it is
+  // reported; the regex counter is the fallback for producers that report nothing.
+  const counted =
+    honesty !== null && honesty.sentencesTotal > 0
+      ? honesty.sentencesTotal
+      : countSentences(answerText);
+  const total = Math.max(counted, cited);
   const ready = cited > 0;
-  const label = ready ? `Grounded · ${cited} of ${total} sentences` : 'Not grounded';
-  return { ready, grounded, weak, cited, total, label };
+  const budgetIncomplete = coverageIncomplete(honesty);
+  return {
+    ready,
+    grounded,
+    weak,
+    cited,
+    total,
+    label: coverageLabel(cited, total, honesty),
+    notScored: cited === 0 && budgetIncomplete,
+    budgetIncomplete,
+  };
+}
+
+/**
+ * The coverage line to render BESIDE an answer, or `null` when there is nothing extra to say.
+ *
+ * <p>Tempdoc 836 S2S3-A.2 — a line that always renders ("…and all of it was examined") is noise,
+ * and noise gets skipped, which is how the one case that matters would get missed. So the note
+ * appears exactly when the run reported that verification did not fully happen — and it is the
+ * SAME string {@link groundingCoverage} computed, never a second phrasing of the same fact.
+ */
+export function coverageNote(coverage: GroundingCoverage): string | null {
+  return coverage.budgetIncomplete ? coverage.label : null;
+}
+
+/** True when EITHER axis reports the pass did not fully run. A set-read, not a precedence chain. */
+function coverageIncomplete(honesty: CoverageHonesty | null): boolean {
+  if (honesty === null) return false;
+  return honesty.sentencesIncomplete || honesty.textIncomplete || honesty.unexaminedSources > 0;
+}
+
+/**
+ * Tempdoc 836 S2S3-A.2 — THE coverage line. The one place the two axes meet.
+ *
+ * <p>The load-bearing split is `Not scored` vs `Not grounded`. "Not grounded" is a verdict about
+ * EVIDENCE and is only honest when the pass actually ran; when the budget cut it short, the
+ * truthful statement is that verification did not complete. This composes with F-049 (an
+ * unresolvable claim mints nothing, so coverage degrades honestly "because coverage counts what
+ * renders"): coverage now also says WHY it degraded — evidence, or budget.
+ *
+ * <p>Deliberately absent: a percentage of text examined. "4% of your text" invites reading coverage
+ * as a quality score; the count of unexamined sources is actionable, a ratio is not. The ratio stays
+ * on {@link CoverageHonesty} for a detail view.
+ */
+function coverageLabel(cited: number, total: number, honesty: CoverageHonesty | null): string {
+  if (cited === 0) return coverageIncomplete(honesty) ? 'Not scored' : 'Not grounded';
+  const base = `Grounded · ${cited} of ${total} sentences`;
+  if (honesty === null) return base;
+  if (honesty.unexaminedSources > 0) {
+    const n = honesty.unexaminedSources;
+    return `${base} · ${n} source${n === 1 ? '' : 's'} not examined`;
+  }
+  if (honesty.textIncomplete) return `${base} · part of the text examined`;
+  if (honesty.sentencesIncomplete) {
+    return `${base} · ${honesty.sentencesScored} of ${honesty.sentencesTotal} sentences scored`;
+  }
+  return base;
 }
 
 /** The metric label for a source's GROUNDING (faithfulness) — distinct from retrieval {@link RELEVANCE_METRIC}. */
@@ -400,7 +583,19 @@ export interface SourceGrounding {
   readonly similarity: number;
   /** The faithfulness tier (the ONE authority), so the SOURCES panel agrees with the inline citations. */
   readonly tier: GroundingTier;
+  /**
+   * Tempdoc 836 S2S3-A.3 — the third state the binary was missing. `examined-uncited` is today's
+   * `cited: false` with its meaning intact (scored, supported nothing); `unexamined` is the source
+   * the verification budget never looked at, which must NOT read as "retrieved but never grounded".
+   *
+   * <p>`unexamined` is a BUDGET fact, so it never feeds a grounding tier or count — the same
+   * containment `lexicalScore` gets under F-048: present because it is true, never a tier input.
+   */
+  readonly state: SourceExamination;
 }
+
+/** Tempdoc 836 S2S3-A.3 — cited / examined-and-uncited / never-examined. */
+export type SourceExamination = 'cited' | 'examined-uncited' | 'unexamined';
 
 /**
  * Join a source to its grounding via the answer's citation-matches (603 C1, corrected per PART X.B).
@@ -417,6 +612,10 @@ export function sourceGrounding(
   sourceIndex: number,
   matches: ReadonlyArray<CitationMatch>,
   parentDocId?: string,
+  // Tempdoc 836 S2S3-A.3 — this source's examination facts, when the run reported them. Absent ⇒
+  // the state stays the established binary, so a producer that says nothing about coverage does
+  // not get "unexamined" assumed on its behalf.
+  coverage?: SourceCoverage | null,
 ): SourceGrounding {
   let count = 0;
   let best = 0;
@@ -427,11 +626,28 @@ export function sourceGrounding(
     }
   }
   const cited = count > 0;
-  return { cited, groundedSentences: count, similarity: best, tier: evidenceTier(cited ? best : 0) };
+  // A source the budget never examined is uncitable for a BUDGET reason. It keeps the uncited tier
+  // (a non-input, exactly as before) but says why, so the panel cannot describe it as "retrieved
+  // but never grounded" — a verdict about evidence that was never read.
+  const state: SourceExamination = cited
+    ? 'cited'
+    : coverage && coverage.windowsScored === 0
+      ? 'unexamined'
+      : 'examined-uncited';
+  return {
+    cited,
+    groundedSentences: count,
+    similarity: best,
+    tier: evidenceTier(cited ? best : 0),
+    state,
+  };
 }
 
 /** The per-source trust badge text — "Grounds N sentence(s)" when cited, else the honest "Retrieved · not cited". */
 export function sourceGroundingLabel(g: SourceGrounding): string {
+  // Tempdoc 836 S2S3-A.3 — an unexamined source is not "not cited": nothing read it. Saying it was
+  // retrieved and found wanting would assert a verdict over text no scorer ever saw.
+  if (g.state === 'unexamined') return 'Retrieved · not examined';
   if (!g.cited) return 'Retrieved · not cited';
   return g.groundedSentences === 1 ? 'Grounds 1 sentence' : `Grounds ${g.groundedSentences} sentences`;
 }

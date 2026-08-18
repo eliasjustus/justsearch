@@ -294,3 +294,37 @@ describe('resolveAnswerCitations — the one agent answer→Citation resolver (5
     expect(resolveAnswerCitations(AGENT_SOURCES, [])).toEqual([]);
   });
 });
+
+describe('836 §4 — the producer gate at the resolve site', () => {
+  /** A claim whose score IS a number, so the §15.B score gate cannot be what drops it. */
+  const scored = (scorer?: string): Claim[] => [
+    {
+      sentenceIndex: 0,
+      sentenceText: 'The lock held.',
+      ...(scorer !== undefined ? { scorer } : {}),
+      verifiedScore: 0.62,
+      lexicalScore: 0,
+      verifiedRefs: [0],
+      lexicalRefs: [],
+    },
+  ];
+
+  it('drops a claim scored by the cosine fallback, even with a numeric score and a valid ref', () => {
+    // The point of asserting it HERE: the write sites already refuse to set a verified score for a
+    // non-cross-encoder producer, so a test that let them build the claim would pass because of the
+    // score gate and prove nothing about this one. This claim reaches the resolver fully formed.
+    expect(claimsToCitations(scored('EMBEDDING_COSINE'), SOURCES)).toEqual([]);
+    expect(claimsToCitations(scored('NONE'), SOURCES)).toEqual([]);
+  });
+
+  it('admits the cross-encoder, and admits a claim from a record older than the field', () => {
+    expect(claimsToCitations(scored('CROSS_ENCODER'), SOURCES)).toHaveLength(1);
+    expect(claimsToCitations(scored(), SOURCES)).toHaveLength(1);
+  });
+
+  it('a dropped claim is not counted as grounded — coverage counts what renders', () => {
+    const claims = scored('EMBEDDING_COSINE');
+    const marks = claimsToCitations(claims, SOURCES);
+    expect(groundingCoverage(marks, 'The lock held.').cited).toBe(0);
+  });
+});

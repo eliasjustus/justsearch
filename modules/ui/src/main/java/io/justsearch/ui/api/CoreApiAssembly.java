@@ -528,13 +528,19 @@ final class CoreApiAssembly {
 
   private static io.justsearch.app.services.lifecycle.WorkerCapability createOfflineWorkerCapability() {
     var cap = new io.justsearch.app.services.lifecycle.WorkerCapability();
-    cap.transition(io.justsearch.app.api.lifecycle.CapabilityHealth.OFFLINE, "Worker not configured");
+    cap.transition(
+        io.justsearch.app.api.lifecycle.CapabilityHealth.OFFLINE,
+        io.justsearch.app.api.lifecycle.LifecycleReasonCode.WORKER_NOT_CONFIGURED.code(),
+        "Worker not configured");
     return cap;
   }
 
   private static io.justsearch.app.services.lifecycle.WorkerCapability createFailedWorkerCapability(String error) {
     var cap = new io.justsearch.app.services.lifecycle.WorkerCapability();
-    cap.transition(io.justsearch.app.api.lifecycle.CapabilityHealth.DEGRADED, "Worker spawn failed: " + error);
+    cap.transition(
+        io.justsearch.app.api.lifecycle.CapabilityHealth.DEGRADED,
+        io.justsearch.app.api.lifecycle.LifecycleReasonCode.WORKER_SPAWN_FAILED.code(),
+        "Worker spawn failed: " + error);
     return cap;
   }
 

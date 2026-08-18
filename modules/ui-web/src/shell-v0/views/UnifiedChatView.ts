@@ -207,9 +207,13 @@ import {
   answerFrameLabel,
   groundingDegraded,
   sourcesAreChunkPrecise,
+  coverageHonesty,
+  coverageNote,
+  isVerifiedProducer,
   type AnswerFrame,
+  type CoverageHonesty,
 } from '../components/chat/evidenceProjection.js';
-import type { CitationSelectDetail } from '../components/chat/citationTypes.js';
+import type { CitationSelectDetail, SourceCoverage } from '../components/chat/citationTypes.js';
 // Tempdoc 561 surface tier: the one window is the view for EVERY interaction shape.
 import { registerViewFactory, getViewFactory } from '../router/viewFactoryRegistry.js';
 import {
@@ -393,6 +397,43 @@ function readSourceIndex(m: Record<string, unknown>): number {
   return -1;
 }
 
+/**
+ * Tempdoc 836 §4 — read the producer off a live payload or a persisted `claimMatches` record.
+ * `null` = the record predates the field, which {@link isVerifiedProducer} admits deliberately (it
+ * is an absent fact about an old record, not an unknown producer today).
+ */
+/** Tempdoc 836 S2S3-A.1 — read the per-source examination facts off a payload or a record. */
+function readSourceCoverage(payload: unknown): SourceCoverage[] {
+  if (!payload || typeof payload !== 'object') return [];
+  const raw = (payload as { sourceCoverage?: unknown }).sourceCoverage;
+  if (!Array.isArray(raw)) return [];
+  const out: SourceCoverage[] = [];
+  for (const c of raw) {
+    if (!c || typeof c !== 'object') continue;
+    const r = c as Record<string, unknown>;
+    if (
+      typeof r.sourceIndex === 'number' &&
+      typeof r.windowsConsidered === 'number' &&
+      typeof r.windowsScored === 'number'
+    ) {
+      out.push({
+        sourceIndex: r.sourceIndex,
+        windowsConsidered: r.windowsConsidered,
+        windowsScored: r.windowsScored,
+      });
+    }
+  }
+  return out;
+}
+
+function readScorer(payload: unknown): string | null {
+  if (payload && typeof payload === 'object') {
+    const s = (payload as { scorer?: unknown }).scorer;
+    if (typeof s === 'string' && s !== '') return s;
+  }
+  return null;
+}
+
 export class UnifiedChatView extends JfElement {
   static properties = {
     apiBase: { attribute: 'api-base', type: String },
@@ -568,6 +609,14 @@ export class UnifiedChatView extends JfElement {
   declare schemaAttached: boolean;
   declare thread: ThreadMessage[];
   declare citations: CitationMatch[];
+  /**
+   * Tempdoc 836 S2S3-A.2 — the current answer's coverage facts (what was examined, and what was
+   * not), or null when the run reported none. Read by the coverage line so it can distinguish
+   * "nothing supports this" from "verification did not run".
+   */
+  declare coverage: CoverageHonesty | null;
+  /** Tempdoc 836 S2S3-A.3 — the per-source examination facts behind the sources panel's third state. */
+  declare sourceCoverage: SourceCoverage[];
   declare sources: RetrievalCitation[];
   declare ragMeta: RagMetaPayload | null;
   /** Tempdoc 603 C2 — the current answer's decontextualized standalone question (transparency), or null. */
@@ -798,6 +847,8 @@ export class UnifiedChatView extends JfElement {
     this.schemaAttached = false;
     this.thread = [];
     this.citations = [];
+    this.coverage = null;
+    this.sourceCoverage = [];
     this.sources = [];
     this.ragMeta = null;
     this.rewriteNote = null;
@@ -1099,6 +1150,8 @@ export class UnifiedChatView extends JfElement {
     this.historyLocked = false;
     this.lockedSendNotice = '';
     this.citations = [];
+    this.coverage = null;
+    this.sourceCoverage = [];
     this.sources = [];
     this.claims = [];
     this.ragMeta = null;
@@ -2141,6 +2194,8 @@ export class UnifiedChatView extends JfElement {
     this.streamingText = '';
     this.errorMessage = '';
     this.citations = [];
+    this.coverage = null;
+    this.sourceCoverage = [];
     this.sources = [];
     this.ragMeta = null;
     this.rewriteNote = null;
@@ -4604,7 +4659,11 @@ export class UnifiedChatView extends JfElement {
     return html`<details class="grounding-badge">
       <summary class="grounding-badge-summary" role="status">
         <span class="grounding-dot" aria-hidden="true"></span>
-        <span>Grounded · ${cov.cited} of ${cov.total} sentences</span>
+        ${/* Tempdoc 836 S2S3-A.2 — the badge renders the PROJECTION's line rather than re-composing
+            it here. Before this, "Grounded · N of M sentences" existed twice: once as
+            `GroundingCoverage.label` and once inlined at this render site, so the honesty rules
+            added to the projection would simply not have reached the surface that shows them. */ ''}
+        <span>${cov.label}</span>
       </summary>
       <div class="grounding-why">
         <div>${cov.grounded} strong + ${cov.weak} supporting of ${cov.total} sentences cite a source.</div>
@@ -5009,11 +5068,15 @@ export class UnifiedChatView extends JfElement {
     // answer as "marks pending ⇒ grounded"; the streaming render sites pass false, the committed/reloaded
     // sites pass true. See {@link answerFrame}.
     settled = false,
+    // Tempdoc 836 S2S3-A.2 — the run's coverage facts. They change the DENOMINATOR (the backend's
+    // BreakIterator count replaces the frontend regex estimate, closing the §3.6 fork) and let the
+    // coverage line distinguish an evidence verdict from a budget shortfall.
+    honesty: CoverageHonesty | null = null,
   ): AnswerFrame {
     return answerFrame(
       shapeId,
       sourceCount,
-      groundingCoverage(coverageCites, answerText),
+      groundingCoverage(coverageCites, answerText, honesty),
       chunkPrecise,
       settled,
     );
@@ -5053,14 +5116,21 @@ export class UnifiedChatView extends JfElement {
     frame: AnswerFrame,
     degraded = false,
     receipt?: { durationMs?: number; modelLabel?: string | null },
+    // Tempdoc 836 S2S3-A.2 — the coverage line, present only when the run said verification did
+    // not fully happen. It rides the existing receipt line rather than adding a second one: the
+    // fact belongs beside the frame ("what may this answer claim?"), and a separate always-on
+    // banner would be a third persistent line under a two-line answer.
+    coverage: string | null = null,
   ): TemplateResult | typeof nothing {
     const label = answerFrameLabel(frame, degraded);
     const receiptText = this.formatReceiptTail(receipt);
-    if (label === null && !receiptText) return nothing;
+    if (label === null && !receiptText && coverage === null) return nothing;
+    const parts: Array<unknown> = [];
+    if (label !== null) parts.push(label);
+    if (coverage !== null) parts.push(html`<span class="answer-coverage">${coverage}</span>`);
+    if (receiptText) parts.push(html`<span class="answer-receipt">${receiptText}</span>`);
     return html`<div class="answer-frame answer-frame-${frame}" role="note">
-      ${label ?? nothing}${label && receiptText ? ' · ' : nothing}${receiptText
-        ? html`<span class="answer-receipt">${receiptText}</span>`
-        : nothing}
+      ${parts.map((p, i) => html`${i > 0 ? ' · ' : nothing}${p}`)}
     </div>`;
   }
 
@@ -5198,6 +5268,13 @@ export class UnifiedChatView extends JfElement {
           sources: ragSources,
           claims: this.claimsFromRecord(it.attributes.claimMatches),
           citations: this.matchesFromRecord(it.attributes.claimMatches),
+          // Tempdoc 836 S2S3-A.6f — the RELOADED turn reads its coverage facts from the same
+          // persisted payload the live turn emitted, so the two render paths cannot disagree about
+          // whether verification ran.
+          coverage: coverageHonesty(
+            it.attributes.claimMatches as Parameters<typeof coverageHonesty>[0],
+          ),
+          sourceCoverage: readSourceCoverage(it.attributes.claimMatches),
           ...(standalone ? { standaloneQuestion: standalone } : {}),
         };
         return this.renderMessage(enriched, idx);
@@ -5293,27 +5370,36 @@ export class UnifiedChatView extends JfElement {
       Array.isArray((claimMatches as { matches?: unknown }).matches)
         ? (claimMatches as { matches: Array<Record<string, unknown>> }).matches
         : [];
+    // Tempdoc 836 §4 — the PRODUCER gate on the persisted-replay path. It reads the same authority
+    // as the live handler because a gate applied to only one of the two render paths recreates the
+    // 561 P-A divergence: the same payload would mark differently live and after a reload.
+    const scorer = readScorer(claimMatches);
+    const verified = isVerifiedProducer(scorer);
     const bySentence = new Map<number, Claim>();
     for (const m of matches) {
       const idx = typeof m.sentenceIndex === 'number' ? m.sentenceIndex : 0;
       const text = typeof m.sentenceText === 'string' ? m.sentenceText : '';
-      const sim = typeof m.similarity === 'number' ? m.similarity : 0;
+      const sim = typeof m.similarity === 'number' && verified ? m.similarity : null;
       const ref = readSourceIndex(m);
       const existing = bySentence.get(idx);
       if (existing) {
-        existing.verifiedScore = Math.max(existing.verifiedScore ?? 0, sim);
-        if (ref >= 0 && !existing.verifiedRefs.includes(ref)) existing.verifiedRefs.push(ref);
+        existing.verifiedScore =
+          sim === null ? existing.verifiedScore : Math.max(existing.verifiedScore ?? 0, sim);
+        if (verified && ref >= 0 && !existing.verifiedRefs.includes(ref)) {
+          existing.verifiedRefs.push(ref);
+        }
       } else {
         bySentence.set(idx, {
           sentenceIndex: idx,
           sentenceText: text,
+          ...(scorer !== null ? { scorer } : {}),
           // Tempdoc 822 §3d/§3b — the persisted `claimMatches` come from the AUTHORITATIVE post-hoc
           // `documents.matchCitations` call (`StreamingCitationMatcher.onDone`), never from the
           // streaming lexical deltas, so a reloaded conversation's scores AND refs are verified by
           // provenance: both land on the verified side.
           verifiedScore: sim,
           lexicalScore: 0,
-          verifiedRefs: ref >= 0 ? [ref] : [],
+          verifiedRefs: verified && ref >= 0 ? [ref] : [],
           lexicalRefs: [],
         });
       }
@@ -5464,12 +5550,21 @@ export class UnifiedChatView extends JfElement {
           // renderStreamingBlock / ctrl.streamingText), so it is settled: a zero-cite chunk-precise answer
           // frames `sourced`, not "grounded" over zero sentences.
           true,
+          // Tempdoc 836 S2S3-A.2 — the turn's coverage facts, so the denominator is the backend's
+          // sentence count and the line can say why it degraded.
+          m.coverage ?? null,
         );
     const degraded = m.isExtract ? false : groundingDegraded(m.shapeId, sourceCount);
     // Search Thread S7 (tempdoc decision 6) — the receipt tail: duration from the message's own
     // captured `durationMs` (set at `send()`'s onDone; absent on a reloaded/record turn — omitted,
     // never fabricated), model name read live from aiState.
     const receipt = { durationMs: m.durationMs, modelLabel: getAiState().runtime?.modelLabel ?? null };
+    // Tempdoc 836 S2S3-A.2 — the coverage line for THIS turn, read from the same projection the
+    // frame reads. Null unless the run reported an incomplete pass, so an answer whose text was
+    // fully examined renders exactly as it did before.
+    const coverageNoteText = m.isExtract
+      ? null
+      : coverageNote(groundingCoverage(marks, m.content, m.coverage ?? null));
     return html`
       ${floorDivider}
       <div class="message assistant${inheritedClass}" data-item-id=${m.id ?? nothing} data-msg-idx=${idx}>
@@ -5482,7 +5577,7 @@ export class UnifiedChatView extends JfElement {
         ${/* Search Thread S7 — the transform-shaped "unmissable" warning stays PRE-content (its
             established position abutting the extracted result); every other frame's line is now the
             quiet receipt UNDER the answer. Exactly one of the two ever renders per turn. */ ''}
-        ${frame === 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt) : nothing}
+        ${frame === 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt, coverageNoteText) : nothing}
         ${m.isExtract
           ? // Tempdoc 565 §15.B — extract is verbatim text: the ONE renderer in `plain` format.
             html`<jf-markdown-block format="plain" .text=${m.content} frame=${frame}></jf-markdown-block>`
@@ -5498,11 +5593,12 @@ export class UnifiedChatView extends JfElement {
               ></jf-markdown-block>`
             : // Tempdoc 565 §15.B — the canonical answer block for every other mode (agent/chat).
               html`<jf-markdown-block .text=${m.content} frame=${frame}></jf-markdown-block>`}
-        ${frame !== 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt) : nothing}
+        ${frame !== 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt, coverageNoteText) : nothing}
         ${(m.sources?.length ?? 0) > 0 || (m.citations?.length ?? 0) > 0
           ? html`<jf-citations-panel
               .sources=${m.sources ?? []}
               .citations=${m.citations ?? []}
+              .sourceCoverage=${m.sourceCoverage ?? []}
               .retrievalMode=${m.ragMeta?.retrieval_mode ?? ''}
             ></jf-citations-panel>`
           : nothing}
@@ -5820,6 +5916,8 @@ export class UnifiedChatView extends JfElement {
     this.reasoning.reset();
     this.errorMessage = '';
     this.citations = [];
+    this.coverage = null;
+    this.sourceCoverage = [];
     this.sources = [];
     this.ragMeta = null;
     this.rewriteNote = null;
@@ -5881,6 +5979,10 @@ export class UnifiedChatView extends JfElement {
         if (this.citations.length > 0) msg.citations = [...this.citations];
         if (this.sources.length > 0) msg.sources = [...this.sources];
         if (this.claims.length > 0) msg.claims = [...this.claims];
+        // Tempdoc 836 S2S3-A.2 — the coverage facts are part of the turn, not of the live stream:
+        // the committed message keeps them so its frame line reads the same facts a reload will.
+        if (this.coverage) msg.coverage = this.coverage;
+        if (this.sourceCoverage.length > 0) msg.sourceCoverage = [...this.sourceCoverage];
         if (this.ragMeta) msg.ragMeta = { ...this.ragMeta };
         // Tempdoc 603 C2 — pin the decontextualized question onto the committed turn so the
         // "Interpreted as: …" line persists past the live stream (mirrors citations/ragMeta).
@@ -6004,6 +6106,17 @@ export class UnifiedChatView extends JfElement {
         const p = payload as { matches?: CitationMatch[] } | null;
         if (p && Array.isArray(p.matches)) {
           this.citations = p.matches;
+          // Tempdoc 836 S2S3-A.2 — the run's coverage facts, kept beside the matches so the frame
+          // line can say WHY it degraded (budget vs evidence) and the sources panel can tell an
+          // unexamined source from an uncited one. Same payload the record persists, so the
+          // reloaded render reads exactly the same facts (S2S3-A.6f).
+          this.coverage = coverageHonesty(p as Parameters<typeof coverageHonesty>[0]);
+          this.sourceCoverage = readSourceCoverage(p);
+          // Tempdoc 836 §4 — the PRODUCER gate, live side. A cosine-fallback score is a number on a
+          // scale the grounding thresholds are not calibrated for, so it may not become a verified
+          // score. The claim still exists (it is what arrived); it simply mints no mark.
+          const scorer = readScorer(p);
+          const verifiedProducer = isVerifiedProducer(scorer);
           // F-5 fix: derive claims from authoritative embedding matches when
           // streaming-lexical didn't fire enough deltas. StreamingCitationMatcher
           // emits rag.citation_delta only when word-overlap matches; that's too
@@ -6038,14 +6151,20 @@ export class UnifiedChatView extends JfElement {
           for (const m of p.matches) {
             const idx = m.sentenceIndex ?? 0;
             const text = m.sentenceText ?? '';
-            const sim = typeof m.similarity === 'number' ? m.similarity : 0;
+            const sim =
+              typeof m.similarity === 'number' && verifiedProducer ? m.similarity : null;
             const existing = bySentence.get(idx);
             if (existing) {
-              existing.verifiedScore = Math.max(existing.verifiedScore ?? 0, sim);
-              if (typeof m.sourceIndex === 'number') existing.verifiedRefs.add(m.sourceIndex);
+              existing.verifiedScore =
+                sim === null ? existing.verifiedScore : Math.max(existing.verifiedScore ?? 0, sim);
+              if (verifiedProducer && typeof m.sourceIndex === 'number') {
+                existing.verifiedRefs.add(m.sourceIndex);
+              }
             } else {
               const verifiedRefs = new Set<number>();
-              if (typeof m.sourceIndex === 'number') verifiedRefs.add(m.sourceIndex);
+              if (verifiedProducer && typeof m.sourceIndex === 'number') {
+                verifiedRefs.add(m.sourceIndex);
+              }
               bySentence.set(idx, {
                 text,
                 verifiedScore: sim,
@@ -6059,18 +6178,23 @@ export class UnifiedChatView extends JfElement {
             .map(([sentenceIndex, v]) => ({
               sentenceIndex,
               sentenceText: v.text,
+              ...(scorer !== null ? { scorer } : {}),
               verifiedScore: v.verifiedScore,
               lexicalScore: v.lexicalScore,
               verifiedRefs: Array.from(v.verifiedRefs),
               lexicalRefs: Array.from(v.lexicalRefs),
             }))
             .sort((a, b) => a.sentenceIndex - b.sentenceIndex);
-          // Propagate to the committed thread message if streaming has ended.
+          // Propagate to the committed thread message if streaming has ended. The coverage facts
+          // ride along (tempdoc 836 S2S3-A.6f): the committed message is what renderMessage reads,
+          // and it must hold the same facts the reloaded record supplies.
           if (!this.isStreaming) {
             const last = this.thread.at(-1);
             if (last?.role === 'assistant') {
               last.claims = [...this.claims];
               last.citations = [...this.citations];
+              last.coverage = this.coverage;
+              last.sourceCoverage = [...this.sourceCoverage];
               this.thread = [...this.thread];
             }
           }

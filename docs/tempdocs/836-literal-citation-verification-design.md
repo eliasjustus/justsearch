@@ -405,7 +405,7 @@ mark. **That is false**, and the error traces to the stale citation admitted in 
 - The Worker only ever emits matches **at or above threshold** (`CitationScorer.java:157`), so a
   skipped sentence produces no match.
 - No match ⇒ no claim ⇒ `claimsToCitations` mints nothing: the score gate
-  (`citationResolve.ts:39`) and the ref gate (`:49-52`) both drop it.
+  (`citationResolve.ts:45`) and the ref gate (`:49-52`) both drop it.
 - No citation ⇒ no `.cite-sentence` class ⇒ plain prose. And **grounded prose is also plain**:
   `.cite-sentence.grounding-grounded { border-bottom: none }` (`MarkdownBlock.ts:371-373`), with
   uncited prose deliberately unmarked (`:369-370`). A skipped sentence is **pixel-identical to a
@@ -1188,3 +1188,632 @@ SHA-256 verified identical).
 | P4 fallback prevalence | DONE (live) | unchanged |
 | P6 live cost cross-check | **DONE (live, S1)** | Decision cell PASSES (1723 ms, 15/15); 49.8 s catastrophe gone; admission arithmetic confirmed in the Worker log. CPU-contention variant (llama-server running) still unmeasured |
 | P5 Q-021 quality | parked | after S2/S3; §10.5's window dilution and §10.7's coverage gaps are inputs to it |
+
+---
+
+# S2S3-amendment — coverage honesty, and the S2/S3 implementation handoff
+
+```
+added: 2026-08-18 (post-S1, PR #466 on main)
+absorbs: §10.7 gaps 1 and 2 + a third gap found while writing this (§S2S3-A.0 item 3)
+status: DESIGN — amends §2 (staging), §3.6 (coverage), §4 (provenance), §5 (tests)
+```
+
+## S2S3-A.0 Why this amendment exists
+
+S1 shipped admission control, which preserves **sentence** coverage by cutting **windows**. That
+trade was correct — §10.6 turned the pre-registered decision cell from MISS into PASS — but it
+created a coverage axis the wire does not carry, and the live leg caught two consequences (§10.7).
+Writing the fix surfaced a third, which is the enabling one:
+
+1. **`scoring_incomplete: false` can mean "every sentence scored against 4% of your text."**
+   (§10.7 gap 1.)
+2. **A source can be starved of every window and read as merely unsupported.** (§10.7 gap 2.)
+3. **S1's honesty fields stop at the Head.** `scorer` and `sentences_scored` reach
+   `CitationMatchResult` (`DocumentService.java:413-433`) but `toCitationMatchPayload`
+   (`StreamingCitationMatcher.java:309-326`) still emits only
+   `sentencesTotal / sentencesMatched / tookMs / matches[]`. Nothing S1 added is visible to a
+   browser. So §4's FE gate ("only `CROSS_ENCODER` may set `verifiedScore`") and §3.6's coverage
+   honesty are **currently unimplementable FE-side** — not deferred, unimplementable. Found by
+   reading the payload builder, not by a test, because no test asserts the Head-to-FE hop carries
+   them.
+
+Gap 3 is why this amendment is a precondition of S2/S3 rather than a follow-up: without it, S2/S3
+would wire `SummarizeView.verifiedScore` to a payload that cannot say which producer wrote the
+score.
+
+## S2S3-A.1 Gaps 1 and 2 are one fact — per-source coverage
+
+Both questions ("how much of my text was examined?" and "was *this* source examined at all?") are
+answered by the same data, and it already exists: `PassageWindows.Prepared` carries `windowTexts`
+(kept), `windowToSource`, and `windowsConsidered` (`PassageWindows.java:68-74`). Nothing new must
+be computed — only carried.
+
+**Decision: per-source coverage is the single authority; the aggregate is derived, never
+transmitted.** Emitting both a response-level ratio and per-source counts would put one fact under
+two authorities — the exact shape this document criticises in F-048 (two producers, one field) and
+833 finding 6 (two authorities for one degradation). The response-level answer is
+`sum(windows_scored) / sum(windows_considered)`, computed by whoever needs it.
+
+### Wire (`indexing.proto`, additive)
+
+```proto
+// Tempdoc 836 S2S3-A.1 — the TEXT-coverage axis. Admission control (836 section 3.5) preserves
+// sentence coverage by cutting windows, so `sentences_scored == sentences_total` can hold while
+// most of the caller's text was never looked at. This is per source, not a response-level ratio:
+// an aggregate cannot express "source 3 got no window at all", which reads identically to
+// "source 3 supports nothing" without it.
+message SourceCoverage {
+  int32 source_index = 1;        // position in the request arrays (the 836 section 5.4 contract)
+  int32 windows_considered = 2;  // windows this source's text produced, before admission
+  int32 windows_scored = 3;      // how many survived admission and were actually scored
+}
+
+message MatchCitationsResponse {
+  // ... fields 1-7 unchanged ...
+  repeated SourceCoverage source_coverage = 8;
+}
+```
+
+The four states, and the distinction gap 2 asks for:
+
+| `considered` | `scored` | meaning | may a caller say "unsupported"? |
+|---|---|---|---|
+| 0 | 0 | no text at all — blank supply and a failed lookup | **no** — unverifiable |
+| >0 | 0 | **starved**: text existed, budget gave it no window | **no** — never examined |
+| >0 | `< considered` | partially examined | only about the part examined |
+| >0 | `== considered` | fully examined | **yes** |
+
+`windows_considered > 0 && windows_scored == 0` is the gap-2 discriminator. It is a state the
+Worker already knows — `selectWindows`'s javadoc names the risk explicitly ("every source that has
+any text keeps at least one window **while slots remain** ... a source silently losing all
+representation cannot be cited at all, which would read as 'not grounded' rather than 'not
+scored'") — and this field is what makes the Worker's own caveat legible to a caller.
+
+### Head record
+
+`CitationMatchResult` gains `List<SourceCoverage> sourceCoverage` with
+`record SourceCoverage(int sourceIndex, int windowsConsidered, int windowsScored)` plus derived
+predicates — derived, so no second authority:
+
+```java
+boolean textCoverageComplete();   // every source with considered>0 has scored == considered
+List<Integer> starvedSources();   // considered>0 && scored==0
+```
+
+`scoringIncomplete()` (`:430-432`) stays exactly as it is — it is the **sentence** axis and remains
+correct. The two axes are reported separately and never blended into one ratio.
+
+### SSE payload (closes gap 3)
+
+`toCitationMatchPayload` gains `scorer`, `sentencesScored`, and `sourceCoverage`, and each match
+entry gains `textSource`. **No `EVENT_SCHEMA` change and no codegen change**: the shape-handler
+codegen generates handler *names* from event names with `payload: unknown`
+(`gen-shape-handlers.mjs` header), so adding payload fields costs nothing in the codegen chain.
+That is worth stating plainly — it means this amendment adds zero surface to S2/S3's regen burden.
+
+## S2S3-A.2 Consumer semantics — what the honest frame line says
+
+Today `groundingCoverage` (`evidenceProjection.ts:368-384`) computes
+`total = Math.max(countSentences(answerText), cited)` and labels
+`Grounded - ${cited} of ${total} sentences`, or `Not grounded` when nothing rendered. Two things
+are wrong with that under S1's behaviour, and §3.6 only fixed the first in design:
+
+- A truncated pass lowers `cited`, so the line **understates grounding** — it attributes a budget
+  to the evidence.
+- `Not grounded` is an **evidence verdict**. When nothing was scored, the truthful statement is
+  that verification did not run.
+
+**The projection carries both axes as flags, and ONE label function reads them.** Not a precedence
+chain that collapses them early — a set, so the label can evolve without a second classifier
+appearing (the §3.6 fork lesson applied to its own fix):
+
+```ts
+interface CoverageHonesty {
+  readonly sentencesScored: number;
+  readonly sentencesTotal: number;
+  readonly sentencesIncomplete: boolean;   // sentencesScored < sentencesTotal
+  readonly textIncomplete: boolean;        // any source 0 < scored < considered
+  readonly unexaminedSources: number;      // count of starved sources (considered>0, scored==0)
+}
+```
+
+Label rules — the only place the two axes meet:
+
+| condition | line |
+|---|---|
+| complete, `cited > 0` | `Grounded - N of M sentences` (unchanged) |
+| `unexaminedSources > 0` | `Grounded - N of M sentences - K sources not examined` |
+| `textIncomplete` | `Grounded - N of M sentences - part of the text examined` |
+| `sentencesIncomplete` | `Grounded - N of M sentences - S of T sentences scored` |
+| `cited == 0` **and** any incompleteness | **`Not scored`** |
+| `cited == 0` and coverage complete | `Not grounded` (unchanged — a real verdict) |
+
+**The `Not scored` / `Not grounded` split is the load-bearing change.** It composes exactly with
+F-049: F-049 made an unresolvable claim mint nothing and let coverage degrade honestly "because
+coverage counts what renders". This amendment adds the missing half — coverage must also say *why*
+it degraded, evidence or budget. Rendering "Not grounded" over a pass that never ran is the same
+class of confident wrongness this whole document exists to remove, pointed at the answer instead of
+at a sentence.
+
+Deliberately **not** doing: a percentage of text examined in the primary line. "4% of your text"
+invites the reader to treat coverage as a quality score. The count of unexamined sources is
+actionable; a ratio is not. Keep the ratio available on the projection for a detail view.
+
+## S2S3-A.3 Gap 2 in the sources panel — a third source state
+
+`evidenceProjection.ts:389-392` documents today's binary: `cited: false` means "the source was
+retrieved but never grounded a sentence, so it MUST NOT read 'high confidence'". A starved source
+would land there and read as *examined and found wanting*. It becomes three states:
+
+- `cited` — grounded at least one claim.
+- `examined-uncited` — scored, supported nothing. Today's `cited: false`, meaning preserved.
+- `unexamined` — `windows_considered > 0 && windows_scored == 0` (starved), or `considered == 0`
+  (no text). Must not carry the "retrieved but never grounded" copy.
+
+`unexamined` is a *budget* fact, so it must not feed any grounding tier or count — the same
+containment `Claim.lexicalScore` gets under F-048: present because it is true, never a tier input.
+
+## S2S3-A.4 Composition with S2/S3's existing contract
+
+- **`DocAccess` (S3) is the first consumer that will hit both gaps in the wild.** It injects up to
+  `MAX_CONTENT_CHARS = 200_000` as ONE source — precisely §10.7's 200 KB cell, where the Worker
+  scored 5 of 134 windows and reported complete. So the coverage fields must land **with**
+  `DocAccess`'s `ATTR_VERIFICATION_SOURCES` population, not after it. Ordering inside S2+S3:
+  wire+payload (A.1) then `DocAccess` then FE consumption. Publishing the doc path first without
+  the coverage fields would ship the exact misreport §10.7 caught.
+- **`EVENT_SCHEMA` + codegen**: unchanged from §2 — one string added to `SummarizeShape:46-47`,
+  fixture regen, `gen-shape-handlers.mjs`, `check-shape-handler-regen.mjs`. Payload fields ride
+  free (A.1).
+- **`SummarizeView.verifiedScore`**: gains the §4 gate, now implementable. Same for
+  `UnifiedChatView`, which has **two** write sites — `:6044` (live) and `:5304` (the persisted
+  `claimMatches` replay). Both need the gate, or a reloaded conversation renders under different
+  rules from the live one, which is the render-path divergence 561 P-A exists to prevent.
+- **F-049 drop-the-claim**: untouched. Nothing here promotes a claim; the coverage fields only
+  explain what an absent claim means.
+
+## S2S3-A.5 P5 calibration — S2/S3 must not promise marks
+
+Three measured results say the summarize tier may show few or no marks even when everything is
+correct:
+
+- Even against the **correct** chunk, probe sentences did not clear 0.5 (max 0.3079, §9.8.2).
+- **Window-boundary dilution**: the same sentence scored 0.9984 against a bare 1,100-char passage
+  and **0.4682** once that text was the tail of a 1500-char window shared with filler (§10.5). The
+  window size is a correctness floor for truncation *and* a score-dilution knob.
+- The threshold is uncalibrated on real content (FW-009), and summary prose is a content type no
+  calibration has seen (Q-021); F-050 measured that compression starves per-sentence matching.
+
+**So S2/S3's acceptance criterion is that the chain is correct and honest — not that marks
+appear.** An implementer must not tune the threshold, the window size, or the tier boundaries to
+make marks show up; that is measurement work belonging to P5, and doing it inside S2/S3 would be
+fitting a constant to a demo.
+
+**No default-off flag** — §2's decision stands, and the P5 warning does not reopen it. The reason
+is now stronger, not weaker: if P5 shows few marks, the surface renders markless *with an honest
+coverage line* (A.2), which is a correct shipped state rather than a regression to hide. Mis-marks
+— the thing a flag would exist to contain — are unconstructible by F-049 + §5.4. P5 therefore gates
+**further investment** (calibration, window sizing), not shipping.
+
+## S2S3-A.6 Invariant tests this amendment adds
+
+Existing §5 shapes stand. New ones, each naming the wrong output it forbids:
+
+**A.6a — complete-looking response over partial text.** One 200 KB source, 15 sentences, real
+budget: assert `sentencesScored == sentencesTotal` **and** `windowsScored < windowsConsidered`
+**and** the projection does NOT report complete. *Forbids:* §10.7 gap 1 verbatim. Must fail before
+the fix — a test that passes pre-fix is the §5.6 mistake repeated.
+
+**A.6b — starved source is distinguishable.** Cap forcing starvation across at least 3 sources: the
+starved source has `considered > 0, scored == 0`, appears in no match, and projects as
+`unexamined`, not `examined-uncited`. *Forbids:* §10.7 gap 2.
+
+**A.6c — no false incompleteness.** A small request fully within budget reports
+`scored == considered` for every source and the unchanged `Grounded - N of M sentences` line.
+*Forbids:* a fix that makes every answer look partial.
+
+**A.6d — the Head-to-FE hop carries the honesty fields.** `toCitationMatchPayload` output contains
+`scorer`, `sentencesScored`, `sourceCoverage`, and per-match `textSource`. *Forbids:* gap 3
+recurring — no test asserted this hop, which is why S1's fields stopped at the Head.
+
+**A.6e — `Not scored` is not `Not grounded`.** Zero cited claims with incomplete coverage renders
+`Not scored`; zero cited claims with complete coverage renders `Not grounded`. *Forbids:* asserting
+an evidence verdict over a pass that never ran.
+
+**A.6f — replay parity.** The same `claimMatches` payload through `UnifiedChatView:5304`
+(persisted) and `:6044` (live) yields identical marks and identical coverage line. *Forbids:* the
+561 P-A divergence re-entering through the new gate.
+
+## S2S3-A.7 Implementation handoff — line map against `origin/main`
+
+Ordered by dependency. Line numbers are `origin/main` at the time of writing; re-verify before
+editing (`tempdocs-are-dated-history` applies to line maps most of all).
+
+### Stage 1 — carry the coverage fact (backend)
+
+| # | File | Line | Change |
+|---|---|---|---|
+| 1 | `modules/ipc-common/src/main/proto/indexing.proto` | 533-547 | add `message SourceCoverage` + `repeated SourceCoverage source_coverage = 8;` to `MatchCitationsResponse` |
+| 2 | `.../indexerworker/services/PassageWindows.java` | 68-74 | `Prepared` gains per-source counts: `windowsConsideredBySource`, with scored-per-source derivable from `windowToSource` — compute both in `prepare` (`:119-183`) |
+| 3 | `.../indexerworker/services/CitationMatchOps.java` | 216-232 | build the `SourceCoverage` list from `Prepared` after admission; set it on the response in **both** producer branches (CE ~`:316`, cosine ~`:313`) and on the early-return paths |
+| 4 | `.../indexerworker/services/GrpcSearchService.java` | 799-822 | pass through (no logic) |
+| 5 | `modules/app-api/.../DocumentService.java` | 413-433 | `CitationMatchResult` gains `List<SourceCoverage>`; add the `SourceCoverage` record + `textCoverageComplete()` / `starvedSources()` derived predicates |
+| 6 | `modules/app-services/.../worker/RemoteDocumentService.java` | 523, 554-563 | map `resp.getSourceCoverageList()`; the two `List.of(), 0,0,0,0, NONE` early returns need the empty list |
+
+### Stage 2 — close gap 3 (Head to browser)
+
+| # | File | Line | Change |
+|---|---|---|---|
+| 7 | `.../conversation/spi/StreamingCitationMatcher.java` | 309-326 | `toCitationMatchPayload` emits `scorer`, `sentencesScored`, `sourceCoverage`; per-entry `textSource` |
+| 8 | `modules/ui-web/src/api/streams.ts` | 33-38 | `CitationMatchesPayload` gains `scorer`, `sentencesScored`, `sourceCoverage`; `CitationMatch` (`:20-31`) gains `textSource` |
+
+No codegen step — payload fields are `unknown` to the shape-handler generator (A.1).
+
+### Stage 3 — DocAccess (the S3 half; must follow stages 1-2)
+
+| # | File | Line | Change |
+|---|---|---|---|
+| 9 | `.../conversation/spi/DocAccess.java` | 98 | replace `InjectorResult.messagesOnly(...)` with citations + verification sources: stash `ATTR_CITATIONS` **and** `ATTR_VERIFICATION_SOURCES` (`RAGContext.java:78`) carrying the injected `truncated` string, and emit `rag.citations` — mirror `SelectionContextInjector.stashCitation` (`:401-404`) and `citationsEvent` (`:406-415`) |
+| 10 | `.../conversation/spi/DocAccess.java` | 51 | `MAX_CONTENT_CHARS = 200_000` is unchanged, but §3.3 says whole-document verification is out of envelope — the coverage fields are what make that honest rather than silent |
+| 11 | — | — | **§8.4 decision required**: what `chunkIndex` does `DocAccess`'s citation carry? Model the absence; do not default to `0` (that is the residue that made this defect possible) |
+
+### Stage 4 — summarize FE chain (the S2 half)
+
+| # | File | Line | Change |
+|---|---|---|---|
+| 12 | `.../conversation/shapes/SummarizeShape.java` | 46-47 | `EVENT_SCHEMA` += `"rag.citation_matches"` |
+| 13 | `modules/app-services/src/test/.../ConversationShapeFixtureGenTest.java` | — | regenerate `scripts/codegen/shapes.fixture.json` |
+| 14 | `scripts/codegen/gen-shape-handlers.mjs` | — | run; regenerates `modules/ui-web/src/api/generated/shape-handlers/core-summarize.ts` (gains `onRagCitationMatches`). Gate: `scripts/ci/check-shape-handler-regen.mjs` |
+| 15 | `modules/ui-web/src/shell-v0/views/SummarizeView.ts` | 343-372 | add `onRagCitationMatches`; stop hardcoding `verifiedScore: null` (`:366`); apply the §4 scorer gate |
+
+### Stage 5 — coverage semantics (FE projection)
+
+| # | File | Line | Change |
+|---|---|---|---|
+| 16 | `.../components/chat/evidenceProjection.ts` | 368-384 | `groundingCoverage` takes the coverage facts; implement the A.2 label table; keep `groundingClass` as the ONE tier authority |
+| 17 | `.../components/chat/evidenceProjection.ts` | 360-361 | retire `countSentences` as the denominator — the backend's `BreakIterator` count (`CitationMatchOps.java:290-305`) is the authority (§3.6 fork) |
+| 18 | `.../components/chat/evidenceProjection.ts` | 389-392 | source state becomes three-valued (A.3) |
+| 19 | `.../components/chat/citationResolve.ts` | 39, 49-52 | existing gates unchanged; add the §4 producer gate — a non-`CROSS_ENCODER` score may not populate `Citation.similarity` |
+| 20 | `.../views/UnifiedChatView.ts` | 6044 **and** 5304 | apply the scorer gate at **both** write sites (live + persisted replay) |
+
+### Verification
+
+`./gradlew.bat build -x test` plus `:modules:worker-services:test :modules:app-services:test
+:modules:app-api:test`; `cd modules/ui-web && npm run typecheck && npm run test:unit:run`;
+`node scripts/ci/check-shape-handler-regen.mjs`. Live leg: the seam has no supplying caller through
+the UI while selection-summarize stalls (§9.9), so drive `DocAccess` via a `core.summarize` dispatch
+with `docId` (no selection) — that path does not depend on the stall.
+
+## S2S3-A.8 Open questions
+
+1. **Does the stall (§9.9) block S2/S3's live verification?** The `docId` path should avoid it, but
+   that is an inference from where the stall appears, not a measurement. Verify early — if the
+   `docId` path stalls too, S2/S3 has no live leg at all and that changes its acceptance bar.
+2. **Should a starved source be retried outside the turn?** A budget-starved source is knowable and
+   re-scorable later; nothing here proposes it, and a background pass would need its own
+   evidence-record story (561 P-A). Named so it is a decision, not an omission.
+3. **Is `unexamined` a per-turn or per-source-lifetime fact?** If the same source is examined in a
+   later turn, does the earlier turn's record update? Current answer: no — the evidence record is
+   per turn — but the sources panel spans turns, so the projection needs a rule.
+4. **§8.4 remains open and is now blocking stage 3** (`DocAccess`'s `chunkIndex`).
+5. **Does the A.2 label survive a narrow viewport?** Four variants, the longest being
+   `Grounded - N of M sentences - K sources not examined`. Presentation-authority work needs the
+   measured UX audit (`ux-audit-closure`), not an eyeball.
+
+---
+
+## S2S3-IMPL — implementation log (S2+S3, 2026-08-18)
+
+```
+implements: S2S3-A.1 … A.7 (all five stages, all 20 edit sites)
+branch: citation-coverage-s2-s3
+base: origin/main @ 010d59f8
+status: IMPLEMENTED + VERIFIED LIVE (S2S3-IMPL.6) — A.8 question 1 answered: the docId path does not stall
+```
+
+### IMPL.1 What landed, by stage
+
+**Stage 1 — carry the coverage fact.**
+
+| # | Site | What |
+|---|---|---|
+| 1 | `indexing.proto:533-570` | `message SourceCoverage` + `repeated SourceCoverage source_coverage = 8` on `MatchCitationsResponse`, with the four-state table in the comment |
+| 2 | `PassageWindows.java:68-150` | `Prepared` gains `windowsConsideredBySource`; `windowsScoredAt(i)` is DERIVED from `windowToSource` (the admitted set) rather than stored beside it, so the two counts cannot drift |
+| 3 | `CitationMatchOps.java:266, 329, 341-362` | `sourceCoverage(prepared, scored)` set on the CE branch, the cosine branch, and the post-preparation early returns |
+| 4 | `GrpcSearchService.java` | **no edit needed** — `matchCitations` already forwards the response object whole; A.7's "pass through (no logic)" is satisfied by construction |
+| 5 | `DocumentService.java:431-505` (+ `CHUNK_INDEX_ABSENT` at `:273`) | `record SourceCoverage(sourceIndex, windowsConsidered, windowsScored)` with `starved()` / `noText()` / `fullyExamined()`, plus `CitationMatchResult.textCoverageComplete()` / `starvedSources()` — all derived, no second authority |
+| 6 | `RemoteDocumentService.java:523, 554-577` | maps `resp.getSourceCoverageList()` verbatim; the two early returns carry `List.of()` |
+
+**Stage 2 — close gap 3.** `StreamingCitationMatcher.toCitationMatchPayload` (`:326-365`) emits `scorer`,
+`sentencesScored`, `sourceCoverage`, and per-match `textSource`. `streams.ts:24-80` follows
+(`CitationMatch.textSource?`, `SourceCoverage`, `CitationMatchesPayload.scorer/sentencesScored/sourceCoverage`).
+
+**Stage 3 — `DocAccess`.** `DocAccess.java:71-160` stashes `ATTR_VERIFICATION_SOURCES` +
+`ATTR_CITATIONS` + `ATTR_USED_RAG` and emits `rag.citations`, supplying the injected `truncated`
+string as the verification text.
+
+**Stage 4 — summarize FE chain.** `SummarizeShape.EVENT_SCHEMA` += `rag.citation_matches`;
+`shapes.fixture.json` regenerated via `-Dupdate.shapes.fixture=true`; `gen-shape-handlers.mjs` run
+(`core-summarize.ts` gains `onRagCitationMatches`); `check-shape-handler-regen` green.
+`SummarizeView.ts` gains the handler with the §4 gate and stops being verified-score-less by
+construction.
+
+**Stage 5 — coverage semantics.** `evidenceProjection.ts` gains `CoverageHonesty` +
+`coverageHonesty()` (flags as a SET), the A.2 label table inside ONE `coverageLabel` function,
+`SourceExamination` three-valued state on `sourceGrounding`, and the `isVerifiedProducer` gate.
+`citationResolve.ts:45` adds the producer gate beside the existing score gate. `UnifiedChatView.ts`
+applies the gate at BOTH write sites (`:6158` live, `:5386` persisted replay). `CitationsPanel.ts`
+gives unexamined sources their own group.
+
+### IMPL.2 Three decisions the handoff left open
+
+**§8.4 — what `chunkIndex` does `DocAccess` carry (A.7 item 11).** The absence is already modelled
+in this repo: `AgentSession.DOC_LEVEL_SENTINEL = -1` and the frontend's `DOC_LEVEL_CHUNK_SENTINEL =
+-1` both mean "document-level, no chunk identity". So the answer is not a new representation but the
+existing one — `ContextCitation.CHUNK_INDEX_ABSENT = -1`.
+
+Making it *usable* required a fix the handoff did not anticipate: `ContextCitation`'s compact
+constructor clamped `chunkIndex = Math.max(0, chunkIndex)`, which **destroyed the sentinel** —
+`-1` became `0`. That was already live on the agent path (`AgentCitationResolver.java:71` passes a
+doc-level source's `-1` straight into a `ContextCitation`), so an agent's document-level source was
+silently being verified against chunk 0 of its document: the 836 defect, in a second place, unnoticed.
+The clamp is now `Math.max(CHUNK_INDEX_ABSENT, chunkIndex)`, and `CitationMatchOps.prepareWindows`
+refuses to look up a negative ordinal rather than searching for "chunk -1".
+
+**A zero-match result now emits.** `StreamingCitationMatcher.onDone` returned early on
+`matches().isEmpty()`. That is precisely the case A.2 is about — "nothing was examined" and
+"everything was examined and supports nothing" are the same empty match list — so suppressing the
+event left the consumer no choice but to render an evidence verdict over a pass that may never have
+run. It now emits whenever the result is non-null. No existing test asserted the suppression.
+
+**Where the label renders.** A.2 treats `groundingCoverage`'s `label` as the user-facing line. It was
+not: `UnifiedChatView.renderGroundingBadge` re-composed `Grounded · N of M sentences` inline, so the
+projection's label had no render site at all — the same one-fact-two-authorities shape this
+amendment exists to close, one level up. The badge now renders `cov.label`, and `renderMessage`
+passes a `coverageNote` into the existing answer-frame receipt line. The note renders ONLY when the
+run reported an incomplete pass (`coverageNote` returns `null` otherwise): a permanent
+"…and all of it was examined" line is noise, and noise is what gets skipped.
+
+### IMPL.3 Wording
+
+The A.2 table renders with the shipped `·` separator, not the `-` of the doc's plain-text table —
+A.2 marks the base line "(unchanged)", and unchanged means the shipped `Grounded · N of M sentences`.
+Variants, verbatim otherwise: `· K sources not examined` (singular "source" at K=1),
+`· part of the text examined`, `· S of T sentences scored`, `Not scored`, `Not grounded`.
+The measured UX audit (`ux-audit-closure`, A.8 question 5 — four variants, narrow viewport) is a
+**named follow-up, not done here**.
+
+### IMPL.4 The producer gate's one deliberate allowance
+
+`isVerifiedProducer` admits an ABSENT `scorer`. The field is emitted on every response since S1, so
+absence means a record persisted *before* the field existed — treating those as unverified would
+strip marks from every historical conversation, an evidence claim about data we have no evidence
+about. A KNOWN non-cross-encoder producer fails closed. Pinned by
+`UnifiedChatView.test.ts` ("a record written before the producer field existed keeps its marks").
+
+### IMPL.5 Verification — what was run, and the fail-first evidence
+
+**A.6 tests.** a/b/c + the no-text and no-producer cases:
+`CitationMatchOpsCoverageTest` (5 tests, worker-services). d:
+`StreamingCitationMatcherPayloadTest` (4, app-services). e + the A.6a/A.6c projection halves +
+the A.6b source-state half + the gate: `evidenceProjection.coverage.test.ts` (20, ui-web) and 3
+added to `citationResolve.test.ts` for the resolve-site gate. f:
+`UnifiedChatView.test.ts` (4 new). Plus `DocAccessCitationTest` (6) for stage 3 and
+`CitationMatchesDeclarationTest` (2) for §5.11.
+
+**A.6d fails before the fix — recorded.** Reverting `toCitationMatchPayload` to its pre-S2/S3 shape
+(dropping `scorer`, `sentencesScored`, `sourceCoverage`, per-match `textSource`) fails 3 of the 4
+payload tests. The 4th (live payload == persisted payload) still passes, correctly: it is a parity
+test, not a field test, and both sides are the same map either way.
+
+**A.6a fails before the fix — recorded.** Mutating `sourceCoverage(...)` to report
+`windowsScored := windowsConsidered` — the dishonest "everything was examined" report, i.e. exactly
+what §10.7 gap 1 describes — fails BOTH `completeSentencesOverPartialText` (A.6a) and
+`starvedSourceIsDistinguishable` (A.6b, the gap-2 discriminator). Restored; green.
+
+**Two-write-site gate, mutation-probed both ways.** Removing the producer gate from the LIVE site
+only fails `A.6f — a cosine-fallback payload mints no verified score on EITHER path`; removing it
+from the PERSISTED-REPLAY site only fails the same test. Restored; 199/199 green. That is the
+551/561 P-A property under test: neither half alone satisfies it.
+
+**Suites.** `./gradlew.bat build -x test -PskipWebBuild=true` green; `./gradlew.bat test` green
+(full unit suite, 4m17s). `npm run typecheck` clean; `npm run test:unit:run` **422 files / 5184
+tests, 0 failures** (baseline before this work: 421 / 5157).
+
+**Live leg.** Run — see IMPL.6. A.8 question 1 answered, all eight live checks PASS, stack torn
+down and verified.
+
+**Gates.** The full `ui-web-gates` recipe + shell-v0 subsets + the kernel set
+(`ambient-purity`, `style-literal-ratchet`, `atom-fork-ratchet`, `modality-contract`,
+`transient-arbitration`, `modal-arbitration`) + `execution-surface` / `operation-surface`: green.
+Three gates are RED and were RED on `origin/main` before this branch:
+`check-theme-token-closure` and `check-accent-as-text` (both in `expected-state.v1.json`), and
+`check-controls-a11y` (**not** in expected-state — verified pre-existing by stashing this branch's
+`UnifiedChatView.ts` and re-running; logged to the observations inbox).
+
+### IMPL.5b Post-implementation critical-analysis pass — two findings, both fixed
+
+Run per `critical-analysis-pass` after the suites were green.
+
+1. **The resolver's producer gate was passing for the wrong reason.** A.7 item 19 asks for the §4
+   gate in `claimsToCitations`, and the test that appeared to cover it asserted `resolved === []`
+   for a cosine payload — but the write sites had already refused to set a verified score, so the
+   EXISTING score gate is what dropped the claim. The producer gate could have been absent and the
+   test would still pass. Fixed by testing the resolver directly with a fully-formed claim (numeric
+   score, valid ref, cosine producer); mutation-probed — removing the gate fails 2 tests.
+2. **`SummarizeView` stored a coverage it never rendered.** The handler set `this.coverage` and
+   nothing read it — substrate without a consumer, on the very surface S2 exists to make honest.
+   Whole-document summarize is §3.3's out-of-envelope case, so a markless answer there is usually a
+   budget fact, and saying nothing leaves the reader to conclude the document supports none of it.
+   The view now renders the same `coverageNote` the chat window does, through the same projection.
+
+### IMPL.6 The live leg — RUN, and A.8 question 1 is ANSWERED
+
+Stack: this worktree's dist (`distFrom`), own lease, pinned API port 57901, torn down and verified
+afterwards (IMPL.6f). Corpus: `docs/explanation` (30 docs). Scorer: the shipped
+`ms-marco-MiniLM-L-6-v2`, auto-discovered from the shared `models/onnx/citation-scorer`. LLM:
+`Qwen_Qwen3.5-9B-Q4_K_M` on the shared cuda12 runtime (fresh dev-data carries no AI packages, so
+the staged cuda12 variant was linked in read-only and `llm.modelPath` pointed at the shared GGUF).
+
+#### IMPL.6a Instrument correction (recorded, per interrogate-results)
+
+Round 1 posted `{shapeId, body:{docId}}` and got a terminal `error` after 90 s —
+`Jinja Exception: No user query found in messages`, with NO `rag.citations` frame. Read as a
+finding that would have been "the doc path injects nothing". It was a **wrong probe premise**: the
+frontend posts `{ shapeId, ...body }` **flattened** (`capabilities/ai.ts:44-50`), so `docId` never
+reached `requestBody()` and `DocAccess` correctly returned empty for a request with no document.
+The template error was the honest downstream consequence of an empty message list. Round 2 used the
+frontend's own body shape.
+
+#### IMPL.6b A.8 Q1 — the `docId` path does NOT stall
+
+**Answered: it streams to completion.** The design could only infer this from where the §9.9 stall
+appears; measured, the inference holds.
+
+```
+POST /api/chat/dispatch  {shapeId: core.summarize, docId: …18-adapters-lucene-deep-dive.md}
+  events: rag.citations 1 | reasoning_chunk 512 | chunk 293 | rag.citation_delta 2
+          rag.citation_matches 1 | done 1
+  firstChunk 9,899 ms   done 16,461 ms   answer 1,193 chars
+```
+
+The §9.9 stall is therefore **specific to the selection path**, not to `core.summarize`. S2/S3 has a
+live leg; A.8 Q1 closes.
+
+#### IMPL.6c Stage 3 on the wire — `DocAccess` publishes, with the absence modelled
+
+The first frame of that stream:
+
+```
+event: rag.citations
+data: {"citations":[{"parentDocId":"…18-adapters-lucene-deep-dive.md",
+       "chunkIndex":-1,"chunkTotal":1,"startChar":0,"endChar":22799,"score":1.0,
+       "excerpt":"---\ntitle: Adapters-Lucene Deep Dive\n…"}]}
+```
+
+`chunkIndex: -1` — the ABSENT sentinel, on the wire, where §9.8.1 measured a fabricated `0`. The
+matcher then reported `text_source: SUPPLIED` on every match, so it scored the injected literal
+text and not a chunk lookup: the doc path is no longer starved (833 finding 4 closed).
+
+#### IMPL.6d Stage 1+2 on the wire — every honesty field arrives
+
+Two runs of the same document (LLM sampling differs, so the sentence counts differ):
+
+```
+run A   scorer=CROSS_ENCODER  sentencesScored=16/16  sourceCoverage=[{0, considered 16, scored  5}]  matches=8
+run B   scorer=CROSS_ENCODER  sentencesScored=33/34  sourceCoverage=[{0, considered 16, scored  2}]  matches=6
+ask     scorer=CROSS_ENCODER  sentencesScored=10/10  sourceCoverage=[{0,2,2},{1,2,2},{2,2,2},{3,2,1},{4,2,1}]  matches=7
+```
+
+Payload keys observed: `sourceCoverage, tookMs, sentencesTotal, scorer, matches, sentencesScored,
+sentencesMatched`; per match `textSource`. **Gap 3 is closed on the wire, not only in a test.**
+
+**Run A is §10.7 gap 1, reproduced and now legible**: `sentences_scored == sentences_total` (16 of
+16 — the sentence axis says "complete") while **5 of 16 windows** were examined. Before this slice
+the response carried nothing that could contradict the first number.
+
+`done.claimMatches` carried a byte-identical map to the live event on every run, so the persisted
+record and the live stream are judged by the same facts by construction.
+
+#### IMPL.6e Consumer semantics, over the REAL payloads
+
+The captured wire payloads were fed through the REAL projection (`coverageHonesty` →
+`groundingCoverage` → `coverageNote`, and both `verifiedScore` write sites) in a throwaway harness
+— uncommitted, in the §9 tradition. Observed, verbatim:
+
+```
+summarize (run B)  honesty {sentencesIncomplete:true, textIncomplete:true, unexamined:0, ratio 0.125}
+                   line    "Grounded · 6 of 34 sentences · part of the text examined"
+                   replay  "Grounded · 6 of 34 sentences · part of the text examined"   (identical)
+ask                marks 7, line "Grounded · 7 of 10 sentences · part of the text examined"
+                   textSource=CHUNK_LOOKUP; replay claims identical to live
+```
+
+The denominator is the backend's `BreakIterator` count (34), not the frontend regex estimate —
+§3.6's fork is closed on live data.
+
+**Gap 2, forced live** through `POST /api/knowledge/match-citations` (5 sources × 40 sentences ×
+10 KB, real 2000 ms budget — §10.7's `10000/5/40` cell):
+
+```
+scorer=CROSS_ENCODER  sentences 23/40  scoring_incomplete=true  text_coverage_complete=false
+starved_sources=[2,3,4]
+source_coverage=[{0: 7 considered, 1 scored}, {1: 7,1}, {2: 7,0}, {3: 7,0}, {4: 7,0}]
+matches=22, all against source 0
+
+projected:  source 0  state=cited            "Grounds 22 sentences"
+            source 1  state=examined-uncited "Retrieved · not cited"
+            source 2  state=unexamined       "Retrieved · not examined"
+            source 3  state=unexamined       "Retrieved · not examined"
+            source 4  state=unexamined       "Retrieved · not examined"
+            line      "Grounded · 1 of 40 sentences · 3 sources not examined"
+            zero-cite "Not scored"           (NOT "Not grounded")
+```
+
+All three source states occur in ONE real response, and the three incomplete label variants plus
+`Not scored` were produced from live wire data rather than hand-built fixtures. Pre-S2/S3, sources
+2-4 would have rendered as "Retrieved · not cited" — an evidence verdict over text nothing read.
+
+#### IMPL.6f Verdicts, and what the live leg changed
+
+| Check | Verdict |
+|---|---|
+| A.8 Q1 — does the `docId` path stall? | **NO** — streams to `done` in 16.5 s |
+| Stage 1+2: honesty fields on the wire | **PASS** — `scorer` / `sentencesScored` / `sourceCoverage` / per-match `textSource` |
+| Stage 3: `DocAccess` populates, absence modelled | **PASS** — `rag.citations` with `chunkIndex: -1`, `textSource: SUPPLIED` |
+| Gap 1: complete-looking over partial text | **PASS** — 16/16 sentences over 5/16 windows, and the line says so |
+| Gap 2: starved source distinguishable | **PASS** — `starved_sources=[2,3,4]`, projected `unexamined` |
+| `Not scored` ≠ `Not grounded` | **PASS** — observed on the live starved payload |
+| Replay parity (both write sites) | **PASS** — identical claims and identical line from `done.claimMatches` |
+| Ask-tier regression | **PASS** — marks still mint (7), real chunk ordinals, `CHUNK_LOOKUP` |
+
+**One change the live leg forced.** `RetrieveContextController`'s `match-citations` response
+published `sentences_scored` (S1) but not the text axis — so the endpoint the seam is MEASURED
+through would have been the last surface reporting "complete" over a partial read. It now publishes
+`source_coverage`, `text_coverage_complete` and `starved_sources`
+(`RetrieveContextControllerCoverageTest`, 3 tests). This is an addition beyond A.7's 20 sites,
+recorded rather than folded in silently.
+
+**Observed consequence worth naming.** The ask tier's line now commonly reads
+"· part of the text examined": with 5 retrieved chunks and 10 answer sentences the budget admits 8
+of 10 windows, so the qualifier is *true* on ordinary ask turns, not only on pathological ones.
+That is honest, but it is a visible change to a high-traffic surface and it is exactly what the
+`ux-audit-closure` follow-up (A.8 question 5) should judge.
+
+**P5 held.** No threshold, window size, or tier boundary was touched at any point, and no run was
+repeated to make marks appear. Marks did appear on the doc path (0.96–0.98 similarity) because the
+literal text is supplied — S1+S3 working, not tuning.
+
+#### IMPL.6g Teardown
+
+Stopped via the dev tool (`portsClosed: true`, `devRunnerOk: true`, exit 0). Verified afterwards:
+`quick_health` reports `running: false`; **0** `llama-server.exe`; **0** `HeadlessApp`/
+`IndexerWorker` java processes; ports 57901 and 5173 have no listeners; no JustSearch process on
+the GPU. The cuda12 runtime was consumed read-only from the main checkout (copied in, never
+modified there) and the shared GGUF was read-only.
+
+### IMPL.7 P5 — no thresholds were touched
+
+No threshold, window size, or tier boundary was changed. Per A.5 the acceptance criterion is that
+the chain is correct and honest, not that marks appear; `PassageWindows.WINDOW_CHARS`,
+`DEFAULT_SIMILARITY_THRESHOLD`, `UNIT_COST_MS` and the grounding tiers are untouched, and no test
+here asserts that a mark appears.
+
+### IMPL.8 Named follow-ups (logged to the inbox, not done here)
+
+- The measured UX audit of the four coverage-label variants (A.8 question 5). **Sharpened by the
+  live leg**: the ask tier's line now commonly carries "· part of the text examined" (IMPL.6f), so
+  the audit is judging a high-traffic surface, not an edge case.
+- **§9.9's selection-summarize stall is still unfixed and still unexplained.** IMPL.6b establishes
+  it is NOT a `core.summarize` problem — the same shape streams fine with `docId` — which narrows it
+  to the selection path and makes it a sharper bug report than 836 could write. Still out of scope.
+- `SelectionContextInjector.citationsEvent` still hardcodes `chunkIndex: 0` in its SSE map; §8.4's
+  answer applies there too, but S1 shipped it and changing it moves `sourcesAreChunkPrecise` for
+  selection sources — out of this slice's scope.
+- `search-v2/records.ts:435` `groundedSentencesLabel` is a THIRD phrasing of the coverage line,
+  independent of `groundingCoverage`.
+- The agent path (`renderGroundingBadge`) reads the label authority but has no coverage facts to
+  give it: `AgentEventPayloads` does not carry `CitationMatchResult`'s coverage. The honest variants
+  therefore cannot appear there yet.
+- A.8 questions 2 (retry a starved source out of turn) and 3 (is `unexamined` per-turn or
+  per-source-lifetime) remain open decisions, untouched.

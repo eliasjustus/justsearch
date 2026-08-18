@@ -28,47 +28,68 @@ import fs from 'node:fs';
 const OPUS_CURRENT = { input: 5.0, output: 25.0, cache_write_5m: 6.25, cache_write_1h: 10.0, cache_read: 0.50 };
 const OPUS_LEGACY = { input: 15.0, output: 75.0, cache_write_5m: 18.75, cache_write_1h: 30.0, cache_read: 1.50 };
 const SONNET_STANDARD = { input: 3.0, output: 15.0, cache_write_5m: 3.75, cache_write_1h: 6.0, cache_read: 0.30 };
-const SONNET_5_INTRO = { input: 2.0, output: 10.0, cache_write_5m: 2.5, cache_write_1h: 4.0, cache_read: 0.20 };
 const HAIKU_4_5 = { input: 1.0, output: 5.0, cache_write_5m: 1.25, cache_write_1h: 2.0, cache_read: 0.10 };
 
 /**
- * Sonnet-5 is $2/$10 through 2026-08-31 and $3/$15 from 2026-09-01. A turn is priced by
- * its own `entry.timestamp`; a turn with no timestamp is priced at the enduring standard
- * rate (the intro window is the exception, so the exception is what needs proof).
+ * Sonnet-5 is a FLAT $2/$10 — no dated cliff (tempdoc 841, re-verified against
+ * platform.claude.com/docs/en/about-claude/pricing 2026-08-18).
+ *
+ * This was previously a two-step `schedule` because $2/$10 was announced as
+ * introductory pricing through 2026-08-31, rising to $3/$15 on 2026-09-01. That
+ * increase was CANCELLED — the pricing page now states the introductory rate
+ * "is now the standard price" and that the scheduled increase "will not occur".
+ *
+ * The schedule is deleted rather than left with a far-future cliff date: a dated
+ * rule that nobody re-checks is a time bomb, and this one was ~2 weeks from
+ * silently overpricing every Sonnet-5 turn by 50% with no symptom (the total
+ * would simply have been larger, and still plausible). `SONNET_5_INTRO_ENDS_MS`
+ * and `SONNET_5_INTRO` are gone with it — they had no consumer outside this file.
  */
-export const SONNET_5_INTRO_ENDS_MS = Date.parse('2026-09-01T00:00:00.000Z');
+const SONNET_5 = { input: 2.0, output: 10.0, cache_write_5m: 2.5, cache_write_1h: 4.0, cache_read: 0.20 };
 
 /**
- * Fast mode (`/fast`) bills Opus at a premium and is recorded per-turn as
+ * Fast mode bills Opus at a premium and is recorded per-turn as
  * `message.usage.speed` — "standard" | "fast" (null on transcripts predating the
  * field). Verified corpus-wide 2026-07-16: 59,332 turns, ALL "standard", zero
  * "fast" — so this table currently prices nothing and is forward-looking only.
- * It exists because the alternative is silent: without it, one `/fast` toggle
- * would understate Opus 4.8 by 2x with no symptom, and the cheap-to-add case is
+ * It exists because the alternative is silent: without it, one fast-mode toggle
+ * would understate Opus by 2x with no symptom, and the cheap-to-add case is
  * exactly the one that goes unnoticed for a month.
  *
- * Rates verified at platform.claude.com/docs/en/about-claude/pricing (fast mode
- * is Opus 4.8 / 4.7 only; 4.6 runs standard-speed at standard rates as of
- * 2026-06-29). Cache multipliers stack ON TOP of fast pricing, per that page:
- * 5m write = 1.25x input, 1h write = 2.0x input, cache read = 0.1x input.
+ * Rates re-verified at platform.claude.com/docs/en/about-claude/pricing
+ * (2026-08-18, tempdoc 841). Fast mode is **Opus 5 and Opus 4.8 only**, both at
+ * $10/$50. Two corrections landed with that check:
+ *   - `claude-opus-4-7` had a $30/$150 row here. Fast mode is NOT available on
+ *     Opus 4.7 at all — such requests return an error — so the row described a
+ *     state that cannot occur, at a rate 3x the real premium. Removed; a "fast"
+ *     4.7 turn now falls back to standard AND is surfaced by
+ *     isFastPricedCorrectly(), which is the honest handling.
+ *   - `claude-opus-5` was missing despite supporting fast mode.
+ * Cache multipliers stack ON TOP of fast pricing, per that page: 5m write =
+ * 1.25x input, 1h write = 2.0x input, cache read = 0.1x input.
  */
-const OPUS_4_8_FAST = { input: 10.0, output: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 };
-const OPUS_4_7_FAST = { input: 30.0, output: 150.0, cache_write_5m: 37.5, cache_write_1h: 60.0, cache_read: 3.00 };
+const OPUS_FAST = { input: 10.0, output: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 };
 
 export const FAST_PRICING = {
-  'claude-opus-4-8': OPUS_4_8_FAST,
-  'claude-opus-4-7': OPUS_4_7_FAST,
+  'claude-opus-5': OPUS_FAST,
+  'claude-opus-4-8': OPUS_FAST,
 };
 
 export const PRICING = {
   'claude-fable-5':             { input: 10.0, output: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 },
+  // Opus 5 was ABSENT until tempdoc 841. findPricing fails closed, so it did not
+  // mis-price anything — it priced 36,514 turns and 7.93G cache-read tokens
+  // (51.9% of all cache-read in the local corpus) at exactly $0, and every
+  // baseline-economics / cost-session total silently excluded the busiest model.
+  // Rates are identical to Opus 4.8, verified 2026-08-18.
+  'claude-opus-5':              OPUS_CURRENT,
   'claude-opus-4-8':            OPUS_CURRENT,
   'claude-opus-4-7':            OPUS_CURRENT,
   'claude-opus-4-6':            OPUS_CURRENT,
   'claude-opus-4-5':            OPUS_CURRENT,
   'claude-opus-4-1':            OPUS_LEGACY,
   'claude-opus-4-20250514':     OPUS_LEGACY,
-  'claude-sonnet-5':            { schedule: [{ before: SONNET_5_INTRO_ENDS_MS, pricing: SONNET_5_INTRO }, { pricing: SONNET_STANDARD }] },
+  'claude-sonnet-5':            SONNET_5,
   'claude-sonnet-4-6':          SONNET_STANDARD,
   'claude-sonnet-4-5-20250929': SONNET_STANDARD,
   'claude-haiku-4-5':           HAIKU_4_5,
@@ -114,8 +135,12 @@ function findEntry(model) {
  * at Sonnet rates, producing a plausible-looking but silently wrong dollar figure.
  * Callers must treat null as "cannot price" ($0 + surfaced via isKnownModel).
  *
- * `timestampMs` selects the dated row for models with a price schedule
- * (Sonnet-5's intro window); null/omitted resolves to the undated standard row.
+ * `timestampMs` selects the dated row for models with a price `schedule`;
+ * null/omitted resolves to the undated row. **No model currently uses a
+ * schedule** — Sonnet-5's was the only one and its cliff was cancelled
+ * (tempdoc 841). The mechanism is kept because dated price changes recur and
+ * re-deriving it costs more than carrying it; it is called out as unused here
+ * so nobody reads the code and infers a live dated rule exists.
  *
  * `speed` is the turn's `message.usage.speed` ("standard" | "fast" | null). Only
  * "fast" changes anything, and only for the Opus models that offer it; anything

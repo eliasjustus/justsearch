@@ -55,8 +55,8 @@ public final class CapabilityHealthBridge {
     Clock clock = Clock.systemUTC();
     worker.addListener((prev, next) -> {
       pushCondition(
-          "worker.capability", "worker", next, worker.pendingReason(), Severity.WARNING,
-          conditionStore, changeRegistry, headSource, clock);
+          "worker.capability", "worker", next, worker.pendingReason(), worker.pendingDetail(),
+          Severity.WARNING, conditionStore, changeRegistry, headSource, clock);
       // Tempdoc 627: narrate the supervised-recovery loop as one-shot occurrences in the RECENT EVENTS
       // stream (the timeline) — distinct from the persistent condition above. The terminal give-up
       // (→ DEGRADED + restart_exhausted) is left to the condition; only the transient milestones emit.
@@ -70,7 +70,8 @@ public final class CapabilityHealthBridge {
         return;
       }
       pushCondition(
-          "inference.capability", "inference", next, inference.pendingReason(), Severity.INFO,
+          "inference.capability", "inference", next, inference.pendingReason(),
+          inference.pendingDetail(), Severity.INFO,
           conditionStore, changeRegistry, headSource, clock);
     });
 
@@ -83,21 +84,32 @@ public final class CapabilityHealthBridge {
     // idempotent UNCHANGED no-op. Mirrors the inference PENDING skip above.
     if (worker.health() != CapabilityHealth.PENDING) {
       pushCondition(
-          "worker.capability", "worker", worker.health(), worker.pendingReason(), Severity.WARNING,
+          "worker.capability", "worker", worker.health(), worker.pendingReason(),
+          worker.pendingDetail(), Severity.WARNING,
           conditionStore, changeRegistry, headSource, clock);
     }
     if (inference.health() != CapabilityHealth.PENDING) {
       pushCondition(
           "inference.capability", "inference", inference.health(), inference.pendingReason(),
+          inference.pendingDetail(),
           Severity.INFO, conditionStore, changeRegistry, headSource, clock);
     }
   }
 
+  /**
+   * Tempdoc 837 §0.2: the Condition {@code message} is one of the two places a HUMAN sentence
+   * legitimately belongs (the other is the 503 debug body), so it prefers the capability's
+   * {@code pendingDetail()} — "Health check failed after 4200ms", the corrupt-index remedy paragraph
+   * — and falls back to the reason CODE only when there is no sentence. Before the prose→code sweep
+   * this field carried the sentence by accident, because the sentence WAS the reason; passing the
+   * code alone would have silently degraded every Health event to a bare token.
+   */
   private static void pushCondition(
       String condId,
       String subject,
       CapabilityHealth health,
       String reason,
+      String detail,
       Severity severity,
       ConditionStore conditionStore,
       HealthEventChangeRegistry changeRegistry,
@@ -110,12 +122,13 @@ public final class CapabilityHealthBridge {
             .ifPresent(removed ->
                 changeRegistry.broadcast(HealthEventChangeRegistry.Kind.CONDITION_REMOVED, removed));
       } else {
+        String message = detail != null && !detail.isBlank() ? detail : reason;
         AssertedCondition condition = new AssertedCondition(
             subject,
             ConditionStatus.TRUE,
             toPascalCase(health.name()),
             Instant.now(clock),
-            Optional.ofNullable(reason),
+            Optional.ofNullable(message),
             Optional.empty(),
             List.of());
         HealthEvent event = new HealthEvent(

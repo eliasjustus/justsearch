@@ -392,6 +392,47 @@ final class LifecycleSnapshotTapTest {
   }
 
   @Test
+  @DisplayName("tempdoc 837: WORKER_CONTROL_PLANE NOT_READY/worker.lost → index.start-error")
+  void workerLostEmitsStartError() {
+    tap.accept(
+        singleDim(ReadinessDimension.WORKER_CONTROL_PLANE, component("NOT_READY", "worker.lost")));
+
+    assertEquals(1, listener.size(), "a new code without a tap row emits NOTHING but a WARN");
+    HealthEvent event = listener.events.get(0).event();
+    assertEquals("index.start-error", event.id(), "same Condition this state produced before S3");
+    AssertedCondition cond = (AssertedCondition) event.body();
+    assertEquals(Severity.ERROR, event.severity());
+    assertEquals("WorkerLost", cond.reason(), "the reason field is what gets MORE precise, not the id");
+  }
+
+  @Test
+  @DisplayName("tempdoc 837: WORKER_CONTROL_PLANE NOT_READY/worker.index_corrupt → index.start-error")
+  void workerIndexCorruptEmitsStartError() {
+    tap.accept(
+        singleDim(
+            ReadinessDimension.WORKER_CONTROL_PLANE, component("NOT_READY", "worker.index_corrupt")));
+
+    assertEquals(1, listener.size());
+    HealthEvent event = listener.events.get(0).event();
+    assertEquals("index.start-error", event.id());
+    assertEquals(Severity.ERROR, event.severity());
+    assertEquals("WorkerIndexCorrupt", ((AssertedCondition) event.body()).reason());
+  }
+
+  @Test
+  @DisplayName("tempdoc 837: INDEX_SERVING NOT_CONFIGURED/worker.shut_down → index.unavailable")
+  void workerShutDownEmitsIndexUnavailable() {
+    tap.accept(
+        singleDim(ReadinessDimension.INDEX_SERVING, component("NOT_CONFIGURED", "worker.shut_down")));
+
+    assertEquals(1, listener.size());
+    HealthEvent event = listener.events.get(0).event();
+    assertEquals("index.unavailable", event.id(), "same Condition worker.not_configured produced");
+    assertEquals(Severity.WARNING, event.severity(), "an orderly teardown is not an ERROR");
+    assertEquals("WorkerShutDown", ((AssertedCondition) event.body()).reason());
+  }
+
+  @Test
   @DisplayName("AI NOT_READY/inference.offline → ai.not-ready")
   void aiNotReadyEmitsAiNotReady() {
     tap.accept(
