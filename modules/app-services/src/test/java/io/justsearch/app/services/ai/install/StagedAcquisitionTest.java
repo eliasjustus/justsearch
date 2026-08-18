@@ -211,6 +211,50 @@ final class StagedAcquisitionTest {
     assertTrue(workerRestarted.get(), "the stage that DID deliver still restarts the Worker");
   }
 
+  /**
+   * Tempdoc 840 U2. The refusal has to happen BEFORE the lease, not merely before the transfer: an
+   * op-lease blocks upgrade preparation, and holding one for a download that was never attempted
+   * would stall an update on nothing. It also must not abandon the run — each stage is measured
+   * against its own size, so a disk that cannot hold the chat model can still leave the retrieval
+   * core that an earlier stage already placed.
+   */
+  @Test
+  @Timeout(10)
+  @DisplayName("a blocked stage takes no lease, acquires nothing, and does not stop later stages")
+  void blockedStageIsRefusedBeforeItsLease() {
+    RecordingListener listener = new RecordingListener();
+    RecordingLeases leases = new RecordingLeases();
+    List<String> acquired = new ArrayList<>();
+
+    boolean completed =
+        new StagedAcquisition(
+                s -> {
+                  acquired.add(s.stage().id());
+                  return summary(false, s.downloads().size(), 0, s.bytes());
+                },
+                (s, sum) -> applied(false),
+                leases,
+                listener,
+                () -> false,
+                s -> InstallStage.CHAT == s.stage() ? "no room for the chat model" : null)
+            .run(
+                List.of(
+                    slice(InstallStage.CORE, dl("embedding", "e/model.onnx", 100)),
+                    slice(InstallStage.CHAT, dl("chat", "c/chat.gguf", 6_000))),
+                null);
+
+    assertTrue(completed, "a refusal is not a cancellation — the run reached its own end");
+    assertEquals(List.of("core"), acquired, "the blocked stage fetched nothing");
+    assertEquals(
+        List.of("register:core", "release:core:true"),
+        leases.events,
+        "the blocked stage never took out an op-lease");
+    assertEquals(
+        List.of("started:core", "acquired:core:100", "ended:core:completed", "ended:chat:blocked"),
+        listener.events,
+        "core completes; chat is reported blocked without ever starting");
+  }
+
   @Test
   @Timeout(10)
   @DisplayName("a stage that placed nothing does not restart the Worker")

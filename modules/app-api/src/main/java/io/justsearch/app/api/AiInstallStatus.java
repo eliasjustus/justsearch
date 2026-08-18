@@ -154,11 +154,22 @@ public final class AiInstallStatus {
 
     /**
      * {@code pending} | {@code running} | {@code completed} | {@code failed} | {@code skipped} |
-     * {@code cancelled}. {@code skipped} means the stage had nothing to acquire (already installed,
-     * hardware-skipped or user-declined) — distinct from {@code completed}, which means this run
-     * delivered something.
+     * {@code cancelled} | {@code blocked}. {@code skipped} means the stage had nothing to acquire
+     * (already installed, hardware-skipped or user-declined) — distinct from {@code completed}, which
+     * means this run delivered something. {@code blocked} means a precondition refused it before it
+     * started, so nothing was attempted and nothing broke; see {@link #blockedReason}.
      */
     public String state = "pending";
+
+    /**
+     * Why a {@code blocked} stage was refused, in words a user can act on — today, that the disk has
+     * too little room for what this stage would fetch (tempdoc 840 U2). Empty for every other state.
+     *
+     * <p>Carried per STAGE rather than on the run, because staging makes the answer per-stage: a disk
+     * that fits the retrieval core but not the chat model blocks one stage and completes the other,
+     * and a single run-level message could not say that.
+     */
+    public String blockedReason = "";
 
     /** Capability-tier ids this stage delivers. */
     public final List<String> capabilities = new ArrayList<>();
@@ -173,6 +184,7 @@ public final class AiInstallStatus {
       c.stage = stage;
       c.label = label;
       c.state = state;
+      c.blockedReason = blockedReason;
       c.capabilities.addAll(capabilities);
       c.totalBytes = totalBytes;
       c.downloadedBytes = downloadedBytes;

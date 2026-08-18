@@ -203,6 +203,14 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   /** Monotonic, so the TTL cannot be skewed by a wall-clock adjustment. */
   private volatile java.util.function.LongSupplier nanoClock = System::nanoTime;
 
+  /** Usable-space source for the per-stage disk precondition; swapped in tests (tempdoc 840 U2). */
+  private volatile FreeSpaceCheck.Probe freeSpaceProbe = FreeSpaceCheck.filesystemProbe();
+
+  /** Test seam: report a chosen amount of free space without needing a real full disk. */
+  void setFreeSpaceProbeForTest(FreeSpaceCheck.Probe probe) {
+    this.freeSpaceProbe = probe == null ? FreeSpaceCheck.filesystemProbe() : probe;
+  }
+
   /**
    * Late-binds the runtime's observed per-package capability status. Called by {@code ServicePhase}
    * after {@code RuntimeActivationService} exists — it takes THIS service as a constructor
@@ -954,6 +962,11 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
                   }
 
                   @Override
+                  public void onStageBlocked(InstallStage stage, String reason) {
+                    recordStageBlocked(stage, reason);
+                  }
+
+                  @Override
                   public void onStageAcquired(
                       InstallStage stage, AcquisitionScheduler.Summary summary) {
                     // Banked whatever happened: the bytes this stage PLACED are on disk, and the
@@ -979,7 +992,16 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
                     markStage(stage, state.id());
                   }
                 },
-                cancelFlag::get)
+                cancelFlag::get,
+                // Refuse a stage the disk cannot hold, BEFORE its first byte (tempdoc 840 U2).
+                // Per stage, not per run: a disk that fits the retrieval core but not the chat model
+                // still ends up with working search. Fail-open — an unmeasurable filesystem never
+                // blocks anything (see FreeSpaceCheck).
+                slice ->
+                    FreeSpaceCheck.blockedReason(
+                        slice.stage().label(),
+                        slice.bytes(),
+                        freeSpaceProbe.usableBytes(modelsDir)))
             .run(slices, success -> firstStageLease.release(leaseOutcome(success)));
 
     if (!completed) {
@@ -2080,6 +2102,20 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       if (!"installed".equals(ps.state)) return false;
     }
     return any;
+  }
+
+  /**
+   * Records that a stage was refused before it started, with the reason the user can act on
+   * (tempdoc 840 U2). Distinct from a failure: nothing was attempted.
+   */
+  private void recordStageBlocked(InstallStage stage, String reason) {
+    synchronized (lock) {
+      var st = findStageStatus(stage.id());
+      if (st != null) {
+        st.blockedReason = reason == null ? "" : reason;
+      }
+      touch();
+    }
   }
 
   private AiInstallStatus.StageStatus findStageStatus(String stageId) {

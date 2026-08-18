@@ -38,11 +38,33 @@ final class StagedAcquisition {
     /** The stage ran and at least one of its files failed. */
     FAILED,
     /** The run stopped during (or instead of) this stage. */
-    CANCELLED;
+    CANCELLED,
+    /**
+     * A precondition refused the stage before it started — today, not enough disk space for what it
+     * would fetch (tempdoc 840 U2). Distinct from FAILED: nothing was attempted, so nothing broke,
+     * and the remedy is the user's to apply rather than a retry's.
+     */
+    BLOCKED;
 
     /** The wire-facing id — the same vocabulary {@code AiInstallStatus.StageStatus.state} uses. */
     String id() {
       return name().toLowerCase(java.util.Locale.ROOT);
+    }
+  }
+
+  /**
+   * Refuses a stage before it starts. Returns the human reason, or {@code null} to allow it.
+   *
+   * <p>Consulted after the empty check and BEFORE the lease is registered: a stage that cannot run
+   * must not take out an op-lease that would block an upgrade for a download never attempted.
+   */
+  @FunctionalInterface
+  interface Precondition {
+    String blockedReason(InstallStage.Slice slice);
+
+    /** The default: nothing is refused. */
+    static Precondition open() {
+      return slice -> null;
     }
   }
 
@@ -86,6 +108,9 @@ final class StagedAcquisition {
 
     /** This stage reached a terminal state. */
     default void onStageEnded(InstallStage stage, StageState state) {}
+
+    /** A precondition refused this stage before it started, with the reason to show the user. */
+    default void onStageBlocked(InstallStage stage, String reason) {}
   }
 
   private final Acquirer acquirer;
@@ -93,6 +118,7 @@ final class StagedAcquisition {
   private final LeaseRegistrar leases;
   private final Listener listener;
   private final BooleanSupplier cancelRequested;
+  private final Precondition precondition;
 
   StagedAcquisition(
       Acquirer acquirer,
@@ -100,11 +126,22 @@ final class StagedAcquisition {
       LeaseRegistrar leases,
       Listener listener,
       BooleanSupplier cancelRequested) {
+    this(acquirer, configurer, leases, listener, cancelRequested, Precondition.open());
+  }
+
+  StagedAcquisition(
+      Acquirer acquirer,
+      Configurer configurer,
+      LeaseRegistrar leases,
+      Listener listener,
+      BooleanSupplier cancelRequested,
+      Precondition precondition) {
     this.acquirer = acquirer;
     this.configurer = configurer;
     this.leases = leases;
     this.listener = listener == null ? new Listener() {} : listener;
     this.cancelRequested = cancelRequested == null ? () -> false : cancelRequested;
+    this.precondition = precondition == null ? Precondition.open() : precondition;
   }
 
   /**
@@ -173,6 +210,22 @@ final class StagedAcquisition {
         listener.onStageEnded(slice.stage(), StageState.SKIPPED);
         if (lease != null) {
           lease.release(true);
+        }
+        continue;
+      }
+
+      String blocked = precondition.blockedReason(slice);
+      if (blocked != null) {
+        // Refused before anything was attempted. Continue rather than abandoning the run: each stage
+        // is measured against its own size, so a disk that cannot hold the chat model can still be
+        // holding a working retrieval core placed by an earlier stage. Nothing special-cases a
+        // blocked CORE either — its packages simply never reach `installed`, and the existing
+        // completeness machinery already reports that honestly as not-installed and repair-needed.
+        log.warn("Install stage [{}] blocked before start: {}", slice.stage().id(), blocked);
+        listener.onStageBlocked(slice.stage(), blocked);
+        listener.onStageEnded(slice.stage(), StageState.BLOCKED);
+        if (lease != null) {
+          lease.release(false);
         }
         continue;
       }
