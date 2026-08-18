@@ -5,6 +5,7 @@ import io.justsearch.app.api.Mode;
 import io.justsearch.app.api.lifecycle.CapabilityHealth;
 import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
 import io.justsearch.app.inference.InferenceLifecycleManager;
+import io.justsearch.app.inference.telemetry.TransitionReason;
 import io.justsearch.app.services.lifecycle.InferenceCapability;
 import io.justsearch.app.services.lifecycle.WorkerCapability;
 import io.justsearch.app.services.runtimestate.RuntimeReconciler;
@@ -90,22 +91,39 @@ public final class InferenceCapabilityWiring {
         runtimeSpecStore == null ? () -> false : () -> runtimeSpecStore.load().chatEnabled();
 
     // Mirror initial state synchronously BEFORE forwarding transitions (R3 discipline).
-    deriveAndApply(inferenceCapability, manager.getCurrentMode(), chatEnabledSpec.getAsBoolean());
+    deriveAndApply(
+        inferenceCapability,
+        manager.getCurrentMode(),
+        chatEnabledSpec.getAsBoolean(),
+        TransitionReason.UNKNOWN);
 
-    manager.addModeChangeListener(
-        (from, to) -> deriveAndApply(inferenceCapability, to, chatEnabledSpec.getAsBoolean()));
+    // Tempdoc 837 S5 (§D.2 option c): subscribe to the REASON-bearing listener so an OFFLINE landing
+    // can say WHY. The 2-arg ModeChangeListener cannot carry it, and moving TransitionReason into
+    // app-api to widen that interface was measured at 18 files against 3 for this.
+    manager.addModeTransitionListener(
+        (from, to, reason) ->
+            deriveAndApply(inferenceCapability, to, chatEnabledSpec.getAsBoolean(), reason));
 
     if (runtimeReconciler != null) {
       runtimeReconciler.addSpecChangeListener(
           () ->
               deriveAndApply(
-                  inferenceCapability, manager.getCurrentMode(), chatEnabledSpec.getAsBoolean()));
+                  inferenceCapability,
+                  manager.getCurrentMode(),
+                  chatEnabledSpec.getAsBoolean(),
+                  // A spec flip is an OBSERVATION of a standing mode, not a transition — there is no
+                  // reason in hand. UNKNOWN maps to the generic code, and the §D.1 retention rule is
+                  // what stops that generic write from erasing a held crash cause.
+                  TransitionReason.UNKNOWN));
     }
   }
 
   /** The single derivation rule (tempdoc 737 §12c item 2), shared by both re-derivation triggers. */
   private static void deriveAndApply(
-      InferenceCapability inferenceCapability, Mode mode, boolean chatEnabledSpec) {
+      InferenceCapability inferenceCapability,
+      Mode mode,
+      boolean chatEnabledSpec,
+      TransitionReason reason) {
     switch (mode) {
       case ONLINE -> {
         if (chatEnabledSpec) {
@@ -115,12 +133,10 @@ public final class InferenceCapabilityWiring {
               CapabilityHealth.DEGRADED, RuntimeStatus.REASON_ENGINE_UP_FOR_BACKGROUND);
         }
       }
-      // Tempdoc 837 S5 refines this arm: crash-recovery and user-deactivate both land here and are
-      // NOT distinguishable without a TransitionReason. Until that signal is threaded the generic
-      // code is the honest answer — but it is a CODE now, not prose the consumer has to discard.
+      // Tempdoc 837 S5: crash-recovery and user-deactivate both land OFFLINE and are now told apart
+      // by the threaded TransitionReason — the one case in fix (a) that genuinely needed a new signal.
       case OFFLINE ->
-          inferenceCapability.transition(
-              CapabilityHealth.OFFLINE, LifecycleReasonCode.INFERENCE_OFFLINE.code());
+          inferenceCapability.transition(CapabilityHealth.OFFLINE, offlineCode(reason).code());
       case TRANSITIONING ->
           inferenceCapability.transition(
               CapabilityHealth.RECOVERING, LifecycleReasonCode.INFERENCE_STARTING.code());
@@ -131,5 +147,33 @@ public final class InferenceCapabilityWiring {
               CapabilityHealth.DEGRADED,
               LifecycleReasonCode.INFERENCE_GPU_YIELDED_TO_INDEXING.code());
     }
+  }
+
+  /**
+   * Tempdoc 837 §1.3 — WHY the runtime is OFFLINE, from the reason the transition already carried.
+   *
+   * <p>Only two reasons name a user-visible truth of their own. Everything else — an auto-start that
+   * did not take, a config apply, a VDU enter/exit step, an external detach, app teardown, or no
+   * reason at all — is either a transient step of a restart or process shutdown, where the generic
+   * code is the honest answer and the FE already words it well.
+   */
+  private static LifecycleReasonCode offlineCode(TransitionReason reason) {
+    if (reason == null) {
+      return LifecycleReasonCode.INFERENCE_OFFLINE;
+    }
+    return switch (reason) {
+      // The engine stopped on its own: the periodic-health threshold tripped and recovery forced it
+      // down. Nobody chose this, and the remedy is a reload, not a switch.
+      case CRASH_RECOVERY -> LifecycleReasonCode.INFERENCE_CRASHED;
+      // Somebody chose this. Reporting it as a fault is what trains alarm-blindness.
+      case USER_SWITCH, ADMIN_TRIGGERED -> LifecycleReasonCode.INFERENCE_DEACTIVATED;
+      case AUTO_START,
+          CONFIG_APPLY,
+          VDU_ENTER,
+          VDU_EXIT,
+          EXTERNAL_DETACH,
+          SHUTDOWN,
+          UNKNOWN -> LifecycleReasonCode.INFERENCE_OFFLINE;
+    };
   }
 }

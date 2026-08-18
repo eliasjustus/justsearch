@@ -11,6 +11,7 @@ import io.justsearch.app.api.OpCriticality;
 import io.justsearch.app.api.OpLeaseOutcome;
 import io.justsearch.app.api.OperationLeaseHandle;
 import io.justsearch.app.api.OperationLeaseService;
+import io.justsearch.app.api.status.MigrationSource;
 import io.justsearch.ipc.KnowledgeServerNotConnectedException;
 import io.grpc.StatusRuntimeException;
 import io.justsearch.telemetry.Telemetry;
@@ -398,7 +399,23 @@ public class IndexingController {
       ctx.status(400).json(ApiErrorHandler.toResponse(e, telemetry, ApiErrorHandler.routeOf(ctx)));
       return;
     }
-    String reason = body == null ? "" : String.valueOf(body.getOrDefault("reason", ""));
+    // Tempdoc 837 §2.3(i) — the one boundary where an OUTSIDE caller writes the migration source into
+    // the persisted generation manifest. Everything else that starts a migration passes a vocabulary
+    // member already, so this is where the closure is enforced: a recognized member passes through,
+    // anything else is coerced to `manual` (a REST-initiated migration with an unrecognized label IS
+    // a manual start) rather than being forwarded verbatim into on-disk state that outlives it.
+    String requestedReason = body == null ? "" : String.valueOf(body.getOrDefault("reason", ""));
+    MigrationSource requestedSource = MigrationSource.fromWire(requestedReason);
+    if (requestedSource == MigrationSource.UNKNOWN) {
+      if (!requestedReason.isBlank()) {
+        log.warn(
+            "Migration start requested with an unrecognized reason \"{}\" — recording it as \"{}\"",
+            requestedReason,
+            MigrationSource.MANUAL.wire());
+      }
+      requestedSource = MigrationSource.MANUAL;
+    }
+    String reason = requestedSource.wire();
     // Tempdoc 542 Phase 3 — REST entry for migration: MUST_COMPLETE op-lease registered
     // BEFORE the gRPC dispatches so concurrent takeover gate reads see the lease.
     OperationLeaseHandle handle = leaseService.register(

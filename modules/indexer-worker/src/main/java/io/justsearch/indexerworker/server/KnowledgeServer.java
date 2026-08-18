@@ -26,6 +26,7 @@ import io.justsearch.indexerworker.index.IndexGenerationManager;
 import io.justsearch.indexerworker.recovery.IndexRecoveryPolicy;
 import io.justsearch.indexerworker.index.MigrationProgressSnapshot;
 import io.justsearch.indexerworker.index.MigrationProgressStore;
+import io.justsearch.app.api.status.MigrationSource;
 import io.justsearch.indexerworker.liveness.LivenessWindows;
 import io.justsearch.indexerworker.util.IndexRootLock;
 import io.justsearch.indexerworker.grpc.DelegatingHealthService;
@@ -528,7 +529,7 @@ public final class KnowledgeServer implements Closeable {
                 activeIndexPath,
                 IndexRecoveryMarker.readReason(activeIndexPath));
             this.searchLifecycle = buildReadOnlyRuntime(activeIndexPath).openReadOnly();
-            IndexGenerationManager.State migrated = genManager.startMigration("corrupt_index_rebuild");
+            IndexGenerationManager.State migrated = genManager.startMigration(MigrationSource.CORRUPT_INDEX_REBUILD.wire());
             String greenGenId = migrated == null ? null : migrated.building_generation();
             if (greenGenId == null || greenGenId.isBlank()) {
               throw new IOException(
@@ -582,7 +583,7 @@ public final class KnowledgeServer implements Closeable {
 
                 // Green: create a new generation and start a writable runtime.
                 IndexGenerationManager.State migrated =
-                    genManager.startMigration("embedding_model_change");
+                    genManager.startMigration(MigrationSource.EMBEDDING_MODEL_CHANGE.wire());
                 String greenGenId =
                     migrated == null ? null : migrated.building_generation();
                 if (greenGenId == null || greenGenId.isBlank()) {
@@ -616,7 +617,7 @@ public final class KnowledgeServer implements Closeable {
             this.searchLifecycle = buildReadOnlyRuntime(activeIndexPath).openReadOnly();
 
             // Green: create a new generation and start a writable runtime.
-            IndexGenerationManager.State migrated = genManager.startMigration("schema_mismatch");
+            IndexGenerationManager.State migrated = genManager.startMigration(MigrationSource.SCHEMA_MISMATCH.wire());
             String greenGenId =
                 migrated == null ? null : migrated.building_generation();
             if (greenGenId == null || greenGenId.isBlank()) {
