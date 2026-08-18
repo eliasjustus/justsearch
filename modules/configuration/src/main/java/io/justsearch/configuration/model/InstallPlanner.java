@@ -238,17 +238,19 @@ public final class InstallPlanner {
       if (variant != null) {
         Path targetFile = installBaseDir.resolve(variant.filename());
         if (isAlreadyInstalled(targetFile, variant.sizeBytes())) {
-          // Already installed with correct hash — skip download
+          // Already present at the expected size — skip download. Not a hash check: see
+          // isAlreadyInstalled for why the pure planner deliberately does not hash multi-GB files.
         } else {
           String targetPath = useAbsoluteTargetPath
               ? targetFile.toAbsolutePath().toString()
               : joinTargetPath(pkg.targetDir(), variant.filename());
+          long staged = partialBytesFor(targetFile, variant.sizeBytes());
           downloads.add(
               new InstallPlan.PlannedDownload(
                   pkg.id(), variant.downloadUrl(), targetPath, variant.sha256(),
-                  variant.sizeBytes(), true, false, true));
+                  variant.sizeBytes(), true, false, true, staged));
           totalBytes += variant.sizeBytes();
-          resumableBytes += partialBytesFor(targetFile, variant.sizeBytes());
+          resumableBytes += staged;
           packageFullyInstalled = false;
         }
       }
@@ -262,6 +264,7 @@ public final class InstallPlanner {
         String targetPath = useAbsoluteTargetPath
             ? targetFile.toAbsolutePath().toString()
             : joinTargetPath(pkg.targetDir(), sf.filename());
+        long staged = partialBytesFor(targetFile, sf.sizeBytes());
         downloads.add(
             new InstallPlan.PlannedDownload(
                 pkg.id(),
@@ -271,9 +274,10 @@ public final class InstallPlanner {
                 sf.sizeBytes(),
                 false,
                 sf.extract(),
-                sf.required()));
+                sf.required(),
+                staged));
         totalBytes += sf.sizeBytes();
-        resumableBytes += partialBytesFor(targetFile, sf.sizeBytes());
+        resumableBytes += staged;
         packageFullyInstalled = false;
       }
 

@@ -160,13 +160,19 @@ public final class AcquisitionScheduler {
     default void onAttempt(Item item, int attempt, int maxAttempts) {}
 
     /**
-     * The set advanced: cumulative byte counts, plus the rate/ETA they support.
+     * The set advanced: cumulative byte counts.
+     *
+     * <p>Byte counts only — the rate/ETA is deliberately NOT delivered here (tempdoc 840 R4). This
+     * event fires immediately after the sample it reports, which is the one instant at which {@link
+     * AcquisitionRate#estimate} cannot tell whether the transfer has since stalled, so a listener
+     * that stamped the estimate handed to it would publish a rate that outlives the transfer.
+     * {@link AcquisitionScheduler#estimate()} is the way to ask, and it is asked when the answer is
+     * wanted.
      *
      * @param overallBytes bytes acquired across the whole set, including this item's in-flight bytes
      * @param packageBytes bytes acquired for this item's package, ditto
      */
-    default void onProgress(
-        Item item, long overallBytes, long packageBytes, AcquisitionRate.Estimate estimate) {}
+    default void onProgress(Item item, long overallBytes, long packageBytes) {}
 
     /** This item continued an earlier run's bytes instead of restarting from zero. */
     default void onItemResumed(Item item) {}
@@ -177,8 +183,15 @@ public final class AcquisitionScheduler {
     /** This item failed — at transport, at verification, or at placement. */
     default void onItemFailed(Item item, String message) {}
 
-    /** This item is on disk at its final path. */
-    default void onItemInstalled(Item item) {}
+    /**
+     * This item is on disk at its final path.
+     *
+     * @param packageBytes the package's placed-byte total INCLUDING this item — the exact figure
+     *     its counter settles on. In-flight progress stops one credit short of it (an item's bytes
+     *     are banked at placement, and no progress event follows), so a package whose last file
+     *     just landed would otherwise stand a fraction below its own size forever.
+     */
+    default void onItemInstalled(Item item, long packageBytes) {}
   }
 
   /**
@@ -325,7 +338,7 @@ public final class AcquisitionScheduler {
               (bytes, total) -> {
                 long overall = overallBase + bytes;
                 rate.sample(overall);
-                listener.onProgress(item, overall, packageBase + bytes, rate.estimate(totalBytes));
+                listener.onProgress(item, overall, packageBase + bytes);
               });
       if (outcome == null) {
         outcome =
@@ -365,10 +378,11 @@ public final class AcquisitionScheduler {
       }
 
       overallBytes += Math.max(0L, item.sizeBytes());
-      packageBytes.merge(item.packageId(), Math.max(0L, item.sizeBytes()), Long::sum);
+      long placedForPackage =
+          packageBytes.merge(item.packageId(), Math.max(0L, item.sizeBytes()), Long::sum);
       states.put(item.id(), ItemState.INSTALLED);
       installed++;
-      listener.onItemInstalled(item);
+      listener.onItemInstalled(item, placedForPackage);
     }
     log.debug("Acquisition finished: {} installed, {} failed, {} bytes", installed, failed, overallBytes);
     return new Summary(false, installed, failed, overallBytes);

@@ -71,6 +71,12 @@ public record InstallPlan(
    *     through from {@code SupportingFile.required}; a model variant is always required. This is
    *     the axis {@code InstallCompleteness} reads to keep an optional metadata gap out of the
    *     "a required component is missing" verdict. Defaults to true everywhere it is unstated.
+   * @param stagedBytes of {@code sizeBytes}, how many an earlier interrupted run already left in
+   *     this file's {@code .partial} staging path. Carried PER FILE, not only as the plan-wide
+   *     {@link InstallPlan#resumableBytes} total, because every consumer that asks "what does this
+   *     file still cost?" — the disk precondition, a per-component cost row, a per-tier estimate —
+   *     needs the answer at its own granularity, and each one deriving it separately is how the
+   *     headline total came to disagree with the rows beneath it. Zero everywhere nothing is staged.
    */
   public record PlannedDownload(
       String packageId,
@@ -80,7 +86,12 @@ public record InstallPlan(
       long sizeBytes,
       boolean isModelVariant,
       boolean extract,
-      boolean required) {
+      boolean required,
+      long stagedBytes) {
+
+    public PlannedDownload {
+      if (stagedBytes < 0) stagedBytes = 0;
+    }
 
     /** Backwards-compat constructor — non-extracted, required file (existing behavior). */
     public PlannedDownload(
@@ -90,7 +101,7 @@ public record InstallPlan(
         String sha256,
         long sizeBytes,
         boolean isModelVariant) {
-      this(packageId, url, targetPath, sha256, sizeBytes, isModelVariant, false, true);
+      this(packageId, url, targetPath, sha256, sizeBytes, isModelVariant, false, true, 0L);
     }
 
     /** Backwards-compat constructor — required file with an explicit extract flag. */
@@ -102,7 +113,29 @@ public record InstallPlan(
         long sizeBytes,
         boolean isModelVariant,
         boolean extract) {
-      this(packageId, url, targetPath, sha256, sizeBytes, isModelVariant, extract, true);
+      this(packageId, url, targetPath, sha256, sizeBytes, isModelVariant, extract, true, 0L);
+    }
+
+    /** Backwards-compat constructor — a file with nothing staged on disk. */
+    public PlannedDownload(
+        String packageId,
+        String url,
+        String targetPath,
+        String sha256,
+        long sizeBytes,
+        boolean isModelVariant,
+        boolean extract,
+        boolean required) {
+      this(packageId, url, targetPath, sha256, sizeBytes, isModelVariant, extract, required, 0L);
+    }
+
+    /**
+     * Bytes this file still has to come over the network — its size minus what is already staged.
+     * The number a cost estimate and a free-space precondition owe the user; {@link #sizeBytes} is
+     * the file-size total a progress bar counts up to.
+     */
+    public long remainingBytes() {
+      return Math.max(0L, sizeBytes - stagedBytes);
     }
   }
 

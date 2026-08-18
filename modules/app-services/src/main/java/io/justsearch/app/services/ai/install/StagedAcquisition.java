@@ -98,6 +98,34 @@ final class StagedAcquisition {
     ConfigurationStage.Applied configure(InstallStage.Slice slice, AcquisitionScheduler.Summary acquired);
   }
 
+  /**
+   * The configuration pass a run owes when NO stage ran one — the invariant "an install run
+   * configures the process at least once" (tempdoc 840 R1).
+   *
+   * <p>Every stage being empty is a supported outcome, not a degenerate one: it is what a
+   * pre-staged {@code JUSTSEARCH_MODELS_DIR} produces, and what a repair on an already-complete
+   * machine produces. Before this seam existed such a run applied nothing at all — no ONNX model
+   * paths written, no system properties latched, no ConfigStore rebuild, no Worker restart — while
+   * reporting itself completed, because every configuration call site hung off a stage that had
+   * files to fetch.
+   *
+   * <p><b>It restarts the Worker unconditionally</b>, which is exactly what {@link
+   * #restartGate(AcquisitionScheduler.Summary, BooleanSupplier)} refuses for a stage. The two are
+   * not in tension: that gate asks "did THIS stage place anything for a restarted Worker to load?",
+   * and the answer for a run that fetched nothing is that the files are new to the WORKER even
+   * though they are not new to the disk — a Worker started before the models were staged has
+   * resolved none of them, and there is no encoder hot-reload.
+   */
+  @FunctionalInterface
+  interface TerminalConfigurer {
+    ConfigurationStage.Applied configure();
+
+    /** No terminal pass — the pre-seam behaviour, kept for constructions that do not configure. */
+    static TerminalConfigurer none() {
+      return () -> null;
+    }
+  }
+
   /** Everything an observer needs to project the staged run, with no surface type mentioned. */
   interface Listener {
     /** This stage is about to acquire. */
@@ -115,6 +143,7 @@ final class StagedAcquisition {
 
   private final Acquirer acquirer;
   private final Configurer configurer;
+  private final TerminalConfigurer terminalConfigurer;
   private final LeaseRegistrar leases;
   private final Listener listener;
   private final BooleanSupplier cancelRequested;
@@ -136,8 +165,28 @@ final class StagedAcquisition {
       Listener listener,
       BooleanSupplier cancelRequested,
       Precondition precondition) {
+    this(
+        acquirer,
+        configurer,
+        TerminalConfigurer.none(),
+        leases,
+        listener,
+        cancelRequested,
+        precondition);
+  }
+
+  StagedAcquisition(
+      Acquirer acquirer,
+      Configurer configurer,
+      TerminalConfigurer terminalConfigurer,
+      LeaseRegistrar leases,
+      Listener listener,
+      BooleanSupplier cancelRequested,
+      Precondition precondition) {
     this.acquirer = acquirer;
     this.configurer = configurer;
+    this.terminalConfigurer =
+        terminalConfigurer == null ? TerminalConfigurer.none() : terminalConfigurer;
     this.leases = leases;
     this.listener = listener == null ? new Listener() {} : listener;
     this.cancelRequested = cancelRequested == null ? () -> false : cancelRequested;
@@ -200,6 +249,7 @@ final class StagedAcquisition {
    */
   boolean run(List<InstallStage.Slice> slices, Lease firstStageLease) {
     Lease carried = firstStageLease;
+    boolean anyStageConfigured = false;
     for (InstallStage.Slice slice : slices) {
       Lease lease = carried;
       carried = null;
@@ -258,6 +308,7 @@ final class StagedAcquisition {
         }
 
         ConfigurationStage.Applied configured = configurer.configure(slice, acquired);
+        anyStageConfigured = true;
         if (configured != null && configured.cancelled()) {
           listener.onStageEnded(slice.stage(), StageState.CANCELLED);
           return false;
@@ -268,6 +319,18 @@ final class StagedAcquisition {
             slice.stage(), succeeded ? StageState.COMPLETED : StageState.FAILED);
       } finally {
         lease.release(succeeded);
+      }
+    }
+    if (!anyStageConfigured) {
+      // No stage had anything to fetch, so no stage configured anything — yet the run must still
+      // leave the process pointed at what is on disk. See TerminalConfigurer for why this one also
+      // restarts the Worker where a stage's restart is gated on having placed something.
+      log.info(
+          "No stage acquired anything; applying the run's configuration once, terminally"
+              + " (pre-staged models or a repair with nothing missing)");
+      ConfigurationStage.Applied configured = terminalConfigurer.configure();
+      if (configured != null && configured.cancelled()) {
+        return false;
       }
     }
     return true;

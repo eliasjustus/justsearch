@@ -405,6 +405,24 @@ final class InstallCompletenessTest {
   }
 
   /**
+   * Package ids this computation classified {@code DECLINED}, deduped in plan order.
+   *
+   * <p>Read off {@code files()} rather than a dedicated accessor: {@code declinedPackages()} was
+   * deleted (tempdoc 840 R8) because nothing consumed it — it is absent from {@code
+   * ai-install-status.v1.json} and from the generated TS, and the per-component {@code declined}
+   * flag on the plan preview is the chosen authority for what the user turned off. The
+   * CLASSIFICATION is still load-bearing (it is what keeps a decline out of every gap and truth
+   * claim), so these tests keep asserting it at its remaining observation point.
+   */
+  private static List<String> declinedPackagesIn(InstallCompleteness result) {
+    return result.files().stream()
+        .filter(f -> f.classification() == InstallCompleteness.Classification.DECLINED)
+        .map(InstallCompleteness.FileState::packageId)
+        .distinct()
+        .toList();
+  }
+
+  /**
    * The normal production shape: the plan was computed WITH the declined set, so the declined
    * package never reaches {@code downloads()} at all — it is in {@code skipped()}. Completeness must
    * still name it, and must not call the machine incomplete for it.
@@ -418,7 +436,7 @@ final class InstallCompletenessTest {
 
     InstallCompleteness result = InstallCompleteness.compute(plan, contract, Set.of("reranker"));
 
-    assertEquals(List.of("reranker"), result.declinedPackages());
+    assertEquals(List.of("reranker"), declinedPackagesIn(result));
     assertTrue(result.installedFully(), "an install the user shaped by declining a part is complete");
     assertFalse(result.repairNeeded(), "a deliberate decline must never raise a Repair prompt");
     assertTrue(result.pendingRegistryAdditions().isEmpty());
@@ -444,7 +462,7 @@ final class InstallCompletenessTest {
 
     assertEquals(
         List.of("reranker"),
-        result.declinedPackages(),
+        declinedPackagesIn(result),
         "only the package the user actually declined belongs on this list");
   }
 
@@ -469,7 +487,7 @@ final class InstallCompletenessTest {
 
     assertEquals(
         List.of("reranker"),
-        result.declinedPackages(),
+        declinedPackagesIn(result),
         "two declined files collapse to one package id (dedup, plan order)");
     assertTrue(
         result.installedFully(),
@@ -496,7 +514,7 @@ final class InstallCompletenessTest {
 
     InstallCompleteness result = InstallCompleteness.compute(plan, contract, Set.of("reranker"));
 
-    assertEquals(List.of("reranker"), result.declinedPackages());
+    assertEquals(List.of("reranker"), declinedPackagesIn(result));
     assertFalse(result.installedFully(), "chat's contracted model.gguf is genuinely gone");
     assertTrue(result.repairNeeded());
     assertEquals(List.of("chat"), result.packagesWithMissingRequiredFiles());
@@ -516,7 +534,7 @@ final class InstallCompletenessTest {
     assertTrue(
         result.optionalGaps().isEmpty(),
         "reporting it would say 'splade is missing a file' about a package the user turned off");
-    assertEquals(List.of("splade"), result.declinedPackages());
+    assertEquals(List.of("splade"), declinedPackagesIn(result));
   }
 
   /**
@@ -538,7 +556,7 @@ final class InstallCompletenessTest {
     // Intent has since flipped back: the declined set no longer names it.
     InstallCompleteness result = InstallCompleteness.compute(plan, contract, Set.of());
 
-    assertTrue(result.declinedPackages().isEmpty(), "intent, not history, decides");
+    assertTrue(declinedPackagesIn(result).isEmpty(), "intent, not history, decides");
     assertTrue(result.repairNeeded(), "the component the user now wants is genuinely absent");
     assertEquals(List.of("reranker"), result.pendingRegistryAdditions());
   }
@@ -558,7 +576,7 @@ final class InstallCompletenessTest {
     InstallCompleteness viaNull = InstallCompleteness.compute(plan, contract, null);
 
     for (InstallCompleteness result : List.of(viaOverload, viaNull)) {
-      assertTrue(result.declinedPackages().isEmpty(), "nothing is declined without intent saying so");
+      assertTrue(declinedPackagesIn(result).isEmpty(), "nothing is declined without intent saying so");
       assertTrue(result.repairNeeded(), "and the missing reranker file is an ordinary gap");
       assertEquals(List.of("reranker"), result.pendingRegistryAdditions());
     }

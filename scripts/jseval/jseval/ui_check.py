@@ -611,6 +611,14 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
                     await asyncio.sleep(cooldown_ms / 1000)
             # tempdoc 840 Phase 5 — the per-component install list: what each piece of the ~7 GB is,
             # what it costs, and what you lose by declining it. Scroll it into the capture.
+            #
+            # KNOWN LIMITATION: on a profile that has not dismissed it, the first-run walkthrough
+            # floats over the lower ~200px and occludes the last rows. Its dismissal lives in
+            # UserStateDocument (not a storage key an init_script can set), and a click-through
+            # attempt did not reach the button inside the card's shadow root. The required and
+            # improves-results groups — what these steps exist to verify — are above the overlay and
+            # capture cleanly; axe still reports 0 violations. Left as a limitation rather than a
+            # swallowed exception that would look handled.
             if view_name == "ai-brain-components":
                 lst = page.get_by_test_id(S.TID_INSTALL_COMPONENT_LIST)
                 await lst.wait_for(state="visible", timeout=10_000)

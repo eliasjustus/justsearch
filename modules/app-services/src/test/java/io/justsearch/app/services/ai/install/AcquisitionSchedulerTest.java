@@ -64,6 +64,7 @@ final class AcquisitionSchedulerTest {
     final List<String> events = new ArrayList<>();
     final Map<String, Long> lastOverall = new LinkedHashMap<>();
     final Map<String, Long> lastPackageBytes = new LinkedHashMap<>();
+    final Map<String, Long> settledPackageBytes = new LinkedHashMap<>();
     final List<Integer> terminalAttemptCounts = new ArrayList<>();
 
     @Override
@@ -83,10 +84,7 @@ final class AcquisitionSchedulerTest {
 
     @Override
     public void onProgress(
-        AcquisitionScheduler.Item item,
-        long overallBytes,
-        long packageBytes,
-        AcquisitionRate.Estimate estimate) {
+        AcquisitionScheduler.Item item, long overallBytes, long packageBytes) {
       lastOverall.put(item.id(), overallBytes);
       lastPackageBytes.put(item.packageId(), packageBytes);
     }
@@ -108,8 +106,9 @@ final class AcquisitionSchedulerTest {
     }
 
     @Override
-    public void onItemInstalled(AcquisitionScheduler.Item item) {
+    public void onItemInstalled(AcquisitionScheduler.Item item, long packageBytes) {
       events.add("installed:" + item.id());
+      settledPackageBytes.put(item.packageId(), packageBytes);
     }
   }
 

@@ -166,6 +166,25 @@ enum InstallStage {
     boolean isEmpty() {
       return downloads.isEmpty();
     }
+
+    /**
+     * Bytes this stage still has to pull over the network, resume-adjusted.
+     *
+     * <p>Deliberately NOT the same number as {@link #bytes()}, and the two are not interchangeable.
+     * {@code bytes()} is the full file-size sum, which is the denominator the progress counter is
+     * measured against — an item is credited its FULL size when it is placed, whether it was
+     * resumed or fetched from zero, so a stage total in any other unit would leave the bar unable
+     * to reach its own end. This is what a COST question asks instead: a 6.34 GB file with 5.5 GB
+     * already in its {@code .partial} owes the network and the disk ~0.84 GB, and charging the full
+     * size would refuse (or over-quote) exactly the resume the staging design exists to preserve.
+     */
+    long remainingBytes() {
+      long sum = 0L;
+      for (InstallPlan.PlannedDownload dl : downloads) {
+        sum += Math.max(0L, dl.remainingBytes());
+      }
+      return sum;
+    }
   }
 
   /**

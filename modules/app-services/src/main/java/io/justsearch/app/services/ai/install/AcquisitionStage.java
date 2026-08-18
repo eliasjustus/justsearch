@@ -63,13 +63,18 @@ final class AcquisitionStage {
   }
 
   /**
-   * Runs the given downloads, in plan order, and returns how the set ended.
+   * The scheduler for the given downloads, in plan order, built but NOT started.
    *
    * <p>Takes the download list rather than the whole {@link InstallPlan} because a staged run gives
    * it one stage's SLICE of the plan (tempdoc 840 Phase 3); nothing else on the plan was ever read
    * here.
+   *
+   * <p>Hands back the scheduler rather than the summary of having run it so the caller can hold the
+   * live object while it works: the rate/ETA estimate has to be DERIVED WHEN READ ({@link
+   * AcquisitionScheduler#estimate()} tests the stall window against the clock at call time), and a
+   * caller that only ever sees the finished summary has nothing left to ask.
    */
-  AcquisitionScheduler.Summary run(List<InstallPlan.PlannedDownload> downloads) {
+  AcquisitionScheduler scheduler(List<InstallPlan.PlannedDownload> downloads) {
     Map<String, InstallPlan.PlannedDownload> byTargetPath = new HashMap<>();
     List<AcquisitionScheduler.Item> items = new ArrayList<>();
     for (InstallPlan.PlannedDownload dl : downloads) {
@@ -78,15 +83,14 @@ final class AcquisitionStage {
           new AcquisitionScheduler.Item(dl.targetPath(), dl.packageId(), dl.sizeBytes()));
     }
     return new AcquisitionScheduler(
-            items,
-            (item, startTier, progress) -> fetchOne(byTargetPath.get(item.id()), item, startTier, progress),
-            item -> placement.place(byTargetPath.get(item.id())),
-            new MemoryLedger(attempts, id -> byTargetPath.get(id).url()),
-            listener,
-            cancelRequested,
-            nanoClock,
-            pauseGate)
-        .run();
+        items,
+        (item, startTier, progress) -> fetchOne(byTargetPath.get(item.id()), item, startTier, progress),
+        item -> placement.place(byTargetPath.get(item.id())),
+        new MemoryLedger(attempts, id -> byTargetPath.get(id).url()),
+        listener,
+        cancelRequested,
+        nanoClock,
+        pauseGate);
   }
 
   /**

@@ -181,10 +181,12 @@ public record InstallCompleteness(
                 dl.required()));
       }
       for (InstallPlan.SkippedPackage sk : plan.skipped()) {
-        // A package the planner skipped BECAUSE the user declined it. Recorded at package
-        // granularity (the plan carries no filenames for a package it never planned) so
-        // declinedPackages() can name it; a package skipped for hardware or intent reasons is NOT
-        // recorded here — it was never the user's choice and has its own surfaces.
+        // A package the planner skipped BECAUSE the user declined it, recorded at package
+        // granularity (the plan carries no filenames for a package it never planned) so {@link
+        // #files} tells the whole story of why this machine's set is what it is. A package skipped
+        // for hardware or intent reasons is NOT recorded here — it was never the user's choice and
+        // has its own surfaces. The user-facing authority on declines is the per-component
+        // `declined` flag on the plan preview, not this classification.
         if (declinedIds.contains(sk.packageId())) {
           files.add(new FileState(sk.packageId(), null, Classification.DECLINED));
         }
@@ -282,24 +284,6 @@ public record InstallCompleteness(
         .filter(f -> f.classification().isMissingGap() && !f.required())
         .map(f -> new OptionalGap(f.packageId(), f.fileName()))
         .toList();
-  }
-
-  /**
-   * Package ids (dedup, plan order) the user declined — absent by choice (tempdoc 840 Phase 2).
-   *
-   * <p>The counterpart to {@link #pendingRegistryAdditions()}: both name packages whose files are
-   * not on disk, and the difference is whose decision that was. A package here is owed no repair
-   * prompt and no "a required component is missing" message; it is reported so a surface can say
-   * "you declined this" and offer to re-enable it.
-   */
-  public List<String> declinedPackages() {
-    Set<String> ids = new LinkedHashSet<>();
-    for (FileState f : files) {
-      if (f.classification() == Classification.DECLINED) {
-        ids.add(f.packageId());
-      }
-    }
-    return List.copyOf(ids);
   }
 
   /**

@@ -207,6 +207,19 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   /** Usable-space source for the per-stage disk precondition; swapped in tests (tempdoc 840 U2). */
   private volatile FreeSpaceCheck.Probe freeSpaceProbe = FreeSpaceCheck.filesystemProbe();
 
+  /**
+   * The running stage's live rate estimator, or null when no acquisition is in flight.
+   *
+   * <p>Held rather than sampled because the estimate has to be derived AT READ TIME. {@link
+   * AcquisitionRate#estimate} decides "this transfer has stopped reporting" by comparing its newest
+   * sample against the clock, and the only previous caller asked for the estimate on the line after
+   * feeding it a sample — where that comparison is always ~0 ns and the stall arm could never fire.
+   * A genuinely stalled transfer therefore left its last measured rate standing on the wire for as
+   * long as it was stalled, which is the most confident lie the class is built to avoid. Same
+   * refreshed-on-read reasoning as the functional-status projection in {@link #getStatus}.
+   */
+  private volatile java.util.function.Supplier<AcquisitionRate.Estimate> liveRateSource;
+
   /** Test seam: report a chosen amount of free space without needing a real full disk. */
   void setFreeSpaceProbeForTest(FreeSpaceCheck.Probe probe) {
     this.freeSpaceProbe = probe == null ? FreeSpaceCheck.filesystemProbe() : probe;
@@ -333,6 +346,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     Set<String> declined = declinedPackages();
     synchronized (lock) {
       reapIfStale();
+      refreshRateEstimateLocked();
       status.resumableBytes = resumableBytesOnDisk;
       // Tempdoc 840 Phase 4 — the pause gate the run actually waits on is the authority; mirroring
       // its bit here on read is what keeps a second copy from existing at all.
@@ -428,10 +442,13 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     preview.resumableBytes = plan.resumableBytes();
     recordResumableBytes(plan);
 
-    // Bytes still to download, per package id.
+    // Bytes still to download, per package id — RESUME-ADJUSTED, exactly like the headline
+    // `totalDownloadBytes` above, so the rows sum to the total instead of quietly re-introducing at
+    // component granularity the "charged the user for bytes already on their disk" defect the
+    // headline was fixed for (Sandbox round 8, per-component half in tempdoc 840 R3).
     Map<String, Long> downloadByPkg = new HashMap<>();
     for (var dl : plan.downloads()) {
-      downloadByPkg.merge(dl.packageId(), dl.sizeBytes(), Long::sum);
+      downloadByPkg.merge(dl.packageId(), dl.remainingBytes(), Long::sum);
     }
 
     // One estimate per tier, in canonical order.
@@ -501,7 +518,10 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
         if ("unavailable".equals(ce.state)) {
           ce.unavailableReason = skipped.reason() == null ? "" : skipped.reason();
         }
-      } else if (ce.downloadBytes > 0L) {
+      } else if (downloadByPkg.containsKey(pkg.id())) {
+        // Keyed on the plan still LISTING files for this package, not on its byte cost: a file whose
+        // .partial already holds every one of its bytes costs nothing more to fetch and is still not
+        // installed — it has not been verified or promoted to its final path.
         ce.state = "to-download";
       } else {
         // Wanted, not skipped, nothing left to fetch — every file is already on disk even though the
@@ -1086,17 +1106,18 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     boolean completed =
         new StagedAcquisition(
                 slice ->
-                    new AcquisitionStage(
-                            modelsDir,
-                            downloadExecutor,
-                            retryPolicy,
-                            attempts,
-                            cancelFlag::get,
-                            nanoClock,
-                            placement,
-                            projection,
-                            pause)
-                        .run(slice.downloads()),
+                    acquireStage(
+                        new AcquisitionStage(
+                                modelsDir,
+                                downloadExecutor,
+                                retryPolicy,
+                                attempts,
+                                cancelFlag::get,
+                                nanoClock,
+                                placement,
+                                projection,
+                                pause)
+                            .scheduler(slice.downloads())),
                 (slice, acquired) ->
                     ConfigurationStage.forInstall(
                             cudaServerExeOnce,
@@ -1104,6 +1125,19 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
                             () -> applyOnnxSettings(registry, plan),
                             ortNativePathOnce,
                             StagedAcquisition.restartGate(acquired, this::tryRestartWorkerBestEffort),
+                            cancelFlag::get,
+                            (phase, message) -> updateState("running", phase, message))
+                        .apply(),
+                // The pass a run owes when no stage acquired anything (tempdoc 840 R1): same steps,
+                // same order, same once-per-run latches — and the Worker restart UNGATED, because a
+                // pre-staged models dir is new to the Worker even though this run fetched none of it.
+                () ->
+                    ConfigurationStage.forInstall(
+                            cudaServerExeOnce,
+                            llmSettingsOnce,
+                            () -> applyOnnxSettings(registry, plan),
+                            ortNativePathOnce,
+                            this::tryRestartWorkerBestEffort,
                             cancelFlag::get,
                             (phase, message) -> updateState("running", phase, message))
                         .apply(),
@@ -1150,11 +1184,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
                 // Per stage, not per run: a disk that fits the retrieval core but not the chat model
                 // still ends up with working search. Fail-open — an unmeasurable filesystem never
                 // blocks anything (see FreeSpaceCheck).
-                slice ->
-                    FreeSpaceCheck.blockedReason(
-                        slice.stage().label(),
-                        slice.bytes(),
-                        freeSpaceProbe.usableBytes(modelsDir)))
+                this::diskBlockedReason)
             .run(slices, success -> firstStageLease.release(leaseOutcome(success)));
 
     if (!completed) {
@@ -1173,6 +1203,55 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   }
 
   /**
+   * Runs one stage's acquisition with its estimator published for the length of the transfer.
+   *
+   * <p>The publication is the point: {@link AcquisitionRate#estimate} decides "this transfer has
+   * stopped reporting" by comparing its newest sample against the clock, so it has to be asked WHEN
+   * THE ANSWER IS WANTED. Holding the live scheduler lets {@link #getStatus} do that; a projection
+   * that only saw the value handed to it alongside a sample could never observe a stall, because at
+   * that instant no time has passed since the sample.
+   *
+   * <p>Package-private so a test can drive exactly this — sample, let the clock run past the stall
+   * window, read the status — without staging a real multi-GB transfer.
+   */
+  AcquisitionScheduler.Summary acquireStage(AcquisitionScheduler scheduler) {
+    liveRateSource = scheduler::estimate;
+    try {
+      return scheduler.run();
+    } finally {
+      liveRateSource = null;
+    }
+  }
+
+  /**
+   * Why this stage's files will not fit, or null when they will (tempdoc 840 U2, corrected by R6).
+   *
+   * <p>Two things this asks that the first version of the check did not. It measures the
+   * filesystems the bytes ACTUALLY land on, derived from the slice's own target paths, rather than
+   * {@code modelsDir} alone: a package with an {@code installRoot} (today {@code cuda-runtime},
+   * essentially the whole CORE payload) is planned with an ABSOLUTE path under the AI home, so with
+   * {@code JUSTSEARCH_MODELS_DIR} pointed at another volume the old probe measured a disk receiving
+   * almost none of them — and the direction that hurts is the silent one, where a roomy models
+   * drive lets an install onto a nearly-full home drive proceed into the late IO error this check
+   * exists to pre-empt. And it demands only the bytes still OWED: a file with 5.5 GB already in its
+   * {@code .partial} needs room for the rest, not for a copy of itself, which is what makes the
+   * check compatible with resuming rather than a second reason a resumable download is refused.
+   *
+   * <p>Package-private so the decision is testable without a second physical volume.
+   */
+  String diskBlockedReason(InstallStage.Slice slice) {
+    Map<Path, Long> byDestination = new LinkedHashMap<>();
+    for (InstallPlan.PlannedDownload dl : slice.downloads()) {
+      // An installRoot package's targetPath is already absolute, and Path.resolve returns it
+      // unchanged in that case — so this one expression covers both planner shapes.
+      byDestination.merge(
+          modelsDir.resolve(dl.targetPath()), Math.max(0L, dl.remainingBytes()), Long::sum);
+    }
+    return FreeSpaceCheck.blockedReason(
+        slice.stage().label(), FreeSpaceCheck.groupByFilesystem(byDestination), freeSpaceProbe);
+  }
+
+  /**
    * Registers one stage's op-lease, sized from the bytes that stage actually has to move.
    *
    * @throws io.justsearch.app.api.OperationAdmissionClosedException when an upgrade preparation owns
@@ -1180,10 +1259,13 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
    *     update
    */
   private StagedAcquisition.Lease registerStageLease(InstallStage.Slice slice) {
+    // Sized from the bytes still OWED, not the file sizes: how long the stage holds the lease is a
+    // function of what it has to transfer, and a resumed stage that only needs its last 0.8 GB must
+    // not block an upgrade for as long as a stage fetching all 6.3 GB.
     long estimateSec =
         Math.max(
             MIN_STAGE_LEASE_SEC,
-            Math.min(MAX_STAGE_LEASE_SEC, slice.bytes() / LEASE_ESTIMATE_BYTES_PER_SEC));
+            Math.min(MAX_STAGE_LEASE_SEC, slice.remainingBytes() / LEASE_ESTIMATE_BYTES_PER_SEC));
     StageLease lease =
         new StageLease(
             operationLeases.register(
@@ -1264,10 +1346,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
       @Override
       public void onProgress(
-          AcquisitionScheduler.Item item,
-          long overallBytes,
-          long packageBytes,
-          AcquisitionRate.Estimate estimate) {
+          AcquisitionScheduler.Item item, long overallBytes, long packageBytes) {
         synchronized (lock) {
           status.downloadedBytes = priorStageBytes.getAsLong() + overallBytes;
           AiInstallStatus.StageStatus stage = findStageStatus(status.currentStage);
@@ -1278,16 +1357,11 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
           // Pass 0 for total so the existing package-level total (set in populateStatusPackages)
           // wins.
           updatePackageProgress(item.packageId(), packageBytes, 0);
-          // Tempdoc 840 Phase 4 — the rate reaches the wire, and the UNKNOWN sentinel reaches it
-          // intact. `estimate` measures this STAGE's slice, so its own horizon answers "time left in
-          // this stage"; the run-level horizon is the same rate re-divided into the run's remainder.
-          // An unknown rate publishes -1 for both — never a 0 the surface would render as "0 B/s,
-          // 0s left" on a transfer that is merely young.
-          long remainingBytes =
-              status.totalBytes > 0L ? Math.max(0L, status.totalBytes - status.downloadedBytes) : -1L;
-          AcquisitionRate.Estimate runWide = estimate.reHorizon(remainingBytes);
-          status.bytesPerSecond = runWide.rateKnown() ? runWide.bytesPerSecond() : -1d;
-          status.remainingSeconds = runWide.remainingKnown() ? runWide.remainingSeconds() : -1L;
+          // The rate is deliberately NOT stamped here (tempdoc 840 R4). `estimate` is measured on
+          // the line after the sample that produced it, where the stall window it is supposed to
+          // enforce cannot have elapsed; a value written here would stand unchanged on the wire for
+          // as long as a stalled transfer stayed stalled. refreshRateEstimateLocked derives it from
+          // the same estimator when the status is READ instead.
           touch();
         }
       }
@@ -1319,7 +1393,16 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       }
 
       @Override
-      public void onItemInstalled(AcquisitionScheduler.Item item) {
+      public void onItemInstalled(AcquisitionScheduler.Item item, long packageBytes) {
+        // Settle the package counter on the exact placed figure BEFORE marking it installed
+        // (tempdoc 840 R7). In-flight progress reports stop one credit short — the item's bytes are
+        // banked at placement and no progress event follows it — so an installed 1.99 GB package
+        // used to sit at 99.97 % of itself for the rest of the run. The stage counter has had this
+        // settlement since Phase 3 (onStageAcquired); the per-package one never got it.
+        synchronized (lock) {
+          updatePackageProgress(item.packageId(), packageBytes, 0);
+          touch();
+        }
         updatePackageState(item.packageId(), "installed");
       }
     };
@@ -2097,6 +2180,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
   private void updateState(String newState, String newPhase, String msg) {
     synchronized (lock) {
+      boolean wasRunning = "running".equalsIgnoreCase(status.state);
       status.state = newState;
       status.phase = newPhase;
       status.message = msg == null ? "" : msg;
@@ -2105,6 +2189,8 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       }
       if (!"running".equalsIgnoreCase(newState)) {
         clearRateEstimate();
+      } else if (!wasRunning) {
+        clearErrorStateLocked();
       }
       touch();
     }
@@ -2119,6 +2205,60 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   private void clearRateEstimate() {
     status.bytesPerSecond = -1d;
     status.remainingSeconds = -1L;
+  }
+
+  /**
+   * Re-derives the published transfer rate from the running stage's estimator (tempdoc 840 R4).
+   *
+   * <p>Called on the READ path, which is the only place it can honestly be called: the stall arm of
+   * {@link AcquisitionRate#estimate} measures how long ago the newest sample arrived, so an estimate
+   * taken at sample time can never observe a stall, and one stamped then keeps describing a transfer
+   * that has since stopped. {@code estimate} measures the running STAGE's slice, so its own horizon
+   * answers "time left in this stage"; the run-level horizon is that same rate divided into the
+   * run's remainder — one estimator answering both questions instead of two that could disagree.
+   *
+   * <p>Only while the run is {@code running}: every other state already had {@link
+   * #clearRateEstimate} applied to it, and re-publishing a rate over that would undo it. Caller
+   * holds {@link #lock}.
+   */
+  private void refreshRateEstimateLocked() {
+    var source = liveRateSource;
+    if (source == null || !"running".equalsIgnoreCase(status.state)) {
+      return;
+    }
+    AcquisitionRate.Estimate stageEstimate;
+    try {
+      stageEstimate = source.get();
+    } catch (RuntimeException e) {
+      log.debug("AiInstall rate estimate unavailable (best-effort): {}", e.toString());
+      return;
+    }
+    if (stageEstimate == null) {
+      return;
+    }
+    long remainingBytes =
+        status.totalBytes > 0L ? Math.max(0L, status.totalBytes - status.downloadedBytes) : -1L;
+    AcquisitionRate.Estimate runWide = stageEstimate.reHorizon(remainingBytes);
+    // The UNKNOWN sentinel reaches the wire intact — never a 0 the surface would render as
+    // "0 B/s, 0s left" on a transfer that is merely young, or on one that has stopped reporting.
+    status.bytesPerSecond = runWide.rateKnown() ? runWide.bytesPerSecond() : -1d;
+    status.remainingSeconds = runWide.remainingKnown() ? runWide.remainingSeconds() : -1L;
+  }
+
+  /**
+   * Drops the previous run's terminal error on the transition INTO {@code running}, because a run
+   * that is starting has not failed. Caller holds {@link #lock}.
+   *
+   * <p>{@link #fail} is the only writer of these two fields and nothing ever cleared them, so the
+   * ordinary "press Install, hit a problem, fix it, press Install again" sequence finished {@code
+   * state=completed} while still publishing the earlier attempt's {@code errorCode} — a completed
+   * install reporting {@code RUNTIME_MISSING}. This is the exact counterpart of {@link
+   * #clearRateEstimate}, which sits on the opposite edge of the same transition for the same reason;
+   * it was simply never applied to the error fields.
+   */
+  private void clearErrorStateLocked() {
+    status.errorCode = "";
+    status.lastError = "";
   }
 
   private void fail(String errorCode, String message) {
@@ -2269,11 +2409,8 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
    *
    * <p>Readiness takes TWO facts, because either alone can lie. The stage must have ended in a state
    * whose configuration pass actually ran — a stage cancelled after its last file landed has the
-   * bytes on disk but never restarted the Worker onto them, so the capability is not live — and
-   * every package the stage owns must have reached {@code installed}, because a capability whose
-   * model did not land is not usable however far the run got. A stage with nothing to do qualifies
-   * on the second fact alone: it needed no restart, and a hardware-skipped or declined package
-   * leaves it unready. Fail-closed in both directions.
+   * bytes on disk but never restarted the Worker onto them, so the capability is not live — and the
+   * stage must have DELIVERED, which {@link #stageDeliveredLocked} defines.
    */
   private void markStage(InstallStage stage, String state) {
     boolean configurationRan =
@@ -2295,15 +2432,35 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     }
   }
 
-  /** True when every package this stage delivers reached {@code installed}. Caller holds the lock. */
+  /**
+   * Whether this stage's capabilities are actually on this machine: at least one of its packages
+   * reached {@code installed}, and none of them is in a state that says the stage is unfinished or
+   * broken. Caller holds the lock.
+   *
+   * <p><b>{@code skipped} is NEUTRAL</b> — it neither delivers nor blocks. A package the hardware
+   * cannot run, the install mode does not want, or the user declined is out of scope for the stage,
+   * not a failure to deliver it. Demanding that EVERY package of a stage reach {@code installed}
+   * made {@code retrieval-core} unreachable on every non-NVIDIA machine in existence: {@code
+   * cuda-runtime} declares {@code requiresCuda} and lives in the CORE stage, so it is
+   * hardware-skipped there, and the stage that delivered a perfectly working search silently never
+   * announced itself.
+   *
+   * <p>Everything else still fails closed. A {@code failed} package means the capability's model did
+   * not land; {@code pending} / {@code downloading} / {@code verifying} means the stage is not
+   * finished with it yet. Zero installed is not a delivery either — a stage whose every package was
+   * declined has nothing to announce.
+   */
   private boolean stageDeliveredLocked(InstallStage stage) {
-    boolean any = false;
+    boolean anyInstalled = false;
     for (var ps : status.packages) {
       if (!stage.id().equals(ps.stage)) continue;
-      any = true;
-      if (!"installed".equals(ps.state)) return false;
+      if ("installed".equals(ps.state)) {
+        anyInstalled = true;
+      } else if (!"skipped".equals(ps.state)) {
+        return false;
+      }
     }
-    return any;
+    return anyInstalled;
   }
 
   /**

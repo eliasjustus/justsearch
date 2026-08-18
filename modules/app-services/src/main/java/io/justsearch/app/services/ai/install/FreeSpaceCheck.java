@@ -3,6 +3,8 @@ package io.justsearch.app.services.ai.install;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -81,6 +83,97 @@ final class FreeSpaceCheck {
         humanBytes(needed),
         humanBytes(requiredBytes),
         humanBytes(MARGIN_BYTES));
+  }
+
+  /**
+   * Why this stage cannot be started, measured against the filesystems its files will actually land
+   * on, or {@code null} when every one of them has room.
+   *
+   * <p>Probing one directory was wrong for a plan that writes to more than one volume, and this
+   * install always can: a package declaring {@code installRoot} (today {@code cuda-runtime}, which
+   * is nearly the whole CORE payload) gets an ABSOLUTE target under the AI home, while everything
+   * else lands under the models root — and {@code JUSTSEARCH_MODELS_DIR} can put those two on
+   * different drives. Measuring only the models root then answers about a filesystem receiving
+   * almost none of the bytes, and the dangerous direction is the quiet one: a roomy models drive
+   * with a nearly-full home drive PASSES, and the install hits exactly the late IO error this check
+   * exists to pre-empt.
+   *
+   * <p>Each root is judged by {@link #blockedReason(String, long, long)}, so the fail-open rule
+   * holds PER root: an unmeasurable filesystem still blocks nothing, even when a measurable sibling
+   * in the same stage is fine.
+   *
+   * @param bytesByFilesystem bytes landing on each filesystem, keyed by a directory ON that
+   *     filesystem which the probe can measure — see {@link #groupByFilesystem}
+   */
+  static String blockedReason(String stageLabel, Map<Path, Long> bytesByFilesystem, Probe probe) {
+    if (bytesByFilesystem == null || probe == null) {
+      return null;
+    }
+    for (Map.Entry<Path, Long> entry : bytesByFilesystem.entrySet()) {
+      String reason =
+          blockedReason(stageLabel, entry.getValue(), probe.usableBytes(entry.getKey()));
+      if (reason != null) {
+        return reason;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Folds planned destinations into one entry per FILESYSTEM, summing the bytes landing on each.
+   *
+   * <p>The grouping key is the {@link java.nio.file.FileStore} of the nearest EXISTING ancestor of
+   * each destination — existing, because the install creates its own directories and the leaf
+   * almost never exists yet; the file store rather than the path, because two destinations under
+   * different directories of the SAME volume must share one budget. Checking them separately would
+   * let each pass against free space the other is also about to consume, which is the same
+   * false-pass this check exists to close.
+   *
+   * <p>The returned key is a representative directory the {@link Probe} can measure, so the probe
+   * seam stays a plain path-to-bytes function and remains substitutable in tests.
+   *
+   * @param bytesByDestination the final path each file will occupy, and its byte cost
+   */
+  static Map<Path, Long> groupByFilesystem(Map<Path, Long> bytesByDestination) {
+    Map<Path, Long> byFilesystem = new LinkedHashMap<>();
+    if (bytesByDestination == null) {
+      return byFilesystem;
+    }
+    Map<Object, Path> representatives = new LinkedHashMap<>();
+    for (Map.Entry<Path, Long> entry : bytesByDestination.entrySet()) {
+      Path measurable = nearestExistingAncestor(entry.getKey());
+      Path representative =
+          representatives.computeIfAbsent(filesystemKey(measurable), key -> measurable);
+      byFilesystem.merge(representative, Math.max(0L, entry.getValue()), Long::sum);
+    }
+    return byFilesystem;
+  }
+
+  /** The closest ancestor directory of {@code destination} that exists, or its root as a fallback. */
+  private static Path nearestExistingAncestor(Path destination) {
+    Path absolute = destination.toAbsolutePath().normalize();
+    for (Path candidate = absolute.getParent(); candidate != null; candidate = candidate.getParent()) {
+      if (Files.isDirectory(candidate)) {
+        return candidate;
+      }
+    }
+    Path root = absolute.getRoot();
+    return root != null ? root : absolute;
+  }
+
+  /**
+   * Identity of the filesystem holding {@code dir} — two directories sharing it share free space.
+   * Falls back to the path root when the store cannot be resolved, which over-splits rather than
+   * over-merges: an extra group is checked fail-open, a wrongly merged one would not be.
+   */
+  private static Object filesystemKey(Path dir) {
+    try {
+      return Files.getFileStore(dir);
+    } catch (Exception e) {
+      log.debug("File-store probe failed for {} (grouping by path root instead): {}", dir, e.toString());
+      Path root = dir.toAbsolutePath().getRoot();
+      return root != null ? root : dir;
+    }
   }
 
   /** Sizes as the user reads them elsewhere in the product — GB/MB, one decimal. */

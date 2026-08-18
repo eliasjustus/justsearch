@@ -255,6 +255,121 @@ final class StagedAcquisitionTest {
         "core completes; chat is reported blocked without ever starting");
   }
 
+  /**
+   * Tempdoc 840 R1. Every stage empty is a SUPPORTED outcome, not a degenerate one: it is what a
+   * pre-staged {@code JUSTSEARCH_MODELS_DIR} produces (the constructor honours that env var so a
+   * pre-populated dir yields zero downloads) and what a repair on an already-complete machine
+   * produces. Such a run used to apply NOTHING — every configuration call site hung off a stage
+   * with files to fetch — so no ONNX path was written, no system property latched, no ConfigStore
+   * rebuilt and no Worker restarted, while the run reported itself completed.
+   */
+  @Test
+  @Timeout(10)
+  @DisplayName("a run where no stage acquired anything still configures once, and still restarts the Worker")
+  void runWithNoAcquisitionStillConfiguresTerminally() {
+    RecordingListener listener = new RecordingListener();
+    RecordingLeases leases = new RecordingLeases();
+    List<String> configured = new ArrayList<>();
+    AtomicInteger terminalPasses = new AtomicInteger();
+    AtomicBoolean workerRestarted = new AtomicBoolean(false);
+
+    boolean completed =
+        new StagedAcquisition(
+                s -> summary(false, s.downloads().size(), 0, s.bytes()),
+                (s, sum) -> {
+                  configured.add(s.stage().id());
+                  return applied(false);
+                },
+                () -> {
+                  terminalPasses.incrementAndGet();
+                  // The production binding hands the restart in UNGATED here, unlike a stage's,
+                  // which goes through restartGate. Running it is what makes "the Worker is
+                  // restarted" an assertion about the wiring rather than about the fake.
+                  workerRestarted.set(true);
+                  return applied(false);
+                },
+                leases,
+                listener,
+                () -> false,
+                StagedAcquisition.Precondition.open())
+            .run(
+                List.of(
+                    slice(InstallStage.CORE),
+                    slice(InstallStage.ENRICHMENT),
+                    slice(InstallStage.CHAT)),
+                null);
+
+    assertTrue(completed);
+    assertTrue(configured.isEmpty(), "no stage had files, so no stage configured");
+    assertEquals(1, terminalPasses.get(), "the run still owes exactly one configuration pass");
+    assertTrue(
+        workerRestarted.get(),
+        "pre-staged models are new to the WORKER even though this run fetched none of them, and"
+            + " there is no encoder hot-reload");
+    assertEquals(
+        List.of("ended:core:skipped", "ended:enrichment:skipped", "ended:chat:skipped"),
+        listener.events);
+    assertTrue(leases.events.isEmpty(), "an empty stage still takes no lease of its own");
+  }
+
+  /**
+   * The other half of R1, and the reason the terminal pass is conditional: a run in which ANY stage
+   * configured must not pay for a second, run-wide pass — that would restart the Worker again for
+   * nothing, and re-run the configuration list a fourth time.
+   */
+  @Test
+  @Timeout(10)
+  @DisplayName("a run where one stage did configure owes no terminal pass")
+  void mixedRunDoesNotAlsoConfigureTerminally() {
+    List<String> configured = new ArrayList<>();
+    AtomicInteger terminalPasses = new AtomicInteger();
+
+    boolean completed =
+        new StagedAcquisition(
+                s -> summary(false, s.downloads().size(), 0, s.bytes()),
+                (s, sum) -> {
+                  configured.add(s.stage().id());
+                  return applied(false);
+                },
+                () -> {
+                  terminalPasses.incrementAndGet();
+                  return applied(false);
+                },
+                new RecordingLeases(),
+                new RecordingListener(),
+                () -> false,
+                StagedAcquisition.Precondition.open())
+            .run(
+                List.of(
+                    slice(InstallStage.CORE),
+                    slice(InstallStage.ENRICHMENT),
+                    slice(InstallStage.CHAT, dl("chat", "c/chat.gguf", 500))),
+                null);
+
+    assertTrue(completed);
+    assertEquals(List.of("chat"), configured, "only the stage that had files configures anything");
+    assertEquals(0, terminalPasses.get(), "and the run owes no extra pass on top of it");
+  }
+
+  /** A terminal pass that hits a cancellation checkpoint ends the run, exactly as a stage's does. */
+  @Test
+  @Timeout(10)
+  @DisplayName("a cancellation inside the terminal configuration stops the run")
+  void terminalConfigurationCancellationStopsTheRun() {
+    boolean completed =
+        new StagedAcquisition(
+                s -> summary(false, 0, 0, 0),
+                (s, sum) -> applied(false),
+                () -> applied(true),
+                new RecordingLeases(),
+                new RecordingListener(),
+                () -> false,
+                StagedAcquisition.Precondition.open())
+            .run(List.of(slice(InstallStage.CORE), slice(InstallStage.CHAT)), null);
+
+    assertFalse(completed);
+  }
+
   @Test
   @Timeout(10)
   @DisplayName("a stage that placed nothing does not restart the Worker")
