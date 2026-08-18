@@ -19,12 +19,11 @@ message names the allowed alternative; use it.
 - **bash-guard** — in the MAIN worktree blocks: `git checkout <branch>` / `git switch`,
   `git reset --hard`, `git clean -f`, `git restore .`, and whole-tree `git checkout -- .`
   (single-file `git checkout -- <path>` is allowed). Everywhere: `git push --force` and
-  unconditional `sleep >= 1s` (readiness-check condition-polls are allowed). Redirects *bare*
-  flagless `cat`/`head`/`tail`/`grep`/`rg` to the Read/Grep tools (flagged and piped forms pass).
+  unconditional `sleep >= 1s` (readiness-check condition-polls are allowed).
 - **repeat-guard** — blocks 3+ consecutive identical tool calls; vary the approach.
 - **build-counter** — blocks Gradle build/test after 3+ consecutive failures; diagnose the root
   cause before building again.
-- **intervene** — auto-limits Reads on files >8 KB to 200 lines (use offset/limit); blocks
+- **intervene** — caps an explicit offset/limit whose slice would blow Read's token ceiling; blocks
   unbounded re-reads of the same file after 10.
 - **maintain-doc-hint** (Stop) — blocks once per governed region per session if you edited a
   `consult-register` governed region without updating its governing doc; stating why no doc

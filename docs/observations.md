@@ -617,7 +617,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 
 ### obs:unanchored-general-68 — Pre-existing markdownlint MD031 violations (10x, fenced code blocks not surrounded by blank lines) i
 `kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
-- [ ] Pre-existing markdownlint MD031 violations (10x, fenced code blocks not surrounded by blank lines) in .claude/skills/ci-triage/SKILL.md — `.claude/skills/ci-triage/SKILL.md:45-101`, predates the phase-3-observability-nightly deletion work (2026-07-07)
 
 ### obs:bench — jseval `bench-concurrency --output-dir` doubles as the corpus base_dir (passed to corpora.load) — po
 `kind: defect?` `anchor: scripts/jseval/jseval/commands/bench.py` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
@@ -825,7 +824,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 
 ### obs:unanchored-general-56 — Skill-vs-CLAUDE.md contradiction (same class as tempdoc 739 F-3): `.claude/skills/publish/SKILL.md`
 `kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
-- [ ] Skill-vs-CLAUDE.md contradiction (same class as tempdoc 739 F-3): `.claude/skills/publish/SKILL.md` says 'strongly consider just delegating all of the mechanical/overview work of the PR/merge to a subagent', but CLAUDE.md's model-routing rule says 'Never delegate: ... merge/publish, irreversible actions, main-checkout writes'. An agent following the skill violates CLAUDE.md; following CLAUDE.md ignores the skill. Found live while running /publish. The skill is untracked/local-only, so the fix cannot ride along in-repo — same blast radius as 739 F-3. (2026-07-15)
 
 ### obs:bash-guard — `bash-guard.mjs` has the same input.cwd gap that tempdoc 739 fixed in `docs-granularity-hint.mjs`: i
 `kind: defect?` `anchor: scripts/agent-analytics/hooks/bash-guard.mjs` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
@@ -1129,7 +1127,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 
 ### obs:unanchored-general-79 — Installer size stated inconsistently across surfaces: 853 MB (README.md:57) vs ~748 MB (.claude/skil
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-21` `last: 2026-07-21`
-- [ ] Installer size stated inconsistently across surfaces: 853 MB (README.md:57) vs ~748 MB (.claude/skills/installer/SKILL.md:16) vs 741 MB (build-installer.yml:202) — found during tempdoc 760 Phase-1 gap audit (2026-07-21)
 
 ### obs:732-response-surface-residuals — 732's concise-default decision attributes the halved Reads-per-search to the text-tier Preview line,
 `kind: defect?` `anchor: docs/tempdocs/732-response-surface-residuals.md` `seen: 1` `first: 2026-07-21` `last: 2026-07-21`
@@ -1275,7 +1272,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 
 ### obs:tier-register — Ported skill copy has a bad find-replace: `.agents/skills/governance/SKILL.md` says `.Codex/rules/ti
 `kind: defect?` `anchor: .Codex/rules/tier-register.md` `seen: 2` `first: 2026-07-30` `last: 2026-08-06`
-- [ ] Ported skill copy has a bad find-replace: `.agents/skills/governance/SKILL.md` says `.Codex/rules/tier-register.md` (lines 2, 81, 85) — no such path exists; the real register is `.claude/rules/tier-register.md`. A Codex-targeted agent following this skill would look in a nonexistent directory — `.agents/skills/governance/SKILL.md:85` (2026-07-30)
 - [ ] docsApiDriftCheck fails pre-existing: tier-register row 3 quotes the banned endpoints as literal examples and the checker has no allow-marker for a rule that must name them — `docs/reference/contributing/tier-register.md:40` (2026-08-06)
 
 ### obs:release-v1-schema — release.v1.schema.json lags compose(): `union_recall` has been emitted since tempdoc 701 but is not
