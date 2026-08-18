@@ -41,6 +41,8 @@ interface FakeCtrl {
   iterationsUsed: number;
   budgetGate: { tokensNeeded: number; tokensRemaining: number; totalTokensConsumed: number } | null;
   contextGate: { promptTokens: number; contextWindow: number } | null;
+  /** Tempdoc 834 §6.2 — why the run is stopped, when it is; the window reads it as `holding`. */
+  runPark: { kind: string; sinceEpochMs: number; detail: string } | null;
   send: ReturnType<typeof vi.fn>;
   steer: ReturnType<typeof vi.fn>;
   cancelSession: ReturnType<typeof vi.fn>;
@@ -48,6 +50,8 @@ interface FakeCtrl {
   resolveContextGate: ReturnType<typeof vi.fn>;
   raiseBudget: ReturnType<typeof vi.fn>;
   resumeSession: ReturnType<typeof vi.fn>;
+  /** Tempdoc 834 §15.3 — the cold-load reattach the window asks the shared controller for. */
+  reattachActiveRunOnLoad: ReturnType<typeof vi.fn>;
 }
 
 function makeCtrl(): FakeCtrl {
@@ -63,6 +67,7 @@ function makeCtrl(): FakeCtrl {
     iterationsUsed: 0,
     budgetGate: null,
     contextGate: null,
+    runPark: null,
     send: vi.fn(async () => {}),
     steer: vi.fn(async () => true),
     cancelSession: vi.fn(async () => {}),
@@ -70,6 +75,7 @@ function makeCtrl(): FakeCtrl {
     resolveContextGate: vi.fn(async () => true),
     raiseBudget: vi.fn(async () => true),
     resumeSession: vi.fn(async () => {}),
+    reattachActiveRunOnLoad: vi.fn(async () => {}),
   };
 }
 
