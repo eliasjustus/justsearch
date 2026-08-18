@@ -12,8 +12,12 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentSessionController, sessionLabel } from './AgentSessionController.js';
-import { setActiveRun, clearActiveRun } from './activeRunPointer.js';
+import {
+  AgentSessionController,
+  interruptedRunNotice,
+  interruptedRunPresentation,
+  sessionLabel,
+} from './AgentSessionController.js';
 // §32 unify — auto-approval is now driven by the autonomy dial level.
 import {
   setAutonomyLevel,
@@ -73,6 +77,54 @@ function mockFetchError(status: number, body = ''): typeof fetch {
   ) as unknown as typeof fetch;
 }
 
+/** One row of `GET /api/chat/runs/live`, defaulted to a live agent run with no conversation. */
+function liveRun(runId: string, conversationId: string | null = null, shapeId = 'core.agent-run'): object {
+  return {
+    runId,
+    shapeId,
+    conversationId,
+    state: 'running',
+    park: null,
+    startedAtEpochMs: 1,
+    updatedAtEpochMs: 1,
+    observerCount: 0,
+    snapshot: null,
+  };
+}
+
+/**
+ * The discovery + attach pair a cold reattach makes: `GET /api/chat/runs/live` answers `runs`, and
+ * the follow-on `POST /api/chat/runs/{runId}/observe` answers `body` as an SSE stream. Any other URL
+ * is a 404 so a stray call is visible rather than silently plausible.
+ */
+function mockFetchDiscoverThenObserve(runs: object[], body: string): typeof fetch {
+  const encoder = new TextEncoder();
+  return vi.fn((url: string) => {
+    if (String(url).includes('/api/chat/runs/live')) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ runs }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    }
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(encoder.encode(body));
+        c.close();
+      },
+    });
+    return Promise.resolve(
+      new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+    );
+  }) as unknown as typeof fetch;
+}
+
+/** The managed run stream's answer for an unknown/retired run — the typed 404 (tempdoc 834 §1.6). */
+function runNotFoundBody(runId: string, reason: 'unknown' | 'retired' = 'retired'): string {
+  return JSON.stringify({ runId, reason, recordHint: `/api/chat/sessions/${runId}/events` });
+}
+
 let notifyCount: number;
 let ctrl: AgentSessionController;
 
@@ -101,6 +153,128 @@ describe('AgentSessionController SSE handlers (G1 migration)', () => {
   it('onSessionStarted sets sessionId', () => {
     ctrl.onSessionStarted({ sessionId: 'sess-123' });
     expect(ctrl.sessionId).toBe('sess-123');
+  });
+
+  // ===== 1b. run_started (tempdoc 834 §1.6) — run identity, with session_started dual-read =====
+  it('onRunStarted is the identity frame: runId IS the sessionId', () => {
+    ctrl.onRunStarted({ runId: 'run-42', shapeId: 'core.agent-run', conversationId: 'conv-9' });
+    expect(ctrl.sessionId).toBe('run-42');
+    expect(ctrl.conversationId).toBe('conv-9');
+  });
+
+  it('onRunStarted does NOT move a controller already pinned to a conversation', () => {
+    ctrl.conversationId = 'conv-mine';
+    ctrl.onRunStarted({ runId: 'run-42', shapeId: 'core.agent-run', conversationId: 'conv-other' });
+    expect(ctrl.sessionId).toBe('run-42');
+    expect(ctrl.conversationId).toBe('conv-mine');
+  });
+
+  it('session_started still sets identity — dual-read, never deleted (the persisted ledger reads it)', () => {
+    ctrl.onSessionStarted({ sessionId: 'legacy-sess' });
+    expect(ctrl.sessionId).toBe('legacy-sess');
+  });
+
+  // ===== 1c. state_snapshot (tempdoc 834 §6.1) — every fact needed to ACT on the run =====
+  it('onStateSnapshot reads the park and the run autonomy level, not just the active agent', () => {
+    ctrl.onStateSnapshot({
+      iteration: 3,
+      budgetRemaining: 100,
+      toolCallsExecuted: 2,
+      messageCount: 5,
+      activeAgentId: 'primary',
+      autonomyLevel: 'GUARDED',
+      park: { kind: 'budget', sinceEpochMs: 111, detail: 'needs 500 more' },
+    });
+    expect(ctrl.activeAgentId).toBe('primary');
+    expect(ctrl.snapshotAutonomyLevel).toBe('GUARDED');
+    expect(ctrl.runPark).toEqual({ kind: 'budget', sinceEpochMs: 111, detail: 'needs 500 more' });
+  });
+
+  it('a snapshot-carried held call is renderable AND answerable after the ring evicted its frame', async () => {
+    // The reattach case the ring cannot serve: no `tool_call_pending` frame ever arrives, so before
+    // 834 §6.1 the gate existed on the backend and nowhere on screen.
+    const decisions: string[] = [];
+    setAuthorizationPresenter(async (p) => {
+      decisions.push(p.pendingId);
+      return { approved: true, allowAlways: false };
+    });
+    ctrl.sessionId = 'sess-parked';
+    globalThis.fetch = mockFetchJson({});
+
+    ctrl.onStateSnapshot({
+      iteration: 9,
+      budgetRemaining: 10,
+      toolCallsExecuted: 4,
+      messageCount: 8,
+      activeAgentId: 'primary',
+      park: { kind: 'approval', sinceEpochMs: 222, detail: 'core_delete_file' },
+      pendingApprovals: [
+        {
+          callId: 'call-held',
+          toolName: 'core_delete_file',
+          arguments: '{"path":"a.txt"}',
+          risk: 'HIGH',
+          gateBehavior: 'typed_confirm',
+        },
+      ],
+    });
+
+    // Renderable: the call is on the controller AND in the conversation, so the feed projection
+    // (which walks `tool-call-group` entries) finds it exactly as it finds a live one.
+    expect(ctrl.toolCalls['call-held']?.status).toBe('pending');
+    expect(
+      ctrl.conversation.some((e) => e.type === 'tool-call-group' && e.callIds?.includes('call-held')),
+    ).toBe(true);
+    // Answerable: the ONE authorization ceremony was opened for it.
+    await new Promise<void>((r) => setTimeout(r, 0));
+    expect(decisions).toEqual(['call-held']);
+  });
+
+  it('a snapshot approval the replay ring ALSO announces opens exactly one ceremony', async () => {
+    const opened: string[] = [];
+    setAuthorizationPresenter(async (p) => {
+      opened.push(p.pendingId);
+      return { approved: false, allowAlways: false };
+    });
+    ctrl.sessionId = 'sess-dup';
+    globalThis.fetch = mockFetchJson({});
+    const approval = {
+      callId: 'call-dup',
+      toolName: 'core_search',
+      arguments: '{}',
+      risk: 'LOW',
+    };
+    ctrl.onStateSnapshot({
+      iteration: 1,
+      budgetRemaining: 1,
+      toolCallsExecuted: 0,
+      messageCount: 1,
+      activeAgentId: 'primary',
+      pendingApprovals: [approval],
+    });
+    ctrl.onToolCallPending({ ...approval, sessionId: 'sess-dup' }); // the ring had NOT evicted it
+    await new Promise<void>((r) => setTimeout(r, 0));
+    expect(opened).toEqual(['call-dup']);
+    // ...and the group carries the call once, so the receipt cannot count it twice.
+    const groups = ctrl.conversation.filter((e) => e.type === 'tool-call-group');
+    expect(groups.flatMap((g) => g.callIds ?? [])).toEqual(['call-dup']);
+  });
+
+  it('a snapshot does NOT re-hold a call the run has already moved past', () => {
+    ctrl.onToolCallPending({ callId: 'call-done', toolName: 'core_search', arguments: '{}', risk: 'LOW', gateBehavior: 'auto' });
+    ctrl.onToolCallApproved({ callId: 'call-done' });
+    expect(ctrl.toolCalls['call-done']?.status).toBe('approved');
+    ctrl.onStateSnapshot({
+      iteration: 2,
+      budgetRemaining: 1,
+      toolCallsExecuted: 1,
+      messageCount: 2,
+      activeAgentId: 'primary',
+      pendingApprovals: [
+        { callId: 'call-done', toolName: 'core_search', arguments: '{}', risk: 'LOW' },
+      ],
+    });
+    expect(ctrl.toolCalls['call-done']?.status).toBe('approved');
   });
 
   // ===== 2. chunk =====
@@ -464,6 +638,66 @@ describe('sessionLabel (561 #4 — human label, never the raw UUID)', () => {
   });
 });
 
+/**
+ * Tempdoc 834 §5.2 — a verbatim mirror of `InterruptedRunPresentation.java`. The cases below are the
+ * Java's own branches in its own order, so the two derive the same answer from the same triple.
+ */
+describe('interruptedRunPresentation (834 §5.2 — the four honest rows)', () => {
+  const row = (over: Partial<Parameters<typeof interruptedRunPresentation>[0]>) =>
+    ({ sessionId: 's', ...over }) as Parameters<typeof interruptedRunPresentation>[0];
+
+  it('a terminal run is FINISHED, with no interruption marker, even if interruptedAt is stamped', () => {
+    expect(interruptedRunPresentation(row({ status: 'DONE', resumable: false }))).toBe('FINISHED');
+    expect(
+      interruptedRunPresentation(row({ status: 'ERROR', interruptedAt: '2026-08-18T10:00:00Z' })),
+    ).toBe('FINISHED');
+    expect(interruptedRunNotice(row({ status: 'DONE' }))).toBeNull();
+  });
+
+  it('a non-terminal run with no interruptedAt is NOT_INTERRUPTED — the ordinary live/idle case', () => {
+    expect(interruptedRunPresentation(row({ status: 'READY_FOR_LLM', resumable: true }))).toBe(
+      'NOT_INTERRUPTED',
+    );
+    expect(interruptedRunPresentation(row({ status: 'READY_FOR_LLM', interruptedAt: '  ' }))).toBe(
+      'NOT_INTERRUPTED',
+    );
+  });
+
+  it('mid-step states are RESUMABLE — "Interrupted when the app closed. Resume."', () => {
+    for (const status of ['READY_FOR_LLM', 'AFTER_TOOL_RESULT']) {
+      const s = row({ status, resumable: true, interruptedAt: '2026-08-18T10:00:00Z' });
+      expect(interruptedRunPresentation(s)).toBe('RESUMABLE');
+      expect(interruptedRunNotice(s)).toBe('Interrupted when the app closed. Resume.');
+    }
+  });
+
+  it('WAITING_APPROVAL is RESUMABLE_AT_APPROVAL — same offer, different copy', () => {
+    const s = row({ status: 'WAITING_APPROVAL', resumable: true, interruptedAt: '2026-08-18T10:00:00Z' });
+    expect(interruptedRunPresentation(s)).toBe('RESUMABLE_AT_APPROVAL');
+    expect(interruptedRunNotice(s)).toBe('Interrupted while waiting for your approval. Resume.');
+  });
+
+  it('the budget/context gates are FORK_ONLY — non-terminal but NOT resumable', () => {
+    for (const status of ['WAITING_BUDGET', 'WAITING_CONTEXT']) {
+      // Even a record claiming `resumable: true` is FORK_ONLY here: the held decision lived only in
+      // memory, so the state name decides before the flag is consulted (the Java's own ordering).
+      const s = row({ status, resumable: true, interruptedAt: '2026-08-18T10:00:00Z' });
+      expect(interruptedRunPresentation(s)).toBe('FORK_ONLY');
+      expect(interruptedRunNotice(s)).toBe(
+        'Interrupted while waiting for your decision about tokens/context. Cannot be resumed — start a new run from this transcript',
+      );
+    }
+  });
+
+  it('defensive branch: an interrupted non-terminal state the store did not mark resumable is FORK_ONLY', () => {
+    expect(
+      interruptedRunPresentation(
+        row({ status: 'SOMETHING_NEW', resumable: false, interruptedAt: '2026-08-18T10:00:00Z' }),
+      ),
+    ).toBe('FORK_ONLY');
+  });
+});
+
 describe('AgentSessionController interaction methods', () => {
   // ===== checkAvailability =====
   it('checkAvailability sets available=true and populates tools on 200', async () => {
@@ -548,24 +782,17 @@ describe('AgentSessionController interaction methods', () => {
           new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
         );
       }
-      // The reattach stream: the run already ended, so the backend signals not-live (graceful).
-      const stream2 = new ReadableStream<Uint8Array>({
-        start(c) {
-          c.enqueue(encoder.encode(sseChunk('attach_not_live', { sessionId: 'sess-1', reason: 'not-live' })));
-          c.close();
-        },
-      });
-      return Promise.resolve(
-        new Response(stream2, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
-      );
+      // The reattach stream: the run already ended, so the MANAGED route answers a typed 404
+      // (tempdoc 834 §15.3 — the legacy `attach_not_live` event's replacement).
+      return Promise.resolve(new Response(runNotFoundBody('sess-1'), { status: 404 }));
     });
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
     await ctrl.send('do the work');
 
-    // A second fetch fired — the reattach to /attach, NOT a false error on the FE.
+    // A second fetch fired — the reattach onto the MANAGED observe route, NOT a false error on the FE.
     expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect((fetchSpy.mock.calls[1]![0] as string)).toContain('/api/chat/agent/sess-1/attach');
+    expect((fetchSpy.mock.calls[1]![0] as string)).toContain('/api/chat/runs/sess-1/observe');
     // The drop was NOT surfaced as a conversation error (the run was reattached, then fell back cleanly).
     expect(ctrl.conversation.filter((e) => e.type === 'error').length).toBe(0);
     expect(ctrl.isStreaming).toBe(false);
@@ -582,80 +809,116 @@ describe('AgentSessionController interaction methods', () => {
     expect(ctrl.conversation.filter((e) => e.type === 'error').length).toBe(1);
   });
 
-  // ===== Tempdoc 577 Root I (#1d): cross-tab reattach on load =====
-  it('reattaches on load to a live run ANOTHER tab started (via the activeRunPointer)', async () => {
-    localStorage.clear();
-    setActiveRun('sess-x'); // a different tab published its live run to the shared pointer
-    const encoder = new TextEncoder();
-    const fetchSpy = vi.fn((_url: string) => {
-      const stream = new ReadableStream<Uint8Array>({
-        start(c) {
-          c.enqueue(encoder.encode(sseChunk('attach_not_live', { sessionId: 'sess-x', reason: 'not-live' })));
-          c.close();
-        },
-      });
-      return Promise.resolve(
-        new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
-      );
-    });
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+  // ===== Tempdoc 834 §15.3: cross-tab reattach on load, from the backend's live-run enumeration =====
+  it('reattaches on load to a live run ANOTHER tab started (found by the enumeration)', async () => {
+    const fetchSpy = mockFetchDiscoverThenObserve(
+      [liveRun('sess-x')],
+      sseChunk('done', { finalResponse: 'the other tab run finished here' }),
+    );
+    globalThis.fetch = fetchSpy;
 
     await ctrl.reattachActiveRunOnLoad();
 
-    // This tab (no run of its own) attached to the OTHER tab's run via the /attach endpoint.
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(fetchSpy.mock.calls[0]![0] as string).toContain('/api/chat/agent/sess-x/attach');
+    // Discovery, then the attach onto the MANAGED observe route — a run this tab never started.
+    const calls = (fetchSpy as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0]![0] as string).toContain('/api/chat/runs/live');
+    expect(calls[1]![0] as string).toContain('/api/chat/runs/sess-x/observe');
+    expect(ctrl.sessionId).toBe('sess-x');
   });
 
   it('does NOT reattach on load when this tab already owns/observes a run', async () => {
-    localStorage.clear();
-    setActiveRun('sess-y');
     ctrl.isStreaming = true; // this tab is already streaming its own run — must not steal/double-attach
     const fetchSpy = vi.fn();
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
     await ctrl.reattachActiveRunOnLoad();
+    // Not even the enumeration is asked: a tab that owns a run has nothing to discover.
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('does nothing on load when there is no active-run pointer', async () => {
-    localStorage.clear();
-    clearActiveRun();
-    const fetchSpy = vi.fn();
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+  it('does nothing on load when the enumeration reports no live run', async () => {
+    const fetchSpy = mockFetchJson({ runs: [] });
+    globalThis.fetch = fetchSpy;
     await ctrl.reattachActiveRunOnLoad();
-    expect(fetchSpy).not.toHaveBeenCalled();
+    // The enumeration is asked exactly once, and NO observe stream follows it.
+    expect((fetchSpy as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+    expect(ctrl.sessionId).toBeNull();
   });
 
-  it('reattaches when the pointer conversation matches this tab', async () => {
-    localStorage.clear();
-    setActiveRun('sess-m', 'conv-1');
+  it('reattaches when the live run conversation matches this tab', async () => {
     ctrl.conversationId = 'conv-1';
-    const encoder = new TextEncoder();
-    const fetchSpy = vi.fn((_url: string) => {
-      const stream = new ReadableStream<Uint8Array>({
-        start(c) {
-          c.enqueue(encoder.encode(sseChunk('attach_not_live', { sessionId: 'sess-m', reason: 'not-live' })));
-          c.close();
-        },
-      });
-      return Promise.resolve(
-        new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
-      );
-    });
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    const fetchSpy = mockFetchDiscoverThenObserve(
+      [liveRun('sess-m', 'conv-1')],
+      sseChunk('done', { finalResponse: 'ok' }),
+    );
+    globalThis.fetch = fetchSpy;
     await ctrl.reattachActiveRunOnLoad();
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(fetchSpy.mock.calls[0]![0] as string).toContain('/api/chat/agent/sess-m/attach');
+    const calls = (fetchSpy as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[1]![0] as string).toContain('/api/chat/runs/sess-m/observe');
   });
 
-  it('does NOT reattach when the pointer belongs to a DIFFERENT conversation', async () => {
-    localStorage.clear();
-    setActiveRun('sess-a', 'conv-A');
+  it('does NOT reattach when the live run belongs to a DIFFERENT conversation', async () => {
     ctrl.conversationId = 'conv-B'; // this tab is pinned to a different conversation
-    const fetchSpy = vi.fn();
+    const fetchSpy = mockFetchDiscoverThenObserve(
+      [liveRun('sess-a', 'conv-A')],
+      sseChunk('done', { finalResponse: 'must not be reached' }),
+    );
+    globalThis.fetch = fetchSpy;
+    await ctrl.reattachActiveRunOnLoad();
+    // The enumeration ran; the conversation guard refused its one row, so no observe stream opened.
+    const calls = (fetchSpy as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(ctrl.sessionId).toBeNull();
+  });
+
+  it('does NOT adopt a live run of another SHAPE (a workflow run is not reattachable here)', async () => {
+    const fetchSpy = mockFetchDiscoverThenObserve(
+      [liveRun('wf-1', null, 'core.workflow-run')],
+      sseChunk('done', { finalResponse: 'must not be reached' }),
+    );
+    globalThis.fetch = fetchSpy;
+    await ctrl.reattachActiveRunOnLoad();
+    expect((fetchSpy as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+    expect(ctrl.sessionId).toBeNull();
+  });
+
+  it('takes the NEWEST agent run — the enumeration is already ordered, so the first row wins', async () => {
+    const fetchSpy = mockFetchDiscoverThenObserve(
+      [liveRun('newest'), liveRun('older')],
+      sseChunk('done', { finalResponse: 'ok' }),
+    );
+    globalThis.fetch = fetchSpy;
+    await ctrl.reattachActiveRunOnLoad();
+    const calls = (fetchSpy as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls[1]![0] as string).toContain('/api/chat/runs/newest/observe');
+  });
+
+  it('degrades to "no live run" when the enumeration fails — discovery never throws into mount', async () => {
+    const fetchSpy = mockFetchError(500, 'boom');
+    globalThis.fetch = fetchSpy;
+    await expect(ctrl.reattachActiveRunOnLoad()).resolves.toBeUndefined();
+    expect((fetchSpy as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+    expect(ctrl.sessionId).toBeNull();
+  });
+
+  it('falls back quietly to the record when the observed run answers the typed 404', async () => {
+    const fetchSpy = vi.fn((url: string) =>
+      String(url).includes('/api/chat/runs/live')
+        ? Promise.resolve(
+            new Response(JSON.stringify({ runs: [liveRun('sess-gone')] }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            }),
+          )
+        : Promise.resolve(new Response(runNotFoundBody('sess-gone'), { status: 404 })),
+    );
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
     await ctrl.reattachActiveRunOnLoad();
-    expect(fetchSpy).not.toHaveBeenCalled();
+    // The retired run is NOT an error the reader sees — it is the record fallback (onAttachNotLive).
+    expect(ctrl.conversation.filter((e) => e.type === 'error')).toHaveLength(0);
+    expect(ctrl.isStreaming).toBe(false);
+    expect(ctrl.runKind).toBeNull();
   });
 
   // ===== approveCall / rejectCall =====
@@ -844,6 +1107,8 @@ describe('AgentSessionController interaction methods', () => {
           activeAgentId: 'primary',
           terminationReason: null,
           preview: 'summarize this doc',
+          // Tempdoc 834 §5.3 — S2 ships this on the wire; the FE dropped it until S5.
+          interruptedAt: '2026-08-12T09:31:00.000Z',
         },
       ],
     });
@@ -851,6 +1116,7 @@ describe('AgentSessionController interaction methods', () => {
     expect(ctrl.sessions.length).toBe(1);
     const s = ctrl.sessions[0]!;
     expect(s.sessionId).toBe('s1');
+    expect(s.interruptedAt).toBe('2026-08-12T09:31:00.000Z');
     expect(s.startedAtEpochMs).toBe(Date.parse(startedAtIso));
     expect(s.status).toBe('READY_FOR_LLM');
     expect(s.preview).toBe('summarize this doc');

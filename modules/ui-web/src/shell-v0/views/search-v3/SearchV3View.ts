@@ -173,8 +173,8 @@ import {
 // Tempdoc 609 §R — the shared reload-durable draft controller (T2.1) and its one-shot leave hint (T1.4).
 import { DraftPersistence } from '../../controllers/draftPersistence.js';
 import { notifyDraftKeptOnce } from '../../controllers/draftKeptHint.js';
-// Tempdoc 577 Root I (#1d) — the shared cross-tab live-run pointer, read on a cold load.
-import { readActiveRun } from '../../controllers/activeRunPointer.js';
+// Tempdoc 834 §15.3 — the backend's live-run enumeration, asked on a cold load.
+import { discoverLiveAgentRun } from '../../controllers/liveRuns.js';
 import {
   getAgentSessionController,
   peekAgentSessionController,
@@ -648,9 +648,12 @@ export class SearchV3View extends JfElement {
     });
     void loadConversations();
     this.restoreLastViewed();
-    // Cold-load reattach BEFORE the first presence look: a run recovered from the shared pointer is
-    // then already on the controller when `syncRunPresence` asks it what is live.
-    this.reattachLiveRun();
+    // Cold-load reattach, started here and NOT awaited: discovery is a network round-trip now
+    // (tempdoc 834 §15.3) and mount must not block on it. The ordering it used to buy — the run
+    // already on the controller before the first presence look — is instead carried by the
+    // subscription taken just above: `attachToRun` notifies, `onAgentUpdate` runs
+    // `syncRunPresence` first, and a recovered run reaches the window that way.
+    void this.reattachLiveRun();
     // The window may be mounting BESIDE a run that is already going (a surface switch, a re-mount).
     // The store notifies on change only, so the first look has to be taken here — see
     // `syncRunPresence` for why an unrepresented live run is this window's problem to state.
@@ -796,20 +799,35 @@ export class SearchV3View extends JfElement {
   /**
    * D3 — the COLD-LOAD half of run recovery. F3 closed the same-instance half (presence adopts a run
    * the shared controller still holds); this closes the half a full page load opens, where the
-   * controller singleton is gone with the tab that made it. The shared cross-tab pointer
-   * (`controllers/activeRunPointer.ts`) is what survives, and the controller's own
-   * `reattachActiveRunOnLoad` is what acts on it — this window asks, once, and then lets presence
-   * synthesise the session exactly as it does for a run it found already running.
+   * controller singleton is gone with the tab that made it. What survives a page load is the run
+   * itself, on the backend, and `GET /api/chat/runs/live` (tempdoc 834 §15.3) is how this window
+   * learns of it — it asks, once, and then lets presence synthesise the session exactly as it does
+   * for a run it found already running.
    *
-   * Conditional on the pointer EXISTING, so the F2 law holds: a window with no live run to recover
-   * still constructs no controller and starts no polling by being mounted.
+   * Conditional on the enumeration ACTUALLY NAMING a live agent run, so the F2 law holds: a window
+   * with no live run to recover still constructs no controller and starts no polling by being
+   * mounted. That is why the enumeration is awaited HERE in the cold case rather than left to
+   * `reattachActiveRunOnLoad` — asking the controller would mean constructing it first, which is
+   * the exact side effect the law forbids. When a controller already exists the law is not at
+   * stake, so the ask goes straight to it and its own conversation guard decides which run to
+   * adopt. In the cold case that guard is vacuous: a controller this window just built has no
+   * conversation pinned to it.
    */
-  private reattachLiveRun(): void {
+  private async reattachLiveRun(): Promise<void> {
     if (this.reattachChecked) return;
     this.reattachChecked = true;
-    if (readActiveRun() === null) return;
-    const ctrl = getAgentSessionController(this.apiBase);
-    void ctrl.reattachActiveRunOnLoad();
+    const existing = peekAgentSessionController();
+    if (existing !== null) {
+      void existing.reattachActiveRunOnLoad();
+      return;
+    }
+    if ((await discoverLiveAgentRun(this.apiBase)) === null) return;
+    void getAgentSessionController(this.apiBase).reattachActiveRunOnLoad();
+    // The mount-time presence look already ran, synchronously, while this round-trip was still in
+    // flight — and it found no controller because there was none yet to find. Take it again now
+    // that there is one, so a recovered run reaches the window on this path directly rather than
+    // only through whatever the controller happens to notify next.
+    this.syncRunPresence();
   }
 
   /* ── The lock (tempdoc 822 Phase F7; inventory E4/E5) ─────────────────────────────────────── */

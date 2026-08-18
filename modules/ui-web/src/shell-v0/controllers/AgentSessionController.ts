@@ -12,7 +12,11 @@
  * an onUpdate callback that triggers re-render.
  */
 
-import { consumeShapeStream } from '../../api/streams.js';
+import {
+  consumeShapeStream,
+  RUN_STARTED_EVENT,
+  type RunNotFoundDetail,
+} from '../../api/streams.js';
 import { authorizedFetch } from '../api/authorizedFetch.js';
 import { LivenessWatchdog } from '../streaming/LivenessWatchdog.js';
 import { STREAM_WATCHDOG_STALE_MS } from '../../api/generated/stream-liveness-constants.js';
@@ -29,12 +33,12 @@ import type {
   CoreAgentRunToolCallRejectedPayload,
   CoreAgentRunStateSnapshotPayload,
 } from '../../api/generated/shape-handlers/core-agent-run.js';
+import type { ParkSnapshot, PendingApproval } from '../../api/generated/shape-handlers/shared.js';
 import type { PluginHostApi } from '../plugin-api/plugin-types.js';
 import { streamViaHost } from '../plugin-api/pumpHostAiStream.js';
 import { ReasoningController } from './ReasoningController.js';
-// Tempdoc 577 §2.14 Root I (#1d) — the ONE cross-tab pointer to the live agent run, so a SECOND tab
-// discovers and reattaches to a run started in another tab (per-tab sessionStorage cannot cross tabs).
-import { setActiveRun, clearActiveRun, readActiveRun } from './activeRunPointer.js';
+// Tempdoc 834 §15.3 — run discovery is the backend's enumeration, not a localStorage pointer.
+import { discoverLiveAgentRun } from './liveRuns.js';
 // Tempdoc 561 P-B2 — Timeline is a DISTINCT projection of the one action ledger (the workspace
 // activity stream), via the same ActionLedgerClient authority ActionLedgerView uses — not a copy
 // of the Sessions roster. Single-authority: no re-derivation of the activity projection.
@@ -162,6 +166,13 @@ export interface SessionListItem {
   /** Tempdoc 577 Move 1 — the record's declared resume capability (the wire has always carried it;
    * the FE dropped it, which is how Resume rendered on evicted sessions and 500'd). */
   resumable?: boolean | null;
+  /**
+   * Tempdoc 834 §5.3 — when this run was found still non-terminal at startup, i.e. the process died
+   * under it. Additive on purpose: "this run is not running" and "this is where it would resume
+   * from" are two facts, so `state` keeps naming the resume seed rather than being overwritten with
+   * an INTERRUPTED value. Classified by {@link interruptedRunPresentation}.
+   */
+  interruptedAt?: string | null;
 }
 
 /**
@@ -204,6 +215,7 @@ function toSessionListItem(raw: Record<string, unknown>): SessionListItem {
     iterationsUsed: raw.iterationsUsed as number | undefined,
     preview: raw.preview as string | undefined,
     resumable: raw.resumable as boolean | null | undefined,
+    interruptedAt: raw.interruptedAt as string | null | undefined,
   };
 }
 
@@ -215,6 +227,53 @@ function toSessionListItem(raw: Record<string, unknown>): SessionListItem {
 export function sessionLabel(s: SessionListItem): string {
   const preview = (s.preview ?? s.initialMessage)?.trim();
   return preview && preview.length > 0 ? preview : 'Untitled session';
+}
+
+/**
+ * Tempdoc 834 §5.2/§5.3 — the four honest ways to present a persisted run.
+ *
+ * A verbatim mirror of the Java authority
+ * `modules/app-api/src/main/java/io/justsearch/app/api/agent/InterruptedRunPresentation.java`,
+ * including its defensive branch and its ordering. The classification is a projection of the exact
+ * triple the wire carries (`state`, `resumable`, `interruptedAt`) with NO inference, which is what
+ * lets both sides derive it independently without becoming two authorities that drift.
+ */
+export type InterruptedRunPresentation =
+  | 'FINISHED'
+  | 'NOT_INTERRUPTED'
+  | 'RESUMABLE'
+  | 'RESUMABLE_AT_APPROVAL'
+  | 'FORK_ONLY';
+
+export function interruptedRunPresentation(s: SessionListItem): InterruptedRunPresentation {
+  const state = s.status;
+  if (state === 'DONE' || state === 'ERROR') return 'FINISHED';
+  const interruptedAt = s.interruptedAt;
+  if (interruptedAt == null || interruptedAt.trim().length === 0) return 'NOT_INTERRUPTED';
+  if (state === 'WAITING_BUDGET' || state === 'WAITING_CONTEXT') return 'FORK_ONLY';
+  // Defensive, mirroring the Java: a non-terminal state the store did not mark resumable cannot be
+  // resumed either, whatever its name. Offer the fork rather than a resume button that will fail.
+  if (s.resumable !== true) return 'FORK_ONLY';
+  return state === 'WAITING_APPROVAL' ? 'RESUMABLE_AT_APPROVAL' : 'RESUMABLE';
+}
+
+/**
+ * The one line a session row shows about its interruption, or null when there is nothing to say.
+ * Copy is tempdoc 834 §5.2's table verbatim; the FORK_ONLY case names the only remedy that exists
+ * (fork from the transcript), because its held decision lived in memory and no checkpoint recorded
+ * it — offering Resume there is the dead-button class this replaces.
+ */
+export function interruptedRunNotice(s: SessionListItem): string | null {
+  switch (interruptedRunPresentation(s)) {
+    case 'RESUMABLE':
+      return 'Interrupted when the app closed. Resume.';
+    case 'RESUMABLE_AT_APPROVAL':
+      return 'Interrupted while waiting for your approval. Resume.';
+    case 'FORK_ONLY':
+      return 'Interrupted while waiting for your decision about tokens/context. Cannot be resumed — start a new run from this transcript';
+    default:
+      return null;
+  }
 }
 
 /**
@@ -304,6 +363,20 @@ export class AgentSessionController implements CoreAgentRunHandlers {
   /** Tempdoc 577 §2.14 Root II — non-null while the run is parked at the context-pressure gate. */
   contextGate: ContextGateState | null = null;
   activeAgentId: string | null = null;
+  /**
+   * Tempdoc 834 §1.5/§6.2 — WHY the run is currently stopped, from the `state_snapshot` primer.
+   * Non-null only while the run is parked. It is the only park signal a reattacher gets when the
+   * announcing frame (`budget_gate` / `context_gate` / `tool_call_pending`) has been evicted from
+   * the replay ring, and it is what keeps a parked run from reading as silently idle.
+   */
+  runPark: ParkSnapshot | null = null;
+  /**
+   * Tempdoc 834 §6.1 — the autonomy level the RUN is executing under, as its own snapshot reports
+   * it. Distinct from the app-wide dial (`substrates/autonomy`): a run carries the level it was
+   * dispatched with, so a reattaching tab whose dial has since moved must not read its own dial as
+   * this run's. Null until a snapshot names it.
+   */
+  snapshotAutonomyLevel: string | null = null;
   /** Slice 491 E17 probe 4: navigation receipts from URLExtractor events. */
   navigationReceipts: Array<{
     outcome: 'extracted' | 'forwarded' | 'dispatched' | 'rejected' | 'unresolved';
@@ -619,6 +692,8 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     this.budgetGate = null;
     this.contextGate = null;
     this.activeAgentId = null;
+    this.runPark = null;
+    this.snapshotAutonomyLevel = null;
     this.navigationReceipts = [];
     this.lastAgentCausationId = null;
     this.reasoning = new ReasoningController(() => this.notify());
@@ -642,21 +717,49 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     }
   }
 
+  /**
+   * Tempdoc 834 §3.3 — `session_started` is DUAL-READ and wire-deprecated for run IDENTITY (that is
+   * {@link onRunStarted}'s job now), but it is never deleted and this handler is never removed. It is
+   * still emitted by the workflow shape, and it is pinned in every persisted `events.ndjson` ledger
+   * already on disk — a persisted vocabulary is not retirable by a wire change, because deleting the
+   * reader breaks replay of every run ever recorded.
+   */
   onSessionStarted(payload: CoreAgentRunSessionStartedPayload): void {
     this.sessionId = payload.sessionId ?? null;
     // Tempdoc 577 Root I — this stream established a live run, so a later mid-run drop is eligible to
     // reattach (distinct from an initial POST failure where no run exists + sessionId may be stale).
     this.runStartedThisStream = true;
-    // Tempdoc 577 Root I (#1d) — publish the live AGENT run to the cross-tab pointer so a second tab
-    // can discover + reattach to it. Stamped with the conversation so a tab pinned to a DIFFERENT
-    // conversation won't adopt it. Cleared on terminal (done/error/not-live).
-    if (!this.replayMode && this.runKind === 'agent' && this.sessionId) {
-      setActiveRun(this.sessionId, this.conversationId);
-    }
     // F2: a new run starts with no proposed batch (avoid showing a prior run's stale plan).
     this.currentToolBatch = [];
     // 543-fwd #6 — a new turn starts a fresh causation chain.
     this.lastAgentCausationId = null;
+    if (this.sessionId && this.pendingAutoApprovals.length > 0) {
+      const queued = this.pendingAutoApprovals.splice(0);
+      for (const callId of queued) void this.approveCall(callId);
+    }
+    this.notify();
+  }
+
+  /**
+   * Tempdoc 834 §1.6/§15.3 — the managed run stream's FIRST frame, and the run's identity triple
+   * (`runId`, `shapeId`, `conversationId`). Run identity lives here now: the runId IS the agent
+   * sessionId (one namespace, no mapping table), and it arrives before any narrative frame, so an
+   * observer knows what it is watching before it renders anything of it.
+   *
+   * <p>The conversation is adopted only when this controller has none of its own — a controller
+   * pinned to a conversation is pinned by its caller, and a run frame is not the place to move it.
+   */
+  onRunStarted(payload: unknown): void {
+    const data = (payload ?? {}) as Record<string, unknown>;
+    const runId = typeof data.runId === 'string' ? data.runId : '';
+    if (runId.length > 0) {
+      this.sessionId = runId;
+      this.runStartedThisStream = true;
+    }
+    const conversationId = typeof data.conversationId === 'string' ? data.conversationId : '';
+    if (conversationId.length > 0 && !this.conversationId) {
+      this.conversationId = conversationId;
+    }
     if (this.sessionId && this.pendingAutoApprovals.length > 0) {
       const queued = this.pendingAutoApprovals.splice(0);
       for (const callId of queued) void this.approveCall(callId);
@@ -697,6 +800,11 @@ export class AgentSessionController implements CoreAgentRunHandlers {
   private handleToolCallEntry(payload: unknown, status: 'proposed' | 'pending'): void {
     const data = payload as Record<string, unknown>;
     const callId = data.callId as string;
+    // Tempdoc 834 §6.1 — a call can reach this point twice for the same hold: the `state_snapshot`
+    // primer adopts it, and then the replay ring (when it has NOT evicted the frame) announces it
+    // again. It is one held decision either way, so the second arrival must not append a second
+    // group entry or open a second authorization ceremony.
+    if (status === 'pending' && this.toolCalls[callId]?.status === 'pending') return;
     if (status === 'pending') {
       this.commitStreamingText({ groupCallId: callId });
     }
@@ -932,8 +1040,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     this.answerCitations = payload.citations ?? [];
     this.isStreaming = false;
     this.runKind = null; // §33 — run terminal: idle again
-    // Tempdoc 585 §D Phase 1 (C1): replaying a finished run must not retire a REAL live run's pointer.
-    if (!this.replayMode) clearActiveRun(); // 577 Root I (#1d) — the run ended; retire the pointer.
+    this.runPark = null; // Tempdoc 834 §6.2 — a run that ended is not parked.
     if (!this.replayMode) this.concludeRunCeremonies(this.sessionId); // Tempdoc 605 Move 2 — drain this run's open ceremonies.
     this.notify();
   }
@@ -1063,8 +1170,7 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     ];
     this.isStreaming = false;
     this.runKind = null; // §33 — run terminal (error): idle again
-    // Tempdoc 585 §D Phase 1 (C1): replaying a finished (errored) run must not retire a live pointer.
-    if (!this.replayMode) clearActiveRun(); // 577 Root I (#1d) — the run ended (error); retire pointer.
+    this.runPark = null; // Tempdoc 834 §6.2 — a run that ended is not parked.
     if (!this.replayMode) this.concludeRunCeremonies(this.sessionId); // Tempdoc 605 Move 2 — the abnormal-terminal case (the M1 trigger).
     this.notify();
   }
@@ -1118,13 +1224,54 @@ export class AgentSessionController implements CoreAgentRunHandlers {
    * precise B1 `Last-Event-ID` reconnect that replays only the events it missed — reflects where the
    * run stands without reconstructing it from the full history. Suppressed in replay mode (a finished
    * run's snapshot is part of its recorded stream, not a live primer).
+   *
+   * <p>Tempdoc 834 §6.1 — the primer carries every fact required to ACT on the run, because the ring
+   * carries narrative only and the ring EVICTS. A long run that parks at an approval gate can have
+   * the announcing `tool_call_pending` frame gone while the gate is still open and answerable, so a
+   * reattacher that read only `activeAgentId` could render neither the gate nor a way to answer it.
+   * The held calls are therefore replayed through the SAME entry point the live frame uses, which is
+   * what makes them answerable rather than merely visible — `handleToolCallEntry` opens the one
+   * authorization ceremony and records the call, and its already-held guard keeps a subsequent
+   * (non-evicted) replay of the same frame from opening a second one.
+   *
+   * <p>`pendingApprovals` absent means UNKNOWN (a record written before 834); `[]` means none are
+   * held. Only the latter may clear a rendered gate, which is why the two are not collapsed.
    */
   onStateSnapshot(payload: CoreAgentRunStateSnapshotPayload): void {
     if (this.replayMode) return;
     if (payload.activeAgentId) {
       this.activeAgentId = payload.activeAgentId;
     }
+    if (payload.autonomyLevel) {
+      this.snapshotAutonomyLevel = payload.autonomyLevel;
+    }
+    this.runPark = payload.park ?? null;
+    for (const approval of payload.pendingApprovals ?? []) {
+      this.adoptSnapshotApproval(approval);
+    }
     this.notify();
+  }
+
+  /**
+   * Tempdoc 834 §6.1 — make one snapshot-carried held call real: recorded, rendered, and answerable
+   * through the ONE ceremony. A call the controller already knows about in a RESOLVED state is
+   * skipped: the snapshot is a point-in-time primer, and re-holding a call the run has since moved
+   * past would put a dead gate on screen.
+   */
+  private adoptSnapshotApproval(approval: PendingApproval): void {
+    const known = this.toolCalls[approval.callId];
+    if (known !== undefined && known.status !== 'pending') return;
+    this.handleToolCallEntry(
+      {
+        callId: approval.callId,
+        toolName: approval.toolName,
+        arguments: approval.arguments,
+        risk: approval.risk,
+        gateBehavior: approval.gateBehavior,
+        sessionId: this.sessionId ?? undefined,
+      },
+      'pending',
+    );
   }
 
   // --- Navigate URL handlers (slice 491 E17 probe 4) ---
@@ -1220,6 +1367,9 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     }
     const map: Record<string, ((p: unknown) => void) | undefined> = {
       session_started: (p) => this.onSessionStarted(p as CoreAgentRunSessionStartedPayload),
+      // Tempdoc 834 §1.6 — the managed run stream's identity frame; `session_started` above stays a
+      // dual-read for the legacy/workflow producers and the persisted ledger (see onSessionStarted).
+      [RUN_STARTED_EVENT]: (p) => this.onRunStarted(p),
       reasoning_chunk: (p) => this.onReasoningChunk(p),
       chunk: (p) => this.onChunk(p as CoreAgentRunChunkPayload),
       tool_batch_proposed: (p) => this.onToolBatchProposed(p as CoreAgentRunToolBatchProposedPayload),
@@ -1404,6 +1554,8 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     this.budgetUpdates = [];
     this.budgetGate = null;
     this.contextGate = null;
+    this.runPark = null;
+    this.snapshotAutonomyLevel = null;
     this.errorHandledDuringStream = false;
     this.reattachedThisRun = false; // Tempdoc 577 Root I — reset the one-shot reattach guard.
     this.runStartedThisStream = false;
@@ -1706,11 +1858,21 @@ export class AgentSessionController implements CoreAgentRunHandlers {
   /**
    * Tempdoc 577 §2.14 Root I (#13/#1d) — ATTACH this controller to a LIVE backend run as an observer:
    * the run is a backend-owned entity (its loop survives the original socket close), so on
-   * mount/reconnect we re-open a stream to {@code /api/chat/agent/{sessionId}/attach}. The backend
-   * REPLAYS the run's buffered history then streams ongoing events through the SAME dispatch the
-   * initiating run used — so the window is a projection of (run × this observer), and a dropped
-   * connection (or a second tab) reattaches without restarting the run. If the run is no longer live
-   * the backend emits `attach_not_live`; the caller then reads the persisted thread record instead.
+   * mount/reconnect we re-open a stream to the run's own channel. The backend REPLAYS the run's
+   * buffered history then streams ongoing events through the SAME dispatch the initiating run used —
+   * so the window is a projection of (run × this observer), and a dropped connection (or a second
+   * tab) reattaches without restarting the run.
+   *
+   * <p>Tempdoc 834 §15.3 — the transport is the MANAGED {@code POST /api/chat/runs/{runId}/observe}
+   * writer, not the legacy raw-{@code Context} {@code /api/chat/agent/{sessionId}/attach}. That is
+   * the whole point rather than a tidy-up: only a managed {@code SseClient} has an {@code onClose},
+   * so only this route can make {@code observerCount} and zero-observer park detection true facts
+   * rather than numbers nobody decrements. The runId IS the agent sessionId (one namespace).
+   *
+   * <p>A run that is no longer live answers a TYPED 404 here, not the legacy `attach_not_live`
+   * event — `consumeShapeStream` surfaces it as `err.runNotFound`, and it routes to exactly the same
+   * fall-back-to-the-record handling. (The `attach_not_live` handler stays: the legacy route still
+   * emits it, `AgentController.java:486`.)
    */
   async attachToRun(sessionId: string): Promise<void> {
     this.sessionId = sessionId;
@@ -1725,12 +1887,19 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     this.liveWatchdog.kick(); // Tempdoc 604 — detect a reattach that connects but never delivers a frame.
     try {
       await consumeShapeStream(
-        `${this.apiBase}/api/chat/agent/${encodeURIComponent(sessionId)}/attach`,
+        `${this.apiBase}/api/chat/runs/${encodeURIComponent(sessionId)}/observe`,
         null,
         (event, payload) => this.dispatchEvent(event, payload),
         this.abortController.signal,
       );
     } catch (e) {
+      const notFound = (e as { runNotFound?: RunNotFoundDetail }).runNotFound;
+      if (notFound) {
+        // The managed route's answer to "that run is unknown or retired" — the same outcome the
+        // legacy route signalled with an in-band event, so it takes the same quiet record fallback.
+        this.onAttachNotLive(notFound);
+        return;
+      }
       if ((e as Error).name === 'AbortError') {
         if (this.liveWatchdogFired) {
           // Tempdoc 604 — the reattach was transport-hung (no heartbeat within the window). This IS
@@ -1760,42 +1929,45 @@ export class AgentSessionController implements CoreAgentRunHandlers {
     }
   }
 
-  /** Tempdoc 577 §2.14 Root I — the backend signalled the run is no longer live; fall back to the record. */
+  /**
+   * The run being attached to is no longer live; fall back to the record.
+   *
+   * Reached two ways: the legacy `/api/chat/agent/{sessionId}/attach` route's in-band
+   * `attach_not_live` event (still emitted, `AgentController.java:486`), and the managed run
+   * stream's typed 404, which {@link attachToRun} routes here.
+   */
   onAttachNotLive(_payload: unknown): void {
     this.isStreaming = false;
     this.runKind = null;
-    // `attach_not_live` IS the terminal signal for a reattach to an already-ended run: the backend
+    this.runPark = null;
+    // "Not live" IS the terminal signal for a reattach to an already-ended run: the legacy route
     // emits it then closes the SSE with no done/error event, so consumeShapeStream raises
     // STREAM_INCOMPLETE. Mark the stream handled so that incomplete-close does not surface as a
     // spurious error entry — falling back to the persisted record is the correct, quiet outcome.
     this.errorHandledDuringStream = true;
-    clearActiveRun(); // Tempdoc 577 Root I (#1d) — the pointer was stale (run no longer live); retire it.
     this.concludeRunCeremonies(this.sessionId); // Tempdoc 605 Move 2 — the attached run already ended; drain its ceremonies.
     this.notify();
   }
 
   /**
-   * Tempdoc 577 §2.14 Root I (#1d) — cross-tab reattach on load. A freshly-loaded tab (with no run of
-   * its own) consults the shared {@link readActiveRun} pointer and, if another tab has a live agent
-   * run, ATTACHES to it — so the run is observed across tabs, not just within the tab that started it.
-   * A no-longer-live pointer resolves quietly via {@link onAttachNotLive} (record fallback + clear).
+   * Tempdoc 834 §15.3 — cross-tab reattach on load. A freshly-loaded tab (with no run of its own)
+   * asks the backend which runs are live and, if one is a live agent run it may adopt, ATTACHES to
+   * it — so a run is observed across tabs, not just within the tab that started it. A run that
+   * retires between the enumeration and the attach resolves quietly via {@link onAttachNotLive}.
    * One-shot per controller; the caller (the view's first agent mount) guards against re-entry.
    */
   async reattachActiveRunOnLoad(): Promise<void> {
     if (this.isStreaming || this.sessionId) {
       return; // this tab already owns/observes a run — do not steal or double-attach.
     }
-    const pointer = readActiveRun();
-    if (!pointer || pointer.runKind !== 'agent') {
+    // The conversation guard lives in `discoverLiveAgentRun`: a tab pinned to a SPECIFIC
+    // conversation must not adopt a run belonging to a different one, while a fresh tab with no
+    // conversation of its own still adopts the newest agent run.
+    const runId = await discoverLiveAgentRun(this.apiBase, this.conversationId);
+    if (runId === null) {
       return;
     }
-    // Conversation guard: a tab pinned to a SPECIFIC conversation must not adopt a run that belongs
-    // to a different one (the pointer is global / latest-run-wins). A fresh/default tab (no specific
-    // conversation) still resumes the active run — the intended cross-tab behaviour.
-    if (this.conversationId && pointer.conversationId && this.conversationId !== pointer.conversationId) {
-      return;
-    }
-    await this.attachToRun(pointer.sessionId);
+    await this.attachToRun(runId);
   }
 
   async checkAvailability(): Promise<void> {

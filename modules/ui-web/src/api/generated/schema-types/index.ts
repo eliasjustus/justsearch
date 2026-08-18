@@ -33,6 +33,8 @@ export type { AgentSessionsResponse } from './agent-sessions-response.js';
 export { agentSessionsResponseSchema } from './agent-sessions-response.js';
 export type { AgentHistoryResponse } from './agent-history-response.js';
 export { agentHistoryResponseSchema } from './agent-history-response.js';
+export type { LiveRunsResponse } from './live-runs-response.js';
+export { liveRunsResponseSchema } from './live-runs-response.js';
 export type { TimeseriesSnapshot } from './timeseries-snapshot.js';
 export { timeseriesSnapshotSchema } from './timeseries-snapshot.js';
 export type { FailedJobsResponse } from './failed-jobs-response.js';

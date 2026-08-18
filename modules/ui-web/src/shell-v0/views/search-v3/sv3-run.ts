@@ -59,6 +59,9 @@ export type Sv3RunSource = Pick<
   | 'sessionId'
   | 'budgetGate'
   | 'contextGate'
+  // Tempdoc 834 §6.2 — the run's own answer to "why am I stopped", carried on the reattach primer.
+  // The two gate fields above are announced by frames the replay ring can evict; this one is not.
+  | 'runPark'
   | 'iterationsUsed'
 >;
 
@@ -278,7 +281,15 @@ export function projectSv3RunPrompts(source: Sv3RunSource, feed: Sv3RunFeed): re
  */
 export function sv3RunSessionStatus(source: Sv3RunSource | null, feed: Sv3RunFeed): Sv3RunSessionStatus {
   if (source === null) return 'absent';
-  if (source.budgetGate !== null || source.contextGate !== null || feed.pendingApprovals.length > 0) {
+  // Tempdoc 834 §6.2 — `runPark` is the fourth way the same fact arrives, and the only one that
+  // survives a reattach whose announcing frame the ring evicted. Without it a parked run that this
+  // tab did not watch park would read as `live`, i.e. as silently idle: streaming, saying nothing.
+  if (
+    source.budgetGate !== null ||
+    source.contextGate !== null ||
+    source.runPark !== null ||
+    feed.pendingApprovals.length > 0
+  ) {
     return 'holding';
   }
   // Both flags, not `runInFlight` alone: the controller's first notification of a run arrives from

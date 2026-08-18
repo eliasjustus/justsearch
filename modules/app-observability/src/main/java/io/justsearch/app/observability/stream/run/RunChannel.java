@@ -40,6 +40,16 @@ public sealed interface RunChannel permits SteppedRunChannel, OneShotRunChannel 
    */
   int observerCount();
 
+  /**
+   * When this run last published a NARRATIVE frame, or its start when it has published none.
+   *
+   * <p>Lifecycle frames deliberately do NOT bump it. A parked run's only write is its heartbeat, so
+   * counting that as activity would make every parked run look busy — which is the one lie an
+   * "updated at" field is in a position to tell, and the enumeration (§5.1) is where it would be
+   * believed.
+   */
+  long updatedAtEpochMs();
+
   /** Why this run is stopped and waiting; always empty for a one-shot pipeline (§6.4). */
   Optional<ParkState> park();
 

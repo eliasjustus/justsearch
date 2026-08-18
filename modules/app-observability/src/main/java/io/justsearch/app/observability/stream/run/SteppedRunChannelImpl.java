@@ -10,8 +10,9 @@ final class SteppedRunChannelImpl extends AbstractRunChannel implements SteppedR
   private volatile ParkState park;
   private volatile Supplier<RunStateSnapshot> snapshotSupplier;
 
-  SteppedRunChannelImpl(RunId id, RunDescriptor descriptor, RunChannelPolicy policy) {
-    super(id, descriptor, policy);
+  SteppedRunChannelImpl(
+      RunId id, RunDescriptor descriptor, RunChannelPolicy policy, java.time.Clock clock) {
+    super(id, descriptor, policy, clock);
   }
 
   @Override

@@ -1962,3 +1962,336 @@ the main checkout into both the source tree and the dist, then the stack was RES
 3. **The 32-channel cap is per-registry and there is one registry**, so an agent run and a
    conversational run share the budget. §2's cap is generous by two orders of magnitude against the
    observed 0–1 concurrency, so this is a note, not a risk.
+
+---
+
+## 17. Implementation log — S4 (enumeration + auth)
+
+Landed on `run-continuity-s4-s5`, based on `origin/main` at `bc4f6c04` (the S3b merge, #478).
+Scope held to §15.2's four items. A stranded observation shard from a merged sibling worktree
+(`6367fb3b`, its branch already deleted) was cherry-picked as the first commit so the note it
+carries — `prepare-worktree.cjs` leaves an existing `.claude/settings.local.json` untouched, so the
+`hook-integrity` gate #475 added reads red on any worktree seeded before it — is not lost with that
+worktree. Reproduced here immediately: the gate was red on this worktree until the tracked
+`.example` was re-seeded, after which it passes.
+
+### 17.1 As built
+
+| §15.2 item | as built |
+|---|---|
+| 1 — the typed records | new package `io.justsearch.app.api.run`: `LiveRunsResponse`, `LiveRunSummary`, `ParkSummary`, `RunStateSnapshotView`, `PendingApprovalView`. No `Map<String,Object>` anywhere on the surface |
+| 2 — the wire chain | `WireRecordSchemaGenTest.liveRuns` beside the agent precedent → `SSOT/schemas/live-runs-response.v1.json` → `gen-wire-schema-types.mjs` (new entry) → `modules/ui-web/src/api/generated/schema-types/live-runs-response.ts`, a `z.strictObject` validator with no `.loose()` |
+| 3 — the handler | `AgentSessionController.handleListLiveRuns` (the read-axis controller, as §15.2 assigns), projecting `RunChannelRegistry.live()` with `MAPPER.convertValue`; the ONE registry reaches it from `ConversationApiAssembly`, the same instance the agent loop journals through |
+| 4 — the auth change | `ApiSecurityFilters.requiresSessionToken(method, path)` — extracted as the single authority, path-scoped over `RunRoutes.PATH_PREFIX` |
+
+### 17.2 Where the build forced a shape §15.2 did not name
+
+1. **`PendingApprovalView.arguments`, not `argumentsJson`.** §5.1's sketch spelled it `argumentsJson`.
+   The canonical payload key is `arguments` (`AgentEventPayloads.approvalMap`), and the controller
+   projects by component name — so the sketch's spelling would have projected to `null` rather than
+   failing loudly, AND forked the vocabulary from the one `tool_call_pending` already puts on the
+   wire. The type §5.1 actually argued for (a JSON **string**, not a map) is kept exactly.
+2. **`updatedAtEpochMs` needed a source that did not exist.** §5.1's record carries it; the substrate
+   had no last-activity stamp. Added on `RunChannel`, stamped in `publish` only — the heartbeat goes
+   through `lifecycle` and deliberately does not bump it, because a parked run's only write is its
+   heartbeat and counting that as activity would make every parked run look busy. The registry's
+   `Clock` is now threaded into the channels so the property is asserted rather than slept on.
+3. **`state` is a closed two-value vocabulary, and closed by construction.** `live()` returns only
+   un-retired runs, so "finished" is unrepresentable here; what remains is `running` / `parked`.
+   Stated on the record rather than left for the FE to infer.
+4. **The auth rule was a fork waiting to happen.** `LocalApiUiTokenPolicyTest` re-stated the
+   method-based rule inline rather than calling it. A path-scoped requirement added to production
+   only would have left that mirror green while production changed underneath it, so the decision
+   was extracted to `requiresSessionToken` and the mirror now calls it. This is the same
+   projection-vs-fork question the register asks about data, applied to a rule.
+5. **Interruption is NOT on this view**, per §5.1's own refusal of an `interrupted` field. An
+   interrupted run is a persisted run; it surfaces on `AgentSessionSummary.interruptedAt` and is
+   classified by the S2-landed `InterruptedRunPresentation`. The two reads compose because a run is
+   in exactly one of them — that is the combined view, not a merged payload.
+
+### 17.3 One defect the critical-analysis pass caught, and no test would have
+
+`RunChannel.park()` is refreshed as a SIDE EFFECT of taking the snapshot
+(`RunChannelObservation.java:104-115`) — §16.6 residual 2 records this deliberately. The first
+projection read `park()` *before* `snapshot()`, so it saw the previous take's value: on the FIRST
+enumeration of a parked run, none at all. A run stopped at an approval gate would have been
+published as `state: "running"`, `park: null` — the worst lie this endpoint can tell, on exactly the
+run a user is trying to recover.
+
+§16.6 had *named* the hazard ("a consumer that reads `park()` alone would see the last-taken value")
+and the projection still walked into it, because the residual reads as a caveat about a *different*
+consumer. Ordering is now load-bearing and says so at the site. The regression test drives the real
+wiring — park set only from inside the snapshot supplier — and with the ordering reverted it is the
+single failing test.
+
+### 17.4 Verification
+
+- `./gradlew.bat test -PskipWebBuild=true` — **BUILD SUCCESSFUL; 1340 suites / 7863 tests / 26
+  skipped / 0 failures** (S3b's baseline was 1338 / 7847; the delta is exactly this slice's 16).
+- New tests: `LiveRunsEnumerationTest` (11), `LiveRunsAuthTest` (5).
+- Governance kernel: the only findings naming a file of this slice were two `contract-projection`
+  rows — `LiveRunsResponse` was a codegen target that was not a registered wire record, and the FE
+  consumer was undeclared. Both registered in `governance/contract-surfaces.v1.json`. The remaining
+  failing gates (`module-deps`, `dead-code`, `dead-code-jvm`, `config-surface`) produce only
+  `kernel/input-missing` / `input-skipped` results — missing preflight inputs, exactly as §16.4
+  recorded. `wire`: pass, no contract touched.
+
+**Mutation probes** (each applied, run, restored, re-verified green):
+
+1. *Disable the path scope* — the run-family branch of `requiresSessionToken` short-circuited to
+   false. Three of five auth tests failed, including the adverse precondition: the enumeration was
+   served untokened, and the body carried the runId the test plants precisely to prove disclosure.
+   Without this probe the auth item is a claim; with it, the guard is shown to bite.
+2. *Restore the park/snapshot ordering* — `park()` read before the snapshot. Exactly one test failed,
+   the new §17.3 regression, on "a stopped run reported as running is the enumeration's worst
+   possible lie".
+
+**The adverse precondition drives the REAL filter**, not a copy: `LiveRunsAuthTest` installs the
+production `ApiSecurityFilters` chain (the precedent is `McpOriginValidationTest`). A test that only
+proves "with a token it works" is green in exactly the world where the guard was never installed.
+
+---
+
+## 18. Implementation log — S5 (the FE discovery sweep)
+
+### 18.1 As built
+
+| §15.3 item | as built |
+|---|---|
+| retire `activeRunPointer` as discovery authority | **DELETED**, module + test. Discovery was its only job — `setActiveRun`/`clearActiveRun`/`readActiveRun` existed solely to feed `readActiveRun`. Replaced by `shell-v0/controllers/liveRuns.ts` (`fetchLiveRuns`, `discoverLiveAgentRun`) |
+| run identity from `run_started` | the managed stream's identity frame sets `sessionId`; `session_started` keeps its handler |
+| `session_started` dual-read, wire-deprecated, NOT deleted | stated at the handler, with the reason (the workflow shape emits it; every existing `events.ndjson` pins it) |
+| `RetrospectivePanel` interruption rows | `interruptedRunPresentation` / `interruptedRunNotice` on the controller, rendered as one line per row |
+| (brief) attach transport onto the managed writer | `attachToRun` now streams `POST /api/chat/runs/{runId}/observe`; the typed 404 replaces the legacy `attach_not_live` on this path |
+| (brief) consume the S1 snapshot fields | `onStateSnapshot` reads `pendingApprovals` / `autonomyLevel` / `park`; `sv3RunSessionStatus` gains `runPark` as a fourth "why am I stopped" source |
+
+**Sweep completion, verified independently of the implementing worker:**
+`grep -rn "activeRunPointer\|setActiveRun\|clearActiveRun\|readActiveRun\|justsearch.activeAgentRun" modules/ui-web/src` returns **0 hits**.
+
+### 18.2 Where S5 differed from §15.3, and why
+
+1. **The conversation filter is NOT sent to the server.** `discoverLiveAgentRun` narrows by
+   `shapeId` server-side but applies the conversation guard client-side, because the guard is
+   **asymmetric**: a run carrying no `conversationId` is adoptable by any caller, and a server-side
+   equality filter would exclude exactly those. The retired pointer had the same asymmetry; keeping
+   it is what makes the five reattach behaviours its tests pinned survive the swap.
+2. **The F2 law forced the await upward.** `SearchV3View.reattachLiveRun` used to gate on the
+   pointer *before* constructing the controller, preserving "a window with no live run to recover
+   constructs no controller by being mounted". Discovery is now a round-trip, so the enumeration is
+   awaited in the view — asking the controller instead would mean constructing it first, which is
+   the precise side effect the law forbids. The mount-time presence look now runs before the
+   round-trip returns, so the recovered path re-takes it explicitly.
+3. **The interruption classifier is a second implementation, and that is a fork.** The TS mirrors
+   `InterruptedRunPresentation.of` branch for branch, verified against the Java. Nothing enforces
+   that correspondence: `app-api` cannot reach the FE, and this is behaviour, not a schema, so the
+   564 record→schema→Zod chain does not carry it. **Named residual** (§18.4.1).
+
+### 18.3 Verification
+
+- `npm run typecheck` — clean.
+- `npm run test:unit:run` — **422 files / 5235 tests passed** (S3b's baseline: 422 / 5210; the
+  deleted `activeRunPointer.test.ts` is offset by the new `liveRuns.test.ts`).
+- `./gradlew.bat test -PskipWebBuild=true` — 1340 suites / 7863 tests / 0 failures.
+- UTF-8: the FE diff adds non-ASCII only as `│ § — · ×`; no mojibake (the cp1252 round-trip class,
+  742).
+- `contract-projection`: the slice's own `register-drift` finding is fixed (`LiveRunsResponse`
+  registered, with `liveRuns.ts` as its one consumer — verified to be the only importer). The
+  remaining `undeclared-consumer` row is **pre-existing**: the detector matches a generated-module
+  mention in a DOC COMMENT, and `AgentSessionController.ts:170` has carried that prose since before
+  #478 while importing nothing. Logged to the inbox rather than worked around.
+
+### 18.4 Residuals
+
+1. **The interruption classifier is duplicated across the language boundary** with no gate on the
+   correspondence. The durable fix is to compute the presentation ON the wire — one more field on
+   `AgentSessionSummary` — so the FE renders a decision instead of re-deriving it. Not done here:
+   §15.3 assigns the FE *rendering*, and moving the classification onto the wire is a design change
+   the handoff does not stage.
+2. **`AgentSessionController.ts`'s `toSessionListItem` shim survives**, still translating raw JSON
+   by hand while `api/domains/agent.ts`'s Zod-validated `listAgentSessions()` sits unused. Adding
+   `interruptedAt` extended the shim by one field rather than retiring it. Pre-existing and already
+   labelled in that file; named here because this slice touched it.
+3. **The eviction seam stays, as §16.3 requires.** S5 moved the *attach* path only. The initiating
+   `/api/chat/agent`, resume, fork and `/ag-ui` are still raw-`Context` with no `onClose`, so for
+   them a failed write is the only disconnect signal. Deleting `writeOrEvict` / `evictIfGone` /
+   `SseObserverGoneException` now would make their `observerCount` permanently non-zero and let a
+   WATCH run proceed unwatched — the exact hazard §2.14 Root I exists to prevent. §16.3's "they
+   retire in S5" expectation is therefore **not met, and should not have been**: §15.3 stages the
+   attach move alone, and deleting a guard whose consumers still exist is not a sweep.
+### 18.5 Live legs — RUN 2026-08-18, DIRECT TOPOLOGY ONLY (P4)
+
+Run under supervision on this worktree's dist (`distFrom`), API port pinned to **7712**, lease
+3600 s, GPU runtime `cuda12` + `Qwen_Qwen3.5-9B-Q4_K_M.gguf` (activation 17.5 s). Ownership was
+checked three ways before starting — `quick_health` `running:false`, an independent process scan
+(the only `java` PIDs were Gradle daemons; no Head, no Worker, no `llama-server`), and an
+`nvidia-smi` compute-app scan showing no inference process. **Every request below went straight
+to `http://127.0.0.1:7712`**, never through the Vite proxy, per D1(c).
+
+**Verdicts: 4 of 4 in-scope legs VERIFIED.** Leg 1's blocked sibling (zero-observer park) is
+NOT re-litigated here — §18.5.1 states why it remains out of reach.
+
+| leg | verdict | headline evidence |
+|---|---|---|
+| 1a — enumeration end to end | **VERIFIED** | a real run listed with true state/park/snapshot, on both shapes |
+| 1b — unauthenticated GET rejected (prod mode) | **VERIFIED** | `401` in 2 ms, and the scope is provably narrow |
+| 2 — observer count drops on close | **VERIFIED** | `2 → 1` in **263 ms** after an abrupt socket destroy |
+| 3 — interrupted run presented | **VERIFIED** | absent from `live`, `interruptedAt` stamped on the session |
+| 4 — FE discovery on reload | **VERIFIED** | enumeration → managed observe, pointer gone from a real browser |
+
+**Leg 1a — the enumeration is true, on both shapes.** A `core.free-chat` run created through
+`POST /api/chat/runs` enumerated as `state:"running"`, `park:null`, `snapshot:null`,
+`observerCount:1` — and the two nulls are the *structural* answer, not a gap: a one-shot pipeline
+has no control point to park at and no stepped state to prime with (§3.4/§6.4).
+`updatedAtEpochMs` advanced with narrative output (`…206522` start → `…208121` → `…209908`),
+confirming the field tracks publishes.
+
+The **agent** run is the one that matters, because it exercises the projection §17.3 fixed. Its
+row carried `runId` identical to the agent `sessionId` (one namespace, §3.2 — no mapping table),
+`shapeId:"core.agent-run"`, and, at t+3.0 s, `state:"parked"` with
+`park:{kind:"approval", sinceEpochMs:…358502, detail:"XotuHUmLqBvuww17c7GxXbetacp7iKss"}` —
+**park non-null on the SAME read that took the snapshot.** That is §17.3's defect observed from
+the outside: before the fix this row would have read `state:"running", park:null` and only
+admitted the park one enumeration later. The snapshot carried all eight components with the
+actionable gate — `pendingApprovals:[{callId:"XotuHUmLqBvuww17c7GxXbetacp7iKss",
+toolName:"core_browse_folders", arguments:"{\"parent_path\":\"\"}", risk:"low",
+gateBehavior:"inline_confirm"}]`, `autonomyLevel:"WATCH"`. §6.1's law is therefore true on the
+wire: **the gate is answerable from the enumeration alone**, with no dependence on a
+`tool_call_pending` frame the ring may have evicted.
+
+**Leg 1b — the auth change, on a real socket.** The dev-runner never sets prod mode, so the stack
+was forced into it by injecting `-Djustsearch.prod=true` into the dist start script (§14.1d's
+technique; a build artifact, reverted immediately after and verified back to 0 occurrences). The
+Head minted a 43-char session token:
+
+| request | result |
+|---|---|
+| `GET /api/chat/runs/live`, **no** token | **401** `{"errorCode":"UI_TOKEN_REQUIRED"}`, `application/json`, 2 ms |
+| same, **wrong** token | **401**, identical body, 1 ms |
+| same, **correct** token | **200** `{"runs":[]}`, 4 ms |
+| control `GET /api/health`, no token | **200** — the ordinary read surface is untouched |
+| control `GET /api/chat/sessions?limit=1`, no token | **200** — the path scope is NARROW |
+
+The last row is the one worth keeping. It proves the change did not quietly tighten every GET:
+only the run family demands the token, exactly as §1.6 scopes it. This confirms `LiveRunsAuthTest`
+against a real server rather than an in-process Javalin.
+
+**Leg 2 — the observer count is real, and the bound holds with margin.** On a live
+`core.free-chat` run: `observerCount` `1` → `2` when a second observer attached through
+`POST /api/chat/runs/{runId}/observe`, then **back to `1` within 263 ms** of destroying that
+observer's socket abruptly (no graceful close). Against the 15 s heartbeat the ≤1-interval bound
+is satisfied by a factor of ~57.
+
+**State the measurement honestly:** 263 ms is the *streaming-cadence* case, not the worst case.
+`onClose` is write-cadence-bound (§15.0 D1.1), so a densely-streaming run notices a dead client on
+its next token write — which is why this is sub-second rather than near 15 s. The worst case is a
+run whose only write IS the heartbeat, and for that the bound is one interval *by construction*.
+A conversational run is never silent, and the run that would be (a parked one) is reachable only
+through the transport §18.5.1 describes, so the worst case was not separately measured.
+
+**Leg 3 — interruption, and the combined view.** An agent run was left parked at an approval gate
+(`state:"LLM_STREAMING"`, `resumable:false`, `interruptedAt:null`), the stack was killed, and the
+stack restarted. After restart:
+
+- `GET /api/chat/runs/live` → `{"runs":[]}` — **absent**, correctly: an interrupted run is a
+  PERSISTED run and never appears in a live enumeration (§5.1).
+- `GET /api/chat/sessions` → the same session with
+  `interruptedAt:"2026-08-18T16:10:15.001294400Z"`, stamped by the startup reconciler.
+
+The two reads compose exactly as §5.3 designs — the run is in precisely one of them. Classifying
+the triple `(LLM_STREAMING, resumable=false, interruptedAt=set)` through
+`InterruptedRunPresentation.of` yields **FORK_ONLY**, via the *defensive* branch (a non-terminal
+state the store did not mark resumable), not via a budget/context gate. **That surfaced a copy
+defect — see §18.6.**
+
+**Leg 4 — FE discovery, in a real browser.** With a parked agent run live
+(`500f05ad-…`, `state:"parked"`), a Chrome tab was pointed at the shell and reloaded mid-run. The
+network record shows the complete S5 chain:
+
+1. `GET http://127.0.0.1:7712/api/chat/runs/live?shapeId=core.agent-run` → **200** — discovery
+   through the enumeration, with the shape filter, direct to the backend (not the proxy);
+2. `POST http://127.0.0.1:7712/api/chat/runs/500f05ad-…/observe` → **200** — the window re-adopted
+   the run it discovered, through the MANAGED route.
+
+And the retired pointer is gone where it actually counts: `localStorage` in that live session held
+25 `justsearch.*`/`jf*` keys and **no key containing `activeAgentRun`**. The built bundle greps to
+0 as well. A `grep` proves deletion; this proves the running app no longer writes it.
+
+**One thing leg 4 did NOT establish, recorded rather than glossed:** seconds after the browser's
+successful attach, the enumeration reported `observerCount:0` for that run, while a node observer
+attached to the *same* run held it at `1` — so the counting is sound and the browser's observe
+stream had closed rather than staying attached. Whether that is benign (nothing more to receive
+from a parked run until its gate is answered) or the `liveWatchdog` (tempdoc 604) aborting a
+stream that only heartbeats is not established here. Logged to the inbox; it does not affect the
+discovery chain above, which is what leg 4 asserts.
+
+**Also observed:** for an agent run whose only watcher is its raw initiating socket,
+`observerCount` reads **0** — the enumeration counts channel listeners, and the legacy initiator
+is held by `AgentSession`, not by the channel (§16.2). So the field means "managed observers", and
+for agent runs it under-reports by the initiator. Nothing consumes it for a liveness decision
+today; named here so nothing starts to.
+
+#### 18.5.1 Zero-observer park is still out of reach, and S5 did not change that
+
+§18.5's earlier draft predicted this and the live round did not disturb it. The composition needs
+`observerCount` to reach 0 on a *parkable* run, and an agent run's initiator is still a raw socket
+that `AgentSession` evicts only when a write to it THROWS — which §16.5.1 measured as not firing
+across three iteration boundaries. Moving *attach* to the managed writer (S5) does not move
+*dispatch*. The live round confirms the two halves independently — the managed-observer half drops
+to zero correctly (leg 2, and the node-observer probe on the parked agent run showed `1` while
+held), and the park itself is now externally visible (leg 1a) — but their composition still awaits
+the initiating transport moving onto managed SSE, which is the change §16.3 anticipated and §15.3
+did not stage.
+
+### 18.6 Two late findings, one of them a revert
+
+**A park-retirement mechanism was implemented and then REVERTED, on review.** The idea was sound:
+the primer's `park` is point-in-time, so a run whose loop is seen executing is by definition no
+longer parked, and a set of "the loop moved" frames (`chunk`, `reasoning_chunk`, `budget_update`,
+`tool_exec_*`) would clear it. Its safety argument did not survive checking. It read: *"safe against
+the replay that follows the primer, because a park frame is the newest frame while the run is
+parked — any replayed movement is chronologically BEFORE the park."* The premise is true and the
+conclusion does not follow: **the FE has no way to tell a replayed frame from a live one.** The
+primer is emitted BEFORE the replay (§6.1), so on every reattach to a parked run the retained
+narrative frames arrive next and clear the park — on exactly the reattach the primer exists to
+serve. Verified structurally: `RunStreamWriter` emits `run_started`, optionally `replay_truncated`,
+the primer, then the replayed window, with **no replay-complete boundary frame**, and the run wire
+carries no `id:`/seq the FE could compare (§15.1.2 requirement 4 closed that deliberately).
+
+Scope of the damage had it shipped: narrow but pointed at this slice's purpose. An APPROVAL park
+survives regardless, because `onStateSnapshot` replays snapshot approvals through the same
+`handleToolCallEntry(…, 'pending')` path a live frame takes, so `pendingApprovals` — an independent,
+self-clearing signal — keeps the run `holding` and the gate answerable. A **budget / context /
+unobserved** park has no such second signal, so those are the ones that would have read as
+un-parked after a reattach.
+
+Reverted rather than shipped-with-a-corrected-comment, because the alternative failure is milder
+and self-limiting (a park that ends mid-stream reads as held until that stream ends, while the
+gate-specific signals clear themselves), and because the retirement was in neither §15.3 nor the
+implementation brief. **The correct fix is a backend one**: a replay-boundary lifecycle frame from
+`RunStreamWriter`, after which the FE may trust movement frames as live. That is a change to the
+S3b writer and its five protocol requirements, so it belongs to whoever next opens that file — not
+to a late edit in an FE sweep.
+
+**`POST /api/chat/agent/{sessionId}/attach` now has ZERO FE consumers.** S5 moved the only caller to
+the managed observe route; the emitter of its `attach_not_live` event is still live at
+`AgentController.java:486`, registered at `AgentRoutes.java:53`. It is NOT deleted here, for §16.3's
+reason: it retires as a UNIT with the other raw-`Context` routes (the initiating dispatch, resume,
+fork, `/ag-ui`) and with the `AgentSseWriter` eviction seam that serves them. Removing one member
+would leave the seam justified by a smaller consumer set without shrinking it, which is a partial
+sweep — the residue class 742 is about. Recorded so the next sweep finds it already counted.
+
+**A third finding, surfaced by live leg 3: `FORK_ONLY`'s copy asserts a reason it cannot know.**
+`InterruptedRunPresentation.FORK_ONLY` is reached two ways — a `WAITING_BUDGET`/`WAITING_CONTEXT`
+gate, and the *defensive* branch (any non-terminal state the store did not mark resumable). §5.2's
+table wrote the copy for the first route only, and both the Java enum and the FE mirror it:
+*"Interrupted while waiting for your decision about tokens/context. Cannot be resumed — start a new
+run from this transcript."*
+
+The live run took the **second** route: `(state=LLM_STREAMING, resumable=false, interruptedAt=set)`
+— a run interrupted mid-stream that simply is not resumable. It would be told it was waiting for a
+decision about tokens or context, which is false. The remedy is a product decision, not a
+mechanical one — either split the presentation in two (so the defensive route gets its own honest
+sentence) or reword `FORK_ONLY` to stop naming a cause it does not know (e.g. "Interrupted, and
+cannot be resumed — start a new run from this transcript"). Not changed here: §5.2's table is the
+authority for this copy, and rewriting it is the tempdoc owner's call rather than an implementer's.
+The classification itself is correct in both routes; only the sentence over-claims.

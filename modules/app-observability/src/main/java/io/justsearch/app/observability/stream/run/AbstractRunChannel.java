@@ -27,19 +27,25 @@ abstract class AbstractRunChannel {
   private final RunDescriptor descriptor;
   private final RunChannelPolicy policy;
   private final SseStreamChannel channel;
+  private final java.time.Clock clock;
+  private final java.util.concurrent.atomic.AtomicLong updatedAtEpochMs;
   private final AtomicBoolean retired = new AtomicBoolean(false);
   private final CopyOnWriteArrayList<Runnable> retireListeners = new CopyOnWriteArrayList<>();
 
-  AbstractRunChannel(RunId id, RunDescriptor descriptor, RunChannelPolicy policy) {
+  AbstractRunChannel(
+      RunId id, RunDescriptor descriptor, RunChannelPolicy policy, java.time.Clock clock) {
     this.id = Objects.requireNonNull(id, "id");
     this.descriptor = Objects.requireNonNull(descriptor, "descriptor");
     this.policy = Objects.requireNonNull(policy, "policy");
+    this.clock = Objects.requireNonNull(clock, "clock");
+    this.updatedAtEpochMs =
+        new java.util.concurrent.atomic.AtomicLong(descriptor.startedAtEpochMs());
     this.channel =
         new SseStreamChannel(
             id.streamId(),
             new io.justsearch.app.observability.stream.StreamSequenceTracker(),
             new FrameHistoryRingBuffer(policy.frameRetention()),
-            java.time.Clock.systemUTC());
+            clock);
   }
 
   public final RunId id() {
@@ -62,11 +68,19 @@ abstract class AbstractRunChannel {
     return channel.listenerCount();
   }
 
+  public final long updatedAtEpochMs() {
+    return updatedAtEpochMs.get();
+  }
+
   public final boolean publish(RunFrame frame) {
     Objects.requireNonNull(frame, "frame");
     if (retired.get()) {
       return false;
     }
+    // Stamped on NARRATIVE publishes only. The heartbeat goes through `lifecycle` and deliberately
+    // does not bump this: a parked run's only write is its heartbeat, so counting it as activity
+    // would make every parked run look busy — the one lie an "updated at" field is able to tell.
+    updatedAtEpochMs.set(clock.millis());
     channel.publish(SseFrameKind.UPDATE, frame.asPayload());
     return true;
   }
