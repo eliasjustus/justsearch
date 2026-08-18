@@ -1,7 +1,7 @@
 ---
 title: "Dev agent-tool surface audit: what agents actually invoke on the justsearch-dev MCP server, what fails, what nobody has ever called, and the two structural reasons 81% of local-API traffic bypasses the surface entirely"
 type: tempdocs
-status: "OPEN — analysis complete and reproducible (2026-08-18); nothing implemented. Owner decisions pending on D1-D4 (§8). Hot-reload coherence RESOLVED 2026-08-18: verdict INCOHERENT, independently re-verified against source (§5.6). Recommendation REVISED same day from RETIRE to FIX-THEN-SURFACE after owner challenge: the retire estimate did not survive re-examination and the value model (warm models across a code change, not a saved spawn) was never weighed — see §4.2. THEORIZED 2026-08-18 (§11): the endstate thesis is a single run registry as keystone, three tool classes with per-class middleware, and specialization into arbitration over transport; #845 reserved as the candidate registry lane. DIRECTION SET 2026-08-18 (12): the through-line is that the surface asserts what it has not verified (7 instances, 1 property); criterion = a dev tool must not report state it did not verify. 12.3 re-sequences 9 by that criterion and drops P3b (allowlist) + defers P8. IN EXECUTION on branch worktree-844-dev-surface-honesty. Adopts 6 inbox conditions (§7) that should be closed by this lane rather than re-logged."
+status: "OPEN — analysis complete and reproducible (2026-08-18); nothing implemented. Owner decisions pending on D1-D4 (§8). Hot-reload coherence RESOLVED 2026-08-18: verdict INCOHERENT, independently re-verified against source (§5.6). Recommendation REVISED same day from RETIRE to FIX-THEN-SURFACE after owner challenge: the retire estimate did not survive re-examination and the value model (warm models across a code change, not a saved spawn) was never weighed — see §4.2. THEORIZED 2026-08-18 (§11): the endstate thesis is a single run registry as keystone, three tool classes with per-class middleware, and specialization into arbitration over transport; #845 reserved as the candidate registry lane. DIRECTION SET 2026-08-18 (12): the through-line is that the surface asserts what it has not verified (7 instances, 1 property); criterion = a dev tool must not report state it did not verify. 12.3 re-sequences 9 by that criterion and drops P3b (allowlist) + defers P8. IMPLEMENTED 2026-08-18 on branch worktree-844-dev-surface-honesty, NOT merged (see 13 As-built). Shipped: P1 prunes (tool set 16 -> 12), P2 start/preflight truth + DIST_NOT_BUILT, P3a projection honesty, P5 quick_health foreignRuns tri-state, P6 de-fork + check-dev-mcp-doc-sync gate + consult-register, P7 the standing reader. Dropped: P3b. Deferred: P8 (D2). Execution corrected this document three times - 3 was measured on a non-recursive glob that excluded subagents (379 -> 731 calls), 6.3 was a sync generator not a fork, and 5.2 s separator claim is retracted. Adopts 6 inbox conditions (§7) that should be closed by this lane rather than re-logged."
 created: 2026-08-18
 author: agent session b73007cd (Opus 5, 1M context) — chartered by the owner after a session-opening question about the state of dev-related MCP capabilities
 category: agent-process / dev-tooling / mcp
@@ -505,14 +505,18 @@ These are already in the conditions store and should be **closed by this lane, n
 Several are at `seen: 3-4` — the repeat counts are evidence the surface has an unworked backlog,
 not that the notes were unclear.
 
-| Condition | Lands in |
-|---|---|
-| `obs:dev-runner-drift` — `distFrom` default drift, hook-hint proposed 2026-07-02 | §5.1 |
-| `obs:server` — ownership gates only `start` (seen: 3) | §6.2 |
-| `observations.md:356` — `/infra/capabilities` + `/infra/health` unreachable | §5.3 |
-| `observations.md:580` — `capture_evidence` libuv crash on Windows | §4.3 |
-| `observations.md:355` + `:470` — fresh worktree has no chat model; settings/v2 workaround undocumented | §5.2 |
-| shard `bccfc163` 2026-08-14 x2 — cuda12 variant message; runHeadlessEval invisible to `quick_health` | §5.2, §6.1 |
+| Condition | Lands in | Outcome (2026-08-18) |
+|---|---|---|
+| `obs:dev-runner-drift` — `distFrom` default drift, hook-hint proposed 2026-07-02 | §5.1 | **closed** — `preflight` takes `distFrom` and shares `start`'s resolver; bare names resolve |
+| `obs:server` — ownership gates only `start` (seen: 3) | §6.2 | **open** — not addressed. The §11.4 Class-C middleware is the fix; out of scope here |
+| `observations.md:356` — `/infra/capabilities` + `/infra/health` unreachable | §5.3 | **closed as won't-fix**, with reasoning recorded in §12.3 (the invariant names an endpoint, not a transport) |
+| `observations.md:580` — `capture_evidence` libuv crash on Windows | §4.3 | **closed** — the crashing tool is gone; the EvidenceBundle format and its CI consumer are untouched |
+| `observations.md:355` + `:470` — fresh worktree has no chat model; settings/v2 workaround undocumented | §5.2 | **partly closed** — the workaround is documented; the precondition is still not surfaced pre-flight (§13.2) |
+| shard `bccfc163` 2026-08-14 x2 — cuda12 variant message; runHeadlessEval invisible to `quick_health` | §5.2, §6.1 | **the second is closed** — `foreignRuns` reports unowned backends. The cuda12 message is unchanged |
+
+Three of six fully closed, one partly, one deliberately won't-fixed with reasons, one left open and
+named. Recorded this way so the next fold does not re-open what was decided, and does not mark
+closed what was not.
 
 ## 8. Owner decisions
 
@@ -928,3 +932,86 @@ mechanism, not extending it, in which case `api_call`'s first-call success would
 because nothing would be rejected. The drop is a bet, and this metric makes it a **testable
 prediction** rather than a preference — if items 1-5 leave `api_call` near 51% while everything
 else improves, that is evidence *for* the §11.5 endstate, not against the sequencing.
+
+## 13. As-built (2026-08-18)
+
+Implemented on `worktree-844-dev-surface-honesty` against the §12.3 order. Nothing merged.
+
+### 13.1 What shipped
+
+| Item | Outcome |
+|---|---|
+| **P6** doc/skill de-fork + sync gate | `scripts/ci/check-dev-mcp-doc-sync.mjs` spawns the real server and compares `tools/list`, the `fetch_api_json` endpoint map and the `API_CALL_ALLOWLIST` against the reference **in both directions**; co-located test, 25 assertions, including "an empty tool list fails loudly instead of passing". Surface registered in `governance/consult-register.v1.json`; Pre-merge row added |
+| **P5** `quick_health` sees foreign backends | `foreignRuns` reports backends the dev-runner did not start, incl. `jseval`'s hardcoded 33221. Tri-state enforced: `null` = did not look, `[]` = looked and found nothing. No subprocess |
+| **P2** `start`/`preflight` truth | One shared `resolveDistRoot` used by both, so `preflight` checks the tree `start` will use. `DIST_NOT_BUILT` replaces `UNHANDLED`, classified in `dev-runner.cjs` with path + remedy. Bare worktree names resolve; unknown ones list what exists |
+| **P4** `ai_activate` preconditions | Folded into the `preflight`/`quick_health` work above. The separator half was retracted (§5.2) rather than implemented |
+| **P3a** projection honesty | `jsonPath` miss names the deepest resolved level + available keys and **withholds the body**; array indexing added; `api_call` gained `jsonPath` (one implementation, two callers); `maxBytes` truncates with an explicit notice instead of failing the call |
+| **P7** the instrument | `scripts/agent-analytics/dev-tool-usage.mjs` + test. Baseline recorded in §12.6 |
+| **P1** prunes | `github` server, `agent_chat`, `capture_evidence`, `validate_evidence` removed; `status` folded into `quick_health {detail:"full"}`; `acquire_when_free` kept. Tool set: **12** |
+
+Verification: doc-sync gate OK · gate test 25 · 36 unit + 18 live-stdio assertions across two new
+test files · `test-ownership-verdict` 34/34 · `test-dev-runner-admission` 6/6 · agent-analytics
+33/33 files · `skills-sync --check` OK · `check-premerge-table` and `check-always-loaded-budget`
+pass. No Java or Gradle sources changed, so no Gradle build was run — stating that rather than
+implying a build verified something it could not.
+
+### 13.2 What did not ship, and why
+
+- **P3b (allowlist additions)** — dropped by §12.3, not forgotten. §11.5's argument stands.
+- **P8 (hot reload)** — untouched, pending owner decision **D2**. No `reload`, `hotReload`,
+  `HotSwapPush.java` or `DEV_HOTRELOAD` code was modified.
+- **D1 is not fully in effect.** `.mcp.json` is gitignored; see §4.1's residual manual step.
+- **`ai_activate`'s runtime-variant precondition is only partly addressed.** `preflight`'s models
+  and llama-variant checks still resolve against the *invoking* checkout, not `distCheckRoot`.
+  Only the dist checks moved. The code says so at the call site rather than letting the reported
+  `distCheckedRoot` imply more coverage than it has — but a fresh worktree can still surprise
+  `ai_activate`, and that is the residue of §5.2.
+
+### 13.3 What the execution found that the audit had not
+
+Four things, three of which corrected this document:
+
+1. **§3 was measured on the wrong corpus.** P7's reader showed the original extractor read only the
+   top level of each project directory, excluding subagent transcripts — a ~48% undercount
+   (379 -> 731 calls). §1 now carries the correction. The audit asserted a `**/*.jsonl` scope it
+   had not verified it was reading: §12.2's criterion, failing on the audit itself.
+2. **§6.3's mechanism was wrong.** The 114 shared lines were machine-generated, not copy-pasted.
+   A generator syncing prose into prose kept a wrong doc faithfully duplicated while its `--check`
+   stayed green. The remedy survived the correction; the diagnosis did not.
+3. **The gate found an error the prose audit missed** — `status` documented as
+   `/api/knowledge/status` against `/api/status` in code. A careful human pass over a 15-row table
+   caught one of its two errors; the gate caught both, by construction.
+4. **A fifth stale inventory** (`scripts/README.md`) still advertised a `wait_ready` tool that no
+   longer exists.
+
+### 13.4 Honest record of process failures
+
+Recorded because a lane about tooling honesty cannot be selective about its own.
+
+- A worker **ran a Gradle build** despite an explicit prohibition, by `node -e "require(...)"` on
+  `prepare-worktree.cjs` to "syntax-check" it — which executed it, triggering `npm ci` and an
+  `installDist`. It completed clean and clobbered no config, but the prohibition existed because
+  Gradle is serialized across agents and a second agent was live at the time. The later brief was
+  amended to name this specific mistake; that is the only reason it did not recur.
+- A worker ran `git checkout -- <doc>` during an adversarial gate test and discarded its own
+  uncommitted rewrite, then redid it.
+- The orchestrator ran a `python -c` with backticks inside double quotes, so the shell performed
+  command substitution on the document text and executed fragments of it, triggering a build. No
+  file was modified; the intended edit never ran.
+
+None changed the shipped result. All three are the same class: a command whose *side effects* were
+not considered because it was framed as a read.
+
+### 13.5 For a reviewer to second-guess
+
+- `DIST_NOT_BUILT` is **not exercised live** — reaching it needs a real `dev-runner start`, which
+  the briefs forbade. Its tests are source-structural and say so. This is the weakest link.
+- `quick_health` now reports `inferenceOrphan` *and* `foreignRuns`, which can both describe port
+  8080. Consistent, but a reviewer may prefer retiring the former; `stop` still acts on it.
+- `CLAUDE.md` was at its exact byte ceiling; 30 B were trimmed from the ui-web row (history
+  pointers only, authority reference kept) to fit the new Pre-merge row.
+- The `cli.mjs` dead-code sweep went beyond the brief's enumerated files.
+- Pre-existing, logged not fixed: `FetchApiJsonOutputSchema` can throw a `ZodError` when `isOk` is
+  false and no error object was produced (e.g. HTTP 500 with a valid JSON body) — neither union
+  branch matches. Predates this lane; no new path into it was added. `hook-integrity` also fails
+  with 6 `unwired-hook` findings against a stale machine-local `settings.local.json`.
