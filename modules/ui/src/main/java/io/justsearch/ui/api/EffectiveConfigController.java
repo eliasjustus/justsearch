@@ -7,6 +7,7 @@ import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.status.EffectiveConfigEntry;
 import io.justsearch.app.inference.InferenceConfig;
 import io.justsearch.configuration.EnvRegistry;
+import io.justsearch.configuration.ModelPathSource;
 import io.justsearch.configuration.PlatformPaths;
 import io.justsearch.configuration.SystemAccess;
 import io.justsearch.configuration.resolved.ConfigResolution;
@@ -27,7 +28,20 @@ import java.util.function.Supplier;
 /** Implements GET /api/debug/effective-config (runtime grounding snapshot). */
 public final class EffectiveConfigController {
   private static final int SCHEMA_VERSION = 1;
-  private static final String UI_SETTINGS = "ui_settings";
+  /**
+   * Tempdoc 842: the ownership marker vocabulary is shared, not privately re-spelled here. This was
+   * a fourth private copy of the same literal ({@code RuntimeActivationService} held two, the
+   * writers hold their own) — and tempdoc 374 alpha.16 already had to re-learn what happens when
+   * one copy drifts from another.
+   *
+   * <p>Deliberately still a single-marker equality test in {@link #isUiSettingsMarker}, NOT
+   * {@link ModelPathSource#isSystemOwned}: that predicate also admits {@code auto_selected_cuda12}
+   * and {@code profile_resolved}, which would reclassify markers this report currently calls
+   * {@code owner: "unknown"} across five keys (index.base_path, server.exe, llm.model_path,
+   * gpu.layers, context.size). Widening the report is a behavior change with its own evidence
+   * bar — this migration is the constant only.
+   */
+  private static final String UI_SETTINGS = ModelPathSource.UI_SETTINGS;
 
   private final Supplier<Integer> apiPortSupplier;
   @SuppressWarnings("unused")

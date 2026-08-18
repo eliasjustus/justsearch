@@ -66,6 +66,13 @@ public final class AiPreflightService {
       AiRuntimeStatusResponse runtimeStatus) {
     List<PackageStatus> packages = new ArrayList<>();
     for (ModelPackage pkg : registry.packages()) {
+      // Tempdoc 842: dev-only packages are not part of any user install, so they have nothing to be
+      // reconciled against — they are dropped from the reported list entirely rather than reported
+      // incomplete-but-not-blocking. A never-installed chat-compact must not surface as something
+      // repair/completeness UIs can offer to fix.
+      if (pkg.devOnly()) {
+        continue;
+      }
       Path baseDir = pkg.installRoot() != null ? aiHome.resolve(pkg.installRoot()) : modelsDir;
       Path pkgDir = baseDir.resolve(pkg.targetDir());
 

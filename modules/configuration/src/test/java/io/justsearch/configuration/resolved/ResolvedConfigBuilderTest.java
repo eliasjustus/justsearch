@@ -276,6 +276,20 @@ final class ResolvedConfigBuilderTest {
       assertEquals(0, config.ai().reranker().maxAvgDocLengthChars());
     }
 
+    @Test
+    @DisplayName("chat profile defaults to 'standard' through the resolution chain (tempdoc 842)")
+    void chatProfileDefaultsToStandard() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.contributeEnvRegistry();
+      ResolvedConfig config = builder.build();
+
+      // Cross-check against the declared default, so removing the EnvRegistry default (silently
+      // falling through to the builder fallback) is caught...
+      assertEquals(EnvRegistry.CHAT_PROFILE.defaultValue(), config.ai().chatProfile());
+      // ...and pin the chosen value: an unconfigured runtime must start the standard 9B pair.
+      assertEquals("standard", config.ai().chatProfile());
+    }
+
     // ==================== Reasoning budget (tempdoc 835 §9f) ====================
     //
     // These guard a SILENT failure: reasoning and answer tokens share one completion ceiling, so an

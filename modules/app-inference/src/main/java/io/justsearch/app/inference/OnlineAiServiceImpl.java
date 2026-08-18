@@ -13,9 +13,13 @@ import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.OnlineAiRuntimeIntrospection;
 import io.justsearch.app.api.OnlineAiRuntimeControl;
 import io.justsearch.app.api.SamplingParams;
+import io.justsearch.configuration.model.ChatModelProfile;
 import io.justsearch.configuration.resolved.ConfigStore;
+import io.justsearch.configuration.resolved.ResolvedConfig;
+import io.justsearch.configuration.resolved.ResolvedPathResolver;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Objects;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -94,6 +98,115 @@ public final class OnlineAiServiceImpl
     } catch (ModeTransitionException e) {
       throw new RuntimeException(e.getMessage(), e);
     }
+  }
+
+  /**
+   * Applies a chat model profile as one atomic unit (tempdoc 842 §2.3).
+   *
+   * <p>Engine restarts never re-run {@link InferenceConfig#fromEnvironment(Path)} — every apply
+   * derives the next config from {@link InferenceLifecycleManager#currentConfig()} — so a profile
+   * switch needs its own entry point here rather than a re-resolution at bootstrap.
+   */
+  @Override
+  public void applyChatProfile(ChatModelProfile profile, RestartPolicy restartPolicy) {
+    Objects.requireNonNull(profile, "profile is required");
+    InferenceConfig current = manager.currentConfig();
+    if (current == null) {
+      throw new IllegalStateException("Inference runtime not configured");
+    }
+
+    Path modelsDir = resolveModelsDir(current);
+    Path modelPath = modelsDir.resolve(profile.modelFile());
+    if (!Files.isRegularFile(modelPath)) {
+      // Fail closed, unlike the projector below: llama-server refuses to start on an unresolvable
+      // --model, so restarting the engine onto a file that is not there turns a profile switch
+      // into an outage. The HTTP path never gets here (RuntimeActivationService pre-checks and
+      // fails with a typed MODEL_NOT_FOUND); this is the same verdict for direct programmatic
+      // callers of OnlineAiRuntimeControl.applyChatProfile. Thrown BEFORE any applyConfig, so the
+      // running engine is left exactly as it was.
+      throw new IllegalStateException(missingProfileModelMessage(profile, modelPath));
+    }
+    Path mmprojPath = modelsDir.resolve(profile.mmprojFile());
+    if (!Files.exists(mmprojPath)) {
+      // Same rule as fromEnvironment: a missing projector degrades to text-only with a WARN
+      // rather than failing the switch — llama-server refuses to start on an unresolvable
+      // --mmproj path, which would turn a profile switch into an outage.
+      LOG.warn(
+          "Chat profile '{}': mmproj not found at {}. Vision features will be disabled.",
+          profile.id(),
+          mmprojPath);
+      mmprojPath = null;
+    }
+
+    InferenceConfig next =
+        new InferenceConfig(
+            current.serverExecutable(),
+            modelPath,
+            mmprojPath,
+            current.serverPort(),
+            current.contextSize(),
+            current.gpuLayers(),
+            current.vduMode(),
+            profile.id());
+
+    LOG.info(
+        "Applying chat profile '{}': model={} mmproj={} (modelsDir={})",
+        profile.id(),
+        modelPath,
+        mmprojPath,
+        modelsDir);
+
+    try {
+      manager.applyConfig(
+          next,
+          mapRestartPolicy(restartPolicy),
+          io.justsearch.app.inference.telemetry.TransitionReason.CONFIG_APPLY);
+    } catch (ModeTransitionException e) {
+      throw new RuntimeException(e.getMessage(), e);
+    }
+  }
+
+  /**
+   * Failure text for a profile whose model file is not on disk.
+   *
+   * <p>Deliberately word-for-word with {@code RuntimeActivationService.missingProfileModelMessage}
+   * (the API-path counterpart) so both surfaces name the same remedy: the compact bundle is a
+   * dev-only package excluded from user install plans, so "Run Install AI" would send the reader
+   * somewhere that will never fetch it. Not shared as one helper because that class lives in
+   * {@code :modules:app-services}, which depends on this module rather than the other way round.
+   */
+  private static String missingProfileModelMessage(ChatModelProfile profile, Path resolved) {
+    String remedy =
+        profile == ChatModelProfile.COMPACT
+            ? " Run `node scripts/dev/fetch-compact-model.mjs` to download it."
+            : " Run Install AI to download it.";
+    return "Chat profile '" + profile.id() + "' model does not exist: " + resolved + "." + remedy;
+  }
+
+  /**
+   * Resolves the models directory a profile's relative filenames hang off.
+   *
+   * <p>Deliberately the <em>configured</em> models dir, not {@code currentConfig().modelPath()
+   * .getParent()}. A profile's {@code modelFile()} / {@code mmprojFile()} are registry
+   * {@code targetDir}-relative names ("compact/Qwen3.5-4B-...gguf"), so they are only meaningful
+   * under the configured models root. When the running config came from an operator path, its
+   * parent is an arbitrary directory that happens to hold one GGUF — resolving a profile against
+   * it would point at files that were never installed there.
+   * {@code InferenceConfig.fromEnvironment} makes the same choice: its {@code associatedModelsDir}
+   * follows the model path only for the override branch, and the profile branch always uses the
+   * configured models dir.
+   *
+   * <p>Falls back to the current model's parent only when there is no ConfigStore to ask.
+   */
+  private static Path resolveModelsDir(InferenceConfig current) {
+    ConfigStore cs = ConfigStore.globalOrNull();
+    if (cs != null) {
+      ResolvedConfig rc = cs.get();
+      Path baseDir = ResolvedPathResolver.resolveBaseDir(rc, System.getProperty("user.dir"));
+      return ResolvedPathResolver.resolveModelsDir(rc, baseDir);
+    }
+    Path parent = current.modelPath() != null ? current.modelPath().getParent() : null;
+    return parent != null ? parent : Path.of(".");
   }
 
   @Override
@@ -218,6 +331,7 @@ public final class OnlineAiServiceImpl
     Path serverExe = base.serverExecutable();
     Path modelPath = base.modelPath();
     Path mmprojPath = base.mmprojPath();
+    String chatProfileId = base.chatProfileId();
 
     // Allow out-of-band override for BYO llama-server path (set via UI settings -> sysprop).
     ConfigStore cs = ConfigStore.globalOrNull();
@@ -240,6 +354,10 @@ public final class OnlineAiServiceImpl
       // the model file path, prefer text-only mode unless mmproj is independently configured elsewhere.
       if (changed) {
         mmprojPath = null;
+        // The profile claim describes the PAIR. Once a bare path replaces the model, the old id
+        // no longer names what is loaded, and a stale claim is worse than none — every surface
+        // that reports realized chat identity would report a model that is not running.
+        chatProfileId = null;
       }
     }
 
@@ -260,7 +378,8 @@ public final class OnlineAiServiceImpl
         base.serverPort(),
         ctx,
         layers,
-        base.vduMode());
+        base.vduMode(),
+        chatProfileId);
   }
 
   private static Path resolveOptionalPath(String raw, Path fallbackDir) {

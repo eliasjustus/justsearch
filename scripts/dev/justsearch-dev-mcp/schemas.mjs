@@ -112,6 +112,9 @@ export const StartInputSchema = z
         + 'sibling worktree under .claude/worktrees, or the main repo). The shared lease stays under '
         + 'the main repo, so a worktree agent can run its own code on the one shared stack. Resolves a '
         + 'rebuildFirst/provenance-mismatch verdict.'),
+    chatProfile: z.enum(['compact', 'standard']).optional()
+      .describe('Chat model profile delivered to the backend as JUSTSEARCH_CHAT_PROFILE (tempdoc 842). '
+        + 'The dev default is "compact" even when this is omitted — ambient operator env still wins.'),
     sessionId: z.string().optional(),
   })
   .strict();
@@ -650,6 +653,9 @@ export const AgentChatOutputSchema = z.union([
       durationMs: z.number(),
       iterations: z.array(AgentIterationSchema).optional(),
       budgetUpdates: z.array(AgentBudgetUpdateSchema).optional(),
+      // Tempdoc 842 §2.7 D2: set true when agent_chat found AI offline and activated the
+      // compact profile itself before running the chat, instead of failing with AI_OFFLINE.
+      autoActivated: z.boolean().optional(),
     })
     .passthrough(),
   z
@@ -665,6 +671,7 @@ export const AgentChatOutputSchema = z.union([
       error: ToolErrorSchema,
       iterations: z.array(AgentIterationSchema).optional(),
       budgetUpdates: z.array(AgentBudgetUpdateSchema).optional(),
+      autoActivated: z.boolean().optional(),
     })
     .passthrough(),
 ]);
@@ -676,6 +683,10 @@ export const AiActivateInputSchema = z
     runId: z.string().meta({ format: 'uuid' }).optional().describe('Run ID (omit to use active run)'),
     apiPort: z.number().int().positive().optional().describe('API port (alternative to runId for untracked instances)'),
     variantId: z.string().min(1).default('cuda12'),
+    // Tempdoc 842 §2.4: activation is when llama-server spawns, so it is the natural chat-model
+    // profile switch point. Forwarded to POST /api/ai/runtime/activate when set; backend support
+    // lands in a parallel Java slice — sending the field is forward-compatible either way.
+    chatProfile: z.enum(['compact', 'standard']).optional(),
     timeoutMs: z.number().int().positive().max(120_000).default(60_000),
     pollIntervalMs: z.number().int().positive().max(10_000).default(2_000),
     sessionId: z.string().optional(),
@@ -692,6 +703,9 @@ export const AiActivateOutputSchema = z.union([
       phase: z.string(),
       message: z.string(),
       durationMs: z.number(),
+      // Tempdoc 842 §2.4/§2.7: passthrough of the realized chat profile, when the runtime status
+      // response carries it (defensive — the field does not exist until the Java slice lands).
+      chatProfile: z.string().optional(),
     })
     .passthrough(),
   z
@@ -703,6 +717,7 @@ export const AiActivateOutputSchema = z.union([
       phase: z.string().optional(),
       message: z.string().optional(),
       durationMs: z.number().optional(),
+      chatProfile: z.string().optional(),
       error: ToolErrorSchema,
     })
     .passthrough(),
@@ -717,6 +732,37 @@ export const QuickHealthInputSchema = z
   })
   .strict();
 
+// Tempdoc 637 Layer A: one-look freshness verdict per source (build artifact, index warmth, FE
+// binding, lockfile drift). Declared here to match what quick_health actually emits (~server.mjs
+// buildArtifact/indexWarmth/feBinding/locks) — previously undeclared and surviving only via
+// passthrough (842 §2.7).
+const FreshnessSourceSchema = z
+  .object({
+    state: z.string(),
+    reason: z.string().optional(),
+    remedy: z.string().optional(),
+    note: z.string().optional(),
+  })
+  .passthrough();
+
+const FreshnessSchema = z
+  .object({
+    buildArtifact: FreshnessSourceSchema,
+    indexWarmth: FreshnessSourceSchema,
+    feBinding: FreshnessSourceSchema,
+    locks: FreshnessSourceSchema,
+  })
+  .passthrough();
+
+// Tempdoc 842 §2.5/§2.7: realized chat model identity, projected from the runtime — passthrough
+// fields since they don't exist on the status response until the parallel Java slice lands.
+const QuickHealthModelSchema = z
+  .object({
+    chatProfile: z.string().optional(),
+    modelPath: z.string().optional(),
+  })
+  .passthrough();
+
 export const QuickHealthOutputSchema = z
   .object({
     running: z.boolean(),
@@ -728,6 +774,8 @@ export const QuickHealthOutputSchema = z
     aiActive: z.boolean().nullable(),
     inferenceOrphan: z.boolean().optional(),
     ownership: OwnershipProjectionSchema.optional(),
+    freshness: FreshnessSchema.optional(),
+    model: QuickHealthModelSchema.optional(),
   })
   .passthrough();
 

@@ -14,6 +14,7 @@ import io.justsearch.app.api.OperationLeaseService;
 import io.justsearch.app.services.runtimestate.RuntimeReconciler;
 import io.justsearch.app.services.runtimestate.RuntimeStatus;
 import io.justsearch.configuration.PlatformPaths;
+import io.justsearch.configuration.ModelPathSource;
 import io.justsearch.configuration.SystemPropertyUtils;
 import io.justsearch.configuration.model.CapabilityTier;
 import io.justsearch.configuration.model.DownloadProfile;
@@ -1227,8 +1228,17 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     s.setLlmModelPath(chatModelPath.toAbsolutePath().toString());
     settingsStore.save(s);
 
-    SystemPropertyUtils.setSysPropIfBlank(
-        "justsearch.llm.model_path", chatModelPath.toAbsolutePath().toString());
+    // Tempdoc 842 (S2): the marker MUST be written next to the value. The bare
+    // setSysPropIfBlank left justsearch.llm.model_path unlabelled, so for the rest of a
+    // just-installed JVM every reader classified the installer's own path as operator-owned —
+    // EffectiveConfigController reported owner "unknown", and the §2.3 precedence rule would have
+    // treated a re-derivable installer path as a sacred operator lock. The value written here is a
+    // copy of the settings row saved two lines up, which is exactly what UI_SETTINGS means.
+    SystemPropertyUtils.setSysPropIfBlankWithSource(
+        "justsearch.llm.model_path",
+        chatModelPath.toAbsolutePath().toString(),
+        ModelPathSource.SOURCE_PROP_LLM_MODEL_PATH,
+        ModelPathSource.UI_SETTINGS);
 
     ConfigStoreRebuilder.rebuild(ConfigStore.globalOrNull(), s);
 

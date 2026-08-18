@@ -17,6 +17,27 @@ public record AiRuntimeStatusResponse(
 ) {
   public record InstalledVariant(String variantId, String exePath) {}
 
+  /**
+   * The active runtime pointers.
+   *
+   * <p>Two axes live here and they are not the same thing. {@code serverExecutablePath},
+   * {@code activeVariantId} and {@code gpuLayers} are the CONFIGURED/REQUESTED values (gpuLayers
+   * comes off the resolved config — what llama-server is asked to offload, not what it managed to).
+   * The three fields added by tempdoc 842 §2.5 are REALIZED — projected from the engine that is
+   * actually running:
+   *
+   * <ul>
+   *   <li>{@code chatProfile} — the running engine's {@code ChatModelProfile} claim, or null when
+   *       it loaded a bare path no profile selected. Null is not "standard".
+   *   <li>{@code modelPath} — the model file the engine actually loaded.
+   *   <li>{@code mmprojActive} — whether a projector is attached. {@code FALSE} is the honest
+   *       report of the swap that dropped it; {@code null} means the engine is offline (no
+   *       realized identity at all), never "no projector".
+   * </ul>
+   *
+   * <p>All three are null when no engine is up, so a consumer can never mistake a settings value
+   * for a running one.
+   */
   public record ActiveRuntime(
       String serverExecutablePath,
       String activeVariantId,
@@ -26,7 +47,11 @@ public record AiRuntimeStatusResponse(
       String vramTierDetected,       // "12gb_plus" | "8gb" | "4gb" | "under_4gb" | "unknown"
       List<String> effectiveVramFlags,  // flags actually applied, e.g. ["-ctk", "q4_0", "-ctv", "q4_0"]
       Long vramTotalBytes,
-      Long vramFreeBytes
+      Long vramFreeBytes,
+      // ---- realized chat identity (tempdoc 842 §2.5); null when the engine is offline ----
+      String chatProfile,
+      String modelPath,
+      Boolean mmprojActive
   ) {}
 
   /**

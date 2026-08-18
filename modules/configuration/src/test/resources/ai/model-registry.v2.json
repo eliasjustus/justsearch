@@ -254,6 +254,35 @@
       ]
     },
     {
+      "id": "chat-compact",
+      "label": "Chat model (compact)",
+      "description": "Smaller chat/vision model for development stacks; excluded from user installs",
+      "targetDir": "compact",
+      "termsUrl": "https://huggingface.co/Qwen/Qwen3.5-4B",
+      "license": "Apache-2.0",
+      "tier": "llm",
+      "devOnly": true,
+      "minVramBytes": 0,
+      "variants": [
+        {
+          "filename": "Qwen3.5-4B-Q4_K_M.gguf",
+          "precision": "GGUF",
+          "targetEP": "LLAMA_SERVER",
+          "sha256": "00FE7986FF5F6B463E62455821146049DB6F9313603938A70800D1FB69EF11A4",
+          "sizeBytes": 2740937888,
+          "downloadUrl": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-Q4_K_M.gguf"
+        }
+      ],
+      "supportingFiles": [
+        {
+          "filename": "mmproj-F16.gguf",
+          "sha256": "CD88EDCF8D031894960BB0C9C5B9B7E1FEA6EBEE02B9F7CE925A00D12891F864",
+          "sizeBytes": 672423616,
+          "downloadUrl": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/mmproj-F16.gguf"
+        }
+      ]
+    },
+    {
       "id": "cuda-runtime",
       "label": "GPU runtime libraries",
       "description": "CUDA 12.4 runtime DLLs for GPU-accelerated chat and ONNX inference",

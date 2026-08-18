@@ -154,6 +154,7 @@ function parseArgs(argv) {
     hotReload: false,
     sessionId: null,
     leaseDurationSec: DEFAULT_LEASE_DURATION_SEC,
+    chatProfile: null,
   };
 
   const args = [...argv];
@@ -220,6 +221,11 @@ function parseArgs(argv) {
         // periodic renewal) sees one already-clamped value — no second clamp site to drift.
         out.leaseDurationSec = clampLeaseDurationSec(takeValue());
         break;
+      case '--chat-profile':
+        // Tempdoc 842 §2.4: chat model profile ("compact" | "standard"), forwarded to the
+        // backend spawn env as JUSTSEARCH_CHAT_PROFILE. Validated below.
+        out.chatProfile = String(takeValue() || '');
+        break;
       case '--help':
       case '-h':
         out.cmd = 'help';
@@ -234,6 +240,9 @@ function parseArgs(argv) {
   }
   if (!Number.isFinite(out.uiPort) || out.uiPort <= 0) throw new Error(`Invalid --ui-port: ${out.uiPort}`);
   if (!Number.isFinite(out.apiPort) || out.apiPort < 0) throw new Error(`Invalid --api-port: ${out.apiPort}`);
+  if (out.chatProfile != null && !['compact', 'standard'].includes(out.chatProfile)) {
+    throw new Error(`Invalid --chat-profile: ${out.chatProfile} (expected compact|standard)`);
+  }
   return out;
 }
 
@@ -245,6 +254,7 @@ function printUsage() {
       'Commands:',
       '  start   [--ui-port 5173] [--api-port 0|33221] [--data-dir <path>] [--clean soft|hard|none] [--json]',
       '          [--lease-duration-sec 30-7200]  (campaign-length ownership hold; default 30, clamped)',
+      '          [--chat-profile compact|standard]  (backend JUSTSEARCH_CHAT_PROFILE; dev default compact)',
       '  status  [--run <runId>|--active] [--json]',
       '  stop    [--run <runId>|--active] [--force] [--json]',
       '  cleanup [--run <runId>|--active] [--force] [--clean soft|hard|none] [--json]',
@@ -1363,6 +1373,28 @@ async function cmdStart(opts) {
 
   const aiEnv = resolveAiDevEnv();
 
+  // Tempdoc 842 §2.4: ambient operator env ALWAYS wins (same convention as resolveAiDevEnv above);
+  // otherwise the CLI-supplied profile applies, and the dev default is "compact" even when the
+  // caller omits --chat-profile entirely.
+  const effectiveChatProfile = process.env.JUSTSEARCH_CHAT_PROFILE || opts.chatProfile || 'compact';
+
+  // Tempdoc 842 §2.4: not fatal (the stack boots AI-offline anyway), but a missing compact model
+  // file silently strands `ai_activate`/`agent_chat` auto-activation later — warn now, once, while
+  // the remedy (fetch-compact-model.mjs) is one line away.
+  if (effectiveChatProfile === 'compact') {
+    const modelsDirForCheck = process.env.JUSTSEARCH_MODELS_DIR || aiEnv.JUSTSEARCH_MODELS_DIR;
+    const compactModelPath = modelsDirForCheck
+      ? path.join(modelsDirForCheck, 'compact', 'Qwen3.5-4B-Q4_K_M.gguf')
+      : null;
+    if (!compactModelPath || !fs.existsSync(compactModelPath)) {
+      process.stderr.write(
+        `[dev-runner] warn: compact chat model not found` +
+        `${compactModelPath ? ` at ${compactModelPath}` : ' (no models dir resolved)'} — ` +
+        `run: node scripts/dev/fetch-compact-model.mjs\n`,
+      );
+    }
+  }
+
   // Ensure distribution is up-to-date before direct launch (S7: bypass Gradle at runtime).
   // Config-cached assemble: ~3s warm, ~15s cold. Skippable with --skip-build when dist is known-good.
   if (!opts.skipBuild) {
@@ -1450,6 +1482,10 @@ async function cmdStart(opts) {
         JUSTSEARCH_API_PORT: String(apiPortRequested),
         JUSTSEARCH_DATA_DIR: dataDir,
         JUSTSEARCH_HOME: dataDir,
+        // Tempdoc 842 §2.4: chat model profile ("compact" | "standard"). Ambient operator env
+        // always wins (effectiveChatProfile already checked process.env first); the dev default
+        // is "compact" even when --chat-profile is omitted entirely.
+        JUSTSEARCH_CHAT_PROFILE: effectiveChatProfile,
         // The Worker's shipped default for the io.justsearch logger is INFO, so query text
         // (logged at DEBUG) stays out of diagnostics exports, which bundle logs/ with
         // path-only redaction. Dev has no such exposure and wants the verbose lines, so the
@@ -1646,6 +1682,9 @@ async function cmdStart(opts) {
     uiUrl,
     dataDir: toPosix(dataDir),
     repoRoot: toPosix(repoRoot),
+    // Tempdoc 842 §2.4: the profile this stack's backend was spawned with, so MCP-side
+    // auto-activation follows the stack's choice instead of assuming a default.
+    chatProfile: effectiveChatProfile,
     // Tempdoc 730 Increment-4 review: identity stamp of THIS run's worker.log at readiness, used
     // by preserveWorkerLog's stop-time ownership guard (null if the file didn't exist yet).
     workerLogStamp,

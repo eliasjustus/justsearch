@@ -184,4 +184,24 @@ class EnvRegistryTest {
         withSysProp(EnvRegistry.LITE_MODE.sysProp(), "true",
             () -> assertTrue(EnvRegistry.LITE_MODE.getBoolean(false)));
     }
+
+    /**
+     * Tempdoc 842 — pins the CHAT_PROFILE entry. The key is the one selector for the llama-server
+     * (model, mmproj) pair; a rename or a changed default would silently move every unconfigured
+     * runtime onto a different chat model.
+     */
+    @Test
+    void chatProfileEntryShape() {
+        assertEquals("justsearch.chat.profile", EnvRegistry.CHAT_PROFILE.sysProp());
+        assertEquals("JUSTSEARCH_CHAT_PROFILE", EnvRegistry.CHAT_PROFILE.envVar());
+        // The declared default is what contributeEnvRegistry() contributes at ORDINAL_DEFAULT, i.e.
+        // what rc.ai().chatProfile() resolves to when nothing sets the key.
+        assertEquals("standard", EnvRegistry.CHAT_PROFILE.defaultValue());
+    }
+
+    @Test
+    void chatProfileRespectsSysProp() {
+        withSysProp(EnvRegistry.CHAT_PROFILE.sysProp(), "compact",
+            () -> assertEquals("compact", EnvRegistry.CHAT_PROFILE.getString("standard")));
+    }
 }

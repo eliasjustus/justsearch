@@ -78,7 +78,7 @@ when deliberately iterating on one surface; `ui-critic`/`ui-fuzz` are deeper, si
 |---|---|---|
 | Views / chrome — `home`, `library`, `settings`, `health`, `help`, `ai-brain` | a served frontend only | the tool auto-serves Vite; renders chrome + empty surfaces with no backend |
 | Search / inspector — `search-results`, `inspector-open`, `multi-select`, `context-menu`, `filters-chips` | dev stack (worker) | search returns real data |
-| AI chain — `streaming`, `summarize-done`, `qa-response`, `citation-highlight` | dev stack + `ai_activate` | the 9B model; latency-/GPU-contention-sensitive — may need a retry on a freshly-activated model |
+| AI chain — `streaming`, `summarize-done`, `qa-response`, `citation-highlight` | dev stack + `ai_activate` | dev stacks default to the compact chat profile (tempdoc 842) — fine for shape/rendering checks; latency-/GPU-contention-sensitive — may need a retry on a freshly-activated model. Judging answer *quality/wording* (not just that the surface renders) needs `ai_activate {chatProfile:"standard"}` first. |
 
 The live shell lands on the **chat** surface by default; every view step navigates to its rail surface first,
 and the harness's app-ready signal is the **rail** (not `search-input`).
@@ -143,7 +143,7 @@ excerpt; the highest-fan-out entries are:
 
 ## Known limitations
 - **No mock-data mode** — data/AI steps need the live dev stack (+ `ai_activate` for AI).
-- **AI legs are latency-/GPU-contention-sensitive** — the 9B model can unload under VRAM pressure; re-activate and retry.
+- **AI legs are latency-/GPU-contention-sensitive** — whichever chat model is active (compact by default in dev, tempdoc 842) can unload under VRAM pressure; re-activate and retry.
 - **Glassmorphism**: Playwright renders without a compositor — blur appears flat.
 - **DPI**: 1× only (2× exceeds the API's 2000px image cap).
 - **Motion**: static frames can't show transitions — assert motion *structurally* (the `--duration-*` / `--ease-*` CSS tokens) rather than watching it.

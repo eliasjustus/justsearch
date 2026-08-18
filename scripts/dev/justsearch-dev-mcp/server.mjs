@@ -583,18 +583,22 @@ async function safeReadRunJson(mainRepoRoot, runId) {
 
 /**
  * Resolves the API base URL from either an explicit apiPort or a runId (falling back to active run).
- * @returns {{ ok: true, apiBaseUrl: string, runId: string|null } | { ok: false, error: { code: string, message: string } }}
+ * Carries the run's spawn-time chatProfile (tempdoc 842 §2.4) when the run record has one, so
+ * callers that auto-activate can follow the stack's own profile choice; null when resolving by
+ * bare apiPort or for pre-842 run records.
+ * @returns {{ ok: true, apiBaseUrl: string, runId: string|null, chatProfile: string|null } | { ok: false, error: { code: string, message: string } }}
  */
 async function resolveApiBaseUrl({ runId, apiPort, mainRepoRoot }) {
   if (apiPort) {
     const url = ensureLoopbackUrl(`http://127.0.0.1:${apiPort}`, 'apiPort');
-    return { ok: true, apiBaseUrl: url.toString().replace(/\/$/, ''), runId: runId ?? null };
+    return { ok: true, apiBaseUrl: url.toString().replace(/\/$/, ''), runId: runId ?? null, chatProfile: null };
   }
   const result = await safeReadRunJson(mainRepoRoot, runId);
   if (!result.ok) return { ok: false, error: result.error };
   const apiBaseUrl = String(result.runJson?.apiBaseUrl || '').trim();
   if (!apiBaseUrl) return { ok: false, error: { code: 'NO_API_URL', message: `Run ${result.runId} has no API URL (apiBaseUrl missing from run.json). The run may not have fully started — call quick_health to check.` } };
-  return { ok: true, apiBaseUrl, runId: result.runId };
+  const chatProfile = typeof result.runJson?.chatProfile === 'string' ? result.runJson.chatProfile : null;
+  return { ok: true, apiBaseUrl, runId: result.runId, chatProfile };
 }
 
 /** Default inference server port (llama-server). Read once at module load. */
@@ -724,6 +728,7 @@ export async function main() {
         apiPort, uiPort, clean, dataDir, takeover, skipBuild, hotReload,
         sessionId: input.sessionId,
         leaseDurationSec: input.leaseDurationSec,
+        chatProfile: input.chatProfile,
       });
       maybeAppendNdjson(mainRepoRoot, { event: 'tool_start', tool: 'justsearch.dev.start', args: { apiPort, uiPort, clean, distFrom: input.distFrom ?? null } });
 
@@ -1776,6 +1781,41 @@ export async function main() {
         } catch { /* no orphan */ }
       }
 
+      // Tempdoc 842 §2.7: aiActive was hard-coded null — populate it for a running, reachable
+      // stack from the AI runtime status. active ⇒ true/false; unreachable (probe off, backend
+      // down, or the status call itself fails) ⇒ stays null, same honesty contract as httpReady.
+      let aiActive = null;
+      let model;
+      if (probe && httpReady && apiBaseUrl) {
+        try {
+          const base = ensureLoopbackUrl(apiBaseUrl, 'apiBaseUrl');
+          const statusUrl = new URL('/api/ai/runtime/status', base).toString();
+          const res = await httpGetTextLimited(statusUrl, { timeoutMs: 2000, maxBytes: 100_000 });
+          if (res.ok && res.text) {
+            const st = JSON.parse(res.text);
+            // Tempdoc 842 review D3: activation-completed alone is a false negative for engines
+            // brought up by AI autostart (the activation state machine never ran). Realized
+            // identity (active.modelPath) is projected only while the engine is online, so its
+            // presence is an equally authoritative online signal.
+            aiActive = !!(
+              (st?.activation?.state === 'completed' && st?.active?.activeVariantId) ||
+              st?.active?.modelPath != null
+            );
+            const chatProfile = st?.active?.chatProfile ?? st?.chatProfile;
+            const modelPath = st?.active?.modelPath ?? st?.active?.llmModelPath ?? st?.modelPath;
+            if (chatProfile != null || modelPath != null) {
+              model = {
+                ...(chatProfile != null ? { chatProfile } : {}),
+                ...(modelPath != null ? { modelPath } : {}),
+              };
+            }
+          }
+          // res.ok === false (unreachable/non-200/parse issue never reached here) → aiActive stays null
+        } catch {
+          // unreachable → aiActive stays null
+        }
+      }
+
       // Tempdoc 637 Layer A: one-look FRESHNESS verdict, aggregated at the dev-tooling layer — the
       // only vantage point that can see all four staleness sources. Each is a reasoned observable at
       // its OWNING layer, PROJECTED here (620 canonical-authority, never re-derived): build artifact
@@ -1826,10 +1866,11 @@ export async function main() {
         uiPort,
         httpReady,
         workerReady,
-        aiActive: null,
+        aiActive,
         ...(inferenceOrphan !== undefined ? { inferenceOrphan } : {}),
         ...(ownership ? { ownership } : {}),
         ...(freshness ? { freshness } : {}),
+        ...(model ? { model } : {}),
       }));
     },
   );
@@ -2321,12 +2362,111 @@ export async function main() {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Tempdoc 842 §2.4/§2.7 D2: shared activation flow. Pre-checks status, fires
+  // POST /api/ai/runtime/activate, polls until a terminal activation state or timeoutMs elapses.
+  // Used by justsearch.dev.ai_activate directly, and by justsearch.dev.agent_chat to
+  // auto-activate when AI is offline instead of failing with AI_OFFLINE one call away from
+  // ai_activate. Returns a plain result object (not a schema-validated tool payload) so each
+  // caller shapes it into its own output schema.
+  // ---------------------------------------------------------------------------
+  async function activateAiRuntime({ base, variantId, chatProfile, timeoutMs, pollIntervalMs }) {
+    const startMs = Date.now();
+    const statusUrl = new URL('/api/ai/runtime/status', base).toString();
+
+    // Check current state — might already be active. Tempdoc 842 review D3/N1: an engine
+    // brought up by AI AUTOSTART never runs the activation state machine, so the old
+    // activation-completed test was a false negative there and this pre-check re-activated a
+    // healthy engine (GPU self-test + RESTART_ALWAYS) on every agent_chat. Engine-online is
+    // activation-completed OR realized identity present (active.modelPath is projected only
+    // while the engine is online — backend invariant). A caller explicitly requesting a
+    // DIFFERENT profile than the running one still proceeds: that is a profile switch.
+    const preCheck = await httpGetTextLimited(statusUrl, { timeoutMs: 10_000, maxBytes: 100_000 });
+    if (preCheck.ok) {
+      try {
+        const pre = JSON.parse(preCheck.text);
+        const engineOnline =
+          (pre.activation?.state === 'completed' && pre.active?.activeVariantId) ||
+          pre.active?.modelPath != null;
+        const profileMatches = chatProfile == null || chatProfile === pre.active?.chatProfile;
+        if (engineOnline && profileMatches) {
+          return {
+            ok: true,
+            // Autostarted engines have no activeVariantId (activation never ran); fall back to
+            // the requested variant so the non-nullable output schema holds.
+            variantId: pre.active?.activeVariantId ?? variantId,
+            chatProfile: pre.active?.chatProfile,
+            activationState: pre.activation?.state ?? 'idle',
+            phase: 'done',
+            message: 'AI runtime already active.',
+            durationMs: Date.now() - startMs,
+            alreadyActive: true,
+          };
+        }
+      } catch { /* proceed with activation */ }
+    }
+
+    // Fire activate
+    const activateUrl = new URL('/api/ai/runtime/activate', base).toString();
+    const activateBody = { variantId, ...(chatProfile ? { chatProfile } : {}) };
+    const activateRes = await httpPostJsonLimited(activateUrl, activateBody, { timeoutMs: 15_000, maxBytes: 100_000 });
+    if (!activateRes.ok || (activateRes.statusCode && activateRes.statusCode >= 400)) {
+      const errMsg = activateRes.textTail || activateRes.error?.message || `HTTP ${activateRes.statusCode}`;
+      return {
+        ok: false,
+        variantId,
+        error: { message: errMsg },
+        durationMs: Date.now() - startMs,
+      };
+    }
+
+    // Poll until completed/failed/timeout
+    const terminalStates = new Set(['completed', 'failed', 'idle']);
+    let lastState = 'running';
+    let lastPhase = '';
+    let lastMessage = '';
+    let lastChatProfile;
+
+    while (Date.now() - startMs < timeoutMs) {
+      await delay(pollIntervalMs);
+      const poll = await httpGetTextLimited(statusUrl, { timeoutMs: 10_000, maxBytes: 100_000 });
+      if (!poll.ok) continue;
+      try {
+        const status = JSON.parse(poll.text);
+        lastState = status.activation?.state || lastState;
+        lastPhase = status.activation?.phase || lastPhase;
+        lastMessage = status.activation?.message || lastMessage;
+        lastChatProfile = status.active?.chatProfile ?? lastChatProfile;
+        if (terminalStates.has(lastState)) break;
+      } catch { /* retry */ }
+    }
+
+    const elapsed = Date.now() - startMs;
+    if (lastState === 'completed') {
+      return {
+        ok: true, variantId, chatProfile: lastChatProfile,
+        activationState: lastState, phase: lastPhase, message: lastMessage, durationMs: elapsed,
+      };
+    }
+
+    return {
+      ok: false, variantId, chatProfile: lastChatProfile,
+      activationState: lastState, phase: lastPhase, message: lastMessage,
+      error: {
+        message: lastState === 'failed' ? (lastMessage || 'Activation failed')
+          : `Timeout after ${elapsed}ms (state: ${lastState}, phase: ${lastPhase})`,
+      },
+      durationMs: elapsed,
+    };
+  }
+
   mcpServer.registerTool(
     'justsearch.dev.agent_chat',
     {
       description:
         'Send a prompt to the built-in agent and get the full conversation transcript including tool calls, results, and final response.' +
-        ' Set verbose=true for per-iteration reasoning detail.',
+        ' Set verbose=true for per-iteration reasoning detail.' +
+        " Auto-activates the AI runtime if it is offline before chatting (using the stack's spawn-time chat profile; dev default compact) — no need to call ai_activate first.",
       inputSchema: AgentChatInputSchema,
       annotations: { destructiveHint: false, openWorldHint: false },
     },
@@ -2350,6 +2490,43 @@ export async function main() {
       }
       const base = ensureLoopbackUrl(resolved.apiBaseUrl, 'apiBaseUrl');
       const effectiveRunId = resolved.runId ?? 'port-only';
+
+      // Tempdoc 842 §2.7 D2: agent_chat used to fail one call away from ai_activate — the
+      // postmortem register recorded three rounds lost to AI_OFFLINE this way. Auto-activate
+      // before opening the SSE chat when AI is not already active; bounded to a slice of the
+      // tool's own timeout budget so a stuck activation can't silently eat the whole call.
+      // The profile follows the STACK's spawn-time choice (run.json chatProfile) so a stack
+      // deliberately started with chatProfile:"standard" is not silently switched to compact;
+      // the dev default (compact, §2.4) applies only when the run record predates 842 or the
+      // stack was resolved by bare apiPort. activateAiRuntime does its own status pre-check
+      // and no-ops (alreadyActive) when AI is already up.
+      const activationBudgetMs = Math.min(input.totalTimeoutMs ?? timeoutMs, 60_000);
+      const activation = await activateAiRuntime({
+        base, variantId: 'cuda12', chatProfile: resolved.chatProfile ?? 'compact',
+        timeoutMs: activationBudgetMs, pollIntervalMs: 2_000,
+      });
+      const autoActivated = activation.ok && activation.alreadyActive !== true;
+      if (!activation.ok) {
+        const out = AgentChatOutputSchema.parse({
+          ok: false,
+          runId: effectiveRunId,
+          prompt: input.prompt,
+          sessionId: null,
+          error: ToolErrorSchema.parse({
+            code: 'AI_OFFLINE',
+            message: `AI runtime is offline and auto-activation failed: ${activation.error?.message || activation.message || 'unknown error'}`,
+          }),
+        });
+        maybeAppendNdjson(mainRepoRoot, {
+          event: 'tool_agent_chat_result',
+          tool: 'justsearch.dev.agent_chat',
+          runId: effectiveRunId,
+          ok: false,
+          error: 'auto-activation failed',
+          durationMs: activation.durationMs,
+        });
+        return toToolResult(out);
+      }
 
       // Agent run-stream route (AgentRoutes.java:24). The legacy /api/agent/*
       // prefix was removed; handleRunStream now lives at /api/chat/agent. Same
@@ -2401,6 +2578,7 @@ export async function main() {
             retryAttempt: transcript.error.retryAttempt,
           }),
         };
+        if (autoActivated) errorPayload.autoActivated = true;
         if (verbose && transcript.iterations?.length > 0) {
           errorPayload.iterations = transcript.iterations;
         }
@@ -2431,6 +2609,7 @@ export async function main() {
         totalTokensUsed: transcript.totalTokensUsed,
         durationMs: transcript.durationMs,
       };
+      if (autoActivated) successPayload.autoActivated = true;
       if (verbose && transcript.iterations?.length > 0) {
         successPayload.iterations = transcript.iterations;
       }
@@ -2466,7 +2645,6 @@ export async function main() {
       const timeoutMs = input.timeoutMs ?? 60_000;
       const pollIntervalMs = input.pollIntervalMs ?? 2_000;
       const variantId = input.variantId ?? 'cuda12';
-      const startMs = Date.now();
 
       const resolved = await resolveApiBaseUrl({ runId: input.runId, apiPort: input.apiPort, mainRepoRoot });
       if (!resolved.ok) {
@@ -2478,70 +2656,34 @@ export async function main() {
       const base = ensureLoopbackUrl(resolved.apiBaseUrl, 'apiBaseUrl');
       const effectiveRunId = resolved.runId ?? 'port-only';
 
-      // Check current state — might already be active
-      const statusUrl = new URL('/api/ai/runtime/status', base).toString();
-      const preCheck = await httpGetTextLimited(statusUrl, { timeoutMs: 10_000, maxBytes: 100_000 });
-      if (preCheck.ok) {
-        try {
-          const pre = JSON.parse(preCheck.text);
-          if (pre.activation?.state === 'completed' && pre.active?.activeVariantId) {
-            return toToolResult(AiActivateOutputSchema.parse({
-              ok: true, runId: effectiveRunId, variantId: pre.active.activeVariantId,
-              activationState: 'completed', phase: 'done',
-              message: 'AI runtime already active.', durationMs: Date.now() - startMs,
-            }));
-          }
-        } catch { /* proceed with activation */ }
-      }
+      // Tempdoc 842: poll-until-done activation flow factored into activateAiRuntime (shared
+      // with justsearch.dev.agent_chat's auto-activation, §2.7 D2) — this handler just shapes
+      // the result into AiActivateOutputSchema.
+      // Tempdoc 842 review D1: an omitted chatProfile follows the STACK's spawn-time profile
+      // (run.json), same as agent_chat — without this, the habitual bare ai_activate call took
+      // the backend's settings path and activated the standard 9B on a compact-default stack.
+      // Explicit input wins; port-only resolution (no run record) keeps legacy behavior.
+      const result = await activateAiRuntime({
+        base, variantId,
+        chatProfile: input.chatProfile ?? resolved.chatProfile ?? undefined,
+        timeoutMs, pollIntervalMs,
+      });
 
-      // Fire activate
-      const activateUrl = new URL('/api/ai/runtime/activate', base).toString();
-      const activateRes = await httpPostJsonLimited(activateUrl, { variantId }, { timeoutMs: 15_000, maxBytes: 100_000 });
-      if (!activateRes.ok || (activateRes.statusCode && activateRes.statusCode >= 400)) {
-        const errMsg = activateRes.textTail || activateRes.error?.message || `HTTP ${activateRes.statusCode}`;
+      if (result.ok) {
         return toToolResult(AiActivateOutputSchema.parse({
-          ok: false, runId: effectiveRunId, variantId,
-          error: ToolErrorSchema.parse({ message: errMsg }),
-          durationMs: Date.now() - startMs,
-        }));
-      }
-
-      // Poll until completed/failed/timeout
-      const terminalStates = new Set(['completed', 'failed', 'idle']);
-      let lastState = 'running';
-      let lastPhase = '';
-      let lastMessage = '';
-
-      while (Date.now() - startMs < timeoutMs) {
-        await delay(pollIntervalMs);
-        const poll = await httpGetTextLimited(statusUrl, { timeoutMs: 10_000, maxBytes: 100_000 });
-        if (!poll.ok) continue;
-        try {
-          const status = JSON.parse(poll.text);
-          lastState = status.activation?.state || lastState;
-          lastPhase = status.activation?.phase || lastPhase;
-          lastMessage = status.activation?.message || lastMessage;
-          if (terminalStates.has(lastState)) break;
-        } catch { /* retry */ }
-      }
-
-      const elapsed = Date.now() - startMs;
-      if (lastState === 'completed') {
-        return toToolResult(AiActivateOutputSchema.parse({
-          ok: true, runId: effectiveRunId, variantId,
-          activationState: lastState, phase: lastPhase,
-          message: lastMessage, durationMs: elapsed,
+          ok: true, runId: effectiveRunId, variantId: result.variantId,
+          activationState: result.activationState, phase: result.phase,
+          message: result.message, durationMs: result.durationMs,
+          ...(result.chatProfile != null ? { chatProfile: result.chatProfile } : {}),
         }));
       }
 
       return toToolResult(AiActivateOutputSchema.parse({
-        ok: false, runId: effectiveRunId, variantId,
-        activationState: lastState, phase: lastPhase, message: lastMessage,
-        error: ToolErrorSchema.parse({
-          message: lastState === 'failed' ? (lastMessage || 'Activation failed')
-            : `Timeout after ${elapsed}ms (state: ${lastState}, phase: ${lastPhase})`,
-        }),
-        durationMs: elapsed,
+        ok: false, runId: effectiveRunId, variantId: result.variantId,
+        activationState: result.activationState, phase: result.phase, message: result.message,
+        ...(result.chatProfile != null ? { chatProfile: result.chatProfile } : {}),
+        error: ToolErrorSchema.parse(result.error),
+        durationMs: result.durationMs,
       }));
     },
   );
