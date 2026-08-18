@@ -1041,12 +1041,17 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
   }
 
   /**
-   * Tempdoc 656: {@code inferenceCapability.pendingReason()} holds a real
-   * {@link LifecycleReasonCode#code()} when set via {@code RuntimeActivationService}'s wiring
-   * (Task 2), but can also hold arbitrary free prose from
-   * {@code InferenceCapabilityWiring.attachInferenceModeListener}'s mode-change callback (e.g.
-   * "Inference offline", "GPU allocated to indexing") — only forward it when it's a known code;
-   * otherwise fall back to the generic {@code INFERENCE_OFFLINE}, same as before this fix.
+   * Forward whichever specific cause the producer set, falling back to the generic
+   * {@code INFERENCE_OFFLINE} for an unrecognized reason. The worker twin is
+   * {@link #resolveWorkerReasonCode}.
+   *
+   * <p>Tempdoc 656 added this filter because the reason slot could hold arbitrary free prose from
+   * the mode-change callback ("Inference offline", "GPU allocated to indexing"), which it silently
+   * substituted the generic code for — deleting the cause. After tempdoc 837 S4/S5 swept the
+   * producers, every non-test writer passes a {@link LifecycleReasonCode}, so the fallback is
+   * defensive rather than routine: the slot now carries {@code inference.crashed} /
+   * {@code inference.deactivated} / {@code inference.gpu_yielded_to_indexing} where it used to
+   * carry one sentence the consumer had to discard.
    */
   private static String resolveInferenceReasonCode(
       io.justsearch.app.services.lifecycle.InferenceCapability inferenceCapability) {
