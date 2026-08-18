@@ -1,7 +1,7 @@
 ---
 title: "Dev agent-tool surface audit: what agents actually invoke on the justsearch-dev MCP server, what fails, what nobody has ever called, and the two structural reasons 81% of local-API traffic bypasses the surface entirely"
 type: tempdocs
-status: "OPEN — analysis complete and reproducible (2026-08-18); nothing implemented. Owner decisions pending on D1-D4 (§8). Hot-reload coherence RESOLVED 2026-08-18: verdict INCOHERENT, independently re-verified against source (§5.6). Recommendation REVISED same day from RETIRE to FIX-THEN-SURFACE after owner challenge: the retire estimate did not survive re-examination and the value model (warm models across a code change, not a saved spawn) was never weighed — see §4.2. THEORIZED 2026-08-18 (§11): the endstate thesis is a single run registry as keystone, three tool classes with per-class middleware, and specialization into arbitration over transport; #845 reserved as the candidate registry lane. Adopts 6 inbox conditions (§7) that should be closed by this lane rather than re-logged."
+status: "OPEN — analysis complete and reproducible (2026-08-18); nothing implemented. Owner decisions pending on D1-D4 (§8). Hot-reload coherence RESOLVED 2026-08-18: verdict INCOHERENT, independently re-verified against source (§5.6). Recommendation REVISED same day from RETIRE to FIX-THEN-SURFACE after owner challenge: the retire estimate did not survive re-examination and the value model (warm models across a code change, not a saved spawn) was never weighed — see §4.2. THEORIZED 2026-08-18 (§11): the endstate thesis is a single run registry as keystone, three tool classes with per-class middleware, and specialization into arbitration over transport; #845 reserved as the candidate registry lane. DIRECTION SET 2026-08-18 (12): the through-line is that the surface asserts what it has not verified (7 instances, 1 property); criterion = a dev tool must not report state it did not verify. 12.3 re-sequences 9 by that criterion and drops P3b (allowlist) + defers P8. IN EXECUTION on branch worktree-844-dev-surface-honesty. Adopts 6 inbox conditions (§7) that should be closed by this lane rather than re-logged."
 created: 2026-08-18
 author: agent session b73007cd (Opus 5, 1M context) — chartered by the owner after a session-opening question about the state of dev-related MCP capabilities
 category: agent-process / dev-tooling / mcp
@@ -444,6 +444,11 @@ not that the notes were unclear.
 
 ## 9. Proposed sequencing
 
+> **Execution order superseded by §12.3.** The table below defines the *items* (P-ids are stable
+> references used throughout this document); §12.3 re-orders them by the honesty criterion and
+> drops two — P3b (allowlist additions) and, for now, P8. Read §12.3 for what to do and in what
+> order; read this table for what each item is.
+
 | # | Item | Depends on |
 |---|---|---|
 | P1 | Prune: `github` server; `agent_chat`, `capture_evidence`, `validate_evidence` wrappers; fold `status` into `quick_health`. Sweep the count in all four inventories (§6.3) in the same change. | D1 |
@@ -714,3 +719,91 @@ number** (verified against `world-state.mjs`; note #843 is already
 double-claimed across worktrees, and #840/#842 have live merge-gate collisions). Not created here
 — whether the registry is a lane or just this lane's P5 is an owner call, and creating a second
 tempdoc speculatively is exactly the kind of residue `retire-with-a-sweep` warns about.
+
+## 12. Direction — the finding under the findings
+
+### 12.1 One missing property, not seven bugs
+
+Every significant defect in this document is the same defect: **the tooling asserts things it has
+not verified.**
+
+| Assertion | Reality |
+|---|---|
+| `preflight`: "worker dist built" | it checked the invoking tree; `start` uses `distFrom`'s |
+| `quick_health`: "free" | it can only see runs it started (§6.1) |
+| `reload`: `hotSwapOk: true` | true when zero classes were pushed, and when the JVM is not the one it compiled for |
+| `reload`: build stamp written | makes a stale JVM report as current (§5.6) |
+| tool description: "still pushes bytecode without hotReload" | no JDWP listener exists at all (§4.2) |
+| reference doc + skill: "exactly these 15 tools", `effective_config` -> `/api/config/effective` | 16 tools; the endpoint is `/api/debug/effective-config` (§6.3) |
+| `start`: `UNHANDLED` | a condition it fully understands, with a remedy in the same message (§5.1) |
+
+Seven items, one property. And the property has a name in this repo already: the product surface
+has extensive machinery for never claiming more than it knows — citation-coverage honesty,
+degradation reason codes, `searchTraceExplain`, the honest-baseline work, and `verify-don't-guess`
+as a Hard Invariant. **The dev surface has none of it.** The tools agents use to verify the
+product are held to a lower evidentiary standard than the product.
+
+### 12.2 The criterion
+
+> **A dev tool must not report state it did not verify, and must not report success it did not
+> confirm.** Where it cannot verify something, it says so — an explicit unknown beats a confident
+> default.
+
+This is a filter, not a project. Its value is as much in what it excludes as in what it selects:
+it says *stop*, which a sorted error column never does.
+
+### 12.3 Re-sequencing by the criterion
+
+Applied to §9, the order changes and two items drop out:
+
+| Order | Item | Kills which false claim | Verdict |
+|---|---|---|---|
+| 1 | **P6** doc/skill de-fork + `check-dev-mcp-doc-sync` gate + consult-register entry | false inventory — and it is the only item that stops every other fix re-drifting | promoted from last to first |
+| 2 | **P5** `quick_health` reports backends it did not start | false "free" — the one that already cost a measurement round | promoted |
+| 3 | **P2** `start` error code + `preflight { distFrom }` | false green, false severity | unchanged |
+| 4 | **P4** `ai_activate` preconditions in `preflight`/`quick_health`; eaten path separators | a mandated tool that surprises 43% of the time | unchanged |
+| 5 | **P3a** projection honesty only: `jsonPath` miss returns available keys; `maxBytes` truncates with a notice; `api_call` gains `jsonPath` | dishonesty by omission — a miss currently returns the most expensive possible payload | narrowed |
+| 6 | **P7** repeatable reader in `scripts/agent-analytics/` | nothing — but it is the instrument the falsifier needs | kept, and now load-bearing |
+| 7 | **P1** prunes (`github` server; `agent_chat`, `capture_evidence`, `validate_evidence` wrappers; fold `status`) | nothing — hygiene, but cheap and it shrinks what P6 must keep true | demoted |
+| — | **P3b** allowlist additions | **dropped** — §11.5: a control with a sanctioned bypass is a tax, not a control |
+| — | **P8** hot reload | **still D2** — not an honesty fix; blocked on an owner decision |
+
+Two drops matter more than the promotions. Adding allowlist entries would have treated the
+symptom of a mechanism §11.5 argues should not exist. And hot reload, despite being the most
+interesting thing in this document, is not on the critical path of anything.
+
+### 12.4 What not to build
+
+**Not the registry as a project.** §11.3 is the right *shape*, but the honest version is a
+fraction of the work: `quick_health` saying *"one run I own; plus an unidentified JVM holding
+33221 and the GPU, which I did not start"* is honest, cheap, and captures nearly all the value. A
+cross-surface registry with enforced registration is a cathedral for a surface taking ~6 calls per
+session.
+
+Keep the proportion in view: `justsearch-dev` is **0.4%** of tool-result bytes (§6.4). The work
+actually happens in `bash` and `jseval`. Harm here is not proportional to volume — one contaminated
+measurement is expensive — but that argues for cheap honesty, not for infrastructure.
+
+### 12.5 Where the actual upside is
+
+The strongest idea in §11 is §11.10, and it is worth more than the whole fix list: **this is the
+only MCP surface whose agent population is fully observable.**
+
+725, 624 and 770 spent real campaign money trying to answer why agents do or do not invoke an MCP
+surface, what response shape they tolerate, and where the truncation cliff bites. Those questions
+are structurally hard on the product side because external agents' transcripts are not visible.
+Here they are — ~66 sessions of ground truth, continuously, for free, over the same protocol with
+the same kind of consumer.
+
+That asymmetry has never been used. The direction worth taking after the honesty work is to stop
+treating the dev surface as a maintenance cost and start treating it as the instrument that
+de-risks product-surface questions *before* they are worth a campaign. P7's reader is the first
+step of that, which is why it survives the re-sequencing despite fixing no bug.
+
+### 12.6 Falsifier
+
+**First-call success rate** (P7's reader is the instrument). If it does not move after items 1-5
+land, then the tools were never the problem — the modality is, and the right answer is to shrink
+the MCP surface to arbitration only and let agents use the shell for everything else. §11.2's
+altitude conjecture already predicts that outcome; this would confirm it, and the response is
+written down here in advance so the result cannot be re-interpreted after the fact.
