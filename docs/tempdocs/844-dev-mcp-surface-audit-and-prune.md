@@ -520,6 +520,12 @@ closed what was not.
 
 ## 8. Owner decisions
 
+> **All four decided 2026-08-18/19.** D1 **yes** (done, incl. the gitignored main-checkout file).
+> D2 **repair** — FIX-THEN-SURFACE, in progress. D3 **full** — `jseval` registers in the run
+> registry, which *overrides* the recommendation below; the minimum shipped first regardless, so
+> the full version is now an extension of working code rather than a bet. D4 **option (b)** — the
+> rule lives in the `/ui-check` skill, not the always-loaded layer.
+
 - **D1 — prune `github` from `.mcp.json`?** Recommend yes (§4.1). No capability is lost; it has none.
 - **D2 — hot reload: repair or sweep?** No longer blocked. §5.6 returned INCOHERENT; §4.2 now
   recommends **FIX-THEN-SURFACE** — five scoped items (JBR staging dropped), a required live
@@ -532,9 +538,23 @@ closed what was not.
 - **D3 — unify backend discovery?** Minimum (`quick_health` probes unowned backends) vs full
   (`jseval` registers in the run registry). Recommend the minimum first; it is the half that already
   cost a measurement.
+  **DECIDED: full.** The minimum shipped (P5, `foreignRuns`), so the port probe is the *fallback*
+  and registration becomes the authoritative path — which is the right layering: a register only
+  covers what registers itself (§11.3), and the probe is what keeps it honest about the rest.
+  Scope: `jseval`'s backend writes a run record the dev-runner's readers already understand, so
+  `quick_health` reports identity (tree, owner, GPU-bound) instead of "something is on 33221".
+  This is the §11.3 keystone in its smallest useful form — **not** a general registry project;
+  §12.4's warning still binds.
 - **D4 — govern the browser surface?** A short rule on when `claude-in-chrome` beats
   `jseval ui-shot`. Costs always-loaded bytes, which the 620 ratchet caps — so this is a genuine
   trade, not a free add.
+  **DECIDED: option (b) — DONE.** The rule lives in `.claude/skills/ui-check/SKILL.md`
+  (`rule:harness-for-assertions`): *use the instrumented harness for anything you will assert on;
+  use the browser for things you are only looking at.* Placed there rather than in `CLAUDE.md`
+  because the always-loaded budget had 2 bytes of headroom and the skill's own trigger
+  ("capturing UI screenshots") fires exactly when the choice is made. The legitimate browser uses
+  (external research, unfamiliar flows, live console/network debugging) are named explicitly so the
+  rule steers local dev-UI verification rather than discouraging exploration.
 
 ## 9. Proposed sequencing
 
