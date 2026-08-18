@@ -2049,3 +2049,100 @@ single failing test.
 **The adverse precondition drives the REAL filter**, not a copy: `LiveRunsAuthTest` installs the
 production `ApiSecurityFilters` chain (the precedent is `McpOriginValidationTest`). A test that only
 proves "with a token it works" is green in exactly the world where the guard was never installed.
+
+---
+
+## 18. Implementation log — S5 (the FE discovery sweep)
+
+### 18.1 As built
+
+| §15.3 item | as built |
+|---|---|
+| retire `activeRunPointer` as discovery authority | **DELETED**, module + test. Discovery was its only job — `setActiveRun`/`clearActiveRun`/`readActiveRun` existed solely to feed `readActiveRun`. Replaced by `shell-v0/controllers/liveRuns.ts` (`fetchLiveRuns`, `discoverLiveAgentRun`) |
+| run identity from `run_started` | the managed stream's identity frame sets `sessionId`; `session_started` keeps its handler |
+| `session_started` dual-read, wire-deprecated, NOT deleted | stated at the handler, with the reason (the workflow shape emits it; every existing `events.ndjson` pins it) |
+| `RetrospectivePanel` interruption rows | `interruptedRunPresentation` / `interruptedRunNotice` on the controller, rendered as one line per row |
+| (brief) attach transport onto the managed writer | `attachToRun` now streams `POST /api/chat/runs/{runId}/observe`; the typed 404 replaces the legacy `attach_not_live` on this path |
+| (brief) consume the S1 snapshot fields | `onStateSnapshot` reads `pendingApprovals` / `autonomyLevel` / `park`; `sv3RunSessionStatus` gains `runPark` as a fourth "why am I stopped" source |
+
+**Sweep completion, verified independently of the implementing worker:**
+`grep -rn "activeRunPointer\|setActiveRun\|clearActiveRun\|readActiveRun\|justsearch.activeAgentRun" modules/ui-web/src` returns **0 hits**.
+
+### 18.2 Where S5 differed from §15.3, and why
+
+1. **The conversation filter is NOT sent to the server.** `discoverLiveAgentRun` narrows by
+   `shapeId` server-side but applies the conversation guard client-side, because the guard is
+   **asymmetric**: a run carrying no `conversationId` is adoptable by any caller, and a server-side
+   equality filter would exclude exactly those. The retired pointer had the same asymmetry; keeping
+   it is what makes the five reattach behaviours its tests pinned survive the swap.
+2. **The F2 law forced the await upward.** `SearchV3View.reattachLiveRun` used to gate on the
+   pointer *before* constructing the controller, preserving "a window with no live run to recover
+   constructs no controller by being mounted". Discovery is now a round-trip, so the enumeration is
+   awaited in the view — asking the controller instead would mean constructing it first, which is
+   the precise side effect the law forbids. The mount-time presence look now runs before the
+   round-trip returns, so the recovered path re-takes it explicitly.
+3. **The interruption classifier is a second implementation, and that is a fork.** The TS mirrors
+   `InterruptedRunPresentation.of` branch for branch, verified against the Java. Nothing enforces
+   that correspondence: `app-api` cannot reach the FE, and this is behaviour, not a schema, so the
+   564 record→schema→Zod chain does not carry it. **Named residual** (§18.4.1).
+
+### 18.3 Verification
+
+- `npm run typecheck` — clean.
+- `npm run test:unit:run` — **422 files / 5235 tests passed** (S3b's baseline: 422 / 5210; the
+  deleted `activeRunPointer.test.ts` is offset by the new `liveRuns.test.ts`).
+- `./gradlew.bat test -PskipWebBuild=true` — 1340 suites / 7863 tests / 0 failures.
+- UTF-8: the FE diff adds non-ASCII only as `│ § — · ×`; no mojibake (the cp1252 round-trip class,
+  742).
+- `contract-projection`: the slice's own `register-drift` finding is fixed (`LiveRunsResponse`
+  registered, with `liveRuns.ts` as its one consumer — verified to be the only importer). The
+  remaining `undeclared-consumer` row is **pre-existing**: the detector matches a generated-module
+  mention in a DOC COMMENT, and `AgentSessionController.ts:170` has carried that prose since before
+  #478 while importing nothing. Logged to the inbox rather than worked around.
+
+### 18.4 Residuals
+
+1. **The interruption classifier is duplicated across the language boundary** with no gate on the
+   correspondence. The durable fix is to compute the presentation ON the wire — one more field on
+   `AgentSessionSummary` — so the FE renders a decision instead of re-deriving it. Not done here:
+   §15.3 assigns the FE *rendering*, and moving the classification onto the wire is a design change
+   the handoff does not stage.
+2. **`AgentSessionController.ts`'s `toSessionListItem` shim survives**, still translating raw JSON
+   by hand while `api/domains/agent.ts`'s Zod-validated `listAgentSessions()` sits unused. Adding
+   `interruptedAt` extended the shim by one field rather than retiring it. Pre-existing and already
+   labelled in that file; named here because this slice touched it.
+3. **The eviction seam stays, as §16.3 requires.** S5 moved the *attach* path only. The initiating
+   `/api/chat/agent`, resume, fork and `/ag-ui` are still raw-`Context` with no `onClose`, so for
+   them a failed write is the only disconnect signal. Deleting `writeOrEvict` / `evictIfGone` /
+   `SseObserverGoneException` now would make their `observerCount` permanently non-zero and let a
+   WATCH run proceed unwatched — the exact hazard §2.14 Root I exists to prevent. §16.3's "they
+   retire in S5" expectation is therefore **not met, and should not have been**: §15.3 stages the
+   attach move alone, and deleting a guard whose consumers still exist is not a sweep.
+
+### 18.5 Live legs — NOT RUN, and why
+
+**The direct-topology live round did not happen.** The shared dev stack was held by another agent
+session (`840-download-restructure`) for the entire implementation window, with a 3600 s lease
+renewing continuously (observed sequence 56 → 238). The campaign rule is that a running stack is
+never taken over; the tool's own verdict softened to `IDLE_HOLD` and briefly to
+`TAKEOVER_ABANDONED`, which is exactly the reasoning the rule exists to refuse — the lease was
+still being renewed, so the owning session was alive.
+
+So the following remain **unverified**, and are not claimed:
+
+| leg | status |
+|---|---|
+| 1 — park detection via managed heartbeat, ≤1-interval bound | **NOT RUN** |
+| 2 — observer count decrements on close, read through the enumeration | **NOT RUN** live; the mechanism has a CI test (attach raises the count, unsubscribe drops it to zero) — the *socket timing* is what is missing |
+| 3 — enumeration end to end against a running backend | **NOT RUN**; the auth half IS covered against the real filter chain in `LiveRunsAuthTest` |
+| 4 — FE reload mid-run re-adopts via the enumeration | **NOT RUN** live; covered at unit level with a mocked fetch |
+
+**What a future live round must know about leg 1.** §16.5.1 found the composition blocked by a
+stale INITIATING observer: `AgentSession` evicts it only when a write to it THROWS, and on the raw
+route `CLIENT_GONE` did not fire even across three iteration boundaries. **S5 does not unblock
+this**, because it moves attach, not dispatch: an agent run's initiator is still a raw socket, so
+`observerCount` = channel listeners + (initiator alive ? 1 : 0) cannot reach 0 while that initiator
+is merely dead-but-unnoticed. The reachable measurement after S5 is leg 2 — a MANAGED second
+observer whose `onClose` fires on its next heartbeat write — and that latency IS the ≤1-interval
+bound. Reaching a true zero-observer park needs the initiating transport on managed SSE too, which
+is the change §16.3 anticipated and §15.3 did not stage.
