@@ -348,6 +348,14 @@ public final class ConversationEngine {
     }
 
     int maxTokens = parseMaxTokens(body);
+    // Tempdoc 845 — publish the effective completion reserve so context injectors budget the prompt
+    // against what this turn ACTUALLY reserves. RAGContext used to assume a flat 1024, which is
+    // merely the default: Thorough sends 3072, so its retrieved context over-committed the window
+    // by the 2048-token difference and the request 400ed at the server. Seeded from the same
+    // variable handed to streamLlm below, so the budgeting reserve cannot drift from the real one.
+    ctx.attributes().put(
+        io.justsearch.app.services.conversation.spi.RAGContext.ATTR_COMPLETION_RESERVE_TOKENS,
+        maxTokens);
     SamplingParams sampling = applySchemaConstraint(parseSamplingParams(body), body);
 
     // Assemble the system prompt once per request — contributors are stateless and don't
