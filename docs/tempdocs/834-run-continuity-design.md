@@ -1269,6 +1269,200 @@ substrate carries run traffic in S3b.
 
 ---
 
+## 14. S3b pre-implementation probes — D1 (POST-managed-SSE) and D2 (P8 lock cost)
+
+Run 2026-08-18 as a **derisk spike**: throwaway code on a scratch branch, never merged, never
+pushed. One dev-stack session per leg, launched from this worktree's dist (`distFrom`), lease
+declared, stopped and teardown-verified afterwards (`quick_health running:false`, ports 63120 /
+63562 / 50744 / 5173 all closed, no `HeadlessApp` / `IndexerWorker` / vite / dev-runner / llama
+survivors). No model was loaded — the probes are transport-level.
+
+**The probe.** One route added to `DebugRoutes` —
+`app.post("/api/debug/sse-probe", new SseHandler(consumer))` — whose consumer reads the request
+body from `client.ctx()`, emits a `started` event echoing the body length, ticks once a second,
+and registers `client.onClose(...)`. Open/close observations were recorded server-side and read
+back through a companion GET route rather than scraped from logs (the dev-runner's captured
+`backend.stdout.log` / `backend.stderr.log` hold only the port line and JVM warnings — see the
+residuals below). `SseHandler`'s shape was re-confirmed by `javap` against the resolved
+`javalin-6.7.0.jar`: `public SseHandler(java.util.function.Consumer<SseClient>)`,
+`implements io.javalin.http.Handler`.
+
+### 14.1 D1 — the hinge: **CONFIRMED**
+
+**(a) Direct POST to the API port — passes on every axis.** `curl -N` with a JSON body,
+`Accept: text/event-stream` and `X-JustSearch-Session` (`LocalApiServer.java:68`), replicating
+`consumeShapeStream`'s header (`streams.ts:441`):
+
+```
+HTTP/1.1 200 OK
+Content-Type: text/event-stream;charset=utf-8
+Connection: close
+Cache-Control: no-cache
+X-Accel-Buffering: no
+
+event: started
+data: {"conn":1,"bodyProbe":"ok","bodyLength":84,"method":"POST","tsMs":1787051828420}
+event: tick   data: {"conn":1,"n":1,...}   … n=2,3,4 at 1 s intervals
+```
+
+- **The body reaches the handler.** `client.ctx().body()` from inside the `SseHandler` consumer
+  returned the full payload — echoed `bodyLength` matched the client's byte count exactly on
+  every connection tried (84/84, 85/85, 83/83, 23/23). No exception, no truncation, no
+  interaction with Javalin's async start.
+- **Events stream incrementally.** Client-side byte counts, polled at 100 ms:
+  `13:17:08.618 → 103 B`, `:09.601 → 160`, `:10.616 → 217`, `:11.491 → 274`, `:12.539 → 331`.
+  One frame per second, delivered as produced. No buffering.
+- **The token filter passes POST-SSE** — see (d); the header is inert in dev but honoured in
+  prod mode.
+
+**(b) onClose fires — but it is write-driven, not socket-driven.** Three disconnects
+(`--max-time`; note that `kill -INT` cannot be delivered to a native Windows `curl` from this
+shell, so the disconnect is a clean process exit / FIN rather than a signal):
+
+| conn | client gone at | `onClose` at | latency | landed on |
+|---|---|---|---|---|
+| 1 | open + 5155 ms | open + 6005 ms | **850 ms** | the next tick |
+| 2 | open + 5033 ms | open + 6002 ms | **969 ms** | the next tick |
+| 3 | open + 4887 ms | open + 6001 ms | **1114 ms** | the tick *after* next |
+
+Every close landed exactly on a tick boundary, never in between — and conn 3 shows the first
+post-disconnect write can still succeed silently, with the failure surfacing on the one after.
+**The design consequence is concrete: `onClose` latency is bounded by the stream's own write
+cadence, not by TCP.** A run stream that goes quiet does not learn its observer left until it
+next writes. The existing heartbeat is therefore load-bearing for §3's park/unobserved
+detection, not merely a proxy keep-alive — a run whose only liveness signal is `onClose` and
+whose heartbeat is disabled would never observe the disconnect at all.
+
+**(c) Through the Vite dev proxy — the stream works, `onClose` NEVER fires. This is P4, and it
+is a real hazard.** Same POST via `http://localhost:5173`:
+
+```
+HTTP/1.1 200 OK
+content-type: text/event-stream;charset=utf-8
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+```
+
+Streaming is byte-for-byte equivalent (`103 → 160 → 217 → 274 → 331` at 1 s), the body arrives
+intact, `X-Accel-Buffering: no` survives. Then the client died at epoch 1787051922141 — and the
+server-side record still read `closed:false` with ticks still succeeding at 1787052393711:
+**471 seconds later, and still counting when the leg ended.** Not late — never.
+
+The mechanism is in the dev proxy, not in Javalin. `modules/ui-web/vite.config.js:141-165`
+hand-rolls the forward: `req.pipe(proxyReq)` (`:165`) and `proxyRes.pipe(res)` (`:155`), with
+an error handler on `proxyReq` (`:158`) but **no `res.on('close', …)` teardown**. Node's `pipe`
+does not destroy the source when the destination closes, so when the browser goes away the
+proxy→backend socket stays open and the backend sees a permanently healthy subscriber.
+
+Topology consequence for S3b, which is what P4 was asked to decide:
+
+- **Any dev verification of run-stream lifecycle — park/unobserved detection, observer-count,
+  `onClose`-driven journal retirement — must go direct to the API port.** Through the proxy the
+  disconnect signal does not exist, so a green result there is meaningless (`static-green ≠
+  live-working`).
+- The proxy is fine for *content* verification (frames render, replay ordering, cursor grammar).
+- The one-line proxy fix (`res.on('close', () => proxyReq.destroy())`) is worth doing so browser
+  verification becomes trustworthy, but it is dev-tooling work, not S3b substrate work, and it
+  does not gate S3b. Logged to the inbox.
+
+**(d) Negative control — the auth posture §1.6 chose is real.** Token enforcement is a **no-op
+under the dev-runner by default**: dev-runner-launched backends never set `JUSTSEARCH_PROD` /
+`-Djustsearch.prod`, so `prodMode` resolves false and
+`ApiSecurityFilters.setupSessionTokenEnforcement` returns early (`ApiSecurityFilters.java:382-390`;
+the dev-runner documents this at `scripts/dev/dev-runner.cjs:842-846`). The control was therefore
+run on a stack forced into prod mode by injecting `-Djustsearch.prod=true` into the dist start
+script (a build artifact; reverted afterwards), which made the Head mint a 43-char session token
+into the runtime manifest:
+
+| request | result |
+|---|---|
+| POST, **no** token | `401` `{"errorCode":"UI_TOKEN_REQUIRED"}`, `content-type: application/json`, **3.1 ms**, no stream |
+| POST, **wrong** token | `401`, identical body, 2.2 ms, no stream |
+| POST, **correct** token | `200 text/event-stream`, body reached handler (`bodyLength:23`), ticks at 1 s |
+| GET `/api/health`, no token | `200` — **unauthenticated**, exactly as §1.6 argues |
+
+The `app.before` filter runs and halts *before* `SseHandler` is reached — no partial hijack, no
+half-open SSE response on a rejected request. §1.6's core argument is confirmed end-to-end: POST
+managed SSE is authenticated by the existing filter with no filter change, and a GET run-stream
+family really would have shipped open.
+
+**Verdict: HINGE CONFIRMED.** All four sub-measurements pass. `app.post(path, new SseHandler(…))`
+yields a fully managed `SseClient` with a readable request body, incremental streaming, a working
+`onClose`, and existing token enforcement — live, in this server. §1.6's endpoint topology stands
+as designed, with two qualifications that belong in S3b's spec rather than in its risk register:
+`onClose` is write-cadence-bound (b), and dev lifecycle verification must bypass the proxy (c).
+
+### 14.2 D2 — P8 lock cost: **KEEP PRIMARY** (do not promote the fallback)
+
+**Instrument.** A `System.nanoTime()` pair around `subscribeLock.readLock().lock()` in
+`SseStreamChannel.publish` (`:121`), samples kept per `streamId` in a fixed overwrite ring and
+read back through a debug route. It measures **acquisition only** — the fan-out inside the read
+lock is unchanged by 834 and is not what P8 asks about.
+
+The busiest live channel was `surface:indexing-jobs`, driven well past the ~30 fps target by
+ingesting the repo's docs and script trees with 21 SSE subscribers attached and concurrent API
+load.
+
+| window | publishes | rate | mean | p50 | p90 | p99 | p99.9 | max | >10 µs | >1 ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 — no writers | 1 331 | 127.9/s | 1 853 ns | 400 | 1 500 | 6 400 | 62 100 | 1 385 200 | 8 | 1 |
+| 2 — **writer contention** | 7 185 | **152.9/s** | **296 ns** | **200** | **400** | **1 100** | 13 300 | 216 300 | 9 | **0** |
+
+Window 2 is the one that decides it. It added a **resume-path reconnect storm — 228 connects
+(4 workers × 57) in 60 s**, each one taking the **write** lock via `subscribeAndReplay`, and each
+replaying a verified **8 537 frames / 4.27 MB** (window hit: no `resume-window-miss`, no
+snapshot). So the primary mechanism was measured with real writers holding the exclusive lock
+while snapshotting thousands of frames, concurrent with 153 publishes/sec:
+
+- **p99 read-lock acquire = 1.1 µs. Zero acquisitions over 1 ms out of 7 185.** Nine (0.13 %)
+  exceeded 10 µs.
+- At 30 fps the total publish-side lock cost is `30 × ~300 ns ≈ 9 µs per second` — roughly
+  0.001 % of one core.
+
+**Interrogating the two surprises**, because the numbers do not read the way a naive reading
+would predict:
+
+1. *Window 2 is ~6× cheaper than window 1 despite far more contention.* Cause is JIT warmup,
+   not a lower true cost: window 1 has 1 331 samples against window 2's 7 185, and window 1
+   includes the first publishes after a reset. The **more** contended window being **faster**
+   rules out contention as the driver of window 1's mean.
+2. *Window 1's 1.39 ms outlier.* It cannot be lock contention: every subscriber in window 1
+   connected without a cursor, so it took `subscribe()` (`SseStreamChannel.java:187-191`), which
+   never touches the write lock — there was no writer in that window for a reader to wait on. It
+   is JVM/OS noise (GC, descheduling under the concurrent curl load). Consistent with this,
+   window 2 — which *did* have 228 writers — has **no** >1 ms sample at all.
+
+Honest floor: `System.nanoTime()` granularity on this machine is ~100 ns, so the p50 of 200 ns is
+one-to-two clock ticks. The true acquire cost is **at or below the measurement floor**, which
+strengthens rather than qualifies the verdict.
+
+**Verdict: KEEP PRIMARY.** The read lock on `publish` is not measurable at 30 fps, and is not
+measurable at 5× that rate with a heavy concurrent writer either. §13.2 residual 3 and the
+fallback note at `SseStreamChannel.java:59-68` can be closed: the publish-generation counter is
+**not** promoted. The two-phase handoff is doing its job — 8 537-frame replays under the write
+lock did not produce a single millisecond-scale publisher stall.
+
+### 14.3 Spike residuals
+
+1. **`kill -INT` cannot be delivered to native Windows `curl`** from Git Bash, so (b)'s
+   disconnects are clean process exits (FIN), not signals. An abrupt `taskkill /F` was also
+   observed to disconnect, but its `onClose` latency was not recorded. The write-driven
+   conclusion rests on the three FIN cases, which agree.
+2. **The dev-runner captures almost no Head log output** — `backend.stdout.log` held one line
+   (`JUSTSEARCH_API_PORT=…`) and `backend.stderr.log` only JVM warnings; there is no Head log
+   file under `<dataDir>/logs/` (only `worker.log`). The probe was rebuilt to self-report through
+   an endpoint instead. Logged to the inbox; it makes `tail_log`-based diagnosis of Head-side
+   behaviour unreliable.
+3. **The proxy `onClose` leak (c) is unfixed** — reported here and to the inbox, deliberately not
+   fixed in a throwaway spike.
+4. **Not measured:** browser-`EventSource` behaviour (§13.4's other pending leg — untouched,
+   and note `EventSource` cannot issue a POST at all, so run streams need `fetch`-based SSE
+   parsing on the FE, which `consumeShapeStream` already does), and `MultiplexedSseWriter`'s
+   non-atomic resume path (§13.2 residual 1).
+
+---
+
 ## 15. Implementation handoff — S3b, S4, S5
 
 Line map for a fresh implementer, in the shape of §11. **Every anchor below was re-verified
