@@ -377,6 +377,43 @@ selection-group machinery should ever be built around it.
   existing hot-swap seam + pair-hoisting per §2.3, env-channel dev default per
   §2.4, 805-conformant honesty per §2.5. Orphans named (§5), principles
   recorded with retirement conditions (§6). D1–D3 pending owner; P1 gates.
+- **2026-08-18 (dev-work dress rehearsal)** — drove the real dev loop on the
+  compact profile (dev-runner stack from this worktree, ingested 48-doc
+  corpus, agent-loop tasks via /api/chat/agent with SSE + approvals). What
+  worked: boot→compact resolution, realized projection, and the fixed
+  activation path all held live, including a live compact→standard→compact
+  profile switch where the standard 9B came up WITH its projector
+  (pre-842 this path dropped it); engine perf on GPU is excellent for both
+  (4B: ~110 tok/s gen, ~4.3k tok/s prompt on 4k-token prompts; concurrent
+  Gradle test build ran 17 s unperturbed during inference). Four discoveries,
+  all model-INDEPENDENT dev-loop issues surfaced by the rehearsal, none
+  842-caused, recorded for follow-up rather than fixed here:
+  (1) **Context-budget gate dominates agent latency at n_ctx 4096** — every
+  tool-heavy task parked at `budget_gate` for the ~120 s unattended-decision
+  timeout (SSE timeline: gate at t≈3.4 s, heartbeats to t≈120 s, then
+  finalize); total ≈130 s/task on BOTH models. At n_ctx 16384 the gate never
+  fired and tasks ran 3–12 s. Compact's ~5 GB VRAM saving comfortably funds
+  the larger context (33/33 layers still offloaded at 16 k).
+  (2) **Toolbox size interacts with model size**: at 4 k ctx the (truncated)
+  tool list kept the 4B on `core_search_index` and answers were correct and
+  cited; at 16 k the full catalog fits and the 4B flailed across
+  workflow/browse/remember tools and hallucinated under retrieval failure,
+  while the 9B in the same condition correctly diagnosed the real fault
+  (quoting `index.unavailable`) instead of hallucinating — the clearest
+  compact-vs-standard quality gap observed, and an argument for curating the
+  agent tool catalog rather than for avoiding the compact profile.
+  (3) **The 4B is trigger-happy with mutation tools**: its flailing included
+  real `core_ingest_files` calls that mass-ingested ~1.7 k documents and
+  queued ~10 k enrichment jobs, ultimately erroring the index (experiment
+  data dir hard-cleaned afterwards). Auto-approve + compact + writable tools
+  deserves a policy look (approval risk classes exist already).
+  (4) Run-to-run variance on the 4B is visibly higher (same T1 prompt:
+  correct twice, hallucinated once) — quality-sensitive verification on
+  `standard` (per §2.6) is not theoretical.
+  Follow-up candidates (not this tempdoc's scope): per-profile default
+  contextSize (compact → 16384); unattended budget-gate default for headless
+  agent runs (834's territory); tool-catalog curation for agent_chat;
+  mutation-tool approval policy under auto-approve.
 - **2026-08-18 (review + fix pass)** — post-implementation critical review
   (claims list + independent refute-first verification of every claim, live
   instance re-queried). Confirmed and FIXED: **D1** bare `ai_activate` took the
