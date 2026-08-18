@@ -237,3 +237,78 @@ whether any `error` event fired.
 Falsifier for A1: if a 400 still occurs, the budget is still overcommitted somewhere the two call
 sites don't cover — check the non-RAG prompt contributors and history seeding, which this slice
 does not budget.
+
+## Outcome record
+
+Static verification, all green:
+
+- `./gradlew.bat build -x test -PskipWebBuild=true` — BUILD SUCCESSFUL.
+- Full JVM unit suite — **7929 tests, 0 failures**, 26 skipped.
+- `modules/ui-web` — `npm run typecheck` clean; `npm run test:unit:run` **422 files / 5235 tests**
+  passed. (FE is untouched by this slice; this is the proof, not a change.)
+- Diff contains no unintended non-ASCII (32 added non-ASCII lines, all intentional em-dashes in
+  comments — no cp1252 mojibake).
+
+### Mutation probe — both call sites independently covered
+
+Required by the acceptance criteria, and it earned its keep:
+
+| Probe | Result |
+|---|---|
+| Revert `tryOpenRetrieval` (`:494`) to `(8192, 1024)` | **3 named tests fail** — `open retrieval sends a budget sized by the LIVE window`, `budget tracks the request's own reserve`, `unobserved window falls back to the CONFIGURED one` |
+| Revert the truncation site (`:377`) to `(8192, 1024)` | **1 named test fails** — `845: an over-budget context is TRIMMED and reported` |
+
+**The second probe initially PASSED** — i.e. the test was not actually covering that call site. The
+fixture context was ~39,000 estimated tokens, large enough to truncate under the old 5990 budget as
+well as the new 460, so it could not tell the two apart. Resizing it to ~2900 tokens — above the
+honest budget, below the old one — made it discriminate. This is exactly the `audit-without-test` /
+test-precision failure mode: a green test that passes for the wrong reason. Recorded because the
+probe is the only thing that caught it.
+
+### Critical-analysis pass
+
+- **Wrong-gate check.** Verified at the set-site, not by symbol existence:
+  `ConversationEngine.java:357` seeds `ATTR_COMPLETION_RESERVE_TOKENS`, `:369` runs the injectors —
+  correct ordering. `RAGContext.ID` is referenced by exactly one shape (`RAGAskShape.java:68`), which
+  dispatches through `dispatchSubstrateDrivenBody`, the same method that seeds the attribute. No
+  second dispatch path reaches RAGContext with the attribute unset.
+- **Event ordering.** `rag.meta` emission moved after truncation. The terminal-error returns between
+  its construction and its emission all return `InjectorResult.terminalError(...)`, which discards
+  `events` — so those paths never emitted `rag.meta` before either. Behaviour unchanged; pinned by
+  `ragMetaStillPrecedesCitations`.
+- **Subagent claims re-derived.** The delegated audit was right about the seam
+  (`OnlineAiService.llmContextTokens()` already exists, with the `AgentLoopService:446-449`
+  precedent) but wrong on three arithmetic values it reported (`5985`/`2299`/`461` vs the actual
+  `5990`/`2304`/`460`). All budget constants in the tests were computed by hand from the source
+  formula rather than taken from the report.
+
+### Design deltas from the original brief
+
+1. **Window source.** The brief suggested `HeadAssembly` / `ServerPropsOps`. The real seam already
+   existed: `OnlineAiService.llmContextTokens()` (`OnlineAiService.java:408`) → `OnlineAiServiceImpl`
+   → `InferenceLifecycleManager.lastKnownContextTokens()`, with `configuredContextTokens()` behind
+   it and an established consumption pattern at `AgentLoopService.java:446-449`. No new accessor was
+   added — `explore-before-implementing` applied.
+2. **A third lie, found while implementing** (§Lie 3): the budgeter's own `MIN_BUDGET` floor could
+   exceed the window. Fixing only the call sites would have left the overflow reachable.
+3. **`retrieval_coverage` is affected.** The `:494` budget is the Worker's `maxContextTokens`, which
+   is the *denominator* of `retrievalCoverage` (`RagContextOps.java:645-646`) — a persisted,
+   user-visible calibration field. A smaller truthful denominator raises reported coverage for the
+   same retrieved text. More honest than dividing by a window that does not exist, but it is a
+   semantic change to an evidence field and is called out in the PR rather than slipped in.
+
+### Logged, not fixed (out of scope)
+
+- `SummarizationStyle:30` — comparable phrasing, no say-so/access clause; unprobed different shape.
+- `TokenEstimation.truncateIfNeeded:124` — `cap = max(MIN_BUDGET, maxContextTokens)` still
+  re-inflates a sub-256 budget to 256, so the impossible-request case retains a small residual
+  overflow at the *truncation* layer even though the *budgeter* is now exact.
+- `AgentLoopService.java:446` — unboxes `configuredContextTokens()` without a null check; both
+  accessors are nullable `Integer` defaults, so a non-Online runtime NPEs there.
+
+### Status
+
+Static work complete; PR **#482** open as a **draft**. It must not leave draft until the live leg
+above is run — that is the one tier this slice could not reach, because the shared dev stack was
+held by another session (fresh 7200s lease, `dist` from the `840-download-restructure` worktree)
+for the slice's whole duration. Not started and not taken over, per instruction.
