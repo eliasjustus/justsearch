@@ -126,6 +126,16 @@ Cost of keeping it: an `npx -y` package fetch + process spawn on every session s
 names in every prompt, for zero capability. The pinned package is also the archived upstream,
 superseded by GitHub's own server.
 
+**Residual manual step — the prune is not fully in effect until this is done.** `.mcp.json` is
+**gitignored**, so the committed change lands in `.mcp.json.example` (tracked) and in
+`.claude/settings.json`'s `enabledMcpjsonServers`, plus this worktree's own `.mcp.json`. Every
+*new* worktree seeded by `prepare-worktree.cjs` therefore gets the clean config — but the **main
+checkout's existing `.mcp.json` still registers `github`**, and no tracked change can reach it.
+One manual edit there (drop the `github` block) completes D1; until then the server keeps
+spawning for sessions started from the main checkout. Recorded here rather than done silently:
+`branch-safety.md` reserves writes to the main checkout, and a machine-local config file is the
+owner's to change.
+
 ### 4.2 Hot reload — FIX-THEN-SURFACE (P8; awaiting D2)
 
 `hotReload: true` on 1 of 162 starts; `reload` invoked 0 times. The §5.6 investigation returned
