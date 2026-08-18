@@ -117,6 +117,15 @@ public final class OnlineAiServiceImpl
 
     Path modelsDir = resolveModelsDir(current);
     Path modelPath = modelsDir.resolve(profile.modelFile());
+    if (!Files.isRegularFile(modelPath)) {
+      // Fail closed, unlike the projector below: llama-server refuses to start on an unresolvable
+      // --model, so restarting the engine onto a file that is not there turns a profile switch
+      // into an outage. The HTTP path never gets here (RuntimeActivationService pre-checks and
+      // fails with a typed MODEL_NOT_FOUND); this is the same verdict for direct programmatic
+      // callers of OnlineAiRuntimeControl.applyChatProfile. Thrown BEFORE any applyConfig, so the
+      // running engine is left exactly as it was.
+      throw new IllegalStateException(missingProfileModelMessage(profile, modelPath));
+    }
     Path mmprojPath = modelsDir.resolve(profile.mmprojFile());
     if (!Files.exists(mmprojPath)) {
       // Same rule as fromEnvironment: a missing projector degrades to text-only with a WARN
@@ -155,6 +164,23 @@ public final class OnlineAiServiceImpl
     } catch (ModeTransitionException e) {
       throw new RuntimeException(e.getMessage(), e);
     }
+  }
+
+  /**
+   * Failure text for a profile whose model file is not on disk.
+   *
+   * <p>Deliberately word-for-word with {@code RuntimeActivationService.missingProfileModelMessage}
+   * (the API-path counterpart) so both surfaces name the same remedy: the compact bundle is a
+   * dev-only package excluded from user install plans, so "Run Install AI" would send the reader
+   * somewhere that will never fetch it. Not shared as one helper because that class lives in
+   * {@code :modules:app-services}, which depends on this module rather than the other way round.
+   */
+  private static String missingProfileModelMessage(ChatModelProfile profile, Path resolved) {
+    String remedy =
+        profile == ChatModelProfile.COMPACT
+            ? " Run `node scripts/dev/fetch-compact-model.mjs` to download it."
+            : " Run Install AI to download it.";
+    return "Chat profile '" + profile.id() + "' model does not exist: " + resolved + "." + remedy;
   }
 
   /**

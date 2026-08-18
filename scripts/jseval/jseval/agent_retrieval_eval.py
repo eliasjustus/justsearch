@@ -52,7 +52,9 @@ _DEFAULT_BASE_URL = "http://127.0.0.1:33221"
 # be producible by accident -- they systematically poison quality baselines and
 # are not comparable to standard-model results. Case-insensitive substring match
 # against the served model name/path (jseval.judge_ceiling.served_model_name).
-COMPACT_MODEL_MARKERS = ("qwen3.5-4b", "qwen3-1.7b")
+# Markers cover current + contemplated compact rungs (tempdoc 842 D1: "qwen3.5-2b"
+# is the contemplated 2B fallback rung, not yet shipped).
+COMPACT_MODEL_MARKERS = ("qwen3.5-4b", "qwen3-1.7b", "qwen3.5-2b")
 
 
 class CompactModelNotAllowedError(RuntimeError):

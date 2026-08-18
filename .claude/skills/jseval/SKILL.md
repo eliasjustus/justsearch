@@ -31,6 +31,9 @@ LLM's `served_model` and hard-errors if that model is a compact dev-tier profile
 can't happen by accident. Pass `--allow-compact-model` only for plumbing/smoke runs whose numbers you do
 NOT intend to compare against standard-model baselines — activate the standard profile
 (`ai_activate {chatProfile:"standard"}`) for any quality-sensitive tier-2 run instead.
+Note: an ambient `JUSTSEARCH_CHAT_PROFILE` in your shell reaches `runHeadlessEval`
+backends through the env whitelist — leave it unset for quality campaigns (the
+served-model guard is the backstop, not the primary control).
 
 <!-- generated:start — do not edit between markers; run: node scripts/docs/skills-sync.mjs -->
 

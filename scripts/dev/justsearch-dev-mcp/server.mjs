@@ -1793,9 +1793,14 @@ export async function main() {
           const res = await httpGetTextLimited(statusUrl, { timeoutMs: 2000, maxBytes: 100_000 });
           if (res.ok && res.text) {
             const st = JSON.parse(res.text);
-            aiActive = !!(st?.activation?.state === 'completed' && st?.active?.activeVariantId);
-            // Defensive passthrough — chatProfile/modelPath don't exist on the status response
-            // until the parallel Java slice (tempdoc 842) lands.
+            // Tempdoc 842 review D3: activation-completed alone is a false negative for engines
+            // brought up by AI autostart (the activation state machine never ran). Realized
+            // identity (active.modelPath) is projected only while the engine is online, so its
+            // presence is an equally authoritative online signal.
+            aiActive = !!(
+              (st?.activation?.state === 'completed' && st?.active?.activeVariantId) ||
+              st?.active?.modelPath != null
+            );
             const chatProfile = st?.active?.chatProfile ?? st?.chatProfile;
             const modelPath = st?.active?.modelPath ?? st?.active?.llmModelPath ?? st?.modelPath;
             if (chatProfile != null || modelPath != null) {
@@ -2369,17 +2374,29 @@ export async function main() {
     const startMs = Date.now();
     const statusUrl = new URL('/api/ai/runtime/status', base).toString();
 
-    // Check current state — might already be active
+    // Check current state — might already be active. Tempdoc 842 review D3/N1: an engine
+    // brought up by AI AUTOSTART never runs the activation state machine, so the old
+    // activation-completed test was a false negative there and this pre-check re-activated a
+    // healthy engine (GPU self-test + RESTART_ALWAYS) on every agent_chat. Engine-online is
+    // activation-completed OR realized identity present (active.modelPath is projected only
+    // while the engine is online — backend invariant). A caller explicitly requesting a
+    // DIFFERENT profile than the running one still proceeds: that is a profile switch.
     const preCheck = await httpGetTextLimited(statusUrl, { timeoutMs: 10_000, maxBytes: 100_000 });
     if (preCheck.ok) {
       try {
         const pre = JSON.parse(preCheck.text);
-        if (pre.activation?.state === 'completed' && pre.active?.activeVariantId) {
+        const engineOnline =
+          (pre.activation?.state === 'completed' && pre.active?.activeVariantId) ||
+          pre.active?.modelPath != null;
+        const profileMatches = chatProfile == null || chatProfile === pre.active?.chatProfile;
+        if (engineOnline && profileMatches) {
           return {
             ok: true,
-            variantId: pre.active.activeVariantId,
+            // Autostarted engines have no activeVariantId (activation never ran); fall back to
+            // the requested variant so the non-nullable output schema holds.
+            variantId: pre.active?.activeVariantId ?? variantId,
             chatProfile: pre.active?.chatProfile,
-            activationState: 'completed',
+            activationState: pre.activation?.state ?? 'idle',
             phase: 'done',
             message: 'AI runtime already active.',
             durationMs: Date.now() - startMs,
@@ -2642,7 +2659,15 @@ export async function main() {
       // Tempdoc 842: poll-until-done activation flow factored into activateAiRuntime (shared
       // with justsearch.dev.agent_chat's auto-activation, §2.7 D2) — this handler just shapes
       // the result into AiActivateOutputSchema.
-      const result = await activateAiRuntime({ base, variantId, chatProfile: input.chatProfile, timeoutMs, pollIntervalMs });
+      // Tempdoc 842 review D1: an omitted chatProfile follows the STACK's spawn-time profile
+      // (run.json), same as agent_chat — without this, the habitual bare ai_activate call took
+      // the backend's settings path and activated the standard 9B on a compact-default stack.
+      // Explicit input wins; port-only resolution (no run record) keeps legacy behavior.
+      const result = await activateAiRuntime({
+        base, variantId,
+        chatProfile: input.chatProfile ?? resolved.chatProfile ?? undefined,
+        timeoutMs, pollIntervalMs,
+      });
 
       if (result.ok) {
         return toToolResult(AiActivateOutputSchema.parse({

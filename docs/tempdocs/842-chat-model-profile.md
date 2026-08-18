@@ -377,6 +377,32 @@ selection-group machinery should ever be built around it.
   existing hot-swap seam + pair-hoisting per §2.3, env-channel dev default per
   §2.4, 805-conformant honesty per §2.5. Orphans named (§5), principles
   recorded with retirement conditions (§6). D1–D3 pending owner; P1 gates.
+- **2026-08-18 (review + fix pass)** — post-implementation critical review
+  (claims list + independent refute-first verification of every claim, live
+  instance re-queried). Confirmed and FIXED: **D1** bare `ai_activate` took the
+  backend settings path and activated the standard 9B on compact stacks (now
+  defaults to the run-record profile, symmetric with agent_chat); **D2**
+  `gen-notices` projected ALL registry packages into user-facing legal
+  attribution — fix is a `devOnly` filter (a model never redistributed to
+  users does not belong in NOTICE/THIRD_PARTY_NOTICES; the committed artifacts
+  stay byte-stable, CI license lane sequence re-run green locally); **D3+N1**
+  `aiActive` derived from activation-completed was a false negative for
+  AUTOSTARTED engines in three places (evidence capture, quick_health, and
+  the auto-activation pre-check — which therefore re-self-tested and
+  restarted a healthy engine); all three now also accept realized identity
+  (`active.modelPath` present ⇔ engine online), live-verified
+  (`aiActive: true` with `activation.state: idle`); **N2** a typo'd
+  `chatProfile` on the activate API warn-fell-back to STANDARD — now 400;
+  **N4** `applyChatProfile` restarted onto a nonexistent model file — now
+  fail-closed before touching the engine; **N3/C5** the jseval guard had zero
+  test coverage (wrong-reason pass) — dedicated suite added, markers extended
+  with the contemplated 2B rung. Review corrections recorded: the refuter
+  could not reproduce the stale-pin live evidence on a fresh-home boot (it
+  requires the shared-home boot; unit pin stands), and "jseval backends are
+  standard-by-default" holds only when ambient `JUSTSEARCH_CHAT_PROFILE` is
+  unset (env whitelist forwards it; skill note added). N5 (filename-based
+  profile stamp when a per-file override names the same file) recorded as
+  harmless. A1–A3 accepted limitations re-challenged and stand.
 - **2026-08-18 (implementation)** — §2 implemented on branch
   `worktree-842-chat-model-profile` with D1=4B (compact), D2=auto-activate,
   D3=`chat.profile`/`standard`/`compact` as recommended. Six slices

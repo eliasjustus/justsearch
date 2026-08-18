@@ -353,6 +353,67 @@ final class OnlineAiServiceImplTest {
     }
   }
 
+  /**
+   * Tempdoc 842 review N4: the MODEL file is fail-closed, unlike the projector above. A missing
+   * model would restart llama-server onto a path it refuses to open — an outage instead of a clean
+   * error — so the throw must land BEFORE any applyConfig reaches the manager, leaving the running
+   * engine exactly as it was. (The HTTP path fails earlier with a typed MODEL_NOT_FOUND; this pins
+   * the verdict for direct OnlineAiRuntimeControl callers.)
+   */
+  @Test
+  @DisplayName("applyChatProfile throws on a missing model file and never touches the engine")
+  void applyChatProfileFailsClosedWhenModelMissing() throws Exception {
+    Path modelsDir = tmp.resolve("models-nomodel");
+    Files.createDirectories(modelsDir.resolve("compact"));
+    // Only the projector is on disk — the model file is not.
+    Files.writeString(modelsDir.resolve(ChatModelProfile.COMPACT.mmprojFile()), "x");
+    Path expectedModel = modelsDir.resolve(ChatModelProfile.COMPACT.modelFile());
+
+    InferenceConfig current =
+        new InferenceConfig(
+            Path.of("/bin/llama-server.exe"),
+            modelsDir.resolve(ChatModelProfile.STANDARD.modelFile()),
+            modelsDir.resolve(ChatModelProfile.STANDARD.mmprojFile()),
+            8082,
+            4096,
+            33,
+            false,
+            "standard");
+    when(manager.currentConfig()).thenReturn(current);
+
+    ConfigStore prevStore = ConfigStore.globalOrNull();
+    String prevModelsDir = System.getProperty("justsearch.models.dir");
+    System.setProperty("justsearch.models.dir", modelsDir.toString());
+    try {
+      TestResolvedConfigHelper.storeFromEnvironment();
+
+      IllegalStateException thrown =
+          assertThrows(
+              IllegalStateException.class,
+              () ->
+                  service.applyChatProfile(
+                      ChatModelProfile.COMPACT,
+                      io.justsearch.app.api.OnlineAiRuntimeControl.RestartPolicy.RESTART_ALWAYS));
+
+      String msg = thrown.getMessage();
+      assertTrue(msg.contains("compact"), "names the profile id: " + msg);
+      assertTrue(msg.contains(expectedModel.toString()), "names the resolved path: " + msg);
+      assertTrue(
+          msg.contains("scripts/dev/fetch-compact-model.mjs"),
+          "names the compact remedy, matching RuntimeActivationService: " + msg);
+
+      verify(manager, never()).applyConfig(any(), any(), any());
+      verify(manager, never()).applyConfig(any(), any());
+    } finally {
+      if (prevModelsDir == null) {
+        System.clearProperty("justsearch.models.dir");
+      } else {
+        System.setProperty("justsearch.models.dir", prevModelsDir);
+      }
+      TestResolvedConfigHelper.restoreGlobal(prevStore);
+    }
+  }
+
   /** Counterpart pin: the non-admin path must NOT use ADMIN_TRIGGERED. */
   @Test
   void applyRuntimeOverrides_routesConfigApplyReasonToManager() throws Exception {

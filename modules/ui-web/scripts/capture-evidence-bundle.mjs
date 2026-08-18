@@ -409,7 +409,12 @@ async function main() {
   if (hasApi) {
     try {
       const st = await fetchJson(opts.apiBaseUrl, '/api/ai/runtime/status', Math.min(perRequestTimeout, 3000));
-      const aiActive = st?.activation?.state === 'completed' && !!st?.active?.activeVariantId;
+      // Tempdoc 842 review D3: activation-completed alone is a false negative for autostarted
+      // engines; realized identity (active.modelPath) is projected only while the engine is
+      // online, so its presence is an equally authoritative online signal.
+      const aiActive =
+        (st?.activation?.state === 'completed' && !!st?.active?.activeVariantId) ||
+        st?.active?.modelPath != null;
       const chatProfile = st?.active?.chatProfile ?? st?.chatProfile ?? null;
       const modelPath = st?.active?.modelPath ?? st?.active?.llmModelPath ?? st?.modelPath ?? null;
       modelInfo = {
