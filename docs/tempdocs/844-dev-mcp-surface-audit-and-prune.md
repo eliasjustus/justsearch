@@ -13,6 +13,8 @@ related:
   - 735-agent-surface-seam-consolidation  # owns the PRODUCT MCP surface — explicitly NOT this doc's scope
   - 770-agent-tool-surface-economy-lane   # product tool-surface economy — likewise out of scope here
   - 841-agent-prompt-cache-efficiency     # same corpus, adjacent method; its "no context bloat" finding bounds §6.4
+  - 271-backend-lifecycle-isolation       # the ownership/interference model §11.3 extends; already flagged raw runHeadless
+  - 542-operation-scoped-lease-taxonomy   # "extending the 271 ownership model" — the op-lease registry §11.3 builds on
 ---
 
 > **Scope boundary.** This document is about the **dev** agent-tool surface — the
@@ -545,6 +547,21 @@ applied to **runtime state** instead of to types: one canonical source, everythi
 projection. That parallel is worth taking seriously — it suggests the register pattern this repo
 already trusts for representations generalizes to processes.
 
+**Prior art — this extends an existing lineage rather than starting one.**
+`271-backend-lifecycle-isolation` (done, 2026-03-10) established the multi-agent ownership and
+interference model, and already named *"raw `:modules:ui:runHeadless` use without full isolation
+overrides"* as a risk. `542-operation-scoped-lease-taxonomy` (done, 2026-05-21) — subtitled
+"extending the 271 ownership model" — added a Layer-2 op-lease registry at
+`tmp/dev-runner/op-leases.json`. Both work: lease adoption is 92/92.
+
+What neither covers is the part this section is about. Both register what the dev-runner *started*;
+neither enumerates what it did not — `jseval`'s 33221 backend, a bare `runHeadless`, a stale JVM
+squatting a port. That is the gap the shard of 2026-08-14 recorded as a contaminated measurement,
+and 271 flagged its seed five months before jseval's backend widened it. So the registry idea is
+an extension in the same line 542 already walked, not a new invention — and the fact that 271's
+foreign-process risk stayed open across two follow-on lanes is itself mild evidence it needs a lane
+rather than another passing mention.
+
 Open question: is registration *enforceable*? A register only covers what registers itself. A bare
 `gradlew runHeadless` will always be able to skip it. So the registry probably needs a discovery
 fallback (port scan, or process enumeration by command line) to stay honest — which is also how it
@@ -689,8 +706,11 @@ not. That is a genuinely useful asymmetry and it has never been used.
 ### 11.12 Candidate follow-up
 
 The run-registry idea (§11.3) is larger than this lane and outlives it — it touches `dev-runner`,
-`jseval`, the MCP surface, `ui-shot`'s auto-serve and the ownership model. If it is worth its own
-lane, **#845 is the next free number** (verified against `world-state.mjs`; note #843 is already
+`jseval`, the MCP surface, `ui-shot`'s auto-serve and the ownership model. It would be the third
+step in the 271 -> 542 line (see §11.3 prior art), extending ownership from *runs we started* to
+*every run on the machine* — not a new concept, and it should be framed that way to avoid forking
+authority away from 542's op-lease registry. If it is worth its own lane, **#845 is the next free
+number** (verified against `world-state.mjs`; note #843 is already
 double-claimed across worktrees, and #840/#842 have live merge-gate collisions). Not created here
 — whether the registry is a lane or just this lane's P5 is an owner call, and creating a second
 tempdoc speculatively is exactly the kind of residue `retire-with-a-sweep` warns about.
