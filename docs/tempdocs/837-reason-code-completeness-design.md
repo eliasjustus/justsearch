@@ -3,7 +3,8 @@
 ```
 status: COMPLETE (pending merge) — S1/S2 + S3/S4 merged (PR #472); S5 + S6 implemented (Appendix E)
 created: 2026-08-14
-updated: 2026-08-18 (Appendix E: S5 + S6 implementation log — all six slices shipped)
+updated: 2026-08-18 (Appendix E: S5 + S6 implementation log — all six slices shipped;
+  E.12 S6 live leg VERIFIED on the shared stack, S5 legs machine-blocked)
 related: 833 (W6 + finding 6, the theorization this designs), 830 (the Search v3
   degradation banner that renders these codes), 600 (the closed vocabulary + its
   gate), 656 (the last "precise reasons never reached the banner" fix), 627
@@ -2221,6 +2222,7 @@ itself needed no edit — additive is additive.
 | `npm run test:unit:run` | **422 files / 5205 tests passed** |
 | ui-web gate set (30 scripts, incl. the shell-v0 subset) | 26 green; 4 pre-existing reds |
 | governance kernel, full run (`--mode gate`) | all pass except 2 pre-existing (below); `module-deps` and `config-surface` pass once their generated inputs exist |
+| S6 live leg on the shared dev stack (§E.12) | 4 of 4 checks PASS + the moved corruption wording; teardown verified |
 | UTF-8 check on the staged diff | every added non-ASCII char is intentional typography (em-dash, `§`, `→`, `⇒`, `≠`, `∈`, `…`); zero mojibake |
 
 **Pre-existing reds, each confined to files this diff does not touch.** ui-web:
@@ -2262,37 +2264,151 @@ Both logged to the observations shard.
   — the `TransitionReason` signal now reaches a consumer — and §7 explicitly scopes it
   out. Recorded as unblocked, not done.
 
-### E.12 — Live legs: PENDING, with a script
+### E.12 — Live verification: S6 VERIFIED; the two S5 legs remain machine-blocked
 
-No dev stack was taken (the brief's constraint, and S5's kill-scenarios in §6 belong
-to the S3/S4-era lease that already ran in C.12). Two legs genuinely need one, and
-both are single-command scripted:
+Run on the shared dev stack from this worktree's dist (`distFrom`, `skipBuild`, `clean: hard`,
+`apiPort: 51020`, `leaseDurationSec: 2400`), one stack lifecycle, ~12 min. Idleness asserted
+before start: `quick_health` `running:false` **and** a process check (0 `llama-server.exe`; 0
+`java.exe` matching `HeadlessApp|IndexerWorker|runHeadless` — the only `java.exe` were Gradle
+daemons, classified by command line; ports 51020 / 5173 / 58750 / 49543 all free). No AI runtime
+was activated: this leg needs none.
 
-1. **`inference.crashed`** — the highest-value live check in the batch, because the
-   distinction it proves is invisible to every static check. With the runtime ONLINE:
+Corpus: `docs/explanation` (30 accepted, 35 indexed at the time of the rebuild).
+
+| # | Check | Verdict |
+|---|---|---|
+| 1 | `migrationSource` lands as a closed-vocabulary member on the status wire | **PASS** |
+| 2 | The `Stability.source` facet flows through; headline and body AGREE | **PASS** |
+| 3 | Stuck-rebuild escalation + progress-row equality gates still key correctly | **PASS** |
+| 4a | A caller-supplied garbage reason is coerced at the REST boundary | **PASS** |
+| 4b | An unknown historical on-disk source maps to `UNKNOWN` | **PASS** (staged on disk) |
+| — | The corruption wording that MOVED off the retired code still renders | **PASS** |
+| 5 | S5 `inference.crashed` / `inference.deactivated` | **NOT STAGEABLE** — machine blocker, unchanged |
+
+**Check 1 — PASS.** `POST /api/indexing/migration/start {"reason":"user_requested_rebuild"}`, then
+polled `worker.migration` to first-observation:
+
+```
+12:40:07  state=""          source=""                       (worker reopening — fallback view)
+12:40:29  state="MIGRATING" source="user_requested_rebuild"  active=g-20260818-123855
+                                                             building=g-20260818-123945
+```
+
+The persisted manifest agrees:
+`.dev-data/index/default/indices/g-20260818-123945/.justsearch-index-generation.json` →
+`"source" : "user_requested_rebuild"`.
+
+Also confirmed live, and it is the half of the design most easily got wrong: at `IDLE` with no
+building generation the field is `""`, **not** `unknown`. "Nothing is being rebuilt" and "a rebuild
+is running and we cannot say why" stayed different facts on the wire.
+
+**Checks 2 + 3 — PASS, driven through the SHIPPED projection, not re-implemented.** The live
+`/api/status` snapshot was captured to disk and fed through the real `computeStability` →
+`computeVerdict` → `verdictHeadline` / `verdictBody` chain (a throwaway vitest file importing the
+production modules; deleted after the run — the observed values below are the record):
+
+```
+LIVE stability = {"kind":"provisional","cause":"rebuilding","source":"user_requested_rebuild"}
+LIVE verdict   = {"kind":"transitioning","severity":"busy",
+                  "reasons":["rebuilding","source:user_requested_rebuild"]}
+LIVE headline  = Rebuilding…
+LIVE body      = The rebuild you requested is running; document counts and results will settle
+                 when it finishes.
+LIVE progress row renders = true | active = 35 | building = 0
+LIVE paused    = {"severity":"warn","reasons":["rebuilding","paused","source:user_requested_rebuild"]}
+                 → headline "Rebuild paused"
+LIVE overdue   = {"severity":"warn","reasons":["rebuilding","overdue","source:user_requested_rebuild"]}
+                 → headline "Rebuilding… (taking longer than expected)"
+```
+
+That is the whole §D.3 carrier chain on live data: `cause` UNCHANGED at `reasons[0]`, the source as
+an extra token, and BOTH wording surfaces reading it — the headline stays plain for a
+user-requested rebuild while the body names it, which is agreement, not divergence (they disagree
+only if one reads the facet and the other does not). The two equality gates the struck flat-token
+design would have disabled fire on the same live inputs: `paused`/`overdue` still escalate to
+`warn` **with** the source token present, and `HealthSurface`'s progress-row narrowing question
+(`cause === 'rebuilding' || cause === 'generation-switch'`, plus a faithful denominator) answers
+`true` with `active = 35`.
+
+**Check 4a — PASS, and verified at the persistence layer, not just the wire.** After a rollback,
+`POST /api/indexing/migration/start` with
+`{"reason": "'; DROP TABLE docs; -- arbitrary <caller> text"}` returned 202, and:
+
+```
+12:48:12  state="MIGRATING" source="manual"   building=g-20260818-124752
+```
+
+with `.../g-20260818-124752/.justsearch-index-generation.json` → `"source" : "manual"`. The
+arbitrary caller string never reached on-disk state. This is the security-relevant half of §2.3(i)
+and it is now observed, not argued. (The coercion WARN could not be read back: the dev-runner's
+captured `backend_stdout` / `backend_stderr` for this run were empty. The manifest is the stronger
+evidence, so this is recorded as unobserved rather than claimed.)
+
+**Check 4b — PASS, staged on disk (cheap, as the brief allowed).** With that generation still
+building, its manifest `source` was edited to `system_test` — one of the six real test-driver
+labels §2.3's table lists — and the next status read returned `migrationSource: "unknown"`. The
+FE then words it calmly and generically:
+
+```
+LIVE unknown verdict  = {"kind":"transitioning","severity":"busy","reasons":["rebuilding","source:unknown"]}
+LIVE unknown headline = Rebuilding…
+LIVE unknown body     = The index is being rebuilt; document counts and results will settle when it finishes.
+```
+
+So the total read-side mapping is live-confirmed against a genuine legacy label, and `UNKNOWN`
+behaves as the design's first-class member: it renders the pre-existing generic wording rather than
+an error or a confident lie.
+
+**Bonus — the moved corruption wording, live.** The same on-disk staging with
+`source = corrupt_index_rebuild` produced:
+
+```
+LIVE corrupt headline = Repairing index…
+LIVE corrupt body     = The index was corrupted and is being rebuilt from your files — results are
+                        temporarily incomplete.
+```
+
+word for word the sentence the retired `index.rebuilding` `CAUSE_ROWS` row carried. This exercises
+the *read + wording* path only — it does not stage real corruption detection, which C.12 scenario 3
+already recorded as unstageable (the supervised-restart path never reads the fatal-reason marker).
+Stated that way deliberately: the claim proven is "the wording moved and still renders", not "the
+corruption path works end to end".
+
+**Incidental confirmation of C.1's typed split.** A 503 during the worker's post-rollback restart
+returned `{"reason":"worker.recovering","detail":"worker process died; restarting"}` — code in
+`reason`, sentence in `detail`, on the live wire.
+
+**Teardown verified.** `justsearch_dev_stop { clean: "hard" }` → `killedPids [21468, 25676, 24352]`,
+`portsClosed: true`; `quick_health` `running:false, runId:null`; 0 `llama-server.exe`, 0 `java.exe`
+matching `HeadlessApp|IndexerWorker|runHeadless`, 0 `node.exe` matching `vite|dev-runner`; ports
+51020 / 5173 / 58750 / 49543 all closed. The dev-data directory was cleaned by the stop, the
+throwaway test file and the captured snapshots were deleted, and `git status` is clean apart from
+this appendix.
+
+**Still pending — S5's two legs, machine blocker unchanged (C.12 scenario 4).** Both need an
+installed llama-server variant, and `ai_runtime_status` reports `installedVariants: []`:
+
+1. **`inference.crashed`** — the highest-value live check in the batch, because the distinction it
+   proves is invisible to every static check:
    ```bash
-   # 1. baseline: components.inference.reason_code absent (READY)
-   curl -s 127.0.0.1:51020/api/status | jq '.lifecycle.components.inference'
-   # 2. kill the engine out from under the Head
-   powershell -c "Stop-Process -Name llama-server -Force"
-   # 3. within ~1 health interval, expect inference.crashed on BOTH surfaces
-   curl -s 127.0.0.1:51020/api/status | jq '.lifecycle.components.inference.reason_code'
-   curl -s 127.0.0.1:51020/api/runtime/manifest | jq '.ai.pendingReason'
-   # 4. then toggle chat off/on in Settings and re-read (3): the crash must SURVIVE
-   #    (the §D.1 retention rule — the leg no unit test can prove end-to-end)
+   curl -s 127.0.0.1:51020/api/status | jq '.components.inference'          # baseline: READY
+   powershell -c "Stop-Process -Name llama-server -Force"                    # kill it
+   curl -s 127.0.0.1:51020/api/status | jq '.components.inference.reason_code'
+   curl -s 127.0.0.1:51020/api/runtime/manifest | jq '.ai.pendingReason'     # both ⇒ inference.crashed
+   # then toggle chat off/on in Settings and re-read: the crash must SURVIVE (the §D.1 rule —
+   # the one leg no unit test can prove end-to-end)
    ```
-2. **`inference.deactivated`** — deactivate the runtime from the UI and expect
-   `inference.deactivated`, not `inference.crashed` and not the generic code.
+2. **`inference.deactivated`** — deactivate the runtime from the UI; expect `inference.deactivated`,
+   not `inference.crashed` and not the generic code.
 
-Both need a llama-server variant installed; C.12 scenario 4 recorded
-`installedVariants: []` on this machine, which is also why S4's two arms remain
-unproven live. S6's live leg (`core.rebuild-index` from the UI, expecting the
-user-requested wording) needs no AI runtime and is the cheapest of the three; the
-corrupt-index source stays hard to stage honestly for the reason C.12 scenario 3
-recorded (the supervised-restart path never reads the fatal-reason marker).
+Note the path correction found while scripting this run: the inference component is at
+`components.inference` on `/api/status`, **not** `lifecycle.components.inference` (`lifecycle`
+carries only `state` / `reason_code` / `message`). The earlier draft of this script had it wrong and
+a poll against it silently never matched.
 
-Unit + gate coverage stands behind all of them: every reason→code mapping, both
-retention orderings, the spec-toggle regression, the mutation probe, and the wire
-`reason_code` path C.12 already walked live for the worker codes
-(`StatusLifecycleHandler.java:1355-1360` forwards the component code verbatim, and the
-inference component travels the same single path).
+**Tooling gap found, not fixed.** `POST /api/operations/{id}/invoke` is not in the dev-MCP
+allowlist, so `core.rebuild-index` could not be invoked through the sanctioned tool; the leg went
+through `POST /api/indexing/migration/start` instead — which is the *better* target anyway, since it
+is this slice's actual write-side enforcement point and the only boundary an outside caller can
+reach. `RebuildIndexHandler`'s one-line member pass-through stays covered by compile + the
+vocabulary test. Logged to the observations shard.
