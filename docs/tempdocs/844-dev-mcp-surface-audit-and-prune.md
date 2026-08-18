@@ -414,13 +414,31 @@ answers "what is running".
 check. Ownership grants the right to *spawn*, not exclusivity over the *mutating* surface. Under
 3-4 parallel agents this is a live corruption path, and §5.6 may show `reload` is its sharpest edge.
 
-### 6.3 The reference doc is forked into the skill, and both are wrong
+### 6.3 A sync generator kept a wrong doc faithfully duplicated
 
-`docs/reference/contributing/mcp-dev-tools.md` and `.claude/skills/dev-stack/SKILL.md` share
+**Corrected diagnosis (2026-08-18).** The first draft of this section called the two files a
+*fork*. That was wrong about the mechanism, and the truth is a better finding.
+
+`docs/reference/contributing/mcp-dev-tools.md` and `.claude/skills/dev-stack/SKILL.md` shared
 **114 identical lines**, including the same tool table and the same *incorrect* endpoint mapping
-(`effective_config` -> `/api/config/effective`; the code maps it to `/api/debug/effective-config`,
-`server.mjs:930`). Both are at `mcp-dev-tools.md:77` and `SKILL.md:145` — the same wrong line in
-two files is the signature of a copy, not of two independent descriptions.
+(`effective_config` -> `/api/config/effective`; the code maps it to `/api/debug/effective-config`).
+Those lines were **machine-generated**: the skill carried explicit
+`<!-- generated:start ... source: docs/reference/contributing/mcp-dev-tools.md -->` markers
+(`SKILL.md:73-241` at the pre-change commit), and `scripts/docs/skills-sync.mjs` inlined the
+reference into it from a `SKILLS` manifest entry.
+
+So the two files could never drift *from each other* — they drifted **together, away from the
+code**, and a `skills-sync --check` run stayed green throughout. That is the sharper lesson:
+
+> **A generator that syncs one prose file into another provides the *appearance* of a consistency
+> guarantee while guaranteeing nothing about correctness.** It kept the copy perfectly faithful to
+> a wrong original, and its green check was evidence of nothing.
+
+It also validates the remedy independently of the original (mis)diagnosis: the fix is not
+"de-duplicate the prose" but **replace prose-to-prose sync with a code-to-doc gate**. The skill now
+links to the reference rather than inlining it, the `dev-stack` entry is gone from the `SKILLS`
+manifest, and `scripts/ci/check-dev-mcp-doc-sync.mjs` asserts the reference against the *running
+server*. Two prose copies agreeing was never the property worth enforcing.
 
 Tool count as stated: **15** in the reference doc ("exactly these tools"), **15** in the skill,
 **15** in the server's own `initialize.instructions` (`server.mjs:611`), **14** in the harness
@@ -430,6 +448,17 @@ header (`justsearch-dev-mcp-harness.mjs:7`). Actual: **16**. `acquire_when_free`
 Also drifted out of the doc: `/api/indexing-roots/substrate`, `/api/indexing-roots/preview`,
 `/api/indexing-jobs/failed/by-prefix`, `/api/action-ledger` are allowlisted in code and absent
 from the reference's allowlist table.
+
+**And a second wrong endpoint this audit missed, which the gate caught.** The doc mapped
+`status` -> `/api/knowledge/status` (`mcp-dev-tools.md:76` at HEAD); the code maps it to
+`/api/status` (`server.mjs:936`). Those are different payloads, and `status` is the most-used
+fetch key on the surface — so the single most consulted row of the table was wrong, and this
+prose audit did not notice while checking the row directly beneath it.
+
+That is the argument for P6 in one observation: a careful human pass over a 15-row table found one
+of the two errors in it. The gate found both on its first run, and found them by construction
+rather than by attention. Prose review does not scale to inventory correctness; a check that reads
+the running server does.
 
 **Nothing in `governance/consult-register.v1.json` covers `scripts/dev/`.** This is exactly the
 `representation-drift` class the register machinery exists for, in the one place the register does
