@@ -75,7 +75,14 @@ Load `/ssot-catalog` for the dual-copy checklist and field role reference.
 - Format fix: `./gradlew.bat spotlessApply`
 
 ## Add a field to an API record
-Load `/api-record` for the full workflow including the controller HashMap caveat.
+
+**The caveat that bites first:** `KnowledgeSearchController.handleSearch()` builds its
+response `Map` by hand, key by key (`modules/ui/src/main/java/io/justsearch/ui/api/KnowledgeSearchController.java`).
+Adding a component to the record does **not** change API output until that map gains an
+explicit `put()`. `KnowledgeSearchResponseContractTest` (in `app-api`) compares
+`KnowledgeSearchResponse`'s record components against the controller's mapped-field set and
+fails the build on omission — so for that one record the trap is gate-caught; for any other
+record it is not.
 
 Records in `app-api` (e.g., `KnowledgeSearchResponse`, `WorkerDebugView`)
 use `@RecordBuilder` to generate fluent builders. When adding a field:
@@ -108,6 +115,10 @@ use `@RecordBuilder` to generate fluent builders. When adding a field:
    second `.loose()` Zod (the `wire-type-single-authority` gate refuses a hand copy).
 10. Run frontend contract tests: `cd modules/ui-web && npm run test:unit:run`
 11. Verify: `./gradlew.bat :modules:app-api:test :modules:app-agent:test :modules:app-observability:test`
+
+`status-v1.json`, `knowledge-status-v1.json`, and `debug-state-v1.json` are deliberately
+manual backward-compatibility baselines. An ordinary field **addition** must not touch them;
+update them only for a breaking change (field removal or rename).
 
 ## Add a field to a registry declaration (Operation / Resource)
 The `/api/registry/{operations,resources}` wire is a generated projection of a typed

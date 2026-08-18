@@ -257,7 +257,9 @@
           "exitCode": 2
         },
         "note": "tempdoc 727 F-7b; the exact confirmed real-world malformed shape -> exit 2"
-      }
+      },
+      "wiring": "opt-in",
+      "wiringNote": "Deliberately NOT wired (owner decision 2026-08-18). Tempdoc 727 F-7b recalibrated its value to \"saves one wasted round-trip\": the platform's own TaskCreate validation error already names the unexpected `tasks` parameter and states the one-call-per-task shape. Wire it only if that platform message regresses."
     },
     "edit-reread-hint": {
       "file": "edit-reread-hint.mjs",
@@ -596,7 +598,8 @@
             "hookId": "subagent-guide",
             "timeout": 5
           }
-        ]
+        ],
+        "matcher": "Explore|Plan"
       }
     ],
     "SubagentStop": [
