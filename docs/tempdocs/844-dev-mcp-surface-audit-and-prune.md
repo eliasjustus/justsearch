@@ -785,6 +785,20 @@ Two drops matter more than the promotions. Adding allowlist entries would have t
 symptom of a mechanism §11.5 argues should not exist. And hot reload, despite being the most
 interesting thing in this document, is not on the critical path of anything.
 
+**The one loose end the P3b drop leaves, stated rather than buried.** §5.3 argued that
+`/infra/capabilities` being unreachable from the dev tools is a contradiction, because CLAUDE.md
+Hard Invariant #4 names it as the way to verify `host.*` contract versions. Dropping P3b leaves it
+unreachable *by MCP*. That is acceptable, and the reason is §11.5's: the invariant says use the
+endpoint, not use a particular transport, and `curl` reaches it today — which is what agents
+already do 268 times over. The contradiction was never between the invariant and reality; it was
+between the invariant and the assumption that the MCP path is the sanctioned one. §11.2 says that
+assumption is what should give way.
+
+If that reasoning is wrong, the fix is not a new allowlist row — it is the §11.5 endstate (drop
+path allowlisting, keep the loopback guard, gate mutations on ownership), which is a separate
+decision and not smuggled in here. P6's sync gate will at least keep the documented allowlist
+honest about what the code actually permits in the meantime.
+
 ### 12.4 What not to build
 
 **Not the registry as a project.** §11.3 is the right *shape*, but the honest version is a
