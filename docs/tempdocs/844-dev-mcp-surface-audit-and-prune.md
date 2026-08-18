@@ -8,7 +8,7 @@ category: agent-process / dev-tooling / mcp
 related:
   - 254-mcp-dev-tools-issues              # the last dev-MCP audit (status done, 2026-03-03) — superseded by this doc
   - 305-hot-reload                        # shipped hot reload 2026-03-14, before worktrees/distFrom/leases matured
-  - 606-dev-stack-takeover-owner-liveness # the ownership/verdict model, fully adopted (92/92 starts)
+  - 606-dev-stack-takeover-owner-liveness # the ownership/verdict model, near-total adoption (160/162 starts)
   - 684-dev-workflow-tooling-hardening-batch # sibling surface (scripts/dev), same maintenance neighbourhood
   - 735-agent-surface-seam-consolidation  # owns the PRODUCT MCP surface — explicitly NOT this doc's scope
   - 770-agent-tool-surface-economy-lane   # product tool-surface economy — likewise out of scope here
@@ -27,9 +27,17 @@ related:
 
 ## 1. Method, and what it can and cannot support
 
-Corpus: `~/.claude/projects/F--justsearch-public*/**/*.jsonl` — 878 transcripts spanning
-~66 main agent sessions, ~6 weeks (the corpus starts ~2026-07-04 and runs to 2026-08-18).
-This is the same substrate `841-agent-prompt-cache-efficiency` used.
+Corpus: `~/.claude/projects/F--justsearch-public*/**/*.jsonl` — **892 transcripts** (878 at first
+measurement) spanning ~66 main agent sessions plus their subagents, ~6 weeks (the corpus starts
+~2026-07-04 and runs to 2026-08-18). This is the same substrate
+`841-agent-prompt-cache-efficiency` used.
+
+**Method correction (2026-08-18).** The `**/*.jsonl` glob above is what this section always
+claimed; the original ad-hoc extractor did **not** implement it — it read only the top level of
+each project directory and so excluded subagent transcripts, undercounting by ~48%. Every number
+in §3 is now produced by `scripts/agent-analytics/dev-tool-usage.mjs`, which walks recursively;
+§10 is its spec. This is the audit's own §12.2 criterion applied to itself: the method asserted a
+scope it had not verified it was reading.
 
 Extraction: parse each transcript, index `tool_use` blocks by `id`, join `tool_result`
 blocks by `tool_use_id`. Invocation counts are `tool_use` blocks only — a naive
@@ -49,9 +57,9 @@ matching the literal ok-false or error-object markers.
 - Byte totals in §6.4 are **bytes, not tokens**. Screenshot results are base64 images, which
   tokenize as images (~1-2k tokens each) regardless of their byte size. The byte ordering
   holds; do not convert it to a token claim without re-measuring.
-- The corpus rolls. These numbers are re-derivable only while the transcripts survive.
-  A repeatable reader (`scripts/agent-analytics/`, on the model of `cache-efficiency.mjs`)
-  is proposed as P7 rather than assumed.
+- The corpus rolls. These numbers are re-derivable only while the transcripts survive —
+  which is why P7 shipped `scripts/agent-analytics/dev-tool-usage.mjs` as the standing reader
+  rather than leaving the analysis in a one-off script. Re-run it; do not trust these figures.
 
 ## 2. Inventory: four servers, and three competing non-MCP surfaces
 
@@ -67,25 +75,42 @@ The dev surface does not stand alone. The same jobs are served by **`jseval`**
 `log-path`), by **`dev-runner.cjs`** invoked directly, and by **raw `curl`**. §6.1 shows
 this is not redundancy-in-name-only: the surfaces cannot see each other's backends.
 
-## 3. Measured usage — `justsearch-dev`, 379 invocations
+## 3. Measured usage — `justsearch-dev`, 731 invocations
 
-| Tool | calls | sessions | err% | dominant failure |
-|---|---:|---:|---:|---|
-| `start` | 92 | 16 | 11% | `UNHANDLED` x7 — "Head dist not found" |
-| `stop` | 76 | 16 | 0 | |
-| `quick_health` | 61 | 20 | 0 | |
-| `fetch_api_json` | 40 | 9 | 18% | `jsonPath` miss; `response_too_large` |
-| `ai_activate` | 35 | 7 | **43%** | "Variant not installed: cuda12" x9 |
-| `ingest` | 24 | 10 | 13% | `path` vs `paths`; repoRoot confinement |
-| `api_call` | 22 | 8 | **45%** | path-not-allowlisted x5 |
-| `preflight` | 10 | 9 | 0 | |
-| `tail_log` | 10 | 6 | 10% | (likely the ±1 false positive) |
-| `search_query` | 8 | 5 | 13% | |
-| `status` | 1 | 1 | 0 | |
-| `agent_chat`, `reload`, `capture_evidence`, `validate_evidence`, `acquire_when_free` | **0** | 0 | — | never invoked |
+> **Superseded numbers.** The first draft of this table counted 379 invocations. That extraction
+> walked only the top level of each project directory, so it silently excluded **subagent**
+> transcripts. Corrected below by `scripts/agent-analytics/dev-tool-usage.mjs` (P7), which walks
+> recursively: **731 invocations over 892 transcripts**. Re-scoping that reader to main sessions
+> only reproduces the original figures almost exactly (`fetch_api_json` 40, `ai_activate` 35,
+> `ingest` 24, `api_call` 22, `preflight` 10, `tail_log` 10, `search_query` 8, `status` 1 — exact),
+> so the original was right about what it measured and wrong about what it claimed to measure.
+> Double-counting was ruled out directly: a `start` id sampled from a subagent transcript does not
+> appear in its parent session's file — subagents genuinely invoke these tools themselves.
 
-Parameter adoption on `start`: `leaseDurationSec` **92/92** (735 G6 landed completely),
-`distFrom` **68/92** (worktree-staged launch is the dominant mode), `hotReload` **1/92**.
+| Tool | calls | sessions | err% | 1st-call success | dominant failure |
+|---|---:|---:|---:|---:|---|
+| `start` | 162 | 17 | 12.3% | 86.0% | `UNHANDLED` x16 — "Head dist not found"; `OWNER_CONFLICT` x2; `INVALID_DIST_FROM` x2 |
+| `stop` | 134 | 18 | 0 | 100% | |
+| `quick_health` | 132 | 21 | 0 | 100% | |
+| `fetch_api_json` | 81 | 9 | 12.3% | 89.2% | `jsonPath` miss; `response_too_large` |
+| `ai_activate` | 60 | 8 | **50.0%** | **61.3%** | "Variant not installed: cuda12" |
+| `api_call` | 57 | 9 | **42.1%** | **51.4%** | path-not-allowlisted |
+| `ingest` | 40 | 10 | 10.0% | 91.7% | `path` vs `paths`; repoRoot confinement |
+| `tail_log` | 28 | 8 | 7.1% | 92.3% | (includes the known false positive) |
+| `preflight` | 19 | 12 | 0 | 100% | |
+| `search_query` | 15 | 7 | 6.7% | 92.9% | |
+| `status` | 2 | 2 | 0 | 100% | |
+| `acquire_when_free` | 1 | 1 | 0 | 100% | |
+| `reload` | **0** | 0 | — | — | registered, never invoked |
+| `agent_chat`, `capture_evidence`, `validate_evidence` | **0** | 0 | — | — | never invoked (now unregistered, §4.3-4.4) |
+
+**Totals: 731 calls, 12.4% error rate, 90.1% first-call success.** That last figure is the
+pre-change baseline for §12.6's falsifier. The two tools dragging it down are `ai_activate`
+(61.3%) and `api_call` (51.4%) — a coin flip on the first attempt.
+
+Parameter adoption on `start` (162 starts): `leaseDurationSec` **160/162** (735 G6 essentially
+complete), `distFrom` **125/162** (worktree-staged launch is the dominant mode, 77%),
+`skipBuild` **112/162**, `hotReload` **1/162**.
 
 `tools/list` payload: 16.3 KB (~4.1k tokens) + 1.5 KB `instructions`. The five zero-use
 tools are 5.0 KB of that — **31% of the schema payload for 0% of the traffic.**
@@ -103,7 +128,7 @@ superseded by GitHub's own server.
 
 ### 4.2 Hot reload — FIX-THEN-SURFACE (P8; awaiting D2)
 
-`hotReload: true` on 1 of 92 starts; `reload` invoked 0 times. The §5.6 investigation returned
+`hotReload: true` on 1 of 162 starts; `reload` invoked 0 times. The §5.6 investigation returned
 **INCOHERENT**, and its load-bearing claims were re-verified independently against source (not
 taken on the auditor's word); all five held. The *diagnosis* below stands in full.
 
@@ -195,18 +220,18 @@ calls) and by `jseval` harnesses. No recorded defect; simply unused.
 
 ### 4.5 `status` -> fold into `quick_health` (P1)
 
-1 call vs 61 for `quick_health`, whose own description tells agents to prefer it. Fold as
+2 calls vs 132 for `quick_health`, whose own description tells agents to prefer it. Fold as
 `quick_health { detail: "full" }` rather than keeping two orientation tools.
 
 ### 4.6 Explicitly NOT a prune candidate: `acquire_when_free`
 
-Zero calls, but it is the documented remedy for `OWNER_CONFLICT`, which fired exactly once
-in the corpus. It is unused because contention is rare, not because it is wrong. Keep — and
+One call in the whole corpus — but it is the documented remedy for `OWNER_CONFLICT`, which
+itself fired only twice. It is unused because contention is rare, not because it is wrong. Keep — and
 fix the fact that it is missing from every document that lists the tools (§6.3).
 
 ## 5. Fix / extend items, ranked by measured pain
 
-### 5.1 `start`'s worktree-dist failure — 7 of 10 `start` errors (P2)
+### 5.1 `start`'s worktree-dist failure — 16 of 20 `start` errors (P2)
 
 Agents pass `distFrom: <worktree>`; `start` fails with error code **`UNHANDLED`** carrying a
 perfectly actionable message ("Head dist not found at ...ui.bat. Make this checkout dev-ready:
@@ -227,7 +252,7 @@ done. It has since produced 7 measured failures.
 
 ### 5.2 `ai_activate`'s 43% failure rate (P4)
 
-9 of 15 failures are `Variant not installed: cuda12` on fresh worktree data dirs — the same
+Most failures are `Variant not installed: cuda12` on fresh worktree data dirs — the same
 condition logged in a prior session's shard (`bccfc163`) on 2026-08-14 ("the two provisioning axes
 (runtime exe vs. installed package) are not distinguished in the failure message",
 `scripts/dev/dev-runner.cjs:457`). Three more are "No chat model configured", whose workaround
@@ -259,7 +284,8 @@ established.
 
 ### 5.3 The 81% bypass (P3 for coverage; the preference half is §6.1)
 
-268 raw HTTP calls to the local API from Bash vs 62 through the MCP tools.
+268 raw HTTP calls to the local API from Bash vs 138 through the MCP read tools
+(`fetch_api_json` 81 + `api_call` 57) — still roughly 2:1 toward the bypass.
 
 | Path | Bash hits | Reachable via MCP? |
 |---|---:|---|
@@ -288,7 +314,7 @@ tooling cannot call is a contradiction that should not survive this lane.
 - `fetch_api_json`'s `jsonPath` is a naive dot-path `reduce` (no array indexing), and **on a miss
   it discards the parsed JSON and returns the raw text tail** — the most expensive possible
   failure mode. Returning the available keys at that level instead converts a token bomb into a
-  hint. 4 of 7 `fetch_api_json` errors are this.
+  hint. Most of `fetch_api_json`'s errors are this.
 - `maxBytes` reads as a truncation budget but is a hard fetch cap that errors `response_too_large`.
   Agents passed `maxBytes: 2000`, and `outputMode: "compact"` with `maxBytes: 3000`, to *reduce*
   output and made it fail instead — twice. Either truncate with a notice, or rename it.
@@ -365,7 +391,12 @@ tools are structurally blind and `curl` is the rational choice.
 
 An `apiPort` escape hatch exists on the read tools (`resolveApiBaseUrl`,
 `server.mjs:588-592`) and would bridge this today, but it is documented nowhere and was used 8
-times — all against port 8090, never 33221.
+times in the main-session scope. On the full corpus it is used 58 times across nine distinct
+ports — including **33221 three times**, i.e. agents did occasionally point the MCP read tools at
+the `jseval` backend. That corrects the first draft of this section, which claimed 33221 was never
+targeted. The conclusion is unchanged and arguably sharper: the escape hatch works and is
+discoverable enough to be used, but `quick_health` still cannot *see* that backend, so the
+orientation tool stays blind to the thing the read tools can already reach.
 
 This has already cost a measurement. A prior session shard (`bccfc163`), 2026-08-14: *"A runHeadlessEval
 Head+Worker started outside the dev-runner is invisible to `quick_health` (lease only knows runs
@@ -570,7 +601,7 @@ already trusts for representations generalizes to processes.
 interference model, and already named *"raw `:modules:ui:runHeadless` use without full isolation
 overrides"* as a risk. `542-operation-scoped-lease-taxonomy` (done, 2026-05-21) — subtitled
 "extending the 271 ownership model" — added a Layer-2 op-lease registry at
-`tmp/dev-runner/op-leases.json`. Both work: lease adoption is 92/92.
+`tmp/dev-runner/op-leases.json`. Both work: lease adoption is 160/162.
 
 What neither covers is the part this section is about. Both register what the dev-runner *started*;
 neither enumerates what it did not — `jseval`'s 33221 backend, a bare `runHeadless`, a stale JVM
@@ -659,7 +690,7 @@ But *why* is it a singleton? Memory and ports are the stated reasons; GPU is the
 no-AI backend on an allocated port may not need to be exclusive at all. If so, a large part of the
 arbitration machinery is solving a self-imposed constraint, and the endstate could be:
 
-- **GPU-bound runs**: arbitrate (the lease model, unchanged — it works, 92/92 adoption).
+- **GPU-bound runs**: arbitrate (the lease model, unchanged — it works, 160/162 adoption).
 - **Everything else**: allocate a port, register it, run as many as fit.
 
 This would dissolve rather than solve most contention friction, and it fits the parallel-agent
@@ -713,7 +744,7 @@ not. That is a genuinely useful asymmetry and it has never been used.
   only) plus a good CLI. §11.2's altitude conjecture points this way. Falsifier: if transport-tool
   usage does not recover after §5.4's projection fixes, the tools are not the problem — the
   modality is.
-- **"Usage reflects value."** Contaminated for anything off-by-default (`hotReload`, 1/92) or
+- **"Usage reflects value."** Contaminated for anything off-by-default (`hotReload`, 1/162) or
   undocumented (`apiPort`, 8 uses). Zero usage of an invisible feature measures visibility.
 - **"The singleton is necessary."** §11.7.
 - **"The allowlist protects something."** §11.5 — no evidence of prevented harm; measured evidence
@@ -829,8 +860,25 @@ step of that, which is why it survives the re-sequencing despite fixing no bug.
 
 ### 12.6 Falsifier
 
-**First-call success rate** (P7's reader is the instrument). If it does not move after items 1-5
-land, then the tools were never the problem — the modality is, and the right answer is to shrink
-the MCP surface to arbitration only and let agents use the shell for everything else. §11.2's
-altitude conjecture already predicts that outcome; this would confirm it, and the response is
-written down here in advance so the result cannot be re-interpreted after the fact.
+**First-call success rate** (`scripts/agent-analytics/dev-tool-usage.mjs` is the instrument, shipped
+under P7). Definition: within one session, an invocation is a *retry* iff the immediately preceding
+invocation of the same tool in that session errored; the rate is successful non-retry calls over
+non-retry calls, so one incident is not double-counted and a successful retry does not masquerade
+as a first-try success.
+
+**Pre-change baseline, measured 2026-08-18: 90.1% overall** (731 calls, 12.4% error rate). The two
+tools dragging it down are `ai_activate` at **61.3%** and `api_call` at **51.4%**.
+
+If the rate does not move after items 1-5 land, then the tools were never the problem — the
+modality is, and the right answer is to shrink the MCP surface to arbitration only and let agents
+use the shell for everything else. §11.2's altitude conjecture already predicts that outcome; this
+is written down in advance so the result cannot be re-interpreted after the fact.
+
+**One tension this metric exposes, stated rather than smoothed over.** `api_call` is the
+second-worst tool by first-call success, and its dominant failure is precisely the one §12.3
+*dropped* — path-not-allowlisted. Under the plan as sequenced, `api_call` should therefore barely
+improve. That is not an oversight: §11.5 argues the correct fix is deleting the allowlist
+mechanism, not extending it, in which case `api_call`'s first-call success would approach 100%
+because nothing would be rejected. The drop is a bet, and this metric makes it a **testable
+prediction** rather than a preference — if items 1-5 leave `api_call` near 51% while everything
+else improves, that is evidence *for* the §11.5 endstate, not against the sequencing.
