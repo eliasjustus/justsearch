@@ -33,6 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -607,6 +608,69 @@ final class SubstrateDrivenEngineTest {
     assertEquals(20, done.payload().get("iterationsUsed"));
     // The accumulated text from the last iteration is delivered.
     assertEquals("tick-19", done.payload().get("finalResponse"));
+  }
+
+  @Test
+  @DisplayName(
+      "Wedge regression (836 §9.9): a producer that never calls back ends the turn with an"
+          + " LLM_TIMEOUT error instead of parking the request thread forever")
+  void stalledProducerEndsTheTurnLoudly() {
+    // The wedge shape: streaming shares one executor thread, so a stream task that never returns
+    // leaves every later dispatch queued with no callback of any kind. Pre-fix streamLlm awaited an
+    // unbounded latch here, so the request thread parked for as long as the process lived.
+    var silentAi =
+        new OnlineAiService() {
+          @Override
+          public boolean isAvailable() {
+            return true;
+          }
+
+          @Override
+          public boolean isStartingUp() {
+            return false;
+          }
+
+          @Override
+          public CompletableFuture<String> summarize(String content) {
+            return CompletableFuture.failedFuture(new UnsupportedOperationException());
+          }
+
+          @Override
+          public CompletableFuture<String> askQuestion(String q, String c) {
+            return CompletableFuture.failedFuture(new UnsupportedOperationException());
+          }
+
+          @Override
+          public void stream(StreamRequest request, StreamSink sink) {
+            // Never calls any sink callback — the queued-behind-a-wedged-thread case.
+          }
+        };
+    var engine =
+        new ConversationEngine(
+            ConversationShapeCatalog.of("core", List.of(oneShotShape(List.of(), List.of(), List.of()))),
+            List.of(),
+            PromptContributorRegistry.of(List.of()),
+            ContextInjectorRegistry.of(List.of()),
+            StreamConsumerRegistry.of(List.of()),
+            IterationControllerRegistry.of(List.of()),
+            () -> silentAi);
+    engine.llmStallDeadline = Duration.ofMillis(300);
+
+    var events = new ArrayList<SseEvent>();
+    long startNanos = System.nanoTime();
+    engine.run(SHAPE_ID, Map.of(), Audience.USER, events::add);
+    long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
+
+    SseEvent error =
+        events.stream().filter(e -> "error".equals(e.name())).findFirst().orElseThrow();
+    assertEquals(
+        "LLM_TIMEOUT",
+        error.payload().get("errorCode"),
+        "a stalled producer must surface as its own reason code, not silence");
+    assertTrue(
+        events.stream().noneMatch(e -> "done".equals(e.name())),
+        "an abandoned turn must not also report done");
+    assertTrue(elapsedMs < 30_000, "the dispatch must return on the bound, not park: " + elapsedMs + "ms");
   }
 
   @Test
