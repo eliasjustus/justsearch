@@ -18,6 +18,7 @@ import io.justsearch.indexerworker.extract.ProcessExtractionSandbox;
 import io.justsearch.indexerworker.extract.TikaExtractionPolicy;
 import io.justsearch.indexerworker.extract.TimeboxedContentExtractor;
 import io.justsearch.indexerworker.extract.ValidatedExtractionArtifact;
+import io.justsearch.indexerworker.embed.EmbeddingCompatibilityController;
 import io.justsearch.indexerworker.fixtures.TestDocumentBuilder;
 import io.justsearch.indexerworker.ingest.IngestionOutcome;
 import io.justsearch.indexerworker.ingest.IngestionOutcomeClass;
@@ -792,6 +793,32 @@ class IndexingLoopTest {
 
       assertEquals(IngestionOutcomeClass.WRITE_FAILED, queue.lastOutcome.outcomeClass());
       assertFalse(queue.done);
+    }
+
+    @Test
+    void writeFeedsSuccessEvidenceToTheEccOnlyForCompletedEmbeddings() throws Exception {
+      // #470 D1: the attestation's success evidence flows through JobBatchWriter.write() -> the
+      // ECC seam on EmbeddingProviderLifecycle. This test exercises the PRODUCTION wiring (real
+      // write path, controller injected through the real lifecycle seam) — a call-site deletion in
+      // JobBatchWriter must redden it, which the controller's own unit tests cannot detect.
+      Path file = Files.writeString(Files.createTempFile("js-ecc-wiring", ".txt"), "body");
+      RecordingQueue queue = new RecordingQueue();
+      IndexingLoop loop = newLoop(queue, providerReturning("body"));
+      EmbeddingCompatibilityController ecc = mock(EmbeddingCompatibilityController.class);
+      loop.getEmbeddingLifecycle().setEmbeddingCompatController(ecc);
+
+      // Primary indexing defers the embedding to the backfill: the doc is PENDING, so the write
+      // must contribute NO success evidence (a vector-less doc proves nothing).
+      invokeWriteExtractedJob(loop, extractedJob(file, "body"));
+      verify(ecc, never()).noteSuccessfulEmbeddingObserved();
+
+      // The batch/migration path hands write() a precomputed embedding: the doc carries
+      // EMBEDDING_STATUS_COMPLETED, which IS the evidence the stamp must be earned from.
+      loop.getWriter()
+          .write(
+              (io.justsearch.indexerworker.loop.ExtractedJob) extractedJob(file, "body"),
+              new float[] {0.1f, 0.2f});
+      verify(ecc).noteSuccessfulEmbeddingObserved();
     }
 
     @Test

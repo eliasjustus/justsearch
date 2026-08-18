@@ -6,10 +6,15 @@ import io.justsearch.app.api.stream.SseFrameKind;
 import io.justsearch.app.api.stream.StreamId;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 
 /**
@@ -35,6 +40,32 @@ import java.util.function.Consumer;
  *       expected to send it directly to a single connected client. Used for connected /
  *       snapshot / closing / reset lifecycle frames that vary per connection.
  * </ul>
+ *
+ * <p><strong>Subscribe atomicity</strong> (tempdoc 834 §1.3.1). {@link #subscribe} registers
+ * a listener and nothing else; the caller replays separately, so a frame published between
+ * the two can be missed. {@link #subscribeAndReplay} closes that race for the
+ * <em>resume</em> path: replay-snapshot and listener registration happen under one write
+ * lock that {@link #publish} excludes, so a published frame reaches a resuming subscriber
+ * <em>either</em> via the replay <em>or</em> via the live fan-out — never both, never
+ * neither.
+ *
+ * <p>The race is NOT closed for the no-cursor path (17 of the 18 production catalog routes
+ * on a fresh connect), and this class does not pretend otherwise: closing it would mean
+ * invoking a caller-supplied snapshot supplier under this monitor — lock inversion across
+ * 18 controllers, each free to take its own locks inside that supplier. Tempdoc 834 §1.3.1
+ * scopes the fix to the resume branch deliberately; a catalog self-corrects at its next
+ * snapshot, whereas a run stream that drops a chunk yields a permanently corrupted answer,
+ * and run streams never take the no-cursor path.
+ *
+ * <p><strong>Lock cost, named.</strong> The listener set is concurrent and only the ring
+ * synchronizes per method, so the channel was lock-free before 834; some streams run at
+ * ~30 fps. {@code publish} therefore takes only the READ lock (an uncontended acquire, once
+ * per frame, on top of the ring's existing monitor) and {@code subscribeAndReplay} takes the
+ * write lock once per connection, held only while snapshotting the frames to replay —
+ * never across a socket write (see the two-phase handoff below). Tempdoc 834's probe P8
+ * sizes the read-lock acquire at 30 fps; if it is measurable, the doc's named fallback is a
+ * publish-generation counter with a retry loop, which needs no lock on the publish path.
+ * P8 has NOT been run, so the primary is what ships.
  */
 public final class SseStreamChannel {
 
@@ -43,6 +74,12 @@ public final class SseStreamChannel {
   private final FrameHistoryRingBuffer history;
   private final Set<Consumer<SseEnvelope>> listeners = ConcurrentHashMap.newKeySet();
   private final Clock clock;
+
+  /**
+   * Guards the publish-vs-subscribe boundary, NOT the ring (which has its own monitor).
+   * Read = publish, write = atomic subscribe-and-replay.
+   */
+  private final ReentrantReadWriteLock subscribeLock = new ReentrantReadWriteLock();
 
   public SseStreamChannel(StreamId streamId) {
     this(streamId, new StreamSequenceTracker(), new FrameHistoryRingBuffer(), Clock.systemUTC());
@@ -73,22 +110,31 @@ public final class SseStreamChannel {
    * envelope, appends to ring (UPDATE only), broadcasts.
    *
    * <p>Listeners that throw are removed inline (mirrors the legacy registry pattern).
+   *
+   * <p>Ring-append and fan-out run under the read lock as one unit, so an atomic subscriber
+   * (see {@link #subscribeAndReplay}) never observes the half-state where a frame is in the
+   * ring but has not yet been fanned out, or vice versa.
    */
   public void publish(SseFrameKind frameKind, Object payload) {
     Objects.requireNonNull(frameKind, "frameKind");
     SseEnvelope envelope = nextEnvelope(frameKind, payload);
-    if (frameKind == SseFrameKind.UPDATE) {
-      history.append(envelope);
+    subscribeLock.readLock().lock();
+    try {
+      if (frameKind == SseFrameKind.UPDATE) {
+        history.append(envelope);
+      }
+      listeners.removeIf(
+          listener -> {
+            try {
+              listener.accept(envelope);
+              return false;
+            } catch (RuntimeException e) {
+              return true;
+            }
+          });
+    } finally {
+      subscribeLock.readLock().unlock();
     }
-    listeners.removeIf(
-        listener -> {
-          try {
-            listener.accept(envelope);
-            return false;
-          } catch (RuntimeException e) {
-            return true;
-          }
-        });
   }
 
   /**
@@ -121,11 +167,130 @@ public final class SseStreamChannel {
     return history.oldestSeqOrZero();
   }
 
+  /**
+   * True when {@code sinceSeq} lies inside the replayable window. The three "outside
+   * window" cases (slice 436 Fix B) are: a cursor from a future / different server lifetime
+   * ({@code sinceSeq > current}); an empty buffer with a positive cursor (server restarted,
+   * or no UPDATEs since the cursor was issued — the gap cannot be validated); and a cursor
+   * predating the oldest retained frame.
+   */
+  public boolean isWithinResumeWindow(long sinceSeq) {
+    long current = currentSeq();
+    if (sinceSeq > current) {
+      return false;
+    }
+    long oldest = oldestRetainedSeq();
+    return !(sinceSeq > 0 && (oldest == 0 || sinceSeq < oldest));
+  }
+
   /** Subscribes a listener; returns a {@link Subscription} for explicit unsubscribe. */
   public Subscription subscribe(Consumer<SseEnvelope> listener) {
     Objects.requireNonNull(listener, "listener");
     listeners.add(listener);
     return () -> listeners.remove(listener);
+  }
+
+  /**
+   * Atomically validates {@code sinceSeq} against the resume window, registers
+   * {@code listener}, and replays the retained frames newer than the cursor to it.
+   *
+   * <p>Returns empty when the cursor is outside the window — no listener is registered and
+   * nothing is replayed, so the caller falls back to reset + snapshot + {@link #subscribe}.
+   *
+   * <p><strong>Two-phase handoff</strong> (tempdoc 834 §2). Replaying inside the lock would
+   * stall every publisher behind one slow-but-alive reattacher's socket, since the
+   * listener's terminal action is a blocking write. So:
+   *
+   * <ol>
+   *   <li>Under the write lock: check the window, snapshot the frames to replay, and
+   *       register the listener in a <em>buffering</em> state.
+   *   <li>Outside the lock: drain the snapshot to the listener, then drain whatever arrived
+   *       while that was happening.
+   *   <li>Flip to pass-through under the write lock with the buffer empty — the one moment
+   *       at which "no publisher is mid-fan-out" is guaranteed.
+   * </ol>
+   *
+   * <p>A listener that throws during the handoff is unregistered and the exception
+   * propagates, matching {@link #publish}'s evict-on-throw contract.
+   *
+   * <p>MUST NOT be called from inside a listener of this same channel: {@code publish}
+   * holds the read lock across the fan-out, and a read-to-write upgrade deadlocks. Callers
+   * are connection handler threads, which never hold the read lock.
+   */
+  public Optional<Subscription> subscribeAndReplay(
+      Consumer<SseEnvelope> listener, long sinceSeq) {
+    Objects.requireNonNull(listener, "listener");
+    HandoffListener handoff = new HandoffListener(listener);
+    List<SseEnvelope> replay;
+    subscribeLock.writeLock().lock();
+    try {
+      if (!isWithinResumeWindow(sinceSeq)) {
+        return Optional.empty();
+      }
+      replay = history.framesSince(sinceSeq);
+      listeners.add(handoff);
+    } finally {
+      subscribeLock.writeLock().unlock();
+    }
+    try {
+      handoff.handOff(replay);
+    } catch (RuntimeException e) {
+      listeners.remove(handoff);
+      throw e;
+    }
+    return Optional.of(() -> listeners.remove(handoff));
+  }
+
+  /**
+   * Buffers broadcasts until the replay has been written, then passes through. Buffering is
+   * cheap (an enqueue) so a publisher never waits on the new subscriber's socket; the drain
+   * itself runs outside every lock.
+   */
+  private final class HandoffListener implements Consumer<SseEnvelope> {
+
+    private final Consumer<SseEnvelope> delegate;
+    private final Queue<SseEnvelope> buffered = new ConcurrentLinkedQueue<>();
+    private volatile boolean passThrough;
+
+    HandoffListener(Consumer<SseEnvelope> delegate) {
+      this.delegate = delegate;
+    }
+
+    @Override
+    public void accept(SseEnvelope envelope) {
+      // Always called with the read lock held (from publish), so passThrough cannot flip
+      // underneath this check — the flip below takes the write lock.
+      if (passThrough) {
+        delegate.accept(envelope);
+      } else {
+        buffered.add(envelope);
+      }
+    }
+
+    void handOff(List<SseEnvelope> replay) {
+      for (SseEnvelope frame : replay) {
+        delegate.accept(frame);
+      }
+      while (true) {
+        List<SseEnvelope> batch = new ArrayList<>();
+        subscribeLock.writeLock().lock();
+        try {
+          if (buffered.isEmpty()) {
+            passThrough = true;
+            return;
+          }
+          SseEnvelope frame;
+          while ((frame = buffered.poll()) != null) {
+            batch.add(frame);
+          }
+        } finally {
+          subscribeLock.writeLock().unlock();
+        }
+        for (SseEnvelope frame : batch) {
+          delegate.accept(frame);
+        }
+      }
+    }
   }
 
   @FunctionalInterface

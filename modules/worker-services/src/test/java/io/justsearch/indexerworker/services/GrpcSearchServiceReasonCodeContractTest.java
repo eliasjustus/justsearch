@@ -41,7 +41,10 @@ final class GrpcSearchServiceReasonCodeContractTest {
           "FINGERPRINT_MISMATCH",
           "REBUILD_IN_PROGRESS",
           "REBUILD_COMPLETED",
-          // Tempdoc 517: 25th member — fall-through for unrecognised compat strings
+          // Tempdoc 819 defect B: the rebuild drained with zero successful embeddings, so the
+          // fingerprint attestation was refused instead of stamped over an empty vector space.
+          "REBUILD_FAILED_NO_VECTORS",
+          // Tempdoc 517: 26th member — fall-through for unrecognised compat strings
           // via SearchReasonCode.fromCompatString(...). Surfaces when the boundary
           // controller hands back a string the enum doesn't know.
           "EMBEDDING_COMPATIBILITY_UNKNOWN");

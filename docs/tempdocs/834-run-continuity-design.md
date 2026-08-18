@@ -1170,3 +1170,96 @@ logged no-op instead of breaking Head boot. `createApprovalGate` has exactly one
 `Map<String, PendingGate>` change has no missed consumer.
 
 Full unit suite (`./gradlew.bat test -PskipWebBuild=true`): **BUILD SUCCESSFUL**.
+
+---
+
+## 13. Implementation log — S3a (substrate hardening)
+
+Landed 2026-08-18 on `run-continuity-s3a`. Scope held to §7-S3a's list exactly: zero run
+code, no new endpoints, no `RunEventHub` touch, no `ChatController` / `AgentSession` change.
+Independently revertable — nothing outside the substrate depends on it.
+
+### 13.1 As built
+
+| §7-S3a item | as built |
+|---|---|
+| `subscribeAndReplay(listener, sinceSeq)`, resume-path only | `SseStreamChannel.java:220-247` — returns `Optional<Subscription>`; empty ⇒ window miss, no listener registered, nothing replayed |
+| the channel-level lock, as costed | `SseStreamChannel.java:82` `ReentrantReadWriteLock`; `publish` takes the READ lock across append + fan-out (`:118-137`); `subscribeAndReplay` takes the write lock (`:225-235`) |
+| two-phase replay handoff | `SseStreamChannel.HandoffListener:249-295` — buffer while draining, drain outside every lock, flip to pass-through under the write lock with the buffer empty |
+| `run` kind on `StreamId` | `StreamId.java:31` regex + `StreamId.run(String)` (`:61-63`); wire mirror `contracts/wire/stream.proto:25` |
+| byte bound + evidence slot | `FrameRetentionPolicy.java` (new), `FrameRetentionSizer.java` (new), `FrameHistoryRingBuffer.java:41-215` |
+| the 18 routes' resume path rewired | `SseEnvelopeWriter.attemptResumeAndSubscribe:164-170`; `attach:226-236`; `attachEventOnly:279-289` |
+
+**The window check moved into the lock.** §1.3.1 names replay + subscribe as the atomic
+pair; validating the cursor *outside* it would leave a real check-then-act hole, since a
+concurrent publish can evict the frames the check just approved. So
+`SseStreamChannel.isWithinResumeWindow` (`:177-184`) is the single window authority — the
+three slice-436 Fix-B cases, lifted verbatim out of `SseEnvelopeWriter.attemptResume` — and
+`subscribeAndReplay` calls it *under the write lock*. `attemptResume` now delegates to it,
+so the atomic and non-atomic forms cannot drift on the window rule.
+
+**Retention defaults are inert.** `FrameRetentionPolicy.DEFAULT` is 9000 frames, no byte
+bound, no evidence slot — and `tracksBytes()` is false for it, so no catalog frame is ever
+sized. The sizer is only reachable from a policy that asks for it, which is what makes the
+byte machinery shippable under 18 live routes today with the run policies still unwritten.
+`FrameRetentionSizer.FRAME_OVERHEAD_BYTES = 200` is the doc's own "honest ~200 B" figure and
+is **provisional pending P2**, which was not run.
+
+### 13.2 Deliberate residuals, named rather than left to be discovered
+
+1. **`MultiplexedSseWriter` keeps the non-atomic resume.** §1.3.1's subject is
+   `SseEnvelopeWriter.attach`; the fan-in writer (tempdoc 662) attaches N channels to one
+   connection and reuses `attemptResume` per channel (`MultiplexedSseWriter.java:99`). Its
+   resume path therefore still has the race. Left in scope discipline, not oversight — it is
+   the same bounded, self-correcting exposure the 17 no-cursor connects have.
+2. **The no-cursor path is untouched**, per §1.3.1's own scoping, and the class javadoc +
+   `05-streaming-envelope.md` now say so in those terms instead of claiming a fleet-wide fix.
+3. **P8 was not run**, so the doc's primary mechanism (read lock on publish) is what shipped,
+   not the generation-counter fallback. R2 stays open; the fallback is recorded at
+   `SseStreamChannel.java:59-68` so a P8 result has somewhere to land.
+4. **Pre-existing, untouched:** `publish` assigns the seq *before* taking the lock, so two
+   concurrent publishers can append to the ring out of seq order. Older than this slice and
+   not in its scope; logged to the observations inbox.
+5. **The wire gate cannot version-track this proto change.** Relaxing a `buf.validate`
+   pattern is invisible to `buf breaking`, so a matching VERSION bump is rejected as
+   `contract-governance/phantom-version`. Verified both ways; the changeset records it and
+   `VERSION` stays at 1.0.3.
+
+### 13.3 Verification
+
+- `./gradlew.bat build -x test -PskipWebBuild=true` — BUILD SUCCESSFUL.
+- `./gradlew.bat test -PskipWebBuild=true` — BUILD SUCCESSFUL; **1338 suites / 7753 tests /
+  51 skipped / 0 failures**.
+- **The existing contract tests are unedited and green**: `SseEnvelopeContractTest` (10),
+  `FrameHistoryRingBufferTest` (8), `ResumeTokenCodecPropertyTest`, `SseEnvelopeWriterTest`
+  (15), `MultiplexedSseWriterTest` (10). The only pre-existing test file touched is
+  `StreamIdTest`, which gained two run-kind cases; no existing case was changed.
+- New: `SseStreamChannelAtomicSubscribeTest` (25, incl. `@RepeatedTest(20)`),
+  `FrameRetentionPolicyTest` (11), `SseEnvelopeWriterAtomicResumeTest` (5).
+- FE untouched, proven: `npm run typecheck` clean, `npm run test:unit:run` — 421 files /
+  5157 tests passed.
+- Governance kernel: 35 gates, 6 fail / 70 findings **with and without** the change —
+  byte-identical to the `origin/main` baseline (`npm-audit`, `ts-any`, `module-deps`,
+  `dead-code`, `contract-projection`, `config-surface` are all pre-existing). `wire`: pass.
+
+**Mutation probe** (the atomicity test, tested against a reintroduced race). Replacing
+`subscribeAndReplay`'s body with the pre-834 order — window check, `framesSince`, replay,
+*then* `listeners.add` — turned 26 green into **12 failures**:
+
+- `never both, never neither` failed **10 of 20 repetitions** (`expected: <[1, 2, 3, …]>` vs
+  a list with holes) — the intermittency is exactly why it is a `@RepeatedTest`, and why a
+  single-shot test would have been a false green;
+- `the channel lock excludes publish while the replay window is being taken` failed
+  (`subscribe blocks until the in-flight publish completes ==> expected: <true> but was:
+  <false>`);
+- `replay handoff does not stall publishers behind a slow consumer's socket` failed.
+
+Restored and re-verified byte-identical to the pre-probe file (`diff` clean), suite green.
+
+### 13.4 Live legs — PENDING, not claimed
+
+No dev stack was taken for this slice. Unverified live: that a real `EventSource` reconnect
+with `?since=` through the 18 routes still renders identically (unit-covered at the frame
+level via mocked `SseClient`, not at the browser level), and P8's read-lock cost on the
+busiest channel at ~30 fps. Both are S3a-scoped legs a later session should run before the
+substrate carries run traffic in S3b.

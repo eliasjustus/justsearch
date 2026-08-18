@@ -448,6 +448,14 @@ public final class EmbeddingProviderLifecycle {
     }
     if (docCount <= 0) return false;
 
+    // Tempdoc 821 §O.1 (+ #470 D2: the empty-index permit is gone entirely), so COMPATIBLE
+    // without stamp evidence is reachable — and there the stamp supplier returns empty, so the
+    // forced commit below would persist NOTHING and refire on every drain (a commit storm).
+    // reconcileStampEvidence() is also the pull-side that latches the embedding backfill's
+    // successes, replacing a push signal from EmbeddingBackfillOps. It reads the index, which is
+    // why it sits after the docCount check rather than at the top of the guard chain.
+    if (!controller.reconcileStampEvidence()) return false;
+
     long now = System.currentTimeMillis();
     long backoffUntil = freshStampBackoffUntilMs.get();
     if (backoffUntil != 0L && now < backoffUntil) {

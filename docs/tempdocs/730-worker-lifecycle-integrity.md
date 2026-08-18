@@ -1,10 +1,11 @@
 ---
 title: "Worker/dev-runner lifecycle integrity: durable embedding-fingerprint persistence across restart, and diagnosability of backend death under sustained MCP-only agent load"
 type: tempdocs
-status: "open — implemented + review-corrected on branch (90b02c0/7a46ca1/a9e7b08/8bdcbce): gated supplier restored after mixed-provenance refutation, shutdown/completion stamp commits, A4 auto-rescue (validated LIVE on the real corrupted generation), death observability; live restart anomaly unreproduced under production-fidelity tests; deaths substantially reframed to lease-takeover contention (new observation: lease renewal during long ops)"
+status: "ISSUE A SUPERSEDED BY 819 (2026-08-11) — Issue A's root cause was found and fixed there; the 'live restart anomaly unreproduced' verdict below is stale and should not be cited. Issue B (death diagnosability) is unchanged and still open. Historical status: open — implemented + review-corrected on branch (90b02c0/7a46ca1/a9e7b08/8bdcbce): gated supplier restored after mixed-provenance refutation, shutdown/completion stamp commits, A4 auto-rescue (validated LIVE on the real corrupted generation), death observability; live restart anomaly unreproduced under production-fidelity tests; deaths substantially reframed to lease-takeover contention (new observation: lease renewal during long ops)"
 created: 2026-07-14
 author: "agent (area agent, tempdoc 725 remediation program)"
 related:
+  - 819   # Issue A root-caused + fixed: the trigger is the Head's help-doc batch committing before the ECC is constructed, which this tempdoc's worker-level tests could not reproduce by construction
   - 725   # parent remediation program (agent tool-adoption legibility); live-validation surfaced both issues
   - 598   # embedding fingerprint compat controller + first durability regression (593 §H reopen B-1)
   - 629   # store-recoverability register + gate (StoreCatalog)

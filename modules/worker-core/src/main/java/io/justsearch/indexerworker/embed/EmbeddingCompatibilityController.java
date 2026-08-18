@@ -30,10 +30,36 @@ import org.slf4j.LoggerFactory;
  * <ul>
  *   <li>During BLOCKED_* states, embedding writes and vector/hybrid queries are blocked.</li>
  *   <li>When a forced reindex is observed, transition to REBUILDING.</li>
- *   <li>When rebuild completes (pending_embedding=0 — an embedding-scoped fact; the global
- *       job queue is deliberately NOT part of the certification condition), stamp fingerprint
- *       and transition to COMPATIBLE.</li>
+ *   <li>When rebuild completes — {@code pending_embedding == 0} <b>and</b> evidence that at least
+ *       one embedding actually succeeded (tempdoc 819 defect B) — stamp the fingerprint and
+ *       transition to COMPATIBLE. The global job queue is deliberately NOT part of the
+ *       certification condition; the success evidence is, because {@code pending == 0} is the
+ *       absence of outstanding work, not proof of success: a rebuild in which every document
+ *       FAILED satisfies it and would otherwise stamp an attestation over zero vectors.</li>
  * </ul>
+ *
+ * <h2>Stamp evidence (tempdoc 819 defect B)</h2>
+ *
+ * <p>{@link #fingerprintToStamp()} offers the fingerprint only when the attestation is EARNED. It
+ * is on the every-commit hot path ({@code CommitOps.commit()}), so the check is IO-free and reads
+ * flags established elsewhere. The stamp is permitted when any of these holds:
+ *
+ * <ul>
+ *   <li>the attestation is already persisted on disk and matches the current model — withholding it
+ *       from later commits would <i>un-stamp</i> a healthy index, which is strictly worse;</li>
+ *   <li>at least one successful embedding has been observed (monotone latch); or</li>
+ *   <li>the stamp was explicitly waived for a caller that can prove provenance structurally
+ *       ({@link #permitStampWithoutEmbeddingEvidence}).</li>
+ * </ul>
+ *
+ * <p>Deliberately NOT a permitting fact: "the index was empty at {@link #refresh()}". An
+ * empty-index permit was the only mechanism able to grant an <i>unearned durable</i> attestation —
+ * a document-less commit (delete/reset RPCs, the background commit timer) could spend it before the
+ * first write revoked it, permanently stamping a fingerprint no embedding ever earned (#470
+ * adversarial review, D2). An empty index needs no stamp: the next boot re-derives
+ * {@code NEW_INDEX_NO_FINGERPRINT} from {@code docCount == 0}, and the stamp lands the moment real
+ * evidence exists (inline embed via the write path, or the backfill via
+ * {@code reconcileStampEvidence}).
  */
 public final class EmbeddingCompatibilityController {
   private static final Logger log = LoggerFactory.getLogger(EmbeddingCompatibilityController.class);
@@ -57,8 +83,17 @@ public final class EmbeddingCompatibilityController {
     UNAVAILABLE
   }
 
+  /**
+   * Terminal reason code for a rebuild that drained ({@code pending == 0}) without a single
+   * successful embedding (tempdoc 819 defect B). Distinct from {@code REBUILD_IN_PROGRESS} so an
+   * operator can tell "still working" from "finished with nothing to show"; part of the
+   * {@code SearchReasonCode} wire vocabulary.
+   */
+  public static final String REBUILD_FAILED_NO_VECTORS = "REBUILD_FAILED_NO_VECTORS";
+
   private final Supplier<Map<String, String>> storedMetadataSupplier;
   private final LongSupplier docCountSupplier;
+  private final java.util.function.IntSupplier completedEmbeddingCountSupplier;
   private final AtomicReference<State> state = new AtomicReference<>(State.UNAVAILABLE);
   private final AtomicReference<String> currentFingerprint = new AtomicReference<>();
   private final AtomicReference<String> storedFingerprint = new AtomicReference<>();
@@ -67,8 +102,41 @@ public final class EmbeddingCompatibilityController {
   private volatile boolean rebuildRequested = false;
   private volatile boolean rebuildCompleted = false;
 
+  // ---- Stamp evidence (tempdoc 819 defect B). All IO-free to read. ----
+
+  /** Monotone: set the first time a successful embedding is observed. Never cleared. */
+  private volatile boolean anySuccessfulEmbeddingObserved = false;
+  /** The current model's fingerprint was already persisted in the index's commit metadata. */
+  private volatile boolean attestationAlreadyOnDisk = false;
+  /** Evidence waived by a caller that can prove provenance structurally. */
+  private volatile boolean stampEvidenceWaived = false;
+  /** A zero-evidence certification was refused; do not re-attempt within this boot. */
+  private volatile boolean zeroVectorRefusalTerminal = false;
+
+  private final java.util.concurrent.atomic.AtomicBoolean zeroVectorRefusalLogged =
+      new java.util.concurrent.atomic.AtomicBoolean(false);
+  private final java.util.concurrent.atomic.AtomicBoolean completedCountReadFailureLogged =
+      new java.util.concurrent.atomic.AtomicBoolean(false);
+  private final java.util.concurrent.atomic.AtomicBoolean stampRefusalLogged =
+      new java.util.concurrent.atomic.AtomicBoolean(false);
+
+  /** Tri-state result of asking the index whether any embedding succeeded. */
+  private enum Evidence {
+    /** At least one successful embedding exists. */
+    PRESENT,
+    /** The index was read successfully and holds no successful embedding. */
+    ABSENT,
+    /** The count could not be read — never treat this as {@link #ABSENT}. */
+    UNREADABLE
+  }
+
   /**
-   * Creates a new compatibility controller.
+   * Creates a new compatibility controller with no index-side success evidence available.
+   *
+   * <p>This overload fails CLOSED for certification: {@link #checkRebuildCompletion} will refuse
+   * unless {@link #noteSuccessfulEmbeddingObserved()} or
+   * {@link #permitStampWithoutEmbeddingEvidence} established evidence in-process. Production wiring
+   * uses the three-argument constructor.
    *
    * @param storedMetadataSupplier supplier that returns the latest commit metadata from the index
    *                               (e.g., {@code LuceneLifecycleManager::latestCommitUserDataBestEffort})
@@ -77,8 +145,33 @@ public final class EmbeddingCompatibilityController {
   public EmbeddingCompatibilityController(
       Supplier<Map<String, String>> storedMetadataSupplier,
       LongSupplier docCountSupplier) {
+    this(storedMetadataSupplier, docCountSupplier, () -> 0);
+  }
+
+  /**
+   * Creates a new compatibility controller.
+   *
+   * <p><b>Both count suppliers must THROW on a read failure, never return 0.</b> Both answers are
+   * safety-relevant: {@code docCount == 0} means "new index, safe to stamp" and
+   * {@code completedEmbeddings == 0} means "this rebuild produced nothing". A supplier that
+   * swallows an {@code IOException} to 0 (as the plain {@code IndexCountOps.docCount()} /
+   * {@code countByField()} do) turns a transient reader fault into a PERMIT — the exact hole
+   * tempdoc 819 defect B closes. Use the {@code …OrThrow} variants.
+   *
+   * @param storedMetadataSupplier supplier that returns the latest commit metadata from the index
+   *                               (e.g., {@code LuceneLifecycleManager::latestCommitUserDataBestEffort})
+   * @param docCountSupplier supplier for current index doc count (used to treat empty/new indexes as safe)
+   * @param completedEmbeddingCountSupplier supplier for the count of documents whose embedding
+   *     completed successfully — the certification evidence
+   */
+  public EmbeddingCompatibilityController(
+      Supplier<Map<String, String>> storedMetadataSupplier,
+      LongSupplier docCountSupplier,
+      java.util.function.IntSupplier completedEmbeddingCountSupplier) {
     this.storedMetadataSupplier = Objects.requireNonNull(storedMetadataSupplier, "storedMetadataSupplier");
     this.docCountSupplier = Objects.requireNonNull(docCountSupplier, "docCountSupplier");
+    this.completedEmbeddingCountSupplier =
+        Objects.requireNonNull(completedEmbeddingCountSupplier, "completedEmbeddingCountSupplier");
   }
 
   /**
@@ -117,26 +210,37 @@ public final class EmbeddingCompatibilityController {
     storedFingerprint.set(storedFp);
 
     if (storedFp == null || storedFp.isBlank()) {
-      // If the index is empty (fresh install / new generation), it's safe to start writing vectors
-      // and stamp the fingerprint on the first commit.
+      attestationAlreadyOnDisk = false;
+      // If the index is empty (fresh install / new generation), it's safe to start writing vectors.
+      // The stamp is NOT pre-permitted (no empty-index permit — see the class javadoc, #470 D2):
+      // it lands once real embedding evidence exists. `docs < 0` means the count could not be read
+      // (tempdoc 819 defect B): that must NOT read as "empty" — fall through to BLOCKED_LEGACY.
       long docs = safeDocCount();
       if (docs == 0L) {
         state.set(State.COMPATIBLE);
         reasonCode.set("NEW_INDEX_NO_FINGERPRINT");
-        log.info("Embedding compatibility: COMPATIBLE (new/empty index; fingerprint will be stamped on commit)");
+        log.info(
+            "Embedding compatibility: COMPATIBLE (new/empty index; fingerprint will be stamped"
+                + " once the first embedding succeeds)");
         return;
       }
 
       state.set(State.BLOCKED_LEGACY);
       reasonCode.set("LEGACY_INDEX_NO_FINGERPRINT");
       log.warn(
-          "Embedding compatibility: BLOCKED_LEGACY (index has no embedding fingerprint; docCount={}). "
+          "Embedding compatibility: BLOCKED_LEGACY (index has no embedding fingerprint; docCount={}"
+              + "; -1 = the count could not be read, which fails closed by design). "
               + "Embedding writes and vector/hybrid queries are blocked until a forced reindex.",
           docs);
       return;
     }
 
     if (storedFp.equals(current.get())) {
+      // The attestation is already persisted for THIS model. Later commits must keep offering it —
+      // withholding it would strip the fingerprint from the next commit and re-flag the index
+      // BLOCKED_LEGACY on the following boot (tempdoc 819 defect B: the gate governs the FIRST
+      // persistence of an attestation, never the preservation of one already earned).
+      attestationAlreadyOnDisk = true;
       state.set(State.COMPATIBLE);
       reasonCode.set("FINGERPRINT_MATCH");
       rebuildCompleted = true; // Already compatible
@@ -145,6 +249,7 @@ public final class EmbeddingCompatibilityController {
       return;
     }
 
+    attestationAlreadyOnDisk = false;
     state.set(State.BLOCKED_MISMATCH);
     reasonCode.set("FINGERPRINT_MISMATCH");
     log.warn("Embedding compatibility: BLOCKED_MISMATCH. "
@@ -218,7 +323,8 @@ public final class EmbeddingCompatibilityController {
   }
 
   /**
-   * Certifies rebuild completion from the embedding-scoped fact {@code pendingEmbeddingCount == 0}.
+   * Certifies rebuild completion from two facts: the embedding-scoped {@code pendingEmbeddingCount
+   * == 0}, <b>and</b> evidence that at least one embedding actually succeeded.
    *
    * <p>The global {@code queueDepth} is <b>not</b> part of the certification condition (it is
    * accepted only as a diagnostic to log): a job stuck in {@code PROCESSING}, or simply ongoing
@@ -226,10 +332,25 @@ public final class EmbeddingCompatibilityController {
    * implies {@code pending==0} on the same counter, and new documents arriving after the stamp are
    * handled by the normal COMPATIBLE incremental path — global idleness adds nothing but livelock.
    *
-   * <p>This certifier flips COMPATIBLE on the FIRST {@code pending==0} read; the indexing-loop caller
-   * ({@code EmbeddingProviderLifecycle.tryFinalizeRebuild}) debounces with a two-consecutive-reads
-   * guard, while the deterministic blue/green cutover ({@code finalizeEmbeddingRebuildBeforeCutover})
-   * calls this once on an already-drained green.
+   * <p><b>Why {@code pending == 0} alone is not enough (tempdoc 819 defect B).</b> Failed documents
+   * are not pending, so a rebuild in which EVERY document failed satisfies it — observed live as
+   * {@code completed=0 pending=0 failed=5 coverage=0%} certifying COMPATIBLE and stamping the
+   * fingerprint over zero vectors, which permanently closes the BLOCKED_LEGACY recovery path for
+   * that index. {@code pending == 0} is the absence of outstanding work, not evidence of success.
+   * The poison-pill distribution (some succeeded, some permanently failed) MUST still certify —
+   * that is what "at least one" preserves, and it is why the condition is not "no failures".
+   *
+   * <p>Evidence is the in-process success latch, an explicit waiver, or a live COMPLETED count read
+   * through a supplier that THROWS on failure. A read failure REFUSES but is not terminal (the next
+   * tick retries); a trustworthy zero REFUSES terminally for this boot — nothing will change it,
+   * since the backfill only ever picks up PENDING documents — sets {@link #REBUILD_FAILED_NO_VECTORS}
+   * and logs once at ERROR. {@link #refresh()} runs once per boot, so the next boot re-derives
+   * BLOCKED_LEGACY and the rescue retries the rebuild from scratch.
+   *
+   * <p>This certifier flips COMPATIBLE on the FIRST evidenced {@code pending==0} read; the
+   * indexing-loop caller ({@code EmbeddingProviderLifecycle.tryFinalizeRebuild}) debounces with a
+   * two-consecutive-reads guard, while the deterministic blue/green cutover
+   * ({@code finalizeEmbeddingRebuildBeforeCutover}) calls this once on an already-drained green.
    *
    * @param queueDepth current job queue depth — logged as diagnostics only, does NOT gate
    * @param pendingEmbeddingCount count of documents with embedding_status=PENDING
@@ -240,17 +361,126 @@ public final class EmbeddingCompatibilityController {
       return false;
     }
 
-    if (pendingEmbeddingCount == 0) {
-      log.info(
-          "Embedding compatibility: rebuild complete (pending_embedding=0; queueDepth={} not gating)",
-          queueDepth);
-      rebuildCompleted = true;
-      state.set(State.COMPATIBLE);
-      reasonCode.set("REBUILD_COMPLETED");
-      return true;
+    if (pendingEmbeddingCount != 0) {
+      return false;
     }
 
-    return false;
+    if (zeroVectorRefusalTerminal) {
+      return false;
+    }
+
+    Evidence evidence = observeEmbeddingSuccessEvidence();
+    if (evidence == Evidence.UNREADABLE) {
+      return false;
+    }
+    if (evidence == Evidence.ABSENT) {
+      zeroVectorRefusalTerminal = true;
+      reasonCode.set(REBUILD_FAILED_NO_VECTORS);
+      if (zeroVectorRefusalLogged.compareAndSet(false, true)) {
+        log.error(
+            "Embedding compatibility: REFUSING to certify the rebuild — pending_embedding=0 but NOT"
+                + " ONE embedding succeeded (queueDepth={}). Certifying here would stamp"
+                + " {} over an index with zero vectors and permanently close the recovery"
+                + " path. Staying REBUILDING with reason={}; dense/hybrid retrieval stays blocked."
+                + " Fix the embedding runtime (see the ORT/embedding errors above) and restart the"
+                + " worker — the next boot re-derives BLOCKED_LEGACY and retries the rebuild.",
+            queueDepth,
+            COMMIT_META_KEY,
+            REBUILD_FAILED_NO_VECTORS);
+      }
+      return false;
+    }
+
+    log.info(
+        "Embedding compatibility: rebuild complete (pending_embedding=0, embedding success"
+            + " observed; queueDepth={} not gating)",
+        queueDepth);
+    rebuildCompleted = true;
+    state.set(State.COMPATIBLE);
+    reasonCode.set("REBUILD_COMPLETED");
+    return true;
+  }
+
+  /**
+   * Records that an embedding was produced successfully. Monotone — once set, never cleared; a
+   * later failure does not retract the fact that the model produced a vector.
+   */
+  public void noteSuccessfulEmbeddingObserved() {
+    anySuccessfulEmbeddingObserved = true;
+  }
+
+  /**
+   * Loop-side reconciliation: if no in-process evidence exists yet, ask the INDEX whether any
+   * embedding has completed, latching a positive answer (tempdoc 821 §O.1).
+   *
+   * <p><b>Performs index IO. NEVER call this from {@link #fingerprintToStamp()} or any other
+   * commit-path code</b> — that method is on the every-commit hot path and is contractually
+   * IO-free. This is for the indexing loop's idle / post-batch drain, where a reader acquisition is
+   * already ordinary. It is also the pull-side that picks up the embedding backfill's successes
+   * without the backfill having to push a signal.
+   *
+   * <p>{@code UNREADABLE} yields false by design: a count that could not be read is not evidence of
+   * anything, so the caller declines now and the next drain retries.
+   *
+   * @return true if the stamp is earned (already-held evidence, or a live COMPLETED count &gt; 0)
+   */
+  public boolean reconcileStampEvidence() {
+    if (hasStampEvidence()) {
+      return true;
+    }
+    return observeEmbeddingSuccessEvidence() == Evidence.PRESENT;
+  }
+
+  /**
+   * Waives the success-evidence requirement for callers that can prove the attestation's soundness
+   * structurally rather than by counting vectors.
+   *
+   * <p>The one production user is the corruption-recovery rebuild (tempdoc 819): the active
+   * generation was recovered to EMPTY by the adapter and the green generation is being rebuilt from
+   * source, so every vector it can contain came from the current model by construction — the
+   * attestation is vacuously true even at zero successes. Refusing there would block the cutover
+   * forever and leave the user serving the EMPTY blue with no keyword results either, which is
+   * strictly worse than the normal cutover's fail-closed behaviour (where blue still holds the
+   * user's corpus and keeping it costs nothing).
+   *
+   * @param reason low-cardinality tag naming the waiving path, for the log line
+   */
+  public void permitStampWithoutEmbeddingEvidence(String reason) {
+    stampEvidenceWaived = true;
+    log.warn(
+        "Embedding compatibility: stamp evidence WAIVED (reason={}) — this generation's provenance"
+            + " is guaranteed structurally, so certification may proceed with zero successful"
+            + " embeddings",
+        reason);
+  }
+
+  /** IO-free: has the stamp been earned? See the class javadoc for the three permitting facts. */
+  private boolean hasStampEvidence() {
+    return attestationAlreadyOnDisk || anySuccessfulEmbeddingObserved || stampEvidenceWaived;
+  }
+
+  /** Consults the in-process facts first, then the index. Latches a PRESENT result. */
+  private Evidence observeEmbeddingSuccessEvidence() {
+    if (anySuccessfulEmbeddingObserved || stampEvidenceWaived) {
+      return Evidence.PRESENT;
+    }
+    int completed;
+    try {
+      completed = completedEmbeddingCountSupplier.getAsInt();
+    } catch (RuntimeException e) {
+      if (completedCountReadFailureLogged.compareAndSet(false, true)) {
+        log.warn(
+            "Embedding compatibility: could not read the completed-embedding count; declining to"
+                + " certify this rebuild rather than reading the failure as zero. Will retry.",
+            e);
+      }
+      return Evidence.UNREADABLE;
+    }
+    if (completed > 0) {
+      anySuccessfulEmbeddingObserved = true;
+      return Evidence.PRESENT;
+    }
+    return Evidence.ABSENT;
   }
 
   /**
@@ -290,15 +520,38 @@ public final class EmbeddingCompatibilityController {
   /**
    * Returns the fingerprint to stamp in commit metadata, if stamping is allowed.
    *
-   * <p>Returns non-empty only when:
+   * <p>Returns non-empty only when BOTH hold:
    * <ul>
-   *   <li>State is COMPATIBLE (already matches), or</li>
-   *   <li>State is REBUILDING and rebuild has completed</li>
+   *   <li>State is COMPATIBLE (already matches), or state is REBUILDING and rebuild has
+   *       completed; AND</li>
+   *   <li>the attestation has been earned — see {@link #hasStampEvidence()} and the class javadoc
+   *       (tempdoc 819 defect B; a fresh/empty index earns it via its first successful embedding,
+   *       never by emptiness alone — #470 D2).</li>
    * </ul>
+   *
+   * <p><b>Must stay IO-free.</b> {@code CommitOps.commit()} consults this on EVERY commit,
+   * including the background timer commit; an index query here would put a reader acquisition on
+   * the commit path.
    */
   public Optional<String> fingerprintToStamp() {
     State s = state.get();
     if (s == State.COMPATIBLE || (s == State.REBUILDING && rebuildCompleted)) {
+      if (!hasStampEvidence()) {
+        // Fresh install (NEW_INDEX_NO_FINGERPRINT): evidence is legitimately absent between the
+        // first document commit and the backfill's first successful embedding — withholding here
+        // is the design working, not a fault, so it logs nothing (#470 D3). Any other state
+        // reaching this point without evidence is worth a once-per-boot warning.
+        if (!"NEW_INDEX_NO_FINGERPRINT".equals(reasonCode.get())
+            && stampRefusalLogged.compareAndSet(false, true)) {
+          log.warn(
+              "Embedding compatibility: state={} but no evidence that any embedding succeeded —"
+                  + " withholding {} from commit metadata rather than attesting to vectors that do"
+                  + " not exist (tempdoc 819). Logged once per boot.",
+              s,
+              COMMIT_META_KEY);
+        }
+        return Optional.empty();
+      }
       String fp = currentFingerprint.get();
       if (fp != null) {
         storedFingerprint.set(fp);
@@ -368,16 +621,28 @@ public final class EmbeddingCompatibilityController {
           log.debug("ECC: refreshed storedFingerprint after commit ({}...)",
               fp.substring(0, Math.min(16, fp.length())));
         }
+        // Read back from the ACTUAL commit metadata: if the attestation for the current model is
+        // now persisted, later commits must keep offering it (tempdoc 819 — the evidence gate
+        // governs first persistence, not preservation).
+        if (fp.equals(currentFingerprint.get())) {
+          attestationAlreadyOnDisk = true;
+        }
       }
     } catch (Exception e) {
       log.debug("ECC: failed to refresh storedFingerprint after commit: {}", e.getMessage());
     }
   }
 
+  /**
+   * Reads the doc count, mapping a read FAILURE to {@code -1} — deliberately NOT to {@code 0},
+   * which {@link #refresh()} would take as "new empty index, safe to stamp". This is why the
+   * supplier is contractually required to throw rather than swallow (tempdoc 819 defect B).
+   */
   private long safeDocCount() {
     try {
       return Math.max(0L, docCountSupplier.getAsLong());
-    } catch (Exception ignored) {
+    } catch (Exception e) {
+      log.warn("Embedding compatibility: doc-count read failed; treating as NOT-empty (fail closed)", e);
       return -1L;
     }
   }

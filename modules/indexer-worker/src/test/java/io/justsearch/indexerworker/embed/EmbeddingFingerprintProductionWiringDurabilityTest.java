@@ -162,6 +162,11 @@ class EmbeddingFingerprintProductionWiringDurabilityTest {
 
       // Completion is observed (queue drained, all embeddings done) — exactly the condition
       // EmbeddingProviderLifecycle.tryFinalizeRebuild() checks via checkRebuildCompletion(0, 0).
+      // Tempdoc 819 defect B: "all embeddings done" now has to be STATED, not inferred from
+      // pending==0 (failed docs are not pending either). These durability tests model a rebuild
+      // that genuinely produced vectors; the zero-success case is covered by
+      // EmbeddingCompatibilityControllerTest#checkRebuildCompletionRefusesWhenEveryEmbeddingFailed.
+      ecc.noteSuccessfulEmbeddingObserved();
       boolean completed = ecc.checkRebuildCompletion(0, 0);
       assertTrue(completed, "sanity: queue==0 && pending==0 must report completion");
       assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, ecc.state());
@@ -245,6 +250,7 @@ class EmbeddingFingerprintProductionWiringDurabilityTest {
               new IndexDocument(
                   Map.of(SchemaFields.DOC_ID, "d2", SchemaFields.DOC_UID, "d2#0")));
 
+      ecc.noteSuccessfulEmbeddingObserved(); // tempdoc 819 B — see the (a, positive) test
       boolean completed = ecc.checkRebuildCompletion(0, 0);
       assertTrue(completed, "sanity: queue==0 && pending==0 must report completion");
       assertEquals(
@@ -326,6 +332,7 @@ class EmbeddingFingerprintProductionWiringDurabilityTest {
         .indexSingle(
             new IndexDocument(
                 Map.of(SchemaFields.DOC_ID, "d2", SchemaFields.DOC_UID, "d2#0")));
+    ecc.noteSuccessfulEmbeddingObserved(); // tempdoc 819 B — see the (a, positive) test
     boolean completed = ecc.checkRebuildCompletion(0, 0);
     assertTrue(completed, "sanity: queue==0 && pending==0 must report completion");
     assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, ecc.state());
