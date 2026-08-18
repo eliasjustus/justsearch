@@ -575,11 +575,48 @@ export async function streamRequest<TDone = Record<string, unknown>>(
  * Resolves on stream EOF. Throws if an `error` event arrived (with `code` +
  * `errorClass` if present) or on non-2xx HTTP.
  */
+export interface ShapeStreamOptions {
+  /**
+   * Tempdoc 834 §1.6 — the RUN-stream resume cursor, sent as `?sinceSeq=<seq>`.
+   *
+   * Deliberately not `?since=`: that parameter carries a `ResumeTokenCodec` token on the envelope
+   * stream family, and reusing the name for a raw integer would be a silent grammar fork. A run
+   * stream refuses a `?since=` outright rather than reading it as 0. Omitted (or 0) replays
+   * everything, which is the guaranteed path — the backend's window rule rejects only a cursor
+   * ahead of the stream or behind the retained window.
+   */
+  readonly sinceSeq?: number;
+}
+
+/**
+ * Tempdoc 834 §1.6 — the typed body of a run stream's 404. `reason` distinguishes "this run is over,
+ * read the record" from "never heard of it", and `recordHint` names where the record lives. A 200
+ * with an empty stream is what this exists to avoid.
+ */
+export interface RunNotFoundDetail {
+  readonly runId: string;
+  readonly reason: 'unknown' | 'retired';
+  readonly recordHint: string;
+}
+
+/** Tempdoc 834 §2 — emitted when the requested cursor predates the retained replay window. */
+export interface ReplayTruncatedPayload {
+  readonly sinceSeq: number;
+  readonly oldestRetainedSeq: number;
+}
+
+/** The SSE event name carrying {@link ReplayTruncatedPayload}. */
+export const REPLAY_TRUNCATED_EVENT = 'replay_truncated';
+
+/** The SSE event name carrying a run's identity triple (`runId`, `shapeId`, `conversationId`). */
+export const RUN_STARTED_EVENT = 'run_started';
+
 export async function consumeShapeStream(
   url: string,
   body: unknown,
   onEvent: (event: string, payload: unknown) => void,
   signal?: AbortSignal,
+  options?: ShapeStreamOptions,
 ): Promise<void> {
   let token = getSessionToken();
   if (!token) {
@@ -592,7 +629,12 @@ export async function consumeShapeStream(
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (token) headers[SESSION_TOKEN_HEADER] = token;
 
-  const response = await fetch(url, {
+  const target =
+    options?.sinceSeq && options.sinceSeq > 0
+      ? `${url}${url.includes('?') ? '&' : '?'}sinceSeq=${encodeURIComponent(String(options.sinceSeq))}`
+      : url;
+
+  const response = await fetch(target, {
     method: 'POST',
     headers,
     body: JSON.stringify(body ?? {}),
@@ -602,9 +644,26 @@ export async function consumeShapeStream(
   if (!response.ok || !response.body) {
     const text = await response.text().catch(() => '');
     const err = new Error(
-      `consumeShapeStream: HTTP ${response.status} from ${url} — ${text.slice(0, 200)}`,
-    ) as Error & { status?: number };
+      `consumeShapeStream: HTTP ${response.status} from ${target} — ${text.slice(0, 200)}`,
+    ) as Error & { status?: number; runNotFound?: RunNotFoundDetail };
     err.status = response.status;
+    // Tempdoc 834 §1.6 — a run stream answers an unknown/retired runId with a TYPED 404 naming
+    // where the record lives. Surfacing it as a generic HTTP error would throw away the only thing
+    // that tells the caller whether to show "this run is over, read the transcript" or a real error.
+    if (response.status === 404) {
+      try {
+        const parsed = JSON.parse(text) as Partial<RunNotFoundDetail>;
+        if (parsed && typeof parsed.runId === 'string' && typeof parsed.reason === 'string') {
+          err.runNotFound = {
+            runId: parsed.runId,
+            reason: parsed.reason === 'retired' ? 'retired' : 'unknown',
+            recordHint: typeof parsed.recordHint === 'string' ? parsed.recordHint : '',
+          };
+        }
+      } catch {
+        // Not the typed body — leave the generic error alone.
+      }
+    }
     throw err;
   }
 
@@ -634,6 +693,10 @@ export async function consumeShapeStream(
         if (ev.event === 'done' || ev.event === 'error') {
           receivedTerminal = true;
         }
+        // Tempdoc 834 §2 — `replay_truncated` says "your cursor predates what is still retained;
+        // here is the window that does exist". It is NOT terminal and NOT an error: the stream
+        // continues from oldestRetainedSeq. It reaches the caller through the generic dispatch
+        // below, alongside `run_started`, rather than being intercepted here.
         if (ev.event === 'error') {
           const p = payload as Record<string, unknown> | null;
           const message =

@@ -65,6 +65,68 @@ public final class AgUiEventTranslator {
   }
 
   /**
+   * Translate an ALREADY-PROJECTED {@code (name, payload)} pair — the shape a run journal carries
+   * (tempdoc 834 §1.3.2) — to the same AG-UI event {@link #translate(AgentEvent)} would produce.
+   *
+   * <p><strong>This is a SECOND hand-written switch, and the design says so out loud</strong>
+   * (§6.5). It is not a mechanical projection: the typed switch RENAMES fields on the way out
+   * ({@code ToolExecutionCompleted.result().message()} becomes {@code "content"}), so this version
+   * has to re-derive each mapping from the payload keys. That is a real drift surface — which is
+   * exactly what makes the equivalence gate in {@code AgUiEventTranslatorConformanceTest}
+   * load-bearing rather than ceremonial. If the gate is ever weakened, the drift returns.
+   *
+   * <p>{@code payload} may be the bare {@code AgentEventPayloads.base} map or the wire form with
+   * its {@code trace} envelope appended; the trace is read for {@code runId} and then EXCLUDED from
+   * the {@code CUSTOM} passthrough body, so both inputs yield the same output the typed form does.
+   */
+  public static SseEvent translateFromMap(String name, Map<String, Object> payload) {
+    Map<String, Object> body = payload == null ? Map.of() : payload;
+    String runId = str(traceOf(body).get("runId"));
+    return switch (name) {
+      case "session_started" ->
+          agui("RUN_STARTED", Map.of("threadId", str(body.get("sessionId")), "runId", str(body.get("sessionId"))));
+      case "done" -> agui("RUN_FINISHED", Map.of("runId", runId, "result", str(body.get("finalResponse"))));
+      case "error" ->
+          agui("RUN_ERROR", Map.of("message", str(body.get("error")), "code", str(body.get("errorCode"))));
+      case "chunk" -> agui("TEXT_MESSAGE_CONTENT", Map.of("messageId", runId, "delta", str(body.get("text"))));
+      case "reasoning_chunk" -> agui("THINKING_TEXT_MESSAGE_CONTENT", Map.of("delta", str(body.get("text"))));
+      case "tool_exec_started" ->
+          agui("TOOL_CALL_START", Map.of("toolCallId", str(body.get("callId")), "toolCallName", str(body.get("toolName"))));
+      case "tool_call_proposed" ->
+          agui("TOOL_CALL_ARGS", Map.of("toolCallId", str(body.get("callId")), "delta", str(body.get("arguments"))));
+      // The rename §6.5 names: the canonical payload key is `output`, the AG-UI field is `content`.
+      case "tool_exec_completed" ->
+          agui("TOOL_CALL_RESULT", Map.of("toolCallId", str(body.get("callId")), "content", str(body.get("output"))));
+      case "state_snapshot" -> agui("STATE_SNAPSHOT", Map.of("snapshot", withoutTrace(body)));
+      default -> agui("CUSTOM", Map.of("name", name, "value", withoutTrace(body)));
+    };
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> traceOf(Map<String, Object> payload) {
+    Object trace = payload.get("trace");
+    return trace instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
+  }
+
+  /**
+   * The payload minus its trace envelope. The typed translator builds {@code CUSTOM.value} and the
+   * snapshot body from {@code base(event)}, which never carries the trace, so a wire payload has to
+   * be reduced to the same thing or the two forms would differ by exactly one key.
+   */
+  private static Map<String, Object> withoutTrace(Map<String, Object> payload) {
+    if (!payload.containsKey("trace")) {
+      return payload;
+    }
+    Map<String, Object> out = new LinkedHashMap<>(payload);
+    out.remove("trace");
+    return out;
+  }
+
+  private static String str(Object value) {
+    return value == null ? "" : value.toString();
+  }
+
+  /**
    * The AG-UI {@code STATE_SNAPSHOT} body. Delegates the two nested shapes to {@link
    * AgentEventPayloads} so the AG-UI projection cannot drift from the canonical one.
    */

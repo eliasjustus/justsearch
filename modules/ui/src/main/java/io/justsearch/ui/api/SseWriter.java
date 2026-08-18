@@ -41,11 +41,16 @@ class SseWriter {
 
   /**
    * The outcome of an SSE write, distinguishing a genuine client-disconnect (the stream is gone — a
-   * {@code RunEventHub} observer should be EVICTED) from a serialization failure (THIS event is
-   * unwritable but the connection is fine — skip the event, KEEP the observer). Tempdoc 577 §2.14
-   * Root I: the zero-observer eviction must fire only on a real disconnect, never on a bad payload —
-   * otherwise a non-serializable event (e.g. a tool's {@code structuredData}) would evict a live
-   * observer AND, sitting in the hub's replay buffer, re-poison every reattach.
+   * run observer should be EVICTED) from a serialization failure (THIS event is unwritable but the
+   * connection is fine — skip the event, KEEP the observer). Tempdoc 577 §2.14 Root I: the
+   * zero-observer eviction must fire only on a real disconnect, never on a bad payload — otherwise a
+   * non-serializable event (e.g. a tool's {@code structuredData}) would evict a live observer AND,
+   * sitting in the replay ring, re-poison every reattach.
+   *
+   * <p>Tempdoc 834 §7-S3b keeps this enum after the hub deletion: {@code AgentSseWriter.writeOrEvict}
+   * is still the ONLY disconnect signal the raw {@code Context}-based attach routes have (the
+   * managed run streams get {@code onClose} instead), and {@code SseWriterTest} pins the
+   * serialization-vs-disconnect distinction itself.
    */
   enum SseWriteOutcome {
     WRITTEN,
@@ -58,7 +63,7 @@ class SseWriter {
    *
    * @return true if the event was written/flushed successfully, false on ANY failure (serialization
    *     or disconnect). Façade over {@link #writeResult} for callers that only need "did it go out"
-   *     (e.g. {@code ScanProgressController}, which cancels on {@code false}); hub-observer callers
+   *     (e.g. {@code ScanProgressController}, which cancels on {@code false}); run-observer callers
    *     use {@link #writeResult} to distinguish the failure modes.
    */
   boolean writeEvent(Context ctx, String event, Map<String, ?> payload) {

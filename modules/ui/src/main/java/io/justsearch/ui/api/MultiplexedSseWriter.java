@@ -96,6 +96,13 @@ public final class MultiplexedSseWriter {
         writer.sendConnected();
 
         String token = tokensByStreamId.get(source.channel().streamId().value());
+        // Tempdoc 834 §13.2 residual 1 / §15.4 open question 4 — this fan-in resume is the ONE
+        // remaining NON-atomic resume: attemptResume replays, then subscribe() registers, so a
+        // frame published between them is missed. S3a scoped the atomic fix to the single-channel
+        // attach and S3b did not close this. Bounded and self-correcting for the catalog channels
+        // fanned in here (the next snapshot repairs the gap). It must NOT be reused for a run
+        // stream: a run that drops a chunk yields a permanently corrupted answer, which is why run
+        // streams go through RunStreamWriter + SseStreamChannel.subscribeAndReplay instead.
         boolean replayed = token != null && writer.attemptResume(token);
         if (!replayed) {
           if (token != null) {

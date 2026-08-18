@@ -15,6 +15,19 @@ dependencies {
   implementation(libs.jackson.core)
   api(libs.opentelemetry.api)
   implementation(libs.slf4j.api)
+
+  // Tempdoc 834 §1.3 — TEST scope only. The run observation substrate lives in app-observability;
+  // main code here publishes through the RunObservation SPI and gains NO dependency on it (§1.4's
+  // "no new edge"). The attach/park tests drive the REAL substrate rather than a double, because a
+  // double for evict-on-throw + bounded replay would reimplement the mechanism they exist to pin.
+  //
+  // Declared HERE rather than inside the jvm-test-suite block below on purpose: in that DSL the
+  // configuration is spelled `implementation`, and scripts/architecture/module-deps.mjs keys off the
+  // configuration NAME (`PRODUCTION_CONFIGS` vs `TEST_CONFIGS`) — so the suite-block form is
+  // published as a PRODUCTION edge in the canonical architecture doc's dependency graph, which
+  // would state the opposite of what this dependency is. `testImplementation` puts it in the doc's
+  // "test-only coupling" section, where it belongs.
+  testImplementation(project(":modules:app-observability"))
 }
 
 testing {

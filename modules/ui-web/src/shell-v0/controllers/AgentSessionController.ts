@@ -1457,7 +1457,8 @@ export class AgentSessionController implements CoreAgentRunHandlers {
       }
       // Tempdoc 577 §2.14 Root I (#13/#1d) — a stream that DROPS mid-run (a transport error, not the
       // user cancelling, and not a backend error already surfaced) does NOT mean the run died: the
-      // run is a backend-owned entity (RunEventHub). REATTACH to it once — replay the buffer + stream
+      // run is a backend-owned entity with its own observation channel. REATTACH to it once — the
+      // primer, then the replay, then stream
       // to terminal — instead of falsely ending it on the FE. onAttachNotLive falls back to the record
       // when the run truly ended. One shot per run (the guard) so a persistently-dead endpoint can't loop.
       if (

@@ -2,7 +2,7 @@
 /**
  * activeRunPointer — Tempdoc 577 §2.14 Root I (#1d) — the ONE cross-tab pointer to the live agent run.
  *
- * The run is a backend-owned, REATTACHABLE entity (the session-local `RunEventHub` + the
+ * The run is a backend-owned, REATTACHABLE entity (its observation channel + the
  * `POST /api/chat/agent/{sessionId}/attach` endpoint serve N observers). Per-tab `sessionStorage`
  * lets the SAME tab reattach across a reload, but it cannot cross tabs. This pointer is the FE half
  * that lets a SECOND tab DISCOVER a run started in another tab: the originating tab writes the live
@@ -13,6 +13,13 @@
  * helpers, they never touch `localStorage` directly. A stale pointer (the owning tab closed before the
  * terminal cleared it) is HARMLESS: `attachToRun` resolves a no-longer-live run via the backend's
  * `attach_not_live` signal and falls back to the persisted thread record.
+ */
+/**
+ * Tempdoc 834 §15.3 — this module is RETIRED AS THE DISCOVERY AUTHORITY in S5, when discovery moves
+ * to `GET /api/chat/runs/live` (a backend enumeration cannot go stale the way a localStorage pointer
+ * can, and it sees runs this browser never started). It is deliberately still in use here: S3b ships
+ * the run substrate, S4 the enumeration endpoint, and only then does the FE have something to switch
+ * to. Do not add new readers.
  */
 const KEY = 'justsearch.activeAgentRun.v1';
 

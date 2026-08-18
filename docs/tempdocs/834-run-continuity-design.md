@@ -1214,9 +1214,10 @@ is **provisional pending P2**, which was not run.
    the same bounded, self-correcting exposure the 17 no-cursor connects have.
 2. **The no-cursor path is untouched**, per §1.3.1's own scoping, and the class javadoc +
    `05-streaming-envelope.md` now say so in those terms instead of claiming a fleet-wide fix.
-3. **P8 was not run**, so the doc's primary mechanism (read lock on publish) is what shipped,
-   not the generation-counter fallback. R2 stays open; the fallback is recorded at
-   `SseStreamChannel.java:59-68` so a P8 result has somewhere to land.
+3. ~~**P8 was not run**~~ **CLOSED (S3b stage 0, §16.1).** P8 ran (§14/D2) and the read-lock
+   primary stands; R2 is closed. The fallback paragraph at `SseStreamChannel.java:59-68` was
+   deleted and replaced with the measured result, so the class no longer carries speculation
+   about a mechanism that will not be built. This residual closes with it.
 4. **Pre-existing, untouched:** `publish` assigns the seq *before* taking the lock, so two
    concurrent publishers can append to the ring out of seq order. Older than this slice and
    not in its scope; logged to the observations inbox.
@@ -1263,3 +1264,701 @@ with `?since=` through the 18 routes still renders identically (unit-covered at 
 level via mocked `SseClient`, not at the browser level), and P8's read-lock cost on the
 busiest channel at ~30 fps. Both are S3a-scoped legs a later session should run before the
 substrate carries run traffic in S3b.
+
+---
+
+## 14. S3b pre-implementation probes — D1 (POST-managed-SSE) and D2 (P8 lock cost)
+
+Run 2026-08-18 as a **derisk spike**: throwaway code on a scratch branch, never merged, never
+pushed. One dev-stack session per leg, launched from this worktree's dist (`distFrom`), lease
+declared, stopped and teardown-verified afterwards (`quick_health running:false`, ports 63120 /
+63562 / 50744 / 5173 all closed, no `HeadlessApp` / `IndexerWorker` / vite / dev-runner / llama
+survivors). No model was loaded — the probes are transport-level.
+
+**The probe.** One route added to `DebugRoutes` —
+`app.post("/api/debug/sse-probe", new SseHandler(consumer))` — whose consumer reads the request
+body from `client.ctx()`, emits a `started` event echoing the body length, ticks once a second,
+and registers `client.onClose(...)`. Open/close observations were recorded server-side and read
+back through a companion GET route rather than scraped from logs (the dev-runner's captured
+`backend.stdout.log` / `backend.stderr.log` hold only the port line and JVM warnings — see the
+residuals below). `SseHandler`'s shape was re-confirmed by `javap` against the resolved
+`javalin-6.7.0.jar`: `public SseHandler(java.util.function.Consumer<SseClient>)`,
+`implements io.javalin.http.Handler`.
+
+### 14.1 D1 — the hinge: **CONFIRMED**
+
+**(a) Direct POST to the API port — passes on every axis.** `curl -N` with a JSON body,
+`Accept: text/event-stream` and `X-JustSearch-Session` (`LocalApiServer.java:68`), replicating
+`consumeShapeStream`'s header (`streams.ts:441`):
+
+```
+HTTP/1.1 200 OK
+Content-Type: text/event-stream;charset=utf-8
+Connection: close
+Cache-Control: no-cache
+X-Accel-Buffering: no
+
+event: started
+data: {"conn":1,"bodyProbe":"ok","bodyLength":84,"method":"POST","tsMs":1787051828420}
+event: tick   data: {"conn":1,"n":1,...}   … n=2,3,4 at 1 s intervals
+```
+
+- **The body reaches the handler.** `client.ctx().body()` from inside the `SseHandler` consumer
+  returned the full payload — echoed `bodyLength` matched the client's byte count exactly on
+  every connection tried (84/84, 85/85, 83/83, 23/23). No exception, no truncation, no
+  interaction with Javalin's async start.
+- **Events stream incrementally.** Client-side byte counts, polled at 100 ms:
+  `13:17:08.618 → 103 B`, `:09.601 → 160`, `:10.616 → 217`, `:11.491 → 274`, `:12.539 → 331`.
+  One frame per second, delivered as produced. No buffering.
+- **The token filter passes POST-SSE** — see (d); the header is inert in dev but honoured in
+  prod mode.
+
+**(b) onClose fires — but it is write-driven, not socket-driven.** Three disconnects
+(`--max-time`; note that `kill -INT` cannot be delivered to a native Windows `curl` from this
+shell, so the disconnect is a clean process exit / FIN rather than a signal):
+
+| conn | client gone at | `onClose` at | latency | landed on |
+|---|---|---|---|---|
+| 1 | open + 5155 ms | open + 6005 ms | **850 ms** | the next tick |
+| 2 | open + 5033 ms | open + 6002 ms | **969 ms** | the next tick |
+| 3 | open + 4887 ms | open + 6001 ms | **1114 ms** | the tick *after* next |
+
+Every close landed exactly on a tick boundary, never in between — and conn 3 shows the first
+post-disconnect write can still succeed silently, with the failure surfacing on the one after.
+**The design consequence is concrete: `onClose` latency is bounded by the stream's own write
+cadence, not by TCP.** A run stream that goes quiet does not learn its observer left until it
+next writes. The existing heartbeat is therefore load-bearing for §3's park/unobserved
+detection, not merely a proxy keep-alive — a run whose only liveness signal is `onClose` and
+whose heartbeat is disabled would never observe the disconnect at all.
+
+**(c) Through the Vite dev proxy — the stream works, `onClose` NEVER fires. This is P4, and it
+is a real hazard.** Same POST via `http://localhost:5173`:
+
+```
+HTTP/1.1 200 OK
+content-type: text/event-stream;charset=utf-8
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+```
+
+Streaming is byte-for-byte equivalent (`103 → 160 → 217 → 274 → 331` at 1 s), the body arrives
+intact, `X-Accel-Buffering: no` survives. Then the client died at epoch 1787051922141 — and the
+server-side record still read `closed:false` with ticks still succeeding at 1787052393711:
+**471 seconds later, and still counting when the leg ended.** Not late — never.
+
+The mechanism is in the dev proxy, not in Javalin. `modules/ui-web/vite.config.js:141-165`
+hand-rolls the forward: `req.pipe(proxyReq)` (`:165`) and `proxyRes.pipe(res)` (`:155`), with
+an error handler on `proxyReq` (`:158`) but **no `res.on('close', …)` teardown**. Node's `pipe`
+does not destroy the source when the destination closes, so when the browser goes away the
+proxy→backend socket stays open and the backend sees a permanently healthy subscriber.
+
+Topology consequence for S3b, which is what P4 was asked to decide:
+
+- **Any dev verification of run-stream lifecycle — park/unobserved detection, observer-count,
+  `onClose`-driven journal retirement — must go direct to the API port.** Through the proxy the
+  disconnect signal does not exist, so a green result there is meaningless (`static-green ≠
+  live-working`).
+- The proxy is fine for *content* verification (frames render, replay ordering, cursor grammar).
+- The one-line proxy fix (`res.on('close', () => proxyReq.destroy())`) is worth doing so browser
+  verification becomes trustworthy, but it is dev-tooling work, not S3b substrate work, and it
+  does not gate S3b. Logged to the inbox.
+
+**(d) Negative control — the auth posture §1.6 chose is real.** Token enforcement is a **no-op
+under the dev-runner by default**: dev-runner-launched backends never set `JUSTSEARCH_PROD` /
+`-Djustsearch.prod`, so `prodMode` resolves false and
+`ApiSecurityFilters.setupSessionTokenEnforcement` returns early (`ApiSecurityFilters.java:382-390`;
+the dev-runner documents this at `scripts/dev/dev-runner.cjs:842-846`). The control was therefore
+run on a stack forced into prod mode by injecting `-Djustsearch.prod=true` into the dist start
+script (a build artifact; reverted afterwards), which made the Head mint a 43-char session token
+into the runtime manifest:
+
+| request | result |
+|---|---|
+| POST, **no** token | `401` `{"errorCode":"UI_TOKEN_REQUIRED"}`, `content-type: application/json`, **3.1 ms**, no stream |
+| POST, **wrong** token | `401`, identical body, 2.2 ms, no stream |
+| POST, **correct** token | `200 text/event-stream`, body reached handler (`bodyLength:23`), ticks at 1 s |
+| GET `/api/health`, no token | `200` — **unauthenticated**, exactly as §1.6 argues |
+
+The `app.before` filter runs and halts *before* `SseHandler` is reached — no partial hijack, no
+half-open SSE response on a rejected request. §1.6's core argument is confirmed end-to-end: POST
+managed SSE is authenticated by the existing filter with no filter change, and a GET run-stream
+family really would have shipped open.
+
+**Verdict: HINGE CONFIRMED.** All four sub-measurements pass. `app.post(path, new SseHandler(…))`
+yields a fully managed `SseClient` with a readable request body, incremental streaming, a working
+`onClose`, and existing token enforcement — live, in this server. §1.6's endpoint topology stands
+as designed, with two qualifications that belong in S3b's spec rather than in its risk register:
+`onClose` is write-cadence-bound (b), and dev lifecycle verification must bypass the proxy (c).
+
+### 14.2 D2 — P8 lock cost: **KEEP PRIMARY** (do not promote the fallback)
+
+**Instrument.** A `System.nanoTime()` pair around `subscribeLock.readLock().lock()` in
+`SseStreamChannel.publish` (`:121`), samples kept per `streamId` in a fixed overwrite ring and
+read back through a debug route. It measures **acquisition only** — the fan-out inside the read
+lock is unchanged by 834 and is not what P8 asks about.
+
+The busiest live channel was `surface:indexing-jobs`, driven well past the ~30 fps target by
+ingesting the repo's docs and script trees with 21 SSE subscribers attached and concurrent API
+load.
+
+| window | publishes | rate | mean | p50 | p90 | p99 | p99.9 | max | >10 µs | >1 ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 — no writers | 1 331 | 127.9/s | 1 853 ns | 400 | 1 500 | 6 400 | 62 100 | 1 385 200 | 8 | 1 |
+| 2 — **writer contention** | 7 185 | **152.9/s** | **296 ns** | **200** | **400** | **1 100** | 13 300 | 216 300 | 9 | **0** |
+
+Window 2 is the one that decides it. It added a **resume-path reconnect storm — 228 connects
+(4 workers × 57) in 60 s**, each one taking the **write** lock via `subscribeAndReplay`, and each
+replaying a verified **8 537 frames / 4.27 MB** (window hit: no `resume-window-miss`, no
+snapshot). So the primary mechanism was measured with real writers holding the exclusive lock
+while snapshotting thousands of frames, concurrent with 153 publishes/sec:
+
+- **p99 read-lock acquire = 1.1 µs. Zero acquisitions over 1 ms out of 7 185.** Nine (0.13 %)
+  exceeded 10 µs.
+- At 30 fps the total publish-side lock cost is `30 × ~300 ns ≈ 9 µs per second` — roughly
+  0.001 % of one core.
+
+**Interrogating the two surprises**, because the numbers do not read the way a naive reading
+would predict:
+
+1. *Window 2 is ~6× cheaper than window 1 despite far more contention.* Cause is JIT warmup,
+   not a lower true cost: window 1 has 1 331 samples against window 2's 7 185, and window 1
+   includes the first publishes after a reset. The **more** contended window being **faster**
+   rules out contention as the driver of window 1's mean.
+2. *Window 1's 1.39 ms outlier.* It cannot be lock contention: every subscriber in window 1
+   connected without a cursor, so it took `subscribe()` (`SseStreamChannel.java:187-191`), which
+   never touches the write lock — there was no writer in that window for a reader to wait on. It
+   is JVM/OS noise (GC, descheduling under the concurrent curl load). Consistent with this,
+   window 2 — which *did* have 228 writers — has **no** >1 ms sample at all.
+
+Honest floor: `System.nanoTime()` granularity on this machine is ~100 ns, so the p50 of 200 ns is
+one-to-two clock ticks. The true acquire cost is **at or below the measurement floor**, which
+strengthens rather than qualifies the verdict.
+
+**Verdict: KEEP PRIMARY.** The read lock on `publish` is not measurable at 30 fps, and is not
+measurable at 5× that rate with a heavy concurrent writer either. §13.2 residual 3 and the
+fallback note at `SseStreamChannel.java:59-68` can be closed: the publish-generation counter is
+**not** promoted. The two-phase handoff is doing its job — 8 537-frame replays under the write
+lock did not produce a single millisecond-scale publisher stall.
+
+### 14.3 Spike residuals
+
+1. **`kill -INT` cannot be delivered to native Windows `curl`** from Git Bash, so (b)'s
+   disconnects are clean process exits (FIN), not signals. An abrupt `taskkill /F` was also
+   observed to disconnect, but its `onClose` latency was not recorded. The write-driven
+   conclusion rests on the three FIN cases, which agree.
+2. **The dev-runner captures almost no Head log output** — `backend.stdout.log` held one line
+   (`JUSTSEARCH_API_PORT=…`) and `backend.stderr.log` only JVM warnings; there is no Head log
+   file under `<dataDir>/logs/` (only `worker.log`). The probe was rebuilt to self-report through
+   an endpoint instead. Logged to the inbox; it makes `tail_log`-based diagnosis of Head-side
+   behaviour unreliable.
+3. **The proxy `onClose` leak (c) is unfixed** — reported here and to the inbox, deliberately not
+   fixed in a throwaway spike.
+4. **Not measured:** browser-`EventSource` behaviour (§13.4's other pending leg — untouched,
+   and note `EventSource` cannot issue a POST at all, so run streams need `fetch`-based SSE
+   parsing on the FE, which `consumeShapeStream` already does), and `MultiplexedSseWriter`'s
+   non-atomic resume path (§13.2 residual 1).
+
+---
+
+## 15. Implementation handoff — S3b, S4, S5
+
+Line map for a fresh implementer, in the shape of §11. **Every anchor below was re-verified
+against `main` at the time of writing**; S1, S2 and S3a have all landed since §7 was authored,
+so several §7 anchors had drifted (§15.0). Re-verify before editing anyway — lines drift.
+
+### 15.0 What binds this handoff
+
+**Cherry-pick §14 first.** The probe record for D1/D2 lives on branch `spike-post-sse` as
+commit `3d5f15b8` (shared object store, so `git cherry-pick 3d5f15b8` works from any
+worktree). Do this as the first commit of the S3b branch so §14 rides the PR and the spec
+qualifications below have their evidence attached.
+
+**D1 — the §1.6 hinge is CONFIRMED live.** `app.post(path, new SseHandler(consumer))` streams
+incrementally, the request body is readable from `client.ctx()` inside the consumer, `onClose`
+fires, and the existing `ApiSecurityFilters` token filter rejects an untokened POST with 401
+*before* the handler runs. §1.6 stands as designed. **Two qualifications bind the spec:**
+
+1. **`onClose` is write-cadence-bound.** Measured 850–1114 ms, always on a tick boundary,
+   never on socket close. A stream that writes nothing **never learns** its client left.
+   Therefore **the heartbeat is load-bearing, not cosmetic**: it is the only write a parked
+   run makes, so it is the sole mechanism by which `onClose` can fire for a parked run, and
+   therefore the sole mechanism by which §3's zero-observer park and `observerCount` become
+   true. `RunStreamWriter` MUST schedule it (§15.1.3). Derived bound, and it is comfortable:
+   heartbeat cadence is 15 s (`StreamLivenessWindows.STREAM_HEARTBEAT_INTERVAL_SECONDS`)
+   against a 120 s park window (`AgentStepRunner.java:953`,
+   `justsearch.agent.zeroObserverParkTimeoutSec` default) — an 8× margin, so detection cannot
+   lose a race with the park timeout. **State the residual honestly:** zero-observer detection
+   is eventually-consistent with a bound of one heartbeat interval, so a WATCH run may execute
+   at most one further iteration after its watcher leaves. That is a real weakening versus the
+   instantaneous-eviction story, and it is still strictly better than the pre-S3b silent case,
+   which never detects at all (R4).
+2. **P4 came back negative and reverses §7's topology relaxation.** Through the Vite dev proxy
+   `onClose` **never** fires — `modules/ui-web/vite.config.js` pipes the upstream response
+   (`proxyRes.pipe(res)`, ~`:150-156`) with no teardown on client `res` close, so the upstream
+   socket stays open forever. §7's "Verification topology" paragraph says that after S3b,
+   tests asserting detection *happens* may run through the proxy "subject to P4". **P4 has now
+   answered: they may not.** Every S3b verification item touching stream lifecycle —
+   `onClose`, `observerCount`, eviction, park, retire/linger, 404-on-retired — is
+   **DIRECT-TOPOLOGY-ONLY**. The proxy remains fine for content checks (frames arrive, text
+   renders, citations attach). Treat §7's paragraph as superseded by this one.
+
+**D2 — P8 ran; keep the primary.** The read-lock-on-`publish` mechanism stands; the
+generation-counter fallback is not needed. So §13.2 residual 3 and the fallback note it points
+at are resolved, and closing them is S3b stage 0 (§15.1.0).
+
+**Orthogonal in-flight work.** The selection-stall was root-caused to a producer-side wedge in
+`OnlineModeOps`/`ConversationEngine`, unrelated to S3b, and is being fixed as its own slice
+that may land first. S3b needs no special case for it, **but the fix may touch
+`ConversationEngine`'s latch region (`:520-570`, `CountDownLatch latch` at `:531`,
+`latch.await()` at `:564`)** — the same region S3b's sink rerouting sits next to. Expect a
+catch-up merge there and re-read the region before editing rather than trusting this map.
+
+### 15.1 S3b — run substrate, endpoints, hub deletion
+
+Dependency-ordered. Stages 0–2 are additive and independently compilable; stage 3 flips run
+traffic onto the new path; stage 4 is the deletion sweep and must come last because everything
+before it still compiles against the hub.
+
+#### Stage 0 — close the S3a residual (no run code)
+
+- `modules/app-observability/.../stream/SseStreamChannel.java:59-68` — delete the
+  "named fallback is a publish-generation counter … P8 has NOT been run" paragraph; replace
+  with one line recording that P8 ran and the read-lock primary stands (§14/D2). Update
+  §13.2 residual 3 in this doc in the same commit.
+- **Done when:** `./gradlew.bat :modules:app-observability:test` green; no behavioural diff.
+
+#### Stage 1 — the run substrate types (new package, no callers yet)
+
+New package `io.justsearch.app.observability.stream.run` in `modules/app-observability`
+(§1.4 — no new module edge; `app-observability` already api-depends on `app-agent-api` and
+`app-api`, and nothing there depends on `app-agent`).
+
+- `RunId` — wraps a letter-initial slug; `streamId()` delegates to the S3a-landed
+  `StreamId.run(String)` (`StreamId.java:61-63`; the regex already admits `run:`, `:31`).
+- `RunDescriptor`, `RunChannelPolicy` (§1.5). Build the two policies on the S3a retention
+  layer rather than re-deriving bounds: `FrameRetentionPolicy` (`:39-95`, with
+  `ofFrames`, `tracksBytes()`, `evidenceSlotEnabled()`, and the `EvidenceClassifier` SPI at
+  `:93`). Narrative 4000 frames / 2 MiB; agent 1000 / 4 MiB; evidence classifier keyed on the
+  event names in §2. Note `FrameRetentionSizer.FRAME_OVERHEAD_BYTES = 200` is **provisional
+  pending P2**, which still has not been run — if P2 is run first, re-derive both budgets.
+- Sealed `RunChannel` with `SteppedRunChannel` / `OneShotRunChannel` (§3.4). **The one-shot
+  type must have no `setPark`** — that is the structural guard, not a javadoc.
+- `RunChannelRegistry` — `open` / `find` / `live` / `retire(id, linger)`. `retire` owns the
+  whole terminal transition (§2): refuse publishes, keep the ring readable for `linger`, then
+  drop; cap 32 channels, drop retired-and-lingering oldest-first, never drop a live run.
+
+**New tests:** `RunChannelRegistryTest` (open/find/live/retire; the 32-cap refusing a 33rd
+live run with a typed error, not evicting); `RunChannelPolicyTest` (evidence classification;
+the one-shot type does not expose `setPark` — a compile-level assertion is enough, e.g. a
+test that only compiles against `RunChannel`).
+
+**Done when:** `:modules:app-observability:test` green; zero references from any other module.
+
+#### Stage 2 — `RunStreamWriter` (new writer, no routes yet)
+
+`modules/ui/.../RunStreamWriter.java`, sibling to `SseEnvelopeWriter` — same managed-client
+orchestration, run vocabulary instead of envelope vocabulary. Mirror the structure at
+`SseEnvelopeWriter.attach:212-262`: resume-and-subscribe (`:228`), heartbeat schedule
+(`:240`), `client.onClose` unsubscribe + heartbeat cancel (`:243`), `keepAlive()`.
+
+Five protocol requirements from §1.6, each of which is a test:
+
+1. **Absent cursor ⇒ replay from 0**, never snapshot-only. `SseEnvelopeWriter.attach` only
+   resumes when the token is non-blank; a run stream must always replay. Convenient property
+   of the S3a API: `isWithinResumeWindow` rejects only `sinceSeq > current` or
+   `sinceSeq > 0 && (oldest == 0 || sinceSeq < oldest)`, so **`subscribeAndReplay(listener, 0)`
+   always succeeds** — it is the guaranteed fallback path.
+2. **`subscribeAndReplay` returns `Optional.empty()` on a window miss and registers nothing**
+   (`SseStreamChannel.java:220-247`). So the writer must handle empty explicitly: emit
+   `replay_truncated {sinceSeq, oldestRetainedSeq}`, emit the snapshot, then call
+   `subscribeAndReplay(listener, 0)` and assert it succeeded. Silently returning an empty
+   stream is the failure mode to avoid.
+3. **`?sinceSeq=<long>`**, not `?since=` — the envelope family's `?since=` carries a
+   `ResumeTokenCodec` token and reusing the name would fork the grammar (§1.6).
+4. **No `id:` line** — closes `Last-Event-ID` as a second, unvalidated resume channel.
+5. **Heartbeat is mandatory** (§15.0 D1.1), at `StreamLivenessWindows.STREAM_HEARTBEAT_INTERVAL_SECONDS`,
+   as a sequenced-but-not-retained lifecycle frame (§3.2) — route it through the channel's
+   `nextEnvelope` analogue, never `publish`, so it never occupies a ring slot.
+
+**New tests:** `RunStreamWriterTest` over a mocked `SseClient` — absent cursor replays from 0;
+window miss emits `replay_truncated` + snapshot then still subscribes; no `id:` line is ever
+written; the heartbeat fires on cadence and is cancelled by `onClose`; `?sinceSeq=` parses and
+a `?since=` token is rejected rather than silently treated as 0.
+
+**Done when:** `:modules:ui:test` green; still no route registered.
+
+#### Stage 3 — endpoints + engine wiring (run traffic flips here)
+
+- `AgentRoutes` (or a new `RunRoutes`) — `app.post("/api/chat/runs", new SseHandler(...))` and
+  `app.post("/api/chat/runs/{runId}/observe", new SseHandler(...))`. Read the request body from
+  `client.ctx()` inside the consumer (D1-confirmed). Auth needs no change: POST is already
+  covered by `ApiSecurityFilters`' token filter (`:395-402`, `TOKEN_REQUIRED_METHODS` at `:44`).
+- `run_started` **lifecycle** frame, first on every run stream, carrying `{runId, shapeId,
+  conversationId}` (§3.2). Not an `AgentEvent` — adding a sealed permit would cascade through
+  7+ sites.
+- **`ChatController` error paths through the sink.** Verified current anchors: the sink is
+  `:169` (`sseWriter.writeEvent(ctx, sseEvent.name(), sseEvent.payload())`), `sseError` is
+  `:123-130`, and the three catch arms are `:170-179` (`AudienceDeniedException` `:170`,
+  `ShapeNotFoundException` `:173`, `Exception` `:176`). Also `:146-149` (malformed body) and
+  `:108` (missing `shapeId`) write via `sseError` — the first is pre-run so it may stay on
+  `ctx`, but `:170-179` are mid-run and must go through the sink or a failing run terminates
+  invisibly for every non-creating observer.
+- **404 contract** for unknown/retired runIds: typed `{runId, reason: "unknown"|"retired",
+  recordHint}` (§1.6), not a 200 with an empty stream.
+
+**New tests:** ask-survival (§3.4 — observer count reaches 0 mid-generation, run still reaches
+`done` and still persists); 404 shape for unknown vs retired; `run_started` is first and is not
+retained in the ring; a mid-run engine exception reaches a second observer.
+
+**Done when:** `./gradlew.bat build -x test -PskipWebBuild=true` and the full unit suite are
+green, and the **direct-topology** live legs below pass.
+
+#### Stage 4 — hub deletion sweep (last)
+
+**Sweep table, re-verified against `main`.** One row had drifted materially since §7 —
+`AgentSession.java`, because S1 grew the file:
+
+| site | §7 said | **verified now** | what changes |
+|---|---|---|---|
+| `RunEventHub.java` | deleted | 108 lines, untouched | deleted |
+| `AgentSession.java` | `:74,671-673,676-678` | **`:85` field, `:735-736` `eventHub()`, `:740-741` `observerCount()`, `:760` policy read** | field + accessor removed; `observerCount()` → injected `IntSupplier`; publish via injected `Consumer<AgentEvent>` |
+| `AgentSessionRegistry.java` | `:185-232` | `:185`, `:194`, `:207`, `:228` — holds | `attachToRun` (both arities) reimplemented on the channel |
+| `AgentLoopService.java` | `:639-645` | `:639-640`, `:644-645` — holds | the two `attachToRun` overrides |
+| `AgentLoopService.java` | `:575,579` | `:575` remove, `:579` `eventHub().close()` — holds | → `registry.retire(id, linger)` |
+| `AgentService.java` (app-agent-api) | `:121-131` | `:121-122`, `:131` — holds | the two default `attachToRun` methods — **public interface, a contract change** |
+| `AgentController.java` | `:478,513` | `:478` native attach, `:513` AG-UI attach — holds | call sites move to the channel |
+| `AgentSseWriter.java` | `:94-149` | `:80`, `:94`, `:99`, `:134-136`, `:145-146` — holds | `writeOrEvict`/`evictIfGone`/`SseObserverGoneException` obsolete once `onClose` owns disconnect |
+| `SseWriter.SseWriteOutcome.CLIENT_GONE` | keep, re-document | consumer is `AgentSseWriter:99,134` | keep the enum (`SseWriterTest:18` pins serialization-vs-disconnect) but re-document |
+| `RunEventHubTest.java` | whole file | 168 lines | deleted |
+| `AgentControllerSseEvictionTest.java` | whole file | 50 lines | deleted |
+| `AgentLoopServiceTest.java` | `:634-709,760` | `:634`, `:666`, `:697`, `:705-709`, `:713-780` (the park test), `:760` — holds | attach + eviction cases retargeted at the channel |
+
+Two things the sweep must not break:
+
+- **`AgentSessionRegistry:207` is now an 8-arg `StateSnapshot`** (S1 landed `pendingApprovals`,
+  `autonomyLevel()`, `parkSnapshot()`). Carry all eight when the primer moves to the channel;
+  dropping the S1 fields here would silently undo S1's whole point (§6.1).
+- **`AgentLoopServiceTest:713-780` is sound and must not be rewritten** (R4). Its dead socket
+  throws on first delivery, so it tests eviction-on-publish, exactly as it claims. Retarget it
+  at the channel; do not weaken it. **Add** the missing silent-run case (§15.3, open question 1).
+
+**Also add**: the map-input `AgUiEventTranslator` overload + the equivalence gate (§6.5),
+anchored on `AgUiEventTranslatorConformanceTest.ALL_VARIANTS:37-61` and `coversEveryPermit:64-71`
+— **not** `AgentEventSchemaConformanceTest`, whose variants are null/zero-field and would NPE
+or pass vacuously — plus at least one variant constructed with a populated `TraceContext`,
+since every current entry carries `TraceContext.none()`.
+
+**Live legs — DIRECT TOPOLOGY ONLY (P4):** two concurrent observers on one ask; reload
+mid-answer and rejoin; `onClose` fires on tab close (expect ≤1 heartbeat interval on a parked
+run, sub-second on a streaming one); a run retired past its linger answers 404 with the right
+`recordHint`. Run these against the backend port, not through `npm run dev`.
+
+### 15.2 S4 — enumeration
+
+1. `modules/app-api/.../run/LiveRunsResponse.java` + `LiveRunSummary` + `ParkSummary` +
+   `RunStateSnapshotView` + `PendingApprovalView` — **typed, never `Map<String,Object>`**
+   (`WireRecordSchemaGenTest.java:107-109` records why). `arguments` rides as a JSON string.
+2. `WireRecordSchemaGenTest` — add a `captureOrVerify(LiveRunsResponse.class,
+   "live-runs-response.v1.json")` case beside the agent precedent at `:110-114`; run it to
+   generate `SSOT/schemas/live-runs-response.v1.json`; then
+   `node scripts/codegen/gen-wire-schema-types.mjs`. S2 already walked this exact path for
+   `AgentSessionSummary.interruptedAt` (`:30`), so follow that commit.
+3. Handler on `AgentSessionController` (the read-axis controller, `AgentRoutes.java:68-70`),
+   projecting `RunChannelRegistry.live()` with `MAPPER.convertValue` — the pattern
+   `handleListSessions:93-97` already uses, since `app-api` cannot depend back on
+   `app-agent-api` (`AgentSessionController.java:90-92`).
+4. **The auth change — a required item of this slice, not a follow-up.**
+   `ApiSecurityFilters.java:395-402` is the token filter; `:399` returns early for GET and
+   OPTIONS and `:44` lists `POST/PUT/DELETE`. Add a **path-scoped** requirement for
+   `/api/chat/runs/**` *before* the method check, so `GET /api/chat/runs/live` demands the
+   token. Do not confuse this filter with the operation-admission filter at `:114-119`, which
+   has its own GET/OPTIONS early return for an unrelated reason. The FE can comply —
+   `consumeShapeStream` already sends `SESSION_TOKEN_HEADER` on a `fetch` (`streams.ts:444`
+   region) and the enumeration is a `fetch`, not an `EventSource`.
+
+**New tests:** projection fidelity; N > 1 runs on one `conversationId` returned as a list,
+never collapsed (§3.5); **the adverse precondition — a request without the token header is
+rejected** (without this, R6 is a comment rather than a guarantee).
+
+**Done when:** suite green, the generated TS/Zod is committed, and — direct topology — an ask
+and an agent run both enumerate with correct `observerCount`, and closing a tab drops the count
+within one heartbeat interval.
+
+### 15.3 S5 — FE sweep
+
+- `modules/ui-web/src/shell-v0/controllers/activeRunPointer.ts` (`setActiveRun:31`,
+  `clearActiveRun:44`, `readActiveRun:53`) — retired as the *discovery* authority; discovery
+  becomes `GET /api/chat/runs/live`. Callers: `SearchV3View.reattachLiveRun` and
+  `AgentSessionController`.
+- Run identity moves to the `run_started` frame; `consumeShapeStream` (`streams.ts:544-553`
+  region) learns `?sinceSeq=`, `replay_truncated`, and the 404 `recordHint` shape.
+- **`session_started` is dual-read and wire-deprecated, NOT deleted** (§3.3) — it is emitted by
+  `WorkflowShapeRunner.java:163` and pinned in the durable ledger (`AgentRunStoreTest:52,383`).
+  Deleting it breaks replay of every existing `events.ndjson`.
+- `RetrospectivePanel.ts:187-193,629-632` — the four interruption rows (§5.2), reading
+  `interruptedAt` which S2 already ships on `AgentSessionSummary:30`.
+
+**Done when:** `npm run typecheck` and `npm run test:unit:run` green, and a browser reload
+mid-answer rejoins the live ask — with the rejoin *content* check permitted through the proxy
+but any `observerCount`/lifecycle assertion run direct (P4).
+
+### 15.4 Open questions for the implementer
+
+1. **The silent-run disconnect test (R4) needs a shape.** §8 calls it "a missing test". With
+   `onClose` write-cadence-bound, the honest assertion is *"a run parked at an approval gate
+   with a dead client loses its observer within one heartbeat interval"* — not "immediately".
+   Decide whether to assert the bound (flaky-prone, needs a real socket) or to unit-test the
+   two halves separately (heartbeat fires on cadence; `onClose` removes the observer) and
+   cover the composition in the direct-topology live leg only. **Recommendation: the latter**,
+   with the live leg recorded as evidence rather than as a CI test.
+2. **P2 was never run**, so `FRAME_OVERHEAD_BYTES = 200` and both run budgets (§2) are
+   provisional. Stage 1 can ship on the provisional numbers, but if the evidence slot's 4 MiB
+   turns out to be wrong by an order of magnitude the retention story is theatre. Run P2
+   before or during stage 1.
+3. **The eventual-consistency residual (§15.0 D1.1)** — a WATCH run may execute one further
+   iteration after its watcher leaves. This is a behavioural change to the park's promise and
+   should be stated in whatever user-facing copy describes "Paused — no one is watching",
+   rather than left as an implementation detail.
+4. **`MultiplexedSseWriter` still has the non-atomic resume** (§13.2 residual 1). It is not in
+   S3b's scope, but if any run stream is ever fanned in through it, the race returns for run
+   traffic — where it is not self-correcting. Add a note at
+   `MultiplexedSseWriter.java:99` if S3b does not close it.
+
+---
+
+## 16. Implementation log — S3b (run substrate, endpoints, hub deletion)
+
+Landed 2026-08-18 on `run-continuity-s3b`, based on `origin/main` at `6c422442`, with §14 and §15
+cherry-picked as the first two commits so the probe evidence rides the PR. Scope held to §15.1's
+five stages. Nothing from S4 or S5 is here: no `GET /api/chat/runs/live`, no `LiveRunsResponse`, no
+`ApiSecurityFilters` change, and `activeRunPointer` is still the FE's discovery authority (labelled,
+not retired — §15.3 stages that).
+
+### 16.1 As built
+
+| §15.1 stage | as built |
+|---|---|
+| 0 — close the S3a residual | `SseStreamChannel.java:60-68` — the generation-counter fallback paragraph replaced with D2's measured result; §13.2 residual 3 closed. `MultiplexedSseWriter.java:98-105` — §15.4 Q4's note, at the call site, saying why it must not be reused for a run stream |
+| 1 — the run substrate | new package `io.justsearch.app.observability.stream.run`: `RunId`, `RunDescriptor`, `RunFrame`, `RunStateSnapshot`, `ParkState`, `RunChannelPolicy`, sealed `RunChannel` + `SteppedRunChannel` / `OneShotRunChannel` (two impls over a shared `AbstractRunChannel`), `RunChannelRegistry`, `RunChannelCapacityExceededException`. `SseStreamChannel.listenerCount()` added as the observer-count authority |
+| 2 — `RunStreamWriter` | `modules/ui/.../RunStreamWriter.java`, sibling to `SseEnvelopeWriter`; the five §15.1.2 protocol requirements, each a test |
+| 3 — endpoints + wiring | `RunStreamController` + `RunRoutes` (`POST /api/chat/runs`, `POST /api/chat/runs/{runId}/observe`); `ChatController.runToSink` routes the three catch arms through the sink; `ConversationApiAssembly` owns the ONE `RunChannelRegistry` |
+| 4 — hub deletion sweep | `RunEventHub.java` + `RunEventHubTest.java` deleted; the `RunObservation` SPI (app-agent-api) + `RunChannelObservation` (app-observability) replace them; the map-input `AgUiEventTranslator` overload + its equivalence gate |
+
+**Sweep completion.** `grep -rn RunEventHub` over the tree returns only *labelled* mentions: two in
+the replacements' javadoc saying what they replaced, one in `SseStreamChannelAtomicSubscribeTest`
+naming the law it inherited. Every live reference (`AgentSession`, `AgentSessionRegistry`,
+`AgentLoopService`, `AgentService`, `AgentController`, `AgentSseWriter`, `SseWriter`,
+`activeRunPointer.ts`, `AgentSessionController.ts`) is gone or re-documented in channel terms.
+
+### 16.2 Where the build forced a shape §15 did not name
+
+1. **`RunObservation` — an SPI §15 did not ask for, and why it is not scope creep.** §1.3 says the
+   session "gains an injected `Consumer<AgentEvent>` publish sink" and an `IntSupplier`. Two JDK
+   types are not enough: a run also needs `observe`, `retire`, the snapshot supplier and the retire
+   hook, and putting the registry itself in `app-agent` would be the module edge §1.4 forbids. One
+   interface in `app-agent-api` (JDK + `AgentEvent` only) carries all of it, and the concrete
+   channel-backed implementation lives beside the channels.
+2. **The initiating observer is delivered to DIRECTLY, not through the channel.** `runAgent` hands
+   the caller typed `AgentEvent`s while the journal carries the wire projection (§1.3.2), so it
+   cannot be a channel listener without changing `runAgent`'s signature and rippling into
+   `ToolIteratingShapeRunner`. `AgentSession` therefore holds it and evicts it on a throw, and
+   `observerCount()` is `channel listeners + (initiator alive ? 1 : 0)`. The R4 property is
+   preserved exactly: a dead initiating socket still drops the count to 0 and still parks a WATCH
+   run — `AgentLoopServiceTest:713-780` passes unchanged in substance.
+3. **`RunObservation.NONE.observerCount()` is 0, not 1.** The first draft answered 1 ("no substrate
+   ⇒ unknown, don't park"). `AgentSessionBudgetTest` failed, and the test was right: with no
+   substrate there is no channel a second observer could ever attach to, so answering "someone is
+   watching" would let a WATCH run proceed UNSUPERVISED on a misconfigured wiring. Parking fails
+   loudly and recoverably; the other direction fails silently and unsafely.
+4. **`RunId.streamId()` derives its slug** as `"r-" + lowercase(value)`. §3.2 aliases an agent
+   `RunId` to its `sessionId`, which is a UUID — digit-initial roughly six times in ten — while
+   `StreamId` requires a letter-initial slug. One unconditional derivation, injective over the id
+   alphabet, rather than a branch or a mapping table.
+5. **`RunChannel.observe` returns `Optional<Subscription>`** where §1.5's sketch returned a bare
+   handle. §15.1.2's requirement 2 makes the window miss something the writer MUST see; a bare
+   handle would have hidden it.
+6. **Frame order: the primer precedes the replay in BOTH branches.** §15.1.2 puts the snapshot after
+   `replay_truncated`; §6.1 is the stronger statement (the primer is the one frame guaranteed to
+   arrive), and emitting it after a successful replay would put it behind thousands of narrative
+   frames on exactly the reattach that needs it first.
+7. **`app-agent`'s TEST suite gained `app-observability`.** Main code publishes through the SPI and
+   gains nothing; the attach and park tests drive the REAL substrate, because a double for
+   evict-on-throw + bounded replay would be a reimplementation of the mechanism they exist to pin.
+   The lockfile change is scoped to `modules/app-agent/gradle.lockfile`; `resolveAndLockAll` also
+   wanted to add an unrelated `dependencyAnalysisKotlinMetadataClasspath` line to all 33 lockfiles
+   (plugin drift already latent on `main`) — reverted, as it is not this slice's.
+
+### 16.3 One sweep row deliberately not executed, with the reason
+
+§7-S3b's table says `AgentSseWriter`'s `writeOrEvict` / `evictIfGone` / `SseObserverGoneException`
+are "obsolete once `onClose` owns disconnect". That holds for the run-stream family, which runs on a
+MANAGED `SseClient`. It does not hold for the raw `Context`-based attach routes (`/api/chat/agent`,
+`/api/chat/agent/{id}/attach`, `/ag-ui`, resume, fork), which §1.6 keeps during migration and which
+have no `onClose` at all: for them a failed write is the ONLY disconnect signal, so deleting the
+throw would silently make their `observerCount` permanently non-zero and a WATCH run would proceed
+unwatched — the exact safety goal §2.14 Root I exists to meet. The seam and
+`AgentControllerSseEvictionTest` are kept and re-documented to say when they retire (with those
+routes, in S5). Deleting a guard whose consumer still exists is not a sweep.
+
+The `id:` line those same routes emit IS now unconsumed — §1.6 retired `Last-Event-ID` and
+`AgentController.parseLastEventId` is gone, replaced by `parseSinceSeq`. Labelled at
+`AgentSseWriter.writeOrEvict` rather than removed, because it is part of those routes' existing wire
+and they retire as a unit.
+
+### 16.4 Verification
+
+- `./gradlew.bat spotlessApply` then `build -x test -PskipWebBuild=true` — **BUILD SUCCESSFUL**.
+- `./gradlew.bat test -PskipWebBuild=true` — **BUILD SUCCESSFUL; 1338 suites / 7847 tests / 26
+  skipped / 0 failures**, re-run after TWO catch-up merges: #476 (the streaming-producer-wedge fix
+  — the in-flight stream §15.0 predicted would land in `ConversationEngine`'s latch region first;
+  S3b keeps `engine.run` synchronous and untouched) and #477 (crash-aware inference reasons). Both
+  composed with no code conflict — #477's FE is readinessNotice/verdict/aiStateStore against this
+  slice's streams.ts/activeRunPointer, and its Java is the inference-capability cluster against
+  this slice's run/chat controllers; only the session observation shard needed a union resolve.
+- The four named conformance tests are green, including the two new equivalence cases on
+  `AgUiEventTranslatorConformanceTest`. No sealed-permit count changed: `run_started`,
+  `replay_truncated` and `heartbeat` are LIFECYCLE frames, not `AgentEvent` permits (§3.2), so the
+  7+ site cascade never fires.
+- New tests: `RunChannelRegistryTest` (16), `RunChannelPolicyTest` (8), `RunStreamWriterTest` (12),
+  `RunStreamControllerTest` (12), plus 5 run-stream cases on `streams.test.ts`.
+- FE: `npm run typecheck` clean; `npm run test:unit:run` — **422 files / 5210 tests passed**.
+- Governance kernel: 35 gates, **5 fail / 70 findings** — `npm-audit`, `ts-any`, `dead-code`,
+  `contract-projection`, `config-surface`, all pre-existing and none naming a file from this slice
+  (S3a recorded the same set plus `module-deps`, which fails only for a missing preflight input;
+  generating it makes it pass). `wire`: pass — no contract touched.
+- ui-web gate set: all pass except the two known-RED-on-main (`theme-token-closure`,
+  `accent-as-text`) and `check-controls-a11y`, which is RED on `main` for a `UnifiedChatView.ts:2143`
+  finding this branch does not touch and which is NOT in `expected-state.v1.json`'s known-red list —
+  logged to the inbox.
+
+**Mutation probes** (each applied, run, restored, re-verified green):
+
+1. *Swallow the window miss* — `RunStreamWriter.subscribeFrom` returns `resumed.orElse(() -> {})`
+   instead of announcing + re-subscribing. `req 2` failed with
+   `expected: <[run_started, replay_truncated, chunk]> but was: <[run_started]>` — i.e. the client
+   held a permanently DEAD stream, which is precisely the failure mode the requirement names.
+2. *Drop a primer component* — `session.pendingApprovals()` → `List.of()` in the snapshot supplier.
+   `attachToRun_replaysHistoryThenStreamsToASecondObserverUntilTerminal` failed on "the held gate is
+   ACTIONABLE from the primer alone". This is the guard §15.1.4 asks for: dropping the S1 fields on
+   the way through the channel would silently undo S1, and nothing else in the suite notices.
+3. *Break the AG-UI rename* — `translateFromMap` reads `body.get("message")` instead of
+   `body.get("output")` for `TOOL_CALL_RESULT`. BOTH equivalence cases failed on
+   `ToolExecutionCompleted`. §6.5 calls this gate "the whole mitigation" for a second hand-written
+   switch; the probe shows it bites.
+
+### 16.5 Live legs — RUN 2026-08-18, DIRECT TOPOLOGY ONLY (P4)
+
+Run under supervision on this worktree's dist (`distFrom`, Head jar built 15:21 from the
+post-merge tree), API port pinned to 7710, lease 3600 s. **Every request below went straight to
+`http://127.0.0.1:7710` — never through the Vite proxy**, per D1(c) (`onClose` never fires
+through it; a green there is meaningless). GPU runtime `cuda12` + `Qwen_Qwen3.5-9B-Q4_K_M.gguf`.
+
+**Verdicts: 3 of 6 VERIFIED, 1 VERIFIED-BEYOND-SCRIPT, 2 NOT REACHABLE AT S3B** — and the two
+that are not reachable are errors in this script, not defects in the slice (§16.5.1).
+
+| leg | verdict | evidence |
+|---|---|---|
+| 1 — park detection via heartbeat | **NOT REACHABLE AT S3b** | §16.5.1 |
+| 2 — reattach replay | **VERIFIED** (both families) | below |
+| 3 — observer count on close | **NOT REACHABLE AT S3b** | §16.5.1 |
+| 4 — `run_started` first, no `id:` | **VERIFIED** | below |
+| 5 — retired-past-linger 404 | **VERIFIED** (both reasons) | below |
+| 6 — ask survival | **VERIFIED**, with a measurement stronger than the script asked | below |
+
+**Leg 4 — `run_started` first, no `id:`. VERIFIED.** `POST /api/chat/runs`
+(`core.free-chat`) answered `200 text/event-stream` with the first frame
+`event: run_started` / `data: {"runId":"run-6d02df36-…","shapeId":"core.free-chat",
+"conversationId":"conv-live-1"}` — the identity triple, and the `run-<uuid>` mint of §3.2. The
+raw byte stream carries exactly two SSE field names, `event:` and `data:` — **zero `id:` lines**,
+so `Last-Event-ID` is closed as a second cursor by construction. (The same probe doubles as the
+freshness check the skill's preamble asks for: a stale jar would have 404'd the route.)
+
+**Leg 2 — reattach replay. VERIFIED on both families, including the mutation-probe case live.**
+On the run-stream family, re-observing inside the linger with the default cursor replayed the
+retained window after `run_started`; with `?sinceSeq=999` (a cursor ahead of the stream) the
+server answered `run_started`, then
+`replay_truncated {"sinceSeq":999,"oldestRetainedSeq":2}`, **then still delivered the window that
+does exist**. That is exactly where mutation probe 1 produced `[run_started]` alone — the live
+form of the same assertion. On the agent family, `POST /api/chat/agent/{id}/attach` returned the
+primer FIRST, ahead of the replay (§6.1), carrying **all eight** StateSnapshot components with a
+real held gate: `pendingApprovals:[{callId:"BM7ZSZ…",toolName:"core_browse_folders",
+arguments:"{\"parent_path\":\"\"}",risk:"low",gateBehavior:"inline_confirm"}]`,
+`autonomyLevel:"WATCH"`, `park:{kind:"approval",sinceEpochMs:1787059653964,detail:"BM7ZSZ…"}`.
+This is the live counterpart of mutation probe 2 — the 8-arg carry, observed rather than argued.
+The replay also contained `tool_batch_proposed`, so the **wire overlay survives the channel
+projection** (§16.2's injected projector doing its job; journaling the base alone would have
+shipped a gate-hint-less plan preview).
+
+**Leg 5 — retired vs unknown. VERIFIED, both reasons.** 71 s after the run terminated (past the
+60 s linger), `POST /api/chat/runs/run-6d02df36-…/observe` answered
+`404 {"runId":"run-6d02df36-…","reason":"retired","recordHint":"/api/chat/conversations/conv-live-1"}` —
+JSON, not a 200 with an empty stream, and the hint names the conversation from the descriptor. A
+never-opened id answered `404 {"reason":"unknown","recordHint":""}`. The tri-state §1.6 designed
+is real on the wire.
+
+**Leg 6 — ask survival. VERIFIED, and the measurement is stronger than "it completed".** A
+`core.free-chat` run was started and its ONLY client killed at 4.0 s, mid-generation — its last
+received bytes end mid-sentence (`"…**Drafting - Section by Section"`). The client had received
+**627 characters**. The assistant turn persisted 18 s later at **2418 characters**: **1791
+characters — 74 % of the answer — were generated AFTER the only observer died**, and the complete
+answer reached `ConversationStore`. §3.4's law is not "the run does not crash"; it is "the run
+keeps going and persists", and the 74 % is what makes that distinction observable.
+
+#### 16.5.1 Legs 1 and 3 are NOT REACHABLE at S3b — a script error, not a slice defect
+
+Both legs were scripted assuming a reachability S3b does not have. The live run is what exposed
+it, which is the argument for running live legs at all.
+
+**Leg 1 (park detection via heartbeat).** The assertion needs a run that (a) can park and (b) is
+observed through the MANAGED `SseClient`, because the heartbeat only becomes the detection
+mechanism via `onClose`. No run satisfies both at S3b: §3.4 makes every run on the new
+`/api/chat/runs` family structurally unparkable, and agent runs — the only parkable ones — still
+enter through the LEGACY raw-`Context` route, which has no `onClose` at all. S3b journals agent
+runs on the channel but does not migrate their transport; that migration is S5's.
+
+Driven anyway, to find out what the legacy path actually does: a WATCH run was started, its
+client killed at 6 s, and the run driven through **three** iteration boundaries over ~2.5 minutes
+with nothing attached (approving each gate out-of-band). `run_unobserved_parked` was **never**
+narrated — `observerCount()` never reached 0, because the stale initiating observer is only
+evicted when its write THROWS, and `AgentSseWriter.writeOrEvict`'s `CLIENT_GONE` did not fire.
+The route's own heartbeat cannot help: it writes through the **non-evicting** `writeEvent`
+(`AgentController.java:137`) — deliberately, since §8 showed switching it to `writeOrEvict` is
+broken three ways.
+
+**This is pre-existing, not introduced by the sweep.** The eviction trigger is mechanism-identical
+before and after: the deleted `RunEventHub.deliver` evicted on `catch (RuntimeException)` around
+`sub.accept(event)`; `AgentSession.deliverToObservers` evicts on `catch (RuntimeException)` around
+`initiator.accept(event)`. Neither fires without a throw. Logged to the inbox. What the run DID
+demonstrate is the other half of §1.7: it survived its client and kept working for three
+iterations unobserved.
+
+**Leg 3 (observer count on close).** `observerCount` has no read surface at S3b —
+`GET /api/chat/runs/live` is S4's. The only externally observable proxy is the park narration,
+which leg 1 shows is unreachable here. Both legs become verifiable together once S4 ships the
+enumeration and S5 moves the agent transport onto the managed writer; they should be re-scripted
+against that slice rather than left as pending items on this one.
+
+Also still pending from §13.4: the browser-`EventSource` reconnect leg for the 18 envelope routes.
+And P2 was still not run, so `FRAME_OVERHEAD_BYTES = 200` and both §2 budgets remain provisional.
+
+#### 16.5.2 Environment notes
+
+`ai_activate` failed twice before succeeding, both times for reasons §12.6 already recorded:
+`Variant not installed: cuda12` (the worktree had no `native-bin` variant — copied read-only from
+the main checkout into both the source tree and the dist, then the stack was RESTARTED because
+`RuntimeActivationService` resolves `variantsRoot` once at construction), then
+`MODEL_PATH_REQUIRED` (a fresh `.dev-data` carries no `llm.modelPath`; set via
+`POST /api/settings/v2`). Activation then took 26.9 s. Teardown verified after the run.
+
+### 16.6 Residuals
+
+1. **`AgentSessionRegistry.attachToRun` registers an `onRetire` latch per attach and never
+   unregisters it.** Bounded by attaches-per-run and cleared at retirement; on a desktop deployment
+   with 0–1 concurrent sessions it is not reachable. Named rather than engineered away.
+2. **`RunChannel.park()` is refreshed when the snapshot is taken**, not on a separate push, because
+   taking the snapshot is the one moment fresh session state is in hand. S4's enumeration reads the
+   snapshot anyway; a consumer that reads `park()` alone would see the last-taken value.
+3. **The 32-channel cap is per-registry and there is one registry**, so an agent run and a
+   conversational run share the budget. §2's cap is generous by two orders of magnitude against the
+   observed 0–1 concurrency, so this is a note, not a risk.
