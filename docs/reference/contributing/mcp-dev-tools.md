@@ -30,7 +30,7 @@ The dev MCP surface exposes exactly these **12** tools:
 | `justsearch.dev.search_query` | Execute `POST /api/knowledge/search`. |
 | `justsearch.dev.ingest` | Execute `POST /api/knowledge/ingest`. |
 | `justsearch.dev.ai_activate` | Activate the online AI runtime. |
-| `justsearch.dev.reload` | Trigger backend hot reload and report whether restart is required. |
+| `justsearch.dev.reload` | Hot-reload the running stack's Worker: compile from the tree that stack was launched from, push method-body changes over identity-checked JDWP, reconstruct services with the ONNX encoders still loaded. Ownership-gated. |
 
 Legacy underscore-style dev tool names and standalone readiness/listing/suggestion/cleanup tools are obsolete. Agents should use the dotted names above.
 
@@ -50,6 +50,7 @@ The **EvidenceBundle format itself is live and load-bearing** — only the two M
 1. Orient with `justsearch.dev.quick_health` — the compact readiness check, and the first call after compaction.
    - Add `detail: "full"` when process state, ports, or runner metadata matter; it is the only mode that spawns a subprocess.
    - Read `foreignRuns` before concluding the machine is free. It lists JustSearch-shaped backends this dev-runner did **not** start (a `jseval` backend on `33221`, a bare `runHeadless`, an unattributed llama-server). The tri-state is load-bearing: `[]` = probed and found none, `null` = did not probe (`probe: false`), a non-empty array = these are running and none is the owned run. Ownership verdicts and `running` describe the dev-runner's own run only — before tempdoc 844 that made a "free" verdict precede a 100%-GPU neighbour and contaminated a measurement round.
+   - `foreignRuns` merges two sources and says which is which. `source: "registered"` means the producer declared the run in the foreign-run register (below) — the entry then carries identity (`producer`, `repoRoot`, `pid`, `dataDir`, `sessionId`, `gpuBound`) and a `state` that was *verified*, not assumed: `live` (its declared port answered), `unreachable` (port silent, pid alive — booting or wedged), `stale` (port silent **and** pid gone: a record whose producer was killed before it could clean up, so nothing is running — delete `recordFile` if it is yours), `unreadable` (the record file could not be parsed). A `live` entry additionally carries `identityStale: true` when the port answers but the recorded pid is gone — the listener is verified, the identity behind it is not. `source: "observed"` means only that a port answered with nothing declaring it. A registered port is never also listed as observed.
 2. Run `justsearch.dev.preflight` if the stack is not running.
    - Pass the **same** `distFrom` you will pass to `start` (a path, or a bare worktree name). Preflight then checks the dists in the tree `start` will launch from and reports it as `distCheckedRoot`; without it, preflight validated the invoking checkout while `start` used another — a false green.
 3. Start the stack with `justsearch.dev.start`.
@@ -57,6 +58,7 @@ The **EvidenceBundle format itself is live and load-bearing** — only the two M
    - `waitTimeoutMs` may need to be higher than the default on cold machines or after clean builds.
    - `chatProfile?: "compact" | "standard"` (tempdoc 842) selects the llama-server chat model pair delivered as `JUSTSEARCH_CHAT_PROFILE` in the spawn env. Defaults to `compact` — dev stacks run the small dev-tier model unless told otherwise.
    - On `OWNER_CONFLICT`, `justsearch.dev.acquire_when_free` waits for the stack instead of a conflict → ask → manual-retry loop.
+   - `hotReload` **defaults true** (tempdoc 844): the Worker gets a JDWP listener on a per-run port, recorded in `run.json`. Pass `hotReload: false` to opt out; `reload` then refuses with `HOT_RELOAD_NOT_ENABLED` rather than reporting a push it could not make.
 4. Use `justsearch.dev.fetch_api_json` for common read-only diagnostics.
 5. Use `justsearch.dev.api_call` only when the endpoint is in the explicit allowlist.
 6. Use `justsearch.dev.stop` when the run should be shut down.
@@ -168,9 +170,111 @@ When an endpoint is not allowlisted, update the dev MCP implementation and this 
   `POST /api/settings/v2` with `{"llm":{"modelPath":"<gguf>","gpuLayers":99}}`, then `ai_activate`. An explicit
   path is operator-owned and wins over the profile (tempdoc 842 precedence); prefer `chatProfile` unless you
   need a model outside the registry pairs.
-- Use `justsearch.dev.reload` after backend changes. It reports whether hot swap worked and whether structural changes require a restart.
 - Do not treat embedding readiness and online LLM readiness as the same thing. Embeddings are Worker-side; online chat/QA uses the app inference runtime.
 - `justsearch.dev.quick_health` reports `aiActive` (real tri-state: `true`/`false` for a reachable stack, `null` when unreachable) plus a `model` block (`chatProfile`, `modelPath`) when the runtime reports realized chat identity, and a declared `freshness` block (tempdoc 637) aggregating build/index/binding/lock staleness sources.
+
+## The Foreign-Run Register
+
+Two dev-stack lifecycles cannot see each other (tempdoc 844 §6.1): the MCP tools know only what
+`dev-runner.cjs` started, while `jseval` boots its own backend on the hardcoded port `33221`. That
+already cost a measurement round. `quick_health` therefore *probes* known ports — and, since D3, a
+producer can also **declare** its run, so `foreignRuns` reports identity rather than inferring
+"something is listening".
+
+**Location.** `<main-checkout>/tmp/dev-runner/foreign/<producer>-<pid>.json`, one file per backend.
+
+Deliberately a *sibling* of the dev-runner's own state, never inside it. `dev-runner.cjs` never
+enumerates its state root — it globs only `runs/` (which it also **prunes**) and reads
+`active.json`, `active.lock.json`, `op-leases.json`, `sessions/` and `interference-events.ndjson`
+by exact name. So `foreign/` is invisible to the 271/542 lease and admission logic, cannot be
+mistaken for one of its runs, and cannot be deleted by run retention. Nothing here writes
+`active.json` or an op-lease.
+
+**Producer.** `scripts/jseval/jseval/run_register.py`. `start_backend` writes the record at spawn
+(not after health — the JVM holds ports, the data dir and the GPU from the moment it starts, and
+that boot window is exactly what a neighbour's "is the machine free?" check must not miss);
+`stop_backend` removes it, keyed by pid. Writes are a temp file plus an atomic `os.replace`, so a
+torn record is never readable. Registration is best-effort: a failed write logs a warning and
+leaves the run merely *observed*, never failing the eval run.
+
+**Record (v1).** Small and versioned; a reader that does not know the version reports the record as
+`unreadable` rather than guessing.
+
+| Field | Meaning |
+|---|---|
+| `schemaVersion` | `1`. Bumped only for a breaking shape change. |
+| `producer` | `"jseval"`. |
+| `recordId` / `pid` | `jseval-<pid>`, and the producer process id used for liveness. |
+| `ports.api` | The backend's HTTP port (`33221` for jseval). |
+| `repoRoot` / `dataDir` | Which tree it was launched from, and which data dir it holds. |
+| `workload` | `"eval-backend"` (`:modules:ui:runHeadlessEval`). |
+| `inferenceRequested` | Whether `-Pllm=true` was asked for. |
+| `gpuBound` | `"unverified"` — the producer does **not** measure GPU residency, so it declines to claim it either way. Treat a live eval backend as GPU contention anyway: its Worker loads the ONNX encoder stack and this repo has no CPU fallback. |
+| `sessionId` | The agent session that owns it, from `tmp/agent-telemetry/current-session-id`, or `null`. |
+| `startedAt` | UTC ISO-8601, second precision. |
+
+**The record makes no liveness claim** — by design. A killed `jseval` never runs its cleanup, so a
+leaked record must never masquerade as a live backend. Liveness is decided by the *reader*
+(`probeForeignRuns`, `scripts/dev/justsearch-dev-mcp/server.mjs`) from the pid and the port, and
+reported as the `state` described under Standard Workflow. A `stale` record is reported, never
+silently deleted: deleting another lifecycle's state on a read would be exactly the confident guess
+this surface is supposed to have stopped making. The entry names `recordFile` so removal is trivial.
+
+**Scope.** This is one producer, one consumer and one small record — not a general run registry
+(tempdoc 844 §12.4 rules that out). Registration is not enforced anywhere; a bare
+`gradlew runHeadless` still registers nothing, which is precisely why the port probe stays as the
+fallback that keeps the register honest about what it does not cover.
+
+## Hot Reload
+
+`justsearch.dev.reload` compiles a module, pushes the changed **method bodies** into the running
+Worker over JDWP, and signals `DevReloadManager` to reconstruct the Worker's services — carrying
+`ModelContext` (embedding, SPLADE, NER, compat controller) across the reconstruction. Keeping the
+ONNX encoders loaded is the capability; a warm restart reloads them and costs ~40s to worker-ready.
+
+What it does **not** do: structural changes (added/removed methods, fields, constructors) are
+rejected by standard HotSwap. They are reported as `structuralChangeDetected` + `restartRequired`,
+never staged or half-applied — restart the stack for those.
+
+Parameters: `module` (default `worker-services`), `skipCompile`, `takeover`, `debugPort` (a
+diagnostics-only override of the recorded port), `sessionId`.
+
+Reported per call: `compiledFrom` (the tree it compiled and pushed from), `debugPort`,
+`identityVerified`, `classesChanged` / `classesRedefined` / `classesNotLoaded`, `hotSwapOutcome`,
+`signalWritten`, and `signalSkippedReason` when services were **not** reconstructed.
+
+Three properties are load-bearing, and each replaces a measured silent failure (tempdoc 844 §5.6):
+
+- **The compile root is the run's tree, not the caller's.** `reload` reads `repoRoot` from the
+  active run record and compiles, pushes and reads the build stamp there. Previously it took the
+  target from the run record and the bytecode from `process.cwd()` frozen at MCP-server launch, so
+  under `distFrom` — 125 of 162 measured starts — a worktree agent's classes were redefined into
+  another agent's JVM and reported as success.
+- **The target VM proves its identity before anything is redefined.** The dev-runner records the
+  Worker's classes dir in `run.json`; `WorkerSpawner` puts that same absolute path first on the
+  Worker's classpath; `HotSwapPush` reads the attached VM's own classpath back over JDI and refuses
+  unless the entry is there. Attaching to "whatever listens on 5005" is no longer possible.
+- **Success is confirmed, not assumed.** A push that redefined zero classes is not success, the
+  marker file is not advanced, and the reload signal is **not** written — a failed push no longer
+  tears down and reconstructs a stack's services with no new bytecode to show for it.
+
+### Reload Error Codes
+
+| Code | Cause | Resolution |
+|------|-------|------------|
+| `NO_ACTIVE_RUN` | No active dev stack. | `start` first. |
+| `OWNER_CONFLICT` | `reload` mutates a run, so it is ownership-gated like `start`/`stop`. | Same remedy as the start-tool code below. `takeover` authorizes the call; it does **not** transfer the lease. |
+| `RUN_ROOT_UNRESOLVED` | The active run record does not say which checkout it was launched from, or that checkout is gone. | Stop and start the stack again. `reload` refuses rather than falling back to the caller's tree — that fallback was the defect. |
+| `HOT_RELOAD_NOT_ENABLED` | The stack was started with `hotReload: false` (no JDWP listener exists), or its run record predates the per-run hot-reload record. | Restart the stack; `hotReload` defaults true. |
+| `COMPILE_FAILED` | Gradle `compileJava` failed in the run's tree. | Fix the compile error; the tail of the Gradle output is in the message. |
+| `TARGET_IDENTITY_MISMATCH` | The JVM on the run's JDWP port was not launched from the tree the run record names. | Nothing was pushed. Re-orient with `quick_health` — a foreign or stale backend is holding that port. |
+| `TARGET_IDENTITY_UNVERIFIED` | The push tool did not confirm the target's identity (e.g. an older `HotSwapPush` copy). | Treated as not-confirmed rather than success; rebuild/refresh the checkout. |
+| `NO_CLASSES_REDEFINED` | Changed classes existed, but none is loaded in the target VM, so no bytecode was replaced. | Not a success and not a signal-worthy event. Exercise the code path first, or restart. |
+| `STRUCTURAL_CHANGE` | Added/removed methods or fields — standard HotSwap cannot apply it. | Restart the dev stack. |
+| `HOTSWAP_FAILED` | The push failed for another reason (JDWP unreachable, timeout). | `hotSwapOutput` carries the tail; check the stack is alive. |
+
+A call that finds no changed class file since the last push returns `ok: true` with `noOp: true`
+and writes no signal — distinct from a push that failed.
 
 ## Start-Tool Error Codes
 

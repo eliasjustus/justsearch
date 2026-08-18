@@ -36,7 +36,12 @@ cd scripts/jseval
 python -m jseval run --dataset scifact --max-queries 0 --pipeline --reset
 ```
 
-Start the dev stack with `hotReload: true` for full JDWP + service reconstruction support.
+`hotReload` defaults true on `start` (tempdoc 844), so the JDWP listener and service
+reconstruction are there unless you opted out with `hotReload: false` — in which case `reload`
+refuses with `HOT_RELOAD_NOT_ENABLED` instead of reporting a push it did not make. `reload`
+compiles from the tree the running stack was launched from (not your cwd), is ownership-gated, and
+verifies the target VM's identity before redefining anything. Full behaviour and error codes:
+`docs/reference/contributing/mcp-dev-tools.md` § Hot Reload.
 
 ## Do NOT Write Manual Polling Loops
 

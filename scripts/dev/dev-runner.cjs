@@ -795,6 +795,44 @@ function resolveProvenance() {
   };
 }
 
+/**
+ * Tempdoc 844 §4.2 R3 — the per-run hot-reload record.
+ *
+ * The JDWP port was a hardcoded 5005 in three independent places (this file, the MCP `reload`
+ * handler's default, and WorkerSpawner's fallback), so `reload` attached to "whatever listens on
+ * 5005" with no way to tell whose VM that was. The port is chosen HERE, once, forwarded to the
+ * Worker via JUSTSEARCH_DEV_DEBUG_PORT and written into run.json; `reload` reads it from there.
+ *
+ * `classesDir` is the identity token: WorkerSpawner puts the same absolute path first on the
+ * Worker's classpath (R4), so a pusher can confirm over JDI that the VM it attached to is the one
+ * this run launched — instead of trusting a port number.
+ *
+ * An explicit JUSTSEARCH_DEV_DEBUG_PORT still wins (operator override); otherwise the first free
+ * port from 5005 upward is taken, so a second stack cannot silently share the first one's port.
+ */
+async function resolveDevHotReload(enabled) {
+  if (!enabled) {
+    return { enabled: false, debugPort: null, classesDir: null };
+  }
+  const classesDir = toPosix(
+    path.join(repoRoot, 'modules', 'worker-services', 'build', 'classes', 'java', 'main'));
+  const override = Number(process.env.JUSTSEARCH_DEV_DEBUG_PORT);
+  if (Number.isInteger(override) && override > 0) {
+    return { enabled: true, debugPort: override, classesDir, portSource: 'env-override' };
+  }
+  for (let port = 5005; port < 5025; port += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    if (!(await isTcpListening(port))) {
+      return { enabled: true, debugPort: port, classesDir, portSource: 'scan' };
+    }
+  }
+  const err = new Error(
+    'No free JDWP port in 5005-5024 for hot-reload. Stop whatever is listening there, '
+    + 'set JUSTSEARCH_DEV_DEBUG_PORT explicitly, or start without hot reload.');
+  err.code = 'DEBUG_PORT_UNAVAILABLE';
+  throw err;
+}
+
 function checkHttp200(url, timeoutMs) {
   return new Promise((resolve) => {
     const u = new URL(url);
@@ -1454,6 +1492,11 @@ async function cmdStart(opts) {
   // Tempdoc 606 Piece 2: capture provenance of the dist we are about to launch.
   // installDist has run by now, so the lib dir exists for the content stamp.
   const devStackProvenance = resolveProvenance();
+
+  // Tempdoc 844 §4.2 R3: hot-reload facts are RECORDED per run instead of being a constant
+  // three code sites agreed on by coincidence. The MCP `reload` tool reads the port and the
+  // identity token from run.json; nothing re-derives 5005.
+  const devHotReload = await resolveDevHotReload(opts.hotReload);
   process.stderr.write(
     `[dev-runner] Launching dist: repoRoot=${devStackProvenance.repoRoot} ` +
     `gitHead=${devStackProvenance.gitHead ?? '?'} headDistStamp=${devStackProvenance.headDistStamp ?? '?'}\n`);
@@ -1502,10 +1545,12 @@ async function cmdStart(opts) {
         // Tempdoc 542 §B Layer 3: Head reads this to know where to write op-leases.json.
         // Absent → Head's OperationLeaseService is a no-op (production / non-dev-runner).
         JUSTSEARCH_DEV_RUNNER_STATE_ROOT: stateRoot,
-        // Hot-reload: enable JDWP + DevReloadManager on Worker (tempdoc 305)
-        ...(opts.hotReload ? {
+        // Hot-reload: enable JDWP + DevReloadManager on Worker (tempdoc 305).
+        // Tempdoc 844 R3: the port comes from the per-run record written into run.json below,
+        // so the pusher reads it instead of assuming 5005.
+        ...(devHotReload.enabled ? {
           JUSTSEARCH_DEV_HOTRELOAD: 'true',
-          JUSTSEARCH_DEV_DEBUG_PORT: String(process.env.JUSTSEARCH_DEV_DEBUG_PORT || '5005'),
+          JUSTSEARCH_DEV_DEBUG_PORT: String(devHotReload.debugPort),
         } : {}),
         // Head startup flags: SerialGC (small heap, no throughput need),
         // -XX:-UsePerfData (skip hsperfdata file).
@@ -1696,6 +1741,10 @@ async function cmdStart(opts) {
     // Tempdoc 730 Increment-4 review: identity stamp of THIS run's worker.log at readiness, used
     // by preserveWorkerLog's stop-time ownership guard (null if the file didn't exist yet).
     workerLogStamp,
+    // Tempdoc 844 §4.2 R3: what `reload` needs to push into THIS run — never re-derived from the
+    // caller's cwd. `enabled:false` is a recorded fact ("this stack has no JDWP listener"), which
+    // is why `reload` can refuse instead of attaching to a stranger's port.
+    hotReload: devHotReload,
     spawn: {
       backend: { cwd: toPosix(spawnBackend.cwd), command: path.basename(spawnBackend.command), args: spawnBackend.args, shell: spawnBackend.shell },
       frontend: { cwd: toPosix(spawnF.cwd), command: spawnF.command, args: spawnF.args, shell: spawnF.shell },

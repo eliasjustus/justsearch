@@ -99,7 +99,11 @@ export const StartInputSchema = z
     takeover: z.enum(['deny', 'warn', 'force']).optional()
       .describe('Takeover policy if another agent owns the backend (default: deny)'),
     hotReload: z.boolean().optional()
-      .describe('Enable hot-reload: JDWP agent + DevReloadManager on Worker (default: false). Use with reload tool after code changes.'),
+      .describe('Enable hot-reload: JDWP agent + DevReloadManager on Worker, and the per-run JDWP '
+        + 'port the reload tool pushes to. DEFAULT TRUE (tempdoc 844 §4.2 condition 3 — it was '
+        + 'opt-in on 1 of 162 measured starts, so nobody could reach the capability, or its bugs). '
+        + 'Pass false to opt out: the Worker then has no JDWP listener at all and reload will '
+        + 'refuse with HOT_RELOAD_NOT_ENABLED rather than pretend.'),
     leaseDurationSec: z.number().int().optional()
       .describe('Tempdoc 735 G6: campaign-length ownership hold, in seconds — clamped server-side to '
         + '[30, 7200] (default: 30, i.e. current behavior). Declare this at start for a long measurement '
@@ -622,12 +626,24 @@ const QuickHealthModelSchema = z
 
 // Tempdoc 844 B3: one observed-but-unowned listener. `attribution` is itself a tri-state —
 // "unowned" (provably not the active run) vs "unknown" (could not be attributed), never merged.
+//
+// Tempdoc 844 D3 adds `source`, which says HOW this entry is known, and `state`, which says what
+// was actually verified about a declared one. The pairing is the honesty contract:
+//   source:'observed'   — a port answered; nothing else is known (the P5 fallback).
+//   source:'registered' — a producer (`jseval`) declared it in tmp/dev-runner/foreign; `state` is
+//                         then 'live' (port answered), 'unreachable' (port silent, pid alive),
+//                         'stale' (port silent, pid gone — a record its producer never retired) or
+//                         'unreadable' (the record file could not be parsed). A registered record
+//                         is NEVER reported as live on the strength of the record alone.
+// `port`/`probePath` are nullable only for 'unreadable', where there is no trustworthy port to name.
 const ForeignRunSchema = z
   .object({
-    port: z.number().int().positive(),
+    port: z.number().int().positive().nullable(),
     kind: z.enum(['backend', 'inference']),
-    probePath: z.string(),
+    probePath: z.string().nullable(),
     attribution: z.enum(['unowned', 'unknown']),
+    source: z.enum(['observed', 'registered']),
+    state: z.enum(['live', 'unreachable', 'stale', 'unreadable']).optional(),
   })
   .passthrough();
 
@@ -661,9 +677,16 @@ export const ReloadInputSchema = z.object({
   module: z.string().optional()
     .describe('Gradle module to compile (default: worker-services)'),
   debugPort: z.number().int().positive().optional()
-    .describe('JDWP debug port for HotSwapPush (default: 5005)'),
+    .describe('Tempdoc 844 R3: override the JDWP port recorded in the run record. Diagnostics '
+      + 'only — the port normally comes from run.json (the dev-runner picks it per run), and the '
+      + 'target VM must still prove its identity, so an override cannot be used to push into '
+      + 'another tree\'s stack.'),
   skipCompile: z.boolean().optional()
     .describe('Skip Gradle compile, only push + signal (default: false)'),
+  takeover: z.enum(['deny', 'warn', 'force']).optional()
+    .describe('Tempdoc 844 R2: reload MUTATES a run, so it is ownership-gated like start/stop. '
+      + 'Default "deny" refuses with OWNER_CONFLICT when another agent owns the stack. This '
+      + 'authorizes the push; it does NOT transfer the lease.'),
   sessionId: z.string().optional(),
 }).strict();
 

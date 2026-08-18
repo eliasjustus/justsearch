@@ -783,6 +783,79 @@ export const API_CALL_ALLOWLIST = [
 export const FOREIGN_BACKEND_PORTS = [33221];
 
 /**
+ * Tempdoc 844 D3 — where a non-dev-runner producer declares its run.
+ *
+ * `scripts/jseval/jseval/run_register.py` writes one small versioned record per backend it
+ * spawns; this is the consumer. The directory sits BESIDE the dev-runner's own state, never
+ * inside it: `dev-runner.cjs` enumerates only `runs/` (`:387`, which it also prunes) and reads
+ * `active.json` / `active.lock.json` / `op-leases.json` / `sessions/` / `interference-events.ndjson`
+ * by exact name — it never lists its state root — so `foreign/` cannot be mistaken for one of its
+ * runs and the 271/542 lease semantics are untouched.
+ */
+export const FOREIGN_REGISTER_RELPOSIX = 'tmp/dev-runner/foreign';
+
+/** The record shape this reader understands. A record declaring anything else is reported as
+ *  unreadable rather than interpreted on a guess. */
+export const FOREIGN_RECORD_SCHEMA_VERSION = 1;
+
+/** Bounds: `quick_health` is called ~133×/21 sessions at 0% errors and must stay cheap. */
+const FOREIGN_REGISTER_MAX_RECORDS = 32;
+const FOREIGN_REGISTER_MAX_BYTES = 16_000;
+
+/**
+ * Tempdoc 844 D3 — read the foreign-run register.
+ *
+ * Returns one entry per `*.json` file, each either `{ ok: true, recordId, record }` or
+ * `{ ok: false, recordId, reason }`. A torn, oversized, non-JSON or wrong-version file becomes an
+ * `ok: false` entry, never an exception and never a silent skip: "there is a record here I could
+ * not read" is a state the caller must be told about, not one to hide (§12.2).
+ *
+ * Makes NO liveness claim — that is `probeForeignRuns`' job, from the pid and the port.
+ */
+export async function readForeignRegister({
+  dir,
+  maxRecords = FOREIGN_REGISTER_MAX_RECORDS,
+  maxBytes = FOREIGN_REGISTER_MAX_BYTES,
+} = {}) {
+  if (!dir) return [];
+  let names;
+  try {
+    const entries = await fsp.readdir(dir, { withFileTypes: true });
+    names = entries.filter((e) => e.isFile() && e.name.endsWith('.json')).map((e) => e.name).sort();
+  } catch {
+    return []; // no register directory at all — nothing has ever registered here
+  }
+
+  const out = [];
+  for (const name of names.slice(0, maxRecords)) {
+    const recordId = name.replace(/\.json$/, '');
+    const abs = path.join(dir, name);
+    try {
+      const st = await fsp.lstat(abs);
+      if (st.isSymbolicLink()) { out.push({ ok: false, recordId, reason: 'record is a symlink' }); continue; }
+      if (st.size > maxBytes) { out.push({ ok: false, recordId, reason: `record too large (${st.size} > ${maxBytes} bytes)` }); continue; }
+      const record = JSON.parse(await fsp.readFile(abs, 'utf8'));
+      if (record?.schemaVersion !== FOREIGN_RECORD_SCHEMA_VERSION) {
+        out.push({ ok: false, recordId, reason: `unknown schemaVersion ${JSON.stringify(record?.schemaVersion)} (this reader understands ${FOREIGN_RECORD_SCHEMA_VERSION})` });
+        continue;
+      }
+      const port = record?.ports?.api;
+      if (!Number.isInteger(port) || port <= 0) {
+        out.push({ ok: false, recordId, reason: `record declares no usable ports.api (${JSON.stringify(port)})` });
+        continue;
+      }
+      out.push({ ok: true, recordId, record });
+    } catch (err) {
+      out.push({ ok: false, recordId, reason: String(err?.message || err).slice(0, 200) });
+    }
+  }
+  if (names.length > maxRecords) {
+    out.push({ ok: false, recordId: '(register)', reason: `${names.length} records present; only the first ${maxRecords} were read` });
+  }
+  return out;
+}
+
+/**
  * Tempdoc 844 B3/§6.1 — probe for backends the dev-runner did not start, and report them as
  * *observed but unowned*, never merged with the owned run.
  *
@@ -795,7 +868,27 @@ export const FOREIGN_BACKEND_PORTS = [33221];
  *   `[]`   = I looked and found nothing.
  *   `[..]` = I looked and found these, and none of them is the run I own.
  *
- * `probe` is injectable so this is unit-testable without a network.
+ * Tempdoc 844 D3 extends this with the *register* (`readForeignRegister`), which turns "something
+ * is listening on 33221" into "jseval's eval backend, from tree X, pid N". The two sources are
+ * merged but never conflated — every entry carries `source`:
+ *
+ *   `source:'registered'` — a producer declared this run. `state` then says what was verified:
+ *       `live`        the declared port answered;
+ *       `unreachable` the port is silent but the pid is alive (booting, or wedged);
+ *       `stale`       the port is silent AND the pid is gone — a record its producer never got to
+ *                     retire (a killed `jseval` never runs its cleanup). Reported, NOT deleted:
+ *                     deleting another lifecycle's state on a read is exactly the kind of
+ *                     confident guess §12.2 forbids, and the file path is given so removal is a
+ *                     one-liner for whoever owns it;
+ *       `unreadable`  the file exists but could not be parsed/understood — an explicit unknown.
+ *   `source:'observed'` — a port answered with no record behind it. Identical to the P5 behaviour;
+ *       all that is known is that something is listening.
+ *
+ * Registration is the authoritative path and probing is the fallback that keeps the register
+ * honest about what never registered — so a registered port is never ALSO reported as `observed`.
+ *
+ * `probe`, `readRegister` and `isPidAlive` are injectable so this is unit-testable without a
+ * network, and `registerDir` can point at a fixture. Still spawns no subprocess.
  */
 export async function probeForeignRuns({
   enabled,
@@ -806,19 +899,89 @@ export async function probeForeignRuns({
   inferencePort = INFERENCE_PORT,
   timeoutMs = 800,
   probe = httpGetStatusCode,
+  registerDir = null,
+  readRegister = readForeignRegister,
+  isPidAlive = _pidAlive,
 } = {}) {
   if (!enabled) return null;
   try {
-    const checks = ports
-      .filter((port) => port !== ownedApiPort)
+    // The register is consulted only when probing is on. Without a probe a record's liveness
+    // cannot be verified, and listing an unverified record as a run would be the confident
+    // default §12.2 rules out — so `probe:false` keeps meaning exactly "I did not look".
+    const register = registerDir ? await readRegister({ dir: registerDir }) : [];
+
+    const registeredPorts = new Set();
+    for (const entry of register) {
+      if (entry.ok) registeredPorts.add(entry.record.ports.api);
+    }
+
+    // The owned run's own port is not worth a probe on its own account (nothing to learn), but a
+    // record that CLAIMS it still has to be resolved — so it comes back in via registeredPorts.
+    const backendPorts = new Set([...ports.filter((port) => port !== ownedApiPort), ...registeredPorts]);
+    const checks = [...backendPorts]
       .map(async (port) => ({ port, kind: 'backend', probePath: '/api/status', code: await probe(`http://127.0.0.1:${port}/api/status`, timeoutMs) }));
     checks.push(
       probe(`http://127.0.0.1:${inferencePort}/health`, timeoutMs)
         .then((code) => ({ port: inferencePort, kind: 'inference', probePath: '/health', code })),
     );
     const results = await Promise.all(checks);
+    const answered = new Map(results.filter((r) => r.kind === 'backend').map((r) => [r.port, r.code === 200]));
 
     const found = [];
+
+    // 1. Registered records first — identity beats inference.
+    for (const entry of register) {
+      if (!entry.ok) {
+        found.push({
+          port: null,
+          kind: 'backend',
+          probePath: null,
+          attribution: 'unknown',
+          source: 'registered',
+          state: 'unreadable',
+          recordId: entry.recordId,
+          recordFile: `${FOREIGN_REGISTER_RELPOSIX}/${entry.recordId}.json`,
+          reason: entry.reason,
+        });
+        continue;
+      }
+      const rec = entry.record;
+      const port = rec.ports.api;
+      const portAnswered = answered.get(port) === true;
+      const pidAlive = Number.isInteger(rec.pid) ? isPidAlive(rec.pid) : null;
+      const state = portAnswered ? 'live' : (pidAlive ? 'unreachable' : 'stale');
+      found.push({
+        port,
+        kind: 'backend',
+        probePath: '/api/status',
+        // A record claiming the port the dev-runner's own run holds cannot be attributed by this
+        // probe — whichever process answered, the listener is ambiguous. Unknown, not unowned.
+        attribution: port === ownedApiPort ? 'unknown' : 'unowned',
+        source: 'registered',
+        state,
+        liveness: { portAnswered, pidAlive },
+        // The port answers but the process the record names is gone: something IS up, but this
+        // record's identity may no longer describe it (jseval records the launcher pid, and the
+        // Worker JVM has been observed to outlive its process tree — `backend.py:26-35`). Saying
+        // "live" alone would attach verified-listener status to unverified identity.
+        ...(portAnswered && pidAlive === false ? { identityStale: true } : {}),
+        recordId: rec.recordId ?? entry.recordId,
+        recordFile: `${FOREIGN_REGISTER_RELPOSIX}/${entry.recordId}.json`,
+        producer: rec.producer ?? null,
+        pid: Number.isInteger(rec.pid) ? rec.pid : null,
+        repoRoot: rec.repoRoot ?? null,
+        dataDir: rec.dataDir ?? null,
+        workload: rec.workload ?? null,
+        inferenceRequested: typeof rec.inferenceRequested === 'boolean' ? rec.inferenceRequested : null,
+        // Passed through verbatim. `"unverified"` is the producer saying it did not measure GPU
+        // residency; this reader must not upgrade that to a claim it also cannot verify.
+        gpuBound: rec.gpuBound ?? null,
+        sessionId: rec.sessionId ?? null,
+        startedAt: rec.startedAt ?? null,
+      });
+    }
+
+    // 2. Then anything listening that nothing declared — today's P5 behaviour, unchanged.
     for (const r of results) {
       if (r.code !== 200) continue;
       if (r.kind === 'inference') {
@@ -831,9 +994,12 @@ export async function probeForeignRuns({
           kind: 'inference',
           probePath: r.probePath,
           attribution: !hasActiveRun || aiActive === false ? 'unowned' : 'unknown',
+          source: 'observed',
         });
       } else {
-        found.push({ port: r.port, kind: 'backend', probePath: r.probePath, attribution: 'unowned' });
+        if (registeredPorts.has(r.port)) continue; // already reported, with identity
+        if (r.port === ownedApiPort) continue;     // the run this dev-runner owns
+        found.push({ port: r.port, kind: 'backend', probePath: r.probePath, attribution: 'unowned', source: 'observed' });
       }
     }
     return found;
@@ -918,6 +1084,189 @@ export async function resolveDistRoot({ distFrom, mainRepoRoot, fallbackRepoRoot
   return { ok: true, repoRoot: resolved, devRunnerPath, distFrom: raw, resolvedVia };
 }
 
+/**
+ * Tempdoc 844 §4.2 R1 — where `reload` must compile and push FROM.
+ *
+ * The bug: `reload` read its target (data dir, signal file) from the active run record but took
+ * its bytecode (Gradle wrapper, classes dir, HotSwapPush) from `process.cwd()` frozen at MCP-server
+ * launch. Under `distFrom` — 125 of 162 measured starts — those are different trees by
+ * construction, so agent B's classes were redefined into agent A's JVM and reported as success
+ * (§5.6 case (c)).
+ *
+ * The fix is to derive everything from the run record's own `repoRoot` — the tree the running
+ * Worker was actually launched from — validated through the SAME `resolveDistRoot` that `start`
+ * and `preflight` share, so there is one root-resolution path, not three. When the run's tree
+ * cannot be established this FAILS: falling back to the caller's tree is precisely the defect.
+ */
+export async function resolveReloadTarget({ mainRepoRoot, runJson }) {
+  const rawRoot = typeof runJson?.repoRoot === 'string' ? runJson.repoRoot.trim() : '';
+  if (!rawRoot) {
+    return {
+      ok: false,
+      error: {
+        code: 'RUN_ROOT_UNRESOLVED',
+        message: 'The active run record does not say which checkout it was launched from '
+          + '(run.json has no repoRoot), so there is no way to know which tree\'s bytecode belongs '
+          + 'in it. Refusing to guess — stop and start the stack again to get a run record that '
+          + 'records its own root.',
+      },
+    };
+  }
+  const resolved = await resolveDistRoot({ distFrom: rawRoot, mainRepoRoot, fallbackRepoRoot: null });
+  if (!resolved.ok) {
+    return {
+      ok: false,
+      error: {
+        code: 'RUN_ROOT_UNRESOLVED',
+        message: `The active run says it was launched from ${rawRoot}, which is not a usable `
+          + `checkout right now: ${resolved.error.message}`,
+      },
+    };
+  }
+  const hr = runJson?.hotReload ?? null;
+  if (!hr || hr.enabled !== true) {
+    return {
+      ok: false,
+      error: {
+        code: 'HOT_RELOAD_NOT_ENABLED',
+        message: hr
+          ? 'This stack was started with hotReload: false, so its Worker has no JDWP listener — '
+            + 'there is nothing to push bytecode to. (The old instructions claimed reload still '
+            + 'pushed method-body changes without it; WorkerSpawner\'s early return guards the '
+            + '-agentlib:jdwp flag too, so that was never true.) Stop and start again; hotReload '
+            + 'now defaults true.'
+          : 'This run record predates the per-run hot-reload record (tempdoc 844 R3), so the JDWP '
+            + 'port and target identity of its Worker are unknown. Refusing to attach to a port on '
+            + 'the assumption that it is 5005 and belongs to this run. Stop and start again.',
+      },
+    };
+  }
+  if (!Number.isInteger(hr.debugPort) || hr.debugPort <= 0) {
+    return {
+      ok: false,
+      error: {
+        code: 'HOT_RELOAD_NOT_ENABLED',
+        message: 'The run record enables hot reload but records no JDWP port, so the target port '
+          + 'is unknown. Stop and start the stack again.',
+      },
+    };
+  }
+  return {
+    ok: true,
+    runRoot: resolved.repoRoot,
+    dataDir: typeof runJson?.dataDir === 'string' && runJson.dataDir ? runJson.dataDir : null,
+    debugPort: hr.debugPort,
+    identityClassesDir: typeof hr.classesDir === 'string' && hr.classesDir ? hr.classesDir : null,
+  };
+}
+
+/**
+ * Tempdoc 844 §4.2 R2 — the Class-C middleware step §11.4 asks for: a tool that MUTATES a run
+ * resolves the run, then checks ownership, then declares staleness. `reload` had none of the
+ * three, so a non-owner could push bytecode into a peer's stack and tear its services down with
+ * no signal to either agent.
+ *
+ * Shares the ONE verdict authority with `start` / `stop` / `acquire_when_free`, so the vocabulary
+ * (`OWNER_CONFLICT`, `IDLE_HOLD`, `takeover`) is the existing one rather than a second dialect.
+ */
+export async function checkRunMutationOwnership({
+  mainRepoRoot, callerRepoRoot, callerSessionId, takeover = 'deny', active, runJson, tool,
+}) {
+  const { ownership, decision } = await buildOwnershipProjection({
+    mainRepoRoot, callerRepoRoot, callerSessionId, takeover, active, runJson,
+  });
+  if (decision && decision.action === 'conflict') {
+    const idle = decision.verdict === 'IDLE_HOLD';
+    return {
+      allowed: false,
+      ownership,
+      decision,
+      refusal: {
+        ok: false,
+        error: {
+          code: 'OWNER_CONFLICT',
+          message: `${tool} mutates the running stack, which another agent owns. `
+            + decision.recommendedAction,
+        },
+        ...(ownership ? { ownership } : {}),
+        actionRequired: idle
+          ? `Owner is idle — retry with takeover: "warn" (no user approval needed). ${tool} does `
+            + 'not transfer the lease; it only authorizes this call.'
+          : `Ask the user before retrying with takeover: "warn". ${tool} does not transfer the `
+            + 'lease; it only authorizes this call.',
+      },
+    };
+  }
+  return { allowed: true, ownership, decision };
+}
+
+/**
+ * Tempdoc 844 §4.2 R5 — what HotSwapPush actually did, read from its exit code and its
+ * machine-readable lines instead of from "it exited 0".
+ *
+ * §5.6 #4: the old tool printed "None of the N changed class(es) are loaded", exited 0, updated
+ * its marker, and the handler recorded `hotSwapOk: true`. Two independent guards now stop that:
+ * the pusher exits 4 in that case, AND a zero `REDEFINED` count is not accepted as success here
+ * even on exit 0 (which also covers an older HotSwapPush copy).
+ *
+ * `identityRequired` maps to R3: when an identity token was passed, a push that did not print
+ * IDENTITY_OK was not identity-checked, and an unverified push is not a confirmed one.
+ */
+export function classifyHotSwapOutcome({ exitCode, stdout = '', stderr = '', identityRequired = true }) {
+  const out = `${stdout}\n${stderr}`;
+  const count = (re) => { const m = out.match(re); return m ? Number(m[1]) : null; };
+  const facts = {
+    classesChanged: count(/^CHANGED (\d+)\s*$/m),
+    classesRedefined: count(/^REDEFINED (\d+)\s*$/m),
+    classesNotLoaded: count(/^NOT_LOADED (\d+)\s*$/m),
+    identityVerified: /^IDENTITY_OK /m.test(out),
+    structuralChangeDetected: out.includes('added/removed methods or fields'),
+  };
+  if (exitCode === 5) {
+    return { ...facts, hotSwapOk: false, outcome: 'IDENTITY_REFUSED', error: {
+      code: 'TARGET_IDENTITY_MISMATCH',
+      message: 'The JVM listening on the run\'s JDWP port was NOT launched from the tree this run '
+        + 'record names, so nothing was pushed. This is the cross-tree injection case — pushing '
+        + 'would have replaced another stack\'s code with this tree\'s.',
+    } };
+  }
+  if (exitCode === 3) {
+    return { ...facts, hotSwapOk: false, noOp: true, outcome: 'NOTHING_CHANGED' };
+  }
+  if (exitCode === 4) {
+    return { ...facts, hotSwapOk: false, outcome: 'NO_CLASSES_REDEFINED', error: {
+      code: 'NO_CLASSES_REDEFINED',
+      message: `${facts.classesChanged ?? 'Some'} changed class file(s) were found, but none of `
+        + 'them is loaded in the target VM, so no bytecode was replaced. Nothing about the running '
+        + 'stack changed; services were NOT reconstructed.',
+    } };
+  }
+  if (exitCode !== 0) {
+    return { ...facts, hotSwapOk: false, outcome: 'PUSH_FAILED', error: {
+      code: facts.structuralChangeDetected ? 'STRUCTURAL_CHANGE' : 'HOTSWAP_FAILED',
+      message: facts.structuralChangeDetected
+        ? 'Structural change (added/removed methods or fields) — standard HotSwap cannot apply it. '
+          + 'Nothing was pushed; restart the stack for this change.'
+        : 'HotSwapPush failed; no bytecode was pushed.',
+    } };
+  }
+  if (identityRequired && !facts.identityVerified) {
+    return { ...facts, hotSwapOk: false, outcome: 'IDENTITY_UNVERIFIED', error: {
+      code: 'TARGET_IDENTITY_UNVERIFIED',
+      message: 'The push tool did not confirm the target VM\'s identity, so it cannot be shown that '
+        + 'the bytecode went into this run\'s Worker rather than another stack\'s. Treating it as '
+        + 'not-confirmed rather than as success.',
+    } };
+  }
+  if (!(facts.classesRedefined > 0)) {
+    return { ...facts, hotSwapOk: false, outcome: 'NO_CLASSES_REDEFINED', error: {
+      code: 'NO_CLASSES_REDEFINED',
+      message: 'The push reported no redefined classes, so no bytecode was replaced.',
+    } };
+  }
+  return { ...facts, hotSwapOk: true, outcome: 'REDEFINED' };
+}
+
 export async function main() {
   const { repoRoot, devRunnerPath } = resolveRepoRoot();
   const mainRepoRoot = resolveMainRepoRoot(repoRoot);
@@ -936,9 +1285,12 @@ export async function main() {
         '(3) start to launch (cold: ~1 min, warm: ~15s HTTP / ~40s worker ready), (4) use tools, (5) stop when done.',
         'quick_health { detail: "full" } returns the dev-runner process/port/readiness payload too.',
         '',
-        'Hot-reload: start with hotReload: true for full service restart support.',
-        'Then call reload after code changes to compile + push bytecode + restart services (~2-3s).',
-        'Without hotReload on start, reload still pushes bytecode (method-body changes only).',
+        'Hot-reload: start defaults to hotReload: true (JDWP listener + DevReloadManager).',
+        'Then call reload after code changes to compile + push bytecode + restart services (~2-3s);',
+        'method bodies only — structural changes are reported, not applied. It keeps the ONNX',
+        'encoders loaded across the change, which is the point (a warm restart reloads them: ~40s).',
+        'With hotReload: false there is no JDWP listener, so reload refuses (HOT_RELOAD_NOT_ENABLED)',
+        'instead of reporting a push it did not make. reload is ownership-gated like start/stop.',
         '',
         'Long campaigns: start with leaseDurationSec (30-7200) to hold ownership without frequent',
         'renewals — avoids a mid-campaign takeover when the agent is busy (jseval/gradle) for minutes',
@@ -1011,7 +1363,10 @@ export async function main() {
         } catch (_) { /* active.json missing or unreadable — proceed to start */ }
       }
 
-      const hotReload = input.hotReload === true;
+      // Tempdoc 844 §4.2 condition 3: hot reload defaults ON. It was opt-in on 1 of 162 measured
+      // starts, so the capability — and the four silent failure modes §5.6 found in it — were
+      // effectively unreachable. `hotReload: false` is the explicit opt-out.
+      const hotReload = input.hotReload !== false;
 
       // Tempdoc 606 Piece 4: optionally launch from a specific worktree's dist. The shared
       // lease stays under the main repo (state is mainRepoRoot-scoped in the dev-runner), so a
@@ -1783,7 +2138,7 @@ export async function main() {
   mcpServer.registerTool(
     'justsearch.dev.quick_health',
     {
-      description: 'Fast orientation — call after compaction or at session start. Returns run state and optional HTTP readiness probes; the default detail:"summary" spawns no subprocess. `foreignRuns` lists JustSearch-shaped backends this dev-runner did NOT start (e.g. a jseval backend on 33221) — `[]` means "probed, found none", `null` means "did not probe" (probe:false), so a free-looking verdict is never a claim about the whole machine. detail:"full" additionally runs the dev-runner status subprocess and returns its process/port/readiness payload under `detail` (this replaced the retired justsearch.dev.status tool).',
+      description: 'Fast orientation — call after compaction or at session start. Returns run state and optional HTTP readiness probes; the default detail:"summary" spawns no subprocess. `foreignRuns` lists JustSearch runs this dev-runner did NOT start — `[]` means "probed, found none", `null` means "did not probe" (probe:false), so a free-looking verdict is never a claim about the whole machine. Each entry says how it is known: `source:"registered"` = its producer (e.g. `jseval`, on 33221) declared it, so it carries identity (`producer`, `repoRoot`, `pid`, `gpuBound`) and a verified `state` — `live` (port answered), `unreachable` (port silent, pid alive), `stale` (port silent, pid gone: a leaked record, nothing is running, remove `recordFile`), `unreadable` (record unparseable). `source:"observed"` = a port answered with nothing declaring it; all that is known is that something is listening. detail:"full" additionally runs the dev-runner status subprocess and returns its process/port/readiness payload under `detail` (this replaced the retired justsearch.dev.status tool).',
       inputSchema: QuickHealthInputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -1889,17 +2244,28 @@ export async function main() {
       // "nothing is running" — that already contaminated a measurement round. Owned vs
       // observed-but-unowned stay separate, and `null` (did not look) stays distinct from `[]`
       // (looked, found nothing).
+      // Tempdoc 844 D3: the register turns "something is on 33221" into "jseval's eval backend,
+      // tree X, pid N" — and, for a record whose producer was killed before it could clean up,
+      // into an explicit "stale record" rather than a phantom live backend.
       const foreignRuns = await probeForeignRuns({
         enabled: probe,
         hasActiveRun: runId !== null,
         ownedApiPort: apiPort,
         aiActive,
+        registerDir: path.join(mainRepoRoot, ...FOREIGN_REGISTER_RELPOSIX.split('/')),
       });
       const foreignRunsNotice = foreignRuns && foreignRuns.length > 0
-        ? `${foreignRuns.length} listener(s) on well-known JustSearch ports were NOT started by this dev-runner `
-          + `(${foreignRuns.map((f) => `${f.port}:${f.kind}/${f.attribution}`).join(', ')}). `
+        ? `${foreignRuns.length} JustSearch run(s) on this machine were NOT started by this dev-runner `
+          + `(${foreignRuns.map((f) => (f.source === 'registered'
+            ? `${f.port ?? '?'}:${f.producer || 'registered'}/${f.state}`
+            : `${f.port}:${f.kind}/${f.attribution}`)).join(', ')}). `
+          + '`source:"registered"` entries are self-declared by their producer and carry identity (repoRoot, pid, '
+          + 'gpuBound); `state:"stale"` means the record\'s port is silent and its pid is gone — nothing is running, '
+          + 'delete `recordFile` if you own it. `source:"observed"` means only that a port answered. '
           + 'Ownership verdicts and `running` describe the dev-runner\'s own run only — ports, GPU and data dirs '
-          + 'may be in use by a neighbour. Check before starting a run or trusting a measurement.'
+          + 'may be in use by a neighbour. A jseval eval backend loads the GPU-only encoder stack, so treat a live '
+          + 'one as GPU contention even though `gpuBound` is "unverified". Check before starting a run or trusting '
+          + 'a measurement.'
         : undefined;
 
       // Tempdoc 637 Layer A: one-look FRESHNESS verdict, aggregated at the dev-tooling layer — the
@@ -2326,45 +2692,71 @@ export async function main() {
   mcpServer.registerTool(
     'justsearch.dev.reload',
     {
-      description: 'Hot-reload Worker code: compile changed classes, push bytecode via JDWP, signal service restart. Requires running dev stack. Call after editing Worker-side code (search, indexing, pipeline logic).',
+      description: 'Hot-reload Worker code in the RUNNING stack: compile from the tree that stack '
+        + 'was launched from, push method-body changes over JDWP into that stack\'s Worker (identity-'
+        + 'checked), then signal a service reconstruction that keeps the ONNX encoders loaded. '
+        + 'Ownership-gated. Structural changes (added/removed methods or fields) are reported, not '
+        + 'applied — restart for those. Requires a stack started with hotReload (the default).',
       inputSchema: ReloadInputSchema,
       annotations: { destructiveHint: false, openWorldHint: false },
     },
     async (rawArgs) => {
       const input = ReloadInputSchema.parse(rawArgs);
       const module = input.module || 'worker-services';
-      const debugPort = input.debugPort || 5005;
       const skipCompile = input.skipCompile === true;
-      const gradleCmd = path.join(repoRoot, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
+      const callerSessionId = input.sessionId || resolveAgentSessionIdForMcp(repoRoot);
       // Tempdoc 696: absolute >= 24 java (not bare PATH `java`, which may be JDK 8) for `--source 25`.
       const javaCmd = resolveJavaExe();
       const jdkEnv = { ...process.env, JAVA_HOME: resolveJdkHome() };
 
       const result = { ok: true, compileMs: null, hotSwapOutput: null, hotSwapOk: null, structuralChangeDetected: false, signalWritten: false };
 
-      // 1. Find active run and data dir
-      let dataDir = null;
+      // ── Class-C middleware step 1 (§11.4): resolve the run ────────────────────────────────
+      let active = null;
+      let runJson = null;
       try {
-        const active = await readJsonFileNoSymlinks({ repoRoot: mainRepoRoot, relPosix: 'tmp/dev-runner/active.json', maxBytes: 200_000 });
+        active = await readJsonFileNoSymlinks({ repoRoot: mainRepoRoot, relPosix: 'tmp/dev-runner/active.json', maxBytes: 200_000 });
         if (!active?.runId) throw new Error('no runId');
-        const runJson = await readRunJson({ repoRoot: mainRepoRoot, runId: active.runId });
-        dataDir = runJson?.dataDir ?? null;
+        runJson = await readRunJson({ repoRoot: mainRepoRoot, runId: active.runId });
+        if (!runJson) throw new Error('no run.json');
       } catch {
         return toToolResult({ ok: false, error: { code: 'NO_ACTIVE_RUN', message: 'No active dev stack. Call start first.' } });
       }
 
-      const signalFile = dataDir ? path.join(dataDir, 'worker_signal.lock') : null;
-      const classesDir = path.join(repoRoot, 'modules', module, 'build', 'classes', 'java', 'main');
-      const hotSwapScript = path.join(repoRoot, 'scripts', 'dev', 'HotSwapPush.java');
+      // ── Class-C middleware step 2 (§11.4, R2): ownership ──────────────────────────────────
+      const gate = await checkRunMutationOwnership({
+        mainRepoRoot, callerRepoRoot: repoRoot, callerSessionId,
+        takeover: input.takeover ?? 'deny', active, runJson, tool: 'reload',
+      });
+      if (!gate.allowed) {
+        maybeAppendNdjson(mainRepoRoot, { event: 'tool_reload', ok: false, conflict: true });
+        return toToolResult(gate.refusal);
+      }
 
-      // 2. Compile
+      // ── R1: compile root comes from the RUN, never from this server's cwd ─────────────────
+      const target = await resolveReloadTarget({ mainRepoRoot, runJson });
+      if (!target.ok) return toToolResult({ ok: false, error: target.error, ...(gate.ownership ? { ownership: gate.ownership } : {}) });
+
+      const { runRoot, dataDir, debugPort: recordedPort, identityClassesDir } = target;
+      const debugPort = input.debugPort || recordedPort;
+      const signalFile = dataDir ? path.join(dataDir, 'worker_signal.lock') : null;
+      const classesDir = path.join(runRoot, 'modules', module, 'build', 'classes', 'java', 'main');
+      // The pusher is the tool THIS server ships with, not whatever copy the run's tree happens to
+      // hold: an older copy would silently skip the identity check it does not have. The bytecode
+      // and the Gradle wrapper come from the run's tree; only the pusher binary is ours.
+      const hotSwapScript = path.join(repoRoot, 'scripts', 'dev', 'HotSwapPush.java');
+      const gradleCmd = path.join(runRoot, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
+      result.compiledFrom = runRoot;
+      result.debugPort = debugPort;
+
+      // 2. Compile — in the run's tree, so the classes pushed are that tree's classes.
       if (!skipCompile) {
         const compileStart = Date.now();
         try {
           const compileResult = await execFileP(
             gradleCmd,
             [`:modules:${module}:compileJava`],
-            { cwd: repoRoot, timeout: 60_000, windowsHide: true, shell: process.platform === 'win32', env: jdkEnv },
+            { cwd: runRoot, timeout: 60_000, windowsHide: true, shell: process.platform === 'win32', env: jdkEnv },
           );
           result.compileMs = Date.now() - compileStart;
           // Check for compilation errors in output
@@ -2377,26 +2769,34 @@ export async function main() {
         }
       }
 
-      // 3. HotSwapPush — push bytecode to running Worker via JDWP
+      // 3. HotSwapPush — push bytecode into the run's Worker, after that VM proves its identity.
+      const hsArgs = ['--add-modules', 'jdk.jdi', '--source', '25', hotSwapScript, String(debugPort), classesDir];
+      if (identityClassesDir) hsArgs.push(identityClassesDir);
+      let hsExit = 0;
+      let hsStdout = '';
+      let hsStderr = '';
       try {
-        const hsResult = await execFileP(
-          javaCmd,
-          ['--add-modules', 'jdk.jdi', '--source', '25', hotSwapScript, String(debugPort), classesDir],
-          { cwd: repoRoot, timeout: 15_000, windowsHide: true, env: jdkEnv },
-        );
-        result.hotSwapOutput = (hsResult.stdout || '').trim();
-        result.hotSwapOk = true;
+        const hsResult = await execFileP(javaCmd, hsArgs, { cwd: runRoot, timeout: 15_000, windowsHide: true, env: jdkEnv });
+        hsStdout = hsResult.stdout || '';
+        hsStderr = hsResult.stderr || '';
       } catch (err) {
-        // HotSwapPush failed — JDWP not available or structural change rejected.
-        // Continue to signal write so service reconstruction still happens.
-        const combinedOutput = ((err.stdout || '') + (err.stderr || '')).trim();
-        result.hotSwapOutput = tail(combinedOutput, 1000).trim();
-        result.hotSwapOk = false;
-        // 371: Detect structural changes (new/removed methods or fields) for clear messaging.
-        if (combinedOutput.includes('added/removed methods or fields')) {
-          result.structuralChangeDetected = true;
-          result.restartRequired = 'Structural changes detected — hot-swap only updated method bodies. Restart the dev stack for full effect.';
-        }
+        hsStdout = err.stdout || '';
+        hsStderr = err.stderr || String(err.message || '');
+        hsExit = typeof err.code === 'number' ? err.code : -1;
+      }
+      const outcome = classifyHotSwapOutcome({
+        exitCode: hsExit, stdout: hsStdout, stderr: hsStderr, identityRequired: !!identityClassesDir,
+      });
+      result.hotSwapOutput = tail(`${hsStdout}\n${hsStderr}`.trim(), 2000).trim();
+      result.hotSwapOk = outcome.hotSwapOk;
+      result.hotSwapOutcome = outcome.outcome;
+      result.identityVerified = identityClassesDir ? outcome.identityVerified : null;
+      result.classesChanged = outcome.classesChanged;
+      result.classesRedefined = outcome.classesRedefined;
+      result.classesNotLoaded = outcome.classesNotLoaded;
+      result.structuralChangeDetected = outcome.structuralChangeDetected;
+      if (outcome.structuralChangeDetected) {
+        result.restartRequired = 'Structural change (added/removed methods or fields) — standard HotSwap cannot apply it. Restart the dev stack.';
       }
 
       // 4. 371: If hot-swap succeeded, propagate the current build stamp to the Worker
@@ -2404,9 +2804,11 @@ export async function main() {
       //    On structural-change failure, skip — the Worker is genuinely stale.
       //    MUST happen BEFORE the MMF signal: the Worker reads this file during performReload(),
       //    which starts as soon as the sentinel detects the signal byte.
+      //    Tempdoc 844 §5.6 #2: the stamp is read from the RUN's tree, not the caller's — copying
+      //    the caller's stamp into a peer's data dir is what defeated 371's stale-JVM detection.
       if (result.hotSwapOk && dataDir) {
         try {
-          const stampPath = path.join(repoRoot, 'modules', 'indexer-worker', 'build', 'install', 'indexer-worker', 'build-stamp.txt');
+          const stampPath = path.join(runRoot, 'modules', 'indexer-worker', 'build', 'install', 'indexer-worker', 'build-stamp.txt');
           const stamp = (await fsp.readFile(stampPath, 'utf8')).trim();
           if (stamp) {
             await fsp.writeFile(path.join(dataDir, 'reload-build-stamp.txt'), stamp, 'utf8');
@@ -2416,8 +2818,14 @@ export async function main() {
         }
       }
 
-      // 5. Write reload signal to MMF (triggers Worker's DevReloadManager)
-      if (signalFile) {
+      // 5. Write reload signal to MMF (triggers Worker's DevReloadManager).
+      //    Tempdoc 844 §5.6 #3 / R5: this used to be gated only on `signalFile` being non-null,
+      //    with a comment saying reconstruction should happen anyway — so a FAILED push still
+      //    quiesced and reconstructed the Worker's services. Tearing services down is not a
+      //    consolation prize for a push that did not land, and on a peer's stack it was an
+      //    unauthorized teardown. It now happens only when new bytecode actually went in, and the
+      //    skip is stated rather than silent.
+      if (result.hotSwapOk && signalFile) {
         try {
           const fh = await fsp.open(signalFile, 'r+');
           try {
@@ -2430,10 +2838,26 @@ export async function main() {
         } catch (err) {
           result.signalError = `Failed to write signal: ${err.message}`;
         }
+      } else if (!result.hotSwapOk) {
+        result.signalSkippedReason = 'No new bytecode was pushed, so services were NOT reconstructed '
+          + '— the running stack is unchanged.';
+      } else if (!signalFile) {
+        result.signalSkippedReason = 'The run record has no dataDir, so the reload signal file could '
+          + 'not be located; bytecode was pushed but services were NOT reconstructed.';
       }
 
-      maybeAppendNdjson(mainRepoRoot, { event: 'tool_reload', ok: result.ok, compileMs: result.compileMs, hotSwapOk: result.hotSwapOk });
-      return toToolResult(result);
+      if (outcome.error) {
+        result.ok = false;
+        result.error = outcome.error;
+      } else if (outcome.noOp) {
+        result.noOp = true;
+        result.note = 'No class file changed since the last push — nothing was pushed and no service '
+          + 'reconstruction was signalled.';
+      }
+
+      maybeAppendNdjson(mainRepoRoot, { event: 'tool_reload', ok: result.ok, compileMs: result.compileMs, hotSwapOk: result.hotSwapOk, outcome: result.hotSwapOutcome });
+      // Class-C middleware step 3 (§11.4, R2): declare staleness on the result itself.
+      return toToolResult(await withStaleness(result, { mainRepoRoot, callerRepoRoot: repoRoot, callerSessionId }));
     },
   );
 
