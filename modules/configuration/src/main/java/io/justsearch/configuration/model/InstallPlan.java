@@ -110,7 +110,12 @@ public record InstallPlan(
    * A model package that was skipped.
    *
    * @param packageId which model package
-   * @param reason why it was skipped (e.g., "Insufficient VRAM for GGUF (6 GB < 7.5 GB)")
+   * @param cause the typed classification of why (tempdoc 840 Phase 2) — what logic reads. Decided
+   *     once, here in the planner, and carried into the install contract unchanged so the contract
+   *     writer never re-derives it from the prose.
+   * @param reason why it was skipped, for display (e.g., "Insufficient VRAM for GGUF (6 GB < 7.5
+   *     GB)"). Display only: classifying by parsing this string is the defect {@code cause} exists
+   *     to remove.
    */
-  public record SkippedPackage(String packageId, String reason) {}
+  public record SkippedPackage(String packageId, SkipCause cause, String reason) {}
 }

@@ -15,10 +15,12 @@ import io.justsearch.configuration.model.ModelPackage;
 import io.justsearch.configuration.model.ModelPrecision;
 import io.justsearch.configuration.model.ModelRegistry;
 import io.justsearch.configuration.model.ModelVariant;
+import io.justsearch.configuration.model.Necessity;
 import io.justsearch.configuration.model.SupportingFile;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -46,7 +48,7 @@ final class AiPreflightServiceTest {
     AiPreflightResult result =
         AiPreflightService.computePreflight(
             registry, modelsDir, aiHome, HardwareProfile.gpuFull(12_000_000_000L),
-            InstallIntent.MCP_LITE, NO_RUNTIME);
+            InstallIntent.MCP_LITE, Set.of(), NO_RUNTIME);
 
     PackageStatus chat = find(result, "chat");
     assertFalse(chat.complete(), "chat is incomplete (no files staged)");
@@ -61,7 +63,7 @@ final class AiPreflightServiceTest {
     AiPreflightResult result =
         AiPreflightService.computePreflight(
             registry, modelsDir, aiHome, HardwareProfile.cpuOnly(),
-            InstallIntent.FULL_DESKTOP, NO_RUNTIME);
+            InstallIntent.FULL_DESKTOP, Set.of(), NO_RUNTIME);
 
     PackageStatus cudaOnly = find(result, "cuda-only");
     assertFalse(cudaOnly.complete(), "cuda-only is incomplete (no files staged)");
@@ -76,7 +78,7 @@ final class AiPreflightServiceTest {
     AiPreflightResult result =
         AiPreflightService.computePreflight(
             registry, modelsDir, aiHome, HardwareProfile.cpuOnly(),
-            InstallIntent.FULL_DESKTOP, NO_RUNTIME);
+            InstallIntent.FULL_DESKTOP, Set.of(), NO_RUNTIME);
 
     PackageStatus embedding = find(result, "embedding");
     assertFalse(embedding.complete(), "embedding is incomplete (no files staged)");
@@ -94,11 +96,49 @@ final class AiPreflightServiceTest {
     AiPreflightResult result =
         AiPreflightService.computePreflight(
             registry, modelsDir, aiHome, HardwareProfile.cpuOnly(),
-            InstallIntent.FULL_DESKTOP, NO_RUNTIME);
+            InstallIntent.FULL_DESKTOP, Set.of(), NO_RUNTIME);
 
     PackageStatus embedding = find(result, "embedding");
     assertTrue(embedding.complete(), "all files staged → complete");
     assertFalse(embedding.blockingIncomplete(), "a complete package is never blocking");
+  }
+
+  /**
+   * (5) Tempdoc 840 Phase 2 — a component the user DECLINED is not a blocking gap. The severity
+   * signal reuses {@code InstallPlanner.isIncludedByPlan}, which mirrors the planner's skip loop; if
+   * that mirror loses the decline gate, a package the install deliberately never downloads starts
+   * reporting as a blocking incompleteness here.
+   */
+  @Test
+  void declined_incomplete_isNotBlocking() {
+    ModelRegistry registry = new ModelRegistry(2, "test", List.of(chatPackage()));
+
+    AiPreflightResult result =
+        AiPreflightService.computePreflight(
+            registry, modelsDir, aiHome, HardwareProfile.gpuFull(12_000_000_000L),
+            InstallIntent.FULL_DESKTOP, Set.of("chat"), NO_RUNTIME);
+
+    PackageStatus chat = find(result, "chat");
+    assertFalse(chat.complete(), "chat is incomplete (no files staged)");
+    assertFalse(
+        chat.blockingIncomplete(),
+        "a declined component is absent by choice — reporting it as a blocking gap is nagging");
+  }
+
+  /** (6) …but declining a REQUIRED package changes nothing: it is still a blocking gap. */
+  @Test
+  void declinedButNotDeclinable_incomplete_isStillBlocking() {
+    ModelRegistry registry = new ModelRegistry(2, "test", List.of(embeddingPackage()));
+
+    AiPreflightResult result =
+        AiPreflightService.computePreflight(
+            registry, modelsDir, aiHome, HardwareProfile.cpuOnly(),
+            InstallIntent.FULL_DESKTOP, Set.of("embedding"), NO_RUNTIME);
+
+    PackageStatus embedding = find(result, "embedding");
+    assertTrue(
+        embedding.blockingIncomplete(),
+        "search does not work without it, so a stale decline must not downgrade the severity");
   }
 
   // --- fixtures -------------------------------------------------------------
@@ -123,7 +163,8 @@ final class AiPreflightServiceTest {
             new ModelVariant("model.onnx", ModelPrecision.FP32, ExecutionProvider.CPU,
                 "AAAA", 1_000, "https://example.com/fp32")),
         List.of(new SupportingFile("tokenizer.json", "CCCC", 10, "https://example.com/tok")),
-        0, null, null, null, CapabilityTier.RETRIEVAL_CORE, false);
+        0, null, null, null, CapabilityTier.RETRIEVAL_CORE, false,
+        Necessity.REQUIRED, List.of());
   }
 
   private static ModelPackage cudaOnlyPackage() {
@@ -133,7 +174,8 @@ final class AiPreflightServiceTest {
             new ModelVariant("model_fp16.onnx", ModelPrecision.FP16, ExecutionProvider.CUDA,
                 "BBBB", 1_000, "https://example.com/fp16")),
         List.of(),
-        0, null, null, null, CapabilityTier.RETRIEVAL_ENRICHMENT, true);
+        0, null, null, null, CapabilityTier.RETRIEVAL_ENRICHMENT, true,
+        Necessity.IMPROVES_RESULTS, List.of("cuda-runtime"));
   }
 
   private static ModelPackage chatPackage() {
@@ -143,6 +185,7 @@ final class AiPreflightServiceTest {
             new ModelVariant("model.gguf", ModelPrecision.GGUF, ExecutionProvider.LLAMA_SERVER,
                 "DDDD", 5_000, "https://example.com/gguf")),
         List.of(),
-        HardwareProfile.MINIMUM_VRAM_FOR_GGUF, null, null, null, CapabilityTier.LLM, false);
+        HardwareProfile.MINIMUM_VRAM_FOR_GGUF, null, null, null, CapabilityTier.LLM, false,
+        Necessity.ADDS_FEATURE, List.of());
   }
 }

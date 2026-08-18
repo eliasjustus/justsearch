@@ -2,7 +2,10 @@ package io.justsearch.configuration.model;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class ModelRegistryLoaderTest {
 
@@ -222,5 +225,112 @@ class ModelRegistryLoaderTest {
           allowedHosts.contains(uri.getHost()),
           "downloadUrl host '" + uri.getHost() + "' is not in the public allowlist " + allowedHosts + ": " + url);
     }
+  }
+
+  /**
+   * Tempdoc 840 Phase 2 — the shipped classification. This is the mapping the install UI turns into
+   * user-facing copy and into which switches exist at all, so it is asserted per package rather than
+   * spot-checked: getting {@code embedding} or {@code cuda-runtime} wrong here is what makes search
+   * (or chat) silently switch-off-able.
+   */
+  @Test
+  void everyPackageDeclaresItsNecessity() {
+    ModelRegistry registry =
+        ModelRegistryLoader.loadFromClasspath("ai/model-registry.v2.json");
+
+    assertEquals(Necessity.REQUIRED, registry.findPackage("embedding").necessity());
+    assertEquals(Necessity.IMPROVES_RESULTS, registry.findPackage("splade").necessity());
+    assertEquals(Necessity.IMPROVES_RESULTS, registry.findPackage("reranker").necessity());
+    assertEquals(Necessity.IMPROVES_RESULTS, registry.findPackage("ner").necessity());
+    assertEquals(Necessity.IMPROVES_RESULTS, registry.findPackage("citation-scorer").necessity());
+    assertEquals(Necessity.ADDS_FEATURE, registry.findPackage("chat").necessity());
+    assertEquals(Necessity.INFRASTRUCTURE, registry.findPackage("cuda-runtime").necessity());
+
+    assertFalse(
+        registry.findPackage("embedding").necessity().userDeclinable(),
+        "search does not work without the embedding model");
+    assertFalse(
+        registry.findPackage("cuda-runtime").necessity().userDeclinable(),
+        "declining 'GPU runtime libraries' would remove chat as a side effect its label never names");
+  }
+
+  /**
+   * Tempdoc 840 Phase 2 — {@code dependsOn} is what makes invariant H1 (nothing that needs the CUDA
+   * runtime is acquired without it) checkable.
+   *
+   * <p>Deliberately NOT a biconditional against "has an FP16/CUDA variant". That was the first
+   * formulation and it is too narrow: {@code chat} ships only a GGUF/{@code LLAMA_SERVER} variant yet
+   * genuinely depends on the runtime package, because {@code cuda-runtime} is what delivers the cuda12
+   * {@code llama-server.exe} that {@code applyCudaServerExe()} points chat at, and this build does not
+   * support CPU chat at all. Encoding the proxy instead of the real relation would have left the one
+   * package whose dependency is least obvious as the one package that did not declare it.
+   *
+   * <p>So the loop asserts only the direction that catches a MISSING edge — a CUDA variant always
+   * implies the dependency — and the named cases below pin the two entries a reader would otherwise
+   * get wrong in opposite directions.
+   */
+  @Test
+  void everyPackageNeedingTheCudaRuntimeDeclaresTheDependency() {
+    ModelRegistry registry =
+        ModelRegistryLoader.loadFromClasspath("ai/model-registry.v2.json");
+
+    for (ModelPackage pkg : registry.packages()) {
+      boolean hasCudaVariant =
+          pkg.variants().stream().anyMatch(v -> v.targetEP() == ExecutionProvider.CUDA);
+      if (hasCudaVariant) {
+        assertTrue(
+            pkg.dependsOn().contains("cuda-runtime"),
+            "package '" + pkg.id() + "' ships a CUDA variant, so it must declare the runtime edge");
+      }
+    }
+    assertTrue(registry.findPackage("embedding").dependsOn().contains("cuda-runtime"));
+    assertTrue(
+        registry.findPackage("chat").dependsOn().contains("cuda-runtime"),
+        "chat has no CUDA *variant* but needs the cuda12 llama-server the runtime package delivers");
+    assertTrue(
+        registry.findPackage("citation-scorer").dependsOn().isEmpty(),
+        "CPU-only INT8 package — the one that genuinely has no edge");
+    assertTrue(
+        registry.findPackage("cuda-runtime").dependsOn().isEmpty(),
+        "the runtime package cannot depend on itself");
+  }
+
+  /**
+   * Tempdoc 840 Phase 2 — fail-closed defaulting, the same rule as {@code required} on supporting
+   * files. An ABSENT necessity (a pre-840 registry) and an UNRECOGNIZED one (a typo, or a category a
+   * newer registry uses and this build does not know) must BOTH land on REQUIRED: a package nobody
+   * classified must never become silently switch-off-able, and an unknown value must not fail the
+   * whole registry load.
+   */
+  @Test
+  void absentOrUnrecognizedNecessity_defaultsToRequired(@TempDir Path tempDir) throws Exception {
+    Path json = tempDir.resolve("registry.json");
+    Files.writeString(
+        json,
+        """
+        {
+          "schemaVersion": 2,
+          "purpose": "test",
+          "packages": [
+            { "id": "unclassified", "label": "L", "description": "D", "targetDir": "d",
+              "minVramBytes": 0, "variants": [], "supportingFiles": [] },
+            { "id": "typo", "label": "L", "description": "D", "targetDir": "d",
+              "necessity": "nice-to-have", "minVramBytes": 0, "variants": [], "supportingFiles": [] },
+            { "id": "classified", "label": "L", "description": "D", "targetDir": "d",
+              "necessity": "adds-feature", "minVramBytes": 0, "variants": [], "supportingFiles": [] }
+          ]
+        }
+        """);
+
+    ModelRegistry registry = ModelRegistryLoader.loadFromFile(json);
+
+    assertEquals(Necessity.REQUIRED, registry.findPackage("unclassified").necessity());
+    assertEquals(Necessity.REQUIRED, registry.findPackage("typo").necessity());
+    assertFalse(registry.findPackage("typo").necessity().userDeclinable());
+    assertEquals(
+        Necessity.ADDS_FEATURE,
+        registry.findPackage("classified").necessity(),
+        "a recognized value must still be honored — the default must not swallow everything");
+    assertTrue(registry.findPackage("unclassified").dependsOn().isEmpty(), "absent dependsOn ⇒ empty");
   }
 }

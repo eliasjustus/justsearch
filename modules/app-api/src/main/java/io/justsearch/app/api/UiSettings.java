@@ -208,6 +208,44 @@ public final class UiSettings {
     this.excludePatterns = new ArrayList<>(cleaned);
   }
 
+  // Tempdoc 840 Phase 2 — per-component install INTENT: registry package ids the user chose not to
+  // install ("I don't want the reranker"). A current PREFERENCE, not a record of what happened: it
+  // must exist before any install run and survive runs that never complete, which is why it lives
+  // here and not in the install contract. The contract's SkipCause.USER_DECLINED is the historical
+  // counterpart; flipping this back re-opens the component as an offerable gap, which reading the
+  // contract could never do.
+  //
+  // Advisory only. InstallPlanner honors an id here only for a package whose Necessity is
+  // user-declinable, so a stale or hand-edited entry naming `embedding` or `cuda-runtime` cannot
+  // turn a mandatory component off.
+  private List<String> declinedAiPackages = new ArrayList<>();
+
+  public List<String> getDeclinedAiPackages() {
+    if (declinedAiPackages == null) {
+      declinedAiPackages = new ArrayList<>();
+    }
+    return declinedAiPackages;
+  }
+
+  public void setDeclinedAiPackages(List<String> declinedAiPackages) {
+    if (declinedAiPackages == null || declinedAiPackages.isEmpty()) {
+      this.declinedAiPackages = new ArrayList<>();
+      return;
+    }
+
+    // Clean + dedupe (preserve insertion order) and cap to avoid abusive payloads — the same shape
+    // as setExcludePatterns above; the registry has 7 packages, so the cap is pure abuse defense.
+    LinkedHashSet<String> cleaned = new LinkedHashSet<>();
+    for (String p : declinedAiPackages) {
+      if (p == null) continue;
+      String s = p.trim();
+      if (s.isBlank()) continue;
+      cleaned.add(s);
+      if (cleaned.size() >= 512) break;
+    }
+    this.declinedAiPackages = new ArrayList<>(cleaned);
+  }
+
   private String llmModelPath = "";
   private String llamaLibPath = "";
   // BYO AI: explicit llama-server executable path (optional override).

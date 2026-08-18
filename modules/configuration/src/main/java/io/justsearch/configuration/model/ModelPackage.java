@@ -38,6 +38,16 @@ import java.util.List;
  *     hardware-eligible package); false (default) means this package's hardware-eligibility is
  *     governed by tier/VRAM only. Added for RUNTIME-tier packages that may need to be
  *     hardware-independent (tempdoc 772 Q3).
+ * @param necessity how badly the product needs this package (tempdoc 840 Phase 2) — the axis a
+ *     per-component install decision is offered on, and the sole source of whether the user may
+ *     decline it ({@link Necessity#userDeclinable()}). Never null: an unclassified package
+ *     normalizes to {@link Necessity#REQUIRED}, so nobody's omission can make a package
+ *     switch-off-able.
+ * @param dependsOn ids of packages this one cannot function without (tempdoc 840 Phase 2). Today
+ *     the only edge is "…→ cuda-runtime", declared by every package that can select a CUDA/FP16
+ *     variant: it makes the previously implicit H1 invariant (no CUDA variant is selected unless
+ *     the CUDA runtime is installed) checkable rather than merely true-by-construction via
+ *     {@code profile.usesCuda()}. Never null; empty means no declared dependency.
  */
 public record ModelPackage(
     String id,
@@ -51,12 +61,20 @@ public record ModelPackage(
     String installRoot,
     String license,
     CapabilityTier tier,
-    boolean requiresCuda) {
+    boolean requiresCuda,
+    Necessity necessity,
+    List<String> dependsOn) {
 
-  /** Compact constructor — normalize nulls to empty lists. */
+  /**
+   * Compact constructor — normalize nulls to empty lists, and an unclassified {@code necessity} to
+   * the fail-closed {@link Necessity#REQUIRED}. Normalizing here (not only at the registry loader)
+   * means no construction path can produce a package whose declinability is undefined.
+   */
   public ModelPackage {
     if (variants == null) variants = List.of();
     if (supportingFiles == null) supportingFiles = List.of();
+    if (dependsOn == null) dependsOn = List.of();
+    if (necessity == null) necessity = Necessity.REQUIRED;
   }
 
   /** Backwards-compat constructor — no installRoot (existing default behavior under modelsDir). */
@@ -108,7 +126,8 @@ public record ModelPackage(
   /**
    * Backwards-compat constructor — no requiresCuda (predates tempdoc 772's hardware-independence
    * field); defaults to false, preserving prior tier-based-only hardware gating for any existing
-   * caller.
+   * caller. Necessity and dependsOn (tempdoc 840) default via the compact constructor to REQUIRED
+   * and empty — the conservative pair: not declinable, no declared dependency.
    */
   public ModelPackage(
       String id,
@@ -124,7 +143,7 @@ public record ModelPackage(
       CapabilityTier tier) {
     this(
         id, label, description, targetDir, variants, supportingFiles, minVramBytes, termsUrl,
-        installRoot, license, tier, false);
+        installRoot, license, tier, false, null, null);
   }
 
   /** Returns true if this package requires a minimum VRAM threshold to be useful. */

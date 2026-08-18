@@ -4,6 +4,8 @@
   "packages": [
     {
       "id": "embedding",
+      "necessity": "required",
+      "dependsOn": ["cuda-runtime"],
       "label": "Embedding model",
       "description": "Vector embeddings for multilingual semantic search",
       "targetDir": "onnx/gte-multilingual-base",
@@ -52,6 +54,8 @@
     },
     {
       "id": "splade",
+      "necessity": "improves-results",
+      "dependsOn": ["cuda-runtime"],
       "label": "Sparse retrieval (SPLADE)",
       "description": "Multilingual sparse vector search for improved recall",
       "targetDir": "splade/naver-splade-v3",
@@ -107,6 +111,8 @@
     },
     {
       "id": "reranker",
+      "necessity": "improves-results",
+      "dependsOn": ["cuda-runtime"],
       "label": "Search reranker",
       "description": "Improves search result ranking accuracy",
       "targetDir": "onnx/reranker",
@@ -150,6 +156,8 @@
     },
     {
       "id": "ner",
+      "necessity": "improves-results",
+      "dependsOn": ["cuda-runtime"],
       "label": "Named entity recognition",
       "description": "Identifies people, organizations, and locations in documents",
       "targetDir": "onnx/ner",
@@ -192,6 +200,7 @@
     },
     {
       "id": "citation-scorer",
+      "necessity": "improves-results",
       "label": "Citation scorer",
       "description": "Enables source attribution in AI answers",
       "targetDir": "onnx/citation-scorer",
@@ -227,6 +236,8 @@
     },
     {
       "id": "chat",
+      "necessity": "adds-feature",
+      "dependsOn": ["cuda-runtime"],
       "label": "Chat model",
       "description": "Conversational AI with reasoning for document Q&A and summarization",
       "targetDir": "",
@@ -255,6 +266,7 @@
     },
     {
       "id": "cuda-runtime",
+      "necessity": "infrastructure",
       "label": "GPU runtime libraries",
       "description": "CUDA 12.4 runtime DLLs for GPU-accelerated chat and ONNX inference",
       "targetDir": "cuda12",

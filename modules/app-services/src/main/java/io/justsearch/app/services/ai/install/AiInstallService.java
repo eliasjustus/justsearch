@@ -349,7 +349,12 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     try {
       recordResumableBytes(
           InstallPlanner.plan(
-              getManifest(), buildHardwareProfile(), installIntent(), modelsDir, homeDir));
+              getManifest(),
+              buildHardwareProfile(),
+              installIntent(),
+              declinedPackages(),
+              modelsDir,
+              homeDir));
     } catch (Exception e) {
       log.debug("AiInstall resumable-bytes probe skipped (best-effort): {}", e.toString());
     }
@@ -371,7 +376,8 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     preview.downloadProfile = profile.name();
 
     // Reuse the PURE planner (no side effects) — tempdoc 381 §F "show the plan before download".
-    InstallPlan plan = InstallPlanner.plan(registry, hardware, intent, modelsDir, homeDir);
+    InstallPlan plan =
+        InstallPlanner.plan(registry, hardware, intent, declinedPackages(), modelsDir, homeDir);
     // What the download will actually COST: complete files are already excluded by the planner, and
     // `remainingBytes()` also drops the bytes an interrupted run left staged. Stating `totalBytes()`
     // here charged the user for bytes already on their disk (Sandbox round 8).
@@ -440,7 +446,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     try {
       ModelRegistry registry = getManifest();
       HardwareProfile hardware = buildHardwareProfile();
-      InstallPlan plan = InstallPlanner.plan(registry, hardware, installIntent(), modelsDir, homeDir);
+      InstallPlan plan =
+          InstallPlanner.plan(
+              registry, hardware, installIntent(), declinedPackages(), modelsDir, homeDir);
       // A successful plan is a DEFINITIVE answer (installed or not) — consume the one-shot now.
       diskRecomputeDone = true;
       // Same disk-is-the-authority reasoning, applied to the OTHER thing a restart forgets: bytes a
@@ -486,7 +494,8 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     // Tempdoc 805 G.3 — the decision moved into InstallCompleteness, at FILE granularity and aware of
     // the contract's entry kind (a skipped entry claims no files). The package-level `containsKey`
     // this replaces called round 11's skipped cuda-runtime entry a contracted gap.
-    InstallCompleteness completeness = InstallCompleteness.compute(plan, contract);
+    InstallCompleteness completeness =
+        InstallCompleteness.compute(plan, contract, declinedPackages());
     // repairNeeded is set even when the completeness claim is unchanged — it answers a different
     // question ("is a required file missing?") and must reach the UI on every recompute.
     synchronized (lock) {
@@ -677,7 +686,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
         hardware.gpuDetected(), hardware.cudaFunctional(), hardware.vramBytes(), profile);
 
     // Compute download plan
-    InstallPlan plan = InstallPlanner.plan(registry, hardware, installIntent(), modelsDir, homeDir);
+    InstallPlan plan =
+        InstallPlanner.plan(
+            registry, hardware, installIntent(), declinedPackages(), modelsDir, homeDir);
     log.info(
         "Install plan: profile={}, downloads={}, skipped={}, alreadyInstalled={}, totalBytes={}",
         plan.profile(),
@@ -934,8 +945,14 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   private InstallCompleteness recomputeCompletenessFromDiskBestEffort() {
     try {
       InstallPlan plan =
-          InstallPlanner.plan(getManifest(), buildHardwareProfile(), installIntent(), modelsDir, homeDir);
-      return InstallCompleteness.compute(plan, readInstallContractBestEffort());
+          InstallPlanner.plan(
+              getManifest(),
+              buildHardwareProfile(),
+              installIntent(),
+              declinedPackages(),
+              modelsDir,
+              homeDir);
+      return InstallCompleteness.compute(plan, readInstallContractBestEffort(), declinedPackages());
     } catch (Exception e) {
       log.debug("AiInstall completion disk recompute skipped (best-effort): {}", e.toString());
       return null;
@@ -1062,6 +1079,32 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   }
 
   // ---------------------------------------------------------------------------
+  // Per-component intent (tempdoc 840 Phase 2)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The packages the user currently declines, read from {@link UiSettings}. This service is the ONLY
+   * place that reads the preference: {@code InstallPlanner.plan} and {@code
+   * InstallCompleteness.compute} take it as a parameter and stay pure functions, so both can be
+   * tested and previewed without a settings store existing at all.
+   *
+   * <p>Best-effort: an unavailable or throwing store yields the empty set, which means "decline
+   * nothing" — the conservative direction, because it can only over-install, never silently drop a
+   * component the user still wants.
+   */
+  public Set<String> declinedPackages() {
+    if (settingsStore == null) return Set.of();
+    try {
+      UiSettings s = settingsStore.load();
+      if (s == null) return Set.of();
+      return Set.copyOf(s.getDeclinedAiPackages());
+    } catch (Exception e) {
+      log.debug("AiInstall declined-package preference unavailable (best-effort): {}", e.toString());
+      return Set.of();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Runtime precondition (tempdoc 772 §Design "Design 1")
   // ---------------------------------------------------------------------------
 
@@ -1156,16 +1199,19 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
     for (ModelPackage pkg : registry.packages()) {
       // Check if skipped
-      boolean skipped =
-          plan.skipped().stream().anyMatch(s -> s.packageId().equals(pkg.id()));
-      if (skipped) {
-        String reason =
-            plan.skipped().stream()
-                .filter(s -> s.packageId().equals(pkg.id()))
-                .findFirst()
-                .map(InstallPlan.SkippedPackage::reason)
-                .orElse("Skipped");
-        models.put(pkg.id(), InstallContract.InstalledModel.skipped(pkg.id(), reason));
+      InstallPlan.SkippedPackage skip =
+          plan.skipped().stream()
+              .filter(s -> s.packageId().equals(pkg.id()))
+              .findFirst()
+              .orElse(null);
+      if (skip != null) {
+        // Tempdoc 840 Phase 2: the planner's typed cause is carried through verbatim. Re-deriving it
+        // here (from the reason prose, or by re-evaluating hardware/intent/declined) would be a
+        // second authority for a decision the planner already made, and would drift the first time
+        // a skip message is reworded.
+        String reason = skip.reason() != null ? skip.reason() : "Skipped";
+        models.put(
+            pkg.id(), InstallContract.InstalledModel.skipped(pkg.id(), skip.cause(), reason));
         continue;
       }
 
