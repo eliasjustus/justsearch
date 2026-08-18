@@ -92,10 +92,10 @@ public final class RunChannelRegistry {
     makeRoom(id);
     Entry entry;
     if (policy.parkable()) {
-      SteppedRunChannelImpl stepped = new SteppedRunChannelImpl(id, descriptor, policy);
+      SteppedRunChannelImpl stepped = new SteppedRunChannelImpl(id, descriptor, policy, clock);
       entry = new Entry(stepped, stepped);
     } else {
-      OneShotRunChannelImpl oneShot = new OneShotRunChannelImpl(id, descriptor, policy);
+      OneShotRunChannelImpl oneShot = new OneShotRunChannelImpl(id, descriptor, policy, clock);
       entry = new Entry(oneShot, oneShot);
     }
     entries.put(id, entry);

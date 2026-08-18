@@ -1,0 +1,103 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "$defs" : {
+    "ParkSummary-nullable" : {
+      "type" : [ "object", "null" ],
+      "properties" : {
+        "detail" : {
+          "type" : [ "string", "null" ]
+        },
+        "kind" : {
+          "type" : [ "string", "null" ]
+        },
+        "sinceEpochMs" : {
+          "type" : "integer"
+        }
+      }
+    }
+  },
+  "type" : "object",
+  "properties" : {
+    "runs" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "conversationId" : {
+            "type" : [ "string", "null" ]
+          },
+          "observerCount" : {
+            "type" : "integer"
+          },
+          "park" : {
+            "$ref" : "#/$defs/ParkSummary-nullable"
+          },
+          "runId" : {
+            "type" : [ "string", "null" ]
+          },
+          "shapeId" : {
+            "type" : [ "string", "null" ]
+          },
+          "snapshot" : {
+            "type" : [ "object", "null" ],
+            "properties" : {
+              "activeAgentId" : {
+                "type" : [ "string", "null" ]
+              },
+              "autonomyLevel" : {
+                "type" : [ "string", "null" ]
+              },
+              "budgetRemaining" : {
+                "type" : [ "integer", "null" ]
+              },
+              "iteration" : {
+                "type" : [ "integer", "null" ]
+              },
+              "messageCount" : {
+                "type" : [ "integer", "null" ]
+              },
+              "park" : {
+                "$ref" : "#/$defs/ParkSummary-nullable"
+              },
+              "pendingApprovals" : {
+                "type" : [ "array", "null" ],
+                "items" : {
+                  "type" : "object",
+                  "properties" : {
+                    "arguments" : {
+                      "type" : [ "string", "null" ]
+                    },
+                    "callId" : {
+                      "type" : [ "string", "null" ]
+                    },
+                    "gateBehavior" : {
+                      "type" : [ "string", "null" ]
+                    },
+                    "risk" : {
+                      "type" : [ "string", "null" ]
+                    },
+                    "toolName" : {
+                      "type" : [ "string", "null" ]
+                    }
+                  }
+                }
+              },
+              "toolCallsExecuted" : {
+                "type" : [ "integer", "null" ]
+              }
+            }
+          },
+          "startedAtEpochMs" : {
+            "type" : "integer"
+          },
+          "state" : {
+            "type" : [ "string", "null" ]
+          },
+          "updatedAtEpochMs" : {
+            "type" : "integer"
+          }
+        }
+      }
+    }
+  }
+}

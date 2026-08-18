@@ -627,7 +627,7 @@ public class LocalApiServer {
         convApi.agentSessionController(),
         convApi.agentToolsController());
     // Tempdoc 834 §1.6 — the run-stream family (POST managed SSE, already token-covered).
-    RunRoutes.register(app, convApi.runStreamController());
+    RunRoutes.register(app, convApi.runStreamController(), convApi.agentSessionController());
     // Tempdoc 530 Layer 4 §4.2: surface the discipline-gate kernel's latest
     // SARIF as flat JSON for UI consumers. Read-only; doesn't run gates.
     GovernanceStateController governanceStateController = new GovernanceStateController();

@@ -402,7 +402,7 @@ final class ConversationApiAssembly {
     // Tempdoc 584/585 — the read sub-controller depends on the NARROW AgentRunQueries surface
     // (agentSupplier::get adapts Supplier<AgentService> to Supplier<AgentRunQueries>).
     AgentSessionController agentSessionController =
-        new AgentSessionController(agentSupplier::get, telemetry);
+        new AgentSessionController(agentSupplier::get, telemetry, runChannelRegistry);
     AgentToolsController agentToolsController =
         new AgentToolsController(agentSupplier, virtualOperationStore);
     ChatController chatController =

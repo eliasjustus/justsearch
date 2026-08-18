@@ -11,8 +11,9 @@ import java.util.Optional;
  */
 final class OneShotRunChannelImpl extends AbstractRunChannel implements OneShotRunChannel {
 
-  OneShotRunChannelImpl(RunId id, RunDescriptor descriptor, RunChannelPolicy policy) {
-    super(id, descriptor, policy);
+  OneShotRunChannelImpl(
+      RunId id, RunDescriptor descriptor, RunChannelPolicy policy, java.time.Clock clock) {
+    super(id, descriptor, policy, clock);
   }
 
   @Override

@@ -260,24 +260,23 @@ class LocalApiUiTokenPolicyTest {
       ctx.status(200);
     });
 
-    // Mirror token enforcement behavior
+    // Mirror token enforcement behavior. The WHICH-REQUESTS-NEED-A-TOKEN decision is NOT re-stated
+    // here — it calls the production rule. Tempdoc 834 S4 added a path-scoped requirement (the run
+    // family needs the token even for GET) and a hand-copied `if` would have stayed green while
+    // production changed underneath it, which is the whole failure mode a mirror invites.
     if (prodMode && sessionToken != null && !sessionToken.isBlank()) {
       app.before(ctx -> {
         String method = ctx.method().name().toUpperCase(java.util.Locale.ROOT);
-        // Skip OPTIONS and GET
-        if ("OPTIONS".equals(method) || "GET".equals(method)) {
+        if (!ApiSecurityFilters.requiresSessionToken(method, ctx.path())) {
           return;
         }
-        // Require token for POST/PUT/DELETE
-        if ("POST".equals(method) || "PUT".equals(method) || "DELETE".equals(method)) {
-          String providedToken = ctx.header(LocalApiServer.SESSION_TOKEN_HEADER);
-          if (providedToken == null || !sessionToken.equals(providedToken)) {
-            ctx.status(401);
-            ctx.json(Map.of(
-                "error", "Missing or invalid session token",
-                "errorCode", "UI_TOKEN_REQUIRED"));
-            throw new io.javalin.http.HttpResponseException(401, "Unauthorized");
-          }
+        String providedToken = ctx.header(LocalApiServer.SESSION_TOKEN_HEADER);
+        if (providedToken == null || !sessionToken.equals(providedToken)) {
+          ctx.status(401);
+          ctx.json(Map.of(
+              "error", "Missing or invalid session token",
+              "errorCode", "UI_TOKEN_REQUIRED"));
+          throw new io.javalin.http.HttpResponseException(401, "Unauthorized");
         }
       });
     }
