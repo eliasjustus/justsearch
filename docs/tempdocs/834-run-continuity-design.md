@@ -1809,8 +1809,11 @@ and they retire as a unit.
 ### 16.4 Verification
 
 - `./gradlew.bat spotlessApply` then `build -x test -PskipWebBuild=true` — **BUILD SUCCESSFUL**.
-- `./gradlew.bat test -PskipWebBuild=true` — **BUILD SUCCESSFUL; 1336 suites / 7822 tests / 26
-  skipped / 0 failures**.
+- `./gradlew.bat test -PskipWebBuild=true` — **BUILD SUCCESSFUL; 1336 suites / 7826 tests / 26
+  skipped / 0 failures** (re-run after the catch-up merge with the streaming-producer-wedge fix,
+  #476 — the in-flight stream §15.0 predicted would land in `ConversationEngine`'s latch region
+  first; S3b keeps `engine.run` synchronous and untouched, so the two composed with no code
+  conflict).
 - The four named conformance tests are green, including the two new equivalence cases on
   `AgUiEventTranslatorConformanceTest`. No sealed-permit count changed: `run_started`,
   `replay_truncated` and `heartbeat` are LIFECYCLE frames, not `AgentEvent` permits (§3.2), so the
