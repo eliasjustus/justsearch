@@ -50,6 +50,13 @@ public final class DocAccess implements ContextInjector {
   /** Soft character cap on injected content — mirrors legacy {@code MAX_CONTENT_CHARS}. */
   static final int MAX_CONTENT_CHARS = 200_000;
 
+  /**
+   * Display-preview length for the citation's {@code excerpt} (tempdoc 836 §1.4). The excerpt is a
+   * PREVIEW, never the verification text — the literal text rides on the {@code VerificationSource}
+   * instead, so nothing can end up verifying a document against 200 characters of it.
+   */
+  private static final int EXCERPT_CHARS = 200;
+
   private final DocumentService documents;
   private final Duration fetchTimeout;
 
@@ -82,7 +89,8 @@ public final class DocAccess implements ContextInjector {
     String docId = asString(body.get("docId"));
     String providedContent = asString(body.get("content"));
 
-    String fullContent = resolveContent(docId, providedContent);
+    Resolved resolved = resolveContent(docId, providedContent);
+    String fullContent = resolved.content();
     if (fullContent == null || fullContent.isBlank()) {
       return InjectorResult.empty();
     }
@@ -95,24 +103,83 @@ public final class DocAccess implements ContextInjector {
     message.put("role", "user");
     message.put("content", "Summarize the following document:\n\n" + truncated);
 
-    return InjectorResult.messagesOnly(List.of(message));
+    if (!resolved.fromDocument()) {
+      // Inline `content` with no resolved document has no citable identity. Minting a citation for
+      // it would name a source that does not exist, so this path keeps returning messages only.
+      return InjectorResult.messagesOnly(List.of(message));
+    }
+
+    // Tempdoc 836 S2S3-A.4 — the doc path publishes what it injected, so the matcher is no longer
+    // starved (it returned empty at StreamingCitationMatcher's source lookup because nothing was
+    // ever stashed). The literal text supplied here is the SAME string the model was given, so
+    // verification is about the text the answer was written from.
+    //
+    // Tempdoc 836 §8.4 — the citation carries CHUNK_INDEX_ABSENT, not 0. A whole document has no
+    // chunk ordinal; `0` would claim it is the document's first chunk, which is precisely the
+    // fabrication this design exists to remove. The Worker never looks it up (text is supplied),
+    // and if it ever had to, an absent ordinal resolves to no text rather than to the wrong text.
+    //
+    // Honest limit (§3.3): up to MAX_CONTENT_CHARS of text is supplied, and whole-document literal
+    // verification is two orders of magnitude outside the per-turn envelope. The per-source
+    // coverage fields (S2S3-A.1) are what make that legible instead of silent — the response says
+    // how many of this document's windows were actually examined.
+    ContextCitation citation =
+        new ContextCitation(
+            resolved.docId(),
+            ContextCitation.CHUNK_INDEX_ABSENT,
+            1,
+            0,
+            truncated.length(),
+            1.0f,
+            truncated.length() > EXCERPT_CHARS ? truncated.substring(0, EXCERPT_CHARS) : truncated,
+            0,
+            0,
+            "",
+            0);
+    List<DocumentService.VerificationSource> sources =
+        List.of(new DocumentService.VerificationSource(citation, truncated));
+    ctx.attributes().put(RAGContext.ATTR_VERIFICATION_SOURCES, sources);
+    ctx.attributes().put(RAGContext.ATTR_CITATIONS, List.of(citation));
+    ctx.attributes().put(RAGContext.ATTR_USED_RAG, true);
+
+    return InjectorResult.of(List.of(message), List.of(citationsEvent(citation)));
   }
+
+  /** The retrieval-shaped announcement of the one source this injector resolved. */
+  private static SseEvent citationsEvent(ContextCitation citation) {
+    Map<String, Object> citationMap = new LinkedHashMap<>();
+    citationMap.put("parentDocId", citation.parentDocId());
+    citationMap.put("chunkIndex", citation.chunkIndex());
+    citationMap.put("chunkTotal", citation.chunkTotal());
+    citationMap.put("startChar", citation.startChar());
+    citationMap.put("endChar", citation.endChar());
+    citationMap.put("score", citation.score());
+    citationMap.put("excerpt", citation.excerpt());
+    return new SseEvent("rag.citations", Map.of("citations", List.of(citationMap)));
+  }
+
+  /**
+   * The resolved content plus WHERE it came from. The distinction is load-bearing: only text the
+   * document service actually returned may be attributed to {@code docId} as a citation — inline
+   * body content has no document identity to name.
+   */
+  private record Resolved(String content, String docId, boolean fromDocument) {}
 
   /**
    * Resolve the document content. Prefers the documents service when a {@code docId} is
    * supplied; falls back to {@code providedContent} when the fetch returns nothing or the
    * service is unavailable.
    */
-  private String resolveContent(String docId, String providedContent) {
+  private Resolved resolveContent(String docId, String providedContent) {
     String fallback = providedContent == null ? "" : providedContent;
     if (docId == null || docId.isBlank()) {
-      return fallback;
+      return new Resolved(fallback, "", false);
     }
     try {
       DocumentRecord record =
           documents.fetch(docId).toCompletableFuture().get(fetchTimeout.toMillis(), TimeUnit.MILLISECONDS);
       if (record != null && record.content() != null && !record.content().isBlank()) {
-        return record.content();
+        return new Resolved(record.content(), docId, true);
       }
     } catch (java.util.concurrent.ExecutionException e) {
       Throwable cause = e.getCause();
@@ -131,7 +198,9 @@ public final class DocAccess implements ContextInjector {
     } catch (RuntimeException e) {
       LOG.warn("DocAccess: document fetch failed for {}", docId, e);
     }
-    return fallback;
+    // The fetch did not produce the document's text, so whatever the caller passed inline is NOT
+    // this document — it carries no citable identity and must not be attributed to `docId`.
+    return new Resolved(fallback, "", false);
   }
 
   private static String asString(Object o) {

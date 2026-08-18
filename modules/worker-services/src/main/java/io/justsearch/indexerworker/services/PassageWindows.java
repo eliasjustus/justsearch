@@ -64,6 +64,10 @@ final class PassageWindows {
    *     chunk lookup (drives the per-match {@code text_source} provenance field)
    * @param sourceCount number of sources in the request
    * @param windowsConsidered how many windows existed before admission control
+   * @param windowsConsideredBySource per source: how many windows its text produced BEFORE
+   *     admission control. The scored-per-source count is NOT stored beside it — it is derived
+   *     from {@code windowToSource}, which is the admitted set, so the two counts cannot drift
+   *     (tempdoc 836 S2S3-A.1: one fact, one authority)
    */
   record Prepared(
       List<String> windowTexts,
@@ -71,7 +75,8 @@ final class PassageWindows {
       List<String> windowDocIds,
       boolean[] suppliedBySource,
       int sourceCount,
-      int windowsConsidered) {
+      int windowsConsidered,
+      int[] windowsConsideredBySource) {
 
     /** True when admission control dropped windows to fit the budget. */
     boolean admissionTruncated() {
@@ -90,6 +95,31 @@ final class PassageWindows {
             "window ordinal " + windowOrdinal + " outside back-map of " + windowToSource.length);
       }
       return windowToSource[windowOrdinal];
+    }
+
+    /**
+     * Windows source {@code i}'s text produced before admission control. Zero means the source had
+     * no text at all (blank supply and a failed lookup) — which is NOT the same fact as "text
+     * existed but the budget gave it no window" (tempdoc 836 S2S3-A.1).
+     */
+    int windowsConsideredAt(int sourceIndex) {
+      return sourceIndex >= 0 && sourceIndex < windowsConsideredBySource.length
+          ? windowsConsideredBySource[sourceIndex]
+          : 0;
+    }
+
+    /**
+     * Windows of source {@code i} that survived admission — derived from the back-map rather than
+     * counted separately, so "which windows are scored" has exactly one authority.
+     */
+    int windowsScoredAt(int sourceIndex) {
+      int n = 0;
+      for (int s : windowToSource) {
+        if (s == sourceIndex) {
+          n++;
+        }
+      }
+      return n;
     }
 
     /** True when source {@code i}'s text was supplied by the caller. */
@@ -142,6 +172,7 @@ final class PassageWindows {
     List<String> windowTexts = new ArrayList<>();
     List<Integer> backMap = new ArrayList<>();
     List<String> windowDocIds = new ArrayList<>();
+    int[] consideredBySource = new int[sourceCount];
     for (int i = 0; i < sourceCount; i++) {
       String text = sourceTexts.get(i);
       if (text.isBlank()) {
@@ -153,6 +184,7 @@ final class PassageWindows {
         windowTexts.add(window);
         backMap.add(i);
         windowDocIds.add(chunkDocIds.get(i));
+        consideredBySource[i]++;
       }
     }
 
@@ -183,7 +215,8 @@ final class PassageWindows {
         List.copyOf(windowDocIds),
         supplied,
         sourceCount,
-        considered);
+        considered,
+        consideredBySource);
   }
 
   /**

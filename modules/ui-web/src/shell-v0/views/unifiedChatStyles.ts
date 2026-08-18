@@ -827,6 +827,12 @@ export const unifiedChatBodyStyles = css`
     .answer-receipt {
       font-style: normal;
     }
+    /* Tempdoc 836 S2S3-A.2 — the coverage line ("what was actually examined"). Upright like the
+       receipt beside it because it is a FACT about the run, not the frame's editorial voice; it
+       renders only when the run reported that verification did not fully happen. */
+    .answer-coverage {
+      font-style: normal;
+    }
     /* Tempdoc 603 C3 — an extraction (transform) is the model's own structuring, not retrieved data.
        Clean JSON reads as authoritative, so the marker is UNMISSABLE (a tinted, bordered strip that
        abuts the result below), not the subtle italic header — a user skimming the values can't miss it. */

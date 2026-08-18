@@ -42,9 +42,25 @@ public final class SummarizeShape {
   public static final I18nKey DESCRIPTION_KEY =
       new I18nKey("registry-conversation-shape.summarize.description");
 
-  /** SSE event vocabulary: standard substrate-emitted events. */
+  /**
+   * SSE event vocabulary: standard substrate-emitted events.
+   *
+   * <p>Tempdoc 836 S2S3 — {@code rag.citation_matches} is DECLARED here because it is produced
+   * here: {@link StreamingCitationMatcher} is a registered stream consumer of this shape and emits
+   * it at {@code onDone}. It already reached the browser (the engine forwards consumer events
+   * without filtering against this list), so the declaration is the manifest catching up with
+   * reality — and 836 §5.11 pins the two together: the event is declared IFF the matcher is a
+   * consumer.
+   */
   private static final List<String> EVENT_SCHEMA =
-      List.of("chunk", "reasoning_chunk", "rag.citations", "rag.citation_delta", "done", "error");
+      List.of(
+          "chunk",
+          "reasoning_chunk",
+          "rag.citations",
+          "rag.citation_delta",
+          "rag.citation_matches",
+          "done",
+          "error");
 
   private SummarizeShape() {}
 

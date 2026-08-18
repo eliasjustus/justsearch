@@ -874,6 +874,10 @@
         "fields": []
       },
       {
+        "name": "rag.citation_matches",
+        "fields": []
+      },
+      {
         "name": "done",
         "fields": []
       },

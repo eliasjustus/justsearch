@@ -47,6 +47,7 @@ import type {
   CitationMatch,
   RetrievalCitation,
   CitationSelectDetail,
+  SourceCoverage,
 } from './citationTypes.js';
 
 // The pure data shapes moved to `citationTypes.ts` (cycle break,
@@ -62,6 +63,7 @@ export class CitationsPanel extends JfElement {
   static properties = {
     citations: { type: Array, attribute: false },
     sources: { type: Array, attribute: false },
+    sourceCoverage: { type: Array, attribute: false },
     retrievalMode: { type: String, attribute: false },
     showWeak: { state: true },
     sourcesExpanded: { type: Boolean, attribute: false },
@@ -70,6 +72,12 @@ export class CitationsPanel extends JfElement {
 
   declare citations: CitationMatch[];
   declare sources: RetrievalCitation[];
+  /**
+   * Tempdoc 836 S2S3-A.3 — the per-source examination facts, so a source the verification budget
+   * never looked at is not filed under "retrieved · not cited". Empty (the default) keeps the
+   * established two-state behaviour for every consumer whose run reports no coverage.
+   */
+  declare sourceCoverage: SourceCoverage[];
   declare retrievalMode: string;
   declare showWeak: boolean;
   // Tempdoc 559 Authority IV (C-1): sources are disclosed on demand, not
@@ -97,6 +105,7 @@ export class CitationsPanel extends JfElement {
     super();
     this.citations = [];
     this.sources = [];
+    this.sourceCoverage = [];
     this.retrievalMode = '';
     this.showWeak = false;
     this.sourcesExpanded = false;
@@ -539,15 +548,30 @@ export class CitationsPanel extends JfElement {
     // 603 PART X.B — grounding joins by the source's ARRAY POSITION in this.sources (the established
     // convention the inline marks use), NOT a doc-ordinal compare. Compute once per (index, source) and
     // carry the result to the card render so grouping and the badge agree (and we don't re-join twice).
+    // Tempdoc 836 S2S3-A.3 — the source's own examination facts join by the same ARRAY POSITION
+    // everything else in the citation system indexes by.
+    const coverageAt = (i: number) =>
+      this.sourceCoverage.find((c) => c.sourceIndex === i) ?? null;
     const gOf = new Map<RetrievalCitation, SourceGrounding>(
-      this.sources.map((s, i) => [s, sourceGrounding(i, this.citations, s.parentDocId)]),
+      this.sources.map((s, i) => [
+        s,
+        sourceGrounding(i, this.citations, s.parentDocId, coverageAt(i)),
+      ]),
     );
     const groups: Record<'high' | 'supporting' | 'weak', RetrievalCitation[]> = {
       high: [],
       supporting: [],
       weak: [],
     };
+    // Tempdoc 836 S2S3-A.3 — an UNEXAMINED source leaves the uncited group entirely. Filing it
+    // under "retrieved (not cited)" would state an evidence verdict about text no scorer read;
+    // it is a budget fact, so it gets its own slot and never a tier.
+    const unexamined: RetrievalCitation[] = [];
     for (const s of this.sources) {
+      if (gOf.get(s)!.state === 'unexamined') {
+        unexamined.push(s);
+        continue;
+      }
       groups[tierGroup(gOf.get(s)!.tier)].push(s);
     }
     const { high, supporting, weak } = groups;
@@ -614,6 +638,15 @@ export class CitationsPanel extends JfElement {
                   : `${weak.length} retrieved (not cited)`}
               </jf-control>
               ${this.showWeak ? renderGroup(weak) : nothing}
+            `
+          : nothing}
+        ${unexamined.length > 0
+          ? html`
+              <div class="tier-header">
+                Not examined — the verification budget did not reach
+                ${unexamined.length === 1 ? 'this source' : `these ${unexamined.length} sources`}
+              </div>
+              ${renderGroup(unexamined)}
             `
           : nothing}
       </div>`

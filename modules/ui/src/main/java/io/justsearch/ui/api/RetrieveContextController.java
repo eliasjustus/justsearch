@@ -308,6 +308,23 @@ public class RetrieveContextController {
       response.put("sentences_scored", result.sentencesScored());
       response.put("scoring_incomplete", result.scoringIncomplete());
       response.put("scorer", result.scorer().name());
+      // Tempdoc 836 S2S3-A.1 — the TEXT-coverage axis, beside the sentence axis above. This
+      // endpoint already published `sentences_scored`; publishing only that would make it the one
+      // surface reporting "complete" over a pass that read a fraction of the caller's text, which
+      // is the half-truth the amendment exists to remove. `windows_considered > 0 &&
+      // windows_scored == 0` is the starved source: never examined, NOT unsupported.
+      response.put(
+          "source_coverage",
+          result.sourceCoverage().stream()
+              .map(
+                  c ->
+                      Map.of(
+                          "source_index", c.sourceIndex(),
+                          "windows_considered", c.windowsConsidered(),
+                          "windows_scored", c.windowsScored()))
+              .toList());
+      response.put("text_coverage_complete", result.textCoverageComplete());
+      response.put("starved_sources", result.starvedSources());
       response.put("took_ms", result.tookMs());
 
       List<Map<String, Object>> matches = result.matches().stream()

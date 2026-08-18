@@ -273,7 +273,7 @@ final class StreamingCitationIntegrationTest {
         double threshold) {
       return CompletableFuture.completedFuture(
           new CitationMatchResult(
-              List.of(), 0, 0, 0, 0, DocumentService.ScorerKind.NONE));
+              List.of(), 0, 0, 0, 0, DocumentService.ScorerKind.NONE, List.of()));
     }
   }
 }
