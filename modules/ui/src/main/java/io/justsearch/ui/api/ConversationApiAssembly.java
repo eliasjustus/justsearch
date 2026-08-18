@@ -33,6 +33,9 @@ final class ConversationApiAssembly {
       AgentSessionController agentSessionController,
       AgentToolsController agentToolsController,
       ChatController chatController,
+      // Tempdoc 834 §1.6 — the POST-managed-SSE run stream family, over the ONE run channel registry
+      // the S4 enumeration will also read.
+      RunStreamController runStreamController,
       io.justsearch.ui.api.mcp.McpProtocolHandler mcpProtocolHandler,
       // Tempdoc 629 (#7): the AUTHORED conversation store, exposed for the encrypted-backup export.
       io.justsearch.agent.api.conversation.ConversationStore conversationStore) {}
@@ -376,6 +379,12 @@ final class ConversationApiAssembly {
             conversationStore,
             // Tempdoc 610 Phase D — the one-shot summarizer for compaction.
             onlineAiSupplier);
+    // Tempdoc 834 §1.6 / §15.1.3 — the run-stream family. It dispatches THROUGH ChatController's
+    // sink-taking entry point rather than around it, so a mid-run failure reaches every observer of
+    // the run instead of only the socket that started it.
+    RunStreamController runStreamController =
+        new RunStreamController(
+            new io.justsearch.app.observability.stream.run.RunChannelRegistry(), chatController);
     io.justsearch.ui.api.mcp.McpProtocolHandler mcpProtocolHandler = null;
     if (registryPresent) {
       // Tempdoc 501 Phase 15: thread the runtime-manifest publisher through so the
@@ -423,6 +432,7 @@ final class ConversationApiAssembly {
         agentSessionController,
         agentToolsController,
         chatController,
+        runStreamController,
         mcpProtocolHandler,
         conversationStore);
   }

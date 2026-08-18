@@ -4,6 +4,7 @@ package io.justsearch.ui.api;
 import io.javalin.http.Context;
 import io.justsearch.agent.api.conversation.BranchesPreventDeletionException;
 import io.justsearch.agent.api.conversation.ConversationStore;
+import io.justsearch.agent.api.conversation.SseEvent;
 import io.justsearch.agent.api.registry.Audience;
 import io.justsearch.agent.api.registry.ConversationShapeRef;
 import io.justsearch.app.api.ApiErrorCode;
@@ -119,14 +120,28 @@ public final class ChatController {
         : MAPPER.readValue(ctx.body(), Map.class);
   }
 
-  /** The one SSE {@code error} event shape: message + the typed code triple the FE reads. */
-  private void sseError(Context ctx, String message, ApiErrorCode code) {
+  /**
+   * The one SSE {@code error} event shape: message + the typed code triple the FE reads. Built as
+   * an {@link SseEvent} so the {@code ctx}-writing form below and the SINK-writing form in
+   * {@link #runToSink} cannot drift into two error vocabularies.
+   */
+  private static SseEvent errorEvent(String message, ApiErrorCode code) {
     Map<String, Object> err = new LinkedHashMap<>();
     err.put("error", message);
     err.put("errorCode", code.name());
     err.put("errorClass", code.errorClass().name());
     err.put("retryable", code.isRetryable());
-    sseWriter.writeEvent(ctx, "error", err);
+    return new SseEvent("error", err);
+  }
+
+  /**
+   * Writes an error DIRECTLY to the response. Correct only for the PRE-run failures — a malformed
+   * body, a missing {@code shapeId} — where no run exists and therefore no run journal could carry
+   * the error. Mid-run failures go through {@link #runToSink} instead (tempdoc 834 §15.1.3).
+   */
+  private void sseError(Context ctx, String message, ApiErrorCode code) {
+    SseEvent event = errorEvent(message, code);
+    sseWriter.writeEvent(ctx, event.name(), event.payload());
   }
 
   private static String message(Exception e) {
@@ -160,28 +175,56 @@ public final class ChatController {
       return;
     }
     sseWriter.initSseHeaders(ctx, route);
-    try {
-      Audience audience = readAudience(ctx);
-      engine.run(
-          shapeId,
-          parsedBody,
-          audience,
-          sseEvent -> sseWriter.writeEvent(ctx, sseEvent.name(), sseEvent.payload()));
-    } catch (ConversationEngine.AudienceDeniedException denied) {
-      LOG.info("Audience denied for shape {}: {}", shapeId.value(), denied.getMessage());
-      sseError(ctx, denied.getMessage(), ApiErrorCode.INVALID_REQUEST);
-    } catch (ConversationEngine.ShapeNotFoundException notFound) {
-      LOG.error("Shape not registered: {}", shapeId.value());
-      sseError(ctx, notFound.getMessage(), ApiErrorCode.NOT_FOUND);
-    } catch (Exception e) {
-      LOG.error("Chat dispatch failed for shape {}", shapeId.value(), e);
-      sseError(ctx, message(e), ApiErrorCode.BAD_REQUEST);
-    }
+    runToSink(
+        shapeId,
+        parsedBody,
+        readAudience(ctx),
+        sseEvent -> sseWriter.writeEvent(ctx, sseEvent.name(), sseEvent.payload()));
     // Suppress unused-field warning until telemetry is wired into per-shape spans (Phase D).
     if (telemetry == null) {
       LOG.trace("telemetry sink not configured");
     }
   }
+
+  /**
+   * Runs a shape against {@code sink} — and reports EVERY mid-run failure through that same sink.
+   *
+   * <p>Tempdoc 834 §15.1.3. Before this, the three catch arms wrote the error straight to the
+   * request's {@code Context}. That is invisible-by-construction under a run journal: the creating
+   * client sees the failure, and every OTHER observer — a second tab, a reattacher — sees a stream
+   * that simply stops. A run that fails has to fail ON THE RUN, where all its observers are.
+   *
+   * <p>The pre-run failures (a body that will not parse, a missing {@code shapeId}) keep writing to
+   * the response: there is no run yet, so there is no journal to fail on.
+   */
+  public void runToSink(
+      ConversationShapeRef shapeId,
+      Map<String, Object> body,
+      Audience audience,
+      java.util.function.Consumer<SseEvent> sink) {
+    try {
+      engine.run(shapeId, body, audience, sink);
+    } catch (ConversationEngine.AudienceDeniedException denied) {
+      LOG.info("Audience denied for shape {}: {}", shapeId.value(), denied.getMessage());
+      sink.accept(errorEvent(denied.getMessage(), ApiErrorCode.INVALID_REQUEST));
+    } catch (ConversationEngine.ShapeNotFoundException notFound) {
+      LOG.error("Shape not registered: {}", shapeId.value());
+      sink.accept(errorEvent(notFound.getMessage(), ApiErrorCode.NOT_FOUND));
+    } catch (Exception e) {
+      LOG.error("Chat dispatch failed for shape {}", shapeId.value(), e);
+      sink.accept(errorEvent(message(e), ApiErrorCode.BAD_REQUEST));
+    }
+  }
+
+  /**
+   * The 423 gate, asked BEFORE any stream commits a 200 (tempdoc 734 round-14 F4). Exposed so the
+   * run-stream routes ask the same question through the same authority rather than re-deriving
+   * which shapes+bodies would record.
+   */
+  public boolean wouldDiscardWhileLocked(ConversationShapeRef shapeId, Map<String, Object> body) {
+    return engine.wouldDiscardWhileLocked(shapeId, body);
+  }
+
 
   public void handleListSessions(Context ctx) {
     String shapeId = ctx.queryParam("shapeId");
@@ -595,7 +638,7 @@ public final class ChatController {
     ctx.json(result);
   }
 
-  private static Audience readAudience(Context ctx) {
+  public static Audience readAudience(Context ctx) {
     String raw = ctx.header(AUDIENCE_HEADER);
     if (raw == null || raw.isBlank()) {
       return Audience.USER;
