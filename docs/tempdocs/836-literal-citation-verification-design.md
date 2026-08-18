@@ -1508,7 +1508,7 @@ with `docId` (no selection) — that path does not depend on the stall.
 implements: S2S3-A.1 … A.7 (all five stages, all 20 edit sites)
 branch: citation-coverage-s2-s3
 base: origin/main @ 010d59f8
-status: IMPLEMENTED — offline verification complete; the LIVE leg is PENDING (S2S3-IMPL.6)
+status: IMPLEMENTED + VERIFIED LIVE (S2S3-IMPL.6) — A.8 question 1 answered: the docId path does not stall
 ```
 
 ### IMPL.1 What landed, by stage
@@ -1620,6 +1620,9 @@ from the PERSISTED-REPLAY site only fails the same test. Restored; 199/199 green
 (full unit suite, 4m17s). `npm run typecheck` clean; `npm run test:unit:run` **422 files / 5184
 tests, 0 failures** (baseline before this work: 421 / 5157).
 
+**Live leg.** Run — see IMPL.6. A.8 question 1 answered, all eight live checks PASS, stack torn
+down and verified.
+
 **Gates.** The full `ui-web-gates` recipe + shell-v0 subsets + the kernel set
 (`ambient-purity`, `style-literal-ratchet`, `atom-fork-ratchet`, `modality-contract`,
 `transient-arbitration`, `modal-arbitration`) + `execution-surface` / `operation-surface`: green.
@@ -1644,17 +1647,150 @@ Run per `critical-analysis-pass` after the suites were green.
    budget fact, and saying nothing leaves the reader to conclude the document supports none of it.
    The view now renders the same `coverageNote` the chat window does, through the same projection.
 
-### IMPL.6 The live leg — PENDING, with the caveat A.8 asked for
+### IMPL.6 The live leg — RUN, and A.8 question 1 is ANSWERED
 
-Not run. Per A.7's Verification note the selection-summarize path still stalls (§9.9), so the
-route would be a `core.summarize` dispatch carrying `docId` and NO selection — which now reaches
-`DocAccess`'s new population. **That route is an inference from where the stall appears, not a
-measurement** (A.8 question 1 is still open). If the `docId` path stalls too, S2/S3 has no live leg
-at all and its acceptance bar is the offline one recorded above.
+Stack: this worktree's dist (`distFrom`), own lease, pinned API port 57901, torn down and verified
+afterwards (IMPL.6f). Corpus: `docs/explanation` (30 docs). Scorer: the shipped
+`ms-marco-MiniLM-L-6-v2`, auto-discovered from the shared `models/onnx/citation-scorer`. LLM:
+`Qwen_Qwen3.5-9B-Q4_K_M` on the shared cuda12 runtime (fresh dev-data carries no AI packages, so
+the staged cuda12 variant was linked in read-only and `llm.modelPath` pointed at the shared GGUF).
 
-What a live run would add that the offline evidence does not: that a real `MatchCitationsResponse`
-over a real 200 KB document produces the coverage numbers the §10.7 cell measured, and that the
-summarize surface renders the resulting line. The seam itself was already exercised live in §10.
+#### IMPL.6a Instrument correction (recorded, per interrogate-results)
+
+Round 1 posted `{shapeId, body:{docId}}` and got a terminal `error` after 90 s —
+`Jinja Exception: No user query found in messages`, with NO `rag.citations` frame. Read as a
+finding that would have been "the doc path injects nothing". It was a **wrong probe premise**: the
+frontend posts `{ shapeId, ...body }` **flattened** (`capabilities/ai.ts:44-50`), so `docId` never
+reached `requestBody()` and `DocAccess` correctly returned empty for a request with no document.
+The template error was the honest downstream consequence of an empty message list. Round 2 used the
+frontend's own body shape.
+
+#### IMPL.6b A.8 Q1 — the `docId` path does NOT stall
+
+**Answered: it streams to completion.** The design could only infer this from where the §9.9 stall
+appears; measured, the inference holds.
+
+```
+POST /api/chat/dispatch  {shapeId: core.summarize, docId: …18-adapters-lucene-deep-dive.md}
+  events: rag.citations 1 | reasoning_chunk 512 | chunk 293 | rag.citation_delta 2
+          rag.citation_matches 1 | done 1
+  firstChunk 9,899 ms   done 16,461 ms   answer 1,193 chars
+```
+
+The §9.9 stall is therefore **specific to the selection path**, not to `core.summarize`. S2/S3 has a
+live leg; A.8 Q1 closes.
+
+#### IMPL.6c Stage 3 on the wire — `DocAccess` publishes, with the absence modelled
+
+The first frame of that stream:
+
+```
+event: rag.citations
+data: {"citations":[{"parentDocId":"…18-adapters-lucene-deep-dive.md",
+       "chunkIndex":-1,"chunkTotal":1,"startChar":0,"endChar":22799,"score":1.0,
+       "excerpt":"---\ntitle: Adapters-Lucene Deep Dive\n…"}]}
+```
+
+`chunkIndex: -1` — the ABSENT sentinel, on the wire, where §9.8.1 measured a fabricated `0`. The
+matcher then reported `text_source: SUPPLIED` on every match, so it scored the injected literal
+text and not a chunk lookup: the doc path is no longer starved (833 finding 4 closed).
+
+#### IMPL.6d Stage 1+2 on the wire — every honesty field arrives
+
+Two runs of the same document (LLM sampling differs, so the sentence counts differ):
+
+```
+run A   scorer=CROSS_ENCODER  sentencesScored=16/16  sourceCoverage=[{0, considered 16, scored  5}]  matches=8
+run B   scorer=CROSS_ENCODER  sentencesScored=33/34  sourceCoverage=[{0, considered 16, scored  2}]  matches=6
+ask     scorer=CROSS_ENCODER  sentencesScored=10/10  sourceCoverage=[{0,2,2},{1,2,2},{2,2,2},{3,2,1},{4,2,1}]  matches=7
+```
+
+Payload keys observed: `sourceCoverage, tookMs, sentencesTotal, scorer, matches, sentencesScored,
+sentencesMatched`; per match `textSource`. **Gap 3 is closed on the wire, not only in a test.**
+
+**Run A is §10.7 gap 1, reproduced and now legible**: `sentences_scored == sentences_total` (16 of
+16 — the sentence axis says "complete") while **5 of 16 windows** were examined. Before this slice
+the response carried nothing that could contradict the first number.
+
+`done.claimMatches` carried a byte-identical map to the live event on every run, so the persisted
+record and the live stream are judged by the same facts by construction.
+
+#### IMPL.6e Consumer semantics, over the REAL payloads
+
+The captured wire payloads were fed through the REAL projection (`coverageHonesty` →
+`groundingCoverage` → `coverageNote`, and both `verifiedScore` write sites) in a throwaway harness
+— uncommitted, in the §9 tradition. Observed, verbatim:
+
+```
+summarize (run B)  honesty {sentencesIncomplete:true, textIncomplete:true, unexamined:0, ratio 0.125}
+                   line    "Grounded · 6 of 34 sentences · part of the text examined"
+                   replay  "Grounded · 6 of 34 sentences · part of the text examined"   (identical)
+ask                marks 7, line "Grounded · 7 of 10 sentences · part of the text examined"
+                   textSource=CHUNK_LOOKUP; replay claims identical to live
+```
+
+The denominator is the backend's `BreakIterator` count (34), not the frontend regex estimate —
+§3.6's fork is closed on live data.
+
+**Gap 2, forced live** through `POST /api/knowledge/match-citations` (5 sources × 40 sentences ×
+10 KB, real 2000 ms budget — §10.7's `10000/5/40` cell):
+
+```
+scorer=CROSS_ENCODER  sentences 23/40  scoring_incomplete=true  text_coverage_complete=false
+starved_sources=[2,3,4]
+source_coverage=[{0: 7 considered, 1 scored}, {1: 7,1}, {2: 7,0}, {3: 7,0}, {4: 7,0}]
+matches=22, all against source 0
+
+projected:  source 0  state=cited            "Grounds 22 sentences"
+            source 1  state=examined-uncited "Retrieved · not cited"
+            source 2  state=unexamined       "Retrieved · not examined"
+            source 3  state=unexamined       "Retrieved · not examined"
+            source 4  state=unexamined       "Retrieved · not examined"
+            line      "Grounded · 1 of 40 sentences · 3 sources not examined"
+            zero-cite "Not scored"           (NOT "Not grounded")
+```
+
+All three source states occur in ONE real response, and the three incomplete label variants plus
+`Not scored` were produced from live wire data rather than hand-built fixtures. Pre-S2/S3, sources
+2-4 would have rendered as "Retrieved · not cited" — an evidence verdict over text nothing read.
+
+#### IMPL.6f Verdicts, and what the live leg changed
+
+| Check | Verdict |
+|---|---|
+| A.8 Q1 — does the `docId` path stall? | **NO** — streams to `done` in 16.5 s |
+| Stage 1+2: honesty fields on the wire | **PASS** — `scorer` / `sentencesScored` / `sourceCoverage` / per-match `textSource` |
+| Stage 3: `DocAccess` populates, absence modelled | **PASS** — `rag.citations` with `chunkIndex: -1`, `textSource: SUPPLIED` |
+| Gap 1: complete-looking over partial text | **PASS** — 16/16 sentences over 5/16 windows, and the line says so |
+| Gap 2: starved source distinguishable | **PASS** — `starved_sources=[2,3,4]`, projected `unexamined` |
+| `Not scored` ≠ `Not grounded` | **PASS** — observed on the live starved payload |
+| Replay parity (both write sites) | **PASS** — identical claims and identical line from `done.claimMatches` |
+| Ask-tier regression | **PASS** — marks still mint (7), real chunk ordinals, `CHUNK_LOOKUP` |
+
+**One change the live leg forced.** `RetrieveContextController`'s `match-citations` response
+published `sentences_scored` (S1) but not the text axis — so the endpoint the seam is MEASURED
+through would have been the last surface reporting "complete" over a partial read. It now publishes
+`source_coverage`, `text_coverage_complete` and `starved_sources`
+(`RetrieveContextControllerCoverageTest`, 3 tests). This is an addition beyond A.7's 20 sites,
+recorded rather than folded in silently.
+
+**Observed consequence worth naming.** The ask tier's line now commonly reads
+"· part of the text examined": with 5 retrieved chunks and 10 answer sentences the budget admits 8
+of 10 windows, so the qualifier is *true* on ordinary ask turns, not only on pathological ones.
+That is honest, but it is a visible change to a high-traffic surface and it is exactly what the
+`ux-audit-closure` follow-up (A.8 question 5) should judge.
+
+**P5 held.** No threshold, window size, or tier boundary was touched at any point, and no run was
+repeated to make marks appear. Marks did appear on the doc path (0.96–0.98 similarity) because the
+literal text is supplied — S1+S3 working, not tuning.
+
+#### IMPL.6g Teardown
+
+Stopped via the dev tool (`portsClosed: true`, `devRunnerOk: true`, exit 0). Verified afterwards:
+`quick_health` reports `running: false`; **0** `llama-server.exe`; **0** `HeadlessApp`/
+`IndexerWorker` java processes; ports 57901 and 5173 have no listeners; no JustSearch process on
+the GPU. The cuda12 runtime was consumed read-only from the main checkout (copied in, never
+modified there) and the shared GGUF was read-only.
 
 ### IMPL.7 P5 — no thresholds were touched
 
@@ -1665,7 +1801,12 @@ here asserts that a mark appears.
 
 ### IMPL.8 Named follow-ups (logged to the inbox, not done here)
 
-- The measured UX audit of the four coverage-label variants (A.8 question 5).
+- The measured UX audit of the four coverage-label variants (A.8 question 5). **Sharpened by the
+  live leg**: the ask tier's line now commonly carries "· part of the text examined" (IMPL.6f), so
+  the audit is judging a high-traffic surface, not an edge case.
+- **§9.9's selection-summarize stall is still unfixed and still unexplained.** IMPL.6b establishes
+  it is NOT a `core.summarize` problem — the same shape streams fine with `docId` — which narrows it
+  to the selection path and makes it a sharper bug report than 836 could write. Still out of scope.
 - `SelectionContextInjector.citationsEvent` still hardcodes `chunkIndex: 0` in its SSE map; §8.4's
   answer applies there too, but S1 shipped it and changing it moves `sourcesAreChunkPrecise` for
   selection sources — out of this slice's scope.
