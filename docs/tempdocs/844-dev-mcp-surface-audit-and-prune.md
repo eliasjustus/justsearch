@@ -1048,6 +1048,21 @@ not considered because it was framed as a read.
 
 ### 13.6 Hot-reload live validation procedure
 
+> **Precondition — a fresh session is required, and this is not optional.** A Claude Code session's
+> `justsearch-dev` MCP server process is spawned once at session start and keeps running the code it
+> booted with. The session that implemented this lane therefore cannot exercise it: its tool schemas
+> still show `hotReload` defaulting to `false`, `reload` without `takeover`, and `quick_health`
+> without the new fields. The server says so itself — `quick_health` returned
+> `mcpServerStale: { sourceChangedSinceBoot: true, recommendedAction: "…restart the session…" }`,
+> which is a pre-existing honesty feature of this surface and exactly the property §12.2 asks for,
+> found working in the wild.
+>
+> So: **run this from a new session started after the branch is checked out** (or after merge).
+> Driving `dev-runner.cjs` by hand would exercise the CLI lifecycle, not the MCP path that D2
+> actually repaired — a green result that way would be `static-green ≠ live-working`.
+>
+> Stack ownership at the time of writing: free (`running: false`), no contention to resolve.
+
 §4.2 condition 1: the P8 repair is not done until a live run edits a method body, reloads, and
 asserts the new behaviour over HTTP **with the encoders still warm**. The implementing worker was
 forbidden from driving the stack, so the procedure is written to be runnable by whoever holds the
