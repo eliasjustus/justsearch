@@ -76,35 +76,14 @@ export interface AiInstallManifest {
   packages?: AiInstallModelPackage[];
 }
 
-export interface AiInstallAssetStatus {
-  id: string;
-  filename: string;
-  url: string;
-  sha256: string;
-  sizeBytes: number;
-  state: string;
-  bytesDownloaded: number;
-  bytesTotal: number;
-  error?: string;
-}
-
-export interface AiInstallStatus {
-  state: string;
-  phase: string;
-  message?: string;
-  startedAtEpochMs?: number;
-  updatedAtEpochMs?: number;
-  cancelRequested?: boolean;
-  lastError?: string;
-  errorCode?: string;
-  /**
-   * True only when state === "completed" AND no packages were skipped/failed.
-   * False after partial-success completion (e.g., chat skipped because no
-   * CUDA). Tempdoc 374 finding #8.
-   */
-  installedFully?: boolean;
-  assets: AiInstallAssetStatus[];
-}
+// Tempdoc 840 Phase 4: the hand-written `AiInstallStatus` + `AiInstallAssetStatus` that lived here
+// are gone. They modelled the pre-v2 flat `assets[]` progress shape, which the package-based v2
+// install stopped emitting long ago — a stale second authority for a wire type that also had a
+// third hand copy in `shell-v0/utils/aiInstallPoll.ts`. The one authority is now the Java DTO
+// (`modules/app-api/.../AiInstallStatus.java`) projected through
+// `SSOT/schemas/ai-install-status.v1.json` into the generated type + Zod schema below.
+export type { AiInstallStatus } from '../generated/schema-types/ai-install-status';
+import type { AiInstallStatus } from '../generated/schema-types/ai-install-status';
 
 // ============================================
 // v2: Offline AI Packs + enterprise policy

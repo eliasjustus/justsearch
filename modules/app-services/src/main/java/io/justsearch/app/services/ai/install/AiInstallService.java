@@ -329,14 +329,21 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   public AiInstallStatus getStatus() {
     maybeRecomputeInstalledFromDisk();
     Map<String, String> observed = observedFunctionalStatus();
+    Set<String> declined = declinedPackages();
     synchronized (lock) {
       reapIfStale();
       status.resumableBytes = resumableBytesOnDisk;
+      // Tempdoc 840 Phase 4 — the pause gate the run actually waits on is the authority; mirroring
+      // its bit here on read is what keeps a second copy from existing at all.
+      status.paused = pause.isPaused();
       // Tempdoc 824 §3.3c — refreshed on read, not on write: the capability comes up and goes down
       // independently of any install run, so a value stamped at completion would be stale for the
       // whole life of the status object (which outlives the run by design).
       for (var ps : status.packages) {
         ps.functionalStatus = observed.getOrDefault(ps.packageId, "unknown");
+        // Same read-time reasoning, for the same reason: a decline recorded between two polls must
+        // show on the next one, and the settings store is the one place it lives.
+        ps.declined = declined.contains(ps.packageId);
       }
       // Deep copy INSIDE the lock: the caller (the HTTP handler) serializes with no lock held while
       // the install thread keeps mutating the live object — including clearing and repopulating
@@ -638,6 +645,10 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
                   ok = true;
                 } finally {
                   running.set(false);
+                  // The pause gate outlives the run (it is a service field). A run cancelled while
+                  // paused leaves the flag set on purpose, so clearing it belongs to whichever run
+                  // ends — otherwise the next status read reports a terminated run as paused.
+                  pause.clear();
                   try {
                     // Every exit — completed, failed, cancelled — changes what is staged on disk,
                     // and a run that ends is exactly when a surface starts asking again. One
@@ -693,16 +704,105 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
   /**
    * Halts an in-flight install before its next file, keeping the run, its op-lease and its place in
-   * the set (tempdoc 840 Phase 3). Distinct from {@link #cancel()}, which is terminal. No endpoint
-   * reaches this yet — the mechanism lands before the surface does.
+   * the set (tempdoc 840 Phase 3, reachable over HTTP since Phase 4). Distinct from {@link
+   * #cancel()}, which is terminal.
+   *
+   * <p>Refuses when nothing is running. The pause gate is a service field that outlives any one run,
+   * so arming it with no run in flight would halt the NEXT install before its first byte — a
+   * failure whose cause is invisible at the surface that caused it.
    */
+  @Override
   public void pauseInstall() {
+    requireRunInFlight("pause");
     pause.pause();
   }
 
-  /** Continues a paused install at its next file. */
+  /** Continues a paused install at its next file. Refuses when nothing is running. */
+  @Override
   public void resumeInstall() {
+    requireRunInFlight("resume");
     pause.resume();
+  }
+
+  private void requireRunInFlight(String verb) {
+    if (!running.get()) {
+      throw new AiInstallException(
+          409,
+          ApiErrorCode.INSTALL_NOT_RUNNING,
+          "No AI install is running, so there is nothing to " + verb + ".");
+    }
+  }
+
+  /**
+   * Records or withdraws the user's decision not to install one package (tempdoc 840 Phase 4).
+   *
+   * <p>Validation order is deliberate: an unknown id is a 404 before declinability is consulted, so
+   * a typo never reports "this component cannot be turned off" about a component that does not
+   * exist. Declinability itself is read from {@code Necessity.userDeclinable()} — the one authority —
+   * rather than a list of ids maintained here, and only the DECLINE direction is gated: withdrawing
+   * a decline can never be an invalid request, including for a package that was never declinable
+   * (where it is simply a no-op).
+   *
+   * <p>The preference is advisory at the planner, which honours it only for a declinable package;
+   * this check is what makes the refusal legible instead of silent.
+   */
+  @Override
+  public void setPackageDeclined(String packageId, boolean declined) {
+    String id = packageId == null ? "" : packageId.trim();
+    if (id.isEmpty()) {
+      throw new AiInstallException(
+          400, ApiErrorCode.INVALID_REQUEST, "A component id is required.");
+    }
+    ModelPackage pkg;
+    try {
+      pkg = getManifest().findPackage(id);
+    } catch (Exception e) {
+      throw new AiInstallException(
+          503, ApiErrorCode.MANIFEST_UNAVAILABLE, "Model registry unavailable: " + e.getMessage());
+    }
+    if (pkg == null) {
+      throw new AiInstallException(
+          404, ApiErrorCode.PACKAGE_NOT_FOUND, "No AI component with id '" + id + "'.");
+    }
+    if (declined && !pkg.necessity().userDeclinable()) {
+      throw new AiInstallException(
+          400,
+          ApiErrorCode.PACKAGE_NOT_DECLINABLE,
+          "'" + pkg.label() + "' is " + pkg.necessity().label().toLowerCase(java.util.Locale.ROOT)
+              + " and cannot be turned off.");
+    }
+    if (settingsStore == null) {
+      throw new AiInstallException(
+          503,
+          ApiErrorCode.SETTINGS_UNAVAILABLE,
+          "Settings are unavailable, so the choice cannot be remembered.");
+    }
+    // UiSettingsStore.save() is a silent no-op in IN_MEMORY mode, so without this the endpoint would
+    // answer 200 and forget the choice on the next read — the same class of lie as a fabricated 0.
+    if (!settingsStore.mode().isWritable()) {
+      throw new AiInstallException(
+          409,
+          ApiErrorCode.SETTINGS_READ_ONLY,
+          "Settings are read-only in this session, so the choice cannot be remembered.");
+    }
+    try {
+      UiSettings settings = settingsStore.load();
+      List<String> next = new ArrayList<>(settings.getDeclinedAiPackages());
+      boolean changed = declined ? (!next.contains(id) && next.add(id)) : next.remove(id);
+      if (!changed) {
+        return; // already in the requested state — writing settings again would be pure churn.
+      }
+      settings.setDeclinedAiPackages(next);
+      settingsStore.save(settings);
+      log.info("AI component '{}' {} by the user", id, declined ? "declined" : "re-enabled");
+    } catch (Exception e) {
+      // Unlike the read path (best-effort, defaults to "decline nothing"), a WRITE that silently
+      // failed would tell the user their choice was saved when it was not.
+      throw new AiInstallException(
+          500,
+          ApiErrorCode.AI_INSTALL_ERROR,
+          "Failed to save the component choice: " + e.getMessage());
+    }
   }
 
   /** Whether an install run is currently halted between files. */
@@ -1125,6 +1225,16 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
           // Pass 0 for total so the existing package-level total (set in populateStatusPackages)
           // wins.
           updatePackageProgress(item.packageId(), packageBytes, 0);
+          // Tempdoc 840 Phase 4 — the rate reaches the wire, and the UNKNOWN sentinel reaches it
+          // intact. `estimate` measures this STAGE's slice, so its own horizon answers "time left in
+          // this stage"; the run-level horizon is the same rate re-divided into the run's remainder.
+          // An unknown rate publishes -1 for both — never a 0 the surface would render as "0 B/s,
+          // 0s left" on a transfer that is merely young.
+          long remainingBytes =
+              status.totalBytes > 0L ? Math.max(0L, status.totalBytes - status.downloadedBytes) : -1L;
+          AcquisitionRate.Estimate runWide = estimate.reHorizon(remainingBytes);
+          status.bytesPerSecond = runWide.rateKnown() ? runWide.bytesPerSecond() : -1d;
+          status.remainingSeconds = runWide.remainingKnown() ? runWide.remainingSeconds() : -1L;
           touch();
         }
       }
@@ -1940,8 +2050,22 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       if (status.startedAtEpochMs <= 0 && "running".equalsIgnoreCase(newState)) {
         status.startedAtEpochMs = System.currentTimeMillis();
       }
+      if (!"running".equalsIgnoreCase(newState)) {
+        clearRateEstimate();
+      }
       touch();
     }
+  }
+
+  /**
+   * Drops the transfer-rate reading back to its unknown sentinel. Called on every exit from {@code
+   * running}: a rate measured by a run that has ended describes a transfer that is no longer
+   * happening, and leaving the last number in place would keep a completed install claiming a live
+   * download speed. Caller holds {@link #lock}.
+   */
+  private void clearRateEstimate() {
+    status.bytesPerSecond = -1d;
+    status.remainingSeconds = -1L;
   }
 
   private void fail(String errorCode, String message) {
@@ -1951,6 +2075,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       status.errorCode = errorCode;
       status.lastError = message;
       status.message = message;
+      // This path sets `state` directly rather than through updateState, so it has to drop the rate
+      // itself — a failed run must not keep publishing the speed it was moving at when it died.
+      clearRateEstimate();
       touch();
     }
   }
@@ -1974,6 +2101,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       var ps = new AiInstallStatus.PackageStatus();
       ps.packageId = dl.packageId();
       ps.label = pkg != null ? pkg.label() : dl.packageId();
+      describe(ps, pkg);
       ps.tier = tierId(pkg);
       ps.stage = stageId(pkg);
       ps.state = "pending";
@@ -1989,6 +2117,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       var ps = new AiInstallStatus.PackageStatus();
       ps.packageId = id;
       ps.label = pkg != null ? pkg.label() : id;
+      describe(ps, pkg);
       ps.tier = tierId(pkg);
       ps.stage = stageId(pkg);
       ps.state = "installed";
@@ -2000,12 +2129,32 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       ps.packageId = sk.packageId();
       ModelPackage pkg = registry.findPackage(sk.packageId());
       ps.label = pkg != null ? pkg.label() : sk.packageId();
+      describe(ps, pkg);
       ps.tier = tierId(pkg);
       ps.stage = stageId(pkg);
       ps.state = "skipped";
       ps.skipReason = sk.reason();
       status.packages.add(ps);
     }
+  }
+
+  /**
+   * Projects the registry's standing description of a package onto its status row (tempdoc 840
+   * Phase 4): what it is for, how badly the product needs it, and whether that necessity leaves the
+   * user any choice.
+   *
+   * <p>All three are facts about the REGISTRY, so they are stamped when the row is built. The
+   * user's own decision is not — {@code declined} is a live preference and is refreshed on every
+   * status read instead (see {@link #getStatus()}).
+   */
+  private static void describe(AiInstallStatus.PackageStatus ps, ModelPackage pkg) {
+    if (pkg == null) {
+      return;
+    }
+    ps.description = pkg.description() == null ? "" : pkg.description();
+    // Never null: ModelPackage's compact constructor normalizes an unclassified package to REQUIRED.
+    ps.necessity = pkg.necessity().id();
+    ps.declinable = pkg.necessity().userDeclinable();
   }
 
   /** The package's capability-tier id (tempdoc 657), or {@code null} if the package/tier is unknown. */

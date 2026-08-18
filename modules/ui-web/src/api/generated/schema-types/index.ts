@@ -15,6 +15,8 @@ export type { EffectivePolicy } from './effective-policy.js';
 export { effectivePolicySchema } from './effective-policy.js';
 export type { AiPackImportStatus } from './ai-pack-import-status.js';
 export { aiPackImportStatusSchema } from './ai-pack-import-status.js';
+export type { AiInstallStatus } from './ai-install-status.js';
+export { aiInstallStatusSchema } from './ai-install-status.js';
 export type { FolderBrowseResponse } from './folder-browse-response.js';
 export { folderBrowseResponseSchema } from './folder-browse-response.js';
 export type { FolderFilesResponse } from './folder-files-response.js';

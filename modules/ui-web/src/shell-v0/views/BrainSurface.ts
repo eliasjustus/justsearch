@@ -284,8 +284,11 @@ export function deriveRepairRemedy(installStatus: InstallStatus | null): RepairR
     return {
       kind: 'manual',
       packages: stuck.map((p) => ({
-        packageId: p.packageId ?? p.id ?? '',
-        label: p.label ?? p.packageId ?? p.id ?? '',
+        // `p.id` used to be read here as a fallback; the backend `PackageStatus` has never had an
+        // `id` field (tempdoc 657), so the arm was always dead. Tempdoc 840 Phase 4 generates this
+        // type from the Java DTO's schema, which is how the dead arm became visible.
+        packageId: p.packageId ?? '',
+        label: p.label ?? p.packageId ?? '',
         attempts: p.attempts ?? 0,
         url: p.url ?? '',
         targetPath: p.targetPath ?? '',

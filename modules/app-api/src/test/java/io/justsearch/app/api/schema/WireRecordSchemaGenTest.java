@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import com.github.victools.jsonschema.generator.SchemaGenerator;
+import io.justsearch.app.api.AiInstallStatus;
 import io.justsearch.app.api.AiPackImportStatus;
 import io.justsearch.app.api.AiRuntimeStatusResponse;
 import io.justsearch.app.api.EffectivePolicy;
@@ -70,6 +71,18 @@ final class WireRecordSchemaGenTest {
   @DisplayName("AiPackImportStatus")
   void aiPackImportStatus() throws IOException {
     captureOrVerify(AiPackImportStatus.class, "ai-pack-import-status.v1.json");
+  }
+
+  // Tempdoc 840 Phase 4 — the AI-install status. Not a record but a mutable public-field DTO, which
+  // victools' PLAIN_JSON preset projects the same way; the shape it emits is the shape Jackson
+  // serializes. It had THREE hand-maintained authorities (this class plus two independent TS
+  // interfaces, one of them still modelling the retired v1 `assets[]`), and every field the staged
+  // install added widened the drift. `AiInstallResourceCatalog.SCHEMA_URL` has pointed at
+  // `ai-install-status.v1.json` since tempdoc 575 — the file it named simply never existed.
+  @Test
+  @DisplayName("AiInstallStatus")
+  void aiInstallStatus() throws IOException {
+    captureOrVerify(AiInstallStatus.class, "ai-install-status.v1.json");
   }
 
   @Test

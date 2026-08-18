@@ -137,6 +137,65 @@ public final class AiInstallController {
     }
   }
 
+  /**
+   * Halts an in-flight install between files (tempdoc 840 Phase 4). A paused run keeps its op-lease
+   * and its place in the set, so this is not a cancel and the response still reads {@code
+   * state: "running"} — {@code paused: true} is the bit that changed.
+   */
+  public void handlePause(Context ctx) {
+    withStatus(ctx, service::pauseInstall, ApiErrorCode.INSTALL_NOT_RUNNING, "Failed to pause install");
+  }
+
+  /** Continues a paused install at its next file. */
+  public void handleResume(Context ctx) {
+    withStatus(
+        ctx, service::resumeInstall, ApiErrorCode.INSTALL_NOT_RUNNING, "Failed to resume install");
+  }
+
+  /** Records the user's decision not to install one component. */
+  public void handleDeclinePackage(Context ctx) {
+    setDeclined(ctx, true);
+  }
+
+  /** Withdraws that decision — the component is offered again. */
+  public void handleAcceptPackage(Context ctx) {
+    setDeclined(ctx, false);
+  }
+
+  private void setDeclined(Context ctx, boolean declined) {
+    String packageId = ctx.pathParam("packageId");
+    withStatus(
+        ctx,
+        () -> service.setPackageDeclined(packageId, declined),
+        ApiErrorCode.AI_INSTALL_ERROR,
+        "Failed to record the component choice");
+  }
+
+  /**
+   * The family's handler shape, factored once: run the mutation, answer with the post-call status,
+   * and map a typed {@link AiInstallException} onto its own status code and error code. The
+   * {@code fallback} pair is only for the untyped path — an exception the service did not classify
+   * must still leave a typed body behind, which is the round-16 lesson this family already carries.
+   */
+  private void withStatus(
+      Context ctx, Runnable mutation, ApiErrorCode fallbackCode, String fallbackMessage) {
+    try {
+      mutation.run();
+      ctx.json(service.getStatus());
+    } catch (AiInstallException e) {
+      ctx.status(e.httpStatus())
+          .json(
+              ApiErrorHandler.toResponse(
+                  e.errorCode(), e.getMessage(), telemetry, ApiErrorHandler.routeOf(ctx)));
+    } catch (Exception e) {
+      log.error("{}", fallbackMessage, e);
+      ctx.status(500)
+          .json(
+              ApiErrorHandler.toResponse(
+                  fallbackCode, fallbackMessage, telemetry, ApiErrorHandler.routeOf(ctx)));
+    }
+  }
+
   private static boolean parseAcceptTerms(Context ctx) {
     try {
       JsonNode root = MAPPER.readTree(ctx.body());

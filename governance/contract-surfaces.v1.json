@@ -46,6 +46,15 @@
       "consumers": ["modules/ui-web/src/api/domains/packs.ts"]
     },
     {
+      "name": "AiInstallStatus",
+      "schema": "SSOT/schemas/ai-install-status.v1.json",
+      "outFile": "ai-install-status.ts",
+      "consumers": [
+        "modules/ui-web/src/api/domains/packs.ts",
+        "modules/ui-web/src/shell-v0/utils/aiInstallPoll.ts"
+      ]
+    },
+    {
       "name": "FolderBrowseResponse",
       "schema": "SSOT/schemas/folder-browse-response.v1.json",
       "outFile": "folder-browse-response.ts",

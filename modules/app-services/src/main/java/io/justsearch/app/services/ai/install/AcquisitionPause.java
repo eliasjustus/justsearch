@@ -23,7 +23,9 @@ import org.slf4j.LoggerFactory;
  * raises a flag and never interrupts the install thread — with {@link #wakeForCancellation()} as the
  * prompt path so the slice is a backstop rather than the latency.
  *
- * <p>The mechanism only; nothing exposes it over the wire yet.
+ * <p>Reached over the wire by {@code POST /api/ai/install/pause} / {@code …/resume} (tempdoc 840
+ * Phase 4), which refuse when no run is in flight — this gate outlives any one run, so arming it
+ * while idle would halt the NEXT install before its first item.
  */
 public final class AcquisitionPause implements AcquisitionScheduler.PauseGate {
 
@@ -68,6 +70,24 @@ public final class AcquisitionPause implements AcquisitionScheduler.PauseGate {
   /** Whether the run is currently halted between items. */
   public boolean isPaused() {
     return paused;
+  }
+
+  /**
+   * Drops the paused flag because the run it belonged to has ENDED — not because anyone continued
+   * it (tempdoc 840 Phase 4).
+   *
+   * <p>A pause is per-run state living on a service-lifetime object. A run cancelled while paused
+   * leaves the flag set on purpose ({@link #wakeForCancellation()} must not make a cancelled run
+   * look continued), and until Phase 4 nothing could set the flag at all, so the flag simply stayed
+   * true afterwards. With a pause endpoint on the wire that residue becomes visible — a terminated
+   * run reporting {@code paused: true} forever — so the run's terminal path clears it here. Distinct
+   * from {@link #resume()} so the log does not claim a resume that never happened.
+   */
+  public void clear() {
+    synchronized (monitor) {
+      paused = false;
+      monitor.notifyAll();
+    }
   }
 
   /**

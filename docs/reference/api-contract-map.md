@@ -893,6 +893,10 @@ Other debug endpoints: `/api/debug/commit-metadata`, `/api/debug/effective-confi
 | `/api/ai/install/start` | POST | `{"acceptTerms": true}` | `AiInstallStatus` | 400 `TERMS_REQUIRED`, 403 `DOWNLOADS_DISABLED`, 409 `INSTALL_ALREADY_RUNNING`, 500 `INSTALL_START_FAILED` |
 | `/api/ai/install/cancel` | POST | – | `AiInstallStatus` | 500 `INSTALL_CANCEL_FAILED` |
 | `/api/ai/install/repair` | POST | `{"acceptTerms": true}` | `AiInstallStatus` | same set as `start`, plus 500 `INSTALL_REPAIR_FAILED` |
+| `/api/ai/install/pause` | POST | – | `AiInstallStatus` (`paused: true`, `state` still `running`) | 409 `INSTALL_NOT_RUNNING`, 500 `AI_INSTALL_ERROR` |
+| `/api/ai/install/resume` | POST | – | `AiInstallStatus` (`paused: false`) | 409 `INSTALL_NOT_RUNNING`, 500 `AI_INSTALL_ERROR` |
+| `/api/ai/install/packages/{packageId}/decline` | POST | – | `AiInstallStatus` | 400 `INVALID_REQUEST`, 400 `PACKAGE_NOT_DECLINABLE`, 404 `PACKAGE_NOT_FOUND`, 409 `SETTINGS_READ_ONLY`, 503 `SETTINGS_UNAVAILABLE`, 500 `AI_INSTALL_ERROR` |
+| `/api/ai/install/packages/{packageId}/decline` | DELETE | – | `AiInstallStatus` | 400 `INVALID_REQUEST`, 404 `PACKAGE_NOT_FOUND`, 409 `SETTINGS_READ_ONLY`, 503 `SETTINGS_UNAVAILABLE`, 500 `AI_INSTALL_ERROR` |
 
 Every error body on this family is the project's standard envelope —
 `{"error": string, "errorCode": string, "errorClass": string, "retryable": boolean, "requestId"?: string}`
@@ -910,6 +914,33 @@ file is missing). `optionalGaps: [{packageId, fileName}]` reports registry files
 `functionalStatus` (`active` | `inactive` | `unknown`) projects what `GET /api/ai/runtime/status`
 observes, and `terminalReason: "TRANSPORT_UNAVAILABLE"` with `attempts`/`url`/`targetPath` says that
 automatic repair has stopped working and names the manual fallback.
+
+**Pause is not cancel.** A paused run keeps its op-lease, its plan and its place in the set and
+halts *between* files, so `state` stays `running` and `paused` is the bit that changed; `cancel` is
+the terminal one. Both endpoints refuse with `409 INSTALL_NOT_RUNNING` when no run is in flight —
+the pause gate outlives any one run, so arming it while idle would halt the *next* install before
+its first byte.
+
+**Declining a component.** `POST …/packages/{packageId}/decline` records the choice in
+`UiSettings.declinedAiPackages`; `DELETE` on the same path withdraws it. `Necessity.userDeclinable()`
+is the authority: a `required` or `infrastructure` package (`embedding`, `cuda-runtime`) is refused
+with `400 PACKAGE_NOT_DECLINABLE` rather than silently ignored. The `DELETE` direction is never
+refused on necessity grounds — "install this after all" cannot be an invalid request. Both are
+idempotent (a no-change request writes nothing and answers `200`).
+
+**Rate and remaining time are `-1` when unknown, never `0`.** `bytesPerSecond` and
+`remainingSeconds` carry `AcquisitionRate`'s explicit unknown sentinel straight through: too few
+samples, a window too short to measure, a transfer that stopped reporting, or a window over which no
+bytes arrived all publish `-1`. `remainingSeconds: 0` is a real value (nothing left to move);
+`bytesPerSecond: 0` is never published. Both reset to `-1` on every non-`running` state. Consumers
+must test `>= 0` before rendering — a `0 B/s` on a young transfer is the plausible-looking lie this
+convention exists to prevent (same rule as `startupEstimate.ts`'s `< 0` arm).
+
+**Per-component metadata on `packages[]`.** `description` and `necessity`
+(`required` | `improves-results` | `adds-feature` | `infrastructure`) are registry facts stamped
+when the row is built; `declinable` projects `Necessity.userDeclinable()`; `declined` is the live
+`UiSettings` preference, re-read on every status read so a decline made between two polls shows on
+the next one.
 
 ### Install plan preview (tempdoc 657)
 

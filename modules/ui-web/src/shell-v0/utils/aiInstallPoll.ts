@@ -17,81 +17,23 @@
  */
 
 import { authorizedFetch } from '../api/authorizedFetch.js';
+import type { AiInstallStatus } from '../../api/generated/schema-types/ai-install-status.js';
 
-export interface InstallStatus {
-  state: string;
-  phase: string;
-  installedFully?: boolean;
-  /**
-   * Tempdoc 804 §B8 — package ids the CURRENT registry declares that the contract which recorded
-   * this installation never covered (a newer version's added artifact). A distinct state from
-   * "not installed": `installedFully` stays true and these are the extras on offer.
-   */
-  pendingRegistryAdditions?: string[];
-  /**
-   * Tempdoc 805 G.3 — ANY file the current registry requires for this profile is missing from disk,
-   * whether or not the install contract claimed it. Distinct from `installedFully` (a claim about
-   * install history): round 11's machine had `installedFully` true and an unusable GPU at once.
-   */
-  repairNeeded?: boolean;
-  /**
-   * Tempdoc 824 §3.3b — registry files this profile declares that are absent from disk and that no
-   * consumer requires (`"required": false`). Deliberately NOT folded into `repairNeeded`: round 16
-   * lost one 872-byte `splade/config.json` and the product said "a required component is missing"
-   * while SPLADE was serving 1 660 inferences on CUDA. Shown, never alarming.
-   */
-  optionalGaps?: Array<{ packageId?: string; fileName?: string }>;
-  message?: string;
-  errorCode?: string;
-  lastError?: string;
-  // `packageId`/`label`/`tier` are the real wire fields (backend `PackageStatus`); the legacy `id`
-  // is kept optional because older callers referenced it (it was never populated — tempdoc 657).
-  packages?: Array<{
-    packageId?: string;
-    label?: string;
-    tier?: string;
-    id?: string;
-    state?: string;
-    skipReason?: string;
-    /** Failure message for a `state: 'failed'` package (`AiInstallStatus.PackageStatus.error`). */
-    error?: string;
-    bytesDownloaded?: number;
-    bytesTotal?: number;
-    /** True when this package continued an earlier (e.g. cancelled) run's bytes instead of
-     *  restarting from zero — `AiInstallStatus.PackageStatus.resumed`. */
-    resumed?: boolean;
-    /**
-     * Tempdoc 824 §3.3c — what the RUNTIME observes about this package's capability
-     * (`'active' | 'inactive' | 'unknown'`), projected from the same derivation
-     * `/api/ai/runtime/status` publishes. Bookkeeping ("a file is missing") and consequence ("the
-     * capability is down") are different claims; the alarming copy needs both.
-     */
-    functionalStatus?: string;
-    /**
-     * Tempdoc 824 §3.4 — `'TRANSPORT_UNAVAILABLE'` once three consecutive repair passes failed the
-     * same file at transport. Repair stays *needed*; it stops being the *remedy*.
-     */
-    terminalReason?: string;
-    /** Transport attempts spent on the still-missing file, across repair passes. */
-    attempts?: number;
-    /** Direct URL of the file that will not transfer — the manual fallback's source. */
-    url?: string;
-    /** Where that file has to land — the manual fallback's destination. */
-    targetPath?: string;
-  }>;
-  downloadedBytes?: number;
-  totalBytes?: number;
-  /**
-   * Bytes an interrupted earlier run left staged in `.partial` files, which a resume keeps
-   * (`AiInstallStatus.resumableBytes`). Backend-derived from DISK via the planner, not from
-   * `state: 'cancelled'` — that state is session-ephemeral and reads `idle` again after a restart,
-   * so keying the paused UI on it would tell a returning user their GBs were discarded.
-   */
-  resumableBytes?: number;
-  startedAtEpochMs?: number;
-  updatedAtEpochMs?: number;
-  cancelRequested?: boolean;
-}
+/**
+ * The `GET /api/ai/install/status` wire shape.
+ *
+ * Tempdoc 840 Phase 4: this used to be a hand-written mirror of
+ * `modules/app-api/src/main/java/io/justsearch/app/api/AiInstallStatus.java`, and
+ * `api/domains/packs.ts` held a SECOND, older mirror that still modelled the retired v1 `assets[]`.
+ * Three hand-maintained copies of one shape, with nothing keeping them in sync — so the staged
+ * install's `stages`/`readyCapabilities` reached neither of them. The Java DTO is now projected to
+ * `SSOT/schemas/ai-install-status.v1.json` and generated into `schema-types/ai-install-status.ts`
+ * (type + Zod), which `check-wire-schema-types-regen` fails the build on drifting from.
+ *
+ * `InstallStatus` stays as the name this module's subscribers already import; it is an alias, not a
+ * fork — do not add fields here.
+ */
+export type InstallStatus = AiInstallStatus;
 
 /**
  * Side-effect-free per-tier weight preview (tempdoc 657), from `GET /api/ai/install/plan-preview`.

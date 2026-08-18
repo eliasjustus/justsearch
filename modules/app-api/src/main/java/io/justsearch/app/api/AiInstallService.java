@@ -73,4 +73,37 @@ public interface AiInstallService {
    * <p>Throws {@link AiInstallException} on validation failures.
    */
   void repair(boolean acceptTerms);
+
+  /**
+   * Halt an in-flight install before its next file, keeping the run, its op-lease and its place in
+   * the set. Not terminal — {@link #cancel()} is.
+   *
+   * @throws AiInstallException 409 {@code INSTALL_NOT_RUNNING} when no run is in flight. The guard
+   *     lives on the contract rather than in the HTTP handler because the pause gate outlives any
+   *     one run: arming it with nothing running would halt the NEXT install before its first byte,
+   *     with nothing on the wire to say why.
+   */
+  void pauseInstall();
+
+  /**
+   * Continue a paused install at its next file.
+   *
+   * @throws AiInstallException 409 {@code INSTALL_NOT_RUNNING} when no run is in flight
+   */
+  void resumeInstall();
+
+  /**
+   * Record — or withdraw — the user's decision not to install one registry package, as a durable
+   * preference ({@code UiSettings.declinedAiPackages}) that survives runs which never complete.
+   *
+   * <p>{@code declined = false} is the withdrawal and is always allowed: "install this after all"
+   * can never be an invalid request. {@code declined = true} is refused for a package whose {@code
+   * Necessity} is not user-declinable — {@code Necessity.userDeclinable()} is the authority, and a
+   * request the product cannot honour must fail loudly rather than be dropped on the floor.
+   *
+   * @throws AiInstallException 400 {@code INVALID_REQUEST} for a blank id; 404 {@code
+   *     PACKAGE_NOT_FOUND} when the registry declares no such package; 400 {@code
+   *     PACKAGE_NOT_DECLINABLE} when declining a {@code required} / {@code infrastructure} package
+   */
+  void setPackageDeclined(String packageId, boolean declined);
 }

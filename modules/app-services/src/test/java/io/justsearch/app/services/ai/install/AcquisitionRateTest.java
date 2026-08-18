@@ -443,4 +443,54 @@ final class AcquisitionRateTest {
         rate.sampleCount(),
         "one sample past the cap must evict exactly enough to return to the cap, not below it");
   }
+
+  // ── reHorizon (tempdoc 840 Phase 4) ────────────────────────────────────────
+  // A staged install measures one slice per stage, so the run-level horizon is the SAME rate divided
+  // into a different remainder. The property that matters is that re-horizoning cannot manufacture
+  // knowledge the rate does not have.
+
+  @Test
+  @Timeout(10)
+  @DisplayName("reHorizon keeps the measured rate and re-divides it into the given remainder")
+  void reHorizonReDividesTheSameRate() {
+    AcquisitionRate.Estimate stageWide = new AcquisitionRate.Estimate(1_000d, 5L);
+
+    AcquisitionRate.Estimate runWide = stageWide.reHorizon(20_000L);
+
+    assertEquals(1_000d, runWide.bytesPerSecond(), 1e-9, "the rate is measured, not re-derived");
+    assertEquals(20L, runWide.remainingSeconds(), "20 000 B at 1 000 B/s is 20 s, not the stage's 5");
+  }
+
+  @Test
+  @Timeout(10)
+  @DisplayName("an UNKNOWN rate re-horizons to UNKNOWN — never to a fabricated 0")
+  void reHorizonOfUnknownStaysUnknown() {
+    AcquisitionRate.Estimate runWide = AcquisitionRate.Estimate.UNKNOWN.reHorizon(20_000L);
+
+    assertFalse(runWide.rateKnown(), "a horizon cannot be more knowable than the rate under it");
+    assertFalse(runWide.remainingKnown());
+    assertEquals(-1L, runWide.remainingSeconds(), "the sentinel, not 0 — 0s would read as 'done'");
+    assertNotEquals(0d, runWide.bytesPerSecond(), "0 B/s is the plausible lie this class prevents");
+  }
+
+  @Test
+  @Timeout(10)
+  @DisplayName("a known rate with an unknown remainder keeps the rate and drops only the horizon")
+  void reHorizonWithUnknownRemainderKeepsTheRate() {
+    AcquisitionRate.Estimate runWide = new AcquisitionRate.Estimate(2_500d, 4L).reHorizon(-1L);
+
+    assertTrue(runWide.rateKnown(), "the rate is still measured even when the total size is not");
+    assertEquals(2_500d, runWide.bytesPerSecond(), 1e-9);
+    assertFalse(runWide.remainingKnown());
+  }
+
+  @Test
+  @Timeout(10)
+  @DisplayName("nothing left to move is 0 seconds — a value, not the unknown sentinel")
+  void reHorizonOfZeroRemainderIsZeroSeconds() {
+    AcquisitionRate.Estimate runWide = new AcquisitionRate.Estimate(1_000d, 3L).reHorizon(0L);
+
+    assertTrue(runWide.remainingKnown(), "0 is genuinely nothing left, and must read as known");
+    assertEquals(0L, runWide.remainingSeconds());
+  }
 }

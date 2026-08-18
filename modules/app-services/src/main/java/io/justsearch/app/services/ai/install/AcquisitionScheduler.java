@@ -264,7 +264,11 @@ public final class AcquisitionScheduler {
     this.totalBytes = sum;
   }
 
-  /** The live rate/ETA estimate for the set. Not on the wire yet — the projection is a later phase. */
+  /**
+   * The live rate/ETA estimate for this scheduler's own slice. Reaches the wire as {@code
+   * AiInstallStatus.bytesPerSecond} / {@code remainingSeconds}, re-horizoned onto the whole run by
+   * the projection in {@code AiInstallService} (tempdoc 840 Phase 4).
+   */
   public AcquisitionRate.Estimate estimate() {
     return rate.estimate(totalBytes);
   }

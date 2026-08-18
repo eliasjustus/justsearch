@@ -72,6 +72,32 @@ public final class AcquisitionRate {
     public boolean remainingKnown() {
       return remainingSeconds >= 0L;
     }
+
+    /**
+     * The same measured rate, re-horizoned onto a different remaining-byte count.
+     *
+     * <p>A staged install gives one estimator per stage, each measuring only its own slice, so this
+     * record's own {@link #remainingSeconds} answers "time left in this STAGE". A run-level surface
+     * asks "time left in the RUN" — the same rate divided into a different remainder. Doing the
+     * division here keeps one estimator answering both questions instead of a second one that could
+     * disagree with the first.
+     *
+     * <p>An unknown rate stays {@link #UNKNOWN}: a horizon can never be more knowable than the rate
+     * it is derived from, and this is the arm that would otherwise fabricate the {@code 0s} the
+     * whole class exists to prevent.
+     *
+     * @param remainingBytes bytes still to move; negative means unknown, which keeps the rate and
+     *     drops the horizon
+     */
+    public Estimate reHorizon(long remainingBytes) {
+      if (!rateKnown() || bytesPerSecond <= 0d) {
+        return UNKNOWN;
+      }
+      if (remainingBytes < 0L) {
+        return new Estimate(bytesPerSecond, -1L);
+      }
+      return new Estimate(bytesPerSecond, Math.round(remainingBytes / bytesPerSecond));
+    }
   }
 
   /** One cumulative-byte reading and when it was taken. */
