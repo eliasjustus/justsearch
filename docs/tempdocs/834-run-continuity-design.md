@@ -1809,18 +1809,20 @@ and they retire as a unit.
 ### 16.4 Verification
 
 - `./gradlew.bat spotlessApply` then `build -x test -PskipWebBuild=true` — **BUILD SUCCESSFUL**.
-- `./gradlew.bat test -PskipWebBuild=true` — **BUILD SUCCESSFUL; 1336 suites / 7826 tests / 26
-  skipped / 0 failures** (re-run after the catch-up merge with the streaming-producer-wedge fix,
-  #476 — the in-flight stream §15.0 predicted would land in `ConversationEngine`'s latch region
-  first; S3b keeps `engine.run` synchronous and untouched, so the two composed with no code
-  conflict).
+- `./gradlew.bat test -PskipWebBuild=true` — **BUILD SUCCESSFUL; 1338 suites / 7847 tests / 26
+  skipped / 0 failures**, re-run after TWO catch-up merges: #476 (the streaming-producer-wedge fix
+  — the in-flight stream §15.0 predicted would land in `ConversationEngine`'s latch region first;
+  S3b keeps `engine.run` synchronous and untouched) and #477 (crash-aware inference reasons). Both
+  composed with no code conflict — #477's FE is readinessNotice/verdict/aiStateStore against this
+  slice's streams.ts/activeRunPointer, and its Java is the inference-capability cluster against
+  this slice's run/chat controllers; only the session observation shard needed a union resolve.
 - The four named conformance tests are green, including the two new equivalence cases on
   `AgUiEventTranslatorConformanceTest`. No sealed-permit count changed: `run_started`,
   `replay_truncated` and `heartbeat` are LIFECYCLE frames, not `AgentEvent` permits (§3.2), so the
   7+ site cascade never fires.
 - New tests: `RunChannelRegistryTest` (16), `RunChannelPolicyTest` (8), `RunStreamWriterTest` (12),
   `RunStreamControllerTest` (12), plus 5 run-stream cases on `streams.test.ts`.
-- FE: `npm run typecheck` clean; `npm run test:unit:run` — **422 files / 5195 tests passed**.
+- FE: `npm run typecheck` clean; `npm run test:unit:run` — **422 files / 5210 tests passed**.
 - Governance kernel: 35 gates, **5 fail / 70 findings** — `npm-audit`, `ts-any`, `dead-code`,
   `contract-projection`, `config-surface`, all pre-existing and none naming a file from this slice
   (S3a recorded the same set plus `module-deps`, which fails only for a missing preflight input;
