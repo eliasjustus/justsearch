@@ -179,9 +179,17 @@ final class StagedAcquisitionTest {
                   configured.add(s.stage().id());
                   // The production binding hands the restart through this gate; running it here is
                   // what makes "no restart" an assertion about the real gate rather than about the
-                  // fake.
-                  StagedAcquisition.restartGate(sum, () -> workerRestarted.compareAndSet(false, true))
-                      .getAsBoolean();
+                  // fake. The verdict is asserted against the side effect rather than discarded:
+                  // the gate saying "restarted" while nothing restarted (or the reverse) would be a
+                  // gate that lies, and that is exactly what this test exists to catch.
+                  boolean restartFired =
+                      StagedAcquisition.restartGate(
+                              sum, () -> workerRestarted.compareAndSet(false, true))
+                          .getAsBoolean();
+                  assertEquals(
+                      restartFired,
+                      workerRestarted.get(),
+                      s.stage().id() + ": the gate's verdict must match whether a restart happened");
                   return applied(false);
                 },
                 leases,
