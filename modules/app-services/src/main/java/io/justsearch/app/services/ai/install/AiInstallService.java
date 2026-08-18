@@ -28,6 +28,7 @@ import io.justsearch.configuration.model.ModelPackage;
 import io.justsearch.configuration.model.ModelRegistry;
 import io.justsearch.configuration.model.ModelRegistryLoader;
 import io.justsearch.configuration.model.ModelVariant;
+import io.justsearch.configuration.model.SkipCause;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.app.services.config.ConfigStoreRebuilder;
 import io.justsearch.app.api.EffectivePolicy;
@@ -457,6 +458,58 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       te.downloadBytes += downloadByPkg.getOrDefault(pkg.id(), 0L);
     }
     preview.tiers.addAll(byTier.values());
+
+    // Per-component rows. Every value is projected from the SAME plan the tier totals came from, so
+    // the list cannot disagree with what an install would actually do. Derived here rather than read
+    // off `status.packages`, which is run bookkeeping and is empty on an idle machine.
+    Set<String> installedIds = new HashSet<>(plan.alreadyInstalled());
+    Map<String, InstallPlan.SkippedPackage> skippedById = new HashMap<>();
+    for (var sk : plan.skipped()) {
+      skippedById.putIfAbsent(sk.packageId(), sk);
+    }
+    Set<String> declined = declinedPackages();
+    for (ModelPackage pkg : registry.packages()) {
+      var ce = new InstallPlanPreview.ComponentEstimate();
+      ce.id = pkg.id();
+      ce.label = pkg.label() == null ? pkg.id() : pkg.label();
+      ce.description = pkg.description() == null ? "" : pkg.description();
+      ce.tier = pkg.tier() == null ? "" : pkg.tier().id();
+      ce.necessity = pkg.necessity() == null ? "" : pkg.necessity().id();
+      ce.declinable = pkg.necessity() != null && pkg.necessity().userDeclinable();
+      ce.declined = declined.contains(pkg.id());
+
+      ModelVariant variant = pkg.selectVariant(profile);
+      long footprint = variant != null ? variant.sizeBytes() : 0L;
+      for (var sf : pkg.supportingFiles()) {
+        footprint += sf.sizeBytes();
+      }
+      ce.totalBytes = footprint;
+      ce.downloadBytes = downloadByPkg.getOrDefault(pkg.id(), 0L);
+
+      InstallPlan.SkippedPackage skipped = skippedById.get(pkg.id());
+      if (installedIds.contains(pkg.id())) {
+        ce.state = "installed";
+      } else if (skipped != null) {
+        // The planner already decided WHY, with a typed cause. Re-deriving it from the prose reason
+        // would be the classification-by-string defect this codebase removed elsewhere.
+        ce.state =
+            switch (skipped.cause() == null ? SkipCause.HARDWARE : skipped.cause()) {
+              case USER_DECLINED -> "declined";
+              case INTENT -> "not-in-mode";
+              case HARDWARE -> "unavailable";
+            };
+        if ("unavailable".equals(ce.state)) {
+          ce.unavailableReason = skipped.reason() == null ? "" : skipped.reason();
+        }
+      } else if (ce.downloadBytes > 0L) {
+        ce.state = "to-download";
+      } else {
+        // Wanted, not skipped, nothing left to fetch — every file is already on disk even though the
+        // planner did not list the package as fully installed (a partially-contracted package).
+        ce.state = "installed";
+      }
+      preview.components.add(ce);
+    }
     return preview;
   }
 
