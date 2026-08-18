@@ -28,7 +28,8 @@ import org.junit.jupiter.api.io.TempDir;
  *
  * <p>The disk verdict is injected here for the same reason {@code applyInstalledFromPlan} takes an
  * injected contract: staging the whole registry's file set to make a real probe answer would be
- * brittle, and app-services carries no {@code ai/model-registry.v2.json} on its test classpath.
+ * brittle, even though app-services can now load the real {@code ai/model-registry.v2.json} from
+ * its own test classpath (tempdoc 840 — the registry ships in {@code modules:configuration}).
  */
 final class AiInstallServiceCompletionTruthTest {
 
@@ -190,9 +191,17 @@ final class AiInstallServiceCompletionTruthTest {
 
   /**
    * The probe is best-effort: when it cannot answer, the package bookkeeping remains the only
-   * authority and every pre-824 verdict stands. This is the branch every app-services test that
-   * calls the no-arg {@code applyCompletionState()} actually takes (no registry on the classpath),
-   * so it is also what keeps those tests meaningful rather than accidentally green.
+   * authority and every pre-824 verdict stands.
+   *
+   * <p>Tempdoc 840: this comment used to add "this is the branch every app-services test that calls
+   * the no-arg {@code applyCompletionState()} actually takes (no registry on the classpath), so it is
+   * also what keeps those tests meaningful rather than accidentally green." Both halves are now false,
+   * and the second was the more dangerous one — the classpath absence it relied on WAS the accident.
+   * The registry now ships from {@code modules:configuration} and is reachable here, and the sibling
+   * tests in {@code AiInstallServicePackageStateTest} inject {@code null} explicitly instead of
+   * inheriting it from a resource that happened to be missing. Every arm of the decision is now
+   * driven deliberately: the no-arg composition by {@code AiInstallCompletionDiskRecomputeTest}
+   * (in {@code modules:ui}), the indeterminate arm here, and the real-disk-truth arm above.
    */
   @Test
   @DisplayName("an indeterminate disk probe degrades to the pre-824 package-derived verdict")

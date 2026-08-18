@@ -292,11 +292,13 @@ try {
 // 7. Core and optional model files
 console.log('\n7. Model files');
 // Chat/VLM model filenames are read from the registry SSOT
-// (modules/ui/src/main/resources/ai/model-registry.v2.json, package id=chat) so this
+// (modules/configuration/src/main/resources/ai/model-registry.v2.json, package id=chat) so this
 // check never drifts when the packaged model changes — cf. tempdoc 579 model-id drift.
+// Tempdoc 840: relocated from modules/ui to modules/configuration (the module that owns
+// ModelRegistryLoader), so app-services no longer reaches the resource by classpath coincidence.
 function readChatModelNames() {
   try {
-    const reg = JSON.parse(readText('modules/ui/src/main/resources/ai/model-registry.v2.json'));
+    const reg = JSON.parse(readText('modules/configuration/src/main/resources/ai/model-registry.v2.json'));
     const chat = (reg.packages || []).find((p) => p.id === 'chat');
     return {
       variant: chat?.variants?.[0]?.filename ?? null,

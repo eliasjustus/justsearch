@@ -856,7 +856,7 @@ public class LocalApiServer {
     // user manually relaunched. Now the worker reference reaches AiInstallService
     // before the user can click "Install AI" (UI doesn't render the dialog until
     // /api/health reports the worker online).
-    core.aiInstallController().setKnowledgeServer(ks);
+    core.aiInstallService().setKnowledgeServer(ks);
 
     // Create and register KnowledgeSearchController if not already present
     if (ks != null && this.knowledgeSearchController == null) {

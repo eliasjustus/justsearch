@@ -70,6 +70,10 @@
     "passage-windows": {
       "minStrength": 82,
       "maxNoCoverage": 0
+    },
+    "acquisition-rate": {
+      "minStrength": 97,
+      "maxNoCoverage": 0
     }
   }
 }

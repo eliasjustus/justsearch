@@ -74,7 +74,7 @@ function main() {
   // Registry projection: only enforce a retired name while the registry confirms
   // it is not a current package. Fail-open if the registry is unreadable.
   const registryPath = path.join(
-    repoRoot, "modules", "ui", "src", "main", "resources", "ai", "model-registry.v2.json");
+    repoRoot, "modules", "configuration", "src", "main", "resources", "ai", "model-registry.v2.json");
   let registryText = "";
   try {
     registryText = fs.readFileSync(registryPath, "utf8");

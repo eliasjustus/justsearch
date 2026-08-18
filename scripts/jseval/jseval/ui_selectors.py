@@ -17,6 +17,10 @@ TID_RESULT_ROW_SNIPPET_TOGGLE = "result-row-snippet-toggle"
 TID_GLOBAL_COMMAND_CHROME = "global-command-chrome"
 TID_SKELETON_LIBRARY = "skeleton-library"
 TID_BRAIN_SWITCH_TO_ADVANCED = "brain-switch-to-advanced"
+# Tempdoc 840 Phase 5 — the per-component install list and the consent dialog it leads into.
+TID_INSTALL_COMPONENT_LIST = "install-component-list"
+TID_BRAIN_SIMPLE_ACTION = "brain-simple-action"
+TID_INSTALL_CONSENT_DIALOG = "install-consent-dialog"
 
 # Activity rail navigation — the rail renders each nav button with
 # `data-surface-id="core.<x>-surface"` (`Shell.ts` renderRailButton) and a `@click` that selects

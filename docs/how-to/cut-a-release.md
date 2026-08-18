@@ -428,9 +428,8 @@ speed). When bumping the ORT version, all of the following must move together:
       runs at CPU speed while the status surfaces still report a GPU variant (tempdoc 734 R11-F3).
       The registry pin then makes the verified bytes the only accepted bytes, so this is the one
       moment the contents can be wrong.
-- [ ] The **registry entry** — `filename` / `sha256` / `sizeBytes` for that asset — in **BOTH**
-      copies of `model-registry.v2.json` (`modules/ui/src/main/resources/ai/` and
-      `modules/configuration/src/test/resources/ai/`).
+- [ ] The **registry entry** — `filename` / `sha256` / `sizeBytes` for that asset — in
+      `model-registry.v2.json` (`modules/configuration/src/main/resources/ai/`).
 - [ ] The in-zip **`ort-native-version.txt`** marker inside the pack archive.
 - [ ] **`OrtCudaHelper.EXPECTED_ORT_NATIVE_VERSION`** (`modules/ort-common/…/OrtCudaHelper.java`).
 

@@ -39,6 +39,29 @@ describe('Control (jf-control)', () => {
     expect(innerButton(el).getAttribute('aria-label')).toBe('Revert non-core overrides');
   });
 
+  /**
+   * Tempdoc 840 — the toggle-button arm. TRI-STATE by design: unset must emit NO `aria-pressed`, so
+   * the ~40 existing plain-command consumers keep rendering exactly as before (a `aria-pressed="false"`
+   * on a plain button would tell AT it is an un-pressed toggle, which it is not).
+   */
+  it('emits no aria-pressed at all unless `pressed` is set', async () => {
+    const el = await mount((c) => (c.label = 'Do it'));
+    expect(innerButton(el).hasAttribute('aria-pressed')).toBe(false);
+  });
+
+  it('emits aria-pressed in both directions once `pressed` is set', async () => {
+    const el = await mount((c) => {
+      c.label = 'Search reranker';
+      c.pressed = true;
+    });
+    expect(innerButton(el).getAttribute('aria-pressed')).toBe('true');
+    el.pressed = false;
+    await el.updateComplete;
+    expect(innerButton(el).getAttribute('aria-pressed')).toBe('false');
+    // …and the name stays put across the flip: the state is on the button, not in the label.
+    expect(innerButton(el).getAttribute('aria-label')).toBe('Search reranker');
+  });
+
   it('fires onActivate on click', async () => {
     const onActivate = vi.fn();
     const el = await mount((c) => {

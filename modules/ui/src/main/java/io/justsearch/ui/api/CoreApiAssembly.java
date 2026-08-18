@@ -51,6 +51,11 @@ final class CoreApiAssembly {
       io.justsearch.ui.observability.GpuSaturationSampler gpuSaturationSampler,
       io.justsearch.app.services.vdu.VduOfflineTriggerSampler vduOfflineTriggerSampler,
       AiInstallController aiInstallController,
+      // The concrete install helper, not just its controller: the worker reference late-binds into
+      // the SERVICE, and routing that through the HTTP controller made a composition-root concern a
+      // controller method and forced the controller to hold the impl type instead of the app-api
+      // interface.
+      io.justsearch.app.services.ai.install.AiInstallService aiInstallService,
       OpenAiCompatController openAiCompatController,
       PolicyController policyController,
       DiagnosticsController diagnosticsController,
@@ -500,6 +505,7 @@ final class CoreApiAssembly {
         gpuSaturationSampler,
         vduOfflineTriggerSampler,
         aiInstallController,
+        aiInstallHelper,
         openAiCompatController,
         policyController,
         diagnosticsController,

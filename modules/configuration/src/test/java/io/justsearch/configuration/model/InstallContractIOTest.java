@@ -20,12 +20,22 @@ class InstallContractIOTest {
     var model = new InstallContract.InstalledModel(
         "embedding", "model.onnx", ModelPrecision.FP32, ExecutionProvider.CPU,
         "onnx/embed", "AAAA", List.of("model.onnx", "tokenizer.json"), false, null);
-    var skipped = InstallContract.InstalledModel.skipped("chat", "No CUDA");
+    var skipped = InstallContract.InstalledModel.skipped("chat", SkipCause.HARDWARE, "No CUDA");
+    // Tempdoc 840 Phase 2: the typed cause is a PERSISTED field, so it must survive the round trip.
+    // An unclassified entry (the pre-840 shape, and the "nothing to install" bookkeeping entry) must
+    // survive as null rather than defaulting to some cause the planner never decided.
+    var declined =
+        InstallContract.InstalledModel.skipped("reranker", SkipCause.USER_DECLINED, "You declined it");
+    var unclassified = InstallContract.InstalledModel.skipped("ner", "No variant");
 
     var contract = new InstallContract(
         2, System.currentTimeMillis(),
         HardwareProfile.cpuOnly(), DownloadProfile.CPU,
-        Map.of("embedding", model, "chat", skipped));
+        Map.of(
+            "embedding", model,
+            "chat", skipped,
+            "reranker", declined,
+            "ner", unclassified));
 
     InstallContractIO.write(contract, tempDir);
     InstallContract loaded = InstallContractIO.read(tempDir);
@@ -45,6 +55,15 @@ class InstallContractIOTest {
     assertNotNull(chatModel);
     assertTrue(chatModel.skipped());
     assertEquals("No CUDA", chatModel.skipReason());
+    assertEquals(SkipCause.HARDWARE, chatModel.skipCause());
+
+    assertEquals(
+        SkipCause.USER_DECLINED,
+        loaded.getModel("reranker").skipCause(),
+        "a decline must stay distinguishable from a hardware skip across a restart");
+    assertNull(
+        loaded.getModel("ner").skipCause(),
+        "an unclassified skip must not gain a cause the planner never decided");
   }
 
   @Test
