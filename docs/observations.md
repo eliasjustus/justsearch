@@ -196,10 +196,6 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: scripts/jseval/jseval/llm_bench.py` `seen: 1` `first: 2026-06-24` `last: 2026-06-24`
 - [ ] llm-bench discover_doc_ids uses `*:*` which returns 0 in semantic-search dev stacks (real queries work) — the bench can't auto-discover docs there, so token/latency benching needs an index that serves `*:*` or an explicit docId — `scripts/jseval/jseval/llm_bench.py` (2026-06-24)
 
-### obs:searchsurface — Pre-existing a11y: the SearchSurface degraded-readiness banner reports an axe serious violation (rea
-`kind: environment?` `anchor: modules/ui-web/src/shell-v0/views/SearchSurface.ts` `seen: 1` `first: 2026-06-30` `last: 2026-06-30`
-- [ ] Pre-existing a11y: the SearchSurface degraded-readiness banner reports an axe serious violation (readinessNotice render / 'Open Health' control), surfaced only when the banner shows; not introduced by 661 DP3 (no new DOM). Worth a focused a11y check of the degradation banner — `modules/ui-web/src/shell-v0/views/SearchSurface.ts`. Rescued from a near-lost obs shard during the 2026-06-30 main-checkout reconcile. (2026-06-30)
-
 ### obs:gitleaks — gitleaks.toml allowlists `third_party/.*` as 'vendored upstream (llama.cpp etc.)' — that tree was re
 `kind: defect?` `anchor: docs/business/go-to-market/cutover-package/gitleaks.toml` `seen: 1` `first: 2026-06-24` `last: 2026-06-24`
 - [ ] gitleaks.toml allowlists `third_party/.*` as 'vendored upstream (llama.cpp etc.)' — that tree was removed in tempdoc 632, so the allowlist rule is now inert; drop it during the 634 cutover gitleaks pass — `docs/business/go-to-market/cutover-package/gitleaks.toml:11` (2026-06-24)
