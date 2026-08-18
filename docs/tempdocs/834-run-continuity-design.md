@@ -1845,31 +1845,109 @@ and they retire as a unit.
    `ToolExecutionCompleted`. §6.5 calls this gate "the whole mitigation" for a second hand-written
    switch; the probe shows it bites.
 
-### 16.5 Live legs — PENDING, DIRECT TOPOLOGY ONLY (P4)
+### 16.5 Live legs — RUN 2026-08-18, DIRECT TOPOLOGY ONLY (P4)
 
-No dev stack was taken. Per §15.0's second qualification, every lifecycle leg below must run
-**against the API port, not through `npm run dev`**: probe D1(c) measured `onClose` NEVER firing
-through the Vite proxy (471 s and still counting), so a green result there is meaningless.
+Run under supervision on this worktree's dist (`distFrom`, Head jar built 15:21 from the
+post-merge tree), API port pinned to 7710, lease 3600 s. **Every request below went straight to
+`http://127.0.0.1:7710` — never through the Vite proxy**, per D1(c) (`onClose` never fires
+through it; a green there is meaningless). GPU runtime `cuda12` + `Qwen_Qwen3.5-9B-Q4_K_M.gguf`.
 
-1. **Park detection via heartbeat.** Start a WATCH agent run; kill the observing client without a
-   clean close; assert `observerCount` reaches 0 and the run narrates `run_unobserved_parked` within
-   ONE heartbeat interval (15 s), not instantly — D1(b) bounds detection by the stream's own write
-   cadence.
-2. **Reattach replay.** `POST /api/chat/runs` with an ask; mid-answer, `POST` to
-   `/api/chat/runs/{runId}/observe` from a second client; assert it receives `run_started`, then the
-   full replay, then the same live tail as the first — and that the first is unaffected.
-3. **Observer count.** With two observers attached, close one; assert the count drops by exactly one
-   within a heartbeat interval and the run continues.
-4. **`run_started` first.** Assert the first frame on both routes carries
-   `{runId, shapeId, conversationId}` and that no `id:` line appears anywhere on the stream.
-5. **Retired 404.** Let a run finish, wait past the 60 s linger, then observe it; assert
-   `404 {reason: "retired", recordHint: "/api/chat/conversations/…"}` — not a 200 with an empty
-   stream.
-6. **Ask survival, live.** Start an ask, kill the client immediately, then read the conversation
-   transcript; assert the assistant message persisted in full.
+**Verdicts: 3 of 6 VERIFIED, 1 VERIFIED-BEYOND-SCRIPT, 2 NOT REACHABLE AT S3B** — and the two
+that are not reachable are errors in this script, not defects in the slice (§16.5.1).
+
+| leg | verdict | evidence |
+|---|---|---|
+| 1 — park detection via heartbeat | **NOT REACHABLE AT S3b** | §16.5.1 |
+| 2 — reattach replay | **VERIFIED** (both families) | below |
+| 3 — observer count on close | **NOT REACHABLE AT S3b** | §16.5.1 |
+| 4 — `run_started` first, no `id:` | **VERIFIED** | below |
+| 5 — retired-past-linger 404 | **VERIFIED** (both reasons) | below |
+| 6 — ask survival | **VERIFIED**, with a measurement stronger than the script asked | below |
+
+**Leg 4 — `run_started` first, no `id:`. VERIFIED.** `POST /api/chat/runs`
+(`core.free-chat`) answered `200 text/event-stream` with the first frame
+`event: run_started` / `data: {"runId":"run-6d02df36-…","shapeId":"core.free-chat",
+"conversationId":"conv-live-1"}` — the identity triple, and the `run-<uuid>` mint of §3.2. The
+raw byte stream carries exactly two SSE field names, `event:` and `data:` — **zero `id:` lines**,
+so `Last-Event-ID` is closed as a second cursor by construction. (The same probe doubles as the
+freshness check the skill's preamble asks for: a stale jar would have 404'd the route.)
+
+**Leg 2 — reattach replay. VERIFIED on both families, including the mutation-probe case live.**
+On the run-stream family, re-observing inside the linger with the default cursor replayed the
+retained window after `run_started`; with `?sinceSeq=999` (a cursor ahead of the stream) the
+server answered `run_started`, then
+`replay_truncated {"sinceSeq":999,"oldestRetainedSeq":2}`, **then still delivered the window that
+does exist**. That is exactly where mutation probe 1 produced `[run_started]` alone — the live
+form of the same assertion. On the agent family, `POST /api/chat/agent/{id}/attach` returned the
+primer FIRST, ahead of the replay (§6.1), carrying **all eight** StateSnapshot components with a
+real held gate: `pendingApprovals:[{callId:"BM7ZSZ…",toolName:"core_browse_folders",
+arguments:"{\"parent_path\":\"\"}",risk:"low",gateBehavior:"inline_confirm"}]`,
+`autonomyLevel:"WATCH"`, `park:{kind:"approval",sinceEpochMs:1787059653964,detail:"BM7ZSZ…"}`.
+This is the live counterpart of mutation probe 2 — the 8-arg carry, observed rather than argued.
+The replay also contained `tool_batch_proposed`, so the **wire overlay survives the channel
+projection** (§16.2's injected projector doing its job; journaling the base alone would have
+shipped a gate-hint-less plan preview).
+
+**Leg 5 — retired vs unknown. VERIFIED, both reasons.** 71 s after the run terminated (past the
+60 s linger), `POST /api/chat/runs/run-6d02df36-…/observe` answered
+`404 {"runId":"run-6d02df36-…","reason":"retired","recordHint":"/api/chat/conversations/conv-live-1"}` —
+JSON, not a 200 with an empty stream, and the hint names the conversation from the descriptor. A
+never-opened id answered `404 {"reason":"unknown","recordHint":""}`. The tri-state §1.6 designed
+is real on the wire.
+
+**Leg 6 — ask survival. VERIFIED, and the measurement is stronger than "it completed".** A
+`core.free-chat` run was started and its ONLY client killed at 4.0 s, mid-generation — its last
+received bytes end mid-sentence (`"…**Drafting - Section by Section"`). The client had received
+**627 characters**. The assistant turn persisted 18 s later at **2418 characters**: **1791
+characters — 74 % of the answer — were generated AFTER the only observer died**, and the complete
+answer reached `ConversationStore`. §3.4's law is not "the run does not crash"; it is "the run
+keeps going and persists", and the 74 % is what makes that distinction observable.
+
+#### 16.5.1 Legs 1 and 3 are NOT REACHABLE at S3b — a script error, not a slice defect
+
+Both legs were scripted assuming a reachability S3b does not have. The live run is what exposed
+it, which is the argument for running live legs at all.
+
+**Leg 1 (park detection via heartbeat).** The assertion needs a run that (a) can park and (b) is
+observed through the MANAGED `SseClient`, because the heartbeat only becomes the detection
+mechanism via `onClose`. No run satisfies both at S3b: §3.4 makes every run on the new
+`/api/chat/runs` family structurally unparkable, and agent runs — the only parkable ones — still
+enter through the LEGACY raw-`Context` route, which has no `onClose` at all. S3b journals agent
+runs on the channel but does not migrate their transport; that migration is S5's.
+
+Driven anyway, to find out what the legacy path actually does: a WATCH run was started, its
+client killed at 6 s, and the run driven through **three** iteration boundaries over ~2.5 minutes
+with nothing attached (approving each gate out-of-band). `run_unobserved_parked` was **never**
+narrated — `observerCount()` never reached 0, because the stale initiating observer is only
+evicted when its write THROWS, and `AgentSseWriter.writeOrEvict`'s `CLIENT_GONE` did not fire.
+The route's own heartbeat cannot help: it writes through the **non-evicting** `writeEvent`
+(`AgentController.java:137`) — deliberately, since §8 showed switching it to `writeOrEvict` is
+broken three ways.
+
+**This is pre-existing, not introduced by the sweep.** The eviction trigger is mechanism-identical
+before and after: the deleted `RunEventHub.deliver` evicted on `catch (RuntimeException)` around
+`sub.accept(event)`; `AgentSession.deliverToObservers` evicts on `catch (RuntimeException)` around
+`initiator.accept(event)`. Neither fires without a throw. Logged to the inbox. What the run DID
+demonstrate is the other half of §1.7: it survived its client and kept working for three
+iterations unobserved.
+
+**Leg 3 (observer count on close).** `observerCount` has no read surface at S3b —
+`GET /api/chat/runs/live` is S4's. The only externally observable proxy is the park narration,
+which leg 1 shows is unreachable here. Both legs become verifiable together once S4 ships the
+enumeration and S5 moves the agent transport onto the managed writer; they should be re-scripted
+against that slice rather than left as pending items on this one.
 
 Also still pending from §13.4: the browser-`EventSource` reconnect leg for the 18 envelope routes.
 And P2 was still not run, so `FRAME_OVERHEAD_BYTES = 200` and both §2 budgets remain provisional.
+
+#### 16.5.2 Environment notes
+
+`ai_activate` failed twice before succeeding, both times for reasons §12.6 already recorded:
+`Variant not installed: cuda12` (the worktree had no `native-bin` variant — copied read-only from
+the main checkout into both the source tree and the dist, then the stack was RESTARTED because
+`RuntimeActivationService` resolves `variantsRoot` once at construction), then
+`MODEL_PATH_REQUIRED` (a fresh `.dev-data` carries no `llm.modelPath`; set via
+`POST /api/settings/v2`). Activation then took 26.9 s. Teardown verified after the run.
 
 ### 16.6 Residuals
 
