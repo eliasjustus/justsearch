@@ -87,22 +87,15 @@ import {
   buildDevRunnerArgsStop,
   coerceExitAwareOk,
   readRunJson,
-  runCaptureEvidenceBundle,
   runCliJson,
-  runValidateDeterminismBudgetV1,
-  runValidateEvidenceBundleV1,
 } from './cli.mjs';
-import { pruneAgentEvidence, readJsonFileNoSymlinks, resolveAllowedRunFile, tailTextFileNoSymlinks } from './files.mjs';
+import { readJsonFileNoSymlinks, resolveAllowedRunFile, tailTextFileNoSymlinks } from './files.mjs';
 import { logError, logInfo, maybeAppendNdjson } from './log.mjs';
 import { ensureLoopbackUrl, resolveAgentSessionIdForMcp, resolveMainRepoRoot, resolveRepoRoot, resolveUnderRepo } from './paths.mjs';
 import {
   AiActivateInputSchema,
   AiActivateOutputSchema,
-  AgentChatInputSchema,
-  AgentChatOutputSchema,
   ApiCallInputSchema,
-  CaptureEvidenceInputSchema,
-  CaptureEvidenceOutputSchema,
   DevRunnerStatusJsonSchema,
   DevRunnerCleanupJsonSchema,
   DevRunnerStartJsonSchema,
@@ -119,14 +112,11 @@ import {
   SearchQueryInputSchema,
   SearchQueryOutputSchema,
   StartInputSchema,
-  StatusInputSchema,
   StatusOutputSchema,
   StopInputSchema,
   TailLogInputSchema,
   TailLogOutputSchema,
   ToolErrorSchema,
-  ValidateEvidenceInputSchema,
-  ValidateEvidenceOutputSchema,
 } from './schemas.mjs';
 
 // Tempdoc 606 — the ONE ownership-verdict authority, shared with the dev-runner
@@ -333,8 +323,70 @@ function tail(str, maxChars) {
   return s.slice(s.length - maxChars);
 }
 
-function toPosixRel(relPath) {
-  return String(relPath).split(path.sep).join('/');
+/**
+ * Tempdoc 844 B4b — `maxBytes` is a READ BUDGET, not a hard fetch cap.
+ *
+ * It used to `res.destroy(new Error('response_too_large'))`, so a caller who passed
+ * `maxBytes: 2000` intending to *shrink* the output got a failed call instead (measured twice).
+ * Now the prefix that fits is kept, reading stops, and the outcome is declared: `truncated: true`
+ * plus `bytesRead`/`maxBytes`. A truncated body will not parse as JSON, so every JSON-parsing
+ * caller must branch on `truncated` and say so — a bare `textTail` leaves the caller no better off
+ * than the old error did. No caller in this server depended on the old `response_too_large`
+ * message (the separate prod MCP server has its own copy of the helper), so there is no
+ * hard-fail flag to keep alive here.
+ */
+function collectLimited(res, { statusCode, maxBytes, finish }) {
+  let bytes = 0;
+  const chunks = [];
+  let stopped = false;
+
+  res.on('data', (chunk) => {
+    if (stopped) return;
+    if (bytes + chunk.length > maxBytes) {
+      const room = Math.max(0, maxBytes - bytes);
+      if (room > 0) chunks.push(chunk.subarray(0, room));
+      bytes += room;
+      stopped = true;
+      try { res.destroy(); } catch { /* already gone */ }
+      const text = Buffer.concat(chunks).toString('utf8');
+      finish({ ok: true, statusCode, text, textTail: tail(text, 8000), truncated: true, bytesRead: bytes, maxBytes, error: null });
+      return;
+    }
+    bytes += chunk.length;
+    chunks.push(chunk);
+  });
+  res.on('error', (err) => {
+    const text = Buffer.concat(chunks).toString('utf8');
+    finish({
+      ok: false,
+      statusCode,
+      text,
+      textTail: tail(text, 8000),
+      truncated: false,
+      bytesRead: bytes,
+      maxBytes,
+      error: { message: err?.message || String(err) },
+    });
+  });
+  res.on('end', () => {
+    const text = Buffer.concat(chunks).toString('utf8');
+    finish({ ok: true, statusCode, text, textTail: tail(text, 8000), truncated: false, bytesRead: bytes, maxBytes, error: null });
+  });
+}
+
+/**
+ * Tempdoc 844 B4b — the ONE truncation notice, shared by every JSON-parsing caller so a truncated
+ * read can never surface as a bare `textTail` or a misleading "Invalid JSON response".
+ */
+export function truncationNotice({ bytesRead, maxBytes }) {
+  return {
+    code: 'RESPONSE_TRUNCATED',
+    message:
+      `Response TRUNCATED: read ${bytesRead} bytes and stopped at maxBytes=${maxBytes}. `
+      + 'The returned body is a partial prefix and does NOT parse as JSON. '
+      + 'maxBytes caps what is READ from the backend, so lowering it cannot shrink a large response — '
+      + 'raise maxBytes, and use jsonPath (or outputMode/summaryOnly) to shrink what is returned.',
+  };
 }
 
 function httpGetTextLimited(urlStr, { timeoutMs, maxBytes, method = 'GET' }) {
@@ -362,44 +414,14 @@ function httpGetTextLimited(urlStr, { timeoutMs, maxBytes, method = 'GET' }) {
         timeout: timeoutMs,
         headers: { Accept: 'application/json' },
       },
-      (res) => {
-        const statusCode = typeof res.statusCode === 'number' ? res.statusCode : null;
-        let bytes = 0;
-        const chunks = [];
-        let aborted = false;
-
-        res.on('data', (chunk) => {
-          if (aborted) return;
-          bytes += chunk.length;
-          if (bytes > maxBytes) {
-            aborted = true;
-            res.destroy(new Error('response_too_large'));
-            return;
-          }
-          chunks.push(chunk);
-        });
-        res.on('error', (err) => {
-          const text = Buffer.concat(chunks).toString('utf8');
-          finish({
-            ok: false,
-            statusCode,
-            text,
-            textTail: tail(text, 8000),
-            error: { message: err?.message || String(err) },
-          });
-        });
-        res.on('end', () => {
-          const text = Buffer.concat(chunks).toString('utf8');
-          finish({ ok: true, statusCode, text, textTail: tail(text, 8000), error: null });
-        });
-      },
+      (res) => collectLimited(res, { statusCode: typeof res.statusCode === 'number' ? res.statusCode : null, maxBytes, finish }),
     );
 
     req.on('timeout', () => {
       req.destroy(new Error('timeout'));
     });
     req.on('error', (err) =>
-      finish({ ok: false, statusCode: null, text: null, textTail: null, error: { message: err?.message || String(err) } }),
+      finish({ ok: false, statusCode: null, text: null, textTail: null, truncated: false, bytesRead: 0, maxBytes, error: { message: err?.message || String(err) } }),
     );
     req.end();
   });
@@ -436,44 +458,14 @@ function httpPostJsonLimited(urlStr, body, { timeoutMs, maxBytes, method = 'POST
           Accept: 'application/json',
         },
       },
-      (res) => {
-        const statusCode = typeof res.statusCode === 'number' ? res.statusCode : null;
-        let bytes = 0;
-        const chunks = [];
-        let aborted = false;
-
-        res.on('data', (chunk) => {
-          if (aborted) return;
-          bytes += chunk.length;
-          if (bytes > maxBytes) {
-            aborted = true;
-            res.destroy(new Error('response_too_large'));
-            return;
-          }
-          chunks.push(chunk);
-        });
-        res.on('error', (err) => {
-          const text = Buffer.concat(chunks).toString('utf8');
-          finish({
-            ok: false,
-            statusCode,
-            text,
-            textTail: tail(text, 8000),
-            error: { message: err?.message || String(err) },
-          });
-        });
-        res.on('end', () => {
-          const text = Buffer.concat(chunks).toString('utf8');
-          finish({ ok: true, statusCode, text, textTail: tail(text, 8000), error: null });
-        });
-      },
+      (res) => collectLimited(res, { statusCode: typeof res.statusCode === 'number' ? res.statusCode : null, maxBytes, finish }),
     );
 
     req.on('timeout', () => {
       req.destroy(new Error('timeout'));
     });
     req.on('error', (err) =>
-      finish({ ok: false, statusCode: null, text: null, textTail: null, error: { message: err?.message || String(err) } }),
+      finish({ ok: false, statusCode: null, text: null, textTail: null, truncated: false, bytesRead: 0, maxBytes, error: { message: err?.message || String(err) } }),
     );
     req.write(bodyStr);
     req.end();
@@ -604,6 +596,328 @@ async function resolveApiBaseUrl({ runId, apiPort, mainRepoRoot }) {
 /** Default inference server port (llama-server). Read once at module load. */
 const INFERENCE_PORT = parseInt(process.env.JUSTSEARCH_SERVER_PORT, 10) || 8080;
 
+/* ── Tempdoc 844 B4a — honest JSON projection ──────────────────────────────────────────────── */
+
+/**
+ * Parse a projection expression into segments: `"a.b[0].c"` -> `['a', 'b', 0, 'c']`.
+ * Returns null for a malformed expression (empty segment, stray bracket) so the caller can say
+ * "that is not a path" rather than silently missing.
+ */
+export function parseJsonPathExpr(expr) {
+  const raw = String(expr ?? '');
+  if (!raw) return null;
+  const out = [];
+  for (const seg of raw.split('.')) {
+    const m = /^([^[\]]*)((?:\[\d+\])*)$/.exec(seg);
+    if (!m) return null;
+    const [, name, indices] = m;
+    if (name) out.push(name);
+    else if (!indices) return null; // "a..b", a trailing "." or a leading "."
+    for (const idx of indices.match(/\d+/g) ?? []) out.push(Number(idx));
+  }
+  return out.length > 0 ? out : null;
+}
+
+/** What a container actually offers, for a miss message. Key list is capped so a hint stays a hint. */
+function availableAt(container) {
+  if (Array.isArray(container)) {
+    return {
+      kind: 'array',
+      length: container.length,
+      hint: container.length > 0 ? `use an index [0]..[${container.length - 1}]` : 'the array is empty',
+    };
+  }
+  if (container && typeof container === 'object') {
+    const keys = Object.keys(container);
+    return {
+      kind: 'object',
+      keys: keys.slice(0, 50),
+      ...(keys.length > 50 ? { keysTotal: keys.length } : {}),
+    };
+  }
+  return { kind: container === null ? 'null' : typeof container, hint: 'a scalar has no members' };
+}
+
+/**
+ * Tempdoc 844 B4a — project a subtree, and on a miss return the keys that ARE there.
+ *
+ * The previous dot-path `reduce` discarded the parsed JSON on a miss and let the handler fall back
+ * to the raw `textTail`, so a one-character typo returned the largest possible payload — the most
+ * expensive answer to the smallest mistake. Now a miss names the deepest segment that DID resolve
+ * and what is available there, and the body is withheld. Array indexing (`a.b[0].c`) is supported.
+ *
+ * One implementation, two callers (`fetch_api_json` and `api_call`).
+ */
+export function projectJsonPath(root, expr) {
+  const segs = parseJsonPathExpr(expr);
+  if (segs == null) {
+    return {
+      ok: false,
+      error: {
+        code: 'JSON_PATH_INVALID',
+        message: `jsonPath "${expr}" is not a valid path. Use dots for keys and brackets for array indices, e.g. "a.b[0].c".`,
+      },
+    };
+  }
+  let cur = root;
+  const walked = [];
+  for (const seg of segs) {
+    const isIndex = typeof seg === 'number';
+    const missing = cur == null || typeof cur !== 'object'
+      || (isIndex
+        ? !Array.isArray(cur) || seg >= cur.length
+        : !Object.prototype.hasOwnProperty.call(cur, seg));
+    if (missing) {
+      const prefix = walked.length > 0 ? walked.join('') : '(root)';
+      const available = availableAt(cur);
+      const shown = available.kind === 'object'
+        ? `available keys at ${prefix}: ${available.keys.join(', ') || '(none)'}`
+        : available.kind === 'array'
+          ? `${prefix} is an array of length ${available.length} — ${available.hint}`
+          : `${prefix} is ${available.kind} — ${available.hint}`;
+      return {
+        ok: false,
+        resolvedPrefix: prefix,
+        available,
+        error: {
+          code: 'JSON_PATH_MISS',
+          message:
+            `jsonPath "${expr}" did not resolve: ${isIndex ? `[${seg}]` : `"${seg}"`} is not present at ${prefix}. ${shown}. `
+            + 'The response body was deliberately NOT returned — re-request with a corrected jsonPath, or omit jsonPath to see the whole response.',
+        },
+      };
+    }
+    walked.push(isIndex ? `[${seg}]` : (walked.length > 0 ? `.${seg}` : String(seg)));
+    cur = cur[seg];
+  }
+  return { ok: true, value: cur };
+}
+
+/**
+ * `justsearch.dev.fetch_api_json`'s endpoint-key -> path map. Module-scope and exported (tempdoc 844
+ * P6) so `scripts/ci/check-dev-mcp-doc-sync.mjs` can compare it against the reference doc's table
+ * instead of re-deriving it — the doc had `effective_config` pointing at a path that does not exist.
+ * The key set must stay identical to FetchApiEndpointSchema's enum; the gate asserts that too.
+ */
+export const FETCH_API_ENDPOINT_MAP = {
+  status: '/api/status',
+  health: '/api/health',
+  effective_config: '/api/debug/effective-config',
+  debug_state: '/api/debug/state',
+  policy_effective: '/api/policy/effective',
+  inference_status: '/api/inference/status',
+  gpu_capabilities: '/api/gpu/capabilities',
+  ui_ready: '/api/ui/ready',
+  ai_runtime_status: '/api/ai/runtime/status',
+};
+
+/**
+ * `justsearch.dev.api_call`'s path allowlist. Module-scope and exported (tempdoc 844 P6) so the
+ * doc-sync gate reads the array itself rather than a regex over this file.
+ */
+export const API_CALL_ALLOWLIST = [
+  // Settings & preview
+  { path: '/api/settings/v2', methods: ['GET', 'POST'] },
+  { path: '/api/preview', methods: ['GET'] },
+  // Indexing & migration
+  { path: '/api/indexing/roots', methods: ['GET', 'POST', 'DELETE'] },
+  // Tempdoc 599 — per-folder status substrate + add-time preview + folder-scoped failed jobs
+  { path: '/api/indexing-roots/substrate', methods: ['GET'] },
+  { path: '/api/indexing-roots/preview', methods: ['POST'] },
+  { path: '/api/indexing-jobs/failed/by-prefix', methods: ['GET'] },
+  { path: '/api/indexing/reindex', methods: ['POST'] },
+  { path: '/api/indexing/excludes/apply', methods: ['POST'] },
+  { path: '/api/indexing/migration/start', methods: ['POST'] },
+  { path: '/api/indexing/migration/cutover', methods: ['POST'] },
+  { path: '/api/indexing/migration/rollback', methods: ['POST'] },
+  { path: '/api/indexing/migration/pause', methods: ['POST'] },
+  { path: '/api/indexing/migration/resume', methods: ['POST'] },
+  { path: '/api/indexing/gc', methods: ['POST'] },
+  // Inference
+  { path: '/api/inference/status', methods: ['GET'] },
+  { path: '/api/inference/mode', methods: ['POST'] },
+  { path: '/api/inference/reload', methods: ['POST'] },
+  // Worker
+  { path: '/api/worker/restart', methods: ['POST'] },
+  // AI install
+  { path: '/api/ai/install/status', methods: ['GET'] },
+  { path: '/api/ai/install/start', methods: ['POST'] },
+  { path: '/api/ai/install/cancel', methods: ['POST'] },
+  { path: '/api/ai/install/repair', methods: ['POST'] },
+  // AI runtime
+  { path: '/api/ai/runtime/status', methods: ['GET'] },
+  { path: '/api/ai/runtime/activate', methods: ['POST'] },
+  { path: '/api/ai/runtime/deactivate', methods: ['POST'] },
+  // AI packs
+  { path: '/api/ai/packs/status', methods: ['GET'] },
+  { path: '/api/ai/packs/installed', methods: ['GET'] },
+  { path: '/api/ai/packs/preflight', methods: ['POST'] },
+  { path: '/api/ai/packs/import', methods: ['POST'] },
+  // Policy
+  { path: '/api/policy/validate', methods: ['GET'] },
+  { path: '/api/policy/user/create', methods: ['POST'] },
+  { path: '/api/policy/user/allowlist/pack-manifest/add', methods: ['POST'] },
+  // Diagnostics & knowledge
+  { path: '/api/diagnostics/export', methods: ['POST'] },
+  { path: '/api/knowledge/status', methods: ['GET'] },
+  // Debug & telemetry
+  { path: '/api/debug/events', methods: ['GET'] },
+  { path: '/api/debug/worker-log', methods: ['GET'] },
+  { path: '/api/telemetry/health', methods: ['GET'] },
+  // Action ledger — read-only activity/change feed (tempdoc 618 §8)
+  { path: '/api/action-ledger', methods: ['GET'] },
+];
+
+/* ── Tempdoc 844 B3 — backends this dev-runner did not start ───────────────────────────────── */
+
+/**
+ * Well-known loopback ports that can host a JustSearch-shaped backend started OUTSIDE the
+ * dev-runner. `33221` is `jseval`'s eval backend, which binds that port hardcoded and ignores
+ * `JUSTSEARCH_API_PORT` (`scripts/jseval/jseval/backend.py:21`,
+ * `scripts/jseval/jseval/commands/_common.py:14-22`) — the single most common way a JVM ends up
+ * holding ports and the GPU while `quick_health` reports nothing running.
+ *
+ * Deliberately a SHORT fixed list, not a scan: tempdoc 844 §12.4 rules out building a run registry,
+ * and `quick_health` must stay cheap (132 calls, 0% errors, no subprocess).
+ */
+export const FOREIGN_BACKEND_PORTS = [33221];
+
+/**
+ * Tempdoc 844 B3/§6.1 — probe for backends the dev-runner did not start, and report them as
+ * *observed but unowned*, never merged with the owned run.
+ *
+ * Why this exists: `quick_health` read only `tmp/dev-runner/active.json`, so a `runHeadlessEval`
+ * Head+Worker was invisible and a "free" verdict preceded a 100%-GPU neighbour — a contaminated
+ * measurement round (session shard `bccfc163`, 2026-08-14).
+ *
+ * The tri-state is the whole point and must not be collapsed:
+ *   `null` = probing was off or the probe itself failed — I did not look.
+ *   `[]`   = I looked and found nothing.
+ *   `[..]` = I looked and found these, and none of them is the run I own.
+ *
+ * `probe` is injectable so this is unit-testable without a network.
+ */
+export async function probeForeignRuns({
+  enabled,
+  hasActiveRun,
+  ownedApiPort = null,
+  aiActive = null,
+  ports = FOREIGN_BACKEND_PORTS,
+  inferencePort = INFERENCE_PORT,
+  timeoutMs = 800,
+  probe = httpGetStatusCode,
+} = {}) {
+  if (!enabled) return null;
+  try {
+    const checks = ports
+      .filter((port) => port !== ownedApiPort)
+      .map(async (port) => ({ port, kind: 'backend', probePath: '/api/status', code: await probe(`http://127.0.0.1:${port}/api/status`, timeoutMs) }));
+    checks.push(
+      probe(`http://127.0.0.1:${inferencePort}/health`, timeoutMs)
+        .then((code) => ({ port: inferencePort, kind: 'inference', probePath: '/health', code })),
+    );
+    const results = await Promise.all(checks);
+
+    const found = [];
+    for (const r of results) {
+      if (r.code !== 200) continue;
+      if (r.kind === 'inference') {
+        // The owned run's OWN llama-server answers here too. Only the run's realized AI state can
+        // tell them apart, and that state is itself a tri-state — so an unknown stays unknown
+        // rather than being reported as somebody else's process.
+        if (hasActiveRun && aiActive === true) continue;
+        found.push({
+          port: r.port,
+          kind: 'inference',
+          probePath: r.probePath,
+          attribution: !hasActiveRun || aiActive === false ? 'unowned' : 'unknown',
+        });
+      } else {
+        found.push({ port: r.port, kind: 'backend', probePath: r.probePath, attribution: 'unowned' });
+      }
+    }
+    return found;
+  } catch {
+    return null; // the probe itself failed — "I did not look" is the honest answer, not []
+  }
+}
+
+/* ── Tempdoc 844 B1/B2 — the checkout `start` will actually launch from ─────────────────────── */
+
+/** Directory names under `<main>/.claude/worktrees`, for a "which names DO exist" error message. */
+async function listWorktreeNames(mainRepoRoot) {
+  try {
+    const entries = await fsp.readdir(path.join(mainRepoRoot, '.claude', 'worktrees'), { withFileTypes: true });
+    return entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Resolve the effective checkout for a `distFrom`, shared by `start` (which launches from it) and
+ * `preflight` (which must check the SAME tree). They were separate before: preflight validated the
+ * invoking checkout's dists while start used `distFrom`'s, so preflight passed and start then
+ * failed — a false green on 125 of 162 observed starts' worth of surface (tempdoc 844 §5.1).
+ * Extracted rather than duplicated precisely so they cannot drift apart again.
+ *
+ * A bare worktree NAME (`"round14"`) resolves against `<main>/.claude/worktrees/<name>` when that
+ * directory exists; when it does not, the refusal says which names do (§5.1: two measured failures
+ * were bare names rejected with no hint).
+ */
+export async function resolveDistRoot({ distFrom, mainRepoRoot, fallbackRepoRoot, fallbackDevRunnerPath = null }) {
+  if (!distFrom) {
+    return { ok: true, repoRoot: fallbackRepoRoot, devRunnerPath: fallbackDevRunnerPath, distFrom: null, resolvedVia: 'caller-checkout' };
+  }
+  const raw = String(distFrom).trim();
+  const looksBare = /^[^\\/:]+$/.test(raw) && raw !== '.' && raw !== '..';
+
+  let resolved = path.resolve(mainRepoRoot, raw);
+  let resolvedVia = 'path';
+  if (looksBare) {
+    const candidate = path.join(mainRepoRoot, '.claude', 'worktrees', raw);
+    let isDir = false;
+    try { isDir = (await fsp.stat(candidate)).isDirectory(); } catch { isDir = false; }
+    if (isDir) {
+      resolved = candidate;
+      resolvedVia = 'worktree-name';
+    }
+  }
+
+  const norm = resolved.replace(/\\/g, '/').replace(/\/+$/, '');
+  const mainNorm = mainRepoRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+  const isMain = norm === mainNorm;
+  const isWorktree = norm.startsWith(`${mainNorm}/.claude/worktrees/`);
+  if (!isMain && !isWorktree) {
+    const known = await listWorktreeNames(mainRepoRoot);
+    return {
+      ok: false,
+      error: {
+        code: 'INVALID_DIST_FROM',
+        message: `distFrom must be the main repo or a sibling worktree under .claude/worktrees: ${raw}`
+          + (looksBare ? ` (no worktree directory named "${raw}"). ` : '. ')
+          + (known.length > 0
+            ? `Worktrees that DO exist: ${known.join(', ')}.`
+            : 'No worktrees exist under .claude/worktrees.'),
+      },
+    };
+  }
+
+  const devRunnerPath = path.join(resolved, 'scripts', 'dev', 'dev-runner.cjs');
+  try {
+    await fsp.access(devRunnerPath);
+  } catch {
+    return {
+      ok: false,
+      error: {
+        code: 'INVALID_DIST_FROM',
+        message: `dev-runner.cjs not found under distFrom (build the worktree first?): ${devRunnerPath}`,
+      },
+    };
+  }
+  return { ok: true, repoRoot: resolved, devRunnerPath, distFrom: raw, resolvedVia };
+}
+
 export async function main() {
   const { repoRoot, devRunnerPath } = resolveRepoRoot();
   const mainRepoRoot = resolveMainRepoRoot(repoRoot);
@@ -612,15 +926,15 @@ export async function main() {
     { name: 'justsearch-dev-mcp', version: '0.2.0' },
     {
       instructions: [
-        'JustSearch dev tools — 15 tools for managing the local development stack.',
+        'JustSearch dev tools — 12 tools for managing the local development stack.',
         '',
-        'Categories: lifecycle (start, stop, status), orientation (quick_health, preflight),',
-        'data (fetch_api_json, api_call, search_query, ingest), agent (agent_chat),',
-        'AI runtime (ai_activate), monitoring (tail_log), evidence (capture_evidence, validate_evidence),',
-        'hot-reload (reload).',
+        'Categories: lifecycle (start, stop), orientation (quick_health, preflight, acquire_when_free),',
+        'data (fetch_api_json, api_call, search_query, ingest),',
+        'AI runtime (ai_activate), monitoring (tail_log), hot-reload (reload).',
         '',
         'Workflow: (1) quick_health to check state, (2) preflight if not running,',
         '(3) start to launch (cold: ~1 min, warm: ~15s HTTP / ~40s worker ready), (4) use tools, (5) stop when done.',
+        'quick_health { detail: "full" } returns the dev-runner process/port/readiness payload too.',
         '',
         'Hot-reload: start with hotReload: true for full service restart support.',
         'Then call reload after code changes to compile + push bytecode + restart services (~2-3s).',
@@ -628,7 +942,7 @@ export async function main() {
         '',
         'Long campaigns: start with leaseDurationSec (30-7200) to hold ownership without frequent',
         'renewals — avoids a mid-campaign takeover when the agent is busy (jseval/gradle) for minutes',
-        'with no session activity. quick_health/status report remaining hold via ownership.lease.remainingSec.',
+        'with no session activity. quick_health reports remaining hold via ownership.lease.remainingSec.',
         '',
         'Prerequisites: ./gradlew.bat build must succeed before start.',
         'After compaction: call quick_health to re-orient.',
@@ -703,26 +1017,17 @@ export async function main() {
       // lease stays under the main repo (state is mainRepoRoot-scoped in the dev-runner), so a
       // worktree agent can run ITS code on the one shared stack. Validate distFrom is the main
       // repo or a sibling worktree before spawning that checkout's dev-runner.
-      let effRepoRoot = repoRoot;
-      let effDevRunnerPath = devRunnerPath;
-      if (input.distFrom) {
-        const resolved = path.resolve(mainRepoRoot, input.distFrom);
-        const norm = resolved.replace(/\\/g, '/').replace(/\/+$/, '');
-        const mainNorm = mainRepoRoot.replace(/\\/g, '/').replace(/\/+$/, '');
-        const isMain = norm === mainNorm;
-        const isWorktree = norm.startsWith(`${mainNorm}/.claude/worktrees/`);
-        if (!isMain && !isWorktree) {
-          return toToolResult({ ok: false, error: { code: 'INVALID_DIST_FROM',
-            message: `distFrom must be the main repo or a sibling worktree under .claude/worktrees: ${input.distFrom}` } });
-        }
-        const cand = path.join(resolved, 'scripts', 'dev', 'dev-runner.cjs');
-        try { await fsp.access(cand); } catch {
-          return toToolResult({ ok: false, error: { code: 'INVALID_DIST_FROM',
-            message: `dev-runner.cjs not found under distFrom (build the worktree first?): ${cand}` } });
-        }
-        effRepoRoot = resolved;
-        effDevRunnerPath = cand;
-      }
+      // Tempdoc 844 B1: resolution lives in resolveDistRoot, shared verbatim with preflight so the
+      // tree preflight checks is the tree start launches from.
+      const distRoot = await resolveDistRoot({
+        distFrom: input.distFrom,
+        mainRepoRoot,
+        fallbackRepoRoot: repoRoot,
+        fallbackDevRunnerPath: devRunnerPath,
+      });
+      if (!distRoot.ok) return toToolResult({ ok: false, error: distRoot.error });
+      const effRepoRoot = distRoot.repoRoot;
+      const effDevRunnerPath = distRoot.devRunnerPath;
 
       const args = buildDevRunnerArgsStart({
         apiPort, uiPort, clean, dataDir, takeover, skipBuild, hotReload,
@@ -805,57 +1110,6 @@ export async function main() {
   );
 
   mcpServer.registerTool(
-    'justsearch.dev.status',
-    {
-      description: 'Check detailed dev-runner status including process state and ports. Use quick_health for faster orientation.',
-      inputSchema: StatusInputSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async (rawArgs) => {
-      const input = StatusInputSchema.parse(rawArgs);
-      const runId = input.runId ?? null;
-
-      const args = buildDevRunnerArgsStatus({ runId });
-      maybeAppendNdjson(mainRepoRoot, { event: 'tool_start', tool: 'justsearch.dev.status', ...(runId ? { runId } : {}) });
-
-      const { exitCode, json } = await runCliJson({
-        repoRoot,
-        devRunnerPath,
-        args,
-        timeoutMs: 20_000,
-        mode: 'oneshot',
-      });
-
-      // status returns ok:false for NO_ACTIVE_RUN; do not coerce to failure on exitCode alone.
-      const parsed = DevRunnerStatusJsonSchema.parse(json);
-      const out = StatusOutputSchema.parse({ ...parsed, exitCode });
-
-      // Best-effort convenience enrichment (do not fail the status tool if run.json is missing).
-      if (out.ok && out.runId) {
-        try {
-          const runJson = await readRunJson({ repoRoot: mainRepoRoot, runId: out.runId });
-          out.apiBaseUrl = runJson?.apiBaseUrl;
-          out.uiUrl = runJson?.uiUrl;
-          out.dataDir = runJson?.dataDir;
-          out.logs = runJson?.logs;
-          if (runJson?.owner) out.owner = runJson.owner;
-          if (runJson?.resourceClaims) out.resourceClaims = runJson.resourceClaims;
-        } catch (_) {}
-        // Ownership from active lease (271) — tempdoc 606 single verdict projection.
-        try {
-          const active = await readJsonFileNoSymlinks({ repoRoot: mainRepoRoot, relPosix: 'tmp/dev-runner/active.json', maxBytes: 200_000 });
-          const callerSessionId = input.sessionId || resolveAgentSessionIdForMcp(repoRoot);
-          const proj = await buildOwnershipProjection({ mainRepoRoot, callerRepoRoot: repoRoot, callerSessionId, takeover: 'deny', active });
-          if (proj.ownership) out.ownership = proj.ownership;
-        } catch (_) {}
-      }
-
-      maybeAppendNdjson(mainRepoRoot, { event: 'tool_status_result', tool: 'justsearch.dev.status', ok: !!out.ok, ...(out.runId ? { runId: out.runId } : {}) });
-      return toToolResult(out);
-    },
-  );
-
-  mcpServer.registerTool(
     'justsearch.dev.tail_log',
     {
       description: 'Read recent log output to diagnose startup failures or runtime errors. Kinds: backend/frontend stdout/stderr, stop_report.',
@@ -932,49 +1186,48 @@ export async function main() {
       const base = ensureLoopbackUrl(resolved.apiBaseUrl, 'apiBaseUrl');
       const effectiveRunId = resolved.runId ?? 'port-only';
 
-      const endpointMap = {
-        status: '/api/status',
-        health: '/api/health',
-        effective_config: '/api/debug/effective-config',
-        debug_state: '/api/debug/state',
-        policy_effective: '/api/policy/effective',
-        inference_status: '/api/inference/status',
-        gpu_capabilities: '/api/gpu/capabilities',
-        ui_ready: '/api/ui/ready',
-        ai_runtime_status: '/api/ai/runtime/status',
-      };
-
-      const relPath = endpointMap[input.endpoint];
+      const relPath = FETCH_API_ENDPOINT_MAP[input.endpoint];
       const url = new URL(relPath, base).toString();
       const res = await httpGetTextLimited(url, { timeoutMs, maxBytes });
 
-      let parsedJson = undefined;
-      let jsonOk = false;
-      if (res.ok) {
+      // Tempdoc 844 B4b: a truncated body cannot be parsed — do not try, and do not let the caller
+      // discover that from a bare textTail.
+      const truncated = res.truncated === true;
+
+      let parsedJson;
+      let bodyOk = false;
+      if (res.ok && !truncated) {
         try {
           parsedJson = JSON.parse(res.text || '');
-          jsonOk = true;
+          bodyOk = true;
         } catch (_) {
-          jsonOk = false;
+          bodyOk = false;
         }
       }
 
-      // jsonPath extraction — extract subtree before building output
+      // Tempdoc 844 B4a: projection, with an available-keys hint on a miss instead of the body.
+      let projected = bodyOk ? parsedJson : undefined;
       let jsonPathError = null;
-      if (input.jsonPath && jsonOk && parsedJson != null) {
-        parsedJson = input.jsonPath.split('.').reduce((obj, key) => obj?.[key], parsedJson);
-        if (parsedJson === undefined) {
-          jsonOk = false;
-          jsonPathError = { message: `jsonPath "${input.jsonPath}" resolved to undefined. Check the path against the full response (omit jsonPath to see it).` };
+      let jsonPathAvailable = null;
+      if (input.jsonPath && bodyOk) {
+        const proj = projectJsonPath(parsedJson, input.jsonPath);
+        if (proj.ok) {
+          projected = proj.value;
+        } else {
+          bodyOk = false;
+          jsonPathError = proj.error;
+          jsonPathAvailable = proj.available ?? null;
         }
       }
 
-      const isOk = res.ok && res.statusCode === 200 && jsonOk;
-      const effectiveError = res.error
-        ? ToolErrorSchema.parse({ message: res.error.message })
-        : jsonPathError
-          ? ToolErrorSchema.parse(jsonPathError)
-          : null;
+      const isOk = res.ok && !truncated && res.statusCode === 200 && bodyOk;
+      const effectiveError = truncated
+        ? ToolErrorSchema.parse(truncationNotice({ bytesRead: res.bytesRead, maxBytes }))
+        : res.error
+          ? ToolErrorSchema.parse({ message: res.error.message })
+          : jsonPathError
+            ? ToolErrorSchema.parse(jsonPathError)
+            : null;
 
       const out = FetchApiJsonOutputSchema.parse({
         ok: isOk,
@@ -982,9 +1235,13 @@ export async function main() {
         endpoint: input.endpoint,
         url,
         statusCode: res.statusCode,
-        ...(jsonOk ? { json: parsedJson } : {}),
-        // Only include textTail when JSON parsing failed (saves ~50% tokens on success)
-        ...(!jsonOk && res.textTail ? { textTail: res.textTail } : {}),
+        ...(bodyOk ? { json: projected } : {}),
+        // textTail only when the BODY itself is the problem (unparseable, or truncated-by-budget).
+        // A jsonPath miss deliberately withholds it — returning the whole body for a typo is the
+        // expensive-failure default this fixes.
+        ...(!bodyOk && !jsonPathError && res.textTail ? { textTail: res.textTail } : {}),
+        ...(truncated ? { truncated: true, bytesRead: res.bytesRead, maxBytesLimit: maxBytes } : {}),
+        ...(jsonPathAvailable ? { jsonPathAvailable } : {}),
         ...(!isOk && effectiveError ? { error: effectiveError } : {}),
       });
       if (input.outputMode !== 'full') {
@@ -997,59 +1254,6 @@ export async function main() {
   );
 
   // --- Generic API Call tool ---
-
-  const API_CALL_ALLOWLIST = [
-    // Settings & preview
-    { path: '/api/settings/v2', methods: ['GET', 'POST'] },
-    { path: '/api/preview', methods: ['GET'] },
-    // Indexing & migration
-    { path: '/api/indexing/roots', methods: ['GET', 'POST', 'DELETE'] },
-    // Tempdoc 599 — per-folder status substrate + add-time preview + folder-scoped failed jobs
-    { path: '/api/indexing-roots/substrate', methods: ['GET'] },
-    { path: '/api/indexing-roots/preview', methods: ['POST'] },
-    { path: '/api/indexing-jobs/failed/by-prefix', methods: ['GET'] },
-    { path: '/api/indexing/reindex', methods: ['POST'] },
-    { path: '/api/indexing/excludes/apply', methods: ['POST'] },
-    { path: '/api/indexing/migration/start', methods: ['POST'] },
-    { path: '/api/indexing/migration/cutover', methods: ['POST'] },
-    { path: '/api/indexing/migration/rollback', methods: ['POST'] },
-    { path: '/api/indexing/migration/pause', methods: ['POST'] },
-    { path: '/api/indexing/migration/resume', methods: ['POST'] },
-    { path: '/api/indexing/gc', methods: ['POST'] },
-    // Inference
-    { path: '/api/inference/status', methods: ['GET'] },
-    { path: '/api/inference/mode', methods: ['POST'] },
-    { path: '/api/inference/reload', methods: ['POST'] },
-    // Worker
-    { path: '/api/worker/restart', methods: ['POST'] },
-    // AI install
-    { path: '/api/ai/install/status', methods: ['GET'] },
-    { path: '/api/ai/install/start', methods: ['POST'] },
-    { path: '/api/ai/install/cancel', methods: ['POST'] },
-    { path: '/api/ai/install/repair', methods: ['POST'] },
-    // AI runtime
-    { path: '/api/ai/runtime/status', methods: ['GET'] },
-    { path: '/api/ai/runtime/activate', methods: ['POST'] },
-    { path: '/api/ai/runtime/deactivate', methods: ['POST'] },
-    // AI packs
-    { path: '/api/ai/packs/status', methods: ['GET'] },
-    { path: '/api/ai/packs/installed', methods: ['GET'] },
-    { path: '/api/ai/packs/preflight', methods: ['POST'] },
-    { path: '/api/ai/packs/import', methods: ['POST'] },
-    // Policy
-    { path: '/api/policy/validate', methods: ['GET'] },
-    { path: '/api/policy/user/create', methods: ['POST'] },
-    { path: '/api/policy/user/allowlist/pack-manifest/add', methods: ['POST'] },
-    // Diagnostics & knowledge
-    { path: '/api/diagnostics/export', methods: ['POST'] },
-    { path: '/api/knowledge/status', methods: ['GET'] },
-    // Debug & telemetry
-    { path: '/api/debug/events', methods: ['GET'] },
-    { path: '/api/debug/worker-log', methods: ['GET'] },
-    { path: '/api/telemetry/health', methods: ['GET'] },
-    // Action ledger — read-only activity/change feed (tempdoc 618 §8)
-    { path: '/api/action-ledger', methods: ['GET'] },
-  ];
 
   mcpServer.registerTool(
     'justsearch.dev.api_call',
@@ -1122,11 +1326,13 @@ export async function main() {
         res = await httpGetTextLimited(url, { timeoutMs, maxBytes, method });
       }
 
-      let parsedJson = undefined;
+      const truncated = res.truncated === true;
+
+      let parsedJson;
       let jsonOk = false;
       // 204 No Content is a valid success with no body
       const isNoContent = res.statusCode === 204;
-      if (res.ok && res.text) {
+      if (res.ok && res.text && !truncated) {
         try {
           parsedJson = JSON.parse(res.text);
           jsonOk = true;
@@ -1135,17 +1341,43 @@ export async function main() {
         }
       }
 
+      // Tempdoc 844 B4c: api_call gained jsonPath, sharing fetch_api_json's implementation — an
+      // agent tried it here and got `unrecognized_keys`, on responses averaging 7.2 KB.
+      let projected = jsonOk ? parsedJson : undefined;
+      let jsonPathError = null;
+      let jsonPathAvailable = null;
+      if (input.jsonPath && jsonOk) {
+        const proj = projectJsonPath(parsedJson, input.jsonPath);
+        if (proj.ok) {
+          projected = proj.value;
+        } else {
+          jsonOk = false;
+          jsonPathError = proj.error;
+          jsonPathAvailable = proj.available ?? null;
+        }
+      }
+
+      const callError = truncated
+        ? truncationNotice({ bytesRead: res.bytesRead, maxBytes })
+        : res.error
+          ? { message: res.error.message }
+          : jsonPathError
+            ? jsonPathError
+            : null;
+
       const out = {
-        ok: res.ok && (res.statusCode >= 200 && res.statusCode < 300) && (jsonOk || isNoContent),
+        ok: res.ok && !truncated && (res.statusCode >= 200 && res.statusCode < 300) && (jsonOk || isNoContent),
         runId: effectiveRunId,
         method,
         path: input.path,
         url,
         statusCode: res.statusCode,
-        ...(jsonOk ? { json: parsedJson } : {}),
-        // Only include textTail when JSON parsing failed (saves ~50% tokens on success)
-        ...(!jsonOk && !isNoContent && res.textTail ? { textTail: res.textTail } : {}),
-        ...(res.error ? { error: { message: res.error.message } } : {}),
+        ...(jsonOk ? { json: projected } : {}),
+        // Withheld on a jsonPath miss (844 B4a) — the available-keys hint replaces the body.
+        ...(!jsonOk && !isNoContent && !jsonPathError && res.textTail ? { textTail: res.textTail } : {}),
+        ...(truncated ? { truncated: true, bytesRead: res.bytesRead, maxBytesLimit: maxBytes } : {}),
+        ...(jsonPathAvailable ? { jsonPathAvailable } : {}),
+        ...(callError ? { error: callError } : {}),
       };
       if (input.outputMode !== 'full') {
         delete out.url;
@@ -1224,6 +1456,22 @@ export async function main() {
           error: ToolErrorSchema.parse({ message: res.error?.message || `HTTP ${res.statusCode}` }),
         });
         return toToolResult(out);
+      }
+
+      // Tempdoc 844 B4b: a maxBytes truncation must not surface as "Invalid JSON response" — that
+      // reads as a backend fault when it is a budget the caller set.
+      if (res.truncated === true) {
+        return toToolResult(SearchQueryOutputSchema.parse({
+          ok: false,
+          runId: effectiveRunId,
+          query: input.query,
+          url,
+          statusCode: res.statusCode,
+          truncated: true,
+          bytesRead: res.bytesRead,
+          maxBytesLimit: maxBytes,
+          error: ToolErrorSchema.parse(truncationNotice({ bytesRead: res.bytesRead, maxBytes })),
+        }));
       }
 
       let parsed;
@@ -1335,6 +1583,20 @@ export async function main() {
         return toToolResult(out);
       }
 
+      // Tempdoc 844 B4b: declare a maxBytes truncation as itself, not as a parse failure.
+      if (res.truncated === true) {
+        return toToolResult(IngestOutputSchema.parse({
+          ok: false,
+          runId: effectiveRunId,
+          url,
+          statusCode: res.statusCode,
+          truncated: true,
+          bytesRead: res.bytesRead,
+          maxBytesLimit: maxBytes,
+          error: ToolErrorSchema.parse(truncationNotice({ bytesRead: res.bytesRead, maxBytes })),
+        }));
+      }
+
       let parsed;
       try {
         parsed = JSON.parse(res.text || '');
@@ -1369,258 +1631,56 @@ export async function main() {
     },
   );
 
-  mcpServer.registerTool(
-    'justsearch.dev.validate_evidence',
-    {
-      description: 'Validate an EvidenceBundle directory for correct structure and determinism budget compliance.',
-      inputSchema: ValidateEvidenceInputSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async (rawArgs) => {
-      const input = ValidateEvidenceInputSchema.parse(rawArgs);
-      const timeoutMs = input.timeoutMs ?? 60_000;
-      const enforceDeterminism = input.enforceDeterminism ?? false;
-
-      const bundleRelNative = resolveUnderRepo(repoRoot, input.bundleDir, 'bundleDir');
-      const bundleRelPosix = toPosixRel(bundleRelNative);
-      if (!(bundleRelPosix === 'tmp/agent-evidence' || bundleRelPosix.startsWith('tmp/agent-evidence/'))) {
-        throw new Error(`bundleDir must be under tmp/agent-evidence (repo-only). got=${bundleRelPosix}`);
-      }
-
-      const [ev, det] = await Promise.all([
-        runValidateEvidenceBundleV1({ repoRoot, bundleDir: bundleRelPosix, timeoutMs }),
-        runValidateDeterminismBudgetV1({
-          repoRoot,
-          bundleDir: bundleRelPosix,
-          timeoutMs,
-          strictReasons: input.strictReasons,
-          allowReasons: input.allowReasons,
-        }),
-      ]);
-
-      const errors = [];
-      const warnings = [];
-
-      const evidenceOk = ev.exitCode === 0;
-      const determinismOk = det.exitCode === 0;
-      const ok = evidenceOk && (enforceDeterminism ? determinismOk : true);
-
-      if (!evidenceOk && Array.isArray(ev.errors)) errors.push(...ev.errors.map((e) => `evidencebundle: ${e}`));
-
-      if (!determinismOk && Array.isArray(det.errors)) {
-        const prefixed = det.errors.map((e) => `determinism: ${e}`);
-        if (enforceDeterminism) errors.push(...prefixed);
-        else warnings.push(...prefixed);
-      }
-
-      const out = ValidateEvidenceOutputSchema.parse({
-        ok,
-        bundleDir: path.resolve(repoRoot, bundleRelNative),
-        evidenceBundle: {
-          ok: evidenceOk,
-          exitCode: ev.exitCode,
-          stdoutTail: ev.stdoutTail || '',
-          stderrTail: ev.stderrTail || '',
-          ...(ev.errors ? { errors: ev.errors } : {}),
-        },
-        determinismBudget: {
-          ok: determinismOk,
-          exitCode: det.exitCode,
-          stdoutTail: det.stdoutTail || '',
-          stderrTail: det.stderrTail || '',
-          ...(det.errors ? { errors: det.errors } : {}),
-        },
-        ...(errors.length > 0 ? { errors } : {}),
-        ...(warnings.length > 0 ? { warnings } : {}),
-      });
-
-      return toToolResult(out);
-    },
-  );
-
-  mcpServer.registerTool(
-    'justsearch.dev.capture_evidence',
-    {
-      description: 'Capture a snapshot of dev run state as an EvidenceBundle including API responses and allowlisted log files.',
-      inputSchema: CaptureEvidenceInputSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-    },
-    async (rawArgs) => {
-      const input = CaptureEvidenceInputSchema.parse(rawArgs);
-      if (!input.runId) input.runId = await resolveRunId(mainRepoRoot, undefined);
-      if (!input.runId) return toToolResult({ ok: false, error: { code: 'NO_ACTIVE_RUN', message: 'No active run found. Recovery: call start to launch the dev stack, then retry.' } });
-
-      const runId = input.runId;
-      const scenario = input.scenario ?? `dev-run-${runId}`;
-      const timeoutMs = input.timeoutMs ?? 60_000;
-      const trace = input.trace ?? true;
-      const include = input.include ?? [];
-
-      const runJson = await readRunJson({ repoRoot: mainRepoRoot, runId });
-      const apiBaseUrl = String(runJson?.apiBaseUrl || '').trim();
-      if (!apiBaseUrl) throw new Error('run.json missing apiBaseUrl');
-      ensureLoopbackUrl(apiBaseUrl, 'apiBaseUrl');
-
-      const uiUrlRaw = String(runJson?.uiUrl || '').trim();
-      const uiUrl = uiUrlRaw ? ensureLoopbackUrl(uiUrlRaw, 'uiUrl').toString() : null;
-
-      const toPosixRel = (relPath) => String(relPath).split(path.sep).join('/');
-
-      // Output root: repo-only AND under tmp/agent-evidence/**.
-      const outRootInput = input.outRoot ?? path.join('tmp', 'agent-evidence', 'dev-runner', runId);
-      const outRootRel = resolveUnderRepo(repoRoot, outRootInput, 'outRoot');
-      const outRootRelPosix = toPosixRel(outRootRel);
-      if (!(outRootRelPosix === 'tmp/agent-evidence' || outRootRelPosix.startsWith('tmp/agent-evidence/'))) {
-        throw new Error(`outRoot must be under tmp/agent-evidence (repo-relative). got=${outRootRelPosix}`);
-      }
-
-      // Attachment allowlist: only well-known dev-runner outputs for THIS runId.
-      const allowedAttachments = [
-        `tmp/dev-runner/runs/${runId}/logs/backend.stdout.log`,
-        `tmp/dev-runner/runs/${runId}/logs/backend.stderr.log`,
-        `tmp/dev-runner/runs/${runId}/logs/frontend.stdout.log`,
-        `tmp/dev-runner/runs/${runId}/logs/frontend.stderr.log`,
-        `tmp/dev-runner/runs/${runId}/stop-report.json`,
-      ];
-      const allowedSet = new Set(allowedAttachments);
-
-      const defaultAttachments = allowedAttachments.filter((p) => !p.endsWith('/stop-report.json'));
-      const requested = input.attachments && input.attachments.length > 0 ? input.attachments : defaultAttachments;
-      const attachFiles = [];
-      for (const p0 of requested) {
-        // Attachments live under mainRepoRoot (shared dev-runner state), not worktree-local repoRoot.
-        const rel = resolveUnderRepo(mainRepoRoot, p0, 'attachment');
-        const relPosix = toPosixRel(rel);
-        if (!allowedSet.has(relPosix)) {
-          throw new Error(`attachment not allowlisted for runId=${runId}: ${p0}`);
-        }
-
-        const abs = path.resolve(mainRepoRoot, rel);
-        let st;
-        try {
-          // lstat is required: we explicitly reject symlinked attachments to avoid following links outside the repo.
-          // eslint-disable-next-line no-await-in-loop
-          st = await fsp.lstat(abs);
-        } catch (err) {
-          throw new Error(`attachment does not exist: ${relPosix}`);
-        }
-        if (st.isSymbolicLink()) {
-          throw new Error(`attachment must not be a symlink: ${relPosix}`);
-        }
-        if (!st.isFile()) {
-          throw new Error(`attachment must be a file: ${relPosix}`);
-        }
-
-        // Ensure the resolved physical path is still under mainRepoRoot (defense-in-depth for junctions/symlinks).
-        // eslint-disable-next-line no-await-in-loop
-        const real = await fsp.realpath(abs).catch(() => null);
-        if (real) {
-          resolveUnderRepo(mainRepoRoot, real, 'attachmentRealPath');
-        }
-
-        attachFiles.push(relPosix);
-      }
-
-      maybeAppendNdjson(mainRepoRoot, {
-        event: 'tool_start',
-        tool: 'justsearch.dev.capture_evidence',
-        runId,
-        scenario,
-        outRoot: outRootRelPosix,
-        attachments: attachFiles,
-        include,
-        trace,
-        timeoutMs,
-      });
-
-      const captureSessionId = input.sessionId || resolveAgentSessionIdForMcp(repoRoot);
-      const args = [
-        '--scenario',
-        scenario,
-        '--run-id',
-        runId,
-        '--api-base-url',
-        apiBaseUrl,
-        ...(uiUrl ? ['--ui-url', uiUrl] : []),
-        '--out-root',
-        outRootRelPosix,
-        '--timeout-ms',
-        String(timeoutMs),
-        '--trace',
-        String(trace),
-        ...(include.length > 0 ? ['--include', include.join(',')] : []),
-        '--attach-label',
-        'dev-runner',
-        ...attachFiles.flatMap((p) => ['--attach-file', p]),
-        ...(captureSessionId ? ['--session-id', captureSessionId] : []),
-      ];
-
-      // External timeout should exceed the internal budget by a little, but still remain bounded.
-      const externalTimeoutMs = Math.max(120_000, timeoutMs + 60_000);
-      const { exitCode, bundleDir, stderr } = await runCaptureEvidenceBundle({
-        repoRoot,
-        args,
-        timeoutMs: externalTimeoutMs,
-      });
-
-      const out = CaptureEvidenceOutputSchema.parse({
-        ok: exitCode === 0,
-        runId,
-        bundleDir,
-        exitCode,
-        outRoot: outRootRelPosix,
-        attachments: attachFiles,
-        ...(exitCode !== 0 ? { stderrTail: stderr } : {}),
-      });
-
-      // Best-effort evidence retention: keep only the last N bundles under tmp/agent-evidence/**.
-      // Never fail the capture tool if pruning fails (record warnings instead).
-      try {
-        const retention = await pruneAgentEvidence({ repoRoot, keepLastN: 20 });
-        out.retention = retention;
-      } catch (err) {
-        out.retention = { keepLastN: 20, found: 0, deleted: 0, warnings: [String(err?.message || err)] };
-      }
-
-      maybeAppendNdjson(mainRepoRoot, { event: 'tool_capture_evidence_result', tool: 'justsearch.dev.capture_evidence', runId, ok: out.ok, exitCode });
-      return toToolResult(await withStaleness(out, { mainRepoRoot, callerRepoRoot: repoRoot, callerSessionId: captureSessionId }));
-    },
-  );
-
   // ─── Preflight ─────────────────────────────────────────────
 
   mcpServer.registerTool(
     'justsearch.dev.preflight',
     {
-      description: 'Check if the dev stack can be started: worker dist built, no active/stale runs, models present, no inference orphans.',
+      description: 'Check if the dev stack can be started: worker dist built, no active/stale runs, models present, no inference orphans. Pass the SAME distFrom you will pass to start — the dist checks then run against the tree start will launch from (a bare worktree name resolves against .claude/worktrees). The checked root is reported as `distCheckedRoot`.',
       inputSchema: PreflightInputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async () => {
+    async (rawArgs) => {
+      const input = PreflightInputSchema.parse(rawArgs ?? {});
       const details = {};
+
+      // Tempdoc 844 B1: check the tree `start` will actually use. Same resolver as start, so the
+      // two cannot drift; without distFrom this is the invoking checkout exactly as before.
+      const distRoot = await resolveDistRoot({
+        distFrom: input.distFrom,
+        mainRepoRoot,
+        fallbackRepoRoot: repoRoot,
+        fallbackDevRunnerPath: devRunnerPath,
+      });
+      if (!distRoot.ok) {
+        // The checks were NOT run — say so rather than reporting them as failed.
+        return toToolResult({ ok: false, error: distRoot.error, checksRun: false });
+      }
+      const distCheckRoot = distRoot.repoRoot;
 
       // 1a. Worker distribution exists
       let workerDist = false;
-      const workerBin = path.join(repoRoot, 'modules', 'indexer-worker', 'build', 'install', 'indexer-worker', 'bin',
+      const workerBin = path.join(distCheckRoot, 'modules', 'indexer-worker', 'build', 'install', 'indexer-worker', 'bin',
         process.platform === 'win32' ? 'indexer-worker.bat' : 'indexer-worker');
       try {
         await fsp.lstat(workerBin);
         workerDist = true;
-        details.workerDist = 'OK';
+        details.workerDist = `OK (${workerBin})`;
       } catch {
         details.workerDist = `Missing: ${workerBin}. Run: ./gradlew.bat assemble`;
       }
 
       // 1b. Head (UI) distribution exists — the dev-runner spawns from installDist, not gradlew
       let headDist = false;
-      const headBin = path.join(repoRoot, 'modules', 'ui', 'build', 'install', 'ui', 'bin',
+      const headBin = path.join(distCheckRoot, 'modules', 'ui', 'build', 'install', 'ui', 'bin',
         process.platform === 'win32' ? 'ui.bat' : 'ui');
       try {
         await fsp.lstat(headBin);
         headDist = true;
-        details.headDist = 'OK';
+        details.headDist = `OK (${headBin})`;
       } catch {
-        details.headDist = `Missing: ${headBin}. Run: ./gradlew.bat :modules:ui:installDist`;
+        details.headDist = `Missing: ${headBin}. Run: ./gradlew.bat :modules:ui:installDist`
+          + ' (or, for a fresh worktree: node scripts/dev/prepare-worktree.cjs)';
       }
 
       // 2. No stale or active run
@@ -1706,6 +1766,13 @@ export async function main() {
       return toToolResult(PreflightOutputSchema.parse({
         ready,
         checks: { workerDist, headDist, noStaleRun, modelsDir, noInferenceOrphan, llamaVariantResolvable },
+        // Tempdoc 844 B1: self-describing — which tree the dist checks looked at, and how it was
+        // resolved. `distCheckedRoot` is what `start` will launch from for the same distFrom;
+        // the remaining checks (models, stale run, inference orphan) are machine/shared-state
+        // scoped and are unaffected by distFrom.
+        distCheckedRoot: distCheckRoot,
+        distFrom: distRoot.distFrom,
+        distFromResolvedVia: distRoot.resolvedVia,
         details,
       }));
     },
@@ -1716,13 +1783,14 @@ export async function main() {
   mcpServer.registerTool(
     'justsearch.dev.quick_health',
     {
-      description: 'Fast orientation — call after compaction or at session start. Returns run state and optional HTTP readiness probes without spawning subprocesses.',
+      description: 'Fast orientation — call after compaction or at session start. Returns run state and optional HTTP readiness probes; the default detail:"summary" spawns no subprocess. `foreignRuns` lists JustSearch-shaped backends this dev-runner did NOT start (e.g. a jseval backend on 33221) — `[]` means "probed, found none", `null` means "did not probe" (probe:false), so a free-looking verdict is never a claim about the whole machine. detail:"full" additionally runs the dev-runner status subprocess and returns its process/port/readiness payload under `detail` (this replaced the retired justsearch.dev.status tool).',
       inputSchema: QuickHealthInputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (rawArgs) => {
       const input = QuickHealthInputSchema.parse(rawArgs);
       const probe = input.probe !== false;
+      const wantDetail = input.detail === 'full';
 
       // Read filesystem state
       let runId = null;
@@ -1816,6 +1884,24 @@ export async function main() {
         }
       }
 
+      // Tempdoc 844 B3 / §6.1: report backends this dev-runner did NOT start. quick_health read only
+      // active.json, so a jseval/runHeadlessEval backend was invisible and its absence read as
+      // "nothing is running" — that already contaminated a measurement round. Owned vs
+      // observed-but-unowned stay separate, and `null` (did not look) stays distinct from `[]`
+      // (looked, found nothing).
+      const foreignRuns = await probeForeignRuns({
+        enabled: probe,
+        hasActiveRun: runId !== null,
+        ownedApiPort: apiPort,
+        aiActive,
+      });
+      const foreignRunsNotice = foreignRuns && foreignRuns.length > 0
+        ? `${foreignRuns.length} listener(s) on well-known JustSearch ports were NOT started by this dev-runner `
+          + `(${foreignRuns.map((f) => `${f.port}:${f.kind}/${f.attribution}`).join(', ')}). `
+          + 'Ownership verdicts and `running` describe the dev-runner\'s own run only — ports, GPU and data dirs '
+          + 'may be in use by a neighbour. Check before starting a run or trusting a measurement.'
+        : undefined;
+
       // Tempdoc 637 Layer A: one-look FRESHNESS verdict, aggregated at the dev-tooling layer — the
       // only vantage point that can see all four staleness sources. Each is a reasoned observable at
       // its OWNING layer, PROJECTED here (620 canonical-authority, never re-derived): build artifact
@@ -1859,6 +1945,45 @@ export async function main() {
         };
       }
 
+      // Tempdoc 844 P1: the retired justsearch.dev.status tool, folded in as detail:"full". It is
+      // the one part of quick_health that spawns a subprocess, so it stays opt-in. On failure the
+      // field is present and ok:false with the reason — never silently omitted on an explicit ask.
+      let detail;
+      if (wantDetail) {
+        try {
+          const { exitCode, json } = await runCliJson({
+            repoRoot,
+            devRunnerPath,
+            args: buildDevRunnerArgsStatus({ runId }),
+            timeoutMs: 20_000,
+            mode: 'oneshot',
+          });
+          // status returns ok:false for NO_ACTIVE_RUN; do not coerce to failure on exitCode alone.
+          const parsed = DevRunnerStatusJsonSchema.parse(json);
+          detail = StatusOutputSchema.parse({ ...parsed, exitCode });
+          if (detail.ok && detail.runId) {
+            try {
+              const runJson = await readRunJson({ repoRoot: mainRepoRoot, runId: detail.runId });
+              detail.apiBaseUrl = runJson?.apiBaseUrl;
+              detail.uiUrl = runJson?.uiUrl;
+              detail.dataDir = runJson?.dataDir;
+              detail.logs = runJson?.logs;
+              if (runJson?.owner) detail.owner = runJson.owner;
+              if (runJson?.resourceClaims) detail.resourceClaims = runJson.resourceClaims;
+            } catch (_) { /* run.json missing — the dev-runner projection still stands */ }
+          }
+        } catch (err) {
+          detail = StatusOutputSchema.parse({
+            ok: false,
+            runId: runId ?? null,
+            error: ToolErrorSchema.parse({
+              code: 'DETAIL_UNAVAILABLE',
+              message: `dev-runner status could not be read: ${err?.message || String(err)}`,
+            }),
+          });
+        }
+      }
+
       return toToolResult(QuickHealthOutputSchema.parse({
         running: runId !== null && (httpReady === true || (httpReady === null && pidsAlive)),
         runId,
@@ -1867,10 +1992,13 @@ export async function main() {
         httpReady,
         workerReady,
         aiActive,
+        foreignRuns,
+        ...(foreignRunsNotice ? { foreignRunsNotice } : {}),
         ...(inferenceOrphan !== undefined ? { inferenceOrphan } : {}),
         ...(ownership ? { ownership } : {}),
         ...(freshness ? { freshness } : {}),
         ...(model ? { model } : {}),
+        ...(detail ? { detail } : {}),
       }));
     },
   );
@@ -2041,334 +2169,11 @@ export async function main() {
   );
 
   // ---------------------------------------------------------------------------
-  // Agent Chat — SSE consumer for interacting with the built-in agent
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Consume the agent SSE stream and return a structured transcript.
-   * Auto-approves tool calls when opts.autoApprove is true.
-   */
-  function consumeAgentSse(streamUrl, body, opts) {
-    const { timeoutMs, totalTimeoutMs, maxBytes, autoApprove, approveBaseUrl, verbose } = opts;
-    return new Promise((resolve) => {
-      const startMs = Date.now();
-      let settled = false;
-      let totalTimer = null;
-      const finish = (transcript) => {
-        if (settled) return;
-        settled = true;
-        if (totalTimer) clearTimeout(totalTimer);
-        transcript.durationMs = Date.now() - startMs;
-        resolve(transcript);
-      };
-
-      // Iteration tracking: progress events mark iteration boundaries
-      let currentIteration = 0;
-      let currentPhase = '';
-      const iterationTextChunks = []; // text chunks accumulated since last progress event
-      const iterationDetails = [];    // [{iteration, phase, textBefore, toolCallIds}]
-
-      const transcript = {
-        sessionId: null,
-        toolCalls: {},
-        chunks: [],
-        finalResponse: '',
-        iterationsUsed: null,
-        toolCallsExecuted: null,
-        totalTokensUsed: null,
-        budgetUpdates: [],
-        error: null,
-        durationMs: 0,
-        iterations: [],
-      };
-
-      // Queue of callIds needing approval before sessionId is known
-      const pendingApproveQueue = [];
-
-      function fireApprove(callId) {
-        const sid = transcript.sessionId;
-        if (!sid) {
-          pendingApproveQueue.push(callId);
-          return;
-        }
-        // Tempdoc 565 §15.C — the unified approval endpoint dispatches agent-gate → workflow-gate
-        // (the forked /api/chat/agent/approve was retired; AgentRoutes.java).
-        const url = new URL('/api/chat/approve', approveBaseUrl).toString();
-        // Fire-and-forget — SSE stream will confirm via tool_call_approved
-        httpPostJsonLimited(url, { sessionId: sid, callId }, { timeoutMs: 10_000, maxBytes: 4096 }).catch(() => {});
-      }
-
-      function flushApproveQueue() {
-        while (pendingApproveQueue.length > 0) {
-          fireApprove(pendingApproveQueue.shift());
-        }
-      }
-
-      function toAgentTrace(rawTrace, fallbackToolCallId) {
-        if (!rawTrace || typeof rawTrace !== 'object') return undefined;
-        const out = {};
-        if (typeof rawTrace.runId === 'string' && rawTrace.runId) out.runId = rawTrace.runId;
-        if (typeof rawTrace.stepId === 'string' && rawTrace.stepId) out.stepId = rawTrace.stepId;
-        if (typeof rawTrace.spanId === 'string' && rawTrace.spanId) out.spanId = rawTrace.spanId;
-        if (typeof rawTrace.parentSpanId === 'string' && rawTrace.parentSpanId) out.parentSpanId = rawTrace.parentSpanId;
-        if (typeof rawTrace.agentId === 'string' && rawTrace.agentId) out.agentId = rawTrace.agentId;
-        if (typeof rawTrace.toolCallId === 'string' && rawTrace.toolCallId) {
-          out.toolCallId = rawTrace.toolCallId;
-        } else if (typeof fallbackToolCallId === 'string' && fallbackToolCallId) {
-          out.toolCallId = fallbackToolCallId;
-        }
-        if (Number.isFinite(rawTrace.iteration)) out.iteration = Number(rawTrace.iteration);
-        return Object.keys(out).length > 0 ? out : undefined;
-      }
-
-      function dispatchEvent(eventType, dataStr) {
-        let data;
-        try {
-          data = dataStr ? JSON.parse(dataStr) : {};
-        } catch {
-          return; // Malformed JSON — skip
-        }
-        const trace = toAgentTrace(
-          data.trace,
-          typeof data.callId === 'string' ? data.callId : undefined,
-        );
-
-        switch (eventType) {
-          case 'session_started':
-            transcript.sessionId = data.sessionId || null;
-            flushApproveQueue();
-            break;
-          case 'progress': {
-            // New iteration boundary — flush accumulated text and start new iteration
-            const iter = data.iteration ?? currentIteration;
-            if (iter !== currentIteration || iterationDetails.length === 0) {
-              const textBefore = iterationTextChunks.join('').trim();
-              iterationDetails.push({
-                iteration: iter,
-                phase: data.phase || '',
-                textBefore,
-                toolCallIds: [],
-                ...(trace ? { trace } : {}),
-              });
-              iterationTextChunks.length = 0;
-            }
-            currentIteration = iter;
-            currentPhase = data.phase || '';
-            break;
-          }
-          case 'chunk':
-            if (data.text) {
-              transcript.chunks.push(data.text);
-              iterationTextChunks.push(data.text);
-            }
-            break;
-          case 'tool_call_proposed': {
-            transcript.toolCalls[data.callId] = {
-              callId: data.callId,
-              toolName: data.toolName || '',
-              arguments: data.arguments || '{}',
-              risk: data.risk || null,
-              approved: false,
-              success: null,
-              output: null,
-              iteration: currentIteration,
-              ...(trace ? { trace } : {}),
-            };
-            // Associate this call with the current iteration detail
-            const iterDetail = iterationDetails[iterationDetails.length - 1];
-            if (iterDetail) iterDetail.toolCallIds.push(data.callId);
-            break;
-          }
-          case 'tool_call_pending':
-            if (autoApprove && data.callId) {
-              if (transcript.toolCalls[data.callId]) {
-                transcript.toolCalls[data.callId].approved = true;
-                if (trace && !transcript.toolCalls[data.callId].trace) {
-                  transcript.toolCalls[data.callId].trace = trace;
-                }
-              }
-              fireApprove(data.callId);
-            }
-            break;
-          case 'tool_call_approved':
-            if (transcript.toolCalls[data.callId]) {
-              transcript.toolCalls[data.callId].approved = true;
-              if (trace && !transcript.toolCalls[data.callId].trace) {
-                transcript.toolCalls[data.callId].trace = trace;
-              }
-            }
-            break;
-          case 'tool_call_rejected':
-            if (transcript.toolCalls[data.callId]) {
-              transcript.toolCalls[data.callId].approved = false;
-              if (trace && !transcript.toolCalls[data.callId].trace) {
-                transcript.toolCalls[data.callId].trace = trace;
-              }
-            }
-            break;
-          case 'tool_exec_completed':
-            if (transcript.toolCalls[data.callId]) {
-              transcript.toolCalls[data.callId].success = !!data.success;
-              transcript.toolCalls[data.callId].output = tail(String(data.output ?? ''), 8000);
-              if (trace && !transcript.toolCalls[data.callId].trace) {
-                transcript.toolCalls[data.callId].trace = trace;
-              }
-            }
-            break;
-          case 'budget_update':
-            transcript.budgetUpdates.push({
-              phase: data.phase || '',
-              tokensConsumed: Number.isFinite(data.tokensConsumed) ? Number(data.tokensConsumed) : 0,
-              tokensRemaining: Number.isFinite(data.tokensRemaining) ? Number(data.tokensRemaining) : 0,
-              ...(trace ? { trace } : {}),
-            });
-            break;
-          case 'done':
-            transcript.finalResponse = data.finalResponse || transcript.chunks.join('');
-            transcript.iterationsUsed = data.iterationsUsed ?? null;
-            transcript.toolCallsExecuted = data.toolCallsExecuted ?? null;
-            transcript.totalTokensUsed = data.totalTokensUsed ?? null;
-            transcript.iterations = iterationDetails;
-            finish(transcript);
-            break;
-          case 'error':
-            transcript.error = {
-              message: data.error || data.errorCode || 'unknown_error',
-              code: data.errorCode,
-              errorClass: typeof data.errorClass === 'string' ? data.errorClass : undefined,
-              retryAction: typeof data.retryAction === 'string' ? data.retryAction : undefined,
-              retryAttempt: Number.isInteger(data.retryAttempt) ? data.retryAttempt : undefined,
-            };
-            transcript.finalResponse = transcript.chunks.join('');
-            finish(transcript);
-            break;
-          // progress, tool_exec_started — informational, ignored
-          default:
-            break;
-        }
-      }
-
-      // SSE line parser state
-      let buffer = '';
-      let currentEvent = '';
-      let currentData = '';
-      let totalBytes = 0;
-
-      const bodyStr = JSON.stringify(body);
-      let u;
-      try {
-        u = new URL(streamUrl);
-      } catch {
-        transcript.error = { message: 'invalid_stream_url' };
-        return finish(transcript);
-      }
-
-      const req = http.request(
-        {
-          hostname: u.hostname,
-          port: Number(u.port),
-          path: u.pathname + u.search,
-          method: 'POST',
-          timeout: timeoutMs,
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(bodyStr),
-            Accept: 'text/event-stream',
-          },
-        },
-        (res) => {
-          if (res.statusCode !== 200) {
-            const errChunks = [];
-            res.on('data', (c) => errChunks.push(c));
-            res.on('end', () => {
-              const errText = Buffer.concat(errChunks).toString('utf8');
-              transcript.error = { message: `HTTP ${res.statusCode}: ${tail(errText, 2000)}` };
-              finish(transcript);
-            });
-            return;
-          }
-
-          res.setEncoding('utf8');
-          res.on('data', (chunk) => {
-            totalBytes += Buffer.byteLength(chunk, 'utf8');
-            if (totalBytes > maxBytes) {
-              transcript.error = { message: 'response_too_large' };
-              req.destroy();
-              finish(transcript);
-              return;
-            }
-
-            buffer += chunk;
-            const lines = buffer.split('\n');
-            buffer = lines.pop(); // Keep incomplete last line
-
-            for (const line of lines) {
-              const trimmed = line.replace(/\r$/, '');
-              if (trimmed.startsWith('event:')) {
-                currentEvent = trimmed.slice(6).trim();
-              } else if (trimmed.startsWith('data:')) {
-                currentData = trimmed.slice(5).trim();
-              } else if (trimmed === '') {
-                if (currentEvent) {
-                  dispatchEvent(currentEvent, currentData);
-                  if (settled) return; // done or error resolved the promise
-                }
-                currentEvent = '';
-                currentData = '';
-              }
-            }
-          });
-
-          res.on('end', () => {
-            // Stream closed without done/error event — return what we have
-            if (!settled) {
-              transcript.finalResponse = transcript.finalResponse || transcript.chunks.join('');
-              if (!transcript.error) transcript.error = { message: 'stream_closed_unexpectedly' };
-              finish(transcript);
-            }
-          });
-
-          res.on('error', (err) => {
-            transcript.error = { message: err?.message || 'stream_error' };
-            transcript.finalResponse = transcript.finalResponse || transcript.chunks.join('');
-            finish(transcript);
-          });
-        },
-      );
-
-      req.on('timeout', () => {
-        transcript.error = { message: 'timeout' };
-        transcript.finalResponse = transcript.chunks.join('');
-        req.destroy();
-        finish(transcript);
-      });
-
-      req.on('error', (err) => {
-        transcript.error = { message: err?.message || 'request_error' };
-        finish(transcript);
-      });
-
-      req.write(bodyStr);
-      req.end();
-
-      if (totalTimeoutMs) {
-        totalTimer = setTimeout(() => {
-          transcript.error = { message: 'total_timeout' };
-          transcript.finalResponse = transcript.chunks.join('');
-          req.destroy();
-          finish(transcript);
-        }, totalTimeoutMs);
-      }
-    });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Tempdoc 842 §2.4/§2.7 D2: shared activation flow. Pre-checks status, fires
+  // Tempdoc 842 §2.4/§2.7 D2: the activation flow. Pre-checks status, fires
   // POST /api/ai/runtime/activate, polls until a terminal activation state or timeoutMs elapses.
-  // Used by justsearch.dev.ai_activate directly, and by justsearch.dev.agent_chat to
-  // auto-activate when AI is offline instead of failing with AI_OFFLINE one call away from
-  // ai_activate. Returns a plain result object (not a schema-validated tool payload) so each
-  // caller shapes it into its own output schema.
+  // Returns a plain result object (not a schema-validated tool payload) so the caller shapes it
+  // into its own output schema. (Tempdoc 844 P1: justsearch.dev.agent_chat, its second caller,
+  // was retired — this is now reached only from justsearch.dev.ai_activate.)
   // ---------------------------------------------------------------------------
   async function activateAiRuntime({ base, variantId, chatProfile, timeoutMs, pollIntervalMs }) {
     const startMs = Date.now();
@@ -2377,7 +2182,7 @@ export async function main() {
     // Check current state — might already be active. Tempdoc 842 review D3/N1: an engine
     // brought up by AI AUTOSTART never runs the activation state machine, so the old
     // activation-completed test was a false negative there and this pre-check re-activated a
-    // healthy engine (GPU self-test + RESTART_ALWAYS) on every agent_chat. Engine-online is
+    // healthy engine (GPU self-test + RESTART_ALWAYS) on every call. Engine-online is
     // activation-completed OR realized identity present (active.modelPath is projected only
     // while the engine is online — backend invariant). A caller explicitly requesting a
     // DIFFERENT profile than the running one still proceeds: that is a profile switch.
@@ -2460,177 +2265,6 @@ export async function main() {
     };
   }
 
-  mcpServer.registerTool(
-    'justsearch.dev.agent_chat',
-    {
-      description:
-        'Send a prompt to the built-in agent and get the full conversation transcript including tool calls, results, and final response.' +
-        ' Set verbose=true for per-iteration reasoning detail.' +
-        " Auto-activates the AI runtime if it is offline before chatting (using the stack's spawn-time chat profile; dev default compact) — no need to call ai_activate first.",
-      inputSchema: AgentChatInputSchema,
-      annotations: { destructiveHint: false, openWorldHint: false },
-    },
-    async (rawArgs) => {
-      const input = AgentChatInputSchema.parse(rawArgs);
-      const timeoutMs = input.timeoutMs ?? 120_000;
-      const maxBytes = input.maxBytes ?? 2_000_000;
-      const autoApprove = input.autoApprove ?? true;
-      const maxIterations = input.maxIterations ?? 10;
-
-      const resolved = await resolveApiBaseUrl({ runId: input.runId, apiPort: input.apiPort, mainRepoRoot });
-      if (!resolved.ok) {
-        const out = AgentChatOutputSchema.parse({
-          ok: false,
-          runId: resolved.runId ?? input.runId ?? 'unknown',
-          prompt: input.prompt,
-          sessionId: null,
-          error: ToolErrorSchema.parse(resolved.error),
-        });
-        return toToolResult(out);
-      }
-      const base = ensureLoopbackUrl(resolved.apiBaseUrl, 'apiBaseUrl');
-      const effectiveRunId = resolved.runId ?? 'port-only';
-
-      // Tempdoc 842 §2.7 D2: agent_chat used to fail one call away from ai_activate — the
-      // postmortem register recorded three rounds lost to AI_OFFLINE this way. Auto-activate
-      // before opening the SSE chat when AI is not already active; bounded to a slice of the
-      // tool's own timeout budget so a stuck activation can't silently eat the whole call.
-      // The profile follows the STACK's spawn-time choice (run.json chatProfile) so a stack
-      // deliberately started with chatProfile:"standard" is not silently switched to compact;
-      // the dev default (compact, §2.4) applies only when the run record predates 842 or the
-      // stack was resolved by bare apiPort. activateAiRuntime does its own status pre-check
-      // and no-ops (alreadyActive) when AI is already up.
-      const activationBudgetMs = Math.min(input.totalTimeoutMs ?? timeoutMs, 60_000);
-      const activation = await activateAiRuntime({
-        base, variantId: 'cuda12', chatProfile: resolved.chatProfile ?? 'compact',
-        timeoutMs: activationBudgetMs, pollIntervalMs: 2_000,
-      });
-      const autoActivated = activation.ok && activation.alreadyActive !== true;
-      if (!activation.ok) {
-        const out = AgentChatOutputSchema.parse({
-          ok: false,
-          runId: effectiveRunId,
-          prompt: input.prompt,
-          sessionId: null,
-          error: ToolErrorSchema.parse({
-            code: 'AI_OFFLINE',
-            message: `AI runtime is offline and auto-activation failed: ${activation.error?.message || activation.message || 'unknown error'}`,
-          }),
-        });
-        maybeAppendNdjson(mainRepoRoot, {
-          event: 'tool_agent_chat_result',
-          tool: 'justsearch.dev.agent_chat',
-          runId: effectiveRunId,
-          ok: false,
-          error: 'auto-activation failed',
-          durationMs: activation.durationMs,
-        });
-        return toToolResult(out);
-      }
-
-      // Agent run-stream route (AgentRoutes.java:24). The legacy /api/agent/*
-      // prefix was removed; handleRunStream now lives at /api/chat/agent. Same
-      // request body + SSE event shape (the browser AgentSessionController posts
-      // the identical `messages` body to this route) — path-only change.
-      const streamUrl = new URL('/api/chat/agent', base).toString();
-      const body = {
-        messages: [{ role: 'user', content: input.prompt }],
-        maxIterations,
-      };
-
-      maybeAppendNdjson(mainRepoRoot, {
-        event: 'tool_start',
-        tool: 'justsearch.dev.agent_chat',
-        runId: effectiveRunId,
-        prompt: input.prompt,
-        maxIterations,
-        autoApprove,
-      });
-
-      const verbose = input.verbose ?? false;
-      const transcript = await consumeAgentSse(streamUrl, body, {
-        timeoutMs,
-        totalTimeoutMs: input.totalTimeoutMs,
-        maxBytes,
-        autoApprove,
-        approveBaseUrl: base,
-        verbose,
-      });
-
-      // Convert toolCalls map to sorted array
-      const toolCallsArr = Object.values(transcript.toolCalls);
-
-      if (transcript.error) {
-        const errorPayload = {
-          ok: false,
-          runId: effectiveRunId,
-          prompt: input.prompt,
-          sessionId: transcript.sessionId,
-          toolCalls: toolCallsArr,
-          finalResponse: transcript.finalResponse || '',
-          totalTokensUsed: transcript.totalTokensUsed,
-          durationMs: transcript.durationMs,
-          error: ToolErrorSchema.parse({
-            message: transcript.error.message,
-            code: transcript.error.code,
-            errorClass: transcript.error.errorClass,
-            retryAction: transcript.error.retryAction,
-            retryAttempt: transcript.error.retryAttempt,
-          }),
-        };
-        if (autoActivated) errorPayload.autoActivated = true;
-        if (verbose && transcript.iterations?.length > 0) {
-          errorPayload.iterations = transcript.iterations;
-        }
-        if (verbose && transcript.budgetUpdates?.length > 0) {
-          errorPayload.budgetUpdates = transcript.budgetUpdates;
-        }
-        const out = AgentChatOutputSchema.parse(errorPayload);
-        maybeAppendNdjson(mainRepoRoot, {
-          event: 'tool_agent_chat_result',
-          tool: 'justsearch.dev.agent_chat',
-          runId: effectiveRunId,
-          ok: false,
-          error: transcript.error.message,
-          durationMs: transcript.durationMs,
-        });
-        return toToolResult(out);
-      }
-
-      const successPayload = {
-        ok: true,
-        runId: effectiveRunId,
-        prompt: input.prompt,
-        sessionId: transcript.sessionId,
-        toolCalls: toolCallsArr,
-        finalResponse: transcript.finalResponse,
-        iterationsUsed: transcript.iterationsUsed,
-        toolCallsExecuted: transcript.toolCallsExecuted,
-        totalTokensUsed: transcript.totalTokensUsed,
-        durationMs: transcript.durationMs,
-      };
-      if (autoActivated) successPayload.autoActivated = true;
-      if (verbose && transcript.iterations?.length > 0) {
-        successPayload.iterations = transcript.iterations;
-      }
-      if (verbose && transcript.budgetUpdates?.length > 0) {
-        successPayload.budgetUpdates = transcript.budgetUpdates;
-      }
-      const out = AgentChatOutputSchema.parse(successPayload);
-
-      maybeAppendNdjson(mainRepoRoot, {
-        event: 'tool_agent_chat_result',
-        tool: 'justsearch.dev.agent_chat',
-        runId: effectiveRunId,
-        ok: true,
-        toolCalls: toolCallsArr.length,
-        iterationsUsed: transcript.iterationsUsed,
-        durationMs: transcript.durationMs,
-      });
-      return toToolResult(await withStaleness(out, { mainRepoRoot, callerRepoRoot: repoRoot, callerSessionId: input.sessionId || resolveAgentSessionIdForMcp(repoRoot) }));
-    },
-  );
-
   // ─── AI Runtime Activate tool ──────────────────────────────
 
   mcpServer.registerTool(
@@ -2656,11 +2290,10 @@ export async function main() {
       const base = ensureLoopbackUrl(resolved.apiBaseUrl, 'apiBaseUrl');
       const effectiveRunId = resolved.runId ?? 'port-only';
 
-      // Tempdoc 842: poll-until-done activation flow factored into activateAiRuntime (shared
-      // with justsearch.dev.agent_chat's auto-activation, §2.7 D2) — this handler just shapes
-      // the result into AiActivateOutputSchema.
+      // Tempdoc 842: poll-until-done activation flow factored into activateAiRuntime — this
+      // handler just shapes the result into AiActivateOutputSchema.
       // Tempdoc 842 review D1: an omitted chatProfile follows the STACK's spawn-time profile
-      // (run.json), same as agent_chat — without this, the habitual bare ai_activate call took
+      // (run.json) — without this, the habitual bare ai_activate call took
       // the backend's settings path and activated the standard 9B on a compact-default stack.
       // Explicit input wins; port-only resolution (no run record) keeps legacy behavior.
       const result = await activateAiRuntime({

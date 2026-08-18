@@ -238,13 +238,6 @@ export const DevRunnerCleanupJsonSchema = z
       .passthrough(),
   ]);
 
-export const StatusInputSchema = z
-  .object({
-    runId: z.string().meta({ format: 'uuid' }).optional(),
-    sessionId: z.string().optional(),
-  })
-  .strict();
-
 export const DevRunnerStatusJsonSchema = z.union([
   z
     .object({
@@ -297,38 +290,9 @@ export const DevRunnerStatusJsonSchema = z.union([
     .passthrough(),
 ]);
 
+/** Tempdoc 844 P1: the dev-runner `status` projection, now reached through
+ *  `quick_health { detail: "full" }` rather than a second orientation tool. */
 export const StatusOutputSchema = DevRunnerStatusJsonSchema;
-
-export const CaptureIncludeSchema = z.enum(['debug', 'policy', 'inference', 'gpu', 'ui_ready', 'effective_config']);
-
-export const CaptureEvidenceInputSchema = z
-  .object({
-    runId: z.string().meta({ format: 'uuid' }).optional().describe('Run ID (omit to use active run)'),
-    scenario: z.string().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/).optional(),
-    outRoot: z.string().min(1).optional(),
-    include: z.array(CaptureIncludeSchema).optional(),
-    trace: z.boolean().optional(),
-    timeoutMs: z.number().int().positive().optional(),
-    /**
-     * Repo-relative attachment paths. The server enforces an allowlist for the given runId.
-     * This exists (instead of raw paths) so we can deterministically reject traversal attempts.
-     */
-    attachments: z.array(z.string().min(1)).optional(),
-    sessionId: z.string().optional(),
-  })
-  .strict();
-
-export const CaptureEvidenceOutputSchema = z
-  .object({
-    ok: z.boolean(),
-    runId: z.string().meta({ format: 'uuid' }),
-    bundleDir: z.string().min(1),
-    exitCode: z.number().int(),
-    outRoot: z.string().min(1),
-    attachments: z.array(z.string().min(1)),
-    stderrTail: z.string().optional(),
-  })
-  .passthrough();
 
 export const TailLogKindSchema = z.enum([
   'backend_stdout',
@@ -384,18 +348,55 @@ export const FetchApiEndpointSchema = z.enum([
   'ai_runtime_status',
 ]);
 
+/**
+ * Tempdoc 844 B4b — `maxBytes` is a READ budget, not an output budget. Agents lowered it to shrink
+ * the returned payload and got `response_too_large` instead; it now truncates with an explicit
+ * notice, and the description says which knob actually shrinks output.
+ */
+const MAX_BYTES_DESCRIPTION =
+  'Maximum bytes to READ from the backend response (default 2000000). Exceeding it truncates the '
+  + 'body and returns an explicit RESPONSE_TRUNCATED notice — a truncated body does not parse as '
+  + 'JSON, so this cannot be used to shrink a large response. To shrink OUTPUT use jsonPath, '
+  + 'outputMode:"compact", or summaryOnly.';
+
+/** Tempdoc 844 B4a/B4c — one description for the one projection implementation (two callers). */
+const JSON_PATH_DESCRIPTION =
+  'Dot-path projecting a subtree of the response, with array indices — e.g. "llm.model_path" or '
+  + '"results[0].fields.path". On a miss the tool returns the available keys at the deepest level '
+  + 'that did resolve and withholds the body, so a typo costs a hint, not the whole payload.';
+
 export const FetchApiJsonInputSchema = z
   .object({
     runId: z.string().meta({ format: 'uuid' }).optional().describe('Run ID (omit to use active run)'),
     apiPort: z.number().int().positive().optional().describe('API port (alternative to runId for untracked instances)'),
     endpoint: FetchApiEndpointSchema,
-    jsonPath: z.string().optional().describe('Dot-path to extract a subtree from the response (e.g., "llm.model_path")'),
+    jsonPath: z.string().optional().describe(JSON_PATH_DESCRIPTION),
     outputMode: OutputModeSchema.optional().describe('Output detail level (default: compact)'),
     timeoutMs: z.number().int().positive().optional(),
-    maxBytes: z.number().int().positive().max(5_000_000).optional(),
+    maxBytes: z.number().int().positive().max(5_000_000).optional().describe(MAX_BYTES_DESCRIPTION),
     sessionId: z.string().optional(),
   })
   .strict();
+
+// Tempdoc 844 B4a/B4b: the fields that make a partial answer legible. Declared rather than left to
+// passthrough (the 842 §2.7 lesson — an undeclared field is an undocumented field).
+const TruncationFields = {
+  truncated: z.boolean().optional(),
+  bytesRead: z.number().int().min(0).optional(),
+  maxBytesLimit: z.number().int().positive().optional(),
+};
+const JsonPathAvailableField = {
+  jsonPathAvailable: z
+    .object({
+      kind: z.string(),
+      keys: z.array(z.string()).optional(),
+      keysTotal: z.number().int().optional(),
+      length: z.number().int().optional(),
+      hint: z.string().optional(),
+    })
+    .passthrough()
+    .optional(),
+};
 
 export const FetchApiJsonOutputSchema = z.union([
   z
@@ -407,6 +408,7 @@ export const FetchApiJsonOutputSchema = z.union([
       statusCode: z.number().int().nullable(),
       json: z.any().optional(),
       textTail: z.string().optional(),
+      ...TruncationFields,
     })
     .passthrough(),
   z
@@ -418,6 +420,8 @@ export const FetchApiJsonOutputSchema = z.union([
       statusCode: z.number().int().nullable(),
       json: z.any().optional(),
       textTail: z.string().optional(),
+      ...TruncationFields,
+      ...JsonPathAvailableField,
       error: ToolErrorSchema,
     })
     .passthrough(),
@@ -436,7 +440,7 @@ export const SearchQueryInputSchema = z
     summaryOnly: z.boolean().optional().describe('Return only totalHits and tookMs, omitting result details'),
     outputMode: OutputModeSchema.optional().describe('Output detail level (default: compact)'),
     timeoutMs: z.number().int().positive().max(60_000).optional(),
-    maxBytes: z.number().int().positive().max(5_000_000).optional(),
+    maxBytes: z.number().int().positive().max(5_000_000).optional().describe(MAX_BYTES_DESCRIPTION),
     sessionId: z.string().optional(),
   })
   .strict();
@@ -464,6 +468,7 @@ export const SearchQueryOutputSchema = z.union([
       query: z.string(),
       url: z.string().min(1).optional(),
       statusCode: z.number().int().nullable(),
+      ...TruncationFields,
       error: ToolErrorSchema,
     })
     .passthrough(),
@@ -475,7 +480,7 @@ export const IngestInputSchema = z
     apiPort: z.number().int().positive().optional().describe('API port (alternative to runId for untracked instances)'),
     paths: z.array(z.string().min(1)).min(1),
     timeoutMs: z.number().int().positive().max(120_000).optional(),
-    maxBytes: z.number().int().positive().max(5_000_000).optional(),
+    maxBytes: z.number().int().positive().max(5_000_000).optional().describe(MAX_BYTES_DESCRIPTION),
     sessionId: z.string().optional(),
   })
   .strict();
@@ -497,6 +502,7 @@ export const IngestOutputSchema = z.union([
       runId: z.string().meta({ format: 'uuid' }),
       url: z.string().min(1).optional(),
       statusCode: z.number().int().nullable(),
+      ...TruncationFields,
       error: ToolErrorSchema,
     })
     .passthrough(),
@@ -513,168 +519,14 @@ export const ApiCallInputSchema = z
     method: ApiCallMethodSchema.default('GET'),
     path: z.string().min(1),
     body: z.any().optional(),
+    // Tempdoc 844 B4c: shares fetch_api_json's projection implementation.
+    jsonPath: z.string().optional().describe(JSON_PATH_DESCRIPTION),
     outputMode: OutputModeSchema.optional().describe('Output detail level (default: compact)'),
     timeoutMs: z.number().int().positive().max(60_000).optional(),
-    maxBytes: z.number().int().positive().max(5_000_000).optional(),
+    maxBytes: z.number().int().positive().max(5_000_000).optional().describe(MAX_BYTES_DESCRIPTION),
     sessionId: z.string().optional(),
   })
   .strict();
-
-export const ValidateEvidenceInputSchema = z
-  .object({
-    bundleDir: z.string().min(1),
-    timeoutMs: z.number().int().positive().optional(),
-    strictReasons: z.boolean().optional(),
-    allowReasons: z.array(z.string().min(1)).optional(),
-    enforceDeterminism: z.boolean().optional(),
-    sessionId: z.string().optional(),
-  })
-  .strict();
-
-export const ValidateEvidenceSubResultSchema = z
-  .object({
-    ok: z.boolean(),
-    exitCode: z.number().int(),
-    stdoutTail: z.string(),
-    stderrTail: z.string(),
-    errors: z.array(z.string()).optional(),
-  })
-  .passthrough();
-
-export const ValidateEvidenceOutputSchema = z
-  .object({
-    ok: z.boolean(),
-    bundleDir: z.string().min(1),
-    evidenceBundle: ValidateEvidenceSubResultSchema,
-    determinismBudget: ValidateEvidenceSubResultSchema,
-    errors: z.array(z.string()).optional(),
-    warnings: z.array(z.string()).optional(),
-  })
-  .passthrough();
-
-// --- Agent Chat ---
-
-export const AgentChatInputSchema = z
-  .object({
-    runId: z.string().meta({ format: 'uuid' }).optional().describe('Run ID (omit to use active run)'),
-    apiPort: z.number().int().positive().optional().describe('API port (alternative to runId for untracked instances)'),
-    prompt: z.string().min(1),
-    maxIterations: z.number().int().positive().max(20).default(10),
-    autoApprove: z.boolean().default(true),
-    timeoutMs: z.number().int().positive().max(600_000).default(120_000)
-      .describe('Socket inactivity timeout in ms — resets on each SSE chunk'),
-    totalTimeoutMs: z.number().int().positive().max(600_000).optional()
-      .describe('Total elapsed time limit in ms (default: none — only inactivity timeout applies)'),
-    maxBytes: z.number().int().positive().max(5_000_000).default(2_000_000),
-    verbose: z.boolean().default(false),
-    sessionId: z.string().optional(),
-  })
-  .strict();
-
-const AgentToolCallSchema = z
-  .object({
-    callId: z.string(),
-    toolName: z.string(),
-    arguments: z.string(),
-    risk: z.enum(['low', 'medium', 'high']).optional(),
-    approved: z.boolean(),
-    success: z.boolean().nullable(),
-    output: z.string().nullable(),
-    iteration: z.number().optional(),
-    trace: z
-      .object({
-        runId: z.string().optional(),
-        stepId: z.string().optional(),
-        spanId: z.string().optional(),
-        parentSpanId: z.string().optional(),
-        agentId: z.string().optional(),
-        toolCallId: z.string().optional(),
-        iteration: z.number().optional(),
-      })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
-
-/** Per-iteration detail (only included in verbose mode). */
-const AgentIterationSchema = z
-  .object({
-    iteration: z.number(),
-    phase: z.string(),
-    textBefore: z.string(),
-    toolCallIds: z.array(z.string()),
-    trace: z
-      .object({
-        runId: z.string().optional(),
-        stepId: z.string().optional(),
-        spanId: z.string().optional(),
-        parentSpanId: z.string().optional(),
-        agentId: z.string().optional(),
-        toolCallId: z.string().optional(),
-        iteration: z.number().optional(),
-      })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
-
-const AgentBudgetUpdateSchema = z
-  .object({
-    phase: z.string(),
-    tokensConsumed: z.number(),
-    tokensRemaining: z.number(),
-    trace: z
-      .object({
-        runId: z.string().optional(),
-        stepId: z.string().optional(),
-        spanId: z.string().optional(),
-        parentSpanId: z.string().optional(),
-        agentId: z.string().optional(),
-        toolCallId: z.string().optional(),
-        iteration: z.number().optional(),
-      })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
-
-export const AgentChatOutputSchema = z.union([
-  z
-    .object({
-      ok: z.literal(true),
-      runId: z.string().meta({ format: 'uuid' }),
-      prompt: z.string(),
-      sessionId: z.string().nullable(),
-      toolCalls: z.array(AgentToolCallSchema),
-      finalResponse: z.string(),
-      iterationsUsed: z.number().nullable(),
-      toolCallsExecuted: z.number().nullable(),
-      totalTokensUsed: z.number().nullable(),
-      durationMs: z.number(),
-      iterations: z.array(AgentIterationSchema).optional(),
-      budgetUpdates: z.array(AgentBudgetUpdateSchema).optional(),
-      // Tempdoc 842 §2.7 D2: set true when agent_chat found AI offline and activated the
-      // compact profile itself before running the chat, instead of failing with AI_OFFLINE.
-      autoActivated: z.boolean().optional(),
-    })
-    .passthrough(),
-  z
-    .object({
-      ok: z.literal(false),
-      runId: z.string().meta({ format: 'uuid' }),
-      prompt: z.string(),
-      sessionId: z.string().nullable(),
-      toolCalls: z.array(AgentToolCallSchema).optional(),
-      finalResponse: z.string().optional(),
-      totalTokensUsed: z.number().nullable().optional(),
-      durationMs: z.number().optional(),
-      error: ToolErrorSchema,
-      iterations: z.array(AgentIterationSchema).optional(),
-      budgetUpdates: z.array(AgentBudgetUpdateSchema).optional(),
-      autoActivated: z.boolean().optional(),
-    })
-    .passthrough(),
-]);
 
 // ─── AI Runtime Activate ───────────────────────────────────
 
@@ -728,6 +580,11 @@ export const AiActivateOutputSchema = z.union([
 export const QuickHealthInputSchema = z
   .object({
     probe: z.boolean().optional().describe('HTTP-probe running backend (default: true)'),
+    // Tempdoc 844 P1: the former justsearch.dev.status tool, folded in as a detail level.
+    detail: z.enum(['summary', 'full']).optional()
+      .describe('"summary" (default) reads run state from disk + optional HTTP probes. "full" additionally '
+        + 'spawns the dev-runner status subprocess and returns its process/port/readiness payload under '
+        + '`detail` — the projection the retired justsearch.dev.status tool returned.'),
     sessionId: z.string().optional(),
   })
   .strict();
@@ -763,6 +620,17 @@ const QuickHealthModelSchema = z
   })
   .passthrough();
 
+// Tempdoc 844 B3: one observed-but-unowned listener. `attribution` is itself a tri-state —
+// "unowned" (provably not the active run) vs "unknown" (could not be attributed), never merged.
+const ForeignRunSchema = z
+  .object({
+    port: z.number().int().positive(),
+    kind: z.enum(['backend', 'inference']),
+    probePath: z.string(),
+    attribution: z.enum(['unowned', 'unknown']),
+  })
+  .passthrough();
+
 export const QuickHealthOutputSchema = z
   .object({
     running: z.boolean(),
@@ -772,10 +640,18 @@ export const QuickHealthOutputSchema = z
     httpReady: z.boolean().nullable(),
     workerReady: z.boolean().nullable(),
     aiActive: z.boolean().nullable(),
+    // Tempdoc 844 B3: backends observed but NOT owned by this dev-runner. The tri-state is
+    // load-bearing — `null` = probing was off or the probe failed (I did not look), `[]` = I looked
+    // and found nothing, a non-empty array = these are running and none of them is my run.
+    foreignRuns: z.array(ForeignRunSchema).nullable(),
+    foreignRunsNotice: z.string().optional(),
     inferenceOrphan: z.boolean().optional(),
     ownership: OwnershipProjectionSchema.optional(),
     freshness: FreshnessSchema.optional(),
     model: QuickHealthModelSchema.optional(),
+    // Tempdoc 844 P1: present only for detail:"full". Either the dev-runner status projection or an
+    // explicit ok:false carrying why it could not be read — never silently absent on request.
+    detail: StatusOutputSchema.optional(),
   })
   .passthrough();
 
@@ -793,7 +669,15 @@ export const ReloadInputSchema = z.object({
 
 // ─── Preflight ─────────────────────────────────────────────
 
-export const PreflightInputSchema = z.object({ sessionId: z.string().optional() }).strict();
+export const PreflightInputSchema = z.object({
+  // Tempdoc 844 B1: preflight used to check the INVOKING checkout's dists while start launched from
+  // distFrom's — preflight passed, start then failed. Same value, same resolver as start.
+  distFrom: z.string().optional()
+    .describe('Check the dists in the checkout `start` will launch from: the main repo, a path to a '
+      + 'sibling worktree under .claude/worktrees, or a bare worktree name (resolved against '
+      + '.claude/worktrees/<name>). Omit to check the invoking checkout, as before.'),
+  sessionId: z.string().optional(),
+}).strict();
 
 export const PreflightOutputSchema = z
   .object({
@@ -807,6 +691,11 @@ export const PreflightOutputSchema = z
       // Tempdoc 618 §3: is the llama-server runtime resolvable for `ai_activate`?
       llamaVariantResolvable: z.boolean(),
     }),
+    // Tempdoc 844 B1: which checkout the dist checks actually looked at, so the answer is
+    // self-describing rather than implicitly "wherever this server happens to run".
+    distCheckedRoot: z.string().optional(),
+    distFrom: z.string().nullable().optional(),
+    distFromResolvedVia: z.string().optional(),
     details: z.record(z.string(), z.string()).optional(),
   })
   .passthrough();

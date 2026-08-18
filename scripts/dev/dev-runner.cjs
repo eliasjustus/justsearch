@@ -1435,12 +1435,20 @@ async function cmdStart(opts) {
   // Without this check, spawn() fails silently and the only feedback is a 60s timeout.
   if (!fs.existsSync(startScript)) {
     const gradleCmd = process.platform === 'win32' ? './gradlew.bat' : './gradlew';
-    throw new Error(
+    const remedy = `node scripts/dev/prepare-worktree.cjs (or: ${gradleCmd} :modules:ui:installDist :modules:indexer-worker:installDist)`;
+    // Tempdoc 844 B2: a fully-understood, recoverable condition with a printed remedy is NOT an
+    // unhandled exception. It surfaced as error code UNHANDLED on 16 of 20 observed `start` errors,
+    // which mis-states the severity and puts it outside the documented admission code set.
+    // Classified here — the layer that knows the condition — so the MCP wrapper needs no re-derivation.
+    const err = new Error(
       `Head dist not found at ${startScript}. Make this checkout dev-ready (tempdoc 618 §3):\n` +
         `  node scripts/dev/prepare-worktree.cjs           # one command: npm ci + both installDists\n` +
         `  or: ${gradleCmd} :modules:ui:installDist :modules:indexer-worker:installDist\n` +
         `Then retry start (or drop --skip-build to build automatically).`,
     );
+    err.code = 'DIST_NOT_BUILT';
+    err.details = { distPath: startScript, repoRoot, remedy };
+    throw err;
   }
 
   // Tempdoc 606 Piece 2: capture provenance of the dist we are about to launch.
@@ -2330,6 +2338,9 @@ if (require.main === module) {
           error: {
             code: err?.code || 'UNHANDLED',
             message: err?.message || String(err),
+            // Tempdoc 844 B2: a classified error may carry structured context (offending path,
+            // remedy) so a consumer does not have to scrape the message for it.
+            ...(err?.details ? { details: err.details } : {}),
             ...(err?.stack ? { stack: String(err.stack) } : {}),
           },
         }) + '\n',

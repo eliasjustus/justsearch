@@ -64,7 +64,7 @@ the rot they were built to avoid is being forgotten (§26 discoverability). Pick
 | "Did I break a11y closure anywhere?" | `jseval ui-a11y-gate` | auto-serve (`--fixtures`) | exit 0 clean · 1 a NEW axe violation vs `governance/ui-a11y-baseline.v1.json` · 2 capture error |
 | "Did persistent chrome GROW taller than it was?" | `jseval ui-proportion-gate` | auto-serve (`--fixtures`) | exit 0 clean · 1 a registered element grew beyond `governance/ui-proportion-baseline.v1.json` · 2 capture error / selector not found |
 | "Did this change MOVE/REMOVE anything I didn't intend?" | `jseval ui-diff <before.measure.json> <after.measure.json>` | two captures (shoot before, edit, shoot after) | semantic changelog (landmark removed · element moved/resized >4px · new axe rule · overflow flip · real console); exit 0 same · 1 changed |
-| "Critique this surface against THIS product's design system" | `jseval ui-critic <step>` | auto-serve (`--fixtures`) | prints a GROUNDED critique **prompt** (facts + `design-reference.v1.json` + rubric) — feed it to a model / `agent_chat` |
+| "Critique this surface against THIS product's design system" | `jseval ui-critic <step>` | auto-serve (`--fixtures`) | prints a GROUNDED critique **prompt** (facts + `design-reference.v1.json` + rubric) — feed it to a model |
 | "Hunt edge-state bugs a human won't patiently click" | `jseval ui-fuzz` | auto-serve (`--fixtures`); ~80s | fuzzes search × {data-variant × viewport × theme}, flags anomalous cells; exit 0 clean · 1 flagged |
 | "Trace the interaction trajectory into a step" | `jseval ui-shot <step> --trace` | served FE | per-step trace of the chain leading to `<step>` (limited to existing harness chain steps) |
 

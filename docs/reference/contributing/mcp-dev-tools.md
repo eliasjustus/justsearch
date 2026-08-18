@@ -7,42 +7,56 @@ description: "Dev orchestration tools for starting, monitoring, and verifying th
 
 # MCP Dev Tools Workflow
 
-The `justsearch-dev-mcp` server is the agent-facing control surface for the local development stack. It wraps the dev runner, selected Local API calls, search/ingest helpers, evidence capture, and AI runtime toggles.
+The `justsearch-dev-mcp` server is the agent-facing control surface for the local development stack. It wraps the dev runner, selected Local API calls, search/ingest helpers, and AI runtime toggles.
 
-Use this reference for tool selection. Use the implementation in `scripts/dev/justsearch-dev-mcp/server.mjs` as the source of truth for schemas and endpoint allowlists.
+This file is the **canonical inventory** of that surface: the tool list, the `fetch_api_json` endpoint keys, and the `api_call` allowlist. `scripts/ci/check-dev-mcp-doc-sync.mjs` asserts all three against the running server, so a drift between this page and `scripts/dev/justsearch-dev-mcp/server.mjs` fails the build instead of quietly misleading an agent (tempdoc 844 §6.3 measured four inventories, all wrong at once).
+
+For the operational side — shared-stack ownership and contention, worktree FE serving, troubleshooting — load the `/dev-stack` skill. It links here rather than restating the inventory.
 
 ## Available Tools
 
-The dev MCP surface currently exposes exactly these tools:
+The dev MCP surface exposes exactly these **12** tools:
 
 | Tool | Purpose |
 |------|---------|
 | `justsearch.dev.start` | Start the backend and frontend dev stack. Readiness waiting is part of this tool via its wait options. |
-| `justsearch.dev.status` | Inspect current dev-runner state and process metadata. |
+| `justsearch.dev.stop` | Stop the active dev run and clean up owned processes. |
+| `justsearch.dev.quick_health` | Fast orientation check for run/API/worker health, plus `foreignRuns` — backends it did not start. `detail: "full"` adds the dev-runner process/port/readiness payload. |
+| `justsearch.dev.preflight` | Run dev preflight checks before heavier workflows. Takes `distFrom` so the dist checks run against the tree `start` will launch from. |
+| `justsearch.dev.acquire_when_free` | Block until the shared stack is acquirable, then return how to take it (the documented remedy for `OWNER_CONFLICT`). |
 | `justsearch.dev.tail_log` | Read recent backend, frontend, or runner log lines. |
 | `justsearch.dev.fetch_api_json` | Fetch predefined JSON endpoints by key. |
 | `justsearch.dev.api_call` | Call allowlisted Local API endpoints with explicit method/path/body. |
 | `justsearch.dev.search_query` | Execute `POST /api/knowledge/search`. |
 | `justsearch.dev.ingest` | Execute `POST /api/knowledge/ingest`. |
-| `justsearch.dev.validate_evidence` | Validate an `EvidenceBundle`. |
-| `justsearch.dev.capture_evidence` | Capture an `EvidenceBundle` from search/API/UI context. |
-| `justsearch.dev.preflight` | Run dev preflight checks before heavier workflows. |
-| `justsearch.dev.quick_health` | Fast orientation check for UI/API/worker health. |
-| `justsearch.dev.stop` | Stop the active dev run and clean up owned processes. |
-| `justsearch.dev.agent_chat` | Send a prompt to the built-in agent and return the transcript. |
 | `justsearch.dev.ai_activate` | Activate the online AI runtime. |
 | `justsearch.dev.reload` | Trigger backend hot reload and report whether restart is required. |
 
 Legacy underscore-style dev tool names and standalone readiness/listing/suggestion/cleanup tools are obsolete. Agents should use the dotted names above.
 
+**Retired in tempdoc 844 P1** — do not reintroduce these names in tooling or prompts:
+
+| Retired tool | Why | Use instead |
+|---|---|---|
+| `justsearch.dev.status` | 1 invocation in six weeks vs 61 for `quick_health`, whose description already told agents to prefer it. | `quick_health { detail: "full" }` |
+| `justsearch.dev.agent_chat` | 0 invocations; superseded in practice by browser-driven UI validation and `jseval` harnesses. | `jseval`, or the chat API directly |
+| `justsearch.dev.capture_evidence` | 0 invocations; the wrapper crashes on Windows with a libuv fail-fast. | `node modules/ui-web/scripts/capture-evidence-bundle.mjs` |
+| `justsearch.dev.validate_evidence` | 0 invocations (its capture counterpart never produced a bundle to validate). | `node scripts/evidence/validate-evidencebundle-v1.mjs <bundleDir>` |
+
+The **EvidenceBundle format itself is live and load-bearing** — only the two MCP wrappers were removed. `scripts/evidence/validate-evidencebundle-v1.mjs` still gates the `installer_verify` job.
+
 ## Standard Workflow
 
-1. Start the stack with `justsearch.dev.start`.
+1. Orient with `justsearch.dev.quick_health` — the compact readiness check, and the first call after compaction.
+   - Add `detail: "full"` when process state, ports, or runner metadata matter; it is the only mode that spawns a subprocess.
+   - Read `foreignRuns` before concluding the machine is free. It lists JustSearch-shaped backends this dev-runner did **not** start (a `jseval` backend on `33221`, a bare `runHeadless`, an unattributed llama-server). The tri-state is load-bearing: `[]` = probed and found none, `null` = did not probe (`probe: false`), a non-empty array = these are running and none is the owned run. Ownership verdicts and `running` describe the dev-runner's own run only — before tempdoc 844 that made a "free" verdict precede a 100%-GPU neighbour and contaminated a measurement round.
+2. Run `justsearch.dev.preflight` if the stack is not running.
+   - Pass the **same** `distFrom` you will pass to `start` (a path, or a bare worktree name). Preflight then checks the dists in the tree `start` will launch from and reports it as `distCheckedRoot`; without it, preflight validated the invoking checkout while `start` used another — a false green.
+3. Start the stack with `justsearch.dev.start`.
    - Use the tool's wait options instead of a separate wait-ready tool.
    - `waitTimeoutMs` may need to be higher than the default on cold machines or after clean builds.
    - `chatProfile?: "compact" | "standard"` (tempdoc 842) selects the llama-server chat model pair delivered as `JUSTSEARCH_CHAT_PROFILE` in the spawn env. Defaults to `compact` — dev stacks run the small dev-tier model unless told otherwise.
-2. Orient with `justsearch.dev.quick_health` for a compact readiness check.
-3. Use `justsearch.dev.status` when process state, ports, or runner metadata matter.
+   - On `OWNER_CONFLICT`, `justsearch.dev.acquire_when_free` waits for the stack instead of a conflict → ask → manual-retry loop.
 4. Use `justsearch.dev.fetch_api_json` for common read-only diagnostics.
 5. Use `justsearch.dev.api_call` only when the endpoint is in the explicit allowlist.
 6. Use `justsearch.dev.stop` when the run should be shut down.
@@ -69,13 +83,13 @@ Operational checks that are still worth doing before longer investigations:
 
 ## Predefined JSON Endpoints
 
-`justsearch.dev.fetch_api_json` accepts endpoint keys for common diagnostics. Current keys include:
+`justsearch.dev.fetch_api_json` accepts these endpoint keys, and only these. The key -> path mapping is the one in `FETCH_API_ENDPOINT_MAP` (`scripts/dev/justsearch-dev-mcp/server.mjs`), asserted by the doc-sync gate:
 
 | Key | Endpoint |
 |-----|----------|
-| `status` | `/api/knowledge/status` |
+| `status` | `/api/status` |
 | `health` | `/api/health` |
-| `effective_config` | `/api/config/effective` |
+| `effective_config` | `/api/debug/effective-config` |
 | `debug_state` | `/api/debug/state` |
 | `policy_effective` | `/api/policy/effective` |
 | `inference_status` | `/api/inference/status` |
@@ -85,34 +99,71 @@ Operational checks that are still worth doing before longer investigations:
 
 Prefer these keys over generic URL calls when they cover the diagnostic need.
 
+### Projection and size limits (tempdoc 844)
+
+Both `fetch_api_json` and `api_call` accept `jsonPath`, sharing one implementation:
+
+- Dot-path with array indices — `"llm.model_path"`, `"results[0].fields.path"`.
+- On a **miss** the tool returns `error.code: "JSON_PATH_MISS"` naming the deepest segment that resolved plus `jsonPathAvailable` (the keys, or the array length, at that level), and **withholds the body**. Previously a miss discarded the parsed JSON and returned the raw `textTail` — the largest possible payload as the answer to a one-character typo.
+- A malformed expression returns `JSON_PATH_INVALID` rather than silently missing.
+
+`maxBytes` is a **read** budget, not an output budget. Exceeding it now truncates and returns `error.code: "RESPONSE_TRUNCATED"` with `truncated`, `bytesRead`, and `maxBytesLimit`; it used to fail the whole call with `response_too_large`. A truncated body does not parse as JSON, so lowering `maxBytes` cannot shrink a large response — use `jsonPath`, `outputMode: "compact"`, or `summaryOnly` for that. The same notice is emitted by `search_query` and `ingest`.
+
 ## Generic API Calls
 
-`justsearch.dev.api_call` is intentionally allowlisted. It is for Local API calls that are useful for development and safe enough for agent workflows.
+`justsearch.dev.api_call` is allowlisted: any path not in the table below is refused. This is the complete list, mirroring `API_CALL_ALLOWLIST` (`scripts/dev/justsearch-dev-mcp/server.mjs`) — the doc-sync gate fails if the two diverge in either direction.
 
-Important allowlisted areas include:
+| Path | Methods |
+|------|---------|
+| `/api/settings/v2` | GET, POST |
+| `/api/preview` | GET |
+| `/api/indexing/roots` | GET, POST, DELETE |
+| `/api/indexing-roots/substrate` | GET |
+| `/api/indexing-roots/preview` | POST |
+| `/api/indexing-jobs/failed/by-prefix` | GET |
+| `/api/indexing/reindex` | POST |
+| `/api/indexing/excludes/apply` | POST |
+| `/api/indexing/migration/start` | POST |
+| `/api/indexing/migration/cutover` | POST |
+| `/api/indexing/migration/rollback` | POST |
+| `/api/indexing/migration/pause` | POST |
+| `/api/indexing/migration/resume` | POST |
+| `/api/indexing/gc` | POST |
+| `/api/inference/status` | GET |
+| `/api/inference/mode` | POST |
+| `/api/inference/reload` | POST |
+| `/api/worker/restart` | POST |
+| `/api/ai/install/status` | GET |
+| `/api/ai/install/start` | POST |
+| `/api/ai/install/cancel` | POST |
+| `/api/ai/install/repair` | POST |
+| `/api/ai/runtime/status` | GET |
+| `/api/ai/runtime/activate` | POST |
+| `/api/ai/runtime/deactivate` | POST |
+| `/api/ai/packs/status` | GET |
+| `/api/ai/packs/installed` | GET |
+| `/api/ai/packs/preflight` | POST |
+| `/api/ai/packs/import` | POST |
+| `/api/policy/validate` | GET |
+| `/api/policy/user/create` | POST |
+| `/api/policy/user/allowlist/pack-manifest/add` | POST |
+| `/api/diagnostics/export` | POST |
+| `/api/knowledge/status` | GET |
+| `/api/debug/events` | GET |
+| `/api/debug/worker-log` | GET |
+| `/api/telemetry/health` | GET |
+| `/api/action-ledger` | GET |
 
-| Area | Representative endpoints |
-|------|--------------------------|
-| Settings and preview | `GET/POST /api/settings/v2`, `GET /api/preview` |
-| Index roots and indexing | `GET/POST/DELETE /api/indexing/roots`, `POST /api/indexing/reindex`, `POST /api/indexing/excludes/apply` |
-| Index migration and GC | `POST /api/indexing/migration/start`, `cutover`, `rollback`, `pause`, `resume`, `POST /api/indexing/gc` |
-| Inference runtime | `GET /api/inference/status`, `POST /api/inference/mode`, `POST /api/inference/reload` |
-| Worker control | `POST /api/worker/restart` |
-| AI install/runtime/packs | `GET/POST /api/ai/install/*`, `GET/POST /api/ai/runtime/*`, `GET/POST /api/ai/packs/*` |
-| Policy and diagnostics | `GET /api/policy/validate`, policy user allowlist calls, `POST /api/diagnostics/export` |
-| Knowledge/debug/telemetry | `GET /api/knowledge/status`, `GET /api/debug/events`, `GET /api/debug/worker-log`, `GET /api/telemetry/health` |
+When an endpoint is not allowlisted, update the dev MCP implementation and this table together instead of bypassing the tool. (Whether the allowlist should exist at all is an open question — tempdoc 844 §11.5 argues a control with a sanctioned `curl` bypass is a tax rather than a control. Until that is decided, this table documents what is, not what should be.)
 
-When an endpoint is not allowlisted, update the dev MCP implementation and this reference together instead of bypassing the tool.
-
-## Search, Ingest, and Evidence
+## Search and Ingest
 
 - Use `justsearch.dev.search_query` for search checks instead of constructing search requests manually.
-- Use `justsearch.dev.ingest` for indexing targeted paths during dev investigations.
-- Use `justsearch.dev.capture_evidence` and `justsearch.dev.validate_evidence` when a task needs a durable evidence bundle, especially before changing retrieval, indexing, or evaluation behavior.
+- Use `justsearch.dev.ingest` for indexing targeted paths during dev investigations. Paths must be under the repo root.
 
 ## AI Runtime Tools
 
-- Use `justsearch.dev.ai_activate` when an investigation requires the online local AI runtime. It takes an optional `chatProfile?: "compact" | "standard"` (tempdoc 842) — activation is when llama-server spawns, so it's the switch point for changing chat model pair; measured switch cost is single-digit seconds either direction. `justsearch.dev.agent_chat` auto-activates the runtime (compact profile) when it finds AI offline and reports `autoActivated: true` in its result, closing the `AI_OFFLINE`-one-call-from-`ai_activate` trap.
+- Use `justsearch.dev.ai_activate` when an investigation requires the online local AI runtime. It takes an optional `chatProfile?: "compact" | "standard"` (tempdoc 842) — activation is when llama-server spawns, so it's the switch point for changing chat model pair; measured switch cost is single-digit seconds either direction.
 - **The chat model is also runtime-configurable by explicit path — no installer pack-import or `-D` restart needed.**
   `POST /api/settings/v2` with `{"llm":{"modelPath":"<gguf>","gpuLayers":99}}`, then `ai_activate`. An explicit
   path is operator-owned and wins over the profile (tempdoc 842 precedence); prefer `chatProfile` unless you
@@ -123,48 +174,19 @@ When an endpoint is not allowlisted, update the dev MCP implementation and this 
 
 ## Start-Tool Error Codes
 
-The `justsearch.dev.start` tool's admission gate can refuse to launch with one of four error codes (see tempdoc 271 + 542 for the ownership and operation-lease models):
+`justsearch.dev.start` can refuse to launch with one of these codes (see tempdoc 271 + 542 for the ownership and operation-lease models). The first four are admission-gate refusals; the last two are pre-launch refusals about the checkout being launched from:
 
 | Code | Cause | Resolution |
 |------|-------|------------|
-| `OWNER_CONFLICT` | Another session holds a fresh lease on the stack; takeover policy is `deny` (the default). | Inspect `quick_health.ownership.holder`. With user approval, retry with `takeover: "warn"`. |
+| `OWNER_CONFLICT` | Another session holds a fresh lease on the stack; takeover policy is `deny` (the default). | Inspect `quick_health.ownership.holder`. With user approval, retry with `takeover: "warn"` — or call `acquire_when_free` and act on its `recommendedTakeover`. |
 | `HANDSHAKE_REQUIRED` | The holder is running a `MUST_COMPLETE` op-lease (migration, bulk-reindex, index GC, etc.); `warn` takeover is upgraded to a sync handshake. Response includes `criticalOps[]`. | Wait for the op to complete (use the per-op `expectedDurationSec` to estimate), or escalate to `takeover: "force"` with user approval (records a `forcibly_interrupted_critical_op` disposition in the stop-report). |
 | `REQUIRES_CONFIRMATION` | A `force` takeover hit an `UNSAFE_TO_INTERRUPT` op-lease. | Pass `--confirm-interrupt=<opId>` matching one of the `criticalOps[].opId` values in the response. The typed token guards against typo'd reclaims of unsafe-to-interrupt ops. |
 | `RUN_NOT_FOUND` / `NO_API_URL` | The active run record references a runId that no longer exists or has no `apiBaseUrl`. | Call `quick_health` to re-orient; the run may have partially failed. |
+| `DIST_NOT_BUILT` | The checkout being launched from has no Head dist (`modules/ui/build/install/ui/bin/ui.bat`) — typically a fresh worktree, or `skipBuild: true` without a prior `installDist`. `error.details` carries `distPath`, `repoRoot`, and `remedy`. | `node scripts/dev/prepare-worktree.cjs` in that checkout, or `./gradlew.bat :modules:ui:installDist :modules:indexer-worker:installDist`. Run `preflight { distFrom }` with the same value first — it checks the dists in the tree `start` will use. |
+| `INVALID_DIST_FROM` | `distFrom` is neither the main repo nor a sibling worktree under `.claude/worktrees`, or that checkout has no `scripts/dev/dev-runner.cjs`. A **bare worktree name** (`"round14"`) is resolved against `.claude/worktrees/<name>`; when no such directory exists the message lists the names that do. | Pass a worktree name, a path to a sibling worktree, or the main repo root. |
+
+Before tempdoc 844, the missing-dist case returned `UNHANDLED` — a fully-understood, recoverable condition classified as an unhandled exception on 16 of 20 measured `start` errors. It is now classified at the layer that detects it (`scripts/dev/dev-runner.cjs`), so severity and code match reality.
 
 `quick_health.ownership.opLeases[]` (added tempdoc 542) surfaces the active critical op-leases on the holder so an agent can see what would be interrupted before requesting takeover.
 
-## Shared-stack ownership & coordination (multi-agent worktrees)
-
-Only one dev stack runs at a time (memory/port). The dev-runner tracks ownership in `tmp/dev-runner/active.json` (lease-based). Before starting, call `quick_health`; if a stack is running, its response carries `ownership.holder` + `ownership.verdict` + `ownership.recommendedAction` from one authority — act on the verdict rather than inferring from raw lease fields (tempdoc 606):
-
-- `TAKEOVER_ABANDONED` — the owning session went silent; `start` self-serve-proceeds (no user prompt needed).
-- `IDLE_HOLD` — the owner is alive but idle; the response recommends `takeover: "warn"`, self-authorizable without a user round-trip.
-- `CONTENTION` — the owner is actively using the stack: the genuine ask-the-user case (the `OWNER_CONFLICT` error above). A `force` takeover needs explicit user direction.
-- `acquire_when_free` blocks until the stack is acquirable and returns a `recommendedTakeover` — it replaces the conflict → ask → manual-retry loop.
-- `ownership.provenance` + `rebuildFirst` flag when the running stack was built from a different worktree/commit than yours; `start { distFrom: "<worktree>" }` launches your own code on the one shared lease.
-- `ownership.displacedNotice` surfaces at your next call if a stack you previously owned was taken over while you were away.
-- `start { leaseDurationSec: <30-7200> }` (tempdoc 735 G6) declares a campaign-length ownership hold instead of relying on the default 30s passive-expiry window: the lease's `expiresAt` is renewed against this declared duration on every renewal cycle, so a long measurement campaign that goes minutes without a Claude Code session touch (busy running `jseval`/Gradle) doesn't lapse into a `TAKEOVER_ABANDONED`/`IDLE_HOLD` verdict mid-run. Values are clamped server-side to `[30, 7200]`; the default (param omitted) is unchanged 30s behavior. Explicit takeover semantics are untouched — `force`/`warn` still work normally; this only stretches the passive-expiry window. `quick_health`/`status` report the remaining hold at `ownership.lease.remainingSec`.
-
-A stack abandoned past a grace period is reaped automatically (the supervisor self-terminates), so a long-gone session stops holding VRAM/ports. Stop the stack when you finish so other agents can use it.
-
-Overnight/long GPU windows (tempdoc 743 P-N, arming step): an unattended multi-hour run starts only on an explicit, recent founder go for *that window* — a budget remark or standing goal is not an arming; declare the window with `leaseDurationSec` sized to it, and when a chain is halted mid-window, stopping the stack is part of the halt, not a follow-up. For supervising the run itself, `node scripts/dev/run-watcher.mjs` (heartbeat + `check` verdicts) replaces hand-rolled per-session watcher scripts; notify-on-failure/completion is the default posture — per-step progress belongs on disk, read at the coarse tick (743 P-M(c), founder-approved 2026-07-17).
-
-## Live-validate a worktree's frontend (FE-only work)
-
-To see *this worktree's* FE in a browser without starting your own stack, borrow the running backend (read-only) and serve the worktree's Vite:
-
-```bash
-node scripts/dev/serve-worktree-fe.cjs   # picks a free port, auto-detects the running backend
-```
-
-It serves from the worktree's `modules/ui-web` (the served code is the worktree's by construction) and prints the branch + backend it bound to — the sanctioned path for the contention/port/wrong-code frictions in tempdoc 618 §7 (no `start` needed, so it works even when another session owns the stack).
-
-## Troubleshooting
-
-- If startup is slow, check `justsearch.dev.tail_log` and retry `justsearch.dev.quick_health` before assuming the stack is broken.
-- If a UI/API check fails, compare `quick_health`, `status`, and relevant predefined JSON endpoint output.
-- If a generic API call is rejected, the endpoint is outside the dev MCP allowlist.
-- If hot reload reports `structuralChangeDetected`, stop/start the dev stack instead of continuing to rely on hot swap.
-- If search results look stale after field/catalog changes, reset or rebuild the dev index instead of debugging query behavior first.
-- If AI activation fails, separate online runtime readiness from Worker encoder readiness; they use different processes and lifecycle controls.
+The ownership/contention model those codes belong to — verdicts, leases, takeover policy, `distFrom`, campaign-length holds — lives in the `/dev-stack` skill, which is also where troubleshooting and worktree-FE serving live.
