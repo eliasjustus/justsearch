@@ -30,7 +30,8 @@ class ModelRegistryLoaderTest {
     assertNotNull(registry.findPackage("citation-scorer"));
     assertNotNull(registry.findPackage("chat"));
     assertNotNull(registry.findPackage("cuda-runtime")); // alpha.15
-    assertEquals(7, registry.packages().size());
+    assertNotNull(registry.findPackage("chat-compact")); // tempdoc 842
+    assertEquals(8, registry.packages().size());
   }
 
   @Test
@@ -110,6 +111,44 @@ class ModelRegistryLoaderTest {
     assertTrue(chat.supportingFiles().get(0).filename().contains("mmproj"));
   }
 
+  @Test
+  void chatCompactPackageHasOneVariantAndItsOwnMmproj() {
+    ModelRegistry registry =
+        ModelRegistryLoader.loadFromClasspath("ai/model-registry.v2.json");
+    ModelPackage compact = registry.findPackage("chat-compact");
+
+    assertEquals("compact", compact.targetDir());
+    assertEquals(CapabilityTier.LLM, compact.tier());
+    assertEquals(1, compact.variants().size());
+    assertEquals("Qwen3.5-4B-Q4_K_M.gguf", compact.variants().get(0).filename());
+    assertEquals(ModelPrecision.GGUF, compact.variants().get(0).precision());
+    assertEquals(ExecutionProvider.LLAMA_SERVER, compact.variants().get(0).targetEP());
+    assertEquals(1, compact.supportingFiles().size());
+    assertEquals("mmproj-F16.gguf", compact.supportingFiles().get(0).filename());
+    // No VRAM floor: the compact pair is the profile that exists FOR constrained/contended GPUs.
+    assertFalse(compact.hasVramRequirement());
+  }
+
+  /**
+   * Tempdoc 842 — production install-plan guard, the same defect class as
+   * {@link #cudaRuntimeDeclaresRequiresCuda_othersDefaultFalse()}. The loader disables
+   * FAIL_ON_UNKNOWN_PROPERTIES, so a loader that never parses {@code devOnly} throws no error and
+   * instead silently ships a 2.7 GB dev model to every user. Every other package leaves the field
+   * unset → false.
+   */
+  @Test
+  void chatCompactIsDevOnly_othersDefaultFalse() {
+    ModelRegistry registry =
+        ModelRegistryLoader.loadFromClasspath("ai/model-registry.v2.json");
+
+    assertTrue(
+        registry.findPackage("chat-compact").devOnly(),
+        "chat-compact must load devOnly=true or it enters every user's install plan");
+    assertFalse(registry.findPackage("chat").devOnly());
+    assertFalse(registry.findPackage("embedding").devOnly());
+    assertFalse(registry.findPackage("cuda-runtime").devOnly());
+  }
+
   /**
    * Tempdoc 632 — the registry is the license SSOT; the generated NOTICE projects from this field.
    * Every package must declare a license so the notice generator's presence-check stays green and no
@@ -147,6 +186,8 @@ class ModelRegistryLoaderTest {
     assertEquals(CapabilityTier.RETRIEVAL_ENRICHMENT, registry.findPackage("splade").tier());
     assertEquals(CapabilityTier.LLM, registry.findPackage("chat").tier());
     assertEquals(CapabilityTier.RUNTIME, registry.findPackage("cuda-runtime").tier());
+    // The dev-only compact chat pair is still LLM-tier — it is excluded by devOnly, not by tier.
+    assertEquals(CapabilityTier.LLM, registry.findPackage("chat-compact").tier());
   }
 
   /**

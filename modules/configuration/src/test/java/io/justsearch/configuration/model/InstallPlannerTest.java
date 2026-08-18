@@ -475,6 +475,41 @@ class InstallPlannerTest {
     }
   }
 
+  @Test
+  void devOnlyPackage_isNeverPlanned_forAnyHardwareOrIntent() {
+    // Tempdoc 842: chat-compact exists for dev stacks only. The skip is unconditional — no intent
+    // wants it and no hardware permits it — so a devOnly package must be absent from the downloads
+    // of every (hardware × intent) combination, and present in skipped() with a reason naming why.
+    ModelRegistry registry = registryWithDevOnlyChat();
+
+    for (HardwareProfile hw :
+        List.of(
+            HardwareProfile.gpuFull(12_000_000_000L),
+            new HardwareProfile(true, true, 6_000_000_000L),
+            HardwareProfile.cpuOnly())) {
+      for (InstallIntent intent : InstallIntent.values()) {
+        InstallPlan plan = InstallPlanner.plan(registry, hw, intent, tempDir, tempDir);
+        String where = hw.downloadProfile() + "/" + intent.id();
+        assertTrue(
+            plan.downloads().stream().noneMatch(d -> d.packageId().equals("chat-compact")),
+            "devOnly package must never be downloaded (" + where + ")");
+        assertTrue(
+            plan.skipped().stream()
+                .anyMatch(
+                    sk ->
+                        sk.packageId().equals("chat-compact")
+                            && sk.reason().contains("development-only")),
+            "devOnly skip must be recorded with a naming reason (" + where + ")");
+        assertFalse(
+            plan.alreadyInstalled().contains("chat-compact"),
+            "a skipped devOnly package is not 'already installed' (" + where + ")");
+        assertFalse(
+            InstallPlanner.isIncludedByPlan(registry.findPackage("chat-compact"), intent, hw),
+            "isIncludedByPlan must agree with the planner loop (" + where + ")");
+      }
+    }
+  }
+
   /** A registry exercising all four {@link Necessity} categories against the real package ids. */
   private ModelRegistry registryWithNecessities() {
     ModelPackage embedding = new ModelPackage(
@@ -485,7 +520,7 @@ class InstallPlannerTest {
             new ModelVariant("model_fp16.onnx", ModelPrecision.FP16, ExecutionProvider.CUDA,
                 "BBBB", 500_000, "https://example.com/fp16")),
         List.of(new SupportingFile("tokenizer.json", "CCCC", 10_000, "https://example.com/tok")),
-        0, null, null, null, CapabilityTier.RETRIEVAL_CORE, false,
+        0, null, null, null, CapabilityTier.RETRIEVAL_CORE, false, false,
         Necessity.REQUIRED, List.of("cuda-runtime"));
     ModelPackage reranker = new ModelPackage(
         "reranker", "Search reranker", "Better ranking", "onnx/reranker",
@@ -495,7 +530,7 @@ class InstallPlannerTest {
             new ModelVariant("model_fp16.onnx", ModelPrecision.FP16, ExecutionProvider.CUDA,
                 "IIII", 150_000, "https://example.com/rr-fp16")),
         List.of(),
-        0, null, null, null, CapabilityTier.RETRIEVAL_ENRICHMENT, false,
+        0, null, null, null, CapabilityTier.RETRIEVAL_ENRICHMENT, false, false,
         Necessity.IMPROVES_RESULTS, List.of("cuda-runtime"));
     ModelPackage chat = new ModelPackage(
         "chat", "Chat model", "Conversational AI", "gguf",
@@ -503,7 +538,7 @@ class InstallPlannerTest {
             new ModelVariant("model.gguf", ModelPrecision.GGUF, ExecutionProvider.LLAMA_SERVER,
                 "DDDD", 5_000_000_000L, "https://example.com/gguf")),
         List.of(),
-        HardwareProfile.MINIMUM_VRAM_FOR_GGUF, null, null, null, CapabilityTier.LLM, false,
+        HardwareProfile.MINIMUM_VRAM_FOR_GGUF, null, null, null, CapabilityTier.LLM, false, false,
         Necessity.ADDS_FEATURE, List.of());
     ModelPackage cudaRuntime = new ModelPackage(
         "cuda-runtime", "GPU runtime libraries", "CUDA DLLs", "cuda12",
@@ -511,10 +546,44 @@ class InstallPlannerTest {
         List.of(
             new SupportingFile(
                 "cuda.zip", "FFFF", 200_000_000L, "https://example.com/cuda.zip", true)),
-        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, true,
+        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, true, false,
         Necessity.INFRASTRUCTURE, List.of());
     return new ModelRegistry(
         2, "test registry", List.of(embedding, reranker, chat, cudaRuntime));
+  }
+
+  @Test
+  void devOnlyPackage_contributesNoBytes_soConsentTotalsAreUnaffected() {
+    // The devOnly skip must happen before any byte accounting: a user consenting to the plan must
+    // never see the dev model's size in the total, even on the most capable hardware.
+    HardwareProfile hw = HardwareProfile.gpuFull(12_000_000_000L);
+
+    InstallPlan withoutDevOnly = InstallPlanner.plan(registryWithTiers(), hw, tempDir);
+    InstallPlan withDevOnly = InstallPlanner.plan(registryWithDevOnlyChat(), hw, tempDir);
+
+    assertEquals(withoutDevOnly.totalBytes(), withDevOnly.totalBytes());
+    assertEquals(withoutDevOnly.downloads().size(), withDevOnly.downloads().size());
+  }
+
+  /**
+   * {@link #registryWithTiers()} plus a devOnly LLM-tier package — the shape of the real
+   * {@code chat-compact} entry (tempdoc 842): wanted by tier, permitted by hardware, and still
+   * never planned.
+   */
+  private ModelRegistry registryWithDevOnlyChat() {
+    ModelPackage chatCompact = new ModelPackage(
+        "chat-compact", "Chat model (compact)", "Dev-only small chat model", "compact",
+        List.of(
+            new ModelVariant("compact.gguf", ModelPrecision.GGUF, ExecutionProvider.LLAMA_SERVER,
+                "HHHH", 2_700_000_000L, "https://example.com/compact-gguf")),
+        List.of(
+            new SupportingFile(
+                "compact-mmproj.gguf", "IIII", 670_000_000L, "https://example.com/compact-mmproj")),
+        0, null, null, null, CapabilityTier.LLM, false, true,
+        Necessity.ADDS_FEATURE, List.of());
+    List<ModelPackage> packages = new java.util.ArrayList<>(registryWithTiers().packages());
+    packages.add(chatCompact);
+    return new ModelRegistry(2, "test registry", packages);
   }
 
   /**
@@ -538,7 +607,7 @@ class InstallPlannerTest {
         List.of(
             new SupportingFile(
                 "runtime.zip", "GGGG", 50_000_000L, "https://example.com/runtime.zip", true)),
-        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, false,
+        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, false, false,
         Necessity.INFRASTRUCTURE, List.of());
     return new ModelRegistry(2, "test registry", List.of(embedding, runtimeCpuSupport));
   }
@@ -559,7 +628,7 @@ class InstallPlannerTest {
         List.of(
             new SupportingFile(
                 "cuda.zip", "FFFF", 200_000_000L, "https://example.com/cuda.zip", true)),
-        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, true,
+        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, true, false,
         Necessity.INFRASTRUCTURE, List.of());
     ModelPackage chat = new ModelPackage(
         "chat", "Chat", "Conversational AI", "gguf",
@@ -587,7 +656,7 @@ class InstallPlannerTest {
         List.of(
             new SupportingFile(
                 "cuda.zip", "FFFF", 200_000_000L, "https://example.com/cuda.zip", true)),
-        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, true,
+        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, true, false,
         Necessity.INFRASTRUCTURE, List.of());
     return new ModelRegistry(2, "test registry", List.of(embedding, cudaRuntime));
   }

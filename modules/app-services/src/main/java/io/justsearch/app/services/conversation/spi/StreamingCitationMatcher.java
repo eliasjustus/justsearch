@@ -138,9 +138,15 @@ public final class StreamingCitationMatcher implements StreamConsumer {
               .matchCitationsAgainst(fullText, sources, threshold)
               .toCompletableFuture()
               .get(timeout.toMillis(), TimeUnit.MILLISECONDS);
-      if (result == null || result.matches().isEmpty()) {
+      if (result == null) {
         return StreamConsumerResult.empty();
       }
+      // Tempdoc 836 S2S3-A.2 — a ZERO-MATCH result is still an answer to "what happened?", and it
+      // is the case where the difference matters most: "nothing was examined" and "everything was
+      // examined and supports nothing" are the same empty match list, told apart only by the
+      // coverage facts this payload carries. Suppressing the event here (the pre-S2/S3 behaviour)
+      // is what left the consumer with no choice but to render an evidence verdict over a pass
+      // that may never have run.
       Map<String, Object> payload = toCitationMatchPayload(result);
       // Tempdoc 561 P-A (evidence non-divergence): emit the live SSE event AND contribute the matches
       // to the done-payload, so ConversationEngine persists the per-claim grounding ON the record. A
@@ -306,11 +312,33 @@ public final class StreamingCitationMatcher implements StreamConsumer {
 
   // -- Payload formatting (matches legacy CitationMatcher) --
 
-  private static Map<String, Object> toCitationMatchPayload(CitationMatchResult result) {
+  /**
+   * The Head-to-browser hop for the honesty fields (tempdoc 836 S2S3-A.0 gap 3).
+   *
+   * <p>Everything the response knows about HOW it was produced travels here, because this map is
+   * both the live {@code rag.citation_matches} payload and the persisted {@code claimMatches} on
+   * the record — so a reloaded conversation is judged by the same facts as the live one. Before
+   * this, {@code scorer} and {@code sentencesScored} reached the Head and stopped: nothing a
+   * browser could read said which producer wrote a similarity, which made the §4 provenance gate
+   * unimplementable rather than merely deferred. No test asserted this hop, which is exactly how
+   * that slipped — {@code StreamingCitationMatcherPayloadTest} now pins it.
+   */
+  static Map<String, Object> toCitationMatchPayload(CitationMatchResult result) {
     Map<String, Object> out = new LinkedHashMap<>();
     out.put("sentencesTotal", result.sentencesTotal());
     out.put("sentencesMatched", result.sentencesMatched());
     out.put("tookMs", result.tookMs());
+    out.put("scorer", result.scorer().name());
+    out.put("sentencesScored", result.sentencesScored());
+    List<Map<String, Object>> coverage = new ArrayList<>(result.sourceCoverage().size());
+    for (DocumentService.SourceCoverage c : result.sourceCoverage()) {
+      Map<String, Object> entry = new LinkedHashMap<>();
+      entry.put("sourceIndex", c.sourceIndex());
+      entry.put("windowsConsidered", c.windowsConsidered());
+      entry.put("windowsScored", c.windowsScored());
+      coverage.add(Map.copyOf(entry));
+    }
+    out.put("sourceCoverage", coverage);
     List<Map<String, Object>> matches = new ArrayList<>(result.matches().size());
     for (CitationMatchEntry m : result.matches()) {
       Map<String, Object> entry = new LinkedHashMap<>();
@@ -319,6 +347,7 @@ public final class StreamingCitationMatcher implements StreamConsumer {
       entry.put("sourceIndex", m.sourceIndex());
       entry.put("similarity", m.similarity());
       entry.put("parentDocId", m.parentDocId());
+      entry.put("textSource", m.textSource().name());
       matches.add(Map.copyOf(entry));
     }
     out.put("matches", matches);

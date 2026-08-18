@@ -102,6 +102,11 @@ public final class ModelRegistryLoader {
     // real cuda-runtime package from its CUDA requirement in production. The registry JSON carries
     // "requiresCuda": true on cuda-runtime to preserve today's hardware gating.
     boolean requiresCuda = rp.requiresCuda != null && rp.requiresCuda;
+    // devOnly: optional flag (default false) — tempdoc 842. Same silent-failure shape as
+    // requiresCuda above: FAIL_ON_UNKNOWN_PROPERTIES is disabled, so dropping this pass-through
+    // costs no error and instead puts the dev-only chat-compact package into every user's
+    // install plan.
+    boolean devOnly = rp.devOnly != null && rp.devOnly;
     // necessity: optional field defaulting to REQUIRED — tempdoc 840 Phase 2, the same fail-closed
     // rule as `required` above and for the same reason. Necessity.fromId returns null for an ABSENT,
     // blank OR unrecognized value, and all three land on REQUIRED here: a package nobody classified
@@ -129,6 +134,7 @@ public final class ModelRegistryLoader {
         rp.license,
         CapabilityTier.fromId(rp.tier),
         requiresCuda,
+        devOnly,
         necessity,
         dependsOn);
   }
@@ -151,6 +157,7 @@ public final class ModelRegistryLoader {
       String license,
       String tier,
       Boolean requiresCuda,
+      Boolean devOnly,
       String necessity,
       List<String> dependsOn) {}
 

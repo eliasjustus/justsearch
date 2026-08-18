@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.agent;
 
-import io.justsearch.agent.api.AgentEvent;
+import io.justsearch.agent.api.RunObservation;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
@@ -178,62 +178,49 @@ final class AgentSessionRegistry {
   }
 
   /**
-   * Tempdoc 577 §2.14 Root I (#13) — attach an observer to a live run's event hub: replay the
-   * buffered history, then stream ongoing events, blocking until the run terminates. Returns false
-   * when the session is not live (the controller falls back to the persisted record).
+   * Tempdoc 577 §2.14 Root I (#13) / 834 §1.3 — attach an observer to a live run's OBSERVATION
+   * CHANNEL: the primer, then the replay from {@code sinceSeq}, then ongoing frames, blocking until
+   * the run terminates. Returns false when the session is not live (the controller falls back to
+   * the persisted record).
+   *
+   * <p>Frames arrive already wire-projected ({@link RunObservation.WireFrame}), because the journal
+   * carries the projection of the ONE payload authority rather than raw events (§1.3.2). That is
+   * what lets a native attach write them straight to the socket and an AG-UI attach re-project them
+   * through the map-input translator, with no second event vocabulary in between.
+   *
+   * <p>{@code sinceSeq} is the CHANNEL sequence, delivered as {@code ?sinceSeq=} on the run-stream
+   * family. It is deliberately not the {@code Last-Event-ID} trace span the pre-834 attach used:
+   * §1.6 closes that second, unvalidated resume channel by not emitting {@code id:} at all. Zero
+   * replays everything and is the guaranteed path.
    */
-  boolean attachToRun(String sessionId, Consumer<AgentEvent> eventConsumer) {
-    return attachToRun(sessionId, Long.MIN_VALUE, eventConsumer);
-  }
-
-  /**
-   * Tempdoc 585 §D Phase 2 (B1) — attach, replaying only events newer than {@code fromSeq} (the SSE
-   * {@code Last-Event-ID} the reattaching client last saw). {@code Long.MIN_VALUE} replays the whole
-   * buffered window (the {@link #attachToRun(String, Consumer)} default).
-   */
-  boolean attachToRun(String sessionId, long fromSeq, Consumer<AgentEvent> eventConsumer) {
+  boolean attachToRun(String sessionId, long sinceSeq, Consumer<RunObservation.WireFrame> observer) {
     var session = sessions.get(sessionId);
     if (session == null) {
       return false; // not a live run — the caller replays events.ndjson instead
     }
-    // Tempdoc 585 §D Phase 2 (C4) — prime the (re)attaching observer with the run's CURRENT state
-    // BEFORE the buffered-event replay, so a late attacher (especially a precise B1 reconnect that
-    // replays only newer events) reconstructs "where the run stands" without the full history. The
-    // primer carries no trace span, so it is not part of the Last-Event-ID sequence.
-    // Tempdoc 834 §6.1 — the primer is pushed BEFORE the replay, so it is the one frame guaranteed
-    // to arrive; every fact needed to ACT on the run (open approval gates, the autonomy dial, why
-    // the run is parked) therefore rides HERE rather than in the evictable ring.
-    eventConsumer.accept(
-        new AgentEvent.StateSnapshot(
-            session.iterationsUsed(),
-            session.budgetRemaining(),
-            session.toolCallsExecuted(),
-            session.messages().size(),
-            session.activeAgentId(),
-            session.pendingApprovals(),
-            session.autonomyLevel().name(),
-            session.parkSnapshot(),
-            io.justsearch.agent.api.TraceContext.none()));
     var done = new java.util.concurrent.CountDownLatch(1);
-    // The observer forwards every event and trips the latch on the terminal event (which the loop
-    // publishes through the hub BEFORE evicting the session), so the attach handler unblocks exactly
-    // when the run ends. A late attach replays the buffered terminal event, tripping it immediately.
-    Consumer<AgentEvent> observer =
-        event -> {
-          eventConsumer.accept(event);
-          if (event instanceof AgentEvent.AgentDone || event instanceof AgentEvent.AgentError) {
-            done.countDown();
-          }
-        };
-    Runnable unsubscribe = session.eventHub().subscribe(observer, fromSeq);
+    // The run being retired IS the end of the stream, and the loop retires it immediately after
+    // publishing the terminal event — so latching on retirement needs no terminal-event vocabulary
+    // here, and cannot miss a run that ends without one.
+    session.observation().onRetire(done::countDown);
+    java.util.Optional<Runnable> unsubscribe =
+        session.observation().observe(sinceSeq, observer);
+    if (unsubscribe.isEmpty()) {
+      // The cursor fell outside the retained window and NOTHING was registered. Falling back to a
+      // full replay is the guaranteed path; silently returning an empty stream is the failure mode.
+      unsubscribe = session.observation().observe(0L, observer);
+      if (unsubscribe.isEmpty()) {
+        return false;
+      }
+    }
     try {
       // Block the attach (SSE) handler thread while streaming. The timeout is a safety net against a
-      // run that never publishes a terminal event (it then falls back like a closed stream).
+      // run that never terminates (it then falls back like a closed stream).
       done.await(ATTACH_MAX_MINUTES, java.util.concurrent.TimeUnit.MINUTES);
     } catch (InterruptedException ie) {
       Thread.currentThread().interrupt();
     } finally {
-      unsubscribe.run();
+      unsubscribe.get().run();
     }
     return true;
   }

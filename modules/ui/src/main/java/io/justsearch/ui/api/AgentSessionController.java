@@ -8,9 +8,17 @@ import io.justsearch.app.api.agent.AgentBatchSummary;
 import io.justsearch.app.api.agent.AgentHistoryResponse;
 import io.justsearch.app.api.agent.AgentSessionSummary;
 import io.justsearch.app.api.agent.AgentSessionsResponse;
+import io.justsearch.app.api.run.LiveRunSummary;
+import io.justsearch.app.api.run.LiveRunsResponse;
+import io.justsearch.app.api.run.ParkSummary;
+import io.justsearch.app.api.run.RunStateSnapshotView;
+import io.justsearch.app.observability.stream.run.RunChannel;
+import io.justsearch.app.observability.stream.run.RunChannelRegistry;
+import io.justsearch.app.observability.stream.run.RunStateSnapshot;
 import io.justsearch.telemetry.Telemetry;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,10 +48,23 @@ final class AgentSessionController {
 
   private final Supplier<AgentRunQueries> queriesSupplier;
   private final Telemetry telemetry;
+  private final RunChannelRegistry runs;
 
   AgentSessionController(Supplier<AgentRunQueries> queriesSupplier, Telemetry telemetry) {
+    this(queriesSupplier, telemetry, null);
+  }
+
+  /**
+   * @param runs the ONE run-channel registry (tempdoc 834 §5.1). A read of what is executing right
+   *     now sits on the read axis beside the reads of what has already executed — the two compose
+   *     into the recovery view, since a run is in exactly one of them. Null-tolerant so the
+   *     persisted-session handlers stay constructible without the run substrate.
+   */
+  AgentSessionController(
+      Supplier<AgentRunQueries> queriesSupplier, Telemetry telemetry, RunChannelRegistry runs) {
     this.queriesSupplier = queriesSupplier;
     this.telemetry = telemetry;
+    this.runs = runs;
   }
 
   /** Resolves the live agent read surface. Always re-fetches so late-bound updates surface. */
@@ -95,6 +116,99 @@ final class AgentSessionController {
             .map(m -> MAPPER.convertValue(m, AgentSessionSummary.class))
             .toList();
     ctx.json(new AgentSessionsResponse(sessions));
+  }
+
+  /**
+   * GET /api/chat/runs/live - every run executing RIGHT NOW (tempdoc 834 §5.1).
+   *
+   * <p>The FE's run-discovery authority, replacing the {@code localStorage} pointer the shell used
+   * to reattach from (§15.3): a backend enumeration cannot go stale the way a pointer can, and it
+   * sees runs this browser never started.
+   *
+   * <p>Optional {@code conversationId} / {@code shapeId} filters. The result is a LIST and is never
+   * collapsed by conversation (§3.5) — nothing serializes two dispatches on one {@code
+   * conversationId}, so N &gt; 1 rows for one conversation is a legitimate answer, and turn-taking is
+   * the FE composer's decision to make rather than the substrate's to hide.
+   *
+   * <p>Interruption is deliberately absent here: an interrupted run is a PERSISTED run, so it
+   * surfaces on {@link #handleListSessions} via {@code AgentSessionSummary.interruptedAt} (§5.3).
+   * The two reads compose — a run appears in exactly one of them.
+   *
+   * <p>Unlike every other GET on this controller, this route demands the session token — see {@link
+   * ApiSecurityFilters#requiresSessionToken}.
+   */
+  void handleListLiveRuns(Context ctx) {
+    if (runs == null) {
+      ctx.json(new LiveRunsResponse(List.of()));
+      return;
+    }
+    String conversationId = ctx.queryParam("conversationId");
+    String shapeId = ctx.queryParam("shapeId");
+    List<LiveRunSummary> live =
+        runs.live().stream()
+            .filter(run -> matches(conversationId, run.descriptor().conversationId()))
+            .filter(run -> matches(shapeId, run.descriptor().shapeId()))
+            .map(AgentSessionController::toSummary)
+            .toList();
+    ctx.json(new LiveRunsResponse(live));
+  }
+
+  /** An absent or blank filter matches everything; a present one matches exactly. */
+  private static boolean matches(String filter, String actual) {
+    return filter == null || filter.isBlank() || filter.equals(actual);
+  }
+
+  /**
+   * Projects one channel onto the wire record. Tempdoc 564 Phase 3's rule, applied to the run axis:
+   * the substrate's already-projected field map converts to the typed record by component name at
+   * the controller boundary, so the FE validates a generated schema instead of fail-open hand-Zod.
+   */
+  private static LiveRunSummary toSummary(RunChannel run) {
+    // ORDER IS LOAD-BEARING. `park()` is refreshed as a side effect of taking the snapshot — that is
+    // deliberate one layer down (taking the snapshot is the one moment fresh session state is in
+    // hand, and two setters for one fact is how they drift), and it is recorded as §16.6 residual 2.
+    // Reading park() first would therefore report the value from the PREVIOUS take: on the first
+    // enumeration of a parked run, none at all — so a parked run would be published as `running`.
+    RunStateSnapshotView snapshot = snapshotView(run);
+    ParkSummary park =
+        run.park()
+            .map(p -> new ParkSummary(p.kind().wire(), p.sinceEpochMs(), p.detail()))
+            .orElse(null);
+    return new LiveRunSummary(
+        run.id().value(),
+        run.descriptor().shapeId(),
+        run.descriptor().conversationId(),
+        park == null ? LiveRunSummary.STATE_RUNNING : LiveRunSummary.STATE_PARKED,
+        park,
+        run.descriptor().startedAtEpochMs(),
+        run.updatedAtEpochMs(),
+        run.observerCount(),
+        snapshot);
+  }
+
+  /**
+   * The primer, or null when this run has none or its shape has drifted from the view record.
+   *
+   * <p>Degrading rather than throwing is the same posture {@code SteppedRunChannelImpl.snapshot()}
+   * already takes one layer down, and for the same reason: this endpoint is the path a user takes to
+   * RECOVER a run they can no longer see, so a projection mismatch must cost that run its primer,
+   * never the whole enumeration. The projection-fidelity test is what turns a drift into a loud
+   * failure at build time instead.
+   */
+  private static RunStateSnapshotView snapshotView(RunChannel run) {
+    Optional<RunStateSnapshot> snapshot = run.snapshot();
+    if (snapshot.isEmpty()) {
+      return null;
+    }
+    try {
+      return MAPPER.convertValue(snapshot.get().fields(), RunStateSnapshotView.class);
+    } catch (RuntimeException drifted) {
+      LOG.warn(
+          "Run {} carries a state snapshot that does not project onto the wire record: {}",
+          run.id().value(),
+          drifted.toString());
+      return null;
+    }
   }
 
   /**

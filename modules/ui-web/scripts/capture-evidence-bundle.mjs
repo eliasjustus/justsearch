@@ -29,6 +29,12 @@
  * - scripts/dev/justsearch-dev-mcp/server.mjs capture_evidence handler:
  *   `--flag value` form, plus --ui-url / --timeout-ms / --include / --session-id.
  *
+ * Model identity (tempdoc 842 §2.5): when an API base URL is given, `harness.model` records the
+ * realized chat model identity ({ aiActive, chatProfile?, modelPath? }) from a best-effort,
+ * short-timeout GET /api/ai/runtime/status. Optional and failure-tolerant — omitted entirely
+ * (not a failed/placeholder artifact, not a captured status file) when the endpoint is
+ * unreachable or does not (yet) report chat identity.
+ *
  * Usage:
  *   node modules/ui-web/scripts/capture-evidence-bundle.mjs \
  *     --scenario <name> --api-base-url <loopback-url|none> [--ui-url <url>] \
@@ -394,6 +400,33 @@ async function main() {
     }
   }
 
+  // 3b. Realized chat model identity (tempdoc 842 §2.5) — best-effort, non-required, folded
+  //    into the harness/environment block. GET /api/ai/runtime/status may not yet report chat
+  //    identity fields at all (a parallel Java slice adds them); extract defensively, the same
+  //    shape as the dev-mcp quick_health projection, and omit the whole `model` object rather
+  //    than guess when the endpoint is unreachable or silent on chat identity.
+  let modelInfo;
+  if (hasApi) {
+    try {
+      const st = await fetchJson(opts.apiBaseUrl, '/api/ai/runtime/status', Math.min(perRequestTimeout, 3000));
+      // Tempdoc 842 review D3: activation-completed alone is a false negative for autostarted
+      // engines; realized identity (active.modelPath) is projected only while the engine is
+      // online, so its presence is an equally authoritative online signal.
+      const aiActive =
+        (st?.activation?.state === 'completed' && !!st?.active?.activeVariantId) ||
+        st?.active?.modelPath != null;
+      const chatProfile = st?.active?.chatProfile ?? st?.chatProfile ?? null;
+      const modelPath = st?.active?.modelPath ?? st?.active?.llmModelPath ?? st?.modelPath ?? null;
+      modelInfo = {
+        aiActive,
+        ...(chatProfile != null ? { chatProfile } : {}),
+        ...(modelPath != null ? { modelPath } : {}),
+      };
+    } catch (err) {
+      if (opts.trace) logErr(`model identity capture skipped (non-fatal): ${err?.message || String(err)}`);
+    }
+  }
+
   // 4. Attachments (allowlisting is the caller's concern — the MCP server enforces
   //    its allowlist before spawning; CI wrappers pass their own log paths).
   const usedNames = new Set();
@@ -476,6 +509,7 @@ async function main() {
       version: '1.0.0',
       node: process.version,
       platform: process.platform,
+      ...(modelInfo ? { model: modelInfo } : {}),
     },
     // This harness performs no fixed sleeps, log scraping, screenshot-only
     // assertions, or unbounded waits — all four v1 counters are 0/0.

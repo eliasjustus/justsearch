@@ -377,6 +377,39 @@ final class ApiSecurityFilters {
    *   <li>POST/PUT/DELETE - require valid token in prod mode
    * </ul>
    */
+  /**
+   * Whether a request must carry the session token — the ONE authority for that question, so the
+   * enforcing filter and any test double read the same rule.
+   *
+   * <p>Two axes, in this order:
+   *
+   * <ol>
+   *   <li><strong>Method.</strong> {@code OPTIONS} is always exempt (a CORS preflight cannot carry
+   *       the header, so requiring it there would break every browser call it precedes). Otherwise
+   *       {@link #TOKEN_REQUIRED_METHODS} — the mutating verbs — require it, and {@code GET} does
+   *       not, because a read-only local API behind a loopback bind was the original bargain.
+   *   <li><strong>Path (tempdoc 834 §1.6/§15.2).</strong> The run family breaks that bargain and so
+   *       requires the token for GET too. Loopback-only (Hard Invariant #2) is not a trust boundary
+   *       here — the session token exists precisely because other local processes are not trusted —
+   *       and the run journal carries prompts, answers, retrieved passage text and tool arguments,
+   *       while {@code GET /api/chat/runs/live} dispenses the very runIds needed to fetch them. A
+   *       GET-exempt enumeration would therefore ship that unauthenticated to any local process.
+   * </ol>
+   *
+   * <p>The path check is deliberately a PREFIX over {@link RunRoutes#PATH_PREFIX} rather than an
+   * exact match on the one known route: a future read route under the family inherits the
+   * requirement instead of silently shipping open.
+   */
+  static boolean requiresSessionToken(String method, String path) {
+    if ("OPTIONS".equals(method)) {
+      return false;
+    }
+    if (path != null && path.startsWith(RunRoutes.PATH_PREFIX)) {
+      return true;
+    }
+    return TOKEN_REQUIRED_METHODS.contains(method);
+  }
+
   private void setupSessionTokenEnforcement(Javalin app) {
     // Only enforce in prod mode with a valid token
     if (!prodMode || sessionToken == null || sessionToken.isBlank()) {
@@ -395,13 +428,7 @@ final class ApiSecurityFilters {
     app.before(ctx -> {
       String method = ctx.method().name().toUpperCase(Locale.ROOT);
 
-      // Always allow OPTIONS (CORS preflight) and GET (read-only)
-      if ("OPTIONS".equals(method) || "GET".equals(method)) {
-        return;
-      }
-
-      // Check if method requires token
-      if (!TOKEN_REQUIRED_METHODS.contains(method)) {
+      if (!requiresSessionToken(method, ctx.path())) {
         return;
       }
 
@@ -445,11 +472,17 @@ final class ApiSecurityFilters {
               required == RouteCapabilityPolicy.Capability.WORKER ? workerCap : inferenceCap;
           if (!cap.available()) {
             ctx.status(503);
-            ctx.json(Map.of(
-                "error", required.errorLabel,
-                "unavailable", cap.name(),
-                "health", cap.health().name(),
-                "reason", cap.pendingReason() != null ? cap.pendingReason() : ""));
+            // Tempdoc 837 §0.2: `reason` is the machine-readable LifecycleReasonCode; the human
+            // sentence that used to occupy it (an exception message, the corrupt-index remedy)
+            // rides alongside in `detail` — a debug body is exactly where prose belongs, so the
+            // sweep moves it rather than deleting it.
+            java.util.Map<String, String> body = new java.util.LinkedHashMap<>();
+            body.put("error", required.errorLabel);
+            body.put("unavailable", cap.name());
+            body.put("health", cap.health().name());
+            body.put("reason", cap.pendingReason() != null ? cap.pendingReason() : "");
+            body.put("detail", cap.pendingDetail() != null ? cap.pendingDetail() : "");
+            ctx.json(body);
             throw new io.javalin.http.HttpResponseException(503, required.haltMessage);
           }
         }

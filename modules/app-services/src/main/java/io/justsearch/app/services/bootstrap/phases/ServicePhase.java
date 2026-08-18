@@ -299,6 +299,11 @@ public final class ServicePhase {
     runtimeActivationHelper.setEncoderRuntimeCache(
         new io.justsearch.app.services.observability.WorkerEncoderRuntimeCache(
             in.knowledgeClientSupplier()));
+    // Tempdoc 842 §2.5: the REALIZED chat identity beside the requested runtime pointers on
+    // /api/ai/runtime/status. A supplier, not a captured value — the identity changes with every
+    // engine restart and profile switch, and is null whenever the engine is down.
+    runtimeActivationHelper.setRealizedChatIdentitySource(
+        () -> BootstrapProjections.projectRealizedChatIdentity(in.inferenceManager()));
     // Tempdoc 824 §3.3c: the install status reconciles its bookkeeping ("a file is missing")
     // against what the runtime observes ("the capability is running"). Bound here, after the
     // activation service exists — it takes aiInstallHelper as a constructor argument, so the

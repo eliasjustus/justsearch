@@ -369,6 +369,216 @@ final class RAGContextTest {
         "empty is the DEFAULT scope on the Worker side, never a match-nothing filter");
   }
 
+  // --- tempdoc 845: honest context budgeting. Both call sites hardcoded
+  // computeSafeInputBudgetTokens(8192, 1024) — a window that does not exist paired with a reserve
+  // that ignored the request. Each site is covered separately: reverting either one to the old
+  // constants fails a named test below.
+
+  /** CALL SITE 2 (tryOpenRetrieval) — the budget crosses the wire as the Worker's cap. */
+  @Test
+  @DisplayName("845: open retrieval sends a budget sized by the LIVE window, not 8192")
+  void openRetrievalBudgetUsesLiveContextWindow() {
+    var docs = new CapturingParamsDocs();
+    // No docIds -> open retrieval. Live window 4096, Thorough's reserve 3072.
+    var ctx = stubCtx(Map.of("question", "what?"));
+    ctx.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 3072);
+    new RAGContext(docs, RAGContext.DEFAULT_TOP_K, () -> stubAi(4096, 4096)).inject(ctx);
+
+    assertNotNull(docs.lastParams);
+    assertEquals(
+        460,
+        docs.lastParams.maxContextTokens(),
+        "(4096 - 3072 - 512) * 0.9; the old hardcode sent 5990 into a 4096-token window");
+  }
+
+  @Test
+  @DisplayName("845: open-retrieval budget tracks the request's own reserve, not a flat 1024")
+  void openRetrievalBudgetTracksRequestReserve() {
+    var docs = new CapturingParamsDocs();
+    var thorough = stubCtx(Map.of("question", "what?"));
+    thorough.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 3072);
+    new RAGContext(docs, RAGContext.DEFAULT_TOP_K, () -> stubAi(4096, 4096)).inject(thorough);
+    int thoroughBudget = docs.lastParams.maxContextTokens();
+
+    var quick = stubCtx(Map.of("question", "what?"));
+    quick.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 512);
+    new RAGContext(docs, RAGContext.DEFAULT_TOP_K, () -> stubAi(4096, 4096)).inject(quick);
+    int quickBudget = docs.lastParams.maxContextTokens();
+
+    assertTrue(
+        quickBudget > thoroughBudget,
+        "a smaller completion reserve must buy more input budget: "
+            + quickBudget
+            + " vs "
+            + thoroughBudget);
+    assertEquals(2764, quickBudget);
+  }
+
+  @Test
+  @DisplayName("845: an unobserved window falls back to the CONFIGURED one, never to 8192")
+  void unknownLiveWindowFallsBackToConfigured() {
+    var docs = new CapturingParamsDocs();
+    var ctx = stubCtx(Map.of("question", "what?"));
+    ctx.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 1024);
+    // llmContextTokens() null = no server observed yet; configured is the next authority.
+    new RAGContext(docs, RAGContext.DEFAULT_TOP_K, () -> stubAi(null, 2048)).inject(ctx);
+
+    assertEquals(
+        460,
+        docs.lastParams.maxContextTokens(),
+        "(2048 - 1024 - 512) * 0.9 — unknown must not be treated as generous");
+  }
+
+  @Test
+  @DisplayName("845: open-retrieval budget stays positive so the Worker keeps token-aware mode")
+  void openRetrievalBudgetNeverCollapsesToZero() {
+    var docs = new CapturingParamsDocs();
+    var ctx = stubCtx(Map.of("question", "what?"));
+    // A reserve larger than the whole window leaves no headroom at all.
+    ctx.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 9000);
+    new RAGContext(docs, RAGContext.DEFAULT_TOP_K, () -> stubAi(4096, 4096)).inject(ctx);
+
+    assertTrue(
+        docs.lastParams.maxContextTokens() > 0,
+        "0 would flip the Worker into its 200K-character fallback, the opposite of a zero budget");
+  }
+
+  /** CALL SITE 1 (inject) — the post-retrieval truncation safety net. */
+  @Test
+  @DisplayName("845: an over-budget context is TRIMMED and reported, not passed through whole")
+  void oversizedContextIsTrimmedAndReported() {
+    // ~2900 estimated tokens: comfortably OVER the honest budget for a 3072-token reserve (460),
+    // and comfortably UNDER what the old hardcoded (8192, 1024) call allowed (5990). Sizing it
+    // between the two is what makes this test discriminate — a context large enough to truncate
+    // under BOTH budgets would pass even with the defect restored.
+    String huge = ("lorem ipsum dolor sit amet consectetur ").repeat(300);
+    var docs =
+        new StubDocs(
+            new ContextResult(huge, 3, 3, 3, List.of(), "BM25", "ok", false, List.of()), Map.of());
+
+    var ctx = stubCtx(Map.of("question", "what?", "docIds", List.of("a")));
+    ctx.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 3072);
+    InjectorResult result =
+        new RAGContext(docs, RAGContext.DEFAULT_TOP_K, () -> stubAi(4096, 4096)).inject(ctx);
+
+    String injected = (String) result.messages().get(0).get("content");
+    assertTrue(
+        injected.contains("[... content truncated ...]"),
+        "the safety net must actually fire against a real 4096-token window");
+    assertTrue(
+        injected.length() < huge.length(),
+        "the trimmed prompt must be shorter than the retrieved context");
+
+    // The honesty half: a locally-trimmed turn must not report itself as untruncated.
+    Map<String, Object> ragMeta = ragMetaOf(result);
+    assertEquals(
+        true,
+        ragMeta.get("context_truncated"),
+        "context_truncated was Worker-only, so a locally-trimmed turn looked complete");
+  }
+
+  @Test
+  @DisplayName("845: a context that fits is untouched and still reports untruncated")
+  void fittingContextIsNotTrimmed() {
+    String small = "a short retrieved passage";
+    var docs =
+        new StubDocs(
+            new ContextResult(small, 1, 1, 1, List.of(), "BM25", "ok", false, List.of()), Map.of());
+
+    var ctx = stubCtx(Map.of("question", "what?", "docIds", List.of("a")));
+    ctx.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 1024);
+    InjectorResult result =
+        new RAGContext(docs, RAGContext.DEFAULT_TOP_K, () -> stubAi(4096, 4096)).inject(ctx);
+
+    String injected = (String) result.messages().get(0).get("content");
+    assertTrue(injected.contains(small), "an in-budget context must survive intact");
+    assertFalse(injected.contains("[... content truncated ...]"));
+    assertEquals(false, ragMetaOf(result).get("context_truncated"));
+  }
+
+  @Test
+  @DisplayName("845: the Worker's own truncation is still reported when the local trim does not fire")
+  void workerTruncationIsPreserved() {
+    var docs =
+        new StubDocs(
+            // contextTruncated = true from the Worker, tiny context so the local trim cannot fire.
+            new ContextResult("tiny", 1, 1, 1, List.of(), "BM25", "ok", true, List.of()), Map.of());
+
+    var ctx = stubCtx(Map.of("question", "what?", "docIds", List.of("a")));
+    InjectorResult result =
+        new RAGContext(docs, RAGContext.DEFAULT_TOP_K, () -> stubAi(4096, 4096)).inject(ctx);
+
+    assertEquals(
+        true,
+        ragMetaOf(result).get("context_truncated"),
+        "the two truncation sources must OR together, not replace one another");
+  }
+
+  @Test
+  @DisplayName("845: rag.meta is still emitted before rag.citations")
+  void ragMetaStillPrecedesCitations() {
+    var citation = new ContextCitation("a", 0, 1, 0, 4, 0.9f, "text", 1, 1, null, 0);
+    var docs =
+        new StubDocs(
+            new ContextResult("text", 1, 1, 1, List.of(citation), "BM25", "ok", false, List.of()),
+            Map.of());
+
+    InjectorResult result =
+        new RAGContext(docs, RAGContext.DEFAULT_TOP_K, () -> stubAi(4096, 4096))
+            .inject(stubCtx(Map.of("question", "what?", "docIds", List.of("a"))));
+
+    List<String> order = result.events().stream().map(SseEvent::name).toList();
+    assertTrue(order.contains("rag.meta"), "rag.meta must still be emitted: " + order);
+    assertTrue(
+        order.indexOf("rag.meta") < order.indexOf("rag.citations"),
+        "deferring the emission must not reorder the stream: " + order);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> ragMetaOf(InjectorResult result) {
+    return (Map<String, Object>)
+        result.events().stream()
+            .filter(e -> "rag.meta".equals(e.name()))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("no rag.meta event emitted"))
+            .payload();
+  }
+
+  /** Minimal online-AI stub exposing only the two context-window accessors this budget reads. */
+  private static io.justsearch.app.api.OnlineAiService stubAi(Integer observed, Integer configured) {
+    return new io.justsearch.app.api.OnlineAiService() {
+      @Override
+      public CompletableFuture<String> summarize(String content) {
+        return CompletableFuture.completedFuture("");
+      }
+
+      @Override
+      public CompletableFuture<String> askQuestion(String question, String context) {
+        return CompletableFuture.completedFuture("");
+      }
+
+      @Override
+      public boolean isAvailable() {
+        return true;
+      }
+
+      @Override
+      public boolean isStartingUp() {
+        return false;
+      }
+
+      @Override
+      public Integer llmContextTokens() {
+        return observed;
+      }
+
+      @Override
+      public Integer configuredContextTokens() {
+        return configured;
+      }
+    };
+  }
+
   private static ConversationContext stubCtx(Map<String, Object> body) {
     return new ConversationContext() {
       private final Map<String, Object> a = new HashMap<>();

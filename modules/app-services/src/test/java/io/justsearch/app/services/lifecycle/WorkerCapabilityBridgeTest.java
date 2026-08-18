@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 import io.justsearch.app.api.lifecycle.CapabilityHealth;
+import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -44,7 +45,15 @@ final class WorkerCapabilityBridgeTest {
   void pendingReasonStartsAtDefaultBeforeAnyTransition() {
     WorkerCapability standalone = new WorkerCapability();
     assertEquals(CapabilityHealth.PENDING, standalone.health());
-    assertEquals("Worker not yet connected", standalone.pendingReason());
+    // Tempdoc 837 S3: converted from the prose "Worker not yet connected". The default is published
+    // raw on the runtime manifest and the 503 body before the first transition, so it must be a code
+    // like every other value this slot can hold — the assertion's INTENT (the pre-transition default
+    // is legible to those readers) is unchanged; only the vocabulary is.
+    assertEquals(
+        LifecycleReasonCode.WORKER_NOT_CONNECTED.code(),
+        standalone.pendingReason(),
+        "the pre-transition default is a reason code, not prose");
+    assertEquals(null, standalone.pendingDetail(), "no human sentence accompanies the default");
     assertNotEquals(true, standalone.available(), "PENDING is not available");
   }
 }

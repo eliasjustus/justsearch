@@ -157,6 +157,24 @@ async function main() {
           ui_url: { type: 'string' },
         },
       },
+      harness: {
+        type: 'object',
+        additionalProperties: true,
+        properties: {
+          // tempdoc 842 §2.5: realized chat model identity, optional and additive — old bundles
+          // without it stay valid (not in `required`); every sub-field is itself optional since
+          // the capture harness omits/passes-through whatever the runtime status reports.
+          model: {
+            type: 'object',
+            additionalProperties: true,
+            properties: {
+              aiActive: { type: 'boolean' },
+              chatProfile: { type: 'string' },
+              modelPath: { type: 'string' },
+            },
+          },
+        },
+      },
       missing_artifacts: { type: 'array', items: { type: 'string' } },
       placeholder_artifacts: {
         type: 'array',

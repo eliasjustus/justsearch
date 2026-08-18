@@ -564,6 +564,42 @@ public final class RuntimeManifestPublisher implements AutoCloseable {
   }
 
   /**
+   * Realized chat-identity publish (tempdoc 842 §2.5) — which chat model the engine is
+   * <em>actually</em> running. Follows {@link #publishMode} exactly: a nullable sub-record, no
+   * schema bump, no-op when unchanged.
+   *
+   * <p>Called on every inference transition, so the block appears when the engine comes up, tracks
+   * a profile switch, and is CLEARED when the engine goes down. Clearing matters more than
+   * publishing: a stale "compact, vision on" left standing over a dead engine is precisely the
+   * declared-vs-realized lie this block exists to prevent. Pass {@code null} to clear.
+   *
+   * @param identity the realized identity, or null when no engine is up
+   */
+  public synchronized RuntimeManifest publishChat(
+      io.justsearch.app.api.inference.RealizedChatIdentity identity) throws IOException {
+    RuntimeManifest previous = current.get();
+    if (previous == null) {
+      throw new IllegalStateException("publishChat called before publishHead");
+    }
+    RuntimeManifest.ChatInfo chatInfo =
+        identity == null
+            ? null
+            : new RuntimeManifest.ChatInfo(
+                identity.profileId(), identity.modelFile(), identity.mmprojActive());
+    if (java.util.Objects.equals(chatInfo, previous.chat())) {
+      return previous; // no-op — realized chat identity unchanged
+    }
+    RuntimeManifest manifest = RuntimeManifestBuilder.builder(previous).chat(chatInfo).build();
+    log.info(
+        "Runtime manifest updated (chat): profileId={}, modelFile={}, mmprojActive={}",
+        chatInfo == null ? null : chatInfo.profileId(),
+        chatInfo == null ? null : chatInfo.modelFile(),
+        chatInfo == null ? null : chatInfo.mmprojActive());
+    return commit(
+        manifest, "publishChat profileId=" + (chatInfo == null ? "none" : chatInfo.profileId()));
+  }
+
+  /**
    * Lifecycle refresh — call when the overall lifecycle projection changes (e.g., inference
    * becomes ready) without a worker transition. Tempdoc 501 §12.1.
    */

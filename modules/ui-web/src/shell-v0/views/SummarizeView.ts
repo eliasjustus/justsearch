@@ -38,7 +38,14 @@ import type { PluginHostApi } from '../plugin-api/plugin-types.js';
 import { streamViaHost } from '../plugin-api/pumpHostAiStream.js';
 import type { CoreSummarizeHandlers } from '../../api/generated/shape-handlers/core-summarize.js';
 // Tempdoc 565 §15.B — `Claim` relocated to the leaf `citationTypes` when StreamingTextBlock retired.
-import type { Claim } from '../components/chat/citationTypes.js';
+import type { Claim, SourceCoverage } from '../components/chat/citationTypes.js';
+import {
+  coverageHonesty,
+  coverageNote,
+  groundingCoverage,
+  isVerifiedProducer,
+  type CoverageHonesty,
+} from '../components/chat/evidenceProjection.js';
 import type {
   CitationMatch,
   RetrievalCitation,
@@ -95,6 +102,8 @@ export class SummarizeView extends JfElement {
     claims: { state: true },
     sources: { state: true },
     citations: { state: true },
+    coverage: { state: true },
+    sourceCoverage: { state: true },
     ragMeta: { state: true },
     errorMessage: { state: true },
   };
@@ -108,6 +117,10 @@ export class SummarizeView extends JfElement {
   declare claims: Claim[];
   declare sources: RetrievalCitation[];
   declare citations: CitationMatch[];
+  /** Tempdoc 836 S2S3-A.2 — the run's coverage facts, or null when it reported none. */
+  declare coverage: CoverageHonesty | null;
+  /** Tempdoc 836 S2S3-A.3 — per-source examination facts behind the panel's third state. */
+  declare sourceCoverage: SourceCoverage[];
   declare ragMeta: RagMetaPayload | null;
   declare errorMessage: string;
 
@@ -126,6 +139,8 @@ export class SummarizeView extends JfElement {
     this.claims = [];
     this.sources = [];
     this.citations = [];
+    this.coverage = null;
+    this.sourceCoverage = [];
     this.ragMeta = null;
     this.errorMessage = '';
   }
@@ -186,6 +201,13 @@ export class SummarizeView extends JfElement {
       flex-direction: column;
       gap: 0.75rem;
     }
+    /* Tempdoc 836 S2S3-A.2 — the coverage line: a quiet fact about the run, at the same ambient
+       altitude as the chat window's answer-frame receipt. It renders only when verification did
+       not fully happen, so it is never permanent chrome. */
+    .coverage-note {
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+    }
     .error {
       padding: 0.5rem 0.75rem;
       background: var(--accent-danger-08);
@@ -239,10 +261,19 @@ export class SummarizeView extends JfElement {
               ?is-streaming=${this.isStreaming}
             ></jf-markdown-block>`
           : nothing}
+        ${/* Tempdoc 836 S2S3-A.2 — the coverage line, present ONLY when the run reported that
+            verification did not fully happen. Whole-document summarize is the case the amendment
+            was written for: 836 §3.3 puts it two orders of magnitude outside the per-turn envelope,
+            so a markless answer here is usually a budget fact, and saying nothing would leave the
+            reader to conclude the document supports none of it. */ ''}
+        ${this.coverageNoteText()
+          ? html`<div class="coverage-note" role="note">${this.coverageNoteText()}</div>`
+          : nothing}
         ${this.sources.length > 0 || this.citations.length > 0
           ? html`<jf-citations-panel
               .sources=${this.sources}
               .citations=${this.citations}
+              .sourceCoverage=${this.sourceCoverage}
               .retrievalMode=${this.ragMeta?.retrieval_mode ?? ''}
             ></jf-citations-panel>`
           : nothing}
@@ -268,6 +299,21 @@ export class SummarizeView extends JfElement {
         @composer-cancel=${() => this.abortController?.abort()}
       ></jf-composer>
     `;
+  }
+
+  /**
+   * Tempdoc 836 S2S3-A.2 — the coverage line for this run, or null when there is nothing extra to
+   * say. Read through the same projection every other surface reads, so this view cannot phrase the
+   * fact differently from the chat window.
+   */
+  private coverageNoteText(): string | null {
+    return coverageNote(
+      groundingCoverage(
+        claimsToCitations(this.claims, this.sources),
+        this.streamingText,
+        this.coverage,
+      ),
+    );
   }
 
   override disconnectedCallback(): void {
@@ -302,6 +348,8 @@ export class SummarizeView extends JfElement {
     this.claims = [];
     this.sources = [];
     this.citations = [];
+    this.coverage = null;
+    this.sourceCoverage = [];
     this.ragMeta = null;
     this.errorMessage = '';
 
@@ -344,6 +392,53 @@ export class SummarizeView extends JfElement {
         const p = payload as { citations?: RetrievalCitation[] } | null;
         if (p && Array.isArray(p.citations)) this.sources = p.citations;
       },
+      onRagCitationMatches: (payload: unknown) => {
+        // Tempdoc 836 S2S3 — the authoritative post-hoc matcher's result, now DECLARED by
+        // `SummarizeShape` and produced against the literal text `DocAccess` injected (S1 + S3),
+        // not against a fabricated "chunk 0". This is why the hardcoded `verifiedScore: null`
+        // below is no longer the whole story for this surface: a claim here can be verified.
+        const p = payload as
+          | { matches?: CitationMatch[]; scorer?: string; sourceCoverage?: SourceCoverage[] }
+          | null;
+        if (!p || !Array.isArray(p.matches)) return;
+        this.citations = p.matches;
+        this.coverage = coverageHonesty(p);
+        this.sourceCoverage = Array.isArray(p.sourceCoverage) ? p.sourceCoverage : [];
+        // Tempdoc 836 §4 — the PRODUCER gate. Only the cross-encoder's scale is the one the
+        // grounding thresholds are calibrated on; a cosine-fallback score arrives as a number of
+        // the same type and a different meaning, so it may not become a verified score.
+        const scorer = p.scorer;
+        const verified = isVerifiedProducer(scorer);
+        const bySentence = new Map<number, Claim>();
+        for (const cl of this.claims) bySentence.set(cl.sentenceIndex, cl);
+        for (const m of p.matches) {
+          const idx = m.sentenceIndex ?? 0;
+          const sim = typeof m.similarity === 'number' && verified ? m.similarity : null;
+          const ref = typeof m.sourceIndex === 'number' ? m.sourceIndex : -1;
+          const existing = bySentence.get(idx);
+          if (existing) {
+            existing.verifiedScore =
+              sim === null ? existing.verifiedScore : Math.max(existing.verifiedScore ?? 0, sim);
+            if (verified && ref >= 0 && !existing.verifiedRefs.includes(ref)) {
+              existing.verifiedRefs.push(ref);
+            }
+            if (scorer !== undefined) existing.scorer = scorer;
+          } else {
+            bySentence.set(idx, {
+              sentenceIndex: idx,
+              sentenceText: m.sentenceText ?? '',
+              ...(scorer !== undefined ? { scorer } : {}),
+              verifiedScore: sim,
+              lexicalScore: 0,
+              verifiedRefs: verified && ref >= 0 ? [ref] : [],
+              lexicalRefs: [],
+            });
+          }
+        }
+        this.claims = Array.from(bySentence.values()).sort(
+          (a, b) => a.sentenceIndex - b.sentenceIndex,
+        );
+      },
       onRagCitationDelta: (payload: unknown) => {
         const p = payload as {
           sentenceIndex?: number;
@@ -358,11 +453,11 @@ export class SummarizeView extends JfElement {
               {
                 sentenceIndex: p.sentenceIndex ?? 0,
                 sentenceText: p.sentenceText,
-                // Tempdoc 822 §3d — `core.summarize` declares `rag.citation_delta` and NO
-                // `rag.citation_matches` (`SummarizeShape.java:47`), so every claim this surface holds
-                // is scored by the streaming LEXICAL matcher. Under the provenance gate those claims
-                // mint no marks here: word overlap is not grounding evidence, and this tier has no
-                // cross-encoder pass to promote it. Adding one is a backend question, not a render fix.
+                // Tempdoc 822 §3d — this event is the streaming LEXICAL matcher (word overlap),
+                // so it lands in `lexicalScore` and mints no mark: word overlap is not grounding
+                // evidence. Tempdoc 836 S2S3 replaced the second half of the old note here —
+                // `core.summarize` DOES now declare `rag.citation_matches`, and the handler above
+                // is the cross-encoder pass that can promote a sentence. A delta still cannot.
                 verifiedScore: null,
                 lexicalScore: bestScore,
                 // Tempdoc 822 §3b — same producer, same standing: a delta's refs are the streaming

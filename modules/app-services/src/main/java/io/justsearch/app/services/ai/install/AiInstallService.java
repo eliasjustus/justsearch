@@ -14,6 +14,7 @@ import io.justsearch.app.api.OperationLeaseService;
 import io.justsearch.app.services.runtimestate.RuntimeReconciler;
 import io.justsearch.app.services.runtimestate.RuntimeStatus;
 import io.justsearch.configuration.PlatformPaths;
+import io.justsearch.configuration.ModelPathSource;
 import io.justsearch.configuration.SystemPropertyUtils;
 import io.justsearch.configuration.model.CapabilityTier;
 import io.justsearch.configuration.model.DownloadProfile;
@@ -462,7 +463,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     }
     for (ModelPackage pkg : registry.packages()) {
       CapabilityTier t = pkg.tier();
-      if (t == null) {
+      // A devOnly package (tempdoc 842) is never installed, so its bytes must never appear in a
+      // total the user consents to — the planner skips it, and this projection has to agree.
+      if (t == null || pkg.devOnly()) {
         continue;
       }
       var te = byTier.get(t);
@@ -486,6 +489,11 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     }
     Set<String> declined = declinedPackages();
     for (ModelPackage pkg : registry.packages()) {
+      // A devOnly package (tempdoc 842) is not a component the user has any decision about: it is
+      // never installed, never declinable, and listing it would offer a choice that does nothing.
+      if (pkg.devOnly()) {
+        continue;
+      }
       var ce = new InstallPlanPreview.ComponentEstimate();
       ce.id = pkg.id();
       ce.label = pkg.label() == null ? pkg.id() : pkg.label();
@@ -514,6 +522,10 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
               case USER_DECLINED -> "declined";
               case INTENT -> "not-in-mode";
               case HARDWARE -> "unavailable";
+              // Not reachable today — devOnly packages are filtered out of this loop above. The arm
+              // exists so the switch stays exhaustive: if that filter is ever removed, a dev package
+              // reads as "this build does not install it" rather than as a hardware failure.
+              case DEV_ONLY -> "not-in-mode";
             };
         if ("unavailable".equals(ce.state)) {
           ce.unavailableReason = skipped.reason() == null ? "" : skipped.reason();
@@ -1794,8 +1806,17 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     s.setLlmModelPath(chatModelPath.toAbsolutePath().toString());
     settingsStore.save(s);
 
-    SystemPropertyUtils.setSysPropIfBlank(
-        "justsearch.llm.model_path", chatModelPath.toAbsolutePath().toString());
+    // Tempdoc 842 (S2): the marker MUST be written next to the value. The bare
+    // setSysPropIfBlank left justsearch.llm.model_path unlabelled, so for the rest of a
+    // just-installed JVM every reader classified the installer's own path as operator-owned —
+    // EffectiveConfigController reported owner "unknown", and the §2.3 precedence rule would have
+    // treated a re-derivable installer path as a sacred operator lock. The value written here is a
+    // copy of the settings row saved two lines up, which is exactly what UI_SETTINGS means.
+    SystemPropertyUtils.setSysPropIfBlankWithSource(
+        "justsearch.llm.model_path",
+        chatModelPath.toAbsolutePath().toString(),
+        ModelPathSource.SOURCE_PROP_LLM_MODEL_PATH,
+        ModelPathSource.UI_SETTINGS);
 
     ConfigStoreRebuilder.rebuild(ConfigStore.globalOrNull(), s);
 

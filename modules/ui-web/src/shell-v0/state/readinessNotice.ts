@@ -135,6 +135,43 @@ const CAUSE_ROWS: ReadonlyArray<{
     wording: 'GPU acceleration for local AI is disabled by administrator policy',
     severity: 'info',
   },
+  // Tempdoc 837 S4 — the GPU was handed to indexing. `info` on purpose: the state is scheduled and
+  // self-clearing, so it belongs in Health rather than the banner, and the honest wording is
+  // reassuring where "the model is offline" was alarming. Severity here is not a label — `info`
+  // withholds it from the banner (warrantsSearchDegradationBanner) and keeps the affordance caveat
+  // calm; upgrading it to `warn` for visibility would make the banner worse than the collapsed
+  // state this replaces.
+  {
+    code: 'inference.gpu_yielded_to_indexing',
+    wording: 'The GPU is indexing your files — chat resumes when it finishes',
+    severity: 'info',
+  },
+  // Tempdoc 837 S4 — a correctness fix, not an enrichment: the engine is UP (a background procedure
+  // is using it) while the user's chat spec is off, and the previous wording said it was offline.
+  {
+    code: 'inference.up_for_background',
+    wording: 'Chat is turned off; the AI engine is running background document processing',
+    severity: 'info',
+  },
+  // Tempdoc 837 S5 — the engine stopped on its own (TransitionReason.CRASH_RECOVERY). `warn`, not
+  // `info`: nobody chose it and there IS an action (reload). It is also the one new code in this
+  // slice that must join AI_MODEL_UNAVAILABLE_CODES — see that set's comment for why the other three
+  // must not.
+  {
+    code: 'inference.crashed',
+    wording: 'The local AI model stopped unexpectedly',
+    remedy: { kind: 'operation', operationId: 'core.reload-inference' },
+    severity: 'warn',
+  },
+  // Tempdoc 837 S5 — the user turned chat off (TransitionReason.USER_SWITCH / ADMIN_TRIGGERED). The
+  // most FREQUENT of the four collapsed cases, so wording it as a fault is what trained
+  // alarm-blindness. `info`: it is a choice, not a failure, and it self-clears by re-enabling.
+  {
+    code: 'inference.deactivated',
+    wording: 'The local AI model is turned off',
+    remedy: { kind: 'operation', operationId: 'core.reload-inference' },
+    severity: 'info',
+  },
   {
     // Tempdoc 656 (post-implementation review fix): this code is the shared catch-all for both
     // activation failures (self-test/apply) AND deactivation failures (rollback) in
@@ -207,6 +244,39 @@ const CAUSE_ROWS: ReadonlyArray<{
     code: 'worker.restart_exhausted',
     wording: 'The knowledge server stopped responding and could not be recovered',
     severity: 'error',
+  },
+  // Tempdoc 837 S3 — the worker WAS serving and stopped answering. `worker.spawn.failed` told these
+  // users their knowledge server "failed to start", which is false: it started fine and then died.
+  // No remedy operation — a supervised restart is already in flight, so there is nothing to click.
+  {
+    code: 'worker.lost',
+    wording: 'The knowledge server stopped responding',
+    severity: 'error',
+  },
+  // Tempdoc 837 S3 — the highest-value row in the batch: this cause is DETECTED today (the dying
+  // worker stamps a fatal-reason marker) and was discarded before the user saw it. No one-click
+  // remedy exists for index.recovery.policy=BACKUP_REBUILD, so this takes the Open-Health fallback
+  // rather than pointing at an operation that does not exist (the vdu.missing_mmproj precedent);
+  // the configuration sentence rides on the Health surface as the condition's detail.
+  {
+    code: 'worker.index_corrupt',
+    wording: 'The search index is corrupt and could not be repaired automatically',
+    severity: 'error',
+  },
+  // Tempdoc 837 S3 — orderly teardown, not a fault: calm `info`. Distinguishing it from
+  // worker.not_configured keeps "we stopped it" from reading as "it was never set up".
+  {
+    code: 'worker.shut_down',
+    wording: 'The knowledge server has shut down',
+    severity: 'info',
+  },
+  // Tempdoc 837 S3 — the pre-transition default: nothing has been observed about the worker yet.
+  // Sibling of worker.starting (which means a start was actually attempted) and worded to claim no
+  // more than it knows.
+  {
+    code: 'worker.not_connected',
+    wording: 'The knowledge server has not connected yet',
+    severity: 'info',
   },
   // Tempdoc 600 PART X — the GPU-saturation readiness code (aiFeatures composite). When retrieval is
   // independently degraded, the verdict appends this as a SECONDARY cause; without a row it rendered the
@@ -309,19 +379,16 @@ const CAUSE_ROWS: ReadonlyArray<{
     remedy: { kind: 'operation', operationId: 'core.rebuild-index' },
     severity: 'info',
   },
-  // Tempdoc 628 Stage C — the index was detected corrupt and is being automatically rebuilt from your
-  // files. No one-click rebuild remedy: it's already rebuilding, so the honest affordance is to watch
-  // progress on Health. Impairing (results temporarily incomplete) but self-healing ⇒ `warn`.
-  {
-    code: 'index.rebuilding',
-    wording:
-      'The index was corrupted and is being rebuilt from your files — results are temporarily incomplete.',
-    severity: 'warn',
-  },
+  // Tempdoc 837 S6 removed the `index.rebuilding` row that used to sit here. Its code was emitted
+  // only inside the window the verdict forces to `transitioning`, where this projection returns null,
+  // so the row was unreachable UI. Its wording was not lost — it moved, word for word, into
+  // `verdictBody`'s rebuilding branch, which is the authority that actually renders during a rebuild.
+  //
   // An in-place embedding rebuild (embeddingCompatState=REBUILDING): the Worker refuses dense
   // queries until it finishes, so ONLY the semantic leg is affected — keyword results stay
   // complete. Nothing to click (it is already running) ⇒ Open-Health fallback; impairing but
-  // self-healing ⇒ `warn`, matching index.rebuilding.
+  // self-healing ⇒ `warn`. Unlike a generation rebuild this leaves stability SETTLED, which is why
+  // this row is reachable and its retired neighbour was not.
   {
     code: 'index.embedding_rebuilding',
     wording:
@@ -400,8 +467,8 @@ const RETRIEVAL_IMPAIRING_CODES: ReadonlySet<string> = new Set([
   // The embedder could not be probed: we do NOT know both legs are live, and the reassuring wording
   // requires positive knowledge (same doctrine as severityForCodes' unknown ⇒ warn default).
   'worker.health.embedding_probe_missing',
-  // The index is being rebuilt from source: results are temporarily incomplete on both legs.
-  'index.rebuilding',
+  // (Tempdoc 837 S6 removed `index.rebuilding` here with its row: a generation rebuild is a
+  // TRANSITION, and this set only ever gates the degraded branch, which that state cannot reach.)
   // An in-place embedding rebuild: the Worker refuses dense queries (REBUILD_IN_PROGRESS) until it
   // finishes, so search is genuinely serving keyword-only for its duration.
   'index.embedding_rebuilding',
@@ -411,6 +478,13 @@ const RETRIEVAL_IMPAIRING_CODES: ReadonlySet<string> = new Set([
   'worker.recovering',
   'worker.spawn.failed',
   'worker.restart_exhausted',
+  // Tempdoc 837 S3 — same rule, four more ways for the knowledge server not to be serving. Omission
+  // is not neutral here: a recognized row outside this set is classified as NOT impairing, which
+  // would let the banner claim "search is fully working" while nothing is serving it.
+  'worker.lost',
+  'worker.index_corrupt',
+  'worker.shut_down',
+  'worker.not_connected',
 ]);
 
 /**
@@ -451,6 +525,22 @@ function isPassageReduced(code: string): boolean {
  * Excluded on purpose: `inference.starting` (transient, owned by the calm `info` branch),
  * `inference.policy_*` (policy-disabled never "comes online"), `vdu.ai_offline` (document
  * understanding, not chat).
+ *
+ * <p>Tempdoc 837 S4 applies that same doctrine to its two new codes, and both are excluded:
+ * `inference.up_for_background` describes an engine that is UP (calling it unavailable would repeat
+ * the falsehood S4 exists to fix), and `inference.gpu_yielded_to_indexing` is the scheduled,
+ * self-clearing sibling of the policy cases — chat is not offered by design, not because the model
+ * is unavailable. Both ship at `info`, and an info-only verdict short-circuits before
+ * `classifyConsequence` runs, so membership would only ever be consulted when one of them rides
+ * alongside a `warn` cause — exactly where the calmer class must not be inferred from a code that
+ * is not evidence for it.
+ *
+ * <p>Tempdoc 837 S5 splits its two codes on exactly that doctrine. `inference.crashed` JOINS the set
+ * — it is a `warn` code, and a recognized `warn` row in none of the consequence sets falls through
+ * to `cosmetic`, which would have the banner say "An optional capability is unavailable; results are
+ * still fully semantic" about a CRASHED AI model. `inference.deactivated` does not join: it is the
+ * policy/user-choice case the exclusion above is written for ("policy-disabled never comes online"),
+ * and it ships at `info` where the set is never consulted anyway.
  */
 const AI_MODEL_UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
   'inference.offline',
@@ -458,6 +548,7 @@ const AI_MODEL_UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
   'inference.model_not_found',
   'inference.runtime_not_installed',
   'inference.activation_failed',
+  'inference.crashed',
 ]);
 
 /**

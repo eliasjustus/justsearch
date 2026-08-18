@@ -13,7 +13,7 @@ import java.util.function.Supplier;
 
 /**
  * Tempdoc 585 §B.5 (Hybrid C, the keystone): the agent capability's SSE write seam for the
- * resume/attach streaming paths — it owns the hub-observer eviction contract and delegates the
+ * resume/attach streaming paths — it owns the run-observer eviction contract and delegates the
  * {@code AgentEvent → SSE-wire} translation to the ONE canonical {@link AgentEventSseTranslator}.
  *
  * <p>Tempdoc 585 followup (observation #354): the event-vocabulary switch used to live here
@@ -24,7 +24,7 @@ import java.util.function.Supplier;
  * translator, so the conformance tests ({@code AgentEventPayloadConformanceTest} /
  * {@code AgentEventSchemaConformanceTest}) cover this path too, and drift is impossible by construction.
  *
- * <p>What stays here is the hub-observer eviction seam ({@link #writeOrEvict}/{@link #evictIfGone}/
+ * <p>What stays here is the run-observer eviction seam ({@link #writeOrEvict}/{@link #evictIfGone}/
  * {@link SseObserverGoneException}, tempdoc 577 §2.14 Root I) — a {@link Context}-coupled concern that
  * belongs in the ui layer, not the translator. {@link #initSseHeaders}/{@link #writeEvent} are
  * passthroughs so a streaming controller holds only this one SSE collaborator.
@@ -56,7 +56,7 @@ final class AgentSseWriter {
 
   /**
    * Best-effort SSE event write (passthrough to {@link SseWriter}), used by the terminal error
-   * writes that are NOT hub observers (so they must not evict on disconnect).
+   * writes that are NOT run observers (so they must not evict on disconnect).
    */
   void writeEvent(Context ctx, String event, Map<String, ?> payload) {
     sseWriter.writeEvent(ctx, event, payload);
@@ -64,7 +64,7 @@ final class AgentSseWriter {
 
   /**
    * Translate an {@link AgentEvent} via the ONE canonical {@link AgentEventSseTranslator} and write
-   * it AS A HUB OBSERVER (see {@link #writeOrEvict}). The tool index feeds the translator's
+   * it AS A RUN OBSERVER (see {@link #writeOrEvict}). The tool index feeds the translator's
    * {@code tool_batch_proposed} gate-prediction projection; it degrades to an empty index when the
    * engine is offline (availableOperations unavailable) — the same graceful behaviour the prior
    * inline {@code projectBatchCalls} had.
@@ -81,21 +81,43 @@ final class AgentSseWriter {
   }
 
   /**
-   * Tempdoc 577 §2.14 Root I (#13) — write to the SSE socket AS A HUB OBSERVER. A disconnect
-   * ({@link SseWriter#writeEvent} returns {@code false}) THROWS, so the {@link
-   * io.justsearch.agent RunEventHub}'s {@code deliver} catch evicts this observer and {@code
-   * observerCount()} drops. That eviction is the precondition the posture-graded zero-observer
-   * park depends on: without it a dead socket lingers in the subscriber set and a Watch run
-   * proceeds UNWATCHED (the safety goal unmet). Safe because every caller is a hub observer
-   * (the loop publishes through the hub, whose {@code deliver} swallows the throw — the loop is
-   * never aborted; the V3 root cause stays fixed). NOT used for the terminal error writes, which
-   * are not hub observers.
+   * Tempdoc 577 §2.14 Root I (#13) — write an ALREADY-PROJECTED run frame to the socket. The
+   * journal carries the wire {@code (name, payload)} pair (tempdoc 834 §1.3.2), so an attaching
+   * observer needs no translation at all: the projection happened once, at publish time, through
+   * the one payload authority.
+   */
+  void writeWireFrame(Context ctx, io.justsearch.agent.api.RunObservation.WireFrame frame) {
+    writeOrEvict(ctx, frame.name(), frame.payload());
+  }
+
+  /**
+   * Tempdoc 577 §2.14 Root I (#13) — write to the SSE socket AS A RUN OBSERVER. A disconnect
+   * ({@link SseWriter#writeEvent} returns {@code false}) THROWS, so the observer is evicted and
+   * {@code observerCount()} drops. That eviction is the precondition the posture-graded
+   * zero-observer park depends on: without it a dead socket lingers in the observer set and a Watch
+   * run proceeds UNWATCHED (the safety goal unmet).
+   *
+   * <p><strong>Still load-bearing after tempdoc 834's hub deletion, and deliberately kept.</strong>
+   * §7-S3b's sweep table calls this seam "obsolete once {@code onClose} owns disconnect" — true for
+   * the run-stream family, which runs on a MANAGED {@code SseClient}. It is NOT true for the raw
+   * {@code Context}-based attach routes below, which have no {@code onClose}: for those, a failed
+   * write is the ONLY disconnect signal, and deleting the throw would silently make their
+   * observerCount permanently non-zero. Retiring the seam belongs with retiring the raw routes.
+   *
+   * <p>Safe because every caller is a run observer, and the substrate's fan-out evicts on the
+   * throw rather than propagating it — the loop is never aborted; the V3 root cause stays fixed.
+   * NOT used for the terminal error writes, which are not observers.
    */
   void writeOrEvict(Context ctx, String eventType, Map<String, ?> payload) {
-    // Tempdoc 585 §D Phase 2 (B1) — stamp the SSE id: from the event's monotonic trace span. Every
-    // agent event's payload carries trace.spanId (AgentEventPayloads.withTrace), so BOTH the live
-    // run stream and the reattach stream emit a Last-Event-ID with no signature change to either
-    // caller — the reconnecting client echoes it back and the hub replays only newer events.
+    // Tempdoc 585 §D Phase 2 (B1) stamped the SSE id: from the event's monotonic trace span so a
+    // reconnecting client could echo it back as Last-Event-ID.
+    //
+    // Tempdoc 834 §1.6 RETIRED that resume story: probe P7 found no producer of the header (the FE
+    // sends only a content type and the session token), the attach handler no longer parses it, and
+    // run streams do not emit id: at all — one resume input (?sinceSeq=), one grammar. What remains
+    // here is an id: line on the LEGACY raw-Context routes with nothing reading it. Left in place
+    // rather than changed, because it is part of those routes' existing wire and they are retired
+    // as a unit in S5; labelled so it is not mistaken for a live resume channel.
     evictIfGone(sseWriter.writeResult(ctx, seqOfPayload(payload), eventType, payload));
   }
 
@@ -124,12 +146,12 @@ final class AgentSseWriter {
   }
 
   /**
-   * The hub-observer eviction decision, factored out as a pure seam (testable without a Javalin
+   * The run-observer eviction decision, factored out as a pure seam (testable without a Javalin
    * {@link Context}): ONLY a {@link SseWriter.SseWriteOutcome#CLIENT_GONE} (the socket closed)
-   * THROWS, so {@code RunEventHub.deliver} evicts the observer. A {@link
+   * THROWS, so the run channel's evict-on-throw fan-out drops the observer. A {@link
    * SseWriter.SseWriteOutcome#SERIALIZATION_FAILED} is NOT a disconnect — the bad event is skipped
    * but the observer is KEPT, so a non-serializable payload cannot kill a live stream or re-poison
-   * every reattach (it sits in the hub's replay buffer).
+   * every reattach (it sits in the replay ring).
    */
   static void evictIfGone(SseWriter.SseWriteOutcome outcome) {
     if (outcome == SseWriter.SseWriteOutcome.CLIENT_GONE) {
@@ -138,9 +160,9 @@ final class AgentSseWriter {
   }
 
   /**
-   * Thrown by a hub-observer write when the SSE client has disconnected, so {@code
-   * RunEventHub.deliver} evicts the observer (tempdoc 577 §2.14 Root I). Unchecked: it must
-   * propagate through the loop's {@code publish} into the hub's fan-out catch.
+   * Thrown by a run-observer write when the SSE client has disconnected, so the run channel's
+   * fan-out evicts the observer (tempdoc 577 §2.14 Root I). Unchecked: it must propagate through
+   * the loop's publish into the substrate's evict-on-throw catch.
    */
   static final class SseObserverGoneException extends RuntimeException {
     SseObserverGoneException() {

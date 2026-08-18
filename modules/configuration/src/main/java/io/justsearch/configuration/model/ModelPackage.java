@@ -38,6 +38,10 @@ import java.util.List;
  *     hardware-eligible package); false (default) means this package's hardware-eligibility is
  *     governed by tier/VRAM only. Added for RUNTIME-tier packages that may need to be
  *     hardware-independent (tempdoc 772 Q3).
+ * @param devOnly true if this package exists for development stacks only and is never part of a
+ *     user install plan (tempdoc 842) — unconditional, independent of intent, tier and hardware.
+ *     Dev tooling fetches it directly from the registry; false (default) is every user-facing
+ *     package, so registries predating the field are unchanged.
  * @param necessity how badly the product needs this package (tempdoc 840 Phase 2) — the axis a
  *     per-component install decision is offered on, and the sole source of whether the user may
  *     decline it ({@link Necessity#userDeclinable()}). Never null: an unclassified package
@@ -62,6 +66,7 @@ public record ModelPackage(
     String license,
     CapabilityTier tier,
     boolean requiresCuda,
+    boolean devOnly,
     Necessity necessity,
     List<String> dependsOn) {
 
@@ -126,8 +131,9 @@ public record ModelPackage(
   /**
    * Backwards-compat constructor — no requiresCuda (predates tempdoc 772's hardware-independence
    * field); defaults to false, preserving prior tier-based-only hardware gating for any existing
-   * caller. Necessity and dependsOn (tempdoc 840) default via the compact constructor to REQUIRED
-   * and empty — the conservative pair: not declinable, no declared dependency.
+   * caller. devOnly (tempdoc 842) defaults to false — user-installable. Necessity and dependsOn
+   * (tempdoc 840) default via the compact constructor to REQUIRED and empty — the conservative
+   * pair: not declinable, no declared dependency.
    */
   public ModelPackage(
       String id,
@@ -143,7 +149,31 @@ public record ModelPackage(
       CapabilityTier tier) {
     this(
         id, label, description, targetDir, variants, supportingFiles, minVramBytes, termsUrl,
-        installRoot, license, tier, false, null, null);
+        installRoot, license, tier, false, false, null, null);
+  }
+
+  /**
+   * Backwards-compat constructor — no devOnly (predates tempdoc 842's dev-only exclusion flag);
+   * defaults to false, so every existing caller keeps producing a user-installable package.
+   * Necessity and dependsOn (tempdoc 840) default via the compact constructor to REQUIRED and
+   * empty.
+   */
+  public ModelPackage(
+      String id,
+      String label,
+      String description,
+      String targetDir,
+      List<ModelVariant> variants,
+      List<SupportingFile> supportingFiles,
+      long minVramBytes,
+      String termsUrl,
+      String installRoot,
+      String license,
+      CapabilityTier tier,
+      boolean requiresCuda) {
+    this(
+        id, label, description, targetDir, variants, supportingFiles, minVramBytes, termsUrl,
+        installRoot, license, tier, requiresCuda, false, null, null);
   }
 
   /** Returns true if this package requires a minimum VRAM threshold to be useful. */

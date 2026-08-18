@@ -7,7 +7,10 @@
  *   Layer 1 — Git safety: blocks destructive git operations.
  *             Some commands are blocked everywhere (force-push).
  *             Others are blocked only in the main worktree (checkout, reset --hard, clean).
- *   Layer 2 — Tool hygiene: blocks bare file-reading commands that should use dedicated tools.
+ *   Layer 2 — Sleep hygiene: blocks unconditional `sleep >= 1s` (use a condition-poll).
+ *
+ * A third layer — tool hygiene, redirecting bare `cat`/`head`/`tail`/`grep` to the
+ * Read/Grep tools — was REMOVED 2026-08-18; see the note at its former site below.
  *
  * Main worktree detection: .git is a real directory in the main checkout,
  * but a file (gitdir pointer) in worktrees. This is a fast, no-subprocess check.
@@ -138,22 +141,6 @@ const SLEEP_PATTERN = {
     'Do not use arbitrary sleep delays between commands.',
 };
 
-// --- Tool hygiene patterns ---
-//
-// Layer 3 only targets *bare* file-reading commands (no flags, no chains).
-// Flagged invocations (`cat -n`, `head -n 50`, `grep -A 3`) are deliberate
-// terminal-oriented output and are allowed (P0a). Chained commands are
-// pipelines, not single-file reads, and bypass Layer 3 by design (P0b).
-
-const FILE_READING_PATTERNS = [
-  { regex: /^\s*cat\s+\S+(?:\s+\S+)*\s*$/, tool: 'Read', alt: 'Use the Read tool to read file contents.' },
-  { regex: /^\s*head\s+\S+\s*$/, tool: 'Read (with limit)', alt: 'Use Read with the `limit` parameter.' },
-  { regex: /^\s*tail\s+\S+\s*$/, tool: 'Read (with offset)', alt: 'Use Read with the `offset` parameter.' },
-  { regex: /^\s*(?:grep|rg)\s+(?:"[^"]*"|'[^']*'|\S+)\s+\S+(?:\s+\S+)*\s*$/, tool: 'Grep', alt: 'Use the Grep tool to search file contents.' },
-];
-
-const CHAIN_OPERATOR = /[|><]|&&|\|\||;/;
-
 /** True when any whitespace-delimited token starts with `-` (a flag). P0a. */
 function hasFlagToken(cmd) {
   return cmd.split(/\s+/).some((tok) => tok.startsWith('-'));
@@ -213,29 +200,13 @@ export function evaluateBashCommand(cmd, { isMain = false } = {}) {
     return { block: true, reason: SLEEP_PATTERN.reason, layer: 'sleep' };
   }
 
-  // Layer 3: Tool hygiene — advisory redirect for *bare* file reads only.
-  // P0b: chained commands are pipelines, not single-file reads; Layer 3 is
-  // advisory (not a safety block), and per-segment blocking would create
-  // false positives on legitimate pipelines. Chains are intentionally exempt.
-  if (CHAIN_OPERATOR.test(cmd)) return { block: false };
-
-  // Allow non-destructive git commands (status, log, diff, add, commit, ...).
-  if (/^\s*git\b/.test(cmd)) return { block: false };
-
-  // P0a: flagged invocations are deliberate terminal output, not bare reads.
-  if (hasFlagToken(cmd)) return { block: false };
-
-  for (const { regex, tool, alt } of FILE_READING_PATTERNS) {
-    if (regex.test(cmd)) {
-      return {
-        block: true,
-        layer: 'tool-hygiene',
-        reason:
-          `${alt} The ${tool} tool provides line numbers, supports offset/limit, ` +
-          `and avoids wasting context on raw terminal output.`,
-      };
-    }
-  }
+  // REMOVED 2026-08-18 (owner decision): the tool-hygiene layer, which blocked bare
+  // `cat`/`head`/`tail`/`grep`/`rg` and redirected them to the Read/Grep tools.
+  // Claude Code's own bypassPermissions-mode guidance now instructs the opposite —
+  // "read files with cat, head, or sed -n, search with grep and find" — so the layer
+  // was contradicting the harness it runs inside, and cost a blocked turn each time
+  // it fired. The safety layers (destructive git, force-push, sleep) are untouched:
+  // those encode facts the harness does NOT provide.
 
   return { block: false };
 }

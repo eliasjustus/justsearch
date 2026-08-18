@@ -24,5 +24,10 @@ public enum SkipCause {
   /** The active {@link InstallIntent} does not want this package's capability tier. */
   INTENT,
   /** The user declined this component (only possible for a {@link Necessity#userDeclinable} one). */
-  USER_DECLINED
+  USER_DECLINED,
+  /**
+   * The package exists for development stacks only ({@link ModelPackage#devOnly}, tempdoc 842) and
+   * is never part of a user install plan — independent of intent, hardware and user choice.
+   */
+  DEV_ONLY
 }

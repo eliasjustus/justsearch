@@ -21,7 +21,7 @@ jseval ui-shot home              # capture one step → prints PNG path + a one-
 jseval ui-shot search-results
 jseval ui-shot citation-highlight
 jseval ui-shot --list            # list all steps
-jseval ui-shot --affected modules/ui-web/src/shell-v0/views/SearchSurface.ts
+jseval ui-shot --affected modules/ui-web/src/shell-v0/components/searchResults/ResultsCard.ts
 jseval ui-check                  # batch-capture all steps (~60s+), diff vs baseline
 ```
 
@@ -78,7 +78,7 @@ when deliberately iterating on one surface; `ui-critic`/`ui-fuzz` are deeper, si
 |---|---|---|
 | Views / chrome — `home`, `library`, `settings`, `health`, `help`, `ai-brain` | a served frontend only | the tool auto-serves Vite; renders chrome + empty surfaces with no backend |
 | Search / inspector — `search-results`, `inspector-open`, `multi-select`, `context-menu`, `filters-chips` | dev stack (worker) | search returns real data |
-| AI chain — `streaming`, `summarize-done`, `qa-response`, `citation-highlight` | dev stack + `ai_activate` | the 9B model; latency-/GPU-contention-sensitive — may need a retry on a freshly-activated model |
+| AI chain — `streaming`, `summarize-done`, `qa-response`, `citation-highlight` | dev stack + `ai_activate` | dev stacks default to the compact chat profile (tempdoc 842) — fine for shape/rendering checks; latency-/GPU-contention-sensitive — may need a retry on a freshly-activated model. Judging answer *quality/wording* (not just that the surface renders) needs `ai_activate {chatProfile:"standard"}` first. |
 
 The live shell lands on the **chat** surface by default; every view step navigates to its rail surface first,
 and the harness's app-ready signal is the **rail** (not `search-input`).
@@ -102,22 +102,33 @@ has **no backend** (data steps will show 502s) — to drive a running dev stack 
 `--ui-url http://127.0.0.1:5173` (a non-`localhost:5173` string bypasses the auto-serve).
 
 ## Step registry
-55 steps. **Chain** (shared browser, `depends_on`): `search-results` → {`filters-chips`, `inspector-open`,
+53 steps (`ui_check.py`; run `jseval ui-shot --list` for the authoritative set — this count
+drifts as steps are added). **Chain** (shared browser, `depends_on`): `search-results` → {`filters-chips`, `inspector-open`,
 `multi-select`, `context-menu`}; `inspector-open` → `streaming` → `summarize-done` → `citation-highlight`.
 **Isolated** (own browser, parallel): the view steps (dark+light), density/mode variants (`search-results-*`,
 `search-*-mode`), CDP pseudo-states (`row-hover`, `input-focus`), and the `shell-v0-demo*` / `presentation-demo*`
 standalone demos. Run `jseval ui-shot --list` for the authoritative set.
 
 ## File-to-step index (live shell-v0)
-`scripts/jseval/jseval/ui_step_index.json` (gated by check-ui-step-coverage). Key mappings:
+`scripts/jseval/jseval/ui_step_index.json` maps **38 source files** to steps (gated by
+check-ui-step-coverage). The JSON is the authority — read it rather than trusting this
+excerpt; the highest-fan-out entries are:
+
 | File | Steps |
 |---|---|
-| `shell-v0/views/SearchSurface.ts` | search-results, filters-chips, multi-select, search-results/mode variants … |
-| `shell-v0/components/InspectorPane.ts` | inspector-open, streaming, summarize-done, qa-response, citation-highlight |
-| `shell-v0/components/chat/MarkdownBlock.ts` | citation-highlight |
+| `shell-v0/components/searchResults/ResultsCard.ts` | search-results, command-mode, zero-results, input-focus, filters-chips, search-simple-mode, search-advanced-mode, … |
+| `shell-v0/chrome/Shell.ts` · `shell-v0/plugin-api/CorePlugin.ts` | all view/nav steps (home, library, ai-brain, health, settings, security, help) |
+| `shell-v0/views/UnifiedChatView.ts` | chat-mode, qa-response, chat-proportion, chat-bands, chat-composer-small, chat-spine-single, … |
+| `shell-v0/views/unifiedChatStyles.ts` · `shell-v0/primitives/compositionLayout.ts` | the chat band/spine/occlusion steps |
+| `shell-v0/views/search-v3/{Sv3Main,sv3-tokens.css}.ts` | sv3-citation-selected + the search-v3 surface steps |
+| `shell-v0/views/SummarizeView.ts` | streaming, summarize-done, qa-response |
+| `shell-v0/components/chat/{MarkdownBlock,CitationsPanel}.ts` | citation-highlight |
 | `shell-v0/components/ContextMenu.ts` | context-menu |
-| `shell-v0/chrome/Shell.ts`, `shell-v0/plugin-api/CorePlugin.ts` | all view/nav steps (home, library, ai-brain, health, settings, help) |
-| `shell-v0/views/{HealthSurface,LibrarySurface,BrainSurface,SettingsSurface,HelpSurface}.ts` | the matching view step |
+| `shell-v0/views/{HealthSurface,LibrarySurface,BrainSurface,SettingsSurface,HelpSurface,SecuritySurface}.ts` | the matching view step (+ its light/variant steps) |
+
+> The pre-search-v3 entries `views/SearchSurface.ts` and `components/InspectorPane.ts` are
+> **gone** — those files were removed in the Search v2/v3 rewrite. Their steps now resolve
+> through `ResultsCard.ts` and `DocumentPane.ts`/`SummarizeView.ts` respectively.
 
 ## Key files
 | File | Purpose |
@@ -132,7 +143,7 @@ standalone demos. Run `jseval ui-shot --list` for the authoritative set.
 
 ## Known limitations
 - **No mock-data mode** — data/AI steps need the live dev stack (+ `ai_activate` for AI).
-- **AI legs are latency-/GPU-contention-sensitive** — the 9B model can unload under VRAM pressure; re-activate and retry.
+- **AI legs are latency-/GPU-contention-sensitive** — whichever chat model is active (compact by default in dev, tempdoc 842) can unload under VRAM pressure; re-activate and retry.
 - **Glassmorphism**: Playwright renders without a compositor — blur appears flat.
 - **DPI**: 1× only (2× exceeds the API's 2000px image cap).
 - **Motion**: static frames can't show transitions — assert motion *structurally* (the `--duration-*` / `--ease-*` CSS tokens) rather than watching it.

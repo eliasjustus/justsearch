@@ -32,13 +32,16 @@ final class ModelRegistryClasspathReachabilityTest {
     ModelRegistry registry = ModelRegistryLoader.loadFromClasspath("ai/model-registry.v2.json");
 
     assertEquals(2, registry.schemaVersion());
-    assertEquals(7, registry.packages().size());
+    assertEquals(8, registry.packages().size());
     assertNotNull(registry.findPackage("embedding"));
     assertNotNull(registry.findPackage("splade"));
     assertNotNull(registry.findPackage("reranker"));
     assertNotNull(registry.findPackage("ner"));
     assertNotNull(registry.findPackage("citation-scorer"));
     assertNotNull(registry.findPackage("chat"));
+    // The dev-only compact chat package (tempdoc 842) ships in the same registry — it is excluded
+    // from install plans by its devOnly flag, not by being absent from the model-identity authority.
+    assertNotNull(registry.findPackage("chat-compact"));
     assertNotNull(registry.findPackage("cuda-runtime"));
   }
 }

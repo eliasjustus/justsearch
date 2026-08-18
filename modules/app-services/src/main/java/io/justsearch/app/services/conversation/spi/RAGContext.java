@@ -9,6 +9,7 @@ import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.DocumentService.ContextCitation;
 import io.justsearch.app.api.DocumentService.ContextResult;
 import io.justsearch.app.api.DocumentService.DocumentRecord;
+import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.RetrieveContextParams;
 import io.justsearch.core.util.DocumentTypeDetector;
 import io.justsearch.core.util.TokenEstimation;
@@ -22,6 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -93,8 +95,51 @@ public final class RAGContext implements ContextInjector {
    */
   public static final String ATTR_QUALITY = "rag.quality";
 
+  /**
+   * Tempdoc 845 — the completion tokens this turn has reserved, i.e. the exact {@code max_tokens}
+   * the engine will send. Seeded by {@code ConversationEngine} from the same variable it later
+   * hands to the LLM call, so the reserve used for budgeting cannot drift from the reserve the
+   * server actually enforces.
+   *
+   * <p>An {@code Integer}. Reasoning tokens are spent INSIDE this reservation, not alongside it
+   * (tempdoc 835: "reasoning tokens and answer tokens share one ceiling"), so it is the whole
+   * reserve — never add a reasoning budget on top.
+   *
+   * <p>Absent (a caller that is not the engine) = {@link #DEFAULT_COMPLETION_RESERVE_TOKENS}.
+   */
+  public static final String ATTR_COMPLETION_RESERVE_TOKENS = "llm.completionReserveTokens";
+
+  /**
+   * Fallback completion reserve when {@link #ATTR_COMPLETION_RESERVE_TOKENS} is absent. Mirrors
+   * {@code ConversationEngine.DEFAULT_MAX_TOKENS}; deliberately not a cross-package reference,
+   * because this is a fallback for callers that are NOT the engine.
+   */
+  static final int DEFAULT_COMPLETION_RESERVE_TOKENS = 1024;
+
+  /**
+   * Fallback context window when no live value is available. Matches the shipped default
+   * ({@code InferenceConfig} builder default, {@code UiSettings.getContextLength()}); the
+   * composition root supplies the live observed window instead.
+   */
+  static final int DEFAULT_CONTEXT_WINDOW_TOKENS = 4096;
+
   private final DocumentService documents;
   private final Duration timeout;
+
+  /**
+   * Tempdoc 845 — the LIVE llama-server context window, read per request.
+   *
+   * <p>Both budget call sites used to hardcode 8192, a window that does not exist: the shipped
+   * default is 4096, so every ask over-committed its input budget by roughly 2x and Thorough
+   * (maxTokens 3072) reliably 400ed at the server. Resolved per request, not at construction,
+   * because the observed window is unknown until a server is started or adopted and changes when
+   * one is restarted.
+   *
+   * <p>Precedence: observed {@code /props} n_ctx -> configured launch window ->
+   * {@link #DEFAULT_CONTEXT_WINDOW_TOKENS}. "Unknown" falls through to the configured value rather
+   * than being treated as healthy.
+   */
+  private final Supplier<OnlineAiService> onlineAi;
 
   /**
    * Fallback top-K when the request body does not specify one. Sourced from
@@ -123,14 +168,91 @@ public final class RAGContext implements ContextInjector {
   }
 
   public RAGContext(DocumentService documents, Duration timeout, int defaultTopK) {
+    this(documents, timeout, defaultTopK, null);
+  }
+
+  /**
+   * Live-window constructor (tempdoc 845). The composition root passes the same
+   * {@code Supplier<OnlineAiService>} the engine holds, so the token budget is computed against
+   * the window the running server actually has.
+   *
+   * @param onlineAi supplier of the online-AI handle, or null to budget against
+   *     {@link #DEFAULT_CONTEXT_WINDOW_TOKENS}
+   */
+  public RAGContext(
+      DocumentService documents,
+      Duration timeout,
+      int defaultTopK,
+      Supplier<OnlineAiService> onlineAi) {
     this.documents = Objects.requireNonNull(documents, "documents");
     this.timeout = Objects.requireNonNull(timeout, "timeout");
     this.defaultTopK = defaultTopK > 0 ? defaultTopK : DEFAULT_TOP_K;
+    this.onlineAi = onlineAi;
+  }
+
+  /**
+   * Composition-root constructor (tempdoc 845) — configured top-K plus the live window.
+   */
+  public RAGContext(
+      DocumentService documents, int defaultTopK, Supplier<OnlineAiService> onlineAi) {
+    this(documents, DEFAULT_TIMEOUT, defaultTopK, onlineAi);
   }
 
   @Override
   public String id() {
     return ID;
+  }
+
+  /**
+   * Tempdoc 845 — the ONE place this injector decides how many input tokens it may spend.
+   *
+   * <p>Both budget consumers (the post-retrieval truncation safety net and the open-retrieval wire
+   * parameter) call this, so they cannot disagree about how much room the prompt has. Both used to
+   * hardcode {@code computeSafeInputBudgetTokens(8192, 1024)} independently — a window that does
+   * not exist paired with a reserve that ignored the request, yielding ~5990 tokens of promised
+   * input against a real 4096-token window.
+   *
+   * @return the input-token budget; 0 when the completion reservation leaves no room at all
+   */
+  private int inputBudgetTokens(ConversationContext ctx) {
+    return TokenEstimation.computeSafeInputBudgetTokens(
+        contextWindowTokens(), completionReserveTokens(ctx));
+  }
+
+  /**
+   * The live context window: observed {@code /props} n_ctx, else the configured launch window, else
+   * the shipped default. Unknown is never treated as generous — it falls through to the next most
+   * authoritative value, and the last of them is the real shipped default, not an invented one.
+   */
+  private int contextWindowTokens() {
+    OnlineAiService ai = onlineAi == null ? null : onlineAi.get();
+    if (ai != null) {
+      Integer observed = ai.llmContextTokens();
+      if (observed != null && observed > 0) {
+        return observed;
+      }
+      // Both accessors are nullable; configured is only a fallback when nothing was observed.
+      Integer configured = ai.configuredContextTokens();
+      if (configured != null && configured > 0) {
+        return configured;
+      }
+    }
+    return DEFAULT_CONTEXT_WINDOW_TOKENS;
+  }
+
+  /**
+   * The completion tokens this turn reserved — the engine's effective {@code max_tokens}, seeded on
+   * the context. Reasoning is spent inside this number (tempdoc 835), so it is the whole reserve.
+   */
+  private static int completionReserveTokens(ConversationContext ctx) {
+    Object raw = ctx.attributes().get(ATTR_COMPLETION_RESERVE_TOKENS);
+    if (raw instanceof Number n) {
+      int v = n.intValue();
+      if (v > 0) {
+        return v;
+      }
+    }
+    return DEFAULT_COMPLETION_RESERVE_TOKENS;
   }
 
   @Override
@@ -170,7 +292,7 @@ public final class RAGContext implements ContextInjector {
     // (BM25 pre-search discovers relevant documents from the full index).
     RetrievalAttempt attempt;
     if (docIds.isEmpty()) {
-      attempt = tryOpenRetrieval(question, topK, excludedSourceIds, collection);
+      attempt = tryOpenRetrieval(ctx, question, topK, excludedSourceIds, collection);
     } else {
       attempt = tryRetrieveContext(question, docIdSet, topK, excludedSourceIds, collection);
     }
@@ -184,11 +306,14 @@ public final class RAGContext implements ContextInjector {
     boolean contextTruncated = retrieval != null && retrieval.contextTruncated();
 
     List<SseEvent> events = new ArrayList<>();
+    // Tempdoc 845 — built here (so it reads the retrieval's own signals) but EMITTED after the
+    // local truncation below, because `context_truncated` must account for that truncation too.
+    // Emission order is unchanged: rag.meta still precedes rag.citations.
+    Map<String, Object> ragMeta = null;
     if (retrieval != null) {
-      Map<String, Object> ragMeta = new LinkedHashMap<>();
+      ragMeta = new LinkedHashMap<>();
       ragMeta.put("retrieval_mode", retrievalMode);
       ragMeta.put("retrieval_mode_reason", retrievalModeReason);
-      ragMeta.put("context_truncated", contextTruncated);
       ragMeta.put("chunks_used", chunksUsed);
       ragMeta.put("chunks_found", chunksFound);
       DocumentService.QualitySignals qs = retrieval.quality();
@@ -196,7 +321,6 @@ public final class RAGContext implements ContextInjector {
       ragMeta.put("score_gap", qs.scoreGap());
       ragMeta.put("retrieval_coverage", qs.retrievalCoverage());
       ragMeta.put("chunks_considered", qs.chunksConsidered());
-      events.add(new SseEvent("rag.meta", ragMeta));
       // Tempdoc 561 P-A/P-B: stash the producer's calibration so RAGDoneEnricher projects it onto the
       // done payload and the engine persists it WITH the assistant turn (evidence first-class on the
       // record). EPHEMERAL retrieval semantics are unchanged — this only exposes the signal downstream.
@@ -247,9 +371,21 @@ public final class RAGContext implements ContextInjector {
       // chunksUsed already 0; chunksFound stays as-is; citations remain empty.
     }
 
-    // Token-budget truncation safety net.
-    int budgetTokens = TokenEstimation.computeSafeInputBudgetTokens(8192, 1024);
+    // Token-budget truncation safety net. Tempdoc 845 — budgeted against the LIVE window and this
+    // request's real completion reserve, so it now actually fires when a turn would overflow
+    // instead of waving through ~5990 tokens aimed at a 4096-token window.
+    int budgetTokens = inputBudgetTokens(ctx);
     TruncationResult truncation = TokenEstimation.truncateIfNeeded(context, budgetTokens);
+
+    // Tempdoc 845 — an honest budget makes this safety net reachable, so the truncation flag must
+    // stop being Worker-only. It previously reported ONLY retrieval.contextTruncated(), leaving a
+    // locally-trimmed turn indistinguishable from a complete one — a silent lie this change would
+    // otherwise have made routine. Note the trimmed string still carries every citation
+    // (see the class javadoc): this flag is what keeps that limit visible rather than hidden.
+    if (ragMeta != null) {
+      ragMeta.put("context_truncated", contextTruncated || truncation.truncated());
+      events.add(new SseEvent("rag.meta", ragMeta));
+    }
 
     boolean usedRag = chunksUsed > 0;
     // Citations correspond to chunks; if we used full-doc fallback, no citations.
@@ -343,9 +479,19 @@ public final class RAGContext implements ContextInjector {
   }
 
   private RetrievalAttempt tryOpenRetrieval(
-      String question, int topK, List<String> excludedSourceIds, List<String> collection) {
+      ConversationContext ctx,
+      String question,
+      int topK,
+      List<String> excludedSourceIds,
+      List<String> collection) {
     try {
-      int budgetTokens = TokenEstimation.computeSafeInputBudgetTokens(8192, 1024);
+      // Tempdoc 845 — the honest budget, not a hardcoded 8192/1024. This one crosses the wire as
+      // the Worker's maxContextTokens, so it decides how many passages come back: an over-budget
+      // ask now returns FEWER whole passages (each with its citation) instead of a full set the
+      // window cannot hold. Floored at 1 because 0 would flip the Worker out of token-aware mode
+      // into its 200K-character fallback (RagContextOps: `if (maxContextTokens > 0)`), which is the
+      // opposite of what a zero budget means.
+      int budgetTokens = Math.max(1, inputBudgetTokens(ctx));
       RetrieveContextParams params =
           RetrieveContextParams.of(
               question, topK, budgetTokens, Set.of(), excludedSourceIds, collection);

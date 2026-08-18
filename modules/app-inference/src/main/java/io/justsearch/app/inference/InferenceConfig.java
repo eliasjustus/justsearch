@@ -2,6 +2,10 @@
 package io.justsearch.app.inference;
 
 import io.justsearch.configuration.EnvRegistry;
+import io.justsearch.configuration.ModelPathSource;
+import io.justsearch.configuration.SystemAccess;
+import io.justsearch.configuration.model.ChatModelProfile;
+import io.justsearch.configuration.resolved.ConfigResolution;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.configuration.resolved.ResolvedConfig;
 import io.justsearch.configuration.resolved.ResolvedPathResolver;
@@ -27,6 +31,11 @@ import org.slf4j.LoggerFactory;
  * @param gpuLayers number of layers to offload to GPU (default: 0 = CPU mode)
  * @param vduMode when true, server launches with vision-safe flags ({@code -np 1},
  *     {@code --cache-ram 0}) that prevent multi-slot vision errors and prompt cache corruption
+ * @param chatProfileId id of the {@link ChatModelProfile} that selected {@code modelPath} +
+ *     {@code mmprojPath} as an atomic pair, or {@code null} when no profile governed the choice
+ *     (an operator-set path, or a bare path applied at runtime). Never a stale claim: whoever
+ *     changes {@code modelPath} without a profile MUST clear this, because the id is what
+ *     downstream surfaces report as the realized chat identity (tempdoc 842 §2.5).
  */
 public record InferenceConfig(
     Path serverExecutable,
@@ -35,7 +44,8 @@ public record InferenceConfig(
     int serverPort,
     int contextSize,
     int gpuLayers,
-    boolean vduMode
+    boolean vduMode,
+    String chatProfileId
 ) {
   private static final Logger log = LoggerFactory.getLogger(InferenceConfig.class);
 
@@ -52,6 +62,27 @@ public record InferenceConfig(
     if (gpuLayers < 0) {
       throw new IllegalArgumentException("gpuLayers must be non-negative");
     }
+    // A blank id is not a weaker claim than no claim — normalize so `chatProfileId() == null`
+    // is the single "no profile governed this pair" test everywhere downstream.
+    chatProfileId = (chatProfileId == null || chatProfileId.isBlank()) ? null : chatProfileId.trim();
+  }
+
+  /**
+   * Legacy seven-component form — equivalent to the canonical constructor with no profile claim.
+   *
+   * <p>Kept so call sites that genuinely have no profile to declare (telemetry fixtures, external
+   * server tests, hand-built configs) stay readable, and so {@code null} remains the explicit,
+   * honest default rather than something a caller has to remember to pass.
+   */
+  public InferenceConfig(
+      Path serverExecutable,
+      Path modelPath,
+      Path mmprojPath,
+      int serverPort,
+      int contextSize,
+      int gpuLayers,
+      boolean vduMode) {
+    this(serverExecutable, modelPath, mmprojPath, serverPort, contextSize, gpuLayers, vduMode, null);
   }
 
   /**
@@ -117,28 +148,72 @@ public record InferenceConfig(
     // Find llama-server executable (prefer CUDA variant when GPU is available)
     Path serverExe = findServerExecutable(resolvedBaseDir, cudaAvailable);
 
-    // Primary model selection:
-    // - Prefer explicit full path override (legacy UI setting): justsearch.llm.model_path / JUSTSEARCH_LLM_MODEL_PATH
-    // - Otherwise use modelsDir + VLM_MODEL filename.
-    Path llmModelPath = rc.ai().llmModelPath();
-    String llmModelPathOverride =
-        llmModelPath != null ? llmModelPath.toString() : null;
-    boolean usingLlmModelOverride = llmModelPathOverride != null && !llmModelPathOverride.isBlank();
+    // ---------------------------------------------------------------------
+    // Chat model selection (tempdoc 842 §2.1 correction + §2.3).
+    //
+    // ONE axis, not two: the chat model and the "extraction VLM" are the same
+    // llama-server engine loading the same file. The profile names an atomic
+    // (model, mmproj) pair so a half-swap — new model, stale projector — is
+    // unrepresentable; that half-swap is precisely how dev stacks ended up
+    // running text-only with no error anywhere.
+    // ---------------------------------------------------------------------
+    ChatModelProfile profile;
+    // isSet() covers env var + JVM flag; the resolution trace additionally catches a
+    // YAML/settings/snapshot-borne selection. Reading only isSet() would resolve the key through
+    // the chain and then ignore what the chain said — the "resolves, is reachable, changes
+    // nothing" shape the config-surface gate exists to catch.
+    boolean chatProfileSet =
+        EnvRegistry.CHAT_PROFILE.isSet()
+            || isExplicitlySourced(rc, EnvRegistry.CHAT_PROFILE.configKey());
+    boolean legacyProfileSet = EnvRegistry.VLM_PROFILE.isSet();
+    if (chatProfileSet) {
+      profile = ChatModelProfile.resolve(rc.ai().chatProfile());
+    } else if (legacyProfileSet) {
+      // Legacy key kept working: its ids ("qwen-vl", "paddle-ocr-vl") resolve through the same
+      // alias/id logic, so an existing justsearch.vlm.profile keeps selecting the same two files.
+      profile = ChatModelProfile.resolve(EnvRegistry.VLM_PROFILE.get().orElse(null));
+    } else {
+      profile = ChatModelProfile.DEFAULT;
+    }
+    // "Explicit" means a human or launcher NAMED a profile. It is what lets profile resolution
+    // supersede a system-owned stored path; without it, nothing changes for anyone.
+    boolean profileExplicit = chatProfileSet || legacyProfileSet;
+    log.debug(
+        "  Chat model profile: {} (explicit: {}, chat.profile set: {}, vlm.profile set: {})",
+        profile.id(),
+        profileExplicit,
+        chatProfileSet,
+        legacyProfileSet);
 
-    // Tempdoc 580 Track D / F-009: the extraction VLM is selected as an atomic
-    // (model, mmproj) PROFILE, not two independent filenames — so a half-swap
-    // (new model, forgotten projector → silent text-only degradation) is
-    // unrepresentable. Default profile = QWEN_VL = today's canonical pair.
-    // The per-file VLM_MODEL/MMPROJ_MODEL env overrides still win for advanced
-    // testing; no auto-discovery of other GGUFs.
-    VlmExtractionProfile profile = VlmExtractionProfile.resolve(EnvRegistry.VLM_PROFILE.get());
-    log.debug("  VLM extraction profile: {} (set: {})", profile.id(), EnvRegistry.VLM_PROFILE.isSet());
-    String vlmModel = nonBlankOr(rc.ai().vlmModel(), profile.vlmModel());
-    String mmprojModel = nonBlankOr(rc.ai().mmprojModel(), profile.mmprojModel());
+    // Per-file overrides keep their win over the profile's members (advanced testing);
+    // no auto-discovery of other GGUFs.
+    String vlmModel = nonBlankOr(rc.ai().vlmModel(), profile.modelFile());
+    String mmprojModel = nonBlankOr(rc.ai().mmprojModel(), profile.mmprojFile());
+    boolean profileModelFileUsed = vlmModel.equals(profile.modelFile());
 
-    log.debug("  Model files (from env or default):");
+    log.debug("  Model files (from env or profile):");
     log.debug("    VLM: {} (set: {})", vlmModel, EnvRegistry.VLM_MODEL.isSet());
     log.debug("    MMProj: {} (set: {})", mmprojModel, EnvRegistry.MMPROJ_MODEL.isSet());
+
+    // ---------------------------------------------------------------------
+    // Model-path override precedence.
+    //
+    // The pre-842 rule was "any stored llm.model_path wins". Every installed and dev data dir
+    // stores one (written at boot from settings.json), so that rule would make an explicit
+    // compact profile silently inert — the design's landmine. The distinction that fixes it
+    // already exists in the runtime: the source marker next to the stored value.
+    // ---------------------------------------------------------------------
+    Path llmModelPath = rc.ai().llmModelPath();
+    String llmModelPathOverride = llmModelPath != null ? llmModelPath.toString() : null;
+    boolean hasStoredModelPath = llmModelPathOverride != null && !llmModelPathOverride.isBlank();
+    ModelPathOwner owner = classifyModelPathOwner(rc, hasStoredModelPath);
+    boolean operatorOverride =
+        owner == ModelPathOwner.OPERATOR_ENV
+            || owner == ModelPathOwner.OPERATOR_SYSPROP
+            || owner == ModelPathOwner.OPERATOR_YAML;
+    // The stored path governs when an operator set it, OR (status quo) when nobody named a
+    // profile and a settings-borne value is all we have. Otherwise the profile governs.
+    boolean usingLlmModelOverride = hasStoredModelPath && (operatorOverride || !profileExplicit);
 
     Path modelPath;
     Path associatedModelsDir;
@@ -174,6 +249,11 @@ public record InferenceConfig(
       }
     }
 
+    // The claim is made only when the profile actually supplied the model file. A per-file
+    // VLM_MODEL override displaces a profile member, and a stale "compact" stamp on someone
+    // else's file is worse than no stamp at all.
+    String chatProfileId = (!usingLlmModelOverride && profileModelFileUsed) ? profile.id() : null;
+
     log.debug("  Resolved paths:");
     log.debug("    Server executable: {} (exists: {})", serverExe, Files.exists(serverExe));
     log.debug("    Model path: {} (exists: {})", modelPath, Files.exists(modelPath));
@@ -182,6 +262,15 @@ public record InferenceConfig(
         mmprojPath,
         mmprojPath != null && Files.exists(mmprojPath));
 
+    // ONE greppable line naming what governed. This is what a human reads when the wrong
+    // model loads.
+    log.info(
+        "Chat model governed by {}: model={} mmproj={} chatProfileId={}",
+        governedByLabel(owner, usingLlmModelOverride, profile, chatProfileId),
+        modelPath,
+        mmprojPath,
+        chatProfileId);
+
     return new InferenceConfig(
         serverExe,
         modelPath,
@@ -189,8 +278,84 @@ public record InferenceConfig(
         port,
         ctxSize,
         layers,
-        false // vduMode — normal startup, not VDU batch
-    );
+        false, // vduMode — normal startup, not VDU batch
+        chatProfileId);
+  }
+
+  /** Who owns the stored {@code justsearch.llm.model_path} value, if anyone. */
+  enum ModelPathOwner {
+    /** No stored value at all. */
+    NONE,
+    /** {@code JUSTSEARCH_LLM_MODEL_PATH} env var — always an operator lock. */
+    OPERATOR_ENV,
+    /** JVM flag with no system-owned marker — a human named this file. */
+    OPERATOR_SYSPROP,
+    /** {@code config.yaml} — nothing writes that file but a human. */
+    OPERATOR_YAML,
+    /** JVM flag written by the system itself (settings promotion, auto-select, profile). */
+    SYSTEM_STORED,
+    /** settings.json / worker-snapshot / auto-detected value that never became an operator lock. */
+    STORED_SETTINGS
+  }
+
+  /**
+   * Classifies the stored model path by <em>who wrote it</em>, using the resolution trace the
+   * config chain already records plus the {@code .source} marker sysprop.
+   *
+   * <p>The trace is the honest seam: a settings.json value promoted to a system property at boot
+   * arrives here as {@code jvm_arg}, indistinguishable from an operator {@code -D} flag by value
+   * alone. The marker is what separates the two, which is why
+   * {@link ModelPathSource#isSystemOwned(String)} is shared rather than re-derived per call site.
+   *
+   * <p>Unknown/absent provenance is treated as an operator flag unless the marker says otherwise:
+   * when in doubt, an explicit path stays sacred.
+   */
+  static ModelPathOwner classifyModelPathOwner(ResolvedConfig rc, boolean hasStoredModelPath) {
+    if (!hasStoredModelPath) {
+      return ModelPathOwner.NONE;
+    }
+    ConfigResolution res =
+        rc != null ? rc.resolution(EnvRegistry.LLM_MODEL_PATH.configKey()) : null;
+    String sourceName = res != null ? res.sourceName() : null;
+    if ("env_var".equals(sourceName)) {
+      return ModelPathOwner.OPERATOR_ENV;
+    }
+    if ("yaml".equals(sourceName)) {
+      // config.yaml has no installer writing into it; a path there is a human's choice.
+      return ModelPathOwner.OPERATOR_YAML;
+    }
+    if (sourceName == null || "jvm_arg".equals(sourceName)) {
+      String marker = SystemAccess.sysProp(ModelPathSource.SOURCE_PROP_LLM_MODEL_PATH);
+      return ModelPathSource.isSystemOwned(marker)
+          ? ModelPathOwner.SYSTEM_STORED
+          : ModelPathOwner.OPERATOR_SYSPROP;
+    }
+    return ModelPathOwner.STORED_SETTINGS;
+  }
+
+  /**
+   * True when {@code key} resolved from a real source rather than the programmatic default —
+   * i.e. somebody actually asked for this value.
+   */
+  private static boolean isExplicitlySourced(ResolvedConfig rc, String key) {
+    ConfigResolution res = rc != null ? rc.resolution(key) : null;
+    return res != null && res.isResolved() && !"default".equals(res.sourceName());
+  }
+
+  private static String governedByLabel(
+      ModelPathOwner owner,
+      boolean usingLlmModelOverride,
+      ChatModelProfile profile,
+      String chatProfileId) {
+    if (!usingLlmModelOverride) {
+      return chatProfileId != null ? "profile:" + profile.id() : "per-file-override";
+    }
+    return switch (owner) {
+      case OPERATOR_ENV -> "operator-env";
+      case OPERATOR_SYSPROP -> "operator-sysprop";
+      case OPERATOR_YAML -> "operator-yaml";
+      default -> "stored-settings";
+    };
   }
 
   private static String nonBlankOr(String value, String fallback) {
@@ -212,70 +377,6 @@ public record InferenceConfig(
       return p;
     }
     return modelsDir.resolve(p);
-  }
-
-  /**
-   * VLM extraction profiles (tempdoc 580 Track D / F-009). Each profile bundles the document
-   * extraction model with its matching multimodal projector as ONE atomic unit, so a swap
-   * cannot leave the projector behind (which would silently degrade the runtime to text-only —
-   * the failure mode the per-file {@code VLM_MODEL}/{@code MMPROJ_MODEL} override allows).
-   *
-   * <p>Selected by the {@code justsearch.vlm.profile} / {@code JUSTSEARCH_VLM_PROFILE} key; the
-   * default is {@link #QWEN_VL}, which is byte-for-byte today's canonical pair (so the default
-   * runtime behavior is unchanged). {@link #PADDLE_OCR_VL} is the F-009 pilot candidate
-   * (PaddleOCR-VL-1.6 — ~1B, Apache-2.0, llama.cpp-runnable). The pilot is gated on the
-   * retrieval-aware extraction eval (jseval {@code extraction-gate}), NOT the OCR leaderboard
-   * number — per §14.4 / InduOCRBench: OCR char-accuracy is a poor proxy for downstream nDCG.
-   */
-  enum VlmExtractionProfile {
-    /** Default — the canonical Qwen3.5-9B + mmproj pair. Today's behavior. */
-    QWEN_VL("qwen-vl", "Qwen_Qwen3.5-9B-Q4_K_M.gguf", "mmproj-F16.gguf"),
-    /** F-009 pilot — PaddleOCR-VL-1.6 (eval-gated, not yet default). */
-    PADDLE_OCR_VL("paddle-ocr-vl", "PaddleOCR-VL-1.6-Q4_K_M.gguf", "PaddleOCR-VL-1.6-mmproj-F16.gguf");
-
-    private final String id;
-    private final String vlmModel;
-    private final String mmprojModel;
-
-    VlmExtractionProfile(String id, String vlmModel, String mmprojModel) {
-      this.id = id;
-      this.vlmModel = vlmModel;
-      this.mmprojModel = mmprojModel;
-    }
-
-    String id() {
-      return id;
-    }
-
-    String vlmModel() {
-      return vlmModel;
-    }
-
-    String mmprojModel() {
-      return mmprojModel;
-    }
-
-    /** Resolve a profile from its id (case-insensitive); unknown/blank → the {@link #QWEN_VL} default. */
-    static VlmExtractionProfile resolve(java.util.Optional<String> rawId) {
-      if (rawId == null || rawId.isEmpty()) {
-        return QWEN_VL;
-      }
-      String wanted = rawId.get().trim();
-      if (wanted.isBlank()) {
-        return QWEN_VL;
-      }
-      for (VlmExtractionProfile p : values()) {
-        if (p.id.equalsIgnoreCase(wanted) || p.name().equalsIgnoreCase(wanted)) {
-          return p;
-        }
-      }
-      log.warn(
-          "Unknown VLM extraction profile '{}'; falling back to the '{}' default. Known profiles: {}.",
-          wanted,
-          QWEN_VL.id,
-          java.util.Arrays.stream(values()).map(VlmExtractionProfile::id).toList());
-      return QWEN_VL;
-    }
   }
 
   /**
@@ -427,8 +528,17 @@ public record InferenceConfig(
    */
   public InferenceConfig withVduMode(boolean vdu) {
     if (vdu == this.vduMode) return this;
+    // The (model, mmproj) pair is untouched here, so the profile claim carries: dropping it would
+    // make every VDU batch report an unknown chat identity.
     return new InferenceConfig(
-        serverExecutable, modelPath, mmprojPath, serverPort, contextSize, gpuLayers, vdu);
+        serverExecutable,
+        modelPath,
+        mmprojPath,
+        serverPort,
+        contextSize,
+        gpuLayers,
+        vdu,
+        chatProfileId);
   }
 
   /**
@@ -459,6 +569,7 @@ public record InferenceConfig(
     private int contextSize = 4096;
     private int gpuLayers = 0;
     private boolean vduMode = false;
+    private String chatProfileId;
 
     private Builder() {}
 
@@ -497,6 +608,16 @@ public record InferenceConfig(
       return this;
     }
 
+    /**
+     * Declares which {@link ChatModelProfile} selected this config's (model, mmproj) pair. Leave
+     * unset for hand-built or operator-path configs — {@code null} is the honest "no profile
+     * governed this" value.
+     */
+    public Builder chatProfileId(String chatProfileId) {
+      this.chatProfileId = chatProfileId;
+      return this;
+    }
+
     public InferenceConfig build() {
       return new InferenceConfig(
           serverExecutable,
@@ -505,7 +626,8 @@ public record InferenceConfig(
           serverPort,
           contextSize,
           gpuLayers,
-          vduMode
+          vduMode,
+          chatProfileId
       );
     }
   }

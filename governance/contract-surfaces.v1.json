@@ -121,6 +121,12 @@
       "consumers": ["modules/ui-web/src/api/domains/agent.ts"]
     },
     {
+      "name": "LiveRunsResponse",
+      "schema": "SSOT/schemas/live-runs-response.v1.json",
+      "outFile": "live-runs-response.ts",
+      "consumers": ["modules/ui-web/src/shell-v0/controllers/liveRuns.ts"]
+    },
+    {
       "name": "TimeseriesSnapshot",
       "schema": "SSOT/schemas/timeseries-snapshot.v1.json",
       "outFile": "timeseries-snapshot.ts",

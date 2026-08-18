@@ -530,6 +530,24 @@ message CitationMatchEntry {
   string text_source = 6;
 }
 
+// Tempdoc 836 S2S3-A.1 — the TEXT-coverage axis. Admission control (836 §3.5) preserves SENTENCE
+// coverage by cutting WINDOWS, so `sentences_scored == sentences_total` can hold while most of the
+// caller's text was never looked at. This is per SOURCE, not a response-level ratio: an aggregate
+// cannot express "source 3 got no window at all", which reads identically to "source 3 supports
+// nothing" without it. The response-level answer is sum(scored)/sum(considered), derived by
+// whoever needs it — per-source is the single authority, so one fact never gets two producers.
+//
+// The four states:
+//   considered == 0, scored == 0  -> no text at all (blank supply + failed lookup): UNVERIFIABLE
+//   considered >  0, scored == 0  -> STARVED: text existed, the budget gave it no window
+//   considered >  0, scored <  considered -> partially examined
+//   considered >  0, scored == considered -> fully examined; only this state supports "unsupported"
+message SourceCoverage {
+  int32 source_index = 1;        // position in the request arrays (the 836 §5.4 numbering contract)
+  int32 windows_considered = 2;  // windows this source's text produced, BEFORE admission control
+  int32 windows_scored = 3;      // how many survived admission and were actually scored
+}
+
 message MatchCitationsResponse {
   repeated CitationMatchEntry matches = 1;
   int32 sentences_total = 2;           // Total sentences in the answer
@@ -544,6 +562,11 @@ message MatchCitationsResponse {
   // the deadline or the admission cap stopped the pass early. It is the honest denominator for a
   // coverage claim: "12 of 15 scored" is a statement about the budget, not about the evidence.
   int32 sentences_scored = 7;
+  // Tempdoc 836 S2S3-A.1 — the SECOND coverage axis, per source. `sentences_scored` says how much
+  // of the ANSWER was checked; this says how much of the caller's TEXT was looked at, and which
+  // sources were never examined at all. Empty when preparation never ran (nothing is known), which
+  // is distinct from a present entry reporting zero.
+  repeated SourceCoverage source_coverage = 8;
 }
 
 // === Folder Browse ===

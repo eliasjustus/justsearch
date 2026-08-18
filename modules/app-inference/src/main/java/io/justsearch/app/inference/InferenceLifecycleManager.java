@@ -911,7 +911,10 @@ public class InferenceLifecycleManager
                       newPort,
                       oldConfig.contextSize(),
                       oldConfig.gpuLayers(),
-                      oldConfig.vduMode());
+                      oldConfig.vduMode(),
+                      // Port-only change: the (model, mmproj) pair is identical, so the profile
+                      // claim carries. Dropping it here would make a detach look like a model swap.
+                      oldConfig.chatProfileId());
               next.validate();
 
               serverOps.setUsingExternal(false);
@@ -1226,6 +1229,21 @@ public class InferenceLifecycleManager
   /** Remove a previously added listener. */
   public void removeModeChangeListener(ModeChangeListener listener) {
     runner.removeListener(listener);
+  }
+
+  /**
+   * Tempdoc 837 §D.2 — add a listener that also receives the {@link
+   * io.justsearch.app.inference.telemetry.TransitionReason} behind the change. Consumers that must
+   * tell crash recovery apart from a deactivation subscribe here; everything else keeps using
+   * {@link #addModeChangeListener}.
+   */
+  public void addModeTransitionListener(ModeTransitionListener listener) {
+    runner.addReasonListener(listener);
+  }
+
+  /** Remove a previously added reason-bearing listener. */
+  public void removeModeTransitionListener(ModeTransitionListener listener) {
+    runner.removeReasonListener(listener);
   }
 
   // Tempdoc 518 P4: ModeChangeListener moved to io.justsearch.app.api.ModeChangeListener.

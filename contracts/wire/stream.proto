@@ -18,9 +18,11 @@ option java_multiple_files = true;
 message SseEnvelope {
   // Kind-prefixed slug identifying the source stream (e.g.,
   // "registry:capabilities"). Stable across reconnects.
-  // Regex matches existing wire format (slice 436 §B.2).
+  // Regex matches existing wire format (slice 436 §B.2), widened by
+  // tempdoc 834 S3a with the `run` kind for per-run observation streams
+  // (e.g. "run:run-4f3c9a10"). Slug rule unchanged: letter-initial.
   string stream_id = 1 [(buf.validate.field).string = {
-    pattern: "^(registry|surface|system):[a-z][a-z0-9-]*$",
+    pattern: "^(registry|surface|system|run):[a-z][a-z0-9-]*$",
     min_len: 1
   }];
   // SseFrameKind carries no enum.defined_only constraint per ADR-09a

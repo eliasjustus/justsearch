@@ -29,8 +29,10 @@ const ENGINE_PATTERNS = [
   /modules\/worker-services\/src\//,
   /modules\/app-services\/src\/main\/java\/io\/justsearch\/app\/services\/worker\//,
   /modules\/app-services\/src\/main\/java\/io\/justsearch\/app\/services\/gpl\//,
-  /modules\/search\/src\//,
-  /modules\/app-search\/src\//,
+  // (`modules/search/src/` and `modules/app-search/src/` were listed here until
+  // 2026-08-18 — neither module has ever existed in this repo's history, so both
+  // patterns were dead weight that could never match. Removed with their settings
+  // `if`-clause counterparts.)
 ];
 
 function isEngineSource(filePath) {

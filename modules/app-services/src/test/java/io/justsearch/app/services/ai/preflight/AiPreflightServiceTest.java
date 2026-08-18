@@ -141,6 +141,30 @@ final class AiPreflightServiceTest {
         "search does not work without it, so a stale decline must not downgrade the severity");
   }
 
+  /**
+   * (7) Tempdoc 842: a devOnly package is absent from the reported package list entirely — not
+   * reported incomplete-but-non-blocking. A never-installed chat-compact must not surface anywhere
+   * a completeness/repair surface could offer to fix it, and it is LLM-tier on capable hardware
+   * under FULL_DESKTOP here, i.e. wanted and permitted by every other gate.
+   */
+  @Test
+  void devOnlyPackage_isAbsentFromPreflightEntirely() {
+    ModelRegistry registry =
+        new ModelRegistry(2, "test", List.of(embeddingPackage(), devOnlyChatPackage()));
+
+    AiPreflightResult result =
+        AiPreflightService.computePreflight(
+            registry, modelsDir, aiHome, HardwareProfile.gpuFull(12_000_000_000L),
+            InstallIntent.FULL_DESKTOP, Set.of(), NO_RUNTIME);
+
+    assertTrue(
+        result.packages().stream().noneMatch(p -> p.id().equals("chat-compact")),
+        "a devOnly package must not appear in the preflight package list at all");
+    assertTrue(
+        result.packages().stream().anyMatch(p -> p.id().equals("embedding")),
+        "non-devOnly packages are still reported");
+  }
+
   // --- fixtures -------------------------------------------------------------
 
   private static PackageStatus find(AiPreflightResult result, String id) {
@@ -163,7 +187,7 @@ final class AiPreflightServiceTest {
             new ModelVariant("model.onnx", ModelPrecision.FP32, ExecutionProvider.CPU,
                 "AAAA", 1_000, "https://example.com/fp32")),
         List.of(new SupportingFile("tokenizer.json", "CCCC", 10, "https://example.com/tok")),
-        0, null, null, null, CapabilityTier.RETRIEVAL_CORE, false,
+        0, null, null, null, CapabilityTier.RETRIEVAL_CORE, false, false,
         Necessity.REQUIRED, List.of());
   }
 
@@ -174,8 +198,19 @@ final class AiPreflightServiceTest {
             new ModelVariant("model_fp16.onnx", ModelPrecision.FP16, ExecutionProvider.CUDA,
                 "BBBB", 1_000, "https://example.com/fp16")),
         List.of(),
-        0, null, null, null, CapabilityTier.RETRIEVAL_ENRICHMENT, true,
+        0, null, null, null, CapabilityTier.RETRIEVAL_ENRICHMENT, true, false,
         Necessity.IMPROVES_RESULTS, List.of("cuda-runtime"));
+  }
+
+  private static ModelPackage devOnlyChatPackage() {
+    return new ModelPackage(
+        "chat-compact", "Chat model (compact)", "Dev-only small chat model", "compact",
+        List.of(
+            new ModelVariant("compact.gguf", ModelPrecision.GGUF, ExecutionProvider.LLAMA_SERVER,
+                "HHHH", 5_000, "https://example.com/compact-gguf")),
+        List.of(new SupportingFile("compact-mmproj.gguf", "IIII", 10, "https://example.com/mmproj")),
+        0, null, null, null, CapabilityTier.LLM, false, true,
+        Necessity.ADDS_FEATURE, List.of());
   }
 
   private static ModelPackage chatPackage() {
@@ -185,7 +220,7 @@ final class AiPreflightServiceTest {
             new ModelVariant("model.gguf", ModelPrecision.GGUF, ExecutionProvider.LLAMA_SERVER,
                 "DDDD", 5_000, "https://example.com/gguf")),
         List.of(),
-        HardwareProfile.MINIMUM_VRAM_FOR_GGUF, null, null, null, CapabilityTier.LLM, false,
+        HardwareProfile.MINIMUM_VRAM_FOR_GGUF, null, null, null, CapabilityTier.LLM, false, false,
         Necessity.ADDS_FEATURE, List.of());
   }
 }

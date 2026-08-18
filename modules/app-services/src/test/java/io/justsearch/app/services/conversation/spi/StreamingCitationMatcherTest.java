@@ -119,7 +119,7 @@ final class StreamingCitationMatcherTest {
     void emitsAuthoritativeMatches() {
       var matchResult = new CitationMatchResult(
           List.of(new CitationMatchEntry(0, "Sentence.", 0, 0.9, "doc-1", TextSource.SUPPLIED)),
-          1, 1, 10L, 1, ScorerKind.CROSS_ENCODER);
+          1, 1, 10L, 1, ScorerKind.CROSS_ENCODER, List.of());
       var matcher = new StreamingCitationMatcher(stubDocs(matchResult));
       var ctx = ctxWithCitations(List.of(citation("doc-1", 0, "excerpt")));
 
@@ -135,7 +135,7 @@ final class StreamingCitationMatcherTest {
     void matchPayloadUsesSourceIndex() {
       var matchResult = new CitationMatchResult(
           List.of(new CitationMatchEntry(0, "Sentence.", 2, 0.9, "doc-1", TextSource.SUPPLIED)),
-          1, 1, 10L, 1, ScorerKind.CROSS_ENCODER);
+          1, 1, 10L, 1, ScorerKind.CROSS_ENCODER, List.of());
       var matcher = new StreamingCitationMatcher(stubDocs(matchResult));
       var ctx = ctxWithCitations(List.of(citation("doc-1", 41, "excerpt")));
 

@@ -25,7 +25,12 @@ import {
   takeRequestedTab,
   type RetrospectiveTab,
 } from '../state/retrospectiveDrawer.js';
-import { sessionLabel, type SessionListItem } from '../controllers/AgentSessionController.js';
+import {
+  interruptedRunNotice,
+  interruptedRunPresentation,
+  sessionLabel,
+  type SessionListItem,
+} from '../controllers/AgentSessionController.js';
 // Tempdoc 577 Move 1 — per-run directives (resume included) dispatch ONLY through the control seam.
 import { dispatchRunControl } from '../controllers/runControlIntent.js';
 import { formatRelativeIso } from '../../utils/relativeTime.js';
@@ -442,6 +447,12 @@ export class RetrospectivePanel extends JfElement {
     .load-error {
       color: var(--text-warning);
     }
+    .interrupted {
+      display: block;
+      font-size: var(--font-size-xs);
+      color: var(--text-warning);
+      margin-top: 0.125rem;
+    }
   `,
   ];
 
@@ -648,6 +659,7 @@ export class RetrospectivePanel extends JfElement {
                             : ''}
                           ${s.iterationsUsed != null ? html`· ${s.iterationsUsed} iter` : nothing}
                         </div>
+                        ${this.renderInterruption(s)}
                       </div>
                       <button class="resume">Resume</button>
                     </div>
@@ -669,8 +681,9 @@ export class RetrospectivePanel extends JfElement {
                             ? formatRelativeIso(new Date(s.startedAtEpochMs).toISOString())
                             : ''}
                           ${s.iterationsUsed != null ? html`· ${s.iterationsUsed} iter` : nothing}
-                          · Finished
+                          ${interruptedRunPresentation(s) === 'FORK_ONLY' ? nothing : '· Finished'}
                         </div>
+                        ${this.renderInterruption(s)}
                       </div>
                       <div class="row-actions">
                         <button class="resume">Replay</button>
@@ -690,6 +703,20 @@ export class RetrospectivePanel extends JfElement {
             })}
       </div>
     `;
+  }
+
+  /**
+   * Tempdoc 834 §5.2 — the interruption line, when there is one. Four presentations, derived by the
+   * shared classifier from the exact triple the wire carries; a row that was simply finished, or
+   * that was never interrupted, says nothing extra. The FORK_ONLY copy names the fork because a
+   * budget/context gate lived in memory and no checkpoint recorded it — a Resume there would be the
+   * dead-button class, so the row keeps its Replay/Export actions and the copy says why.
+   */
+  private renderInterruption(s: SessionListItem): TemplateResult | typeof nothing {
+    const notice = interruptedRunNotice(s);
+    return notice === null
+      ? nothing
+      : html`<span class="interrupted" data-testid="session-interrupted">${notice}</span>`;
   }
 
   private renderTimeline(): TemplateResult {

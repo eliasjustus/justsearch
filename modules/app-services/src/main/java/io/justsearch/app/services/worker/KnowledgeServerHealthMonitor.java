@@ -108,7 +108,12 @@ public final class KnowledgeServerHealthMonitor implements Closeable {
       log.warn("Knowledge Server health monitor tick failed: {}", e.getMessage(), e);
       WorkerCapability cap = bootstrap.workerCapability();
       if (cap.health() == CapabilityHealth.READY) {
-        cap.transition(CapabilityHealth.DEGRADED, "Health monitor tick exception");
+        // Tempdoc 837 §3.1: guarded on READY — the worker was serving, so this is "lost", not
+        // "never started". The exception text is the detail behind the code.
+        cap.transition(
+            CapabilityHealth.DEGRADED,
+            io.justsearch.app.api.lifecycle.LifecycleReasonCode.WORKER_LOST.code(),
+            "Health monitor tick exception: " + e.getMessage());
       }
     }
   }

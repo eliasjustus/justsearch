@@ -19,6 +19,7 @@ import io.justsearch.indexerworker.extract.OcrRoutingConfig;
 import io.justsearch.indexerworker.extract.TikaOcrRuntime;
 import io.justsearch.indexerworker.rag.ChunkDocumentWriter;
 import io.justsearch.indexing.SchemaFields;
+import io.justsearch.app.api.status.MigrationSource;
 import io.justsearch.ipc.ChunkCoverage;
 import io.justsearch.ipc.CompatibilityStatus;
 import io.justsearch.ipc.CoreStatus;
@@ -582,17 +583,25 @@ final class IndexStatusOps {
                 : stateSnapshot.active_generation());
 
     // tempdoc 628 Stage C: surface WHY a rebuild is running (the building generation's manifest source,
-    // e.g. "corrupt_index_rebuild") so the Head can word the degradation cause.
+    // e.g. "corrupt_index_rebuild") so the Head can word the transition.
+    //
+    // Tempdoc 837 §2.3(i) — THIS is where the vocabulary lives: a TOTAL read-side mapping applied the
+    // moment the persisted string leaves the disk, with UNKNOWN as a first-class member. The field was
+    // caller-controlled (POST /api/indexing/migration/start forwarded an arbitrary body string into
+    // the manifest) and every pre-existing generation, every test driver's label, and every
+    // hand-written manifest can hand back a string outside any vocabulary we define — forever. So the
+    // closure is on read, not a strict write-side enum. The empty string is preserved as "no facet":
+    // it means "nothing is being rebuilt", which is a different fact from "we do not know why".
     String migrationSource = "";
     if (stateSnapshot != null
         && stateSnapshot.building_generation() != null
         && !stateSnapshot.building_generation().isBlank()
         && indexGenerationManager != null) {
-      String src =
-          indexGenerationManager.readGenerationSourceBestEffort(stateSnapshot.building_generation());
-      if (src != null) {
-        migrationSource = src;
-      }
+      migrationSource =
+          MigrationSource.fromWire(
+                  indexGenerationManager.readGenerationSourceBestEffort(
+                      stateSnapshot.building_generation()))
+              .wire();
     }
 
     EnumeratorProgress enumerator =

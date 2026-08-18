@@ -33,6 +33,9 @@ final class ConversationApiAssembly {
       AgentSessionController agentSessionController,
       AgentToolsController agentToolsController,
       ChatController chatController,
+      // Tempdoc 834 §1.6 — the POST-managed-SSE run stream family, over the ONE run channel registry
+      // the S4 enumeration will also read.
+      RunStreamController runStreamController,
       io.justsearch.ui.api.mcp.McpProtocolHandler mcpProtocolHandler,
       // Tempdoc 629 (#7): the AUTHORED conversation store, exposed for the encrypted-backup export.
       io.justsearch.agent.api.conversation.ConversationStore conversationStore) {}
@@ -82,12 +85,46 @@ final class ConversationApiAssembly {
             : (b.HeadAssembly != null
                 ? () -> b.HeadAssembly.core().agent()
                 : io.justsearch.agent.api.AgentService::unavailable);
+    // Tempdoc 834 §1.3 — THE run channel registry. One instance, shared by the agent loop (which
+    // journals through it) and the run-stream endpoints (which observe and, in S4, enumerate it):
+    // a second registry would be a second answer to "what is running right now".
+    final io.justsearch.app.observability.stream.run.RunChannelRegistry runChannelRegistry =
+        new io.justsearch.app.observability.stream.run.RunChannelRegistry();
+    // The projector keeps the journal carrying what the WIRE carries: the base payload plus the one
+    // wire-only overlay (the tool_batch_proposed gate prediction). Journaling the base alone would
+    // silently ship a gate-hint-less plan preview to every observer.
+    final io.justsearch.agent.api.RunObservation runObservation =
+        new io.justsearch.app.observability.stream.run.RunChannelObservation(
+            runChannelRegistry,
+            event -> {
+              java.util.Map<String, io.justsearch.agent.api.registry.Operation> opsByToolName;
+              try {
+                opsByToolName =
+                    io.justsearch.app.services.conversation.ProposedBatchProjection.indexByToolName(
+                        rawAgentSupplier.get().availableOperations());
+              } catch (RuntimeException engineOffline) {
+                opsByToolName = java.util.Map.of(); // degrade, exactly as AgentSseWriter does
+              }
+              var translated =
+                  io.justsearch.app.services.conversation.AgentEventSseTranslator.translate(
+                      event,
+                      b.HeadAssembly != null
+                          ? b.HeadAssembly.substrate().conversation().intentGateEvaluator()
+                          : null,
+                      opsByToolName);
+              return new io.justsearch.agent.api.RunObservation.WireFrame(
+                  translated.name(), translated.payload());
+            },
+            java.time.Clock.systemUTC());
     Supplier<io.justsearch.agent.api.AgentService> agentSupplier =
         () -> {
           io.justsearch.agent.api.AgentService a = rawAgentSupplier.get();
           if (a != null) {
             // Idempotent: forwards to the step runner (no-op on the unavailable null-object).
             a.setWorkflowToolRunner(wfToolRunner);
+            // Same late-bind reason (tempdoc 834 §1.3): the agent is constructed lazily when AI
+            // activates, so a one-shot set at boot would miss the instance that actually runs.
+            a.setRunObservation(runObservation);
           }
           return a;
         };
@@ -187,10 +224,16 @@ final class ConversationApiAssembly {
             List.of(
                 new io.justsearch.app.services.conversation.spi.DocAccess(docs),
                 new io.justsearch.app.services.conversation.spi.BatchDocAccess(docs),
+                // Tempdoc 845 — the same onlineAiSupplier the engine uses, so the RAG token budget
+                // is computed against the window the running llama-server actually has (observed
+                // n_ctx, else the configured launch window) instead of a hardcoded 8192.
                 ragCfgForCitations == null
-                    ? new io.justsearch.app.services.conversation.spi.RAGContext(docs)
+                    ? new io.justsearch.app.services.conversation.spi.RAGContext(
+                        docs,
+                        io.justsearch.app.services.conversation.spi.RAGContext.DEFAULT_TOP_K,
+                        onlineAiSupplier)
                     : new io.justsearch.app.services.conversation.spi.RAGContext(
-                        docs, ragCfgForCitations.ragTopK()),
+                        docs, ragCfgForCitations.ragTopK(), onlineAiSupplier),
                 io.justsearch.app.services.conversation.spi.UserPromptInjector.INSTANCE,
                 io.justsearch.app.services.conversation.spi.ExternalContextInjector.INSTANCE,
                 // Tempdoc 603 C2 — conversation-aware query decontextualization before RAG retrieval.
@@ -365,7 +408,7 @@ final class ConversationApiAssembly {
     // Tempdoc 584/585 — the read sub-controller depends on the NARROW AgentRunQueries surface
     // (agentSupplier::get adapts Supplier<AgentService> to Supplier<AgentRunQueries>).
     AgentSessionController agentSessionController =
-        new AgentSessionController(agentSupplier::get, telemetry);
+        new AgentSessionController(agentSupplier::get, telemetry, runChannelRegistry);
     AgentToolsController agentToolsController =
         new AgentToolsController(agentSupplier, virtualOperationStore);
     ChatController chatController =
@@ -376,6 +419,11 @@ final class ConversationApiAssembly {
             conversationStore,
             // Tempdoc 610 Phase D — the one-shot summarizer for compaction.
             onlineAiSupplier);
+    // Tempdoc 834 §1.6 / §15.1.3 — the run-stream family. It dispatches THROUGH ChatController's
+    // sink-taking entry point rather than around it, so a mid-run failure reaches every observer of
+    // the run instead of only the socket that started it.
+    RunStreamController runStreamController =
+        new RunStreamController(runChannelRegistry, chatController);
     io.justsearch.ui.api.mcp.McpProtocolHandler mcpProtocolHandler = null;
     if (registryPresent) {
       // Tempdoc 501 Phase 15: thread the runtime-manifest publisher through so the
@@ -423,6 +471,7 @@ final class ConversationApiAssembly {
         agentSessionController,
         agentToolsController,
         chatController,
+        runStreamController,
         mcpProtocolHandler,
         conversationStore);
   }

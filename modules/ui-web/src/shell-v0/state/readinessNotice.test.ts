@@ -317,7 +317,10 @@ describe('classifyConsequence (805 §G.2)', () => {
     expect(classifyConsequence(['index.dense_unavailable'])).toBe('retrieval-impaired');
     expect(classifyConsequence(['worker.health.embedding_not_ready'])).toBe('retrieval-impaired');
     expect(classifyConsequence(['worker.health.embedding_probe_missing'])).toBe('retrieval-impaired');
-    expect(classifyConsequence(['index.rebuilding'])).toBe('retrieval-impaired');
+    // (837 S6 retired `index.rebuilding`: a generation rebuild is a transition, not a degradation,
+    // so it can never reach this classifier. `index.embedding_rebuilding` — the in-place rebuild
+    // that leaves stability settled — is the one that genuinely does.)
+    expect(classifyConsequence(['index.embedding_rebuilding'])).toBe('retrieval-impaired');
     expect(classifyConsequence(['worker.spawn.failed'])).toBe('retrieval-impaired');
     // The reindex causes are retrieval-impairing too (the banner returns earlier for them, but the
     // classifier is consumed by other surfaces that have no reindex branch).
@@ -458,5 +461,103 @@ describe('remedy targets resolve to the surface that owns the capability', () =>
       target: ownerSurfaceId,
       label: 'Unlock in Security',
     });
+  });
+});
+
+/**
+ * Tempdoc 837 S3/S4 — the codes that used to be prose, or used to be collapsed onto a sibling.
+ * Each row is asserted on the bar the tempdoc set for itself: the wording must be TRUE in the state
+ * that emits it, and the consequence-set membership must be a decision, not an omission (omission
+ * silently selects `cosmetic` for an AI code and `impairing` for everything else).
+ */
+describe('readinessNotice — tempdoc 837 worker + inference rows', () => {
+  it('worker.lost words the state it is actually emitted in (it was serving, then stopped)', () => {
+    expect(reasonFor('worker.lost').wording).toBe('The knowledge server stopped responding');
+    // The collapsed code claimed a start failure for a worker that had started fine.
+    expect(reasonFor('worker.spawn.failed').wording).toContain('failed to start');
+    expect(reasonFor('worker.lost').wording).not.toContain('start');
+  });
+
+  it('worker.index_corrupt carries no fake one-click remedy — Open Health, like its precedent', () => {
+    const r = reasonFor('worker.index_corrupt');
+    expect(r.wording).toBe('The search index is corrupt and could not be repaired automatically');
+    // No operation exists for index.recovery.policy=BACKUP_REBUILD, so the row must not invent one:
+    // it declares NO remedy (the vdu.missing_mmproj precedent) and the banner supplies Open Health.
+    expect(r.remedy).toBeUndefined();
+    const n = readinessNotice(degraded('error', ['worker.index_corrupt']));
+    expect(n!.remedy).toEqual({ kind: 'navigate', target: 'core.health-surface', label: 'Open Health' });
+  });
+
+  it('the non-serving worker codes are all retrieval-impairing (omission would over-claim)', () => {
+    for (const code of [
+      'worker.lost',
+      'worker.index_corrupt',
+      'worker.shut_down',
+      'worker.not_connected',
+    ]) {
+      expect(classifyConsequence([code]), code).toBe('retrieval-impaired');
+    }
+  });
+
+  it('severity: a lost/corrupt server is error; a shutdown or a not-yet-connected one is calm', () => {
+    expect(severityForCodes(['worker.lost'])).toBe('error');
+    expect(severityForCodes(['worker.index_corrupt'])).toBe('error');
+    expect(severityForCodes(['worker.shut_down'])).toBe('info');
+    expect(severityForCodes(['worker.not_connected'])).toBe('info');
+    expect(warrantsSearchDegradationBanner(degraded('error', ['worker.lost']))).toBe(true);
+  });
+
+  it('S4: the two new inference codes are calm and stay OUT of the banner', () => {
+    expect(reasonFor('inference.gpu_yielded_to_indexing').wording).toBe(
+      'The GPU is indexing your files — chat resumes when it finishes',
+    );
+    expect(reasonFor('inference.up_for_background').wording).toBe(
+      'Chat is turned off; the AI engine is running background document processing',
+    );
+    expect(severityForCodes(['inference.gpu_yielded_to_indexing'])).toBe('info');
+    expect(severityForCodes(['inference.up_for_background'])).toBe('info');
+    expect(
+      warrantsSearchDegradationBanner(degraded('info', ['inference.gpu_yielded_to_indexing'])),
+    ).toBe(false);
+  });
+
+  it('S4: neither new inference code joins AI_MODEL_UNAVAILABLE_CODES (not "any inference.*")', () => {
+    // up_for_background describes an engine that is UP; gpu_yielded is a scheduled, self-clearing
+    // hand-off. Classifying either as "the AI model is unavailable" would repeat, in the other
+    // direction, the exact over-claim this tempdoc exists to remove.
+    expect(classifyConsequence(['inference.gpu_yielded_to_indexing'])).not.toBe('ai-unavailable');
+    expect(classifyConsequence(['inference.up_for_background'])).not.toBe('ai-unavailable');
+    // …while the genuinely-unavailable sibling still classifies that way.
+    expect(classifyConsequence(['inference.offline'])).toBe('ai-unavailable');
+  });
+
+  it('S5: a crash and a deactivation word DIFFERENT truths (the collapse this slice removes)', () => {
+    expect(reasonFor('inference.crashed').wording).toBe('The local AI model stopped unexpectedly');
+    expect(reasonFor('inference.deactivated').wording).toBe('The local AI model is turned off');
+    // Nobody chose the crash: it is a warn with a reload remedy. The deactivation IS the choice.
+    expect(severityForCodes(['inference.crashed'])).toBe('warn');
+    expect(severityForCodes(['inference.deactivated'])).toBe('info');
+    expect(reasonFor('inference.crashed').remedy).toEqual({
+      kind: 'operation',
+      operationId: 'core.reload-inference',
+    });
+  });
+
+  it('S5: inference.crashed MUST join AI_MODEL_UNAVAILABLE_CODES — the `cosmetic` trap', () => {
+    // A recognized `warn` row in NONE of the consequence sets falls through to `cosmetic`, and the
+    // banner then says "An optional capability is unavailable; results are still fully semantic"
+    // about a crashed AI model. Membership is the mandatory companion edit, not a nicety.
+    expect(classifyConsequence(['inference.crashed'])).toBe('ai-unavailable');
+    const n = readinessNotice(degraded('warn', ['inference.crashed']));
+    expect(n!.headline).toBe('AI features unavailable.');
+    expect(n!.body).toContain('Search is fully working');
+    expect(n!.body).toContain('Chat and answer features are unavailable');
+  });
+
+  it('S5: inference.deactivated does NOT join it — it is the policy/user-choice case', () => {
+    // The set's own doctrine excludes inference.policy_* ("policy-disabled never comes online").
+    // A deliberate switch-off is that case, and it ships at `info` where the set is never consulted.
+    expect(classifyConsequence(['inference.deactivated'])).not.toBe('ai-unavailable');
+    expect(warrantsSearchDegradationBanner(degraded('info', ['inference.deactivated']))).toBe(false);
   });
 });

@@ -420,6 +420,32 @@ final class StatusLifecycleHandlerTest {
     assertTrue(env.composites().get("aiFeatures").reasonCodes().contains("vdu.missing_mmproj"));
   }
 
+  @Test
+  @DisplayName("tempdoc 837: an orderly shutdown reaches INDEX_SERVING as NOT_CONFIGURED, not an error")
+  void workerShutDownIsANotConfiguredVerdictNotAnError() {
+    StatusLifecycleHandler handler = newHandler();
+    LifecycleSnapshotV1.Component ready =
+        new LifecycleSnapshotV1.Component(LifecycleState.LIFECYCLE_STATE_READY);
+    // The worker component as the OFFLINE arm now publishes it after an orderly teardown.
+    LifecycleSnapshotV1.Component shutDown =
+        new LifecycleSnapshotV1.Component(
+            LifecycleState.LIFECYCLE_STATE_DEGRADED, "worker.shut_down");
+    LifecycleSnapshotV1 snapshot =
+        LifecycleSnapshotV1.now(
+            new LifecycleSnapshotV1.Lifecycle(LifecycleState.LIFECYCLE_STATE_DEGRADED),
+            new LifecycleSnapshotV1.Components(ready, shutDown, ready));
+
+    ReadinessEnvelopeView env =
+        handler.buildReadinessEnvelope(
+            compatWorkerView(CompatibilityStatusView.empty()), snapshot, freshContact());
+
+    // The branch that used to key on worker.not_configured alone: without shut_down joining it, an
+    // orderly teardown would fall through to the ERROR-shaped branches and the tap row for
+    // (INDEX_SERVING, NOT_CONFIGURED, worker.shut_down) would be dead on arrival.
+    assertEquals("NOT_CONFIGURED", env.components().get("indexServing").state());
+    assertEquals("worker.shut_down", env.components().get("indexServing").reasonCode());
+  }
+
   /** Worker answered during this response build — the provenance these state/reason tests assume. */
   private static StatusLifecycleHandler.WorkerContact freshContact() {
     return StatusLifecycleHandler.WorkerContact.observed(System.currentTimeMillis());
@@ -522,6 +548,44 @@ final class StatusLifecycleHandlerTest {
         .aiReady(view.aiReady())
         .embeddingReady(view.embeddingReady())
         .build();
+  }
+
+  /**
+   * Tempdoc 837 S6 (§2.1/§2.2) — the retirement of {@code index.rebuilding}, asserted positively.
+   *
+   * <p>{@code compatBlockedReason} used to emit that code whenever a corruption-triggered rebuild was
+   * MIGRATING or SWITCHING. That is exactly the window the FE verdict forces to {@code transitioning},
+   * where the readiness notice returns null — so the code was published on the wire and no surface
+   * could ever word it. It is gone, and the reason travels as a facet of the transition instead. This
+   * pins the removal: if the branch comes back, this test goes red rather than the code silently
+   * re-appearing on a composite nothing renders.
+   */
+  @Test
+  void corruptIndexRebuildNoLongerProducesACompatBlockedReason() {
+    for (String migrationState : new String[] {"MIGRATING", "SWITCHING"}) {
+      WorkerOperationalView view =
+          WorkerOperationalViewBuilder.builder()
+              .core(new CoreIndexView(true, 10, 0, "SERVING", 0, 0))
+              .failure(FailureTrackingView.empty())
+              .migration(
+                  MigrationGenerationViewBuilder.builder()
+                      .migrationState(migrationState)
+                      .migrationSource("corrupt_index_rebuild")
+                      .migrationEnumerator(MigrationGenerationView.empty().migrationEnumerator())
+                      .build())
+              .compatibility(CompatibilityStatusView.empty())
+              .queueDb(QueueDbStatusView.healthy())
+              .enrichment(EnrichmentProgressView.empty())
+              .gpu(GpuDiagnosticsView.empty())
+              .vectorFormat(VectorFormatView.empty())
+              .telemetry(new TelemetryMetricsView(0.0, 0, 0, 0.25, "OK"))
+              .searchConfig(SearchConfigView.empty())
+              .build();
+
+      assertNull(
+          StatusLifecycleHandler.compatBlockedReason(view),
+          migrationState + ": a generation rebuild is a transition, not a compat block");
+    }
   }
 
   private static WorkerOperationalView workerView(

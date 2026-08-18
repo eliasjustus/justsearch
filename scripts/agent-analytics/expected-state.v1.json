@@ -19,7 +19,7 @@
       "match": [
         "check-theme-token-closure"
       ],
-      "claim": "check-theme-token-closure is RED on main (8 ghost tokens in shell-v0/components/RecentsMenu.ts) — pre-existing; only NEW ghost tokens beyond RecentsMenu.ts are yours.",
+      "claim": "check-theme-token-closure is RED on main (3 ghost tokens in shell-v0/components/RecentsMenu.ts (was 8; partially fixed, re-probed 2026-08-18)) — pre-existing; only NEW ghost tokens beyond RecentsMenu.ts are yours.",
       "evidence": "observations condition obs:theme-token-closure-red (seen 8); probe re-confirmed 2026-07-06",
       "added": "2026-07-06",
       "exitProbe": "node scripts/ci/check-theme-token-closure.mjs"

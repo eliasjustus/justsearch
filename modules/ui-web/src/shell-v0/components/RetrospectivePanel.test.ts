@@ -113,6 +113,41 @@ describe('RetrospectivePanel', () => {
     el.remove();
   });
 
+  // Tempdoc 834 §5.2 — the four interruption rows, derived from (state, resumable, interruptedAt).
+  it('renders the four interruption presentations, and only where one applies', async () => {
+    const at = '2026-08-18T10:00:00Z';
+    const ctrl = getAgentSessionController('http://x');
+    (ctrl as unknown as { sessions: unknown[] }).sessions = [
+      { sessionId: 's-fin', preview: 'finished run', status: 'DONE', resumable: false },
+      { sessionId: 's-mid', preview: 'mid-step run', status: 'READY_FOR_LLM', resumable: true, interruptedAt: at },
+      { sessionId: 's-appr', preview: 'gated run', status: 'WAITING_APPROVAL', resumable: true, interruptedAt: at },
+      { sessionId: 's-fork', preview: 'budget-parked run', status: 'WAITING_BUDGET', resumable: false, interruptedAt: at },
+    ];
+
+    const el = document.createElement('jf-interaction-retrospective-panel') as RetrospectivePanel;
+    el.apiBase = 'http://x';
+    el.open = true;
+    document.body.appendChild(el);
+    await settle(el);
+
+    const notices = Array.from(
+      el.shadowRoot?.querySelectorAll('[data-testid="session-interrupted"]') ?? [],
+    ).map((n) => (n.textContent ?? '').replace(/\s+/g, ' ').trim());
+    // Three rows say something; the FINISHED one deliberately says nothing.
+    expect(notices).toEqual([
+      'Interrupted when the app closed. Resume.',
+      'Interrupted while waiting for your approval. Resume.',
+      'Interrupted while waiting for your decision about tokens/context. Cannot be resumed — start a new run from this transcript',
+    ]);
+    // The FORK_ONLY row is not resumable, so it keeps Replay/Export — but it must NOT be labelled
+    // "Finished", because it was interrupted rather than completed.
+    const rows = Array.from(el.shadowRoot?.querySelectorAll('.session-row') ?? []);
+    const forkRow = rows.find((r) => (r.textContent ?? '').includes('budget-parked run'));
+    expect((forkRow?.textContent ?? '')).not.toContain('Finished');
+    expect(forkRow?.querySelector('button.resume')?.textContent?.trim()).toBe('Replay');
+    el.remove();
+  });
+
   // Tempdoc 585 §D Phase 1 (C1/D1) — the LIVE open path (setRetrospectiveOpen → loadActive →
   // loadSessions fetch → render) must NOT loop. The browser froze opening this drawer; this drives the
   // exact path the other tests bypass (they set `open=true` + sessions directly), with a notify counter

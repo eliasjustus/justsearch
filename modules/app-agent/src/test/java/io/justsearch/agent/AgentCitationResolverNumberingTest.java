@@ -59,7 +59,8 @@ class AgentCitationResolverNumberingTest {
             1,
             5L,
             1,
-            DocumentService.ScorerKind.CROSS_ENCODER);
+            DocumentService.ScorerKind.CROSS_ENCODER,
+            List.of());
 
     var cites =
         new AgentCitationResolver(docsReturning(result)).resolve("A sentence.", twoPassagesOfOneDoc());
@@ -83,7 +84,8 @@ class AgentCitationResolverNumberingTest {
             1,
             5L,
             1,
-            DocumentService.ScorerKind.CROSS_ENCODER);
+            DocumentService.ScorerKind.CROSS_ENCODER,
+            List.of());
 
     var cites =
         new AgentCitationResolver(docsReturning(result)).resolve("A sentence.", twoPassagesOfOneDoc());

@@ -7,6 +7,7 @@ import io.justsearch.agent.api.AgentErrorCode;
 import io.justsearch.agent.api.AgentProfile;
 import io.justsearch.agent.api.AgentRequest;
 import io.justsearch.agent.api.RetryAction;
+import io.justsearch.agent.api.RunObservation;
 import io.justsearch.agent.api.AgentService;
 import io.justsearch.agent.api.ToolCallRequest;
 import io.justsearch.agent.api.TraceContext;
@@ -125,6 +126,11 @@ public final class AgentLoopService implements AgentService {
   // (IntentGateEvaluator). Set by AgentLoopWiring after construction; the tool dispatcher resolves
   // it per-call via a supplier and stamps the backend GateBehavior onto the pending-approval event.
   private volatile io.justsearch.agent.api.registry.IntentPreviewer intentPreviewer;
+  // Tempdoc 834 §1.3 — the observation substrate a run is journaled and observed through. Late-bound
+  // by the composition root; NONE until then (see setRunObservation).
+  private volatile RunObservation runObservation = RunObservation.NONE;
+  /** The shape a native agent run is journaled under. */
+  private static final String RUN_SHAPE_ID = "core.agent-run";
   private final AgentToolEmitter agentToolEmitter;
   private final FileOperationLog fileOperationLog; // nullable
   // Tempdoc 584 §B.4: prompt assembly (the indexed-root preamble + the slice-447 condition-recovery
@@ -353,6 +359,18 @@ public final class AgentLoopService implements AgentService {
   }
 
   /**
+   * Tempdoc 834 §1.3 — installs the run observation substrate. Idempotent and late-bindable: the
+   * agent is constructed lazily when AI activates, so the composition root sets this on whichever
+   * instance it resolves rather than once at boot (the {@code standalone-capability-stays-stuck}
+   * trap). Until it is set, {@link RunObservation#NONE} applies and a run is UNOBSERVABLE but not
+   * mis-reported as unwatched.
+   */
+  @Override
+  public void setRunObservation(RunObservation observation) {
+    this.runObservation = observation == null ? RunObservation.NONE : observation;
+  }
+
+  /**
    * Slice 447 §X.11.5 Phase 5: wires the agent retrospection consumer onto the prompt composer.
    * The supplier is called at prompt-construction time; its returned String is appended to the
    * system prompt. Pass {@code null} to disable. Tempdoc 584 §B.4: delegates to
@@ -456,13 +474,31 @@ public final class AgentLoopService implements AgentService {
     agentTelemetry.recordSessionStart(); // tempdoc 415
     var traceSequencerRef = new AtomicReference<>(
         new AgentEventTracing.Sequencer(sessionId, session.activeAgentId()));
-    Consumer<AgentEvent> sink = wrapEventConsumer(sessionId, session, eventConsumer,
-        traceSequencerRef);
-    // Tempdoc 577 §2.14 Root I (#13) — the initiating SSE writer is the FIRST observer of the run's
-    // hub (not a privileged direct delegate): it subscribes like any reattaching observer, so N
-    // views share ONE run authority. Subscribing before the loop starts means it receives every
-    // event live (the buffer is empty at this point; a later /attach replays it).
-    session.eventHub().subscribe(eventConsumer);
+    Consumer<AgentEvent> sink = wrapEventConsumer(sessionId, session, traceSequencerRef);
+    // Tempdoc 834 §1.3 — open the run's observation channel. The session-local hub is gone; the
+    // substrate owns sequencing, the bounded replay ring, fan-out and evict-on-throw.
+    session.observeThrough(runObservation.open(sessionId, RUN_SHAPE_ID, request.conversationId()));
+    // Tempdoc 834 §6.1 — the act-on-the-run primer, pushed before every replay. All EIGHT
+    // components ride: dropping the three S1 added (pendingApprovals, autonomyLevel, park) would
+    // silently undo S1's whole point — a reattacher would see a stopped run with no gate to answer.
+    session.observation()
+        .setSnapshotSupplier(
+            () ->
+                new AgentEvent.StateSnapshot(
+                    session.iterationsUsed(),
+                    session.budgetRemaining(),
+                    session.toolCallsExecuted(),
+                    session.messages().size(),
+                    session.activeAgentId(),
+                    session.pendingApprovals(),
+                    session.autonomyLevel().name(),
+                    session.parkSnapshot(),
+                    TraceContext.none()));
+    // Tempdoc 577 §2.14 Root I (#13) — the initiating SSE writer is an OBSERVER of the run, not a
+    // privileged owner: the run survives it leaving, and it is counted (and evicted on a dead
+    // socket) exactly like a reattaching tab. It is delivered to directly because it takes typed
+    // AgentEvents while the journal carries the wire projection (§1.3.2).
+    session.attachInitiatingObserver(eventConsumer);
 
     // Prepend default system prompt if the conversation doesn't already have one
     if (session.messages().isEmpty()
@@ -573,10 +609,12 @@ public final class AgentLoopService implements AgentService {
       // defaults a missing mark to ERRORED/INTERNAL_ERROR (F6, loud ERROR), and fans out.
       finalizer.emitSessionEnd(sessionId, session);
       sessionRegistry.remove(sessionId);
-      // Tempdoc 577 §2.14 Root I (#13) — the run is terminal: close the hub (drop observers + the
-      // replay buffer, refuse late publishes). A reattach after this point reads the persisted record
-      // (events.ndjson), not the live hub — the run is no longer an in-flight observed entity.
-      session.eventHub().close();
+      // Tempdoc 577 §2.14 Root I (#13) / 834 §2 — the run is terminal. ONE call owns the whole
+      // transition: refuse late publishes, close attached observers, keep the replay readable for
+      // the linger window, then drop it. It used to be two sites that disagreed — remove-then-close
+      // here, with attach refusing an already-removed session — so a reattach arriving in the gap
+      // saw "gone" for a run whose answer had just landed.
+      session.observation().retire();
     }
   }
 
@@ -636,13 +674,14 @@ public final class AgentLoopService implements AgentService {
   }
 
   @Override
-  public boolean attachToRun(String sessionId, Consumer<AgentEvent> eventConsumer) {
-    return sessionRegistry.attachToRun(sessionId, eventConsumer);
+  public boolean attachToRun(String sessionId, Consumer<RunObservation.WireFrame> observer) {
+    return sessionRegistry.attachToRun(sessionId, 0L, observer);
   }
 
   @Override
-  public boolean attachToRun(String sessionId, long fromSeq, Consumer<AgentEvent> eventConsumer) {
-    return sessionRegistry.attachToRun(sessionId, fromSeq, eventConsumer);
+  public boolean attachToRun(
+      String sessionId, long sinceSeq, Consumer<RunObservation.WireFrame> observer) {
+    return sessionRegistry.attachToRun(sessionId, sinceSeq, observer);
   }
 
   @Override
@@ -776,7 +815,7 @@ public final class AgentLoopService implements AgentService {
   // --- Internal ---
 
   private Consumer<AgentEvent> wrapEventConsumer(
-      String sessionId, AgentSession session, Consumer<AgentEvent> delegate,
+      String sessionId, AgentSession session,
       AtomicReference<AgentEventTracing.Sequencer> traceSequencerRef) {
     return event -> {
       AgentEvent enriched = event;
@@ -785,12 +824,12 @@ public final class AgentLoopService implements AgentService {
         enriched = AgentEventTracing.withTrace(event,
             traceSequencerRef.get().next(event, session.iterationsUsed()));
       }
-      // Tempdoc 577 §2.14 Root I (#13) — publish to the session-local hub (the run's ONE event
-      // authority) instead of writing the SSE socket directly. The hub fans out to every observer
-      // (the initiating SSE writer + any reattaching tab) and SWALLOWS a broken observer's
-      // exception — so a closed/dropped socket can no longer kill the loop, and the run survives the
-      // socket close (the §2.15 V3 root cause: a synchronous write to a dead socket aborted the loop).
-      session.eventHub().publish(enriched);
+      // Tempdoc 577 §2.14 Root I (#13) / 834 §1.3 — deliver to the run's observers (the journal,
+      // which fans out to every reattacher, plus the initiating writer) instead of writing the SSE
+      // socket directly. A broken observer's exception is SWALLOWED and the observer evicted — so a
+      // closed/dropped socket can no longer kill the loop, and the run survives the socket close
+      // (the §2.15 V3 root cause: a synchronous write to a dead socket aborted the loop).
+      session.deliverToObservers(enriched);
       runStore.appendEvent(sessionId, enriched);
       // Tempdoc 585 §D Phase 1 (A1): per-event-type observability from the ONE publish chokepoint.
       agentTelemetry.recordEventEmitted(io.justsearch.agent.api.AgentEventPayloads.name(enriched));

@@ -5,6 +5,8 @@
  * present. Reads the single-authority manifest governance/agent-hooks.v1.json and
  * checks, against the live .claude/settings.local.json + hook files:
  *   - wiring     : every binding resolves to a catalog hook; every catalog hook is bound.
+ *   - live-wiring: every catalog hook is ALSO present in the live settings.local.json —
+ *                  the only file Claude Code reads. `wiring: "opt-in"` opts out on record.
  *   - cwd-invariant: every settings command is the ${CLAUDE_PROJECT_DIR} exec-form
  *                    (the regression teeth for the 592 crash class).
  *   - load       : every hook file parses (`node --check`) — crash-on-load can't ship.
@@ -27,6 +29,7 @@ import { HOOK_INTEGRITY_RULE_DESCRIPTIONS } from './rule-descriptions.mjs';
 import {
   verdictForBinding,
   verdictForCatalogBound,
+  verdictForLiveWiring,
   verdictForCwdInvariantCommand,
   verdictForLoad,
   verdictForBite,
@@ -153,6 +156,14 @@ export async function enforceHookIntegrity(options) {
   }
 
   // 2. cwd-invariant commands — scan the LIVE settings (catches a hand-edit bypassing the manifest).
+  //    2b. LIVE WIRING (added 2026-08-18): rule 1 above only proves the manifest is
+  //    internally consistent — catalog vs its own `bindings`. It says nothing about the
+  //    file Claude Code actually reads. That gap let SEVEN hooks (one of them blocking)
+  //    sit registered, bite-tested, and present in settings.local.json.example while
+  //    never firing in any real session, for over a month, with this gate green. A hook
+  //    that is not in the live settings does not exist at runtime, so assert it here.
+  //    A hook may opt out deliberately by declaring `"wiring": "opt-in"` in the catalog
+  //    (with a `wiringNote` saying why) — that is a decision on the record, not drift.
   if (existsSync(settingsPath)) {
     let settings;
     try {
@@ -160,6 +171,15 @@ export async function enforceHookIntegrity(options) {
       for (const { location, entry } of walkCommands(settings.hooks)) {
         const repr = entry.command === 'node' && Array.isArray(entry.args) ? `node ${entry.args.join(' ')}` : String(entry.command);
         push(verdictForCwdInvariantCommand({ location, isExecForm: isExecForm(entry), commandRepr: repr }), '.claude/settings.local.json');
+      }
+      const liveText = JSON.stringify(settings.hooks ?? {});
+      for (const [hookId, meta] of Object.entries(catalog)) {
+        const file = meta?.file ?? `${hookId}.mjs`;
+        push(verdictForLiveWiring({
+          hookId,
+          live: liveText.includes(file),
+          optIn: meta?.wiring === 'opt-in',
+        }), '.claude/settings.local.json');
       }
     } catch (e) {
       push({ ruleId: 'hook-integrity/cwd-relative-command', status: 'fail', reason: `settings parse error: ${e.message}` }, '.claude/settings.local.json');

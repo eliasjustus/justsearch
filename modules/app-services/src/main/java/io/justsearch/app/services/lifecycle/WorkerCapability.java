@@ -3,6 +3,7 @@ package io.justsearch.app.services.lifecycle;
 
 import io.justsearch.app.api.lifecycle.Capability;
 import io.justsearch.app.api.lifecycle.CapabilityHealth;
+import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
 import io.justsearch.app.services.worker.RecoveryContext;
 import java.util.List;
 import java.util.Objects;
@@ -23,7 +24,11 @@ import java.util.function.BiConsumer;
 public final class WorkerCapability implements Capability {
 
   private volatile CapabilityHealth health = CapabilityHealth.PENDING;
-  private volatile String reason = "Worker not yet connected";
+  // Tempdoc 837 S3: the reason slot holds a LifecycleReasonCode, never prose. The pre-transition
+  // default is the "nothing observed yet" code, not a sentence — it is published raw on the runtime
+  // manifest and the 503 body from process start until the first transition.
+  private volatile String reason = LifecycleReasonCode.WORKER_NOT_CONNECTED.code();
+  private volatile String detail;
   // Tempdoc 627 (N2): the most-recent recovery context, parked by the supervision bridge immediately
   // before the RECOVERING transition so the capability-health bridge can attach it as forensic
   // attributes on the recovery occurrence. Read synchronously by transition listeners.
@@ -40,6 +45,11 @@ public final class WorkerCapability implements Capability {
   @Override
   public String pendingReason() {
     return health == CapabilityHealth.READY ? null : reason;
+  }
+
+  @Override
+  public String pendingDetail() {
+    return health == CapabilityHealth.READY ? null : detail;
   }
 
   @Override
@@ -65,9 +75,38 @@ public final class WorkerCapability implements Capability {
    * Returns the previous health state.
    */
   public CapabilityHealth transition(CapabilityHealth newHealth, String newReason) {
+    return transition(newHealth, newReason, null);
+  }
+
+  /**
+   * Transition health state, carrying a human {@code detail} sentence alongside the reason code.
+   *
+   * <p><b>Reason retention (tempdoc 837 §D.1).</b> The decision is
+   * {@link ReasonRetention#retainHeld} — the ONE rule, shared with {@link InferenceCapability}. Its
+   * strongest case is this capability's corrupt-index latch: {@code WorkerFatalReasonMarker
+   * .readAndClear} DELETES the marker file as it reads it, so "the worker died because the index is
+   * corrupt" is observable exactly once per crash: whichever caller wins the race gets it, and a
+   * later overwrite would destroy it PERMANENTLY (a restart cannot re-derive it — the marker is
+   * gone). So while health is non-READY, a held {@link LifecycleReasonCode#WORKER_INDEX_CORRUPT}
+   * (class {@code STICKY}) is retained against any incoming reason: the supervised-restart narration
+   * ({@code worker.recovering}) and the terminal give-up ({@code worker.restart_exhausted}) are
+   * downstream symptoms of the corruption, not competing causes.
+   *
+   * <p>The rule is bounded by recovery, not by a timer: READY clears the reason outright, so no
+   * stale cause can survive a worker that came back. The new health is ALWAYS applied — only the
+   * reason is retained — and a transition whose reason was rejected without a health change does
+   * NOT fire listeners (the tempdoc 656 reason-only widening below must not turn a rejected write
+   * into a spurious manifest publish).
+   */
+  public CapabilityHealth transition(
+      CapabilityHealth newHealth, String newReason, String newDetail) {
     CapabilityHealth prev = this.health;
     String prevReason = this.reason;
-    this.reason = newReason;
+    boolean latched = ReasonRetention.retainHeld(prevReason, newReason, newHealth);
+    String effectiveReason = latched ? prevReason : newReason;
+    String effectiveDetail = latched ? this.detail : newDetail;
+    this.reason = effectiveReason;
+    this.detail = effectiveDetail;
     this.health = newHealth;
     boolean healthChanged = prev != newHealth;
     if (healthChanged) {
@@ -81,7 +120,7 @@ public final class WorkerCapability implements Capability {
     // Tempdoc 656 Task 0: fire listeners on a reason-only change too, not just a health transition —
     // see InferenceCapability.transition() for the shared rationale. Generation-counter side effects
     // above stay gated on healthChanged only; this widening only affects listener notification.
-    if (healthChanged || !Objects.equals(prevReason, newReason)) {
+    if (healthChanged || !Objects.equals(prevReason, effectiveReason)) {
       for (BiConsumer<CapabilityHealth, CapabilityHealth> listener : listeners) {
         listener.accept(prev, newHealth);
       }

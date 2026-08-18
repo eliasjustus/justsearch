@@ -39,6 +39,33 @@ export function verdictForCatalogBound({ hookId, bound }) {
 }
 
 /**
+ * Every catalog hook is present in the LIVE .claude/settings.local.json — the only
+ * file Claude Code actually reads. `verdictForCatalogBound` above proves the manifest
+ * agrees with itself; this proves the manifest agrees with reality. Without it a hook
+ * can be registered, bite-tested, and shipped in the .example template while never
+ * firing (observed 2026-08-18: seven such hooks, one blocking, for over a month).
+ *
+ * `optIn` = the catalog declares `"wiring": "opt-in"` — a deliberate, documented
+ * decision not to wire it. Those pass; everything else must be live.
+ */
+export function verdictForLiveWiring({ hookId, live, optIn }) {
+  if (optIn) {
+    return { ruleId: `${ID}/live-wiring`, status: 'pass', reason: `'${hookId}' is declared opt-in (deliberately unwired)` };
+  }
+  if (!live) {
+    return {
+      ruleId: `${ID}/unwired-hook`,
+      status: 'fail',
+      reason:
+        `manifest.hooks['${hookId}'] is not present in .claude/settings.local.json, so it never fires. ` +
+        `Add it to the live settings (copy its entry from .claude/settings.local.json.example), ` +
+        `or declare "wiring": "opt-in" with a "wiringNote" in the catalog if it is deliberately unwired.`,
+    };
+  }
+  return { ruleId: `${ID}/live-wiring`, status: 'pass', reason: `'${hookId}' is wired in the live settings` };
+}
+
+/**
  * Every command in the live settings hooks block is the cwd-invariant exec-form
  * (command:"node", args:["${CLAUDE_PROJECT_DIR}/..."]). The regression teeth for
  * the original 592 bug: a relative `node scripts/...` command is a build failure.

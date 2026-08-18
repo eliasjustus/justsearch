@@ -46,7 +46,8 @@ final class LazyDocumentServiceCitationForwardTest {
                 1,
                 7L,
                 1,
-                ScorerKind.CROSS_ENCODER));
+                ScorerKind.CROSS_ENCODER,
+                List.of()));
 
     var result =
         new LazyDocumentService(() -> delegate)
@@ -72,7 +73,7 @@ final class LazyDocumentServiceCitationForwardTest {
   void citationOverloadDelegatesWithBlankText() {
     AtomicReference<List<VerificationSource>> seen = new AtomicReference<>();
     var delegate =
-        new RecordingDocs(seen, new CitationMatchResult(List.of(), 1, 0, 1L, 1, ScorerKind.NONE));
+        new RecordingDocs(seen, new CitationMatchResult(List.of(), 1, 0, 1L, 1, ScorerKind.NONE, List.of()));
 
     new LazyDocumentService(() -> delegate)
         .matchCitations("A sentence.", List.of(CITATION), 0.5)

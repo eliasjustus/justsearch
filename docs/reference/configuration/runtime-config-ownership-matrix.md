@@ -132,6 +132,7 @@ Precedence note:
 | - | JUSTSEARCH_BGE_M3_MAX_SEQ_LEN | justsearch.bgem3.max_seq_len | BGE_M3_MAX_SEQ_LEN | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_BGE_M3_MODEL_PATH | justsearch.bgem3.model_path | BGE_M3_MODEL_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_BUILD_STAMP | justsearch.build.stamp | BUILD_STAMP | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_CHAT_PROFILE | justsearch.chat.profile | CHAT_PROFILE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_CITATION_MATCH_THRESHOLD | justsearch.citation.match_threshold | CITATION_MATCH_THRESHOLD | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_CITATION_SCORER_DEADLINE_MS | justsearch.citation.scorer.deadline_ms | CITATION_SCORER_DEADLINE_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_CITATION_SCORER_ENABLED | justsearch.citation.scorer.enabled | CITATION_SCORER_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |

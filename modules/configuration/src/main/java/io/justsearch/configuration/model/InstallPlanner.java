@@ -148,6 +148,18 @@ public final class InstallPlanner {
     long resumableBytes = 0;
 
     for (ModelPackage pkg : registry.packages()) {
+      // Dev-only gate (tempdoc 842): a package flagged devOnly is never part of ANY user install
+      // plan — unconditional, ahead of the intent/hardware gates, because no intent and no
+      // hardware can make it wanted. Dev tooling fetches these directly from the registry.
+      if (pkg.devOnly()) {
+        skipped.add(
+            new InstallPlan.SkippedPackage(
+                pkg.id(),
+                SkipCause.DEV_ONLY,
+                String.format("%s is a development-only package", pkg.label())));
+        continue;
+      }
+
       // Intent gate (tempdoc 657): skip packages whose capability tier this intent
       // does not want, independent of hardware. An untagged package (tier == null) is
       // always wanted, so pre-tier registries behave exactly as before.
@@ -302,11 +314,11 @@ public final class InstallPlanner {
 
   /**
    * Whether the package would be included in the plan for the given {@code intent} and
-   * {@code hardware} — i.e. it is NOT skipped by the intent gate, the requiresCuda hardware gate, or
-   * the GGUF VRAM floor. Mirrors the three skip conditions in {@link #plan}'s loop so consumers get
-   * the include/skip verdict from one place rather than re-deriving the tier/CUDA/VRAM checks
-   * (tempdoc 772 Q3). Note: a variant might still be absent, but that is a completeness concern, not
-   * an inclusion one.
+   * {@code hardware} — i.e. it is NOT skipped by the dev-only gate, the intent gate, the
+   * requiresCuda hardware gate, or the GGUF VRAM floor. Mirrors the skip conditions in
+   * {@link #plan}'s loop so consumers get the include/skip verdict from one place rather than
+   * re-deriving the devOnly/tier/CUDA/VRAM checks (tempdoc 772 Q3, tempdoc 842). Note: a variant
+   * might still be absent, but that is a completeness concern, not an inclusion one.
    */
   public static boolean isIncludedByPlan(
       ModelPackage pkg, InstallIntent intent, HardwareProfile hardware) {
@@ -323,6 +335,9 @@ public final class InstallPlanner {
   public static boolean isIncludedByPlan(
       ModelPackage pkg, InstallIntent intent, Set<String> declined, HardwareProfile hardware) {
     DownloadProfile profile = hardware.downloadProfile();
+    if (pkg.devOnly()) {
+      return false;
+    }
     if (!intent.wants(pkg.tier())) {
       return false;
     }

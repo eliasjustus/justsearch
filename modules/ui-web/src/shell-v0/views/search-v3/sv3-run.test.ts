@@ -57,6 +57,7 @@ const source = (over: Partial<Sv3RunSource> = {}): Sv3RunSource => ({
   sessionId: null,
   budgetGate: null,
   contextGate: null,
+  runPark: null,
   iterationsUsed: 0,
   ...over,
 });
@@ -193,6 +194,19 @@ describe('two axes derive ONE phase', () => {
       0,
     );
     expect(sv3RunSessionStatus(source({ runInFlight: true }), held)).toBe('holding');
+  });
+
+  // Tempdoc 834 §6.2 — the reattach case: the run is parked, and the frame that said so was evicted
+  // from the replay ring before this observer arrived. Without the snapshot's `park` the window
+  // would read a streaming-but-silent run as `live`, i.e. as idle with no explanation.
+  it('reads the snapshot park as holding, even with no gate value and no held call on this observer', () => {
+    const parked = source({
+      runInFlight: true,
+      runPark: { kind: 'unobserved', sinceEpochMs: 42, detail: 'no observer' },
+    });
+    expect(sv3RunSessionStatus(parked, SV3_RUN_FEED_EMPTY)).toBe('holding');
+    // ...and it is the park doing the work: the same run without it is merely live.
+    expect(sv3RunSessionStatus(source({ runInFlight: true }), SV3_RUN_FEED_EMPTY)).toBe('live');
   });
 });
 

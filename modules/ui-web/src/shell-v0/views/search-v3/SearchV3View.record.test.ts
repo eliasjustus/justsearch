@@ -82,6 +82,8 @@ let fetchMock: ReturnType<typeof vi.fn>;
 interface Backend {
   conversations: Array<Record<string, unknown>>;
   threads: Record<string, { conversationId: string; events: unknown[] } | 'fail'>;
+  /** Tempdoc 834 §5.1 — what `GET /api/chat/runs/live` answers, newest-first. */
+  liveRuns: Array<Record<string, unknown>>;
 }
 let backend: Backend;
 
@@ -136,6 +138,9 @@ function stubFetch(): void {
     // Tempdoc 838 — a name is a fact the BACKEND holds now, so the fake one holds it too: the write
     // lands on the row the list then serves, which is what makes the reload assertions below a test
     // of durability rather than of a browser-local cache.
+    if (href.includes('/api/chat/runs/live')) {
+      return { ok: true, status: 200, json: () => Promise.resolve({ runs: backend.liveRuns }) };
+    }
     if (href.includes('/api/chat/conversations') && href.endsWith('/title')) {
       const id = decodeURIComponent(href.slice(0, -'/title'.length).split('/').pop() ?? '');
       const row = backend.conversations.find((c) => c.sessionId === id);
@@ -199,7 +204,7 @@ beforeEach(() => {
     sessionId: null,
   });
   clock = 0;
-  backend = { conversations: [], threads: {} };
+  backend = { conversations: [], threads: {}, liveRuns: [] };
   fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
   stubFetch();
@@ -546,11 +551,20 @@ describe('a reload restores the thread THIS TAB was reading (A3)', () => {
 });
 
 describe('a cold load re-attaches to a live run (D3)', () => {
-  it('asks the shared controller to reattach when the cross-tab pointer says a run is live', async () => {
-    localStorage.setItem(
-      'justsearch.activeAgentRun.v1',
-      JSON.stringify({ sessionId: 'run-7', runKind: 'agent' }),
-    );
+  it('asks the shared controller to reattach when the enumeration says a run is live', async () => {
+    backend.liveRuns = [
+      {
+        runId: 'run-7',
+        shapeId: 'core.agent-run',
+        conversationId: null,
+        state: 'running',
+        park: null,
+        startedAtEpochMs: 1,
+        updatedAtEpochMs: 1,
+        observerCount: 0,
+        snapshot: null,
+      },
+    ];
     // The controller comes back attached to the live run, exactly as a real reattach leaves it.
     Object.assign(ctrl, {
       runInFlight: true,
@@ -568,7 +582,7 @@ describe('a cold load re-attaches to a live run (D3)', () => {
     ).toContain('Active');
   });
 
-  it('starts NO controller at all when no run is pointed at — a mounted window does not poll', async () => {
+  it('starts NO controller at all when the enumeration is empty — a mounted window does not poll', async () => {
     const el = await mount();
     expect(reattach).not.toHaveBeenCalled();
     expect(ctrlExists).toBe(false);

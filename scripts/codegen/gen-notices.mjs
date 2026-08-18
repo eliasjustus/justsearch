@@ -85,9 +85,12 @@ function loadCargo(dump = readJson(CARGO_DUMP)) {
   return [...dump].sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version));
 }
 
-/** Bundled ML models — the registry is the SSOT for their licenses. */
+/** Bundled ML models — the registry is the SSOT for their licenses. devOnly packages
+ * (tempdoc 842) are never installed for users or redistributed, so they do not belong in
+ * user-facing attribution — same exclusion the install planner / preflight apply. */
 function loadModels(registry = readJson(REGISTRY_PROD)) {
   return (registry.packages || [])
+    .filter((p) => !p.devOnly)
     .map((p) => ({ id: p.id, label: p.label, license: p.license, termsUrl: p.termsUrl, targetDir: p.targetDir }))
     .sort((a, b) => a.id.localeCompare(b.id));
 }

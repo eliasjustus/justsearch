@@ -20,6 +20,7 @@ import io.justsearch.agent.api.registry.ConversationShapeRef;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.SamplingParams;
 import io.justsearch.core.util.TokenEstimation;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -28,6 +29,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -68,6 +72,15 @@ public final class ConversationEngine {
   static final int DEFAULT_MAX_TOKENS = 1024;
   private static final int MAX_ITERATIONS_HARD_CAP = 20;
   private static final ObjectMapper SCHEMA_MAPPER = new ObjectMapper();
+  private static final long STALL_POLL_MS = 250;
+
+  /**
+   * How long a turn may go with no output at all before {@link #streamLlm} gives up on it. Longer
+   * than the transport's own idle read deadline (2 minutes), so a stalled <em>body</em> is reported
+   * by the transport and this only catches a producer that never called back — a stream task that
+   * never started, or one parked outside the read loop. Package-private for tests.
+   */
+  Duration llmStallDeadline = Duration.ofMinutes(3);
 
   private final ConversationShapeCatalog catalog;
   private final Map<ConversationShapeRef, ShapeRunner> runnersByShape;
@@ -335,6 +348,14 @@ public final class ConversationEngine {
     }
 
     int maxTokens = parseMaxTokens(body);
+    // Tempdoc 845 — publish the effective completion reserve so context injectors budget the prompt
+    // against what this turn ACTUALLY reserves. RAGContext used to assume a flat 1024, which is
+    // merely the default: Thorough sends 3072, so its retrieved context over-committed the window
+    // by the 2048-token difference and the request 400ed at the server. Seeded from the same
+    // variable handed to streamLlm below, so the budgeting reserve cannot drift from the real one.
+    ctx.attributes().put(
+        io.justsearch.app.services.conversation.spi.RAGContext.ATTR_COMPLETION_RESERVE_TOKENS,
+        maxTokens);
     SamplingParams sampling = applySchemaConstraint(parseSamplingParams(body), body);
 
     // Assemble the system prompt once per request — contributors are stateless and don't
@@ -532,11 +553,17 @@ public final class ConversationEngine {
     StringBuilder fullText = new StringBuilder();
     AtomicReference<String> completionText = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
+    AtomicLong lastActivityNanos = new AtomicLong(System.nanoTime());
+    AtomicBoolean abandoned = new AtomicBoolean(false);
 
     ai.stream(
         new OnlineAiService.StreamRequest(messages, maxTokens, sampling),
         new OnlineAiService.StreamSink(
             chunk -> {
+              if (abandoned.get()) {
+                return;
+              }
+              lastActivityNanos.set(System.nanoTime());
               fullText.append(chunk);
               sink.accept(new SseEvent("chunk", Map.of("text", chunk)));
               for (StreamConsumer consumer : consumers) {
@@ -548,7 +575,13 @@ public final class ConversationEngine {
                 }
               }
             },
-            reasoning -> sink.accept(new SseEvent("reasoning_chunk", Map.of("text", reasoning))),
+            reasoning -> {
+              if (abandoned.get()) {
+                return;
+              }
+              lastActivityNanos.set(System.nanoTime());
+              sink.accept(new SseEvent("reasoning_chunk", Map.of("text", reasoning)));
+            },
             toolDelta -> {},
             usage -> usageOut.set(usage),
             complete -> {
@@ -561,7 +594,22 @@ public final class ConversationEngine {
             }));
 
     try {
-      latch.await();
+      // Bounded, idle-based: a stream that is producing keeps its turn for as long as it needs, but
+      // a producer that never calls back at all — the wedge shape, where the shared streaming thread
+      // is parked and this dispatch is only queued behind it — dies loudly instead of parking this
+      // request thread forever. The transport's own read deadline is shorter, so it normally reports
+      // first and this stays a backstop.
+      while (!latch.await(STALL_POLL_MS, TimeUnit.MILLISECONDS)) {
+        if (System.nanoTime() - lastActivityNanos.get() >= llmStallDeadline.toNanos()) {
+          abandoned.set(true);
+          LOG.error(
+              "LLM stream produced nothing for {} — abandoning the turn (producer never returned)",
+              llmStallDeadline);
+          throw new LlmStreamException(
+              "LLM stream stalled: no output for " + llmStallDeadline.toSeconds() + "s",
+              "LLM_TIMEOUT");
+        }
+      }
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       throw new LlmStreamException("LLM call interrupted", "INTERRUPTED");

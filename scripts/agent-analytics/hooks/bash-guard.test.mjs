@@ -34,21 +34,27 @@ function check(label, cmd, opts, expectBlock) {
 const MAIN = { isMain: true };
 const WT = { isMain: false };
 
-// --- P0a: flagged file-reading commands are NOT blocked ---
-check('P0a cat -n', 'cat -n file.txt', WT, false);
-check('P0a head -n', 'head -n 50 file.log', WT, false);
-check('P0a tail -n', 'tail -n 20 file.log', WT, false);
-check('P0a grep -A', 'grep -A 3 "pattern" file.txt', WT, false);
-check('P0a rg -i', 'rg -i needle src/app.ts', WT, false);
-// Regression: bare (flagless) reads still redirect to Read/Grep.
-check('P0a bare cat blocked', 'cat file.txt', WT, true);
-check('P0a bare head blocked', 'head file.txt', WT, true);
-check('P0a bare grep blocked', 'grep "pattern" file.txt', WT, true);
+// --- Tool-hygiene layer REMOVED 2026-08-18 (owner decision): it contradicted Claude
+// Code's own bypassPermissions guidance ("read files with cat, head, or sed -n").
+// Every file-reading form must now pass, bare or flagged. These assertions are the
+// regression teeth for the removal — if any of them starts blocking again, the layer
+// (or an equivalent) has crept back in.
+check('cat -n allowed', 'cat -n file.txt', WT, false);
+check('head -n allowed', 'head -n 50 file.log', WT, false);
+check('tail -n allowed', 'tail -n 20 file.log', WT, false);
+check('grep -A allowed', 'grep -A 3 "pattern" file.txt', WT, false);
+check('rg -i allowed', 'rg -i needle src/app.ts', WT, false);
+check('bare cat allowed (was blocked)', 'cat file.txt', WT, false);
+check('bare head allowed (was blocked)', 'head file.txt', WT, false);
+check('bare tail allowed (was blocked)', 'tail file.txt', WT, false);
+check('bare grep allowed (was blocked)', 'grep "pattern" file.txt', WT, false);
+check('bare rg allowed (was blocked)', 'rg needle src/app.ts', WT, false);
+check('bare cat allowed in MAIN worktree too', 'cat file.txt', MAIN, false);
 
-// --- P0b: chained commands (pipelines) bypass Layer 3 by design ---
-check('P0b cat | head allowed', 'cat file.txt | head', WT, false);
-check('P0b grep | wc allowed', 'grep x file.txt | wc -l', WT, false);
-check('P0b cat > redirect allowed', 'cat tmpl.txt > out.txt', WT, false);
+// --- Chained/piped forms were already exempt and remain so ---
+check('cat | head allowed', 'cat file.txt | head', WT, false);
+check('grep | wc allowed', 'grep x file.txt | wc -l', WT, false);
+check('cat > redirect allowed', 'cat tmpl.txt > out.txt', WT, false);
 // Regression: git + sleep safety still fire even inside chains.
 check('P0b force-push in chain still blocked', 'git push --force && echo done', WT, true);
 check('P0b sleep in chain still blocked', 'sleep 5; echo hi', WT, true);

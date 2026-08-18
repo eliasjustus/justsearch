@@ -119,6 +119,18 @@ public final class LifecycleSnapshotTap {
     MAPPING_TABLE.put(
         new MappingKey(ReadinessDimension.WORKER_CONTROL_PLANE, "NOT_READY", "worker.spawn.failed"),
         new ConditionMapping("index.start-error", "worker", Severity.ERROR));
+    // Tempdoc 837 §3.4: worker.lost and worker.index_corrupt are the two causes that USED to reach
+    // this dimension collapsed onto worker.spawn.failed, so they keep the same conditionId and
+    // severity — behaviour-preserving — while the Condition's `reason` field (PascalCase of the code)
+    // now says WorkerLost / WorkerIndexCorrupt instead of the false WorkerSpawnFailed. Without these
+    // rows the lookup misses and the Condition disappears entirely (an unmapped key emits nothing but
+    // a once-per-startup WARN), which would be a silent regression rather than a refinement.
+    MAPPING_TABLE.put(
+        new MappingKey(ReadinessDimension.WORKER_CONTROL_PLANE, "NOT_READY", "worker.lost"),
+        new ConditionMapping("index.start-error", "worker", Severity.ERROR));
+    MAPPING_TABLE.put(
+        new MappingKey(ReadinessDimension.WORKER_CONTROL_PLANE, "NOT_READY", "worker.index_corrupt"),
+        new ConditionMapping("index.start-error", "worker", Severity.ERROR));
 
     // ----- INDEX_SERVING: worker availability + throughput. -----
     MAPPING_TABLE.put(
@@ -126,6 +138,11 @@ public final class LifecycleSnapshotTap {
         new ConditionMapping("index.unavailable", "worker", Severity.WARNING));
     MAPPING_TABLE.put(
         new MappingKey(ReadinessDimension.INDEX_SERVING, "NOT_CONFIGURED", "worker.not_started"),
+        new ConditionMapping("index.unavailable", "worker", Severity.WARNING));
+    // Tempdoc 837 §3.4: an orderly teardown now says worker.shut_down where it used to say
+    // worker.not_configured — same NOT_CONFIGURED verdict, same Condition, more honest reason.
+    MAPPING_TABLE.put(
+        new MappingKey(ReadinessDimension.INDEX_SERVING, "NOT_CONFIGURED", "worker.shut_down"),
         new ConditionMapping("index.unavailable", "worker", Severity.WARNING));
     MAPPING_TABLE.put(
         new MappingKey(ReadinessDimension.INDEX_SERVING, "NOT_READY", "worker.starting"),
@@ -196,6 +213,26 @@ public final class LifecycleSnapshotTap {
     MAPPING_TABLE.put(
         new MappingKey(ReadinessDimension.AI, "DEGRADED", "inference.offline"),
         new ConditionMapping("ai.not-ready", "inference.ai", Severity.WARNING));
+    // Tempdoc 837 §3.4 / S5: the two causes that used to reach this dimension collapsed onto
+    // inference.offline. An unmapped (dimension, state, code) key emits NO Condition at all — only a
+    // once-per-startup WARN — so refining the code without a row here would delete the Condition
+    // instead of sharpening it. inference.crashed keeps offline's conditionId and WARNING severity
+    // (behaviour-preserving; only the Condition's `reason` gets more precise), while
+    // inference.deactivated drops to INFO: it is the user's own choice, and emitting a WARNING for a
+    // state somebody deliberately selected is the alarm-blindness this slice exists to stop. That
+    // matches its `info` CAUSE_ROWS severity and the sibling inference.starting row above.
+    MAPPING_TABLE.put(
+        new MappingKey(ReadinessDimension.AI, "NOT_READY", "inference.crashed"),
+        new ConditionMapping("ai.not-ready", "inference.ai", Severity.WARNING));
+    MAPPING_TABLE.put(
+        new MappingKey(ReadinessDimension.AI, "DEGRADED", "inference.crashed"),
+        new ConditionMapping("ai.not-ready", "inference.ai", Severity.WARNING));
+    MAPPING_TABLE.put(
+        new MappingKey(ReadinessDimension.AI, "NOT_READY", "inference.deactivated"),
+        new ConditionMapping("ai.not-ready", "inference.ai", Severity.INFO));
+    MAPPING_TABLE.put(
+        new MappingKey(ReadinessDimension.AI, "DEGRADED", "inference.deactivated"),
+        new ConditionMapping("ai.not-ready", "inference.ai", Severity.INFO));
     // UNKNOWN reachable only when the inference component state is null (boot path).
     MAPPING_TABLE.put(
         new MappingKey(ReadinessDimension.AI, "UNKNOWN", null),

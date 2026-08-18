@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
@@ -46,11 +47,18 @@ import tools.jackson.databind.json.JsonMapper;
  *       retained in the ring buffer for resume.
  * </ul>
  *
- * <p><strong>Known limitation — snapshot-vs-subscribe race</strong> (per slice 436 §B.C):
- * between {@link #sendSnapshot} (or {@link #attemptResume}) and
- * {@link SseStreamChannel#subscribe}, broadcasts can fire and be missed by the new
- * subscriber. The window is small (single-thread function call). Fixing requires
- * subscribe-before-snapshot + queue-and-filter pattern; out of scope for V1.
+ * <p><strong>Known limitation — snapshot-vs-subscribe race</strong> (per slice 436 §B.C),
+ * now scoped to the NO-CURSOR path only. On a fresh connect (no {@code ?since=}) the
+ * snapshot is built from a caller-supplied supplier and only then is
+ * {@link SseStreamChannel#subscribe} called, so a broadcast in between can be missed. That
+ * window stays open deliberately: closing it means invoking {@code snapshotExtras.get()}
+ * under the channel's monitor — lock inversion across 18 controllers (tempdoc 834 §1.3.1).
+ *
+ * <p>The RESUME path ({@code ?since=<token>}) no longer has the race: {@link #attach} and
+ * {@link #attachEventOnly} take it through
+ * {@link SseStreamChannel#subscribeAndReplay}, which registers the listener and snapshots
+ * the replay under one lock, so a frame published mid-attach reaches the client either via
+ * the replay or via the live fan-out — never both, never neither.
  */
 public final class SseEnvelopeWriter {
 
@@ -127,31 +135,52 @@ public final class SseEnvelopeWriter {
    *       since the token was issued — can't validate the gap).
    *   <li>Token predates the buffer's oldest retained frame.
    * </ol>
+   *
+   * <p>Non-atomic: this replays only, and the caller subscribes separately, so a frame
+   * broadcast in between is missed. {@link MultiplexedSseWriter} is its remaining caller —
+   * per-channel atomic attach across a fan-in connection is not in tempdoc 834 S3a's scope
+   * (§1.3.1 names {@code attach}). Single-channel connections use
+   * {@link #attemptResumeAndSubscribe}.
    */
   public boolean attemptResume(String resumeToken) {
-    Optional<ResumeTokenCodec.Decoded> decoded = ResumeTokenCodec.decode(resumeToken);
-    if (decoded.isEmpty()) {
+    OptionalLong sinceSeq = resumeCursor(resumeToken);
+    if (sinceSeq.isEmpty() || !channel.isWithinResumeWindow(sinceSeq.getAsLong())) {
       return false;
     }
-    ResumeTokenCodec.Decoded d = decoded.get();
-    if (!d.streamId().equals(channel.streamId())) {
-      return false;
-    }
-    long sinceSeq = d.seq();
-    long current = channel.currentSeq();
-    long oldest = channel.oldestRetainedSeq();
-    // Token from a future / different server lifetime.
-    if (sinceSeq > current) {
-      return false;
-    }
-    // Empty buffer with positive sinceSeq, OR token predates the buffer's window.
-    if (sinceSeq > 0 && (oldest == 0 || sinceSeq < oldest)) {
-      return false;
-    }
-    for (SseEnvelope frame : channel.framesSince(sinceSeq)) {
+    for (SseEnvelope frame : channel.framesSince(sinceSeq.getAsLong())) {
       sendFrame(frame);
     }
     return true;
+  }
+
+  /**
+   * Atomic form of {@link #attemptResume}: replays the missed frames AND subscribes for
+   * live forwarding under one channel lock, so no broadcast can slip between the two
+   * (tempdoc 834 §1.3.1). Returns the subscription handle the caller MUST unsubscribe on
+   * connection close, or empty when the token is unusable — malformed, from another stream,
+   * or outside the resume window — in which case nothing was replayed and no listener was
+   * registered, and the caller falls back to reset + snapshot + {@link #subscribe}.
+   */
+  public Optional<SseStreamChannel.Subscription> attemptResumeAndSubscribe(String resumeToken) {
+    OptionalLong sinceSeq = resumeCursor(resumeToken);
+    if (sinceSeq.isEmpty()) {
+      return Optional.empty();
+    }
+    return channel.subscribeAndReplay(this::sendFrame, sinceSeq.getAsLong());
+  }
+
+  /**
+   * Decodes {@code resumeToken} to its cursor seq, or empty when it is malformed, null, or
+   * addressed to a different stream. The window check is the channel's
+   * ({@link SseStreamChannel#isWithinResumeWindow}) so the two resume forms above cannot
+   * drift apart on it.
+   */
+  private OptionalLong resumeCursor(String resumeToken) {
+    Optional<ResumeTokenCodec.Decoded> decoded = ResumeTokenCodec.decode(resumeToken);
+    if (decoded.isEmpty() || !decoded.get().streamId().equals(channel.streamId())) {
+      return OptionalLong.empty();
+    }
+    return OptionalLong.of(decoded.get().seq());
   }
 
   /**
@@ -169,10 +198,12 @@ public final class SseEnvelopeWriter {
    * <ol>
    *   <li>Emits {@code connected} lifecycle.
    *   <li>Reads {@code ?since=<token>} from {@link SseClient#ctx()} (null-safe).
-   *   <li>Attempts resume; on miss emits {@code reset}.
+   *   <li>Attempts resume — atomically replaying AND subscribing; on miss emits
+   *       {@code reset}.
    *   <li>If not replayed, emits {@code snapshot} carrying the
    *       {@code snapshotExtras.get()} payload.
-   *   <li>Subscribes to the channel for live UPDATE forwarding.
+   *   <li>Subscribes to the channel for live UPDATE forwarding (only when the resume path
+   *       did not already do so).
    *   <li>Schedules heartbeat lifecycle frames at {@code heartbeatSeconds} cadence.
    *   <li>Registers onClose to unsubscribe + cancel heartbeat.
    *   <li>Calls {@link SseClient#keepAlive()} to hold the connection open.
@@ -192,18 +223,18 @@ public final class SseEnvelopeWriter {
     writer.sendConnected();
 
     String token = (client.ctx() == null) ? null : client.ctx().queryParam("since");
-    boolean replayed = false;
+    Optional<SseStreamChannel.Subscription> resumed = Optional.empty();
     if (token != null && !token.isBlank()) {
-      replayed = writer.attemptResume(token);
-      if (!replayed) {
+      resumed = writer.attemptResumeAndSubscribe(token);
+      if (resumed.isEmpty()) {
         writer.sendReset("resume-window-miss");
       }
     }
-    if (!replayed) {
+    if (resumed.isEmpty()) {
       writer.sendSnapshot(snapshotExtras.get());
     }
 
-    SseStreamChannel.Subscription subscription = writer.subscribe();
+    SseStreamChannel.Subscription subscription = resumed.orElseGet(writer::subscribe);
 
     var heartbeat =
         heartbeatScheduler.scheduleAtFixedRate(
@@ -245,15 +276,16 @@ public final class SseEnvelopeWriter {
     writer.sendConnected();
 
     String token = (client.ctx() == null) ? null : client.ctx().queryParam("since");
+    Optional<SseStreamChannel.Subscription> resumed = Optional.empty();
     if (token != null && !token.isBlank()) {
-      boolean replayed = writer.attemptResume(token);
-      if (!replayed) {
+      resumed = writer.attemptResumeAndSubscribe(token);
+      if (resumed.isEmpty()) {
         writer.sendReset("resume-window-miss");
       }
     }
     // No snapshot — event-only stream, no state to materialize.
 
-    SseStreamChannel.Subscription subscription = writer.subscribe();
+    SseStreamChannel.Subscription subscription = resumed.orElseGet(writer::subscribe);
 
     var heartbeat =
         heartbeatScheduler.scheduleAtFixedRate(
