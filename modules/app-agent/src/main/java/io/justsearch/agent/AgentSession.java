@@ -7,6 +7,7 @@ import tools.jackson.databind.json.JsonMapper;
 import io.justsearch.agent.api.AgentErrorCode;
 import io.justsearch.agent.api.ToolCallRequest;
 import io.justsearch.agent.api.AgentEvent;
+import io.justsearch.agent.api.RunObservation;
 import io.justsearch.agent.api.registry.OperationResult;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -22,6 +23,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -78,11 +80,17 @@ final class AgentSession {
   // thread, read when emitting the budget event on the same thread (defensive against future moves).
   private volatile int contextWindow = 0;
 
-  // Tempdoc 577 §2.14 Root I (#13) — the session-local event hub: the run is an OBSERVED entity, not
-  // owned by the socket that started it. The loop publishes every event here; N observers (the
-  // initiating SSE writer + any reattaching tab) subscribe (replay the buffer + receive ongoing).
-  // ~1000 events is a generous reattach window; the full history lives on events.ndjson.
-  private final RunEventHub eventHub = new RunEventHub(1000);
+  // Tempdoc 577 §2.14 Root I (#13) / 834 §1.3 — the run is an OBSERVED entity, not owned by the
+  // socket that started it. The session-local hub this used to be was DELETED: sequencing, bounded
+  // replay, fan-out and evict-on-throw all already existed in the SSE substrate, so the loop now
+  // publishes through an injected RunObservation.Handle and owns no journal of its own.
+  private volatile RunObservation.Handle observation = RunObservation.Handle.NONE;
+
+  // The observer that started the run. It is delivered to DIRECTLY (it takes typed AgentEvents,
+  // while the journal carries the wire projection), so its liveness is tracked here rather than by
+  // the substrate: a write to a dead socket THROWS, and an initiating observer left counted would
+  // mean "no watcher" never registers and a Watch run proceeds unwatched.
+  private volatile Consumer<AgentEvent> initiatingObserver;
 
   // Tempdoc 415: session-lifecycle observability state. Loop-thread-only access; markTerminated
   // is idempotent (WARN-on-second-call) so a future regression that triggers it twice doesn't
@@ -729,16 +737,49 @@ final class AgentSession {
     this.contextWindow = Math.max(0, n);
   }
 
-  // --- Run event hub (tempdoc 577 §2.14 Root I #13 — the run as an observed entity) ---
+  // --- Run observation (tempdoc 577 §2.14 Root I #13 / 834 §1.3 — the run as an observed entity) ---
 
-  /** The session-local event hub the loop publishes to and observers subscribe to. */
-  RunEventHub eventHub() {
-    return eventHub;
+  /** Binds this run to its observation channel. Called once at run start by the loop. */
+  void observeThrough(RunObservation.Handle observation) {
+    this.observation = observation == null ? RunObservation.Handle.NONE : observation;
+  }
+
+  /** The run's observation channel — the journal, the replay, and the secondary observers. */
+  RunObservation.Handle observation() {
+    return observation;
+  }
+
+  /** Registers the observer that started the run (the initiating SSE writer). */
+  void attachInitiatingObserver(Consumer<AgentEvent> observer) {
+    this.initiatingObserver = observer;
+  }
+
+  /**
+   * Delivers an event to every observer: the journal (which fans out to reattachers) and the
+   * initiating observer.
+   *
+   * <p>An initiating observer whose delivery THROWS is a dead socket, and is dropped — the same
+   * eviction the substrate performs for its own listeners. Both halves matter: without the eviction
+   * {@link #observerCount()} never reaches 0 and a Watch run proceeds unwatched; without the
+   * swallow a closed socket would abort the loop, which is the V3 root cause this design keeps
+   * fixed.
+   */
+  void deliverToObservers(AgentEvent event) {
+    observation.publish(event);
+    Consumer<AgentEvent> initiator = initiatingObserver;
+    if (initiator == null) {
+      return;
+    }
+    try {
+      initiator.accept(event);
+    } catch (RuntimeException deadSocket) {
+      initiatingObserver = null;
+    }
   }
 
   /** How many observers are currently attached to this run (the zero-observer policy reads this). */
   int observerCount() {
-    return eventHub.observerCount();
+    return observation.observerCount() + (initiatingObserver == null ? 0 : 1);
   }
 
   /** Tempdoc 577 §2.14 Root I (#13) — what a run with NO observer does at its next decision point. */

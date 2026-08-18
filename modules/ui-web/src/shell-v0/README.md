@@ -25,7 +25,7 @@ shell-v0/
 ├── state/                — client-persisted state stores (NavigationJournal,
 │                           UserStateDocument)
 ├── controllers/          — behavior controllers (AgentSessionController,
-│                           ReasoningController, activeRunPointer, draftPersistence)
+│                           ReasoningController, liveRuns, draftPersistence)
 ├── components/            — generic reusable Lit components (Form, StatusCard,
 │                           ActionButton, Table, Button, ConfirmDialog, ...)
 ├── renderers/             — JSON Forms renderer set (controls/, layouts/) plus

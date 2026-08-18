@@ -110,6 +110,14 @@ const TARGETS = [
     outFile: 'agent-history-response.ts',
     rootName: 'AgentHistoryResponse',
   },
+  // Tempdoc 834 §5.1 (S4): the live-run enumeration — the FE's run-discovery authority, replacing
+  // the localStorage pointer. Typed end-to-end for the same reason the agent surface above is: this
+  // is the endpoint that hands out the runIds every other run read is keyed by.
+  {
+    schema: 'SSOT/schemas/live-runs-response.v1.json',
+    outFile: 'live-runs-response.ts',
+    rootName: 'LiveRunsResponse',
+  },
   // Tempdoc 564 Phase 4: the last barrel consumer of the parallel `wire-types.ts` path. The
   // timeseries-snapshot schema is a clean, precise, hand-curated artifact (required fields), so the
   // FE type+Zod generate from it; once the barrel re-points here, wire-types.ts has no consumers and

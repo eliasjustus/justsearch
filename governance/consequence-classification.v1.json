@@ -20,5 +20,9 @@
     "testFiles": true,
     "whyTestFiles": "`*.test.ts` files assert the claim's presence on the impairing branch and its ABSENCE on the passage/AI branches — the precision tests are the reason the phrase must appear in them."
   },
-  "consumers": ["modules/ui-web/src/shell-v0/state/availability.ts"]
+  "consumers": [
+    "modules/ui-web/src/shell-v0/state/availability.ts",
+    "modules/ui-web/src/shell-v0/state/verdict.ts"
+  ],
+  "whyConsumers": "Tempdoc 837 §1.5 (UR-4) added verdict.ts: `verdictBody`'s degraded arm used to answer purely off `v.severity`, so a `warn` AI-only cause (inference.crashed) made the Health footer assert \"Retrieval is degraded\" while the banner — same verdict, same reason codes — correctly said search was fully working and only chat was off. That is the two-surfaces-one-verdict contradiction this register exists for, so the arm now consults `classifyConsequence` instead of re-deriving from severity."
 }

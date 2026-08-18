@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Tempdoc 577 §2.14 Root I — {@link SseWriter#writeResult} must report a serialization failure as
  * {@link SseWriter.SseWriteOutcome#SERIALIZATION_FAILED}, NOT as a client-disconnect. The agent
- * hub-observer eviction keys off {@code CLIENT_GONE} only, so this is what stops a non-serializable
+ * run-observer eviction keys off {@code CLIENT_GONE} only, so this is what stops a non-serializable
  * event (e.g. a tool's {@code structuredData}) from evicting a live observer + re-poisoning reattaches.
  */
 final class SseWriterTest {

@@ -1228,6 +1228,21 @@ public class InferenceLifecycleManager
     runner.removeListener(listener);
   }
 
+  /**
+   * Tempdoc 837 §D.2 — add a listener that also receives the {@link
+   * io.justsearch.app.inference.telemetry.TransitionReason} behind the change. Consumers that must
+   * tell crash recovery apart from a deactivation subscribe here; everything else keeps using
+   * {@link #addModeChangeListener}.
+   */
+  public void addModeTransitionListener(ModeTransitionListener listener) {
+    runner.addReasonListener(listener);
+  }
+
+  /** Remove a previously added reason-bearing listener. */
+  public void removeModeTransitionListener(ModeTransitionListener listener) {
+    runner.removeReasonListener(listener);
+  }
+
   // Tempdoc 518 P4: ModeChangeListener moved to io.justsearch.app.api.ModeChangeListener.
 
   // ==================== Model Swap Detection ====================

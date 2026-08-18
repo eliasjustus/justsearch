@@ -3580,10 +3580,11 @@ export class UnifiedChatView extends JfElement {
       this.agentSessionUnsub = subscribeAgentSession(() => this.requestUpdate());
     }
     this.agentCtrl = ctrl;
-    // Tempdoc 577 §2.14 Root I (#1d) — one-shot cross-tab reattach: the FIRST time this tab mounts the
-    // agent surface, discover a live run started in ANOTHER tab (via the shared activeRunPointer) and
-    // attach to it. Guarded both here (one-shot) and inside reattachActiveRunOnLoad (skips if this tab
-    // already owns/observes a run), and scheduled off the render via microtask.
+    // Tempdoc 834 §15.3 — one-shot cross-tab reattach: the FIRST time this tab mounts the agent
+    // surface, ask the backend's live-run enumeration (`GET /api/chat/runs/live`) whether a run this
+    // tab may adopt is executing — including one started in ANOTHER tab, or by no tab at all — and
+    // attach to it. Guarded both here (one-shot) and inside reattachActiveRunOnLoad (skips if this
+    // tab already owns/observes a run), and scheduled off the render via microtask.
     if (!this.reattachChecked) {
       this.reattachChecked = true;
       queueMicrotask(() => void ctrl.reattachActiveRunOnLoad());

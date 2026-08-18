@@ -59,15 +59,21 @@ public enum LifecycleReasonCode {
   INDEX_NOT_HEALTHY("index.not_healthy"),
   INDEX_BLOCKED_LEGACY("index.blocked_legacy"),
   INDEX_SCHEMA_MISMATCH("index.schema_mismatch"),
-  // Tempdoc 628 Stage C: a corruption-triggered rebuild-from-source is in progress (the index was
-  // detected corrupt, backed up, and is being rebuilt). Distinct from the BLOCKED_* reindex codes:
-  // here the rebuild is already running — the cause is "the index was corrupt", remedy is to wait.
-  INDEX_REBUILDING("index.rebuilding"),
+  // Tempdoc 837 S6 (§2.1/§2.2) RETIRED the INDEX_REBUILDING member here. (Its code string is
+  // deliberately not repeated in this comment: the gate's enum extractor does not strip comments, so
+  // a prose mention in the NAME-plus-quoted-string shape would re-create the phantom it deleted.)
+  // It was emitted
+  // only while migrationState ∈ {MIGRATING, SWITCHING} — which is exactly the window the FE verdict
+  // forces to `transitioning`, where the readiness notice returns null — so it reached the wire and
+  // no surface ever worded it. A generation rebuild in progress is a TRANSITION (self-clearing, has
+  // progress, no user action), and WHY it is running is a facet of that transition carried by
+  // io.justsearch.app.api.status.MigrationSource, not a second verdict about it.
+  //
   // An in-place embedding rebuild is running (`embeddingCompatState=REBUILDING`): the Worker
   // refuses dense queries with `REBUILD_IN_PROGRESS` until it finishes, so keyword results are
-  // complete but semantic ranking is off. Distinct from INDEX_REBUILDING, whose cause is "the
-  // index was corrupt" — reusing that code would tell the user their index is damaged when it
-  // is merely re-embedding.
+  // complete but semantic ranking is off. Distinct from a GENERATION rebuild (which moves the
+  // generation and so leaves stability provisional); this one leaves it settled, which is why this
+  // code is reachable and its retired neighbour was not.
   INDEX_EMBEDDING_REBUILDING("index.embedding_rebuilding"),
   INDEX_EMBEDDING_LEGACY("index.embedding_legacy"),
   INDEX_EMBEDDING_MISMATCH("index.embedding_mismatch"),
@@ -102,6 +108,16 @@ public enum LifecycleReasonCode {
   // RuntimeStatus.REASON_ENGINE_UP_FOR_BACKGROUND, so the capability and the ENGINE condition
   // (tempdoc 737 §12c item 2) keep naming this state identically.
   INFERENCE_UP_FOR_BACKGROUND("inference.up_for_background"),
+  // Tempdoc 837 S5 (fix a) — the engine STOPPED on its own: the periodic health threshold tripped and
+  // crash recovery forced the runtime OFFLINE (TransitionReason.CRASH_RECOVERY). Nobody chose this,
+  // the remedy is different (reload / check logs), and it reads differently to a user than the
+  // deactivation it was collapsed with. The one code in fix (a) that genuinely needed a new signal.
+  INFERENCE_CRASHED("inference.crashed"),
+  // Tempdoc 837 S5 — the user (or an admin action) turned the local AI off: an OFFLINE landing under
+  // TransitionReason.USER_SWITCH / ADMIN_TRIGGERED. The most FREQUENT of the four collapsed cases, so
+  // it is the one that trained alarm-blindness: the banner told a user who had just switched chat off
+  // that something was broken.
+  INFERENCE_DEACTIVATED("inference.deactivated"),
 
   // --- Visual text extraction (OCR/VDU) ---
   OCR_DISABLED("ocr.disabled"),
@@ -148,6 +164,113 @@ public enum LifecycleReasonCode {
 
   public static boolean isKnown(String code) {
     return code != null && ALLOWED_CODES.contains(code);
+  }
+
+  /**
+   * Tempdoc 837 §D.1 — how much this code is worth defending when it is the HELD reason and a new
+   * write arrives (see {@link RetentionClass}).
+   *
+   * <p>Deliberately a {@code switch} EXPRESSION with no {@code default} arm: Java then requires
+   * exhaustiveness, so adding a future reason code is a compile error until it is classified. The
+   * discipline this replaces was review-caught, and it was missed once already.
+   *
+   * <p>Deliberately NOT a constructor parameter. The readiness-reason-codes gate extracts the
+   * vocabulary with {@code \b[A-Z][A-Z0-9_]*\s*\(\s*"([^"]+)"\s*\)}
+   * ({@code scripts/ci/check-readiness-reason-codes.mjs}), which requires the closing paren
+   * immediately after the quoted string; a second constant argument would extract ZERO codes and
+   * fail the gate with a misleading "the producer/consumer seam moved".
+   *
+   * <p>Codes a {@link Capability} never holds — the {@code index.*} / {@code ocr.*} / {@code vdu.*}
+   * / {@code telemetry.*} / {@code lambdamart.*} / {@code gpu.*} / {@code chunk_embedding.*} /
+   * {@code worker.throughput_*} / {@code worker.health.*} / {@code worker.not_started} /
+   * {@code worker.unavailable} families are computed per-request in {@code StatusLifecycleHandler}
+   * from worker views and never enter a reason slot — are classified {@link RetentionClass#TRANSIENT}
+   * so the classification stays total: never-retained is the safe default for a code that cannot be
+   * held anyway.
+   */
+  public RetentionClass retentionClass() {
+    return switch (this) {
+      // Unrepeatable: the fatal-reason marker is deleted as it is read (tempdoc 628/837 §3.1).
+      case WORKER_INDEX_CORRUPT -> RetentionClass.STICKY;
+
+      // Real causes. WORKER_SPAWN_FAILED is deliberately NOT generic even though
+      // resolveWorkerReasonCode uses it as a consumer-side fallback: fallback-ness is a property of
+      // the consumer, and after the 837 S3 sweep the code is only ever SET where the worker
+      // genuinely never started. Classifying it GENERIC would let a stale worker.lost outrank a real
+      // subsequent spawn failure.
+      case WORKER_SPAWN_FAILED,
+          WORKER_LOST,
+          WORKER_RESTART_EXHAUSTED,
+          INFERENCE_CRASHED,
+          INFERENCE_MODEL_NOT_CONFIGURED,
+          INFERENCE_MODEL_NOT_FOUND,
+          INFERENCE_RUNTIME_NOT_INSTALLED,
+          INFERENCE_POLICY_ONLINE_AI_DISABLED,
+          INFERENCE_POLICY_GPU_DISABLED,
+          INFERENCE_ACTIVATION_FAILED -> RetentionClass.FAULT;
+
+      // The one "I know nothing" fallback in this vocabulary.
+      case INFERENCE_OFFLINE -> RetentionClass.GENERIC;
+
+      // Progress / scheduled / intentional, plus every code no capability ever holds.
+      case WORKER_STARTING,
+          WORKER_RECOVERING,
+          WORKER_SHUT_DOWN,
+          WORKER_NOT_CONNECTED,
+          WORKER_NOT_CONFIGURED,
+          WORKER_NOT_STARTED,
+          WORKER_UNAVAILABLE,
+          WORKER_THROUGHPUT_STALLED,
+          WORKER_THROUGHPUT_DEGRADED,
+          WORKER_HEALTH_EMBEDDING_NOT_READY,
+          WORKER_HEALTH_EMBEDDING_PROBE_MISSING,
+          INFERENCE_STARTING,
+          INFERENCE_GPU_YIELDED_TO_INDEXING,
+          INFERENCE_UP_FOR_BACKGROUND,
+          INFERENCE_DEACTIVATED,
+          INDEX_NOT_HEALTHY,
+          INDEX_BLOCKED_LEGACY,
+          INDEX_SCHEMA_MISMATCH,
+          INDEX_EMBEDDING_REBUILDING,
+          INDEX_EMBEDDING_LEGACY,
+          INDEX_EMBEDDING_MISMATCH,
+          INDEX_DENSE_UNAVAILABLE,
+          OCR_DISABLED,
+          OCR_ENGINE_MISSING,
+          OCR_LANGUAGE_MISSING,
+          VDU_AI_OFFLINE,
+          VDU_INSUFFICIENT_VRAM,
+          VDU_MISSING_MMPROJ,
+          VDU_CIRCUIT_OPEN,
+          TELEMETRY_UNAVAILABLE,
+          TELEMETRY_METRICS_STALE,
+          TELEMETRY_METRICS_HIGH_FAILURE_RATE,
+          TELEMETRY_DISK_SPACE_LOW,
+          CHUNK_EMBEDDING_NOT_READY,
+          CHUNK_EMBEDDING_IN_PROGRESS,
+          LAMBDAMART_NOT_CONFIGURED,
+          LAMBDAMART_TRAINING,
+          LAMBDAMART_FAILED,
+          GPU_SATURATED -> RetentionClass.TRANSIENT;
+    };
+  }
+
+  /**
+   * The {@link RetentionClass} of an arbitrary reason-slot string. A {@code null} or unrecognized
+   * value — a legacy prose sentence, or a code from a newer build — is {@link
+   * RetentionClass#TRANSIENT}: never retained, which is the conservative answer for something we
+   * cannot classify (prose has no precedence, per tempdoc 837 §1.4).
+   */
+  public static RetentionClass retentionClassOf(String code) {
+    if (code == null) {
+      return RetentionClass.TRANSIENT;
+    }
+    for (LifecycleReasonCode member : values()) {
+      if (member.code.equals(code)) {
+        return member.retentionClass();
+      }
+    }
+    return RetentionClass.TRANSIENT;
   }
 
   public static Set<String> allowedCodes() {

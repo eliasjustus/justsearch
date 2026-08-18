@@ -16,7 +16,7 @@ The canonical, must-not-drift docs live under:
 
 Noncanonical notes/ideas that may drift live under:
 - `docs/tempdocs/`
-- `docs/future-features/`
+- `docs/observations.md` + `docs/observations.d/` (the conditions store)
 
 Current LLMs consume documentation differently than humans. We scan, chunk, and embed. We do not "read" linearly. Therefore, when you write documentation in this repo—whether for humans or for other agents—you must follow these **LLM-Optimization Standards**.
 
@@ -49,7 +49,7 @@ At the root of the site (or docs), we maintain an `llms.txt`. This is the **Inde
 ### 2.2. The Context (`/llms-full.txt`)
 Some projects maintain a concatenated `llms-full.txt` file. **JustSearch does not maintain this by default.**
 
-If we later add an automated generator, it should concatenate **canonical docs only** (exclude `tempdocs/` and `future-features/`) to avoid drift/noise.
+If we later add an automated generator, it should concatenate **canonical docs only** (exclude `tempdocs/` and the observations conditions store) to avoid drift/noise.
 
 ---
 

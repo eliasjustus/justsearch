@@ -626,6 +626,8 @@ public class LocalApiServer {
         convApi.agentController(),
         convApi.agentSessionController(),
         convApi.agentToolsController());
+    // Tempdoc 834 §1.6 — the run-stream family (POST managed SSE, already token-covered).
+    RunRoutes.register(app, convApi.runStreamController(), convApi.agentSessionController());
     // Tempdoc 530 Layer 4 §4.2: surface the discipline-gate kernel's latest
     // SARIF as flat JSON for UI consumers. Read-only; doesn't run gates.
     GovernanceStateController governanceStateController = new GovernanceStateController();
@@ -954,6 +956,15 @@ public class LocalApiServer {
         this.convApi.agentController().shutdown();
       } catch (RuntimeException e) {
         log.warn("AgentController.shutdown failed: {}", e.getMessage());
+      }
+    }
+    // Tempdoc 834 §1.6: stop the run-stream heartbeat scheduler and retire every open run — the
+    // same asymmetric-lifecycle trap the line above closes for AgentController.
+    if (this.convApi != null && this.convApi.runStreamController() != null) {
+      try {
+        this.convApi.runStreamController().shutdown();
+      } catch (RuntimeException e) {
+        log.warn("RunStreamController.shutdown failed: {}", e.getMessage());
       }
     }
     // Tempdoc 430 Phase 8 (rev 3.11 §B.X.6): stop the rule-engine runner symmetrically.

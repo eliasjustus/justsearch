@@ -1041,12 +1041,17 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
   }
 
   /**
-   * Tempdoc 656: {@code inferenceCapability.pendingReason()} holds a real
-   * {@link LifecycleReasonCode#code()} when set via {@code RuntimeActivationService}'s wiring
-   * (Task 2), but can also hold arbitrary free prose from
-   * {@code InferenceCapabilityWiring.attachInferenceModeListener}'s mode-change callback (e.g.
-   * "Inference offline", "GPU allocated to indexing") — only forward it when it's a known code;
-   * otherwise fall back to the generic {@code INFERENCE_OFFLINE}, same as before this fix.
+   * Forward whichever specific cause the producer set, falling back to the generic
+   * {@code INFERENCE_OFFLINE} for an unrecognized reason. The worker twin is
+   * {@link #resolveWorkerReasonCode}.
+   *
+   * <p>Tempdoc 656 added this filter because the reason slot could hold arbitrary free prose from
+   * the mode-change callback ("Inference offline", "GPU allocated to indexing"), which it silently
+   * substituted the generic code for — deleting the cause. After tempdoc 837 S4/S5 swept the
+   * producers, every non-test writer passes a {@link LifecycleReasonCode}, so the fallback is
+   * defensive rather than routine: the slot now carries {@code inference.crashed} /
+   * {@code inference.deactivated} / {@code inference.gpu_yielded_to_indexing} where it used to
+   * carry one sentence the consumer had to discard.
    */
   private static String resolveInferenceReasonCode(
       io.justsearch.app.services.lifecycle.InferenceCapability inferenceCapability) {
@@ -1271,16 +1276,13 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
    * {@code readinessNotice.CAUSE_ROWS}.
    */
   static String compatBlockedReason(WorkerOperationalView workerView) {
-    // tempdoc 628 Stage C: a corruption-triggered rebuild-from-source is the dominant retrieval cause
-    // while it runs — word it explicitly ("rebuilding because the index was corrupt") rather than
-    // letting the user see a generic degraded state for an unexplained reason.
-    var mig = workerView.migration();
-    if (mig != null && "corrupt_index_rebuild".equals(mig.migrationSource())) {
-      String migState = mig.migrationState();
-      if ("MIGRATING".equalsIgnoreCase(migState) || "SWITCHING".equalsIgnoreCase(migState)) {
-        return LifecycleReasonCode.INDEX_REBUILDING.code();
-      }
-    }
+    // Tempdoc 837 S6 removed the migration branch that used to sit here (tempdoc 628 Stage C's
+    // `index.rebuilding`), restoring this to the pure compat-state function its javadoc above already
+    // describes. The branch fired only while migrationState ∈ {MIGRATING, SWITCHING}, which is exactly
+    // the window the FE verdict forces to `transitioning` — so the code was published on the wire and
+    // no surface could ever word it. WHY a rebuild is running now travels as a facet of that
+    // transition (io.justsearch.app.api.status.MigrationSource → verdict.reasons `source:<member>`), in the
+    // authority that is actually rendered.
     var compat = workerView.compatibility();
     if (compat == null) {
       return null;

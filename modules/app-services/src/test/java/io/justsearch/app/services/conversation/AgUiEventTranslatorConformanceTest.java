@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.agent.api.AgentEvent;
+import io.justsearch.agent.api.AgentEventPayloads;
 import io.justsearch.agent.api.TraceContext;
 import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.agent.api.registry.RiskTier;
@@ -96,6 +97,68 @@ class AgUiEventTranslatorConformanceTest {
           sse.name(),
           sse.payload().get("type"),
           () -> "AG-UI payload.type must equal the event type for " + event.getClass().getSimpleName());
+    }
+  }
+
+  @Test
+  @DisplayName("834 §6.5 — the map-input overload equals the typed one, for EVERY permit")
+  void mapInputEqualsTypedInput() {
+    for (AgentEvent event : ALL_VARIANTS) {
+      SseEvent typed = AgUiEventTranslator.translate(event);
+      SseEvent fromMap =
+          AgUiEventTranslator.translateFromMap(
+              AgentEventPayloads.name(event), AgentEventPayloads.base(event));
+      assertEquals(
+          typed,
+          fromMap,
+          () ->
+              "the map-input translator is a SECOND hand-written switch (it re-derives the "
+                  + "message()->content rename from payload keys), so this gate is the whole "
+                  + "mitigation for its drift: "
+                  + event.getClass().getSimpleName());
+    }
+  }
+
+  @Test
+  @DisplayName("834 §6.5 — equality holds for the WIRE payload too (base + the trace envelope)")
+  void mapInputEqualsTypedInputForTheWirePayload() {
+    for (AgentEvent event : ALL_VARIANTS) {
+      SseEvent typed = AgUiEventTranslator.translate(event);
+      SseEvent fromWire =
+          AgUiEventTranslator.translateFromMap(
+              AgentEventPayloads.name(event),
+              AgentEventPayloads.withTrace(AgentEventPayloads.base(event), event.trace()));
+      assertEquals(
+          typed,
+          fromWire,
+          () ->
+              "a run journal carries the WIRE pair, which appends the trace envelope — the map "
+                  + "form must reduce to the same output, not differ by one key: "
+                  + event.getClass().getSimpleName());
+    }
+  }
+
+  @Test
+  @DisplayName("834 §6.5 — the runId half is exercised: a TRACED event carries its runId through")
+  void mapInputCarriesTheRunIdHalf() {
+    TraceContext trace = new TraceContext("run-77", "step-1", "span-000009", null, "primary", null, 3);
+    List<AgentEvent> traced =
+        List.of(
+            new AgentEvent.TextChunk("hello", trace),
+            new AgentEvent.AgentDone("the answer", 1, 0, 0, List.of(), List.of(), trace));
+
+    for (AgentEvent event : traced) {
+      SseEvent typed = AgUiEventTranslator.translate(event);
+      SseEvent fromWire =
+          AgUiEventTranslator.translateFromMap(
+              AgentEventPayloads.name(event),
+              AgentEventPayloads.withTrace(AgentEventPayloads.base(event), event.trace()));
+      assertEquals(typed, fromWire, () -> event.getClass().getSimpleName());
+      assertEquals(
+          "run-77",
+          typed.payload().getOrDefault("runId", typed.payload().get("messageId")),
+          "the typed form reads runId off the trace — so the map form must read it off the "
+              + "payload's trace envelope, or the whole runId half of the projection is untested");
     }
   }
 

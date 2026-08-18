@@ -11,9 +11,12 @@
  * a same-tab reload, like the agent run's per-tab reattach). Cross-tab restore is NOT wanted here: a
  * second tab should land cold, not adopt another tab's open thread.
  *
- * Single authority: this module is the only reader/writer of the key (mirrors `activeRunPointer`). A
- * stale pointer (the conversation was deleted) is harmless — `loadConversation` resolves a missing
- * session to an empty thread.
+ * Single authority: this module is the only reader/writer of the key. A stale pointer (the
+ * conversation was deleted) is harmless — `loadConversation` resolves a missing session to an empty
+ * thread. That harmlessness is what keeps a browser-local pointer legitimate HERE while run
+ * discovery moved to the backend enumeration (`liveRuns.ts`, tempdoc 834 §15.3): a stale pointer to
+ * a dead conversation costs an empty thread, whereas a stale pointer to a dead RUN was a claim about
+ * what the product is doing right now, which only the backend can hold.
  */
 const KEY = 'justsearch.lastViewedConversation.v1';
 

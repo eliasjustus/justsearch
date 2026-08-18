@@ -349,7 +349,7 @@
             "args": [
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/search-engine-hint.mjs"
             ],
-            "if": "Edit(modules/adapters-lucene/src/**)|Write(modules/adapters-lucene/src/**)|Edit(modules/reranker/src/**)|Write(modules/reranker/src/**)|Edit(modules/worker-services/src/**)|Write(modules/worker-services/src/**)|Edit(modules/app-services/src/**)|Write(modules/app-services/src/**)|Edit(modules/search/src/**)|Edit(modules/app-search/src/**)"
+            "if": "Edit(modules/adapters-lucene/src/**)|Write(modules/adapters-lucene/src/**)|Edit(modules/reranker/src/**)|Write(modules/reranker/src/**)|Edit(modules/worker-services/src/**)|Write(modules/worker-services/src/**)|Edit(modules/app-services/src/**)|Write(modules/app-services/src/**)"
           },
           {
             "type": "command",
@@ -502,7 +502,8 @@
             ],
             "timeout": 5
           }
-        ]
+        ],
+        "matcher": "Explore|Plan"
       }
     ],
     "SubagentStop": [

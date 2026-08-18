@@ -3,31 +3,35 @@
 /**
  * Synchronous PreToolUse intervention hook (matcher: "Read", "Edit").
  *
- * Two behaviors:
- * 1. Auto-injects limit for Read calls on large files (>8KB) without offset/limit.
- * 2. Tracks per-session read and edit counts for compact-save.mjs (no warnings).
+ * Three behaviors:
+ * 1. Blocks a file's UNBOUNDED re-reads once they pass HOT_FILE_CAP this session.
+ * 2. Caps an agent-supplied offset/limit whose slice would still blow the Read tool's
+ *    own ~25k-token ceiling (tempdoc 727 F-7c).
+ * 3. Tracks per-session read and edit counts for compact-save.mjs (no warnings).
+ *
+ * REMOVED 2026-08-18: the blanket "auto-limit any >8KB file to 200 lines" injection.
+ * It was tuned for a much smaller context budget than the sessions that now run here
+ * (Opus 5 at 1M), and it taxed EVERY large read — including the first, orienting one —
+ * to save context that is no longer scarce, while costing extra round-trips to re-read
+ * with offsets. The two targeted protections above remain: they bound genuinely
+ * pathological reads (the same file over and over; a single slice over the platform's
+ * hard ceiling) rather than routine ones. Owner decision, this session.
  *
  * - Synchronous (async: false) — blocks until it returns
  * - File I/O: reads/writes tiny per-session count caches (~1-2KB each)
- * - Outputs hookSpecificOutput with updatedInput when limit injection is active
+ * - Outputs hookSpecificOutput with updatedInput when the F-7c cap fires
  *
  * Note: permissionDecision: 'allow' auto-approves the Read call without user
- * confirmation when limit injection is active.
+ * confirmation when that cap is applied.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { atomicWriteFileSync, readStdin, runHook, telemetryDir as TELEMETRY_DIR } from '../lib/hook-base.mjs';
 
-// Dynamic file size threshold for auto-injecting limit.
-// ~200 lines at ~40 bytes/line. Any file larger gets limit: 200.
-// Note: analytics (dispatch.mjs) captures pre-intervention state, so the
-// unbounded-read rate in session reports overcounts — reads that get limit
-// injected here still appear as "unbounded" in the events stream.
+// Below this size a file is too small for any slice of it to approach the Read
+// tool's token ceiling, so the F-7c explicit-limit cap skips it outright.
 const SIZE_THRESHOLD_BYTES = 8_000;
-// Lines to read when auto-limiting a large file. Matches Claude Code's own
-// large-file Read default — enough for orientation; re-read with offset for more.
-const DEFAULT_LIMIT = 200;
 // Unbounded re-reads of one file per session before the hook blocks and asks
 // for offset/limit. 10 tolerates legitimate iterative work while catching the
 // "keep re-reading the whole file" context-waste pattern; compaction resets it.
@@ -42,23 +46,6 @@ export function shouldBlockHotFile(unboundedCount, isUnbounded, cap = HOT_FILE_C
   return !!isUnbounded && unboundedCount >= cap;
 }
 
-export function shouldInjectLimit(toolInput) {
-  if (!toolInput?.file_path) return null;
-  if (toolInput.offset != null || toolInput.limit != null) return null;
-  try {
-    const stat = fs.statSync(toolInput.file_path);
-    if (stat.size > SIZE_THRESHOLD_BYTES) {
-      return {
-        updatedInput: { ...toolInput, limit: DEFAULT_LIMIT },
-        sizeBytes: stat.size,
-      };
-    }
-  } catch {
-    // File doesn't exist or can't be accessed — let Read handle the error
-  }
-  return null;
-}
-
 // Tempdoc 727 F-7c: chars-per-token estimate, calibrated live against a real dense tempdoc
 // (docs/tempdocs/624-agentic-retrieval-eval-rebuild.md — heavy on hyphenated technical terms,
 // parenthetical citations, and punctuation, which tokenizes less efficiently than plain
@@ -71,8 +58,7 @@ const CHARS_PER_TOKEN_ESTIMATE = 2.3;
 const SAFE_TOKEN_CEILING = 18_000;
 
 /**
- * shouldInjectLimit (above) only ever acts when the caller supplies NO offset/limit at all —
- * confirmed live (tempdoc 727 derisk) that an agent-specified offset/limit sails straight
+ * Confirmed live (tempdoc 727 derisk): an agent-specified offset/limit sails straight
  * through this hook untouched even when that requested slice is itself still large enough to
  * hit the platform's own Read ceiling. A file-wide average bytes-per-line estimate is not
  * reliable for deciding this: a real tempdoc's YAML frontmatter can contain a handful of
@@ -122,7 +108,9 @@ function readLineRangeBounded(filePath, offset, limit, fileSizeBytes) {
 export function shouldCapExplicitLimit(toolInput) {
   if (!toolInput?.file_path) return null;
   const hasExplicitRange = toolInput.offset != null || toolInput.limit != null;
-  if (!hasExplicitRange) return null; // shouldInjectLimit already owns the no-range case
+  // A read with NO offset/limit is left alone entirely (the blanket auto-limit was removed
+  // 2026-08-18); the platform's own Read truncation is the backstop for that case.
+  if (!hasExplicitRange) return null;
 
   let stat;
   try {
@@ -341,12 +329,9 @@ async function main() {
       process.exit(2);
     }
 
-    // Check if we need to inject a limit for large files
-    const injection = shouldInjectLimit(toolInput);
-
-    // Tempdoc 727 F-7c: the caller supplied its own offset/limit (shouldInjectLimit always
-    // defers in that case), but that requested slice may itself still be too large.
-    const explicitCap = injection ? null : shouldCapExplicitLimit(toolInput);
+    // Tempdoc 727 F-7c: the caller supplied its own offset/limit, but that requested
+    // slice may itself still be too large for the Read tool's own token ceiling.
+    const explicitCap = shouldCapExplicitLimit(toolInput);
     if (explicitCap) {
       const shortPath = (toolInput.file_path || '').split(/[/\\]/).slice(-2).join('/');
       process.stdout.write(JSON.stringify({
@@ -363,22 +348,8 @@ async function main() {
       }));
       return;
     }
-
-    // Only emit output if we're injecting a limit
-    if (injection) {
-      const shortPath = (toolInput.file_path || '').split(/[/\\]/).slice(-2).join('/');
-      process.stdout.write(JSON.stringify({
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
-          updatedInput: injection.updatedInput,
-          additionalContext:
-            `Note: Read on ${shortPath} (${injection.sizeBytes} bytes) was auto-limited to ${DEFAULT_LIMIT} lines. ` +
-            `Re-read with offset to access lines beyond ${DEFAULT_LIMIT} if needed.`,
-        },
-      }));
-    }
-    // No output = no modification
+    // No output = no modification. An unbounded read of a large file now passes
+    // through untouched — the platform's Read truncation handles it.
   } catch {
     // Parse failure — no modification
   }

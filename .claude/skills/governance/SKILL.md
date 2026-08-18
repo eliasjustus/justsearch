@@ -5,16 +5,19 @@ user-invocable: true
 
 # Discipline-gate kernel (tempdoc 530)
 
-The kernel that gates ratchet-style hygiene metrics across the repo. The
-canonical ratchet-file gates are `npm-audit`, `prose-tier-register`,
-`consumer-drift` (tempdoc 531 — substrate consumer-floor enforcement), and
-`ssot-catalog-sync` (root↔classpath catalog mirror enforcement);
-`governance/registry.v1.json` is the full list.
+The kernel that gates ratchet-style hygiene metrics across the repo.
+**`governance/registry.v1.json` is the authority — 35 gates as of 2026-08-18; read it
+rather than trusting any list in prose.** The frequently-hit ones: `npm-audit`,
+`prose-tier-register`, `consumer-drift` (tempdoc 531 — substrate consumer-floor
+enforcement), `ssot-catalog-sync` (root↔classpath catalog mirror), `config-surface`
+(dead settings + surface ratchet), and the count-ratchets `todo-fixme`, `ts-any`,
+`style-literal-ratchet`, `atom-fork-ratchet`.
 
-(The size/count ratchet gates — `class-size`, `clone`, `ui-bundle`,
-`exception-count` — were removed end-to-end for go-public, tempdoc 634. The
-coverage-style human-audit gates `independent-review` and `ux-audit-closure`
-were retired earlier — tempdoc 530 §Remediation.)
+(Four *specific* size/count ratchets — `class-size`, `clone`, `ui-bundle`,
+`exception-count` — were removed end-to-end for go-public, tempdoc 634; that removal did
+not end count-ratcheting in general, and the four named above are live. The coverage-style
+human-audit gates `independent-review` and `ux-audit-closure` were retired earlier —
+tempdoc 530 §Remediation.)
 
 ## Quickstart
 
@@ -58,15 +61,22 @@ discipline). The body is free-form; explain context not obvious from git.
 
 ## Allowed classifications per gate
 
+Vocabularies are **per gate** — using another gate's word fails the loader.
+
 | Gate | Classifications |
 |---|---|
 | `npm-audit` | `declared-regression` · `lockfile-import` · `emergency-override` · `severity-decrease` |
 | `prose-tier-register` | `tier-change` · `new-rule-registered` · `rule-retired` · `emergency-override` |
-| `consumer-drift` | `slot-retraction` · `grace-extension` · `emergency-override` (changeset frontmatter needs a `slot:` field naming the affected slot) |
-| `ssot-catalog-sync` | `intentional-divergence` · `mirror-retirement` · `emergency-override` (changeset frontmatter needs a `mirror:` field naming the affected mirror) |
+| `runtime-state` | `new-rule-registered` · `tier-change` · `rule-retired` |
+| `consumer-drift` | `slot-retraction` · `grace-extension` · `emergency-override` (frontmatter needs a `slot:` field naming the affected slot) |
+| `ssot-catalog-sync` | `intentional-divergence` · `mirror-retirement` · `emergency-override` (frontmatter needs a `mirror:` field naming the affected mirror) |
+| `test-efficacy` | `strength-regression` · `seam-retraction` · `emergency-override` |
+| `register-guard-resolution` | `guard-downgrade` |
+| `tempdoc-wiring` | `emergency-override` |
+| **count-ratchets** — `todo-fixme` · `ts-any` · `style-literal-ratchet` · `atom-fork-ratchet` · `dead-code` · `module-deps` · `adr-coverage` · `test-to-code` · `config-surface` | the shared growth family: `declared-growth` · `declared-regression` · `merge-import` · `emergency-override` |
 
-Read the gate's own README for nuances:
-`gates/<id>/.changesets/README.md`.
+Read the gate's own README for nuances — `gates/<id>/.changesets/README.md` — and note that
+not every gate ships one; when it doesn't, `run.mjs --explain <ruleId>` is the fallback.
 
 ## What the kernel catches (silent-bypass closures)
 

@@ -108,27 +108,43 @@ public interface AgentService extends AgentRunQueries {
   }
 
   /**
-   * Tempdoc 577 §2.14 Root I (#13) — ATTACH a new observer to a LIVE run (GET/POST
-   * /api/chat/agent/{sessionId}/attach). The observer subscribes to the run's session-local event
-   * hub: it REPLAYS the buffered events (the run's recent history) then receives ongoing events,
-   * and this call BLOCKS (streaming to the observer) until the run terminates — exactly like the
-   * initiating run stream. N observers can attach to one run; a dropped observer never affects the
-   * run or the others. Returns true when a LIVE session was found and observed; false (404) when the
-   * run is not live (terminal/evicted — the caller falls back to the persisted record).
+   * Tempdoc 834 §1.3 — installs the substrate a run is journaled and observed through. Late-bound
+   * by the composition root because the agent is constructed lazily when AI activates; setting it
+   * once at boot would miss the instance that is actually used. Default no-op so the null object
+   * and legacy implementations compile unchanged.
+   */
+  default void setRunObservation(RunObservation observation) {}
+
+  /**
+   * Tempdoc 577 §2.14 Root I (#13) / 834 §1.3 — ATTACH a new observer to a LIVE run (POST
+   * /api/chat/agent/{sessionId}/attach). The observer receives the act-on-the-run primer, then the
+   * replay, then ongoing frames, and this call BLOCKS (streaming to the observer) until the run
+   * terminates — exactly like the initiating run stream. N observers can attach to one run; a
+   * dropped observer never affects the run or the others. Returns true when a LIVE session was
+   * found and observed; false (404) when the run is not live (terminal/evicted — the caller falls
+   * back to the persisted record).
+   *
+   * <p><strong>Contract change (834 §7-S3b).</strong> The observer now receives
+   * {@link RunObservation.WireFrame} — the already-projected {@code (name, payload)} pair — rather
+   * than a typed {@link AgentEvent}. The journal carries the projection of the ONE payload
+   * authority; handing observers raw events would mean either a second serialization path or a
+   * second vocabulary, which is the drift {@link AgentEventPayloads} exists to prevent.
    *
    * <p>Default returns false so legacy implementations compile unchanged.
    */
-  default boolean attachToRun(String sessionId, Consumer<AgentEvent> eventConsumer) {
-    return attachToRun(sessionId, Long.MIN_VALUE, eventConsumer);
+  default boolean attachToRun(String sessionId, Consumer<RunObservation.WireFrame> observer) {
+    return attachToRun(sessionId, 0L, observer);
   }
 
   /**
-   * Tempdoc 585 §D Phase 2 (B1) — ATTACH, replaying only events newer than {@code fromSeq} (the SSE
-   * {@code Last-Event-ID} the reattaching client last saw, per {@link TraceContext#seq()}). {@code
-   * Long.MIN_VALUE} replays the whole buffered window (the {@link #attachToRun(String, Consumer)}
-   * default). Default returns false so legacy implementations compile unchanged.
+   * ATTACH, replaying only the frames after {@code sinceSeq} (the run stream's {@code ?sinceSeq=}
+   * cursor — the CHANNEL sequence, not the {@code Last-Event-ID} trace span the pre-834 attach
+   * used; §1.6 closes that second, unvalidated resume channel by not emitting {@code id:} at all).
+   * Zero replays everything and is the guaranteed path. Default returns false so legacy
+   * implementations compile unchanged.
    */
-  default boolean attachToRun(String sessionId, long fromSeq, Consumer<AgentEvent> eventConsumer) {
+  default boolean attachToRun(
+      String sessionId, long sinceSeq, Consumer<RunObservation.WireFrame> observer) {
     return false;
   }
 

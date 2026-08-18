@@ -660,7 +660,11 @@ class AgentLoopServiceTest {
     assertTrue(pendingSeen.await(5, java.util.concurrent.TimeUnit.SECONDS), "run is live + parked");
 
     // A second observer attaches to the LIVE run on its own thread (the attach blocks until terminal).
-    var attachEvents = new java.util.concurrent.CopyOnWriteArrayList<AgentEvent>();
+    // Tempdoc 834 §1.3.2 — the journal carries the WIRE-projected (name, payload) pair, not typed
+    // events, so this observer asserts on event NAMES. That is what lets the native attach write
+    // frames straight to the socket and the AG-UI attach re-project them, with no second vocabulary.
+    var attachEvents =
+        new java.util.concurrent.CopyOnWriteArrayList<io.justsearch.agent.api.RunObservation.WireFrame>();
     var attachReturned = new java.util.concurrent.CompletableFuture<Boolean>();
     var attachThread = new Thread(() ->
         attachReturned.complete(service.attachToRun(sessionId.get(), attachEvents::add)));
@@ -670,15 +674,44 @@ class AgentLoopServiceTest {
     // The replay must deliver the already-emitted history to the late observer (poll — the attach
     // runs on another thread). It must include the SessionStarted + the pending approval.
     long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
-    while (attachEvents.stream().noneMatch(e -> e instanceof AgentEvent.ToolCallPendingApproval)
+    while (attachEvents.stream().noneMatch(e -> "tool_call_pending".equals(e.name()))
         && System.nanoTime() < deadline) {
       Thread.onSpinWait();
     }
     assertTrue(
-        attachEvents.stream().anyMatch(e -> e instanceof AgentEvent.SessionStarted),
-        "the attach replayed the run's history (SessionStarted)");
+        attachEvents.stream().anyMatch(e -> "state_snapshot".equals(e.name())),
+        "the attach received the act-on-the-run primer BEFORE the replay (§6.1)");
+    assertEquals(
+        "state_snapshot",
+        attachEvents.get(0).name(),
+        "and the primer is FIRST — the ring evicts oldest, so it cannot sit behind the replay");
+    // Tempdoc 834 §15.1.4 — ALL EIGHT StateSnapshot components must survive the move onto the
+    // channel. Dropping back to the pre-S1 five would silently undo S1's whole point (§6.1): a
+    // reattacher would see a stopped run with no gate to answer, which is exactly the failure the
+    // snapshot-not-ring recovery law exists to prevent.
+    Map<String, Object> primer = attachEvents.get(0).payload();
+    for (String component :
+        List.of(
+            "iteration",
+            "budgetRemaining",
+            "toolCallsExecuted",
+            "messageCount",
+            "activeAgentId",
+            "pendingApprovals",
+            "autonomyLevel",
+            "park")) {
+      assertTrue(
+          primer.containsKey(component),
+          "the primer dropped the '" + component + "' component: " + primer);
+    }
+    assertFalse(
+        ((List<?>) primer.get("pendingApprovals")).isEmpty(),
+        "and the held gate is ACTIONABLE from the primer alone — it carries the pending approval");
     assertTrue(
-        attachEvents.stream().anyMatch(e -> e instanceof AgentEvent.ToolCallPendingApproval),
+        attachEvents.stream().anyMatch(e -> "session_started".equals(e.name())),
+        "the attach replayed the run's history (session_started)");
+    assertTrue(
+        attachEvents.stream().anyMatch(e -> "tool_call_pending".equals(e.name())),
         "the attach replayed the pending approval");
 
     // Drive the run to terminal; BOTH observers must receive the terminal and the attach must return.
@@ -696,8 +729,7 @@ class AgentLoopServiceTest {
         Boolean.TRUE, attachReturned.get(5, java.util.concurrent.TimeUnit.SECONDS),
         "attachToRun returned true (a live run was observed) and unblocked on the terminal event");
     assertTrue(
-        attachEvents.stream().anyMatch(
-            e -> e instanceof AgentEvent.AgentDone || e instanceof AgentEvent.AgentError),
+        attachEvents.stream().anyMatch(e -> "done".equals(e.name()) || "error".equals(e.name())),
         "the attach observer received the terminal event");
   }
 
@@ -754,7 +786,9 @@ class AgentLoopServiceTest {
       Thread.sleep(700);
 
       // Reattach: replays the buffered history INCLUDING the park narration, and releases the park.
-      var replay = new java.util.concurrent.CopyOnWriteArrayList<AgentEvent>();
+      var replay =
+          new java.util.concurrent.CopyOnWriteArrayList<
+              io.justsearch.agent.api.RunObservation.WireFrame>();
       var attachReturned = new CompletableFuture<Boolean>();
       var attachThread = new Thread(() ->
           attachReturned.complete(service.attachToRun(sessionId.get(), replay::add)));
@@ -781,8 +815,9 @@ class AgentLoopServiceTest {
     }
   }
 
-  private static boolean isUnobservedPark(AgentEvent e) {
-    return e instanceof AgentEvent.AgentProgress p && "run_unobserved_parked".equals(p.phase());
+  private static boolean isUnobservedPark(io.justsearch.agent.api.RunObservation.WireFrame frame) {
+    return "progress".equals(frame.name())
+        && "run_unobserved_parked".equals(frame.payload().get("phase"));
   }
 
   @Test
@@ -1452,7 +1487,7 @@ class AgentLoopServiceTest {
                 .undo(executionId);
           }
         };
-    var service = new AgentLoopService(ai, catalog, executor, stubEmitter(), null, null);
+    var service = observed(new AgentLoopService(ai, catalog, executor, stubEmitter(), null, null));
 
     var events = run(service, userMessage("go"), 3);
 
@@ -2227,8 +2262,21 @@ class AgentLoopServiceTest {
     }
   }
 
+  /**
+   * Tempdoc 834 §1.3 — installs the REAL run observation substrate on a test service. The
+   * session-local hub is gone, so without this a run has no journal, no replay and no second
+   * observer; a test double for evict-on-throw + bounded replay would be a reimplementation of the
+   * exact mechanism the attach and park tests exist to pin.
+   */
+  private static AgentLoopService observed(AgentLoopService service) {
+    service.setRunObservation(
+        new io.justsearch.app.observability.stream.run.RunChannelObservation(
+            new io.justsearch.app.observability.stream.run.RunChannelRegistry()));
+    return service;
+  }
+
   private static AgentLoopService buildService(OnlineAiService ai, StubTool... tools) {
-    return new AgentLoopService(
+    return observed(new AgentLoopService(
         ai,
         stubCatalog(tools),
         stubExecutor(tools),
@@ -2236,12 +2284,12 @@ class AgentLoopServiceTest {
         null,
         null,
         null,
-        null);
+        null));
   }
 
   private static AgentLoopService buildServiceWithTelemetry(
       OnlineAiService ai, Telemetry telemetry, StubTool... tools) {
-    return new AgentLoopService(
+    return observed(new AgentLoopService(
         ai,
         stubCatalog(tools),
         stubExecutor(tools),
@@ -2249,12 +2297,12 @@ class AgentLoopServiceTest {
         null,
         null,
         null,
-        telemetry);
+        telemetry));
   }
 
   private static AgentLoopService buildServiceWithAgentTelemetry(
       OnlineAiService ai, AgentTelemetry agentTelemetry, StubTool... tools) {
-    return AgentLoopService.forTesting(
+    return observed(AgentLoopService.forTesting(
         ai,
         stubCatalog(tools),
         stubExecutor(tools),
@@ -2262,7 +2310,7 @@ class AgentLoopServiceTest {
         null,
         null,
         null,
-        agentTelemetry);
+        agentTelemetry));
   }
 
   private static AgentLoopService buildServiceWithSmallBudgetAndProfiles(
@@ -2318,7 +2366,7 @@ class AgentLoopServiceTest {
     };
     var searchTool = new StubTool("search_index", RiskTier.LOW, "results");
     var ingestTool = new StubTool("ingest_files", RiskTier.LOW, "ok");
-    return new AgentLoopService(
+    return observed(new AgentLoopService(
         aiWithSmallContext,
         stubCatalog(searchTool, ingestTool),
         stubExecutor(searchTool, ingestTool),
@@ -2326,7 +2374,7 @@ class AgentLoopServiceTest {
         null,
         null,
         null,
-        null);
+        null));
   }
 
   private static AgentLoopService buildServiceWithSmallBudget(
@@ -2381,7 +2429,7 @@ class AgentLoopServiceTest {
       }
     };
     var searchTool = new StubTool("search", RiskTier.LOW, "results");
-    return new AgentLoopService(
+    return observed(new AgentLoopService(
         aiWithSmallContext,
         stubCatalog(searchTool),
         stubExecutor(searchTool),
@@ -2389,7 +2437,7 @@ class AgentLoopServiceTest {
         null,
         null,
         null,
-        null);
+        null));
   }
 
   private static List<AgentEvent> run(

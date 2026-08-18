@@ -1649,4 +1649,164 @@ class OnlineModeOpsTest {
     assertNull(errorRef.get(), "onError should not fire in lenient mode");
     assertEquals(List.of("partial"), chunks);
   }
+
+  // ==================== Streaming producer wedge (836 §9.9) ====================
+
+  /**
+   * Installs a handler that answers 200, writes one chunk, and then never writes again and never
+   * closes — the "producer that never returns" shape. Returns a latch the test releases so the
+   * server thread can exit.
+   */
+  private CountDownLatch installNeverEndingStream() {
+    CountDownLatch release = new CountDownLatch(1);
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          exchange.getRequestBody().readAllBytes();
+          exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+          exchange.sendResponseHeaders(200, 0);
+          var os = exchange.getResponseBody();
+          os.write(
+              "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"
+                  .getBytes(StandardCharsets.UTF_8));
+          os.flush();
+          try {
+            release.await(30, TimeUnit.SECONDS);
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          }
+          exchange.close();
+        });
+    return release;
+  }
+
+  @Test
+  @DisplayName("A body that goes silent hits the idle read deadline and errors instead of parking")
+  void streamChat_stalledBodyFiresStreamStalledException() throws Exception {
+    CountDownLatch release = installNeverEndingStream();
+    ops.streamIdleDeadline = Duration.ofMillis(300);
+
+    CountDownLatch errorLatch = new CountDownLatch(1);
+    AtomicReference<Throwable> errorRef = new AtomicReference<>();
+    try {
+      ops.streamChat(
+          List.of(Map.of("role", "user", "content", "test")),
+          100,
+          chunk -> {},
+          fr -> fail("onComplete must not fire for an abandoned stream"),
+          err -> {
+            errorRef.set(err);
+            errorLatch.countDown();
+          });
+
+      // The request timeout (2 minutes) bounds only header arrival, so without a read deadline
+      // nothing here ever fires.
+      assertTrue(errorLatch.await(10, TimeUnit.SECONDS), "the idle read deadline must fire");
+      assertInstanceOf(
+          StreamStalledException.class,
+          errorRef.get(),
+          "an idle body must terminate as a stall, not park the streaming thread");
+    } finally {
+      release.countDown();
+    }
+  }
+
+  @Test
+  @DisplayName(
+      "Wedge regression (836 §9.9): a stream that never returns must not block the next dispatch"
+          + " past the read deadline")
+  void streamChat_stalledStreamDoesNotWedgeTheNextDispatch() throws Exception {
+    CountDownLatch release = installNeverEndingStream();
+    ops.streamIdleDeadline = Duration.ofMillis(300);
+
+    CountDownLatch firstDone = new CountDownLatch(1);
+    try {
+      ops.streamChat(
+          List.of(Map.of("role", "user", "content", "first")),
+          100,
+          chunk -> {},
+          fr -> firstDone.countDown(),
+          err -> firstDone.countDown());
+
+      assertTrue(
+          firstDone.await(10, TimeUnit.SECONDS),
+          "the stalled stream must terminate on its own read deadline");
+
+      // Second dispatch: a healthy stream, on the same single-threaded executor and the same
+      // process-wide lock the first one held. Pre-fix it queued behind the first forever.
+      release.countDown();
+      restoreDefaultStreamHandler();
+      CountDownLatch secondDone = new CountDownLatch(1);
+      CopyOnWriteArrayList<String> chunks = new CopyOnWriteArrayList<>();
+      ops.streamChat(
+          List.of(Map.of("role", "user", "content", "second")),
+          100,
+          chunks::add,
+          fr -> secondDone.countDown(),
+          err -> secondDone.countDown());
+
+      assertTrue(secondDone.await(10, TimeUnit.SECONDS), "the next dispatch must still run");
+      assertEquals(List.of("Hello", " world"), chunks);
+    } finally {
+      release.countDown();
+    }
+  }
+
+  @Test
+  @DisplayName("A blocked consumer callback no longer holds the process-wide inference lock")
+  void streamChat_slowCallbackDoesNotHoldTheOnlineRequestLock() throws Exception {
+    CountDownLatch releaseCallback = new CountDownLatch(1);
+    CountDownLatch callbackEntered = new CountDownLatch(1);
+    CountDownLatch streamDone = new CountDownLatch(1);
+
+    ops.streamChat(
+        List.of(Map.of("role", "user", "content", "test")),
+        100,
+        chunk -> {
+          callbackEntered.countDown();
+          try {
+            releaseCallback.await(30, TimeUnit.SECONDS);
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          }
+        },
+        fr -> streamDone.countDown(),
+        err -> streamDone.countDown());
+
+    assertTrue(callbackEntered.await(10, TimeUnit.SECONDS), "the chunk callback should run");
+    try {
+      // A chat completion needs the same lock the streaming exchange takes. While a consumer
+      // callback is blocked, that lock must already be free — pre-fix the callback ran inside it,
+      // so this call could not complete until the consumer returned.
+      String answer =
+          ops.chatCompletion(List.of(Map.of("role", "user", "content", "q")), 32)
+              .get(10, TimeUnit.SECONDS);
+      assertEquals("Hello from LLM", answer);
+    } finally {
+      releaseCallback.countDown();
+    }
+    assertTrue(streamDone.await(10, TimeUnit.SECONDS), "the stream still terminates");
+  }
+
+  private void restoreDefaultStreamHandler() {
+    server.removeContext("/v1/chat/completions");
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          exchange.getRequestBody().readAllBytes();
+          exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+          exchange.sendResponseHeaders(200, 0);
+          var os = exchange.getResponseBody();
+          os.write(
+              "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n"
+                  .getBytes(StandardCharsets.UTF_8));
+          os.write(
+              "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n"
+                  .getBytes(StandardCharsets.UTF_8));
+          os.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
+          os.flush();
+          os.close();
+        });
+  }
 }

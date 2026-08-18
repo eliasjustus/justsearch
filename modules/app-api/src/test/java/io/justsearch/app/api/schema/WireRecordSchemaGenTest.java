@@ -14,6 +14,7 @@ import io.justsearch.app.api.indexing.FailedJobsResponse;
 import io.justsearch.app.api.knowledge.FolderBrowseResponse;
 import io.justsearch.app.api.knowledge.FolderFilesResponse;
 import io.justsearch.app.api.knowledge.SearchTrace;
+import io.justsearch.app.api.run.LiveRunsResponse;
 import io.justsearch.app.api.settings.SettingsV2;
 import io.justsearch.app.api.status.InferenceStatusResponse;
 import java.io.IOException;
@@ -117,6 +118,17 @@ final class WireRecordSchemaGenTest {
   @DisplayName("AgentHistoryResponse")
   void agentHistory() throws IOException {
     captureOrVerify(AgentHistoryResponse.class, "agent-history-response.v1.json");
+  }
+
+  // Tempdoc 834 §5.1 (S4): the live-run enumeration — the FE's run-discovery authority, replacing a
+  // localStorage pointer. Typed for the same reason the agent surface above is: a Map<String,Object>
+  // here would be exactly the fail-open hole the 564 chain retired, on the one endpoint that hands
+  // out the runIds every other run read is keyed by. The envelope pulls in LiveRunSummary /
+  // ParkSummary / RunStateSnapshotView / PendingApprovalView as $defs.
+  @Test
+  @DisplayName("LiveRunsResponse")
+  void liveRuns() throws IOException {
+    captureOrVerify(LiveRunsResponse.class, "live-runs-response.v1.json");
   }
 
   // Tempdoc 564 Phase 5: the failed-jobs surface — record-backed so the FE validates it at the parse

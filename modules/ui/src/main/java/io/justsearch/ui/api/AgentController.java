@@ -33,7 +33,7 @@ import org.slf4j.LoggerFactory;
  * (1131 LOC). Three cohesive concerns were lifted out to halt the accretion trajectory before it
  * became a second LocalApiServer:
  * <ul>
- *   <li>the {@code AgentEvent → SSE-wire} vocabulary + the hub-observer eviction seam →
+ *   <li>the {@code AgentEvent → SSE-wire} vocabulary + the run-observer eviction seam →
  *       {@link AgentSseWriter} (the keystone — the biggest mass and an accretor in its own right);
  *   <li>the 8 pure-read session/history handlers → {@link AgentSessionController} (narrowed to the
  *       {@code AgentRunQueries} read interface tempdoc 584 segregated);
@@ -123,7 +123,7 @@ final class AgentController {
    * {@code heartbeat} frame every {@link StreamLivenessWindows#STREAM_HEARTBEAT_INTERVAL_SECONDS} for
    * the life of the stream, then cancels it when the body returns/throws. The heartbeat is written
    * via {@link AgentSseWriter#writeEvent} (per-context synchronized, so it interleaves safely with
-   * the hub-observer event writes), carries no trace span (so it never enters the replay buffer nor
+   * the run-observer event writes), carries no trace span (so it never enters the replay buffer nor
    * advances {@code Last-Event-ID}), and is not an {@code AgentEvent} (so it does not touch the closed
    * event-vocabulary contract). The FE ignores it as an unmapped event and resets its liveness
    * watchdog on it.
@@ -186,8 +186,8 @@ final class AgentController {
                   shapeRef,
                   body,
                   audience,
-                  // Tempdoc 577 §2.14 Root I (#13) — the initiating run's hub observer EVICTS on
-                  // disconnect (throws so RunEventHub.deliver drops it), the precondition the
+                  // Tempdoc 577 §2.14 Root I (#13) — the initiating run observer EVICTS on
+                  // disconnect (it throws, so the run drops it), the precondition the
                   // zero-observer park needs.
                   sseEvent -> sseWriter.writeOrEvict(ctx, sseEvent.name(), sseEvent.payload())));
     } catch (UnknownShapeException unknown) {
@@ -456,7 +456,7 @@ final class AgentController {
    * GET /api/chat/agent/{sessionId}/attach — Tempdoc 577 §2.14 Root I (#13): ATTACH a new SSE
    * observer to a LIVE run. The run is a backend-owned entity (its loop survives the initiating
    * socket closing), so a reattaching tab — or a second observer — subscribes to the run's event
-   * hub: it replays the run's buffered history, then streams ongoing events in the SAME wire
+   * observation channel: it receives the act-on-the-run primer, then the replay, then ongoing frames in the SAME wire
    * vocabulary the initiating run stream uses (via {@link AgentSseWriter#writeAgentEvent}). Blocks
    * until the run terminates. When the session is not live (terminal/evicted), emits a
    * {@code not_live} signal so the FE falls back to the persisted thread record instead.
@@ -465,17 +465,18 @@ final class AgentController {
     String sessionId = ctx.pathParam("sessionId");
     sseWriter.initSseHeaders(ctx, "/api/chat/agent/attach");
     try {
-      // Tempdoc 585 §D Phase 2 (B1) — precise reconnect: a reattaching client echoes the WHATWG
-      // Last-Event-ID it last saw (the monotonic trace span). The hub then replays only newer
-      // buffered events instead of the whole window — no duplicate replay. Absent/unparseable ⇒
-      // Long.MIN_VALUE ⇒ replay the full window (a fresh attach, the prior behaviour).
-      long fromSeq = parseLastEventId(ctx.header("Last-Event-ID"));
+      // Tempdoc 834 §1.6 — the resume cursor is the CHANNEL sequence, read from ?sinceSeq=. The
+      // pre-834 Last-Event-ID cursor is retired: run streams do not emit `id:` at all, so it cannot
+      // become a second, unvalidated resume channel beside the query parameter. Absent ⇒ 0 ⇒ replay
+      // everything, which is the guaranteed path (the window rule rejects only a cursor ahead of the
+      // stream or behind the retained window).
+      long sinceSeq = parseSinceSeq(ctx.queryParam(RunStreamWriter.CURSOR_PARAM));
       withHeartbeat(
           ctx,
           () -> {
             boolean attached =
                 agentService()
-                    .attachToRun(sessionId, fromSeq, event -> sseWriter.writeAgentEvent(ctx, event));
+                    .attachToRun(sessionId, sinceSeq, frame -> sseWriter.writeWireFrame(ctx, frame));
             if (!attached) {
               // Not an in-flight run — signal the FE to read the persisted record
               // (events.ndjson / thread).
@@ -497,7 +498,7 @@ final class AgentController {
 
   /**
    * POST /api/chat/agent/{sessionId}/ag-ui — Tempdoc 585 §D Phase 3 (C3): attach an AG-UI-protocol
-   * observer to a LIVE run. Identical attach mechanics to {@link #handleAttachStream} (the run's hub,
+   * observer to a LIVE run. Identical attach mechanics to {@link #handleAttachStream} (the run's channel,
    * the Last-Event-ID cursor, the disconnect-eviction), but each event is projected through the
    * sibling {@link AgUiEventTranslator} instead of the native one — so the SAME run streams as AG-UI
    * events to an AG-UI client (CopilotKit, etc.). Stays under {@code /api/chat/*}: the removed
@@ -507,14 +508,18 @@ final class AgentController {
     String sessionId = ctx.pathParam("sessionId");
     sseWriter.initSseHeaders(ctx, "/api/chat/agent/ag-ui");
     try {
-      long fromSeq = parseLastEventId(ctx.header("Last-Event-ID"));
+      long sinceSeq = parseSinceSeq(ctx.queryParam(RunStreamWriter.CURSOR_PARAM));
       boolean attached =
           agentService()
               .attachToRun(
                   sessionId,
-                  fromSeq,
-                  event -> {
-                    var agui = AgUiEventTranslator.translate(event);
+                  sinceSeq,
+                  frame -> {
+                    // Tempdoc 834 §6.5 — the journal carries the projected pair, so the AG-UI
+                    // projection re-derives from the payload keys. That second hand-written switch
+                    // is real drift surface; the equivalence gate in
+                    // AgUiEventTranslatorConformanceTest is its whole mitigation.
+                    var agui = AgUiEventTranslator.translateFromMap(frame.name(), frame.payload());
                     sseWriter.writeOrEvict(ctx, agui.name(), agui.payload());
                   });
       if (!attached) {
@@ -534,23 +539,22 @@ final class AgentController {
   }
 
   /**
-   * Tempdoc 585 §D Phase 2 (B1) — parse a {@code Last-Event-ID} header into a replay cursor. Accepts
-   * the bare numeric id we emit ({@code "42"}) and tolerates a {@code "span-000042"} form; anything
-   * absent or unparseable yields {@link Long#MIN_VALUE} (replay the whole buffered window).
+   * Tempdoc 834 §1.6 — parse the {@code ?sinceSeq=} channel cursor. Absent, negative or unparseable
+   * yields 0, which replays everything and always succeeds.
+   *
+   * <p>This REPLACES the pre-834 {@code Last-Event-ID} parse. Probe P7 confirmed nothing produced
+   * that header — {@code consumeShapeStream} sends only the content type and the session token, and
+   * the FE attach passes no headers — so it was an unvalidated resume input with no producer. §1.6
+   * closes the door by not emitting {@code id:} at all: one resume input, one grammar.
    */
-  private static long parseLastEventId(String header) {
-    if (header == null || header.isBlank()) {
-      return Long.MIN_VALUE;
-    }
-    String token = header.trim();
-    int dash = token.lastIndexOf('-');
-    if (dash >= 0 && dash + 1 < token.length()) {
-      token = token.substring(dash + 1);
+  private static long parseSinceSeq(String raw) {
+    if (raw == null || raw.isBlank()) {
+      return 0L;
     }
     try {
-      return Long.parseLong(token);
+      return Math.max(0L, Long.parseLong(raw.trim()));
     } catch (NumberFormatException notNumeric) {
-      return Long.MIN_VALUE;
+      return 0L;
     }
   }
 

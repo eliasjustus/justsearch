@@ -23,7 +23,12 @@
 
 import type { ConnectionPhase, ReadinessView } from './aiStateStore.js';
 import type { Maybe } from './known.js';
-import { isReindexCause, severityForCodes, type Severity } from './readinessNotice.js';
+import {
+  classifyConsequence,
+  isReindexCause,
+  severityForCodes,
+  type Severity,
+} from './readinessNotice.js';
 
 export type { Severity };
 
@@ -52,9 +57,49 @@ export type ProvisionalCause =
 // fresh). Feed-staleness is therefore PANEL-scoped: the Tasks panel observes it
 // directly via `indexingJobsBridge.subscribeFeedStalled`, not through this axis.
 
+/**
+ * Tempdoc 837 §2.3 — WHY a generation rebuild / cutover is running. The closed vocabulary the worker
+ * maps every persisted manifest source onto (`io.justsearch.app.api.status.MigrationSource`), `unknown`
+ * included: a generation built by an older build, by a test driver, or from a hand-edited manifest
+ * hands back a label no vocabulary can close over, and that is a real state, not an error.
+ */
+export type MigrationSource =
+  | 'corrupt_index_rebuild'
+  | 'embedding_model_change'
+  | 'schema_mismatch'
+  | 'user_requested_rebuild'
+  | 'user_requested_bulk_reindex'
+  | 'manual'
+  | 'unknown';
+
+const MIGRATION_SOURCES: ReadonlySet<string> = new Set<MigrationSource>([
+  'corrupt_index_rebuild',
+  'embedding_model_change',
+  'schema_mismatch',
+  'user_requested_rebuild',
+  'user_requested_bulk_reindex',
+  'manual',
+  'unknown',
+]);
+
+/** The `source:<member>` token prefix carried on `verdict.reasons` (837 §2.3(ii)). */
+const SOURCE_TOKEN_PREFIX = 'source:';
+
 export type Stability =
   | { readonly kind: 'settled' }
-  | { readonly kind: 'provisional'; readonly cause: ProvisionalCause };
+  | {
+      readonly kind: 'provisional';
+      readonly cause: ProvisionalCause;
+      /**
+       * 837 §2.3(ii) — an ADDITIVE facet of a rebuild/switch transition, never a new `cause` token.
+       * Two live sites narrow on the cause by EQUALITY — the stuck-rebuild escalation below and
+       * `HealthSurface.renderRebuildProgress` — so a `rebuilding-corrupt`-style flat token would
+       * compile clean and silently disable both (a wedged rebuild would stop escalating to `warn`,
+       * and the progress bar would blank). Both failures are invisible to `tsc`, which is exactly
+       * why the source travels beside the cause instead of inside it.
+       */
+      readonly source?: MigrationSource;
+    };
 
 export type VerdictKind =
   | 'operational'
@@ -78,6 +123,12 @@ export interface StabilityInput {
   readonly indexState: string | null | undefined;
   /** `worker.migration.*` — the rebuild / generation-switch signal (595 §9.1). */
   readonly migrationState: string | null | undefined;
+  /**
+   * 837 §2.3 — `worker.migration.migrationSource`: WHY the building generation exists. The worker
+   * has already closed this over its vocabulary on read, so anything unrecognized arriving here is
+   * treated as absent rather than trusted.
+   */
+  readonly migrationSource?: string | null;
   readonly activeGenerationId: string | null | undefined;
   readonly buildingGenerationId: string | null | undefined;
   readonly servingSearchGenerationId: string | null | undefined;
@@ -90,6 +141,16 @@ export interface StabilityInput {
    * starved under load) while the backend is alive — a calm `updating` state, NOT `channel-stale`.
    */
   readonly reachableViaContact?: boolean;
+}
+
+/**
+ * 837 §2.3 — narrow the wire string to the closed facet, or to `undefined` when there is none. The
+ * empty string means "nothing is being rebuilt", which is a different fact from `unknown` ("a
+ * rebuild is running and we cannot say why"), so it must not become a facet.
+ */
+function migrationSourceOf(raw: string | null | undefined): MigrationSource | undefined {
+  if (raw == null || raw === '') return undefined;
+  return MIGRATION_SOURCES.has(raw) ? (raw as MigrationSource) : 'unknown';
 }
 
 /**
@@ -121,17 +182,19 @@ export function computeStability(i: StabilityInput): Stability {
   if ((i.indexState ?? '').toUpperCase() === 'UNAVAILABLE') {
     return { kind: 'provisional', cause: 'worker-restart' };
   }
+  // 837 §2.3(ii) — the source rides ALONGSIDE the unchanged cause on every migration-derived arm.
+  const source = migrationSourceOf(i.migrationSource);
   const ms = (i.migrationState ?? '').toUpperCase();
-  if (ms === 'SWITCHING') return { kind: 'provisional', cause: 'generation-switch' };
-  if (ms === 'MIGRATING') return { kind: 'provisional', cause: 'rebuilding' };
+  if (ms === 'SWITCHING') return { kind: 'provisional', cause: 'generation-switch', source };
+  if (ms === 'MIGRATING') return { kind: 'provisional', cause: 'rebuilding', source };
   const building = i.buildingGenerationId ?? '';
   if (building !== '' && building !== (i.activeGenerationId ?? '')) {
-    return { kind: 'provisional', cause: 'rebuilding' };
+    return { kind: 'provisional', cause: 'rebuilding', source };
   }
   const ss = i.servingSearchGenerationId ?? '';
   const si = i.servingIngestGenerationId ?? '';
   if (ss !== '' && si !== '' && ss !== si) {
-    return { kind: 'provisional', cause: 'generation-switch' };
+    return { kind: 'provisional', cause: 'generation-switch', source };
   }
   // 630: post-resume reconcile — lower precedence than a real rebuild/worker-down (above), but
   // more informative than the generic connection-axis cases (below), so name it before them.
@@ -208,6 +271,9 @@ export function computeVerdict(i: VerdictInput): SystemHealthVerdict {
       return { kind: 'connecting', severity: 'info', reasons: [] };
     }
     const cause = i.stability.cause;
+    // 837 §2.3(ii) — carry the rebuild's source as an EXTRA token, exactly the way `paused` /
+    // `overdue` below already are. `reasons[0]` stays the cause, so nothing downstream reorders.
+    const sourceToken = i.stability.source ? [`${SOURCE_TOKEN_PREFIX}${i.stability.source}`] : [];
     // E4: escalate a STUCK generation rebuild/cutover, using the backend's own
     // paused flag / age-vs-max-duration (the FE only projects them).
     if (cause === 'rebuilding' || cause === 'generation-switch') {
@@ -215,10 +281,18 @@ export function computeVerdict(i: VerdictInput): SystemHealthVerdict {
       const maxDur = i.migrationSwitchingMaxDurationMs ?? 0;
       const overdue = age > 0 && maxDur > 0 && age > maxDur;
       if (i.migrationPaused === true) {
-        return { kind: 'transitioning', severity: 'warn', reasons: [cause, 'paused'] };
+        return {
+          kind: 'transitioning',
+          severity: 'warn',
+          reasons: [cause, 'paused', ...sourceToken],
+        };
       }
       if (overdue) {
-        return { kind: 'transitioning', severity: 'warn', reasons: [cause, 'overdue'] };
+        return {
+          kind: 'transitioning',
+          severity: 'warn',
+          reasons: [cause, 'overdue', ...sourceToken],
+        };
       }
     }
     // Tempdoc 649 — `channel-stale` is genuine lost contact (no poll AND no stream frame within the
@@ -229,7 +303,7 @@ export function computeVerdict(i: VerdictInput): SystemHealthVerdict {
     if (cause === 'channel-stale') {
       return { kind: 'transitioning', severity: 'warn', reasons: [cause] };
     }
-    return { kind: 'transitioning', severity: 'busy', reasons: [cause] };
+    return { kind: 'transitioning', severity: 'busy', reasons: [cause, ...sourceToken] };
   }
   // Settled: roll up the readiness axis.
   if (!i.readiness.known) return { kind: 'checking', severity: 'info', reasons: [] };
@@ -249,6 +323,19 @@ export function computeVerdict(i: VerdictInput): SystemHealthVerdict {
   }
   if (r.retrieval === 'unknown') return { kind: 'checking', severity: 'info', reasons: [] };
   return { kind: 'operational', severity: 'ok', reasons: [] };
+}
+
+/**
+ * 837 §2.3(ii) — read the source facet back off `verdict.reasons`. BOTH wording surfaces consume it
+ * ({@link verdictHeadline} and {@link verdictBody}); the design named only the body, and §D.3 caught
+ * that `verdictHeadline` has the identical `includes()`-then-`switch(reasons[0])` shape. A facet read
+ * by one and not the other means the headline and the body disagree about the same rebuild.
+ */
+function sourceOfReasons(reasons: readonly string[]): MigrationSource | undefined {
+  const token = reasons.find((r) => r.startsWith(SOURCE_TOKEN_PREFIX));
+  if (token === undefined) return undefined;
+  const value = token.slice(SOURCE_TOKEN_PREFIX.length);
+  return MIGRATION_SOURCES.has(value) ? (value as MigrationSource) : 'unknown';
 }
 
 /** The ONE human headline for the verdict (Health badge + footer read this). */
@@ -281,7 +368,21 @@ export function verdictHeadline(v: SystemHealthVerdict): string {
           return 'Catching up…';
         case 'rebuilding':
         default:
-          return 'Rebuilding…';
+          // 837 §2.3 — name the cause of the rebuild when the backend told us one. The three
+          // system-initiated sources answer the question a user actually has ("why is it rebuilding
+          // — did something break?"); a rebuild the user asked for, a bare manual start, and an
+          // unrecognized legacy source all keep the plain headline, because naming them would tell
+          // the user something they already know or something we do not know.
+          switch (sourceOfReasons(v.reasons)) {
+            case 'corrupt_index_rebuild':
+              return 'Repairing index…';
+            case 'embedding_model_change':
+              return 'Rebuilding for a new AI model…';
+            case 'schema_mismatch':
+              return 'Rebuilding for a new index format…';
+            default:
+              return 'Rebuilding…';
+          }
       }
     case 'degraded':
       if (v.reasons.some(isReindexCause)) return 'Reindex required';
@@ -342,11 +443,39 @@ export function verdictBody(v: SystemHealthVerdict): string {
           return 'The backend is busy; showing last-known values while the view catches up.';
         case 'rebuilding':
         default:
-          return 'The index is being rebuilt; document counts and results will settle when it finishes.';
+          // 837 §2.3 — the same facet the headline above reads, so the two cannot disagree about the
+          // same rebuild. The corruption sentence is carried over WORD FOR WORD from the retired
+          // `index.rebuilding` CAUSE_ROWS row: that wording was correct, it was simply attached to a
+          // code no surface could reach.
+          switch (sourceOfReasons(v.reasons)) {
+            case 'corrupt_index_rebuild':
+              return 'The index was corrupted and is being rebuilt from your files — results are temporarily incomplete.';
+            case 'embedding_model_change':
+              return 'The AI embedding model changed, so the index is being rebuilt; semantic ranking resumes when it finishes.';
+            case 'schema_mismatch':
+              return 'The index format changed, so the index is being rebuilt; results will settle when it finishes.';
+            case 'user_requested_rebuild':
+              return 'The rebuild you requested is running; document counts and results will settle when it finishes.';
+            case 'user_requested_bulk_reindex':
+              return 'The bulk reindex you requested is running; document counts and results will settle when it finishes.';
+            default:
+              return 'The index is being rebuilt; document counts and results will settle when it finishes.';
+          }
       }
     case 'degraded':
       if (v.reasons.some(isReindexCause)) {
         return 'A reindex is required to restore full search quality.';
+      }
+      // Tempdoc 837 §1.5 (UR-4) — a `warn` AI-only cause used to fall straight through to
+      // "Retrieval is degraded", which is FALSE for a chat-only outage and contradicted the banner
+      // (which correctly said "Search is fully working … Chat and answer features are unavailable")
+      // off the SAME verdict. Two surfaces, one verdict, opposite claims — the exact defect the
+      // consequence-classification authority exists to prevent, so this branch consults that ONE
+      // classifier rather than re-deriving a claim from severity. Mirrors the isReindexCause arm
+      // directly above; `verdict.ts` is a registered consumer in
+      // governance/consequence-classification.v1.json.
+      if (classifyConsequence(v.reasons) === 'ai-unavailable') {
+        return 'Chat and answer features are unavailable; search itself is unaffected.';
       }
       return v.severity === 'info'
         ? 'An optional capability is unavailable; search still works.'
