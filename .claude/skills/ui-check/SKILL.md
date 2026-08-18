@@ -21,7 +21,7 @@ jseval ui-shot home              # capture one step → prints PNG path + a one-
 jseval ui-shot search-results
 jseval ui-shot citation-highlight
 jseval ui-shot --list            # list all steps
-jseval ui-shot --affected modules/ui-web/src/shell-v0/views/SearchSurface.ts
+jseval ui-shot --affected modules/ui-web/src/shell-v0/components/searchResults/ResultsCard.ts
 jseval ui-check                  # batch-capture all steps (~60s+), diff vs baseline
 ```
 
@@ -102,22 +102,33 @@ has **no backend** (data steps will show 502s) — to drive a running dev stack 
 `--ui-url http://127.0.0.1:5173` (a non-`localhost:5173` string bypasses the auto-serve).
 
 ## Step registry
-55 steps. **Chain** (shared browser, `depends_on`): `search-results` → {`filters-chips`, `inspector-open`,
+53 steps (`ui_check.py`; run `jseval ui-shot --list` for the authoritative set — this count
+drifts as steps are added). **Chain** (shared browser, `depends_on`): `search-results` → {`filters-chips`, `inspector-open`,
 `multi-select`, `context-menu`}; `inspector-open` → `streaming` → `summarize-done` → `citation-highlight`.
 **Isolated** (own browser, parallel): the view steps (dark+light), density/mode variants (`search-results-*`,
 `search-*-mode`), CDP pseudo-states (`row-hover`, `input-focus`), and the `shell-v0-demo*` / `presentation-demo*`
 standalone demos. Run `jseval ui-shot --list` for the authoritative set.
 
 ## File-to-step index (live shell-v0)
-`scripts/jseval/jseval/ui_step_index.json` (gated by check-ui-step-coverage). Key mappings:
+`scripts/jseval/jseval/ui_step_index.json` maps **38 source files** to steps (gated by
+check-ui-step-coverage). The JSON is the authority — read it rather than trusting this
+excerpt; the highest-fan-out entries are:
+
 | File | Steps |
 |---|---|
-| `shell-v0/views/SearchSurface.ts` | search-results, filters-chips, multi-select, search-results/mode variants … |
-| `shell-v0/components/InspectorPane.ts` | inspector-open, streaming, summarize-done, qa-response, citation-highlight |
-| `shell-v0/components/chat/MarkdownBlock.ts` | citation-highlight |
+| `shell-v0/components/searchResults/ResultsCard.ts` | search-results, command-mode, zero-results, input-focus, filters-chips, search-simple-mode, search-advanced-mode, … |
+| `shell-v0/chrome/Shell.ts` · `shell-v0/plugin-api/CorePlugin.ts` | all view/nav steps (home, library, ai-brain, health, settings, security, help) |
+| `shell-v0/views/UnifiedChatView.ts` | chat-mode, qa-response, chat-proportion, chat-bands, chat-composer-small, chat-spine-single, … |
+| `shell-v0/views/unifiedChatStyles.ts` · `shell-v0/primitives/compositionLayout.ts` | the chat band/spine/occlusion steps |
+| `shell-v0/views/search-v3/{Sv3Main,sv3-tokens.css}.ts` | sv3-citation-selected + the search-v3 surface steps |
+| `shell-v0/views/SummarizeView.ts` | streaming, summarize-done, qa-response |
+| `shell-v0/components/chat/{MarkdownBlock,CitationsPanel}.ts` | citation-highlight |
 | `shell-v0/components/ContextMenu.ts` | context-menu |
-| `shell-v0/chrome/Shell.ts`, `shell-v0/plugin-api/CorePlugin.ts` | all view/nav steps (home, library, ai-brain, health, settings, help) |
-| `shell-v0/views/{HealthSurface,LibrarySurface,BrainSurface,SettingsSurface,HelpSurface}.ts` | the matching view step |
+| `shell-v0/views/{HealthSurface,LibrarySurface,BrainSurface,SettingsSurface,HelpSurface,SecuritySurface}.ts` | the matching view step (+ its light/variant steps) |
+
+> The pre-search-v3 entries `views/SearchSurface.ts` and `components/InspectorPane.ts` are
+> **gone** — those files were removed in the Search v2/v3 rewrite. Their steps now resolve
+> through `ResultsCard.ts` and `DocumentPane.ts`/`SummarizeView.ts` respectively.
 
 ## Key files
 | File | Purpose |

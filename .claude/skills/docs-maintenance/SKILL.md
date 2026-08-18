@@ -1,5 +1,5 @@
 ---
-description: "TRIGGER when: editing files in docs/explanation/, docs/reference/, docs/how-to/, docs/decisions/, or after creating/modifying canonical documentation. Loads the post-edit regeneration sequence and doc quality rules."
+description: "TRIGGER when: editing files in docs/explanation/, docs/reference/, docs/how-to/, docs/decisions/, after creating/modifying canonical documentation, or when auditing docs for tempdoc-to-canonical drift. Loads the post-edit regeneration sequence, doc quality rules, and the drift-audit procedure."
 user-invocable: true
 ---
 
@@ -51,7 +51,10 @@ metric.
 
 ### Canonical vs Noncanonical
 - **Canonical (must not drift):** `docs/explanation/`, `docs/reference/`, `docs/how-to/`, `docs/decisions/`
-- **Noncanonical (allowed to drift):** `docs/tempdocs/`, `docs/future-features/`, `docs/observations.md`
+- **Noncanonical (dated working history, allowed to drift):** `docs/tempdocs/`, `docs/observations.md` + `docs/observations.d/`
+
+If the two disagree, canonical is truth. If canonical is unclear, verify against source and
+contract tests — not against a tempdoc, which reflects only its writing date.
 
 ### Link Rules
 - Canonical docs **must not** reference tempdocs (`docs/tempdocs/`). CI lint will reject this.
@@ -78,3 +81,30 @@ description: "One-line summary."
 ### ADR Template
 New ADRs use MADR-lite: Status / Context / Decision / Consequences / Alternatives Considered.
 Next available number: check `docs/decisions/README.md` Decision Log table.
+
+## Drift Audit (periodic tempdoc → canonical review)
+
+Use this when auditing doc freshness rather than reacting to a single edit.
+
+1. **List recent tempdocs** — `ls -lt docs/tempdocs/ | head -N`. Highest number first; a
+   newer tempdoc supersedes an older one's claims.
+2. **Per tempdoc, determine canonical impact** — which canonical docs it affects (check
+   `docs/llms.txt`), what specifically changed (features, API, model swaps, decisions), and
+   whether it warrants a new ADR (a load-bearing decision with alternatives considered).
+3. **Categorize** — stale facts (wrong model names, deleted modules still listed, "planned"
+   features now shipped) · missing content (new endpoints, pipeline stages, schema fields) ·
+   new ADRs needed (architectural decisions recorded only in a tempdoc).
+4. **Group by topic cluster** (API contract, search pipeline, model inventory) before
+   editing, to minimize context switching and cross-reference errors.
+5. **Execute, then run the full verification block above.**
+
+### Common drift patterns
+
+| Pattern | Example | Impact |
+|---------|---------|--------|
+| Model swap | Tempdoc swaps reranker; model-inventory still shows the old model | Agents use the wrong model name in prompts/configs |
+| Module deletion | Tempdoc deletes a module; module-architecture still lists it | Agents try to find/modify deleted code |
+| Feature activation | Tempdoc ships entity facets; the ADR still says "future feature" | Agents treat a shipped feature as unimplemented |
+| API expansion | Tempdoc adds response fields; the contract map is incomplete | Frontend/agent consumers miss new capabilities |
+| New invariant | Tempdoc establishes a pipeline rule; the invariants doc is missing it | Agents violate the rule unknowingly |
+| Phantom path | A doc names a directory/file that no longer exists (or never did) | Agents route work to a location that isn't there |

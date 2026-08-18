@@ -29,7 +29,9 @@ folder at `C:\Users\WDAGUtilityAccount\Desktop\JustSearchTest\` with:
   `/mcp` Inspector check + snapshots)
 - `docs/` — `explanation/`, `reference/`, `how-to/`, `decisions/`, `tempdocs/`,
   plus `llms.txt`
-- `.claude/rules/` + `.claude/skills/start/` — sandbox-aware orientation
+- `.claude/rules/` + `CLAUDE.md` + `docs/llms.txt` — sandbox-aware orientation
+  (the `start` skill this used to name was retired; orientation is CLAUDE.md +
+  the docs index + `scripts/agent-analytics/world-state.mjs`)
 - `.claude/settings.json` — sanitized (no plugins, no dev-tools MCP,
   bypassPermissions)
 - `tools/` — any installers copied here on the host (e.g. Git)
