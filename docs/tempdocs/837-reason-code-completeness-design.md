@@ -1,9 +1,10 @@
 # 837 — Reason-code completeness (833 W6): design
 
 ```
-status: DESIGN
+status: IN PROGRESS — S1/S2 + S3/S4 merged (PR #472); S5, S6 open
 created: 2026-08-14
-updated: 2026-08-14
+updated: 2026-08-18 (Appendix D: S5 amendment — precedence rule re-derived,
+  TransitionReason placement decided, S6 citations refreshed)
 related: 833 (W6 + finding 6, the theorization this designs), 830 (the Search v3
   degradation banner that renders these codes), 600 (the closed vocabulary + its
   gate), 656 (the last "precise reasons never reached the banner" fix), 627
@@ -306,6 +307,14 @@ and `INFERENCE_DEACTIVATED` first (it can ship in the same slice as the
 `TransitionReason` plumbing or wait).
 
 ### 1.4 The ordering hazard nobody has hit yet (found while designing)
+
+> **SUPERSEDED IN PART BY APPENDIX D (2026-08-18).** Rule 2 below ("the held
+> reason is a different known code") is a wrong-gate: S3 converted
+> `KnowledgeServerBootstrap.java:160` to `WORKER_STARTING`, so the literal rule
+> retains *`worker.starting`* as the reported cause of a spawn failure (C.3).
+> **Implement §D.1's re-derived rule, not this one.** The rest of §1.4 — the
+> READY-clears bound, the effective-change listener rule, the corrupt-marker
+> latch — stands as written and shipped.
 
 `RuntimeActivationService.reportToCapability`
 (`modules/app-services/src/main/java/io/justsearch/app/services/ai/runtime/RuntimeActivationService.java:1200-1209`)
@@ -1133,9 +1142,9 @@ build the Health consumer for `GpuDiagnosticsView`. Separate product call.
    that number — and note it argues *for* the typed slot: 26 sites is exactly the
    scale at which "we swept it by hand" stops being credible, which is what 656
    demonstrated when it swept a subset and left three raw consumers standing.
-3. **How wide is the `TransitionReason` move?** `git grep -c TransitionReason`
-   per module, plus a compile. **Three options, and option 3 is strictly smaller
-   than the package move the first draft assumed:**
+3. ~~**How wide is the `TransitionReason` move?**~~ **ANSWERED AND DECIDED —
+   see §D.2 (counts measured 2026-08-18; option 3 wins, 3 files vs 18).** The
+   three options as originally framed:
    1. move the enum to `app-api` (~20 import sites; the 518 P4 precedent);
    2. a narrow `app-api`-local reason enum that `TransitionRunner` maps onto — no
       move, but a second vocabulary to keep in sync (the fork risk);
@@ -1766,3 +1775,204 @@ daemons); ports 51020 / 5173 / 58750 / 49543 all closed. Test artifacts removed 
   mid-session crash and not only at bootstrap, the corruption read has to move to a site the
   supervisor's path actually reaches. Logged to the observations shard; not fixed here (out of
   S3's scope, and it is a behavioural change to 628's contract, not a wording fix).
+
+---
+
+## Appendix D — S5 amendment (wave-3 derisk D4, 2026-08-18)
+
+Design amendment only; no implementation. Three questions S3/S4's merge (PR #472)
+left pointed at S5. All `file:line` citations below were re-verified against
+`main` at `3c73eff1` in the main checkout.
+
+### D.1 — The precedence rule, re-derived against C.3
+
+**The defect.** §1.4's rule 2 retains the held reason whenever it is "a different
+known code". S3 converted `KnowledgeServerBootstrap.java:160` from prose to
+`WORKER_STARTING`, so the literal rule makes the very next
+`PENDING → DEGRADED(worker.spawn.failed)` retain **`worker.starting`** — a
+starting worker reported as the cause of a spawn failure. C.3 caught it and
+shipped only the narrow latch instead, correctly leaving the general rule to S5.
+
+**Root cause of the wrong-gate: the rule keyed on the wrong operand.** §1.4 asked
+"is the *incoming* code generic?" — a property of the arriving write. What
+actually licenses retention is a property of the *held* code: is it evidence of a
+fault that the newer write would destroy? `worker.starting` is progress
+narration, stale by construction the moment anything else happens. Inverting the
+key is the whole fix.
+
+**The re-derived rule.**
+
+```java
+// Retention is decided by the HELD code's class, not by the incoming code's genericness.
+static boolean retainHeld(String heldCode, String incomingCode, CapabilityHealth newHealth) {
+  if (newHealth == CapabilityHealth.READY) return false;      // recovery always clears (§1.4, unchanged)
+  RetentionClass held = LifecycleReasonCode.retentionClassOf(heldCode);
+  if (held == RetentionClass.STICKY) return true;             // unrepeatable evidence — the shipped latch
+  if (held != RetentionClass.FAULT) return false;             // TRANSIENT / GENERIC / prose: never retained
+  return LifecycleReasonCode.retentionClassOf(incomingCode) != RetentionClass.FAULT;
+}
+```
+
+Behaviour on the four cases that matter:
+
+| Held | Incoming | Result | Why |
+|---|---|---|---|
+| `worker.starting` (TRANSIENT) | `worker.spawn.failed` | **overwrite** | the C.3 regression, now structurally impossible |
+| `worker.index_corrupt` (STICKY) | anything, non-READY | retain | preserves the shipped latch byte-for-byte |
+| `inference.model_not_found` (FAULT) | `inference.offline` (GENERIC) | retain | the §1.4 hazard the rule exists for |
+| `inference.model_not_found` (FAULT) | `inference.crashed` (FAULT) | **overwrite** | a newer fault is better information, not noise |
+
+**The classification, and where it lives.** A `RetentionClass` enum plus
+`LifecycleReasonCode.retentionClassOf(...)` on the enum itself — one authority,
+beside the vocabulary it classifies. Four classes:
+
+- **STICKY** — unrepeatable evidence; retained against everything while non-READY.
+  Members today: `WORKER_INDEX_CORRUPT`, and only it (`WorkerFatalReasonMarker
+  .readAndClear` deletes the marker, `WorkerFatalReasonMarker.java:65`).
+- **FAULT** — a real cause: `WORKER_SPAWN_FAILED`, `WORKER_LOST`,
+  `WORKER_RESTART_EXHAUSTED`, `INFERENCE_CRASHED` (S5), `INFERENCE_MODEL_*`,
+  `INFERENCE_RUNTIME_NOT_INSTALLED`, `INFERENCE_POLICY_*`,
+  `INFERENCE_ACTIVATION_FAILED`.
+- **TRANSIENT** — progress / scheduled / intentional, self-clearing, never
+  retained: `WORKER_STARTING`, `WORKER_RECOVERING`, `WORKER_SHUT_DOWN`,
+  `WORKER_NOT_CONNECTED`, `WORKER_NOT_CONFIGURED`, `INFERENCE_STARTING`,
+  `INFERENCE_GPU_YIELDED_TO_INDEXING`, `INFERENCE_UP_FOR_BACKGROUND`,
+  `INFERENCE_DEACTIVATED` (S5).
+- **GENERIC** — the "I know nothing" fallback a consumer substitutes:
+  `INFERENCE_OFFLINE`, and only it. **`WORKER_SPAWN_FAILED` is deliberately NOT
+  here** even though `resolveWorkerReasonCode` uses it as its fallback:
+  fallback-ness is a property of the *consumer*, and after S3's sweep the code is
+  only ever *set* at sites that genuinely mean "it never started". Classifying it
+  GENERIC would let a stale `worker.lost` outrank a real subsequent spawn failure.
+- Codes never held by a Capability (`index.*`, `ocr.*`, `vdu.*`, `telemetry.*`,
+  `lambdamart.*`, `gpu.*`, `chunk_embedding.*`, `worker.throughput_*`,
+  `worker.health.*`, `worker.not_started`, `worker.unavailable`) are computed
+  per-request in `StatusLifecycleHandler` from worker views and never enter a
+  reason slot. They still need a class so the classification is total — give them
+  `TRANSIENT` (never-retained is the safe default for a code that cannot be held
+  anyway) and say so in the javadoc, rather than inventing a fifth class.
+
+**Enforcement — use a switch expression, not a set.** Write `retentionClassOf` as
+a `switch` **expression** over `LifecycleReasonCode` with **no `default` arm**.
+Java then requires exhaustiveness, so adding any future reason code is a
+**compile error until it is classified**. That is ~100% adherence for the exact
+discipline C.3 had to catch by review, and it costs nothing.
+
+> **Trap for the implementer — do NOT add a constructor parameter.** The obvious
+> alternative (`WORKER_LOST("worker.lost", Kind.FAULT)`) **breaks the S2 gate**:
+> `extractEnumCodes` matches `\b[A-Z][A-Z0-9_]*\s*\(\s*"([^"]+)"\s*\)`
+> (`scripts/ci/check-readiness-reason-codes.mjs:34`), which requires the closing
+> paren immediately after the quoted string. A second argument makes it match
+> nothing, so the gate extracts 0 codes and fails with "the producer/consumer seam
+> moved". A separate method leaves the constant syntax untouched.
+
+**Tests (both orderings, plus the named regression).**
+
+1. **`retainsSpecificFaultOverGenericOffline`** — activation failure
+   (`inference.model_not_found`) then a mode-change `OFFLINE`; assert the specific
+   code survives.
+2. **`specificFaultSurvivesSpecToggle`** — the S5 load-bearing case from §6: set
+   `INFERENCE_CRASHED`, fire the `chatEnabled` spec-change re-derivation
+   (`InferenceCapabilityWiring.java:98-101`, which passes `UNKNOWN` → generic);
+   assert the crash cause survives.
+3. **`transientNeverOutranksFault` — THE C.3 REGRESSION, name it so.**
+   `PENDING(worker.starting) → DEGRADED(worker.spawn.failed)`; assert
+   `pendingReason() == "worker.spawn.failed"`. This test fails against §1.4's
+   literal rule and passes against §D.1 — it is the amendment's proof.
+4. **`newerFaultOverwritesOlderFault`** — `inference.model_not_found` then
+   `inference.crashed`; assert the crash wins (guards against over-correcting into
+   a sticky-everything rule).
+5. **`stickyLatchUnchanged`** — the shipped C.9 latch tests must stay green
+   verbatim; if any needs editing, the generalization broke the latch.
+6. **`readyClearsEverything`** — including from a STICKY hold.
+
+**Scope note.** `InferenceCapability` still has the pre-S3 shape on `main` (no
+`detail`, no retention — `InferenceCapability.java:20-32,62-77`). S5 brings it to
+`WorkerCapability`'s shipped shape (`WorkerCapability.java:99-129`) and both then
+delegate to the one shared `retainHeld`, rather than each growing its own copy.
+
+### D.2 — `TransitionReason` placement: measured, and decided
+
+Counts taken on `main` (`grep -rln … --include=*.java modules/`, `/build/`
+excluded):
+
+| Option | Files touched | Detail |
+|---|---|---|
+| (a) move `TransitionReason` → `app-api` | **18** (9 main + 9 test) | main: the enum itself, `InferenceLifecycleManager`, `TransitionRunner`, `OnlineAiServiceImpl` (uses the FQN), the two same-package telemetry files that currently need no import (`InferenceTelemetryEvents`, `NoopInferenceTelemetryEvents`), `InferenceTags`, `InferenceTelemetryAdapter`, `RuntimeReconciler`. test: 4 in `app-inference`, 5 in `app-services`. |
+| (b) `app-api`-local reason enum + mapping | **~4** | but forks a 10-member vocabulary that must stay in sync forever, and still edits `ModeChangeListener` — which has **49** main-source reference sites. |
+| (c) reason-bearing listener declared in `app-inference` | **3** | new interface + `TransitionRunner` notify site + `InferenceCapabilityWiring` subscription. No move, no duplicate vocabulary, `ModeChangeListener` untouched. |
+
+**Decision: option (c).** It is 6× smaller than the move and the only option that
+adds no second vocabulary. Two verified facts carry it:
+
+- `modules/app-services/build.gradle.kts:19` already declares
+  `api(project(":modules:app-inference"))`, so the one consumer that needs the
+  reason (`InferenceCapabilityWiring`) can name the enum where it already lives.
+  No module-graph change.
+- The `ort-common` collision is not hypothetical: `io.justsearch.ort.telemetry
+  .TransitionReason` is referenced by **5** main-source files
+  (`NativeSessionHandle`, `AssemblerEvent`, `OrtSessionTelemetryEvents`, the type
+  itself, `worker-services/OrtSessionTelemetryAdapter`). Option (a) would put two
+  same-simple-named types in one widely-imported package (`app-api`), forcing
+  fully-qualified names in any file that ever touches both. Option (c) keeps each
+  in its own module, where the existing name collision stays harmless.
+
+This also retires §7's "the `TransitionReason` move is wider than it looks" risk:
+there is no move.
+
+### D.3 — S6 citation refresh (wave 2 moved several)
+
+Re-verified against `main` at `3c73eff1`.
+
+| Claim | Design cited | Current | Status |
+|---|---|---|---|
+| `computeStability` MIGRATING/SWITCHING | `verdict.ts:124-130` | `verdict.ts:124-126` | unchanged |
+| Stuck-rebuild escalation gate (kills a flat token) | `verdict.ts:213` | `verdict.ts:213` | unchanged |
+| `paused`/`overdue` extra-token precedent | `verdict.ts:218,221` | `verdict.ts:218,221` | unchanged |
+| Degraded arm (reasons = reason codes) | `verdict.ts:247-248` | `verdict.ts:248` | unchanged |
+| `verdictBody` paused/overdue → `reasons[0]` switch | `verdict.ts:323-328` | **`verdict.ts:324-330`** | moved |
+| UR-4 "Retrieval is degraded" | `verdict.ts:347-352` | **`verdict.ts:353`** | moved |
+| `HealthSurface` progress-row gate | `HealthSurface.ts:818` | `HealthSurface.ts:815-818` | unchanged |
+| `readinessNotice` returns null unless degraded | `readinessNotice.ts:600` | **`readinessNotice.ts:656`** | moved +56 |
+| `index.rebuilding` CAUSE_ROWS row | `readinessNotice.ts:326-331` | **`readinessNotice.ts:367`** | moved +41 |
+| `index.rebuilding` in `RETRIEVAL_IMPAIRING_CODES` | `readinessNotice.ts:414-415` | **`readinessNotice.ts:455`** | moved +41 |
+| `compatBlockedReason` migration branch | `StatusLifecycleHandler.java:1254-1264` | **`StatusLifecycleHandler.java:1278-1281`** | moved +24 |
+| `INDEX_REBUILDING` enum member | `LifecycleReasonCode.java:46` | **`LifecycleReasonCode.java:65`** | moved +19 |
+
+**One substantive finding, not just a line shift.** §2.3 named `verdictBody` as
+the facet's consumer. `verdictHeadline` has the **same** pattern —
+`v.reasons.includes('paused')` / `includes('overdue')` then `switch (v.reasons[0])`
+at **`verdict.ts:267-269`** — and the design never mentioned it. The rebuild
+*headline* is therefore a second consumer of the carrier: S6 must read the source
+facet in **both** `verdictHeadline` (`:267-269`) and `verdictBody` (`:324-330`),
+or the headline and the body will disagree about why the rebuild is running. Add
+a test per surface.
+
+Everything else in §2.3 survives re-verification: the two equality gates that
+killed the flat-token alternative are both still live and still gate on
+`cause === 'rebuilding' || cause === 'generation-switch'`, and the
+`paused`/`overdue` precedent the carrier design copies is still exactly where the
+design said it was.
+
+### D.4 — Open questions this amendment does not settle
+
+1. **UR-4 is still undecided** and now blocks S5 harder than it did:
+   `verdict.ts:353` is unchanged, so shipping `inference.crashed` at `warn` will
+   make the Health footer say "Retrieval is degraded" for a chat-only outage while
+   the banner says "Search is fully working". §1.5 lists the three options; the
+   recommended one adds `verdict.ts` to
+   `governance/consequence-classification.v1.json`'s `consumers` (today just
+   `availability.ts`).
+2. **Where does `retainHeld` live?** Both capabilities need it and they share no
+   base class today (both implement `Capability` in `app-api`). A package-private
+   static helper in `io.justsearch.app.services.lifecycle` is the smallest answer;
+   a default method on `Capability` would push retention policy into `app-api`,
+   where the enum also lives. Not decided here — a placement call best made with
+   the diff in hand.
+3. **Should `WORKER_SHUT_DOWN` really be TRANSIENT?** An orderly shutdown is not
+   self-clearing the way `worker.starting` is — nothing follows it. It is
+   classified TRANSIENT because it must never outrank a fault, which is the
+   property that matters; if a later slice wants "terminal but intentional" as its
+   own class, that is a vocabulary change, not a retention change.
+4. **C.13's two unproven-live S4 arms and the supervised-restart marker gap** are
+   untouched by this amendment and remain S5/backlog items exactly as C.13 states.
