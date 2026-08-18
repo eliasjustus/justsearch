@@ -328,6 +328,23 @@ blocks are not persisted in transcripts so their contribution is invisible here;
 and "never referenced again" was only checked by a weak basename-recurrence proxy
 (9% of files read were never mentioned again).
 
+**This section partly duplicated tooling that already existed.**
+`scripts/agent-analytics/context-attribution.mjs` already classifies transcript
+content by category (tool output by tool name, assistant text, thinking, user
+text) using the same chars/4 method — i.e. the composition table above is a
+re-derivation, and the probe should have started there. That is the
+*Explore Before Implementing* failure CLAUDE.md names as the most common agent
+mistake in this codebase, committed while investigating agent efficiency. It cost
+only scratchpad time because none of it was productized.
+
+The genuinely new part is the **window-aware duplicate-read discriminator**
+(compare `offset`/`limit` between reads of an unmodified file); nothing in
+`context-attribution.mjs` looks at read windows. It is deliberately NOT shipped as
+a reader: its answer is ~0.3%, and a permanent metric that reads zero is
+speculative. What is worth carrying forward is the rule, not the code — **if
+anyone revisits duplicate reads, the window split is mandatory**, because without
+it the number comes out ~30× too large.
+
 ## 12. The value side: cost per shipped merge
 
 `tmp/agent-telemetry/session-merges.ndjson` carries **381 rows → 277 distinct
