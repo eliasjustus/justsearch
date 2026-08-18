@@ -453,7 +453,14 @@ server*. Two prose copies agreeing was never the property worth enforcing.
 Tool count as stated: **15** in the reference doc ("exactly these tools"), **15** in the skill,
 **15** in the server's own `initialize.instructions` (`server.mjs:611`), **14** in the harness
 header (`justsearch-dev-mcp-harness.mjs:7`). Actual: **16**. `acquire_when_free` is registered
-(`server.mjs:1857`) and appears in none of the four inventories.
+(`server.mjs:1857`) and appears in none of them.
+
+**Make that five inventories, not four.** The P6 sweep turned up a fifth in `scripts/README.md`
+(§MCP Integration), still advertising the *legacy underscore* names and a
+`justsearch_dev_wait_ready` tool that no longer exists at all — the reference doc had already
+declared those obsolete. Nothing pointed the two files at each other, so one was retired in prose
+while the other kept listing it. Five independent statements of one fact, no two agreeing, none
+checked against the code: the register gap below is not an abstraction.
 
 Also drifted out of the doc: `/api/indexing-roots/substrate`, `/api/indexing-roots/preview`,
 `/api/indexing-jobs/failed/by-prefix`, `/api/action-ledger` are allowlisted in code and absent
