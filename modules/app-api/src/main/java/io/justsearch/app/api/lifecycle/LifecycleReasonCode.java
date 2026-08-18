@@ -59,15 +59,21 @@ public enum LifecycleReasonCode {
   INDEX_NOT_HEALTHY("index.not_healthy"),
   INDEX_BLOCKED_LEGACY("index.blocked_legacy"),
   INDEX_SCHEMA_MISMATCH("index.schema_mismatch"),
-  // Tempdoc 628 Stage C: a corruption-triggered rebuild-from-source is in progress (the index was
-  // detected corrupt, backed up, and is being rebuilt). Distinct from the BLOCKED_* reindex codes:
-  // here the rebuild is already running — the cause is "the index was corrupt", remedy is to wait.
-  INDEX_REBUILDING("index.rebuilding"),
+  // Tempdoc 837 S6 (§2.1/§2.2) RETIRED the INDEX_REBUILDING member here. (Its code string is
+  // deliberately not repeated in this comment: the gate's enum extractor does not strip comments, so
+  // a prose mention in the NAME-plus-quoted-string shape would re-create the phantom it deleted.)
+  // It was emitted
+  // only while migrationState ∈ {MIGRATING, SWITCHING} — which is exactly the window the FE verdict
+  // forces to `transitioning`, where the readiness notice returns null — so it reached the wire and
+  // no surface ever worded it. A generation rebuild in progress is a TRANSITION (self-clearing, has
+  // progress, no user action), and WHY it is running is a facet of that transition carried by
+  // io.justsearch.app.api.status.MigrationSource, not a second verdict about it.
+  //
   // An in-place embedding rebuild is running (`embeddingCompatState=REBUILDING`): the Worker
   // refuses dense queries with `REBUILD_IN_PROGRESS` until it finishes, so keyword results are
-  // complete but semantic ranking is off. Distinct from INDEX_REBUILDING, whose cause is "the
-  // index was corrupt" — reusing that code would tell the user their index is damaged when it
-  // is merely re-embedding.
+  // complete but semantic ranking is off. Distinct from a GENERATION rebuild (which moves the
+  // generation and so leaves stability provisional); this one leaves it settled, which is why this
+  // code is reachable and its retired neighbour was not.
   INDEX_EMBEDDING_REBUILDING("index.embedding_rebuilding"),
   INDEX_EMBEDDING_LEGACY("index.embedding_legacy"),
   INDEX_EMBEDDING_MISMATCH("index.embedding_mismatch"),
@@ -225,7 +231,6 @@ public enum LifecycleReasonCode {
           INDEX_NOT_HEALTHY,
           INDEX_BLOCKED_LEGACY,
           INDEX_SCHEMA_MISMATCH,
-          INDEX_REBUILDING,
           INDEX_EMBEDDING_REBUILDING,
           INDEX_EMBEDDING_LEGACY,
           INDEX_EMBEDDING_MISMATCH,

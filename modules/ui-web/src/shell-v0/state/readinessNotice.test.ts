@@ -317,7 +317,10 @@ describe('classifyConsequence (805 §G.2)', () => {
     expect(classifyConsequence(['index.dense_unavailable'])).toBe('retrieval-impaired');
     expect(classifyConsequence(['worker.health.embedding_not_ready'])).toBe('retrieval-impaired');
     expect(classifyConsequence(['worker.health.embedding_probe_missing'])).toBe('retrieval-impaired');
-    expect(classifyConsequence(['index.rebuilding'])).toBe('retrieval-impaired');
+    // (837 S6 retired `index.rebuilding`: a generation rebuild is a transition, not a degradation,
+    // so it can never reach this classifier. `index.embedding_rebuilding` — the in-place rebuild
+    // that leaves stability settled — is the one that genuinely does.)
+    expect(classifyConsequence(['index.embedding_rebuilding'])).toBe('retrieval-impaired');
     expect(classifyConsequence(['worker.spawn.failed'])).toBe('retrieval-impaired');
     // The reindex causes are retrieval-impairing too (the banner returns earlier for them, but the
     // classifier is consumed by other surfaces that have no reindex branch).

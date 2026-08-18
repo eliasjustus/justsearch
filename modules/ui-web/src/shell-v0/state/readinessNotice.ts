@@ -379,19 +379,16 @@ const CAUSE_ROWS: ReadonlyArray<{
     remedy: { kind: 'operation', operationId: 'core.rebuild-index' },
     severity: 'info',
   },
-  // Tempdoc 628 Stage C — the index was detected corrupt and is being automatically rebuilt from your
-  // files. No one-click rebuild remedy: it's already rebuilding, so the honest affordance is to watch
-  // progress on Health. Impairing (results temporarily incomplete) but self-healing ⇒ `warn`.
-  {
-    code: 'index.rebuilding',
-    wording:
-      'The index was corrupted and is being rebuilt from your files — results are temporarily incomplete.',
-    severity: 'warn',
-  },
+  // Tempdoc 837 S6 removed the `index.rebuilding` row that used to sit here. Its code was emitted
+  // only inside the window the verdict forces to `transitioning`, where this projection returns null,
+  // so the row was unreachable UI. Its wording was not lost — it moved, word for word, into
+  // `verdictBody`'s rebuilding branch, which is the authority that actually renders during a rebuild.
+  //
   // An in-place embedding rebuild (embeddingCompatState=REBUILDING): the Worker refuses dense
   // queries until it finishes, so ONLY the semantic leg is affected — keyword results stay
   // complete. Nothing to click (it is already running) ⇒ Open-Health fallback; impairing but
-  // self-healing ⇒ `warn`, matching index.rebuilding.
+  // self-healing ⇒ `warn`. Unlike a generation rebuild this leaves stability SETTLED, which is why
+  // this row is reachable and its retired neighbour was not.
   {
     code: 'index.embedding_rebuilding',
     wording:
@@ -470,8 +467,8 @@ const RETRIEVAL_IMPAIRING_CODES: ReadonlySet<string> = new Set([
   // The embedder could not be probed: we do NOT know both legs are live, and the reassuring wording
   // requires positive knowledge (same doctrine as severityForCodes' unknown ⇒ warn default).
   'worker.health.embedding_probe_missing',
-  // The index is being rebuilt from source: results are temporarily incomplete on both legs.
-  'index.rebuilding',
+  // (Tempdoc 837 S6 removed `index.rebuilding` here with its row: a generation rebuild is a
+  // TRANSITION, and this set only ever gates the degraded branch, which that state cannot reach.)
   // An in-place embedding rebuild: the Worker refuses dense queries (REBUILD_IN_PROGRESS) until it
   // finishes, so search is genuinely serving keyword-only for its duration.
   'index.embedding_rebuilding',

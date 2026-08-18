@@ -8,6 +8,7 @@ import io.justsearch.app.api.OpCriticality;
 import io.justsearch.app.api.OpLeaseOutcome;
 import io.justsearch.app.api.OperationLeaseHandle;
 import io.justsearch.app.api.OperationLeaseService;
+import io.justsearch.app.api.status.MigrationSource;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Supplier;
@@ -63,7 +64,7 @@ public final class RebuildIndexHandler implements OperationHandler {
         1800L,
         Map.of("source", "core.rebuild-index"));
     try {
-      boolean started = indexing.startMigration("Operation invocation: core.rebuild-index");
+      boolean started = indexing.startMigration(MigrationSource.USER_REQUESTED_REBUILD.wire());
       if (!started) {
         handle.release(OpLeaseOutcome.FAILURE);
         return OperationResult.failure("Index rebuild could not be started; see worker logs");

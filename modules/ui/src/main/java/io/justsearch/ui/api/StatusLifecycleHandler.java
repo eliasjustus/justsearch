@@ -1271,16 +1271,13 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
    * {@code readinessNotice.CAUSE_ROWS}.
    */
   static String compatBlockedReason(WorkerOperationalView workerView) {
-    // tempdoc 628 Stage C: a corruption-triggered rebuild-from-source is the dominant retrieval cause
-    // while it runs — word it explicitly ("rebuilding because the index was corrupt") rather than
-    // letting the user see a generic degraded state for an unexplained reason.
-    var mig = workerView.migration();
-    if (mig != null && "corrupt_index_rebuild".equals(mig.migrationSource())) {
-      String migState = mig.migrationState();
-      if ("MIGRATING".equalsIgnoreCase(migState) || "SWITCHING".equalsIgnoreCase(migState)) {
-        return LifecycleReasonCode.INDEX_REBUILDING.code();
-      }
-    }
+    // Tempdoc 837 S6 removed the migration branch that used to sit here (tempdoc 628 Stage C's
+    // `index.rebuilding`), restoring this to the pure compat-state function its javadoc above already
+    // describes. The branch fired only while migrationState ∈ {MIGRATING, SWITCHING}, which is exactly
+    // the window the FE verdict forces to `transitioning` — so the code was published on the wire and
+    // no surface could ever word it. WHY a rebuild is running now travels as a facet of that
+    // transition (io.justsearch.app.api.status.MigrationSource → verdict.reasons `source:<member>`), in the
+    // authority that is actually rendered.
     var compat = workerView.compatibility();
     if (compat == null) {
       return null;

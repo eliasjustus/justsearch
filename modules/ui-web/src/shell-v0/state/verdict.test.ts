@@ -6,6 +6,7 @@ import {
   verdictHeadline,
   verdictTone,
   presentVerdict,
+  type MigrationSource,
   type StabilityInput,
 } from './verdict.js';
 import { severityForCodes } from './readinessNotice.js';
@@ -436,6 +437,127 @@ describe('verdictHeadline', () => {
     expect(verdictHeadline({ kind: 'transitioning', severity: 'busy', reasons: ['rebuilding'] })).toBe('Rebuilding…');
     expect(verdictHeadline({ kind: 'degraded', severity: 'info', reasons: ['lambdamart.not_configured'] })).toBe('Reduced capability');
     expect(verdictHeadline({ kind: 'degraded', severity: 'warn', reasons: ['x'] })).toBe('Service degraded');
+  });
+});
+
+/**
+ * Tempdoc 837 §2.3 — the rebuild's SOURCE, carried as an additive facet of the transition after the
+ * reason-code authority for it (`index.rebuilding`) was retired as unreachable.
+ *
+ * <p>The two regression tests at the end are the point: a flat `rebuilding-corrupt`-style cause token
+ * would have compiled clean and silently disabled the stuck-rebuild escalation and the progress bar,
+ * both of which narrow on the cause by EQUALITY.
+ */
+describe('837 §2.3 — the migration-source facet on a rebuild transition', () => {
+  const rebuildInput = (migrationSource: string | null | undefined): StabilityInput => ({
+    ...settledInput,
+    migrationState: 'MIGRATING',
+    migrationSource,
+  });
+
+  it('the cause is UNCHANGED — the source rides beside it, never inside it', () => {
+    const s = computeStability(rebuildInput('corrupt_index_rebuild'));
+    expect(s).toEqual({
+      kind: 'provisional',
+      cause: 'rebuilding',
+      source: 'corrupt_index_rebuild',
+    });
+  });
+
+  it('an absent source is absent, not `unknown` (nothing rebuilding ≠ rebuilding for reasons unknown)', () => {
+    const blank = computeStability(rebuildInput(''));
+    expect(blank.kind === 'provisional' ? blank.source : 'not-provisional').toBeUndefined();
+    const undef = computeStability(rebuildInput(undefined));
+    expect(undef.kind === 'provisional' ? undef.source : 'not-provisional').toBeUndefined();
+  });
+
+  it('a label outside the vocabulary narrows to `unknown` rather than being trusted', () => {
+    const s = computeStability(rebuildInput('system_test'));
+    expect(s.kind === 'provisional' && s.source).toBe('unknown');
+  });
+
+  it('computeVerdict carries it as an extra token, with reasons[0] still the cause', () => {
+    const v = computeVerdict({
+      phase: 'connected',
+      stability: { kind: 'provisional', cause: 'rebuilding', source: 'corrupt_index_rebuild' },
+      readiness: UNKNOWN,
+    });
+    expect(v.reasons[0]).toBe('rebuilding');
+    expect(v.reasons).toContain('source:corrupt_index_rebuild');
+    expect(v.kind).toBe('transitioning');
+  });
+
+  it('BOTH wording surfaces read the facet — headline and body cannot disagree (§D.3)', () => {
+    const withSource = (source: MigrationSource) =>
+      computeVerdict({
+        phase: 'connected',
+        stability: { kind: 'provisional', cause: 'rebuilding', source },
+        readiness: UNKNOWN,
+      });
+
+    const corrupt = withSource('corrupt_index_rebuild');
+    expect(verdictHeadline(corrupt)).toBe('Repairing index…');
+    expect(verdictBody(corrupt)).toBe(
+      // Word-for-word the wording the retired index.rebuilding CAUSE_ROWS row carried.
+      'The index was corrupted and is being rebuilt from your files — results are temporarily incomplete.',
+    );
+
+    const embedding = withSource('embedding_model_change');
+    expect(verdictHeadline(embedding)).toBe('Rebuilding for a new AI model…');
+    expect(verdictBody(embedding)).toContain('embedding model changed');
+
+    const schema = withSource('schema_mismatch');
+    expect(verdictHeadline(schema)).toBe('Rebuilding for a new index format…');
+    expect(verdictBody(schema)).toContain('index format changed');
+  });
+
+  it('a user-requested or unknown source keeps the plain headline and names only what it knows', () => {
+    const user = computeVerdict({
+      phase: 'connected',
+      stability: { kind: 'provisional', cause: 'rebuilding', source: 'user_requested_rebuild' },
+      readiness: UNKNOWN,
+    });
+    expect(verdictHeadline(user)).toBe('Rebuilding…');
+    expect(verdictBody(user)).toContain('rebuild you requested');
+
+    const unknown = computeVerdict({
+      phase: 'connected',
+      stability: { kind: 'provisional', cause: 'rebuilding', source: 'unknown' },
+      readiness: UNKNOWN,
+    });
+    expect(verdictHeadline(unknown)).toBe('Rebuilding…');
+    expect(verdictBody(unknown)).toBe(
+      'The index is being rebuilt; document counts and results will settle when it finishes.',
+    );
+  });
+
+  it('REGRESSION: the stuck-rebuild escalation still fires with a source present (verdict.ts:213)', () => {
+    const paused = computeVerdict({
+      phase: 'connected',
+      stability: { kind: 'provisional', cause: 'rebuilding', source: 'corrupt_index_rebuild' },
+      readiness: UNKNOWN,
+      migrationPaused: true,
+    });
+    expect(paused.severity).toBe('warn');
+    expect(paused.reasons).toEqual(['rebuilding', 'paused', 'source:corrupt_index_rebuild']);
+    expect(verdictHeadline(paused)).toBe('Rebuild paused');
+
+    const overdue = computeVerdict({
+      phase: 'connected',
+      stability: { kind: 'provisional', cause: 'generation-switch', source: 'schema_mismatch' },
+      readiness: UNKNOWN,
+      migrationSwitchingAgeMs: 10_000,
+      migrationSwitchingMaxDurationMs: 5_000,
+    });
+    expect(overdue.severity).toBe('warn');
+    expect(overdue.reasons).toEqual(['generation-switch', 'overdue', 'source:schema_mismatch']);
+  });
+
+  it('REGRESSION: the progress-bar gate still narrows (HealthSurface.ts:815-818 reads cause only)', () => {
+    // The surface asks exactly this question; a renamed cause would blank the bar with tsc green.
+    const s = computeStability(rebuildInput('corrupt_index_rebuild'));
+    expect(s.kind === 'provisional' && (s.cause === 'rebuilding' || s.cause === 'generation-switch'))
+      .toBe(true);
   });
 });
 
