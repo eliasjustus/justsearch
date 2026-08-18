@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   computeStability,
   computeVerdict,
+  verdictBody,
   verdictHeadline,
   verdictTone,
   presentVerdict,
@@ -435,6 +436,41 @@ describe('verdictHeadline', () => {
     expect(verdictHeadline({ kind: 'transitioning', severity: 'busy', reasons: ['rebuilding'] })).toBe('Rebuilding…');
     expect(verdictHeadline({ kind: 'degraded', severity: 'info', reasons: ['lambdamart.not_configured'] })).toBe('Reduced capability');
     expect(verdictHeadline({ kind: 'degraded', severity: 'warn', reasons: ['x'] })).toBe('Service degraded');
+  });
+});
+
+/**
+ * Tempdoc 837 §1.5 (UR-4) — `verdictBody`'s degraded arm answered off `v.severity` alone, so a
+ * `warn` AI-only cause made the Health footer say "Retrieval is degraded" while the banner, from the
+ * SAME verdict, correctly said search was fully working and only chat was off. Two surfaces, one
+ * verdict, opposite claims.
+ */
+describe('verdictBody — AI-only degradations do not claim retrieval is degraded (837 UR-4)', () => {
+  it('a crashed AI model scopes the sentence to chat, not retrieval', () => {
+    const body = verdictBody({ kind: 'degraded', severity: 'warn', reasons: ['inference.crashed'] });
+    expect(body).toBe('Chat and answer features are unavailable; search itself is unaffected.');
+    expect(body).not.toContain('Retrieval is degraded');
+  });
+
+  it('a genuinely retrieval-impairing cause still says retrieval is degraded', () => {
+    expect(
+      verdictBody({ kind: 'degraded', severity: 'warn', reasons: ['index.dense_unavailable'] }),
+    ).toBe('Retrieval is degraded. See recent events for detail.');
+  });
+
+  it('an unclassifiable cause keeps the conservative sentence (never the calmer AI claim)', () => {
+    expect(
+      verdictBody({ kind: 'degraded', severity: 'warn', reasons: ['something.unrecognized'] }),
+    ).toBe('Retrieval is degraded. See recent events for detail.');
+  });
+
+  it('the reindex and cosmetic arms are untouched', () => {
+    expect(
+      verdictBody({ kind: 'degraded', severity: 'warn', reasons: ['index.embedding_mismatch'] }),
+    ).toBe('A reindex is required to restore full search quality.');
+    expect(
+      verdictBody({ kind: 'degraded', severity: 'info', reasons: ['lambdamart.not_configured'] }),
+    ).toBe('An optional capability is unavailable; search still works.');
   });
 });
 

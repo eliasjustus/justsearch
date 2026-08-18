@@ -527,4 +527,34 @@ describe('readinessNotice — tempdoc 837 worker + inference rows', () => {
     // …while the genuinely-unavailable sibling still classifies that way.
     expect(classifyConsequence(['inference.offline'])).toBe('ai-unavailable');
   });
+
+  it('S5: a crash and a deactivation word DIFFERENT truths (the collapse this slice removes)', () => {
+    expect(reasonFor('inference.crashed').wording).toBe('The local AI model stopped unexpectedly');
+    expect(reasonFor('inference.deactivated').wording).toBe('The local AI model is turned off');
+    // Nobody chose the crash: it is a warn with a reload remedy. The deactivation IS the choice.
+    expect(severityForCodes(['inference.crashed'])).toBe('warn');
+    expect(severityForCodes(['inference.deactivated'])).toBe('info');
+    expect(reasonFor('inference.crashed').remedy).toEqual({
+      kind: 'operation',
+      operationId: 'core.reload-inference',
+    });
+  });
+
+  it('S5: inference.crashed MUST join AI_MODEL_UNAVAILABLE_CODES — the `cosmetic` trap', () => {
+    // A recognized `warn` row in NONE of the consequence sets falls through to `cosmetic`, and the
+    // banner then says "An optional capability is unavailable; results are still fully semantic"
+    // about a crashed AI model. Membership is the mandatory companion edit, not a nicety.
+    expect(classifyConsequence(['inference.crashed'])).toBe('ai-unavailable');
+    const n = readinessNotice(degraded('warn', ['inference.crashed']));
+    expect(n!.headline).toBe('AI features unavailable.');
+    expect(n!.body).toContain('Search is fully working');
+    expect(n!.body).toContain('Chat and answer features are unavailable');
+  });
+
+  it('S5: inference.deactivated does NOT join it — it is the policy/user-choice case', () => {
+    // The set's own doctrine excludes inference.policy_* ("policy-disabled never comes online").
+    // A deliberate switch-off is that case, and it ships at `info` where the set is never consulted.
+    expect(classifyConsequence(['inference.deactivated'])).not.toBe('ai-unavailable');
+    expect(warrantsSearchDegradationBanner(degraded('info', ['inference.deactivated']))).toBe(false);
+  });
 });

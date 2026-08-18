@@ -23,7 +23,12 @@
 
 import type { ConnectionPhase, ReadinessView } from './aiStateStore.js';
 import type { Maybe } from './known.js';
-import { isReindexCause, severityForCodes, type Severity } from './readinessNotice.js';
+import {
+  classifyConsequence,
+  isReindexCause,
+  severityForCodes,
+  type Severity,
+} from './readinessNotice.js';
 
 export type { Severity };
 
@@ -347,6 +352,17 @@ export function verdictBody(v: SystemHealthVerdict): string {
     case 'degraded':
       if (v.reasons.some(isReindexCause)) {
         return 'A reindex is required to restore full search quality.';
+      }
+      // Tempdoc 837 §1.5 (UR-4) — a `warn` AI-only cause used to fall straight through to
+      // "Retrieval is degraded", which is FALSE for a chat-only outage and contradicted the banner
+      // (which correctly said "Search is fully working … Chat and answer features are unavailable")
+      // off the SAME verdict. Two surfaces, one verdict, opposite claims — the exact defect the
+      // consequence-classification authority exists to prevent, so this branch consults that ONE
+      // classifier rather than re-deriving a claim from severity. Mirrors the isReindexCause arm
+      // directly above; `verdict.ts` is a registered consumer in
+      // governance/consequence-classification.v1.json.
+      if (classifyConsequence(v.reasons) === 'ai-unavailable') {
+        return 'Chat and answer features are unavailable; search itself is unaffected.';
       }
       return v.severity === 'info'
         ? 'An optional capability is unavailable; search still works.'

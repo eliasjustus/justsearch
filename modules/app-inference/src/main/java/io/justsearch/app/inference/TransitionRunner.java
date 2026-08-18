@@ -68,13 +68,17 @@ final class TransitionRunner {
   /** Tempdoc 518 Appendix F W4.1 — shared listener substrate. Wraps each typed
    *  {@link io.justsearch.app.api.ModeChangeListener} in a Consumer adapter so the
    *  exception-swallow iteration matches ConfigStore + (eventually) IndexingLoop. */
-  private record ModeChange(Mode from, Mode to) {}
+  private record ModeChange(Mode from, Mode to, TransitionReason reason) {}
 
   private final ObservableNotifier<ModeChange> listeners =
       new ObservableNotifier<>("ModeChangeListener");
 
   private final java.util.Map<io.justsearch.app.api.ModeChangeListener, Consumer<ModeChange>>
       listenerAdapters = new java.util.concurrent.ConcurrentHashMap<>();
+
+  /** Tempdoc 837 §D.2 — the reason-bearing listeners, notified from the SAME notify sites. */
+  private final java.util.Map<ModeTransitionListener, Consumer<ModeChange>>
+      reasonListenerAdapters = new java.util.concurrent.ConcurrentHashMap<>();
 
   /**
    * Bounded failure-history ring buffer. Newest entries at the head (addFirst); oldest are
@@ -247,12 +251,33 @@ final class TransitionRunner {
   void addListener(io.justsearch.app.api.ModeChangeListener listener) {
     Consumer<ModeChange> adapter = listenerAdapters.computeIfAbsent(
         listener, l -> change -> l.onModeChange(change.from(), change.to()));
+    // The 2-arg listeners ignore change.reason() — unchanged behaviour, no signature churn.
     listeners.register(adapter);
   }
 
   /** Unregister a previously added listener. */
   void removeListener(io.justsearch.app.api.ModeChangeListener listener) {
     Consumer<ModeChange> adapter = listenerAdapters.remove(listener);
+    if (adapter != null) {
+      listeners.unregister(adapter);
+    }
+  }
+
+  /**
+   * Tempdoc 837 §D.2 — register a listener that also receives the {@link TransitionReason} this
+   * runner already holds. Same notify sites, same exception-swallow iteration; the reason is the
+   * only difference, and it is what lets a consumer tell crash recovery apart from a deactivation.
+   */
+  void addReasonListener(ModeTransitionListener listener) {
+    Consumer<ModeChange> adapter =
+        reasonListenerAdapters.computeIfAbsent(
+            listener, l -> change -> l.onModeTransition(change.from(), change.to(), change.reason()));
+    listeners.register(adapter);
+  }
+
+  /** Unregister a previously added reason-bearing listener. */
+  void removeReasonListener(ModeTransitionListener listener) {
+    Consumer<ModeChange> adapter = reasonListenerAdapters.remove(listener);
     if (adapter != null) {
       listeners.unregister(adapter);
     }
@@ -310,7 +335,7 @@ final class TransitionRunner {
       long startNanos = System.nanoTime();
       InferenceRuntimeView priorView = viewRef.get();
       Mode prev = modeState.beginTransition();
-      notifyListeners(prev, Mode.TRANSITIONING);
+      notifyListeners(prev, Mode.TRANSITIONING, reason);
 
       // Tempdoc 518 Appendix G W4.3 — wrap the body in an OTel span. The span carries
       // inference.from_phase / inference.to_phase / inference.reason / inference.success
@@ -359,7 +384,7 @@ final class TransitionRunner {
           case TransitionOutcome.Success success -> {
             modeState.complete(success.target());
             installSuccessView(success.nextView(), success.target());
-            notifyListeners(Mode.TRANSITIONING, success.target());
+            notifyListeners(Mode.TRANSITIONING, success.target(), reason);
             emitTransition(prev, success.target(), reason, startNanos);
             span.setAttribute("inference.to_phase", success.target().name());
             span.setAttribute("inference.success", true);
@@ -368,7 +393,7 @@ final class TransitionRunner {
           case TransitionOutcome.Failure failure -> {
             Mode restored = modeState.rollback();
             installFailureView(failure.rollbackView(), restored, failure.failure());
-            notifyListeners(Mode.TRANSITIONING, restored);
+            notifyListeners(Mode.TRANSITIONING, restored, reason);
             emitFailureSink(failureSink, failure.failure());
             emitTransition(prev, restored, reason, startNanos, failure.failure());
             span.setAttribute("inference.to_phase", restored.name());
@@ -415,7 +440,7 @@ final class TransitionRunner {
       if (failureOrNull != null) {
         recordFailureToHistory(failureOrNull);
       }
-      notifyListeners(prev, Mode.OFFLINE);
+      notifyListeners(prev, Mode.OFFLINE, reason);
       emitTransition(prev, Mode.OFFLINE, reason, startNanos, failureOrNull);
     }
   }
@@ -513,8 +538,8 @@ final class TransitionRunner {
     return new RuntimeIdentity(generationId, modelId, 0, System.currentTimeMillis());
   }
 
-  private void notifyListeners(Mode from, Mode to) {
-    listeners.notifyAll(new ModeChange(from, to));
+  private void notifyListeners(Mode from, Mode to, TransitionReason reason) {
+    listeners.notifyAll(new ModeChange(from, to, reason));
   }
 
   private void emitTransition(Mode from, Mode to, TransitionReason reason, long startNanos) {
