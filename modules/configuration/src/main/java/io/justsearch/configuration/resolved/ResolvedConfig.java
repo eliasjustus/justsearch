@@ -215,6 +215,10 @@ public record ResolvedConfig(
       int contextSize,
       String vlmModel,
       String mmprojModel,
+      // Tempdoc 842: the named (model, mmproj) bundle the llama-server engine starts with —
+      // "standard" (default) or "compact". Resolve via ChatModelProfile; the explicit
+      // llmModelPath override still wins.
+      String chatProfile,
       boolean useThinking,
       int reasoningBudget,
       String onnxruntimeVariantId,

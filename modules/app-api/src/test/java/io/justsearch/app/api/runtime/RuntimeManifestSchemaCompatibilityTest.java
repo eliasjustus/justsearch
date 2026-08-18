@@ -76,6 +76,7 @@ class RuntimeManifestSchemaCompatibilityTest {
     assertEquals(null, parsed.worker(), "older bodies have no worker sub-record");
     assertEquals(null, parsed.ai(), "older bodies have no ai sub-record");
     assertEquals(null, parsed.mode(), "older bodies have no mode sub-record (tempdoc 657)");
+    assertEquals(null, parsed.chat(), "older bodies have no chat sub-record (tempdoc 842)");
   }
 
   @Test
@@ -102,6 +103,67 @@ class RuntimeManifestSchemaCompatibilityTest {
     assertNotNull(parsed.mode());
     assertEquals("mcp-lite", parsed.mode().intent());
     assertEquals("retrieval-only", parsed.mode().realized());
+  }
+
+  @Test
+  void chatSubRecordRoundTripsAndStaysOptional() throws Exception {
+    // Tempdoc 842 §2.5: the realized chat-identity sub-record is a new OPTIONAL field, added in
+    // exactly the shape `mode` was (657). A body carrying it must round-trip; a body omitting it
+    // must still parse (chat == null), so the schema version stays 1.
+    String withChat =
+        "{\n"
+            + "  \"schemaVersion\": 1,\n"
+            + "  \"instanceId\": \"00000000-0000-0000-0000-000000000842\",\n"
+            + "  \"pid\": 842,\n"
+            + "  \"startedAt\": \"2026-08-18T00:00:00Z\",\n"
+            + "  \"dataDir\": \"/tmp/842\",\n"
+            + "  \"head\": {\n"
+            + "    \"apiPort\": 40842,\n"
+            + "    \"apiBaseUrl\": \"http://127.0.0.1:40842\",\n"
+            + "    \"readyAt\": \"2026-08-18T00:00:01Z\"\n"
+            + "  },\n"
+            + "  \"chat\": {\"profileId\": \"compact\","
+            + " \"modelFile\": \"Qwen3.5-4B-Q4_K_M.gguf\", \"mmprojActive\": true}\n"
+            + "}";
+
+    RuntimeManifest parsed = TOLERANT.readValue(withChat, RuntimeManifest.class);
+
+    assertNotNull(parsed.chat());
+    assertEquals("compact", parsed.chat().profileId());
+    assertEquals("Qwen3.5-4B-Q4_K_M.gguf", parsed.chat().modelFile());
+    assertEquals(Boolean.TRUE, parsed.chat().mmprojActive());
+    assertEquals(1, parsed.schemaVersion(), "an additive nullable block does not bump the schema");
+  }
+
+  @Test
+  void chatMmprojActiveIsTriStateNotBoolean() throws Exception {
+    // The defect this block exists to expose is a swap that silently DROPS the projector, so
+    // "vision is off" and "we have no observation" must be distinguishable. A boxed Boolean plus
+    // NON_NULL gives three states on the wire; a primitive would have collapsed the last two into
+    // `false` and made "unknown" read as a positive claim that vision is off.
+    RuntimeManifest.ChatInfo unknown = new RuntimeManifest.ChatInfo("compact", "m.gguf", null);
+    String written = TOLERANT.writeValueAsString(unknown);
+    assertTrue(
+        !written.contains("mmprojActive"),
+        "an unknown projector state must be omitted, not written as false: " + written);
+    assertEquals(null, TOLERANT.readValue(written, RuntimeManifest.ChatInfo.class).mmprojActive());
+
+    RuntimeManifest.ChatInfo dropped = new RuntimeManifest.ChatInfo("compact", "m.gguf", false);
+    String droppedJson = TOLERANT.writeValueAsString(dropped);
+    assertTrue(
+        droppedJson.contains("\"mmprojActive\":false"),
+        "an OBSERVED absent projector must be written explicitly: " + droppedJson);
+  }
+
+  @Test
+  void chatProfileIdNullSurvivesAsNullNotDefaultProfile() throws Exception {
+    // A bare operator path carries no profile claim. Round-tripping that as null (rather than
+    // materializing "standard") is what stops the manifest from asserting a profile the engine
+    // never selected.
+    RuntimeManifest.ChatInfo unattributed = new RuntimeManifest.ChatInfo(null, "custom.gguf", true);
+    String written = TOLERANT.writeValueAsString(unattributed);
+    assertTrue(!written.contains("profileId"), "an absent claim must be omitted: " + written);
+    assertEquals(null, TOLERANT.readValue(written, RuntimeManifest.ChatInfo.class).profileId());
   }
 
   @Test

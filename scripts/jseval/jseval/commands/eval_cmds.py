@@ -164,10 +164,14 @@ def cmd_retrieval_eval(ctx, queries, corpus_dir, corpus_jsonl, base_url, top_k, 
 @click.option("--no-structured", is_flag=True, help="Disable structured JSON output (plain text answers).")
 @click.option("--paper-prompt", is_flag=True, help="Use the original MultiHop-RAG paper prompt (ablation for fair comparison).")
 @click.option("--source-check", is_flag=True, help="Enable pre-retrieval source existence check (deterministic abstention for absent sources).")
+@click.option("--allow-compact-model", is_flag=True, default=False,
+              help="Permit tier-2 quality evals against the compact dev-tier chat model; "
+                   "results are marked and NOT comparable to standard-model baselines.")
 @click.option("--output-dir", type=click.Path(), default=None)
 @click.pass_context
 def cmd_tier2_eval(ctx, queries, base_url, llm_url, top_k, max_context_tokens,
-                   types, max_queries, no_structured, paper_prompt, source_check, output_dir):
+                   types, max_queries, no_structured, paper_prompt, source_check,
+                   allow_compact_model, output_dir):
     """Tier 2: Single-shot RAG eval (retrieve + local LLM, $0 cost)."""
     from .. import agent_retrieval_eval as are
 
@@ -182,6 +186,7 @@ def cmd_tier2_eval(ctx, queries, base_url, llm_url, top_k, max_context_tokens,
         use_paper_prompt=paper_prompt,
         source_check=source_check,
         checkpoint_dir=cp_dir,
+        allow_compact_model=allow_compact_model,
     )
 
     if ctx.obj.get("json"):

@@ -338,7 +338,7 @@ export async function readRunJson({ repoRoot, runId }) {
   return JSON.parse(raw);
 }
 
-export function buildDevRunnerArgsStart({ apiPort, uiPort, clean, dataDir, takeover, skipBuild, hotReload, sessionId, leaseDurationSec }) {
+export function buildDevRunnerArgsStart({ apiPort, uiPort, clean, dataDir, takeover, skipBuild, hotReload, sessionId, leaseDurationSec, chatProfile }) {
   const out = [
     'start',
     '--json',
@@ -357,6 +357,9 @@ export function buildDevRunnerArgsStart({ apiPort, uiPort, clean, dataDir, takeo
   if (leaseDurationSec != null && Number.isFinite(Number(leaseDurationSec))) {
     out.push(`--lease-duration-sec=${leaseDurationSec}`);
   }
+  // Tempdoc 842 §2.4: forward the chat model profile; dev-runner.cjs owns the "compact" dev
+  // default when this is omitted.
+  if (chatProfile) out.push(`--chat-profile=${chatProfile}`);
   return out;
 }
 

@@ -40,10 +40,18 @@ public final class AiRuntimeController {
 
   public void handleActivate(Context ctx) {
     String variantId = null;
+    // Tempdoc 842 §2.4: optional chat-model profile. Absent (or an unparseable body, which the
+    // pre-842 code already tolerated) leaves the activation flow byte-for-byte unchanged; a value
+    // is normalized by ChatModelProfile.resolve downstream, which warn-falls-back rather than
+    // failing so a bad flag cannot brick activation.
+    String chatProfile = null;
     try {
       JsonNode root = MAPPER.readTree(ctx.body());
       if (root != null && root.has("variantId")) {
         variantId = root.get("variantId").asText(null);
+      }
+      if (root != null && root.has("chatProfile")) {
+        chatProfile = root.get("chatProfile").asText(null);
       }
     } catch (Exception ignored) {
       // tolerate
@@ -72,7 +80,7 @@ public final class AiRuntimeController {
     }
 
     try {
-      service.startActivate(variantId);
+      service.startActivate(variantId, chatProfile);
       ctx.json(service.getStatus());
     } catch (IllegalStateException e) {
       ctx.status(409).json(ApiErrorHandler.toResponse(ApiErrorCode.RUNTIME_ACTIVATION_RUNNING, e.getMessage(), telemetry, ApiErrorHandler.routeOf(ctx)));

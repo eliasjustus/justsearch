@@ -41,11 +41,24 @@ from pathlib import Path
 import httpx
 
 from jseval.chunk_completeness import iter_corpus_docs, resolve_chunk_threshold_chars
+from jseval.judge_ceiling import served_model_name
 from jseval.utility_calibrate import assert_watched_roots_scoped, base_url_from_mcp_config
 
 log = logging.getLogger(__name__)
 
 _DEFAULT_BASE_URL = "http://127.0.0.1:33221"
+
+# Tempdoc 842 §2.5: quality numbers from a compact/dev-tier chat model must not
+# be producible by accident -- they systematically poison quality baselines and
+# are not comparable to standard-model results. Case-insensitive substring match
+# against the served model name/path (jseval.judge_ceiling.served_model_name).
+COMPACT_MODEL_MARKERS = ("qwen3.5-4b", "qwen3-1.7b")
+
+
+class CompactModelNotAllowedError(RuntimeError):
+    """Raised by :func:`run_tier2_eval` when the served chat model matches a
+    ``COMPACT_MODEL_MARKERS`` entry (tempdoc 842 §2.5) and ``allow_compact_model``
+    was not passed."""
 
 
 def stage_corpus_dir(corpus_dir: str, *, prefix: str = "jseval-corpus-stage-",
@@ -826,6 +839,7 @@ def run_tier2_eval(
     use_paper_prompt: bool = False,
     source_check: bool = False,
     checkpoint_dir: Path | None = None,
+    allow_compact_model: bool = False,
 ) -> dict:
     """Run Tier 2 single-shot RAG eval: retrieve-context + local LLM answer.
 
@@ -836,8 +850,39 @@ def run_tier2_eval(
     When source_check=True, queries mentioning sources absent from the
     corpus are answered with "Insufficient Information" without calling
     the LLM (deterministic pre-retrieval abstention).
+
+    Tempdoc 842 §2.5: probes the served chat model's identity (best-effort;
+    never raises) and records it as ``served_model`` in the result aggregate.
+    If the served model matches ``COMPACT_MODEL_MARKERS``, raises
+    :class:`CompactModelNotAllowedError` unless ``allow_compact_model=True`` --
+    compact/dev-tier models poison quality baselines and must not be used for
+    quality-sensitive tier-2 runs by accident.
     """
     import httpx as _httpx
+
+    try:
+        served_model = served_model_name(llm_url)
+    except Exception as e:  # noqa: BLE001 — identity probe is advisory, never fatal
+        served_model = None
+        log.warning("served_model_name probe failed for %s: %s", llm_url, e)
+    if served_model is None:
+        log.warning("Could not determine served chat model identity at %s; "
+                    "tier-2 result will record served_model=None.", llm_url)
+
+    compact_model_allowed = False
+    if served_model:
+        matched_marker = next(
+            (m for m in COMPACT_MODEL_MARKERS if m in served_model.lower()), None)
+        if matched_marker:
+            if not allow_compact_model:
+                raise CompactModelNotAllowedError(
+                    f"Tier-2 eval is running against served model '{served_model}', which "
+                    f"matches compact/dev-tier marker '{matched_marker}'. Compact models "
+                    "systematically poison quality baselines and results from them are not "
+                    "comparable to standard-model baselines (tempdoc 842 §2.5). Pass "
+                    "--allow-compact-model (CLI) or allow_compact_model=True (API) to run "
+                    "anyway -- the result will be stamped compact_model_allowed=true.")
+            compact_model_allowed = True
 
     client = _httpx.Client(base_url=base_url, timeout=30.0)
     results: list[Tier2Result] = []
@@ -1013,7 +1058,8 @@ def run_tier2_eval(
     client.close()
     if source_check:
         log.info("Source check abstentions: %d/%d", source_check_abstentions, len(filtered))
-    return _aggregate_tier2(results)
+    return _aggregate_tier2(results, served_model=served_model,
+                            compact_model_allowed=compact_model_allowed)
 
 
 def _save_checkpoint(checkpoint_dir: Path, results: list[Tier2Result], done: int, total: int) -> None:
@@ -1029,10 +1075,11 @@ def _save_checkpoint(checkpoint_dir: Path, results: list[Tier2Result], done: int
     log.debug("  Checkpoint saved: %d/%d to %s", done, total, cp_file)
 
 
-def _aggregate_tier2(results: list[Tier2Result]) -> dict:
+def _aggregate_tier2(results: list[Tier2Result], *, served_model: str | None = None,
+                     compact_model_allowed: bool = False) -> dict:
     """Aggregate Tier 2 results."""
     if not results:
-        return {"error": "no results"}
+        return {"error": "no results", "served_model": served_model}
 
     total = len(results)
     errors = sum(1 for r in results if r.error)
@@ -1070,8 +1117,9 @@ def _aggregate_tier2(results: list[Tier2Result]) -> dict:
             "avg_latency_ms": round(sum(r.latency_retrieve_ms + r.latency_llm_ms for r in tv) / tn),
         }
 
-    return {
+    agg = {
         "tier": "tier2_single_shot_rag",
+        "served_model": served_model,
         "total_queries": total,
         "errors": errors,
         "accuracy_exact": round(exact_correct / n, 4),
@@ -1085,6 +1133,9 @@ def _aggregate_tier2(results: list[Tier2Result]) -> dict:
         "by_type": type_summary,
         "results": [asdict(r) for r in results],
     }
+    if compact_model_allowed:
+        agg["compact_model_allowed"] = True
+    return agg
 
 
 def format_tier2_console(result: dict) -> str:

@@ -49,6 +49,9 @@
         "activeVariantId" : {
           "type" : [ "string", "null" ]
         },
+        "chatProfile" : {
+          "type" : [ "string", "null" ]
+        },
         "effectiveVramFlags" : {
           "type" : [ "array", "null" ],
           "items" : {
@@ -57,6 +60,12 @@
         },
         "gpuLayers" : {
           "type" : [ "integer", "null" ]
+        },
+        "mmprojActive" : {
+          "type" : [ "boolean", "null" ]
+        },
+        "modelPath" : {
+          "type" : [ "string", "null" ]
         },
         "serverExecutablePath" : {
           "type" : [ "string", "null" ]

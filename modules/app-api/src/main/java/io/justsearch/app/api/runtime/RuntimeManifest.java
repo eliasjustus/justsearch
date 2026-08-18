@@ -86,7 +86,23 @@ public record RuntimeManifest(
      * existing version single-sources (see {@link RuntimeContract#current()}); nullable and
      * {@code @JsonInclude(NON_NULL)}, so older readers are unaffected and no schema bump is needed.
      */
-    RuntimeContract runtimeContract) {
+    RuntimeContract runtimeContract,
+    /**
+     * Realized chat-model identity (tempdoc 842 §2.5). {@code profileId} is the
+     * {@code ChatModelProfile} the RUNNING engine claims ({@code null} = no profile claim, i.e. the
+     * model came from a bare path); {@code modelFile} is the file name actually loaded; {@code
+     * mmprojActive} says whether a multimodal projector is attached to that engine.
+     *
+     * <p>This is the same declared-vs-realized honesty 805 established for ONNX execution providers
+     * and {@link ModeInfo} shipped for install mode: settings can say "compact" while the engine
+     * runs the 9B, and a projector-dropping swap leaves vision silently off. Only a projection of
+     * the running engine can say so.
+     *
+     * <p>Nullable — a manifest written before the first chat publish (or with no inference runtime
+     * at all) omits it; {@code @JsonInclude(NON_NULL)} keeps it optional and the schema version
+     * stays 1 (older readers unaffected), exactly as {@code mode} was added.
+     */
+    ChatInfo chat) {
 
   public static final int CURRENT_SCHEMA_VERSION = 1;
 
@@ -245,6 +261,37 @@ public record RuntimeManifest(
   }
 
   /**
+   * Realized chat-model identity (tempdoc 842 §2.5) — the honesty surface for "which chat model is
+   * this stack actually talking to".
+   *
+   * <ul>
+   *   <li>{@code profileId} — the {@code ChatModelProfile} id the running engine claims
+   *       ({@code "standard"} | {@code "compact"} | ...). {@code null} is a real, distinct state:
+   *       the engine loaded a bare path nobody attributed to a profile. It is NOT "standard".
+   *   <li>{@code modelFile} — the file name the engine actually loaded (never the full path: the
+   *       manifest's public projection is read by external agents and directory layout is not
+   *       theirs to learn).
+   *   <li>{@code mmprojActive} — {@code TRUE}/{@code FALSE} when the engine's projector state is
+   *       known, {@code null} when it is not. Deliberately a boxed tri-state: the defect this
+   *       block exists to expose is a swap that silently drops the projector, and "we don't know"
+   *       must not render as "no projector" (or, worse, as "vision is fine").
+   * </ul>
+   */
+  @RecordBuilder
+  @JsonInclude(JsonInclude.Include.NON_NULL)
+  public record ChatInfo(String profileId, String modelFile, Boolean mmprojActive) {
+
+    /**
+     * Public projection (tempdoc 501 §13.4.5 audience axis). Chat identity carries no credentials
+     * and no filesystem layout — {@code modelFile} is a bare file name — so the public view is
+     * identity, like {@link ModeInfo#publicProjection}.
+     */
+    public ChatInfo publicProjection() {
+      return this;
+    }
+  }
+
+  /**
    * Public projection of the whole manifest (tempdoc 501 §13.4.5 audience
    * axis). Each sub-record declares its own {@code publicProjection()}; this
    * method composes them. The type system enforces that new sensitive
@@ -263,16 +310,18 @@ public record RuntimeManifest(
     ModeInfo publicMode = mode == null ? null : mode.publicProjection();
     RuntimeContract publicContract =
         runtimeContract == null ? null : runtimeContract.publicProjection();
+    ChatInfo publicChat = chat == null ? null : chat.publicProjection();
     if (publicHead == head
         && publicWorker == worker
         && publicAi == ai
         && publicReach == reachability
         && publicMode == mode
-        && publicContract == runtimeContract) {
+        && publicContract == runtimeContract
+        && publicChat == chat) {
       return this;
     }
     return new RuntimeManifest(
         schemaVersion, instanceId, pid, startedAt, dataDir, lifecycle,
-        publicHead, publicWorker, publicAi, publicReach, publicMode, publicContract);
+        publicHead, publicWorker, publicAi, publicReach, publicMode, publicContract, publicChat);
   }
 }

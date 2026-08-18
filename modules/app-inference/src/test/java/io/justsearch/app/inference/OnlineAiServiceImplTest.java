@@ -9,14 +9,21 @@ import io.justsearch.app.api.OnlineAiService.AiUsage;
 import io.justsearch.app.inference.InferenceConfig;
 import io.justsearch.app.inference.InferenceLifecycleManager;
 import io.justsearch.app.api.Mode;
+import io.justsearch.configuration.model.ChatModelProfile;
+import io.justsearch.configuration.resolved.ConfigStore;
+import io.justsearch.configuration.resolved.TestResolvedConfigHelper;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -24,6 +31,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 final class OnlineAiServiceImplTest {
 
   @Mock InferenceLifecycleManager manager;
+
+  @TempDir Path tmp;
 
   private OnlineAiServiceImpl service;
 
@@ -167,6 +176,181 @@ final class OnlineAiServiceImplTest {
             any(InferenceConfig.class),
             eq(InferenceLifecycleManager.RestartPolicy.RESTART_IF_ONLINE),
             eq(io.justsearch.app.inference.telemetry.TransitionReason.ADMIN_TRIGGERED));
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // Tempdoc 842 §2.3 — bare-path applies vs. atomic profile applies.
+  // -------------------------------------------------------------------------------------------
+
+  /**
+   * A bare path has no known projector, so the defensive mmproj drop stays. The profile id must go
+   * with it: leaving a stale "standard" claim on someone else's model file would make every
+   * surface that reports realized chat identity report a model that is not running.
+   */
+  @Test
+  @DisplayName("applyRuntimeOverrides with a new bare path clears BOTH the mmproj and the profile claim")
+  void barePathApplyClearsMmprojAndProfileClaim() throws Exception {
+    InferenceConfig current =
+        new InferenceConfig(
+            Path.of("/bin/llama-server.exe"),
+            Path.of("/models/Qwen_Qwen3.5-9B-Q4_K_M.gguf"),
+            Path.of("/models/mmproj-F16.gguf"),
+            8080,
+            4096,
+            33,
+            false,
+            "standard");
+    when(manager.currentConfig()).thenReturn(current);
+
+    service.applyRuntimeOverrides(
+        "/elsewhere/hand-picked.gguf",
+        null,
+        null,
+        io.justsearch.app.api.OnlineAiRuntimeControl.RestartPolicy.APPLY_ONLY);
+
+    ArgumentCaptor<InferenceConfig> captor = ArgumentCaptor.forClass(InferenceConfig.class);
+    verify(manager).applyConfig(captor.capture(), any(), any());
+    InferenceConfig next = captor.getValue();
+    assertEquals(Path.of("/elsewhere/hand-picked.gguf"), next.modelPath());
+    assertNull(next.mmprojPath(), "a bare path drops the projector");
+    assertNull(next.chatProfileId(), "a bare path must not carry a stale profile claim");
+  }
+
+  /** An unchanged path is not a swap: the pair, and therefore the claim, survives. */
+  @Test
+  @DisplayName("applyRuntimeOverrides that does not change the model keeps the profile claim")
+  void unchangedPathApplyKeepsProfileClaim() throws Exception {
+    Path model = Path.of("/models/compact/Qwen3.5-4B-Q4_K_M.gguf");
+    InferenceConfig current =
+        new InferenceConfig(
+            Path.of("/bin/llama-server.exe"),
+            model,
+            Path.of("/models/compact/mmproj-F16.gguf"),
+            8080,
+            4096,
+            33,
+            false,
+            "compact");
+    when(manager.currentConfig()).thenReturn(current);
+
+    service.applyRuntimeOverrides(
+        model.toString(),
+        8192,
+        null,
+        io.justsearch.app.api.OnlineAiRuntimeControl.RestartPolicy.APPLY_ONLY);
+
+    ArgumentCaptor<InferenceConfig> captor = ArgumentCaptor.forClass(InferenceConfig.class);
+    verify(manager).applyConfig(captor.capture(), any(), any());
+    InferenceConfig next = captor.getValue();
+    assertEquals(model, next.modelPath());
+    assertEquals(Path.of("/models/compact/mmproj-F16.gguf"), next.mmprojPath());
+    assertEquals("compact", next.chatProfileId());
+    assertEquals(8192, next.contextSize());
+  }
+
+  /**
+   * The profile-driven counterpart: model, projector, and id land together, and everything the
+   * profile does not name (ctx, GPU layers, port, executable) is carried over untouched.
+   */
+  @Test
+  @DisplayName("applyChatProfile applies model + mmproj + id atomically and leaves ctx/gpuLayers alone")
+  void applyChatProfileAppliesTheWholePairAtomically() throws Exception {
+    Path modelsDir = tmp.resolve("models");
+    Files.createDirectories(modelsDir.resolve("compact"));
+    Files.writeString(modelsDir.resolve(ChatModelProfile.COMPACT.modelFile()), "x");
+    Files.writeString(modelsDir.resolve(ChatModelProfile.COMPACT.mmprojFile()), "x");
+
+    InferenceConfig current =
+        new InferenceConfig(
+            Path.of("/bin/llama-server.exe"),
+            modelsDir.resolve(ChatModelProfile.STANDARD.modelFile()),
+            modelsDir.resolve(ChatModelProfile.STANDARD.mmprojFile()),
+            8082,
+            8192,
+            33,
+            false,
+            "standard");
+    when(manager.currentConfig()).thenReturn(current);
+
+    ConfigStore prevStore = ConfigStore.globalOrNull();
+    String prevModelsDir = System.getProperty("justsearch.models.dir");
+    System.setProperty("justsearch.models.dir", modelsDir.toString());
+    try {
+      TestResolvedConfigHelper.storeFromEnvironment();
+
+      service.applyChatProfile(
+          ChatModelProfile.COMPACT,
+          io.justsearch.app.api.OnlineAiRuntimeControl.RestartPolicy.RESTART_ALWAYS);
+
+      ArgumentCaptor<InferenceConfig> captor = ArgumentCaptor.forClass(InferenceConfig.class);
+      verify(manager)
+          .applyConfig(
+              captor.capture(),
+              eq(InferenceLifecycleManager.RestartPolicy.RESTART_ALWAYS),
+              eq(io.justsearch.app.inference.telemetry.TransitionReason.CONFIG_APPLY));
+      InferenceConfig next = captor.getValue();
+      assertEquals(modelsDir.resolve(ChatModelProfile.COMPACT.modelFile()), next.modelPath());
+      assertEquals(modelsDir.resolve(ChatModelProfile.COMPACT.mmprojFile()), next.mmprojPath());
+      assertEquals("compact", next.chatProfileId());
+      // Untouched carry-over — a profile names a model bundle, not a whole runtime.
+      assertEquals(8192, next.contextSize());
+      assertEquals(33, next.gpuLayers());
+      assertEquals(8082, next.serverPort());
+      assertEquals(Path.of("/bin/llama-server.exe"), next.serverExecutable());
+    } finally {
+      if (prevModelsDir == null) {
+        System.clearProperty("justsearch.models.dir");
+      } else {
+        System.setProperty("justsearch.models.dir", prevModelsDir);
+      }
+      TestResolvedConfigHelper.restoreGlobal(prevStore);
+    }
+  }
+
+  /** Missing projector on disk warns and degrades to text-only rather than failing the switch. */
+  @Test
+  @DisplayName("applyChatProfile nulls a missing mmproj instead of failing the switch")
+  void applyChatProfileDegradesToTextOnlyWhenMmprojMissing() throws Exception {
+    Path modelsDir = tmp.resolve("models-nomm");
+    Files.createDirectories(modelsDir.resolve("compact"));
+    Files.writeString(modelsDir.resolve(ChatModelProfile.COMPACT.modelFile()), "x");
+
+    InferenceConfig current =
+        new InferenceConfig(
+            Path.of("/bin/llama-server.exe"),
+            modelsDir.resolve(ChatModelProfile.STANDARD.modelFile()),
+            null,
+            8082,
+            4096,
+            0,
+            false,
+            "standard");
+    when(manager.currentConfig()).thenReturn(current);
+
+    ConfigStore prevStore = ConfigStore.globalOrNull();
+    String prevModelsDir = System.getProperty("justsearch.models.dir");
+    System.setProperty("justsearch.models.dir", modelsDir.toString());
+    try {
+      TestResolvedConfigHelper.storeFromEnvironment();
+
+      service.applyChatProfile(
+          ChatModelProfile.COMPACT,
+          io.justsearch.app.api.OnlineAiRuntimeControl.RestartPolicy.APPLY_ONLY);
+
+      ArgumentCaptor<InferenceConfig> captor = ArgumentCaptor.forClass(InferenceConfig.class);
+      verify(manager).applyConfig(captor.capture(), any(), any());
+      InferenceConfig next = captor.getValue();
+      assertEquals(modelsDir.resolve(ChatModelProfile.COMPACT.modelFile()), next.modelPath());
+      assertNull(next.mmprojPath());
+      assertEquals("compact", next.chatProfileId());
+    } finally {
+      if (prevModelsDir == null) {
+        System.clearProperty("justsearch.models.dir");
+      } else {
+        System.setProperty("justsearch.models.dir", prevModelsDir);
+      }
+      TestResolvedConfigHelper.restoreGlobal(prevStore);
+    }
   }
 
   /** Counterpart pin: the non-admin path must NOT use ADMIN_TRIGGERED. */

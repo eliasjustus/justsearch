@@ -27,8 +27,11 @@ export interface AiRuntimeStatusResponse {
   } | null;
   active?: {
     activeVariantId?: string | null;
+    chatProfile?: string | null;
     effectiveVramFlags?: string[] | null;
     gpuLayers?: number | null;
+    mmprojActive?: boolean | null;
+    modelPath?: string | null;
     serverExecutablePath?: string | null;
     vramDetectionSource?: string | null;
     vramFreeBytes?: number | null;
@@ -68,8 +71,11 @@ export const aiRuntimeStatusResponseSchema = z.strictObject({
   }).nullable().optional(),
   "active": z.strictObject({
     "activeVariantId": z.string().nullable().optional(),
+    "chatProfile": z.string().nullable().optional(),
     "effectiveVramFlags": z.array(z.string()).nullable().optional(),
     "gpuLayers": z.number().int().nullable().optional(),
+    "mmprojActive": z.boolean().nullable().optional(),
+    "modelPath": z.string().nullable().optional(),
     "serverExecutablePath": z.string().nullable().optional(),
     "vramDetectionSource": z.string().nullable().optional(),
     "vramFreeBytes": z.number().int().nullable().optional(),

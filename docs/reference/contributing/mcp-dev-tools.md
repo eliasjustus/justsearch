@@ -40,6 +40,7 @@ Legacy underscore-style dev tool names and standalone readiness/listing/suggesti
 1. Start the stack with `justsearch.dev.start`.
    - Use the tool's wait options instead of a separate wait-ready tool.
    - `waitTimeoutMs` may need to be higher than the default on cold machines or after clean builds.
+   - `chatProfile?: "compact" | "standard"` (tempdoc 842) selects the llama-server chat model pair delivered as `JUSTSEARCH_CHAT_PROFILE` in the spawn env. Defaults to `compact` — dev stacks run the small dev-tier model unless told otherwise.
 2. Orient with `justsearch.dev.quick_health` for a compact readiness check.
 3. Use `justsearch.dev.status` when process state, ports, or runner metadata matter.
 4. Use `justsearch.dev.fetch_api_json` for common read-only diagnostics.
@@ -111,13 +112,14 @@ When an endpoint is not allowlisted, update the dev MCP implementation and this 
 
 ## AI Runtime Tools
 
-- Use `justsearch.dev.ai_activate` when an investigation requires the online local AI runtime.
-- **The chat model is runtime-configurable — no installer pack-import or `-D` restart needed.**
-  The dev data dir starts with no chat model, which reads like a blocker but isn't: `POST /api/settings/v2`
-  with `{"llm":{"modelPath":"<gguf>","gpuLayers":99}}`, then `ai_activate`. This unblocked a live
-  verification that had been treated as impossible.
+- Use `justsearch.dev.ai_activate` when an investigation requires the online local AI runtime. It takes an optional `chatProfile?: "compact" | "standard"` (tempdoc 842) — activation is when llama-server spawns, so it's the switch point for changing chat model pair; measured switch cost is single-digit seconds either direction. `justsearch.dev.agent_chat` auto-activates the runtime (compact profile) when it finds AI offline and reports `autoActivated: true` in its result, closing the `AI_OFFLINE`-one-call-from-`ai_activate` trap.
+- **The chat model is also runtime-configurable by explicit path — no installer pack-import or `-D` restart needed.**
+  `POST /api/settings/v2` with `{"llm":{"modelPath":"<gguf>","gpuLayers":99}}`, then `ai_activate`. An explicit
+  path is operator-owned and wins over the profile (tempdoc 842 precedence); prefer `chatProfile` unless you
+  need a model outside the registry pairs.
 - Use `justsearch.dev.reload` after backend changes. It reports whether hot swap worked and whether structural changes require a restart.
 - Do not treat embedding readiness and online LLM readiness as the same thing. Embeddings are Worker-side; online chat/QA uses the app inference runtime.
+- `justsearch.dev.quick_health` reports `aiActive` (real tri-state: `true`/`false` for a reachable stack, `null` when unreachable) plus a `model` block (`chatProfile`, `modelPath`) when the runtime reports realized chat identity, and a declared `freshness` block (tempdoc 637) aggregating build/index/binding/lock staleness sources.
 
 ## Start-Tool Error Codes
 

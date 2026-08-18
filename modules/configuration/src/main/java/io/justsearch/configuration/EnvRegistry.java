@@ -306,6 +306,14 @@ public enum EnvRegistry {
      */
     VLM_PROFILE("justsearch.vlm.profile", "JUSTSEARCH_VLM_PROFILE"),
 
+    /**
+     * Chat model profile (tempdoc 842) — selects the llama-server engine model pair:
+     * {@code standard} (Qwen3.5-9B, the user-facing default) or {@code compact} (the dev-tier small
+     * model). Consumed at engine start. {@link #VLM_PROFILE} remains a legacy fallback read by the
+     * inference layer.
+     */
+    CHAT_PROFILE("justsearch.chat.profile", "JUSTSEARCH_CHAT_PROFILE", "standard"),
+
     /** HTTP port for llama-server. */
     SERVER_PORT("justsearch.server.port", "JUSTSEARCH_SERVER_PORT"),
 
