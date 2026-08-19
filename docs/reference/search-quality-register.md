@@ -670,6 +670,67 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   self-consistent against their own embedded policy snapshot; they are dated history, not retracted.
   Any *claim-bearing* run must use the v2 cohort.
 
+### F-052: CE model quality IS a quality lever — the delivered-rank swap A/B refutes F-001/F-006 (MiniLM vs incumbent: email −5.7%, scifact −6.9%, legal −23.4%), and exposed a SILENT CE-deadline drop that no comparability field reports (2026-08-19; first CE-model measurement on the corrected harness)
+
+- **Answer:** shared-index, delivered-rank CE model-swap A/B (arm A = incumbent
+  gte-multilingual-reranker-base at default discovery; arm B = ms-marco-MiniLM-L-6-v2 via
+  `JUSTSEARCH_RERANK_MODEL_PATH` + `JUSTSEARCH_RERANK_MAX_SEQ_LEN=512`, the tempdoc 309 §43
+  mechanism; git `69872fc2`). Hybrid nDCG@10, arm A → arm B: **legal-clerc-200 0.5788 → 0.4435
+  (−0.1353, −23.4%)**; **enron-qa 0.7967 → 0.7512 (−0.0455, −5.7%)**; **scifact 0.7533 → 0.7013
+  (−0.0520, −6.9%)**. P@1 and R@10 move the same direction in every cell. The measurement is
+  deterministic: two bit-identical replicates per arm per corpus, and per-query `fusion_score`
+  is bit-identical across ALL runs including cross-arm — retrieval and fusion contributed
+  exactly zero to the deltas; the CE stage is the only varying component. Arm A reproduces the
+  832 scorecard (0.5788/0.7967/0.7533 vs 0.5780/0.7957/0.7572) and passes `relevance-gate` on
+  all three corpora.
+- **Consequences:** **F-001 and F-006 are REFUTED** under the current pipeline — "CE model
+  doesn't matter" was an artifact of the pre-800 harness (which deleted the CE's ordering
+  channel) COMBINED with pre-F-041 preview-blind CE input; with evidence-coherent input and
+  delivered-rank scoring, CE model quality is a first-order lever, largest exactly where the CE
+  has the most work to do (legal, where fusion is weakest). **D-001's choice is strongly
+  re-validated** (the incumbent decisively beats the model it replaced) but its "CE is no longer
+  a quality lever" rationale is retired. This measures the CURRENT pipeline (evidence-preview/
+  span ON, 775 defaults) — it supersedes, not corrects, 309 §41/§43's conditions.
+- **The methodological finding (eval-integrity hole, `green-masked` family):**
+  `justsearch.rerank.deadline_ms` defaults to **200 ms** while the incumbent's CE stage p50 on
+  legal is **165 ms** — inside jitter distance of its own deadline. A budget miss returns the
+  rerank RPC as skipped and the query is delivered in pure fusion order, with **no trace in any
+  gate-read field**: `comparable: true`, empty `comparability_reasons`, `ann_proof PASS`,
+  `error_count 0`, `cross_encoder` still in observed legs. Only per-hit
+  `judgeSignals.ce_score: null` shows it. Two early runs were contaminated exactly this way
+  (legal arm A at 49% CE coverage scored **0.6255 vs 0.5788 clean** — dropping the CE on half
+  the queries RAISED legal nDCG, independently corroborating 802's −0.0418 CE-ordering term on
+  this corpus); the exposure is **asymmetric by model speed** (a slower model loses more queries
+  to the deadline), so any future CE A/B without a coverage check is structurally biased.
+  Coverage was enforced as an acceptance criterion (clean cells ≥99.5%, residual skip sets
+  verified IDENTICAL between arms and carrying deterministic reasons — NAVIGATIONAL /
+  BELOW_MIN_THRESHOLD / FUSION_CONFIDENT). **A `ce_coverage` verdict now ships next to
+  `chunk_completeness` in jseval** (same embedded-verdict + gate-seam pattern; landed with this
+  entry): per-query `crossEncoderStatus`/`crossEncoderReason` are now PERSISTED into
+  `{mode}_per_query.json` — the reason previously lived only in memory, which is why the
+  archived pre-fix artifacts can only ever read `unevaluable` (loudly — the gate prints the
+  unexplained count) rather than `degraded-ce`; the writer→reader→verdict loop is
+  regression-tested on the real writer, and the hole itself is pinned as a test asserting the
+  contaminated and clean runs are indistinguishable on every gate-read field. Verdict
+  `degraded-ce` when silent drops exceed 2% of CE-eligible queries (bounds induced bias to
+  ~0.002 nDCG, an order below the relevance ratchet's 0.02 tolerance); `DEADLINE_EXCEEDED` /
+  `RPC_FAILED` / unknown reasons fail closed as silent drops; the deterministic skips above
+  stay legitimate; all four ratchet gates assert it, with `--allow-ce-degradation` /
+  `JUSTSEARCH_ALLOW_CE_DEGRADATION=1` as the explicit escape hatch. The production-side half — a 200 ms default with a 165 ms p50 means real long-doc
+  queries silently lose the CE under jitter, with no reason code — is logged to the inbox as an
+  owner decision (raise the deadline vs surface the skip), not changed unilaterally.
+- **Conditions/caveats:** English corpora only — the incumbent is multilingual while MiniLM is
+  English-only, so the de/fr margin is plausibly LARGER and is unmeasured. Arm B ran
+  FP16-on-CUDA `VariantSelection.optimal` (the MiniLM dir was rebuilt as FP32+FP16 with a
+  hand-authored ADR-0019 manifest — deliberately not the historical INT8, so the swap varies
+  model identity only; `models/onnx/reranker-minilm-backup/build.json` records the deviation,
+  including that `build-crossencoder.py` cannot emit a GPU variant itself). Single machine,
+  single session; replicates were bit-identical so no variance estimate is needed for the sign.
+- **Evidence:** run dirs `tmp/ce-ab/` in the `d004-register-reconcile` worktree (12 clean runs +
+  2 deadline-contaminated kept as evidence, roll-up `final.jsonl`; gitignored — this entry is
+  the durable record). Wrong-gate check: `models.reranker_model_path` reads the expected
+  directory in every run of both arms, corroborated by Worker startup logs.
+
 ### F-051: the German 10⁴ collapse is attributed — task-shape dominant, German representation a measured secondary cause, and the ENGINE IS EXONERATED on headroom: its leg-union sits at/above the offline exact-NN ceiling on the rebuilt DE cells; the only internal loss is a 1k-scale fusion/judge leak that vanishes at 10k (tempdoc 748 §G.1-§G.3, 2026-08-19; closes Q-018)
 
 - **Answer (final attribution for Q-018's four hypotheses):** **(c) gold-design/task-shape is
@@ -2236,13 +2297,21 @@ above)*
   the next instance when its own evidence demands it (`structural-defects-no-repeat`, applied to *avoid* premature
   generalization here, not to force it).
 
-### F-001: CE model quality is irrelevant on personal email
+### F-001: CE model quality is irrelevant on personal email — REFUTED (2026-08-19, F-052)
 
+- **REFUTED (2026-08-19):** the swap comparison this finding is about was re-run on the
+  corrected delivered-rank harness under current defaults (F-052): MiniLM vs the incumbent
+  costs **enron-qa −0.0455 nDCG@10 (−5.7%)**, deterministic across bit-identical replicates,
+  fusion held bit-identical between arms. CE model quality is NOT irrelevant on personal
+  email. The original "zero difference" was the pre-800 harness artifact the 800 caveat below
+  predicted, compounded by pre-F-041 preview-blind CE input. Original text retained below as
+  dated history.
 - **Answer:** Upgrading from MiniLM-L6-v2 to GTE-ModernBERT produces zero measurable difference on EnronQA (±0.3% nDCG, noise level).
 - **Evidence:** tempdoc 309 §43
 - **Conditions/caveats:** Tested on EnronQA (verbose QA questions, single-user inbox). CE may still matter on academic/legal corpora (SciFact, CourtListener).
 - **⚠ Measurement caveat (2026-07-31, 800):** The eval harness scores each hit by its **pre-rerank fusion score**, so `ir_measures` re-sorts the delivered list back into fusion order and the CE's *ordering* is discarded; only its *selection* (which 10 of the 20-candidate window survive the trim) reaches the number. A CE model swap changes both, but two rerankers agree far more on selection than on ordering — so "zero difference, within noise" is also exactly what a metric outputs when the differing part has been deleted. **This finding is not refuted, but it cannot be distinguished from an artifact using the old numbers.** Treat as *unmeasured*, not *measured as zero*, until a re-run on a corrected harness. Mechanism and measurements: tempdoc 800.
 - **UPDATE (2026-08-14, 832):** the corrected-harness substrate now exists — release `832-rebaseline-2026-08-14` (5 corpora, delivered-rank scoring, cohort `32d6a0a0`) re-pins every default-config baseline. The CE **model-swap** comparison this finding is about has still not been re-run on that basis, so the verdict stays *unmeasured* — but any future swap A/B now has a certifiable, ordering-sensitive baseline to run against.
+- **RESOLVED (2026-08-19):** that re-run happened — see F-052 and the refutation header above.
 
 ### F-002: CE actively hurts on personal email
 
@@ -2262,6 +2331,7 @@ above)*
 
   The retracted rider's error was corpus identity: `mixed/en-email-enron-raw-*` and `mixed/en-legal-clerc-*` are certification corpora with synthesized queries, **not** the published `mixed/enron-qa` and `mixed/legal-clerc-200`. Shared names, different benchmarks, opposite behaviour.
 - **Bearing on this finding.** On EnronQA the CE's *ordering* contribution is **positive (+0.0184)**, which does not support "CE actively hurts on personal email" and is mild evidence against it. It does not refute F-002 outright: F-002's evidence compares `full` vs `bm25_splade`, which differ in the dense leg as well as the CE, and covers CE *selection* plus ordering rather than ordering alone. Treat the direction on email as **open**, not settled. Full measurement and method: tempdoc 802.
+- **Adjacent datapoint (2026-08-19, F-052):** a WEAKER CE (MiniLM) lowers email hybrid by −0.0455 under current defaults — CE *model quality* clearly matters on email (refuting F-001), which is a different question from CE on/off. The on/off direction on email stays open pending its own delivered-rank A/B; note F-052's contaminated-run side-evidence corroborated 802's negative ordering term on LEGAL (dropping the CE on 51% of legal queries raised nDCG +0.047).
 
 ### F-003: BM25 dominates on entity-heavy personal content
 
@@ -2281,13 +2351,20 @@ above)*
 - **Evidence:** tempdoc 309 §39, FlagEmbedding issue #987
 - **Conditions/caveats:** May be fixed in future ONNX Runtime releases.
 
-### F-006: CE model upgrade irrelevant when retrieval is strong (generalized)
+### F-006: CE model upgrade irrelevant when retrieval is strong (generalized) — REFUTED (2026-08-19, F-052)
 
+- **REFUTED (2026-08-19):** the swap ablation ran on the corrected delivered-rank harness
+  (F-052): the CE model swap moves every tested corpus, same direction — scifact −6.9%,
+  enron −5.7%, legal −23.4% (MiniLM vs incumbent, shared index, fusion bit-identical between
+  arms). The stated root cause ("retrieval strong enough that the CE is marginal") is dead: the
+  CE's contribution is not bounded by the `bm25_splade`→`full` gap because the delivered order
+  is the CE's, which the old metric deleted. Original text retained below as dated history.
 - **Answer:** GTE-ModernBERT (149M, 8192 tokens) produces identical nDCG@10 to MiniLM-L6-v2 (22.7M, 512 tokens) on ALL tested corpora: SciFact (-0.1%), CourtListener (-0.4%), MIRACL/de (+0.1%), EnronQA (-0.3%). All within noise.
 - **Evidence:** tempdoc 309 §41 (SciFact, CL-200, MIRACL/de), §43 (EnronQA)
 - **Conditions/caveats:** Generalizes F-001 beyond email. Root cause: BGE-M3 produces strong enough top-K rankings that CE reranking is marginal — the `bm25_splade` → `full` gap is only 1-4%, which is the maximum possible CE contribution regardless of CE model quality.
 - **⚠ Measurement caveat (2026-07-31, 800):** Inherits F-001's caveat, and more strongly — this finding generalizes "zero difference" across *all* corpora, which is the signature an apparatus produces when the CE's ordering channel is discarded on every corpus alike. The stated root cause (retrieval is strong enough to make CE marginal) is not established by these numbers: they cannot see the CE's ordering contribution at all. Independently, measurement on the **published** corpora (tempdoc 802, ir_measures, all five re-run) puts that contribution at **−0.0418 to +0.0184 nDCG@10** — larger than the 1–4% `bm25_splade`→`full` gap this finding cites as the CE's maximum possible contribution, and therefore not marginal. Treat as *unmeasured* pending a corrected re-run; tempdocs 800, 802. (An earlier version of this rider cited the 781-certification cells at ±0.06; those are certification corpora, not the published ones — the published figures above supersede them.)
 - **UPDATE (2026-08-14, 832):** default-config baselines are re-pinned on the corrected delivered-rank harness (release `832-rebaseline-2026-08-14`, cohort `32d6a0a0`); the generalization this finding makes (CE model swaps ≈ 0 across corpora) still awaits its own swap ablations on that basis and remains *unmeasured*.
+- **RESOLVED (2026-08-19):** those ablations ran — see F-052 and the refutation header above.
 
 ### F-007: Cross-language noise is minimal in mixed multilingual corpus
 
@@ -2415,6 +2492,14 @@ Design choices in the current production pipeline, with rationale.
 - **Rationale:** 8192-token context eliminates truncation damage on long docs. Neutral on all tested corpora (F-006). Low effort (model swap + config change).
 - **Evidence:** tempdoc 309 §41 (confirmed neutral on SciFact, CL-200, MIRACL/de, EnronQA)
 - **Revisit when:** settled. CE model is no longer a quality lever — gains come from retrieval (BGE-M3) and fusion (balanced weights).
+- **Rationale corrected (2026-08-19, F-052):** the CHOICE stands, re-validated decisively — the
+  incumbent beats the model it replaced by 5.7–23.4% nDCG@10 on the delivered-rank harness. But
+  the "CE model is no longer a quality lever" revisit line is retired: F-052 shows CE model
+  quality IS a first-order lever (the old neutrality was a harness artifact, F-001/F-006
+  refuted). Consequence: a *stronger* CE than the incumbent is now a legitimate open direction
+  (was closed by this decision's rationale) — subject to D-003 eligibility and the F-005-class
+  ONNX/GPU practicality screen; nobody has measured an upgrade candidate on the corrected
+  harness.
 
 ### D-002: Balanced CC weights (0.34/0.33/0.33) for BGE-M3
 

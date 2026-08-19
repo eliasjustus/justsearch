@@ -318,6 +318,8 @@ jobs:
           # accept a present-but-chain-untrusted signature instead of hard-failing after all the
           # per-file signings already ran. Unset in production. (Tempdoc 760 rehearsal path.)
           JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED: ${{ vars.JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED }}
+          # Read-only releases API access for derive-release-sequence.mjs (tag lane only).
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           # On a v* tag ref (a real release cut) also verify server.json version/URL match the
           # tag; skip on non-tag dry-runs where gradle.properties may not match yet. (Tempdoc 726.)
@@ -332,9 +334,21 @@ jobs:
             $extra['VerifyReleaseVersion'] = $true
             if ($tag -match '^v\d+\.\d+\.\d+$') {
               $extra['AssembleUpdaterAssets'] = $true
-              # GitHub's per-workflow run number is monotonic across new runs and unchanged on a
-              # rerun, giving release metadata rollback protection without making retries diverge.
-              $extra['ReleaseSequence'] = [long]$env:GITHUB_RUN_NUMBER
+              # Rollback protection for release metadata. This was GITHUB_RUN_NUMBER, which GitHub
+              # scopes to the workflow FILE: renaming/moving/recreating this file resets it to 1,
+              # and updater.rs permanently refuses any descriptor below its persisted
+              # highest_accepted_sequence — bricking updates for every client that ever accepted
+              # one, with no in-client recovery (tempdoc 801 D14.b). The derivation below reads the
+              # sequence out of the already-published release.v1.json assets instead, so it is
+              # independent of this file's identity and monotonic against exactly the values
+              # clients can hold. Its floor is 41 (= v0.2.0's published 40, plus one), which is why
+              # even a zero-descriptor API result can never regress below what is already shipped.
+              # --exclude-tag keeps a re-run of an already-published tag deriving the SAME value
+              # (the property GITHUB_RUN_NUMBER's rerun-stability used to provide).
+              # The script exits non-zero rather than guessing; that must fail the build.
+              $derivedSequence = & node scripts/ci/derive-release-sequence.mjs --repo $env:GITHUB_REPOSITORY --exclude-tag $tag
+              if ($LASTEXITCODE -ne 0) { throw "derive-release-sequence.mjs failed (exit $LASTEXITCODE); refusing to cut a release with a guessed sequence." }
+              $extra['ReleaseSequence'] = [long]($derivedSequence | Select-Object -Last 1).Trim()
               $extra['InstallerUrl'] = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/{filename}"
               $extra['ArtifactKeyId'] = $env:JUSTSEARCH_UPDATE_ARTIFACT_KEY_ID
               $extra['ArtifactPublicKey'] = $env:JUSTSEARCH_UPDATE_ARTIFACT_PUBLIC_KEY

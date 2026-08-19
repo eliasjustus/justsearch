@@ -12,6 +12,7 @@ import httpx
 
 from . import ann_proof as ann_proof_mod
 from . import artifacts as artifacts_mod
+from . import ce_coverage as ce_coverage_mod
 from . import chunk_completeness as chunk_completeness_mod
 from . import comparability as comparability_mod
 from . import corpora
@@ -551,6 +552,7 @@ def _build_summary(
     summary["chunk_completeness"] = _compute_chunk_completeness(
         dataset_name, mode_results, status_snapshot, base_dir,
     )
+    summary["ce_coverage"] = _compute_ce_coverage(mode_results)
     return summary
 
 
@@ -676,6 +678,37 @@ def _compute_chunk_completeness(
         "reasons": list(result.reasons),
         # Provenance: which threshold the expectation was computed against (null = none published).
         "threshold_chars": threshold_chars,
+    }
+
+
+def _compute_ce_coverage(mode_results: dict) -> dict:
+    """The register-F-052 cross-encoder-coverage block: attach to every run so it self-documents,
+    sibling of `chunk_completeness`. Enforcement lives at the gate seam
+    (`ratchet_kernel.assert_ce_coverage`); this is the advisory half (644 idiom: both an embedded
+    verdict AND a fail-closed gate assertion).
+
+    Computed per mode from that mode's raw responses — a mode whose pipeline never runs the CE
+    resolves to `not-applicable` on its own recorded reasons (PIPELINE_NOT_ELIGIBLE / DISABLED),
+    so leg-isolation and lexical-only modes are never struck and no mode allow-list has to be
+    maintained here. Errored queries are excluded, matching the `query_evidences` filter above:
+    they have no trace to read and are already counted by `error_count`.
+    """
+    per_mode: dict[str, ce_coverage_mod.CeCoverageResult] = {}
+    for mode, mr in mode_results.items():
+        states = [
+            ce_coverage_mod.state_from_response(r)
+            for r in (mr.get("raw_responses") or [])
+            if r.get("error") is None
+        ]
+        ce_requested = "cross_encoder" in ((mr.get("pipeline_tracking") or {}).get("observed") or [])
+        per_mode[mode] = ce_coverage_mod.ce_coverage_verdict(states, ce_requested=ce_requested)
+
+    verdict, reasons = ce_coverage_mod.combine_mode_verdicts(per_mode)
+    return {
+        "verdict": verdict,
+        "reasons": reasons,
+        "tolerance": ce_coverage_mod.DEFAULT_SILENT_DROP_TOLERANCE,
+        "per_mode": {mode: ce_coverage_mod.as_block(r) for mode, r in per_mode.items()},
     }
 
 

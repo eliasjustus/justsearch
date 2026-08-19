@@ -8,7 +8,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import provenance
+from . import ce_coverage, provenance
 from .retriever import resolve_doc_id
 
 log = logging.getLogger(__name__)
@@ -224,6 +224,8 @@ def _build_per_query_entries(
                 continue
             judge_signals.append({"docId": doc_id, **provenance.extract_judge_signals(h)})
 
+        ce_stage = ce_coverage.ce_stage_of(resp)
+
         entry = {
             "qid": qid,
             "query": query_records[qid].text if query_records and qid in query_records else None,
@@ -250,6 +252,13 @@ def _build_per_query_entries(
             "error": resp.get("error"),
             # Tempdoc 643: per-hit {docId, bm25/splade/dense rank+score, fusion_score, ce_score}.
             "judgeSignals": judge_signals,
+            # Register F-052: the cross-encoder stage's own executed/skipped status + skip reason.
+            # judgeSignals alone shows THAT a query was delivered in fusion order, never WHY — and
+            # a deterministic skip (NAVIGATIONAL_QUERY / FUSION_CONFIDENT / ...) is arm-invariant
+            # while a DEADLINE_EXCEEDED drop contaminates the run. Persisting the reason is what
+            # makes the archived artifact judgeable at all (jseval.ce_coverage).
+            "crossEncoderStatus": ce_stage.get("status"),
+            "crossEncoderReason": ce_stage.get("reason"),
         }
         entries.append(entry)
 
