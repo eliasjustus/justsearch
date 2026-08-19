@@ -602,3 +602,258 @@ mechanism).
   exists), Tauri-webview behavior (esp. window height < ~976px — nav now scrolls,
   re-check), screen-reader walkthrough, reduced-motion scroll feel. Harness gap
   (clipped-interactive-elements detection) logged to observations.
+
+## 13. Remediation round — owner visual feedback (2026-08-19, with Discord reference screenshots)
+
+Owner findings against the shipped window, each with a Discord-reference anchor:
+
+1. **Sub-anchors must not have background highlighting.** Discord's sub-items
+   (Appearance → Theme/App Icon/…) are plain text; the active one is brighter text
+   only. Our anchor rows got the pill treatment — remove it (categories keep the
+   pill; anchors go text-brightness + aria-current only).
+2. **Too many cards.** Most of our sections wrap plain settings in big bordered
+   card boxes. Discord's default is FLAT rows on the page background: bold
+   sub-heading + muted description, control below/right; cards are reserved for
+   genuinely composite content (e.g. the Color Themes swatch grid). De-card the
+   sections; keep cards only where content is composite.
+3. **Themes must be color swatches, not text walls.** Discord's Color Themes is a
+   grid of small rounded-square swatches painted with the actual theme colors;
+   active gets a ring + check. Our theme cards carry long descriptions that squash
+   into dense unreadable columns. Render swatches painted from each theme's own
+   palette; name as a small label; long description demoted to tooltip/aria.
+4. **Fewer option-card grids; use the right control shapes.** Examples (owner):
+   Density → a discrete slider (3 stops for now: compact/comfortable/spacious,
+   Discord's tick-marked slider idiom); Contrast → on/off switch; Motion → on/off
+   switch ("Reduce motion"); the dark/light/system variant picker → the small
+   square swatch trio with a check badge (Discord's "Default Themes" row idiom).
+   General rule: binary → switch; small ordinal scale → discrete slider or radio;
+   enum with visual identity → swatches; card grids only when options genuinely
+   need explanation panels.
+
+## 14. Theorization — the full settings-opportunity space (2026-08-19, pre-design)
+
+Framing: §13's four findings are instances of one gap — the window's *shell* (P0-P4)
+is Discord-grade, but the *content* still renders in the old page's vocabulary
+(everything a card, every enum an option-card grid). Theorized directions, not design:
+
+**T1 — One flat setting-row primitive.** Default rendering = bold label + muted
+description + control (inline right for compact controls, below for radio/slider),
+thin divider rhythm, on the page background. Cards demoted to composite-content
+exception (swatch grids, plugin lists, witness ledger). Self-propagating: future
+sections inherit the look. Open scope call: all categories in one pass vs
+high-traffic first.
+
+**T2 — A control-shape grammar** (the generalization of §13.4): binary → switch;
+small ordinal → radio group or discrete slider (owner leans slider for density;
+Discord-literal would be radios — either is a11y-sound with labeled stops);
+enum-with-visual-identity → swatch row/grid (theme variant trio, theme palettes);
+continuous → slider (none exist yet; density's 3-stop slider is forward-compatible
+if the spacing scale ever goes continuous); action → button row; cross-link →
+chevron "Related Settings" row (Discord idiom; we already have two organic
+instances: delete-confirm → Security, Appearance → Token Editor).
+
+**T3 — Theme swatches from the themes' own tokens.** Each theme declares a palette;
+paint tiles from it (surface ground + accent mark — two-tone, since our themes are
+semantic palettes, not decorative gradients). Name stays as a small label (our theme
+names carry meaning); prose descriptions leave the grid (tooltip/aria at most).
+A11y guard: never color-only differentiation — the name label is load-bearing.
+
+**T4 — Deduplicate contrast.** Interface's "High contrast" toggle and
+Accessibility's Contrast pair look like two homes for one concern (verify: ui
+setting vs adaptation profile). One canonical home + a Related-Settings cross-link
+from the other — the Discord Appearance→Accessibility link is the exact pattern.
+
+**T5 — Register grows a row vocabulary (recognized, not built).** Today the
+register declares WHERE settings live; T1/T2 push toward declaring WHAT SHAPE each
+row takes (`{kind: toggle|slider|enum|swatch|action|link, settingPath, labelKey,
+…}`) with a generic row renderer — the ADR-0031/0033 declaration philosophy applied
+one level deeper, and the third projection candidate: **row-level search** (today's
+search stops at section granularity). Tension (AHA): many sections are genuinely
+bespoke (plugins, grants, witness) and the generic-renderer path has already bitten
+once (the enter-action-picker select-name defect came from `jf-form`); only unify
+rows that share a reason to change. Earns keep when row-level search ships against
+it; retire if rows stay bespoke.
+
+**T6 — Category-space opportunities (future, cheap to reserve):** Keybinds (a
+keybinding registry already exists — `registerKeybindingEntry`; a Keyboard category
+page could surface/edit it, Discord's Keybinds analog); Language (catalogs are
+en-only today; the i18n plumbing exists); Notifications (advisory-inbox
+preferences); D1 Brain → *AI Runtime* member category (pending owner; mechanism
+proven twice). Reserving = a register entry each, nothing more.
+
+**T7 — Interaction niceties, ranked cheap→speculative:** version footer
+click-to-copy (finish the §4 spec delta); per-category reset (today only global
+`core.reset-settings`); instant-apply + undo-toast for destructive-ish toggles (the
+pending-effect queue exists); HC ui-shot steps (closure-audit residual — would have
+caught palette issues live); small-width behavior rule for the modal (unresearched
+in Discord; likely nav-collapses-to-list → page-push — design only when a real
+constraint arrives).
+
+**Non-goals reaffirmed:** no unsaved-changes bar until a form-like page exists; no
+settings-window profile header (no accounts); no per-language settings levers
+(ADR-0043 invariant untouched — these are UI prefs, not search analysis).
+
+## 15. Design — content remediation (settled 2026-08-19; refines §13/§14 with probe evidence)
+
+### 15.1 The flat row idiom (T1, settled)
+
+One `settings-row` markup idiom inside SettingsSurface (CSS + a render helper —
+NOT a new custom element; §9.3's one-component rule stands): bold label, muted
+one-line description, control inline-right (switch/dropdown/small swatch trio) or
+full-width below (radio/slider/swatch grid), hairline divider rhythm, page
+background. `.section` card chrome (one rule-set, `SettingsSurface.ts:417-422`)
+is restyled in place to the flat treatment — **all categories in one pass** (a
+partial pass would ship two visual dialects). Cards survive only as the
+composite-content exception (theme swatch grid, plugin list, delivered
+contributions, workspace profiles), and lighter than today.
+**Scope extension the probe forced:** `SecuritySurface` re-declares the identical
+`.section` card CSS (`SecuritySurface.ts:579`) and now renders INSIDE the window —
+it de-cards in the same pass or the window ships mixed dialects. Brain's copy
+stays untouched (not window-hosted unless D1(b)).
+
+### 15.2 Control primitives (T2, settled by inventory)
+
+- **Switch:** the settings page hand-rolls `.switch` divs (4+ sites,
+  `SettingsSurface.ts:1156-1190,1394-1443` — **missing `aria-checked`**, literal
+  `white` knob) while a correct implementation exists in
+  `ToggleSwitchRenderer.ts:82-100`. Consolidate: one shared switch (extract to a
+  small component or reuse the renderer's element standalone — worker verifies
+  which is cleaner), used by Contrast, Motion ("Reduce motion"), and the existing
+  toggle rows. The a11y fix rides along by construction.
+- **Discrete slider (Density):** no themed slider exists anywhere (the only
+  `type="range"` is the chat replay scrubber, unstyled). Owner explicitly chose
+  slider over Discord-literal radios: build a minimal themed discrete slider
+  (native range + tick labels + `aria-valuetext`, tokens only) as the grammar's
+  ordinal shape — deliberately small; radios remain the documented fallback if it
+  fights the platform.
+- **Segmented enum pickers** (Simple/Detailed, System/Dark/Light): currently
+  bare `.option-btn` buttons with NO radiogroup semantics, while two proper
+  `role="radiogroup"` precedents exist (`OptionButtonGroupRenderer.ts:88-107`,
+  `AutonomyDial.ts:185-196`). Align to the radiogroup pattern; the theme-variant
+  trio additionally becomes the small square swatch row with check badge
+  (Discord "Default Themes" idiom).
+- **Cross-link row:** chevron "Related settings" row shape (two organic instances
+  exist already: delete-confirm→Security, Appearance→Token Editor) — formalized as
+  part of the row grammar, debuting for the contrast dedupe below.
+
+### 15.3 Theme swatches (T3, settled) — declare, don't parse
+
+Built-ins expose NO color data (manifest entries are `{id, displayName,
+description, cssPath}` — `themeManifest.ts:26-32`); deriving colors would mean
+fetch-and-regex of theme CSS at runtime. Rejected. Instead the **theme manifest
+gains an optional declared `swatch` (surface + accent)** per entry — presentation
+metadata belongs in the artifact's own declaration (the same philosophy as
+`labelKey`/`present()`): manifest.json entries get authored swatch values matching
+their palettes; the validator learns the optional field; custom themes derive
+swatches directly from their token tree (`tokens['surface-primary']` /
+`tokens['accent-tint']`, readable without applying — `designTokenTree.ts:135-158`);
+a theme without swatch data renders a neutral tile. Grid: two-tone tiles (surface
+ground, accent mark), ring + check on active, name as small label (our names carry
+meaning), description demoted to native `title` (the house idiom — 15 uses in
+this file; no tooltip primitive exists and none is built).
+
+### 15.4 Contrast: one authority (T4, upgraded from IA cleanup to defect fix)
+
+Probe verdict: `UISettings.highContrast` (backend-persisted, via
+`applyAppearance`) and `userConfig.accessibilityProfile.contrast` (FE-local, via
+`applyAdaptationProfile`) **both toggle the same `high-contrast` root class**,
+winner decided by boot order (`adaptationProfile.ts:42,76-78` acknowledges the
+fight). This violates the presentation-kernel's own single-authority doctrine
+(doc 27). Design: **one visible control** (Accessibility's new switch) and **one
+DOM-class owner**; the Interface duplicate becomes a Related-settings cross-link.
+The two backing stores must converge on one canonical field with the other
+migrated/deprecated — the care point is persistence semantics (one store syncs
+server-side, the other is local); the implementation round resolves the mechanics
+and the review verifies no user's existing HC preference is silently lost.
+
+### 15.5 Orphans (this work, not a later sweep)
+
+Hand-authored `.switch` idiom + its CSS (replaced by the shared switch);
+non-semantic `.option-btn` pickers (replaced by radiogroup/swatch-trio); the
+`.section` card rule-sets in SettingsSurface + SecuritySurface (restyled);
+theme-description text in the grid (demoted to `title`); one of the two contrast
+set-site pathways (migrated).
+
+## 16. Reach (design judgment)
+
+- **"Control shapes are shared primitives, not per-surface hand-authoring."**
+  Existing violation found in the wild: the settings page hand-rolls switches
+  (with an a11y gap) while a correct switch ships in the declared-renderer stack,
+  and hand-rolls segmented pickers while two radiogroup precedents exist. This
+  remediation conforms to the existing pattern rather than inventing one. Earns
+  keep: a third surface adopts the shared switch (Brain's toggles are candidates).
+  Retire: if the shared switch grows per-surface conditionals, split it back.
+- **"Presentation metadata is declared in the artifact's manifest"** (swatch =
+  theme's `labelKey` analog). Candidate scope: plugin surfaces could declare
+  swatches/icons the same way. Earns keep: a second consumer of declared swatches
+  (e.g. a theme quick-picker outside settings). Retire: if the swatch field rots
+  unauthored, drop it and render neutral tiles.
+- **The contrast fix is an instance of doc 27's existing single-authority
+  principle** — not a new principle; recorded as a violation-repair. The same
+  probe pattern ("grep for two writers of one DOM class/token") is worth applying
+  to `motion-reduced` and future profile axes at review time.
+
+## 17. De-risk findings — §15 remediation (2026-08-19)
+
+**R1 contrast (contracted).** Canonical store = backend `UISettings.highContrast`
+(only durable one; `accessibilityProfile` is localStorage-only). The Accessibility
+switch becomes the single control and **writes through** the existing
+machine/save path (`patch({highContrast})` → `save-settings` narrow POST) so
+persistence is not degraded; `accessibilityProfile.contrast`, if kept at all, is a
+derived projection, never a second authority. One-time migration: an explicitly
+set `accessibilityProfile.contrast` wins the reconciliation write (it is today's
+de-facto boot winner by call order — now made deliberate), then stops projecting.
+Removal surface is fully enumerated (incl. the SECOND toggle render path in the
+declared presentation, `builtinPresentations.ts:58-63,85` — both go together);
+must-not-delete list pinned (backend schema field, boot-restore path, tokens.css
+HC blocks, the statechart's other edges). Implementation obligations from the
+trace: a real end-to-end HC test (none exists today — click → class + backend
+persist), a live `/api/settings/v2` narrow-PATCH check, and a live check that
+per-profile contrast divergence (accessibilityProfile is per-profile; the backend
+field is singular) isn't silently collapsed. Bonus finds: dead
+`justsearch-high-contrast` localStorage key (vestigial, logged to observations);
+zero existing e2e coverage of either HC path.
+
+**R2/R6 controls (settled, better than designed).** Extract `jf-switch`
+(plain props checked/label/disabled + change event) from ToggleSwitchRenderer's
+CSS/a11y; the renderer composes it; SettingsSurface's FOUR hand-rolled `.switch`
+sites consume it; register in `atom-facets` (`forkClasses: ["switch"]`) so the
+ratchet forbids a fifth fork. Radiogroup: NEITHER precedent implements the
+WAI-ARIA keyboard model (both click-only, gate-passing via native buttons) — the
+arrow/Home/End model is added ONCE inside `OptionButtonGroupRenderer` (whose
+markup already matches SettingsSurface's `.option-btn` vocabulary exactly), and
+the 6+ hand-forked pickers consume `<jf-option-button-group>`; the
+`.option-btn`/`.option-label`/`.selected` class contract that three test sites
+pin is preserved by construction.
+
+**R3/R4/R5 (trivial).** Manifest validator is accumulate-style/additive — optional
+`swatch` field + sibling `manifest.schema.json`; authoring colors read directly
+from each theme's CSS/token file. `input[type=range]` is unconditionally gate-clean
+(native allowlist); slider styles on existing token roles. De-carding blast radius:
+one rule-set each in SettingsSurface + SecuritySurface; no proportion-baseline or
+test pins on card visuals.
+
+**Confidence: 8/10.** Everything is contracted or precedented; residuals are the
+two live checks (PATCH merge, per-profile HC) and the inherent visual-iteration
+loop. Model plan: contrast migration → opus (store/statechart/persistence
+judgment); switch extraction + radiogroup keyboard model → sonnet high; flat-row
+de-carding + slider + swatches → sonnet high with orchestrator ui-shot review
+loop; refute-first reviews per round (opus for the contrast chunk).
+
+## 18. Remediation implementation log (2026-08-19)
+
+- **R1 (this commit)** — control primitives. `<jf-switch>` extracted from
+  ToggleSwitchRenderer (which now composes it — one visual), 4 hand-rolled
+  `.switch` sites converted, atom registered with `forkClasses:["switch"]`
+  (ratchet now forbids a fifth fork), and the missing `aria-checked` fixed by
+  construction. WAI-ARIA radiogroup keyboard model (arrows/Home/End, wrapping,
+  roving tabindex, focus-follows-selection) added ONCE in
+  OptionButtonGroupRenderer + a plain-props path; 6 forked `.option-btn` pickers
+  converted. Review: PASS, zero blockers (line-by-line conversion faithfulness,
+  session-only gating verified at both layers); notes: option-group not
+  ratchet-registered (documented scope), icon field not aria-hidden (pre-existing
+  pattern). Live: structural verification on the worktree-served FE (borrowed
+  read-only backend — the shared stack was warn-taken-over mid-round by another
+  session, so mutating interaction checks fold into R2's live pass on an owned
+  stack): 2 switches with the full role/aria-checked/tabindex triad, 6 groups
+  with radiogroup role and correct roving tabindex. Unit: 437 files / 5597 green.

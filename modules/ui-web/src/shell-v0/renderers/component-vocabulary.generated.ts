@@ -136,6 +136,7 @@ export type ComponentTag =
   | 'jf-sv3-sidebar'
   | 'jf-sv3-topbar'
   | 'jf-sv3-window'
+  | 'jf-switch'
   | 'jf-system-notice'
   | 'jf-system-self-view'
   | 'jf-system-surface'
@@ -280,6 +281,7 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-sv3-sidebar',
   'jf-sv3-topbar',
   'jf-sv3-window',
+  'jf-switch',
   'jf-system-notice',
   'jf-system-self-view',
   'jf-system-surface',
@@ -313,6 +315,7 @@ export const ATOM_TAGS: readonly ComponentTag[] = [
   'jf-filter-chip',
   'jf-status-badge',
   'jf-status-dot',
+  'jf-switch',
 ];
 
 /** Is `tag` a registered visual atom (574 Move 3)? */

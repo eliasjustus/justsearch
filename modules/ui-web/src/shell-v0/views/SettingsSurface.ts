@@ -60,6 +60,11 @@ import '../components/AutonomyDial.js';
 import '../components/StatusBadge.js';
 import '../components/Button.js';
 import '../components/ErrorAlert.js';
+// Tempdoc 855 §15.2/§17 R2 — the shared switch atom + the radiogroup renderer's plain-props path
+// (both consumed directly by hand-authored templates below, not through JsonForms).
+import '../components/Switch.js';
+import '../renderers/controls/OptionButtonGroupRenderer.js';
+import type { OptionButtonGroupOption } from '../renderers/controls/OptionButtonGroupRenderer.js';
 import type { FormChangeEventDetail } from '../components/Form.js';
 import type { PluginHostApi } from '../plugin-api/plugin-types.js';
 import { listLayouts } from '../layout/LayoutManifest.js';
@@ -555,35 +560,6 @@ export class SettingsSurface extends JfElement {
       border-radius: 0.25rem;
       color: var(--text-primary);
       font-size: var(--font-size-sm);
-    }
-    .switch {
-      width: 2.5rem;
-      height: 1.25rem;
-      border-radius: 9999px;
-      background: var(--surface-tertiary);
-      border: 1px solid var(--border-subtle);
-      position: relative;
-      cursor: pointer;
-      transition: background var(--duration-fast) var(--ease-standard);
-    }
-    .switch::after {
-      content: '';
-      position: absolute;
-      top: 1px;
-      left: 1px;
-      width: 1rem;
-      height: 1rem;
-      border-radius: 50%;
-      background: var(--text-secondary);
-      transition: left var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard);
-    }
-    .switch.on {
-      background: var(--accent-tint);
-      border-color: var(--accent-tint);
-    }
-    .switch.on::after {
-      left: 1.25rem;
-      background: white;
     }
     p.help {
       margin: 0.5rem 0 0 0;
@@ -1088,28 +1064,21 @@ export class SettingsSurface extends JfElement {
     // Tempdoc 738 — render the selected state from the live uiMode authority (not the local
     // this.ui.mode snapshot) so this control stays in sync with the topbar Simple/Detailed toggle.
     const mode: 'simple' | 'advanced' = getUiMode();
+    const options: OptionButtonGroupOption[] = [
+      { value: 'simple', label: 'Simple', description: 'Standard view', icon: 'list' },
+      { value: 'advanced', label: 'Detailed', description: 'Full controls + diagnostics', icon: 'maximize-2' },
+    ];
     return html`
       <div class="section">
         <h3>${icon({ name: 'layers', size: 12 })} Interface</h3>
         <div class="row">
-          <button
-            class="option-btn ${mode === 'simple' ? 'selected' : ''}"
-            ?disabled=${this.readOnly}
-            @click=${() => void this.patch({ mode: 'simple' })}
-          >
-            ${icon({ name: 'list', size: 18 })}
-            <div class="option-label">Simple</div>
-            <div class="option-desc">Standard view</div>
-          </button>
-          <button
-            class="option-btn ${mode === 'advanced' ? 'selected' : ''}"
-            ?disabled=${this.readOnly}
-            @click=${() => void this.patch({ mode: 'advanced' })}
-          >
-            ${icon({ name: 'maximize-2', size: 18 })}
-            <div class="option-label">Detailed</div>
-            <div class="option-desc">Full controls + diagnostics</div>
-          </button>
+          <jf-option-button-group
+            .options=${options}
+            .value=${mode}
+            ?enabled=${!this.readOnly}
+            @change=${(e: CustomEvent<{ value: string }>) =>
+              void this.patch({ mode: e.detail.value as UISettings['mode'] })}
+          ></jf-option-button-group>
         </div>
         <p class="help">
           Detailed mode shows technical detail and unlocks AI runtime configuration, GPU controls,
@@ -1125,69 +1094,40 @@ export class SettingsSurface extends JfElement {
       <div class="section">
         <h3>${icon({ name: 'palette', size: 12 })} Appearance</h3>
         <div class="row" style="margin-bottom: 0.75rem">
-          <button
-            class="option-btn ${theme === 'system' ? 'selected' : ''}"
-            ?disabled=${this.readOnly}
-            @click=${() => void this.patch({ theme: 'system' })}
-          >
-            ${icon({ name: 'monitor', size: 18 })}
-            <div class="option-label">System</div>
-            <div class="option-desc">Follow OS</div>
-          </button>
-          <button
-            class="option-btn ${theme === 'dark' ? 'selected' : ''}"
-            ?disabled=${this.readOnly}
-            @click=${() => void this.patch({ theme: 'dark' })}
-          >
-            ${icon({ name: 'moon', size: 18 })}
-            <div class="option-label">Dark</div>
-            <div class="option-desc">Default theme</div>
-          </button>
-          <button
-            class="option-btn ${theme === 'light' ? 'selected' : ''}"
-            ?disabled=${this.readOnly}
-            @click=${() => void this.patch({ theme: 'light' })}
-          >
-            ${icon({ name: 'sun', size: 18 })}
-            <div class="option-label">Light</div>
-            <div class="option-desc">Bright theme</div>
-          </button>
+          <jf-option-button-group
+            .options=${[
+              { value: 'system', label: 'System', description: 'Follow OS', icon: 'monitor' },
+              { value: 'dark', label: 'Dark', description: 'Default theme', icon: 'moon' },
+              { value: 'light', label: 'Light', description: 'Bright theme', icon: 'sun' },
+            ] as OptionButtonGroupOption[]}
+            .value=${theme}
+            ?enabled=${!this.readOnly}
+            @change=${(e: CustomEvent<{ value: string }>) =>
+              void this.patch({ theme: e.detail.value as UISettings['theme'] })}
+          ></jf-option-button-group>
         </div>
         <div class="toggle-row">
           <div>
             <div class="toggle-label">High contrast</div>
             <div class="toggle-desc">Better visibility</div>
           </div>
-          <div
-            class="switch ${this.ui.highContrast ? 'on' : ''}"
-            role="switch"
-            tabindex="0"
-            @click=${() => void this.patch({ highContrast: !this.ui.highContrast })}
-            @keydown=${(e: KeyboardEvent) => {
-              if (e.key === ' ' || e.key === 'Enter') {
-                e.preventDefault();
-                void this.patch({ highContrast: !this.ui.highContrast });
-              }
-            }}
-          ></div>
+          <jf-switch
+            .checked=${!!this.ui.highContrast}
+            label="High contrast"
+            @change=${(e: CustomEvent<{ checked: boolean }>) =>
+              void this.patch({ highContrast: e.detail.checked })}
+          ></jf-switch>
         </div>
         <div class="toggle-row">
           <div>
             <div class="toggle-label">Solid surfaces</div>
             <div class="toggle-desc">Opaque panels, no glass blur</div>
           </div>
-          <div
-            class="switch ${this.surfaceMode === 'solid' ? 'on' : ''}"
-            role="switch"
-            tabindex="0"
-            @click=${() => this.toggleSurfaceMode()}
-            @keydown=${(e: KeyboardEvent) => {
-              if (e.key === ' ' || e.key === 'Enter') {
-                e.preventDefault();
-                this.toggleSurfaceMode();
-              }
-            }}
-          ></div>
+          <jf-switch
+            .checked=${this.surfaceMode === 'solid'}
+            label="Solid surfaces"
+            @change=${() => this.toggleSurfaceMode()}
+          ></jf-switch>
         </div>
       </div>
     `;
@@ -1212,44 +1152,51 @@ export class SettingsSurface extends JfElement {
     const density = p.density ?? 'comfortable';
     const contrast = p.contrast ?? 'normal';
     const motion = p.motion ?? 'full';
-    const opt = (active: boolean, label: string, desc: string, pick: () => void): TemplateResult => html`
-      <button class="option-btn ${active ? 'selected' : ''}" ?disabled=${this.readOnly} @click=${pick}>
-        <div class="option-label">${label}</div>
-        <div class="option-desc">${desc}</div>
-      </button>
-    `;
+    const densityOptions: OptionButtonGroupOption[] = [
+      { value: 'compact', label: 'Compact', description: 'More on screen' },
+      { value: 'comfortable', label: 'Comfortable', description: 'Default' },
+      { value: 'spacious', label: 'Spacious', description: 'Roomy' },
+    ];
+    const contrastOptions: OptionButtonGroupOption[] = [
+      { value: 'normal', label: 'Normal', description: 'Default' },
+      { value: 'high', label: 'High', description: 'Guaranteed AA' },
+    ];
+    const motionOptions: OptionButtonGroupOption[] = [
+      { value: 'full', label: 'Full', description: 'Animations on' },
+      { value: 'reduced', label: 'Calm', description: 'Reduced motion' },
+    ];
     return html`
       <div class="section" data-testid="settings-accessibility">
         <h3>${icon({ name: 'layers', size: 12 })} Accessibility</h3>
         <div class="toggle-label" style="margin-bottom: 0.35rem">Density</div>
         <div class="row" style="margin-bottom: 0.75rem">
-          ${opt(density === 'compact', 'Compact', 'More on screen', () =>
-            applyAdaptationProfile({ density: 'compact' }),
-          )}
-          ${opt(density === 'comfortable', 'Comfortable', 'Default', () =>
-            applyAdaptationProfile({ density: 'comfortable' }),
-          )}
-          ${opt(density === 'spacious', 'Spacious', 'Roomy', () =>
-            applyAdaptationProfile({ density: 'spacious' }),
-          )}
+          <jf-option-button-group
+            .options=${densityOptions}
+            .value=${density}
+            ?enabled=${!this.readOnly}
+            @change=${(e: CustomEvent<{ value: string }>) =>
+              applyAdaptationProfile({ density: e.detail.value as 'compact' | 'comfortable' | 'spacious' })}
+          ></jf-option-button-group>
         </div>
         <div class="toggle-label" style="margin-bottom: 0.35rem">Contrast</div>
         <div class="row" style="margin-bottom: 0.75rem">
-          ${opt(contrast === 'normal', 'Normal', 'Default', () =>
-            applyAdaptationProfile({ contrast: 'normal' }),
-          )}
-          ${opt(contrast === 'high', 'High', 'Guaranteed AA', () =>
-            applyAdaptationProfile({ contrast: 'high' }),
-          )}
+          <jf-option-button-group
+            .options=${contrastOptions}
+            .value=${contrast}
+            ?enabled=${!this.readOnly}
+            @change=${(e: CustomEvent<{ value: string }>) =>
+              applyAdaptationProfile({ contrast: e.detail.value as 'normal' | 'high' })}
+          ></jf-option-button-group>
         </div>
         <div class="toggle-label" style="margin-bottom: 0.35rem">Motion</div>
         <div class="row">
-          ${opt(motion === 'full', 'Full', 'Animations on', () =>
-            applyAdaptationProfile({ motion: 'full' }),
-          )}
-          ${opt(motion === 'reduced', 'Calm', 'Reduced motion', () =>
-            applyAdaptationProfile({ motion: 'reduced' }),
-          )}
+          <jf-option-button-group
+            .options=${motionOptions}
+            .value=${motion}
+            ?enabled=${!this.readOnly}
+            @change=${(e: CustomEvent<{ value: string }>) =>
+              applyAdaptationProfile({ motion: e.detail.value as 'full' | 'reduced' })}
+          ></jf-option-button-group>
         </div>
       </div>
     `;
@@ -1280,7 +1227,11 @@ export class SettingsSurface extends JfElement {
    */
   private renderViewerAudience(): TemplateResult {
     const audience: Audience = this.viewerAudience;
-    const choose = (a: Audience) => () => setViewerAudience(a);
+    const options: OptionButtonGroupOption[] = [
+      { value: 'USER', label: 'User', description: 'Default tier', icon: 'monitor' },
+      { value: 'OPERATOR', label: 'Operator', description: 'Shows admin ops', icon: 'shield' },
+      { value: 'DEVELOPER', label: 'Developer', description: 'Show everything', icon: 'database' },
+    ];
     return html`
       <div class="section">
         <h3>${icon({ name: 'shield', size: 12 })} View tier</h3>
@@ -1297,33 +1248,12 @@ export class SettingsSurface extends JfElement {
           </div>
         </div>
         <div class="row">
-          <button
-            class="option-btn ${audience === 'USER' ? 'selected' : ''}"
-            ?disabled=${this.readOnly}
-            @click=${choose('USER')}
-          >
-            ${icon({ name: 'monitor', size: 18 })}
-            <div class="option-label">User</div>
-            <div class="option-desc">Default tier</div>
-          </button>
-          <button
-            class="option-btn ${audience === 'OPERATOR' ? 'selected' : ''}"
-            ?disabled=${this.readOnly}
-            @click=${choose('OPERATOR')}
-          >
-            ${icon({ name: 'shield', size: 18 })}
-            <div class="option-label">Operator</div>
-            <div class="option-desc">Shows admin ops</div>
-          </button>
-          <button
-            class="option-btn ${audience === 'DEVELOPER' ? 'selected' : ''}"
-            ?disabled=${this.readOnly}
-            @click=${choose('DEVELOPER')}
-          >
-            ${icon({ name: 'database', size: 18 })}
-            <div class="option-label">Developer</div>
-            <div class="option-desc">Show everything</div>
-          </button>
+          <jf-option-button-group
+            .options=${options}
+            .value=${audience}
+            ?enabled=${!this.readOnly}
+            @change=${(e: CustomEvent<{ value: string }>) => setViewerAudience(e.detail.value as Audience)}
+          ></jf-option-button-group>
         </div>
       </div>
     `;
@@ -1400,20 +1330,11 @@ export class SettingsSurface extends JfElement {
               'machine to improve ranking. Nothing is ever uploaded.'}
           </div>
         </div>
-        <div
-          class="switch ${this.feedbackCaptureEnabled ? 'on' : ''}"
-          role="switch"
-          aria-checked=${this.feedbackCaptureEnabled ? 'true' : 'false'}
-          aria-label="Improve ranking from your activity (local only)"
-          tabindex="0"
-          @click=${() => void this.toggleFeedbackCapture()}
-          @keydown=${(e: KeyboardEvent) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              void this.toggleFeedbackCapture();
-            }
-          }}
-        ></div>
+        <jf-switch
+          .checked=${!!this.feedbackCaptureEnabled}
+          label="Improve ranking from your activity (local only)"
+          @change=${() => void this.toggleFeedbackCapture()}
+        ></jf-switch>
       </div>
     `;
   }
@@ -1430,12 +1351,11 @@ export class SettingsSurface extends JfElement {
             <div class="toggle-label">Launch on startup</div>
             <div class="toggle-desc">Start minimized in the system tray</div>
           </div>
-          <div
-            class="switch ${this.autostart ? 'on' : ''}"
-            role="switch"
-            tabindex="0"
-            @click=${() => void this.toggleAutostart()}
-          ></div>
+          <jf-switch
+            .checked=${!!this.autostart}
+            label="Launch on startup"
+            @change=${() => void this.toggleAutostart()}
+          ></jf-switch>
         </div>
       </div>
     `;
