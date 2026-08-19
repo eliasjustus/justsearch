@@ -1,8 +1,13 @@
 #!/usr/bin/env node
 /**
- * Small local harness to sanity-check the MCP stdio server.
+ * STARTS A REAL DEV STACK. Running this file boots the backend (preflight -> start -> quick_health
+ * -> stop) on the shared, one-at-a-time dev stack — it takes the lease, spends about a minute, and
+ * can collide with another agent's run. Do NOT run it to "check the tool inventory": that is what
+ * `node scripts/ci/check-dev-mcp-doc-sync.mjs` is for, and it needs no stack. Two sessions have
+ * broken an explicit no-dev-stack prohibition by reading the old headline ("small local harness to
+ * sanity-check the MCP stdio server") as a static check.
  *
- * What it checks:
+ * What it checks (by actually doing it):
  * - stdio framing works (newline-delimited JSON-RPC; no stray stdout)
  * - initialize + tools/list works (12 tools, no dropped tools)
  * - preflight -> start (with integrated wait_ready) -> quick_health (summary + full) -> stop (auto-resolve)

@@ -810,27 +810,161 @@ function resolveProvenance() {
  * An explicit JUSTSEARCH_DEV_DEBUG_PORT still wins (operator override); otherwise the first free
  * port from 5005 upward is taken, so a second stack cannot silently share the first one's port.
  */
-async function resolveDevHotReload(enabled) {
-  if (!enabled) {
-    return { enabled: false, debugPort: null, classesDir: null };
+/** The one module whose classes dir goes on the Worker classpath for hot reload (R4). */
+const HOTRELOAD_MODULE = 'worker-services';
+
+/** Filesystem timestamp slack, so ordinary granularity is not read as a rebuild. */
+const HOTRELOAD_STAMP_SKEW_MS = 2000;
+
+/**
+ * `<root>/modules/<module>/build/classes/java/main` — the identity-token layout.
+ *
+ * Three sides agree on this shape: this file writes it into run.json, WorkerSpawner puts the same
+ * absolute path first on the Worker classpath (`devHotReloadClassesDir`), and the reload tool
+ * parses the module back out of it (`reloadModuleFromClassesDir`). A function rather than an inline
+ * join so a test can pin it against the parser instead of restating it.
+ */
+function hotReloadClassesDir(root, module = HOTRELOAD_MODULE) {
+  return toPosix(path.join(root, 'modules', module, 'build', 'classes', 'java', 'main'));
+}
+
+/** Newest `.class` mtime under `dir`, or null when there is no class file at all. */
+function newestClassMtimeMs(dir) {
+  let newest = null;
+  const walk = (d) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) {
+        walk(p);
+      } else if (e.name.endsWith('.class')) {
+        try {
+          const { mtimeMs } = fs.statSync(p);
+          if (newest === null || mtimeMs > newest) newest = mtimeMs;
+        } catch { /* raced away — it cannot be the newest thing we rely on */ }
+      }
+    }
+  };
+  walk(dir);
+  return newest;
+}
+
+/**
+ * Tempdoc 844 M3 — may the hot-reload classes dir go FIRST on the Worker's classpath?
+ *
+ * R4 prefixes `modules/worker-services/build/classes/java/main` so the pushed bytecode and the
+ * classes loaded later come from one tree. That is only true when the classes dir and the
+ * installDist jars are the SAME build. With `--skip-build` (passed on 124 of 179 measured starts)
+ * installDist does not run, so the two are independently aged: worker-services from build B,
+ * everything else from build A's jars, with nothing comparing them — and `freshness.buildArtifact`
+ * derives from the dist stamp alone, so it would still say FRESH.
+ *
+ * The rule: prefix only when the pairing is established.
+ *  - the build step ran → both artifacts came out of the one Gradle invocation → prefix;
+ *  - `--skip-build` → compare the newest class file against the installed `worker-services-*.jar`.
+ *    Classes no newer than the jar means the jar contains them (the jar is built FROM them), so
+ *    the pair is consistent → prefix. Classes NEWER, or either side unreadable, is exactly the
+ *    "I cannot verify this" case: hot reload is turned off for the run and run.json records why,
+ *    which restores the pre-844 guarantee (a self-consistent, possibly stale, jar set) instead of
+ *    a silent mixture.
+ */
+function assessHotReloadClasspath({ classesDir, buildRan, libDir }) {
+  if (buildRan) {
+    return { ok: true, verdict: 'BUILD_RAN', reason: null };
   }
-  const classesDir = toPosix(
-    path.join(repoRoot, 'modules', 'worker-services', 'build', 'classes', 'java', 'main'));
+  const newestClass = newestClassMtimeMs(classesDir);
+  if (newestClass === null) {
+    return {
+      ok: false,
+      verdict: 'CLASSES_DIR_EMPTY',
+      reason: `${toPosix(classesDir)} holds no .class files, so there is nothing to put on the `
+        + 'classpath and nothing for reload to push. Start without --skip-build.',
+    };
+  }
+  let jarName = null;
+  let jarMtime = null;
+  try {
+    jarName = fs.readdirSync(libDir)
+      .find((f) => f.startsWith(`${HOTRELOAD_MODULE}-`) && f.endsWith('.jar')) || null;
+    if (jarName) jarMtime = fs.statSync(path.join(libDir, jarName)).mtimeMs;
+  } catch { /* the dist is not readable — handled as the unknown it is, just below */ }
+  if (jarMtime === null) {
+    return {
+      ok: false,
+      verdict: 'DIST_JAR_UNREADABLE',
+      reason: `no ${HOTRELOAD_MODULE}-*.jar could be read under ${toPosix(libDir)}, so the classes `
+        + 'dir cannot be shown to match the jars the Worker launches from. Start without '
+        + '--skip-build.',
+    };
+  }
+  if (newestClass > jarMtime + HOTRELOAD_STAMP_SKEW_MS) {
+    return {
+      ok: false,
+      verdict: 'CLASSES_NEWER_THAN_DIST',
+      reason: `${toPosix(classesDir)} was compiled after ${jarName} was installed `
+        + `(${new Date(newestClass).toISOString()} vs ${new Date(jarMtime).toISOString()}), so `
+        + `putting it first on the classpath would load ${HOTRELOAD_MODULE} from one build and `
+        + 'every other module from another. Start without --skip-build to pair them.',
+    };
+  }
+  return { ok: true, verdict: 'STAMPS_CONSISTENT', reason: null };
+}
+
+async function resolveDevHotReload(enabled, { buildRan = true } = {}) {
+  if (!enabled) {
+    return { enabled: false, requested: false, debugPort: null, classesDir: null };
+  }
+  const classesDir = hotReloadClassesDir(repoRoot);
+  // Tempdoc 844 M3: no classpath prefix without an established pairing, and therefore no hot
+  // reload — the prefix IS the mechanism, and offering it unpaired is the silent mixed classpath.
+  const classpath = assessHotReloadClasspath({
+    classesDir,
+    buildRan,
+    libDir: path.join(
+      repoRoot, 'modules', 'indexer-worker', 'build', 'install', 'indexer-worker', 'lib'),
+  });
+  if (!classpath.ok) {
+    process.stderr.write(
+      `[dev-runner] hot reload OFF (${classpath.verdict}): ${classpath.reason}\n`);
+    return {
+      enabled: false,
+      requested: true,
+      debugPort: null,
+      classesDir: null,
+      classpathVerdict: classpath.verdict,
+      reason: classpath.reason,
+    };
+  }
   const override = Number(process.env.JUSTSEARCH_DEV_DEBUG_PORT);
   if (Number.isInteger(override) && override > 0) {
-    return { enabled: true, debugPort: override, classesDir, portSource: 'env-override' };
+    return { enabled: true, requested: true, debugPort: override, classesDir, portSource: 'env-override' };
   }
   for (let port = 5005; port < 5025; port += 1) {
     // eslint-disable-next-line no-await-in-loop
     if (!(await isTcpListening(port))) {
-      return { enabled: true, debugPort: port, classesDir, portSource: 'scan' };
+      return { enabled: true, requested: true, debugPort: port, classesDir, portSource: 'scan' };
     }
   }
-  const err = new Error(
-    'No free JDWP port in 5005-5024 for hot-reload. Stop whatever is listening there, '
-    + 'set JUSTSEARCH_DEV_DEBUG_PORT explicitly, or start without hot reload.');
-  err.code = 'DEBUG_PORT_UNAVAILABLE';
-  throw err;
+  // Tempdoc 844 S4: hot reload is default-ON, and this ran AFTER admission and installDist — with
+  // the previous stack already stopped. Failing the whole start because an optional dev
+  // convenience has no port is out of proportion: degrade, and say so loudly enough that nobody
+  // reads the missing capability as a working one.
+  const reason = 'no free JDWP port in 5005-5024 — stop whatever is listening there, or set '
+    + 'JUSTSEARCH_DEV_DEBUG_PORT explicitly, and start again to get hot reload.';
+  process.stderr.write(`[dev-runner] hot reload OFF (DEBUG_PORT_UNAVAILABLE): ${reason}\n`);
+  return {
+    enabled: false,
+    requested: true,
+    debugPort: null,
+    classesDir: null,
+    classpathVerdict: 'DEBUG_PORT_UNAVAILABLE',
+    reason,
+  };
 }
 
 function checkHttp200(url, timeoutMs) {
@@ -1457,8 +1591,15 @@ async function cmdStart(opts) {
       },
     );
     if (buildResult.status !== 0) {
+      // Tempdoc 844 S5: a spawn that never ran gives status === null, and the real cause is in
+      // `.error` (ENOENT on gradlew.bat, EACCES, EAGAIN). Reporting "exit code null" while
+      // dropping it sent the reader looking for a Gradle failure that never happened.
       throw new Error(
-        `Gradle assemble + installDist failed with exit code ${buildResult.status}`);
+        buildResult.error
+          ? `Gradle assemble + installDist could not be run: ${buildResult.error.message}`
+            + `${buildResult.error.code ? ` (${buildResult.error.code})` : ''} — ${gradlePath}`
+          : `Gradle assemble + installDist failed with exit code ${buildResult.status}`
+            + `${buildResult.signal ? ` (killed by ${buildResult.signal})` : ''}`);
     }
   }
 
@@ -1505,7 +1646,7 @@ async function cmdStart(opts) {
   // Tempdoc 844 §4.2 R3: hot-reload facts are RECORDED per run instead of being a constant
   // three code sites agreed on by coincidence. The MCP `reload` tool reads the port and the
   // identity token from run.json; nothing re-derives 5005.
-  const devHotReload = await resolveDevHotReload(opts.hotReload);
+  const devHotReload = await resolveDevHotReload(opts.hotReload, { buildRan: !opts.skipBuild });
   process.stderr.write(
     `[dev-runner] Launching dist: repoRoot=${devStackProvenance.repoRoot} ` +
     `gitHead=${devStackProvenance.gitHead ?? '?'} headDistStamp=${devStackProvenance.headDistStamp ?? '?'}\n`);
@@ -1557,8 +1698,12 @@ async function cmdStart(opts) {
         // Hot-reload: enable JDWP + DevReloadManager on Worker (tempdoc 305).
         // Tempdoc 844 R3: the port comes from the per-run record written into run.json below,
         // so the pusher reads it instead of assuming 5005.
+        // Tempdoc 844 M3: set EXPLICITLY in both directions. Spreading process.env above means an
+        // ambient JUSTSEARCH_DEV_HOTRELOAD=true would otherwise survive a run where this decided
+        // hot reload is off, and the Worker would prefix its classpath with a classes dir the run
+        // record says is not there — a mixed classpath that run.json denies.
+        JUSTSEARCH_DEV_HOTRELOAD: devHotReload.enabled ? 'true' : 'false',
         ...(devHotReload.enabled ? {
-          JUSTSEARCH_DEV_HOTRELOAD: 'true',
           JUSTSEARCH_DEV_DEBUG_PORT: String(devHotReload.debugPort),
         } : {}),
         // Head startup flags: SerialGC (small heap, no throughput need),
@@ -2445,6 +2590,11 @@ if (require.main === module) {
       // Tempdoc 819 §D: graceful ordered-shutdown-before-taskkill helpers.
       postLifecycleShutdown,
       maybeGracefulBackendShutdown,
+      // Tempdoc 844 M3: the hot-reload classpath pairing check.
+      assessHotReloadClasspath,
+      newestClassMtimeMs,
+      hotReloadClassesDir,
+      HOTRELOAD_MODULE,
     },
   };
 }

@@ -93,7 +93,15 @@ export const StartInputSchema = z
     dataDir: z.string().min(1).optional(),
     clean: CleanModeSchema.optional(),
     waitLevel: ReadyLevelSchema.optional().describe('Readiness level to wait for after start (default: ready_worker)'),
-    skipBuild: z.boolean().optional().describe('Skip Gradle assemble step — launch from existing dist (default: false)'),
+    skipBuild: z.boolean().optional().describe('Skip the Gradle build step and launch from the '
+      + 'artifacts already on disk (default: false). Two consequences, both from tempdoc 844: the '
+      + 'step that is skipped is `assemble + :modules:ui:installDist + :modules:indexer-worker:'
+      + 'installDist` (F4 — `assemble` alone left the launched dist untouched), so a Java edit you '
+      + 'have not installed will NOT be in the running stack; and hot reload needs the '
+      + 'worker-services classes dir to be paired with those jars, which skipping the build cannot '
+      + 'establish. When they are not paired the dev-runner turns hot reload OFF for the run and '
+      + 'records why in run.json, rather than putting a half-new classes dir on a half-old '
+      + 'classpath (M3).'),
     startTimeoutMs: z.number().int().positive().optional().describe('Timeout for dev-runner start subprocess (default: 600000)'),
     waitTimeoutMs: z.number().int().positive().optional().describe('Timeout for readiness polling after start (default: 60000)'),
     takeover: z.enum(['deny', 'warn', 'force']).optional()
@@ -675,7 +683,10 @@ export const QuickHealthOutputSchema = z
 
 export const ReloadInputSchema = z.object({
   module: z.string().optional()
-    .describe('Gradle module to compile (default: worker-services)'),
+    .describe('Gradle module to compile. Defaults to — and tempdoc 844 M5 now restricts it to — the '
+      + 'one module the run recorded as its hot-reload classes dir (worker-services). Any other '
+      + 'value is refused: the identity check only ever sees the recorded dir, so pushing a '
+      + 'different module reported success while that module kept loading from its stale jar.'),
   debugPort: z.number().int().positive().optional()
     .describe('Tempdoc 844 R3: override the JDWP port recorded in the run record. Diagnostics '
       + 'only — the port normally comes from run.json (the dev-runner picks it per run), and the '

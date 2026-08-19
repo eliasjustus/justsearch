@@ -13,6 +13,12 @@
 //                             its producer never retired reads as `stale`, never as live; an
 //                             unregistered port still surfaces via the probe; a torn record is an
 //                             explicit `unreadable` and does not crash or suppress its neighbours.
+//   M1  readForeignRegister — only ENOENT/ENOTDIR yields []; any other readdir failure propagates
+//                             so the caller reports null ("did not look").
+//   M4  normalizeApiCallPath — the allowlist is applied to the path that will actually be SENT:
+//                             dot segments, encoded dot segments and `//host` cannot slip past it.
+//   S3  resolveForeignRegisterDir — the reader follows JUSTSEARCH_DEV_RUNNER_STATE_ROOT, as the
+//                             producer that writes the records does.
 //   B4a projectJsonPath     — a miss returns the available keys, never the body; array indexing.
 //   B4b truncationNotice    — a maxBytes overrun is a declared truncation, not a failed call.
 //
@@ -26,13 +32,16 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  API_CALL_ALLOWLIST,
   FOREIGN_BACKEND_PORTS,
   FOREIGN_REGISTER_RELPOSIX,
+  normalizeApiCallPath,
   parseJsonPathExpr,
   probeForeignRuns,
   readForeignRegister,
   projectJsonPath,
   resolveDistRoot,
+  resolveForeignRegisterDir,
   truncationNotice,
 } from './justsearch-dev-mcp/server.mjs';
 
@@ -421,12 +430,78 @@ const registerTests = [
     assert.equal(FOREIGN_REGISTER_RELPOSIX, 'tmp/dev-runner/foreign');
     assert.ok(!FOREIGN_REGISTER_RELPOSIX.includes('/runs'), 'runs/ is the one directory dev-runner globs AND prunes');
   }],
-  ['dev-runner never enumerates its state root, so foreign/ cannot be mistaken for one of its runs', async () => {
+  ['every enumeration site in dev-runner is a known one, so foreign/ cannot become one of its runs', async () => {
+    // Tempdoc 844 M6: this was `!/readdir(Sync)?\(\s*stateRoot/` — a negative source regex that
+    // could not catch the thing it named. Every real enumeration site passes a variable or a
+    // path.join, so `readdir(path.join(stateRoot, …))` and `readdir(someVar)` both slipped past it
+    // while the test kept reporting the invariant as enforced.
+    //
+    // An INVENTORY can be checked, where a negative pattern cannot: this pins the argument
+    // expression of every readdir call site in the file. The invariant itself ("none of these is
+    // the state root") is a human reading of that list — but a NEW enumeration cannot land without
+    // failing here and forcing the reading to happen again, which is the enforceable half.
     const src = await fsp.readFile(path.join(HERE, 'dev-runner.cjs'), 'utf8');
-    // Every readdir in dev-runner.cjs is over runs/ (pruning), a data dir (cleaning) or a lib dir —
-    // never `stateRoot` itself. If that changes, this lane's location assumption needs re-checking.
-    assert.ok(!/readdir(Sync)?\(\s*stateRoot/.test(src), 'dev-runner must not enumerate its state root');
+    const sites = [...src.matchAll(/\breaddir(?:Sync)?\(\s*([^,)]+)/g)].map((m) => m[1].trim()).sort();
+    assert.deepEqual(
+      sites,
+      [
+        'd',                // newestClassMtimeMs — recursive walk of a build/classes dir (M3)
+        'dir',              // cleanDataDir — a data dir
+        'dir',              // authoredStoreTopLevelNames — a data dir
+        'libDir',           // computeHeadDistStamp — modules/ui/build/install/ui/lib
+        'libDir',           // assessHotReloadClasspath — the indexer-worker dist lib dir (M3)
+        'runsDirectory',    // pruneHistoricRuns — <stateRoot>/runs, the one dir it globs
+        'srcDir',           // stageSharedCuda12 — the shared cuda12 staging source
+      ].sort(),
+      'a readdir call site in dev-runner.cjs changed. None may enumerate the state root itself: '
+        + 'foreign/ is a SIBLING of runs/, and this lane\'s location argument depends on the '
+        + 'dev-runner reading its own state files by exact name. Re-check the new site, then '
+        + 'update this list.',
+    );
     assert.ok(!/stateRoot,\s*['"]foreign['"]/.test(src), 'dev-runner must not read the foreign register');
+  }],
+  ['the reader honours JUSTSEARCH_DEV_RUNNER_STATE_ROOT, like the producer that writes the records', () => {
+    // Tempdoc 844 S3: run_register.py:66-73 redirects the register under the override; this reader
+    // hardcoded <main>/tmp/dev-runner/foreign, so with the override set it reported `[]` — "looked,
+    // found nothing" — about a directory nothing ever writes to.
+    const isolated = path.join(os.tmpdir(), 'jsdev-844-stateroot');
+    assert.equal(
+      resolveForeignRegisterDir('F:/main', { JUSTSEARCH_DEV_RUNNER_STATE_ROOT: isolated }),
+      path.join(path.resolve(isolated), 'foreign'));
+    assert.equal(
+      resolveForeignRegisterDir('F:/main', {}),
+      path.join('F:/main', ...FOREIGN_REGISTER_RELPOSIX.split('/')));
+    assert.equal(
+      resolveForeignRegisterDir('F:/main', { JUSTSEARCH_DEV_RUNNER_STATE_ROOT: '   ' }),
+      path.join('F:/main', ...FOREIGN_REGISTER_RELPOSIX.split('/')));
+  }],
+  ['a readdir failure that is NOT "no such directory" propagates, so the caller reports null', async () => {
+    // Tempdoc 844 M1: `catch { return []; }` asserted ENOENT and swallowed EACCES/EPERM/EMFILE too,
+    // turning "I could not read the register" into "I read it and it was empty" — the tri-state
+    // collapse this reader exists to prevent, in its own code.
+    const throwing = (code) => () => { const e = new Error(`${code}: refused`); e.code = code; throw e; };
+    for (const code of ['EACCES', 'EPERM', 'EMFILE', 'EIO']) {
+      // eslint-disable-next-line no-await-in-loop
+      await assert.rejects(
+        readForeignRegister({ dir: path.join(os.tmpdir(), 'jsdev-844-nope'), readdir: throwing(code) }),
+        new RegExp(code));
+    }
+    // ENOENT/ENOTDIR still mean "nothing has ever registered here", which IS a verified claim.
+    for (const code of ['ENOENT', 'ENOTDIR']) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.deepEqual(
+        await readForeignRegister({ dir: path.join(os.tmpdir(), 'jsdev-844-nope'), readdir: throwing(code) }),
+        []);
+    }
+    // …and probeForeignRuns turns that into `null` (did not look), never `[]`.
+    const runs = await probeForeignRuns({
+      enabled: true,
+      hasActiveRun: false,
+      registerDir: path.join(os.tmpdir(), 'jsdev-844-nope'),
+      readRegister: async () => { const e = new Error('EPERM'); e.code = 'EPERM'; throw e; },
+      probe: async () => 0,
+    });
+    assert.equal(runs, null, 'an unreadable register must be "did not look", not "found nothing"');
   }],
 ];
 
@@ -548,6 +623,100 @@ const distCodeTests = [
     const section = doc.slice(doc.indexOf('## Start-Tool Error Codes'));
     assert.match(section, /`DIST_NOT_BUILT`/);
     assert.match(section, /`INVALID_DIST_FROM`/);
+    assert.match(section, /`START_TIMED_OUT`/);
+  }],
+  ['M2: a start timeout cannot synthesize ok:true from whatever runId is in active.json', async () => {
+    // The removed block read active.json and, if ANY runId was there, returned
+    // `{ ok: true, runId, apiPort: runJson?.apiPortActual ?? 0, … }` — verifying neither that the
+    // run belonged to this call nor that anything answered. Source-structural (the handler is a
+    // closure inside registerTool), so it asserts on both the absence of the old shape and the
+    // presence of the new one.
+    const src = await fsp.readFile(path.join(HERE, 'justsearch-dev-mcp', 'server.mjs'), 'utf8');
+    const site = src.slice(src.indexOf('START_TIMED_OUT') - 3000, src.indexOf('START_TIMED_OUT') + 2500);
+    assert.doesNotMatch(src, /ok: true, recovered: true/, 'the recovered-as-success NDJSON event must be gone');
+    assert.doesNotMatch(src, /apiPort: runJson\?\.apiPortActual \?\? 0/, 'the synthesized success payload must be gone');
+    assert.match(site, /readinessConfirmed: false/);
+    assert.match(site, /observed/);
+    assert.match(site, /Readiness was NOT confirmed/);
+    assert.match(site, /timedOut: true/);
+  }],
+];
+
+/* ── M4: the allowlist is api_call's only boundary, so it must see the path that is sent ───── */
+
+/** What the handler does: shape check, then allowlist, then the URL-stability assertion. */
+function admitApiCallPath(rawPath, base = 'http://127.0.0.1:33301') {
+  const shape = normalizeApiCallPath(rawPath);
+  if (!shape.ok) return { admitted: false, why: `shape: ${shape.reason}` };
+  const entry = API_CALL_ALLOWLIST.find(
+    (e) => e.path === rawPath || (e.pattern instanceof RegExp && e.pattern.test(rawPath)));
+  if (!entry) return { admitted: false, why: 'not allowlisted' };
+  const sent = new URL(rawPath, base).pathname;
+  if (sent !== rawPath) return { admitted: false, why: `resolves to ${sent}` };
+  return { admitted: true, sent };
+}
+
+const allowlistTests = [
+  ['a legitimate package id is still admitted, and sent verbatim', () => {
+    const r = admitApiCallPath('/api/ai/install/packages/chat-compact_v1.2/decline');
+    assert.equal(r.admitted, true, r.why);
+    assert.equal(r.sent, '/api/ai/install/packages/chat-compact_v1.2/decline');
+    assert.equal(admitApiCallPath('/api/settings/v2').admitted, true);
+  }],
+  ['".." in a path parameter no longer escapes the allowlist', () => {
+    // The live bug: `[A-Za-z0-9._-]+` matches "..", and the match happened BEFORE
+    // `new URL(path, base)` normalized it — so this passed the boundary and was SENT as
+    // /api/ai/install/decline, a different endpoint than the one that was checked.
+    const r = admitApiCallPath('/api/ai/install/packages/../decline');
+    assert.equal(r.admitted, false);
+    assert.match(r.why, /"\.\." segment/);
+  }],
+  ['a "." segment is refused too', () => {
+    assert.equal(admitApiCallPath('/api/ai/install/packages/./decline').admitted, false);
+    assert.equal(admitApiCallPath('/api/./settings/v2').admitted, false);
+  }],
+  ['percent-encoded dot segments are refused (the decode happens before the check)', () => {
+    for (const p of [
+      '/api/ai/install/packages/%2e%2e/decline',
+      '/api/ai/install/packages/%2E%2E/decline',
+      '/api/ai/install/packages/%2e/decline',
+      '/api/ai/install/packages/a%2fb/decline',
+    ]) {
+      assert.equal(admitApiCallPath(p).admitted, false, `${p} must not be admitted`);
+    }
+  }],
+  ['a protocol-relative path cannot redirect the call off loopback', () => {
+    const r = admitApiCallPath('//example.com/api/settings/v2');
+    assert.equal(r.admitted, false);
+    assert.match(r.why, /empty segment/);
+  }],
+  ['a relative path, a backslash and a trailing slash are all refused', () => {
+    assert.match(normalizeApiCallPath('api/settings/v2').reason, /must start with "\/"/);
+    assert.match(normalizeApiCallPath('/api\\settings').reason, /backslash/);
+    assert.match(normalizeApiCallPath('/api/settings/v2/').reason, /empty segment/);
+    assert.match(normalizeApiCallPath('/api/%zz/v2').reason, /percent-encoding/);
+    assert.match(normalizeApiCallPath('').reason, /non-empty/);
+  }],
+  ['the handler applies the same three steps in the same order this test mirrors', async () => {
+    // admitApiCallPath above mirrors the handler's SEQUENCING (the handler is a closure inside
+    // registerTool and cannot be imported); normalizeApiCallPath and API_CALL_ALLOWLIST are the
+    // real ones. Pin the sequencing so the mirror cannot quietly stop describing the handler.
+    const src = await fsp.readFile(path.join(HERE, 'justsearch-dev-mcp', 'server.mjs'), 'utf8');
+    const shapeAt = src.indexOf('const shape = normalizeApiCallPath(input.path);');
+    const allowAt = src.indexOf('const entry = API_CALL_ALLOWLIST.find(');
+    const urlAt = src.indexOf('const resolvedUrl = new URL(input.path, base);');
+    assert.ok(shapeAt > 0 && allowAt > 0 && urlAt > 0, 'all three steps must be present');
+    assert.ok(shapeAt < allowAt, 'the shape check must run BEFORE the allowlist match');
+    assert.ok(allowAt < urlAt, 'the URL-stability assertion must run after the allowlist match');
+    assert.match(src, /if \(resolvedUrl\.pathname !== input\.path\)/);
+  }],
+  ['every allowlisted literal path passes the shape check it is now filtered through', () => {
+    for (const e of API_CALL_ALLOWLIST) {
+      if (e.pattern) continue; // `{packageId}` is a template, not a real path
+      const shape = normalizeApiCallPath(e.path);
+      assert.equal(shape.ok, true, `${e.path}: ${shape.reason}`);
+      assert.equal(new URL(e.path, 'http://127.0.0.1:33301').pathname, e.path);
+    }
   }],
 ];
 
@@ -555,7 +724,7 @@ const distCodeTests = [
 
 let pass = 0;
 let fail = 0;
-for (const [name, fn] of [...distTests, ...distCodeTests, ...foreignTests, ...registerTests, ...jsonPathTests, ...truncationTests]) {
+for (const [name, fn] of [...distTests, ...distCodeTests, ...foreignTests, ...registerTests, ...allowlistTests, ...jsonPathTests, ...truncationTests]) {
   try {
     await fn();
     console.log(`  PASS  ${name}`);

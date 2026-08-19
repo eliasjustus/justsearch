@@ -1372,3 +1372,34 @@ cause was not the one the pattern implies.
 Defect 4 is the most valuable thing the live pass produced, and it was found only because defect 3's
 refusal was loud. A quieter failure mode would have let the run "pass" against stale code — which is
 `static-green ≠ live-working` with the roles reversed: the *stack* was stale, not the test.
+
+### 13.10 Pre-merge independent review — six blockers and five smalls (2026-08-19)
+
+An independent pre-merge review applied §12.2 to this branch's own code and found the criterion
+violated six times in a blocking way. All are fixed; the order below is the review's.
+
+| # | Where | The false claim | Fix |
+|---|---|---|---|
+| M1 | `server.mjs` `readForeignRegister` | `catch { return []; }` asserted ENOENT and also swallowed EACCES/EPERM/EMFILE — "I looked and found nothing" about a directory it could not read. The D3 tri-state collapsing inside D3's own code. | only ENOENT/ENOTDIR yields `[]`; everything else propagates, so `probeForeignRuns` yields `null` |
+| M2 | `server.mjs` `start` timeout | on timeout it read `active.json` and synthesized `{ok:true, runId, apiPort…}` from *any* runId — verifying neither that the run was this call's nor that HTTP answered | `START_TIMED_OUT`, `readinessConfirmed:false`, and an `observed` block (incl. one `/api/health` probe) explicitly labelled observed-not-confirmed |
+| M3 | `dev-runner.cjs` + `WorkerSpawner` | R4's classes-dir prefix is only sound when the classes dir and the installDist jars are one build; `skipBuild` (124/179 starts) cannot establish that, and `freshness.buildArtifact` would still say FRESH | the pairing is established (build ran) or *checked* (class mtimes vs the installed `worker-services-*.jar`); when it cannot be, hot reload is OFF for the run with a recorded `reason`/`classpathVerdict` and the classpath is exactly the pre-844 jar set |
+| M4 | `server.mjs` `api_call` allowlist | `[A-Za-z0-9._-]+` admits `..`, and matching ran *before* `new URL()` normalized — `…/packages/../decline` passed the allowlist and was sent as `/api/ai/install/decline` | `normalizeApiCallPath` (absolute, no backslash, no empty/`.`/`..` segment after percent-decoding) before the match, plus a post-match assertion that the resolved pathname is still the matched one |
+| M5 | `server.mjs` `reload` | `module` chose the push source while the identity args always came from the run record, so another module passed `IDENTITY_OK` and reported `REDEFINED` while its later-loaded classes stayed on the stale jar | `module` is restricted to the module the run recorded; anything else is `RELOAD_MODULE_NOT_ON_CLASSPATH` |
+| M6 | two tests | a Java test claimed to pin a cross-side contract it never referenced; a JS guard used a negative source regex that could not catch the call shapes it named | Java test renamed to what it checks; the cross-side pin moved to where both ends are executable in one process; the negative regex replaced by a readdir-call-site **inventory** |
+
+Smalls, same criterion: **S1** a killed `HotSwapPush` is `HOTSWAP_TIMED_OUT` with
+`classesRedefined: null`, not "no bytecode was pushed"; **S2** `jseval`'s `stop_backend` sweeps for
+the orphan Worker *before* retiring its register record; **S3** the register reader honours
+`JUSTSEARCH_DEV_RUNNER_STATE_ROOT` as the writer does; **S4** an exhausted 5005-5024 range degrades
+to hot-reload-off with a notice instead of failing a start whose predecessor is already stopped;
+**S5** a `spawnSync` `.error` is surfaced instead of "exit code null"; **N1** the MCP harness's first
+line now says it starts a real dev stack.
+
+**The M3 decision, and why.** Option (a) — prefix only when the build ran — restores the guarantee
+but removes hot reload from the dominant path (`skipBuild`, 124/179). Option (b) alone would leave a
+*reported* mixture, which is honest but still contaminates. The shipped answer is (a) with (b) as
+the recovery: the build having run **is** the pairing, and under `skipBuild` the pairing is measured
+(classes no newer than the jar the jar was built from ⇒ consistent). The common `skipBuild` restart
+on unchanged artifacts therefore keeps hot reload; only a genuinely divergent tree loses it, loudly.
+The outcome is stronger than "no silent mixture": **no mixture at all**, because the prefix is the
+mechanism and it is never applied unpaired.

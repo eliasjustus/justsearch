@@ -27,8 +27,18 @@
 //   F4  dev-runner.cjs             — `start` logged "Ensuring distribution is up-to-date" and ran
 //                                    `assemble`, which does not refresh the dist it launches.
 //
-// Pure unit tests: no dev stack, no JVM, no network. The two async helpers touch only a tmp
-// fixture tree.
+// The pre-merge review findings, same criterion again:
+//   M3  assessHotReloadClasspath — R4 puts the classes dir FIRST, which is only sound when it and
+//                                  the installDist jars are one build. `skipBuild` (124 of 179
+//                                  measured starts) cannot establish that, so the pairing is
+//                                  checked and hot reload is turned OFF with a recorded reason
+//                                  rather than a silent half-new classpath.
+//   M5  reloadModuleFromClassesDir — reload may only push the module the run's classpath carries;
+//                                  any other module is refused instead of reported REDEFINED.
+//   S1  classifyHotSwapOutcome    — a KILLED pusher is an explicit unknown, not "nothing pushed".
+//
+// Pure unit tests: no dev stack, no JVM, no network. The async helpers touch only tmp fixture
+// trees; `dev-runner.cjs` is required for its `__test` exports, as its own tests already do.
 //
 // Run: node scripts/dev/test-dev-mcp-hot-reload.mjs
 //
@@ -37,11 +47,15 @@ import assert from 'node:assert/strict';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import {
   checkRunMutationOwnership,
   classifyHotSwapOutcome,
+  reloadModuleFromClassesDir,
   resolveReloadTarget,
 } from './justsearch-dev-mcp/server.mjs';
+
+const require = createRequire(import.meta.url);
 
 // server.mjs installs process-level handlers that LOG rather than exit, so a top-level abort here
 // would otherwise leave exit code 0 — a green that ran nothing. Fail closed until the runner clears it.
@@ -387,6 +401,40 @@ const outcomeTests = [
     }
     assert.equal(classifyHotSwapOutcome(REDEFINED_OK).hotSwapOk, true);
   }],
+  ['S1: a KILLED pusher reports an explicit unknown, not "no bytecode was pushed"', () => {
+    // A kill that lands after redefineClasses returned leaves new bytecode in the VM. The old code
+    // mapped the killer's exit code (-1) onto HOTSWAP_FAILED — "no bytecode was pushed" — which is
+    // a claim about a state it could not observe.
+    const o = classifyHotSwapOutcome({ exitCode: -1, stdout: 'CHANGED 2\nIDENTITY_OK F:/t/classes\n', timedOut: true });
+    assert.equal(o.outcome, 'TIMED_OUT');
+    assert.equal(o.hotSwapOk, false);
+    assert.equal(o.error.code, 'HOTSWAP_TIMED_OUT');
+    assert.equal(o.classesRedefined, null, 'classesRedefined must be an explicit unknown, not 0');
+    assert.match(o.error.message, /UNKNOWN/);
+    assert.match(o.error.message, /must NOT be assumed unchanged/);
+    // Facts it CAN still see are kept — the identity check completed before the kill.
+    assert.equal(o.classesChanged, 2);
+    assert.equal(o.identityVerified, true);
+  }],
+  ['S1: a timeout is distinguished from a genuine non-zero exit', () => {
+    const killed = classifyHotSwapOutcome({ exitCode: -1, stdout: '', timedOut: true });
+    const exited = classifyHotSwapOutcome({ exitCode: -1, stdout: '', timedOut: false });
+    assert.equal(killed.outcome, 'TIMED_OUT');
+    assert.equal(exited.outcome, 'PUSH_FAILED');
+    assert.equal(exited.classesRedefined, 0, 'a real non-zero exit IS a verified zero (F2)');
+    // A structural refusal that also happened to be killed still reports the unknown, because the
+    // kill is the thing that makes the outcome unobservable.
+    const structuralAndKilled = classifyHotSwapOutcome({
+      exitCode: -1, stderr: 'HotSwap not supported by target VM: add method not implemented', timedOut: true,
+    });
+    assert.equal(structuralAndKilled.outcome, 'TIMED_OUT');
+    assert.equal(structuralAndKilled.structuralChangeDetected, true);
+  }],
+  ['S1: the handler classifies a kill as timedOut rather than as exit code -1', async () => {
+    const src = await fsp.readFile(path.join(HERE, 'justsearch-dev-mcp', 'server.mjs'), 'utf8');
+    assert.match(src, /hsTimedOut = err\.killed === true \|\| typeof err\.signal === 'string';/);
+    assert.match(src, /timedOut: hsTimedOut,/);
+  }],
 ];
 
 /* ── R5: the signal gate itself (source-structural — labelled, not disguised) ───────────────
@@ -458,11 +506,161 @@ const signalGateTests = [
   }],
 ];
 
+/* ── M3: the classes-dir prefix only when the classes dir and the dist are ONE build ───────── */
+
+const { __test: devRunner } = require(path.join(HERE, 'dev-runner.cjs'));
+
+/** `<root>/classes` with one .class file, and `<root>/lib/worker-services-0.2.0.jar`. */
+async function makeArtifacts({ classAgeMs = 0, jarAgeMs = 0, withJar = true, withClass = true } = {}) {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'jsdev-844-m3-'));
+  const classesDir = path.join(root, 'classes', 'io', 'justsearch');
+  const libDir = path.join(root, 'lib');
+  await fsp.mkdir(classesDir, { recursive: true });
+  await fsp.mkdir(libDir, { recursive: true });
+  const now = Date.now();
+  if (withClass) {
+    const f = path.join(classesDir, 'Thing.class');
+    await fsp.writeFile(f, 'x', 'utf8');
+    await fsp.utimes(f, new Date(now - classAgeMs), new Date(now - classAgeMs));
+  }
+  if (withJar) {
+    const f = path.join(libDir, 'worker-services-0.2.0.jar');
+    await fsp.writeFile(f, 'x', 'utf8');
+    await fsp.utimes(f, new Date(now - jarAgeMs), new Date(now - jarAgeMs));
+  }
+  return { root, classesDir: path.join(root, 'classes'), libDir };
+}
+
+const artifactRoots = [];
+const artifacts = async (opts) => { const a = await makeArtifacts(opts); artifactRoots.push(a.root); return a; };
+
+const classpathPairingTests = [
+  ['the build step having run IS the pairing — no stamp guessing needed', async () => {
+    const a = await artifacts({ classAgeMs: 0, jarAgeMs: 600_000 });
+    const r = devRunner.assessHotReloadClasspath({ classesDir: a.classesDir, libDir: a.libDir, buildRan: true });
+    assert.equal(r.ok, true);
+    assert.equal(r.verdict, 'BUILD_RAN');
+  }],
+  ['skipBuild + classes NEWER than the installed jar is refused — that is the mixed classpath', async () => {
+    // The M3 regression: R4 puts the classes dir FIRST, and with skipBuild installDist never ran,
+    // so worker-services would come from build B and every other module from build A's jars —
+    // with `freshness.buildArtifact` still saying FRESH because it derives from the dist stamp.
+    const a = await artifacts({ classAgeMs: 0, jarAgeMs: 600_000 });
+    const r = devRunner.assessHotReloadClasspath({ classesDir: a.classesDir, libDir: a.libDir, buildRan: false });
+    assert.equal(r.ok, false);
+    assert.equal(r.verdict, 'CLASSES_NEWER_THAN_DIST');
+    assert.match(r.reason, /--skip-build/);
+    assert.match(r.reason, /worker-services-0\.2\.0\.jar/);
+  }],
+  ['skipBuild with classes no newer than the jar IS paired — hot reload survives the common path', async () => {
+    // 124 of 179 measured starts passed skipBuild. The usual case is a stack restarted on the same
+    // artifacts, where the jar was installed FROM those classes: consistent, so the prefix holds.
+    const a = await artifacts({ classAgeMs: 600_000, jarAgeMs: 0 });
+    const r = devRunner.assessHotReloadClasspath({ classesDir: a.classesDir, libDir: a.libDir, buildRan: false });
+    assert.equal(r.ok, true);
+    assert.equal(r.verdict, 'STAMPS_CONSISTENT');
+  }],
+  ['an unreadable dist jar is an explicit unknown, not an assumed pairing', async () => {
+    const a = await artifacts({ withJar: false });
+    const r = devRunner.assessHotReloadClasspath({ classesDir: a.classesDir, libDir: a.libDir, buildRan: false });
+    assert.equal(r.ok, false);
+    assert.equal(r.verdict, 'DIST_JAR_UNREADABLE');
+  }],
+  ['an empty classes dir is refused rather than prefixed as an empty entry', async () => {
+    const a = await artifacts({ withClass: false });
+    const r = devRunner.assessHotReloadClasspath({ classesDir: a.classesDir, libDir: a.libDir, buildRan: false });
+    assert.equal(r.ok, false);
+    assert.equal(r.verdict, 'CLASSES_DIR_EMPTY');
+  }],
+  ['newestClassMtimeMs walks nested packages and ignores non-.class files', async () => {
+    const a = await artifacts({ classAgeMs: 600_000 });
+    await fsp.writeFile(path.join(a.classesDir, 'io', 'justsearch', 'notes.txt'), 'x', 'utf8');
+    const nested = path.join(a.classesDir, 'io', 'justsearch', 'deep');
+    await fsp.mkdir(nested, { recursive: true });
+    const newer = path.join(nested, 'Deep.class');
+    await fsp.writeFile(newer, 'x', 'utf8');
+    const got = devRunner.newestClassMtimeMs(a.classesDir);
+    assert.ok(got >= (await fsp.stat(newer)).mtimeMs - 5, 'the deepest .class must be seen');
+    assert.equal(devRunner.newestClassMtimeMs(path.join(a.root, 'nope')), null);
+  }],
+  ['start passes the skipBuild fact through — the check cannot be bypassed by the caller', async () => {
+    const src = await fsp.readFile(path.join(HERE, 'dev-runner.cjs'), 'utf8');
+    assert.match(src, /resolveDevHotReload\(opts\.hotReload,\s*\{\s*buildRan:\s*!opts\.skipBuild\s*\}\)/);
+  }],
+  ['reload repeats the dev-runner\'s own reason instead of inventing one (F3\'s mistake)', async () => {
+    const r = await resolveReloadTarget({
+      mainRepoRoot: fx.main,
+      runJson: runRecord(fx.treeA, {
+        hotReload: {
+          enabled: false, requested: true, debugPort: null, classesDir: null,
+          classpathVerdict: 'CLASSES_NEWER_THAN_DIST',
+          reason: 'the classes dir was compiled after the jar was installed',
+        },
+      }),
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.error.code, 'HOT_RELOAD_NOT_ENABLED');
+    assert.match(r.error.message, /turned it off at start/);
+    assert.match(r.error.message, /compiled after the jar was installed/);
+    assert.match(r.error.message, /CLASSES_NEWER_THAN_DIST/);
+    // …and an ordinary opt-out still reads as an opt-out, not as a failure.
+    const optOut = await resolveReloadTarget({
+      mainRepoRoot: fx.main,
+      runJson: runRecord(fx.treeA, { hotReload: { enabled: false, requested: false, debugPort: null, classesDir: null } }),
+    });
+    assert.match(optOut.error.message, /started with hotReload: false/);
+  }],
+];
+
+/* ── M5: reload may only push the module the run's classpath actually carries ──────────────── */
+
+const moduleScopeTests = [
+  ['M6: the layout the dev-runner records is the layout the reload tool parses back', () => {
+    // The cross-side pin the Java test used to claim falsely (it restated WorkerSpawner's own
+    // implementation and never referenced this side). Here both ends are executable in one
+    // process: the writer's output must be exactly what the parser understands.
+    const dir = devRunner.hotReloadClassesDir('F:/t');
+    assert.equal(dir, 'F:/t/modules/worker-services/build/classes/java/main');
+    assert.equal(devRunner.HOTRELOAD_MODULE, 'worker-services');
+    assert.equal(reloadModuleFromClassesDir(dir), devRunner.HOTRELOAD_MODULE);
+    // …and WorkerSpawner's Java-side half is pinned to the same segment sequence.
+    const java = 'modules/worker-services/build/classes/java/main';
+    assert.ok(dir.endsWith(java), `dev-runner must emit ${java}`);
+  }],
+  ['the recorded classes dir names the module, and an unrecognisable one is an explicit null', () => {
+    assert.equal(
+      reloadModuleFromClassesDir('F:/t/modules/worker-services/build/classes/java/main'),
+      'worker-services');
+    assert.equal(
+      reloadModuleFromClassesDir('F:\\t\\modules\\worker-services\\build\\classes\\java\\main'),
+      'worker-services');
+    assert.equal(reloadModuleFromClassesDir('F:/t/modules/app-services/build/classes/java/main'), 'app-services');
+    assert.equal(reloadModuleFromClassesDir('F:/t/modules/worker-services/build/libs'), null);
+    assert.equal(reloadModuleFromClassesDir(''), null);
+    assert.equal(reloadModuleFromClassesDir(null), null);
+  }],
+  ['reload refuses a module the run\'s classpath does not carry, rather than reporting REDEFINED', async () => {
+    // The M5 bug: `module` chose the compile+push source, but the identity args always came from
+    // the run record's classesDir — so pushing another module passed IDENTITY_OK while its classes
+    // came from a directory the VM never loads from, and later-loaded classes stayed on the stale
+    // jar. The refusal below is the whole fix; the assertion pins that the message says why.
+    const src = await fsp.readFile(path.join(HERE, 'justsearch-dev-mcp', 'server.mjs'), 'utf8');
+    const site = src.slice(src.indexOf('RELOAD_MODULE_NOT_ON_CLASSPATH'));
+    assert.match(site.slice(0, 1200), /Refusing/);
+    assert.match(site.slice(0, 1200), /stale jar/);
+    // The guard is on `input.module`, i.e. the caller's value, not the resolved default.
+    assert.match(src, /if \(input\.module && input\.module !== recordedModule\)/);
+    // …and the module actually used comes from the RECORD, never from the input.
+    assert.match(src, /const module = recordedModule \|\| 'worker-services';/);
+  }],
+];
+
 /* ── runner ────────────────────────────────────────────────────────────────────────────────── */
 
 let passed = 0;
 let failed = 0;
-for (const [name, fn] of [...targetTests, ...ownershipTests, ...outcomeTests, ...signalGateTests]) {
+for (const [name, fn] of [...targetTests, ...ownershipTests, ...outcomeTests, ...signalGateTests,
+  ...classpathPairingTests, ...moduleScopeTests]) {
   try {
     await fn();
     passed += 1;
@@ -473,5 +671,6 @@ for (const [name, fn] of [...targetTests, ...ownershipTests, ...outcomeTests, ..
   }
 }
 await fsp.rm(fx.root, { recursive: true, force: true });
+for (const root of artifactRoots) await fsp.rm(root, { recursive: true, force: true });
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed === 0 ? 0 : 1;

@@ -39,9 +39,13 @@ python -m jseval run --dataset scifact --max-queries 0 --pipeline --reset
 `hotReload` defaults true on `start` (tempdoc 844), so the JDWP listener and service
 reconstruction are there unless you opted out with `hotReload: false` — in which case `reload`
 refuses with `HOT_RELOAD_NOT_ENABLED` instead of reporting a push it did not make. `reload`
-compiles from the tree the running stack was launched from (not your cwd), is ownership-gated, and
-verifies the target VM's identity before redefining anything. Full behaviour and error codes:
-`docs/reference/contributing/mcp-dev-tools.md` § Hot Reload.
+compiles from the tree the running stack was launched from (not your cwd), is ownership-gated,
+verifies the target VM's identity before redefining anything, and only ever pushes the module the
+run recorded. **`skipBuild: true` can cost you hot reload**: the classes dir goes first on the
+Worker classpath, which is only sound when it and the installDist jars are one build — when
+`skipBuild` leaves them unpaired the dev-runner turns hot reload off for that run and records why,
+rather than running a half-new classpath. Start without `skipBuild` to get it back. Full behaviour
+and error codes: `docs/reference/contributing/mcp-dev-tools.md` § Hot Reload.
 
 ## Do NOT Write Manual Polling Loops
 

@@ -54,12 +54,18 @@ class WorkerSpawnerHotReloadClasspathTest {
   }
 
   @Test
-  @DisplayName("the classes dir is the SAME path the pusher identifies the VM by")
-  void classesDirIsTheIdentityToken() {
-    // dev-runner.cjs writes <repoRoot>/modules/worker-services/build/classes/java/main into
-    // run.json as hotReload.classesDir, and HotSwapPush requires that exact entry on the attached
-    // VM's classpath. If this layout changes on one side only, the identity check starts refusing
-    // every legitimate push — so both sides are pinned here.
+  @DisplayName("this side's half of the identity-token layout: modules/<m>/build/classes/java/main")
+  void devHotReloadClassesDirLayoutIsPinnedOnThisSide() {
+    // Tempdoc 844 M6: this test used to claim "both sides are pinned here". It was not — it
+    // restated devHotReloadClassesDir's implementation and never referenced dev-runner.cjs, so a
+    // change to the JS side would leave this green while every reload refused with
+    // TARGET_IDENTITY_MISMATCH. Renamed to what it actually checks.
+    //
+    // The cross-side pin lives where both sides are readable from one process:
+    // scripts/dev/test-dev-mcp-hot-reload.mjs asserts the dev-runner writes this layout into
+    // run.json and that the reload tool parses the module back out of it
+    // (reloadModuleFromClassesDir). What is checked HERE is only that WorkerSpawner produces the
+    // documented shape, absolutely.
     Path repo = REPO;
 
     Path classes = WorkerSpawner.devHotReloadClassesDir(repo);
@@ -68,6 +74,6 @@ class WorkerSpawnerHotReloadClasspathTest {
         repo.resolve("modules").resolve("worker-services").resolve("build").resolve("classes")
             .resolve("java").resolve("main").toAbsolutePath(),
         classes);
-    assertTrue(classes.isAbsolute(), "the identity token must be absolute on both sides");
+    assertTrue(classes.isAbsolute(), "the identity token must be absolute");
   }
 }

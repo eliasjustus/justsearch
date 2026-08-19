@@ -782,6 +782,51 @@ export const API_CALL_ALLOWLIST = [
   { path: '/api/action-ledger', methods: ['GET'] },
 ];
 
+/**
+ * Tempdoc 844 M4 — validate the request path BEFORE the allowlist sees it.
+ *
+ * The allowlist is `api_call`'s only boundary (`destructiveHint: true`), and it used to be applied
+ * to the raw input while `new URL(input.path, base)` normalized the string afterwards. The
+ * `{packageId}` pattern's `[A-Za-z0-9._-]+` admits `..`, so
+ * `/api/ai/install/packages/../decline` MATCHED the packages entry and was SENT as
+ * `/api/ai/install/decline` — one segment of escape past the boundary. A protocol-relative
+ * `//host/path` is the same class of bug with a worse landing site.
+ *
+ * So: absolute, no backslashes, no empty/`.`/`..` segments — decoded, so `%2e%2e` cannot smuggle
+ * one in — and the caller then asserts that the URL it builds still has this exact pathname, which
+ * makes "the string that was matched is the string that is sent" structural rather than assumed.
+ */
+export function normalizeApiCallPath(rawPath) {
+  if (typeof rawPath !== 'string' || rawPath.length === 0) {
+    return { ok: false, reason: 'path must be a non-empty string' };
+  }
+  if (!rawPath.startsWith('/')) {
+    return { ok: false, reason: 'path must start with "/" — a relative path resolves against the base URL and would not be the path the allowlist matched' };
+  }
+  if (rawPath.includes('\\')) {
+    return { ok: false, reason: 'path must not contain a backslash' };
+  }
+  const segments = rawPath.split('/').slice(1);
+  for (const seg of segments) {
+    let decoded;
+    try {
+      decoded = decodeURIComponent(seg);
+    } catch {
+      return { ok: false, reason: `path segment ${JSON.stringify(seg)} is not valid percent-encoding` };
+    }
+    if (seg === '') {
+      return { ok: false, reason: 'path must not contain an empty segment ("//" or a trailing "/")' };
+    }
+    if (decoded === '.' || decoded === '..') {
+      return { ok: false, reason: `path must not contain a "${decoded}" segment — it would resolve past whatever the allowlist matched` };
+    }
+    if (decoded.includes('/') || decoded.includes('\\')) {
+      return { ok: false, reason: `path segment ${JSON.stringify(seg)} encodes a path separator` };
+    }
+  }
+  return { ok: true, path: rawPath };
+}
+
 /* ── Tempdoc 844 B3 — backends this dev-runner did not start ───────────────────────────────── */
 
 /**
@@ -808,6 +853,26 @@ export const FOREIGN_BACKEND_PORTS = [33221];
  */
 export const FOREIGN_REGISTER_RELPOSIX = 'tmp/dev-runner/foreign';
 
+/** Directory name under the dev-runner state root — the one constant both sides share. */
+export const FOREIGN_REGISTER_DIRNAME = 'foreign';
+
+/**
+ * Where the register actually lives for THIS process.
+ *
+ * Tempdoc 844 S3 — the writer (`run_register.py:register_dir`) honours
+ * `JUSTSEARCH_DEV_RUNNER_STATE_ROOT` exactly as `dev-runner.cjs:56` does, so an isolated
+ * dev-runner (integration tests, throwaway stacks) gets an isolated register. This reader
+ * hardcoded `<main>/tmp/dev-runner/foreign`, so with the override set it confidently reported
+ * `[]` for a register it was never pointed at — §12.2's collapse, from the other side.
+ */
+export function resolveForeignRegisterDir(mainRepoRoot, env = process.env) {
+  const override = env?.JUSTSEARCH_DEV_RUNNER_STATE_ROOT;
+  if (typeof override === 'string' && override.trim()) {
+    return path.join(path.resolve(override.trim()), FOREIGN_REGISTER_DIRNAME);
+  }
+  return path.join(mainRepoRoot, ...FOREIGN_REGISTER_RELPOSIX.split('/'));
+}
+
 /** The record shape this reader understands. A record declaring anything else is reported as
  *  unreadable rather than interpreted on a guess. */
 export const FOREIGN_RECORD_SCHEMA_VERSION = 1;
@@ -830,14 +895,23 @@ export async function readForeignRegister({
   dir,
   maxRecords = FOREIGN_REGISTER_MAX_RECORDS,
   maxBytes = FOREIGN_REGISTER_MAX_BYTES,
+  // Injectable so the non-ENOENT branch below is testable — a real EACCES on a directory is not
+  // reproducible on Windows in a unit test, and an untested branch is how M1 shipped.
+  readdir = fsp.readdir,
 } = {}) {
   if (!dir) return [];
   let names;
   try {
-    const entries = await fsp.readdir(dir, { withFileTypes: true });
+    const entries = await readdir(dir, { withFileTypes: true });
     names = entries.filter((e) => e.isFile() && e.name.endsWith('.json')).map((e) => e.name).sort();
-  } catch {
-    return []; // no register directory at all — nothing has ever registered here
+  } catch (err) {
+    // §12.2 in this reader's own code: `[]` is the claim "I looked and nothing has ever registered
+    // here", and only ENOENT/ENOTDIR (no such directory / the path is not one) support it. Every
+    // other readdir failure — EACCES/EPERM (Windows AV or the indexer holding the directory open),
+    // EMFILE, EIO — means "I could not look", which is a different claim. Those propagate so
+    // `probeForeignRuns` yields `null` ("did not probe") instead of a confident empty register.
+    if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') return [];
+    throw err;
   }
 
   const out = [];
@@ -1143,7 +1217,15 @@ export async function resolveReloadTarget({ mainRepoRoot, runJson }) {
       ok: false,
       error: {
         code: 'HOT_RELOAD_NOT_ENABLED',
-        message: hr
+        // Tempdoc 844 M3/S4: hot reload can be OFF because it was not asked for, or because the
+        // dev-runner asked for it and could not deliver it honestly (unpaired classes dir, no free
+        // JDWP port). `requested: true` distinguishes the two, and `reason` is the dev-runner's own
+        // words — the refusal must not invent a cause, which is exactly F3's mistake.
+        message: hr?.requested === true && typeof hr.reason === 'string' && hr.reason
+          ? `Hot reload was requested for this run but the dev-runner turned it off at start: ${hr.reason} `
+            + `(${hr.classpathVerdict || 'no verdict recorded'}). Its Worker therefore has no JDWP `
+            + 'listener and no hot-reload classes dir on its classpath, so there is nothing to push to.'
+          : hr
           ? 'This stack was started with hotReload: false, so its Worker has no JDWP listener — '
             + 'there is nothing to push bytecode to. (The old instructions claimed reload still '
             + 'pushed method-body changes without it; WorkerSpawner\'s early return guards the '
@@ -1172,6 +1254,20 @@ export async function resolveReloadTarget({ mainRepoRoot, runJson }) {
     debugPort: hr.debugPort,
     identityClassesDir: typeof hr.classesDir === 'string' && hr.classesDir ? hr.classesDir : null,
   };
+}
+
+/**
+ * Tempdoc 844 M5 — the module the run's identity token actually names.
+ *
+ * `hotReload.classesDir` is `<runRoot>/modules/<module>/build/classes/java/main`; this reads the
+ * `<module>` out of it. `null` when the path does not have that shape, which is an explicit
+ * unknown — the caller refuses rather than guessing that it is `worker-services`.
+ */
+export function reloadModuleFromClassesDir(classesDir) {
+  if (typeof classesDir !== 'string' || !classesDir) return null;
+  const m = classesDir.replace(/\\/g, '/')
+    .match(/\/modules\/([^/]+)\/build\/classes\/java\/main\/?$/);
+  return m ? m[1] : null;
 }
 
 /**
@@ -1249,7 +1345,7 @@ const STRUCTURAL_CHANGE_PATTERNS = [
  * `identityRequired` maps to R3: when an identity token was passed, a push that did not print
  * IDENTITY_OK was not identity-checked, and an unverified push is not a confirmed one.
  */
-export function classifyHotSwapOutcome({ exitCode, stdout = '', stderr = '', identityRequired = true }) {
+export function classifyHotSwapOutcome({ exitCode, stdout = '', stderr = '', identityRequired = true, timedOut = false }) {
   const out = `${stdout}\n${stderr}`;
   const count = (re) => { const m = out.match(re); return m ? Number(m[1]) : null; };
   const facts = {
@@ -1265,6 +1361,25 @@ export function classifyHotSwapOutcome({ exitCode, stdout = '', stderr = '', ide
     identityVerified: /^IDENTITY_OK /m.test(out),
     structuralChangeDetected: STRUCTURAL_CHANGE_PATTERNS.some((re) => re.test(out)),
   };
+  if (timedOut) {
+    // Tempdoc 844 S1: the pusher was KILLED, so its exit code is the killer's, not its own. A kill
+    // that landed after `redefineClasses` returned leaves new bytecode in the VM; one that landed
+    // before leaves none. Both are consistent with what we can see, so `classesRedefined` is an
+    // explicit unknown — the previous code reported "no bytecode was pushed", which is a claim.
+    return {
+      ...facts,
+      classesRedefined: null,
+      hotSwapOk: false,
+      outcome: 'TIMED_OUT',
+      error: {
+        code: 'HOTSWAP_TIMED_OUT',
+        message: 'HotSwapPush did not finish inside its timeout and was killed. Whether any '
+          + 'bytecode was redefined is UNKNOWN — the kill may have landed on either side of the '
+          + 'redefineClasses call — so the Worker must NOT be assumed unchanged, and the service '
+          + 'reconstruction signal was not written. Restart the stack to get back to a known state.',
+      },
+    };
+  }
   if (exitCode === 5) {
     return { ...facts, hotSwapOk: false, outcome: 'IDENTITY_REFUSED', error: {
       code: 'TARGET_IDENTITY_MISMATCH',
@@ -1450,7 +1565,6 @@ export async function main() {
       maybeAppendNdjson(mainRepoRoot, { event: 'tool_start', tool: 'justsearch.dev.start', args: { apiPort, uiPort, clean, distFrom: input.distFrom ?? null } });
 
       let json;
-      let recoveredApiBaseUrl = null;
       try {
         const result = await runCliJson({
           repoRoot: effRepoRoot,
@@ -1461,31 +1575,56 @@ export async function main() {
         });
         json = result.json;
       } catch (err) {
-        // On timeout, check if an active run was created anyway (race recovery)
-        if (String(err?.message || '').includes('timed out')) {
-          try {
-            const active = await readJsonFileNoSymlinks({ repoRoot: mainRepoRoot, relPosix: 'tmp/dev-runner/active.json', maxBytes: 200_000 });
-            if (active?.runId) {
-              const runJson = await readRunJson({ repoRoot: mainRepoRoot, runId: active.runId });
-              recoveredApiBaseUrl = runJson?.apiBaseUrl || null;
-              maybeAppendNdjson(mainRepoRoot, { event: 'tool_start_result', tool: 'justsearch.dev.start', ok: true, recovered: true });
-              json = {
-                ok: true,
-                runId: active.runId,
-                apiPort: runJson?.apiPortActual ?? 0,
-                uiPort: runJson?.uiPortActual ?? 0,
-                apiBaseUrl: runJson?.apiBaseUrl,
-                uiUrl: runJson?.uiUrl,
-                dataDir: runJson?.dataDir ?? '',
-              };
+        if (!String(err?.message || '').includes('timed out')) throw err;
+        // Tempdoc 844 §12.2 — a timeout is not a start. This branch used to read active.json and,
+        // if ANY runId was there, synthesize `{ ok: true, … }`: it did not check that the run was
+        // this call's, and it never probed the API, so a start that died mid-boot — or a run that
+        // was already there before the call — was reported as a successful start with a port.
+        // Now the timeout is reported as a timeout, and everything read off disk is labelled as
+        // observed-not-confirmed.
+        maybeAppendNdjson(mainRepoRoot, { event: 'tool_start_result', tool: 'justsearch.dev.start', ok: false, timedOut: true });
+        const observed = { activeRunId: null, apiBaseUrl: null, uiUrl: null, apiPort: null, uiPort: null, dataDir: null, apiStatusCode: null };
+        try {
+          const active = await readJsonFileNoSymlinks({ repoRoot: mainRepoRoot, relPosix: 'tmp/dev-runner/active.json', maxBytes: 200_000 });
+          if (active?.runId) {
+            observed.activeRunId = active.runId;
+            const runJson = await readRunJson({ repoRoot: mainRepoRoot, runId: active.runId });
+            observed.apiBaseUrl = runJson?.apiBaseUrl ?? null;
+            observed.uiUrl = runJson?.uiUrl ?? null;
+            observed.apiPort = Number.isInteger(runJson?.apiPortActual) ? runJson.apiPortActual : null;
+            observed.uiPort = Number.isInteger(runJson?.uiPortActual) ? runJson.uiPortActual : null;
+            observed.dataDir = runJson?.dataDir ?? null;
+            if (observed.apiBaseUrl) {
+              // One cheap probe, so the report carries a fact instead of an inference. Whatever it
+              // says, it does NOT establish that this call started that listener.
+              observed.apiStatusCode = await httpGetStatusCode(
+                new URL('/api/health', ensureLoopbackUrl(observed.apiBaseUrl, 'apiBaseUrl')).toString(), 2000);
             }
-          } catch (_) {
-            // Recovery failed, fall through to original error
           }
-          if (!json) throw err;
-        } else {
-          throw err;
-        }
+        } catch (_) { /* nothing readable on disk — the nulls above already say so */ }
+        return toToolResult({
+          ok: false,
+          error: {
+            code: 'START_TIMED_OUT',
+            message: `The dev-runner start subprocess did not report a result within ${startTimeoutMs} ms. `
+              + 'Readiness was NOT confirmed and it is not established that this call started anything: '
+              + (observed.activeRunId
+                ? `active.json names run ${observed.activeRunId}`
+                  + (observed.apiStatusCode === 200
+                    ? ', and its recorded API port answers /api/health — but that listener may predate this call'
+                    : observed.apiStatusCode === null
+                      ? ', whose API base URL could not be probed'
+                      : `, whose API answered ${observed.apiStatusCode} on /api/health`)
+                  + '.'
+                : 'nothing is recorded in active.json.'),
+          },
+          // Read off disk / off one probe AFTER the timeout. Not a claim about this call's effect.
+          observed,
+          readinessConfirmed: false,
+          actionRequired: 'Call quick_health (probe: true) to find out what is actually running, and '
+            + 'tail_log { kind: "backend_stderr" } if the boot failed. Do not treat the fields under '
+            + '`observed` as a started stack.',
+        });
       }
 
       const parsed = DevRunnerStartJsonSchema.parse(json);
@@ -1501,7 +1640,7 @@ export async function main() {
 
       // After successful start, wait for readiness if requested
       if (parsed.ok) {
-        const apiBaseUrl = parsed.apiBaseUrl || recoveredApiBaseUrl;
+        const apiBaseUrl = parsed.apiBaseUrl;
         if (apiBaseUrl && waitLevel) {
           try {
             const readinessResult = await waitReady({ apiBaseUrl, level: waitLevel, timeoutMs: waitTimeoutMs });
@@ -1680,6 +1819,19 @@ export async function main() {
       const timeoutMs = input.timeoutMs ?? 15_000;
       const maxBytes = input.maxBytes ?? 2_000_000;
 
+      // Tempdoc 844 M4: shape first, allowlist second. A path that would not survive URL
+      // resolution unchanged is refused before any entry gets a chance to match it.
+      const shape = normalizeApiCallPath(input.path);
+      if (!shape.ok) {
+        return toToolResult({
+          ok: false,
+          method,
+          path: input.path,
+          statusCode: null,
+          error: { message: `Rejected path ${JSON.stringify(input.path)}: ${shape.reason}.` },
+        });
+      }
+
       // Validate path against allowlist
       // An entry matches by exact path, or by `pattern` when the route carries a path parameter.
       const entry = API_CALL_ALLOWLIST.find(
@@ -1721,7 +1873,23 @@ export async function main() {
       const base = ensureLoopbackUrl(resolved.apiBaseUrl, 'apiBaseUrl');
       const effectiveRunId = resolved.runId ?? 'port-only';
 
-      const url = new URL(input.path, base).toString();
+      // Tempdoc 844 M4, second half: the allowlist matched a string; this asserts the URL actually
+      // being sent still carries that exact path. Anything that changed under resolution never
+      // passed the boundary that was checked.
+      const resolvedUrl = new URL(input.path, base);
+      if (resolvedUrl.pathname !== input.path) {
+        return toToolResult({
+          ok: false,
+          method,
+          path: input.path,
+          statusCode: null,
+          error: {
+            message: `Rejected path ${JSON.stringify(input.path)}: it resolves to `
+              + `${JSON.stringify(resolvedUrl.pathname)}, which is not the path the allowlist matched.`,
+          },
+        });
+      }
+      const url = resolvedUrl.toString();
 
       // observations.md L158 fix: normalize body — when Claude passes body: "{}" (a string
       // literal), JSON.stringify produces double-encoded "\"{}\""  which Jackson rejects.
@@ -2312,7 +2480,7 @@ export async function main() {
         hasActiveRun: runId !== null,
         ownedApiPort: apiPort,
         aiActive,
-        registerDir: path.join(mainRepoRoot, ...FOREIGN_REGISTER_RELPOSIX.split('/')),
+        registerDir: resolveForeignRegisterDir(mainRepoRoot),
       });
       const foreignRunsNotice = foreignRuns && foreignRuns.length > 0
         ? `${foreignRuns.length} JustSearch run(s) on this machine were NOT started by this dev-runner `
@@ -2762,7 +2930,6 @@ export async function main() {
     },
     async (rawArgs) => {
       const input = ReloadInputSchema.parse(rawArgs);
-      const module = input.module || 'worker-services';
       const skipCompile = input.skipCompile === true;
       const callerSessionId = input.sessionId || resolveAgentSessionIdForMcp(repoRoot);
       // Tempdoc 696: absolute >= 24 java (not bare PATH `java`, which may be JDK 8) for `--source 25`.
@@ -2798,6 +2965,37 @@ export async function main() {
       if (!target.ok) return toToolResult({ ok: false, error: target.error, ...(gate.ownership ? { ownership: gate.ownership } : {}) });
 
       const { runRoot, dataDir, debugPort: recordedPort, identityClassesDir } = target;
+
+      // Tempdoc 844 M5: `module` chose what to compile and push, but the identity args below always
+      // come from the run record's `hotReload.classesDir`. Pushing a different module therefore
+      // passed IDENTITY_OK (the RECORDED dir is on the classpath) while the bytecode came from a
+      // directory that is not — redefining already-loaded classes by name and leaving every class
+      // of that module loaded later coming from the stale jar, reported as REDEFINED /
+      // hotSwapOk: true. That is exactly the half-old state R4 removed. The run's classpath admits
+      // one classes dir, so that is the one module reload can honestly push.
+      const recordedModule = reloadModuleFromClassesDir(identityClassesDir);
+      if (input.module && input.module !== recordedModule) {
+        return toToolResult({
+          ok: false,
+          error: {
+            code: 'RELOAD_MODULE_NOT_ON_CLASSPATH',
+            message: recordedModule
+              ? `This run's Worker was launched with exactly one hot-reload classes dir on its `
+                + `classpath: modules/${recordedModule}. Pushing modules/${input.module} would compile `
+                + `and redefine classes from a directory the target VM does not load from, so every `
+                + `class of that module loaded after the push would still come from the stale jar — `
+                + `while the identity check (which only ever saw modules/${recordedModule}) reported `
+                + `success. Refusing. Restart the stack to pick up a change in modules/${input.module}.`
+              : `This run record's hotReload.classesDir (${JSON.stringify(identityClassesDir)}) does `
+                + 'not name a module, so it cannot be shown that modules/'
+                + `${input.module} is on the target VM's classpath. Refusing to push into a VM whose `
+                + 'load path for that module is unknown; stop and start the stack again.',
+            ...(recordedModule ? { recordedModule } : {}),
+          },
+          ...(gate.ownership ? { ownership: gate.ownership } : {}),
+        });
+      }
+      const module = recordedModule || 'worker-services';
       const debugPort = input.debugPort || recordedPort;
       const signalFile = dataDir ? path.join(dataDir, 'worker_signal.lock') : null;
       const classesDir = path.join(runRoot, 'modules', module, 'build', 'classes', 'java', 'main');
@@ -2838,6 +3036,7 @@ export async function main() {
       let hsExit = 0;
       let hsStdout = '';
       let hsStderr = '';
+      let hsTimedOut = false;
       try {
         const hsResult = await execFileP(javaCmd, hsArgs, { cwd: runRoot, timeout: 15_000, windowsHide: true, env: jdkEnv });
         hsStdout = hsResult.stdout || '';
@@ -2846,9 +3045,13 @@ export async function main() {
         hsStdout = err.stdout || '';
         hsStderr = err.stderr || String(err.message || '');
         hsExit = typeof err.code === 'number' ? err.code : -1;
+        // Tempdoc 844 S1: execFile's own timeout kills the pusher; it did not exit on its own, so
+        // its exit code says nothing about what it had already done.
+        hsTimedOut = err.killed === true || typeof err.signal === 'string';
       }
       const outcome = classifyHotSwapOutcome({
         exitCode: hsExit, stdout: hsStdout, stderr: hsStderr, identityRequired: !!identityClassesDir,
+        timedOut: hsTimedOut,
       });
       result.hotSwapOutput = tail(`${hsStdout}\n${hsStderr}`.trim(), 2000).trim();
       result.hotSwapOk = outcome.hotSwapOk;
