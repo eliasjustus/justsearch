@@ -19,6 +19,107 @@ export const OUTCOMES_FILE = 'outcomes.ndjson';
 export const JUDGE_OUTCOMES_FILE = 'judge-outcomes.ndjson';
 export const SESSION_MERGES_FILE = 'session-merges.ndjson';
 
+// --- session→merge link provenance (tempdoc 856 §3.1) ---------------------
+// The link row gains `source` + `kind` so a recovered row is distinguishable
+// from an observed one. Rows written before 856 carry NEITHER field; they are
+// all teardown-written observations, so normalizeMergeLinkRow() backfills them
+// as {source:'teardown', kind:'fact'} on READ. The ledger file itself is never
+// rewritten — legacy rows stay byte-identical on disk.
+export const MERGE_LINK_SOURCES = Object.freeze({
+  TEARDOWN: 'teardown',           // remove-worktree.cjs at worktree teardown
+  PUBLISH: 'publish',             // /publish, at merge time
+  COMMIT_MESSAGE: 'commit-message', // Session-Id: line in the squash commit message
+  SHARD_INFERENCE: 'shard-inference', // derived from an observation-shard add
+});
+
+export const DEFAULT_MERGE_LINK_SOURCE = MERGE_LINK_SOURCES.TEARDOWN;
+
+/**
+ * The evidence tier a source earns. Three-valued on purpose (856 §3.2 —
+ * "absent evidence is not negative evidence", applied to provenance):
+ *
+ *   fact      — a known writer observed the link.
+ *   inference — derived, with a measured error rate (856 §4).
+ *   unknown   — an UNRECOGNISED source. Not fact.
+ *
+ * The third case is the one that matters. A ledger row carrying a foreign,
+ * misspelled, or future `source` must not be laundered into the fact tier just
+ * because it is not literally 'shard-inference'; that would let an unvetted
+ * writer mint facts. `unknown` makes the gap legible instead.
+ */
+export function mergeLinkKind(source) {
+  if (source === MERGE_LINK_SOURCES.SHARD_INFERENCE) return 'inference';
+  if (Object.values(MERGE_LINK_SOURCES).includes(source)) return 'fact';
+  return 'unknown';
+}
+
+/** Evidence tiers, weakest to strongest. Used to resolve a row that disagrees with itself. */
+const TIER_RANK = Object.freeze({ unknown: 0, inference: 1, fact: 2 });
+
+/**
+ * Read-side normalizer: returns a copy of a ledger row with `source`/`kind`
+ * guaranteed present. Absent `source` → the legacy meaning (every row written
+ * before 856 is a teardown-written observation).
+ *
+ * WHEN `source` AND `kind` DISAGREE, THE WEAKER TIER WINS. Neither field can be
+ * trusted to win outright:
+ *
+ * - Believing `kind` lets a row declare `source:'shard-inference', kind:'fact'`
+ *   and be read as observed — the fact tier absorbing an inference at a
+ *   measured ~8.9% error rate (856 §4), which is the whole failure §3.1 exists
+ *   to prevent.
+ * - Believing `source` lets a row declare `source:'teardown', kind:'inference'`
+ *   and be UPGRADED to fact — normalization manufacturing confidence the writer
+ *   explicitly disclaimed.
+ *
+ * Both are upgrades, and an upgrade is the only direction that can invent
+ * evidence. Taking the minimum can only ever weaken a claim, so a disagreement
+ * degrades to caution instead of resolving in favour of whichever field the
+ * reader happened to trust. All three in-repo writers go through
+ * buildMergeLinkRow, where the two agree by construction, so a disagreement
+ * means a foreign, hand-edited, or corrupt row — exactly the case to be
+ * conservative about.
+ *
+ * The discarded claim is surfaced as `kind_conflict` rather than silently
+ * overwritten: a corrected claim is still a finding about the ledger (856 §7,
+ * rejects are reported, not dropped).
+ */
+export function normalizeMergeLinkRow(row) {
+  const source = row?.source ?? DEFAULT_MERGE_LINK_SOURCE;
+  const fromSource = mergeLinkKind(source);
+  const declared = row?.kind;
+  const declaredIsWeaker = declared != null
+    && TIER_RANK[declared] != null
+    && TIER_RANK[declared] < TIER_RANK[fromSource];
+  const kind = declaredIsWeaker ? declared : fromSource;
+  const out = { ...row, source, kind };
+  if (declared != null && declared !== kind) out.kind_conflict = declared;
+  return out;
+}
+
+/**
+ * Build one session→merge ledger row. Lives here rather than in any one
+ * writer because THREE writers emit it (record-merge.mjs, merge-links.mjs,
+ * recover-merge-links.mjs) and a second row shape would be exactly the fork
+ * tempdoc 856 exists to remove.
+ */
+export function buildMergeLinkRow({
+  sessionId, mergeCommit, subject,
+  source = DEFAULT_MERGE_LINK_SOURCE, ts = new Date().toISOString(),
+}) {
+  if (!Object.values(MERGE_LINK_SOURCES).includes(source)) {
+    throw new Error(`buildMergeLinkRow: unknown source '${source}' (expected one of ${Object.values(MERGE_LINK_SOURCES).join(', ')})`);
+  }
+  return {
+    session_id: sessionId,
+    merge_commit: mergeCommit,
+    subject,
+    ts,
+    source,
+    kind: mergeLinkKind(source),
+  };
+}
+
 // Resolve repo root from this lib's location (lib/ → agent-analytics/ → scripts/ → repo)
 const SCRIPT_DIR = path.dirname(new URL(import.meta.url).pathname);
 const scriptDir = process.platform === 'win32'

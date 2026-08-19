@@ -17,20 +17,74 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   TELEMETRY_DIR, OUTCOMES_FILE, JUDGE_OUTCOMES_FILE, SESSION_MERGES_FILE,
   repoRoot, loadEventsFromSource, groupBySession, loadNdjsonArray, loadNdjsonMap,
+  normalizeMergeLinkRow, mergeLinkKind,
 } from './lib/telemetry-io.mjs';
 
 const fact = (value, source, note) => ({ value, kind: 'fact', source, ...(note ? { note } : {}) });
 
 // --- canonical-source readers ---------------------------------------------
 
-function mergeFact(sessionId, mergeRecords) {
-  const hit = mergeRecords.filter(r => r.session_id === sessionId).at(-1);
-  if (!hit) return fact(false, 'git/session-merges', 'no recorded merge for this session');
-  return { value: true, commit: hit.merge_commit, subject: hit.subject,
-    kind: 'fact', source: 'git/session-merges' };
+export function mergeFact(sessionId, mergeRecords) {
+  // Absent evidence is not negative evidence (tempdoc 856 §3.2). The link ledger is
+  // incomplete by construction, so "no row" means never-observed, not observed-not-merged
+  // — same shape as buildFact below, which reports 'unknown' for a missing input.
+  const hits = (mergeRecords || []).filter(r => r && r.session_id === sessionId);
+  if (hits.length === 0) {
+    return fact('unknown', 'git/session-merges',
+      'no recorded merge link for this session — absence of a link is not evidence that nothing merged');
+  }
+  // A session can hold many links (56 in the current ledger); report the set, not the last.
+  // Per-row source/kind come from the canonical read-side normalizer, so a recovered
+  // (inference) row stays distinguishable from an observed one (§3.1); a legacy row with
+  // neither field normalizes to its historical meaning rather than losing its tier.
+  const merges = hits.map(normalizeMergeLinkRow).map(h => ({
+    commit: h.merge_commit ?? null,
+    subject: h.subject ?? null,
+    source: h.source,
+    kind: h.kind,
+  }));
+  // The block tier is DERIVED from the rows, never pinned. A fact-tier block asserting a
+  // merge on inference-only evidence is the `catalog-verbatim` shape §3.1 exists to
+  // prevent — the fact tier silently absorbing a derived row, at ~8.9% measured error
+  // (§4). One observed link is enough to make "this session merged something" an
+  // observation, so any fact row keeps the block at fact; the per-row tiers still say
+  // which specific links are derived.
+  const observed = merges.some(m => m.kind === 'fact');
+  if (observed) {
+    return { value: true, count: merges.length, merges,
+      kind: 'fact', source: 'git/session-merges' };
+  }
+  // A row whose tier is `unknown` cannot support `value: true`. Rows asserting a merge from
+  // a provenance we cannot recognise leave us where having no rows at all does, so this
+  // reports the same 'unknown' the empty case does — this function's own invariant applied
+  // to itself. The rows stay in `merges` and the note says they exist, so an unrecognised
+  // writer is legible rather than swallowed.
+  const derived = merges.filter(m => m.kind === 'inference');
+  if (derived.length === 0) {
+    const unrecognised = [...new Set(merges.map(m => m.source ?? 'none'))];
+    return { value: 'unknown', count: merges.length, merges,
+      kind: 'fact', source: 'git/session-merges',
+      note: `${merges.length} link(s) recorded for this session, but none from a provenance this reader recognises (${unrecognised.join(', ')}) — rows exist, unlike the no-link case, yet unrecognised provenance cannot carry a merge claim` };
+  }
+  // The block source is read off what the DERIVED rows declare — the rows actually carrying
+  // the claim — never inferred from their tier: a row may carry a kind that disagrees with
+  // its source, and picking a source from the tier would manufacture a provenance nothing
+  // observed. Name a source only when those rows agree on one AND that source is itself a
+  // derivation source; otherwise name none and let the note carry what was actually seen.
+  const declared = [...new Set(derived.map(m => m.source ?? null))];
+  const namable = declared.length === 1 && declared[0] !== null
+    && mergeLinkKind(declared[0]) === 'inference';
+  return { value: true, count: merges.length, merges,
+    kind: 'inference',
+    source: namable ? declared[0] : null,
+    note: namable
+      ? `every link for this session was recovered by '${declared[0]}', not observed at merge time (~8.9% false-positive rate on single-shard commits, tempdoc 856 §4)`
+      : `no link for this session was observed at merge time, and the derived links declare no single derivation source (${declared.map(s => s ?? 'none').join(', ')}) — the block names none rather than pick one`,
+  };
 }
 
 function buildFact(sessionId) {
@@ -165,10 +219,18 @@ function main() {
   } else {
     for (const r of records) {
       const t = r.facts.tempdocs.map(t => `${t.number}:${t.status ?? '?'}(${t.checkboxes_done ?? 0}/${t.checkboxes_total ?? 0})`).join(' ') || '—';
-      console.log(`${r.session_id.slice(0, 8)}  merged=${r.facts.merged.value}  build=${r.facts.build_last_status.value}  gates=${r.facts.gates.value}  tempdocs=[${t}]  inference=${r.inference ? r.inference.task_completion : 'none'}`);
+      const m = r.facts.merged;
+      const mergedCol = m.value === true
+        ? `true(${m.count}${m.kind === 'inference' ? ',inferred' : ''})`
+        : `${m.value}${m.count ? `(${m.count} unrecognised)` : ''}`;
+      console.log(`${r.session_id.slice(0, 8)}  merged=${mergedCol}  build=${r.facts.build_last_status.value}  gates=${r.facts.gates.value}  tempdocs=[${t}]  inference=${r.inference ? r.inference.task_completion : 'none'}`);
     }
     console.log(`\nOutcomes (fact-authoritative) written to ${path.join(TELEMETRY_DIR, OUTCOMES_FILE)}`);
   }
 }
 
-main();
+// CLI entry only when run directly, so the test can import mergeFact without
+// triggering a real telemetry read + outcomes.ndjson write on import.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}

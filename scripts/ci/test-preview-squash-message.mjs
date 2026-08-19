@@ -57,6 +57,8 @@ function ids(reportValue) {
       '## Related Issues',
       '',
       'None.',
+      '',
+      'Session-Id: 1568032c-aff9-459c-9afd-7adb22e80473',
     ].join('\n'),
   });
   assert.equal(clean.settings.matchesPrTitleBody, true);
@@ -69,8 +71,79 @@ function ids(reportValue) {
   const emptyTemplate = report({
     body: ['## Summary', '', '## Changes', '', '## Testing', '', '## Related Issues', ''].join('\n'),
   });
-  assert.deepEqual(ids(emptyTemplate), ['empty-template-sections', 'missing-testing-signal']);
+  assert.deepEqual(ids(emptyTemplate), ['empty-template-sections', 'missing-testing-signal', 'missing-session-id-line']);
   assert.match(emptyTemplate.warnings[0].message, /Summary, Changes, Testing, Related Issues/);
+}
+
+// --- tempdoc 856 §3: Session-Id trailer (ADVISORY — warning only) ---
+{
+  const noTrailer = report({ body: '## Testing\n\nVerified locally.' });
+  assert(ids(noTrailer).includes('missing-session-id-line'));
+  // The suggestion falls back to a placeholder when no session id is supplied.
+  const warning = noTrailer.warnings.find((w) => w.id === 'missing-session-id-line');
+  assert.match(warning.message, /Session-Id: <session-uuid>/);
+}
+
+{
+  const withSessionId = buildSquashMessagePreview({
+    repoSlug: 'justsearch-app/justsearch',
+    repo,
+    sessionId: '1568032c-aff9-459c-9afd-7adb22e80473',
+    pr: { number: 1, title: 'fix: thing', body: '## Testing\n\nVerified.' },
+  });
+  const warning = withSessionId.warnings.find((w) => w.id === 'missing-session-id-line');
+  assert.match(warning.message, /Session-Id: 1568032c-aff9-459c-9afd-7adb22e80473/);
+}
+
+{
+  const lastLine = report({
+    body: ['## Testing', '', 'Verified locally.', '', 'Session-Id: 1568032c-aff9-459c-9afd-7adb22e80473'].join('\n'),
+  });
+  assert(!ids(lastLine).includes('missing-session-id-line'));
+}
+
+{
+  // POSITION DOES NOT MATTER. An earlier revision warned when the line was not
+  // in the final paragraph; that premise was refuted — GitHub appends its own
+  // `---------` / `Co-authored-by:` paragraph on squash, so a trailing position
+  // is not achievable, and merge-links.mjs scans the whole message instead.
+  const midBody = report({
+    body: [
+      'Session-Id: 1568032c-aff9-459c-9afd-7adb22e80473',
+      '',
+      '## Testing',
+      '',
+      'Verified locally.',
+    ].join('\n'),
+  });
+  assert(!ids(midBody).includes('missing-session-id-line'));
+  assert.deepEqual(ids(midBody).filter((id) => id.includes('session-id')), []);
+}
+
+{
+  // No space after the colon is accepted, because merge-links.mjs's reader
+  // accepts it — the preview imports that predicate rather than owning a second
+  // one, so the two cannot disagree.
+  const noSpace = report({
+    body: ['## Testing', '', 'Verified.', '', 'Session-Id:1568032c-aff9-459c-9afd-7adb22e80473'].join('\n'),
+  });
+  assert(!ids(noSpace).includes('missing-session-id-line'));
+}
+
+{
+  // A mid-line mention is not a declaration, and the preview must agree with
+  // the reader that this body carries nothing.
+  const mention = report({
+    body: ['## Testing', '', 'Verified.', '', 'Write Session-Id: <uuid> into the body.'].join('\n'),
+  });
+  assert(ids(mention).includes('missing-session-id-line'));
+}
+
+{
+  // Advisory: an empty body already warns via missing-body and must not gain a
+  // Session-Id warning on top of it.
+  const emptyBody = report({ body: '' });
+  assert(!ids(emptyBody).includes('missing-session-id-line'));
 }
 
 {
@@ -187,7 +260,7 @@ function ids(reportValue) {
       `${JSON.stringify({
         number: 77,
         title: 'docs: fixture preview',
-        body: '## Summary\n\nFixture body.\n\n## Testing\n\nFixture verified.',
+        body: '## Summary\n\nFixture body.\n\n## Testing\n\nFixture verified.\n\nSession-Id: 1568032c-aff9-459c-9afd-7adb22e80473',
       })}\n`,
       'utf8'
     );

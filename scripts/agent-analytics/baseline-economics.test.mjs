@@ -8,6 +8,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,6 +16,7 @@ import {
   parseArgs,
   loadExclusionMatcher,
   loadMerges,
+  makeMergeCommitStatus,
   classifyMerge,
   isoWeekKey,
   discoverSessions,
@@ -714,6 +716,185 @@ async function main() {
     assert.equal(report.totals.merge_rows_in_window, 1);
     assert.equal(report.totals.merges_attributed, 1);
   });
+  // --- 856 §7: ledger dedup + origin/main ancestry filter, with reported rejects ---
+  const oneSession = (id, cost) => ({
+    session_id: id, project_dir: 'p', start_ts: '2026-07-01T00:00:00.000Z',
+    total_cost_usd: cost, orchestrator_tokens_total: 10, worker_tokens_total: 0,
+    subagents: { count: 0 }, model_mix: {}, unknown_model_tokens: {},
+  });
+  const allAncestors = () => 'ancestor';
+
+  run('buildReport (856) collapses an exact duplicate (session_id, merge_commit) pair to one merge', () => {
+    const sessions = [oneSession('s1', 10)];
+    const merges = [
+      { session_id: 's1', merge_commit: 'aaa', subject: 'feat(x): thing', ts: '2026-07-01T01:00:00.000Z' },
+      { session_id: 's1', merge_commit: 'aaa', subject: 'feat(x): thing', ts: '2026-07-01T03:00:00.000Z' },
+    ];
+    const report = buildReport({
+      sessions, merges, since: '2026-07-01', until: null, excludedCount: 0, mergeCommitStatus: allAncestors,
+    });
+    assert.equal(report.totals.merge_rows_in_window, 2, 'raw row count keeps both rows visible');
+    assert.equal(report.totals.merges_duplicate_rows, 1);
+    assert.equal(report.totals.merges_eligible, 1);
+    assert.equal(report.totals.merges_attributed, 1);
+    // Right-reason guard: without dedup this would be 5 (10/2), not 10 (10/1).
+    assert.equal(report.totals.cost_per_merge_attributed, 10);
+    assert.equal(report.sessions[0].merge_count, 1);
+    assert.equal(report.sessions[0].merges.length, 1);
+    assert.deepEqual(report.totals.duplicate_row_sample, [{ session_id: 's1', merge_commit: 'aaa' }]);
+    assert.match(report.caveats.join('\n'), /exact duplicate \(session_id, merge_commit\) pairs/);
+  });
+
+  run('buildReport (856) keeps BOTH rows when two different sessions claim one commit (co-authorship)', () => {
+    const sessions = [oneSession('s1', 10), oneSession('s2', 30)];
+    const merges = [
+      { session_id: 's1', merge_commit: 'shared', subject: 'feat(x): co-authored', ts: '2026-07-01T01:00:00.000Z' },
+      { session_id: 's2', merge_commit: 'shared', subject: 'feat(x): co-authored', ts: '2026-07-01T02:00:00.000Z' },
+    ];
+    const report = buildReport({
+      sessions, merges, since: '2026-07-01', until: null, excludedCount: 0, mergeCommitStatus: allAncestors,
+    });
+    assert.equal(report.totals.merges_duplicate_rows, 0, 'same commit, different sessions is not a duplicate');
+    assert.equal(report.totals.merges_eligible, 2);
+    assert.equal(report.totals.merges_attributed, 2);
+    assert.equal(report.totals.by_merge_class.feat.count, 2);
+    for (const row of report.sessions) assert.equal(row.merge_count, 1);
+    assert.doesNotMatch(report.caveats.join('\n'), /duplicate \(session_id, merge_commit\)/);
+  });
+
+  run('buildReport (856) excludes an off-origin/main row, counts it, and names it in the sample', () => {
+    const sessions = [oneSession('s1', 12)];
+    const merges = [
+      { session_id: 's1', merge_commit: 'onmain0', subject: 'feat: real squash', ts: '2026-07-01T01:00:00.000Z' },
+      { session_id: 's1', merge_commit: 'local00', subject: "Merge branch 'main' of github.com", ts: '2026-07-01T02:00:00.000Z' },
+    ];
+    const report = buildReport({
+      sessions, merges, since: '2026-07-01', until: null, excludedCount: 0,
+      mergeCommitStatus: (c) => (c === 'onmain0' ? 'ancestor' : 'off-main'),
+    });
+    assert.equal(report.totals.merge_rows_in_window, 2);
+    assert.equal(report.totals.merges_off_main, 1);
+    assert.equal(report.totals.merges_eligible, 1);
+    assert.equal(report.totals.merges_attributed, 1);
+    // Right-reason guard: the SURVIVING merge is the on-main one, and the
+    // dropped local merge is not silently reclassified as `other`.
+    assert.equal(report.sessions[0].merges[0].merge_commit, 'onmain0');
+    assert.equal(report.totals.by_merge_class.other, undefined);
+    assert.equal(report.totals.cost_per_merge_attributed, 12);
+    assert.deepEqual(report.totals.off_main_row_sample, [{ session_id: 's1', merge_commit: 'local00' }]);
+    assert.match(report.caveats.join('\n'), /not an ancestor of origin\/main/);
+    assert.match(report.caveats.join('\n'), /local00/);
+  });
+
+  run('buildReport (856) counts an unresolvable commit separately from an off-main one', () => {
+    const sessions = [oneSession('s1', 9)];
+    const merges = [
+      { session_id: 's1', merge_commit: 'good000', subject: 'fix: ok', ts: '2026-07-01T01:00:00.000Z' },
+      { session_id: 's1', merge_commit: 'gone000', subject: 'fix: commit gc-ed', ts: '2026-07-01T02:00:00.000Z' },
+      { session_id: 's1', merge_commit: 'local00', subject: 'fix: local only', ts: '2026-07-01T03:00:00.000Z' },
+    ];
+    const report = buildReport({
+      sessions, merges, since: '2026-07-01', until: null, excludedCount: 0,
+      mergeCommitStatus: (c) => ({ good000: 'ancestor', gone000: 'unresolvable', local00: 'off-main' }[c]),
+    });
+    assert.equal(report.totals.merges_unresolvable_commit, 1);
+    assert.equal(report.totals.merges_off_main, 1);
+    assert.deepEqual(report.totals.unresolvable_row_sample, [{ session_id: 's1', merge_commit: 'gone000' }]);
+    assert.match(report.caveats.join('\n'), /does not resolve in this\s+repository/);
+  });
+
+  run('buildReport (856) reject accounting closes: raw = attributed + scope + unattributable + rejects', () => {
+    const sessions = [oneSession('s1', 5)];
+    const merges = [
+      { session_id: 's1', merge_commit: 'a', subject: 'feat: attributed', ts: '2026-07-01T01:00:00.000Z' },
+      { session_id: 's1', merge_commit: 'a', subject: 'feat: attributed', ts: '2026-07-01T01:30:00.000Z' },
+      { session_id: 'ghost', merge_commit: 'b', subject: 'fix: no transcript', ts: '2026-07-01T02:00:00.000Z' },
+      { session_id: 'skipme', merge_commit: 'c', subject: 'chore: scoped out', ts: '2026-07-01T03:00:00.000Z' },
+      { session_id: 's1', merge_commit: 'd', subject: "Merge branch 'main'", ts: '2026-07-01T04:00:00.000Z' },
+      { session_id: 's1', merge_commit: 'e', subject: 'fix: vanished', ts: '2026-07-01T05:00:00.000Z' },
+    ];
+    const report = buildReport({
+      sessions, merges, since: '2026-07-01', until: null, excludedCount: 1,
+      isExcludedSessionId: (id) => id === 'skipme',
+      mergeCommitStatus: (c) => ({ a: 'ancestor', b: 'ancestor', c: 'ancestor', d: 'off-main', e: 'unresolvable' }[c]),
+    });
+    const t = report.totals;
+    assert.equal(t.merge_rows_in_window, 6);
+    assert.equal(
+      t.merges_attributed + t.merges_excluded_by_scope + t.merges_unattributable
+        + t.merges_duplicate_rows + t.merges_off_main + t.merges_unresolvable_commit,
+      t.merge_rows_in_window,
+    );
+    assert.equal(t.merges_attributed, 1);
+    assert.equal(t.merges_excluded_by_scope, 1);
+    assert.equal(t.merges_unattributable, 1);
+    assert.equal(t.merges_duplicate_rows, 1);
+    assert.equal(t.merges_off_main, 1);
+    assert.equal(t.merges_unresolvable_commit, 1);
+    assert.equal(t.merges_eligible, 3, 'eligible = attributed + scope-excluded + unattributable');
+    assert.equal(t.ancestry_filter_applied, true);
+  });
+
+  run('buildReport (856) reports the ancestry filter as NOT applied when no oracle is supplied', () => {
+    const sessions = [oneSession('s1', 4)];
+    const merges = [{ session_id: 's1', merge_commit: 'whatever', subject: 'feat: x', ts: '2026-07-01T01:00:00.000Z' }];
+    const noOracle = buildReport({ sessions, merges, since: '2026-07-01', until: null, excludedCount: 0 });
+    assert.equal(noOracle.totals.ancestry_filter_applied, false);
+    assert.equal(noOracle.totals.merges_attributed, 1, 'rows are kept, not classified as off-main');
+    assert.equal(noOracle.totals.merges_off_main, 0);
+    assert.match(noOracle.caveats.join('\n'), /Ancestry filter NOT applied/);
+
+    const withOracle = buildReport({
+      sessions, merges, since: '2026-07-01', until: null, excludedCount: 0, mergeCommitStatus: allAncestors,
+    });
+    assert.equal(withOracle.totals.ancestry_filter_applied, true);
+    assert.doesNotMatch(withOracle.caveats.join('\n'), /Ancestry filter NOT applied/);
+  });
+
+  run('buildReport (856 §7) always carries the restatement caveat labelling the -40.5% as bookkeeping', () => {
+    const report = buildReport({ sessions: [], merges: [], since: '2026-06-20', until: null, excludedCount: 0 });
+    const caveats = report.caveats.join('\n');
+    assert.match(caveats, /RESTATEMENT, not improvement/);
+    assert.match(caveats, /400 raw rows to 238 \(-40\.5%\)/);
+    // The raw-row swing is NOT the swing in the falsifier's own denominator —
+    // the caveat must name both, or -40.5% reads as the cost/merge move.
+    assert.match(caveats, /ATTRIBUTED merge count[\s\S]*171 to 165 \(-3\.5%\)/);
+    assert.match(caveats, /NOT a change in delivery rate/);
+    assert.match(caveats, /do not read either step as a trend/);
+    assert.match(formatMarkdown(report), /RESTATEMENT, not improvement/);
+  });
+
+  run('formatMarkdown (856) prints the reject breakdown as part of the merge-rows identity', () => {
+    const sessions = [oneSession('s1', 6)];
+    const merges = [
+      { session_id: 's1', merge_commit: 'aaaaaaa', subject: 'feat: kept', ts: '2026-07-01T01:00:00.000Z' },
+      { session_id: 's1', merge_commit: 'aaaaaaa', subject: 'feat: kept', ts: '2026-07-01T01:10:00.000Z' },
+      { session_id: 's1', merge_commit: 'bbbbbbb', subject: "Merge branch 'main'", ts: '2026-07-01T02:00:00.000Z' },
+    ];
+    const md = formatMarkdown(buildReport({
+      sessions, merges, since: '2026-07-01', until: null, excludedCount: 0,
+      mergeCommitStatus: (c) => (c === 'aaaaaaa' ? 'ancestor' : 'off-main'),
+    }));
+    assert.match(md, /Merge rows in window \(raw ledger\): 3 = attributed 1 .* \+ duplicate 1 \+ off-main 1 \+ unresolvable 0/);
+    assert.match(md, /Ledger rows surviving dedup \+ ancestry \(eligible\): 1/);
+    assert.match(md, /Duplicate \(session_id, merge_commit\) rows collapsed: 1 — sample: s1→aaaaaaa/);
+    assert.match(md, /Rows citing a commit not on origin\/main: 1 — sample: s1→bbbbbbb/);
+  });
+
+  // --- makeMergeCommitStatus against real git (read-only) ---
+  run('makeMergeCommitStatus returns null when the ref does not resolve', () => {
+    assert.equal(makeMergeCommitStatus({ ref: 'refs/heads/no-such-ref-856-test' }), null);
+  });
+  run('makeMergeCommitStatus classifies HEAD as ancestor and a bogus hash as unresolvable', () => {
+    const status = makeMergeCommitStatus({ ref: 'HEAD' });
+    assert.notEqual(status, null, 'HEAD must resolve inside the repo');
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    assert.equal(status(headSha), 'ancestor');
+    assert.equal(status('0'.repeat(40)), 'unresolvable');
+    assert.equal(status('not-a-hash'), 'unresolvable', 'a non-hex merge_commit never reaches git');
+    assert.equal(status(undefined), 'unresolvable');
+  });
+
   run('buildReport surfaces unknown-model tokens at the window-totals level', () => {
     const sessions = [{
       session_id: 's-unk', project_dir: 'p', start_ts: '2026-07-02T00:00:00.000Z',

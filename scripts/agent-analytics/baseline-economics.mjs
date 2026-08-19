@@ -44,6 +44,7 @@ export const CAVEATS = [
   'Structural break 2026-07-15: model-routing change (explicit `model: "sonnet"` on implementation subagents) — pre/post token/cost mix across this date reflects a deliberate policy change, not drift.',
   'Data-limited left edge: session-merges.ndjson starts 2026-06-30 — sessions with a transcript start before that date can show cost with zero attributed merges purely because the merge-link store did not exist yet, not because no merge happened.',
   'Window-edge attribution: cross-session dedup assigns a re-carried turn to the EARLIEST session that carries it, but sessions starting before --since are never costed, so their keys are not in scope. A resumed session at the left edge therefore keeps history that originated outside the window, and totals are mildly sensitive to --since (a wider window moves those tokens to the origin session, it does not create or destroy them). Inherent to windowing; compare like-for-like windows, and do not read a --since change as a real cost movement.',
+  'RESTATEMENT, not improvement (tempdoc 856 §7): merge rows are now deduplicated on (session_id, merge_commit) and filtered to commits that are ancestors of origin/main. Measured over the window since 2026-06-20, and independently re-measured as identical over the DEFAULT_SINCE of 2026-06-18 that this script uses when no window is given (both windows contain the same merge rows), this moves 400 raw rows to 238 (-40.5%), and the `other` class over raw rows collapses from 103 to 13. The ATTRIBUTED merge count — the denominator of cost_per_merge_attributed — moves less, 171 to 165 (-3.5%), because most rejected rows were already unattributable and already outside that denominator; cost/merge therefore rises ~3.6% on unchanged spend. Both are a bookkeeping correction to the ledger, NOT a change in delivery rate or in cost — do not read either step as a trend, and do not compare a post-filter number against a pre-filter one.',
 ];
 
 // --- CLI arg parsing ---------------------------------------------------
@@ -109,6 +110,12 @@ export function loadExclusionMatcher(filePath) {
 
 // --- Merges ----------------------------------------------------------------
 
+/**
+ * Read the raw ledger. Deliberately unvalidated beyond JSON parseability —
+ * dedup and the origin/main ancestry filter live in buildReport (tempdoc 856
+ * §7) so they stay pure and unit-testable, and so their rejects can be
+ * REPORTED rather than dropped here where nothing could see them.
+ */
 export function loadMerges(filePath) {
   let content;
   try {
@@ -122,6 +129,73 @@ export function loadMerges(filePath) {
     try { rows.push(JSON.parse(line)); } catch { /* skip malformed */ }
   }
   return rows;
+}
+
+/** How many rejected rows to name in the report per reject class. */
+const REJECT_SAMPLE_SIZE = 5;
+
+/**
+ * Build a cached `commit -> 'ancestor' | 'off-main' | 'unresolvable'` oracle
+ * backed by `git merge-base --is-ancestor <commit> <ref>` (exit 0 = ancestor,
+ * 1 = not an ancestor, 128 = commit does not resolve).
+ *
+ * Returns NULL when `ref` itself does not resolve, rather than classifying
+ * every row as off-main: a missing ref is "we could not check", not "these
+ * commits are not on main" (tempdoc 856 §9.2 — absent evidence is not
+ * negative evidence). buildReport then reports the filter as not applied.
+ */
+export function makeMergeCommitStatus({ cwd = SCRIPT_DIR, ref = 'origin/main' } = {}) {
+  try {
+    execFileSync('git', ['rev-parse', '--verify', `${ref}^{commit}`], { cwd, stdio: 'ignore' });
+  } catch {
+    return null;
+  }
+  const cache = new Map();
+  return (commit) => {
+    if (typeof commit !== 'string' || !/^[0-9a-f]{7,40}$/i.test(commit)) return 'unresolvable';
+    const hit = cache.get(commit);
+    if (hit) return hit;
+    let status;
+    try {
+      execFileSync('git', ['merge-base', '--is-ancestor', commit, ref], { cwd, stdio: 'ignore' });
+      status = 'ancestor';
+    } catch (e) {
+      status = e.status === 1 ? 'off-main' : 'unresolvable';
+    }
+    cache.set(commit, status);
+    return status;
+  };
+}
+
+/**
+ * Collapse exact duplicate `(session_id, merge_commit)` pairs. Two DIFFERENT
+ * sessions citing ONE commit is not a duplicate — co-authored work exists (15
+ * such commits in the current window) and both sessions legitimately claim it.
+ */
+function dedupeMergeRows(rows) {
+  const seen = new Set();
+  const kept = [];
+  const duplicates = [];
+  for (const r of rows) {
+    const key = `${r.session_id}|${r.merge_commit}`;
+    if (seen.has(key)) { duplicates.push(r); continue; }
+    seen.add(key);
+    kept.push(r);
+  }
+  return { kept, duplicates };
+}
+
+function rejectSample(rows) {
+  return rows.slice(0, REJECT_SAMPLE_SIZE).map((r) => ({
+    session_id: r.session_id,
+    merge_commit: typeof r.merge_commit === 'string' ? r.merge_commit : null,
+  }));
+}
+
+function fmtRejectSample(sample) {
+  return sample
+    .map((s) => `${String(s.session_id).slice(0, 8)}→${s.merge_commit ? s.merge_commit.slice(0, 8) : '(no commit)'}`)
+    .join(', ');
 }
 
 const CONVENTIONAL_TYPES = new Set([
@@ -404,11 +478,32 @@ function filterMergesToWindow(merges, sinceMs, untilMs) {
  * filter" rather than lumped into the same "unattributable" bucket as a merge
  * whose session transcript genuinely can't be found — those are different
  * situations and were previously both silently dropped from the merge count.
+ *
+ * `mergeCommitStatus` (tempdoc 856 §7) is the optional ancestry oracle from
+ * makeMergeCommitStatus. Omitted (or null), the ancestry filter is reported as
+ * NOT applied rather than silently assumed to have passed. Ledger rejects —
+ * duplicates, off-main, unresolvable — follow the same split-don't-drop rule
+ * as the scope/unattributable split above: each is counted and sampled.
  */
-export function buildReport({ sessions, merges, since, until, excludedCount, isExcludedSessionId = () => false }) {
+export function buildReport({
+  sessions, merges, since, until, excludedCount,
+  isExcludedSessionId = () => false, mergeCommitStatus = null,
+}) {
   const sinceMs = new Date(since).getTime();
   const untilMs = until ? new Date(until).getTime() : null;
-  const inWindowMerges = filterMergesToWindow(merges, sinceMs, untilMs);
+  const rawInWindowMerges = filterMergesToWindow(merges, sinceMs, untilMs);
+
+  const { kept: dedupedMerges, duplicates } = dedupeMergeRows(rawInWindowMerges);
+
+  const offMain = [];
+  const unresolvable = [];
+  const inWindowMerges = [];
+  for (const m of dedupedMerges) {
+    const status = mergeCommitStatus ? mergeCommitStatus(m.merge_commit) : 'ancestor';
+    if (status === 'ancestor') inWindowMerges.push(m);
+    else if (status === 'off-main') offMain.push(m);
+    else unresolvable.push(m);
+  }
 
   const costedSessionIds = new Set(sessions.map((s) => s.session_id));
 
@@ -528,6 +623,38 @@ export function buildReport({ sessions, merges, since, until, excludedCount, isE
       `friction-excluded-sessions.json scope filter — deliberately not costed, excluded from cost/merge.`,
     );
   }
+  const duplicateSample = rejectSample(duplicates);
+  const offMainSample = rejectSample(offMain);
+  const unresolvableSample = rejectSample(unresolvable);
+  if (duplicates.length > 0) {
+    dynamicCaveats.push(
+      `${duplicates.length} ledger row(s) in this window were exact duplicate (session_id, merge_commit) ` +
+      `pairs and were collapsed to one — sample: ${fmtRejectSample(duplicateSample)}. ` +
+      `Two DIFFERENT sessions citing one commit is co-authorship, not a duplicate, and is kept.`,
+    );
+  }
+  if (offMain.length > 0) {
+    dynamicCaveats.push(
+      `${offMain.length} ledger row(s) in this window cite a commit that is not an ancestor of origin/main ` +
+      `(typically a local \`Merge branch 'main'\` commit recorded as a merge) and were excluded — ` +
+      `sample: ${fmtRejectSample(offMainSample)}. Judged against the LOCAL origin/main ref: a stale ref ` +
+      `over-reports this class.`,
+    );
+  }
+  if (unresolvable.length > 0) {
+    dynamicCaveats.push(
+      `${unresolvable.length} ledger row(s) in this window cite a commit that does not resolve in this ` +
+      `repository (missing or garbage merge_commit, or a commit since garbage-collected) and were ` +
+      `excluded — sample: ${fmtRejectSample(unresolvableSample)}.`,
+    );
+  }
+  if (!mergeCommitStatus) {
+    dynamicCaveats.push(
+      'Ancestry filter NOT applied in this run (no origin/main oracle available): rows citing a commit ' +
+      'off origin/main are still counted. Merge counts here are NOT comparable to a run where the filter ' +
+      'was applied.',
+    );
+  }
 
   return {
     window: { since, until },
@@ -538,11 +665,23 @@ export function buildReport({ sessions, merges, since, until, excludedCount, isE
       sessions_excluded_by_scope: excludedCount,
       sessions_with_zero_merges: zeroMergeSessions.length,
       total_cost_usd: round(totalCost),
-      merge_rows_in_window: inWindowMerges.length,
+      // Raw in-window ledger rows, BEFORE dedup/ancestry. The identity is
+      //   merge_rows_in_window = attributed + excluded_by_scope + unattributable
+      //                          + duplicate_rows + off_main + unresolvable_commit
+      merge_rows_in_window: rawInWindowMerges.length,
+      merges_eligible: inWindowMerges.length,
       merges_attributed: totalMerges,
       merges_excluded_by_scope: mergesExcludedByScope,
       merges_unattributable: mergesUnattributable,
       unattributable_session_ids: [...unattributableSessionIds],
+      // Ledger rejects (tempdoc 856 §7) — reported, never silently dropped.
+      merges_duplicate_rows: duplicates.length,
+      merges_off_main: offMain.length,
+      merges_unresolvable_commit: unresolvable.length,
+      duplicate_row_sample: duplicateSample,
+      off_main_row_sample: offMainSample,
+      unresolvable_row_sample: unresolvableSample,
+      ancestry_filter_applied: Boolean(mergeCommitStatus),
       // Labeled explicitly (tempdoc 743 Finding 2): computed over ATTRIBUTED
       // merges only — a merge with no costed session contributes no cost and
       // is excluded from both numerator and denominator here.
@@ -587,9 +726,19 @@ export function formatMarkdown(report) {
   lines.push('## Window totals');
   lines.push(`- Sessions in window: ${t.sessions_in_window} (excluded by scope filter: ${t.sessions_excluded_by_scope})`);
   lines.push(`- Total cost (attributed sessions): ${fmtUsd(t.total_cost_usd)}`);
-  lines.push(`- Merge rows in window: ${t.merge_rows_in_window} = attributed ${t.merges_attributed} + excluded-by-scope ${t.merges_excluded_by_scope} + unattributable ${t.merges_unattributable}`);
+  lines.push(`- Merge rows in window (raw ledger): ${t.merge_rows_in_window} = attributed ${t.merges_attributed} + excluded-by-scope ${t.merges_excluded_by_scope} + unattributable ${t.merges_unattributable} + duplicate ${t.merges_duplicate_rows} + off-main ${t.merges_off_main} + unresolvable ${t.merges_unresolvable_commit}`);
   if (t.merges_unattributable > 0) {
     lines.push(`  - Unattributable session ids (no discoverable transcript): ${t.unattributable_session_ids.map((id) => id.slice(0, 8)).join(', ')}`);
+  }
+  lines.push(`- Ledger rows surviving dedup + ancestry (eligible): ${t.merges_eligible}${t.ancestry_filter_applied ? '' : ' (ancestry filter NOT applied — no origin/main oracle)'}`);
+  if (t.merges_duplicate_rows > 0) {
+    lines.push(`  - Duplicate (session_id, merge_commit) rows collapsed: ${t.merges_duplicate_rows} — sample: ${fmtRejectSample(t.duplicate_row_sample)}`);
+  }
+  if (t.merges_off_main > 0) {
+    lines.push(`  - Rows citing a commit not on origin/main: ${t.merges_off_main} — sample: ${fmtRejectSample(t.off_main_row_sample)}`);
+  }
+  if (t.merges_unresolvable_commit > 0) {
+    lines.push(`  - Rows citing a commit that does not resolve: ${t.merges_unresolvable_commit} — sample: ${fmtRejectSample(t.unresolvable_row_sample)}`);
   }
   lines.push(`- Cost/merge (attributed only): ${fmtUsd(t.cost_per_merge_attributed)}`);
   lines.push(`- Sessions with zero merges: ${t.sessions_with_zero_merges}`);
@@ -669,10 +818,14 @@ async function main() {
 
   const costedSessions = costSessionsChronologically(discovered);
   const merges = loadMerges(mergesPath);
+  const mergeCommitStatus = makeMergeCommitStatus({ cwd: SCRIPT_DIR });
+  if (!mergeCommitStatus) {
+    console.error('baseline-economics: origin/main does not resolve — ancestry filter NOT applied (reported in caveats)');
+  }
 
   const report = buildReport({
     sessions: costedSessions, merges, since: opts.since, until: opts.until, excludedCount,
-    isExcludedSessionId: isExcluded,
+    isExcludedSessionId: isExcluded, mergeCommitStatus,
   });
 
   if (opts.json) {
