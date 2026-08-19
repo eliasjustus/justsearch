@@ -109,8 +109,14 @@ def retrieve(
     max_retries: int = 5,
     allow_errors: bool = False,
     include_excerpts: bool = False,
+    query_syntax: str | None = None,
 ) -> tuple[list[ScoredDoc], list[dict]]:
     """Query the API for each query sequentially with retry.
+
+    ``query_syntax`` (Q-020 / F-046): ``"simple"`` or ``"lucene"``, forwarded verbatim as the
+    request's ``querySyntax`` field (`docs/reference/api-contract-map.md`, Knowledge Search API).
+    ``None`` (the default) omits the field entirely — the wire request is byte-identical to a
+    pre-Q-020 caller, and the Head's own default (SIMPLE) resolves server-side.
 
     Returns:
         scored_docs: list of ScoredDoc for ir-measures
@@ -122,7 +128,9 @@ def retrieve(
     with httpx.Client(base_url=base_url, timeout=timeout) as client:
         total = len(queries)
         for i, (qid, qtext) in enumerate(queries.items(), 1):
-            body = _build_request(qtext, mode, top_k, debug, pipeline, include_excerpts)
+            body = _build_request(
+                qtext, mode, top_k, debug, pipeline, include_excerpts, query_syntax,
+            )
             response = execute_query(client, qid, body, max_retries, allow_errors)
 
             if response is None:
@@ -184,6 +192,7 @@ def _build_request(
     debug: bool,
     pipeline: dict | None,
     include_excerpts: bool = False,
+    query_syntax: str | None = None,
 ) -> dict:
     body: dict = {"query": query, "limit": top_k}
     if pipeline:
@@ -196,6 +205,11 @@ def _build_request(
         body["debug"] = True
     if include_excerpts:
         body["includeExcerpts"] = True
+    # Q-020 / F-046: only sent when the caller explicitly asks for a syntax. Omitting the field
+    # (query_syntax is None) keeps the request byte-identical to every pre-Q-020 caller — the
+    # Head's own SIMPLE default resolves server-side (`docs/reference/api-contract-map.md`).
+    if query_syntax is not None:
+        body["querySyntax"] = query_syntax
     return body
 
 
