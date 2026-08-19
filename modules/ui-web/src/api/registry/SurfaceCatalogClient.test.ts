@@ -10,7 +10,6 @@ import {
   bootSurfaceRegistry,
   getSurface,
   listSurfaces,
-  listSurfacesByAudience,
   listSurfacesByPlacement,
   mergePluginSurfaceContributions,
   onSurfaceCatalogChange,
@@ -278,17 +277,6 @@ describe('SurfaceCatalogClient', () => {
       expect(listSurfacesByPlacement('HUD')).toEqual([]);
     });
 
-    it('listSurfacesByAudience filters by audience', () => {
-      __seedForTest(
-        catalogOf(librarySurface('core.library-surface'), operatorSurface('core.head-log-surface')),
-      );
-      expect(listSurfacesByAudience('USER').map((s) => s.id)).toEqual([
-        'core.library-surface',
-      ]);
-      expect(listSurfacesByAudience('OPERATOR').map((s) => s.id)).toEqual([
-        'core.head-log-surface',
-      ]);
-    });
   });
 
   describe('boot fetch', () => {

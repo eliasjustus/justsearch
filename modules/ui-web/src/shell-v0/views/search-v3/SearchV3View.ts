@@ -1366,6 +1366,7 @@ export class SearchV3View extends JfElement {
    * render nothing on the very fork the reader just made.
    */
   private async openBranch(id: string): Promise<void> {
+    const prevId = this.sessions.activeId;
     const now = Date.now();
     this.sessions = mergeStoreConversations(this.sessions, [
       { id, title: null, firstUserMessage: '', createdAt: now, lastActiveAt: now },
@@ -1376,6 +1377,11 @@ export class SearchV3View extends JfElement {
     // The same rule `onSessionSelect` applies: an edit in another row is DROPPED rather than
     // committed, because navigating away must not write text the reader walked away from.
     this.renamingId = null;
+    // 854 D4 — same guard as `onSessionSelect`: close only on a real switch, using the id captured
+    // before the claim above (`this.sessions === before` identity is not this method's guard — its
+    // callers already establish it is a real switch or a branch that's always new, but comparing ids
+    // directly here keeps the two sites' close logic identical rather than relying on caller proofs).
+    if (prevId !== id) this.closePane();
     void this.setComposerState('docked');
     await Promise.all([this.refreshRecord(id), this.refreshHistory(id), loadConversations()]);
   }
@@ -2550,9 +2556,15 @@ export class SearchV3View extends JfElement {
     // navigating away must not write text the reader walked away from.
     this.renamingId = null;
     const before = this.sessions;
+    const prevId = before.activeId;
     this.sessions = focusSession(this.sessions, id, Date.now());
     if (this.sessions === before) return; // unknown id — nothing was claimed, so nothing to record
     this.claimConversation(id);
+    // 854 D4 — the evidence pane belongs to the conversation it was opened against; a real switch
+    // closes it. Guarded on the id captured BEFORE the claim, not object identity: focusSession
+    // returns a NEW list even when id === prevId (it stamps lastVisitedAt on the row), so an
+    // unguarded closePane() here would also fire on a re-click of the already-active row.
+    if (prevId !== id) this.closePane();
     // The RECORD is what the reader is being shown, so it is fetched on the claim rather than trusted
     // from whatever this window happened to still hold (inventory D1).
     void this.refreshRecord(id);

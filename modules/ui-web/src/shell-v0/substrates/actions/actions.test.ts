@@ -171,6 +171,29 @@ describe('shell actions — AI install palette reachability (727 F-1)', () => {
     });
     expect(navigate).toHaveBeenCalledWith('core.brain-surface');
   });
+
+  it('854 D3 — a plain "Go to Activity" navigation entry exists, mirroring go-to-health', async () => {
+    // Health had a palette entry (go-to-health); Activity had none. This is the one reachability
+    // delta the audience-honesty flip actually needed (854 §6.4) — the surface was already USER-
+    // reachable via the System hub's tabs, but only Activity had no named palette route to it.
+    const navigate = vi.fn();
+    registerShellActions({
+      navigate,
+      toggleInspector: () => {},
+      togglePalette: () => {},
+      focusComposer: () => {},
+    });
+
+    const activity = getAction('core.action.shell.go-to-activity');
+    expect(activity).toBeDefined();
+    expect(activity!.title).toBe('Go to Activity');
+    expect(activity!.appliesTo).toBeUndefined(); // global — surfaces in the flat palette pool
+    expect(await invokeAction('core.action.shell.go-to-activity')).toEqual({
+      kind: 'navigate',
+      to: 'core.activity-surface', // the TARGET, not merely that registration happened
+    });
+    expect(navigate).toHaveBeenCalledWith('core.activity-surface');
+  });
 });
 
 describe('listActions filtering (§3.C)', () => {
