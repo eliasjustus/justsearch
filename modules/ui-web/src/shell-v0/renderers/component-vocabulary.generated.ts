@@ -109,7 +109,6 @@ export type ComponentTag =
   | 'jf-scope-chip'
   | 'jf-search-results'
   | 'jf-search-trace'
-  | 'jf-search-v2'
   | 'jf-security-surface'
   | 'jf-selection-actions-menu'
   | 'jf-settings-surface'
@@ -252,7 +251,6 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-scope-chip',
   'jf-search-results',
   'jf-search-trace',
-  'jf-search-v2',
   'jf-security-surface',
   'jf-selection-actions-menu',
   'jf-settings-surface',

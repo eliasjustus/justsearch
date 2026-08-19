@@ -55,10 +55,8 @@ const LOADERS: ReadonlyMap<string, () => Promise<unknown>> = new Map<
   // Tempdoc 583 §D.3b — the API explorer (read-only route-manifest projection). DEEPLINK dev tool,
   // off-rail; lazy-loaded on first navigation (sibling of the governance dashboard).
   ['jf-api-explorer-view', () => import('./ApiExplorerView.js')],
-  // Tempdoc 818 slice 1 — the from-scratch Search v2 window skeleton. DEVELOPER/DEEPLINK, no rail
-  // entry (578: one task, one window); reachable only at #justsearch://surface/core.search-v2-surface
-  // while the comparison against UnifiedChatView runs (818 §5 sunset criterion).
-  ['jf-search-v2', () => import('./search-v2/SearchV2View.js')],
+  // Tempdoc 851 (owner decision 2026-08-19): the `jf-search-v2` row is retired with its window —
+  // 818 never reached its §5 cutover, so nothing resolves that tag any more.
   // Tempdoc 822 slice 1 — the Search v3 window, rebuilt on a new design system.
   // DEVELOPER/DEEPLINK, no rail entry; reachable only at
   // #justsearch://surface/core.search-v3-surface while the geometry is calibrated.

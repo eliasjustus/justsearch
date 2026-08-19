@@ -90,7 +90,7 @@ export class CitationsPanel extends JfElement {
   /**
    * The HOST owns the disclosure, so this panel renders BODY ONLY (tempdoc 822 Phase F11).
    *
-   * Default `false` — every shipped consumer (`views/search-v2/SearchV2View.ts`,
+   * Default `false` — every shipped consumer (`views/UnifiedChatView.ts`,
    * `views/SummarizeView.ts`) is byte-identical to before. Search v3 sets it because its answer tail
    * is ONE 24px row: a component-owned header on its own line makes that two rows, and the panel's
    * uppercase `▸ N SOURCES` is a second disclosure dialect for an act the window already declares.
@@ -208,7 +208,7 @@ export class CitationsPanel extends JfElement {
     /* Tempdoc 822 §5.4 — the selected source card. Containment means every --cp-* name defaults to
        TODAY'S VALUE, not to nothing: this selector's (0,2,0) outranks the base '.citation, .source'
        at (0,1,0), so a 'transparent' default would blank a selected card's fill and edge in the
-       shipped windows (search-v2, SummarizeView) where 'data-selected' is reachable. Defaulting to
+       shipped windows (UnifiedChatView, SummarizeView) where 'data-selected' is reachable. Defaulting to
        the base rule's own '--surface-2' / '--border-subtle' makes an un-tokenized selected card
        byte-identical to an unselected one, and the v3 window opts in from Sv3Main.ts. These rules
        sit AFTER .source:hover on purpose: they share its (0,2,0) specificity, so source order is what
@@ -227,7 +227,7 @@ export class CitationsPanel extends JfElement {
          rule — later in source — took the border of every card the pointer was over. Before this
          slice 'data-selected' was unreachable and every hovered card showed the hover edge; the
          moment the store was wired up, the card you had just CLICKED became the one card in the
-         panel with no hover feedback, in search-v2, SummarizeView and v3 alike. Restating it keeps
+         panel with no hover feedback, in UnifiedChatView, SummarizeView and v3 alike. Restating it keeps
          the source order's meaning intact — when a card is both, it still takes the HIGHER wash —
          while letting the pointer's own signal survive the selection it just made. */
       /* Its own name, falling through to the plain hover edge: a consumer whose selected edge
