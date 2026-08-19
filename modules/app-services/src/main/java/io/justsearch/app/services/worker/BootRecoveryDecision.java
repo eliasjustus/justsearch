@@ -11,17 +11,21 @@ package io.justsearch.app.services.worker;
  * <p>Law: while no client is bound, a failed boot resolves to a bounded re-{@code ATTEMPT} sequence
  * with exponential backoff and then to exactly one terminal {@code GIVE_UP}
  * ({@code worker.spawn_recovery_exhausted}) — never to silence, and never to an unbounded loop. Two
- * vetoes outrank the budget and stop the sequence WITHOUT a give-up narration, because in both cases
- * another authority's verdict already stands and must not be superseded (825 §D5 decision 2):
+ * other-authority conditions outrank the budget, and review F2 established that they are NOT the
+ * same kind of thing:
  *
  * <ul>
- *   <li>{@link Veto#SUPERVISION_ENGAGED} — the failing attempt's spawner already performed a
- *       supervised restart, so the restart budget is {@link SupervisionPolicy}'s. Re-attempting here
- *       would multiply the declared restart intensity, which is exactly the second-restart-authority
- *       hazard the tempdoc-627 review warned about.
- *   <li>{@link Veto#RESTART_EXHAUSTED} — supervision has already given up
- *       ({@code worker.restart_exhausted}). That verdict is terminal by contract; boot recovery may
- *       not overwrite it with its own.
+ *   <li>{@link Veto#RESTART_EXHAUSTED} ⇒ {@link Action#GIVE_UP}, permanently and silently.
+ *       Supervision has given up ({@code worker.restart_exhausted}); that verdict is terminal by
+ *       contract (825 §D5 decision 2), it is already legible on the wire under supervision's own
+ *       code, and boot recovery may not overwrite it with its own.
+ *   <li>{@link Veto#SUPERVISION_ENGAGED} ⇒ {@link Action#STAND_DOWN}, for this cycle only. A live
+ *       supervisor is holding the restart budget, so re-attempting would multiply the declared
+ *       restart intensity — the second-restart-authority hazard the tempdoc-627 review warned about.
+ *       But standing down is not a verdict: nothing is narrated, nothing latches, and the next tick
+ *       re-asks. Making this one permanent (the pre-review shape) meant a supervised-then-abandoned
+ *       boot got zero attempts, no terminal code, and a dead operator hatch — silence, which this
+ *       law forbids.
  * </ul>
  */
 public final class BootRecoveryDecision {
@@ -36,17 +40,36 @@ public final class BootRecoveryDecision {
     WAIT,
     /** Re-attempt the bootstrap now. */
     ATTEMPT,
-    /** Stop trying. Narrated as the terminal reason code unless a {@link Veto} says otherwise. */
+    /**
+     * Do nothing THIS cycle because another authority is mid-arc, and re-evaluate on the next one.
+     * Distinct from {@link #GIVE_UP} in exactly the way that matters (review F2): standing down is
+     * not a verdict, so it neither narrates nor latches — if supervision's arc ends without bringing
+     * the worker back, recovery resumes.
+     */
+    STAND_DOWN,
+    /** Stop trying, permanently. Narrated as the terminal reason code unless a {@link Veto} says otherwise. */
     GIVE_UP
   }
 
-  /** Why the sequence stopped without this authority getting to narrate its own terminal code. */
+  /**
+   * Why the sequence stopped without this authority getting to narrate its own terminal code. The
+   * two are NOT interchangeable, and review F2 turned on the difference: one is temporary and the
+   * other is final.
+   */
   public enum Veto {
     /** No veto — the give-up (if any) is this authority's own budget being spent. */
     NONE,
-    /** The last attempt left supervision holding the restart budget. */
+    /**
+     * The last attempt left supervision holding the restart budget ({@code supervisionEngaged()}
+     * latches on {@code restartCount > 0}, so this says "a supervised restart happened", NOT "it
+     * failed"). Pairs with {@link Action#STAND_DOWN}: temporary, re-evaluated every tick.
+     */
     SUPERVISION_ENGAGED,
-    /** Supervision has already declared the terminal {@code worker.restart_exhausted}. */
+    /**
+     * Supervision has declared the terminal {@code worker.restart_exhausted}. Pairs with
+     * {@link Action#GIVE_UP}: permanent, by owner decision 2 — and the state is already legible on
+     * the wire under supervision's own code, so this authority adds nothing by narrating.
+     */
     RESTART_EXHAUSTED
   }
 
@@ -56,18 +79,21 @@ public final class BootRecoveryDecision {
    *
    * @param clientBound a {@code RemoteKnowledgeClient} is bound, i.e. the bootstrap is up and the
    *     ordinary health arm owns it
-   * @param supervisionEngaged the last failed start left supervision holding the restart budget
-   *     ({@code KnowledgeServerBootstrap.supervisionEngagedOnLastAttempt()})
+   * @param supervisionActive a supervisor is alive right now and holding the restart budget
+   *     ({@code KnowledgeServerBootstrap.supervisionActive()}) — a live question, re-asked every
+   *     tick, not a latch (review F2)
    * @param restartExhaustedHeld the capability currently holds {@code worker.restart_exhausted}
    * @param attemptsMade boot-recovery attempts already made in this arc
    * @param gaveUp this arc has already narrated its terminal state (so it must not narrate twice)
    * @param msSinceLastAttempt elapsed time since the last attempt; {@link Long#MAX_VALUE} when none
-   *     has been made yet (the first attempt still waits out the base backoff, so a transient boot
-   *     failure is not immediately re-attempted into the same contention that caused it)
+   *     has been made yet, which makes the FIRST attempt due immediately (review F8 — an earlier
+   *     draft of this javadoc claimed it waited out the base backoff, which the code never did). The
+   *     spacing before that first attempt is the monitor's poll interval, since the arm only runs on
+   *     a tick; the backoff schedule governs the attempts after it.
    */
   public record Input(
       boolean clientBound,
-      boolean supervisionEngaged,
+      boolean supervisionActive,
       boolean restartExhaustedHeld,
       int attemptsMade,
       boolean gaveUp,
@@ -89,6 +115,10 @@ public final class BootRecoveryDecision {
     static Decision giveUp(Veto veto) {
       return new Decision(Action.GIVE_UP, veto, 0, 0);
     }
+
+    static Decision standDown(Veto veto) {
+      return new Decision(Action.STAND_DOWN, veto, 0, 0);
+    }
   }
 
   /**
@@ -109,12 +139,19 @@ public final class BootRecoveryDecision {
     if (in.gaveUp()) {
       return Decision.none();
     }
-    // Vetoes outrank the budget: another authority's verdict stands, so we stop AND stay quiet.
+    // Supervision's TERMINAL verdict outranks everything: permanent, and already on the wire under
+    // its own code, so this authority stops and stays quiet (owner decision 2).
     if (in.restartExhaustedHeld()) {
       return Decision.giveUp(Veto.RESTART_EXHAUSTED);
     }
-    if (in.supervisionEngaged()) {
-      return Decision.giveUp(Veto.SUPERVISION_ENGAGED);
+    // Supervision merely ENGAGED is a different animal (review F2): supervisionEngaged() latches on
+    // restartCount > 0, so it says a supervised restart happened, not that supervision failed or is
+    // still working. Treating it as terminal handed a whole class of bricked boots zero recovery
+    // attempts, no terminal code, and a permanently dead operator hatch — while supervision itself
+    // had already stopped (its spawner died with the failed start). So: yield the cycle, keep the
+    // budget, and re-decide on the next tick.
+    if (in.supervisionActive()) {
+      return Decision.standDown(Veto.SUPERVISION_ENGAGED);
     }
     int nextAttempt = in.attemptsMade() + 1;
     if (nextAttempt > policy.maxAttempts()) {

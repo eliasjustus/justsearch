@@ -60,6 +60,9 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
    */
   static final long RESUME_TOLERANCE_FACTOR = 3;
 
+  /** How long {@link #close()} waits for an in-flight boot-recovery attempt to unwind (review F4). */
+  static final long CLOSE_AWAIT_MS = 5_000;
+
   private final KnowledgeServerBootstrap bootstrap;
   private final long pollIntervalMs;
   private final ScheduledExecutorService executor;
@@ -82,6 +85,14 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
   private volatile long lastRecoveryAttemptMs = -1;
   private volatile boolean recoveryGaveUp;
   private final AtomicBoolean recoveryAttemptRunning = new AtomicBoolean(false);
+
+  /**
+   * Review F4: set by {@link #close()} before the executor is shut down, so an attempt that has not
+   * yet spawned stands down instead of racing the ordered shutdown. Without it, a recovery attempt
+   * running (or queued) while {@code performOrderedShutdown} walks past the monitor could spawn a
+   * Worker JVM after the coordinator had already closed the bootstrap — an orphan nothing owns.
+   */
+  private volatile boolean closed;
 
   public KnowledgeServerHealthMonitor(KnowledgeServerBootstrap bootstrap) {
     this(bootstrap, DEFAULT_POLL_INTERVAL_MS);
@@ -201,7 +212,12 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
               "Boot recovery attempt {} due in {}ms",
               decision.nextAttempt(),
               decision.waitMs());
-      case ATTEMPT -> attemptBootRecovery(decision.nextAttempt());
+      case STAND_DOWN ->
+          // Review F2(a): this cycle only. No narration, no latch — the next tick re-asks, so a
+          // supervised arc that ends without bringing the worker back does not strand recovery.
+          log.info(
+              "Boot recovery yielding this cycle: a supervisor is live and holds the restart budget");
+      case ATTEMPT -> attemptBootRecovery(false, false);
       case GIVE_UP -> narrateGiveUp(decision.veto());
     }
   }
@@ -212,7 +228,7 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
         lastRecoveryAttemptMs < 0 ? Long.MAX_VALUE : nowMs.getAsLong() - lastRecoveryAttemptMs;
     return new BootRecoveryDecision.Input(
         bootstrap.hasClient(),
-        bootstrap.supervisionEngagedOnLastAttempt(),
+        bootstrap.supervisionActive(),
         LifecycleReasonCode.WORKER_RESTART_EXHAUSTED
             .code()
             .equals(bootstrap.workerCapability().pendingReason()),
@@ -228,12 +244,50 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
    * ultimately succeeds narrates ONE {@code worker.restart-attempted} milestone and ONE
    * {@code worker.recovered}, not a flap per cycle.
    */
-  private void attemptBootRecovery(int attemptNo) {
-    if (!recoveryAttemptRunning.compareAndSet(false, true)) {
+  private void attemptBootRecovery(boolean operatorRequested, boolean slotAlreadyHeld) {
+    // Review F4: the closed check is INSIDE the running-slot and re-checked after it, because close()
+    // waits for an in-flight attempt but must not let a new one start. A spawn begun after
+    // performOrderedShutdown has passed the monitor would orphan a worker JVM that nothing closes.
+    if (closed && !slotAlreadyHeld) {
+      return;
+    }
+    if (!slotAlreadyHeld && !recoveryAttemptRunning.compareAndSet(false, true)) {
       return;
     }
     try {
-      recoveryAttemptsMade = attemptNo;
+      if (closed) {
+        return;
+      }
+      // Review F5: re-decide HERE, on the executor thread, against state read now. The caller's
+      // decision is a stale hint: requestRecoveryNow decides on the HTTP thread, and by the time
+      // this runs the budget may be spent (N rapid requests), the worker may already be up (a
+      // duplicate queued behind a successful handover), or a veto may have appeared. Without this,
+      // a burst of manual requests out-spends the declared budget and can re-spawn over a live
+      // worker. This is also why the attempt NUMBER comes from the decision rather than the caller.
+      BootRecoveryDecision.Decision decision =
+          BootRecoveryDecision.decide(currentRecoveryInput(), recoveryPolicy);
+      if (decision.action() == BootRecoveryDecision.Action.GIVE_UP) {
+        // The budget was spent (or a veto appeared) between the request and this runnable. The
+        // decision to stop is still a decision: narrate it here rather than dropping quietly, or a
+        // manual-only sequence never reaches its terminal state and the operator is left with a
+        // "scheduled" answer and permanent silence.
+        narrateGiveUp(decision.veto());
+        return;
+      }
+      boolean due =
+          decision.action() == BootRecoveryDecision.Action.ATTEMPT
+              // An operator's request is what makes a backoff-pending attempt due — but only that:
+              // it cannot convert a veto, a spent budget, or a live worker into an attempt.
+              || (operatorRequested && decision.action() == BootRecoveryDecision.Action.WAIT);
+      if (!due) {
+        log.info(
+            "Boot recovery attempt dropped before spawning: the state now says {} ({})",
+            decision.action(),
+            decision.veto());
+        return;
+      }
+      int attemptNo = decision.nextAttempt();
+      recoveryAttemptsMade = recoveryAttemptsMade + 1;
       lastRecoveryAttemptMs = nowMs.getAsLong();
       WorkerCapability cap = bootstrap.workerCapability();
       // Park the forensic context first: the capability-health bridge reads it synchronously from
@@ -253,6 +307,10 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
           "Boot recovery: re-attempting Knowledge Server start ({}/{})",
           attemptNo,
           recoveryPolicy.maxAttempts());
+      if (closed) {
+        // Last gate before the spawn: close() may have landed while we narrated.
+        return;
+      }
       try {
         bootstrap.startForRecovery();
       } catch (InterruptedException e) {
@@ -305,18 +363,27 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
       // periodic tick both resolve to GIVE_UP before either has run.
       return;
     }
-    recoveryGaveUp = true;
+    // The latch is set per-arm, not up front: a SUPERVISION_ENGAGED give-up must never latch
+    // (review F2(a) — that is the permanent-silence bug), so it stays out of the two arms below.
     switch (veto) {
       case RESTART_EXHAUSTED ->
-          log.warn(
-              "Boot recovery standing down: supervision has already declared {} — that verdict is"
-                  + " terminal and is not superseded",
-              LifecycleReasonCode.WORKER_RESTART_EXHAUSTED.code());
+          // Permanent and silent BY DESIGN, and honest only because the state is already on the wire
+          // under supervision's own terminal code — which the fixture now fails fast on too, so this
+          // path no longer costs a blind wait (review F2(b)).
+      {
+        recoveryGaveUp = true;
+        log.warn(
+            "Boot recovery giving up: supervision has already declared {} — that verdict is"
+                + " terminal and is not superseded",
+            LifecycleReasonCode.WORKER_RESTART_EXHAUSTED.code());
+      }
       case SUPERVISION_ENGAGED ->
-          log.warn(
-              "Boot recovery standing down: the last start left supervision holding the restart"
-                  + " budget, so SupervisionPolicy stays the single restart authority");
+          // Unreachable: a live supervisor yields STAND_DOWN, which never reaches this method
+          // (review F2(a)). Kept for switch totality, and it must NOT latch a give-up, so it is
+          // deliberately not routed here by the decision.
+          log.warn("Boot recovery give-up requested while a supervisor is live — ignoring");
       case NONE -> {
+        recoveryGaveUp = true;
         log.error(
             "Boot recovery exhausted after {} attempt(s); the knowledge server will not be retried"
                 + " again in this process",
@@ -347,14 +414,23 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
     if (bootstrap.hasClient()) {
       return Verdict.NOT_APPLICABLE;
     }
-    if (recoveryAttemptRunning.get()) {
+    // Reserve the single attempt slot on the CALLER's thread and hand it to the runnable. Checking a
+    // "is one running" flag instead let a burst queue N runnables before the first had started, so
+    // N requests were all told ACCEPTED and the later ones were then dropped by the executor-side
+    // re-decide — an answer that promised an attempt nobody made. Reserving makes the verdict true:
+    // ACCEPTED means exactly one attempt will be considered, and everyone else is told to wait.
+    if (!recoveryAttemptRunning.compareAndSet(false, true)) {
       return Verdict.ALREADY_RUNNING;
     }
+    boolean slotHandedOff = false;
     BootRecoveryDecision.Decision decision =
         BootRecoveryDecision.decide(currentRecoveryInput(), recoveryPolicy);
     try {
       return switch (decision.action()) {
         case NONE -> recoveryGaveUp ? Verdict.EXHAUSTED : Verdict.NOT_APPLICABLE;
+        // Review F2(c): a live supervisor is a TEMPORARY refusal — say so, and do not latch anything.
+        // The operator can retry in a moment; the caller renders it differently from the terminal one.
+        case STAND_DOWN -> Verdict.VETOED_SUPERVISION;
         case GIVE_UP -> {
           // Narrate on the executor (the arm's own thread) so the manual path lands the same
           // terminal state the periodic path would, exactly once, and no capability write happens
@@ -366,10 +442,12 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
             case NONE -> Verdict.EXHAUSTED;
           };
         }
-        // WAIT is an ATTEMPT whose backoff has not elapsed; the request is what makes it due.
+        // WAIT is an ATTEMPT whose backoff has not elapsed; the request is what makes it due. The
+        // decision is re-run on the executor before anything spawns, so this is a hint, not a
+        // licence — a burst of requests still cannot out-spend the budget (review F5).
         case ATTEMPT, WAIT -> {
-          int attemptNo = decision.nextAttempt();
-          executor.execute(() -> attemptBootRecovery(attemptNo));
+          executor.execute(() -> attemptBootRecovery(true, true));
+          slotHandedOff = true;
           yield Verdict.ACCEPTED;
         }
       };
@@ -379,6 +457,12 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
       // unavailable answer.
       log.debug("Worker recovery request rejected — the monitor is shut down");
       return Verdict.NOT_APPLICABLE;
+    } finally {
+      // Every path that did NOT hand the slot to a runnable must release it, or one refused request
+      // would wedge the arm for the life of the process.
+      if (!slotHandedOff) {
+        recoveryAttemptRunning.set(false);
+      }
     }
   }
 
@@ -420,8 +504,27 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
     }
   }
 
+  /**
+   * Review F4: close is now ORDERED, not just requested. The flag stops an attempt that has not
+   * spawned yet; the bounded await makes the return value mean "no recovery is in flight any more",
+   * which is what {@code performOrderedShutdown} needs before it closes the bootstrap underneath us.
+   * Bounded at {@value #CLOSE_AWAIT_MS}ms so a wedged attempt delays shutdown rather than blocking
+   * it; {@code shutdownNow} has already interrupted it, and the Worker's own Job Object / heartbeat
+   * suicide-pact is the backstop for a process that still slips through.
+   */
   @Override
   public void close() {
+    closed = true;
     executor.shutdownNow();
+    try {
+      if (!executor.awaitTermination(CLOSE_AWAIT_MS, TimeUnit.MILLISECONDS)) {
+        log.warn(
+            "Knowledge Server health monitor did not stop within {}ms; a boot-recovery attempt may"
+                + " still be unwinding",
+            CLOSE_AWAIT_MS);
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
   }
 }

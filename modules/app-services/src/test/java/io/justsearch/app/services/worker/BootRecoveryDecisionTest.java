@@ -102,14 +102,30 @@ final class BootRecoveryDecisionTest {
   }
 
   @Test
-  @DisplayName("VETO: supervision holding the restart budget stops the loop without narrating")
-  void supervisionEngagedVetoesFurtherAttempts() {
-    Decision d =
+  @DisplayName("VETO: a LIVE supervisor yields the cycle — it does not end the arc")
+  void liveSupervisorStandsDownForThisCycleOnly() {
+    Decision standing =
         BootRecoveryDecision.decide(
             new Input(false, true, false, 0, false, Long.MAX_VALUE), POLICY);
 
-    assertEquals(Action.GIVE_UP, d.action(), "a second restart authority must not emerge");
-    assertEquals(Veto.SUPERVISION_ENGAGED, d.veto());
+    assertEquals(
+        Action.STAND_DOWN,
+        standing.action(),
+        "a second restart authority must not emerge while a supervisor holds the budget");
+    assertEquals(Veto.SUPERVISION_ENGAGED, standing.veto());
+    assertEquals(0, standing.nextAttempt(), "standing down consumes no budget");
+
+    // Review F2(a) — THE regression: making this permanent handed a supervised-then-abandoned boot
+    // zero attempts, no terminal code and a dead operator hatch. Once the supervisor is gone (the
+    // failed start's close() dropped the spawner), the very next decision must attempt.
+    Decision afterSupervisorGone =
+        BootRecoveryDecision.decide(
+            new Input(false, false, false, 0, false, Long.MAX_VALUE), POLICY);
+    assertEquals(
+        Action.ATTEMPT,
+        afterSupervisorGone.action(),
+        "standing down must not latch: recovery resumes when supervision's arc ends");
+    assertEquals(1, afterSupervisorGone.nextAttempt(), "with its budget untouched");
   }
 
   @Test
@@ -135,6 +151,43 @@ final class BootRecoveryDecisionTest {
             new Input(false, false, true, POLICY.maxAttempts(), false, 999_999), POLICY);
 
     assertEquals(Veto.RESTART_EXHAUSTED, d.veto());
+  }
+
+  @Test
+  @DisplayName("the TERMINAL supervision verdict outranks a merely-live supervisor")
+  void restartExhaustedOutranksStandDown() {
+    Decision d =
+        BootRecoveryDecision.decide(new Input(false, true, true, 0, false, 999_999), POLICY);
+
+    assertEquals(
+        Action.GIVE_UP,
+        d.action(),
+        "gave-up is permanent; still-supervising is not — the pair must not collapse");
+    assertEquals(Veto.RESTART_EXHAUSTED, d.veto());
+  }
+
+  @Test
+  @DisplayName("re-deciding mid-flight refuses an attempt the state no longer licenses (F5)")
+  void reDecideRefusesWhatTheCallerAskedFor() {
+    // The three states a queued manual request can land in after the fact. Each must resolve to
+    // something the executor-side re-decide will NOT treat as an attempt.
+    assertEquals(
+        Action.NONE,
+        BootRecoveryDecision.decide(new Input(true, false, false, 1, false, 999_999), POLICY)
+            .action(),
+        "a worker came up in the meantime (handover already ran)");
+    assertEquals(
+        Action.GIVE_UP,
+        BootRecoveryDecision.decide(
+                new Input(false, false, false, POLICY.maxAttempts(), false, 999_999), POLICY)
+            .action(),
+        "the budget was spent by the requests ahead of this one");
+    assertEquals(
+        Action.NONE,
+        BootRecoveryDecision.decide(
+                new Input(false, false, false, POLICY.maxAttempts(), true, 999_999), POLICY)
+            .action(),
+        "the arc already gave up");
   }
 
   @Test

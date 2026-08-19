@@ -63,9 +63,15 @@ public final class KnowledgeServerBootstrap implements Closeable {
     private final java.util.concurrent.locks.ReentrantLock initLock =
         new java.util.concurrent.locks.ReentrantLock();
 
-    private MainSignalBus signalBus;
-    private WorkerSpawner spawner;
-    private RemoteKnowledgeClient client;
+    // Tempdoc 825 review F10: volatile. These three are written by whichever thread runs start() /
+    // closeForUpgrade() — the boot thread, and (since 825) the health monitor's executor — and read
+    // by the other: hasClient() is the monitor's arm discriminator, and the shutdown coordinator
+    // calls closeForUpgrade() from the shutdown hook thread. Without volatile a reader can observe a
+    // stale non-null spawner (double shutdown) or a stale null client (a needless recovery attempt
+    // against a worker that is already up).
+    private volatile MainSignalBus signalBus;
+    private volatile WorkerSpawner spawner;
+    private volatile RemoteKnowledgeClient client;
 
     /**
      * Tempdoc 672 follow-up: epoch-ms of the most recent {@link #signalUserActivity()} call — the
@@ -287,6 +293,10 @@ public final class KnowledgeServerBootstrap implements Closeable {
                 completeReadyInitialization();
             } else {
                 // Tempdoc 837 §3.1: the start-time health budget elapsed — the worker NEVER started.
+                // Review F7: this site is reachable DURING a recovery arc — the attempt's worker
+                // spawns and answers gRPC but never reaches healthy — and it was the one worker-down
+                // site without a suppression guard. The rule now lives in transitionWorkerDown, so
+                // this call is unconditional and the funnel decides.
                 transitionWorkerDown(
                     LifecycleReasonCode.WORKER_SPAWN_FAILED,
                     "Health check failed after " + healthCheckElapsedMs + "ms");
@@ -297,10 +307,8 @@ public final class KnowledgeServerBootstrap implements Closeable {
         } catch (Exception e) {
             // Read supervision's verdict BEFORE close() drops the spawner that holds it.
             supervisionEngagedOnLastAttempt = spawner != null && spawner.supervisionEngaged();
-            if (!narrationSuppressed()) {
-                transitionWorkerDown(
-                    LifecycleReasonCode.WORKER_SPAWN_FAILED, "Start failed: " + e.getMessage());
-            }
+            transitionWorkerDown(
+                LifecycleReasonCode.WORKER_SPAWN_FAILED, "Start failed: " + e.getMessage());
             log.error("Failed to start Knowledge Server integration", e);
             close();
             throw e;
@@ -340,10 +348,10 @@ public final class KnowledgeServerBootstrap implements Closeable {
             // unless the boot-recovery arm owns this arc's narration (tempdoc 825), in which case the
             // verdict is ITS terminal give-up, not a per-cycle spawn-failed pin.
             retryPending = false;
-            if (!narrationSuppressed()) {
-                transitionWorkerDown(
-                    LifecycleReasonCode.WORKER_SPAWN_FAILED, "Start failed: " + e.getMessage());
-            }
+            // transitionWorkerDown is the one funnel: it owns both the arc-suppression rule (F7) and
+            // the "never overwrite supervision's terminal verdict" rule (F1).
+            transitionWorkerDown(
+                LifecycleReasonCode.WORKER_SPAWN_FAILED, "Start failed: " + e.getMessage());
             throw e;
         } finally {
             retryPending = false;
@@ -375,13 +383,41 @@ public final class KnowledgeServerBootstrap implements Closeable {
     }
 
     /**
-     * Tempdoc 825 (§D2 mechanism 1): whether the last failed start left supervision holding the
-     * restart budget. {@link WorkerStartFailures#startWithRetry} consults this to bound ONE call; the
-     * boot-recovery arm consults it ACROSS calls, which is what stops a second restart authority from
-     * emerging one recovery cycle at a time.
+     * Tempdoc 825 review F1: whether SUPERVISION has already stamped its terminal verdict on this
+     * capability. {@code worker.restart_exhausted} and {@code worker.spawn.failed} are both
+     * {@code FAULT}, so {@link io.justsearch.app.services.lifecycle.ReasonRetention} lets the
+     * incoming one win — which means this class's own final "start failed" stamp would erase the
+     * supervisor's verdict on every boot where supervision engaged and gave up. That is not merely a
+     * cosmetic loss: {@link BootRecoveryDecision}'s permanent veto reads this exact slot, so the
+     * erasure would silently convert "supervision gave up, stop for good" into "nobody knows, keep
+     * re-attempting" — the second restart authority the tempdoc-627 review forbade.
      */
-    public boolean supervisionEngagedOnLastAttempt() {
-        return supervisionEngagedOnLastAttempt;
+    private boolean supervisionVerdictHeld() {
+        return LifecycleReasonCode.WORKER_RESTART_EXHAUSTED
+            .code()
+            .equals(workerCapability.pendingReason());
+    }
+
+    /**
+     * Tempdoc 825 (§D2 mechanism 1, corrected by review F2): whether a supervisor is alive RIGHT NOW
+     * and holding the restart budget — the honest cross-cycle form of the veto.
+     *
+     * <p>The obvious signal, {@code supervisionEngagedOnLastAttempt}, is the wrong one here.
+     * {@link WorkerSpawner#supervisionEngaged()} latches on {@code restartCount > 0}, so it means "a
+     * supervised restart happened at some point during that attempt", not "supervision is working on
+     * it". That field is also never cleared until the next {@link #startWithRetry}, so a boot-recovery
+     * arm gated on it would stand down forever and never run the very attempt that clears it — the
+     * bricked-boot class would get zero attempts and no terminal code at all. It stays private, doing
+     * the job it was written for: bounding ONE {@code startWithRetry} call.
+     *
+     * <p>This asks the live question instead. After a failed start, {@link #close()} has dropped the
+     * spawner, so no supervisor exists and the restart budget is nobody's — recovery may proceed.
+     * While a spawner IS alive and has restarted the worker, supervision owns the arc and this
+     * authority yields the cycle (never permanently: the next tick re-asks).
+     */
+    public boolean supervisionActive() {
+        WorkerSpawner s = spawner;
+        return s != null && s.supervisionEngaged();
     }
 
     /**
@@ -470,8 +506,12 @@ public final class KnowledgeServerBootstrap implements Closeable {
             // Tempdoc 825 §D4: the countdown fault injector. Fails PID validation with the exact
             // 821 §O.4 signature (PidValidationTimeoutException — transient, so the boot retry and
             // the recovery arm both engage) for the first N attempts and then stops, so a test can
-            // prove CONVERGENCE and not merely the pin. Cannot fire in production: the config's
-            // compact constructor zeroes the count when isProduction (KnowledgeServerConfig).
+            // prove CONVERGENCE and not merely the pin. The guard is exactly this: the config's
+            // compact constructor zeroes the count whenever isProduction() is true — which is a
+            // DETECTED property (explicit justsearch.prod / JUSTSEARCH_PROD flag, or a bundled-JRE
+            // layout), not a build-time constant, so a shipped build launched with the flag forced
+            // to false can still arm it. That is the same reach every other dev-only sysprop in
+            // KnowledgeServerConfig has; it is not a security boundary.
             log.warn(
                 "Injecting boot fault (justsearch.worker.boot.faultInjectAttempts): {} injected"
                     + " failure(s) remaining after this one",
@@ -713,9 +753,43 @@ public final class KnowledgeServerBootstrap implements Closeable {
         return new WorkerDown(generic, detail);
     }
 
-    /** Applies a {@link #workerDownCode} verdict to the capability as DEGRADED. Visible for tests. */
+    /**
+     * Applies a {@link #workerDownCode} verdict to the capability as DEGRADED. Visible for tests.
+     *
+     * <p>Review F1: this is the ONE funnel for every worker-down verdict this class produces
+     * ({@code start()}'s per-attempt catch, the health-budget branch, {@code startWithRetry}'s final
+     * catch, and {@code checkHealth}'s worker.lost), so the "do not overwrite supervision's terminal
+     * verdict" rule lives here rather than at four call sites that would drift.
+     * {@code worker.restart_exhausted} and the codes below are all {@code FAULT}, so
+     * {@link io.justsearch.app.services.lifecycle.ReasonRetention} lets the incoming one win — and
+     * losing it is not cosmetic: {@link BootRecoveryDecision}'s permanent veto reads this exact slot,
+     * so an overwrite silently converts "supervision gave up, stop for good" into "nobody knows, keep
+     * re-attempting".
+     *
+     * <p>The corrupt-index verdict is the one exception, and it is computed BEFORE the guard so the
+     * unrepeatable marker is still consumed: it explains WHY supervision exhausted itself and is
+     * strictly better information (its {@code STICKY} class says the same).
+     */
     void transitionWorkerDown(LifecycleReasonCode generic, String detail) {
         WorkerDown down = workerDownCode(generic, detail);
+        if (narrationSuppressed()) {
+            // Review F7: the suppression rule lives in the funnel too, for the same reason the
+            // supervision guard does — it was applied at three of the four worker-down sites and
+            // missed the health-budget branch, which is reachable mid-recovery (the attempt's worker
+            // spawns and answers gRPC but never becomes healthy) and flapped the arc out of
+            // RECOVERING. Any future site inherits the rule instead of having to remember it.
+            log.debug(
+                "Suppressing worker-down narration ({}): a retry or recovery arc owns it",
+                down.code().code());
+            return;
+        }
+        if (supervisionVerdictHeld() && down.code() != LifecycleReasonCode.WORKER_INDEX_CORRUPT) {
+            log.warn(
+                "Not overwriting supervision's terminal {} with {}: the supervisor's verdict stands",
+                LifecycleReasonCode.WORKER_RESTART_EXHAUSTED.code(),
+                down.code().code());
+            return;
+        }
         workerCapability.transition(
             CapabilityHealth.DEGRADED, down.code().code(), down.detail());
     }

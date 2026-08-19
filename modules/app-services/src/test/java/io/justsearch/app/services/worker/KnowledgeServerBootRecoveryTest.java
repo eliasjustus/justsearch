@@ -63,6 +63,22 @@ final class KnowledgeServerBootRecoveryTest {
     return bootstrap;
   }
 
+  /**
+   * The post-boot state after supervision gave up DURING the boot: the capability holds what
+   * {@code SupervisionEvents.onGaveUp} writes, and the start it was supervising then failed. The
+   * transition is the producer's own call, verbatim — what makes this the "real path" (review F1) is
+   * the ORDER: the verdict is in the slot before {@code startWithRetry}'s final catch runs over it.
+   */
+  private static KnowledgeServerBootstrap brickedAfterSupervisionGaveUp(Path tempDir) {
+    var bootstrap = new KnowledgeServerBootstrap(configFor(tempDir));
+    bootstrap
+        .workerCapability()
+        .transition(CapabilityHealth.DEGRADED, RESTART_EXHAUSTED, "restart budget exhausted");
+    assertThrows(Exception.class, () -> bootstrap.startWithRetry(1, 0));
+    assertFalse(bootstrap.hasClient(), "the fixture must leave no client bound");
+    return bootstrap;
+  }
+
   private static List<String> recordTransitions(KnowledgeServerBootstrap bootstrap) {
     WorkerCapability cap = bootstrap.workerCapability();
     List<String> seen = new ArrayList<>();
@@ -156,13 +172,28 @@ final class KnowledgeServerBootRecoveryTest {
 
   @Test
   @Timeout(180)
+  @DisplayName("F1: a supervisor's give-up survives the failed start that follows it")
+  void supervisionVerdictSurvivesTheFailedStartThatFollowsIt(@TempDir Path tempDir) {
+    var bootstrap = brickedAfterSupervisionGaveUp(tempDir);
+
+    // Review F1: worker.restart_exhausted and worker.spawn.failed are BOTH FAULT, so ReasonRetention
+    // lets the incoming one win — startWithRetry's unguarded final catch therefore erased the
+    // supervisor's verdict on every real boot where supervision gave up. That is not cosmetic: the
+    // permanent veto below reads this exact slot, so the erasure silently downgraded "supervision
+    // gave up, stop for good" into "nobody knows, keep re-attempting".
+    assertEquals(
+        RESTART_EXHAUSTED,
+        bootstrap.workerCapability().pendingReason(),
+        "the generic start-failure stamp must not overwrite supervision's terminal verdict");
+  }
+
+  @Test
+  @Timeout(180)
   @DisplayName("VETO: a held worker.restart_exhausted is never superseded — no attempt, no overwrite")
   void restartExhaustedIsNeverSuperseded(@TempDir Path tempDir) {
-    var bootstrap = bricked(tempDir);
-    // Supervision's terminal verdict lands (this is what SupervisionEvents.onGaveUp writes).
-    bootstrap
-        .workerCapability()
-        .transition(CapabilityHealth.DEGRADED, RESTART_EXHAUSTED, "restart budget exhausted");
+    // Produced by the REAL path (review F1): the supervisor's give-up lands during the boot, and the
+    // boot then fails — which is the only way this state occurs in production.
+    var bootstrap = brickedAfterSupervisionGaveUp(tempDir);
     var monitor =
         new KnowledgeServerHealthMonitor(bootstrap, 10_000, System::currentTimeMillis, NO_WAIT);
     List<String> seen = recordTransitions(bootstrap);
@@ -190,9 +221,14 @@ final class KnowledgeServerBootRecoveryTest {
         monitor.requestRecoveryNow(),
         "POST /api/worker/restart in the null-worker state must reach the recovery loop");
 
-    // Drive the budget to its end through the periodic arm, then ask again.
-    for (int i = 0; i <= NO_WAIT.maxAttempts(); i++) {
+    // Drive the budget to its end through the periodic arm. The manual request runs on the monitor's
+    // own executor and HOLDS the single attempt slot while it does (review F5), so a tick landing in
+    // that window is a deliberate no-op — the loop is bounded by the terminal state, not by a count.
+    long deadline = System.currentTimeMillis() + 60_000;
+    while (System.currentTimeMillis() < deadline
+        && !RECOVERY_EXHAUSTED.equals(bootstrap.workerCapability().pendingReason())) {
       monitor.tick();
+      Thread.onSpinWait();
     }
     assertEquals(
         RECOVERY_EXHAUSTED,
@@ -202,6 +238,127 @@ final class KnowledgeServerBootRecoveryTest {
         WorkerRecoveryAuthority.Verdict.EXHAUSTED,
         monitor.requestRecoveryNow(),
         "the manual path may not out-spend the declared budget");
+  }
+
+  @Test
+  @Timeout(180)
+  @DisplayName("F7: every worker-down site shares ONE suppression rule, in the funnel")
+  void workerDownFunnelOwnsTheSuppressionRule(@TempDir Path tempDir) {
+    // Review F7 found the guard applied at three of the four worker-down sites: the
+    // health-budget-elapsed branch was missed, and it is reachable DURING a recovery arc (the
+    // attempt's worker spawns and answers gRPC but never becomes healthy), flapping the arc out of
+    // RECOVERING. Provoking a half-alive worker needs a real process — the live leg's territory —
+    // so what is pinned here is the property that makes the site-by-site question moot: the rule
+    // lives in transitionWorkerDown, which every site calls, including any added later.
+    var bootstrap = bricked(tempDir);
+    bootstrap
+        .workerCapability()
+        .transition(CapabilityHealth.RECOVERING, RECOVERING, "attempt 1 of 2");
+    List<String> seen = recordTransitions(bootstrap);
+
+    // Outside an arc the funnel narrates, as it always has.
+    bootstrap.transitionWorkerDown(
+        LifecycleReasonCode.WORKER_SPAWN_FAILED, "Health check failed after 30000ms");
+    assertEquals(
+        SPAWN_FAILED,
+        bootstrap.workerCapability().pendingReason(),
+        "the funnel must still narrate when no arc owns the narration");
+
+    // Inside one it does not — and every site inherits that, because they all come through here.
+    bootstrap.workerCapability().transition(CapabilityHealth.RECOVERING, RECOVERING, "attempt 2");
+    seen.clear();
+    assertThrows(Exception.class, bootstrap::startForRecovery);
+
+    assertTrue(
+        seen.stream().noneMatch(t -> t.contains(SPAWN_FAILED)),
+        "no worker-down site may narrate inside a recovery arc: " + seen);
+    assertEquals(
+        RECOVERING,
+        bootstrap.workerCapability().pendingReason(),
+        "the arc keeps the capability at RECOVERING for its whole duration");
+  }
+
+  @Test
+  @Timeout(180)
+  @DisplayName("F4: a closed monitor never spawns — the shutdown race cannot orphan a worker JVM")
+  void closedMonitorNeverSpawns(@TempDir Path tempDir) {
+    var bootstrap = bricked(tempDir);
+    var monitor =
+        new KnowledgeServerHealthMonitor(bootstrap, 10_000, System::currentTimeMillis, NO_WAIT);
+    List<String> seen = recordTransitions(bootstrap);
+
+    monitor.close();
+    // A tick already in the executor's hands when close() lands: without the closed flag this
+    // spawns a Worker JVM after performOrderedShutdown has walked past the monitor, and nothing
+    // owns the resulting process.
+    monitor.tick();
+    monitor.tick();
+
+    assertTrue(seen.isEmpty(), "a closed monitor must not narrate or attempt anything: " + seen);
+    assertFalse(bootstrap.hasClient(), "…and certainly must not bind a new worker");
+    assertEquals(
+        WorkerRecoveryAuthority.Verdict.NOT_APPLICABLE,
+        monitor.requestRecoveryNow(),
+        "the manual path must not resurrect a closed monitor either");
+  }
+
+  @Test
+  @Timeout(180)
+  @DisplayName("F5: a burst of manual requests cannot out-spend the declared budget")
+  void manualBurstCannotOutspendTheBudget(@TempDir Path tempDir) throws Exception {
+    var bootstrap = bricked(tempDir);
+    var monitor =
+        new KnowledgeServerHealthMonitor(bootstrap, 10_000, System::currentTimeMillis, NO_WAIT);
+    try {
+      // Ten operator requests, each waiting only for the executor to be free — which is how a real
+      // burst behaves once the ALREADY_RUNNING short-circuit stops queueing duplicates. An ACCEPTED
+      // verdict is one spawn, so the count of them IS the spawn count. Pre-review nothing re-checked
+      // the state on the executor thread, so every request spawned: ten worker processes against a
+      // declared budget of two, and the arc never reached its terminal state at all.
+      List<String> seen = recordTransitions(bootstrap);
+      List<String> verdicts = new ArrayList<>();
+      int accepted = 0;
+      long deadline = System.currentTimeMillis() + 90_000;
+      for (int i = 0; i < 10 && System.currentTimeMillis() < deadline; i++) {
+        WorkerRecoveryAuthority.Verdict verdict = monitor.requestRecoveryNow();
+        while (verdict == WorkerRecoveryAuthority.Verdict.ALREADY_RUNNING
+            && System.currentTimeMillis() < deadline) {
+          Thread.onSpinWait();
+          verdict = monitor.requestRecoveryNow();
+        }
+        verdicts.add(String.valueOf(verdict));
+        if (verdict == WorkerRecoveryAuthority.Verdict.ACCEPTED) {
+          accepted++;
+        }
+      }
+      while (System.currentTimeMillis() < deadline
+          && !RECOVERY_EXHAUSTED.equals(bootstrap.workerCapability().pendingReason())) {
+        Thread.onSpinWait();
+      }
+
+      assertEquals(
+          RECOVERY_EXHAUSTED,
+          bootstrap.workerCapability().pendingReason(),
+          "ten requests against a budget of "
+              + NO_WAIT.maxAttempts()
+              + " must still converge on the ONE terminal state; verdicts="
+              + verdicts
+              + " transitions="
+              + seen);
+      assertTrue(
+          accepted <= NO_WAIT.maxAttempts(),
+          "an operator's requests may make an attempt sooner, never more often: accepted "
+              + accepted
+              + " of a budgeted "
+              + NO_WAIT.maxAttempts());
+      RecoveryContext last = bootstrap.workerCapability().lastRecoveryContext();
+      assertTrue(
+          last != null && last.attempt() <= NO_WAIT.maxAttempts(),
+          "no attempt may be numbered beyond the budget; highest seen: "
+              + (last == null ? "none" : last.attempt()));
+    } finally {
+      monitor.close();
+    }
   }
 
   @Test
