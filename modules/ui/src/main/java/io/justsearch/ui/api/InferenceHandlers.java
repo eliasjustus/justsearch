@@ -630,9 +630,19 @@ final class InferenceHandlers {
       }
     }
     if (knowledgeServer == null) {
+      // Live leg (run 3): a POST landing in the milliseconds between the bootstrap narrating its
+      // failure (inside tryStartKnowledgeServer) and connectWorker binding the recovery authority
+      // got "Knowledge Server not configured" — untruthful during startup, and the one message an
+      // operator watching /api/health flip to worker.spawn.failed is most likely to see. The state
+      // is genuinely "not wired up YET" and retrying does resolve it, so the class stays TRANSIENT
+      // and the sentence says which of the two it is.
       ctx.status(503)
           .json(
-              ApiErrorHandler.toResponse(ApiErrorCode.SERVICE_UNAVAILABLE, "Knowledge Server not configured", telemetry, ApiErrorHandler.routeOf(ctx)));
+              ApiErrorHandler.toResponse(
+                  ApiErrorCode.SERVICE_UNAVAILABLE,
+                  "Worker recovery is still initializing — retry shortly",
+                  telemetry,
+                  ApiErrorHandler.routeOf(ctx)));
       return;
     }
     if (knowledgeServer.spawner() == null) {
@@ -685,12 +695,33 @@ final class InferenceHandlers {
         ctx.status(202).json(Map.of("success", true, "recovery", verdict.name()));
         return true;
       }
-      case VETOED_SUPERVISION, VETOED_RESTART_EXHAUSTED, EXHAUSTED -> {
+      // Still supervised: a TEMPORARY refusal. Supervision owns the worker for now and this arm
+      // re-evaluates every tick, so retrying really can succeed — SERVICE_UNAVAILABLE (TRANSIENT,
+      // retryable) is the truth here.
+      case VETOED_SUPERVISION -> {
         ctx.status(503)
             .json(
                 ApiErrorHandler.toResponse(
                     ApiErrorCode.SERVICE_UNAVAILABLE,
-                    "Worker recovery declined: " + verdict.name(),
+                    "The knowledge server is being restarted by its supervisor — retry shortly",
+                    telemetry,
+                    ApiErrorHandler.routeOf(ctx)));
+        return true;
+      }
+      // Terminal: the budget is spent, or supervision itself gave up. The live leg (run 2) caught
+      // this answering `errorClass: TRANSIENT, retryable: true` for a state where the very next
+      // request provably returns the same thing until the application restarts — a retry hint the
+      // client cannot act on. PERMANENT (hence retryable=false, derived from the class) plus the
+      // one honest remedy. The HTTP status stays 503: the service genuinely is not serving, which a
+      // 500 would misreport as an internal fault.
+      case VETOED_RESTART_EXHAUSTED, EXHAUSTED -> {
+        ctx.status(503)
+            .json(
+                ApiErrorHandler.toResponse(
+                    ApiErrorCode.WORKER_RECOVERY_EXHAUSTED,
+                    "Worker recovery declined: "
+                        + verdict.name()
+                        + " — the recovery budget is spent; restart the application to retry",
                     telemetry,
                     ApiErrorHandler.routeOf(ctx)));
         return true;

@@ -2,6 +2,8 @@
 package io.justsearch.ui.api;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
@@ -9,11 +11,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.javalin.http.Context;
+import io.justsearch.app.api.ApiErrorCode;
+import io.justsearch.app.api.ErrorClass;
 import io.justsearch.app.services.worker.WorkerRecoveryAuthority;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 /**
  * {@code POST /api/worker/restart} in the state it was WRITTEN for and used to fail in (tempdoc 825
@@ -106,6 +112,80 @@ final class InferenceHandlersWorkerRestartTest {
 
       verify(ctx).status(503);
     }
+  }
+
+  @Test
+  @DisplayName("a TERMINAL decline is not advertised as retryable (live leg, run 2)")
+  void terminalDeclineIsNotRetryable() {
+    for (WorkerRecoveryAuthority.Verdict verdict :
+        List.of(
+            WorkerRecoveryAuthority.Verdict.EXHAUSTED,
+            WorkerRecoveryAuthority.Verdict.VETOED_RESTART_EXHAUSTED)) {
+      Map<String, Object> body = declineBody(verdict);
+
+      // The live run measured errorClass=TRANSIENT / retryable=true on a state where the next
+      // request provably returns the same answer until the application is restarted.
+      assertEquals(ApiErrorCode.WORKER_RECOVERY_EXHAUSTED.name(), body.get("errorCode"), verdict.name());
+      assertEquals(ErrorClass.PERMANENT.name(), body.get("errorClass"), verdict.name());
+      assertEquals(false, body.get("retryable"), verdict.name());
+      assertEquals("errors." + ApiErrorCode.WORKER_RECOVERY_EXHAUSTED.name(), body.get("i18nKey"));
+      assertTrue(
+          String.valueOf(body.get("error")).contains("restart the application"),
+          "the message must name the one remedy that works: " + body.get("error"));
+    }
+  }
+
+  @Test
+  @DisplayName("a still-supervised decline stays retryable — that one really can change")
+  void supervisedDeclineStaysRetryable() {
+    Map<String, Object> body = declineBody(WorkerRecoveryAuthority.Verdict.VETOED_SUPERVISION);
+
+    assertEquals(ApiErrorCode.SERVICE_UNAVAILABLE.name(), body.get("errorCode"));
+    assertEquals(ErrorClass.TRANSIENT.name(), body.get("errorClass"));
+    assertEquals(true, body.get("retryable"));
+    assertTrue(
+        String.valueOf(body.get("error")).contains("retry shortly"),
+        "…and says so: " + body.get("error"));
+  }
+
+  @Test
+  @DisplayName("the pre-bind startup window says so, instead of 'not configured' (live leg, run 3)")
+  void preBindWindowIsWordedHonestly() {
+    // A POST fired the instant the pin became visible landed here: the bootstrap narrates its
+    // failure inside tryStartKnowledgeServer, and connectWorker binds the recovery authority a
+    // moment later. The window is inherent to that ordering; what it said was not.
+    InferenceHandlers handlers = handlersWithNoWorker(); // no authority bound yet
+    Context ctx = mockContext();
+
+    handlers.handleRestartWorker(ctx);
+
+    Map<String, Object> body = capturedBody(ctx);
+    verify(ctx).status(503);
+    assertEquals(ErrorClass.TRANSIENT.name(), body.get("errorClass"), "retrying does resolve this");
+    assertEquals(true, body.get("retryable"));
+    String message = String.valueOf(body.get("error"));
+    assertTrue(message.contains("initializing"), "must name the startup window: " + message);
+    assertFalse(
+        message.contains("not configured"),
+        "the worker IS configured — it is mid-boot: " + message);
+  }
+
+  /** Drives one decline verdict through the handler and returns the JSON envelope it wrote. */
+  private static Map<String, Object> declineBody(WorkerRecoveryAuthority.Verdict verdict) {
+    InferenceHandlers handlers = handlersWithNoWorker();
+    handlers.setWorkerRecovery(new StubAuthority(verdict));
+    Context ctx = mockContext();
+
+    handlers.handleRestartWorker(ctx);
+
+    return capturedBody(ctx);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> capturedBody(Context ctx) {
+    ArgumentCaptor<Object> json = ArgumentCaptor.forClass(Object.class);
+    verify(ctx).json(json.capture());
+    return (Map<String, Object>) json.getValue();
   }
 
   @Test
