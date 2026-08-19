@@ -251,6 +251,26 @@ tier (incorrect — the gate never ran). Two surfaces of one evidence verdict, d
 worse than the current uniform-but-wrong state: it teaches the reader that the absence of marks means
 nothing. The gate must move with the data, not with one of its two consumers.
 
+**IMPLEMENTATION AMENDMENT (S1, 2026-08-19) — the arm list above was incomplete; two more were found
+while sweeping, and one of them is not closed.**
+
+- **Arm 5, FIXED in S1:** `UnifiedChatView.ts:6109` (live) — `this.citations = p.matches`, the live
+  twin of `matchesFromRecord`. Gating only the record path would have made a reloaded render
+  *stricter* than the live one in the same window: the 561 P-A divergence, introduced by the fix.
+- **Arm 6, FIXED in S1 (found by independent review of the S1-S3 PR):** `SummarizeView.ts:404` —
+  `this.citations = p.matches`, ungated, bound into the shared panel at `:276`, while the claims a
+  few lines below *were* gated. A third window with the identical defect, missed by the design's
+  four-site list.
+- **Arm 7, OPEN — a residual this PR does not close.** `UnifiedChatView.onRagCitationDelta`
+  (`:5995`) *appends* to `this.citations` from the **lexical** `rag.citation_delta` stream, with a
+  word-overlap ratio in the `similarity` field. Deltas can arrive after the matches event, so a
+  gated `this.citations` can be partially re-populated with lexical numbers that `sourceGrounding`
+  then reads as cross-encoder probabilities. S1's "one producer verdict" is therefore airtight for
+  the MATCHES producer and not yet for the delta producer. Fixing it is a different decision
+  (whether a lexical delta may reach the panel at all — 822 §3d says its score may never reach a
+  tier, which suggests it may not), so it is named here rather than fixed silently. Also logged to
+  the observations inbox.
+
 ### 1.6 D4 — index-keyed merge, and the id overwrite
 
 `applySv3Record` (`sv3-sessions.ts:652-672`) matches `recordTurns[index]` to `local[index]`
@@ -500,6 +520,20 @@ Named orphans, deleted in this slice rather than left as wrappers: the private
    `claimsToCitations`, producing a real `Sv3TurnEvidence` (`sources` / `matches` / `marks` /
    `retrievalMode`). Also project `coverage` and `sourceCoverage` so v3's honesty frame reads the same
    facts live and restored. Delete the `:101-106` comment that justifies the discard.
+
+   **IMPLEMENTATION AMENDMENT (S3, 2026-08-19) — the `coverage` / `sourceCoverage` half was
+   deliberately NOT implemented, and the reason is narrower than "no consumer".** `Sv3TurnEvidence`
+   carries no such fields, and the LIVE path (`sv3-ask.ts`) does not read them off the payload
+   either — so live and restored already agree on this axis, and projecting them onto the restored
+   turn alone would have created the asymmetry the item exists to prevent, in the other direction.
+   The nuance, found by independent review and worth recording because it changes who should act:
+   the consumer is not missing, it is **unwired**. `<jf-citations-panel>` already accepts
+   `sourceCoverage` and already words the third state ("Retrieved · not examined",
+   `CitationsPanel.ts:66,80,554`); `Sv3Main.ts:1377-1386` simply never passes it. So v3 is one
+   binding — plus the two fields on the evidence record and the two reads in `sv3-ask.ts` — away
+   from the parity `UnifiedChatView` already has. That is a **pre-existing v3-vs-UCV gap this PR
+   neither creates nor closes**, and wiring it is an owner call (it changes what the v3 panel says
+   about budget-starved sources), not a silent extension of this slice.
 2. **"Never told" is preserved.** A record turn with no citation attributes still projects
    `evidence: null` — the distinction `sv3-honesty.ts` depends on (absent ≠ zero) is not collapsed.
 3. **`applySv3Record` matches by identity, not position.** `Sv3Turn` gains

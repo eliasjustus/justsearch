@@ -744,7 +744,10 @@ export function applySv3Record(
     const localIndex = pairing.get(recordIndex);
     if (localIndex !== undefined) {
       keepLocalsBefore(localIndex);
-      emitted = localIndex + 1;
+      // MONOTONE, never assigned: when the record's order and the local order disagree — a later
+      // record turn reconciling to an EARLIER local turn — rewinding the cursor would re-walk
+      // locals already emitted and append an unreconciled one a second time.
+      emitted = Math.max(emitted, localIndex + 1);
     }
     merged.push(reconcile(recorded, localIndex === undefined ? undefined : local[localIndex]));
   });

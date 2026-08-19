@@ -1,7 +1,7 @@
 ---
 title: "German semantic bridging collapses at 10k: the engine's semantic leg bridges zero-lexical-overlap German descriptors at ~half CLERC strength at 1k and goes dark at 10⁴ (hybrid 0.043, union recall 0.10) on post-F-031/F-032 code — the 707 engine finding, chartered as its own attribution investigation (NOT a 708 re-litigation)"
 type: tempdocs
-status: "open — attribution pass executed 2026-07-29 (§A-§H): phases 0-2 done OFFLINE, Q-018 NOT closed. Interim verdict: (c) gold-design/task-shape is dominant — the identical EN construction collapses at 10k too (0.0996/0.1105) and its lexical leg is 0.0 by construction, not by German; (d) largely eliminated and (a) weakened by real German scoring 0.7283 nDCG / 0.9805 recall with recall holding at zero lexical overlap; (b) refuted on the EN member by F-040's already-recorded exact-NN collapse. A residual DE-vs-EN bridge gap survives and is confounded with payload version. A defillered DE rebuild exists at scripts/jseval/748-corpora/de-miracl/ but is STRUCTURALLY CERTIFIED ONLY and claim_eligible:false — no paid closed-book, no backend run. DE remains a non-claim-bearing secondary stratum. Remaining phase-3 work is scripted in §G, not run."
+status: "ATTRIBUTION COMPLETE 2026-08-19 — §G.3 executed live (see §G.3 RESULT): engine leg-union sits AT/ABOVE the offline exact-NN ceiling on both rebuilt DE cells (0.70 vs 0.48 at 1k; 0.16 vs 0.14 at 10k), so the engine leaves no DE recall headroom unexploited and DE behaves like EN (F-040 shape). Q-018 moved to ANSWERED → register F-051. Final attribution: (c) task-shape dominant, (a) German representation measured secondary (§G.1), (b) refuted (F-040 + §G.2 + §G.3), (d) eliminated. New non-pre-registered finding: a 1k-scale fusion/judge leak (union 0.70 → hybrid 0.36@100, leak 0.34) that vanishes at 10k — routed to the fusion-territory inbox item, F-051. DE stays non-claim-bearing (rebuilt cells claim_eligible:false, SCIENTIFIC_GATES still unrun). Earlier status retained below as dated history: open — attribution pass executed 2026-07-29 (§A-§H): phases 0-2 done OFFLINE, Q-018 NOT closed. Interim verdict: (c) gold-design/task-shape is dominant — the identical EN construction collapses at 10k too (0.0996/0.1105) and its lexical leg is 0.0 by construction, not by German; (d) largely eliminated and (a) weakened by real German scoring 0.7283 nDCG / 0.9805 recall with recall holding at zero lexical overlap; (b) refuted on the EN member by F-040's already-recorded exact-NN collapse. A residual DE-vs-EN bridge gap survives and is confounded with payload version. A defillered DE rebuild exists at scripts/jseval/748-corpora/de-miracl/ but is STRUCTURALLY CERTIFIED ONLY and claim_eligible:false — no paid closed-book, no backend run. DE remains a non-claim-bearing secondary stratum. Remaining phase-3 work is scripted in §G, not run."
 created: 2026-07-16
 updated: 2026-07-29
 author: agent (Fable orchestration), chartered at founder direction ("go ahead as you suggested") after the 707 chain-2 verdict routed the finding to an encoder-lane successor
@@ -543,6 +543,85 @@ This is also the input the charter's experiment 2 needs: a **multi-mode** run wr
 `{vector,lexical,splade}_per_query.json` artifacts that `staged_recall_accounting` requires
 (`scripts/jseval/jseval/projections/staged_recall_accounting.py:78-82`), which the surviving
 single-mode runs do not have (§C).
+
+#### §G.3 RESULT (2026-08-19 — executed live, eval backend port 33231, git `e4af3af2`; delegated campaign, numbers spot-verified against artifacts by the orchestrator)
+
+**Provenance gate passed before any GPU time:** both cells re-materialized from the committed
+recipes via the §G.2 path; commitment sha256 8/8 files match; host pool sha
+`bb2d828b…d5d2` = recipe `real_source_sha256`; assembled digests bit-identical to the recipes
+(1k `f168a182…b2db`, 10k `06f7725a…d289`). Engine `corpus_identity` signatures 1k
+`f1989d7f…3591`, 10k `1d077ade…3018`.
+
+**Pre-registered command deviated from, deliberately and source-verified:** `corpus-fidelity
+--base-url` cannot execute §G.3 as written — it requires the corpus already ingested
+(`corpus_fidelity.py:102`; `serve-eval-backend.py` only boots), passes `output_dir=None` so it
+writes NONE of the artifacts this section says it produces, and its second sub-gate spends paid
+`claude -p` calls while swallowing subprocess failures as "non-leak". Ran instead:
+`python -m jseval run --dataset mixed/de-miracl-{1k,10k}-verbose --base-url
+http://127.0.0.1:33231 --modes vector,lexical,splade,hybrid --embedding --splade --pipeline`,
+each cell twice (`--top-k 10` and `--top-k 100`, because the §G.2 ceiling is R@100 while jseval
+scores depth 10; R@100 computed from the runs' own TREC files). The paid shortcut-leak scalar
+was NOT measured. The §G.3 command block above is retained as dated history; do not re-run it
+as written.
+
+**Validity:** all four runs `comparable: true`, `comparability_reasons: []`, `error_count: 0`,
+`ann_proof PASS` (N/A for lexical), CE loaded (hybrid legs
+`cross_encoder+dense+hybrid+query_classification`), enrichment 100% before querying, 50/50
+queries/mode. Run dirs under `scripts/jseval/tmp/748/g3-{1k,10k}{,-k100}/…` (worktree
+`d004-register-reconcile`, gitignored — numbers below are the durable record).
+
+| cell / mode | vector | lexical | splade | hybrid |
+|---|---|---|---|---|
+| 1k nDCG@10 (k10/k100) | 0.0998 / 0.0998 | 0.0000 | 0.0526 / 0.0558 | 0.0635 / **0.0853** |
+| 1k R@10 · R@100 | 0.16 · 0.44 | 0.00 · 0.12 | 0.08-0.10 · **0.62** | 0.10-0.12 · 0.36 |
+| 10k nDCG@10 (k10/k100) | 0.0638 / 0.0635 | 0.0000 | 0.0058 / 0.0063 | 0.0402 / 0.0404 |
+| 10k R@10 · R@100 | 0.10 · 0.12 | 0.00 · 0.00 | 0.02 · 0.10 | 0.08 · 0.12 |
+
+Staged recall (top_n=100): 1k **union 0.70** (vector 0.44 / splade 0.62 / lexical 0.12),
+leg_miss 0.30, **leak 0.34**, judge_low 0.30; 10k **union 0.16** (0.12 / 0.10 / 0.0),
+leg_miss 0.84, leak 0.04. (top_n=10: 1k union 0.18, 10k union 0.12.)
+
+**Verdict — the §525 open hypothesis is settled: the engine does NOT leave DE recall headroom
+unexploited.** Against the §G.2 offline exact-NN ceiling (R@100 0.48 → 0.14, 1k → 10k;
+`tmp/748/bridge-scale-de-miracl-v2.json`): engine leg-union@100 is **0.70 at 1k (ABOVE the
+0.48 ceiling)** and **0.16 at 10k (at the 0.14 ceiling)**. So DE behaves like EN after all
+(the F-040 shape — engine ≥ its own offline dense ceiling); §G.2's "unlike EN" framing was an
+artifact of comparing a fillered-v1 union number against a dense-only probe. Mechanism: the
+engine's dense leg alone tracks the exact-NN ceiling from slightly below (0.44 vs 0.48 at 1k;
+0.12 vs 0.14 at 10k — HNSW vs exact, within 2 queries of 50); the surplus is entirely legs the
+offline probe does not model, dominated by SPLADE (0.62@100 at 1k) plus chunk-level matching.
+
+**Two findings beyond the pre-registered question:**
+1. **The engine's recall advantage is scale-fragile, and SPLADE is the collapsing leg:** union
+   0.70 → 0.16 (÷4.4) vs the ceiling's 0.48 → 0.14 (÷3.4); SPLADE R@100 0.62 → 0.10. The
+   engine converges onto the representation ceiling at 10k.
+2. **The only internal loss is a 1k-scale fusion/judge leak:** at 1k the legs deliver union
+   0.70 but hybrid surfaces 0.36@100 / 0.12@10 — leak_rate 0.34 (17 CASCADE_LEAK + 15
+   JUDGE_RANK_LOW of 50). At 10k the leak vanishes (0.04) because the legs find almost nothing
+   to drop. Same territory as the open "residual fusion gap needs an owner" inbox item;
+   register F-051 carries the numbers. Caveat: this is a `claim_eligible: false` synthetic
+   stratum — a capability probe, not a production regression.
+
+**§G.4 reopen check:** the depth-sweep skip STANDS — DE exact-NN collapses 1k→10k (§G.2), so
+the reopen condition ("DE exact-NN flat while the engine collapses") does not fire. Noted
+without reopening: candidate depth is a real knob at 1k (hybrid nDCG@10 0.0635 → 0.0853 at
+top-k 10 → 100) and null at 10k (0.0402 → 0.0404) — consistent with the leak finding, since a
+wider window lets fusion keep more of what the legs found.
+
+**Instrument defects hit (logged to the observations inbox):**
+`staged_recall_accounting`'s self-reconciliation is invalid at `top_n != 10` (it cross-checks
+depth-`top_n` presence against the harness's fixed R@10 — the k100 runs report exactly their
+`rank_11_plus` counts as "mismatches"; the k10 runs report 0/50); and
+`corpus_inject._cross_process_assembly` fails on Python 3.13 because `jseval/types.py` shadows
+stdlib `types` in the spawned subprocess (`ImportError: cannot import name 'GenericAlias'`) —
+worked around with `PYTHONSAFEPATH=1`, not fixed here.
+
+**Q-018 disposition:** attribution COMPLETE — (c) task-shape dominant, (a) German
+representation a measured secondary cause (§G.1), (b) refuted on both members (F-040 / §G.2 /
+this section), (d) eliminated, engine exonerated on headroom (this section). Register: Q-018
+moved to ANSWERED → **F-051**. DE remains a **non-claim-bearing** secondary stratum — the
+rebuilt cells are still `claim_eligible: false` (structural certification only; the four
+SCIENTIFIC_GATES were not run here and these runs do not substitute for them).
 
 ### §G.4 The two charter experiments that still have not been attempted
 

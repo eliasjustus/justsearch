@@ -117,9 +117,15 @@ interface Building {
   tools: number;
   errored: boolean;
   /**
-   * The evidence of the LAST assistant message in the turn that carried any. A turn's answer is its
-   * terminal assistant message, and that is the message whose sources the reader is looking at; an
-   * earlier interim message's retrieval is not the evidence for the text on screen.
+   * The evidence of the LAST assistant message in the turn that carried any — last-wins, because a
+   * turn's terminal assistant message is the answer, and an earlier interim message's retrieval is
+   * not what the reader is looking at.
+   *
+   * HONEST LIMIT: the turn's `answer` concatenates EVERY assistant message, so on a multi-message
+   * turn the rendered text is wider than the evidence beside it. That asymmetry is the live path's
+   * too (a run's evidence record is likewise rewritten whole by the last citation event it sees),
+   * so restoring matches what was on screen; it is not an invariant that one message's evidence
+   * covers the whole answer.
    */
   evidence: Sv3TurnEvidence | null;
 }
