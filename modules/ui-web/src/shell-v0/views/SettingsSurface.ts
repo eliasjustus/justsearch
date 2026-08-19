@@ -2336,7 +2336,6 @@ export class SettingsSurface extends JfElement {
       rail: () => this.renderRail(),
       keyboard: () => this.renderKeyboard(),
       'agent-autonomy': () => this.renderAutonomyDial(),
-      'security-privacy': () => this.renderSecurityPrivacyPointer(),
       plugins: () => this.renderPlugins(),
       'plugin-permissions': () => this.renderPluginPermissions(),
       'durable-grants': () => this.renderDurableGrants(),
@@ -2348,28 +2347,6 @@ export class SettingsSurface extends JfElement {
       'workspace-profiles': () => this.renderWorkspaceProfilesDeveloper(),
       data: () => this.renderData(),
     };
-  }
-
-  /** Tempdoc 855 §4 — the Security & Privacy category's native page: the pointer block that used
-   *  to sit inline in the one-page Settings scroll (629 moved the real controls out to
-   *  `core.security-surface`), extracted verbatim so the register can dispatch it by key. */
-  private renderSecurityPrivacyPointer(): TemplateResult {
-    return html`
-      <div class="section">
-        <h3>${icon({ name: 'shield', size: 12 })} Security &amp; Privacy</h3>
-        <p class="help" style="margin-top: 0">
-          Chat encryption, encrypted backups, auto-lock, and what's protected at rest now have their
-          own home.
-        </p>
-        <div style="margin-top: 0.5rem">
-          <jf-button
-            variant="secondary"
-            .onActivate=${() => this.host_.navigation.navigate('core.security-surface')}
-            >Open Security &amp; Privacy</jf-button
-          >
-        </div>
-      </div>
-    `;
   }
 
   /** Tempdoc 855 §4 — Feedback capture moves from nested-inside-Security-pointer to its own

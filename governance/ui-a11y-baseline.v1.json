@@ -43,6 +43,17 @@
       "note": "color-contrast: pre-existing light-palette defects in chat view/status deck/walkthrough card, newly VISIBLE behind the 855 settings modal (the old full-stage settings page hid them); owned by those surfaces, logged to observations 2026-08-19. (select-name fixed in 855 P1 — jf-enter-action-picker now carries a real accessible name.)"
     },
     {
+      "surface": "security-light",
+      "uiShotStep": "security-light",
+      "e2eViews": [
+        "security"
+      ],
+      "knownRules": [
+        "color-contrast"
+      ],
+      "note": "Same pre-existing light-palette chrome defects (chat view/status deck) as the settings-light entry, newly VISIBLE because the security step now opens the 855 settings modal over the stage; owned by those surfaces, logged to observations 2026-08-19."
+    },
+    {
       "surface": "health",
       "uiShotStep": "health",
       "e2eViews": [

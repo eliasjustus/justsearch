@@ -147,12 +147,15 @@ const CORE_SURFACES: PluginSurfaceContribution[] = [
   {
     // Tempdoc 629 (remaining-work) — unified Security & Privacy surface (encryption control + at-rest
     // status), moved out of Settings.
+    // Tempdoc 855 §5 item 1 / §9.3 — absorbed into the settings window as a member category (Privacy &
+    // Trust). Placement flip must stay in step with CoreSurfaceCatalog.java (check-surface-composition
+    // LEG-2 parity gate); deep-links keep working via the member→host alias redirect (§9.4).
     id: 'core.security-surface',
     mountTag: 'jf-security-surface',
     labelKey: 'registry-surface.security-surface.label',
     descriptionKey: 'registry-surface.security-surface.description',
     audience: 'USER',
-    placement: 'RAIL',
+    placement: 'DEEPLINK',
   },
   {
     // Tempdoc 561 P-E — learned-memory (inspect / forget): the durable "what it knows" facts half.

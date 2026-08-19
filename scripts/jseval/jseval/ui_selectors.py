@@ -61,6 +61,11 @@ CSS_CITATION_HIGHLIGHT = '.cite-ref, [data-cite-key]'
 CSS_SETTINGS_WINDOW = 'jf-settings-window'
 CSS_SETTINGS_WINDOW_DIALOG = 'jf-settings-window dialog[open]'
 CSS_SETTINGS_WINDOW_CONTENT = 'jf-settings-window jf-settings-surface'
+# Tempdoc 855 §5 item 1 — Security absorbed into Settings as a member category (off the rail). Its
+# deep-link redirects onto the settings window (member→host alias), which mounts the member surface
+# INSIDE the persistent `<jf-settings-surface>` — this is the readiness signal that the Security
+# category (not just Settings generally) is the one active/rendered.
+CSS_SETTINGS_WINDOW_SECURITY_CONTENT = 'jf-settings-window jf-settings-surface jf-security-surface'
 # Tempdoc 697 activation — LIVE-VERIFIED (headless Playwright probe against this worktree's
 # auto-served Vite, --fixtures) working locator for the ONE composer textarea. `SEARCH_INPUT`
 # / `TID_SEARCH_INPUT` / `CSS_SEARCH_INPUT_TEXTAREA` (above) are STALE: tempdoc 687 ("the Search

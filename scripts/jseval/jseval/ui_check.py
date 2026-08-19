@@ -601,16 +601,27 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
                     await page.evaluate(
                         "(id) => { location.hash = `justsearch://surface/${id}`; }", surface_id
                     )
-                if surface_id == S.RAIL_SURFACE_SETTINGS:
+                if surface_id in (S.RAIL_SURFACE_SETTINGS, S.RAIL_SURFACE_SECURITY):
                     # tempdoc 855: Settings is MODAL — the affordance opens the <jf-settings-window>
                     # dialog OVER the stage rather than swapping the stage surface, so wait on the
                     # open dialog + its mounted content instead of a stage mount.
+                    #
+                    # tempdoc 855 §5 item 1 — Security has no rail button any more (off-rail DEEPLINK,
+                    # absorbed as a settings member category), so the `rail_css` click above always
+                    # falls through to the hash-route except branch; the member→host alias redirect
+                    # then opens the settings window at the Security category. Wait for that category
+                    # to actually be the one mounted (not just the window/settings-surface shell).
                     await page.locator(S.CSS_SETTINGS_WINDOW_DIALOG).wait_for(
                         state="visible", timeout=10_000
                     )
-                    await page.locator(S.CSS_SETTINGS_WINDOW_CONTENT).first.wait_for(
-                        state="attached", timeout=10_000
-                    )
+                    if surface_id == S.RAIL_SURFACE_SECURITY:
+                        await page.locator(S.CSS_SETTINGS_WINDOW_SECURITY_CONTENT).first.wait_for(
+                            state="attached", timeout=10_000
+                        )
+                    else:
+                        await page.locator(S.CSS_SETTINGS_WINDOW_CONTENT).first.wait_for(
+                            state="attached", timeout=10_000
+                        )
                 if cooldown_ms > 0:
                     await asyncio.sleep(cooldown_ms / 1000)
             if view_name == "ai-brain-advanced":

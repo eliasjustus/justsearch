@@ -58,6 +58,7 @@ import {
 import {
   __resetSessionRegistryForTest,
 } from '../plugin-api/sessionRegistry.js';
+import { requestMemberTab } from '../router/memberTabIntent.js';
 import {
   setCustomThemeEntries,
   __resetCatalogForTest,
@@ -404,5 +405,40 @@ describe('SettingsSurface — settle transients on hide (tempdoc 609 instance-re
     expect(v.themeImportDraft).toBe('{"id":"my-draft-theme"}');
     // The user's category choice is recoverable and survives.
     expect(v.activeCategory).toBe('developer');
+  });
+});
+
+describe('SettingsSurface — Security member deep-link (tempdoc 855 §5 item 1 / §9.3)', () => {
+  beforeEach(() => {
+    __resetUserConfigForTest();
+    __resetThemeStateForTest();
+    __resetCatalogForTest();
+    resetSurfaceCatalog();
+    seedSurfaceCatalog(RAIL_FIXTURE);
+    __resetSessionRegistryForTest();
+  });
+
+  it('drains a pending member-tab intent on mount: activeCategory becomes core.security-surface', async () => {
+    // Mirrors the real redirect flow (catalogResolver.ts memberHostAliases → requestMemberTab) fired
+    // BEFORE the settings surface mounts — the one-shot `pending` path (memberTabIntent.ts).
+    requestMemberTab('core.settings-surface', 'core.security-surface');
+    const el = await mountSurface();
+    const v = el as unknown as Record<string, unknown>;
+    expect(v.activeCategory).toBe('core.security-surface');
+    el.remove();
+  });
+
+  it('a live member-tab request while already mounted switches activeCategory to core.security-surface', async () => {
+    // Mirrors a member deep-link landing while Settings is already the active surface — no re-mount,
+    // so the intent must arrive via the subscribe path, not the one-shot drain (§11.2).
+    const el = await mountSurface('appearance');
+    const v = el as unknown as Record<string, unknown>;
+    expect(v.activeCategory).toBe('appearance');
+
+    requestMemberTab('core.settings-surface', 'core.security-surface');
+    await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+
+    expect(v.activeCategory).toBe('core.security-surface');
+    el.remove();
   });
 });

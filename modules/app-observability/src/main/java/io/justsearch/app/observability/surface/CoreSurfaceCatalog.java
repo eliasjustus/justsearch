@@ -593,18 +593,32 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
               // Tempdoc 571 §11 / 578 — Settings ⊇ Appearance: the preferences window hosts the two
               // theming surfaces (Skins gallery, presentation Editor) as an Appearance tab group, so
               // "how it looks" has one home instead of separate rail icons.
+              // Tempdoc 855 §5 item 1 / §9.3 — Settings ⊇ Security & Privacy: the settings window
+              // absorbs core.security-surface as a member category under Privacy & Trust (set-once
+              // config, not a daily rail destination); its deep-links keep working via the existing
+              // member→host alias redirect (§9.4).
               .withMembers(
-                  List.of(PRESENTATION_GALLERY_SURFACE_ID, PRESENTATION_EDITOR_SURFACE_ID)),
+                  List.of(
+                      PRESENTATION_GALLERY_SURFACE_ID,
+                      PRESENTATION_EDITOR_SURFACE_ID,
+                      SECURITY_SURFACE_ID)),
           // Tempdoc 629 (remaining-work) — the unified Security & Privacy surface: the encryption
           // control + recovery + encrypted backup/import + auto-lock (moved out of Settings) above the
-          // read-only at-rest status. A standalone RAIL surface (no members, no operations).
+          // read-only at-rest status.
+          // Tempdoc 855 §5 item 1 — absorbed into the settings window as a member category (Privacy &
+          // Trust). This partially reverses 629's placement but not its substance: 629's point was "own
+          // home with real sections", which the settings window now provides directly.
+          // Tempdoc 571 §11 / 578 — Security is a MEMBER of Settings (its "Security & Privacy"
+          // category), so its home is its host: DEEPLINK keeps it off the rail (and out of every
+          // placement==='RAIL' consumer) while staying URL-routable; the member→host redirect lands a
+          // core.security-surface deep-link on Settings with the Security category active.
           new Surface(
               SECURITY_SURFACE_ID,
               Presentation.of(
                   new I18nKey("registry-surface.security-surface.label"),
                   new I18nKey("registry-surface.security-surface.description")),
               Audience.USER,
-              Placement.RAIL,
+              Placement.DEEPLINK,
               new SurfaceConsumes(
                   /* resources */ Set.of(),
                   /* operations */ Set.of(),

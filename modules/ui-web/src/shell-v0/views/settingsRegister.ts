@@ -123,12 +123,12 @@ export const SETTINGS_REGISTER: readonly SettingsGroup[] = [
     labelKey: 'settings.group.privacy-trust',
     categories: [
       {
-        id: 'security-privacy',
-        kind: 'native',
-        labelKey: 'settings.category.security-privacy',
-        sections: [
-          { key: 'security-privacy', labelKey: 'settings.section.security-privacy' },
-        ],
+        // Tempdoc 855 §5 item 1 / §9.3 — absorbed member category: core.security-surface (encryption,
+        // backups, auto-lock) mounts here directly instead of a native pointer page linking out to it
+        // (629's interim placement, now superseded — the settings window is the real home).
+        id: 'core.security-surface',
+        kind: 'member',
+        memberSurfaceId: 'core.security-surface',
       },
       {
         id: 'plugins',
