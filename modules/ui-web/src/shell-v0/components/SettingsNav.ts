@@ -108,9 +108,9 @@ export class SettingsNav extends JfElement {
       font-size: var(--font-size-sm);
       padding: 0.375rem 0.625rem;
     }
-    .search-input::placeholder {
-      color: var(--text-tertiary, var(--text-secondary));
-    }
+    /* 574 Move 1/2 — placeholder color is a Class-B ambient facet (ambient-purity gate): the ONE
+       definition lives in ambientStyles.ts, adopted into this shadow root by JfElement. No local
+       placeholder rule here. */
     .search-input:focus-visible {
       outline: 2px solid var(--focus-ring-color, var(--accent-tint));
       outline-offset: -1px;

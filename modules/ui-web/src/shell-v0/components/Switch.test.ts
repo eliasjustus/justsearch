@@ -61,7 +61,7 @@ describe('<jf-switch>', () => {
     expect(calls).toEqual([{ checked: true }, { checked: true }]);
   });
 
-  it('disabled is inert: no event on click, tabindex=-1', async () => {
+  it('disabled is inert: no event on click, tabindex=-1, aria-disabled=true', async () => {
     const el = await mount();
     el.checked = false;
     el.disabled = true;
@@ -70,9 +70,18 @@ describe('<jf-switch>', () => {
     el.addEventListener('change', () => calls.push(true));
     const sw = el.shadowRoot!.querySelector('[role="switch"]') as HTMLElement;
     expect(sw.getAttribute('tabindex')).toBe('-1');
+    expect(sw.getAttribute('aria-disabled')).toBe('true');
     sw.click();
     sw.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
     expect(calls).toEqual([]);
+  });
+
+  it('enabled switch has no aria-disabled attribute', async () => {
+    const el = await mount();
+    el.disabled = false;
+    await el.updateComplete;
+    const sw = el.shadowRoot!.querySelector('[role="switch"]') as HTMLElement;
+    expect(sw.hasAttribute('aria-disabled')).toBe(false);
   });
 
   it('label sets aria-label; omitted label leaves it unset', async () => {

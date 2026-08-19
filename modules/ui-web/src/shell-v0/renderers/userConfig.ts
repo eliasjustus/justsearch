@@ -74,13 +74,20 @@ export interface RendererUserConfig {
 
   /**
    * 569 §19 Seam 4 — the user-selected accessibility/adaptation axes the projection layer reads.
-   * `contrast` toggles the global `.high-contrast` class; `motion: 'reduced'` toggles `.motion-reduced`
-   * (forces reduced-motion + quiets liveness). Density is the existing `density` field above (it threads
-   * to renderers via the DensityController). `state/adaptationProfile.ts applyAdaptationProfile` is the
-   * ONE authority that writes all three + projects them to global DOM state; the cascade does the rest,
-   * so an adaptation axis is O(1) and total across every present + future surface.
+   * `motion: 'reduced'` toggles `.motion-reduced` (forces reduced-motion + quiets liveness). Density is
+   * the existing `density` field above (it threads to renderers via the DensityController).
+   * `state/adaptationProfile.ts applyAdaptationProfile` is the ONE authority that writes both +
+   * projects them to global DOM state; the cascade does the rest, so an adaptation axis is O(1) and
+   * total across every present + future surface.
+   *
+   * `contrast` is RETIRED (tempdoc 855 §17 R1): the canonical high-contrast store is the backend-
+   * persisted `UISettings.highContrast`, whose one writer is `themeState.applyAppearance`. The field
+   * remains declared solely so `adaptationProfile.migrateLegacyContrastPreference` can read an
+   * existing FE-local preference once, hand it to the canonical field, and delete it. Nothing writes
+   * it any more.
    */
   accessibilityProfile?: {
+    /** @deprecated Legacy FE-local axis; read once by the one-time contrast migration, then cleared. */
     contrast?: 'normal' | 'high';
     motion?: 'full' | 'reduced';
   };

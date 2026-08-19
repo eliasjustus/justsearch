@@ -857,3 +857,25 @@ loop; refute-first reviews per round (opus for the contrast chunk).
   session, so mutating interaction checks fold into R2's live pass on an owned
   stack): 2 switches with the full role/aria-checked/tabindex triad, 6 groups
   with radiogroup role and correct roving tabindex. Unit: 437 files / 5597 green.
+
+- **R2 (this commit)** — contrast single authority, per the §17 contract. Canonical =
+  backend `UISettings.highContrast`; the Accessibility `jf-switch` is the ONE control,
+  writing through the existing machine/save path; `accessibilityProfile.contrast`
+  RETIRED (not derived — zero remaining readers) with a one-time, fail-safe boot
+  migration (clear-last ordering: any GET/POST failure retries next boot; verified
+  against read-only-409, sanitizer-strip, and both failure orderings by an
+  adversarial review that could not construct a data-loss case). Both duplicate
+  renders removed (hand + declared presentation). Review found 2 merge-blockers,
+  fixed in-commit: the Related-settings cross-link rendered only on the fallback
+  path (moved to the branch join in renderInterfaceRegion; test now pins the
+  DEFAULT declared path — the wrong-gate pattern caught and corrected), and an
+  ambient-purity gate red (re-authored ::placeholder removed; the JfElement ambient
+  authority already covers it). Ride-alongs: the now-sole Shell `jf-set-appearance`
+  listener seam pinned by a real mounted-shell test; `jf-switch` gains
+  aria-disabled; four now-false canonical-doc claims corrected (HC persistence
+  moved backend-side; phantom Cmd+Shift+H removed). Live: narrow-PATCH verified
+  against the real backend (one field flipped, all others intact + durable; POST
+  response-shape quirk logged); ui-shot set 0 NEW axe. Residual: the interactive
+  browser smoke (HC toggle click round-trip, migration seed, cross-link click)
+  awaits a visible browser window — pinned by unit tests meanwhile; folds into
+  R3's live pass.

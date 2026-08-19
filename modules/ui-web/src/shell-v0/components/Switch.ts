@@ -94,6 +94,7 @@ export class Switch extends JfElement {
         class="switch ${this.checked ? 'on' : ''} ${this.disabled ? 'disabled' : ''}"
         role="switch"
         aria-checked=${this.checked ? 'true' : 'false'}
+        aria-disabled=${this.disabled ? 'true' : nothing}
         aria-label=${this.label ?? nothing}
         tabindex=${this.disabled ? '-1' : '0'}
         @click=${this.toggle}

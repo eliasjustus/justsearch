@@ -636,3 +636,58 @@ describe('Shell — settings window close semantics (tempdoc 855 §11.1 D3/D4)',
     unsubscribe();
   });
 });
+
+// Fix-round F2 (tempdoc 855) — pins the Shell listener seam. `SettingsSurface.highContrast.test.ts`
+// covers the whole chain from the Accessibility switch click through to the `high-contrast` root
+// class, but binds its OWN two-line adapter onto `applyAppearance` rather than exercising Shell's
+// real `document.addEventListener('jf-set-appearance', this.setAppearanceListener)` registration
+// (Shell.ts:1091) — that seam had zero coverage. This is the sole remaining HC set-site (the
+// Appearance card's duplicate toggle was pruned, §17 R1), so pinning its OWN registration here
+// closes the gap: mount the real Shell, dispatch the SAME event a real caller (SettingsSurface via
+// `patch()` → the appearance statechart's `set-appearance` effect) would dispatch, and assert the
+// class Shell's listener is responsible for applying.
+describe('Shell — appearance listener seam (tempdoc 855 fix round F2)', () => {
+  beforeEach(() => {
+    resetSurfaceCatalog();
+    __resetUserConfigForTest();
+    __resetStoreRegistryForTest();
+    __resetSurfaceSchemasForTest();
+    __resetBootstrapForTest();
+    deactivateProjection();
+    window.location.hash = '';
+    seedTwoSurfaces();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ entries: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    document.querySelectorAll('jf-shell').forEach((el) => el.remove());
+    resetSurfaceCatalog();
+    __resetUserConfigForTest();
+    __resetStoreRegistryForTest();
+    __resetSurfaceSchemasForTest();
+    __resetBootstrapForTest();
+    deactivateProjection();
+    window.location.hash = '';
+    vi.unstubAllGlobals();
+    document.documentElement.classList.remove('high-contrast');
+  });
+
+  it('registers the jf-set-appearance listener that applies the high-contrast root class', async () => {
+    await renderShell();
+    expect(document.documentElement.classList.contains('high-contrast')).toBe(false);
+
+    document.dispatchEvent(
+      new CustomEvent('jf-set-appearance', { detail: { highContrast: true } }),
+    );
+
+    expect(document.documentElement.classList.contains('high-contrast')).toBe(true);
+  });
+});

@@ -141,7 +141,11 @@ Goal: validate “normal user” workflows in the **web UI** (Vite browser mode)
   - ✅ Backend accepts both payload shapes (verified via direct call):
     - legacy/desktop flat payload (used by `BrainView`)
     - nested web payload (`{ ui: {...}, llm: {...} }`, used by `useSettings`)
-  - Note: UI-only preferences (high contrast/density/vim mode/default action) are intentionally persisted client-side; only `theme` is merged into backend settings today.
+  - Note: UI-only preferences (density/default action) are intentionally persisted client-side.
+    **Correction (tempdoc 855, 2026-08-19):** high contrast is NOT client-side-only — it is the
+    canonical, backend-persisted `UISettings.highContrast` field, merged into backend settings via
+    `POST /api/settings/v2` alongside `theme` (see `secondary-views-behavior.md` §5 Settings
+    persistence and its §2 Appearance supersession note).
   - ⚠️ Toggle interactions not deterministically automatable in this run due to ref churn; recommend a quick manual click-through in a real browser.
 
 ### W9. AI flows (optional)

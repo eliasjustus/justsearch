@@ -26,6 +26,12 @@ export const SETTINGS_INTERFACE_REGION = 'core.settings.interface';
  * renderers (option-button grid / switch) — matching the hand-authored look, which is what lets
  * this declaration be the DEFAULT render with no visual downgrade. The `x-enum-labels` /
  * `x-enum-descriptions` carry the human text the bespoke buttons showed (full parity).
+ *
+ * `highContrast` is deliberately NOT declared here (tempdoc 855 §15.4/§17 R1). It used to be, which
+ * made this region a SECOND render of the same toggle Appearance hand-authored — and the two of them
+ * a second authority over the `high-contrast` root class. The one visible control now lives in the
+ * Accessibility section and writes through `SettingsSurface.patch()`, so `APPEARANCE_FLOW`'s
+ * `HC_ON`/`HC_OFF` edges below have exactly one producer again. Do not re-add it here.
  */
 const SETTINGS_INTERFACE_SCHEMA = {
   type: 'object',
@@ -55,12 +61,6 @@ const SETTINGS_INTERFACE_SCHEMA = {
         light: 'Bright theme',
       },
     },
-    highContrast: {
-      type: 'boolean',
-      title: 'High contrast',
-      description: 'Better visibility',
-      'x-ui-renderer': 'toggle-switch',
-    },
     vimMode: {
       type: 'boolean',
       title: 'Vim keybindings',
@@ -82,7 +82,6 @@ const SETTINGS_INTERFACE_UISCHEMA: UISchemaElement = {
   elements: [
     { type: 'Control', scope: '#/properties/mode' },
     { type: 'Control', scope: '#/properties/theme' },
-    { type: 'Control', scope: '#/properties/highContrast' },
     { type: 'Control', scope: '#/properties/vimMode' },
     { type: 'Control', scope: '#/properties/defaultAction' },
   ],

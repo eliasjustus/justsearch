@@ -409,6 +409,15 @@ Theme selection:
 
 High Contrast toggle — syncs to both settings store and the `onHighContrastChange` prop (which applies the `.high-contrast` class to the shell).
 
+> **Superseded (tempdoc 855 §17 R1, 2026-08-19):** the React-era `onHighContrastChange` prop is
+> gone. High contrast is now the ONE control, in the Accessibility section (`jf-switch`,
+> `data-testid="settings-high-contrast"`), writing through `SettingsSurface.patch()` to the
+> canonical `UISettings.highContrast` field — the same backend-persisted path every other setting
+> uses. It reaches the `.high-contrast` root class via the APPEARANCE_FLOW statechart's
+> `set-appearance` effect, applied by `Shell.ts`'s `jf-set-appearance` listener (`themeState.applyAppearance`).
+> The Appearance section (this one) now renders a cross-link row pointing at Accessibility instead
+> of its own duplicate toggle.
+
 #### 3. Keyboard (Keyboard icon)
 
 - **Vim Mode** toggle — "j/k navigation, / for search". `vimMode` is a persisted backend field (added to `UISettings` type, `UiSettingsV2Schema`, and the backend `UiSettingsV2` DTO as `vimMode: Boolean`). The setting round-trips correctly through `POST /api/settings/v2` and survives backend restarts. Previously this was localStorage-only.
@@ -427,7 +436,12 @@ Read-only reference grid (2 columns on md+):
 | ↑↓ | Navigate |
 | Enter | Open file |
 | Esc | Clear / close |
-| Cmd+Shift+H | High contrast |
+
+> **Correction (tempdoc 855 fix round, 2026-08-19):** this grid previously listed `Cmd+Shift+H` →
+> "High contrast" — no such shortcut binding exists in code (`git grep` for a Shift+H handler
+> across `modules/ui-web/src` turns up nothing). High contrast is toggled via the Accessibility
+> section's switch only (see the §2 Appearance supersession note above); the row is removed rather
+> than corrected because no shortcut replaces it.
 
 #### 6. Data (Database icon)
 

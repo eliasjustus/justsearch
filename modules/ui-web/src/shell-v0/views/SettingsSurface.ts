@@ -7,10 +7,10 @@
  * `<jf-settings-nav>`'s vertical grouped nav + accordion + scroll-spy instead of the retired
  * horizontal `<jf-surface-tabs>` presentation.
  *
- * Full functional parity with the pre-855 flat page: Interface (mode), Appearance
- * (theme + high-contrast), Keyboard (default action), Desktop autostart (Tauri-only), Reset to
- * defaults via `core.reset-settings`, Delete all data (Tauri-only, dangerous) — now reachable as
- * per-category pages instead of one long scroll.
+ * Full functional parity with the pre-855 flat page: Interface (mode), Appearance (theme),
+ * Accessibility (density · high contrast · motion), Keyboard (default action), Desktop autostart
+ * (Tauri-only), Reset to defaults via `core.reset-settings`, Delete all data (Tauri-only,
+ * dangerous) — now reachable as per-category pages instead of one long scroll.
  *
  * Persists settings via POST /api/settings/v2 (matches Library + Brain
  * patterns). Reset routes through OperationClient.
@@ -31,6 +31,7 @@ import { icon } from '../components/Icon.js';
 // §2.A: rail-customization labels resolve through the one surface-label
 // authority — never the raw `core.*-surface` id.
 import { present } from '../display/present.js';
+import { localizeResourceKey } from '../../i18n/resourceCatalog.js';
 import { applyAppearance, getSurfaceMode, setSurfaceMode } from '../state/themeState.js';
 import { setUiMode, getUiMode, subscribeUiMode } from '../state/uiModeState.js';
 // 569 Move 1/3 — the body-tier apply path: a real region rendered from a declaration.
@@ -457,6 +458,23 @@ export class SettingsSurface extends JfElement {
       font-size: var(--font-size-xs);
       color: var(--text-secondary);
       margin-top: 0.125rem;
+    }
+    /* 855 §17 R1 — the cross-link row's affordance (see renderRelatedSettingsRow). */
+    .link-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.25rem 0.5rem;
+      border: none;
+      border-radius: 0.375rem;
+      background: transparent;
+      color: var(--text-link);
+      font-family: inherit;
+      font-size: var(--font-size-sm);
+      cursor: pointer;
+    }
+    .link-row:hover {
+      background: var(--surface-tertiary);
     }
     .option-btn {
       flex: 1;
@@ -1045,7 +1063,10 @@ export class SettingsSurface extends JfElement {
   private renderInterfaceRegion(): TemplateResult {
     const body = activeBodyFor(SETTINGS_INTERFACE_REGION);
     if (!body) {
-      return html`${this.renderInterface()}${this.renderAppearance()}`;
+      return html`
+        ${this.renderInterface()}${this.renderAppearance()}
+        <div class="section">${this.renderRelatedSettingsRow('appearance', 'accessibility')}</div>
+      `;
     }
     return html`
       <div class="section">
@@ -1057,6 +1078,7 @@ export class SettingsSurface extends JfElement {
             void this.patch(e.detail.data as Partial<UISettings>)}
         ></jf-declared-surface>
       </div>
+      <div class="section">${this.renderRelatedSettingsRow('appearance', 'accessibility')}</div>
     `;
   }
 
@@ -1108,18 +1130,6 @@ export class SettingsSurface extends JfElement {
         </div>
         <div class="toggle-row">
           <div>
-            <div class="toggle-label">High contrast</div>
-            <div class="toggle-desc">Better visibility</div>
-          </div>
-          <jf-switch
-            .checked=${!!this.ui.highContrast}
-            label="High contrast"
-            @change=${(e: CustomEvent<{ checked: boolean }>) =>
-              void this.patch({ highContrast: e.detail.checked })}
-          ></jf-switch>
-        </div>
-        <div class="toggle-row">
-          <div>
             <div class="toggle-label">Solid surfaces</div>
             <div class="toggle-desc">Opaque panels, no glass blur</div>
           </div>
@@ -1134,6 +1144,42 @@ export class SettingsSurface extends JfElement {
   }
 
   /**
+   * Tempdoc 855 §15.4/§17 R1 — the cross-link row. Appearance used to render its OWN High-contrast
+   * toggle beside Accessibility's contrast picker: two controls, two stores, one `high-contrast`
+   * class. The control now lives once (Accessibility); this row is what replaces it — a pointer, not
+   * a second authority. Rendered from `renderInterfaceRegion()` (not `renderAppearance()`), because
+   * that region renders EITHER the declared `<jf-declared-surface>` OR the built-in
+   * Interface+Appearance render, never both — `renderAppearance()` is dead on the default declared
+   * path (production boot applies `CORE_DECLARED`), so the row has to sit at the branch join to
+   * render on both paths, exactly once.
+   *
+   * Deliberately small and reusable (the first formal cross-link row): it takes a register
+   * coordinate — the same `{categoryId, sectionKey}` pair `<jf-settings-nav>` emits and
+   * `searchRegister()` returns — and activates it through the SAME `activateSearchHit` path, so the
+   * cross-category case (select the category, then jump once its content has rendered) is handled by
+   * the existing composition rather than a second navigation rule. The label is the target section's
+   * own `settings.section.*` catalog label, so a renamed section renames its cross-links too.
+   */
+  private renderRelatedSettingsRow(categoryId: string, sectionKey: string): TemplateResult {
+    const section = SETTINGS_REGISTER.flatMap((g) => g.categories)
+      .find((c) => c.id === categoryId)
+      ?.sections?.find((s) => s.key === sectionKey);
+    if (!section) return html``;
+    return html`
+      <div class="toggle-row">
+        <div class="toggle-label">${localizeResourceKey('settings.related.label')}</div>
+        <button
+          class="link-row"
+          type="button"
+          @click=${() => this.activateSearchHit(categoryId, sectionKey)}
+        >
+          ${localizeResourceKey(section.labelKey)}${icon({ name: 'chevron-right', size: 14 })}
+        </button>
+      </div>
+    `;
+  }
+
+  /**
    * Tempdoc 567 §9.4 — flip the glass/solid surface mode. `setSurfaceMode` (the theme authority)
    * applies it live through the one appearance writer AND persists it (FE-only, user-state document).
    */
@@ -1143,23 +1189,25 @@ export class SettingsSurface extends JfElement {
   }
 
   /**
-   * 569 §19 Seam 4 — the adaptation / accessibility axes (density · contrast · motion). One authority
-   * (`applyAdaptationProfile`) persists them per-profile and projects them to global DOM state; the
-   * cascade re-projects every surface, so a single switch is total and contrast stays AA by construction.
+   * 569 §19 Seam 4 — the adaptation / accessibility axes. Density + motion persist per-profile via the
+   * one `applyAdaptationProfile` authority and project to global DOM state; the cascade re-projects
+   * every surface, so a single switch is total.
+   *
+   * Tempdoc 855 §15.4/§17 R1 — High contrast is the ONE visible contrast control (Appearance's
+   * duplicate became a cross-link row), and it deliberately does NOT go through
+   * `applyAdaptationProfile`: its canonical store is the backend-persisted `UISettings.highContrast`,
+   * so it writes through `patch()` like every other backed setting (→ appearance statechart →
+   * `set-appearance` + the narrow `save-settings` POST). That leaves `themeState.applyAppearance` as
+   * the single writer of the `high-contrast` root class.
    */
   private renderAccessibility(): TemplateResult {
     const p = getAdaptationProfile();
     const density = p.density ?? 'comfortable';
-    const contrast = p.contrast ?? 'normal';
     const motion = p.motion ?? 'full';
     const densityOptions: OptionButtonGroupOption[] = [
       { value: 'compact', label: 'Compact', description: 'More on screen' },
       { value: 'comfortable', label: 'Comfortable', description: 'Default' },
       { value: 'spacious', label: 'Spacious', description: 'Roomy' },
-    ];
-    const contrastOptions: OptionButtonGroupOption[] = [
-      { value: 'normal', label: 'Normal', description: 'Default' },
-      { value: 'high', label: 'High', description: 'Guaranteed AA' },
     ];
     const motionOptions: OptionButtonGroupOption[] = [
       { value: 'full', label: 'Full', description: 'Animations on' },
@@ -1178,17 +1226,20 @@ export class SettingsSurface extends JfElement {
               applyAdaptationProfile({ density: e.detail.value as 'compact' | 'comfortable' | 'spacious' })}
           ></jf-option-button-group>
         </div>
-        <div class="toggle-label" style="margin-bottom: 0.35rem">Contrast</div>
-        <div class="row" style="margin-bottom: 0.75rem">
-          <jf-option-button-group
-            .options=${contrastOptions}
-            .value=${contrast}
-            ?enabled=${!this.readOnly}
-            @change=${(e: CustomEvent<{ value: string }>) =>
-              applyAdaptationProfile({ contrast: e.detail.value as 'normal' | 'high' })}
-          ></jf-option-button-group>
+        <div class="toggle-row" data-testid="settings-high-contrast">
+          <div>
+            <div class="toggle-label">High contrast</div>
+            <div class="toggle-desc">Guaranteed AA — better visibility</div>
+          </div>
+          <jf-switch
+            .checked=${this.ui.highContrast === true}
+            ?disabled=${this.readOnly}
+            label="High contrast"
+            @change=${(e: CustomEvent<{ checked: boolean }>) =>
+              void this.patch({ highContrast: e.detail.checked })}
+          ></jf-switch>
         </div>
-        <div class="toggle-label" style="margin-bottom: 0.35rem">Motion</div>
+        <div class="toggle-label" style="margin: 0.75rem 0 0.35rem">Motion</div>
         <div class="row">
           <jf-option-button-group
             .options=${motionOptions}
