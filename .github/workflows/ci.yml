@@ -200,6 +200,14 @@ jobs:
       - name: Update never ships or deletes models
         run: node scripts/ci/check-update-preserves-models.mjs
 
+      # Tempdoc 801 D14.b: the release sequence is the one number that can permanently brick
+      # update acceptance (updater.rs refuses anything below the client's persisted
+      # highest_accepted_sequence). Its derivation runs exactly once per release cut, inside a
+      # manual tag dispatch nothing else exercises — so this offline suite is the only place its
+      # max-selection, fail-closed, and floor branches are ever executed.
+      - name: Test the release-sequence derivation
+        run: node scripts/ci/derive-release-sequence.test.mjs
+
       - name: Test the installer-branding gate
         run: node scripts/ci/check-installer-branding.test.mjs
 

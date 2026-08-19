@@ -3,7 +3,7 @@ title: Search Quality Register
 type: reference
 status: stable
 created: 2026-03-19
-updated: 2026-08-14
+updated: 2026-08-19
 description: "Shared decision register for search quality. Read before starting search work. Update before finishing."
 ---
 
@@ -1182,6 +1182,38 @@ above)*
   `#citationAuthorityMatchesSectionHeaders` :251-266 — a pin that the ask prompt's citation
   instruction names the same bracketed 1-based ordinals `ContextBudgeter.sectionHeader` emits, so a
   change to the S1 header shape breaks the S6 prompt test; the S1 ⇔ S6 coupling).
+
+### F-051: citation sentences were cut out of MARKDOWN as if it were prose, so a whole list scored as one "sentence" — segmentation now follows block structure, and `sentences_total` (836 §3.6's coverage denominator) is not comparable across the change (tempdoc 847 S5, 2026-08-19)
+
+- **Defect, measured over 19 answer shapes (64 keys, 847 §S0-results):** `BreakIterator` over the
+  raw markdown never breaks at a marker — a terminal `.` followed by whitespace and a bullet,
+  ordinal, quote, pipe or heading marker (each with its trailing space) suppresses the boundary
+  outright — so a bullet list, blockquote or table plus its lead-in paragraph became ONE key handed
+  to the cross-encoder. A blank line does not fix it: it
+  splits the terminator off as an orphan `"."`. 8 of 64 keys (12.5 %) carried no sentence at all
+  (orphan `.`, bare ordinals) and were scored, persisted as evidence, and counted in the denominator.
+- **Fix:** one authority, `AnswerSegmentation.splitSentences`, parses the answer with commonmark
+  (plus the GFM tables and task-list extensions, so a table is one block per CELL and a `- [x]` key
+  starts at its text — what `marked` renders, and what the renderer's block clamp measures against)
+  and runs `BreakIterator` inside ONE block, never across one. A segment with no letter is never
+  scored: exactly the measured junk class, and it closes the `"2026."`-shaped hole a length floor
+  admits. `Locale.ROOT` replaces `Locale.ENGLISH` — measured inert across `en`/`root`/`ja`/`zh`,
+  so it was a per-language lever in appearance only (HI-6).
+- **The denominator moved, in BOTH directions — do not compare across this change.** Over the
+  23-shape matrix: 73 keys → 85, junk 9 → 0, fused 37 → 0. Junk removal subtracts; de-fusion adds
+  more back (a three-item list that was one key is now four). Reported coverage generally **rises**
+  on list-shaped answers and may **fall** on table-shaped ones, where label cells are now counted as
+  unmatched sentences instead of hiding inside one key that matched trivially. A grounding-coverage
+  figure recorded before 2026-08-19 answers a different question from one recorded after.
+- **Reach into the eval:** the RAG faithfulness metric (`RagQualityEvalTest#computeFaithfulness`)
+  scores the answer's sentences, and it carried its own copy of the pre-847 splitter — so it was
+  measuring a segmentation production had stopped using. It now calls the same authority; a
+  faithfulness number from before this change is on the old segmentation.
+- **Evidence:** tempdoc 847 §2.2 + §S0-results (the 19-shape probe) and the S5 record;
+  `AnswerSegmentationTest` (the 23-shape matrix, the classification counters, and the denominator
+  accounting against an in-test mirror of the pre-847 splitter). Residual, exhibited by the matrix
+  rather than asserted: `BreakIterator` still splits `"Dr. Smith"` into two keys, and the short one
+  has letters, so the junk predicate cannot catch it.
 
 ### F-046: every multi-leg retrieval path silently ignored the request's `query_syntax` — a `lucene` request retrieved a SIMPLE (escaped) parse on hybrid/BM25+SPLADE/3-way; fixed and coupled to the counts, SIMPLE-default retrieval unchanged (tempdoc 821 §P, 2026-08-13; the real defect behind 821 §N's facets inversion)
 
