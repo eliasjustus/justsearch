@@ -19,7 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadNdjsonMap, OUTCOMES_FILE } from './lib/telemetry-io.mjs';
+import { loadJoinInputs, outcomeForSession } from './outcome-session.mjs';
 
 const TELEMETRY_DIR = 'tmp/agent-telemetry';
 const SESSIONS_DIR = 'sessions';
@@ -265,6 +265,66 @@ function computeTypeCeilings(entries) {
   return result;
 }
 
+/**
+ * Resolve a session's task type from its outcome record.
+ *
+ * WHY THIS IS NOT `outcome.task_type`: tempdoc 622 restructured the row into
+ * `{facts, inference}` and carried the LLM judge's task_type down with it
+ * (`inferenceBlock` in outcome-session.mjs writes it). Reading the flat path
+ * alone therefore resolved to null for EVERY post-622 row, and a null task type
+ * disables both `suppressForTypes` entries in RULES above — so WASTEFUL never
+ * saw a `feature` session and THRASHING never saw an `implementation` one, and
+ * each kept firing on exactly the population tempdoc 277 C4 measured it to be
+ * wrong (bash_fileop_pct r=+0.51 with completion on features) or inverted (33%
+ * of completed implementation sessions, 0% of partial) on. computeTypeCeilings
+ * collapsed to a single null type for the same reason.
+ *
+ * The flat fallback keeps the helper total over both row shapes; a recomputed
+ * record (the only kind main() feeds it now) never carries the flat field, but
+ * a caller holding a pre-622 row still resolves.
+ *
+ * WHAT THIS DOES NOT FIX. `inference.task_type` originates in the LLM-judge
+ * cache (judge-outcomes.ndjson), and the judge has scored a small fraction of
+ * the corpus — 994 bytes, last written 2026-07-12, in the main checkout. So the
+ * path fix and the recompute wiring together get task_type flowing CORRECTLY,
+ * but neither makes the suppressions fire for a session the judge never scored:
+ * those still resolve to null and both rules still apply. That residue is a
+ * DATA gap, not a wiring gap, and closing it means running the judge — do not
+ * read this helper as evidence the suppressions are live.
+ */
+function resolveTaskType(outcome) {
+  return outcome?.inference?.task_type ?? outcome?.task_type ?? null;
+}
+
+/**
+ * Pass 1 of --all: pair each report with its signals and its task type.
+ *
+ * Outcomes are a view (tempdoc 858 §3), so the task type is RECOMPUTED per
+ * session rather than read out of outcomes.ndjson — nothing maintains that file
+ * any more, and a consumer reading it gets whatever some past --write happened
+ * to leave behind.
+ *
+ * `inputs` is REQUIRED, and its absence throws rather than falling back:
+ * `outcomeForSession` self-loads when given nothing, so an omission would be
+ * absorbed silently and re-parse the whole event store once per session. Loading
+ * is ~0.5s of NDJSON parsing over the corpus against microseconds for the join
+ * itself (see `loadJoinInputs` in outcome-session.mjs), so the hoist has to be
+ * enforced, not just documented. A sibling test pins the hoisted and
+ * self-loading paths to the same record, so hoisting is a cost change only.
+ */
+function resolveEntries(reports, inputs) {
+  if (!inputs) {
+    throw new TypeError(
+      'resolveEntries: `inputs` is required — pass loadJoinInputs() hoisted out of the loop; '
+      + 'omitting it makes outcomeForSession reload the event store per session.');
+  }
+  return reports.map(report => ({
+    report,
+    signals: extractSignals(report),
+    taskType: resolveTaskType(outcomeForSession(report.session_id, { inputs })),
+  }));
+}
+
 function classifySession(signals, taskType = null) {
   return RULES
     .filter(rule => {
@@ -485,9 +545,7 @@ function main() {
 
   if (sessionId) {
     const report = loadReport(sessionId);
-    const outcomesMap = loadNdjsonMap(path.join(repoRoot, TELEMETRY_DIR, OUTCOMES_FILE));
-    const outcome = outcomesMap.get(sessionId);
-    const taskType = outcome?.task_type ?? null;
+    const taskType = resolveTaskType(outcomeForSession(sessionId));
     const result = scoreReport(report, weights, taskType);
     if (taskType) result.task_type = taskType;
     upsertScore(result);
@@ -508,17 +566,8 @@ function main() {
     process.exit(1);
   }
 
-  // Load outcomes for task_type lookup and per-type ceiling computation
-  const outcomesMap = loadNdjsonMap(path.join(repoRoot, TELEMETRY_DIR, OUTCOMES_FILE));
-
   // Pass 1: Extract signals and resolve task types
-  const entries = [];
-  for (const report of reports) {
-    const signals = extractSignals(report);
-    const outcome = outcomesMap.get(report.session_id);
-    const taskType = outcome?.task_type ?? null;
-    entries.push({ report, signals, taskType });
-  }
+  const entries = resolveEntries(reports, loadJoinInputs());
 
   // Compute per-type ceilings via hierarchical partial pooling
   const typeCeilingsMap = computeTypeCeilings(entries);
@@ -598,4 +647,8 @@ function main() {
 const __filename = fileURLToPath(import.meta.url);
 if (process.argv[1] === __filename) main();
 
-export { computeScore, extractSignals, computeTypeCeilings, SIGNAL_CEILINGS, N_STABLE, percentile };
+export {
+  computeScore, extractSignals, computeTypeCeilings, classifySession,
+  resolveTaskType, resolveEntries,
+  SIGNAL_CEILINGS, N_STABLE, percentile,
+};

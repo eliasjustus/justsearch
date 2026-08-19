@@ -153,6 +153,7 @@ def execute_run(
     pipeline_summary: dict | None = None,
     env_overrides: dict[str, str] | None = None,
     index_cache: dict | None = None,
+    query_syntax: str | None = None,
 ) -> dict:
     """Execute a full evaluation run.
 
@@ -162,6 +163,11 @@ def execute_run(
     BackendInfo; when present it is projected into ``summary["index_cache"]`` as a
     top-level provenance block. It never enters the manifest dict (manifest_hash
     stability).
+
+    ``query_syntax`` (Q-020 / F-046) is ``"simple"``, ``"lucene"``, or ``None``. ``None`` (the
+    default) sends no ``querySyntax`` field on the wire — identical to every pre-Q-020 run — and
+    is still recorded in ``summary["query_syntax"]`` as ``"simple"`` (the Head's documented
+    server-side default, `docs/reference/api-contract-map.md`) so every run is self-documenting.
     """
     # E-J-N11: capture environment fingerprint once per run. Informational only
     # (never used as a comparability gate). Safe to run early — best-effort with
@@ -244,6 +250,7 @@ def execute_run(
             query_texts, base_url, mode, top_k, debug,
             pipeline=ce_pipeline_override,
             allow_errors=allow_errors, include_excerpts=context_coverage,
+            query_syntax=query_syntax,
         )
 
         # Filter qrels to only the queries that were actually evaluated,
@@ -393,7 +400,7 @@ def execute_run(
                              search_config, env_overrides, env_fingerprint,
                              run_manifest=run_manifest, base_dir=base_dir,
                              status_snapshot=state_snapshots.get("/api/status"),
-                             index_cache=index_cache)
+                             index_cache=index_cache, query_syntax=query_syntax)
 
     # 5. Write artifacts + append history
     if output_dir:
@@ -493,6 +500,7 @@ def _build_summary(
     base_dir: Path | None = None,
     status_snapshot: dict | None = None,
     index_cache: dict | None = None,
+    query_syntax: str | None = None,
 ) -> dict:
     summary: dict = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -502,6 +510,10 @@ def _build_summary(
         "doc_count": meta.doc_count,
         "query_count": meta.query_count,
         "metric_contract": METRIC_CONTRACT,
+        # Q-020 / F-046: self-documents which syntax retrieval ran under. `query_syntax=None`
+        # (nothing sent on the wire) is recorded as the Head's own default, "simple" —
+        # see `docs/reference/api-contract-map.md` (Knowledge Search API, `querySyntax`).
+        "query_syntax": query_syntax or "simple",
         "qrels_summary": _compute_qrels_summary(qrels),
         "corpus_identity": _get_corpus_identity(dataset_name, meta, qrels, base_dir),
         "per_mode": {

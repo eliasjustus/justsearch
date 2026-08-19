@@ -114,6 +114,8 @@ def config_to_cli_args(config: dict) -> dict[str, Any]:
         args["embedding"] = bool(config["embedding"])
     if "splade" in config:
         args["splade"] = bool(config["splade"])
+    if "query_syntax" in config:
+        args["query_syntax"] = str(config["query_syntax"])
     if "pipeline" in config:
         args["pipeline"] = bool(config["pipeline"])
     if "top_k" in config:

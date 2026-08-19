@@ -1,11 +1,20 @@
 ---
 title: "MCP Dev Tools — Critical Analysis & Improvements"
 type: tempdoc
-status: done
+status: done — superseded by tempdoc 844 (2026-08-19)
 created: 2026-03-03
+updated: 2026-08-19
 ---
 
 > NOTE: Noncanonical doc (implementation tracker). May drift. Verify against code.
+
+> **Superseded by `844-dev-mcp-surface-audit-and-prune.md`.** 254 counted "14 tools (was 16)";
+> by August the surface had 16 again, stated as 15 in three places and 14 in a fourth, and the
+> reference doc's endpoint table was wrong in two rows. 844 re-measured the surface against six
+> weeks of transcripts, cut it to 12, and — the part 254 could not do — put the inventory behind
+> `scripts/ci/check-dev-mcp-doc-sync.mjs`, which spawns the real server and fails the build on
+> drift. That gate is why this document's fate (accurate at the time, quietly wrong within
+> months) should not repeat.
 
 # MCP Dev Tools — Critical Analysis & Improvements
 

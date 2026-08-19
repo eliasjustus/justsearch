@@ -16,6 +16,7 @@ import {
   costRecordFromSessionCost,
   upsertCostRecord,
   bestEffortUpsertCost,
+  parseArgs,
 } from './record-merge.mjs';
 import { TELEMETRY_DIR, COSTS_FILE } from './lib/telemetry-io.mjs';
 
@@ -35,6 +36,25 @@ function writeTranscript(dir, sessionId, lines) {
 }
 
 try {
+  // --- parseArgs / --source provenance (tempdoc 856 C1) ---
+  run('parseArgs defaults --source to teardown so remove-worktree.cjs is unchanged', () => {
+    // scripts/dev/remove-worktree.cjs passes only a commit; that call site must
+    // keep producing exactly the rows it produced before 856.
+    assert.deepEqual(parseArgs(['abc1234']), { commitArg: 'abc1234', sessionIdArg: null, source: 'teardown' });
+    assert.deepEqual(parseArgs([]), { commitArg: 'HEAD', sessionIdArg: null, source: 'teardown' });
+  });
+  run('parseArgs reads --source in both spaced and = form, alongside --session-id', () => {
+    assert.equal(parseArgs(['HEAD', '--source', 'publish']).source, 'publish');
+    assert.equal(parseArgs(['HEAD', '--source=git-trailer']).source, 'git-trailer');
+    const both = parseArgs(['abc', '--session-id', 's-1', '--source', 'publish']);
+    assert.equal(both.commitArg, 'abc');
+    assert.equal(both.sessionIdArg, 's-1');
+    assert.equal(both.source, 'publish');
+  });
+  run('parseArgs does not mistake a --source value for the commit argument', () => {
+    assert.equal(parseArgs(['--source', 'publish']).commitArg, 'HEAD');
+  });
+
   // --- costRecordFromSessionCost ---
   run('costRecordFromSessionCost maps a computeSessionCost record to the legacy costs.ndjson row shape', () => {
     const sessionCostRec = {

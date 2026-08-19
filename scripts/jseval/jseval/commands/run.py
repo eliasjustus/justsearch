@@ -24,6 +24,14 @@ log = logging.getLogger(__name__)
 @click.option("--top-k", default=10, show_default=True)
 @click.option("--embedding/--no-embedding", default=False, help="Enable dense/hybrid readiness checks.")
 @click.option("--splade/--no-splade", default=False)
+@click.option(
+    "--query-syntax", "query_syntax",
+    type=click.Choice(["simple", "lucene"]), default=None,
+    help="Q-020 / F-046: forward this run's queries with the given `querySyntax` "
+         "(`docs/reference/api-contract-map.md`). Default: omit the field entirely — "
+         "byte-identical to every pre-Q-020 request, and the Head resolves its own SIMPLE "
+         "default server-side. Recorded in summary.json's `query_syntax` either way.",
+)
 @click.option("--allow-errors", is_flag=True, help="Continue on query errors.")
 @click.option("--max-queries", default=0, show_default=True, help="Cap queries for fast iteration (0 = all).")
 @click.option("--lambdamart/--no-lambdamart", default=False)
@@ -75,7 +83,7 @@ log = logging.getLogger(__name__)
          "a single flaky projection without losing other signals.",
 )
 @click.pass_context
-def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade, lambdamart, cross_encoder, allow_errors, max_queries, context_coverage, thresholds, history_db, corpus_dir, skip_ingest, pipeline, timeline_path, start_backend, llm, qu, filter_norm, clean, reset, cpu, allow_degraded, index_cache_flag, pin_index_selector_key, config_path, warmup_count, json_flag, skip_projections):
+def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade, query_syntax, lambdamart, cross_encoder, allow_errors, max_queries, context_coverage, thresholds, history_db, corpus_dir, skip_ingest, pipeline, timeline_path, start_backend, llm, qu, filter_norm, clean, reset, cpu, allow_degraded, index_cache_flag, pin_index_selector_key, config_path, warmup_count, json_flag, skip_projections):
     """Execute an evaluation run."""
     if json_flag:
         ctx.obj["json"] = True
@@ -93,6 +101,7 @@ def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade,
         modes = cli_args.get("modes", modes)
         embedding = cli_args.get("embedding", embedding)
         splade = cli_args.get("splade", splade)
+        query_syntax = cli_args.get("query_syntax", query_syntax)
         pipeline = cli_args.get("pipeline", pipeline)
         top_k = cli_args.get("top_k", top_k)
         max_queries = cli_args.get("max_queries", max_queries)
@@ -207,6 +216,7 @@ def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade,
             top_k=top_k,
             embedding=embedding,
             splade=splade,
+            query_syntax=query_syntax,
             lambdamart=lambdamart,
             cross_encoder=cross_encoder,
             allow_errors=allow_errors,
@@ -239,13 +249,18 @@ def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade,
 @click.option("--top-k", default=10, show_default=True)
 @click.option("--embedding/--no-embedding", default=False)
 @click.option("--splade/--no-splade", default=False)
+@click.option(
+    "--query-syntax", "query_syntax",
+    type=click.Choice(["simple", "lucene"]), default=None,
+    help="Q-020 / F-046: see `jseval run --help`.",
+)
 @click.option("--allow-errors", is_flag=True)
 @click.option("--max-queries", default=0, show_default=True, help="Cap queries (0 = all).")
 @click.option("--context-coverage", is_flag=True, help="Compute excerpt coverage metrics.")
 @click.option("--thresholds", default="0.25,0.5", show_default=True, help="Coverage threshold rates.")
 @click.option("--history-db", type=click.Path(), default=None, help="Shared history database path.")
 @click.pass_context
-def cmd_requery(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade, allow_errors, max_queries, context_coverage, thresholds, history_db):
+def cmd_requery(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade, query_syntax, allow_errors, max_queries, context_coverage, thresholds, history_db):
     """Re-run queries only (skip ingest/readiness wait)."""
     from .. import run as run_module
 
@@ -263,6 +278,7 @@ def cmd_requery(ctx, dataset, modes, base_url, output_dir, top_k, embedding, spl
         context_coverage=context_coverage,
         coverage_thresholds=[float(t) for t in thresholds.split(",")],
         history_db=Path(history_db) if history_db else None,
+        query_syntax=query_syntax,
     )
     if ctx.obj.get("json"):
         click.echo(json.dumps(summary, indent=2, default=str))
@@ -298,6 +314,7 @@ def _run_iteration(
     allow_degraded,
     index_cache_enabled,
     pin_index_selector_key=None,
+    query_syntax=None,
     env_overrides,
     json_flag,
     is_warmup,
@@ -381,6 +398,7 @@ def _run_iteration(
             context_coverage, thresholds, history_db, corpus_dir,
             skip_ingest, ingest_config, env_overrides,
             suppress_stdout=is_warmup, index_cache=cache_outcome,
+            query_syntax=query_syntax,
         )
         # Publish only a fresh build (outcome != adopted) done under --clean, and
         # only when the selector key is available. Capture happens while up.
@@ -472,7 +490,7 @@ def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
             splade, lambdamart, cross_encoder, allow_errors, max_queries,
             context_coverage, thresholds, history_db, corpus_dir,
             skip_ingest, ingest_config, env_overrides=None,
-            suppress_stdout=False, index_cache=None):
+            suppress_stdout=False, index_cache=None, query_syntax=None):
     """Inner run logic (extracted for backend lifecycle try/finally).
 
     When suppress_stdout is True (used by warmup iterations of --warmup N), the
@@ -529,6 +547,7 @@ def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
         pipeline_summary=pipeline_summary,
         env_overrides=env_overrides,
         index_cache=index_cache,
+        query_syntax=query_syntax,
     )
     if suppress_stdout:
         return
