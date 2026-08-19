@@ -352,9 +352,10 @@ final class AgentRunQueryService implements io.justsearch.agent.api.AgentRunQuer
                   userContent));
         }
       }
-      for (Map<String, Object> rec : runStore.readEvents(runId)) {
-        AgentInteractionMapper.fromRunEvent(rec, conversationId).ifPresent(out::add);
-      }
+      // Tempdoc 848 §2.4 — the whole run at once, not record-by-record: the reasoning fold is
+      // stateful (chunks coalesce into blocks that attach to the turn they belong to), and its
+      // terminal-attachment rule needs the run's boundary.
+      out.addAll(AgentInteractionMapper.fromRunEvents(runStore.readEvents(runId), conversationId));
       if (background) {
         // +1ms after the run's last update so the closing marker sorts AFTER every event of the run.
         java.time.Instant endAt =

@@ -579,6 +579,12 @@ export class SearchV3View extends JfElement {
    * handed to the turn at the terminal, which is what makes a past turn's thinking survive the reset.
    */
   private readonly askReasoning = new ReasoningController(() => this.requestUpdate());
+  /**
+   * The turn the ask controller above is streaming for, or null (tempdoc 848 §2.7). Handed down so
+   * the transcript binds the live thinking to ONE turn by id, exactly as it binds the run feed —
+   * `streaming` status alone is per-turn and reachable for two turns at once.
+   */
+  private askReasoningTurnId: string | null = null;
 
   constructor() {
     super();
@@ -1409,6 +1415,7 @@ export class SearchV3View extends JfElement {
     // the blocks it finalizes are written onto the turn below. Resetting here is what stops the
     // previous answer's thinking appearing under this one.
     this.askReasoning.reset();
+    this.askReasoningTurnId = ref.turnId;
     // The app-wide activity indicator, raised for the duration and settled at the terminal below
     // (inventory G11). Cancelling through the SAME abort handle Stop uses, so there is one way to
     // stop this stream however the reader reaches it.
@@ -1446,6 +1453,7 @@ export class SearchV3View extends JfElement {
       if (this.askAbort === abort) {
         this.askAbort = null;
         this.streaming = false;
+        this.askReasoningTurnId = null;
         this.settleAiActivity();
       }
     };
@@ -1571,6 +1579,25 @@ export class SearchV3View extends JfElement {
    */
   private agentController(): AgentSessionController | null {
     return peekAgentSessionController();
+  }
+
+  /**
+   * The live thinking, whichever tier is producing it (tempdoc 848 §2.8). The ask stream's own
+   * controller while an ask streams; otherwise the SHARED agent controller's, which has been
+   * accumulating a delegated run's reasoning all along with nothing reading it — a run showed no
+   * thinking live while a settled one now shows it from the record, which is the same asymmetry
+   * inverted. One reasoning surface, both tiers.
+   */
+  private liveReasoning(): ReasoningController | null {
+    if (this.streaming) return this.askReasoning;
+    if (this.run === null) return null;
+    return this.agentController()?.reasoning ?? null;
+  }
+
+  /** The turn that owns {@link liveReasoning}'s controller — the id the transcript binds it to. */
+  private liveReasoningTurnId(): string | null {
+    if (this.streaming) return this.askReasoningTurnId;
+    return this.run?.turnId ?? null;
   }
 
   /**
@@ -2183,7 +2210,8 @@ export class SearchV3View extends JfElement {
           ?record-notice=${this.recordNotice}
           ?history-locked=${this.historyLocked}
           ?locked-refusal=${this.lockedRefusal}
-          .reasoning=${this.streaming ? this.askReasoning : null}
+          .reasoning=${this.liveReasoning()}
+          .reasoningTurnId=${this.liveReasoningTurnId()}
           .currentModelLabel=${this.currentModelLabel}
           ?detailed=${isAdvancedMode()}
           data-testid="sv3-main"

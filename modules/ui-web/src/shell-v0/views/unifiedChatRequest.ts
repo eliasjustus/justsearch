@@ -63,6 +63,15 @@ export interface ThreadMessage {
   // `send()`'s onDone from `aiState.activity.startedAtMs` (never persisted server-side, so a
   // reloaded/record turn simply lacks it — the receipt line omits duration rather than fabricate it).
   durationMs?: number;
+  /**
+   * Tempdoc 848 §2.1/§2.6 — the turn's thinking, as the ordered blocks the run produced. Persisted
+   * server-side (`ConversationEngine.persistedAssistant`) and lifted onto the thread record, so a
+   * settled or reloaded turn renders the same blocks the stream showed. The element shape is
+   * declared STRUCTURALLY here (its source is `controllers/ReasoningController.ts`'s
+   * `ReasoningBlock`) because this module states it is pure — no element/runtime dependencies — and
+   * the controller is a runtime class module.
+   */
+  reasoning?: { readonly text: string; readonly durationMs: number }[];
 }
 
 export const SHAPE_LABELS: Record<ShapeId, string> = {

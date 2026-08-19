@@ -202,6 +202,76 @@ def assert_chunk_completeness(
     sys.exit(2)
 
 
+def assert_ce_coverage(
+    run_dir: str | Path,
+    *,
+    allow_degraded: bool = False,
+) -> None:
+    """Refuse a ratchet comparison when the run's cross-encoder silently dropped out on part of
+    the query set (register F-052).
+
+    A rerank RPC that misses ``justsearch.rerank.deadline_ms`` leaves the query in pure fusion
+    order while every existing gate signal stays green (``comparable: true``, ``ann_proof PASS``,
+    ``error_count 0``, ``cross_encoder`` still in the observed legs). The run's metrics are then a
+    blend of two pipelines. Reads the run's already-embedded ``ce_coverage`` block from
+    ``summary.json`` (computed once, at run-build time, by ``run._compute_ce_coverage`` — this
+    function enforces the verdict the run already carries, it does not recompute it). On an
+    un-overridden ``degraded-ce`` verdict: echoes a legible error + remedy and ``sys.exit(2)``,
+    matching ``assert_chunk_completeness``.
+
+    ``ok``/``not-applicable`` return silently. ``unevaluable`` (the run's artifacts predate
+    ``judgeSignals`` or the cross-encoder reason channel) passes but WARNS on stderr — the same
+    loud stand-down ``assert_chunk_completeness`` gives its own unevaluable verdict, because a
+    silent pass on absent telemetry is this guard's own failure mode. A run predating the guard
+    entirely (no ``ce_coverage`` block, or no ``summary.json``) has no verdict to enforce and is
+    treated as ``ok``, matching ``compare_engine_sets``'s "skip when unrecorded" precedent.
+
+    Override with ``allow_degraded=True`` (the CLI's ``--allow-ce-degradation`` flag) or
+    ``JUSTSEARCH_ALLOW_CE_DEGRADATION=1``. Never silent: the override downgrades the refusal to a
+    warning.
+    """
+    summary_path = Path(run_dir) / "summary.json"
+    summary = (json.loads(summary_path.read_text(encoding="utf-8"))
+               if summary_path.is_file() else {})
+    block = summary.get("ce_coverage") or {}
+    verdict = block.get("verdict")
+    if verdict == "unevaluable":
+        click.echo(json.dumps({
+            "warning": "ce-coverage guard STOOD DOWN — this run was not checked",
+            "reasons": block.get("reasons"),
+            "remedy": "re-run against a jseval that records judgeSignals + the cross-encoder "
+                      "stage's status/reason per query (register F-052) to get a real verdict.",
+        }, indent=2), err=True)
+        return
+    if verdict != "degraded-ce":
+        return
+
+    overridden = allow_degraded or os.environ.get("JUSTSEARCH_ALLOW_CE_DEGRADATION") == "1"
+    if overridden:
+        click.echo(json.dumps({
+            "warning": "ce-coverage guard overridden (--allow-ce-degradation / "
+                       "JUSTSEARCH_ALLOW_CE_DEGRADATION=1)",
+            "reasons": block.get("reasons"),
+            "per_mode": block.get("per_mode"),
+        }, indent=2), err=True)
+        return
+
+    click.echo(json.dumps({
+        "exit_code": 2,
+        "error": "ce-coverage guard: the cross-encoder silently dropped out on part of this "
+                 "run's query set — those queries were delivered in pure fusion order with no "
+                 "deterministic reason recorded, so the run's metrics blend two pipelines and "
+                 "are not comparable. Re-run (raise justsearch.rerank.deadline_ms or reduce "
+                 "concurrent load), or pass --allow-ce-degradation / set "
+                 "JUSTSEARCH_ALLOW_CE_DEGRADATION=1 to certify anyway. "
+                 f"{'; '.join(block.get('reasons') or [])}",
+        "tolerance": block.get("tolerance"),
+        "reasons": block.get("reasons"),
+        "per_mode": block.get("per_mode"),
+    }, indent=2), err=True)
+    sys.exit(2)
+
+
 def resolve_run_dir(run_dir: str | None, data_dir: str | Path) -> Path:
     """Return the explicit ``--run-dir`` or the latest eval-results run; echo + ``exit 2`` if none."""
     rd = Path(run_dir) if run_dir else _gate._latest_run_dir(Path(data_dir))

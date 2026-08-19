@@ -193,3 +193,78 @@ def test_assert_chunk_completeness_env_var_override_passes_with_warning(tmp_path
     rk.assert_chunk_completeness(rd)  # no raise -- env var alone is enough
     captured = capsys.readouterr()
     assert "overridden" in captured.err
+
+
+# --- register F-052: cross-encoder-coverage validity guard --------------------
+
+def _run_dir_with_ce_coverage(tmp_path, verdict, name="ce_run"):
+    rd = tmp_path / name
+    rd.mkdir()
+    (rd / "summary.json").write_text(json.dumps({
+        "dataset": "d",
+        "ce_coverage": {
+            "verdict": verdict,
+            "tolerance": 0.02,
+            "reasons": [f"hybrid: {verdict} -- 98/200 CE-eligible queries reranked"],
+            "per_mode": {"hybrid": {"verdict": verdict, "applied": 98, "eligible": 200,
+                                    "silent_drops": 102}},
+        },
+    }), encoding="utf-8")
+    return rd
+
+
+def test_assert_ce_coverage_degraded_exits_2(tmp_path):
+    rd = _run_dir_with_ce_coverage(tmp_path, "degraded-ce")
+    with pytest.raises(SystemExit) as e:
+        rk.assert_ce_coverage(rd)
+    assert e.value.code == 2
+
+
+def test_assert_ce_coverage_ok_is_silent(tmp_path, capsys):
+    rd = _run_dir_with_ce_coverage(tmp_path, "ok")
+    rk.assert_ce_coverage(rd)  # no raise
+    assert capsys.readouterr().err == ""
+
+
+def test_assert_ce_coverage_not_applicable_is_silent(tmp_path, capsys):
+    # A lexical-only / CE-off run must pass without a word -- it is not a stand-down.
+    rd = _run_dir_with_ce_coverage(tmp_path, "not-applicable")
+    rk.assert_ce_coverage(rd)  # no raise
+    assert capsys.readouterr().err == ""
+
+
+def test_assert_ce_coverage_unevaluable_passes_but_warns_loudly(tmp_path, capsys):
+    # The run's artifacts predate judgeSignals / the CE reason channel. Gating on absent telemetry
+    # is wrong, but a SILENT pass is this guard's own failure mode: on such a run a fully
+    # contaminated pipeline would sail through with nothing said.
+    rd = _run_dir_with_ce_coverage(tmp_path, "unevaluable")
+    rk.assert_ce_coverage(rd)  # no raise
+    err = capsys.readouterr().err
+    assert "STOOD DOWN" in err
+    assert "not checked" in err
+
+
+def test_assert_ce_coverage_missing_block_skips(tmp_path):
+    rd = tmp_path / "old_ce_run"
+    rd.mkdir()
+    (rd / "summary.json").write_text(json.dumps({"dataset": "d"}), encoding="utf-8")
+    rk.assert_ce_coverage(rd)  # no raise -- a run predating the guard
+
+
+def test_assert_ce_coverage_missing_summary_skips(tmp_path):
+    rd = tmp_path / "no_summary_ce"
+    rd.mkdir()
+    rk.assert_ce_coverage(rd)  # no raise
+
+
+def test_assert_ce_coverage_flag_override_passes_with_warning(tmp_path, capsys):
+    rd = _run_dir_with_ce_coverage(tmp_path, "degraded-ce")
+    rk.assert_ce_coverage(rd, allow_degraded=True)  # no raise
+    assert "overridden" in capsys.readouterr().err
+
+
+def test_assert_ce_coverage_env_var_override_passes_with_warning(tmp_path, monkeypatch, capsys):
+    rd = _run_dir_with_ce_coverage(tmp_path, "degraded-ce")
+    monkeypatch.setenv("JUSTSEARCH_ALLOW_CE_DEGRADATION", "1")
+    rk.assert_ce_coverage(rd)  # no raise -- env var alone is enough
+    assert "overridden" in capsys.readouterr().err
