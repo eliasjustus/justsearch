@@ -7,7 +7,9 @@
  * The whole sheet is scoped to the WINDOW HOST, never `:root`: custom properties inherit down
  * through every nested shadow root, so a host-scoped declaration reaches the window's whole tree
  * while the shipped app's `:root` palette stays untouched. Dark is the default set (`:host`);
- * the light set sits behind `:host([theme='light'])` for a later theme seam.
+ * the light set sits behind `:host([theme='light'])`, and the attribute is WRITTEN by the window
+ * host from the app's own appearance authority (`SearchV3View.theme`, 852 S4) — the seam this sheet
+ * carried unwired from slice 1 until then.
  *
  * Three tiers, flowing one way: T0 primitives → T1 semantic roles → T2 geometry/material.
  * A component reads T1/T2 only. A theme change is a T1 redefinition, never a component edit.

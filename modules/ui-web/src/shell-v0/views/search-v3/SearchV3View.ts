@@ -12,7 +12,9 @@
  *
  *  1. **The token sheet.** `sv3Tokens` is applied HERE, on the window host — never on `:root`. Custom
  *     properties inherit down through every nested shadow root, so one host-scoped declaration
- *     reaches the whole window while the shipped app's palette stays untouched.
+ *     reaches the whole window while the shipped app's palette stays untouched. WHICH of its two
+ *     sets is live is the app's decision, not this window's: the `theme` attribute mirrors the app's
+ *     appearance authority (852 S4, ledger row 14) and the sheet's light block keys off it.
  *  2. **The window grid.** A fixed `--sidebar-width` panel that does not flex, beside a main column
  *     of topbar → content surface → composer band.
  *  3. **The scroll policy.** The window region never scrolls: this host and the main column are
@@ -65,6 +67,7 @@ import {
   type Sv3ComposerStateRequest,
   type Sv3ComposerSubmit,
   type Sv3EffortChange,
+  type Sv3TierChange,
 } from './Sv3Composer.js';
 import { projectSv3Results, type Sv3ResultsView } from './sv3-results.js';
 import {
@@ -108,6 +111,7 @@ import {
   removeSession,
   restoreSessionTitle,
   sessionById,
+  setSessionContextUsage,
   setTurnEvidence,
   setTurnReasoning,
   setTurnRewrite,
@@ -118,8 +122,36 @@ import {
   sv3ShouldGenerateTitle,
   SV3_SESSIONS_EMPTY,
   type Sv3RunGate,
+  type Sv3Session,
   type Sv3SessionList,
 } from './sv3-sessions.js';
+// The effective-context set (tempdoc 610, ported by 852 S2) — the pure half. The WRITES are the five
+// shared store functions below; this module decides what each turn's frame and menu are, and what
+// the shared inspector renders.
+import {
+  projectSv3ContextInspector,
+  projectSv3TurnContexts,
+  sv3ContextMenuItems,
+  sv3ExcludedMessageIds,
+  sv3ExcludedTurnCount,
+  sv3TurnContextFor,
+  type Sv3ContextAction,
+  type Sv3ContextActionId,
+  type Sv3ContextMenuRequest,
+  type Sv3TurnContext,
+} from './sv3-context.js';
+// Branch / edit / retry and the version pager (slice 513 + 610 Phase A/B, ported by 852 S3) — the
+// pure half. All three are ONE backend act (`branchConversation`); this module decides which message
+// id each of them names, and which conversations are the versions of a turn.
+import {
+  isSv3BranchActionId,
+  projectSv3TurnLineage,
+  sv3BranchMenuItems,
+  sv3LineageFor,
+  type Sv3BranchAction,
+  type Sv3TurnLineage,
+  type Sv3VersionSelect,
+} from './sv3-branch.js';
 // The window's honesty derivations (tempdoc 822 Phase F7): the lock, the corpus, and the ONE remedy
 // channel every region's fix-it control leaves through.
 import {
@@ -145,17 +177,39 @@ import {
 // conversation, so identity, existence, title and its markdown export come from here — this window
 // mints none of them.
 import {
+  branchConversation,
+  clearContextFloor,
+  compactContext,
   createConversationId,
-  deleteConversation,
+  deleteConversationWithCascade,
+  editContextFloorSummary,
   exportConversationMarkdown,
   generateConversationTitle,
   loadConversations,
   resumeConversation,
   setActiveConversation,
+  setContextFloor,
   setConversationApiBase,
   setConversationTitle,
+  setMessageExcluded,
   subscribeConversationList,
+  type Conversation,
 } from '../../state/conversationListStore.js';
+// The product's ONE confirm dialog. Cascade-delete asks a second question — "and its branches?" —
+// and asking it in a second dialect would be a second dismiss rule for the same gesture.
+import { confirmAsync } from '../../components/ConfirmDialog.js';
+// Tempdoc 610 §K — the SHELL-mounted context inspector. The window pushes the projection and opens
+// the drawer; the drawer is the product's one "what did the assistant actually see" surface and is
+// not re-implemented here.
+import {
+  isContextInspectorOpen,
+  setContextInspectorView,
+  toggleContextInspector,
+} from '../../state/contextInspectorDrawer.js';
+import type { InspectorView } from '../../components/ContextInspectorPane.js';
+// The product's ONE overflow-menu primitive (slice 458). A window-local menu would be a second
+// keyboard model and a second dismiss rule for the same gesture.
+import { openContextMenu } from '../../components/ContextMenu.js';
 // The shared clipboard util — the export's destination, the same one the shipped window uses.
 import { copyToClipboard } from '../../utils/clipboardCopy.js';
 // The canonical thread RECORD (tempdoc 561 P-A; inventory D1) — the shared fetch, already consumed
@@ -194,6 +248,9 @@ import {
   projectSv3RunFeed,
   projectSv3RunPrompts,
   sv3PrimaryAction,
+  isSv3Tier,
+  SV3_TIER_DEFAULT,
+  type Sv3ComposerTier,
   sv3RunNeedsPresence,
   sv3RunOutcome,
   sv3RunPresenceStart,
@@ -206,14 +263,39 @@ import {
   type Sv3RunView,
 } from './sv3-run.js';
 import { type Sv3CitationOpen, type Sv3RunDecision } from './Sv3Main.js';
-import type { DocumentLineRange } from '../../components/documentPane/DocumentPane.js';
+import {
+  sameCitationHeader,
+  type CitationHeader,
+} from '../../components/chat/evidenceProjection.js';
+import type { DocumentCitationAnchor } from '../../components/documentPane/DocumentPane.js';
+import {
+  sv3CitationHeader,
+  sv3MatchedSentence,
+  SV3_SOURCE_INDEX_ABSENT,
+} from './sv3-citation-anchor.js';
 import { setAiActivity, subscribeAiState, type AiState } from '../../state/aiStateStore.js';
 import { projectAvailability } from '../../state/availability.js';
 import { reasonFor } from '../../state/readinessNotice.js';
 import { isAdvancedMode, subscribeUiMode } from '../../state/uiModeState.js';
+import {
+  getAppearanceMode,
+  subscribeAppearanceMode,
+  type AppearanceMode,
+} from '../../state/themeState.js';
 import { emitEphemeralToast } from '../../components/advisory/ephemeralToast.js';
 import { projectSv3Degradation, type Sv3Degradation } from './sv3-degradation.js';
 import {
+  BRANCH_FAILED,
+  CONTEXT_COMPACT_FAILED,
+  CONTEXT_EXCLUDE_FAILED,
+  CONTEXT_FLOOR_FAILED,
+  CONTEXT_INCLUDE_FAILED,
+  CONTEXT_RESTORE_FAILED,
+  CONTEXT_SUMMARY_FAILED,
+  DELETE_FAILED,
+  deleteCascadeConfirm,
+  deleteCascadeMessage,
+  deleteCascadeTitle,
   PANE_LABEL,
   SV3_COMMAND_EXPORT_MARKDOWN,
   SV3_COMMAND_SEARCH_TEXT,
@@ -226,6 +308,7 @@ import type { Sv3Palette } from './Sv3Palette.js';
 import './Sv3Topbar.js';
 import './Sv3Sidebar.js';
 import './Sv3Main.js';
+import './Sv3ContextBar.js';
 import './Sv3Composer.js';
 import './Sv3Palette.js';
 // The window's citation-inspection region (tempdoc 822 Phase F8). It mounts the product's ONE reading
@@ -269,8 +352,12 @@ const renamingRowInPath = (event: KeyboardEvent): boolean =>
  */
 const openControlMenuInPath = (event: KeyboardEvent): boolean =>
   event.composedPath().some((node) => {
-    const el = node as Element & { effortMenuOpen?: unknown };
-    return el.localName === 'jf-sv3-composer' && el.effortMenuOpen === true;
+    const el = node as Element & { effortMenuOpen?: unknown; tierMenuOpen?: unknown };
+    if (el.localName !== 'jf-sv3-composer') return false;
+    // EITHER control menu (852 S4 added the second). The ladder's rung is "a menu is open in the
+    // control row", not "the effort menu is open" — a mode menu that Escape closed by falling
+    // through to the window would take the composer back to hero with it.
+    return el.effortMenuOpen === true || el.tierMenuOpen === true;
   });
 
 export class SearchV3View extends JfElement {
@@ -435,6 +522,7 @@ export class SearchV3View extends JfElement {
 
   static properties = {
     composerState: { type: String, reflect: true, attribute: COMPOSER_STATE_ATTR },
+    theme: { type: String, reflect: true },
     apiBase: { type: String, attribute: 'api-base' },
     searchSnapshot: { state: true },
     asked: { state: true },
@@ -445,7 +533,9 @@ export class SearchV3View extends JfElement {
     sidebarCollapsed: { type: Boolean, reflect: true, attribute: 'sidebar-collapsed' },
     resizing: { type: Boolean, reflect: true },
     paneDocPath: { state: true },
-    paneRange: { state: true },
+    paneCitation: { state: true },
+    paneCitationHeader: { state: true },
+    paneSource: { state: true },
     paneWidthPx: { state: true },
     paneOverlay: { type: Boolean, reflect: true, attribute: 'pane-overlay' },
     renamingId: { state: true },
@@ -453,9 +543,24 @@ export class SearchV3View extends JfElement {
     historyLocked: { state: true },
     lockedRefusal: { state: true },
     effort: { state: true },
+    tier: { state: true },
+    compacting: { state: true },
+    conversations: { state: true },
   };
 
   declare composerState: Sv3ComposerState;
+  /**
+   * The window's light/dark set (852 S4, ledger row 14). The token sheet has carried a COMPLETE
+   * authored light palette behind `:host([theme='light'])` since slice 1 (`sv3-tokens.css.ts:333`)
+   * and nothing ever set the attribute, so the window painted its dark set inside a light app — the
+   * polarity conflict the 2026-08-19 measured audit recorded as F-06.
+   *
+   * MIRRORED, NEVER OWNED: the value is the app's own appearance authority's (`themeState`), read at
+   * connect and re-read on every change, including an OS flip while the reader has chosen "Follow
+   * OS". This window has no theme control of its own and must not grow one — a second writer would
+   * be a surface disagreeing with the app about what mode it is in.
+   */
+  declare theme: AppearanceMode;
   /** Set by the shell on every render of a mounted surface (`chrome/Shell.ts:2945-2949`). */
   declare apiBase: string;
   /** The latest store emission. Null only until the subscription's first (immediate) call. */
@@ -491,8 +596,25 @@ export class SearchV3View extends JfElement {
    * path can reach the reading surface from this window, because nothing else assigns here.
    */
   declare paneDocPath: string | null;
-  /** The cited passage's line span, handed to the shared reader as its `highlightRange`. */
-  declare paneRange: DocumentLineRange | null;
+  /**
+   * The cited passage in CHARACTER coordinates, handed to the reader as its anchor (tempdoc 849 §3).
+   * The reader derives its own lines from it; this window converts nothing.
+   */
+  declare paneCitation: DocumentCitationAnchor | null;
+  /**
+   * Which turn's which source the open pane is showing, so a claim match that lands AFTER the pane
+   * opened can be re-resolved onto it (§4). `rag.citations` arrives at retrieval time and
+   * `rag.citation_matches` only once the answer has streamed, so the pane is routinely opened before
+   * its matched sentence exists — the upgrade is the common path, not a repair.
+   */
+  declare paneSource: { readonly turnId: string; readonly sourceIndex: number } | null;
+  /**
+   * Tempdoc 849 §7 — what the open pane may say about the citation that opened it. Held HERE rather
+   * than derived inside the pane for the reason slice 2 recorded: the event carries identity only,
+   * and the facts live on this window's own turn records, which the reading pane has no access to
+   * and must not be given a second copy of.
+   */
+  declare paneCitationHeader: CitationHeader | null;
   /** The pane's chosen width. Held whether or not the pane is open, exactly as the sidebar's is. */
   declare paneWidthPx: number;
   /** The pane presents as a window-scoped overlay — the spec's 980px switch, asked of OUR box. */
@@ -528,16 +650,48 @@ export class SearchV3View extends JfElement {
    * control describes THIS window's next send, which is exactly what it says.
    */
   declare effort: Sv3Effort;
+  /**
+   * WHERE the next send goes (852 S4) — ask the local model, or delegate the draft to the agent.
+   *
+   * Held on exactly {@link effort}'s terms and for the same reasons: window-local, in-memory, not a
+   * persisted preference, and read at DISPATCH time so an in-flight run is never re-routed. The
+   * composer renders it and announces a change; the routing itself is decided here, in
+   * `onComposerSubmit`, which is the one place a send becomes a run.
+   */
+  declare tier: Sv3ComposerTier;
+  /**
+   * A compaction is in flight (tempdoc 610 Phase D). WINDOW-level because it is one LLM call and the
+   * menu that starts it must not offer a second while the first is running — the reference window's
+   * own guard (`views/UnifiedChatView.ts:1658-1673`).
+   */
+  declare compacting: boolean;
+  /**
+   * The shared conversation store's list, AS ROWS (852 S3). This window's own {@link sessions} is a
+   * projection that drops the two fields the version pager is made of — `parentSessionId` and
+   * `branchPointMessageId` — so the pager reads the store's rows directly rather than having those
+   * pointers copied onto a second shape that would then have to be kept in step.
+   *
+   * Held rather than re-fetched: `siblingSessionsAt` is a pure read and the subscription below keeps
+   * this current, which is why a branch created here calls `loadConversations` — the new row is what
+   * makes the fork visible to the pager at all.
+   */
+  declare conversations: readonly Conversation[];
 
   /** Watches the window box so the pane's presentation follows it (Phase F8). */
   private boxObserver: ResizeObserver | null = null;
   private searchUnsubscribe: (() => void) | null = null;
   private aiUnsubscribe: (() => void) | null = null;
   private uiModeUnsubscribe: (() => void) | null = null;
+  private appearanceUnsubscribe: (() => void) | null = null;
   private agentUnsubscribe: (() => void) | null = null;
   private convListUnsubscribe: (() => void) | null = null;
   /** The in-flight record fetch, so a claim that supersedes another cannot land out of order. */
   private recordAbort: AbortController | null = null;
+  /**
+   * The `/history` companion load's generation token (852 S3, closing S2's F5) — the record half's
+   * {@link recordAbort} discipline applied to the other half of the same open.
+   */
+  private historyAbort: AbortController | null = null;
   /**
    * One-shot, mirroring the shipped window's `reattachChecked` (`views/UnifiedChatView.ts:3496`): a
    * cold load asks the shared controller to reattach to a live run ONCE. Re-asking on every render
@@ -589,6 +743,10 @@ export class SearchV3View extends JfElement {
   constructor() {
     super();
     this.composerState = COMPOSER_STATE_DEFAULT;
+    // Read in the CONSTRUCTOR, not on connect: the attribute is reflected, so a value arriving one
+    // render late would paint the dark set for a frame in a light app — the flash the app's own
+    // pre-paint script exists to avoid.
+    this.theme = getAppearanceMode();
     this.apiBase = '';
     this.searchSnapshot = null;
     this.asked = false;
@@ -599,7 +757,9 @@ export class SearchV3View extends JfElement {
     this.sidebarCollapsed = false;
     this.resizing = false;
     this.paneDocPath = null;
-    this.paneRange = null;
+    this.paneCitation = null;
+    this.paneSource = null;
+    this.paneCitationHeader = null;
     this.paneWidthPx = SV3_PANE_DEFAULT_PX;
     this.paneOverlay = false;
     this.renamingId = null;
@@ -607,6 +767,9 @@ export class SearchV3View extends JfElement {
     this.historyLocked = false;
     this.lockedRefusal = false;
     this.effort = SV3_EFFORT_DEFAULT;
+    this.tier = SV3_TIER_DEFAULT;
+    this.compacting = false;
+    this.conversations = [];
     // Constructed HERE rather than on connect: a Lit controller added before connection still gets
     // its `hostConnected`, and adding it inside `connectedCallback` would add a second one on every
     // re-attach of this retained instance.
@@ -644,6 +807,13 @@ export class SearchV3View extends JfElement {
     // every render site reads `isAdvancedMode()` live, so the subscription's only job is to ask for
     // a re-render when the reader changes the preference on another surface.
     this.uiModeUnsubscribe = subscribeUiMode(() => this.requestUpdate());
+    // Ledger row 14 — the app's light/dark decision, mirrored onto the host so the token sheet's
+    // authored light set activates. Re-read on connect as well as subscribed: a retained instance
+    // re-attaches into whatever mode the app is in now, not the one it was unmounted in.
+    this.theme = getAppearanceMode();
+    this.appearanceUnsubscribe = subscribeAppearanceMode((mode) => {
+      this.theme = mode;
+    });
     // Subscribing does NOT create a controller (the read below is a `peek`), so a window that never
     // delegates never starts the agent controller's polling as a side effect of being mounted.
     this.agentUnsubscribe = subscribeAgentSession(this.onAgentUpdate);
@@ -653,6 +823,9 @@ export class SearchV3View extends JfElement {
     setConversationApiBase(this.apiBase || '');
     this.convListUnsubscribe = subscribeConversationList((state) => {
       this.sessions = mergeStoreConversations(this.sessions, state.conversations);
+      // The ROWS as well as the projection (852 S3): the version pager is read from the store's own
+      // parent pointers, which `mergeStoreConversations` deliberately does not carry across.
+      this.conversations = state.conversations;
     });
     void loadConversations();
     this.restoreLastViewed();
@@ -688,12 +861,16 @@ export class SearchV3View extends JfElement {
     this.convListUnsubscribe = null;
     this.recordAbort?.abort();
     this.recordAbort = null;
+    this.historyAbort?.abort();
+    this.historyAbort = null;
     this.searchUnsubscribe?.();
     this.searchUnsubscribe = null;
     this.aiUnsubscribe?.();
     this.aiUnsubscribe = null;
     this.uiModeUnsubscribe?.();
     this.uiModeUnsubscribe = null;
+    this.appearanceUnsubscribe?.();
+    this.appearanceUnsubscribe = null;
     // The RUN is not cancelled here. Unlike the ask stream (which this window owns), a delegated run
     // is hosted by the product-wide controller and may be watched from another surface; tearing it
     // down because this dev window unmounted would be this window deciding for the whole product.
@@ -731,6 +908,16 @@ export class SearchV3View extends JfElement {
    * The shell re-sets `api-base` on a CACHED element rather than reconstructing it, so the base has
    * to follow the attribute and not just the first connect.
    */
+  /**
+   * The late claim match is resolved BEFORE the render that will show it, not after: writing state
+   * from `updated()` schedules a second update for the same frame and Lit's dev build warns about
+   * exactly that. The shared reader does its equivalent derivation in `willUpdate` for the same
+   * reason.
+   */
+  protected override willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has('sessions')) this.upgradeOpenPaneAnchor();
+  }
+
   protected override updated(changed: Map<string, unknown>): void {
     if (changed.has('apiBase')) {
       setSearchApiBase(this.apiBase || '');
@@ -747,6 +934,10 @@ export class SearchV3View extends JfElement {
         composer.draft = this.draftSeed;
       }
     }
+    // Tempdoc 610 §K — keep the OPEN inspector current. Its subject is "what the last turn sent", so
+    // a new turn, a moved floor or a hidden turn changes it; a drawer left showing the previous
+    // answer's prompt would be the stalest possible answer to the one question it exists to answer.
+    if (isContextInspectorOpen()) setContextInspectorView(this.buildContextInspectorView());
   }
 
   /* ── The conversation record (tempdoc 822 Phase F6) ───────────────────────────────────────── */
@@ -823,8 +1014,19 @@ export class SearchV3View extends JfElement {
    * without claiming removes the race rather than compensating for it afterwards; this window
    * already claims at open ({@link claimConversation}).
    *
-   * A superseded load is still DISCARDED — the reader moved on, and the fields belong to a
-   * conversation that is no longer the one on screen.
+   * TWO GUARDS, because there are two ways an answer can be stale (852 S3, closing S2's F5).
+   *
+   *  - **Session** — the reader moved on, and these fields belong to a conversation that is no longer
+   *    the one on screen. That guard shipped with S1.
+   *  - **ORDER** — two reloads of the SAME conversation can land out of order, and the older answer
+   *    would then stand. S2 recorded this as F5 and named the fix: the record half's generation
+   *    token. Branch and edit multiply the reload rate (every act is a write followed by a reload,
+   *    and an edit is two acts in a row), so the same discipline applies here: each load supersedes
+   *    the one before it, and a superseded load's answer is DROPPED however late it arrives.
+   *
+   * HONEST LIMIT on the order guard: `resumeConversation` accepts no signal, so the superseded
+   * REQUEST is not cancelled — only its answer is discarded. That is what F5 named (ordering), and
+   * the request that is still in flight costs a round trip and changes nothing.
    *
    * HONEST LIMIT: `resumeConversation` reports a failed read as an empty resume by contract, so a
    * conversation whose history could not be read is recorded as one with no floor and no parent
@@ -836,7 +1038,12 @@ export class SearchV3View extends JfElement {
    * load after the write lands, or the window renders a floor the backend no longer holds.
    */
   private async refreshHistory(conversationId: string): Promise<void> {
+    this.historyAbort?.abort();
+    const abort = new AbortController();
+    this.historyAbort = abort;
     const history = await resumeConversation(conversationId, SV3_ASK_SHAPE_ID, { claim: false });
+    if (abort.signal.aborted) return;
+    if (this.historyAbort === abort) this.historyAbort = null;
     if (this.sessions.activeId !== conversationId) return;
     this.sessions = applySv3History(this.sessions, conversationId, {
       parentSessionId: history.parentSessionId,
@@ -848,6 +1055,361 @@ export class SearchV3View extends JfElement {
       excludedSourceIds: history.excludedSourceIds,
       locked: history.locked,
     });
+  }
+
+  /* ── The effective context (tempdoc 610, ported by 852 S2) ────────────────────────────────── */
+
+  /** The claimed conversation, or null when nothing is claimed. */
+  private get activeSession(): Sv3Session | null {
+    const id = this.sessions.activeId;
+    return id === null ? null : sessionById(this.sessions, id);
+  }
+
+  /**
+   * What the effective context does with each turn on screen. Computed ONCE per render and handed to
+   * both consumers (the transcript's frames, the bar's aggregate) plus every act below, so what the
+   * window renders and what it writes are derived from one reading of one record.
+   */
+  private turnContexts(): readonly Sv3TurnContext[] {
+    const session = this.activeSession;
+    if (session === null) return [];
+    return projectSv3TurnContexts(session.turns, session.history);
+  }
+
+  /**
+   * The reader asked for a turn's ⋯ menu. The entries come from the SAME pure derivation the region
+   * gated its trigger on, so a menu can never offer an act the turn cannot address; an empty list
+   * opens nothing at all rather than an empty menu.
+   */
+  private async onContextMenu(event: Event): Promise<void> {
+    const detail = (event as CustomEvent<Sv3ContextMenuRequest>).detail;
+    const session = this.activeSession;
+    if (detail === undefined || session === null) return;
+    const contexts = this.turnContexts();
+    const items = sv3ContextMenuItems(contexts, detail.turnId, {
+      compacting: this.compacting,
+      streaming: this.streaming,
+      contextFloor: session.history?.contextFloor ?? null,
+      hasSummary: (session.history?.contextFloorSummary ?? null) !== null,
+    });
+    // ONE menu for both sets (852 S3). They are two derivations because they are gated on different
+    // ids — a turn can be excludable and not forkable — but a turn has one ⋯, and a second overflow
+    // beside the first would be a second place to look for "what can I do with this turn".
+    const branch = sv3BranchMenuItems(this.turnLineage(), detail.turnId, {
+      streaming: this.streaming,
+    });
+    if (items.length === 0 && branch.length === 0) return;
+    const chosen = await openContextMenu({
+      // The branch acts lead: they fork the conversation, and the context acts change what the next
+      // prompt carries within it. The reference window orders them the same way.
+      actions: [
+        ...branch.map((item) => ({
+          id: item.id,
+          label: item.label,
+          icon: 'git-branch' as const,
+          category: 'ai' as const,
+          enabled: item.enabled,
+        })),
+        ...items.map((item) => ({
+          id: item.id,
+          label: item.label,
+          icon: 'history' as const,
+          category: 'ai' as const,
+          enabled: item.enabled,
+        })),
+      ],
+      anchor: { x: detail.x, y: detail.y },
+    });
+    if (chosen === null) return;
+    if (isSv3BranchActionId(chosen)) {
+      await this.runBranchAction({ action: chosen, turnId: detail.turnId });
+      return;
+    }
+    await this.runContextAction({ action: chosen as Sv3ContextActionId, turnId: detail.turnId });
+  }
+
+  private onContextAction(event: Event): void {
+    const detail = (event as CustomEvent<Sv3ContextAction>).detail;
+    if (detail === undefined) return;
+    void this.runContextAction(detail);
+  }
+
+  /**
+   * The five acts of tempdoc 610, and the two reads beside them. Each write goes through the SHARED
+   * store function that owns its endpoint (this window mints no request), and — the obligation 852
+   * S1 recorded when it loaded `/history` without rendering it — **every write is followed by a
+   * re-load of that record**. The backend is the authority on the floor and the exclusions; a
+   * window that patched its own copy instead would keep rendering a floor a failed or partial write
+   * never established, and would drift from the other client the moment there is one.
+   */
+  private async runContextAction(detail: Sv3ContextAction): Promise<void> {
+    const session = this.activeSession;
+    if (session === null) return;
+    const sessionId = session.id;
+    if (detail.action === 'inspect') {
+      this.openContextInspector();
+      return;
+    }
+    const contexts = this.turnContexts();
+    const turn = detail.turnId === undefined ? null : sv3TurnContextFor(contexts, detail.turnId);
+    switch (detail.action) {
+      case 'floor': {
+        const messageId = turn?.floorMessageId ?? null;
+        if (messageId === null) return;
+        await this.settleContextWrite(
+          sessionId,
+          await setContextFloor(sessionId, messageId),
+          CONTEXT_FLOOR_FAILED,
+        );
+        return;
+      }
+      case 'restore':
+        await this.settleContextWrite(
+          sessionId,
+          await clearContextFloor(sessionId),
+          CONTEXT_RESTORE_FAILED,
+        );
+        return;
+      case 'compact': {
+        const messageId = turn?.floorMessageId ?? null;
+        if (messageId === null || this.compacting) return;
+        this.compacting = true;
+        try {
+          // The summary comes back on the response, and is then re-read from `/history` like every
+          // other field: one place decides what the floor currently says.
+          const summary = await compactContext(sessionId, messageId);
+          await this.settleContextWrite(sessionId, summary !== null, CONTEXT_COMPACT_FAILED);
+        } finally {
+          this.compacting = false;
+        }
+        return;
+      }
+      case 'summary':
+        if (detail.text === undefined) return;
+        await this.settleContextWrite(
+          sessionId,
+          await editContextFloorSummary(sessionId, detail.text),
+          CONTEXT_SUMMARY_FAILED,
+        );
+        return;
+      case 'exclude':
+      case 'include': {
+        const ids = turn?.messageIds ?? [];
+        if (ids.length === 0) return;
+        const excluded = detail.action === 'exclude';
+        // Both of a turn's messages, because the reader hid a TURN: leaving the question in the
+        // prompt while dropping the answer would send the model a question it never answered.
+        const ok = await this.excludeInTurn(sessionId, ids, excluded);
+        await this.settleContextWrite(
+          sessionId,
+          ok,
+          excluded ? CONTEXT_EXCLUDE_FAILED : CONTEXT_INCLUDE_FAILED,
+        );
+        return;
+      }
+      case 'include-all': {
+        const ids = sv3ExcludedMessageIds(contexts);
+        if (ids.length === 0) return;
+        const ok = await this.excludeInTurn(sessionId, ids, false);
+        await this.settleContextWrite(sessionId, ok, CONTEXT_INCLUDE_FAILED);
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
+  /**
+   * Several exclusion toggles, ONE AT A TIME — never `Promise.all`.
+   *
+   * The endpoint's write is read-modify-write over a SHARED document and the store takes no lock:
+   * `FileConversationStore.toggleStringInMeta` reads `meta.json`, adds or removes the id, and calls
+   * `writeMetaAtomic` (`:503-527`). The write is atomic per file; the SEQUENCE is not, and each POST
+   * is served on its own HTTP thread. Two toggles in flight together therefore race on one snapshot,
+   * and the loser's id is silently dropped.
+   *
+   * What that costs here is specific and invisible: a turn's two ids go out together, one lands, and
+   * the turn is left HALF excluded — the prompt carries a question whose answer was dropped, while
+   * the transcript dims the turn either way (`hasExcluded` is true on one id as on two). Serializing
+   * removes the race rather than detecting it afterwards, and it is what the shipped window already
+   * does (`views/UnifiedChatView.ts:1767-1776`, a sequential `for`-await).
+   *
+   * Returns whether EVERY toggle landed; the caller reloads `/history` either way.
+   */
+  private async excludeInTurn(
+    sessionId: string,
+    ids: readonly string[],
+    excluded: boolean,
+  ): Promise<boolean> {
+    let ok = true;
+    for (const id of ids) {
+      if (!(await setMessageExcluded(sessionId, id, excluded))) ok = false;
+    }
+    return ok;
+  }
+
+  /**
+   * The tail every context write shares: RELOAD, then report a refusal. The reload runs whether or
+   * not the write landed — a partially-applied bulk exclusion is exactly the case where the window's
+   * own idea of the ledger is least trustworthy — and the toast names the act, because the remedies
+   * differ (a refused floor is the store; a compaction that returned nothing is usually the model).
+   */
+  private async settleContextWrite(
+    sessionId: string,
+    ok: boolean,
+    failure: string,
+  ): Promise<void> {
+    await this.refreshHistory(sessionId);
+    if (ok) return;
+    emitEphemeralToast({ message: failure, severity: 'warning' });
+  }
+
+  /* ── Branch, edit / retry and the version pager (852 S3) ──────────────────────────────────── */
+
+  /**
+   * What each turn can do about branching, derived once per render from the SAME three inputs the
+   * acts below read: the turns on screen, the conversation's `/history`, and the store's own rows.
+   * The trigger's gate and the act's target are therefore one derivation, which is what stops a menu
+   * offering a fork the window would then compute differently.
+   */
+  private turnLineage(): readonly Sv3TurnLineage[] {
+    const session = this.activeSession;
+    if (session === null) return [];
+    return projectSv3TurnLineage(session.turns, session.history, session.id, this.conversations);
+  }
+
+  private onBranchAction(event: Event): void {
+    const detail = (event as CustomEvent<Sv3BranchAction>).detail;
+    if (detail === undefined) return;
+    void this.runBranchAction(detail);
+  }
+
+  /**
+   * The three acts, all of them ONE backend act with a different `fromMsgId` and a different thing
+   * to do afterwards (`views/UnifiedChatView.ts:1471-1497` — there is no edit endpoint and no retry
+   * endpoint, and inventing one here would be inventing a contract the backend does not hold).
+   *
+   *  - **Branch** forks after this turn's ANSWER and continues there; nothing is re-sent.
+   *  - **Retry** forks before this turn's QUESTION and re-sends it unchanged.
+   *  - **Edit** forks at the same point and sends the rewrite, so the new text is the first
+   *    divergent message rather than a second one appended below the old exchange.
+   *
+   * The ids come from {@link projectSv3TurnLineage} and nowhere else, so an act can never be pointed
+   * at a message `?fromMsgId=` would reject — and a turn that names none renders no affordance to
+   * press in the first place.
+   */
+  private async runBranchAction(detail: Sv3BranchAction): Promise<void> {
+    const session = this.activeSession;
+    if (session === null || this.streaming) return;
+    const lineage = sv3LineageFor(this.turnLineage(), detail.turnId);
+    if (lineage === null) return;
+    const turn = session.turns.find((t) => t.id === detail.turnId) ?? null;
+    switch (detail.action) {
+      case 'branch':
+        if (lineage.branchFromId === null) return;
+        await this.branchInto(session.id, lineage.branchFromId, null);
+        return;
+      case 'retry': {
+        const question = turn?.question ?? '';
+        if (lineage.forkKey === null || question === '') return;
+        await this.branchInto(session.id, lineage.forkKey, question);
+        return;
+      }
+      case 'edit': {
+        const text = (detail.text ?? '').trim();
+        if (lineage.forkKey === null || text === '' || !lineage.canEdit) return;
+        await this.branchInto(session.id, lineage.forkKey, text);
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
+  /**
+   * Fork, open the fork, and — for the two acts that re-send — ask again IN it.
+   *
+   * ORDER IS THE WHOLE THING. The branch is opened and CLAIMED before the re-send, because
+   * {@link runAsk} appends to whatever conversation is active: sending first would append the
+   * rewritten question to the conversation the reader was replacing, which is the failure this act
+   * exists to avoid and would look entirely plausible on screen.
+   *
+   * A refused branch changes nothing and says so. There is no local fallback — a window that
+   * appended the re-send to the current conversation "because the branch failed" would silently do
+   * the one thing the reader did not ask for.
+   */
+  private async branchInto(
+    sessionId: string,
+    fromMsgId: string,
+    resend: string | null,
+  ): Promise<void> {
+    // The preview is the conversation's OPENING question, the same thing the shipped window sends
+    // (`:1485`): it is what makes the new session surface as a recent one with a name.
+    const preview = this.activeSession?.turns.find((t) => t.question !== '')?.question ?? '';
+    const branched = await branchConversation(sessionId, fromMsgId, preview);
+    if (branched === null) {
+      emitEphemeralToast({ message: BRANCH_FAILED, severity: 'warning' });
+      return;
+    }
+    await this.openBranch(branched);
+    if (resend !== null) await this.runAsk(resend);
+  }
+
+  /**
+   * Open a conversation this window has just created. The same four moves a row click makes
+   * ({@link onSessionSelect}) — project the row, focus it, claim it, load both records — plus the
+   * one a row click does not need: RE-LIST.
+   *
+   * The re-list is what makes the fork visible. A branch's siblings are read from the store's own
+   * `parentSessionId`/`branchPointMessageId` pointers, and the row carrying them does not exist in
+   * this window's copy of the list until `listSessions` returns it — so without this the pager would
+   * render nothing on the very fork the reader just made.
+   */
+  private async openBranch(id: string): Promise<void> {
+    const now = Date.now();
+    this.sessions = mergeStoreConversations(this.sessions, [
+      { id, title: null, firstUserMessage: '', createdAt: now, lastActiveAt: now },
+    ]);
+    this.sessions = focusSession(this.sessions, id, now);
+    this.claimConversation(id);
+    this.recordNotice = false;
+    // The same rule `onSessionSelect` applies: an edit in another row is DROPPED rather than
+    // committed, because navigating away must not write text the reader walked away from.
+    this.renamingId = null;
+    void this.setComposerState('docked');
+    await Promise.all([this.refreshRecord(id), this.refreshHistory(id), loadConversations()]);
+  }
+
+  /**
+   * The reader paged to another version of a turn. It is an OPEN, not a write: the target is a real
+   * conversation and claiming it is what claiming any conversation does, so this routes through the
+   * one open path rather than a second, branch-flavoured one.
+   */
+  private onVersionSelect(event: Event): void {
+    const id = (event as CustomEvent<Sv3VersionSelect>).detail?.sessionId ?? '';
+    if (id === '' || id === this.sessions.activeId) return;
+    void this.openBranch(id);
+  }
+
+  /**
+   * Tempdoc 610 §K — open the shared inspector on what the last completed turn actually sent. The
+   * projection is pushed rather than subscribed to, the same way the shipped window does it, and it
+   * is re-pushed on every update while the drawer is open so a new turn does not leave it stale.
+   */
+  private openContextInspector(): void {
+    setContextInspectorView(this.buildContextInspectorView());
+    toggleContextInspector();
+  }
+
+  private buildContextInspectorView(): InspectorView {
+    const session = this.activeSession;
+    return projectSv3ContextInspector(
+      session?.turns ?? [],
+      this.turnContexts(),
+      session?.history ?? null,
+      session?.contextUsage ?? null,
+      this.aiSnapshot?.runtime.contextWindow ?? null,
+    );
   }
 
   /**
@@ -1196,7 +1758,59 @@ export class SearchV3View extends JfElement {
     this.paneWidthPx = clampSv3PaneWidth(this.paneWidthPx, available, this.sidebarOccupiedWidth());
     this.applyPaneWidth(this.paneWidthPx);
     this.paneDocPath = detail.docPath;
-    this.paneRange = detail.range;
+    this.paneCitation = detail.anchor ?? null;
+    this.paneSource = { turnId: detail.turnId, sourceIndex: detail.sourceIndex };
+    this.paneCitationHeader = this.headerFor(detail.turnId, detail.sourceIndex, this.paneCitation);
+  }
+
+  /**
+   * Tempdoc 849 §7 — the citation header for the turn/source the pane is showing. One helper, two
+   * callers, for the same reason `sv3CitationAnchor` has two: the header is resolved when the
+   * citation is followed and AGAIN when a late claim match changes what may be said about it, and
+   * the two answers must be produced by the same join.
+   */
+  private headerFor(
+    turnId: string,
+    sourceIndex: number,
+    anchor: DocumentCitationAnchor | null,
+  ): CitationHeader | null {
+    const turn = activeTurns(this.sessions).find((candidate) => candidate.id === turnId) ?? null;
+    return sv3CitationHeader(turn, sourceIndex, anchor);
+  }
+
+  /**
+   * Tempdoc 849 §4 — the late claim match. A citation followed while the answer is still streaming
+   * has a retrieved chunk and no matched sentence, so the pane opens tinting the passage; when
+   * `rag.citation_matches` lands, the open pane gains its sentence and lands the strong emphasis.
+   *
+   * Only the OPEN pane's own source is upgraded, and only from `null` — a match for a different
+   * source does not touch it, and a pane that already has its sentence is not re-anchored by a later
+   * projection of the same turn. The reader's `armedHighlightKey` guard does the rest: the new,
+   * distinct range arms the strong phase exactly once.
+   */
+  private upgradeOpenPaneAnchor(): void {
+    const source = this.paneSource;
+    if (source === null || source.sourceIndex === SV3_SOURCE_INDEX_ABSENT) return;
+    const anchor = this.paneCitation;
+
+    // The ANCHOR upgrade, which needs an anchor to upgrade and a sentence it does not yet have.
+    if (anchor !== null && anchor.sentenceText === null) {
+      const turn = activeTurns(this.sessions).find((c) => c.id === source.turnId) ?? null;
+      const sentence = sv3MatchedSentence(turn, source.sourceIndex);
+      if (sentence !== null) this.paneCitation = { ...anchor, sentenceText: sentence };
+    }
+
+    // The HEADER refresh, which needs neither (review LOW-5). The two used to share one early
+    // return, so a pane opened on an UNUSABLE span — `citation === null`, exactly the S10 case this
+    // slice added — was excluded from the header refresh forever: its grounding line stayed frozen
+    // at "Retrieved · not cited" no matter what the matcher later found. A citation with no usable
+    // position is still a citation whose source can be grounded, and the header is the only thing
+    // that can say so.
+    const next = this.headerFor(source.turnId, source.sourceIndex, this.paneCitation);
+    // Written only on a real change: this runs on every `sessions` update, i.e. every streamed
+    // chunk, and a fresh object each time would re-render the reader continuously for a header
+    // whose words never moved.
+    if (!sameCitationHeader(this.paneCitationHeader, next)) this.paneCitationHeader = next;
   }
 
   /**
@@ -1205,7 +1819,9 @@ export class SearchV3View extends JfElement {
    */
   private closePane(): void {
     this.paneDocPath = null;
-    this.paneRange = null;
+    this.paneCitation = null;
+    this.paneSource = null;
+    this.paneCitationHeader = null;
   }
 
   private readonly onHostKeydown = (event: KeyboardEvent): void => {
@@ -1383,10 +1999,16 @@ export class SearchV3View extends JfElement {
   }
 
   /**
-   * The DELEGATE tier's own gate, from the same authority. It is a strict SUPERSET of the ask tier's:
-   * both need a live backend and a loaded model, but only the ask tier additionally needs an indexed
-   * document to ground an answer in. Reading one reason for both would therefore refuse a delegation
-   * the agent could have served — the two tiers get two projections rather than one shared guess.
+   * The DELEGATE tier's own gate, from the same authority. Its conditions are a strict SUBSET of the
+   * ask tier's — both need a live backend and a loaded model (`state/availability.ts:96-133`, shared
+   * by every affordance), and only ASK additionally needs an indexed document to ground an answer in
+   * (`:139-146`). Reading one reason for both would therefore refuse a delegation the agent could
+   * have served, which is why the two tiers get two projections rather than one shared guess.
+   *
+   * That containment is load-bearing beyond the wording (852 S4): while it holds, a Ctrl+Enter
+   * delegate from ask mode can never meet a closed delegate gate behind an open ask one. See the
+   * §S4 remainder note in `docs/tempdocs/852-sv3-promotion.md` for what breaks if `agent` ever
+   * grows a gate of its own.
    */
   private get delegateUnavailableReason(): string {
     const availability = projectAvailability('agent', this.aiSnapshot);
@@ -1481,7 +2103,13 @@ export class SearchV3View extends JfElement {
         onRewrite: (standalone) => {
           this.sessions = setTurnRewrite(this.sessions, ref, standalone);
         },
-        onDone: () => {
+        onDone: (usage) => {
+          // Tempdoc 610 §E.4 — the occupancy this turn reported, recorded on the CONVERSATION that
+          // spent it (a terminal that reported none leaves the previous reading standing rather than
+          // replacing it with a zero the backend never sent).
+          if (usage !== null) {
+            this.sessions = setSessionContextUsage(this.sessions, ref.sessionId, usage);
+          }
           // The answer has arrived, so the thinking that preceded it is over — the shipped window
           // ends it on the first content chunk; ending it at the terminal is the same edge for a
           // window whose transcript renders the block beside the answer rather than instead of it.
@@ -1513,6 +2141,17 @@ export class SearchV3View extends JfElement {
     const effort = (event as CustomEvent<Sv3EffortChange>).detail?.effort;
     if (!isSv3Effort(effort)) return;
     this.effort = effort;
+  }
+
+  /**
+   * The composer announced a new send TIER (852 S4). Validated rather than trusted, exactly as the
+   * effort rung is: the event crosses a shadow boundary and an unknown tier would otherwise fall
+   * through to `runAsk` and silently ask when the reader chose to delegate.
+   */
+  private onTierChange(event: Event): void {
+    const tier = (event as CustomEvent<Sv3TierChange>).detail?.tier;
+    if (!isSv3Tier(tier)) return;
+    this.tier = tier;
   }
 
   /** Halting is always the reader's; the turn settles `halted` through the sink's own terminal. */
@@ -1853,7 +2492,11 @@ export class SearchV3View extends JfElement {
     const prompt = main?.shadowRoot?.querySelector<HTMLElement>('[data-testid="sv3-run-prompt"]');
     if (prompt === null || prompt === undefined) return;
     prompt.scrollIntoView({ block: 'nearest' });
-    prompt.querySelector('button')?.focus();
+    // Through the primitive's shadow root, because the decision controls are `jf-control`s (852 S4
+    // adoption) and `jf-control` does not delegate focus: focusing the HOST would move focus nowhere
+    // and leave the reader on a decision they were just taken to.
+    const decision = prompt.querySelector('jf-control');
+    decision?.shadowRoot?.querySelector('button')?.focus();
   }
 
   /**
@@ -2016,27 +2659,91 @@ export class SearchV3View extends JfElement {
   }
 
   /**
-   * The reader discards a conversation (tempdoc 831). `removeSession` decides — including the
-   * refusal for a conversation with work in flight, which is why nothing is re-checked here — and
-   * the deletion is WRITTEN THROUGH to the conversation store, the authority for a conversation's
-   * existence (the same shape the rename write-through takes). If the authority declines, the next
-   * list load projects the row back: the window never claims a deletion that did not happen.
+   * The reader discards a conversation (tempdoc 831). `removeSession` DECIDES — including the
+   * refusal for a conversation with work in flight — and the deletion is WRITTEN THROUGH to the
+   * conversation store, the authority for a conversation's existence.
    *
-   * Removing the conversation ON SCREEN routes through New session first, so the window leaves the
-   * transcript the way every other exit from it does — an emptied pane and nothing claimed — rather
-   * than through a second, partial teardown that would be free to forget one of the pointers.
+   * THE ROW LEAVES WHEN THE STORE SAYS IT LEFT (852 S3), not on the press. This used to be
+   * optimistic, which the cascade port made untenable: the delete can now stop and ASK ("this has 2
+   * branches — delete those too?"), and asking about a row that has already vanished from the list
+   * behind the dialog is asking about something the reader can no longer see. Removing on the answer
+   * also retires the restore-by-re-list dance the optimistic version needed for every refusal.
    */
   private onSessionRemove(event: Event): void {
     const id = (event as CustomEvent<Sv3SessionRemove>).detail?.id ?? '';
     const gate = this.runGate();
-    // Asked TWICE, deliberately: the first call is the decision (an unchanged list is the refusal,
-    // and nothing else may happen on a refusal), and the second is the write — because the New-
-    // session exit in between replaces the list this one would otherwise have been computed from.
+    // The DECISION, taken now and carried into the write: an unchanged list is the refusal (work in
+    // flight), and nothing else may happen on a refusal. The gate travels with it rather than being
+    // re-derived after the await — the reader's press is what is being answered, and by the time the
+    // store answers it has already deleted the conversation regardless of what has started since.
     if (removeSession(this.sessions, id, gate) === this.sessions) return;
-    if (this.sessions.activeId === id) this.onSessionNew();
-    if (this.renamingId === id) this.renamingId = null;
-    this.sessions = removeSession(this.sessions, id, gate);
-    void deleteConversation(id);
+    void this.deleteThroughStore(id, gate);
+  }
+
+  /**
+   * Delete, CASCADE-AWARE (slice 517 FIX-U1, ported by 852 S3 — the one behavior the retired
+   * conversation-history dropdown had that this window's sidebar did not).
+   *
+   * Slices 515/516 made it impossible to orphan a branch: the store REFUSES to delete a conversation
+   * other conversations were forked from, with `409` + the children's ids. This window's delete
+   * called the plain store function, which reports that refusal as a bare `false` — so the row
+   * vanished from the list, the conversation stayed on disk, and the reader was told nothing. That
+   * is not a missing feature; it is a delete that silently does not delete.
+   *
+   * What the reader is now asked is the same question the shipped window asked, in this window's
+   * own words, and it NAMES the branches — the ids come back from the refusal, the labels from the
+   * list this window already holds. It promises ONE level, because that is what the cascade does:
+   * the store function recurses into each child WITHOUT the consent callback, so a child that has
+   * children of its own answers `409`, the cascade aborts, and nothing is deleted. The copy says so
+   * ({@link deleteCascadeMessage}) rather than promising a depth this act refuses to perform.
+   *
+   * Nothing leaves the list until the store says it left — including the conversation the reader
+   * pressed delete on, which is why removing it on screen happens HERE and not at the press.
+   */
+  private async deleteThroughStore(id: string, gate: Sv3RunGate): Promise<void> {
+    let cascaded: readonly string[] = [];
+    let declined = false;
+    const result = await deleteConversationWithCascade(id, async (childIds) => {
+      cascaded = childIds;
+      const consented = await confirmAsync({
+        title: deleteCascadeTitle,
+        message: deleteCascadeMessage(
+          this.conversationLabel(id),
+          childIds.map((childId) => this.conversationLabel(childId)),
+        ),
+        variant: 'danger',
+        confirmLabel: deleteCascadeConfirm(childIds.length),
+      });
+      declined = !consented;
+      return consented;
+    });
+    if (!result.ok) {
+      // A DECLINED cascade is NOT a failure — the reader was asked and said no — and it is the ONE
+      // silent case. A plain refusal and a consented cascade that then broke halfway are both real
+      // failures and both must say so; the store function's return cannot tell the three apart
+      // (`{ok:false, childIds}` covers two of them), which is why the reader's own answer is tracked
+      // here instead of inferred from it. Nothing was removed on screen, so there is nothing to put
+      // back — the re-list is for the CHILDREN a half-broken cascade may really have deleted.
+      if (!declined) emitEphemeralToast({ message: DELETE_FAILED, severity: 'warning' });
+      void loadConversations();
+      return;
+    }
+    // The store deleted it, so now the screen follows. Removing the open conversation routes through
+    // New session first, so the window leaves the transcript the way every other exit from it does —
+    // an emptied pane and nothing claimed — rather than a partial teardown free to forget a pointer.
+    // The children go with it: the list must not keep offering conversations the store no longer has.
+    for (const gone of [id, ...cascaded]) {
+      if (this.sessions.activeId === gone) this.onSessionNew();
+      if (this.renamingId === gone) this.renamingId = null;
+      this.sessions = removeSession(this.sessions, gone, gate);
+    }
+  }
+
+  /** A conversation's name as the reader knows it, for a dialog that must name what it will delete. */
+  private conversationLabel(id: string): string {
+    const session = sessionById(this.sessions, id);
+    const row = this.conversations.find((c) => c.id === id) ?? null;
+    return session?.title ?? row?.title ?? row?.firstUserMessage ?? id;
   }
 
   /**
@@ -2136,7 +2843,8 @@ export class SearchV3View extends JfElement {
       <jf-sv3-pane
         data-testid="sv3-pane"
         .docPath=${this.paneDocPath}
-        .highlightRange=${this.paneRange}
+        .citation=${this.paneCitation}
+        .citationHeader=${this.paneCitationHeader}
         ?overlay=${this.paneOverlay}
         api-base=${this.apiBase}
         @sv3-pane-close=${this.closePane}
@@ -2157,6 +2865,7 @@ export class SearchV3View extends JfElement {
         run?.phase === 'running' ||
         run?.phase === 'holding',
       followUp: turns.length > 0,
+      tier: this.tier,
     });
     // Relative timestamps are computed HERE, on render, and never ticked: a sidebar that re-renders
     // itself every second is continuous motion at rest, which the spec's duty-cycle law rules out.
@@ -2164,6 +2873,10 @@ export class SearchV3View extends JfElement {
       ...this.runGate(run),
       now: Date.now(),
     });
+    // ONE reading of the effective context per render, shared by the transcript's frames and the
+    // bar's aggregate — so the dimmed turns and the "N turns hidden" count cannot disagree.
+    const session = this.activeSession;
+    const contexts = this.turnContexts();
     return html`
       <jf-sv3-sidebar
         .groups=${sessionGroups}
@@ -2196,10 +2909,15 @@ export class SearchV3View extends JfElement {
         @sv3-composer-stop=${this.onComposerStop}
         @sv3-composer-answer=${this.onComposerAnswer}
         @sv3-effort-change=${this.onEffortChange}
+        @sv3-tier-change=${this.onTierChange}
         @sv3-run-decision=${this.onRunDecision}
         @sv3-palette-request=${this.onPaletteRequest}
         @sv3-remedy=${this.onRemedy}
         @sv3-citation-open=${this.onCitationOpen}
+        @sv3-context-menu=${this.onContextMenu}
+        @sv3-context-action=${this.onContextAction}
+        @sv3-branch-action=${this.onBranchAction}
+        @sv3-version-select=${this.onVersionSelect}
       >
         <jf-sv3-topbar window-title=${WINDOW_TITLE} data-testid="sv3-topbar"></jf-sv3-topbar>
         <jf-sv3-main
@@ -2214,8 +2932,18 @@ export class SearchV3View extends JfElement {
           .reasoningTurnId=${this.liveReasoningTurnId()}
           .currentModelLabel=${this.currentModelLabel}
           ?detailed=${isAdvancedMode()}
+          .turnContexts=${contexts}
+          .turnLineage=${this.turnLineage()}
+          .floorSummary=${session?.history?.contextFloorSummary ?? null}
+          ?streaming=${this.streaming}
           data-testid="sv3-main"
         ></jf-sv3-main>
+        <jf-sv3-context-bar
+          .usage=${session?.contextUsage ?? null}
+          .contextWindow=${this.aiSnapshot?.runtime.contextWindow ?? null}
+          hidden-turns=${sv3ExcludedTurnCount(contexts)}
+          data-testid="sv3-context-bar-host"
+        ></jf-sv3-context-bar>
         <jf-sv3-composer
           state=${this.composerState}
           slot-kind=${slot.kind}
@@ -2227,6 +2955,7 @@ export class SearchV3View extends JfElement {
           ?detailed=${isAdvancedMode()}
           .corpus=${projectSv3Corpus(this.aiSnapshot)}
           effort=${this.effort}
+          tier=${this.tier}
           model-label=${this.currentModelLabel ?? ''}
           data-testid="sv3-composer"
         ></jf-sv3-composer>

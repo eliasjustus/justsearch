@@ -26,16 +26,22 @@
  * LABEL leftward into its glyph (§5.9's signature compaction) and the window morphs the moving
  * box with the view transition in `sv3-composer-morph.ts` (§5.5).
  *
- * Its control row holds ONE control (tempdoc 822 Phase F10) — the effort rung the next question will
- * carry — and, beside it, ONE FACT (Phase F11): which model would answer. Control first, fact second,
- * the design spec's own footer order. Slice 3's two scope PLACEHOLDERS are gone with them — they stood for
+ * Its control row holds TWO controls — the MODE the next draft is sent at (852 S4: ask the model, or
+ * delegate to the agent) and the EFFORT rung it carries (tempdoc 822 Phase F10) — and, beside them,
+ * ONE FACT (Phase F11): which model would answer. Controls first, fact second,
+ * the design spec's own footer order; mode before effort, because effort qualifies a send whose
+ * destination the mode has already decided. Slice 3's two scope PLACEHOLDERS are gone with them — they stood for
  * the search axis the §4b standing directive defers indefinitely and did nothing when clicked.
  *
  * Side-effect registers <jf-sv3-composer>.
  */
 import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
-import { icon } from '../../components/Icon.js';
+import { icon, type IconName } from '../../components/Icon.js';
+// The product's ONE operability primitive (tempdoc 559 Authority V; 852 parity ledger row 11). The
+// two REMEDIES in this element are born on it; the menu triggers, the menu rungs, the disclosure and
+// the primary slot are not, and each of those exceptions is stated at its own render site.
+import '../../components/Control.js';
 import { sv3Shared } from './sv3-shared-styles.js';
 import {
   COMPOSER_PLACEHOLDER,
@@ -57,7 +63,15 @@ import {
   sv3EffortLabel,
   type Sv3Effort,
 } from './sv3-ask.js';
-import { sv3PrimaryAction, type Sv3SlotKind } from './sv3-run.js';
+import {
+  sv3PrimaryAction,
+  SV3_TIER_DEFAULT,
+  SV3_TIER_MENU_LABEL,
+  SV3_TIER_OPTIONS,
+  sv3TierLabel,
+  type Sv3ComposerTier,
+  type Sv3SlotKind,
+} from './sv3-run.js';
 import {
   SV3_CORPUS_UNKNOWN,
   SV3_REMEDY,
@@ -82,12 +96,16 @@ export interface Sv3ComposerStateRequest {
 export const SV3_COMPOSER_SUBMIT = 'sv3-composer-submit';
 
 /**
- * Which tier the reader routed the draft to (tempdoc 822 Phase F2). Enter asks the local model;
- * Ctrl+Enter DELEGATES the same draft as an agent task. The keys are the whole difference — no mode
- * switch, no second field, and no new chrome: the routing is announced in the send slot's aria-label
- * and title, which is the one place a control may explain itself without spending screen.
+ * Which tier the reader routed the draft to (tempdoc 822 Phase F2; declared in `sv3-run.ts`, the
+ * module that owns the send-routing vocabulary, and re-exported here so this element's submit
+ * contract reads in one file).
+ *
+ * Until 852 S4 the keys were the WHOLE difference — Enter asked, Ctrl+Enter delegated, and the only
+ * statement of that was the send slot's aria-label. A routing a reader can only discover by pressing
+ * a chord they were never told about is not an affordance, so the control row gained a mode control
+ * (§3.2) and the chord stayed as its accelerator.
  */
-export type Sv3ComposerTier = 'ask' | 'delegate';
+export type { Sv3ComposerTier };
 
 export interface Sv3ComposerSubmit {
   readonly query: string;
@@ -118,6 +136,18 @@ export interface Sv3EffortChange {
   readonly effort: Sv3Effort;
 }
 
+/**
+ * Raised when the reader picks a send TIER (852 S4). Same boundary as the effort rung and the draft:
+ * the composer owns the control, the window owns the value and stamps it on the next dispatch. The
+ * composer never routes anything itself — a tier it kept would be a second answer to "what does Enter
+ * do" beside the window's own.
+ */
+export const SV3_TIER_CHANGE = 'sv3-tier-change';
+
+export interface Sv3TierChange {
+  readonly tier: Sv3ComposerTier;
+}
+
 /** The spec's composer control icon at its default optical size (`size-4`). */
 const CONTROL_GLYPH_SIZE = 16;
 
@@ -130,6 +160,14 @@ const CHEVRON_SIZE = 14;
  * label and the glyph is then the only thing left to say what the control is about.
  */
 const EFFORT_GLYPH = 'zap';
+
+/**
+ * The mode control's glyph (852 S4). A ROUTING mark, not a destination: the control chooses WHERE a
+ * draft goes, so a `bot` would name one of its two tiers and have nothing left to wear for the other
+ * — and `send` is already the primary control's own mark. Worn always, for the reason the effort
+ * glyph is: docking evaporates the label and the glyph is then all the control has left to say.
+ */
+const TIER_GLYPH = 'arrow-right-left';
 
 export class Sv3Composer extends JfElement {
   static styles = [
@@ -207,7 +245,10 @@ export class Sv3Composer extends JfElement {
         text-align: center;
         text-wrap: balance;
       }
-      .corpus-remedy {
+      /* Geometry only: the focus ring comes from jf-control itself (852 S4 adoption), which is why
+         no :focus-visible rule remains here — two rings would be the drift the primitive exists
+         against. */
+      .corpus-remedy::part(control) {
         padding: 0;
         border: 0;
         background: none;
@@ -218,13 +259,8 @@ export class Sv3Composer extends JfElement {
         text-underline-offset: 2px;
         cursor: pointer;
       }
-      .corpus-remedy:hover {
+      .corpus-remedy::part(control):hover {
         color: var(--primary);
-      }
-      .corpus-remedy:focus-visible {
-        outline: 2px solid var(--ring);
-        outline-offset: 2px;
-        border-radius: var(--control-radius);
       }
 
       /* The design spec stacks composer banners ABOVE the box, 8px clear of it, at the composer's
@@ -299,6 +335,8 @@ export class Sv3Composer extends JfElement {
          button in a one-line banner would out-weigh the send. */
       .degradation-remedy {
         flex: none;
+      }
+      .degradation-remedy::part(control) {
         padding: 0;
         border: 0;
         background: none;
@@ -309,7 +347,7 @@ export class Sv3Composer extends JfElement {
         text-underline-offset: 2px;
         cursor: pointer;
       }
-      .degradation-remedy:hover {
+      .degradation-remedy::part(control):hover {
         color: var(--primary);
       }
       .degradation-disclosure {
@@ -326,7 +364,6 @@ export class Sv3Composer extends JfElement {
       .degradation-disclosure:hover {
         color: var(--foreground);
       }
-      .degradation-remedy:focus-visible,
       .degradation-disclosure:focus-visible {
         outline: 2px solid var(--ring);
         outline-offset: 2px;
@@ -787,9 +824,11 @@ export class Sv3Composer extends JfElement {
     detailed: { type: Boolean, reflect: true },
     corpus: { attribute: false },
     effort: { type: String, reflect: true },
+    tier: { type: String, reflect: true },
     modelLabel: { type: String, reflect: true, attribute: 'model-label' },
     draft: { state: true },
     effortMenuOpen: { state: true },
+    tierMenuOpen: { state: true },
     degradationOpen: { state: true },
   };
 
@@ -853,6 +892,14 @@ export class Sv3Composer extends JfElement {
    */
   declare effort: Sv3Effort;
   /**
+   * Which tier the next send routes to (852 S4), HELD BY THE WINDOW exactly as the effort rung is.
+   *
+   * It changes what a plain Enter and the send control do; the Ctrl/⌘+Enter accelerator is UNCHANGED
+   * and still delegates from either mode, which is why the keyboard path in {@link onKeydown} reads
+   * the modifier first and this property second.
+   */
+  declare tier: Sv3ComposerTier;
+  /**
    * Which model would answer the next question, VERBATIM from the runtime authority (tempdoc 822
    * Phase F11; the same expression `SearchV3View` stamps on a turn). The window authors no model
    * name: no shortening, no re-casing, no vendor-stripping.
@@ -870,6 +917,12 @@ export class Sv3Composer extends JfElement {
    * (`SearchV3View.onHostKeydown`).
    */
   declare effortMenuOpen: boolean;
+  /**
+   * The mode menu's own open flag. Public for the same reason {@link effortMenuOpen} is: the window's
+   * Escape ladder yields to whichever control menu is open. The two are mutually exclusive by
+   * construction (opening one closes the other), so the row never holds two open menus.
+   */
+  declare tierMenuOpen: boolean;
   /**
    * The reader's own disclosure of the banner's detail, in Simple mode. Window-local and forgotten
    * on unmount: nothing is remembered per cause-set, so a banner never opens itself because an
@@ -893,9 +946,11 @@ export class Sv3Composer extends JfElement {
     this.detailed = false;
     this.corpus = SV3_CORPUS_UNKNOWN;
     this.effort = SV3_EFFORT_DEFAULT;
+    this.tier = SV3_TIER_DEFAULT;
     this.modelLabel = '';
     this.draft = '';
     this.effortMenuOpen = false;
+    this.tierMenuOpen = false;
     this.degradationOpen = false;
   }
 
@@ -926,9 +981,12 @@ export class Sv3Composer extends JfElement {
     // sent halfway through being typed.
     if (event.shiftKey) return;
     event.preventDefault();
-    // Ctrl+Enter (⌘↩ on macOS) DELEGATES; plain Enter asks. Alt is left alone — an Alt+Enter this
-    // window claimed would swallow a chord the platform or the shell may already own.
-    this.submit(event.ctrlKey || event.metaKey ? 'delegate' : 'ask');
+    // Ctrl+Enter (⌘↩ on macOS) DELEGATES, from either mode — the accelerator is UNCHANGED by S4's
+    // mode control, which is why the modifier is read first and the chosen tier second. Plain Enter
+    // sends at the chosen tier, which is `ask` in a window whose reader has not touched the control.
+    // Alt is left alone — an Alt+Enter this window claimed would swallow a chord the platform or the
+    // shell may already own.
+    this.submit(event.ctrlKey || event.metaKey ? 'delegate' : this.tier);
   }
 
   /**
@@ -989,12 +1047,17 @@ export class Sv3Composer extends JfElement {
 
   render(): TemplateResult {
     const empty = this.draft.trim().length === 0;
+    // WHICHEVER TIER THE READER CHOSE is the one whose refusal must be on screen (852 S4). Before the
+    // mode control, the notice was deliberately the ASK tier's — Enter's refusal was the one that
+    // could never be silent. Now Enter routes wherever the control points, so a delegate-mode window
+    // showing the ask tier's availability would refuse the send for a reason nothing on screen states.
+    const activeReason = this.activeUnavailableReason;
     // Soft, never `disabled`: the availability authority's contract is that the reason stays
     // reachable, and a natively-disabled control is not even focusable (`state/availability.ts:6-20`).
-    const unavailable = this.unavailableReason !== '';
+    const unavailable = activeReason !== '';
     // The ONE banner slot, shared. The affordance-scoped reason yields whenever the degradation
     // banner already words its code, so the same fact never stands in the slot twice.
-    const reason = sv3ComposerReason(this.degradation, this.unavailableReason);
+    const reason = sv3ComposerReason(this.degradation, activeReason);
     return html`
       <div class="band" data-testid="sv3-composer-band">
         ${this.state === 'hero' ? this.landing() : nothing}
@@ -1027,7 +1090,7 @@ export class Sv3Composer extends JfElement {
           </div>
           <div class="footer">
             <div class="controls" @focusout=${this.onControlsFocusOut}>
-              ${this.effortControl()}${this.modelLabelFact()}
+              ${this.tierControl()}${this.effortControl()}${this.modelLabelFact()}
             </div>
             ${this.primaryAction(empty, unavailable, this.refusalDescribedBy(reason))}
           </div>
@@ -1037,33 +1100,84 @@ export class Sv3Composer extends JfElement {
   }
 
   /**
-   * The composer's ONE control (tempdoc 822 Phase F10) — the design spec's traits picker
-   * re-expressed on this window's tokens: a ghost
-   * composer control whose LABEL IS THE CURRENT VALUE, a chevron, and a menu of radio rungs.
+   * The control row's SHARED trigger (tempdoc 822 Phase F10's grammar, generalised by 852 S4 when a
+   * second control joined the row) — the design spec's traits picker re-expressed on this window's
+   * tokens: a ghost composer control whose LABEL IS THE CURRENT VALUE, a chevron, and a menu of radio
+   * rungs behind it.
    *
-   * The accessible name carries both halves in BOTH forms ("Effort: Standard"), because the visible
+   * The accessible name carries BOTH halves ("Effort: Standard", "Mode: Ask"), because the visible
    * label is only the value: docking evaporates it into the glyph (§5.9), and a control whose
    * remaining glyph means "effort" to nobody would have gone quiet exactly when it got smaller.
+   *
+   * ONE renderer, because the two controls are one grammar and a second copy of it is how a row of
+   * controls starts drifting. Only the MENUS are still written twice, and only because their option
+   * rows carry different data-attribute NAMES (`data-effort` is read by the ui-shot harness,
+   * `scripts/jseval/jseval/ui_check.py:1539`) — a lit template cannot parametrise an attribute name.
    */
-  private effortControl(): TemplateResult {
-    const label = sv3EffortLabel(this.effort);
+  private controlTrigger(spec: {
+    readonly testid: string;
+    readonly menuLabel: string;
+    readonly glyph: IconName;
+    readonly value: string;
+    readonly open: boolean;
+    readonly toggle: () => void;
+  }): TemplateResult {
+    const name = `${spec.menuLabel}: ${spec.value}`;
     return html`
       <button
         type="button"
         class="composer-control"
-        data-testid="sv3-composer-effort"
+        data-testid=${spec.testid}
         aria-haspopup="menu"
-        aria-expanded=${this.effortMenuOpen ? 'true' : 'false'}
-        aria-label=${`${SV3_EFFORT_MENU_LABEL}: ${label}`}
-        title=${`${SV3_EFFORT_MENU_LABEL}: ${label}`}
-        @click=${this.toggleEffortMenu}
-        @keydown=${this.onTriggerKeydown}
+        aria-expanded=${spec.open ? 'true' : 'false'}
+        aria-label=${name}
+        title=${name}
+        @click=${spec.toggle}
+        @keydown=${(event: KeyboardEvent) => this.onTriggerKeydown(event, spec.open, spec.toggle)}
       >
-        ${icon({ name: EFFORT_GLYPH, size: CONTROL_GLYPH_SIZE, className: 'control-glyph' })}
-        <span class="control-label"><span class="control-label-motion">${label}</span></span>
+        ${icon({ name: spec.glyph, size: CONTROL_GLYPH_SIZE, className: 'control-glyph' })}
+        <span class="control-label"><span class="control-label-motion">${spec.value}</span></span>
         ${icon({ name: 'chevron-down', size: CHEVRON_SIZE, className: 'control-chevron' })}
       </button>
-      ${this.effortMenuOpen ? this.effortMenu() : nothing}
+    `;
+  }
+
+  private effortControl(): TemplateResult {
+    return html`
+      ${this.controlTrigger({
+        testid: 'sv3-composer-effort',
+        menuLabel: SV3_EFFORT_MENU_LABEL,
+        glyph: EFFORT_GLYPH,
+        value: sv3EffortLabel(this.effort),
+        open: this.effortMenuOpen,
+        toggle: this.toggleEffortMenu,
+      })}${this.effortMenuOpen ? this.effortMenu() : nothing}
+    `;
+  }
+
+  /**
+   * WHERE THE DRAFT GOES (852 S4, ledger row 12) — the window's two dispatch tiers, made visible.
+   *
+   * Both were live and tested long before this control existed; `delegate` was reachable only by
+   * Ctrl/⌘+Enter, announced nowhere but in the send control's aria-label. A capability a reader can
+   * only find by pressing a chord nobody told them about is not an affordance, and this window's own
+   * honesty law does not have a category for "present but undiscoverable".
+   *
+   * It sits in the `.controls` wrapper beside the effort rung and NOT in the primary-action slot: that
+   * slot early-returns exactly one control and never disables the loser behind the winner. It is a
+   * real control, so it takes the full button treatment — unlike the model FACT beside it, which is
+   * deliberately not focusable and carries no role.
+   */
+  private tierControl(): TemplateResult {
+    return html`
+      ${this.controlTrigger({
+        testid: 'sv3-composer-tier',
+        menuLabel: SV3_TIER_MENU_LABEL,
+        glyph: TIER_GLYPH,
+        value: sv3TierLabel(this.tier),
+        open: this.tierMenuOpen,
+        toggle: this.toggleTierMenu,
+      })}${this.tierMenuOpen ? this.tierMenu() : nothing}
     `;
   }
 
@@ -1121,9 +1235,64 @@ export class Sv3Composer extends JfElement {
     `;
   }
 
-  private toggleEffortMenu(): void {
-    this.effortMenuOpen = !this.effortMenuOpen;
+  /**
+   * The mode menu. Written out rather than shared with {@link effortMenu} for the one reason stated
+   * at {@link controlTrigger}: the option rows differ in an attribute NAME.
+   */
+  private tierMenu(): TemplateResult {
+    return html`
+      <div
+        class="menu"
+        role="menu"
+        aria-label=${SV3_TIER_MENU_LABEL}
+        data-testid="sv3-composer-tier-menu"
+        @keydown=${this.onMenuKeydown}
+      >
+        <div class="menu-label">${SV3_TIER_MENU_LABEL}</div>
+        ${SV3_TIER_OPTIONS.map(
+          (option) => html`
+            <button
+              type="button"
+              class="menu-item"
+              role="menuitemradio"
+              data-testid="sv3-composer-tier-option"
+              data-tier=${option.id}
+              aria-checked=${option.id === this.tier ? 'true' : 'false'}
+              @click=${() => this.chooseTier(option.id)}
+            >
+              <span class="menu-item-head">
+                ${option.label}
+                ${option.isDefault
+                  ? html`<span class="menu-badge" data-testid="sv3-composer-tier-default"
+                      >Default</span
+                    >`
+                  : nothing}
+              </span>
+              <span class="menu-item-description">${option.description}</span>
+            </button>
+          `,
+        )}
+      </div>
+    `;
   }
+
+  /**
+   * Bound fields, not methods: the trigger's keydown handler receives its own toggle as a value, and
+   * an unbound method passed that way would lose the element when called.
+   *
+   * The two menus are MUTUALLY EXCLUSIVE. Opening one closes the other rather than layering it: they
+   * open into the same space above the same row, and the keyboard walk below addresses "the open
+   * menu" — a second one would make that phrase ambiguous.
+   */
+  private readonly toggleEffortMenu = (): void => {
+    this.effortMenuOpen = !this.effortMenuOpen;
+    if (this.effortMenuOpen) this.tierMenuOpen = false;
+  };
+
+  private readonly toggleTierMenu = (): void => {
+    this.tierMenuOpen = !this.tierMenuOpen;
+    if (this.tierMenuOpen) this.effortMenuOpen = false;
+  };
 
   /**
    * The rung is the WINDOW's to keep — the composer announces it exactly as it announces a draft,
@@ -1132,7 +1301,7 @@ export class Sv3Composer extends JfElement {
    */
   private chooseEffort(effort: Sv3Effort): void {
     this.effortMenuOpen = false;
-    this.focusTrigger();
+    this.focusTrigger('sv3-composer-effort');
     if (effort === this.effort) return;
     this.dispatchEvent(
       new CustomEvent<Sv3EffortChange>(SV3_EFFORT_CHANGE, {
@@ -1143,11 +1312,25 @@ export class Sv3Composer extends JfElement {
     );
   }
 
+  /** The tier, on exactly the effort rung's terms — the composer announces it and keeps nothing. */
+  private chooseTier(tier: Sv3ComposerTier): void {
+    this.tierMenuOpen = false;
+    this.focusTrigger('sv3-composer-tier');
+    if (tier === this.tier) return;
+    this.dispatchEvent(
+      new CustomEvent<Sv3TierChange>(SV3_TIER_CHANGE, {
+        detail: { tier },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
   /** Down-arrow on the trigger opens the menu onto its first rung (the spec's menu behaviour). */
-  private onTriggerKeydown(event: KeyboardEvent): void {
-    if (event.key !== 'ArrowDown' || this.effortMenuOpen) return;
+  private onTriggerKeydown(event: KeyboardEvent, open: boolean, toggle: () => void): void {
+    if (event.key !== 'ArrowDown' || open) return;
     event.preventDefault();
-    this.effortMenuOpen = true;
+    toggle();
     void this.updateComplete.then(() => this.menuItems()[0]?.focus());
   }
 
@@ -1160,8 +1343,12 @@ export class Sv3Composer extends JfElement {
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
+      // Read WHICH menu is open before closing it — the focus goes back to the control that opened
+      // this menu, not to whichever trigger happens to be first in the row.
+      const trigger = this.tierMenuOpen ? 'sv3-composer-tier' : 'sv3-composer-effort';
       this.effortMenuOpen = false;
-      this.focusTrigger();
+      this.tierMenuOpen = false;
+      this.focusTrigger(trigger);
       return;
     }
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
@@ -1179,21 +1366,25 @@ export class Sv3Composer extends JfElement {
    * transient this window owns): a menu left open behind a moved caret is reachable by pointer only.
    */
   private onControlsFocusOut(event: FocusEvent): void {
-    if (!this.effortMenuOpen) return;
+    if (!this.effortMenuOpen && !this.tierMenuOpen) return;
     const next = event.relatedTarget as Node | null;
     const row = this.shadowRoot?.querySelector('.controls') ?? null;
     if (next !== null && row?.contains(next) === true) return;
     this.effortMenuOpen = false;
+    this.tierMenuOpen = false;
   }
 
+  /** The rungs of THE open menu — the two are mutually exclusive, so at most one menu is rendered. */
   private menuItems(): HTMLButtonElement[] {
     return [
       ...(this.shadowRoot?.querySelectorAll<HTMLButtonElement>('button.menu-item') ?? []),
     ];
   }
 
-  private focusTrigger(): void {
-    this.shadowRoot?.querySelector<HTMLButtonElement>('button.composer-control')?.focus();
+  private focusTrigger(testid: string): void {
+    this.shadowRoot
+      ?.querySelector<HTMLButtonElement>(`button.composer-control[data-testid="${testid}"]`)
+      ?.focus();
   }
 
   /**
@@ -1224,14 +1415,13 @@ export class Sv3Composer extends JfElement {
       </p>`;
     }
     return html`<p class="corpus" data-testid="sv3-composer-corpus" data-kind="empty">
-      <button
-        type="button"
+      <jf-control
         class="corpus-remedy"
         data-testid="sv3-composer-corpus-remedy"
-        @click=${this.remedy}
+        label=${CORPUS_ADD_FOLDERS}
+        .onActivate=${() => this.remedy()}
+        >${CORPUS_ADD_FOLDERS}</jf-control
       >
-        ${CORPUS_ADD_FOLDERS}
-      </button>
     </p>`;
   }
 
@@ -1246,6 +1436,16 @@ export class Sv3Composer extends JfElement {
   }
 
   /**
+   * The availability of the tier the reader has CHOSEN (852 S4). The two tiers are gated separately
+   * and deliberately — an agent task needs a live model but no indexed document, so the ask tier can
+   * be refused while delegate is fine — and the window hands down both, so the composer asks the one
+   * that is about to run rather than the one that used to be the only answer.
+   */
+  private get activeUnavailableReason(): string {
+    return this.tier === 'delegate' ? this.delegateUnavailableReason : this.unavailableReason;
+  }
+
+  /**
    * Which node in the ONE banner slot explains a refusal (inventory E1).
    *
    * The send's `aria-describedby` used to name the availability notice unconditionally, which would
@@ -1254,7 +1454,7 @@ export class Sv3Composer extends JfElement {
    * silence, which is the one outcome the reachable-reason contract rules out.
    */
   private refusalDescribedBy(reason: string): string | null {
-    if (this.unavailableReason === '') return null;
+    if (this.activeUnavailableReason === '') return null;
     if (reason !== '') return 'sv3-composer-notice';
     return this.degradation === null ? null : SV3_DEGRADATION_HEADLINE_ID;
   }
@@ -1314,14 +1514,13 @@ export class Sv3Composer extends JfElement {
           data-testid="sv3-degradation-headline"
           >${degradation.headline}</span
         >
-        <button
-          type="button"
+        <jf-control
           class="degradation-remedy"
           data-testid="sv3-degradation-remedy"
-          @click=${this.takeDegradationRemedy}
+          label=${degradation.remedy.label}
+          .onActivate=${() => this.takeDegradationRemedy()}
+          >${degradation.remedy.label}</jf-control
         >
-          ${degradation.remedy.label}
-        </button>
         ${hasDetail ? this.degradationDisclosure(open) : nothing}
       </p>
       ${open && hasDetail ? this.degradationDetail(degradation) : nothing}
@@ -1469,7 +1668,7 @@ export class Sv3Composer extends JfElement {
                 data-unavailable=${String(unavailable)}
                 aria-describedby=${describedBy ?? nothing}
                 data-testid="sv3-composer-send"
-                @click=${() => this.submit('ask')}
+                @click=${() => this.submit(this.tier)}
               >
                 &#8593;
               </button>

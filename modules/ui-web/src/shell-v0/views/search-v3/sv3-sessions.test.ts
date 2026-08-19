@@ -56,6 +56,7 @@ import {
 // Tempdoc 847 §1.3 — the cold-load case merges the REAL record projection, not a hand-built turn:
 // the evidence defect lived in that projection, so a fixture that bypassed it would prove nothing.
 import { projectSv3RecordTurns } from './sv3-record.js';
+import type { Citation } from '../../components/chat/MarkdownBlock.js';
 import type { ThreadEvent } from '../unifiedThreadProjection.js';
 
 /**
@@ -952,7 +953,12 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
     expect(applied.sessions[0]?.turns[0]?.status).toBe('streaming');
   });
 
-  it('keeps the evidence the record cannot resolve, so a refresh never blanks the panel', () => {
+  it('keeps the live evidence when the record carries NONE, so a refresh never blanks the panel', () => {
+    // The precise intent, stated in the name because the fixture is what makes it true: the record
+    // turn below has `evidence: null` (see `recordTurn`), so this case pins ONE end of the merge —
+    // a record that reports no evidence at all may not overwrite what the live turn observed. It
+    // never defended `prior.evidence ?? recorded.evidence` in the case where BOTH sides carry an
+    // evidence object; the two cases beneath it are about that (847 F-12).
     const list = submitInSession(SV3_SESSIONS_EMPTY, 'q', T0, 'ask', 'uc-a');
     const ref = latestTurnRef(list) as Sv3TurnRef;
     const withEvidence = settleTurn(
@@ -961,8 +967,111 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
       'complete',
       T0 + MINUTE,
     );
-    const applied = applySv3Record(withEvidence, 'uc-a', [recordTurn({ id: 'evt-1' })]);
+    const recorded = recordTurn({ id: 'evt-1' });
+    expect(recorded.evidence).toBeNull();
+    const applied = applySv3Record(withEvidence, 'uc-a', [recorded]);
     expect(sv3TurnSourceCount(applied.sessions[0]?.turns[0] as Sv3Turn)).toBe(3);
+  });
+
+  it('takes the RECORD’s marks when the live turn has an evidence object holding none (847 F-12)', () => {
+    // The defect. The live arm publishes an evidence record the moment `rag.meta` names a retrieval
+    // mode — before any source or mark exists — so `prior.evidence ?? recorded.evidence` saw a
+    // non-null object and discarded the record's complete evidence. The post-`done` refresh IS the
+    // repair for a turn whose citation events did not land, and it was thrown away every time it
+    // arrived, for the session's whole lifetime: a grounded answer rendered zero citation marks
+    // until the page was reloaded, at which point the same record produced them.
+    const list = submitInSession(SV3_SESSIONS_EMPTY, 'q', T0, 'ask', 'uc-a');
+    const ref = latestTurnRef(list) as Sv3TurnRef;
+    const liveButEmpty: Sv3TurnEvidence = {
+      sources: [],
+      matches: [],
+      marks: [],
+      retrievalMode: 'HYBRID',
+    };
+    const settledLive = settleTurn(
+      setTurnEvidence(list, ref, liveButEmpty),
+      ref,
+      'complete',
+      T0 + MINUTE,
+    );
+    const full = evidence(2);
+    const recordEvidence: Sv3TurnEvidence = {
+      ...full,
+      matches: [
+        {
+          sentenceIndex: 0,
+          sentenceText: 'The lock held.',
+          sourceIndex: 0,
+          similarity: 0.94,
+          parentDocId: full.sources[0]?.parentDocId ?? '',
+        },
+      ],
+      marks: [
+        {
+          sentenceText: 'The lock held.',
+          similarity: 0.94,
+          sentenceIndex: 0,
+          label: 1,
+          detail: {
+            parentDocId: full.sources[0]?.parentDocId ?? '',
+            startLine: 1,
+            endLine: 4,
+            startChar: 0,
+            endChar: 40,
+            excerpt: 'excerpt 0',
+          },
+          hover: { excerpt: 'excerpt 0', title: 'note-0.md', headingText: 'Notes' },
+        },
+      ],
+    };
+    const applied = applySv3Record(settledLive, 'uc-a', [
+      recordTurn({ id: 'evt-1', evidence: recordEvidence }),
+    ]);
+    const merged = applied.sessions[0]?.turns[0] as Sv3Turn;
+    expect(merged.evidence?.marks).toHaveLength(1);
+    expect(merged.evidence?.matches).toHaveLength(1);
+    expect(sv3TurnSourceCount(merged)).toBe(2);
+    // The live turn's own observation is still the one thing it DID observe.
+    expect(merged.evidence?.retrievalMode).toBe('HYBRID');
+  });
+
+  it('keeps the LIVE marks when the turn observed some — the record does not overwrite them', () => {
+    // The other side of the same rule, so the fix cannot be read as "the record always wins": a turn
+    // that watched its own citation events keeps them, which is what rule 2 has always said.
+    const list = submitInSession(SV3_SESSIONS_EMPTY, 'q', T0, 'ask', 'uc-a');
+    const ref = latestTurnRef(list) as Sv3TurnRef;
+    const mark: Citation = {
+      sentenceText: 'The live sentence.',
+      similarity: 0.91,
+      sentenceIndex: 0,
+      label: 1,
+      detail: {
+        parentDocId: 'f:/docs/note-0.md',
+        startLine: 1,
+        endLine: 4,
+        startChar: 0,
+        endChar: 40,
+        excerpt: 'excerpt 0',
+      },
+      hover: { excerpt: 'excerpt 0', title: 'note-0.md', headingText: 'Notes' },
+    };
+    const liveMark: Sv3TurnEvidence = { ...evidence(1), marks: [mark] };
+    const settledLive = settleTurn(
+      setTurnEvidence(list, ref, liveMark),
+      ref,
+      'complete',
+      T0 + MINUTE,
+    );
+    const applied = applySv3Record(settledLive, 'uc-a', [
+      recordTurn({
+        id: 'evt-1',
+        evidence: { ...evidence(5), marks: [{ ...mark, sentenceText: 'recorded' }] },
+      }),
+    ]);
+    const merged = applied.sessions[0]?.turns[0] as Sv3Turn;
+    expect(merged.evidence?.marks).toHaveLength(1);
+    expect(merged.evidence?.marks[0]?.sentenceText).toBe('The live sentence.');
+    expect(sv3TurnSourceCount(merged)).toBe(1);
   });
 
   it('takes the RECORD’s thinking on a cold load, and keeps the LIVE blocks in session (848)', () => {
@@ -1045,6 +1154,7 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
           completedAt: null,
           lastVisitedAt: 0,
           history: null,
+          contextUsage: null,
           createdAt: T0,
           updatedAt: T0,
           turns: [

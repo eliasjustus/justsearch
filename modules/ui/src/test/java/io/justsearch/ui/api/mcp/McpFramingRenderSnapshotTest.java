@@ -10,6 +10,7 @@ import io.justsearch.agent.api.registry.OperationCatalog;
 import io.justsearch.agent.api.registry.OperationDispatcher;
 import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.DocumentService.ContextCitation;
+import io.justsearch.app.api.DocumentService.ContextInclusion;
 import io.justsearch.app.api.DocumentService.ContextResult;
 import io.justsearch.app.api.DocumentService.QualitySignals;
 import io.justsearch.app.api.knowledge.KnowledgeSearchResponse;
@@ -124,8 +125,10 @@ final class McpFramingRenderSnapshotTest {
   private static ContextResult answerResult() {
     List<ContextCitation> citations =
         List.of(
-            new ContextCitation("doc-1", 0, 2, 0, 40, 0.9f, "excerpt-1", 1, 4, "", 0),
-            new ContextCitation("doc-2", 0, 1, 0, 30, 0.7f, "excerpt-2", 1, 3, "", 0));
+            new ContextCitation(
+                "doc-1", 0, 2, 0, 40, 0.9f, "excerpt-1", 1, 4, "", 0, ContextInclusion.ABSENT),
+            new ContextCitation(
+                "doc-2", 0, 1, 0, 30, 0.7f, "excerpt-2", 1, 3, "", 0, ContextInclusion.ABSENT));
     return new ContextResult(
         "[From: doc-1]\nThe hedging desk escalated to Vince Kaminski.",
         2,

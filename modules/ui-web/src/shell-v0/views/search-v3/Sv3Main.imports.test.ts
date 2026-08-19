@@ -4,8 +4,9 @@
  * The SHIPPED components rendered inside the Search v3 window, dressed in the window's tokens
  * (tempdoc 822 Phase F9 — the F-series fit audit's action 1).
  *
- * The window is dark by construction while the shipped app's `:root` is currently light, so every
- * custom property a nested shipped component reads and the window does NOT re-point is not a taste
+ * The window and the shipped app's `:root` are two different scales — and until 852 S4 wired the
+ * window's theme attribute they could also be in opposite MODES — so every custom property a nested
+ * shipped component reads and the window does NOT re-point is not a taste
  * difference but a polarity inversion. The audit measured two of them on screen: a tool-call card
  * painting `rgb(248,249,252)` under text at `oklch(0.97 0 0)` (white on white) and a reasoning
  * block painting `rgba(15,23,42,.58)` slate on `oklch(14.5% 0 0)`.

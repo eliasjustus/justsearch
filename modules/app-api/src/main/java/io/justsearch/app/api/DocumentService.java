@@ -261,7 +261,9 @@ public interface DocumentService {
       int startLine,
       int endLine,
       String headingText,
-      int headingLevel) {
+      int headingLevel,
+      // Tempdoc 849 §5.3 — retrieved-vs-received, resolved at the head's cut (never at construction)
+      ContextInclusion inclusion) {
 
     /**
      * The absence of a chunk ordinal (tempdoc 836 §8.4). A whole-document source has no chunk
@@ -287,6 +289,101 @@ public interface DocumentService {
       endLine = Math.max(0, endLine);
       headingText = headingText == null ? "" : headingText;
       headingLevel = Math.max(0, headingLevel);
+      // Tempdoc 849 §5.3 — a citation is CONSTRUCTED absent. Inclusion is not knowable where the
+      // record is minted (the Worker does not run the head's cut), so null collapses to the same
+      // explicit ABSENT the CHUNK_INDEX_ABSENT sentinel above models for the chunk ordinal.
+      inclusion = inclusion == null ? ContextInclusion.ABSENT : inclusion;
+    }
+
+    /**
+     * Returns a copy carrying the inclusion state resolved AT the truncation cut (tempdoc 849
+     * §5.3, route (a)). The one transformation that may set this component — everything upstream
+     * of the cut leaves it {@link ContextInclusion#ABSENT}, so "the producer said nothing" and
+     * "the passage reached the model whole" stay distinguishable on the record itself.
+     */
+    public ContextCitation withInclusion(ContextInclusion resolved) {
+      return new ContextCitation(
+          parentDocId, chunkIndex, chunkTotal, startChar, endChar, score, excerpt,
+          startLine, endLine, headingText, headingLevel,
+          resolved == null ? ContextInclusion.ABSENT : resolved);
+    }
+  }
+
+  /**
+   * Tempdoc 849 §5.1 — whether the passage a citation names actually reached the model.
+   *
+   * <p>Retrieval and inclusion are two different facts. A citation is emitted for every passage the
+   * retriever selected; the head's token budget then decides how much of that set the prompt can
+   * actually hold. Before 849 the trimmed context still carried every citation, so a passage the
+   * cut discarded was indistinguishable from one the model read in full — the class javadoc of
+   * {@code RAGContext} documented that gap as permanent.
+   *
+   * <p>Modelled on {@code SourceExamination} (836) one pipeline stage earlier, including its
+   * absence discipline: {@link State#ABSENT} means the producer said nothing, and a consumer must
+   * then say nothing — never assume {@link State#INCLUDED} on the producer's behalf. That is what
+   * keeps a conversation persisted before 849 from being retroactively described.
+   *
+   * <p>Containment (the rule {@code SourceExamination} already carries): this is a BUDGET fact. It
+   * never feeds a grounding tier, a grounding count, or a relevance score.
+   *
+   * @param state included / partial / dropped, or ABSENT when unresolved
+   * @param includedChars characters of the passage that reached the model;
+   *     {@link #INCLUDED_CHARS_UNKNOWN} when the state is ABSENT
+   */
+  record ContextInclusion(State state, int includedChars) {
+
+    /** The four states, ABSENT included so "unresolved" is modelled rather than defaulted away. */
+    enum State {
+      /** The producer did not resolve inclusion. Say nothing; do not read as INCLUDED. */
+      ABSENT,
+      /** The whole passage reached the model. */
+      INCLUDED,
+      /** The passage reached the model with its tail cut (worker-side or at the head's cut). */
+      PARTIAL,
+      /** The citation's passage contributed no text to the prompt. */
+      DROPPED
+    }
+
+    /** No character count is knowable, because no inclusion state was resolved. */
+    public static final int INCLUDED_CHARS_UNKNOWN = -1;
+
+    /** The state every {@link ContextCitation} is constructed in. */
+    public static final ContextInclusion ABSENT =
+        new ContextInclusion(State.ABSENT, INCLUDED_CHARS_UNKNOWN);
+
+    public ContextInclusion {
+      state = state == null ? State.ABSENT : state;
+      includedChars =
+          state == State.ABSENT ? INCLUDED_CHARS_UNKNOWN : Math.max(0, includedChars);
+    }
+
+    /** The whole passage reached the model. */
+    public static ContextInclusion included(int includedChars) {
+      return new ContextInclusion(State.INCLUDED, includedChars);
+    }
+
+    /** The passage reached the model with its tail cut. */
+    public static ContextInclusion partial(int includedChars) {
+      return new ContextInclusion(State.PARTIAL, includedChars);
+    }
+
+    /** The passage contributed no text to the prompt. */
+    public static ContextInclusion dropped() {
+      return new ContextInclusion(State.DROPPED, 0);
+    }
+
+    /** True when nothing was resolved — the emitter must then emit no inclusion key at all. */
+    public boolean absent() {
+      return state == State.ABSENT;
+    }
+
+    /**
+     * The wire vocabulary the FE mirrors ({@code 'included' | 'partial' | 'dropped'}). Callers
+     * must check {@link #absent()} first: absence is expressed by omitting the key, never by a
+     * fourth string the consumer would have to interpret.
+     */
+    public String wireName() {
+      return state.name().toLowerCase(java.util.Locale.ROOT);
     }
   }
 

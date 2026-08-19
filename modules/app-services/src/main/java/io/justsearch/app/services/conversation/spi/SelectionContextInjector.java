@@ -196,7 +196,8 @@ public final class SelectionContextInjector implements ContextInjector {
             0,
             0,
             "",
-            0);
+            0,
+            DocumentService.ContextInclusion.ABSENT);
     stashCitation(ctx, citation, truncated);
     return InjectorResult.of(List.of(message), List.of(citationsEvent(citation, startChar, endChar)));
   }
@@ -223,7 +224,9 @@ public final class SelectionContextInjector implements ContextInjector {
     Map<String, Object> message =
         userMessage("Use the following document for context:\n\n", truncated);
     ContextCitation citation =
-        new ContextCitation(docId, 0, 1, 0, truncated.length(), 1.0f, truncate(truncated, 200), 0, 0, "", 0);
+        new ContextCitation(
+            docId, 0, 1, 0, truncated.length(), 1.0f, truncate(truncated, 200), 0, 0, "", 0,
+            DocumentService.ContextInclusion.ABSENT);
     stashCitation(ctx, citation, truncated);
     return InjectorResult.of(
         List.of(message), List.of(citationsEvent(citation, 0, truncated.length())));
@@ -260,7 +263,8 @@ public final class SelectionContextInjector implements ContextInjector {
             0,
             0,
             "",
-            0);
+            0,
+            DocumentService.ContextInclusion.ABSENT);
     stashCitation(ctx, citation, truncated);
     return InjectorResult.of(
         List.of(message), List.of(citationsEvent(citation, startChar, endChar)));
@@ -271,7 +275,9 @@ public final class SelectionContextInjector implements ContextInjector {
     Map<String, Object> message =
         userMessage("Use the following cited passage as context:\n\n", content);
     ContextCitation citation =
-        new ContextCitation(docId, 0, 1, 0, content.length(), 1.0f, truncate(content, 200), 0, 0, "", 0);
+        new ContextCitation(
+            docId, 0, 1, 0, content.length(), 1.0f, truncate(content, 200), 0, 0, "", 0,
+            DocumentService.ContextInclusion.ABSENT);
     stashCitation(ctx, citation, content);
     return InjectorResult.of(
         List.of(message), List.of(citationsEvent(citation, 0, content.length())));
@@ -296,7 +302,7 @@ public final class SelectionContextInjector implements ContextInjector {
       String content = fetchDocContent(ref.id());
       if (content == null || content.isBlank()) continue;
       String truncated = truncate(content, RESULT_SET_PER_DOC_CHARS);
-      if (concat.length() > 0) concat.append("\n\n---\n\n");
+      if (concat.length() > 0) concat.append(DocumentService.SECTION_SEPARATOR);
       concat.append("Document: ").append(ref.id()).append("\n\n").append(truncated);
       Map<String, Object> citation = new LinkedHashMap<>();
       citation.put("parentDocId", ref.id());
@@ -310,7 +316,7 @@ public final class SelectionContextInjector implements ContextInjector {
           new DocumentService.VerificationSource(
               new ContextCitation(
                   ref.id(), 0, 1, 0, truncated.length(), 1.0f, truncate(truncated, 200), 0, 0, "",
-                  0),
+                  0, DocumentService.ContextInclusion.ABSENT),
               truncated));
       taken++;
     }

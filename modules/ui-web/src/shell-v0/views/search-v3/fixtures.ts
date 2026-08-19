@@ -294,6 +294,145 @@ export const CITATIONS_LABEL = 'Citations';
 /** How long the copy confirmation stands before the label returns. */
 export const TURN_COPY_FEEDBACK_MS = 1600;
 
+/* ── The effective-context set (tempdoc 610, ported by 852 S2) ─────────────────────────────────
+ *
+ * The reference window's own wording wherever it had some, because these five acts change what the
+ * MODEL sees and a second phrasing of "the assistant no longer sees this" in a second window is a
+ * second contract. What is re-worded is only what the unit changed: this window's transcript is
+ * made of TURNS, so a per-message act is named for the turn it acts on.
+ */
+
+/** The ⋯ trigger's accessible name — icon-only, so this IS the name and not a tooltip. */
+export const CONTEXT_MENU_LABEL = 'Context actions for this turn';
+
+export const CONTEXT_MENU_RESET = 'Reset context to here';
+export const CONTEXT_MENU_COMPACT = 'Compact up to here';
+export const CONTEXT_MENU_EXCLUDE = 'Exclude from context';
+export const CONTEXT_MENU_INCLUDE = 'Include in context';
+
+/** The divider above the floor turn, in its two forms — a plain rewind, and one carrying a summary. */
+export const CONTEXT_FLOOR_RESET =
+  'Context reset — the assistant no longer sees the turns above this line';
+export const CONTEXT_FLOOR_COMPACTED =
+  'Context compacted — the turns above this line are summarized for the assistant';
+
+/**
+ * The divider's control row names itself as a GROUP. `role="separator"` sits on the hairline above
+ * it and nowhere else: that role is children-presentational, so putting it on the row would prune
+ * Restore — the only way back from a floor — from assistive tech entirely.
+ */
+export const CONTEXT_FLOOR_GROUP_LABEL = 'Effective context';
+
+export const CONTEXT_FLOOR_RESTORE = 'Restore';
+export const CONTEXT_FLOOR_RESTORE_LABEL = 'Restore the full context for this conversation';
+export const CONTEXT_SUMMARY_SHOW = 'Show summary';
+export const CONTEXT_SUMMARY_HIDE = 'Hide summary';
+export const CONTEXT_SUMMARY_EDIT = 'Edit';
+export const CONTEXT_SUMMARY_EDIT_LABEL = 'Edit the context summary';
+export const CONTEXT_SUMMARY_INPUT_LABEL = 'Context summary';
+export const CONTEXT_SUMMARY_SAVE = 'Save';
+export const CONTEXT_SUMMARY_CANCEL = 'Cancel';
+
+/** The bar under the transcript: the meter's trigger, and the aggregate of what is hidden. */
+export const CONTEXT_METER_LABEL = 'Context';
+export const CONTEXT_METER_BAR_LABEL = 'Context window used';
+export const CONTEXT_INCLUDE_ALL = 'Include all';
+export const CONTEXT_INCLUDE_ALL_LABEL = 'Include every hidden turn back into the context';
+
+/** "N turns hidden from context" — a count the reader can act on, so it says which number it is. */
+export const contextHiddenLabel = (turns: number): string =>
+  `${turns} turn${turns === 1 ? '' : 's'} hidden from context`;
+
+/** The occupancy readout, and what pressing it opens. */
+export const contextMeterLabel = (pct: number, occupancy: number, window: number): string =>
+  `${CONTEXT_METER_LABEL} ${pct}% · ${occupancy} / ${window} tokens`;
+
+export const contextMeterTrigger = (pct: number): string =>
+  `Context ${pct}% used — show what the assistant sees`;
+
+/** The estimated split, named as an estimate everywhere it appears (tempdoc 610 §I.2). */
+export const contextSplitLabel = (system: number, conversation: number, retrieved: number): string =>
+  `split (estimated): system ~${system}, conversation ~${conversation}, documents ~${retrieved}`;
+
+/** The inspector's own section names and speaker labels. */
+export const CONTEXT_INSPECTOR_SUMMARY = 'Summary of earlier turns';
+export const CONTEXT_INSPECTOR_CONVERSATION = 'Conversation';
+export const CONTEXT_INSPECTOR_DOCUMENTS = 'Documents';
+export const CONTEXT_TURN_USER = 'You';
+export const CONTEXT_TURN_ASSISTANT = 'Assistant';
+
+/**
+ * What a refused write says. Each names the ACT that failed rather than "something went wrong",
+ * because the reader's next move differs per act. None of them words the model's availability: this
+ * window has ONE vocabulary for that (`state/readinessNotice.ts`, spoken by the composer's own
+ * notice), and a second phrasing here would be a second sense of the same state (inventory E8).
+ */
+export const CONTEXT_FLOOR_FAILED = 'The context could not be reset';
+export const CONTEXT_RESTORE_FAILED = 'The context could not be restored';
+export const CONTEXT_COMPACT_FAILED = 'The turns above this one could not be summarized';
+export const CONTEXT_SUMMARY_FAILED = 'The summary could not be saved';
+export const CONTEXT_EXCLUDE_FAILED = 'That turn could not be hidden from the context';
+export const CONTEXT_INCLUDE_FAILED = 'That turn could not be put back into the context';
+
+/* ── Branch, edit / retry and the version pager (slice 513 + 610 Phase A/B, ported by 852 S3) ───
+ *
+ * The reference window's wording verbatim wherever it had some, for the reason S2 kept the context
+ * wording: these acts create a real, navigable fork of a conversation, and a second name for
+ * "branch to a new thread" in a second window would be a second concept to the reader.
+ */
+
+export const BRANCH_MENU_RETRY = 'Retry from here';
+export const BRANCH_MENU_BRANCH = 'Branch to new thread';
+
+/** Edit renders INLINE on the question — the reference's §13.1 split — so this is its own name. */
+export const BRANCH_EDIT_LABEL = 'Edit this question';
+export const BRANCH_EDIT_INPUT_LABEL = 'Rewrite this question';
+export const BRANCH_EDIT_SEND = 'Send';
+export const BRANCH_EDIT_CANCEL = 'Cancel';
+/**
+ * A stream started while the editor was open. The rewrite is KEPT and Send says why it cannot go —
+ * a fork of a transcript with a prompt in flight is not a fork of it, the same gate the ⋯ entries
+ * take. Silently doing nothing here would be "a control that fails when pressed".
+ */
+export const BRANCH_EDIT_WAIT = 'Wait for the answer in flight before re-asking this question';
+
+/**
+ * The pager names itself as a GROUP and each control as a direction, because "1 / 3" alone is a
+ * position with nothing to say what it positions.
+ */
+export const VERSION_PAGER_LABEL = 'Versions of this turn';
+export const VERSION_PREVIOUS = 'Previous version';
+export const VERSION_NEXT = 'Next version';
+/** Why an END of the pager does not move — carried as `jf-control`'s reason, not left as silence. */
+export const VERSION_AT_FIRST = 'This is the first version of this turn';
+export const VERSION_AT_LAST = 'This is the last version of this turn';
+export const versionPagerCount = (index: number, total: number): string => `${index + 1} / ${total}`;
+
+/**
+ * A refused branch, in the same grammar as the context refusals above: name the act, and say what
+ * the conversation is now — an unchanged conversation is the reassurance the reader needs most,
+ * because the act they pressed was about to replace what is on screen.
+ */
+export const BRANCH_FAILED = 'That thread could not be branched — this conversation is unchanged';
+
+/** Delete's two new words: the cascade prompt, and the refusal when the store declined. */
+export const DELETE_FAILED = 'That conversation could not be deleted';
+export const deleteCascadeTitle = 'Delete this conversation and its branches?';
+/**
+ * It promises exactly ONE level, because that is exactly what the cascade does.
+ * `deleteConversationWithCascade` recurses into each child WITHOUT the consent callback, so a child
+ * that has children of its own answers `409`, the cascade ABORTS, and the parent is left standing
+ * (the reader then gets `DELETE_FAILED`). Wording it as "those branches too" would promise a
+ * three-level delete this act refuses to perform — and the refusal is the honest behaviour, so the
+ * copy is what has to match it.
+ */
+export const deleteCascadeMessage = (label: string, branches: readonly string[]): string =>
+  `"${label}" has ${branches.length} branch${branches.length === 1 ? '' : 'es'} forked from it:\n`
+  + `${branches.map((b) => `• ${b}`).join('\n')}\n\n`
+  + `Deleting it deletes ${branches.length === 1 ? 'that branch' : 'those direct branches'} too. `
+  + `A branch that has been forked again is not deleted — nothing is removed and this will say so.`;
+export const deleteCascadeConfirm = (branches: number): string => `Delete all (${branches + 1})`;
+
 /**
  * The citation pane's own words (tempdoc 822 Phase F8). The region is named for WHAT IT HOLDS — a
  * cited document — rather than "Document", because the pane's scope guard is that it never holds

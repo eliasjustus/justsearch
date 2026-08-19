@@ -55,11 +55,24 @@ import type {
 // The ONE claim→mark resolver (565 §15.B). The window resolves nothing itself: it hands the
 // backend's claims + sources to the shared authority and stores what comes back.
 import { claimsToCitations } from '../../components/chat/citationResolve.js';
-// Tempdoc 847 S2 — the ONE `claimMatches` envelope reader, so this window's producer gate IS the
-// shipped window's, not a second copy of it (§2.5: defence in depth through one authority).
-import { admittedMatches, readScorer } from '../../components/chat/recordEvidence.js';
-import { isVerifiedProducer } from '../../components/chat/evidenceProjection.js';
-import type { Sv3TurnEvidence } from './sv3-sessions.js';
+// Tempdoc 847 S2 / F-12 — the ONE `claimMatches` envelope reader, so this window's producer gate IS
+// the shipped window's, not a second copy of it (§2.5: defence in depth through one authority).
+//
+// F-12 widened this from the gate to the WHOLE envelope. S2 imported `readScorer` and applied the
+// producer verdict through the shared authority, but kept reading every other field off the raw
+// payload here — so the live arm and the reloaded arm were still two readers of one shape, and only
+// the gate was shared. `claimsFromRecord` + `matchesFromRecord` are that shape's readers; the live
+// handler below now calls exactly them, so a field the record arm normalizes (a legacy `chunkIndex`
+// position, an absent `parentDocId`) cannot be normalized on one path and dropped on the other.
+import {
+  claimsFromRecord,
+  matchesFromRecord,
+  readScorer,
+} from '../../components/chat/recordEvidence.js';
+import type { Sv3ContextUsage, Sv3TurnEvidence } from './sv3-sessions.js';
+// Tempdoc 610 §E.4 — the ONE reading of the terminal's own occupancy report, next to the meter it
+// feeds rather than inlined in the handler table below.
+import { readSv3ContextUsage } from './sv3-context.js';
 
 /** The one shape this window's ask route dispatches. */
 export const SV3_ASK_SHAPE_ID = 'core.rag-ask';
@@ -190,7 +203,13 @@ export interface Sv3AskSink {
    * showing it back.
    */
   onRewrite(standalone: string): void;
-  onDone(): void;
+  /**
+   * The turn reached its terminal, carrying whatever the `done` payload said about the PROMPT it
+   * spent (tempdoc 610 §E.4 — `promptTokens` + the estimated `contextBreakdown`), or `null` when it
+   * reported none. Handed over rather than stored here: the occupancy belongs to the conversation,
+   * and this client owns no conversation.
+   */
+  onDone(usage: Sv3ContextUsage | null): void;
   /** The session lock refused this send (HTTP 423) — the ONLY 423 consumer in this window. */
   onRefused(): void;
   /** The reader pressed Stop. Whatever streamed so far is kept; the turn is halted, not failed. */
@@ -249,6 +268,12 @@ function mergeClaim(
     // between a coverage ratio and a relevance probability exists to max over), and the refs land
     // on the matching side for the same reason (822 §3b).
     if (provenance === 'verified') {
+      // 847 S5 — the verified side's text WINS. The two sides segment differently (the draft cuts
+      // an incomplete markdown buffer as prose; the final cuts parsed block nodes), so at the same
+      // `sentenceIndex` they are usually different sentences. Keeping the draft's text would hand
+      // the renderer a key that no longer names the sentence that earned the score — a mark placed
+      // on one sentence by another's evidence, and a live render that disagrees with the reload.
+      if (sentenceText) existing.text = sentenceText;
       if (score !== null) existing.verifiedScore = Math.max(existing.verifiedScore ?? 0, score);
       if (sourceIndex !== null) existing.verifiedRefs.add(sourceIndex);
     } else {
@@ -327,7 +352,17 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
       retrievalMode,
     });
 
+  /**
+   * What the terminal said about the prompt it spent. Captured from the `done` EVENT — the stream's
+   * own last frame — rather than assumed at the call below, which fires for a stream that ended
+   * without one too.
+   */
+  let usage: Sv3ContextUsage | null = null;
+
   const handlers: CoreRagAskHandlers = {
+    onDone(payload: unknown) {
+      usage = readSv3ContextUsage(payload);
+    },
     onReasoningChunk(payload: unknown) {
       sink.onReasoning(payload);
     },
@@ -381,19 +416,30 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
       // numbers — whose supported and unsupported bands interleave at a 0.0049 margin (836 §9.7) —
       // with cross-encoder-calibrated grounding tiers.
       scorer = readScorer(p);
-      const verified = isVerifiedProducer(scorer);
       // The panel answers to the same verdict as the marks: an unadmitted producer's matches carry
       // no per-source tier, so the sources list and the answer text say the same thing (847 §2.3).
-      matches = admittedMatches(p.matches, scorer);
-      for (const m of p.matches) {
-        mergeClaim(
-          claims,
-          m.sentenceIndex ?? 0,
-          m.sentenceText ?? '',
-          verified && typeof m.similarity === 'number' ? m.similarity : null,
-          'verified',
-          verified && typeof m.sourceIndex === 'number' ? m.sourceIndex : null,
-        );
+      matches = matchesFromRecord(p);
+      // Tempdoc 847 F-12 — the verified half of this turn's claims is what the SHARED envelope
+      // reader says it is, so a live answer and the same answer after a reload are built from one
+      // parse of one payload. The result is MERGED rather than assigned because the live arm has a
+      // second contributor the record arm does not: the lexical `rag.citation_delta` claims already
+      // in `claims`, which live on their own side of the accumulator (§3b/§3d).
+      //
+      // A claim the reader admitted no ref for still merges — with `null` — because the sentence WAS
+      // matched and must exist as a claim; it simply resolves no mark (see `mergeClaim`).
+      for (const claim of claimsFromRecord(p)) {
+        const refs: readonly (number | null)[] =
+          claim.verifiedRefs.length > 0 ? claim.verifiedRefs : [null];
+        for (const ref of refs) {
+          mergeClaim(
+            claims,
+            claim.sentenceIndex,
+            claim.sentenceText,
+            claim.verifiedScore,
+            'verified',
+            ref,
+          );
+        }
       }
       publish();
     },
@@ -430,5 +476,5 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
     return;
   }
 
-  sink.onDone();
+  sink.onDone(usage);
 }

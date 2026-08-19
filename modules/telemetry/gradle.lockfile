@@ -58,6 +58,7 @@ net.logstash.logback:logstash-logback-encoder:9.0=testCompileClasspath,testRunti
 org.apiguardian:apiguardian-api:1.1.2=integrationTestCompileClasspath,testCompileClasspath
 org.checkerframework:checker-qual:3.49.5=annotationProcessor,integrationTestAnnotationProcessor,testAnnotationProcessor,testFixturesAnnotationProcessor
 org.codehaus.mojo:animal-sniffer-annotations:1.26=testCompileClasspath,testRuntimeClasspath
+org.jetbrains.kotlin:kotlin-metadata-jvm:2.3.0=dependencyAnalysisKotlinMetadataClasspath
 org.jetbrains.kotlin:kotlin-stdlib:2.2.21=integrationTestRuntimeClasspath,runtimeClasspath,testFixturesRuntimeClasspath,testRuntimeClasspath
 org.jetbrains:annotations:13.0=integrationTestRuntimeClasspath,runtimeClasspath,testFixturesRuntimeClasspath,testRuntimeClasspath
 org.jspecify:jspecify:1.0.0=annotationProcessor,integrationTestAnnotationProcessor,testAnnotationProcessor,testCompileClasspath,testFixturesAnnotationProcessor,testRuntimeClasspath

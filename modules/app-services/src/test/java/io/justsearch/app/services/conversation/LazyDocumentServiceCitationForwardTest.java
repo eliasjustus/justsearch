@@ -8,6 +8,7 @@ import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.DocumentService.CitationMatchEntry;
 import io.justsearch.app.api.DocumentService.CitationMatchResult;
 import io.justsearch.app.api.DocumentService.ContextCitation;
+import io.justsearch.app.api.DocumentService.ContextInclusion;
 import io.justsearch.app.api.DocumentService.ScorerKind;
 import io.justsearch.app.api.DocumentService.TextSource;
 import io.justsearch.app.api.DocumentService.VerificationSource;
@@ -30,7 +31,8 @@ import org.junit.jupiter.api.Test;
 final class LazyDocumentServiceCitationForwardTest {
 
   private static final ContextCitation CITATION =
-      new ContextCitation("/docs/a.md", 0, 1, 0, 40, 1.0f, "preview", 0, 0, "", 0);
+      new ContextCitation(
+          "/docs/a.md", 0, 1, 0, 40, 1.0f, "preview", 0, 0, "", 0, ContextInclusion.ABSENT);
 
   @Test
   @DisplayName("the supplied passage text reaches the delegate, not an empty default")

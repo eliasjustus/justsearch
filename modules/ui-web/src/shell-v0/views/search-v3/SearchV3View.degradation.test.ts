@@ -232,6 +232,24 @@ const all = (host: Mounted, testid: string): HTMLElement[] => [
   ...(host.shadowRoot?.querySelectorAll<HTMLElement>(`[data-testid="${testid}"]`) ?? []),
 ];
 
+/**
+ * Press a control the way a reader does — through the native button inside it. The banner's REMEDY is
+ * born on the shared operability primitive (852 S4's jf-control adoption) and renders its button in
+ * its own shadow root; the disclosure beside it is still a hand-rolled button (it carries
+ * aria-expanded/aria-controls, which the primitive does not express) and is clicked directly.
+ */
+async function press(host: Element | null | undefined): Promise<void> {
+  if (!host) throw new Error('press: no control');
+  if (host.localName === 'button') {
+    (host as HTMLButtonElement).click();
+    return;
+  }
+  await (host as Mounted).updateComplete;
+  const button = host.shadowRoot?.querySelector('button');
+  if (!button) throw new Error('press: the control rendered no button');
+  button.click();
+}
+
 const text = (el: HTMLElement | null): string => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
 async function mountComposer(over: {
@@ -281,7 +299,7 @@ describe('the banner rests at one line and discloses the rest', () => {
     const el = await mountComposer({ degradation: banner() });
     const seen: string[] = [];
     el.addEventListener(SV3_REMEDY, (e) => seen.push((e as CustomEvent<Sv3RemedyDetail>).detail.target));
-    (q(el, 'sv3-degradation-remedy') as HTMLButtonElement).click();
+    await press(q(el, 'sv3-degradation-remedy'));
     expect(seen).toEqual([banner().remedy.target]);
   });
 

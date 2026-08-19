@@ -6117,6 +6117,12 @@ export class UnifiedChatView extends JfElement {
               typeof m.similarity === 'number' && verifiedProducer ? m.similarity : null;
             const existing = bySentence.get(idx);
             if (existing) {
+              // 847 S5 — the verified side's text WINS over a mid-stream draft's. The draft cuts an
+              // incomplete markdown buffer as prose and the final cuts parsed block nodes, so the
+              // same `sentenceIndex` usually names two different sentences; keeping the draft's
+              // text would place a mark by evidence another sentence earned, and make this live
+              // render disagree with its own reload.
+              if (text) existing.text = text;
               existing.verifiedScore =
                 sim === null ? existing.verifiedScore : Math.max(existing.verifiedScore ?? 0, sim);
               if (verifiedProducer && typeof m.sourceIndex === 'number') {

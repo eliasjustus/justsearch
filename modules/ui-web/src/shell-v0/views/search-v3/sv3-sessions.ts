@@ -226,6 +226,26 @@ export interface Sv3SessionHistory {
   readonly locked?: boolean;
 }
 
+/**
+ * How full the model's context window was on this conversation's LAST completed turn (tempdoc 610
+ * §E.4 / §I.2, ported in 852 S2). Reported by the dispatch's own `done` payload and kept per
+ * CONVERSATION, because that is what it describes: a meter carried on the window would follow the
+ * reader into a conversation whose prompt it never measured.
+ *
+ * `breakdown` is the per-phase attribution and is an ESTIMATE by the backend's own account
+ * (`promptTokens` is the authoritative total); `null` when the turn reported none.
+ */
+export interface Sv3ContextUsage {
+  /** The real occupancy of the last prompt, in tokens. */
+  readonly promptTokens: number;
+  /** The estimated split, or null when the terminal carried none. */
+  readonly breakdown: {
+    readonly system: number;
+    readonly conversation: number;
+    readonly retrieved: number;
+  } | null;
+}
+
 /** One conversation in this window: what it was opened with, and every turn it has taken. */
 export interface Sv3Session {
   readonly id: string;
@@ -270,6 +290,12 @@ export interface Sv3Session {
    * field must be able to tell that from a conversation that really is a root with no floor.
    */
   readonly history: Sv3SessionHistory | null;
+  /**
+   * What this conversation's last completed turn reported about its own prompt occupancy, or `null`
+   * while it has reported none (tempdoc 852 S2). `null` is "not measured", not "empty": the meter is
+   * omitted rather than shown at 0%, which is the same rule {@link Sv3SessionHistory} follows.
+   */
+  readonly contextUsage: Sv3ContextUsage | null;
   readonly createdAt: number;
   /** When the session last submitted; the resting row's timestamp. */
   readonly updatedAt: number;
@@ -347,6 +373,7 @@ function openSession(
     renamed: false,
     turns: [openTurn(id, 0, title, now, kind)],
     history: null,
+    contextUsage: null,
     createdAt: now,
     updatedAt: now,
     pinned: false,
@@ -680,6 +707,7 @@ export function mergeStoreConversations(
       renamed: c.titleSource === 'user',
       turns: [],
       history: null,
+      contextUsage: null,
       createdAt: c.createdAt,
       updatedAt: c.lastActiveAt,
       pinned: false,
@@ -707,6 +735,39 @@ function titleFor(row: Sv3StoreConversation, current: string): string {
 }
 
 /**
+ * Reconcile ONE turn's live evidence with the record's (tempdoc 847 F-12).
+ *
+ * The rule this replaces was `prior.evidence ?? recorded.evidence`, and its intent was rule 2 below:
+ * a refresh must never blank a panel the live turn filled. But `??` only asks whether the live turn
+ * has an evidence OBJECT, and the live arm publishes one the moment `rag.meta` names a retrieval
+ * mode — before a single source or mark exists. So an object holding empty arrays shadowed the
+ * record's complete evidence, and it did so PERMANENTLY: the post-`done` refresh is the repair, and
+ * it was thrown away every time it arrived, for the session's whole lifetime.
+ *
+ * The fix keeps the intent and drops the proxy. Each field asks the question the `??` was standing
+ * in for — *did the live turn actually observe this?* — so what the turn watched still wins, and
+ * what it never saw is taken from the record instead of being asserted as empty. The fields are
+ * reconciled INDEPENDENTLY because they are independently observable: a turn whose stream carried
+ * sources but whose citation-matches never arrived keeps its sources and gains the record's marks.
+ *
+ * The two ends stay exactly as they were: a record with no evidence cannot overwrite a live turn's
+ * (rule 2), and a turn that observed nothing takes the record's whole record (the cold-load path).
+ */
+function reconcileEvidence(
+  prior: Sv3TurnEvidence | null,
+  recorded: Sv3TurnEvidence | null,
+): Sv3TurnEvidence | null {
+  if (recorded === null) return prior;
+  if (prior === null) return recorded;
+  return {
+    sources: prior.sources.length > 0 ? prior.sources : recorded.sources,
+    matches: prior.matches.length > 0 ? prior.matches : recorded.matches,
+    marks: prior.marks.length > 0 ? prior.marks : recorded.marks,
+    retrievalMode: prior.retrievalMode !== '' ? prior.retrievalMode : recorded.retrievalMode,
+  };
+}
+
+/**
  * The canonical thread record, projected onto a conversation's turns (tempdoc 822 Phase F6;
  * inventory D1 / tempdoc 561 P-A: *the window is not the authority*).
  *
@@ -723,7 +784,10 @@ function titleFor(row: Sv3StoreConversation, current: string): string {
  *  2. **Blank the evidence.** The record DOES carry the answer's sources and matches now (tempdoc
  *     847 §2.4, projected by `sv3-record.ts`), but a live turn watched the stream and can hold what
  *     the record has not caught up to, so what the turn already stood on wins over what the record
- *     reports — and a refresh never empties the panel beside it.
+ *     reports — and a refresh never empties the panel beside it. What the turn did NOT observe is
+ *     taken from the record rather than asserted as empty: see {@link reconcileEvidence}, which is
+ *     where the difference between "the live turn holds this" and "the live turn holds an evidence
+ *     object" is made (847 F-12).
  *  3. **Re-word a HALT.** "The reader pressed Stop" is not in the record — to the backend a halted
  *     answer just ended. Overwriting it with `complete` would call the reader's own decision a
  *     success (the four-terminal rule {@link Sv3TurnStatus} exists to keep them distinct).
@@ -799,7 +863,7 @@ export function applySv3Record(
       ...recorded,
       id: prior.id,
       recordId: recorded.recordId ?? recorded.id,
-      evidence: prior.evidence ?? recorded.evidence,
+      evidence: reconcileEvidence(prior.evidence, recorded.evidence),
       status: prior.status === 'halted' ? 'halted' : recorded.status,
       detail: prior.status === 'halted' ? prior.detail : recorded.detail,
       toolCalls: recorded.toolCalls > 0 ? recorded.toolCalls : prior.toolCalls,
@@ -849,6 +913,23 @@ export function applySv3History(
   return {
     ...list,
     sessions: list.sessions.map((s) => (s.id === sessionId ? { ...s, history } : s)),
+  };
+}
+
+/**
+ * What a terminal reported about the prompt it just spent (tempdoc 852 S2) — recorded on the
+ * conversation that spent it, never on the window, so claiming another conversation shows ITS
+ * occupancy or none at all rather than the last one the window happened to see.
+ */
+export function setSessionContextUsage(
+  list: Sv3SessionList,
+  sessionId: string,
+  contextUsage: Sv3ContextUsage,
+): Sv3SessionList {
+  if (sessionById(list, sessionId) === null) return list;
+  return {
+    ...list,
+    sessions: list.sessions.map((s) => (s.id === sessionId ? { ...s, contextUsage } : s)),
   };
 }
 
