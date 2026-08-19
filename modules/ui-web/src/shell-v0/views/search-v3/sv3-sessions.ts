@@ -118,6 +118,14 @@ export interface Sv3Turn {
    * an exclusion is being set against.
    */
   readonly assistantRecordId: string | null;
+  /**
+   * The record opened this turn on a USER message (tempdoc 852 S1). `false` until the record has
+   * spoken for the turn, and `false` for a turn the record opened on something else — an agent run
+   * whose prompt was never recorded starts on a tool call or a search event, and that item's id is
+   * {@link recordId} without being anybody's message. It is the provenance half of
+   * {@link sv3TurnMessageIds}: the id alone cannot say which plane of the thread it came from.
+   */
+  readonly recordOpenedByUser: boolean;
   readonly kind: Sv3TurnKind;
   readonly question: string;
   /** Accumulated answer text. Whatever streamed before a halt is KEPT — it was really received. */
@@ -298,6 +306,7 @@ const openTurn = (
   id: turnIdFor(sessionId, index),
   recordId: null,
   assistantRecordId: null,
+  recordOpenedByUser: false,
   kind,
   question,
   answer: '',
@@ -845,17 +854,24 @@ export function applySv3History(
  * messages is this turn?", so branch, edit-retry, floor-setting and message-exclusion stop each
  * inventing their own.
  *
- * Both halves are honestly `null` when there is no id an endpoint would accept:
+ * **What is guaranteed:** a reported id is one the CONVERSATION STORE itself minted, and therefore
+ * one `?fromMsgId=`, `{floorMessageId}` and `POST …/messages/{id}/exclude` can address. `null` means
+ * this turn has no such message — an affordance that needs one is unavailable, which is a fact about
+ * the turn, not a gap in this function.
  *
- *  - **A live turn has not been reconciled to the record yet.** It carries the positional
- *    `${sessionId}#t${n}` handle {@link Sv3Turn.id} is minted with, which addresses a turn inside
- *    this tab and nothing on the backend. Its `recordId` is `null` until {@link applySv3Record}
- *    stamps one, and that is what this reports.
- *  - **A thread event can carry a SYNTHESISED id.** When a message reaches
- *    `InteractionThreadController.chatTurn` with no usable `id`, the event id becomes
- *    `${conversationId}:chat:${msg.hashCode()}` (`InteractionThreadController.java:260-262`) — an id
- *    that exists in no store and that no branch/floor/exclude endpoint will accept. Reporting it
- *    would hand an affordance a key the backend is guaranteed to reject.
+ * **Why an ALLOWLIST of the store's own mints rather than a list of ids to reject.**
+ * `GET /api/thread/{id}` interleaves two planes (`InteractionThreadController.java:66-73`): the chat
+ * turns, which ARE store rows, and every agent run's events, projected read-time from
+ * `AgentRunStore` and stored as messages nowhere. The run plane mints ids of its own for
+ * user messages (`${runId}:user`, `AgentRunQueryService.java:346-350`), assistant messages
+ * (`${conversationId}:assistant:${stamp}`, `AgentInteractionMapper.java:69`), workflow node outputs
+ * and search events — and `chatTurn` has a fallback of its own for a row with no usable id
+ * (`${conversationId}:chat:${msg.hashCode()}`, `:260-262`). Enumerating those is a list that is one
+ * entry behind the next event kind someone adds. The store's mints are the closed set: a UUID from
+ * `FileConversationStore.enrichMessage` (`:213-219`) or the `idx-N` back-fill `loadHistory` applies
+ * on read (`:159-165`) so pre-513 messages stay branchable. Anything else is not a store row, and
+ * the honest answer for it is `null`. A new store mint would fail CLOSED here — an affordance
+ * unavailable, never one pointed at the wrong message.
  */
 export interface Sv3TurnMessageIds {
   /** The turn's USER message id — what `?fromMsgId=` and a branch point key on. */
@@ -865,18 +881,28 @@ export interface Sv3TurnMessageIds {
 }
 
 /**
- * The synthesised thread-event id (see {@link Sv3TurnMessageIds}). Anchored, because the shape is
- * `${conversationId}:chat:${hashCode}` and a hash is a signed 32-bit integer — matching the literal
- * `:chat:` anywhere would reject a real id that merely contained it.
+ * The two ids `FileConversationStore` mints, and nothing else (see {@link Sv3TurnMessageIds}).
+ * Anchored end to end: `${runId}:user` and `${conversationId}:assistant:${stamp}` both CONTAIN a
+ * store-shaped substring, and an unanchored test would admit them.
  */
-const SYNTHESISED_EVENT_ID = /:chat:-?\d+$/;
+const STORE_MINTED_MESSAGE_ID =
+  /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|idx-\d+)$/i;
 
-const addressableMessageId = (id: string | null): string | null =>
-  id !== null && id !== '' && !SYNTHESISED_EVENT_ID.test(id) ? id : null;
+/**
+ * Is this an id the conversation store minted — i.e. one the message endpoints can address? Exported
+ * because `sv3-record.ts` applies the same test while projecting, so a turn never even carries a
+ * run-plane id in its assistant slot.
+ */
+export const isSv3StoreMessageId = (id: string | null | undefined): boolean =>
+  typeof id === 'string' && STORE_MINTED_MESSAGE_ID.test(id);
 
 export const sv3TurnMessageIds = (turn: Sv3Turn): Sv3TurnMessageIds => ({
-  userMsgId: addressableMessageId(turn.recordId),
-  assistantMsgId: addressableMessageId(turn.assistantRecordId),
+  // BOTH conditions, because either alone admits a run-plane id: the record opens a turn on whatever
+  // item comes first when no user message precedes it (`sv3-record.ts`), and the run plane mints user
+  // messages of its own.
+  userMsgId:
+    turn.recordOpenedByUser && isSv3StoreMessageId(turn.recordId) ? turn.recordId : null,
+  assistantMsgId: isSv3StoreMessageId(turn.assistantRecordId) ? turn.assistantRecordId : null,
 });
 
 /**

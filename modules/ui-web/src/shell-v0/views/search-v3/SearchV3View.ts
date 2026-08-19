@@ -809,25 +809,29 @@ export class SearchV3View extends JfElement {
    * On CLAIM, not per turn: these are properties of a conversation, and re-asking at every terminal
    * would spend a round trip per answer to re-read facts that a turn does not change.
    *
-   * A superseded load is DISCARDED, and the shared active-conversation pointer is put back — the
-   * store's `resumeConversation` claims that pointer as a side effect of a successful read
-   * (`state/conversationListStore.ts:529`), so a slow load for a conversation the reader has already
-   * left would otherwise re-point the product at the one they walked away from. Put back to whatever
-   * is active NOW, `null` included: New session clears the pointer, and a load landing after it must
-   * not resurrect the conversation the reader just left.
+   * `claim: false`, and the pointer is never touched here. `resumeConversation` claims the app-wide
+   * active conversation as a side effect of a successful read, which is right for the shipped
+   * window's open path and wrong for a companion load: a slow read landing after the reader moved on
+   * — to another v3 conversation, to New session, or into the OTHER window, which claims the same
+   * shared pointer — would re-point the product at the conversation they walked away from. Reading
+   * without claiming removes the race rather than compensating for it afterwards; this window
+   * already claims at open ({@link claimConversation}).
+   *
+   * A superseded load is still DISCARDED — the reader moved on, and the fields belong to a
+   * conversation that is no longer the one on screen.
    *
    * HONEST LIMIT: `resumeConversation` reports a failed read as an empty resume by contract, so a
    * conversation whose history could not be read is recorded as one with no floor and no parent
    * rather than as one that was not told. The record half has {@link recordNotice} for that; this
    * half would need the shared store to distinguish the two, which is not S1's to change.
+   *
+   * OBLIGATION ON S2/S3: every one of these fields is mutable by an affordance those slices ship —
+   * setting or clearing a floor, compacting, excluding a message or a source. Each must re-run this
+   * load after the write lands, or the window renders a floor the backend no longer holds.
    */
   private async refreshHistory(conversationId: string): Promise<void> {
-    const history = await resumeConversation(conversationId, SV3_ASK_SHAPE_ID);
-    const active = this.sessions.activeId;
-    if (active !== conversationId) {
-      setActiveConversation(active);
-      return;
-    }
+    const history = await resumeConversation(conversationId, SV3_ASK_SHAPE_ID, { claim: false });
+    if (this.sessions.activeId !== conversationId) return;
     this.sessions = applySv3History(this.sessions, conversationId, {
       parentSessionId: history.parentSessionId,
       branchPointMessageId: history.branchPointMessageId,

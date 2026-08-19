@@ -52,14 +52,35 @@ for the same reason — the terminal assistant message is the answer.
 ### (b) One accessor for a turn's two message ids
 
 `sv3TurnMessageIds(turn) → { userMsgId, assistantMsgId }`, reusing 847-S3's `recordId` for the user
-half and (a) for the assistant half. No new identity field. Both halves are honestly `null` when
-there is no id an endpoint would accept:
+half and (a) for the assistant half. No new identity field.
 
-- a **live** turn still carries the positional `${sessionId}#t${n}` handle and has `recordId: null`,
-  so an affordance needing a backend id is unavailable until the record arrives, and says so;
-- a thread event carrying the **synthesised** `${conversationId}:chat:${msg.hashCode()}` id
-  (`InteractionThreadController.java:260-262`) names a message that exists in no store — reporting
-  it would hand an affordance a key the backend is guaranteed to reject.
+**What it guarantees, and why the rule is provenance rather than a list of ids to reject.**
+`GET /api/thread/{id}` interleaves two planes (`InteractionThreadController.java:66-73`): the chat
+turns, which ARE conversation-store rows, and every agent run's events, projected read-time from
+`AgentRunStore` and written as messages nowhere. The run plane mints its own user messages
+(`${runId}:user`, `AgentRunQueryService.java:346-350`), assistant messages
+(`${conversationId}:assistant:${stamp}`, `AgentInteractionMapper.java:69`), workflow node outputs
+and search events — and `chatTurn` has a fallback of its own for a row with no usable id
+(`${conversationId}:chat:${msg.hashCode()}`, `:260-262`). The first draft of this slice filtered
+only the last of those, which is a list one entry behind the next event kind anybody adds.
+
+So the accessor reports an id only when **both** hold:
+
+1. **Provenance** — the record opened the turn on a `user` item (`Sv3Turn.recordOpenedByUser`), for
+   the user half. The projection opens a turn on whatever arrives before any user item, and a sealed
+   first line becomes a `role:"locked"` placeholder that `chatTurn` drops, so a thread can legitimately
+   open on a *stored assistant* row — whose id is a perfectly good store UUID and is still not the
+   user message a branch point means. Shape alone cannot see that.
+2. **The store's own mints** — a UUID from `FileConversationStore.enrichMessage` (`:213-219`) or the
+   `idx-N` back-fill `loadHistory` applies on read (`:159-165`). An allowlist rather than a denylist,
+   so a new run-plane id family fails CLOSED (an affordance unavailable) instead of mis-targeting.
+
+The same store test is applied while projecting, so a turn's `assistantRecordId` holds the last
+**stored** assistant message rather than the last assistant item — on a turn that has both, a plain
+last-wins would let the run's projected message displace the addressable one.
+
+A **live** turn is null on both halves by construction: it carries the positional
+`${sessionId}#t${n}` handle and `recordId: null` until the record speaks.
 
 `sv3TurnByMessageId(turns, messageId)` is the companion lookup, because every `/history` field names
 a MESSAGE while the window renders TURNS.
@@ -78,13 +99,22 @@ answer), and `applySv3History` parks the result on `Sv3Session.history` as `Sv3S
 give this window a second answer to "what happened in this conversation". The canonical record is
 the one authority for that.
 
-A superseded load is discarded **and** the shared active-conversation pointer is restored —
-`resumeConversation` claims that pointer as a side effect of a successful read
-(`conversationListStore.ts:529`), so a slow load for a conversation the reader has already left
-would otherwise re-point the product at the one they walked away from.
+**The read does not claim.** `resumeConversation` claimed the app-wide active conversation as a side
+effect of any successful read — right for the shipped window's open path, its only caller until now,
+and wrong for a companion load: a slow read landing after the reader moved on (to another v3
+conversation, to New session, or into the *other* window, which claims the same shared pointer) would
+re-point the product at the conversation they walked away from. It now takes `{ claim }`, defaulting
+to today's behaviour, and search-v3 passes `claim: false` — it already claims at open. Removing the
+side effect beats compensating for it afterwards: a restore-the-pointer heuristic cannot tell a
+cross-window claim from its own. A superseded load is still discarded.
 
 **Nothing renders any of it yet.** S2/S3 are its consumers and are the reason it is loaded now
 rather than later; S1 stays a substrate slice with no UI to audit.
+
+**Obligation this places on S2/S3:** every one of these fields is mutable by an affordance those
+slices ship — setting or clearing a floor, compacting, excluding a message or a source. Each write
+must be followed by a re-load, or the window renders a floor the backend no longer holds. The
+`history: null` tri-state supports that directly: a lazy re-load is the same call.
 
 ### Verification
 
@@ -100,15 +130,19 @@ these two:
    (`m1` sits at history position 1 and belongs to the FIRST turn). A merge leg asserts the
    record's evidence and message ids land on the turn bearing the matching `recordId` when the
    record's order disagrees with the local one.
-2. **The `idx-N` backfill and the `hashCode()` fallback shapes.** `idx-N` is a real store id and is
-   reported; the synthesised shape is not. **The assertion's premise, recorded because it is what
-   makes the second half a guard rather than a live expectation:** a store-backed conversation
-   cannot produce the fallback — `enrichMessage` mints a UUID before every write, `loadHistory`
-   back-fills `idx-N` on read, and a sealed line becomes `idx-N-locked`. It is reachable only for a
-   thread event that did not come from the conversation store.
+2. **The `idx-N` backfill, the run plane, and the `hashCode()` fallback.** `idx-N` is a real store id
+   and is reported; a run turn's `${runId}:user` + `${conversationId}:assistant:${stamp}` pair, a
+   turn opened on a search event, a turn opened on a stored *assistant* row, and the `:chat:`
+   fallback are each constructed and asserted `null`. **The fallback assertion's premise, recorded
+   because it is what makes that half a guard rather than a live expectation:** a store-backed
+   conversation cannot produce it — `enrichMessage` mints a UUID before every write, `loadHistory`
+   back-fills `idx-N` on read, and a sealed line becomes `idx-N-locked`.
 
-Both were confirmed by mutation: reverting (a) fails 5 of the new cases, dropping the synthesised-id
-filter fails the guard, and disabling the `refreshHistory` calls fails the view-level case.
+Every new case was confirmed to bite by mutation: reverting (a) fails 5; dropping the store-mint
+allowlist fails 3; dropping the `recordOpenedByUser` condition fails the stored-assistant-row case
+(the one shape alone cannot decide); letting the projection take the last assistant item regardless
+of provenance fails the mixed-turn case; disabling the `refreshHistory` calls fails the arrival case;
+and restoring the claiming read fails both pointer cases.
 
 Green: `npm run typecheck` clean; `npm run test:unit:run` 5221 passed (one unrelated pre-existing
 flake in `EnvelopeStream.test.ts`'s 70 ms watchdog, green in isolation). ui-web gate set + the six

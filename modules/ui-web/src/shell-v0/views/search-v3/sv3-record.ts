@@ -29,7 +29,7 @@ import type { RetrievalCitation } from '../../components/chat/citationTypes.js';
 import { claimsFromRecord, matchesFromRecord } from '../../components/chat/recordEvidence.js';
 import { claimsToCitations } from '../../components/chat/citationResolve.js';
 import type { Sv3RunFeedItem } from './sv3-run.js';
-import type { Sv3Turn, Sv3TurnEvidence } from './sv3-sessions.js';
+import { isSv3StoreMessageId, type Sv3Turn, type Sv3TurnEvidence } from './sv3-sessions.js';
 
 /**
  * The label a non-prose record item carries. Deliberately the same closed vocabulary
@@ -129,18 +129,31 @@ interface Building {
    */
   evidence: Sv3TurnEvidence | null;
   /**
-   * The id of the LAST assistant message in the turn — last-wins for the same reason
-   * {@link evidence} is, and kept even though the ask turn's activity list is not (tempdoc 852
-   * §2.3a): the rendering rule that drops the list says nothing about the identity, and edit-retry,
-   * branch and floor-setting all address an assistant message by it.
+   * The id of the last assistant message in the turn THAT THE CONVERSATION STORE MINTED — last-wins
+   * for the same reason {@link evidence} is, and kept even though the ask turn's activity list is
+   * not (tempdoc 852 §2.3a): the rendering rule that drops the list says nothing about the identity,
+   * and edit-retry, branch and floor-setting all address an assistant message by it.
+   *
+   * The store test is applied HERE, not only at the accessor, because the two planes of the thread
+   * interleave: an agent run's assistant messages are projected read-time from `AgentRunStore` and
+   * exist as messages nowhere (`AgentInteractionMapper.java:69`), so a plain last-wins would let a
+   * run event's id displace the real message's on a turn that has both.
    */
   assistantId: string | null;
+  /** The record opened this turn on a `user` item, rather than on whatever arrived first. */
+  openedByUser: boolean;
 }
 
-const open = (id: string, question: string, askedAt: number): Building => ({
+const open = (
+  id: string,
+  question: string,
+  askedAt: number,
+  openedByUser: boolean,
+): Building => ({
   id,
   question,
   askedAt,
+  openedByUser,
   answers: [],
   activity: [],
   tools: 0,
@@ -178,7 +191,7 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
   let current: Building | null = null;
   const ensure = (item: UnifiedTurnItem): Building => {
     if (current !== null) return current;
-    const created = open(item.id, '', item.ts);
+    const created = open(item.id, '', item.ts, false);
     current = created;
     built.push(created);
     return created;
@@ -186,7 +199,7 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
 
   for (const item of items) {
     if (item.kind === 'user') {
-      current = open(item.id, item.content, item.ts);
+      current = open(item.id, item.content, item.ts, true);
       built.push(current);
       continue;
     }
@@ -194,7 +207,7 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
     if (item.kind === 'assistant') {
       turn.answers.push(item.content);
       turn.activity.push({ kind: 'text', id: item.id, text: item.content });
-      turn.assistantId = item.id;
+      if (isSv3StoreMessageId(item.id)) turn.assistantId = item.id;
       const evidence = recordEvidenceOf(item);
       if (evidence !== null) turn.evidence = evidence;
       continue;
@@ -227,8 +240,10 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       // Tempdoc 852 §2.3a — the OTHER half of the exchange's identity. An ask turn drops its
       // activity list below, and used to drop every assistant id with it; the id is what edit-retry,
       // branch and floor-setting address, and none of them can be built on a turn that cannot name
-      // the message they act on.
+      // the message they act on. Carried WITH its provenance, because the thread interleaves store
+      // rows and read-time run projections and only the former is addressable.
       assistantRecordId: turn.assistantId,
+      recordOpenedByUser: turn.openedByUser,
       kind: agent ? 'agent' : 'ask',
       question: turn.question,
       answer: turn.answers.join('\n\n'),

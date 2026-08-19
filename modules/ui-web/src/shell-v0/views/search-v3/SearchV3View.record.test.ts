@@ -69,6 +69,7 @@ import type { StatusSnapshot } from '../../utils/statusPoll.js';
 import {
   __resetConversationListForTest,
   getConversationListState,
+  setActiveConversation,
 } from '../../state/conversationListStore.js';
 import { __draftStorageKey, __resetDraftProvidersForTest } from '../../controllers/draftPersistence.js';
 import { __resetDraftKeptForTest } from '../../controllers/draftKeptHint.js';
@@ -431,6 +432,12 @@ describe('a v3 session IS a conversation in the app-wide store (A1 + A4)', () =>
 });
 
 describe('the transcript projects from the canonical record (D1)', () => {
+  /**
+   * An id the CONVERSATION STORE minted — the UUID `FileConversationStore.enrichMessage` writes
+   * before every append (`:213-219`). The message endpoints address these and nothing else, so a
+   * case about `/history`'s message-keyed fields has to use them (tempdoc 852 S1).
+   */
+  const storedId = (n: number): string => `11111111-2222-4333-8444-55555555555${n}`;
   const conversationRow = (id: string, first: string): Record<string, unknown> => ({
     sessionId: id,
     createdAtMs: 1,
@@ -485,10 +492,10 @@ describe('the transcript projects from the canonical record (D1)', () => {
     backend.threads['uc-branch'] = {
       conversationId: 'uc-branch',
       events: [
-        wireEvent('m0', 'USER_MESSAGE', 'why did the renewal fail?'),
-        wireEvent('m1', 'ASSISTANT_MESSAGE', 'The lock held.'),
-        wireEvent('m3', 'USER_MESSAGE', 'and the second one?'),
-        wireEvent('m4', 'ASSISTANT_MESSAGE', 'The same lock.'),
+        wireEvent(storedId(0), 'USER_MESSAGE', 'why did the renewal fail?'),
+        wireEvent(storedId(1), 'ASSISTANT_MESSAGE', 'The lock held.'),
+        wireEvent(storedId(3), 'USER_MESSAGE', 'and the second one?'),
+        wireEvent(storedId(4), 'ASSISTANT_MESSAGE', 'The same lock.'),
       ],
     };
     backend.histories['uc-branch'] = {
@@ -497,17 +504,17 @@ describe('the transcript projects from the canonical record (D1)', () => {
       // The transcript the companion ALSO carries — and which this window must keep ignoring, the
       // canonical record being the one authority for what happened.
       messages: [
-        { role: 'user', content: 'why did the renewal fail?', id: 'm0' },
-        { role: 'assistant', content: 'The lock held.', id: 'm1' },
-        { role: 'user', content: 'and the second one?', id: 'm3' },
-        { role: 'assistant', content: 'The same lock.', id: 'm4' },
+        { role: 'user', content: 'why did the renewal fail?', id: storedId(0) },
+        { role: 'assistant', content: 'The lock held.', id: storedId(1) },
+        { role: 'user', content: 'and the second one?', id: storedId(3) },
+        { role: 'assistant', content: 'The same lock.', id: storedId(4) },
       ],
       parentSessionId: 'uc-parent',
-      branchPointMessageId: 'm1',
+      branchPointMessageId: storedId(1),
       parentFirstUserMessage: 'the original question',
-      contextFloor: 'm3',
+      contextFloor: storedId(3),
       contextFloorSummary: 'Everything above was compacted.',
-      excludedMessageIds: ['m4'],
+      excludedMessageIds: [storedId(4)],
       excludedSourceIds: ['docs/lease.md0'],
     };
     const el = await mount();
@@ -516,29 +523,57 @@ describe('the transcript projects from the canonical record (D1)', () => {
     const session = el.sessions.sessions[0];
     expect(session?.history).toEqual({
       parentSessionId: 'uc-parent',
-      branchPointMessageId: 'm1',
+      branchPointMessageId: storedId(1),
       parentFirstUserMessage: 'the original question',
-      contextFloor: 'm3',
+      contextFloor: storedId(3),
       contextFloorSummary: 'Everything above was compacted.',
-      excludedMessageIds: ['m4'],
+      excludedMessageIds: [storedId(4)],
       excludedSourceIds: ['docs/lease.md0'],
       locked: undefined,
     });
     // The two records MEET: the floor names a message, and the turn it belongs to is found by id.
     const turns = session?.turns ?? [];
     expect(turns).toHaveLength(2);
-    expect(sv3TurnByMessageId(turns, 'm3')).toBe(turns[1]);
-    expect(sv3TurnByMessageId(turns, 'm4')).toBe(turns[1]);
+    expect(sv3TurnByMessageId(turns, storedId(3))).toBe(turns[1]);
+    expect(sv3TurnByMessageId(turns, storedId(4))).toBe(turns[1]);
     // ...and the companion's own message list wrote nothing: the transcript is still the record's.
     expect(turns[1]?.question).toBe('and the second one?');
     expect(turns[1]?.answer).toBe('The same lock.');
   });
 
-  it('drops a SUPERSEDED companion load, and gives the active-conversation pointer back', async () => {
-    // `resumeConversation` claims the app-wide active-conversation pointer as a side effect of a
-    // successful read (`state/conversationListStore.ts:529`). A slow load for a conversation the
-    // reader has already left would therefore re-point the PRODUCT at the one they walked away
-    // from — so the two loads here are made to land out of order on purpose.
+  it('reads the companion record WITHOUT claiming the shared active-conversation pointer', async () => {
+    // `resumeConversation` claims the app-wide active conversation as a side effect of a successful
+    // read — right for the shipped window's open path, wrong for a companion load. The other window
+    // claims the SAME pointer, so a v3 load still in flight when that happens would hand the product
+    // back a conversation the reader has left. v3 passes `claim: false` and claims at open instead;
+    // the delayed history below lands after another window's claim and must not touch it.
+    backend.conversations = [conversationRow('uc-mine', 'the one v3 opened')];
+    backend.threads['uc-mine'] = { conversationId: 'uc-mine', events: [] };
+    backend.histories['uc-mine'] = {
+      sessionId: 'uc-mine',
+      messages: [],
+      contextFloor: 'x9',
+      __delayMs: 250,
+    };
+    const el = await mount();
+    await openTheOnlyConversation(el);
+    // The load must still be IN THE AIR here, or the case proves nothing about a claim landing late.
+    expect(el.sessions.sessions.find((s) => s.id === 'uc-mine')?.history).toBeNull();
+    // The OTHER window claims the shared pointer while v3's companion load is still in the air.
+    setActiveConversation('uc-elsewhere');
+    await new Promise<void>((resolve) => setTimeout(resolve, 400));
+    await settle(el);
+
+    expect(getConversationListState().activeId).toBe('uc-elsewhere');
+    // ...and v3 still recorded what it asked for: the load is discarded only when the READER moved,
+    // which is a different question from who owns the pointer.
+    expect(el.sessions.sessions.find((s) => s.id === 'uc-mine')?.history?.contextFloor).toBe('x9');
+  });
+
+  it('drops a SUPERSEDED companion load, and leaves the pointer on the conversation in view', async () => {
+    // The other half: the reader moves within v3 while a load is in flight. The late load must not
+    // write its fields onto a conversation that is no longer on screen — the two loads here are made
+    // to land out of order on purpose.
     backend.conversations = [
       conversationRow('uc-left', 'the first one'),
       conversationRow('uc-here', 'the second one'),

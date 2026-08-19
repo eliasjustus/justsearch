@@ -143,6 +143,7 @@ describe('the answer frame is derived from the shared authority, never worded he
     id: 't1',
     recordId: null,
     assistantRecordId: null,
+    recordOpenedByUser: false,
     kind: 'ask',
     question: 'why?',
     answer: 'Because the lock held.',
