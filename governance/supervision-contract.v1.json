@@ -72,13 +72,16 @@
         },
         {
           "mode": "partial-boot",
-          "detection": "awaitPort timeout (spawned but never published gRPC port)",
-          "recovery": "initial boot: start() throws -> capability DEGRADED + close(). Restart path: doRestart reaps the port-less orphan (stopProcess graceful); next supervision tick restarts or gives up from a clean slate.",
-          "terminalState": "no port-less zombie holding the data-dir lock; eventual give-up if it recurs",
+          "detection": "awaitPort timeout (spawned but never published gRPC port), or PID validation exhausting its window (PidValidationTimeoutException) — the confirmed 821 §O.4 signature",
+          "recovery": "initial boot: KnowledgeServerBootstrap.startWithRetry re-attempts transient failures (3 attempts, supervision-vetoed). If those are exhausted the bootstrap is NO LONGER discarded (tempdoc 825): KnowledgeServerHealthMonitor is constructed regardless of outcome and takes its boot-recovery arm — a bounded, backed-off re-attempt sequence under BootRecoveryPolicy (4 attempts, 10s doubling to 60s) decided by the pure BootRecoveryDecision, holding the capability at RECOVERING for the arc so a boot that ultimately succeeds narrates no flap. On success the monitor performs the HeadAssembly/LocalApiServer handover. Restart path: doRestart reaps the port-less orphan (stopProcess graceful); next supervision tick restarts or gives up from a clean slate.",
+          "terminalState": "capability DEGRADED + worker.spawn_recovery_exhausted once the boot-recovery budget is spent (distinct from supervision's worker.restart_exhausted, which boot recovery may never supersede — see recoveryAuthorityBoundary); no port-less zombie holding the data-dir lock",
+          "recoveryAuthorityBoundary": "Tempdoc 825 §D5 decision 2: BootRecoveryDecision governs ONLY the never-started state and stands down — without narrating — when supervision engaged during the failing attempt (KnowledgeServerBootstrap.supervisionEngagedOnLastAttempt) or already declared worker.restart_exhausted. So the two authorities never both hold the restart budget, and supervision's terminal verdict stays terminal.",
           "guards": [
+            "io.justsearch.app.services.worker.BootRecoveryDecisionTest",
+            "io.justsearch.app.services.worker.KnowledgeServerBootRecoveryTest",
             "dev-stack-smoke"
           ],
-          "note": "The orphan reap lives in WorkerSpawner.doRestart's failure path; exercising it needs a real spawn that never publishes a port — a dev-stack smoke, not a unit test."
+          "note": "BootRecoveryDecisionTest pins the decision law (budget, backoff, both vetoes, narrate-once); KnowledgeServerBootRecoveryTest drives a real bootstrap against an empty temp dir through the monitor's arm. The orphan reap lives in WorkerSpawner.doRestart's failure path; exercising THAT needs a real spawn that never publishes a port — still a dev-stack smoke."
         }
       ]
     },

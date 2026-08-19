@@ -431,11 +431,9 @@ public class HeadlessApp {
     LocalApiServer apiServer = apiPhase.apiServer();
     KnowledgeServerHealthMonitor healthMonitor = null;
 
-    if (knowledgeServer != null) {
-      bootstrap.connectKnowledgeServer(knowledgeServer);
-      apiServer.lateBindKnowledgeServer(knowledgeServer, knowledgeServerStartError);
-      healthMonitor = new KnowledgeServerHealthMonitor(knowledgeServer);
-      healthMonitor.start();
+    if (knowledgeServer != null && knowledgeServer.hasClient()) {
+      connectAndBind(bootstrap, apiServer, knowledgeServer, knowledgeServerStartError);
+      healthMonitor = startHealthMonitor(bootstrap, apiServer, knowledgeServer);
       if (bootstrap.capabilities().worker().available()) {
         log.info("Knowledge Server connected — search and indexing now available");
       } else {
@@ -444,7 +442,28 @@ public class HeadlessApp {
                 + " worker reaches READY",
             bootstrap.capabilities().worker().health());
       }
+    } else if (knowledgeServer != null) {
+      // Tempdoc 825 (Option B): the bootstrap failed to start, but it is provably restartable
+      // (KnowledgeServerBootstrapRestartabilityTest), so it is no longer discarded. The surfaces
+      // late-bind with null as before — there is no client to give them yet — and the SAME health
+      // monitor that polls a live worker takes the boot-recovery arm instead, re-attempting the
+      // bootstrap under a bounded budget and performing the handover if it comes up. Before this,
+      // this branch started no monitor at all: /api/health served 503 for the life of the process.
+      apiServer.lateBindKnowledgeServer(null, knowledgeServerStartError);
+      // Deliberately NO transition here. The bootstrap that just failed is the producer of this
+      // verdict and has already narrated it exactly once (startWithRetry's final catch), with the
+      // code it actually knows to be true — worker.spawn.failed, or worker.index_corrupt, or
+      // supervision's terminal worker.restart_exhausted. Re-stamping the generic code would destroy
+      // the specific one (two FAULTs, so ReasonRetention does not defend the held code), and the
+      // boot-recovery veto reads exactly that slot to decide whether supervision's verdict stands.
+      healthMonitor = startHealthMonitor(bootstrap, apiServer, knowledgeServer);
+      log.warn(
+          "Knowledge Server failed to start: {} (worker reason: {}) — boot recovery armed",
+          knowledgeServerStartError,
+          bootstrap.capabilities().worker().pendingReason());
     } else if (knowledgeServerStartError != null) {
+      // No bootstrap instance at all: the failure was fatal before/at construction (or the data
+      // directory is locked), so there is nothing to re-attempt.
       apiServer.lateBindKnowledgeServer(null, knowledgeServerStartError);
       bootstrap.capabilities().worker()
           .transition(
@@ -461,6 +480,35 @@ public class HeadlessApp {
     }
 
     return new WorkerConnectionResult(knowledgeServer, knowledgeServerStartError, healthMonitor);
+  }
+
+  /**
+   * The worker handover: the two late-binding seams the API surfaces need, in the order
+   * {@code LocalApiServer.lateBindKnowledgeServer} documents (HeadAssembly is the single owner of the
+   * reference and is connected first). Tempdoc 825 makes this callable twice — once at boot when the
+   * bootstrap came up, and once from the monitor's boot-recovery arm when a re-attempt succeeded.
+   */
+  private static void connectAndBind(
+      HeadAssembly bootstrap,
+      LocalApiServer apiServer,
+      KnowledgeServerBootstrap knowledgeServer,
+      String startError) {
+    bootstrap.connectKnowledgeServer(knowledgeServer);
+    apiServer.lateBindKnowledgeServer(knowledgeServer, startError);
+  }
+
+  /**
+   * Tempdoc 825: ONE monitor authority, constructed regardless of the bootstrap outcome. It is also
+   * the {@code WorkerRecoveryAuthority} behind {@code POST /api/worker/restart}, so the operator's
+   * manual path and the automatic loop share one budget and one set of vetoes.
+   */
+  private static KnowledgeServerHealthMonitor startHealthMonitor(
+      HeadAssembly bootstrap, LocalApiServer apiServer, KnowledgeServerBootstrap knowledgeServer) {
+    KnowledgeServerHealthMonitor monitor = new KnowledgeServerHealthMonitor(knowledgeServer);
+    monitor.onRecoveryConnected(recovered -> connectAndBind(bootstrap, apiServer, recovered, null));
+    apiServer.bindWorkerRecovery(monitor);
+    monitor.start();
+    return monitor;
   }
 
   private static ConfigPhaseResult resolveConfig() throws Exception {
@@ -921,9 +969,14 @@ public class HeadlessApp {
 
   private static KnowledgeServerStartResult tryStartKnowledgeServer(
       io.justsearch.app.services.lifecycle.WorkerCapability sharedWorkerCapability) {
+    // Tempdoc 825: held outside the try so a failed start still RETURNS the instance. The pre-825
+    // code manufactured the null that connectWorker then turned into a permanent DEGRADED pin with
+    // no monitor — the "boot brick" of 821 §O.4. The instance is restartable by construction
+    // (close() resets the started guard), which is what makes the recovery arm possible at all.
+    KnowledgeServerBootstrap bootstrap = null;
     try {
       log.info("Attempting to start Knowledge Server...");
-      KnowledgeServerBootstrap bootstrap = new KnowledgeServerBootstrap(sharedWorkerCapability);
+      bootstrap = new KnowledgeServerBootstrap(sharedWorkerCapability);
       // Retry transient boot-time timing failures. A single failed start used to be terminal: the
       // catch below returned a null bootstrap, connectWorker() then pinned the worker capability
       // DEGRADED and started no health monitor, so nothing recovered for the life of the process.
@@ -954,7 +1007,7 @@ public class HeadlessApp {
           "To fix: {}",
           io.justsearch.app.services.worker.WorkerStartFailures.operatorHint(e));
       log.error("Stack trace:", e);
-      return new KnowledgeServerStartResult(null, summarizeStartError(e));
+      return new KnowledgeServerStartResult(bootstrap, summarizeStartError(e));
     }
   }
 
