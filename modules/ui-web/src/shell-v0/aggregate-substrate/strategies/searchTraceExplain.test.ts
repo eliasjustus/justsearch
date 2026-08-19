@@ -240,6 +240,22 @@ describe('searchTraceExplain strategy (549 D1 + 577 Phase 3 altitude cut)', () =
     }
   });
 
+  // Register F-054 — an inference failure (measured: ONNX Runtime arena exhaustion on 199/200 of a
+  // campaign's "deadline misses") used to reach the user as "ran out of time", which is both false
+  // and points at a knob that cannot fix it. It is now its own worded drop.
+  it('F-054 — an inference failure is worded as a failure, never as running out of time', () => {
+    const trace: SearchTrace = searchTraceSchema.parse({
+      version: 1,
+      effectiveMode: 'HYBRID',
+      stages: [{ id: 'cross-encoder', status: 'skipped', reason: 'INFERENCE_FAILED' }],
+    });
+    const parts = userSummaryParts(trace);
+    expect(parts).toContain('Relevance re-ranking failed to run — results are ranked without it');
+    const line = parts.join(' · ');
+    expect(line).not.toContain('ran out of time');
+    expect(line).not.toContain('INFERENCE_FAILED');
+  });
+
   // The FE half of the cross-encoder vocabulary correspondence. The Java producer is
   // `CrossEncoderSkipReason`; the gate (check-search-degradation-reason-codes) enforces that
   // every non-exempt member is worded here and that no worded key is dead.
@@ -247,6 +263,7 @@ describe('searchTraceExplain strategy (549 D1 + 577 Phase 3 altitude cut)', () =
     'DEADLINE_EXCEEDED',
     'RPC_FAILED',
     'MODEL_NOT_LOADED',
+    'INFERENCE_FAILED',
     'UNKNOWN',
   ];
 
