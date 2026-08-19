@@ -36,7 +36,7 @@ import { sv3Shared } from './sv3-shared-styles.js';
 // another window having been mounted first — a surface that leaned on a sibling window's
 // registration would render an unknown element whenever it was reached first.
 import '../../components/documentPane/DocumentPane.js';
-import type { DocumentLineRange } from '../../components/documentPane/DocumentPane.js';
+import type { DocumentCitationAnchor } from '../../components/documentPane/DocumentPane.js';
 import { PANE_LABEL } from './fixtures.js';
 
 /** Raised when the pane's own close control is used; the window decides what closing means. */
@@ -165,7 +165,7 @@ export class Sv3Pane extends JfElement {
 
   static properties = {
     docPath: { attribute: false },
-    highlightRange: { attribute: false },
+    citation: { attribute: false },
     apiBase: { type: String, attribute: 'api-base' },
     overlay: { type: Boolean, reflect: true },
   };
@@ -175,8 +175,13 @@ export class Sv3Pane extends JfElement {
    * a path reaches this pane is a property write from the window's citation handler.
    */
   declare docPath: string | null;
-  /** The cited passage's 0-based inclusive line span, or null when the citation carried none. */
-  declare highlightRange: DocumentLineRange | null;
+  /**
+   * The cited passage, addressed by the CHARACTER offsets its producer computed (tempdoc 849 §3).
+   * Null when the citation carried no span. The reader derives its own line coordinates from this;
+   * nothing here converts, clamps or interprets it — a coordinate conversion in a region element
+   * would be exactly the extra hop the char anchor exists to remove.
+   */
+  declare citation: DocumentCitationAnchor | null;
   declare apiBase: string;
   /**
    * The narrow presentation, decided by the window from its own box (see the styles above for why it
@@ -190,7 +195,7 @@ export class Sv3Pane extends JfElement {
   constructor() {
     super();
     this.docPath = null;
-    this.highlightRange = null;
+    this.citation = null;
     this.apiBase = '';
     this.overlay = false;
   }
@@ -214,7 +219,7 @@ export class Sv3Pane extends JfElement {
         <jf-document-pane
           data-testid="sv3-pane-document"
           .docPath=${this.docPath}
-          .highlightRange=${this.highlightRange}
+          .citation=${this.citation}
           api-base=${this.apiBase}
           @pane-close=${this.onPaneClose}
         ></jf-document-pane>
