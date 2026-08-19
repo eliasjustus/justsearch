@@ -137,10 +137,17 @@ rules plus the 578-Option-A merged-id-set resolution, so the refactor cannot sil
 The leg adds a second **subject** to this gate: `CoreSurfaceCatalog.java`. The gate's existing
 wiring — the `ui-web-gates` recipe in `governance/consult-register.v1.json`, pushed by the consult
 hook on any `modules/ui-web/src/**` edit — only covers the FE side, so a Java-only edit would not
-have reached it. The CLAUDE.md pre-merge row for `CoreSurfaceCatalog.java` now names
-`check-surface-composition` alongside `--gate surface-altitude` (`check-premerge-table` green:
-49 script refs, all resolving). `governance/surface-composition.v1.json`'s description was
-updated to describe both legs rather than only the first.
+have reached it.
+
+The first attempt added `check-surface-composition` to the CLAUDE.md pre-merge row for
+`CoreSurfaceCatalog.java`. **`check-always-loaded-budget` rejected it** — 31 B over CLAUDE.md's
+ratchet ceiling — and its failure message names the correct remedy: migrate the addition out to
+the consult-register. So the routing lives in a new `surface-catalog-parity` region
+(`pathIncludes: ["CoreSurfaceCatalog.java"]`) whose recipe names both this gate and
+`--gate surface-altitude`; `regionFor()` was probed against the catalog's real path and resolves
+it. `governance/surface-composition.v1.json`'s description was updated to describe both legs
+rather than only the first. `check-premerge-table` validates the register's script refs
+(50 refs, all resolving) and `check-always-loaded-budget` is green with CLAUDE.md unchanged.
 
 **Open:** neither this gate nor its test is wired into `.github/workflows/ci.yml` — that is the
 pre-existing arrangement for this gate and is unchanged here, so the leg is enforced by the
