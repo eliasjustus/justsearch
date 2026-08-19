@@ -896,3 +896,109 @@ next charter that touches `persistedAssistant` sweeps rather than adds one more.
   appears within the next several charters, the principle has hardened into a rule and belongs in a
   gate on `persistedAssistant`'s key set rather than in prose — which is itself the honest signal
   that the prose has done its job.
+
+---
+
+## 9. Live round (2026-08-19) — the legs no unit test spans
+
+Run against **this branch's build** on the shared dev stack (`distFrom` = this worktree; API
+`127.0.0.1:56062`, FE `localhost:5173`, data dir `modules/ui-web/.dev-data`). Inference: shared
+cuda12 llama-server, `Qwen_Qwen3.5-9B-Q4_K_M.gguf`, launched by **this** stack —
+`…/agent-a859c51c95d9e6241/modules/ui/native-bin/llama-server/variants/cuda12/llama-server.exe -m …
+--jinja --reasoning-format deepseek --reasoning-budget 512 --host 127.0.0.1 --port 8082 -c 4096
+-ngl 99` (PID 8956, sole llama-server on the machine; the launch line was read from the process, not
+assumed — the constant-8081 adoption hazard checked rather than trusted).
+
+**Worktree note (environment, not product):** the backend resolves `variantsRoot` from the repo root
+at construction, so a worktree with no `modules/ui/native-bin/` reports `RUNTIME_VARIANT_NOT_INSTALLED`
+even though the dev-runner resolves the shared exe into `JUSTSEARCH_SERVER_EXE`. Junctioning the
+worktree's `native-bin/llama-server` at the main checkout's (gitignored path, zero copy) and
+restarting the backend resolves it.
+
+### 9.1 Leg 1 — prompt purity across turns (§2.2b) — **PASS**
+
+Two turns of one PERSISTENT `core.free-chat` conversation (`live-848-purity`), `enableThinking:true`:
+
+| Fact | Turn 1 | Turn 2 |
+|---|---|---|
+| `reasoning_chunk` frames / chars | 217 / 788 | 244 / 833 |
+| `done.promptTokens` | 22 | **52** |
+| `done` carries a `reasoning` key | no | no |
+
+Turn 1's reasoning tokenizes (llama-server `/tokenize`, same model) to **217 tokens**; its answer to
+7 and turn 2's question to 13. Observed prompt growth is **30 tokens** — the answer + the question +
+chat-template markers. Had the persisted `reasoning` been re-fed, turn 2's prompt would have been
+~269. The record meanwhile *does* carry it (§9.5), so this is persistence without re-feeding, which
+is the whole of §2.2b.
+
+### 9.2 Leg 2 — reload renders from the record — **PASS**
+
+A thinking turn driven through the real composer in the shipped chat window (not the API): the
+settled turn rendered exactly one `[data-testid="chat-turn-reasoning"]` block (collapsed, "Thought
+for 7s", 2123 chars, `durationMs` 7433) and **zero** streaming blocks — the 835 §9e post-`done` loss,
+closed. After a full page reload the live thread came back with `reasoning.length === 0` on the
+assistant message (as designed — `loadConversation` rebuilds role/content only) and the transcript
+still rendered **1** block with the identical text length and duration: it can only have come from
+`attributes.reasoning` via `reasoningBlocksFromRecord`.
+
+*Observed en route:* the window reopens on the **Search** tier after a reload, which renders no
+transcript; the block appears once the reader is back on a conversation tier. Tier restore is
+out of this charter's scope — logged to the inbox, not fixed here.
+
+### 9.3 Leg 3 — think → text → think — **PASS (via the filter path, not the model's own second block)**
+
+Three prompt attempts to make the model open a *second native* thinking region failed, and the
+reason is structural, not luck: `--reasoning-budget 512` is spent inside region 1 every time (the
+model's thinking is long), and once spent llama-server routes everything to content. Recorded
+honestly rather than retried further.
+
+The multi-region case was then reproduced through the **other** producer this design names — the one
+A-4 and F2 were written for: `OnlineModeOps` wires `ThinkTagStreamFilter` unconditionally, so inline
+`<think>…</think>` appearing in the CONTENT stream is rerouted into the reasoning sink mid-stream. A
+turn whose answer carried literal think tags produced **5 interleaved regions live**, and the
+persisted record carried **5 blocks** — each with its own duration:
+
+```
+live regions: 5   persisted blocks: 5
+[0] 195 chars / 712 ms  "Thinking Process: 1. **Analyze the Req…"   (native region)
+[1..4] 32 chars / ~101 ms each  "rechecking the capital of France"      (rerouted <think> regions)
+```
+
+Pre-F2 this same turn would have persisted **one** block carrying the concatenated text and only the
+first region's duration. This is the F2 claim, measured live on a real stream.
+
+### 9.4 Leg 4 — a halted/errored agent run keeps its thinking (D-7 + F1a) — **PASS in both windows**
+
+An agent run (`live-848-agent-halt`) was driven until it had streamed 89 `reasoning_chunk` frames
+(453 chars), then llama-server was killed mid-step — a genuine crash-shaped failure, not a mock. The
+run emitted `error` (`LLM_TRANSIENT`, "LLM call failed after retries").
+
+- **Record:** `GET /api/thread/live-848-agent-halt` returns the `ERROR` event carrying
+  `attributes.reasoning = [{ chars: 453, durationMs: 2413 }]` — the fold's terminal attachment.
+- **Chat window:** renders `[LLM_TRANSIENT] LLM call failed after retries…` **and** one
+  `chat-turn-reasoning` block ("Thought for 2s", 453 chars, 2413 ms).
+- **Search v3:** the same conversation projects a turn `kind: agent, status: failed` with
+  `reasoning.length === 1`, rendering one `sv3-turn-reasoning` block with the same numbers — which
+  also live-proves §2.7(4) (an agent-kind turn renders reasoning at all).
+
+### 9.5 Opportunistic — persisted shape and the extract non-goal — **PASS**
+
+`messages.jsonl` for `live-848-purity`, read directly:
+
+```
+{"role":"assistant","content":"The capital of France is Paris.",
+ "reasoning":[{"text":"Thinking Process:…" (788 chars),"durationMs":3097}], "id":…,"hash":…,"ts":…}
+```
+
+Element keys are exactly `["text","durationMs"]`, and the array sits beside the ordinary message
+fields — the §2.1 shape, on disk. A `core.extract` turn with a `schema` and no `enableThinking`
+(`live-848-extract`) produced **zero** `reasoning_chunk` events and a persisted assistant record whose
+keys are `[role, content, id, hash, ts]` — **no** `reasoning` key, and valid schema-shaped JSON
+(§1.7(a), live).
+
+### 9.6 What the live round did not cover
+
+The `enableThinking:true`-with-`schema` case (§6.1 test 5b) stayed unit-level; the ask plane's
+drop-on-error limit (§2.4) is unchanged and was not exercised live. Teardown after the round:
+stack stopped, no `llama-server`/backend survivors, dev ports closed, GPU back to its 478 MiB /
+1% baseline.
