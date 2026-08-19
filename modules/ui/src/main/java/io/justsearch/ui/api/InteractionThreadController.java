@@ -278,6 +278,12 @@ public final class InteractionThreadController {
     if (claimMatches instanceof Map<?, ?> cm && !cm.isEmpty()) {
       attributes.put("claimMatches", claimMatches);
     }
+    // Tempdoc 848 §2.3 — the turn's thinking. A fact the RUN produced belongs on the record, so a
+    // reloaded turn renders the same reasoning blocks the live turn showed, from the same authority.
+    Object reasoning = msg.get("reasoning");
+    if (reasoning instanceof List<?> r && !r.isEmpty()) {
+      attributes.put("reasoning", reasoning);
+    }
     return new InteractionEvent(
         eventId,
         conversationId,

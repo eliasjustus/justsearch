@@ -32,6 +32,8 @@ import { __resetConversationListForTest } from '../../state/conversationListStor
 import { __resetDraftProvidersForTest } from '../../controllers/draftPersistence.js';
 import { __resetDraftKeptForTest } from '../../controllers/draftKeptHint.js';
 import { NAVIGATE_TO_SURFACE_EVENT } from '../../controllers/navigateRequest.js';
+import { applySv3Record } from './sv3-sessions.js';
+import { projectSv3RecordTurns } from './sv3-record.js';
 import {
   CORPUS_ADD_FOLDERS,
   CORPUS_REMEDY_TARGET,
@@ -672,6 +674,40 @@ describe('the model\'s thinking is its own block, never mixed into the answer', 
     expect(el.sessions.sessions[0]?.turns[0]?.reasoning).toHaveLength(1);
     expect(el.sessions.sessions[0]?.turns[0]?.reasoning[0]?.text).toContain('checking the renewal log');
     expect(q(main, 'sv3-turn-reasoning')).not.toBeNull();
+  });
+
+  it('a record refresh never blanks the thinking the window observed (tempdoc 848)', async () => {
+    // The record is authoritative for what it HOLDS, never for what has not reached it. A refresh
+    // that arrived before the turn's reasoning was persisted (or from a record that carries none)
+    // must keep the live blocks — the same rule `evidence` has had since Phase F7.
+    feed();
+    const stream = stubStream();
+    const el = await mount();
+    await ask(el, 'why did the renewal fail?');
+    stream.emit('reasoning_chunk', { text: 'checking the renewal log' });
+    stream.emit('chunk', { text: 'It expired.' });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+
+    const sessionId = el.sessions.sessions[0]!.id;
+    const turnId = el.sessions.sessions[0]!.turns[0]!.id;
+    // The REAL projection over a record that carries no reasoning attribute — not a hand-built turn.
+    const recorded = projectSv3RecordTurns([
+      {
+        id: turnId, occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE',
+        originator: 'user', content: 'why did the renewal fail?', attributes: {},
+      },
+      {
+        id: 'a1', occurredAt: '2026-01-01T00:00:02Z', kind: 'ASSISTANT_MESSAGE',
+        originator: 'agent', content: 'It expired.', attributes: {},
+      },
+    ]);
+    el.sessions = applySv3Record(el.sessions, sessionId, recorded);
+    await settle(el);
+
+    expect(el.sessions.sessions[0]?.turns[0]?.reasoning).toHaveLength(1);
+    expect(q(await region(el, 'jf-sv3-main'), 'sv3-turn-reasoning')).not.toBeNull();
   });
 
   it('renders no block at all for a turn the model did not think out loud in', async () => {

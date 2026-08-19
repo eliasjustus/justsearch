@@ -255,15 +255,16 @@ final class AgentToolDispatcher {
       return false;
     }
 
-    // Emit the pending-approval carrying the backend's issuance verdict. The FE auto-approves (which
-    // mints the consent capsule via the normal approve path enforcement requires) iff gateBehavior is
-    // AUTO; otherwise it prompts the user. Either way the approval flows through one path.
-    eventConsumer.accept(
-        new AgentEvent.ToolCallPendingApproval(
-            call.id(), call.toolName(), call.arguments(), risk, gateBehavior));
-
     // Tempdoc 834 §6.2 — the SAME five values ride into the gate, so a reattacher whose replay ring
-    // no longer holds the frame above still gets the open gate on the state snapshot.
+    // no longer holds the frame below still gets the open gate on the state snapshot.
+    //
+    // REGISTERED BEFORE ANNOUNCED, deliberately: the emit is what wakes every observer, so anything
+    // that happens once the frame is out — a reattach building its `state_snapshot` primer, or an
+    // approve() arriving from a fast client — must find the gate already there. With the emit first,
+    // a reattacher could snapshot a run that has announced a pending approval but reports
+    // `pendingApprovals: []` and no `park` (i.e. "nothing to answer" for a run that is about to
+    // block), and an approval that beat the registration would be dropped by `approve()`'s
+    // unknown-callId path. Registration has no dependency on the emit — it is a map put.
     CompletableFuture<Boolean> gate =
         session.createApprovalGate(
             call.id(),
@@ -273,6 +274,13 @@ final class AgentToolDispatcher {
                 call.arguments(),
                 risk == null ? null : risk.name().toLowerCase(java.util.Locale.ROOT),
                 gateBehavior == null ? null : gateBehavior.name().toLowerCase(java.util.Locale.ROOT)));
+
+    // Emit the pending-approval carrying the backend's issuance verdict. The FE auto-approves (which
+    // mints the consent capsule via the normal approve path enforcement requires) iff gateBehavior is
+    // AUTO; otherwise it prompts the user. Either way the approval flows through one path.
+    eventConsumer.accept(
+        new AgentEvent.ToolCallPendingApproval(
+            call.id(), call.toolName(), call.arguments(), risk, gateBehavior));
     try {
       return gate.get(APPROVAL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     } catch (Exception e) {

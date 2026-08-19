@@ -27,6 +27,7 @@ import {
   sv3ShouldGenerateTitle,
   sv3SessionIsLive,
   setTurnEvidence,
+  setTurnReasoning,
   settleAgentTurn,
   settleTurn,
   startNewSession,
@@ -962,6 +963,36 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
     );
     const applied = applySv3Record(withEvidence, 'uc-a', [recordTurn({ id: 'evt-1' })]);
     expect(sv3TurnSourceCount(applied.sessions[0]?.turns[0] as Sv3Turn)).toBe(3);
+  });
+
+  it('takes the RECORD’s thinking on a cold load, and keeps the LIVE blocks in session (848)', () => {
+    // The merge rule at the heart of tempdoc 848's reload story, and the line 847's `applySv3Record`
+    // refactor rewrites — pinned here so a later extraction cannot break it silently.
+    const cold = applySv3Record(SV3_SESSIONS_EMPTY, 'uc-a', []);
+    expect(cold).toBe(SV3_SESSIONS_EMPTY);
+
+    const list = submitInSession(SV3_SESSIONS_EMPTY, 'q', T0, 'ask', 'uc-a');
+    const ref = latestTurnRef(list) as Sv3TurnRef;
+    const settledNoThinking = settleTurn(list, ref, 'complete', T0 + MINUTE);
+    const hydrated = applySv3Record(settledNoThinking, 'uc-a', [
+      recordTurn({ id: 'evt-1', reasoning: [{ text: 'recorded thinking', durationMs: 900 }] }),
+    ]);
+    expect(hydrated.sessions[0]?.turns[0]?.reasoning).toEqual([
+      { text: 'recorded thinking', durationMs: 900 },
+    ]);
+
+    const withLive = settleTurn(
+      setTurnReasoning(list, ref, [{ text: 'live thinking', durationMs: 1200 }]),
+      ref,
+      'complete',
+      T0 + MINUTE,
+    );
+    const refreshed = applySv3Record(withLive, 'uc-a', [
+      recordTurn({ id: 'evt-1', reasoning: [{ text: 'recorded thinking', durationMs: 900 }] }),
+    ]);
+    expect(refreshed.sessions[0]?.turns[0]?.reasoning).toEqual([
+      { text: 'live thinking', durationMs: 1200 },
+    ]);
   });
 
   it('never re-words a HALT as a completion — the reader’s own act is not in the record', () => {
