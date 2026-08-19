@@ -132,6 +132,23 @@ def _disable_shared_dataset_cache_by_default(monkeypatch):
     monkeypatch.setenv("JUSTSEARCH_DATASET_CACHE", "0")
 
 
+@pytest.fixture(autouse=True)
+def _isolate_foreign_run_register(monkeypatch, tmp_path):
+    """Keep the tempdoc-844 foreign-run register out of the real main checkout.
+
+    `run_register.register_dir()` defaults to `<main-checkout>/tmp/dev-runner/foreign` — exactly
+    what a real `jseval` run wants, and never what a test run wants: `stop_backend` unregisters by
+    pid on every call, and any test that reaches the spawn path would otherwise write into the
+    shared machine state that `quick_health` reads. Isolated with the same env var
+    `dev-runner.cjs:57` honors, so the isolation goes through the production code path rather than
+    around it. Tests that assert on the register re-point this explicitly (monkeypatch's last
+    write for a given test wins over this autouse fixture).
+    """
+    monkeypatch.setenv(
+        "JUSTSEARCH_DEV_RUNNER_STATE_ROOT", str(tmp_path / "dev-runner-state"),
+    )
+
+
 @pytest.fixture
 def clean_projection_registry():
     """Reset the projection registry around each test that opts in.

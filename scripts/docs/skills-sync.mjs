@@ -47,12 +47,12 @@ const SKILLS = [
       "docs/reference/jseval-pipeline-reference.md",
     ],
   },
-  {
-    skillPath: ".claude/skills/dev-stack/SKILL.md",
-    sources: [
-      "docs/reference/contributing/mcp-dev-tools.md",
-    ],
-  },
+  // dev-stack is deliberately NOT here (tempdoc 844 P6): syncing mcp-dev-tools.md into the skill
+  // produced a 114-line verbatim copy of the tool inventory in a second file, and the copy carried
+  // the same wrong endpoint mapping for months. The skill now links to the reference for the
+  // inventory and keeps only operational content, so there is nothing to sync. The code<->doc
+  // guarantee moved to scripts/ci/check-dev-mcp-doc-sync.mjs, which asserts the reference against
+  // the running server — a stronger check than keeping two prose copies identical.
   {
     skillPath: ".claude/skills/installer/SKILL.md",
     sources: [

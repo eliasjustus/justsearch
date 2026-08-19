@@ -8,6 +8,14 @@ user-invocable: true
 Operational reference for the JustSearch dev stack. Load this before
 starting backends, debugging port issues, or running pipeline profiling.
 
+> **Tool inventory lives in one place.** The canonical list of `justsearch.dev.*` tools, the
+> `fetch_api_json` endpoint keys, and the `api_call` allowlist are in
+> [`docs/reference/contributing/mcp-dev-tools.md`](../../../docs/reference/contributing/mcp-dev-tools.md),
+> and `scripts/ci/check-dev-mcp-doc-sync.mjs` holds that page and the server together.
+> This skill deliberately does **not** restate them — the same table lived in both files and both
+> were wrong for months (tempdoc 844 §6.3). Read that reference for *which tool*; read this skill
+> for *how to operate the shared stack*.
+
 ## Key Operational Facts
 
 - **Cold start:** ~6s to port emit, ~38s to Worker ready
@@ -16,7 +24,7 @@ starting backends, debugging port issues, or running pipeline profiling.
 - **jseval's `--llm` flag cold start** (`python -m jseval run --start-backend --llm`, not a `dev.start` option) may fail once: Worker port discovery (15s timeout) races with GGUF model load (~5GB disk read). Retry succeeds because OS file cache is warm. Not a code bug.
 - **`--clean none`** preserves embedding progress across backend restarts
 - **`RERANK_MODEL_PATH`** must be absolute (Gradle `runHeadless` CWD differs from repo root)
-- **Dev stacks default to the compact chat profile** (tempdoc 842) — smaller/faster, frees VRAM. `ai_activate {chatProfile:"standard"}` switches to the standard (user-facing) model; the engine reload takes single-digit seconds either direction. `agent_chat` auto-activates (compact) when it finds AI offline, so a bare `agent_chat` call no longer dead-ends on `AI_OFFLINE`. Compact model files aren't installed by default — fetch them with `node scripts/dev/fetch-compact-model.mjs` (sha-verified).
+- **Dev stacks default to the compact chat profile** (tempdoc 842) — smaller/faster, frees VRAM. `ai_activate {chatProfile:"standard"}` switches to the standard (user-facing) model; the engine reload takes single-digit seconds either direction. Compact model files aren't installed by default — fetch them with `node scripts/dev/fetch-compact-model.mjs` (sha-verified).
 
 ## Hot-Reload Iteration Loop
 
@@ -28,7 +36,16 @@ cd scripts/jseval
 python -m jseval run --dataset scifact --max-queries 0 --pipeline --reset
 ```
 
-Start the dev stack with `hotReload: true` for full JDWP + service reconstruction support.
+`hotReload` defaults true on `start` (tempdoc 844), so the JDWP listener and service
+reconstruction are there unless you opted out with `hotReload: false` — in which case `reload`
+refuses with `HOT_RELOAD_NOT_ENABLED` instead of reporting a push it did not make. `reload`
+compiles from the tree the running stack was launched from (not your cwd), is ownership-gated,
+verifies the target VM's identity before redefining anything, and only ever pushes the module the
+run recorded. **`skipBuild: true` can cost you hot reload**: the classes dir goes first on the
+Worker classpath, which is only sound when it and the installDist jars are one build — when
+`skipBuild` leaves them unpaired the dev-runner turns hot reload off for that run and records why,
+rather than running a half-new classpath. Start without `skipBuild` to get it back. Full behaviour
+and error codes: `docs/reference/contributing/mcp-dev-tools.md` § Hot Reload.
 
 ## Do NOT Write Manual Polling Loops
 
@@ -70,152 +87,23 @@ directly first** (`/api/status`, `/api/knowledge/search`) — data layer first,
 presentation last. The one time the API is queried directly, it usually localizes
 the fault immediately (e.g. to the FE), saving many wrong-layer turns.
 
-<!-- generated:start — do not edit between markers; run: node scripts/docs/skills-sync.mjs -->
-
-<!-- source: docs/reference/contributing/mcp-dev-tools.md -->
-
-# MCP Dev Tools Workflow
-
-The `justsearch-dev-mcp` server is the agent-facing control surface for the local development stack. It wraps the dev runner, selected Local API calls, search/ingest helpers, evidence capture, and AI runtime toggles.
-
-Use this reference for tool selection. Use the implementation in `scripts/dev/justsearch-dev-mcp/server.mjs` as the source of truth for schemas and endpoint allowlists.
-
-## Available Tools
-
-The dev MCP surface currently exposes exactly these tools:
-
-| Tool | Purpose |
-|------|---------|
-| `justsearch.dev.start` | Start the backend and frontend dev stack. Readiness waiting is part of this tool via its wait options. |
-| `justsearch.dev.status` | Inspect current dev-runner state and process metadata. |
-| `justsearch.dev.tail_log` | Read recent backend, frontend, or runner log lines. |
-| `justsearch.dev.fetch_api_json` | Fetch predefined JSON endpoints by key. |
-| `justsearch.dev.api_call` | Call allowlisted Local API endpoints with explicit method/path/body. |
-| `justsearch.dev.search_query` | Execute `POST /api/knowledge/search`. |
-| `justsearch.dev.ingest` | Execute `POST /api/knowledge/ingest`. |
-| `justsearch.dev.validate_evidence` | Validate an `EvidenceBundle`. |
-| `justsearch.dev.capture_evidence` | Capture an `EvidenceBundle` from search/API/UI context. |
-| `justsearch.dev.preflight` | Run dev preflight checks before heavier workflows. |
-| `justsearch.dev.quick_health` | Fast orientation check for UI/API/worker health. |
-| `justsearch.dev.stop` | Stop the active dev run and clean up owned processes. |
-| `justsearch.dev.agent_chat` | Send a prompt to the built-in agent and return the transcript. |
-| `justsearch.dev.ai_activate` | Activate the online AI runtime. |
-| `justsearch.dev.reload` | Trigger backend hot reload and report whether restart is required. |
-
-Legacy underscore-style dev tool names and standalone readiness/listing/suggestion/cleanup tools are obsolete. Agents should use the dotted names above.
-
-## Standard Workflow
-
-1. Start the stack with `justsearch.dev.start`.
-   - Use the tool's wait options instead of a separate wait-ready tool.
-   - `waitTimeoutMs` may need to be higher than the default on cold machines or after clean builds.
-   - `chatProfile?: "compact" | "standard"` (tempdoc 842) selects the llama-server chat model pair delivered as `JUSTSEARCH_CHAT_PROFILE` in the spawn env. Defaults to `compact` — dev stacks run the small dev-tier model unless told otherwise.
-2. Orient with `justsearch.dev.quick_health` for a compact readiness check.
-3. Use `justsearch.dev.status` when process state, ports, or runner metadata matter.
-4. Use `justsearch.dev.fetch_api_json` for common read-only diagnostics.
-5. Use `justsearch.dev.api_call` only when the endpoint is in the explicit allowlist.
-6. Use `justsearch.dev.stop` when the run should be shut down.
-
-## Prerequisites
-
-Build the Worker distribution and UI assets before relying on the dev stack:
-
-```bash
-./gradlew.bat :modules:indexer-worker:installDist :modules:ui:assemble
-```
-
-If AI runtime behavior is part of the investigation, also verify model files, native runtime availability, and GPU/runtime prerequisites with the project-specific preflight scripts before drawing conclusions from failures.
-
-Operational checks that are still worth doing before longer investigations:
-
-| Area | Check |
-|------|-------|
-| Worker distribution | `modules/indexer-worker/build/install/indexer-worker/` should exist after the Gradle command above. |
-| UI assets | `modules/ui-web/dist/` should exist when testing packaged/static UI behavior. |
-| Models | Online LLM paths and Worker ONNX encoder assets must match the current settings/model manifest. Do not assume old GGUF embedding paths. |
-| Runtime variant | CPU-only online runtime is valid but slow; GPU behavior requires a GPU-capable runtime variant and matching configuration. |
-| Dev data | The default dev data directory is `modules/ui-web/.dev-data`; stale indexes there can hide ingestion/search changes. |
-
-## Predefined JSON Endpoints
-
-`justsearch.dev.fetch_api_json` accepts endpoint keys for common diagnostics. Current keys include:
-
-| Key | Endpoint |
-|-----|----------|
-| `status` | `/api/knowledge/status` |
-| `health` | `/api/health` |
-| `effective_config` | `/api/config/effective` |
-| `debug_state` | `/api/debug/state` |
-| `policy_effective` | `/api/policy/effective` |
-| `inference_status` | `/api/inference/status` |
-| `gpu_capabilities` | `/api/gpu/capabilities` |
-| `ui_ready` | `/api/ui/ready` |
-| `ai_runtime_status` | `/api/ai/runtime/status` |
-
-Prefer these keys over generic URL calls when they cover the diagnostic need.
-
-## Generic API Calls
-
-`justsearch.dev.api_call` is intentionally allowlisted. It is for Local API calls that are useful for development and safe enough for agent workflows.
-
-Important allowlisted areas include:
-
-| Area | Representative endpoints |
-|------|--------------------------|
-| Settings and preview | `GET/POST /api/settings/v2`, `GET /api/preview` |
-| Index roots and indexing | `GET/POST/DELETE /api/indexing/roots`, `POST /api/indexing/reindex`, `POST /api/indexing/excludes/apply` |
-| Index migration and GC | `POST /api/indexing/migration/start`, `cutover`, `rollback`, `pause`, `resume`, `POST /api/indexing/gc` |
-| Inference runtime | `GET /api/inference/status`, `POST /api/inference/mode`, `POST /api/inference/reload` |
-| Worker control | `POST /api/worker/restart` |
-| AI install/runtime/packs | `GET/POST /api/ai/install/*`, `GET/POST /api/ai/runtime/*`, `GET/POST /api/ai/packs/*` |
-| Policy and diagnostics | `GET /api/policy/validate`, policy user allowlist calls, `POST /api/diagnostics/export` |
-| Knowledge/debug/telemetry | `GET /api/knowledge/status`, `GET /api/debug/events`, `GET /api/debug/worker-log`, `GET /api/telemetry/health` |
-
-When an endpoint is not allowlisted, update the dev MCP implementation and this reference together instead of bypassing the tool.
-
-## Search, Ingest, and Evidence
-
-- Use `justsearch.dev.search_query` for search checks instead of constructing search requests manually.
-- Use `justsearch.dev.ingest` for indexing targeted paths during dev investigations.
-- Use `justsearch.dev.capture_evidence` and `justsearch.dev.validate_evidence` when a task needs a durable evidence bundle, especially before changing retrieval, indexing, or evaluation behavior.
-
-## AI Runtime Tools
-
-- Use `justsearch.dev.ai_activate` when an investigation requires the online local AI runtime. It takes an optional `chatProfile?: "compact" | "standard"` (tempdoc 842) — activation is when llama-server spawns, so it's the switch point for changing chat model pair; measured switch cost is single-digit seconds either direction. `justsearch.dev.agent_chat` auto-activates the runtime (compact profile) when it finds AI offline and reports `autoActivated: true` in its result, closing the `AI_OFFLINE`-one-call-from-`ai_activate` trap.
-- **The chat model is also runtime-configurable by explicit path — no installer pack-import or `-D` restart needed.**
-  `POST /api/settings/v2` with `{"llm":{"modelPath":"<gguf>","gpuLayers":99}}`, then `ai_activate`. An explicit
-  path is operator-owned and wins over the profile (tempdoc 842 precedence); prefer `chatProfile` unless you
-  need a model outside the registry pairs.
-- Use `justsearch.dev.reload` after backend changes. It reports whether hot swap worked and whether structural changes require a restart.
-- Do not treat embedding readiness and online LLM readiness as the same thing. Embeddings are Worker-side; online chat/QA uses the app inference runtime.
-- `justsearch.dev.quick_health` reports `aiActive` (real tri-state: `true`/`false` for a reachable stack, `null` when unreachable) plus a `model` block (`chatProfile`, `modelPath`) when the runtime reports realized chat identity, and a declared `freshness` block (tempdoc 637) aggregating build/index/binding/lock staleness sources.
-
-## Start-Tool Error Codes
-
-The `justsearch.dev.start` tool's admission gate can refuse to launch with one of four error codes (see tempdoc 271 + 542 for the ownership and operation-lease models):
-
-| Code | Cause | Resolution |
-|------|-------|------------|
-| `OWNER_CONFLICT` | Another session holds a fresh lease on the stack; takeover policy is `deny` (the default). | Inspect `quick_health.ownership.holder`. With user approval, retry with `takeover: "warn"`. |
-| `HANDSHAKE_REQUIRED` | The holder is running a `MUST_COMPLETE` op-lease (migration, bulk-reindex, index GC, etc.); `warn` takeover is upgraded to a sync handshake. Response includes `criticalOps[]`. | Wait for the op to complete (use the per-op `expectedDurationSec` to estimate), or escalate to `takeover: "force"` with user approval (records a `forcibly_interrupted_critical_op` disposition in the stop-report). |
-| `REQUIRES_CONFIRMATION` | A `force` takeover hit an `UNSAFE_TO_INTERRUPT` op-lease. | Pass `--confirm-interrupt=<opId>` matching one of the `criticalOps[].opId` values in the response. The typed token guards against typo'd reclaims of unsafe-to-interrupt ops. |
-| `RUN_NOT_FOUND` / `NO_API_URL` | The active run record references a runId that no longer exists or has no `apiBaseUrl`. | Call `quick_health` to re-orient; the run may have partially failed. |
-
-`quick_health.ownership.opLeases[]` (added tempdoc 542) surfaces the active critical op-leases on the holder so an agent can see what would be interrupted before requesting takeover.
-
 ## Shared-stack ownership & coordination (multi-agent worktrees)
 
 Only one dev stack runs at a time (memory/port). The dev-runner tracks ownership in `tmp/dev-runner/active.json` (lease-based). Before starting, call `quick_health`; if a stack is running, its response carries `ownership.holder` + `ownership.verdict` + `ownership.recommendedAction` from one authority — act on the verdict rather than inferring from raw lease fields (tempdoc 606):
 
 - `TAKEOVER_ABANDONED` — the owning session went silent; `start` self-serve-proceeds (no user prompt needed).
 - `IDLE_HOLD` — the owner is alive but idle; the response recommends `takeover: "warn"`, self-authorizable without a user round-trip.
-- `CONTENTION` — the owner is actively using the stack: the genuine ask-the-user case (the `OWNER_CONFLICT` error above). A `force` takeover needs explicit user direction.
+- `CONTENTION` — the owner is actively using the stack: the genuine ask-the-user case (the `OWNER_CONFLICT` error). A `force` takeover needs explicit user direction.
 - `acquire_when_free` blocks until the stack is acquirable and returns a `recommendedTakeover` — it replaces the conflict → ask → manual-retry loop.
 - `ownership.provenance` + `rebuildFirst` flag when the running stack was built from a different worktree/commit than yours; `start { distFrom: "<worktree>" }` launches your own code on the one shared lease.
 - `ownership.displacedNotice` surfaces at your next call if a stack you previously owned was taken over while you were away.
-- `start { leaseDurationSec: <30-7200> }` (tempdoc 735 G6) declares a campaign-length ownership hold instead of relying on the default 30s passive-expiry window: the lease's `expiresAt` is renewed against this declared duration on every renewal cycle, so a long measurement campaign that goes minutes without a Claude Code session touch (busy running `jseval`/Gradle) doesn't lapse into a `TAKEOVER_ABANDONED`/`IDLE_HOLD` verdict mid-run. Values are clamped server-side to `[30, 7200]`; the default (param omitted) is unchanged 30s behavior. Explicit takeover semantics are untouched — `force`/`warn` still work normally; this only stretches the passive-expiry window. `quick_health`/`status` report the remaining hold at `ownership.lease.remainingSec`.
+- `start { leaseDurationSec: <30-7200> }` (tempdoc 735 G6) declares a campaign-length ownership hold instead of relying on the default 30s passive-expiry window: the lease's `expiresAt` is renewed against this declared duration on every renewal cycle, so a long measurement campaign that goes minutes without a Claude Code session touch (busy running `jseval`/Gradle) doesn't lapse into a `TAKEOVER_ABANDONED`/`IDLE_HOLD` verdict mid-run. Values are clamped server-side to `[30, 7200]`; the default (param omitted) is unchanged 30s behavior. Explicit takeover semantics are untouched — `force`/`warn` still work normally; this only stretches the passive-expiry window. `quick_health` reports the remaining hold at `ownership.lease.remainingSec`.
+
+The four admission error codes `start` can return (`OWNER_CONFLICT`, `HANDSHAKE_REQUIRED`, `REQUIRES_CONFIRMATION`, `RUN_NOT_FOUND`/`NO_API_URL`) and their resolutions are tabulated in the [MCP dev tools reference](../../../docs/reference/contributing/mcp-dev-tools.md#start-tool-error-codes).
 
 A stack abandoned past a grace period is reaped automatically (the supervisor self-terminates), so a long-gone session stops holding VRAM/ports. Stop the stack when you finish so other agents can use it.
+
+**Honest limit (tempdoc 844 §6.1):** the lease only knows runs the dev-runner started. A `jseval` backend (hardcoded port 33221), a bare `gradlew runHeadless`, or a `runHeadlessEval` JVM is invisible to `quick_health` — so a "free" verdict can sit next to a 100%-GPU neighbour. This has already contaminated one measurement round. Check the ports before trusting a free verdict during eval work.
 
 Overnight/long GPU windows (tempdoc 743 P-N, arming step): an unattended multi-hour run starts only on an explicit, recent founder go for *that window* — a budget remark or standing goal is not an arming; declare the window with `leaseDurationSec` sized to it, and when a chain is halted mid-window, stopping the stack is part of the halt, not a follow-up. For supervising the run itself, `node scripts/dev/run-watcher.mjs` (heartbeat + `check` verdicts) replaces hand-rolled per-session watcher scripts; notify-on-failure/completion is the default posture — per-step progress belongs on disk, read at the coarse tick (743 P-M(c), founder-approved 2026-07-17).
 
@@ -232,10 +120,8 @@ It serves from the worktree's `modules/ui-web` (the served code is the worktree'
 ## Troubleshooting
 
 - If startup is slow, check `justsearch.dev.tail_log` and retry `justsearch.dev.quick_health` before assuming the stack is broken.
-- If a UI/API check fails, compare `quick_health`, `status`, and relevant predefined JSON endpoint output.
-- If a generic API call is rejected, the endpoint is outside the dev MCP allowlist.
+- If a UI/API check fails, compare `quick_health` (add `detail: "full"` for process/port state) with the relevant predefined JSON endpoint output.
+- If a generic API call is rejected, the endpoint is outside the dev MCP allowlist — see the allowlist table in the reference.
 - If hot reload reports `structuralChangeDetected`, stop/start the dev stack instead of continuing to rely on hot swap.
 - If search results look stale after field/catalog changes, reset or rebuild the dev index instead of debugging query behavior first.
 - If AI activation fails, separate online runtime readiness from Worker encoder readiness; they use different processes and lifecycle controls.
-
-<!-- generated:end -->
