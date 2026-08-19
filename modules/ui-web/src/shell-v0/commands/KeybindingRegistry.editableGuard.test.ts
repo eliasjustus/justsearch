@@ -61,6 +61,27 @@ describe('KeybindingRegistry editable-target guard (Search Thread S2)', () => {
     expect(invoked).not.toContain('test.focus-bar');
   });
 
+  it.each([
+    ['textarea', () => document.createElement('textarea')],
+    ['select', () => document.createElement('select')],
+    ['contentEditable', () => {
+      const el = document.createElement('div');
+      Object.defineProperty(el, 'isContentEditable', { configurable: true, value: true });
+      return el;
+    }],
+  ])("plain '/' is suppressed when the target is a %s", (_name, make) => {
+    // Tempdoc 857 PR-A / review F3 — this guard's predicate is now the SHARED `isTypingTarget`
+    // rather than an inline copy, so the union it covers is a dependency of this file and not just
+    // a local literal. `select` in particular was covered here and NOWHERE else: dropping it from
+    // the shared predicate used to leave this suite entirely green, which is exactly the kind of
+    // silent coupling a shared predicate has to be pinned against.
+    const target = make();
+    document.body.appendChild(target);
+    target.dispatchEvent(new KeyboardEvent('keydown', { key: '/', bubbles: true, composed: true }));
+    expect(invoked).not.toContain('test.focus-bar');
+    target.remove();
+  });
+
   it('a modified chord (Ctrl+L) still fires from inside an input', () => {
     input.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'l', ctrlKey: true, bubbles: true, composed: true }),

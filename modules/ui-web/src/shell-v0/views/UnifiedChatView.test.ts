@@ -2498,6 +2498,24 @@ describe('UnifiedChatView §33 — window-level J/K step navigation', () => {
     }
   });
 
+  it('never hijacks typing — a focused <select> blocks navigation (tempdoc 857 PR-A: a fix, not a port)', () => {
+    // This case FAILED before 857 PR-A. The inline guard here covered INPUT/TEXTAREA/contentEditable
+    // and omitted SELECT, while `commands/KeybindingRegistry.ts:163-167` — the second copy of the
+    // same check — always covered it. The omission was live: this view renders a
+    // `<select class="workflow-picker">` (`views/UnifiedChatView.ts:3986`), and with it focused a
+    // `j` press stole the element's own type-ahead. Re-pointing this handler at the shared
+    // `isTypingTarget` union fixes it as a side effect of the port.
+    const { nav } = mountWithLandmarks();
+    const jumpTo = vi.spyOn(nav, 'jumpTo').mockImplementation(() => {});
+    const picker = document.createElement('select');
+    document.body.appendChild(picker);
+    picker.focus();
+    expect(document.activeElement).toBe(picker);
+    pressWindow('j');
+    expect(jumpTo).not.toHaveBeenCalled();
+    picker.remove();
+  });
+
   it('removes the window listener on disconnect (no leak after the view is gone)', () => {
     const { view, nav } = mountWithLandmarks();
     const jumpTo = vi.spyOn(nav, 'jumpTo').mockImplementation(() => {});

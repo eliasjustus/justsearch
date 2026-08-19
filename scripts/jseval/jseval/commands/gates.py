@@ -125,7 +125,7 @@ def cmd_relevance_gate(ctx, data_dir, dataset, baselines, run_dir, report_out,
             per_corpus_tolerance=base.get("per_corpus_tolerance"),
         ),
     )
-    rd = _rk.resolve_run_dir(run_dir, data_dir)
+    rd = _rk.resolve_run_dir(run_dir, data_dir, dataset=dataset)
     # tempdoc 644: refuse to compare a run whose realized engine set differs from the baseline's
     # (e.g. a CE-off worktree run vs a CE-on baseline) — apples-to-oranges. Backward-compatible.
     _rk.assert_cohort_engines(rd, baselines, allow_mismatch=allow_engine_mismatch)
@@ -197,7 +197,7 @@ def cmd_perf_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, mode, 
         baselines,
         project_release=lambda rel, base: _pgate.project_release_to_perf_baselines(rel),
     )
-    rd = _rk.resolve_run_dir(run_dir, data_dir)
+    rd = _rk.resolve_run_dir(run_dir, data_dir, dataset=dataset)
     run_summary = json.loads((rd / "summary.json").read_text(encoding="utf-8"))
     manifest_path = rd / "manifest.json"
     run_manifest = (json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -324,7 +324,7 @@ def cmd_leak_gate(ctx, data_dir, dataset, baselines, run_dir, report_out, allow_
 
     # tempdoc 644: refuse a cross-engine-set comparison before gating. resolve_run_dir is
     # deterministic so calling it here + inside run_gate is consistent. Backward-compatible.
-    _resolved_rd = _rk.resolve_run_dir(run_dir, data_dir)
+    _resolved_rd = _rk.resolve_run_dir(run_dir, data_dir, dataset=dataset)
     _rk.assert_cohort_engines(_resolved_rd, baselines, allow_mismatch=allow_engine_mismatch)
     # tempdoc 718: refuse a run whose index shipped without its chunk sub-system.
     # Backward-compatible (no-verdict skips) -- summary.json (not the projection) carries the block.
@@ -402,7 +402,7 @@ def cmd_union_recall_gate(ctx, data_dir, dataset, baselines, run_dir, report_out
 
     # tempdoc 644: refuse a cross-engine-set comparison before gating. resolve_run_dir is
     # deterministic so calling it here + inside run_gate is consistent. Backward-compatible.
-    _resolved_rd = _rk.resolve_run_dir(run_dir, data_dir)
+    _resolved_rd = _rk.resolve_run_dir(run_dir, data_dir, dataset=dataset)
     _rk.assert_cohort_engines(_resolved_rd, baselines, allow_mismatch=allow_engine_mismatch)
     # tempdoc 718: refuse a run whose index shipped without its chunk sub-system.
     # Backward-compatible (no-verdict skips) -- summary.json (not the projection) carries the block.

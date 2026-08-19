@@ -72,8 +72,20 @@ def _find_envelope(data_dir: Path) -> tuple[Path, dict] | None:
     return None
 
 
-def _latest_run_dir(data_dir: Path) -> Path | None:
-    """Return the most recently named run directory under data_dir/eval-results."""
+def _latest_run_dir(data_dir: Path, dataset: str | None = None) -> Path | None:
+    """Return the most recently named run directory under data_dir/eval-results.
+
+    ``dataset``, when given, restricts candidates to runs whose own ``summary.json``
+    records that dataset (canonical-slug compared, e.g. ``scifact`` == ``beir/scifact`` —
+    :func:`jseval.release.canonical_dataset_slug`) — picking the latest MATCHING run
+    instead of the latest run overall. Without this filter, a data-dir holding runs for
+    two different datasets silently resolves to whichever run sorts latest by directory
+    name, regardless of which dataset a gate was asked to check — comparing the wrong
+    corpus's metrics against the requested dataset's baseline with no error (a real
+    incident: a two-dataset eval-results/ compared the wrong corpus's nDCG@10). Returns
+    ``None`` (the caller's existing "no run found" hard-error path) rather than silently
+    falling back to the overall-latest run when no candidate matches.
+    """
     eval_results = data_dir / "eval-results"
     if not eval_results.is_dir():
         return None
@@ -82,7 +94,17 @@ def _latest_run_dir(data_dir: Path) -> Path | None:
     if not candidates:
         return None
     candidates.sort(key=lambda p: p.name, reverse=True)
-    return candidates[0]
+    if dataset is None:
+        return candidates[0]
+    from .release import canonical_dataset_slug
+
+    wanted = canonical_dataset_slug(dataset)
+    for p in candidates:
+        summary = _load_json(p / "summary.json")
+        run_dataset = summary.get("dataset") if isinstance(summary, dict) else None
+        if run_dataset is not None and canonical_dataset_slug(run_dataset) == wanted:
+            return p
+    return None
 
 
 def _load_json(path: Path) -> Any:
