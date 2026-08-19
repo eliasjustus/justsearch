@@ -92,22 +92,58 @@ public final class TokenEstimation {
    * Compute a safe input token budget given the server context window and the requested output budget.
    *
    * <p>This is a best-effort guard rail to avoid llama-server 400s when input + output exceeds n_ctx.
-   * Uses formula: {@code raw = (ctx - out - 256 - 256) * 0.9}, with floor of 256.
+   * Uses formula: {@code raw = headroom * 0.9}, where
+   * {@code headroom = ctx - out - 256 - 256}.
+   *
+   * <p>Tempdoc 845: the {@value #MIN_BUDGET}-token floor is clamped by the real headroom. It used to
+   * be applied <em>after</em> the subtraction ({@code max(MIN_BUDGET, raw)}), so a request whose
+   * output reservation approached the window still got 256 tokens of input budget back — e.g.
+   * {@code (4096, 4000)} returned 256, promising 4256 tokens of a 4096-token window. The returned
+   * budget now never exceeds the headroom, and is 0 when there is no headroom at all (a request
+   * reserving more output than the window can hold leaves no room for input, and saying so is the
+   * honest answer).
+   *
+   * <p>{@code outputMaxTokens} is the <em>whole</em> completion reservation. Reasoning tokens are
+   * spent inside it, not alongside it (tempdoc 835: "reasoning tokens and answer tokens share one
+   * ceiling"), so callers must not add a reasoning budget on top — that double-counts.
    *
    * @param nCtx the context window size in tokens
-   * @param outputMaxTokens the maximum output tokens reserved
-   * @return safe input budget in tokens (minimum 256)
+   * @param outputMaxTokens the maximum output tokens reserved (reasoning included)
+   * @return safe input budget in tokens; 0 when the reservation leaves no room, and never more
+   *     than {@code nCtx - outputMaxTokens - 512}
    */
   public static int computeSafeInputBudgetTokens(int nCtx, int outputMaxTokens) {
     int ctx = Math.max(MIN_CONTEXT, nCtx);
     int out = Math.max(0, outputMaxTokens);
-    double raw = (ctx - out - FULL_COVERAGE_OVERHEAD_TOKENS - FULL_COVERAGE_SAFETY_TOKENS) * 0.9;
-    return (int) Math.floor(Math.max(MIN_BUDGET, raw));
+    int headroom = ctx - out - FULL_COVERAGE_OVERHEAD_TOKENS - FULL_COVERAGE_SAFETY_TOKENS;
+    if (headroom <= 0) {
+      return 0;
+    }
+    int budget = (int) Math.floor(headroom * 0.9);
+    return Math.min(headroom, Math.max(MIN_BUDGET, budget));
   }
 
   // ==========================================================================
   // Truncation Strategies
   // ==========================================================================
+
+  /**
+   * The floor a context cut applies to its token budget: never cut below {@value #MIN_BUDGET}
+   * tokens of content, whatever the budget says.
+   *
+   * <p>Tempdoc 849 D-5: {@link #truncateIfNeeded} has always floored this way, and since 845
+   * {@code computeSafeInputBudgetTokens} genuinely can return {@code 0} — so a zero budget means
+   * "a {@value #MIN_BUDGET}-token floor of context", not "no context at all". The section-aware cut
+   * (tempdoc 849 §5.2) reads the floor from here rather than re-deriving it, so the two cut
+   * branches cannot disagree about what a zero budget means. This does NOT touch
+   * {@link #computeSafeInputBudgetTokens}: that stays the one place the budget itself is decided.
+   *
+   * @param maxContextTokens the requested content budget in tokens
+   * @return the budget actually applied, never below {@value #MIN_BUDGET}
+   */
+  public static int effectiveContextCap(int maxContextTokens) {
+    return Math.max(MIN_BUDGET, maxContextTokens);
+  }
 
   /**
    * Truncate content using first/last strategy with warning marker.
@@ -121,7 +157,7 @@ public final class TokenEstimation {
     if (content == null) {
       return new TruncationResult(null, false, 0, 0, -1);
     }
-    int cap = Math.max(MIN_BUDGET, maxContextTokens);
+    int cap = effectiveContextCap(maxContextTokens);
     int tokens = estimateTokens(content);
     if (tokens <= cap) {
       return new TruncationResult(content, false, tokens, tokens, -1);

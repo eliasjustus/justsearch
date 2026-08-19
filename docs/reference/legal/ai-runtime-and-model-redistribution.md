@@ -73,7 +73,7 @@ Important: shipping `llama.cpp` / `llama-server.exe` does **not** automatically 
 
 ### Current pinned models — the registry is the license SSOT (tempdoc 632)
 
-License is now a first-class field on every package in `modules/ui/src/main/resources/ai/model-registry.v2.json`
+License is now a first-class field on every package in `modules/configuration/src/main/resources/ai/model-registry.v2.json`
 (the `license` field, added in tempdoc 632). The committed `NOTICE` / `THIRD_PARTY_NOTICES` PROJECT from it via
 `scripts/codegen/gen-notices.mjs` (guarded by `check-notices-regen`), so this doc and the notices cannot drift from
 the registry. Current chat model: `Qwen/Qwen3.5-9B` (Apache-2.0). The five ONNX/SPLADE packages are Apache-2.0

@@ -57,6 +57,73 @@ function fakeCitation(overrides: Partial<CitationMatch> = {}): CitationMatch {
   };
 }
 
+/**
+ * Tempdoc 849 slice 3 §5 — the RETRIEVED-vs-RECEIVED badge on the source card.
+ *
+ * Its own describe block because the discipline being pinned is not "the badge renders" but "the
+ * badge renders EXACTLY when the producer resolved the state": the absence case is the one that
+ * keeps a pre-849 conversation from being retroactively described.
+ */
+describe('CitationsPanel — 849 inclusion badge', () => {
+  async function panelText(source: RetrievalCitation): Promise<string> {
+    const el = document.createElement('jf-citations-panel') as CitationsPanel;
+    el.sources = [source];
+    el.citations = [fakeCitation({ parentDocId: source.parentDocId, sourceIndex: 0 })];
+    document.body.appendChild(el);
+    await settle(el);
+    const text = (el.shadowRoot?.textContent ?? '').replace(/\s+/g, ' ');
+    el.remove();
+    return text;
+  }
+
+  it('names a DROPPED passage as retrieved but never sent to the model', async () => {
+    const text = await panelText(fakeSource({ contextInclusion: 'dropped' }));
+    expect(text).toContain('Retrieved · never sent to the model');
+  });
+
+  it('a DROPPED passage does not ALSO claim it grounded a sentence', async () => {
+    // Slice-3 review MEDIUM-3. The pair is reachable: `RAGContext.java:429` hands the matcher every
+    // kept citation regardless of the cut, and the matcher scores against chunk text it re-fetches
+    // by identity — not against what the model was shown. So this card's fixture (a dropped passage
+    // WITH a citation match) is the real production shape, and it used to render both
+    // "never sent to the model" and "Grounds 1 sentence".
+    const text = await panelText(fakeSource({ contextInclusion: 'dropped' }));
+    expect(text).toContain('Retrieved · never sent to the model');
+    // The badge stands alone. Its producer observed the actual cut; the grounding label is a
+    // similarity against text the model never saw, and the two cannot both be informative.
+    expect(text).not.toContain('Grounds 1 sentence');
+  });
+
+  it('names the partial and included states in the same vocabulary — and they KEEP their grounding', async () => {
+    // The discriminator for the suppression above: it must be scoped to `dropped`, not a blanket
+    // removal of the grounding badge from every card that carries an inclusion state.
+    const partial = await panelText(fakeSource({ contextInclusion: 'partial' }));
+    expect(partial).toContain('Partly sent to the model');
+    expect(partial).toContain('Grounds 1 sentence');
+    const included = await panelText(fakeSource({ contextInclusion: 'included' }));
+    expect(included).toContain('Sent to the model');
+    expect(included).toContain('Grounds 1 sentence');
+  });
+
+  it('renders NOTHING for a citation that said nothing about inclusion', async () => {
+    // Every conversation persisted before 849 lands here. The card must be silent — not "included",
+    // and not a placeholder caveat, which would put a hedge on the entire history.
+    const text = await panelText(fakeSource());
+    expect(text).not.toContain('sent to the model');
+    expect(text).not.toContain('Sent to the model');
+    // Non-vacuity: the card DID render (so "no badge" is the badge's absence, not an empty panel).
+    expect(text).toContain('Grounds 1 sentence');
+  });
+
+  it('an unrecognised state is absence, not a guess', async () => {
+    const text = await panelText(
+      fakeSource({ contextInclusion: 'mostly' as never }),
+    );
+    expect(text).not.toContain('sent to the model');
+    expect(text).not.toContain('mostly');
+  });
+});
+
 describe('CitationsPanel', () => {
   it('renders nothing when both arrays are empty', async () => {
     const el = document.createElement('jf-citations-panel') as CitationsPanel;
@@ -275,7 +342,7 @@ describe('CitationsPanel', () => {
     it(`leaves the SHIPPED default untouched — ${path.what}`, async () => {
       const el = await mount(path.apply, false);
       // The header is still the panel's own, and the two always-open bodies are still open: a
-      // default that quietly started gating itself would close SearchV2View and SummarizeView.
+      // default that quietly started gating itself would close UnifiedChatView and SummarizeView.
       expect(el.externalDisclosure).toBe(false);
       expect(el.shadowRoot?.querySelector(path.header)).not.toBeNull();
       const openByDefault = path.header === 'div.panel-header';
@@ -482,7 +549,7 @@ describe('CitationsPanel 822 §5.4 — the source card is the selection’s far 
 
     // `.source[data-selected]` is (0,2,0) and OUTRANKS the base `.citation, .source` at (0,1,0), so
     // its fallbacks are not decoration — they are what a selected card resolves to in every consumer
-    // that does not opt in (search-v2, SummarizeView, where `MarkdownBlock` marks and `SourcesPane`
+    // that does not opt in (UnifiedChatView, SummarizeView, where `MarkdownBlock` marks and `SourcesPane`
     // both write the store, so `data-selected` IS reachable). Defaulting them to the base rule's own
     // `--surface-2` / `--border-subtle` is what makes "shipped is unaffected" true: the two cards
     // must be indistinguishable. A `transparent` default would blank the selected card instead.
@@ -547,7 +614,7 @@ describe('CitationsPanel 822 §5.4 — the source card is the selection’s far 
     // are both (0,2,0) and the selected rule is later, so it took the border of any card the pointer
     // was over. While `data-selected` was unreachable that never showed; the moment this slice wired
     // the store up, the card the reader had just CLICKED became the one card in the panel with no
-    // pointer feedback — in search-v2, SummarizeView and UnifiedChatView alike. So the more specific
+    // pointer feedback — in SummarizeView and UnifiedChatView alike. So the more specific
     // (0,3,0) rule has to restate the hover edge, not the background alone.
     const hovered = ruleBody('\\.source\\[data-selected\\]:hover');
     const resting = ruleBody('\\.source\\[data-selected\\]');

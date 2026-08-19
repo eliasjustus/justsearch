@@ -741,9 +741,23 @@ export const API_CALL_ALLOWLIST = [
   { path: '/api/worker/restart', methods: ['POST'] },
   // AI install
   { path: '/api/ai/install/status', methods: ['GET'] },
+  { path: '/api/ai/install/manifest', methods: ['GET'] },
+  // The side-effect-free plan projection. Predates tempdoc 840 (added by 657) and was never
+  // allowlisted, so the one endpoint that answers "what would this machine install, and what does
+  // each piece cost" was unreachable from the dev tools.
+  { path: '/api/ai/install/plan-preview', methods: ['GET'] },
   { path: '/api/ai/install/start', methods: ['POST'] },
   { path: '/api/ai/install/cancel', methods: ['POST'] },
   { path: '/api/ai/install/repair', methods: ['POST'] },
+  { path: '/api/ai/install/pause', methods: ['POST'] },
+  { path: '/api/ai/install/resume', methods: ['POST'] },
+  // Per-component intent (tempdoc 840). The package id is a path segment, so this entry matches by
+  // pattern; `path` stays as the human-readable form used in the not-allowlisted message.
+  {
+    path: '/api/ai/install/packages/{packageId}/decline',
+    pattern: /^\/api\/ai\/install\/packages\/[A-Za-z0-9._-]+\/decline$/,
+    methods: ['POST', 'DELETE'],
+  },
   // AI runtime
   { path: '/api/ai/runtime/status', methods: ['GET'] },
   { path: '/api/ai/runtime/activate', methods: ['POST'] },
@@ -1667,7 +1681,10 @@ export async function main() {
       const maxBytes = input.maxBytes ?? 2_000_000;
 
       // Validate path against allowlist
-      const entry = API_CALL_ALLOWLIST.find((e) => e.path === input.path);
+      // An entry matches by exact path, or by `pattern` when the route carries a path parameter.
+      const entry = API_CALL_ALLOWLIST.find(
+        (e) => e.path === input.path || (e.pattern instanceof RegExp && e.pattern.test(input.path)),
+      );
       if (!entry) {
         return toToolResult({
           ok: false,

@@ -17,11 +17,13 @@ import org.junit.jupiter.api.io.TempDir;
  * Sandbox round 8 — what {@code GET /api/ai/install/plan-preview} states is what the consent dialog
  * states, so this is where the "you owe 10.14 GB" lie was told over 1.2 GB the user already had.
  *
- * <p>Lives in {@code modules:ui} because that is the module carrying {@code
- * ai/model-registry.v2.json} on its classpath — {@code AiInstallService.getManifest()} loads the
- * real registry, which app-services tests cannot (see {@code AiInstallServiceDiskRecomputeTest}'s
- * note). The assertions are DIFFERENTIAL (same machine, same registry, one staged {@code .partial}
- * between the two reads), so they hold on any hardware profile without pinning a byte total.
+ * <p>Lives in {@code modules:ui} alongside the rest of the install-flow test suite; {@code
+ * AiInstallService.getManifest()} loads the real registry here via the real classpath resource.
+ * (Since tempdoc 840 the registry ships from {@code modules:configuration}, so app-services tests
+ * can load it too — see {@code ModelRegistryClasspathReachabilityTest} — this placement is for
+ * suite continuity, not resource reachability.) The assertions are DIFFERENTIAL (same machine, same
+ * registry, one staged {@code .partial} between the two reads), so they hold on any hardware
+ * profile without pinning a byte total.
  */
 final class AiInstallPlanPreviewResumeTest {
 

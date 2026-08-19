@@ -209,10 +209,11 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 
 ### obs:search-quality-register — Doc/code drift: search-quality register D-004 still says leg-arbitration 'SHIPPED (default off)' / '
 `kind: defect?` `anchor: docs/reference/search-quality-register.md` `seen: 5` `first: 2026-06-24` `last: 2026-07-28`
-- [ ] Doc/code drift: search-quality register D-004 still says leg-arbitration 'SHIPPED (default off)' / 'default-on not recommended' (`docs/reference/search-quality-register.md:585-605`), but shipped code has BOTH leg-arbitration + recall-complete default TRUE (`ResolvedConfigBuilder.java:1497,1513`) per tempdoc 636 final decision; F-024 + a recall-complete D-row also need reconciling. (2026-06-24, tempdoc 636 take-over) (2026-06-24)
-- [ ] search-quality-register.md has TWO entries numbered F-030 (tempdoc 678 encoder-domain-mismatch, ~line 595, and tempdoc 706 OCR comparability, ~line 579) — pre-existing numbering collision found during 691 Phase-L takeover; register owner should renumber one — `docs/reference/search-quality-register.md` (2026-07-10)
+- [x] ~~Doc/code drift: search-quality register D-004 still says leg-arbitration 'SHIPPED (default off)' / 'default-on not recommended' (`docs/reference/search-quality-register.md:585-605`), but shipped code has BOTH leg-arbitration + recall-complete default TRUE (`ResolvedConfigBuilder.java:1497,1513`) per tempdoc 636 final decision; F-024 + a recall-complete D-row also need reconciling. (2026-06-24, tempdoc 636 take-over)~~ (2026-06-24)
+- [x] RESOLVED (2026-08-19): D-004 annotated with a dated STATUS SUPERSEDED note (default ON since the 2026-06-24 F-024 user decision; code cites `ResolvedConfigBuilder.java:1631/:1647`) — the drift was register-internal; code, `environment-variables.md`, tempdoc 636, and F-024 already agreed. The note also records that all post-2026-06-24 default-config baselines (incl. release `832-rebaseline-2026-08-14`) are both-levers-ON measurements. (2026-08-19)
+- [x] ~~search-quality-register.md has TWO entries numbered F-030 (tempdoc 678 encoder-domain-mismatch, ~line 595, and tempdoc 706 OCR comparability, ~line 579) — pre-existing numbering collision found during 691 Phase-L takeover; register owner should renumber one — `docs/reference/search-quality-register.md`~~ RESOLVED (2026-08-19): collision resolved by canonicalizing the already-cited suffixed forms F-030(706)/F-030(678) via a numbering-collision note in the register (renumbering would break existing tempdoc citations); bare F-030 is retired from future assignment. (2026-07-10)
 - [ ] Residual hybrid-vs-lexical gap on legal-clerc post-F-032 (hybrid 0.5592/0.5609 vs lexical 0.6891 at b88e76e) is fusion territory — out of 708 scope, needs its own owner — `docs/reference/search-quality-register.md` (2026-07-11)
-- [ ] search-quality-register.md has a DUPLICATE finding ID F-030 — used for BOTH the 706 scanned-PDF-OCR-engine finding AND the 678 encoder-domain-mismatch finding. Register hygiene: distinct findings need distinct IDs (renumber one, e.g. the 706 OCR one). Found during 705 re-investigation; register is 678/708's domain — `docs/reference/search-quality-register.md` (2026-07-12)
+- [x] ~~search-quality-register.md has a DUPLICATE finding ID F-030 — used for BOTH the 706 scanned-PDF-OCR-engine finding AND the 678 encoder-domain-mismatch finding. Register hygiene: distinct findings need distinct IDs (renumber one, e.g. the 706 OCR one). Found during 705 re-investigation; register is 678/708's domain — `docs/reference/search-quality-register.md`~~ RESOLVED (2026-08-19): same item as the 2026-07-10 line above — see that resolution. (2026-07-12)
 - [ ] Register Dataset Catalog lists mixed/ohr-bench-tika-pdf as 999 docs, but the 786 sweep's summary.json reports doc_count 1000 / final_doc_count 1001 like the other three OHR arms — catalog row may be stale — `docs/reference/search-quality-register.md:33` (2026-07-28)
 
 ### obs:resourceapimodule — ResourceApiModule.shutdown() never calls intentStreamController::shutdown — its heartbeat scheduler
@@ -243,7 +244,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:hybridsearchops — Stale code comments say recall-complete pool is 'default off' but resolved default is true — `Hybrid
 `kind: defect?` `anchor: HybridSearchOps.java` `seen: 4` `first: 2026-06-30` `last: 2026-08-06`
 - [ ] Stale code comments say recall-complete pool is 'default off' but resolved default is true — `HybridSearchOps.java:477`, `SearchExecutor.java:758`, `EnvRegistry.java:972`; also CE javadoc still names 'MiniLM-L6-v2' (model is gte-multilingual-reranker-base) at `RerankerConfig.java:59`, `KnowledgeSearchEngine.java:158-161`. Found during tempdoc 643 investigation. (2026-06-30)
-- [ ] Low-signal fusion fallback constants drift from documented config defaults: HybridSearchOps.java:45-46 hardcodes DEFAULT_VECTOR_ONLY_CAP_LOW_SIGNAL=10 / DEFAULT_VECTOR_RRF_WEIGHT_LOW_SIGNAL=0.3 while claiming to match ResolvedConfig defaults, but ResolvedConfigBuilder.java:1480-1481 defaults are 3 / 0.25 — the no-config fallback path silently uses different fusion parameters than the documented defaults. Found during read-only constants-provenance sweep 2026-07-06. (2026-07-06)
+- [x] ~~Low-signal fusion fallback constants drift from documented config defaults: HybridSearchOps.java:45-46 hardcodes DEFAULT_VECTOR_ONLY_CAP_LOW_SIGNAL=10 / DEFAULT_VECTOR_RRF_WEIGHT_LOW_SIGNAL=0.3 while claiming to match ResolvedConfig defaults, but ResolvedConfigBuilder.java:1480-1481 defaults are 3 / 0.25 — the no-config fallback path silently uses different fusion parameters than the documented defaults. Found during read-only constants-provenance sweep 2026-07-06.~~ RESOLVED (2026-08-19): constants aligned to 3 / 0.25 and every `DEFAULT_*` in `HybridSearchOps` is now pinned against the `ResolvedConfigBuilder` default in `CalibrationConstantsTest`, converting the header comment's claim into a test. Framing correction from the verification pass: the fallback fires only when `session.resolvedConfig == null`, which the production constructor cannot produce (`RuntimeSession.java:270-271`, `resolveFromConfigStore` falls through to a built config `:405-414`; null only in the test-mode constructor `:229`) — so this was a lying comment + divergent test-only fallback, never a live fusion misconfiguration. (2026-07-06)
 - [ ] Engine robustness (for 636/643): fusion CAN bury a RETRIEVED gold below the returned top-10 when one leg is degraded (CASCADE_LEAK); the recall-complete splice is not wired into the shipped 3-way CC path and SPLADE is unprotected (`HybridSearchOps.java:477-490`, `SearchExecutor.java runThreeWay`). Latent, non-biting on healthy realistic corpora (MIRACL CASCADE_LEAK≈0.03) — measured in tempdoc 701 E3 (2026-07-08)
 - [ ] `searchHybrid`'s dense leg calls `readPathOps.searchVector(v, l)` with no filter at all — no chunk exclusion, no collection scope — while the BM25 leg beside it goes through `applyRuntimeFilters`; production-unreachable after the null-filters fix but a live trap for any future null-filter caller — `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/HybridSearchOps.java:542` (2026-08-06)
 
@@ -256,7 +257,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] 526 §17 review note 3 — T1A citation anchor publish has no regression test; if `event.currentTarget` rect extraction regresses, only manual browser testing would catch it. — `modules/ui-web/src/shell-v0/components/chat/CitationsPanel.ts:222` (2026-05-21)
 
 ### obs:dev-runner — Dev-runner is bound to main repo path (`F:/JustSearch`) and cannot live-verify Java backend changes
-`kind: defect?` `anchor: scripts/dev/dev-runner.cjs` `seen: 7` `first: 2026-07-14` `last: 2026-08-18`
+`kind: defect?` `anchor: scripts/dev/dev-runner.cjs` `seen: 8` `first: 2026-07-14` `last: 2026-08-19`
 - [ ] Dev-runner is bound to main repo path (`F:/JustSearch`) and cannot live-verify Java backend changes made in worktrees. Worsened by main's gradle currently failing with a snakeyaml lockfile issue (`Resolved 'org.snakeyaml:snakeyaml-engine:3.0.1' which is not part of the dependency lock state`). Net effect: tempdoc 530 §4.2 `/api/governance/state` endpoint compiled cleanly in the worktree (class present in worktree's installed jar; route registered in source) but could not be live-HTTP-verified due to this contradiction. Resolution path: fix main's lockfile, or extend dev-runner to honor worktree CWD. — `scripts/dev/dev-runner.cjs` + `F:/JustSearch` main lockfile (2026-05-21, tempdoc 530 Pass-7 Phase D2)
 - [ ] justsearch_dev_stop broke after its origin worktree was torn down: the MCP dev server resolves scripts/dev/dev-runner.cjs from the session-inject-time worktree path (removed adoption-legibility) -> MODULE_NOT_FOUND; stack had to be killed by PID tree. dev-runner stop path should resolve from the run record or repoRoot, not the session cwd at inject time. Hit 2026-07-14 during 725 A/B teardown; no stop-report written for run b1784f21. (2026-07-14)
 - [ ] dev-runner does not capture Head-process stdout (backend.stdout.log is 27 bytes, only the port line), so Head-side VDU/ inference failures cannot be diagnosed from logs at all — only worker.log is written — `scripts/dev/dev-runner.cjs` (2026-07-29)
@@ -264,14 +265,16 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] A fresh worktree dev-data has no AI package registered, so ai_activate fails RUNTIME_VARIANT_NOT_INSTALLED even though the shared cuda12 llama-server IS staged at the main checkout — the two provisioning axes (runtime exe vs. installed package) are not distinguished in the failure message — `scripts/dev/dev-runner.cjs:457` (2026-08-14)
 - [ ] dev-runner captures almost no Head log output (backend.stdout.log = 1 port line, backend.stderr.log = JVM warnings only, no Head log file under <dataDir>/logs/) so tail_log cannot diagnose Head-side behaviour — `scripts/dev/dev-runner.cjs:1439` (2026-08-18)
 - [ ] dev-runner captured backend_stdout/backend_stderr were EMPTY (0 bytes) for a healthy run, so tail_log could not surface an application WARN that definitely fired — `scripts/dev/dev-runner.cjs` (2026-08-18)
+- [ ] justsearch.dev.stop left an ORPHANED llama-server (holding 6.5 GB VRAM + its port) when the backend had respawned inference after a mid-run kill; the stop's orphan detection missed the respawned child and manual Stop-Process was needed — `scripts/dev/dev-runner.cjs` (2026-08-19)
 
 ### obs:logger — Governance `ts-any` gate: silent-growth across ~16 files untouched by 549 (logger.ts, platform.ts, t
 `kind: environment?` `anchor: logger.ts` `seen: 1` `first: 2026-05-26` `last: 2026-05-26`
 - [ ] Governance `ts-any` gate: silent-growth across ~16 files untouched by 549 (logger.ts, platform.ts, tauriRuntime.ts, WalkthroughCard.ts, HoverPreviewHost.ts, dev-fixtures.ts, stateValidator.ts, etc.) — pre-existing baseline drift (ungated under manual-only CI); needs a ts-any baseline rebalance or per-file changesets — `modules/ui-web/src` (2026-05-26)
 
 ### obs:actionledgerview — 550 thesis II NIT (independent review 2026-05-27): `ActionLedgerView` went stream-only and dropped t
-`kind: defect?` `anchor: modules/ui-web/src/shell-v0/components/ActionLedgerView.ts` `seen: 1`
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/components/ActionLedgerView.ts` `seen: 2` `first: 2026-08-19` `last: 2026-08-19`
 - [ ] 550 thesis II NIT (independent review 2026-05-27): `ActionLedgerView` went stream-only and dropped the error banner; a permanently-unreachable backend renders "No activity yet." indistinguishable from a genuinely empty ledger (no onError/connection-state signal on `openActionLedgerStream`). — `modules/ui-web/src/shell-v0/components/ActionLedgerView.ts`
+- [ ] strip-token-fallbacks --check is RED on main (6 design-token fallbacks remain) — `modules/ui-web/src/shell-v0/components/ActionLedgerView.ts`, `modules/ui-web/src/shell-v0/components/RecentsMenu.ts` (2026-08-19)
 
 ### obs:isolatedbackendfixture — LESSON (static-green != live-working, 2026-05-27): merging 138 commits of `main` into a long-lived b
 `kind: lesson?` `anchor: modules/system-tests/.../harness/IsolatedBackendFixture.java` `seen: 1` `first: 2026-05-27` `last: 2026-05-27`
@@ -295,8 +298,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] index.html links Google Fonts over the network for --font-display ('Plus Jakarta Sans'), so a local-first install silently loses its display face offline; no font is bundled (no @font-face, no woff/ttf assets in modules/ui-web) — `modules/ui-web/index.html:26` (2026-08-08)
 
 ### obs:coreplugin — Surface audience drift: `core.health-surface` + `core.activity-surface` are USER in Java CoreSurface
-`kind: defect?` `anchor: modules/ui-web/src/shell-v0/plugin-api/CorePlugin.ts` `seen: 1` `first: 2026-06-09` `last: 2026-06-09`
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/plugin-api/CorePlugin.ts` `seen: 2` `first: 2026-06-09` `last: 2026-08-19`
 - [ ] Surface audience drift: `core.health-surface` + `core.activity-surface` are USER in Java CoreSurfaceCatalog but OPERATOR in FE CorePlugin.ts — two-authority drift (tempdoc 571 CI-2) — `modules/ui-web/src/shell-v0/plugin-api/CorePlugin.ts:109,151` (2026-06-09)
+- [ ] FE/Java surface audience drift: core.health-surface and core.activity-surface declare audience OPERATOR in CorePlugin.ts but Audience.USER in CoreSurfaceCatalog.java; FE re-declaration wins in the shell, so the wire catalog is wrong about who sees them (found by 852-S0's new parity leg, recorded in KNOWN_PARITY_DRIFT) — `modules/ui-web/src/shell-v0/plugin-api/CorePlugin.ts:179` (2026-08-19)
 
 ### obs:coreplugin-missing — FE-only surfaces: `core.memory-surface` + `core.command-palette` exist in FE CorePlugin.ts but are a
 `kind: defect?` `anchor: modules/ui-web/src/shell-v0/plugin-api/CorePlugin.ts` `seen: 1` `first: 2026-06-09` `last: 2026-06-09`
@@ -393,8 +397,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] README calls the benchmark run 'one reproducible release run' but release.v1.json records no artifact pointer and the runs are gone — the reproducibility claim is unbacked for the CURRENT published table even after 802 makes it recordable going forward — `README.md:120` (2026-07-31)
 
 ### obs:staged-recall-accounting — staged_recall_accounting.py module docstring 'Output shape v1' example (lines ~40-56) is stale — mis
-`kind: defect?` `anchor: staged_recall_accounting.py` `seen: 1` `first: 2026-06-30` `last: 2026-06-30`
+`kind: defect?` `anchor: staged_recall_accounting.py` `seen: 2` `first: 2026-06-30` `last: 2026-08-19`
 - [ ] staged_recall_accounting.py module docstring 'Output shape v1' example (lines ~40-56) is stale — missing oracle_judge_ndcg_ceiling, judge_headroom_ceiling, fp_mapping which the actual produce() output includes. Noticed while adding judge_rank_histogram during tempdoc 643 Stage 1b. (2026-06-30)
+- [ ] staged_recall_accounting's self-reconciliation is invalid when top_n != 10: it cross-checks depth-top_n presence against the harness's fixed R@10, so a --top-k 100 run reports exactly its rank_11_plus count as 'mismatches' (measured: 12/50 on de-miracl-1k-verbose k100, 0/50 on the same cell at k10) — reconciliation should compare at matching depth or declare itself k10-only — scripts/jseval/jseval/projections/staged_recall_accounting.py (2026-08-19, 748 G.3 campaign) (2026-08-19)
 
 ### obs:test-compare — compare_runs.compare_pipeline_timing has no unit test (test_compare.py covers compare() + per_query_
 `kind: environment?` `anchor: test_compare.py` `seen: 1` `first: 2026-07-01` `last: 2026-07-01`
@@ -606,6 +611,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:onnxembeddingencoder — Parent-doc embedding recomputes chunk vectors that are immediately discarded: EmbeddingService.embed
 `kind: defect?` `anchor: embed/onnx/OnnxEmbeddingEncoder.java` `seen: 3` `first: 2026-07-07` `last: 2026-07-11`
 - [ ] Parent-doc embedding recomputes chunk vectors that are immediately discarded: EmbeddingService.embedDocumentBatch (embed/EmbeddingService.java:365-381) only keeps result.vector() (the pooled parent vector) from OnnxEmbeddingEncoder.embedBatchWithChunking's per-chunk GPU work; the actual CHUNK_VECTOR field is filled by a second, independent embedding pass over CHUNK_CONTENT (pre-split by ChunkSplitter during primary indexing, loop/ops/CombinedEnrichmentBackfillOps.java:210-226) — i.e. long documents' content is chunk-embedded twice with different chunk boundaries (encoder's 512/128-overlap window vs ChunkSplitter's own window) — `embed/onnx/OnnxEmbeddingEncoder.java:385-448` (2026-07-07)
+- [ ] SCOPE NARROWED (2026-08-19, per-occurrence verification): the line above no longer describes the shipped default path — F-031's late-chunking single-pass lane (default true, `ResolvedConfigBuilder.java:1160`) routes chunked parents through `embedWithSpans` (one forward pass, no discarded window vectors, `CombinedEnrichmentBackfillOps.java:563-574,651`). The double-work mechanism itself is intact (`OnnxEmbeddingEncoder.embedBatchWithChunking:584-665` still discards `chunkVectors` at `EmbeddingService.java:421`) and remains REACHABLE on four lanes: (1) docs over the 8192-token single-pass limit (`:658-662`, counter `longDocWindowed`); (2) GPU arena OOM fallback (`:664-678`, counter `arenaOomWindowed`); (3) `late_chunking_enabled=false`; (4) the non-combined embed lane when <2 enrichment stages are available (`BackfillScheduler.java:632-635,669` → `EmbeddingBackfillOps.java:100`). Fix-worthiness should be measurement-gated: read the `longDocWindowed`/`arenaOomWindowed` counters (already logged, `CombinedEnrichmentBackfillOps.java:1098-1111`) off a live long-doc ingest before designing; the honest scope of any fix is "one chunk-boundary authority", not plumbing. (2026-08-19)
 - [ ] OnnxEmbeddingEncoder.buildAssembly hardcodes tokenizer path as modelDir.resolve("tokenizer.json") instead of modelDir.resolve(manifest.tokenizer()) — BertNerInference correctly uses the manifest field; embedding encoder ignores a declared non-default tokenizer filename — `modules/worker-core/src/main/java/io/justsearch/indexerworker/embed/onnx/OnnxEmbeddingEncoder.java:159` (2026-07-11)
 - [ ] OnnxEmbeddingEncoder.createChunks raw id-slice windows CLS-pool a non-[CLS] token on windows 2+ (708 offline A/B: 0.105 vs 0.745 R@10 with proper per-window special tokens); F-031's single-pass path moots it up to 8192 tokens, but any residual window-mean path for docs >8192 tokens still carries the artifact — `modules/worker-core/src/main/java/io/justsearch/indexerworker/embed/onnx/OnnxEmbeddingEncoder.java:525` (2026-07-11)
 
@@ -671,7 +677,8 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 
 ### obs:writepathops — STRUCTURAL TRAP confirmed live: KnnFloatVectorField (VECTOR) is non-stored and silently DESTROYED by
 `kind: follow-up?` `anchor: modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/WritePathOps.java` `seen: 1` `first: 2026-07-10` `last: 2026-07-10`
-- [ ] STRUCTURAL TRAP confirmed live: KnnFloatVectorField (VECTOR) is non-stored and silently DESTROYED by any subsequent readModifyWrite; chunk docs get re-queued (WritePathOps.java:471) but PARENT docs do not — any new enrichment pass that writes VECTOR in its own RMW before another stage's RMW loses the vector with status still COMPLETED (no error, no signal). The combined pass's one-RMW bundling is the only thing upholding this undeclared invariant. Candidate for 710 (invariant should be declared/enforced or vectors preserved in RMW) — `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/WritePathOps.java:471` (2026-07-10)
+- [x] ~~STRUCTURAL TRAP confirmed live: KnnFloatVectorField (VECTOR) is non-stored and silently DESTROYED by any subsequent readModifyWrite; chunk docs get re-queued (WritePathOps.java:471) but PARENT docs do not — any new enrichment pass that writes VECTOR in its own RMW before another stage's RMW loses the vector with status still COMPLETED (no error, no signal). The combined pass's one-RMW bundling is the only thing upholding this undeclared invariant. Candidate for 710 (invariant should be declared/enforced or vectors preserved in RMW) — `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/WritePathOps.java:471`~~ (2026-07-10)
+- [x] RESOLVED (2026-08-19, per-occurrence code verification): fixed by tempdoc 711 / F-032. Every non-stored/non-docValues field declares an `rmwPolicy` in `fields.v1.json` (vector `:180`, chunk_vector `:193`, splade `:433`); enforcement is structural inside `readModifyWrite` (`WritePathOps.java:354`, engine `:384-428`); startup fail-fast for undeclared fragile fields is invoked at open time (`FieldMapper.validateRmwPolicies` `:198-245`, called from `ComponentsFactory.java:124`); a null re-read with COMPLETED status downgrades to PENDING (`WritePathOps.java:408-418`) and `StatusArtifactContract.enforce` (`WritePathOps.java:365`, default mode FAIL) rejects COMPLETED-without-artifact. No doc-rebuild bypass remains (3 `toDocument` call sites, all covered); regression suite `RmwFieldPreservationTest` incl. same-doc-twice-in-one-batch. (2026-08-19)
 
 ### obs:bertnerinference — NER tokenizer construction lacked explicit truncation=false/padding=false (unlike SPLADE/embed's tok
 `kind: follow-up?` `anchor: modules/worker-core/src/main/java/io/justsearch/indexerworker/ner/BertNerInference.java` `seen: 2` `first: 2026-07-10` `last: 2026-07-27`
@@ -687,25 +694,29 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Recurring orchestration failure mode (2x this session): a stopped/idle subagent is NOT re-woken when its own backgrounded shell jobs complete — completion notifications are lost if they fire while the agent is between turns; orchestrator had to detect completion via on-disk evidence (result-file mtimes, GPU idle) and manually SendMessage-resume both times. Candidate agent-lessons.md entry: long-running background jobs inside subagents need orchestrator-side completion polling, or the subagent should poll rather than background-and-wait — platform behavior, not repo bug (2026-07-11)
 
 ### obs:documentpane — Stale comments in DocumentPane.ts reference retired InspectorPane.ts (e.g. line 10, line 60 'Mirrors
-`kind: defect?` `anchor: modules/ui-web/src/shell-v0/components/documentPane/DocumentPane.ts` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/components/documentPane/DocumentPane.ts` `seen: 3` `first: 2026-07-11` `last: 2026-08-19`
 - [ ] Stale comments in DocumentPane.ts reference retired InspectorPane.ts (e.g. line 10, line 60 'Mirrors InspectorPane's local VisualExtractionEvidence shape') — that component was removed (only referenced in UnifiedChatView.test.ts's 'retired jf-inspector-pane never appears' regression test); the comments should point at the actual current pattern origin instead — `modules/ui-web/src/shell-v0/components/documentPane/DocumentPane.ts:10,60` (2026-07-11)
+- [ ] DocumentPane fetches /api/preview with a hard-coded maxChars=5000 and never reads the response's 'truncated' flag (PreviewController.java:171), so a citation past char ~5000 silently highlights nothing — scrollToHighlight finds no .hl-strong and no-ops — `modules/ui-web/src/shell-v0/components/documentPane/DocumentPane.ts:279` (2026-08-18)
+- [ ] 849 S9: DocumentPane.emitVisibleRange emits WINDOW-relative data-line indices on `pane-visible-range`, whose contract documents absolute document lines — latent (no production consumer today), becomes wrong the moment one reads it — `modules/ui-web/src/shell-v0/components/documentPane/DocumentPane.ts:emitVisibleRange` (2026-08-19)
 
 ### obs:supervisiondecision — SupervisionDecision has 3 pre-existing surviving ConditionalsBoundaryMutator mutants (backoffMs L99/
 `kind: environment?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/worker/SupervisionDecision.java` `seen: 1` `first: 2026-07-11` `last: 2026-07-11`
 - [ ] SupervisionDecision has 3 pre-existing surviving ConditionalsBoundaryMutator mutants (backoffMs L99/L104, decide L80) — worker-supervision seam already reports 88% strength in report-pit-strength.mjs, unrelated to tempdoc 677 work — `modules/app-services/src/main/java/io/justsearch/app/services/worker/SupervisionDecision.java` (2026-07-11)
 
 ### obs:ui-a11y-baseline-v1 — chat/grounding-badge surface missing from governance/ui-a11y-baseline.v1.json — ui-a11y-gate structu
-`kind: defect?` `anchor: ui-a11y-baseline.v1.json` `seen: 3` `first: 2026-07-12` `last: 2026-08-06`
+`kind: defect?` `anchor: ui-a11y-baseline.v1.json` `seen: 4` `first: 2026-07-12` `last: 2026-08-19`
 - [ ] chat/grounding-badge surface missing from governance/ui-a11y-baseline.v1.json — ui-a11y-gate structurally can't exercise the grounding badge (no chat entry). Extend baseline surface list to cover chat. Surfaced by 720 per-sentence UX audit. (2026-07-12)
 - [ ] governance/ui-a11y-baseline.v1.json declares $schema './ui-a11y-baseline.schema.json' but that file does not exist (the sibling ui-proportion-baseline.schema.json does) — the a11y register is schema-unvalidated — `governance/ui-a11y-baseline.v1.json:2` (2026-08-06)
 - [ ] governance/ui-a11y-baseline.v1.json declares \ './ui-a11y-baseline.schema.json' but that file does not exist (ui-proportion-baseline.schema.json's description also cites it as the mirrored shape) — dangling schema reference, no validation of the a11y register — `governance/ui-a11y-baseline.v1.json:2` (2026-08-06)
+- [ ] UX audit: governance/ui-a11y-baseline.v1.json has no entry for the search-v3 window, the DocumentPane reading surface, or the reasoning block, so ui-a11y-gate structurally cannot see axe violations there (two SERIOUS ones measured today) — `governance/ui-a11y-baseline.v1.json` (2026-08-19)
 
 ### obs:combinedenrichmentbackfillops — Comment over-attributes Lucene #15068 (an MMapDirectory mmap resource leak, not data loss) as a vect
 `kind: defect?` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java` `seen: 7` `first: 2026-07-11` `last: 2026-08-14`
 - [ ] Comment over-attributes Lucene #15068 (an MMapDirectory mmap resource leak, not data loss) as a vector-loss / commit-cadence rationale — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java:627-630` (found during 717 research; behavior fine, comment only) (2026-07-11)
 - [ ] Combined pass parent lane stamps parent-status markers (EMBEDDING_STATUS/NER_STATUS COMPLETED) onto chunk docs picked up via the splade-status query — chunk docs end up carrying parent lifecycle fields they never own — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java:330` (2026-07-11)
 - [ ] A chunk doc pending both chunk_embedding and splade sits in BOTH combined-pass caches (parentIdCache via splade-status query, chunkIdCache via chunk-embedding query) and can be popped twice into one batch — double-added to embedDocIds, double-embedded — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java:199-260` (2026-07-11)
-- [ ] INTERMITTENT fresh-build chunk-death anomaly (chartered as tempdoc 717): a fresh --clean ingest SOMETIMES produces an index with the entire chunk_merge leg absent (vector nDCG 0.34 not 0.62), silently. Observed degenerate: 713 control run, 712 A/B-1 OFF arm. Observed healthy: 713 §M-5 probe, 712 A/B-2 both arms (first try). Not deterministic; refuted as "always dead," confirmed as occasional — `modules/worker-services/.../CombinedEnrichmentBackfillOps.java:372` (2026-07-11)
+- [x] ~~INTERMITTENT fresh-build chunk-death anomaly (chartered as tempdoc 717): a fresh --clean ingest SOMETIMES produces an index with the entire chunk_merge leg absent (vector nDCG 0.34 not 0.62), silently. Observed degenerate: 713 control run, 712 A/B-1 OFF arm. Observed healthy: 713 §M-5 probe, 712 A/B-2 both arms (first try). Not deterministic; refuted as "always dead," confirmed as occasional — `modules/worker-services/.../CombinedEnrichmentBackfillOps.java:372`~~ (2026-07-11)
+- [x] RESOLVED (2026-08-19, per-occurrence verification): fixed by tempdoc 717 (`d37578a8`, 2026-07-12) — `parent_token_count` index-time estimate fallback (`IndexingDocumentOps.java:444-454`, estimate `length/3` so a 2000-char chunked doc clears the 512 short threshold) + `isShortCorpus` majority-coverage fail-open (`CorpusProfile.java:62-70`); follow-on hardening skips deleted-but-unmerged parents in the profile (`IndexCountOps.java:776-782`). Every recorded occurrence predates the fix; no recurrence in any later run (all post-713 legal-clerc register rows carry chunk_merge). Residual found during this verification and fixed in the same PR as this note: jseval's chunk-completeness corroborator waived ALL `SKIPPED_SHORT_CORPUS`/`SKIPPED_NO_CHUNK_DOCS` skips unconditionally (`run.py` 715-defect-1 waiver), which would have silently passed a 717-class recurrence — the waiver is now conditioned on the offline chunk expectation agreeing the corpus is short. Register F-035 quarantine note reconciled with the 717 resolution in the same PR. (2026-08-19)
 - [ ] Stale perf comment: 'Per-doc at 2.0ms/call is near-optimal' for NER — measured 74ms/doc on legal-clerc-200 (22161ms/299 ops) — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java:577` (2026-07-27)
 - [ ] SPLADE/NER backfill stage starvation live-witnessed (813 post-merge review): six consecutive combined cycles selected splade=100 docs but executed 0ms splade/ner work because the embed stage consumed the whole 5000ms budget first — CombinedEnrichmentBackfillOps.java:678-687 abort branch. Consequence: 813's terminal states (fully searchable / Up to date) unreachable while embedding work keeps arriving; UI reports it truthfully as enriching. Pre-existing (798 D2c budget design), not introduced by 813. Needs a worker-side budget-fairness slice (reserve per-stage slice or rotate first claim). Evidence: session 487f0d1b task b2died21y worker log 12:10:02-12:10:28. (2026-08-06)
 - [ ] Eval-path enrichment: 63 chunk-doc terminal SPLADE FAILED escalations per miracl-fr-2k run when chunk-SPLADE is off — chunk docs seeded splade_status=PENDING get pulled into the parent branch by the splade-status query and escalated as blank-content; invisible to the readiness gate because splade counts exclude IS_CHUNK docs — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/CombinedEnrichmentBackfillOps.java:534` (2026-08-14)
@@ -746,7 +757,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] 707/719 cross-platform replay gotcha: committed 707 commitment.v1.json digests hash CRLF build-time bytes, but git text=auto stores LF — a fresh LF checkout's fabricated-queries/meta/recipe files hash differently than their own manifests; rebuilding via corpus-query-stratum-build + corpus-inject-real reproduces all committed signatures exactly (proven 2026-07-14, en-legal-clerc 1k members). Outsider replay docs should say regenerate-then-verify, not hash-the-checkout. Discovered during 725 A/B corpus prep. (2026-07-14)
 
 ### obs:unifiedchatview — "New chat" button is state-gated (thread.length > 0 && !agentMode) and doesn't render on a fresh/emp
-`kind: defect?` `anchor: modules/ui-web/src/shell-v0/views/UnifiedChatView.ts` `seen: 11` `first: 2026-07-14` `last: 2026-08-18`
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/views/UnifiedChatView.ts` `seen: 16` `first: 2026-07-14` `last: 2026-08-19`
 - [ ] "New chat" button is state-gated (thread.length > 0 && !agentMode) and doesn't render on a fresh/empty chat surface, with no other entry point (keyboard-shortcuts doc lists none) — found via tempdoc 727 friction mining — `modules/ui-web/src/shell-v0/views/UnifiedChatView.ts:2114-2117` (2026-07-14)
 - [ ] Fourth affordance-to-shape resolver: UnifiedChatView.currentShapeId() maps affordance->shape by hand for answer-frame purposes, parallel to compose.resolveShape/resolveDispatchShape — a fork that can drift — `modules/ui-web/src/shell-v0/views/UnifiedChatView.ts:4448` (2026-07-31)
 - [ ] New chat in the Delegate rung clears the chat thread but not the shared AgentSessionController run state (resetRunState is private), so a finished agent run survives a 'New chat' — pre-existing, surfaced by round-14 finding 14's header fix — `modules/ui-web/src/shell-v0/views/UnifiedChatView.ts:2033` (2026-08-06)
@@ -758,6 +769,11 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] check-controls-a11y is RED on origin/main (title-on-disabled, baseline 0) but is not listed in governance/expected-state.v1.json, so every ui-web branch re-diagnoses it — `modules/ui-web/src/shell-v0/views/UnifiedChatView.ts:2096` (2026-08-14)
 - [ ] check-controls-a11y is RED on origin/main (1 title-on-disabled instance, baseline 0) but is not in expected-state.v1.json — either fix or record it — `modules/ui-web/src/shell-v0/views/UnifiedChatView.ts:2096` (2026-08-17)
 - [ ] check-controls-a11y is RED on main (title-on-disabled in UnifiedChatView, 1 > baseline 0) but is not in expected-state.v1.json's known-red list — either fix or register it — `modules/ui-web/src/shell-v0/views/UnifiedChatView.ts:2143` (2026-08-18)
+- [ ] check-controls-a11y is RED on main (1 title-on-disabled instance over baseline 0) — `modules/ui-web/src/shell-v0/views/UnifiedChatView.ts:2143`; not in expected-state.v1.json, so every ui-web PR re-discovers it (2026-08-19)
+- [ ] 847 §1.5b has a fifth arm not in the design: the LEXICAL rag.citation_delta handler writes word-overlap scores straight into this.citations, which sourceGrounding turns into a panel tier — `modules/ui-web/src/shell-v0/views/UnifiedChatView.ts:5995` (2026-08-19)
+- [ ] UnifiedChatView reopens on the SEARCH tier after a page reload, so a restored conversation's transcript is not rendered until the reader switches back to a conversation tier (affordance is not restored with the conversation) — `modules/ui-web/src/shell-v0/views/UnifiedChatView.ts:3083` (2026-08-19)
+- [ ] check-controls-a11y still RED on main and still not in expected-state.v1.json — re-verified during 852 S2 review; the gate reports it at `modules/ui-web/src/shell-v0/views/UnifiedChatView.ts:2137` now (the shard's older note says :2143 — the line number drifts, the finding does not) (2026-08-19)
+- [ ] check-controls-a11y is RED on main (not in expected-state.v1.json): 1 title-on-disabled instance over baseline 0 — `modules/ui-web/src/shell-v0/views/UnifiedChatView.ts:2137` (2026-08-19)
 
 ### obs:unanchored-flake — Browser-automation viewport-resize flakiness (innerWidth/outerWidth mismatch, resize not taking effe
 `kind: lesson?` `anchor: none` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
@@ -798,12 +814,13 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Backend-death root cause substantially resolved: deaths coincide with other sessions' lease takeovers (30s lease not renewed during long-running probes/campaigns that make no MCP dev-tool calls; observed live — session f3e41644 reclaimed mid-probe, stale_reclaim written by ITS runner). Issue 6 reframes from product crash to contention semantics; candidate fix: lease renewal heartbeat during utility-run/long ops — `scripts/dev/dev-runner.cjs lease model` (2026-07-14)
 
 ### obs:check-tempdoc-numbers — check-tempdoc-numbers has a blind spot: it only reports a number claimed by 2+ IN-FLIGHT worktrees,
-`kind: defect?` `anchor: scripts/ci/check-tempdoc-numbers.mjs` `seen: 5` `first: 2026-07-15` `last: 2026-08-18`
+`kind: defect?` `anchor: scripts/ci/check-tempdoc-numbers.mjs` `seen: 6` `first: 2026-07-15` `last: 2026-08-18`
 - [ ] check-tempdoc-numbers has a blind spot: it only reports a number claimed by 2+ IN-FLIGHT worktrees, excluding any basename already on origin (`newBasenames` filter). So an in-flight tempdoc colliding with one already merged to main passes green — reproduced live: branch worktree-ui-audit-density-review's 696-simple-detailed-disclosure vs main's 696-dev-tooling-jdk-resolution went undetected while the check flagged an unrelated 720 collision in the same run — `scripts/ci/check-tempdoc-numbers.mjs:117` (2026-07-15)
 - [ ] check-tempdoc-numbers reports two pre-existing cross-worktree number collisions (#720: memory-injector-plan vs p1a-context-prepend-plan; #729: gjf-removal vs the stale pre-rename copy of 734 in worktree sandbox-validation) — the affected sessions may not know until their own merge-time run — `scripts/ci/check-tempdoc-numbers.mjs` (2026-07-17)
 - [ ] check-tempdoc-numbers treats a gate changeset as claiming a tempdoc number, so a changeset named after the tempdoc that justifies it collides with that tempdoc. Hit twice today in different worktrees (#801 in 798-remaining, #803 here); the natural naming convention — name the changeset after its tempdoc — is exactly what trips it. Workaround is a non-numeric changeset filename — `scripts/ci/check-tempdoc-numbers.mjs` (tempdoc 803) (2026-07-31)
 - [ ] check-tempdoc-numbers reports a cross-worktree NUMBER COLLISION on #822: 822-search-v3-window.md [worktree:822-curated] vs 822-donor + 822-t3code-search-window.md [worktree:822-t3code-window] — two sibling sessions claimed 822 concurrently (2026-08-14, seen during charters PR #443 prep; not caused by 825-828). One of those sessions must renumber before merge — `scripts/ci/check-tempdoc-numbers.mjs` (2026-08-13)
 - [ ] check-tempdoc-numbers misses tempdoc-vs-tempdoc collisions across worktrees: #843 is claimed by BOTH 843-deepseek-harness-relevance-and-mcp-interop.md (worktree dsh-mcp-probe) and 843-streaming-producer-wedge.md, and the checker stays silent — it only reported the #840/#842 tempdoc-vs-changeset pairs. The cross-worktree guard has a blind spot in exactly the case parallel agents hit most — `scripts/ci/check-tempdoc-numbers.mjs` (2026-08-18)
+- [ ] Pre-existing tempdoc number collision on #840: 840-model-download-restructure.md vs 840-retire-model-registry-mirror.md (sibling worktree gates/ssot-catalog-sync) — check-tempdoc-numbers fails standalone — `scripts/ci/check-tempdoc-numbers.mjs` (2026-08-18)
 
 ### obs:expected-state-v1 — Possible stale expected-state entry: [ui-web-typecheck-ts5101] declares ui-web `npm run typecheck` R
 `kind: environment?` `anchor: expected-state.v1.json` `seen: 3` `first: 2026-07-15` `last: 2026-08-17`
@@ -831,8 +848,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] check-gen-token-names --check is RED on main: token-names.generated.ts is missing --measure-notice/--measure-prose/--measure-text-entry, added by #403 (tempdoc 818) without regenerating — `modules/ui-web/src/shell-v0/themes/token-names.generated.ts` (2026-08-13)
 
 ### obs:consult-register-v1 — The `ui-web-gates` recipe documents a kernel-gate command that does not work: `node scripts/governan
-`kind: defect?` `anchor: governance/consult-register.v1.json` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
+`kind: defect?` `anchor: governance/consult-register.v1.json` `seen: 2` `first: 2026-07-15` `last: 2026-08-17`
 - [ ] The `ui-web-gates` recipe documents a kernel-gate command that does not work: `node scripts/governance/run.mjs --gate ambient-purity,style-literal-ratchet,... --mode gate` (comma-separated) exits 2 with "gate id 'ambient-purity,style-literal-ratchet' not found" — run.mjs takes ONE gate id per invocation (verified 2026-07-15: comma form exit 2, single form exit 0). Risk is a silent skip of all 6 kernel gates, or exit 2 misread as a gate FAILURE. This recipe is the authority CLAUDE.md's pre-merge table defers to for every `modules/ui-web/src/**` edit — `governance/consult-register.v1.json:28` (2026-07-15)
+- [ ] consult-register ui-web-gates recipe prescribes `run.mjs --gate a,b,c,... --mode gate` (comma list) but run.mjs's --gate is singular (`--gate <id>  run only the named gate`); the comma form exits non-zero with 'gate id not found', so an agent following the recipe verbatim sees a FAIL that is a syntax error, not a gate result — and could mistake it for a real failure or vice versa. Recipe should list the six gates as separate invocations (all six pass individually) — `governance/consult-register.v1.json` ui-web-gates recipe[1] vs `scripts/governance/run.mjs` --gate (2026-08-17)
 
 ### obs:unanchored-flake-3 — Flaky test on public main: `:modules:app-inference:test` failed the 'Unit tests (platform-contracts)
 `kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
@@ -862,10 +880,12 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Post-737-Phase4: /api/inference/mode REST (BrainRuntimeServiceImpl.switchInferenceMode) still switches mode DIRECTLY (foreign change the reconciler may revert to spec); FE buttons + api/domains/status.ts switchInferenceMode may now be dead — candidate for retirement with the switch-inference-mode alias (§12d). — `modules/ui-web/src/api/domains/status.ts:35` (2026-07-15)
 
 ### obs:aiinstallservice — ECC never re-syncs on mid-session embedding-model arrival: production relies on AiInstallService.try
-`kind: defect?` `anchor: AiInstallService.java` `seen: 3` `first: 2026-07-14` `last: 2026-07-30`
+`kind: defect?` `anchor: AiInstallService.java` `seen: 5` `first: 2026-07-14` `last: 2026-08-18`
 - [ ] ECC never re-syncs on mid-session embedding-model arrival: production relies on AiInstallService.tryRestartWorkerBestEffort (AiInstallService.java:958-972) which is best-effort — on its silent failure the old worker keeps a stale UNAVAILABLE ECC forever; no arrival-side provider listener exists (EmbeddingProviderLifecycle.setEmbeddingProvider never notifies, only unload does). Needs its own design pass (notification seam + re-entrancy-safe refresh + recovery re-run). Refresh-guard hardening landed with the 734 fixes. (2026-07-14)
 - [ ] cleanupBitsTmpFiles deletes every *.tmp in the model target dir, not just BITS' BIT*.tmp scratch — an unrelated temp file in modelsDir would be collateral — `modules/app-services/src/main/java/io/justsearch/app/services/ai/install/AiInstallService.java:1329` (2026-07-30)
 - [ ] AiInstallService's five io.justsearch.app.api.AiInstallService implementations lack @Override (errorprone MissingOverride warnings at build time) — `modules/app-services/src/main/java/io/justsearch/app/services/ai/install/AiInstallService.java:194,212,359,382,393` (2026-07-30)
+- [ ] GET /api/ai/install/status returns packages: [] on a machine that is idle and NOT fully installed (applyInstalledFromPlan only populates the list when installedFully flips true) — so a categorised component list cannot be rendered from status alone before/outside a run; the manifest endpoint is the only full list — `modules/app-services/src/main/java/io/justsearch/app/services/ai/install/AiInstallService.java:applyInstalledFromPlan` (2026-08-18)
+- [ ] startInstall leaves running=true if operationLeases.register throws — the try/catch that resets it only wraps Thread.ofVirtual().start(), so an OperationAdmissionClosedException from the pre-plan lease wedges the service at INSTALL_ALREADY_RUNNING — `modules/app-services/src/main/java/io/justsearch/app/services/ai/install/AiInstallService.java:697` (2026-08-18)
 
 ### obs:indexstatusops — worker.core.pendingJobs (StatusResponse) is actually the combined PENDING+PROCESSING queueDepth (Ind
 `kind: defect?` `anchor: IndexStatusOps.java` `seen: 2` `first: 2026-07-14` `last: 2026-08-06`
@@ -942,9 +962,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] 750/734 finding-5 harness gaps (opus dossier 2026-07-30): (1) v2 golden-parity baseline never committed — check_golden_parity.py silently degrades to overlap-only (PARITY_UNCALIBRATED_POPULATION); (2) no reranker identity/EP fingerprint check despite CE solely ordering the top-10 — `check_golden_parity.py:276`; (3) golden parity has no row in governance/sandbox-coverage.v1.json; (4) dead config keys written-never-read `ResolvedConfigBuilder.java:505-508` (search.rerank.enabled, search.hybrid.ann_k/bm25_k), workers.ai.* and index.pipeline.profile zero consumers; (5) 750 frontmatter contradicts its own Implementation section. (2026-07-30)
 
 ### obs:brainsurface — MERGE-ORDER CONSTRAINT (release 0.2.0): PR #184 (worktree-release-asset-set) must merge to main BEFO
-`kind: defect?` `anchor: modules/ui-web/src/shell-v0/views/BrainSurface.ts` `seen: 2` `first: 2026-07-15` `last: 2026-08-06`
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/views/BrainSurface.ts` `seen: 3` `first: 2026-07-15` `last: 2026-08-18`
 - [ ] MERGE-ORDER CONSTRAINT (release 0.2.0): PR #184 (worktree-release-asset-set) must merge to main BEFORE the 737 branch (worktree-737-ai-runtime). Both carry the A1 inference-mode band-aid (BrainSurface.ts, BrainSurface.indexing-escape.test.ts, aiStateStore.ts, aiVerdict.ts) in their shared base; 737 SUPERSEDES and deletes it. #184-first is clean (737's diff already accounts for A1 in its base and cleanly removes it); 737-first CONFLICTS (main would have the rewrite while #184 still re-adds the deleted test + A1-shaped BrainSurface). Owner chose two separate PRs + order-them (2026-07-15), not A1 surgery. Note: 'zero shared files' held BETWEEN the two branches but NOT relative to main. — `modules/ui-web/src/shell-v0/views/BrainSurface.ts` (2026-07-15)
 - [ ] BrainSurface compat callout's schema detail line still reads the flat 'Schema incompatible' for both BLOCKED_LEGACY and BLOCKED_MISMATCH, while the embedding arm distinguishes the two (fingerprint missing vs mismatch) — asymmetric technical detail — `modules/ui-web/src/shell-v0/views/BrainSurface.ts:1851` (2026-08-06)
+- [ ] BrainSurface renders rows with class `data-row` (renderTierBreakdown / renderModels / renderSearchQualityFeatures) but its static styles define no `.data-row` rule, so those rows are unstyled — the rule exists only in HealthSurface.ts and security/atRestCard.ts — `modules/ui-web/src/shell-v0/views/BrainSurface.ts:2193` (2026-08-18)
 
 ### obs:719-reproducible-public-agent-utility-benchmark — 719 source-identity prose is behind the implementation: #178 (725) added mcp_initialize_identity + s
 `kind: defect?` `anchor: docs/tempdocs/719-reproducible-public-agent-utility-benchmark.md` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
@@ -1474,8 +1495,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] component-vocabulary.generated.ts was stale on main before 818 (missing `jf-app-update-banner`) — an earlier PR defined the element without running gen-component-vocabulary; the 818 regen swept it — `modules/ui-web/src/shell-v0/renderers/component-vocabulary.generated.ts` (2026-08-07)
 
 ### obs:resultscard — search-ui-behavior.md points the Help badge at the JsonForms renderer dir (`shell-v0/renderers/`), b
-`kind: defect?` `anchor: shell-v0/components/searchResults/ResultsCard.ts` `seen: 1` `first: 2026-08-06` `last: 2026-08-06`
+`kind: defect?` `anchor: shell-v0/components/searchResults/ResultsCard.ts` `seen: 2` `first: 2026-08-06` `last: 2026-08-19`
 - [ ] search-ui-behavior.md points the Help badge at the JsonForms renderer dir (`shell-v0/renderers/`), but the search result row renders in `shell-v0/components/searchResults/ResultsCard.ts` — stale path pointer in a canonical doc — `docs/reference/search-ui-behavior.md:647` (2026-08-06)
+- [ ] UX audit: chat-surface result cards fail contrast in the light palettes — axe color-contrast 1.47:1 (#fdfcfa on #ffc97c) on jf-results-card snapshot chips, plus 4.32:1 on the History/new-chat triggers and status-bar conn/endpoint text; pre-existing, unrelated to 846/847/848 — `modules/ui-web/src/shell-v0/components/searchResults/ResultsCard.ts` (2026-08-19)
 
 ### obs:search-ui-behavior — search-ui-behavior.md 'Result Row Anatomy' still describes density modes, a rich-mode metadata line,
 `kind: defect?` `anchor: docs/reference/search-ui-behavior.md` `seen: 1` `first: 2026-08-06` `last: 2026-08-06`
@@ -1556,9 +1578,13 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] IngestStarvationE2ETest (798 T4) fails on hosted CI first attempts with initializationError/TimeoutException in the IsolatedBackendFixture spawn — 2 of 3 first attempts across PRs #377/#384 (runs 31070845964 attempt 1, 31093519435), passes locally (tests=1 failures=0) and on CI rerun. Recurring loaded-runner spawn-timeout pattern, not a product defect; the fixture readiness timeout likely needs headroom on hosted runners — scripts/../system-tests IsolatedBackendFixture. (2026-08-06)
 
 ### obs:ragcontextops — `buildRagFilters` never populates `collection`/`docIds` (the `RetrieveContextRequest` proto has no c
-`kind: defect?` `anchor: modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/RagContextOps.java` `seen: 2` `first: 2026-08-06` `last: 2026-08-13`
+`kind: defect?` `anchor: modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/RagContextOps.java` `seen: 6` `first: 2026-08-06` `last: 2026-08-19`
 - [ ] `buildRagFilters` never populates `collection`/`docIds` (the `RetrieveContextRequest` proto has no collection field), so the RAG path has no producer of an explicit collection scope — the withIncludeChunks copy fix restores propagation, but nothing sets it there yet — `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/RagContextOps.java:919` (2026-08-06)
 - [ ] RagContextOps.runBudgetLoop adds a hit to `used` on STOPPED_BUDGET (mapAppendResult folds it into APPENDED_AND_STOPPED), so a budget-stopped chunk becomes a citation/source with no context section the model ever saw — `modules/worker-services/src/main/java/io/justsearch/indexerworker/services/RagContextOps.java:1704` (2026-08-13)
+- [ ] Citation startLine/endLine are 1-based at the producer (countNewlinesBefore+1) but DocumentPane's DocumentLineRange is 0-based inclusive, and no hop subtracts one — every citation highlight is off by one line; Sv3Main.ts:100's '0-based inclusive' comment is false — `modules/worker-services/src/main/java/io/justsearch/indexerworker/services/RagContextOps.java:872` (2026-08-18)
+- [ ] RagContextOps.mapAppendResult collapses STOPPED_BUDGET into APPENDED_AND_STOPPED and runBudgetLoop then adds the hit to 'used', so a budget-exhausted retrieval emits a citation and increments chunksIncluded for a passage that appended nothing — citations.size() can exceed sections.size() by one — `modules/worker-services/src/main/java/io/justsearch/indexerworker/services/RagContextOps.java:1706-1721` (2026-08-18)
+- [ ] 849 S11 (backend, pre-existing): RagContextOps fabricates startChar=searchFrom when indexOf misses, so those citations carry offsets that point at the wrong text — with 849 slice 2's excerpt witness they now suppress with a 'document may have changed' explanation that is FALSE (the document is fine; the producer guessed) — `modules/worker-services/src/main/java/io/justsearch/indexerworker/services/RagContextOps.java:859` (2026-08-19)
+- [ ] 849 follow-up: no honest per-source retrieval-strength readout exists — ContextCitation.score is the raw Lucene hit score (RRF-fused hybrid caps ~0.09, BM25 unbounded) so no fixed tier scale can band it; the mode-independent alternative is RANK WITHIN THE TURN's source list (position is already available FE-side and needs no calibration) — a real design question, deferred out of 849 slice 3 — `modules/worker-services/src/main/java/io/justsearch/indexerworker/services/RagContextOps.java:395` (2026-08-19)
 
 ### obs:index-general-2 — check-runtime-manifest-closure fails pre-existing on 2 sibling-file reads of runtime/api-port.txt ou
 `kind: environment?` `anchor: packaging/mcpb/server/index.js` `seen: 1` `first: 2026-08-06` `last: 2026-08-06`
@@ -1618,13 +1644,15 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] FacetingEngine truncation OMITS rather than undercounts: on exceeding maxDocsScanned it breaks out of the segment loop, so a facet value living only in a later segment vanishes entirely — any consumer treating facets as complete without checking facetsTruncated can silently lose whole categories — `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/FacetingEngine.java:100` (2026-08-06)
 
 ### obs:envelopestream-test — Flaky under full-suite load only: EnvelopeStream heartbeat-watchdog reconnect test expects >=2 sourc
-`kind: environment?` `anchor: modules/ui-web/src/shell-v0/streaming/EnvelopeStream.test.ts` `seen: 6` `first: 2026-08-06` `last: 2026-08-14`
+`kind: environment?` `anchor: modules/ui-web/src/shell-v0/streaming/EnvelopeStream.test.ts` `seen: 8` `first: 2026-08-06` `last: 2026-08-19`
 - [ ] Flaky under full-suite load only: EnvelopeStream heartbeat-watchdog reconnect test expects >=2 sources, got 1; passes in isolation — `modules/ui-web/src/shell-v0/streaming/EnvelopeStream.test.ts:488` (2026-08-06)
 - [ ] ui-web full-suite flake under load: wall-clock watchdog tests fail only in the full parallel run, pass alone — EnvelopeStream watchdog + one resourceRegistry occurrence — `modules/ui-web/src/shell-v0/streaming/EnvelopeStream.test.ts:488` (2026-08-12)
 - [ ] EnvelopeStream heartbeat-watchdog test is load-flaky: failed once in a full ui-web run, passed in isolation and on re-run — `modules/ui-web/src/shell-v0/streaming/EnvelopeStream.test.ts` (2026-08-13)
 - [ ] Flaky under full-suite load: EnvelopeStream watchdog reconnect test expects >=2 sources after a 70ms wait and got 1 (passes in isolation; timing-sensitive) — `modules/ui-web/src/shell-v0/streaming/EnvelopeStream.test.ts:488` (2026-08-13)
 - [ ] EnvelopeStream heartbeat-watchdog reconnect test is timing-flaky under full-suite parallel load (passes 24/24 in isolation; intermittent fail in npm run test:unit:run) — `modules/ui-web/src/shell-v0/streaming/EnvelopeStream.test.ts` (2026-08-14)
 - [ ] ui-web unit suite shows two intermittent flakes under parallel-agent CPU load, both green on re-run and unrelated to the slice: EnvelopeStream.test.ts:488 heartbeat watchdog (expected 1 to be >= 2), and an ECONNREFUSED 127.0.0.1:3000 dump with no recoverable test name — `modules/ui-web/src/shell-v0/streaming/EnvelopeStream.test.ts:488` (2026-08-14)
+- [ ] Flaky under full-suite load: EnvelopeStream 'reconnects when the heartbeat-absence watchdog expires' failed once in a 425-file run (real-timer 70ms wait), green in isolation — `modules/ui-web/src/shell-v0/streaming/EnvelopeStream.test.ts:488` (2026-08-18)
+- [ ] ui-web unit suite flake: EnvelopeStream heartbeat-watchdog case asserts a 70ms real-time reconnect and fails under parallel load (green in isolation) — `modules/ui-web/src/shell-v0/streaming/EnvelopeStream.test.ts:488` (2026-08-19)
 
 ### obs:ui-shot — jseval ui-shot / ui-*-gate auto-serve leaks its Vite child process — two survived my session in the
 `kind: defect?` `anchor: scripts/jseval/jseval/ui_shot.py` `seen: 1` `first: 2026-08-06` `last: 2026-08-06`
@@ -1690,8 +1718,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Nothing asserts tauri.updater.conf.json plugins.updater.pubkey == repo var JUSTSEARCH_UPDATE_ARTIFACT_PUBLIC_KEY — silent drift would ship updater artifacts signed for a key clients don't pin; add to the release preflight (surfaced by v0.2.0 tag run 31697222656) — `modules/shell/src-tauri/tauri.updater.conf.json` (2026-08-13)
 
 ### obs:tauri-conf — tauri.conf.json declares bundle icons 32x32.png / 128x128.png / 128x128@2x.png but modules/shell/src
-`kind: defect?` `anchor: modules/shell/src-tauri/tauri.conf.json` `seen: 1` `first: 2026-08-06` `last: 2026-08-06`
+`kind: defect?` `anchor: modules/shell/src-tauri/tauri.conf.json` `seen: 2` `first: 2026-08-06` `last: 2026-08-19`
 - [ ] tauri.conf.json declares bundle icons 32x32.png / 128x128.png / 128x128@2x.png but modules/shell/src-tauri/icons/ contains only icon.icns + icon.ico — the PNG variants are missing on disk — `modules/shell/src-tauri/tauri.conf.json:30` (2026-08-06)
+- [ ] 823a's cross-era over-install validation (old Software\justsearch key -> new 'Elias Justus' publisher, no migration shim) was deferred past GA by owner adjudication (734:3664 'lane re-runs naturally in the next release's rounds') and has never run: round 16 exercised old-over-old (predates 01f32282), round 17's warm-reinstall lane was 'unobservable' (host restart). v0.2.0 is public so the pre-#410-key population is no longer bounded to dev/sandbox machines - the next release's sandbox round should treat old-key-over-new-key over-install as BLOCKING, not best-effort: stage a pre-01f32282 build, over-install current, observe RestorePreviousInstallLocation fallback + uninstaller handoff + no dangling ARP entry - .github/workflows/build-installer.yml / modules/shell/src-tauri/tauri.conf.json:16 (2026-08-19, Wave-4 verification) (2026-08-19)
 
 ### obs:serve-worktree-fe — TaskStop on a serve-worktree-fe.cjs background task orphans its child Vite: the node vite.js child s
 `kind: defect?` `anchor: serve-worktree-fe.cjs` `seen: 1` `first: 2026-08-07` `last: 2026-08-07`
@@ -1705,7 +1734,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: scripts/agent-analytics/hooks/otlp-sink-ensure.mjs` `seen: 1` `first: 2026-08-13` `last: 2026-08-13`
 - [ ] Agent-observability OTel sink is DEAD and failed silently: nothing listening on 127.0.0.1:4318, last data 2026-07-29 14:01 (32 files in tmp/agent-telemetry/otlp) — otlp-sink-ensure SessionStart hook is fail-open with no alarm, so tempdoc 622's span/cost attribution has been unavailable for ~2 weeks unnoticed. Needs a liveness check or loud degradation notice in the hook — `scripts/agent-analytics/hooks/otlp-sink-ensure.mjs` (found during publish-workflow velocity analysis, 2026-08-14) (2026-08-13)
 
-### obs:unanchored-missing-4 — Windows Gradle cache save has NEVER succeeded in CI: setup-java cache-save fails with unquoted-path 
+### obs:unanchored-missing-4 — Windows Gradle cache save has NEVER succeeded in CI: setup-java cache-save fails with unquoted-path
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-08-13` `last: 2026-08-13`
 - [ ] Windows Gradle cache save has NEVER succeeded in CI: setup-java cache-save fails with unquoted-path tar error ('C:\Program ... tar.exe exit code 2') emitted as ##[warning] so lanes stay green — every Windows lane (54% = 32.5h of 59.9h daily runner-time on 2026-08-13) runs 100% cold ('gradle cache is not found', 0 FROM-CACHE), and ci-walltime budgets are calibrated against cold runs — `.github/workflows/ci.yml` setup-java cache:gradle on windows lanes (runs 31750644388, 31742266298) (2026-08-13)
 
@@ -1758,8 +1787,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] verify-runtime-config-matrix fails on main (pre-existing, not from this branch): missing env/sysprop pair JUSTSEARCH_APP_VERSION | justsearch.app.version — `scripts/docs/verify-runtime-config-matrix.mjs` (2026-08-18)
 
 ### obs:contract-surfaces-v1 — contract-projection gate fails on main (pre-existing, not from this branch): AgentSessionController.
-`kind: environment?` `anchor: governance/contract-surfaces.v1.json` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
+`kind: environment?` `anchor: governance/contract-surfaces.v1.json` `seen: 2` `first: 2026-08-18` `last: 2026-08-18`
 - [ ] contract-projection gate fails on main (pre-existing, not from this branch): AgentSessionController.ts imports a generated wire module but is not a declared consumer — `governance/contract-surfaces.v1.json` / `modules/ui-web/src/shell-v0/controllers/AgentSessionController.ts` (2026-08-18)
+- [ ] contract-projection gate fails on a pre-existing undeclared consumer: AgentSessionController.ts imports schema-types/agent-sessions-response but is not listed in governance/contract-surfaces.v1.json — `governance/contract-surfaces.v1.json` (2026-08-18)
 
 ### obs:registry-snapshot — Vacuous-green gate class: `host-owns-truth` and `runtime-witness` emit a WARNING and return PASS whe
 `kind: defect?` `anchor: tmp/consumer-presence/registry-snapshot.json` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
@@ -1770,10 +1800,11 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Deeplink hash is not honored on backend-less boot: URLSource's boot read loses to the default-surface race when backend fetches are refused; surface mounts only via a post-boot popstate re-dispatch. Reproduced against a bare worktree Vite serve with core.search-v3-surface (and likely affects search-v2 deeplinks under the same conditions) — modules/ui-web/src/shell-v0/router/sources/URLSource.ts:55 (2026-08-12)
 
 ### obs:recentsmenu — 4 ui-web gate reds pre-exist on local main @0063a8f4 in files untouched by 822 slice 3: check-theme-
-`kind: defect?` `anchor: modules/ui-web/src/shell-v0/components/RecentsMenu.ts` `seen: 3` `first: 2026-08-12` `last: 2026-08-14`
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/components/RecentsMenu.ts` `seen: 4` `first: 2026-08-12` `last: 2026-08-19`
 - [ ] 4 ui-web gate reds pre-exist on local main @0063a8f4 in files untouched by 822 slice 3: check-theme-token-closure (3 ghost tokens in RecentsMenu.ts), gen-token-names --check stale (223), strip-token-fallbacks (RecentsMenu.ts 4, ActionLedgerView.ts 2), check-accent-as-text (ActionLedgerView.ts 1 > baseline 0) — `modules/ui-web/src/shell-v0/components/RecentsMenu.ts` (2026-08-12)
 - [ ] strip-token-fallbacks --check is RED on main: 6 design-token fallbacks remain in ActionLedgerView.ts (2) and RecentsMenu.ts (4) — `modules/ui-web/src/shell-v0/components/RecentsMenu.ts` (2026-08-14)
 - [ ] strip-token-fallbacks --check RED on main, not in expected-state.v1.json: 6 design-token fallbacks remain (ActionLedgerView.ts 2, RecentsMenu.ts 4) — same two files as the known theme-token-closure/accent-as-text reds — `modules/ui-web/src/shell-v0/components/RecentsMenu.ts` (2026-08-14)
+- [ ] strip-token-fallbacks --check is RED on main (6 design-token fallbacks) — `modules/ui-web/src/shell-v0/components/RecentsMenu.ts`, `modules/ui-web/src/shell-v0/components/ActionLedgerView.ts`; same two files as the recorded theme-token-closure / accent-as-text reds, so one cleanup would clear three gates (2026-08-19)
 
 ### obs:unanchored-general-16 — /api/status reports worker.core.indexedDocuments=0 + indexState DEGRADED + indexServing NOT_READY wh
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-08-12` `last: 2026-08-12`
@@ -1788,32 +1819,41 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] ui-web unit runs emit ECONNREFUSED 127.0.0.1:3000 stderr noise (unstubbed relative-URL fetches escaping to happy-dom's default origin) across many suites incl. untouched views/search-v2 — harmless but obscures real failures — `modules/ui-web/src/shell-v0/views/search-v2` (2026-08-13)
 
 ### obs:searchv3view — Search v3: Escape is claimed by the citation pane while a document is open, so an in-progress sideba
-`kind: defect?` `anchor: modules/ui-web/src/shell-v0/views/search-v3/SearchV3View.ts` `seen: 2` `first: 2026-08-13` `last: 2026-08-14`
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/views/search-v3/SearchV3View.ts` `seen: 6` `first: 2026-08-13` `last: 2026-08-19`
 - [ ] Search v3: Escape is claimed by the citation pane while a document is open, so an in-progress sidebar rename loses its cancel key in that state (F8 brief's specified order) — `modules/ui-web/src/shell-v0/views/search-v3/SearchV3View.ts:1085` (2026-08-13)
 - [ ] sv3 sidebar resize grip has no visible focus indicator (keyboard-resizable but focus-invisible) — `modules/ui-web/src/shell-v0/views/search-v3/SearchV3View.ts:1990` (2026-08-14)
+- [ ] sv3 cold-boot ordering: SearchV3View.restoreLastViewed early-returns when the pointed-at session is already listed, so neither refreshRecord nor the /history companion load runs on that path — pre-existing shape, inherited by 852 S1 — `modules/ui-web/src/shell-v0/views/search-v3/SearchV3View.ts:757-758` (2026-08-19)
+- [ ] 852 S2 follow-up (F5): SearchV3View.refreshHistory guards the SESSION but not request ORDER, so two reloads of the same conversation can land out of order and leave the older /history standing — refreshRecord's AbortController is the shape of the fix — `modules/ui-web/src/shell-v0/views/search-v3/SearchV3View.ts:838` (2026-08-19)
+- [ ] 852 S2 nit (F8): the four per-turn context-menu entries all carry the same 'history' icon, so the menu's glyph column distinguishes nothing — `modules/ui-web/src/shell-v0/views/search-v3/SearchV3View.ts:945` (2026-08-19)
+- [ ] sv3 pane survives a CONVERSATION switch: closePane() runs on New session but not on onSessionSelect or 852-S3's new openBranch/version-pager routes, so a citation pane from conversation A stays open over conversation B (849 slice 3 makes the stale header go null rather than lie, but the document itself is still the old conversation's evidence) — `modules/ui-web/src/shell-v0/views/search-v3/SearchV3View.ts:1315" (2026-08-19)
 
 ### obs:unanchored-general-19 — Slice F10 live probe wrote one real conversation into the shared stack (opening question 'probe stan
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-08-13` `last: 2026-08-13`
 - [ ] Slice F10 live probe wrote one real conversation into the shared stack (opening question 'probe standard rung'), created while proving the effort payload end-to-end — harmless dev data, delete if the owner tidies conversations (2026-08-13)
 
 ### obs:sv3main — sv3 turn can render the ungrounded verdict AND a redundant "0 sources" note for the same fact (compl
-`kind: defect?` `anchor: modules/ui-web/src/shell-v0/views/search-v3/Sv3Main.ts` `seen: 2` `first: 2026-08-13` `last: 2026-08-13`
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/views/search-v3/Sv3Main.ts` `seen: 3` `first: 2026-08-13` `last: 2026-08-19`
 - [ ] sv3 turn can render the ungrounded verdict AND a redundant "0 sources" note for the same fact (completed ask, evidence non-null, zero sources/matches) — `modules/ui-web/src/shell-v0/views/search-v3/Sv3Main.ts:1231-1244` (2026-08-13)
 - [ ] Search v3: a completed ask with evidence != null and zero sources says the same fact twice — the degraded-ungrounded verdict AND a '0 sources' note in the same tail row (observed live at the 640px floor); pre-existing, out of F11's scope — `modules/ui-web/src/shell-v0/views/search-v3/Sv3Main.ts:1273` + `components/chat/evidenceProjection.ts:184` (2026-08-13)
+- [ ] v3 sources panel never receives sourceCoverage: jf-citations-panel already words 'Retrieved · not examined' (CitationsPanel.ts:66,80,554) but Sv3Main never binds .sourceCoverage — pre-existing v3-vs-UCV honesty gap (847 §2.4 amendment) — `modules/ui-web/src/shell-v0/views/search-v3/Sv3Main.ts:1377` (2026-08-19)
 
 ### obs:registry-v1 — Head/worker citation contract is outside every governance gate and internally inconsistent: --gate w
 `kind: defect?` `anchor: registry.v1.json` `seen: 1` `first: 2026-08-13` `last: 2026-08-13`
 - [ ] Head/worker citation contract is outside every governance gate and internally inconsistent: --gate wire watches only contracts/wire (governance/registry.v1.json:350-367), while chunk_index means 'index into chunks array' at indexing.proto:456 and :502 but 'ordinal within parent doc' at :495 — modules/ipc-common/src/main/proto/indexing.proto:456 (2026-08-13)
 
-### obs:ragcontext — RAGContext token-budget truncation cuts trailing context sections but still emits rag.citations for 
-`kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/RAGContext.java` `seen: 1` `first: 2026-08-13` `last: 2026-08-13`
+### obs:ragcontext — RAGContext token-budget truncation cuts trailing context sections but still emits rag.citations for
+`kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/RAGContext.java` `seen: 4` `first: 2026-08-13` `last: 2026-08-19`
 - [ ] RAGContext token-budget truncation cuts trailing context sections but still emits rag.citations for all of them, so the FE can show a source whose text never reached the model — `modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/RAGContext.java:235` (2026-08-13)
+- [ ] done-payload contextBreakdown.retrieved (480) can exceed the Head's computed input budget (460) by ~4% — two different token accountings for one quantity; harmless today but a drifting pair — `modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/RAGContext.java:218` (2026-08-18)
+- [ ] RAG context budgeter overcommits ~2x: both RAGContext call sites use computeSafeInputBudgetTokens(8192,1024) — hardcoded 8192 vs real n_ctx 4096 (InferenceConfig :101,:459) and fixed 1024 reserve ignoring request maxTokens AND the server-side reasoning budget — Thorough (maxTokens 3072, topK 12) passes the budgeter and 400s at llama-server (probe: 5227 vs 4096, deterministic) — `modules/app-services/.../spi/RAGContext.java:251,348` + `core/util/TokenEstimation.java:101-106` (2026-08-18)
+- [ ] 849 MEDIUM-3 deeper fix (backend): the streaming citation matcher is handed EVERY kept citation regardless of what the context cut did with it, and scores against chunk text it re-fetches by (parentDocId, chunkIndex) — so a DROPPED passage can be 'matched' against an answer the model wrote without ever seeing it; slice 3 suppresses the contradiction at the presentation layer, the root fix is filtering dropped citations out of the matcher's input — `modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/RAGContext.java:429` (2026-08-19)
 
 ### obs:markdownblock — happy-dom + DOMPurify 3.4.11 silently drop the FIRST element of every sanitized fragment (DOMPurify'
-`kind: defect?` `anchor: modules/ui-web/src/shell-v0/components/chat/MarkdownBlock.ts` `seen: 1` `first: 2026-08-13` `last: 2026-08-13`
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/components/chat/MarkdownBlock.ts` `seen: 2` `first: 2026-08-13` `last: 2026-08-19`
 - [ ] happy-dom + DOMPurify 3.4.11 silently drop the FIRST element of every sanitized fragment (DOMPurify's '<remove></remove>' prefix trick mis-parses), so a markdown unit test whose fixture opens with a heading sees it as bare text — a real-browser render is unaffected — `modules/ui-web/src/shell-v0/components/chat/MarkdownBlock.ts:479` (2026-08-13)
+- [ ] decorateCitations flattens DOM text nodes with no separator, so a <br> or an element boundary fuses adjacent words into one token (measured: 'index  \nand' -> 'indexand'; '<summary>More detail</summary>' + para -> 'detailthe') and the key loses its mark — `modules/ui-web/src/shell-v0/components/chat/MarkdownBlock.ts:740` (2026-08-19)
 
-### obs:sv3sessionrow — Sv3SessionRow declares an `inflight` property (dim-on-busy treatment) that the sidebar never sets — 
+### obs:sv3sessionrow — Sv3SessionRow declares an `inflight` property (dim-on-busy treatment) that the sidebar never sets —
 `kind: defect?` `anchor: modules/ui-web/src/shell-v0/views/search-v3/Sv3SessionRow.ts` `seen: 1` `first: 2026-08-14` `last: 2026-08-14`
 - [ ] Sv3SessionRow declares an `inflight` property (dim-on-busy treatment) that the sidebar never sets — dead prop since 822 F3 — `modules/ui-web/src/shell-v0/views/search-v3/Sv3SessionRow.ts:428` (2026-08-14)
 
@@ -1825,7 +1865,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: modules/app-services/src/integrationTest/java/io/justsearch/app/services/gpl/LambdaMartBenchmarkTest.java` `seen: 1` `first: 2026-08-14` `last: 2026-08-14`
 - [ ] LambdaMartBenchmarkTest p50-latency assertion is load-sensitive: fails under concurrent build load (6.54ms vs 5ms threshold), passes in isolation — a wall-clock threshold in a non-isolated suite — `modules/app-services/src/integrationTest/java/io/justsearch/app/services/gpl/LambdaMartBenchmarkTest.java` (2026-08-14)
 
-### obs:watchedrootscancollectiontest — WatchedRootScanCollectionTest$ProductionWireForwarding fails on Windows with 'Failed to delete temp 
+### obs:watchedrootscancollectiontest — WatchedRootScanCollectionTest$ProductionWireForwarding fails on Windows with 'Failed to delete temp
 `kind: defect?` `anchor: modules/app-services/src/test/java/io/justsearch/app/services/worker/WatchedRootScanCollectionTest.java` `seen: 1` `first: 2026-08-14` `last: 2026-08-14`
 - [ ] WatchedRootScanCollectionTest$ProductionWireForwarding fails on Windows with 'Failed to delete temp directory ... <root>, data' (JUnit @TempDir teardown IOException, not an assertion) — seen under concurrent Gradle load; assertions passed — `modules/app-services/src/test/java/io/justsearch/app/services/worker/WatchedRootScanCollectionTest.java` (2026-08-14)
 
@@ -1867,14 +1907,15 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Worker fatal-reason marker is never read on the supervised-restart path: killing a running Worker races checkHealth's (current==READY) branch against the supervisor's onRecovering, and the supervisor won 3 of 4 live trials with the marker left unread on disk — so worker.index_corrupt effectively only fires at Head bootstrap, not for a mid-session corrupt-index crash (pre-existing, predates 837 S3) — `modules/app-services/src/main/java/io/justsearch/app/services/worker/KnowledgeServerBootstrap.java:645` (2026-08-18)
 
 ### obs:vite-config — Vite dev proxy never propagates client disconnect to the backend: proxyRes.pipe(res) with no res.on(
-`kind: defect?` `anchor: modules/ui-web/vite.config.js` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
+`kind: defect?` `anchor: modules/ui-web/vite.config.js` `seen: 2` `first: 2026-08-18` `last: 2026-08-18`
 - [ ] Vite dev proxy never propagates client disconnect to the backend: proxyRes.pipe(res) with no res.on('close') teardown leaves the proxy->backend SSE socket open forever (measured: 471s after client death, SseClient.onClose still not fired) — `modules/ui-web/vite.config.js:155` (2026-08-18)
+- [ ] Stale comment references retired ui-bundle ratchet gate (removed tempdoc 634) as if still active — `modules/ui-web/vite.config.js:250` ("declared emergency-override (gates/ui-bundle/.changesets/)") and `.gitignore:47-48` ("ui-bundle enforcer's metric-computation path") (2026-08-18)
 
 ### obs:adversarialcorpusingestiontest — worker-services full-suite flakes under parallel load: AdversarialCorpusIngestionTest 'directory (no
 `kind: environment?` `anchor: modules/worker-services/src/test/java/io/justsearch/indexerworker/extract/AdversarialCorpusIngestionTest.java` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
 - [ ] worker-services full-suite flakes under parallel load: AdversarialCorpusIngestionTest 'directory (non-regular source) is admission-skipped' and WorkerMethvinWatcherTest.createEventCarriesTheFilesRealSizeToTheQueue each failed once in back-to-back `gradlew test` runs and passed in isolation — filesystem/timing-sensitive, unrelated to the changed modules — `modules/worker-services/src/test/java/io/justsearch/indexerworker/extract/AdversarialCorpusIngestionTest.java` (2026-08-18)
 
-### obs:paths — justsearch_dev_start resolves an absolute dataDir under the MAIN repo root to a repo-relative path, 
+### obs:paths — justsearch_dev_start resolves an absolute dataDir under the MAIN repo root to a repo-relative path,
 `kind: defect?` `anchor: scripts/dev/justsearch-dev-mcp/paths.mjs` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
 - [ ] justsearch_dev_start resolves an absolute dataDir under the MAIN repo root to a repo-relative path, which the dev-runner then re-resolves against the worktree when distFrom is set — pointing at a sibling worktree's .dev-data silently created a NEW empty data dir at <worktree>/.claude/worktrees/<sibling>/... instead (had to junction it back) — `scripts/dev/justsearch-dev-mcp/paths.mjs:48` (2026-08-18)
 
@@ -1883,8 +1924,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Legacy raw-Context agent SSE route never evicts a dead initiating observer: writeOrEvict's CLIENT_GONE did not fire across 3 iterations / ~2.5 min with the client gone, so observerCount stays >0 and the WATCH zero-observer park is unreachable there; the heartbeat on that route uses the NON-evicting writeEvent by design (834 §8). Pre-existing — the eviction trigger is mechanism-identical pre/post the 834 hub deletion — `modules/ui/src/main/java/io/justsearch/ui/api/AgentController.java:137` (2026-08-18)
 
 ### obs:baseline — governance kernel `dead-code` gate is red on a stale ratchet baseline — `gates/dead-code/baseline.tx
-`kind: defect?` `anchor: gates/dead-code/baseline.txt` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
+`kind: defect?` `anchor: gates/dead-code/baseline.txt` `seen: 2` `first: 2026-08-18` `last: 2026-08-18`
 - [ ] governance kernel `dead-code` gate is red on a stale ratchet baseline — `gates/dead-code/baseline.txt` is dated 2026-07-16 and predates the whole search-v3 view set, so ~15 untouched files report silent-growth — `gates/dead-code/baseline.txt:1` (2026-08-18)
+- [ ] dead-code (knip) gate is RED on main: gates/dead-code/baseline.txt is pinned at 2026-07-16 and 20 of 23 findings are drift in untouched files (search-v2/*, search-v3/*, TaskList.ts, knowledge-search-response.ts, packs.ts's long-dead v1 install fns) — needs a baseline refresh, and a per-PR declared-growth changeset would wrongly absorb all of it (growthCovered is PR-wide) — `gates/dead-code/baseline.txt` (2026-08-18)
 
 ### obs:prepare-worktree — hook-integrity gate (new in #475) is RED on any worktree whose gitignored `.claude/settings.local.js
 `kind: defect?` `anchor: scripts/dev/prepare-worktree.cjs` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
@@ -1899,8 +1941,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] check-controls-a11y RED on main: title-on-disabled button in UnifiedChatView (gate reports shell-v0/views/UnifiedChatView.ts:2143, baseline 0) — not in expected-state.v1.json alongside the other pre-existing ui-web gate reds (2026-08-18)
 
 ### obs:onlinemodeops — Selection-stall root cause (D5 diagnosis): one-shot process-wide wedge — all streaming chats share E
-`kind: defect?` `anchor: OnlineModeOps.java` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
+`kind: defect?` `anchor: OnlineModeOps.java` `seen: 2` `first: 2026-08-18` `last: 2026-08-19`
 - [ ] Selection-stall root cause (D5 diagnosis): one-shot process-wide wedge — all streaming chats share Executors.newSingleThreadExecutor + onlineRequestLock held across onChunk/onReasoning callbacks + unbounded latch.await; one non-returning stream task parks the LLM thread forever and later dispatches emit rag.citations then queue. Two surviving park candidates (body-read-never-terminates under budget-0 era responses vs cross-thread SSE write park); discriminator = jcmd thread dump at stall. NOTE: observed pre-#464 (budget 0); re-verify presentation under the 512 default before fixing — `OnlineModeOps.java:74-80,597,651-732` + `ConversationEngine.java:531,564` (2026-08-18)
+- [ ] RAGContext's structure-blind truncation flattens all newlines and destroys SECTION_SEPARATOR + '[n] label' headers, so when the safety net fires OnlineModeOps.formatContextAsNumberedPassages parses no header and silently falls back to its running counter — the exact 'second, independently-derived numbering could disagree with sources[n-1]' its own javadoc warns against — `modules/app-inference/src/main/java/io/justsearch/app/inference/OnlineModeOps.java:1129` (2026-08-19)
 
 ### obs:queryrewriteinjector — Latent cross-request deadlock shape: QueryRewriteInjector.chatCompletion (on core.rag-ask) takes the
 `kind: defect?` `anchor: QueryRewriteInjector.java` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
@@ -1909,6 +1952,154 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:840-model-download-restructure — check-tempdoc-numbers reports a live #840 collision between 840-model-download-restructure.md (4 wor
 `kind: environment?` `anchor: docs/tempdocs/840-model-download-restructure.md` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
 - [ ] check-tempdoc-numbers reports a live #840 collision between 840-model-download-restructure.md (4 worktrees) and 840-retire-model-registry-mirror.md (gates/ssot-catalog-sync changeset in worktree 840-download-restructure) — pre-existing, blocks the gate for any agent running it — `docs/tempdocs/840-model-download-restructure.md` (2026-08-18)
+
+### obs:unanchored-error-2 — CI 'License and notices' lane failed on main run 32187508386 (#482 push, 2026-08-18) with 'Error res
+`kind: follow-up?` `anchor: none` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] CI 'License and notices' lane failed on main run 32187508386 (#482 push, 2026-08-18) with 'Error resolving plugin com.gradle.develocity:4.5.0 / Gradle Central Plugin Repository disabled due to earlier error' — transient plugin-portal outage, next main push run green; if seen again consider mirroring/caching the plugin or continue-on-error classification for this failure class — .github/workflows/ci.yml (license-and-notices) (2026-08-19)
+
+### obs:test-ui-proportion-gate — Pre-existing jseval pytest failures unrelated to chunk-completeness work: 38 failures across test_ui
+`kind: environment?` `anchor: test_ui_proportion_gate.py` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] Pre-existing jseval pytest failures unrelated to chunk-completeness work: 38 failures across test_ui_proportion_gate.py, test_corpus_inject.py, test_corpus_schema.py, test_leak_gate.py, test_union_recall_gate.py, test_utility_comparison.py (env/fixture drift, not touched by this session) — `scripts/jseval/tests/` (2026-08-19)
+
+### obs:corpus-inject — corpus_inject._cross_process_assembly fails on Python 3.13: it spawns python scripts/jseval/jseval/c
+`kind: lesson?` `anchor: corpus_inject.py` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] corpus_inject._cross_process_assembly fails on Python 3.13: it spawns python scripts/jseval/jseval/corpus_inject.py, putting the package dir on sys.path[0] where jseval/types.py shadows stdlib types -> ImportError: cannot import name 'GenericAlias', failing the determinism check gating every 707/748-family assembly; workaround PYTHONSAFEPATH=1; fix is spawning via -m or setting PYTHONSAFEPATH in the spawn env — scripts/jseval/jseval/corpus_inject.py (2026-08-19, 748 G.3 campaign) (2026-08-19)
+
+### obs:ratchet-kernel — jseval relevance-gate --data-dir resolves the LATEST run in eval-results/ regardless of --dataset: a
+`kind: defect?` `anchor: scripts/jseval/jseval/ratchet_kernel.py` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] jseval relevance-gate --data-dir resolves the LATEST run in eval-results/ regardless of --dataset: a dir holding both a scifact and an enron-qa run reported the scifact nDCG as 'current' under dataset mixed/enron-qa and FAILED the gate — a silent wrong-dataset comparison, not an error — `scripts/jseval/jseval/ratchet_kernel.py` (2026-08-19)
+
+### obs:resolvedconfigbuilder — PRODUCT truthfulness gap found by F-052's campaign: justsearch.rerank.deadline_ms defaults to 200ms 
+`kind: defect?` `anchor: ResolvedConfigBuilder.java` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] PRODUCT truthfulness gap found by F-052's campaign: justsearch.rerank.deadline_ms defaults to 200ms while the incumbent CE's stage p50 on long-doc corpora is ~165ms — real queries silently lose the CE under jitter (rerank RPC returns skipped, delivered in fusion order) with NO reason code, no searchTrace degradation signal, no rag_meta hint; only per-hit judgeSignals.ce_score=null shows it. Owner decision: raise the deadline vs surface the skip as a SearchReasonCode (or both) — do not change unilaterally, latency tradeoff — ResolvedConfigBuilder.java:1262 / EnvRegistry.java:747 / KnowledgeSearchEngine rerank call (2026-08-19, F-052) (2026-08-19)
+
+### obs:test-leak-gate — jseval leak-gate + union-recall-gate pointer tests still pin release_id 715-rebaseline-2026-07-16 bu
+`kind: defect?` `anchor: scripts/jseval/tests/test_leak_gate.py` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] jseval leak-gate + union-recall-gate pointer tests still pin release_id 715-rebaseline-2026-07-16 but release.v1.json is now 832-rebaseline-2026-08-14 — both fail — `scripts/jseval/tests/test_leak_gate.py:204`, `scripts/jseval/tests/test_union_recall_gate.py:199` (2026-08-19)
+
+### obs:aiinstallcontroller — AiInstallController carries 5 unused imports predating tempdoc 840 (BrainInstallService, OnlineAiSer
+`kind: defect?` `anchor: modules/ui/src/main/java/io/justsearch/ui/api/AiInstallController.java` `seen: 1` `first: 2026-08-17` `last: 2026-08-17`
+- [ ] AiInstallController carries 5 unused imports predating tempdoc 840 (BrainInstallService, OnlineAiService, EnterprisePolicyService, UiSettingsStore, java.util.Map) — surfaced while decoupling the controller onto the app-api interface (840 B3); only the self-orphaned KnowledgeServerBootstrap import was removed — `modules/ui/src/main/java/io/justsearch/ui/api/AiInstallController.java:5-14` (2026-08-17)
+
+### obs:updater — In-app updater buffers the ENTIRE NSIS installer in memory before staging (`let bytes = update.downl
+`kind: defect?` `anchor: modules/shell/src-tauri/src/updater.rs` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
+- [ ] In-app updater buffers the ENTIRE NSIS installer in memory before staging (`let bytes = update.download(...)` returns Vec<u8>); for a multi-hundred-MB installer that is a large transient allocation. Not fixable in isolation: tauri-plugin-updater's `Update::download()` hands the caller only `chunk.len()`, never the chunk bytes, and accumulates internally — streaming to disk means bypassing the library method and reimplementing the HTTP GET + Ed25519/pubkey verification path. Documented while wiring download progress (840 U7); left deliberately untouched — `modules/shell/src-tauri/src/updater.rs:370-373` (2026-08-18)
+
+### obs:workermethvinwatchertest — Flaky: WorkerMethvinWatcherTest.createEventCarriesTheFilesRealSizeToTheQueue failed once in a full .
+`kind: environment?` `anchor: modules/worker-services/src/test/java/io/justsearch/indexerworker/watcher/WorkerMethvinWatcherTest.java` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
+- [ ] Flaky: WorkerMethvinWatcherTest.createEventCarriesTheFilesRealSizeToTheQueue failed once in a full ./gradlew test run and passed on isolated re-run and on a prior full run (filesystem-watcher timing) — `modules/worker-services/src/test/java/io/justsearch/indexerworker/watcher/WorkerMethvinWatcherTest.java:93` (2026-08-18)
+
+### obs:schemamismatchstatuscontracttest — Flaky integration test: SchemaMismatchStatusContractTest.setup() can time out after 30s on Jetty/Jav
+`kind: environment?` `anchor: modules/ui/src/test/java/io/justsearch/ui/api/SchemaMismatchStatusContractTest.java` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
+- [ ] Flaky integration test: SchemaMismatchStatusContractTest.setup() can time out after 30s on Jetty/Javalin server start under load (one-off; passed on re-run) — `modules/ui/src/test/java/io/justsearch/ui/api/SchemaMismatchStatusContractTest.java:110` (2026-08-18)
+
+### obs:ai-install-status — dead-code gate: generated `aiInstallStatusSchema` (Zod validator, tempdoc 840 Phase 4) has no consum
+`kind: defect?` `anchor: modules/ui-web/src/api/generated/schema-types/ai-install-status.ts` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
+- [ ] dead-code gate: generated `aiInstallStatusSchema` (Zod validator, tempdoc 840 Phase 4) has no consumer — 0 to 1 unused export over the pinned baseline; the generated Zod half is emitted but never used to validate the wire payload — `modules/ui-web/src/api/generated/schema-types/ai-install-status.ts:69` (2026-08-18)
+
+### obs:installcomponents — installComponents.ts module docstring claims its shapes feed three surfaces (Brain panel, System Sel
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/state/installComponents.ts` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
+- [ ] installComponents.ts module docstring claims its shapes feed three surfaces (Brain panel, System Self-View, task tray) but only BrainSurface.ts imports composeComponentGroups/composeComponentRow — `modules/ui-web/src/shell-v0/state/installComponents.ts:11` (2026-08-18)
+
+### obs:13-ai-setup-and-verification — docs/explanation/13 still points the AI-install backend service at modules/ui/src/main/java/io/justs
+`kind: defect?` `anchor: docs/explanation/13-ai-setup-and-verification.md` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
+- [ ] docs/explanation/13 still points the AI-install backend service at modules/ui/src/main/java/io/justsearch/ui/ai/install/AiInstallService.java; the class lives in app-services (modules/app-services/src/main/java/io/justsearch/app/services/ai/install/AiInstallService.java) — stale since the service moved out of ui — `docs/explanation/13-ai-setup-and-verification.md:102` (2026-08-18)
+
+### obs:summarizationstyle — SummarizationStyle carries unscoped 'provided text' framing like the RAGQAStyle access-denial defect
+`kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/SummarizationStyle.java` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
+- [ ] SummarizationStyle carries unscoped 'provided text' framing like the RAGQAStyle access-denial defect (845) but has no say-so/access clause; left unchanged as an unprobed different shape — re-check if summarize ever denies access — `modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/SummarizationStyle.java:30` (2026-08-18)
+
+### obs:tokenestimation — TokenEstimation.truncateIfNeeded re-inflates any cap below MIN_BUDGET back to 256 (`cap = Math.max(M
+`kind: defect?` `anchor: modules/core/src/main/java/io/justsearch/core/util/TokenEstimation.java` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
+- [ ] TokenEstimation.truncateIfNeeded re-inflates any cap below MIN_BUDGET back to 256 (`cap = Math.max(MIN_BUDGET, maxContextTokens)`), so a 0/near-0 input budget still yields ~256 tokens of prompt; residual after 845 fixed the budgeter itself — `modules/core/src/main/java/io/justsearch/core/util/TokenEstimation.java:124` (2026-08-18)
+
+### obs:agentloopservice — AgentLoopService unboxes configuredContextTokens() without a null check; both context accessors are 
+`kind: defect?` `anchor: modules/app-agent/src/main/java/io/justsearch/agent/AgentLoopService.java` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
+- [ ] AgentLoopService unboxes configuredContextTokens() without a null check; both context accessors are nullable Integer defaults, so a non-Online runtime NPEs on the token-budget line — `modules/app-agent/src/main/java/io/justsearch/agent/AgentLoopService.java:446` (2026-08-18)
+
+### obs:conversationengine — Quick rung (maxTokens 512) + thinking ON returns an EMPTY answer — reasoning consumed all 512 comple
+`kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/conversation/ConversationEngine.java` `seen: 3` `first: 2026-08-18` `last: 2026-08-19`
+- [ ] Quick rung (maxTokens 512) + thinking ON returns an EMPTY answer — reasoning consumed all 512 completion tokens, 0 answer chars (tempdoc 835 B3 regression reproduced live 2026-08-18, arm A1) — `modules/app-services/src/main/java/io/justsearch/app/services/conversation/ConversationEngine.java:72` (2026-08-18)
+- [ ] claimMatches persistence hop is stringly-keyed and invisible to the execution-surface scan — `ConversationEngine.java:846-865` (tempdoc 847 design pass) (2026-08-18)
+- [ ] 848 scope limit: the ANSWER plane persists no assistant record (so no reasoning) when a turn fails — streamLlm rethrows before the reasoning flush and the caller emitError-returns before persistedAssistant; the agent plane keeps it via the journal fold (D-7). Closing it means persisting a partial assistant turn on error — a turn-semantics change — `modules/app-services/src/main/java/io/justsearch/app/services/conversation/ConversationEngine.java:644` (2026-08-19)
+
+### obs:ragqastyle — Thinking-mode 'no access to indexed files' denials are prompt-scoped, not retrieval: identical bytes
+`kind: defect?` `anchor: modules/app-services/.../spi/RAGQAStyle.java` `seen: 2` `first: 2026-08-18` `last: 2026-08-18`
+- [ ] Thinking-mode 'no access to indexed files' denials are prompt-scoped, not retrieval: identical bytes of context in all arms (probe, controls isolated enableThinking alone); the reasoning pass infers the 'provided documents' are not the user's files because RAGQAStyle never says they are, then obeys its say-so clause — `modules/app-services/.../spi/RAGQAStyle.java:27-31` (2026-08-18)
+- [ ] Residual from 845: a DIRECT capability question ('can you access my files?') still yields 'I cannot directly access your files' post-prompt-fix — confounded by the product-docs corpus (model reasons product-vs-assistant split); deconfound with a non-JustSearch corpus before any further prompt wording change — `modules/app-services/.../spi/RAGQAStyle.java:25` (tempdoc 845 A4) (2026-08-18)
+
+### obs:check-shape-handler-regen — check-shape-handler-regen is an npm alias wired into no workflow — regen drift possible — `modules/u
+`kind: defect?` `anchor: check-shape-handler-regen` `seen: 1` `first: 2026-08-18` `last: 2026-08-18`
+- [ ] check-shape-handler-regen is an npm alias wired into no workflow — regen drift possible — `modules/ui-web/package.json` (tempdoc 847 design pass) (2026-08-18)
+
+### obs:check-offline-single-sense — check-offline-single-sense allow-list is keyed by exact file path, so renaming/moving an allow-liste
+`kind: defect?` `anchor: scripts/ci/check-offline-single-sense.mjs` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] check-offline-single-sense allow-list is keyed by exact file path, so renaming/moving an allow-listed file silently orphans the entry instead of failing — a gate that degrades quietly under refactor — `scripts/ci/check-offline-single-sense.mjs:50` (2026-08-19)
+
+### obs:model-manifest — App runtime rewrites the TRACKED models/onnx/gte-multilingual-base/model_manifest.json in the main c
+`kind: defect?` `anchor: model_manifest.json` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] App runtime rewrites the TRACKED models/onnx/gte-multilingual-base/model_manifest.json in the main checkout (capabilities block deleted; likely ingest-time embedding-compatibility resolution) — working-tree pollution that blocks pulls and destroys curated capability facts; runtime rewrites belong in dataDir, not the repo copy (2026-08-19)
+
+### obs:fileconversationstore — Pre-existing: FileConversationStore's decrypt-failure placeholder writes role:"locked" into the hist
+`kind: environment?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/conversation/FileConversationStore.java` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] Pre-existing: FileConversationStore's decrypt-failure placeholder writes role:"locked" into the history, and the new buildLlmInput projection passes any role through — a locked message reaches the model as {role:'locked', content:''}. chatTurn filters it for display, but the LLM-input side has no role whitelist — `modules/app-services/src/main/java/io/justsearch/app/services/conversation/FileConversationStore.java:149-155` (2026-08-19)
+
+### obs:unanchored-general-22 — GitHub pull_request synchronize events intermittently do not trigger the CI workflow (twice today: P
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] GitHub pull_request synchronize events intermittently do not trigger the CI workflow (twice today: PR 493 e5dbc68f, PR 495 5186fa9e) — agents covered with explicit workflow_dispatch; check trigger config or GitHub-side delivery — `.github/workflows/ci.yml` (2026-08-19)
+
+### obs:streamingcitationmatcher — StreamingCitationMatcher's mid-stream draft segmentation still splits raw markdown as prose (Locale.
+`kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/StreamingCitationMatcher.java` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] StreamingCitationMatcher's mid-stream draft segmentation still splits raw markdown as prose (Locale.ENGLISH, same fusion 847 S5 removed on the scored path) — `modules/app-services/src/main/java/io/justsearch/app/services/conversation/spi/StreamingCitationMatcher.java:225` (2026-08-19)
+
+### obs:unanchored-general-31 — resolveAndLockAll adds kotlin-metadata-jvm:2.3.0=dependencyAnalysisKotlinMetadataClasspath to every 
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] resolveAndLockAll adds kotlin-metadata-jvm:2.3.0=dependencyAnalysisKotlinMetadataClasspath to every module lockfile — pre-existing skew on main, rides along in any PR that regenerates locks — `modules/core/gradle.lockfile` (2026-08-19)
+
+### obs:unanchored-general-34 — gradlew generateLicenseReport fails on Gradle 9 (unsafe cross-project resolution of :modules:adapter
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] gradlew generateLicenseReport fails on Gradle 9 (unsafe cross-project resolution of :modules:adapters-lucene:runtimeClasspath); only checkLicense --no-parallel produces the report locally — `.github/workflows/ci.yml:314` (2026-08-19)
+
+### obs:runtimeactivationservice — RuntimeActivationService.resolveVariantsRoot resolves from the repo root and ignores JUSTSEARCH_SERV
+`kind: lesson?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/ai/runtime/RuntimeActivationService.java` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] RuntimeActivationService.resolveVariantsRoot resolves from the repo root and ignores JUSTSEARCH_SERVER_EXE, so a worktree dev stack reports RUNTIME_VARIANT_NOT_INSTALLED even when the dev-runner resolved the shared main-checkout cuda12 exe; workaround is junctioning modules/ui/native-bin/llama-server — `modules/app-services/src/main/java/io/justsearch/app/services/ai/runtime/RuntimeActivationService.java:1687` (2026-08-19)
+
+### obs:markdownhighlightruntime — 846 UX audit: main checkout's modules/ui-web/node_modules was missing `highlight.js` (declared in pa
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/components/markdown/markdownHighlightRuntime.ts` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] 846 UX audit: main checkout's modules/ui-web/node_modules was missing `highlight.js` (declared in package.json+lock since PR #489), so the dev stack served a Vite 'Failed to resolve import' error overlay that blocked the whole app — post-merge `npm install` drift, not a code defect — `modules/ui-web/src/shell-v0/components/markdown/markdownHighlightRuntime.ts:17` (2026-08-19)
+
+### obs:sv3-tokens-css — UX audit: Search v3 window's light palette is unwired — sv3-tokens.css.ts puts the whole light set b
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/views/search-v3/sv3-tokens.css.ts` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] UX audit: Search v3 window's light palette is unwired — sv3-tokens.css.ts puts the whole light set behind `:host([theme='light'])` and nothing sets that attribute from data-theme, so app-light leaves v3 painting dark inks over light global tokens (measured: inline code chip 1.08:1, mode toggle 2.05:1 in the reading pane) — `modules/ui-web/src/shell-v0/views/search-v3/sv3-tokens.css.ts:333` (2026-08-19)
+
+### obs:ui-proportion-baseline-v1 — UX audit: governance/ui-proportion-baseline.v1.json tracks only two chat-surface elements, so ui-pro
+`kind: defect?` `anchor: governance/ui-proportion-baseline.v1.json` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] UX audit: governance/ui-proportion-baseline.v1.json tracks only two chat-surface elements, so ui-proportion-gate cannot see DocumentPane chrome growth (846 moved a line-height:1.6 host rule onto the pane; header +~5px, toggle row +~5px measured) — `governance/ui-proportion-baseline.v1.json` (2026-08-19)
+
+### obs:llamaserverops — UX audit: the dev stack launches llama-server with --reasoning-budget 0 (log: 'reasoning-budget: act
+`kind: defect?` `anchor: modules/app-inference/src/main/java/io/justsearch/app/inference/LlamaServerOps.java` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] UX audit: the dev stack launches llama-server with --reasoning-budget 0 (log: 'reasoning-budget: activated, budget=0 tokens'), so no effort rung can produce a reasoning block on a dev run; sv3 Effort=Thorough also 400s at the 4096 dev context (6121-token request) — `modules/app-inference/src/main/java/io/justsearch/app/inference/LlamaServerOps.java:259` (2026-08-19)
+
+### obs:app-services-0-2-0 — Stale installDist silently serves old wire: dev stack ran `modules/ui/build/install/ui/lib/app-servi
+`kind: defect?` `anchor: modules/ui/build/install/ui/lib/app-services-0.2.0.jar` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] Stale installDist silently serves old wire: dev stack ran `modules/ui/build/install/ui/lib/app-services-0.2.0.jar` dated 2026-08-13 emitting the pre-822-§3b `chunkIndex` + no `scorer` citation payload, while `modules/app-services/build/libs/app-services-0.2.0.jar` (same version string, rebuilt same day) had `sourceIndex`+`scorer`; dev.start did not refresh the dist and quick_health freshness did not flag it — `modules/ui/build/install/ui/lib/` (2026-08-19)
+
+### obs:sv3-context — 852 S2 follow-up (F6): an effective-context floor whose message maps to no rendered turn renders NO 
+`kind: follow-up?` `anchor: modules/ui-web/src/shell-v0/views/search-v3/sv3-context.ts` `seen: 2` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] 852 S2 follow-up (F6): an effective-context floor whose message maps to no rendered turn renders NO divider and dims nothing, while the backend still truncates the prompt at it — consider rendering the bar line + Restore whenever contextFloor is set but unresolved — `modules/ui-web/src/shell-v0/views/search-v3/sv3-context.ts:130` (2026-08-19)
+- [ ] 852 S2 follow-up (F4): the turn-context projection is lossy, so an excluded message id mapping to no rendered turn is invisible to the hidden-turn count AND unreachable by Include all — a /history-side count (ledger length vs resolved turns) would surface it — `modules/ui-web/src/shell-v0/views/search-v3/sv3-context.ts:160` (2026-08-19)
+
+### obs:sv3-citation-anchor — 849 S10: a citation whose endChar<=startChar yields a null anchor, so the v3 pane opens at the docum
+`kind: defect?` `anchor: sv3-citation-anchor.ts` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] 849 S10: a citation whose endChar<=startChar yields a null anchor, so the v3 pane opens at the document head with NO message — the pane cannot distinguish 'opened without a citation' from 'citation carried an unusable span' without a new event field; a fourth honest reason worth adding when the header lands (slice 3) — `modules/ui-web/src/shell-v0/views/search-v3/sv3-citation-anchor.ts:sv3CitationAnchor` (2026-08-19)
+
+### obs:sv3-branch — sv3 version pager: versionsAt allocates `[...conversations]` per turn although siblingSessionsAt alr
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/views/search-v3/sv3-branch.ts` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] sv3 version pager: versionsAt allocates `[...conversations]` per turn although siblingSessionsAt already .slice()s internally — gratuitous per-render allocation on the F12 path (852 S3 review L7) — `modules/ui-web/src/shell-v0/views/search-v3/sv3-branch.ts:193` (2026-08-19)
+
+### obs:searchv3view-pane-test — SearchV3View.pane.test.ts rag.citation_matches fixtures omit `parentDocId`, which the wire shape req
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/views/search-v3/SearchV3View.pane.test.ts` `seen: 1` `first: 2026-08-19` `last: 2026-08-19`
+- [ ] SearchV3View.pane.test.ts rag.citation_matches fixtures omit `parentDocId`, which the wire shape requires and the grounding join uses as a guard — any assertion routed through sourceGrounding there silently reads 'not cited' — `modules/ui-web/src/shell-v0/views/search-v3/SearchV3View.pane.test.ts:651` (2026-08-19)
 
 ## Parked
 

@@ -1125,6 +1125,11 @@ final class OnlineModeOps {
    * prompt asks the model to cite and what the FE resolves against {@code sources[n - 1]}, so a
    * second, independently-derived numbering here could silently disagree with it (tempdoc 822
    * §3a). A section whose header does not parse falls back to the running counter.
+   *
+   * <p>Reachable from outside this package via
+   * {@code InferenceLifecycleManager#formatContextAsNumberedPassages} (tempdoc 849): the head's
+   * section-aware cut exists partly to keep these headers parseable when the budget bites, and that
+   * claim is only worth asserting against THIS parser rather than a re-implementation of it.
    */
   static String formatContextAsNumberedPassages(String rawContext) {
     if (rawContext == null || rawContext.isBlank()) {

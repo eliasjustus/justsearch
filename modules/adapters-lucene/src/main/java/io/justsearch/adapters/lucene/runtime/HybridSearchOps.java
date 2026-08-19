@@ -37,18 +37,21 @@ public final class HybridSearchOps {
 
   // Fallback defaults matching ResolvedConfig documented defaults.
   // Used only when session.resolvedConfig returns null (defensive path).
-  private static final int DEFAULT_CANDIDATE_LIMIT_MAX = 100;
-  private static final int DEFAULT_TEXT_CANDIDATE_MULTIPLIER = 10;
-  private static final int DEFAULT_VECTOR_CANDIDATE_MULTIPLIER = 10;
-  private static final double DEFAULT_VECTOR_RRF_WEIGHT = 0.75;
+  // Package-private (not private) so CalibrationConstantsTest can pin each value against its
+  // ResolvedConfigBuilder counterpart (tempdoc-driven drift fix: two of these had silently
+  // diverged from the builder defaults they claim to mirror).
+  static final int DEFAULT_CANDIDATE_LIMIT_MAX = 100;
+  static final int DEFAULT_TEXT_CANDIDATE_MULTIPLIER = 10;
+  static final int DEFAULT_VECTOR_CANDIDATE_MULTIPLIER = 10;
+  static final double DEFAULT_VECTOR_RRF_WEIGHT = 0.75;
   // Dense field is EUCLIDEAN (FieldMapper's 2-arg KnnFloatVectorField constructor), vectors are
   // L2-normalized, so score_euc = 1/(3-2*cos). Intended semantics: cosine-score (1+cos)/2 == 0.40
   // <=> cos == -0.2 <=> score_euc = 1/(3-2*(-0.2)) = 1/3.4 ~= 0.294 (tempdoc 702).
   // Package-private (not private) so CalibrationConstantsTest can pin the derivation.
   static final double DEFAULT_VECTOR_LOW_SIGNAL_THRESHOLD = 0.294;
-  private static final int DEFAULT_VECTOR_SKIP_MIN_CHARS = 4;
-  private static final int DEFAULT_VECTOR_ONLY_CAP_LOW_SIGNAL = 10;
-  private static final double DEFAULT_VECTOR_RRF_WEIGHT_LOW_SIGNAL = 0.3;
+  static final int DEFAULT_VECTOR_SKIP_MIN_CHARS = 4;
+  static final int DEFAULT_VECTOR_ONLY_CAP_LOW_SIGNAL = 3;
+  static final double DEFAULT_VECTOR_RRF_WEIGHT_LOW_SIGNAL = 0.25;
 
   // Tempdoc 636 Design v2 — per-query leg arbitration on the 2-way CC alpha. (adapters-lucene must
   // not read env/system properties — ArchUnit guardrail; these are plain constants. Promote to

@@ -821,6 +821,17 @@ export function registerShellActions(deps: ShellActionDeps): void {
   navigateAction('core.action.shell.go-to-brain-install', 'Go to Brain — Install AI', 'core.brain-surface');
   navigateAction('core.action.shell.go-to-brain-repair', 'Go to Brain — Repair AI Install', 'core.brain-surface');
 
+  // Tempdoc 840 Phase 5 (U6) — the install was reachable only by knowing the product's word for it.
+  // Every existing route to it leads with "Brain", so a user who wants the thing itself ("download
+  // the models", "set up search") had no entry point that speaks their words. Same target, a title
+  // written from the user's side; the palette scorer is token-wise (804 §B9), so "download models",
+  // "set up ai" and "ai models" all land here.
+  navigateAction(
+    'core.action.shell.download-ai-models',
+    'Download AI models — set up search and chat',
+    'core.brain-surface',
+  );
+
   shellAction(
     'core.action.shell.toggle-inspector',
     'Toggle Inspector',

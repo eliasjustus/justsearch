@@ -244,17 +244,18 @@ describe('the window has exactly ONE ask-issuance site', () => {
       .filter((name) => name !== 'sv3-ask.ts' && name !== 'SearchV3View.ask.test.ts')
       .filter((name) => readFileSync(join(here, name), 'utf8').includes('consumeShapeStream'));
     expect(offenders).toEqual([]);
-    // A second window's client is the other way this could go wrong: no import may cross into
-    // search-v2, whose askClient this module MINED rather than imported. Phase F2 widened the scan
-    // from the static `from '../search-v2/…'` form to any IMPORT SHAPE — a deep-relative path, a
-    // dynamic `import()`, a `require()` — because the coupling is the same however it is spelled,
-    // and a rule that only catches one spelling teaches the other one.
+    // Another window's client is the other way this could go wrong: no import may cross into a
+    // sibling WINDOW, whose ask path this module MINED rather than imported. Phase F2 widened the
+    // scan from the static `from '../<window>/…'` form to any IMPORT SHAPE — a deep-relative path,
+    // a dynamic `import()`, a `require()` — because the coupling is the same however it is spelled,
+    // and a rule that only catches one spelling teaches the other one. Tempdoc 851 retired the
+    // search-v2 window, so the surviving sibling this can cross into is the shipped window.
     const crossImports = readdirSync(here)
       .filter((name) => name.endsWith('.ts'))
       // This file writes the pattern in order to forbid it — the one allowed mention.
       .filter((name) => name !== 'SearchV3View.ask.test.ts')
       .filter((name) =>
-        /(?:\bfrom\s*|\bimport\s*\(|\brequire\s*\()\s*['"][^'"]*search-v2[^'"]*['"]/.test(
+        /(?:\bfrom\s*|\bimport\s*\(|\brequire\s*\()\s*['"][^'"]*UnifiedChatView[^'"]*['"]/.test(
           readFileSync(join(here, name), 'utf8'),
         ),
       );

@@ -20,6 +20,7 @@ import {
   recordRecentSession,
   getConversationListState,
   loadConversations,
+  setActiveConversation,
   setConversationTitle,
   generateConversationTitle,
   type Conversation,
@@ -189,6 +190,19 @@ describe('conversationListStore branching', () => {
     expect(resumed.parentSessionId).toBe('parent-A');
     expect(resumed.branchPointMessageId).toBe('mid-1');
     expect(resumed.messages).toEqual([{ role: 'user', content: 'q', id: 'mid-1' }]);
+  });
+
+  it('resumeConversation CLAIMS the active conversation by default, and not when the caller declines', async () => {
+    // Tempdoc 852 S1 — the claim is right for a window's open path and wrong for a companion load
+    // running while the reader is elsewhere. Both directions asserted: a default that stopped
+    // claiming would break the shipped window's open, and an opt-out that still claimed would let a
+    // background read move the product's idea of where the reader is.
+    mockFetch(() => jsonResponse({ messages: [] }));
+    setActiveConversation('uc-open');
+    await resumeConversation('uc-read-only', 'core.free-chat', { claim: false });
+    expect(getConversationListState().activeId).toBe('uc-open');
+    await resumeConversation('uc-navigated-to', 'core.free-chat');
+    expect(getConversationListState().activeId).toBe('uc-navigated-to');
   });
 
   it('resumeConversation omits parent pointers for a root session', async () => {

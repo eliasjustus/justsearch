@@ -8,6 +8,7 @@ import io.justsearch.agent.api.conversation.ConversationContext;
 import io.justsearch.agent.api.conversation.StreamConsumerResult;
 import io.justsearch.agent.api.registry.Audience;
 import io.justsearch.app.api.DocumentService.ContextCitation;
+import io.justsearch.app.api.DocumentService.ContextInclusion;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,7 +39,8 @@ final class RAGDoneEnricherTest {
   void onDoneProjectsCitations() {
     var citation =
         new ContextCitation(
-            "doc-1", 0, 3, 100, 200, 0.85f, "the excerpt", 10, 12, "Heading", 2);
+            "doc-1", 0, 3, 100, 200, 0.85f, "the excerpt", 10, 12, "Heading", 2,
+            ContextInclusion.ABSENT);
     var ctx =
         stubCtxWithAttrs(
             Map.of(
@@ -69,6 +71,27 @@ final class RAGDoneEnricherTest {
     assertEquals(12, c.get("endLine"));
     assertEquals("Heading", c.get("headingText"));
     assertEquals(2, c.get("headingLevel"));
+    // Tempdoc 849 — this citation was constructed ABSENT, so the persisted map must carry NO
+    // inclusion key. The full round-trip through the store lives in CitationInclusionPersistenceTest.
+    assertFalse(c.containsKey("contextInclusion"), c.toString());
+  }
+
+  @Test
+  @DisplayName("849: a resolved inclusion rides the persisted citation map")
+  void onDoneCarriesResolvedInclusion() {
+    var citation =
+        new ContextCitation(
+            "doc-1", 0, 3, 100, 200, 0.85f, "the excerpt", 10, 12, "Heading", 2,
+            ContextInclusion.dropped());
+    var ctx = stubCtxWithAttrs(Map.of(RAGContext.ATTR_CITATIONS, List.of(citation)));
+
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> citations =
+        (List<Map<String, Object>>)
+            RAGDoneEnricher.INSTANCE.onDone("answer", ctx).donePayloadEntries().get("citations");
+
+    assertEquals("dropped", citations.get(0).get("contextInclusion"));
+    assertEquals(0, citations.get(0).get("contextIncludedChars"));
   }
 
   @Test

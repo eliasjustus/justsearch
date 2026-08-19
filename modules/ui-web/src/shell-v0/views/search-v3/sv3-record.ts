@@ -9,10 +9,10 @@
  * the product already owns both halves of reading it: `views/unifiedThreadClient.ts`
  * (`fetchUnifiedThread` — schema, forward-tolerant per-event parsing, the EMPTY-on-failure contract)
  * and `views/unifiedThreadProjection.ts` (`projectUnifiedThread` — authoritative `occurredAt` order,
- * tool-lifecycle merge by `callId`, run segmentation). Both are consumed by the shipped window AND by
- * search-v2, which is what makes them shared authorities rather than one window's extraction; this
- * module imports the pair and adds ONLY the last mile — grouping the ordered items into the turns
- * this window renders.
+ * tool-lifecycle merge by `callId`, run segmentation). Both are consumed by the shipped window as
+ * well as by this one, which is what makes them shared authorities rather than one window's
+ * extraction; this module imports the pair and adds ONLY the last mile — grouping the ordered items
+ * into the turns this window renders.
  *
  * It authors no fetch, no schema and no ordering of its own, and it is pure: same items in, same
  * turns out. The record's interleaving is preserved exactly (561 P-A: chat turns and agent activity
@@ -22,8 +22,18 @@
  */
 import { projectUnifiedThread, type ThreadEvent, type UnifiedTurnItem } from '../unifiedThreadProjection.js';
 import type { ToolCall } from '../../controllers/AgentSessionController.js';
+import {
+  reasoningBlocksFromRecord,
+  type ReasoningBlock,
+} from '../../controllers/ReasoningController.js';
+import type { RetrievalCitation } from '../../components/chat/citationTypes.js';
+// The SHARED authorities this projection reads the record's evidence through (tempdoc 847 S1/S3):
+// the `claimMatches` envelope reader carrying the producer gate, and the ONE claim→mark resolver the
+// live path already uses. Nothing about the evidence is derived here.
+import { claimsFromRecord, matchesFromRecord } from '../../components/chat/recordEvidence.js';
+import { claimsToCitations } from '../../components/chat/citationResolve.js';
 import type { Sv3RunFeedItem } from './sv3-run.js';
-import type { Sv3Turn } from './sv3-sessions.js';
+import { isSv3StoreMessageId, type Sv3Turn, type Sv3TurnEvidence } from './sv3-sessions.js';
 
 /**
  * The label a non-prose record item carries. Deliberately the same closed vocabulary
@@ -64,6 +74,43 @@ export function recordToolCall(item: UnifiedTurnItem): ToolCall {
   };
 }
 
+/**
+ * Tempdoc 847 §2.4 — a persisted assistant message's evidence, projected into the window's ONE
+ * evidence record.
+ *
+ * `GET /api/thread/{id}` copies `citations` and `claimMatches` verbatim onto the assistant event's
+ * attributes (`InteractionThreadController.java:267-280`) and the shared projection passes
+ * `attributes` straight through (`unifiedThreadProjection.ts:327`). The window used to discard both
+ * and render a restored answer with no sources at all — the evidence was on the wire and thrown
+ * away.
+ *
+ * `null` when the record carries NEITHER attribute: "never told" is not "told zero", and
+ * `sv3-honesty.ts` depends on the difference (an absent evidence record gets no frame line, an
+ * empty one would claim a verified nothing).
+ *
+ * The marks come from the SAME `claimsToCitations` the live path resolves through, over claims from
+ * the SAME producer-gated envelope reader, so a reloaded answer and the live one cannot mark
+ * differently (561 P-A). `retrievalMode` is `''` because the record does not carry it — the panel
+ * reads that as "not told", which is what it is.
+ */
+function recordEvidenceOf(item: UnifiedTurnItem): Sv3TurnEvidence | null {
+  const a = item.attributes;
+  const hasSources = Array.isArray(a.citations);
+  const claimMatches = a.claimMatches;
+  const hasMatches =
+    claimMatches !== null &&
+    typeof claimMatches === 'object' &&
+    Array.isArray((claimMatches as { matches?: unknown }).matches);
+  if (!hasSources && !hasMatches) return null;
+  const sources = hasSources ? (a.citations as RetrievalCitation[]) : [];
+  return {
+    sources,
+    matches: matchesFromRecord(claimMatches),
+    marks: claimsToCitations(claimsFromRecord(claimMatches), sources),
+    retrievalMode: '',
+  };
+}
+
 /** The turn under construction — the same fields as {@link Sv3Turn}, mutable while it accumulates. */
 interface Building {
   id: string;
@@ -73,16 +120,53 @@ interface Building {
   activity: Sv3RunFeedItem[];
   tools: number;
   errored: boolean;
+  /** Tempdoc 848 §2.7 — the turn's persisted thinking, accumulated across all its assistant items. */
+  reasoning: ReasoningBlock[];
+  /**
+   * The evidence of the LAST assistant message in the turn that carried any — last-wins, because a
+   * turn's terminal assistant message is the answer, and an earlier interim message's retrieval is
+   * not what the reader is looking at.
+   *
+   * HONEST LIMIT: the turn's `answer` concatenates EVERY assistant message, so on a multi-message
+   * turn the rendered text is wider than the evidence beside it. That asymmetry is the live path's
+   * too (a run's evidence record is likewise rewritten whole by the last citation event it sees),
+   * so restoring matches what was on screen; it is not an invariant that one message's evidence
+   * covers the whole answer.
+   */
+  evidence: Sv3TurnEvidence | null;
+  /**
+   * The id of the last assistant message in the turn THAT THE CONVERSATION STORE MINTED — last-wins
+   * for the same reason {@link evidence} is, and kept even though the ask turn's activity list is
+   * not (tempdoc 852 §2.3a): the rendering rule that drops the list says nothing about the identity,
+   * and edit-retry, branch and floor-setting all address an assistant message by it.
+   *
+   * The store test is applied HERE, not only at the accessor, because the two planes of the thread
+   * interleave: an agent run's assistant messages are projected read-time from `AgentRunStore` and
+   * exist as messages nowhere (`AgentInteractionMapper.java:69`), so a plain last-wins would let a
+   * run event's id displace the real message's on a turn that has both.
+   */
+  assistantId: string | null;
+  /** The record opened this turn on a `user` item, rather than on whatever arrived first. */
+  openedByUser: boolean;
 }
 
-const open = (id: string, question: string, askedAt: number): Building => ({
+const open = (
+  id: string,
+  question: string,
+  askedAt: number,
+  openedByUser: boolean,
+): Building => ({
   id,
   question,
   askedAt,
+  openedByUser,
   answers: [],
   activity: [],
   tools: 0,
   errored: false,
+  reasoning: [],
+  evidence: null,
+  assistantId: null,
 });
 
 /**
@@ -98,11 +182,12 @@ const open = (id: string, question: string, askedAt: number): Building => ({
  * run, and a turn that recorded only prose was an ask. Nothing in the record says which tier this
  * window dispatched it from, so deriving it from what happened is the only honest answer available.
  *
- * `evidence` is `null` throughout: the record does carry a persisted assistant message's sources, but
- * this window's evidence value is the SHARED resolver's output over the live stream's claims (Phase
- * F4), which the record has no counterpart for. {@link ../sv3-sessions.applySv3Record} therefore
- * keeps whatever evidence the turn already had rather than letting a refresh blank the panel. A turn
- * restored on a cold load has none — an honest "never told", not a claimed zero.
+ * `evidence` is PROJECTED from the record (tempdoc 847 §2.4, correcting Phase F6): the persisted
+ * assistant message carries its sources and its per-sentence matches, and this module hands both to
+ * the same shared resolver the live stream's claims go through, so a restored answer stands on the
+ * evidence it really stood on. A turn whose record carries neither attribute keeps `null` — an
+ * honest "never told", not a claimed zero. {@link ../sv3-sessions.applySv3Record} still prefers what
+ * a LIVE turn observed, because that turn watched the stream and the record cannot know more than it.
  */
 export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly Sv3Turn[] {
   // The shared projector runs HERE, in this window's one registered render site
@@ -113,7 +198,7 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
   let current: Building | null = null;
   const ensure = (item: UnifiedTurnItem): Building => {
     if (current !== null) return current;
-    const created = open(item.id, '', item.ts);
+    const created = open(item.id, '', item.ts, false);
     current = created;
     built.push(created);
     return created;
@@ -121,14 +206,25 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
 
   for (const item of items) {
     if (item.kind === 'user') {
-      current = open(item.id, item.content, item.ts);
+      current = open(item.id, item.content, item.ts, true);
       built.push(current);
       continue;
     }
     const turn = ensure(item);
+    // Tempdoc 848 §2.7 — reasoning is read off EVERY item kind, not just the assistant one. A turn
+    // can record several assistant items (an iterating shape, a multi-step run), so blocks accumulate
+    // in record order rather than the last one winning; and a run that was HALTED or ERRORED carries
+    // its trailing thinking on the terminal ERROR event (the agent fold's D-7 rule), which would be
+    // silently dropped if only the assistant arm looked. (Contrast `evidence`, deliberately
+    // last-wins: the terminal message's retrieval is what the reader is looking at, whereas every
+    // step's thinking really happened.)
+    turn.reasoning.push(...reasoningBlocksFromRecord(item.attributes.reasoning));
     if (item.kind === 'assistant') {
       turn.answers.push(item.content);
       turn.activity.push({ kind: 'text', id: item.id, text: item.content });
+      if (isSv3StoreMessageId(item.id)) turn.assistantId = item.id;
+      const evidence = recordEvidenceOf(item);
+      if (evidence !== null) turn.evidence = evidence;
       continue;
     }
     if (item.kind === 'tool-activity') {
@@ -151,11 +247,23 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
     const agent = turn.activity.some((entry) => entry.kind !== 'text');
     return {
       id: turn.id,
+      // Tempdoc 847 §2.4.3 — the RECORD's own id for this turn, carried as its own field. It is the
+      // identity `applySv3Record` reconciles on; the local `id` a live turn was minted with is never
+      // overwritten by it, because UI state (expanded sources, the copied-turn flag, the live run's
+      // `turnId`) is keyed on that id and a swap silently invalidates it.
+      recordId: turn.id,
+      // Tempdoc 852 §2.3a — the OTHER half of the exchange's identity. An ask turn drops its
+      // activity list below, and used to drop every assistant id with it; the id is what edit-retry,
+      // branch and floor-setting address, and none of them can be built on a turn that cannot name
+      // the message they act on. Carried WITH its provenance, because the thread interleaves store
+      // rows and read-time run projections and only the former is addressable.
+      assistantRecordId: turn.assistantId,
+      recordOpenedByUser: turn.openedByUser,
       kind: agent ? 'agent' : 'ask',
       question: turn.question,
       answer: turn.answers.join('\n\n'),
       status: turn.errored ? 'failed' : 'complete',
-      evidence: null,
+      evidence: turn.evidence,
       detail: '',
       toolCalls: turn.tools,
       // An ASK turn's whole response is its answer text, which the transcript already renders through
@@ -163,12 +271,16 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       // the same paragraph. Only a turn with real activity carries the interleaved sequence.
       activity: agent ? turn.activity : [],
       askedAt: turn.askedAt,
-      // The record carries none of the four (tempdoc 822 Phase F7): no rewrite note, no thinking
-      // blocks, and no receipt. They are seeded EMPTY rather than guessed, and
-      // {@link ../sv3-sessions.applySv3Record} keeps whatever the live turn observed — so a
-      // cold-loaded turn honestly shows no frame line instead of one built from invented numbers.
+      // Tempdoc 848 §2.7 — the record now carries the turn's THINKING (persisted on the assistant
+      // message by `ConversationEngine`, lifted onto the thread event by `InteractionThreadController`
+      // / folded from the run journal by `AgentInteractionMapper`), so a cold-loaded turn shows the
+      // blocks the run really produced. Of tempdoc 822 Phase F7's four, that leaves the rewrite note
+      // and the receipt absent from the record (847 closed evidence). Those stay seeded EMPTY rather
+      // than guessed, and {@link ../sv3-sessions.applySv3Record} keeps whatever the live turn
+      // observed — so a cold-loaded turn shows no frame line instead of one built from invented
+      // numbers.
       standaloneQuestion: '',
-      reasoning: [],
+      reasoning: turn.reasoning,
       durationMs: null,
       modelLabel: null,
     } satisfies Sv3Turn;

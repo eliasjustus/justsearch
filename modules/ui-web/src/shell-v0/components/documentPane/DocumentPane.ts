@@ -8,14 +8,35 @@
  * needs to wire (consumer registration, event handling in the host surface).
  *
  * Fetch + provenance parity: mirrors `components/InspectorPane.ts`'s `loadPreview` — same
- * `/api/preview?docId=…&offsetChars=0&maxChars=5000` request shape, same response fields
- * (`content` / `textProvenance` / `visualExtractionEvidence`), and the same tempdoc-671
+ * `/api/preview` request shape, same response fields (`content` / `textProvenance` /
+ * `visualExtractionEvidence`), and the same tempdoc-671
  * zero-content diagnostic: the "Text source" provenance line is computed and rendered even when
  * `content` is empty (a scanned page OCR found no text on is still explained), not hidden behind an
  * `if (!content)` gate. `previewProvenanceLabel`/`previewEvidenceDetail` below are a deliberate,
  * small, local carryover of InspectorPane's private helpers of the same shape — this component owns
  * only new files under `components/documentPane/`, so the shared logic is duplicated rather than
  * extracted into a shared module that would require editing InspectorPane.ts.
+ *
+ * **Two ways to address a passage, and only one of them crosses a process boundary intact**
+ * (tempdoc 849 §3 R1). {@link DocumentPane.highlightRange}/{@link DocumentPane.chunkRange} are the
+ * original line-span contract, still what the shipped Shell and search-v2 consumers write.
+ * {@link DocumentPane.citation} is the evidence reader's contract: the citation's own
+ * document-relative CHARACTER span, from which this component derives its own 0-based lines over
+ * the text it fetched. Character offsets are the producer's primary quantity; the line numbers that
+ * used to travel instead were derived from them, 1-based, and read here as 0-based — an off-by-one
+ * nothing downstream could recompute. When `citation` is set it is the anchor, and the line
+ * properties are not read; the tier machinery below is unchanged either way.
+ *
+ * Two consequences the citation path carries that the line path cannot:
+ *
+ *  - **The window follows the citation.** The fetch is `offsetChars`-anchored around the cited span
+ *    instead of the document's first 5,000 characters, and the response's `truncated` flag is read
+ *    rather than dropped, so a passage at character 40,000 is reachable at all.
+ *  - **The excerpt is a witness.** No content hash, document version or index timestamp exists for a
+ *    citation anywhere, so the only available staleness check is whether the citation's own excerpt
+ *    still appears at the offsets it named. When it does not, the pane highlights NOTHING and says
+ *    so: a tinted passage is the strongest signal on this surface and a caveat beneath it is the
+ *    weakest, so a hedged highlight would lend the pane's authority to a location it cannot confirm.
  *
  * Two render modes:
  *   - `rendered` — markdown source is split into top-level blocks by {@link markdownBlockMap} (each
@@ -37,6 +58,9 @@
  *
  * a11y: the scroll region is `tabindex="0"` + `role="region"` (the measured axe
  * `scrollable-region-focusable` fix) so a keyboard user can focus-then-arrow/Page-scroll it. The
+ * ramp's own inner scroll containers — a wide `<pre>` or `<table>` in Rendered mode — get the same
+ * treatment from `markScrollableRegions` (tempdoc 853 F-05); the pane region alone does not reach
+ * content clipped INSIDE a block. The
  * Rendered/Source toggle is a `role="radiogroup"` of native `<button role="radio">`s — the same
  * mutually-exclusive-choice pattern `OptionButtonGroupRenderer` (`jf-option-button-group`) already
  * uses, chosen over an independent-toggle `aria-pressed` pair (seen on UnifiedChatView's "Abilities"
@@ -46,6 +70,14 @@ import { html, css, nothing, type TemplateResult, type PropertyValues } from 'li
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { JfElement } from '../../primitives/JfElement.js';
 import { markdownBlockMap, type MarkdownBlockDescriptor } from './markdownBlockMap.js';
+// Tempdoc 849 §7 — the header's WORDS come from the registered projection authority, never from
+// this view. A label minted in a renderer is the fork `governance/execution-surfaces.v1.json` exists
+// to prevent, and the pane and the sources panel must describe one budget fact identically.
+import { CITATION_SPAN_UNUSABLE, type CitationHeader } from '../chat/evidenceProjection.js';
+import { lineSpanOfChars, locateText, locateWitness } from './charAnchor.js';
+import { markdownCodeHighlight, markdownTypography } from '../markdown/markdownStyles.js';
+import { highlightCodeBlocks } from '../markdown/markdownHighlight.js';
+import { markScrollableRegions } from '../markdown/markdownScrollRegions.js';
 import { formatDisplayPath, formatLocationBreadcrumb } from '../searchResults/resultRowPresentation.js';
 import { isAdvancedMode, subscribeUiMode } from '../../state/uiModeState.js';
 import { authorizedFetch } from '../../api/authorizedFetch.js';
@@ -57,6 +89,58 @@ import { icon } from '../Icon.js';
 export interface DocumentLineRange {
   readonly startLine: number;
   readonly endLine: number;
+}
+
+/**
+ * Tempdoc 849 §3 — a citation addressed the way its producer computed it: by character offsets into
+ * the document, with the excerpt that was quoted from them.
+ */
+export interface DocumentCitationAnchor {
+  /** Document-relative, 0-based, INCLUSIVE. */
+  readonly startChar: number;
+  /** Document-relative, 0-based, EXCLUSIVE — the producer's own convention. */
+  readonly endChar: number;
+  /**
+   * The passage text the citation quoted. Used ONLY as a staleness witness, never as an anchor:
+   * searching for it would silently pick the wrong occurrence in repeated text (headers, tables,
+   * boilerplate), which is the confidently-wrong class this anchoring exists to remove.
+   */
+  readonly excerpt: string;
+  /**
+   * The claim-matched sentence inside the cited chunk, when a claim match exists for this source.
+   * `null` ⇒ no claim match, so the pane tints the chunk and invents no sentence: which part of the
+   * passage the answer used is not known, and the honest rendering is to say less, not to guess.
+   */
+  readonly sentenceText: string | null;
+}
+
+/** What the fetched window let the reader confirm about {@link DocumentPane.citation}. */
+interface CitationAnchorState {
+  /** The claim-matched sentence's line span, or `null` when there is no match to locate. */
+  readonly highlight: DocumentLineRange | null;
+  /** The cited chunk's line span, or `null` when the anchor could not be confirmed. */
+  readonly chunk: DocumentLineRange | null;
+  /**
+   * Why nothing is highlighted, when nothing is. Three distinct facts, kept distinct because they
+   * are three different things to tell a reader:
+   *
+   *  - `witness` — the excerpt is not at the anchored offsets: the document changed under them.
+   *  - `shrunk` — the document ENDS before the cited offsets, and the endpoint said there is no
+   *    more to fetch. Also a change, and a more specific one than `witness`.
+   *  - `window` — the slice that was loaded does not reach the offsets, but more of the document
+   *    exists. That is this reader's limit, not a claim about the document.
+   *
+   * `null` ⇒ the anchor was confirmed.
+   */
+  readonly unconfirmed: 'witness' | 'shrunk' | 'window' | null;
+}
+
+/** The slice of the document currently in {@link DocumentPane.content}. */
+interface PreviewWindow {
+  /** Where `content` starts in the document. */
+  readonly offset: number;
+  /** The endpoint said more of the document follows this slice. */
+  readonly truncated: boolean;
 }
 
 /** Mirrors InspectorPane's local `VisualExtractionEvidence` shape (the `/api/preview` response field). */
@@ -90,6 +174,34 @@ export interface VisualExtractionEvidence {
 export type DocumentPaneMode = 'rendered' | 'source';
 
 const SCROLL_DEBOUNCE_MS = 150;
+/** The head-of-document window, kept for the line-addressed consumers that have no char anchor. */
+const DEFAULT_MAX_CHARS = 5000;
+/** How much text before the cited span the window carries, so a passage never opens flush at the top. */
+const CITATION_LEAD_IN_CHARS = 2000;
+/** …and after it, so the reader can keep reading past the evidence without a second fetch. */
+const CITATION_TRAIL_CHARS = 3000;
+/** The endpoint's own ceiling (`GrpcSearchService` caps a slice at 200K characters). */
+const MAX_WINDOW_CHARS = 200000;
+
+/**
+ * What the pane says when it will not highlight (tempdoc 849 §3 R1.4). Both sentences state the
+ * consequence — "nothing is highlighted" — because the reader's question is not "was there a
+ * problem?" but "why is the passage I clicked not marked?".
+ */
+const ANCHOR_NOTICE = {
+  witness:
+    'The cited passage could not be confirmed at its recorded position — this document may have changed since it was indexed, so nothing is highlighted.',
+  shrunk:
+    'This document is now shorter than the cited passage’s recorded position, so it has changed since it was indexed and nothing is highlighted.',
+  window:
+    'The cited passage lies outside the part of this document that could be loaded, so nothing is highlighted.',
+} as const;
+
+/** What the pane says about the slice it is showing, from the response's own `truncated` flag. */
+const WINDOW_NOTE = {
+  around: 'Showing the part of this document around the cited passage.',
+  head: 'Showing the beginning of a longer document.',
+} as const;
 /** Search Thread Round-2 R1b — how long the passage lands with the strong tint before decaying to
  *  the quiet translucent tint + edge marker (the card's refined-✓ decay idiom, ported here). */
 const HIGHLIGHT_DECAY_MS = 1500;
@@ -115,6 +227,12 @@ export class DocumentPane extends JfElement {
     apiBase: { type: String, attribute: 'api-base' },
     highlightRange: { attribute: false },
     chunkRange: { attribute: false },
+    // Tempdoc 849 §3 — the char-anchored citation; when set, the authority for both tiers.
+    citation: { attribute: false },
+    // Tempdoc 849 §7 — what the citation that opened this pane can honestly be said about.
+    citationHeader: { attribute: false },
+    anchorState: { state: true },
+    previewWindow: { state: true },
     mode: { state: true },
     content: { state: true },
     provenance: { state: true },
@@ -123,12 +241,38 @@ export class DocumentPane extends JfElement {
     error: { state: true },
     // Search Thread Round-2 R1b — has the current highlightRange decayed to the quiet tier?
     highlightSettled: { state: true },
+    // Tempdoc 846 §2.3 — the shared ramp's prose variant, reflected so the shared sheet's
+    // `:host([prose])` rules reach this pane's rendered blocks. Default ON: a document IS
+    // headings, tables and rules, which is precisely what the variant exists to dress.
+    prose: { type: Boolean, reflect: true },
   };
 
   declare docPath: string | null;
   declare apiBase: string;
   declare highlightRange: DocumentLineRange | null;
   declare chunkRange: DocumentLineRange | null;
+  /**
+   * Tempdoc 849 §3 — the cited passage addressed by CHARACTER offsets. When set, this is the anchor:
+   * both tiers are derived from it against the fetched text and {@link highlightRange}/
+   * {@link chunkRange} are not read, so a line number never has to survive a process boundary.
+   */
+  declare citation: DocumentCitationAnchor | null;
+  /**
+   * Tempdoc 849 §7 — the CITATION header: which turn cited this document, where in it the passage
+   * sits, whether the passage reached the model, and the two differently-measured scores. Distinct
+   * from {@link provenance}, which is TEXT-EXTRACTION provenance (the OCR/text-layer route) and is
+   * untouched by this: §7's first instruction is not to overload that word.
+   *
+   * <p>`null` means this pane was NOT opened by a citation — the three line-addressed mount sites
+   * never set it. That is also what distinguishes those from a citation whose span was unusable,
+   * which is a header PRESENT with {@link CitationHeader.spanUnusable} set (849 S10): before this
+   * property existed the pane could not tell the two apart and so said nothing about either.
+   */
+  declare citationHeader: CitationHeader | null;
+  /** Derived from {@link citation} + the fetched window; never written from outside. */
+  declare anchorState: CitationAnchorState | null;
+  /** Which slice of the document {@link content} is, and whether more of it follows. */
+  declare previewWindow: PreviewWindow | null;
   declare mode: DocumentPaneMode;
   declare content: string;
   declare provenance: string | null;
@@ -138,10 +282,14 @@ export class DocumentPane extends JfElement {
   /** Round-2 R1b — false while the landed highlight is in its strong phase; true once decayed
    *  (or immediately, under prefers-reduced-motion) to the quiet tint + edge marker. */
   declare highlightSettled: boolean;
+  /** Tempdoc 846 §2.3 — wear the shared ramp's prose variant (headings, tables, rules, images). */
+  declare prose: boolean;
 
   private blocksCache: { content: string; blocks: MarkdownBlockDescriptor[] } | null = null;
   private scrollDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private loadToken = 0;
+  /** The window of the fetch currently in flight, or null when none is (tempdoc 849 — see {@link windowCovers}). */
+  private requestedWindow: { offset: number; maxChars: number } | null = null;
   private highlightDecayTimer: ReturnType<typeof setTimeout> | null = null;
   /** Round-2 R1b — the last highlightRange (as a line-span key) the decay was armed for, so a
    *  no-op re-render (an unrelated property changing) never re-triggers the strong phase. */
@@ -153,6 +301,10 @@ export class DocumentPane extends JfElement {
     this.apiBase = '';
     this.highlightRange = null;
     this.chunkRange = null;
+    this.citation = null;
+    this.citationHeader = null;
+    this.anchorState = null;
+    this.previewWindow = null;
     this.mode = 'source';
     this.content = '';
     this.provenance = null;
@@ -160,6 +312,7 @@ export class DocumentPane extends JfElement {
     this.loading = false;
     this.error = null;
     this.highlightSettled = false;
+    this.prose = true;
   }
 
   static override transientState = {
@@ -202,14 +355,55 @@ export class DocumentPane extends JfElement {
       this.evidence = null;
       this.error = null;
       this.blocksCache = null;
+      this.anchorState = null;
+      this.previewWindow = null;
       // A fresh docPath re-arms the highlight decay even for a line-range that happens to match
       // the previous document's (the passage is a genuinely new landing).
       this.armedHighlightKey = null;
-      if (path) void this.loadContent(path);
+      if (path) void this.loadContent(path, this.anchor());
+    } else if (changed.has('citation')) {
+      // Tempdoc 849 §4 — a LATE claim match arrives on an already-open pane as a new anchor over the
+      // same span. Re-fetching would be a visible reload for a fact the loaded window already
+      // contains, so the window is re-used whenever it covers the anchor and only re-fetched when
+      // the anchor moved outside it.
+      if (this.docPath && !this.windowCovers(this.anchor())) {
+        void this.loadContent(this.docPath, this.anchor());
+      } else {
+        this.deriveAnchorState();
+      }
     }
     if (changed.has('highlightRange')) {
       this.syncHighlightDecay();
     }
+  }
+
+  /**
+   * The citation anchor, read through ONE normalizer. A Lit property a consumer never binds stays
+   * `undefined`, not `null` — and three of this component's four mount sites are line-addressed and
+   * never bind it — so an `=== null` test at each read site would be false for exactly those
+   * consumers and send them down the anchored path with nothing to anchor on.
+   */
+  private anchor(): DocumentCitationAnchor | null {
+    return this.citation ?? null;
+  }
+
+  /**
+   * Is the cited span already covered — by the slice in {@link content}, or by a fetch already on
+   * its way? The in-flight arm matters because the FIRST anchor typically arrives WITH the document
+   * (`docPath` and `citation` set together) and a second anchor can land before that fetch returns:
+   * without it, `previewWindow` is still null, the pane reads "not covered" and fires a duplicate,
+   * identical request. When the in-flight window lands, the anchor is derived against whatever it
+   * actually contains, so trusting the request here cannot hide a short read.
+   */
+  private windowCovers(citation: DocumentCitationAnchor | null): boolean {
+    if (citation === null) return true; // nothing to cover
+    const pending = this.requestedWindow;
+    if (pending !== null) {
+      return citation.startChar >= pending.offset && citation.endChar <= pending.offset + pending.maxChars;
+    }
+    const win = this.previewWindow;
+    if (win === null) return false;
+    return citation.startChar >= win.offset && citation.endChar <= win.offset + this.content.length;
   }
 
   /**
@@ -221,7 +415,7 @@ export class DocumentPane extends JfElement {
    * phase, by construction (R1b: "the chunkRange tier NEVER gets the strong phase").
    */
   private syncHighlightDecay(): void {
-    const hl = this.highlightRange;
+    const hl = this.activeHighlightRange();
     const key = hl ? `${hl.startLine}:${hl.endLine}` : null;
     if (key === this.armedHighlightKey) return;
     this.armedHighlightKey = key;
@@ -251,32 +445,68 @@ export class DocumentPane extends JfElement {
    * otherwise. chunkRange can never yield `'strong'` — R1b's "never gets the strong phase" rule.
    */
   private highlightTier(startLine: number, endLine: number): 'strong' | 'weak' | null {
-    const hl = this.highlightRange;
+    const hl = this.activeHighlightRange();
     if (hl && this.overlaps(hl, startLine, endLine)) {
       return this.highlightSettled ? 'weak' : 'strong';
     }
-    const chunk = this.chunkRange;
+    const chunk = this.activeChunkRange();
     if (chunk && this.overlaps(chunk, startLine, endLine)) return 'weak';
     return null;
   }
 
   override updated(changed: PropertyValues): void {
+    // Tempdoc 849 §4 (review D-2) — EITHER tier is a scroll target. `rag.citations` is emitted at
+    // retrieval time and `rag.citation_matches` only after the answer streams, so a citation
+    // followed mid-stream has a chunk and no matched sentence: guarding this on `highlightRange`
+    // alone opened the pane at the top of the document with the evidence tinted off-screen, which is
+    // the common landing and not an edge case. Scrollability and emphasis are different properties —
+    // the weak tier still never takes the strong PHASE (see {@link syncHighlightDecay}).
     if (
-      this.highlightRange &&
+      (this.activeHighlightRange() || this.activeChunkRange()) &&
       !this.loading &&
-      (changed.has('highlightRange') || changed.has('content') || changed.has('loading') || changed.has('mode'))
+      (changed.has('highlightRange') ||
+        changed.has('chunkRange') ||
+        changed.has('citation') ||
+        changed.has('anchorState') ||
+        changed.has('content') ||
+        changed.has('loading') ||
+        changed.has('mode'))
     ) {
       this.scrollToHighlight();
     }
+    // Tempdoc 846 §2.4 — syntax-highlight the rendered document's fenced code. The container the
+    // blocks render into is passed (not a snapshot of its children), so a highlighter that is still
+    // loading writes into the live tree when it arrives. Idempotent; a no-op in Source mode.
+    highlightCodeBlocks(this.renderRoot.querySelector('.blocks'));
+    // Tempdoc 853 (F-05) — the ramp's `pre`/`table` scroll containers are focusable + named, so a
+    // keyboard user can reach the clipped half of a wide fence or table. Re-applied per render: Lit
+    // rebuilds this subtree through `unsafeHTML`, which takes the attributes with it.
+    markScrollableRegions(this.renderRoot.querySelector('.blocks'));
   }
 
-  private async loadContent(path: string): Promise<void> {
+  /**
+   * The window to request for an anchor: lead-in before the cited span so it does not open flush at
+   * the top, the span itself however long it is, and trailing context to read on into. Without an
+   * anchor this is the document's head, which is what the line-addressed consumers have always got.
+   */
+  private windowFor(citation: DocumentCitationAnchor | null): { offset: number; maxChars: number } {
+    if (citation === null) return { offset: 0, maxChars: DEFAULT_MAX_CHARS };
+    const offset = Math.max(0, Math.floor(citation.startChar) - CITATION_LEAD_IN_CHARS);
+    const span = Math.max(0, Math.ceil(citation.endChar) - offset);
+    return { offset, maxChars: Math.min(MAX_WINDOW_CHARS, span + CITATION_TRAIL_CHARS) };
+  }
+
+  private async loadContent(path: string, citation: DocumentCitationAnchor | null): Promise<void> {
     const token = ++this.loadToken;
+    const window = this.windowFor(citation);
+    this.requestedWindow = window;
     this.loading = true;
     this.error = null;
     try {
       const res = await authorizedFetch(
-        this.base() + `/api/preview?docId=${encodeURIComponent(path)}&offsetChars=0&maxChars=5000`,
+        this.base() +
+          `/api/preview?docId=${encodeURIComponent(path)}&offsetChars=${window.offset}` +
+          `&maxChars=${window.maxChars}`,
       );
       if (token !== this.loadToken) return; // a newer docPath superseded this request
       if (!res.ok) {
@@ -285,19 +515,109 @@ export class DocumentPane extends JfElement {
       }
       const data = (await res.json()) as {
         content?: string;
+        truncated?: boolean;
         textProvenance?: string | null;
         visualExtractionEvidence?: VisualExtractionEvidence | null;
       };
       if (token !== this.loadToken) return;
-      this.content = data.content ?? '';
+      // The anchor arithmetic uses the offset WE asked for. The response's `offsetChars` is the
+      // request parameter echoed back (`PreviewController.java:167`), not the position served — the
+      // worker clamps an offset past the end of the document silently, and `nextOffsetChars` is the
+      // only served-position fact on the response. No clamp can go unnoticed regardless: a clamped
+      // slice does not contain the cited offsets, which the coverage check below reports as a
+      // changed document rather than as a highlight in the wrong place.
+      let offset = window.offset;
+      let content = data.content ?? '';
+      if (offset > 0) {
+        // A slice cut at an arbitrary character starts mid-line, which would render a half line and
+        // shift nothing else; dropping that remainder makes line 0 a real line again. It is dropped
+        // only when the whole remainder lies BEFORE the cited span — on text with no line breaks for
+        // longer than the lead-in (extracted PDFs are routinely one long line), the first break can
+        // sit past the citation, and trimming to it would cut away the evidence and then report it
+        // as unreachable.
+        const firstBreak = content.indexOf('\n');
+        const trimmedTo = offset + firstBreak + 1;
+        if (firstBreak >= 0 && (citation === null || trimmedTo <= citation.startChar)) {
+          offset = trimmedTo;
+          content = content.slice(firstBreak + 1);
+        }
+      }
+      this.content = content;
+      this.previewWindow = { offset, truncated: data.truncated === true };
       this.provenance = data.textProvenance ?? null;
       this.evidence = data.visualExtractionEvidence ?? null;
+      this.deriveAnchorState();
     } catch (err) {
       if (token !== this.loadToken) return;
       this.error = err instanceof Error ? err.message : String(err);
     } finally {
-      if (token === this.loadToken) this.loading = false;
+      if (token === this.loadToken) {
+        this.requestedWindow = null;
+        this.loading = false;
+      }
     }
+  }
+
+  /**
+   * Tempdoc 849 §3 — turn the citation's character offsets into this reader's own 0-based lines,
+   * over the text it actually holds, and refuse to do so when it cannot confirm the offsets.
+   *
+   * Order matters: the witness is checked BEFORE any line is derived, so a stale anchor produces no
+   * range at all rather than a range that is then explained away.
+   */
+  private deriveAnchorState(): void {
+    this.anchorState = this.resolveAnchor();
+    // Armed here, where the range is decided, rather than from a `changed.has('anchorState')` test
+    // in `willUpdate`. Both work — probed: Lit records a property changed DURING `willUpdate` in the
+    // same `changedProperties`, so the observer would fire in the same cycle — and the claim that
+    // arming from `willUpdate` was a defect would have been false. This is the shorter path, not a
+    // repair: deriving the range and arming its emphasis are one operation.
+    this.syncHighlightDecay();
+  }
+
+  private resolveAnchor(): CitationAnchorState | null {
+    const citation = this.anchor();
+    const win = this.previewWindow;
+    if (citation === null || win === null) return null;
+    const start = citation.startChar - win.offset;
+    const end = citation.endChar - win.offset;
+    // A span that is empty or inverted is not an anchor at all. It says nothing about the document,
+    // so the pane says nothing either — the same silence as opening with no citation, rather than a
+    // notice blaming the document for a span the producer never filled in.
+    if (end <= start) return null;
+    if (start < 0 || end > this.content.length) {
+      // The `truncated` flag is what separates "the document ends here" from "we only loaded this
+      // much". A slice that ran to EOF and still does not reach the cited offsets means the document
+      // SHRANK under them — reporting that as an under-loaded window would blame this reader for a
+      // change in the document.
+      const ranToEnd = !win.truncated && end > this.content.length && start >= 0;
+      return { highlight: null, chunk: null, unconfirmed: ranToEnd ? 'shrunk' : 'window' };
+    }
+    if (!locateWitness(this.content, { start, end }, citation.excerpt)) {
+      return { highlight: null, chunk: null, unconfirmed: 'witness' };
+    }
+    const chunk = lineSpanOfChars(this.content, { start, end });
+    // The strong tier is the claim-matched sentence LOCATED INSIDE the confirmed chunk — a bounded
+    // search, not a second anchor. No match, or a match whose text is not in the passage, leaves the
+    // chunk tinted and nothing emphasised.
+    let highlight: DocumentLineRange | null = null;
+    if (citation.sentenceText) {
+      const sentence = locateText(this.content, citation.sentenceText, start, end);
+      if (sentence !== null) highlight = lineSpanOfChars(this.content, sentence);
+    }
+    return { highlight, chunk, unconfirmed: null };
+  }
+
+  /** The line span the strong tier renders from — the anchor's when there is one. */
+  private activeHighlightRange(): DocumentLineRange | null {
+    if (this.anchor() !== null) return this.anchorState?.highlight ?? null;
+    return this.highlightRange;
+  }
+
+  /** The line span the weak tier renders from — the anchor's when there is one. */
+  private activeChunkRange(): DocumentLineRange | null {
+    if (this.anchor() !== null) return this.anchorState?.chunk ?? null;
+    return this.chunkRange;
   }
 
   private computedBlocks(): MarkdownBlockDescriptor[] {
@@ -313,7 +633,13 @@ export class DocumentPane extends JfElement {
 
   private scrollToHighlight(): void {
     void this.updateComplete.then(() => {
-      const el = this.shadowRoot?.querySelector('.hl-strong');
+      // The exact hit when there is one, the chunk when there is not — asked in that ORDER rather
+      // than as one `.hl-strong, .hl-weak` selector. A single selector returns the first match in
+      // DOCUMENT order, and the chunk's opening line precedes the matched sentence whenever the
+      // sentence sits anywhere but the head of the passage, so it would scroll past the emphasis it
+      // was meant to land on.
+      const root = this.shadowRoot;
+      const el = root?.querySelector('.hl-strong') ?? root?.querySelector('.hl-weak');
       el?.scrollIntoView({ block: 'center' });
     });
   }
@@ -429,7 +755,18 @@ export class DocumentPane extends JfElement {
     return parts.length > 0 ? parts.join(' · ') : null;
   }
 
-  static styles = css`
+  /**
+   * Tempdoc 846 §2.3 — the shared markdown ramp comes FIRST, so every rule below still has the last
+   * word. Before this, Rendered mode dressed a whole `.md` file in user-agent defaults (a 32px
+   * `h1`, browser list indents, an unstyled `<table>`, a `<pre>` with no surface) — the one surface
+   * whose entire job is reading a document was the one that did not dress documents.
+   *
+   * The shared sheet also carries `:host` typography (`font-size`, `line-height`, `word-wrap`); the
+   * pane's own `:host` rule below re-declares what it means to keep (`display`, `color`,
+   * `font-family`), and every chrome row — header, toggle, provenance — sets its own `font-size`,
+   * so what the ramp actually reaches is the document body it was moved here for.
+   */
+  static styles = [markdownTypography, markdownCodeHighlight, css`
     :host([overlay]) {
       /* 687 R5b — sized for the OverlayHost right-drawer slot (narrow viewports). */
       width: min(28rem, 92vw);
@@ -540,6 +877,56 @@ export class DocumentPane extends JfElement {
     .preview-source-detail {
       color: var(--text-tertiary);
     }
+    /* Tempdoc 849 §7 — the CITATION header. Above the extraction-provenance line and visually its
+       sibling, not its replacement: one says where this TEXT came from, the other says why this
+       document is open. Wraps, because the fact count varies with what the producer recorded and a
+       fixed row would either clip the honest cases or reserve space for absent ones. */
+    .citation-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.25rem 0.6rem;
+      margin: 0.75rem 0.875rem 0;
+      padding: 0.3rem 0.5rem;
+      border-inline-start: 2px solid var(--border-subtle);
+      color: var(--text-secondary);
+      font-size: var(--font-size-xs);
+      line-height: 1.35;
+    }
+    .citation-turn {
+      flex-basis: 100%;
+      color: var(--text-tertiary);
+    }
+    .citation-turn q {
+      color: var(--text-primary);
+    }
+    /* Each score names its own metric. §7 rule 1: the two are NEVER adjacent as bare numbers, which
+       is enforced by there being no number here at all — the band word is the whole value. */
+    .citation-metric {
+      color: var(--text-tertiary);
+    }
+    .citation-band {
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+    .citation-inclusion {
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .citation-inclusion.dropped {
+      color: var(--text-warning);
+    }
+    /* Tempdoc 849 §3 — the reader's own notices (why nothing is highlighted; what slice this is).
+       Deliberately the quiet chrome voice the provenance line already speaks in: these say the pane
+       is claiming LESS than usual, which is not an alert. */
+    .reader-notice {
+      margin: 0.75rem 0.875rem 0;
+      padding: 0.35rem 0.5rem;
+      border-inline-start: 2px solid var(--border-subtle);
+      color: var(--text-secondary);
+      font-size: var(--font-size-xs);
+      line-height: 1.35;
+    }
     .scroll-region {
       flex: 1;
       overflow-y: auto;
@@ -549,8 +936,13 @@ export class DocumentPane extends JfElement {
       outline: 2px solid var(--accent-tint);
       outline-offset: -2px;
     }
+    /* Tempdoc 846 §2.3 — the wrapper's rhythm now READS the shared vocabulary instead of restating
+       its literal (it was a private '0.25em'). The wrapper is load-bearing here and the ramp cannot
+       replace it: this pane renders one block per wrapper, so the ramp's own 'p:first-child' /
+       'p:last-child' zeroing fires on EVERY paragraph (each is both), which is exactly right — the
+       gap between blocks is the wrapper's, and nothing double-counts it. */
     .blocks .block {
-      margin: 0.25em 0;
+      margin: var(--md-block-gap) 0;
     }
     /* Round-2 R1b — the strong→quiet decay: both tiers share the same transitioned properties so
        swapping hl-strong for hl-weak (the JS class-flip in highlightTier) animates smoothly rather
@@ -609,7 +1001,7 @@ export class DocumentPane extends JfElement {
         transition: none;
       }
     }
-  `;
+  `];
 
   private renderToggle(): TemplateResult {
     const isMd = this.docPath ? isMarkdownPath(this.docPath) : false;
@@ -656,13 +1048,105 @@ export class DocumentPane extends JfElement {
     `;
   }
 
+  /**
+   * Tempdoc 849 §7 — the citation header. Every element is projected by `evidenceProjection.ts` and
+   * every one of them is suppressed when its producer said nothing, so a pre-849 conversation, a
+   * fallback-mode retrieval and an uncited source each render a SHORTER header rather than a
+   * padded one. There is no "unknown" placeholder: a caveat on every historical citation would be a
+   * claim of its own.
+   */
+  private renderCitationHeader(): TemplateResult | typeof nothing {
+    const h = this.citationHeader;
+    if (h === null) return nothing;
+    const parts = [
+      h.passage === null ? nothing : html`<span class="citation-passage">${h.passage}</span>`,
+      this.renderInclusion(h),
+      h.grounding === null ? nothing : html`<span class="citation-grounding">${h.grounding}</span>`,
+      this.renderBand(h.claim),
+    ].filter((part) => part !== nothing);
+    if (h.turnLabel === null && parts.length === 0) return nothing;
+    return html`<div class="citation-header" data-testid="citation-header">
+      ${h.turnLabel === null
+        ? nothing
+        : html`<span class="citation-turn">Cited in the answer to <q>${h.turnLabel}</q></span>`}
+      ${parts}
+    </div>`;
+  }
+
+  /** §5 — the flagship. Absent ⇒ nothing, never "included" (`inclusionBadge` already refuses). */
+  private renderInclusion(h: CitationHeader): TemplateResult | typeof nothing {
+    const badge = h.inclusion;
+    if (badge === null) return nothing;
+    return html`<span
+      class="citation-inclusion ${badge.state}"
+      data-inclusion=${badge.state}
+      title=${badge.detail}
+      >${badge.label}</span
+    >`;
+  }
+
+  /**
+   * §7 — a score as METRIC + BAND, never a bare number. Only the CLAIM similarity is banded here;
+   * the retrieval score is not rendered at all, because it is the raw Lucene hit score and the
+   * tier thresholds are anchored to the cross-encoder scale (see `claimMatch`).
+   */
+  private renderBand(score: CitationHeader['claim']): TemplateResult | typeof nothing {
+    if (score === null) return nothing;
+    return html`<span class="citation-score"
+      ><span class="citation-metric">${score.metric}</span>
+      <span class="citation-band">${score.band}</span></span
+    >`;
+  }
+
+  /**
+   * Tempdoc 849 slice 2 S10 — the citation carried a span this reader cannot use (`endChar <=
+   * startChar`, or a non-finite offset). The pane used to open in silence, indistinguishable from a
+   * document opened with no citation at all; the header is what finally lets it tell the difference,
+   * so this is where the message belongs.
+   */
+  private renderSpanNotice(): TemplateResult | typeof nothing {
+    if (this.citationHeader?.spanUnusable !== true) return nothing;
+    return html`<p class="reader-notice span-notice" role="note">${CITATION_SPAN_UNUSABLE}</p>`;
+  }
+
+  /**
+   * Tempdoc 849 §3 R1.4 — why nothing is highlighted, when the anchor could not be confirmed. It
+   * renders INSTEAD of a highlight, never beside one: a tinted passage plus a hedge is read as a
+   * tinted passage.
+   */
+  private renderAnchorNotice(): TemplateResult | typeof nothing {
+    const unconfirmed = this.anchorState?.unconfirmed ?? null;
+    if (unconfirmed === null) return nothing;
+    return html`<p class="reader-notice anchor-notice" role="note">${ANCHOR_NOTICE[unconfirmed]}</p>`;
+  }
+
+  /**
+   * Tempdoc 849 §10 — the endpoint has always returned `truncated` and this reader has always
+   * dropped it, so a reader looking at a 5,000-character slice believed they were looking at the
+   * document. The flag is now said out loud, and no character count is quoted with it: the honest
+   * fact is that this is a window, and a number would invite precision about a boundary the reader
+   * cannot see.
+   */
+  private renderWindowNote(): TemplateResult | typeof nothing {
+    const win = this.previewWindow;
+    if (win === null || (!win.truncated && win.offset === 0)) return nothing;
+    // Not beside a suppression notice: "showing the part around the cited passage" next to "the
+    // cited passage could not be confirmed" are two sentences that contradict each other, and the
+    // suppression is the one the reader needs. When there is no confirmed anchor, this window is not
+    // "around" anything the pane is willing to claim.
+    if ((this.anchorState?.unconfirmed ?? null) !== null) return nothing;
+    return html`<p class="reader-notice window-note">
+      ${win.offset > 0 ? WINDOW_NOTE.around : WINDOW_NOTE.head}
+    </p>`;
+  }
+
   private renderRenderedMode(): TemplateResult {
     const blocks = this.computedBlocks();
     if (blocks.length === 0) {
       return html`<div class="empty">No renderable content.</div>`;
     }
     return html`
-      <div class="blocks">
+      <div class="blocks md-content">
         ${blocks.map((b) => {
           const tier = this.highlightTier(b.startLine, b.endLine);
           return html`<div
@@ -699,7 +1183,7 @@ export class DocumentPane extends JfElement {
       return html`<jf-error-alert tone="error">${this.error}</jf-error-alert>`;
     }
     return html`
-      ${this.renderProvenanceLine()}
+      ${this.renderCitationHeader()}${this.renderProvenanceLine()}${this.renderSpanNotice()}${this.renderAnchorNotice()}${this.renderWindowNote()}
       <div
         class="scroll-region"
         tabindex="0"

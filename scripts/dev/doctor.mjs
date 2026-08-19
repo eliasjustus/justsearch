@@ -50,7 +50,7 @@ function resolveModelsDir() {
 }
 
 function readRegistry() {
-  const p = path.join(repoRoot, 'modules', 'ui', 'src', 'main', 'resources', 'ai', 'model-registry.v2.json');
+  const p = path.join(repoRoot, 'modules', 'configuration', 'src', 'main', 'resources', 'ai', 'model-registry.v2.json');
   return JSON.parse(fs.readFileSync(p, 'utf8'));
 }
 

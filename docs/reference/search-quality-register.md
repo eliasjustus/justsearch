@@ -3,7 +3,7 @@ title: Search Quality Register
 type: reference
 status: stable
 created: 2026-03-19
-updated: 2026-08-14
+updated: 2026-08-19
 description: "Shared decision register for search quality. Read before starting search work. Update before finishing."
 ---
 
@@ -290,7 +290,9 @@ incremental rebuild, cell content probe-verified (4293/4293 chunk vectors live, 
 all 94 batches). The fresh-build re-verify rows confirm the 711 defaults pin (0.6185 ≈ 0.6184)
 with a direct on-disk vector-count probe. A separate same-session fresh-build defaults run scored
 0.3403/chunks-dead (the F-032-control signature, with the fix present) — unreproduced on the
-immediate probe-instrumented re-run, quarantined as a C-confidence anomaly in tempdoc 713 §M-3/M-5.
+immediate probe-instrumented re-run, quarantined as a C-confidence anomaly in tempdoc 713 §M-3/M-5;
+that quarantine was RESOLVED by tempdoc 717 (query-time `SKIPPED_SHORT_CORPUS` mis-classification
+via a `parent_token_count` race, not vector loss — see the F-035 quarantine-resolution note below).
 
 ### mixed/miracl-de-2k
 
@@ -668,6 +670,108 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   self-consistent against their own embedded policy snapshot; they are dated history, not retracted.
   Any *claim-bearing* run must use the v2 cohort.
 
+### F-052: CE model quality IS a quality lever — the delivered-rank swap A/B refutes F-001/F-006 (MiniLM vs incumbent: email −5.7%, scifact −6.9%, legal −23.4%), and exposed a SILENT CE-deadline drop that no comparability field reports (2026-08-19; first CE-model measurement on the corrected harness)
+
+- **Answer:** shared-index, delivered-rank CE model-swap A/B (arm A = incumbent
+  gte-multilingual-reranker-base at default discovery; arm B = ms-marco-MiniLM-L-6-v2 via
+  `JUSTSEARCH_RERANK_MODEL_PATH` + `JUSTSEARCH_RERANK_MAX_SEQ_LEN=512`, the tempdoc 309 §43
+  mechanism; git `69872fc2`). Hybrid nDCG@10, arm A → arm B: **legal-clerc-200 0.5788 → 0.4435
+  (−0.1353, −23.4%)**; **enron-qa 0.7967 → 0.7512 (−0.0455, −5.7%)**; **scifact 0.7533 → 0.7013
+  (−0.0520, −6.9%)**. P@1 and R@10 move the same direction in every cell. The measurement is
+  deterministic: two bit-identical replicates per arm per corpus, and per-query `fusion_score`
+  is bit-identical across ALL runs including cross-arm — retrieval and fusion contributed
+  exactly zero to the deltas; the CE stage is the only varying component. Arm A reproduces the
+  832 scorecard (0.5788/0.7967/0.7533 vs 0.5780/0.7957/0.7572) and passes `relevance-gate` on
+  all three corpora.
+- **Consequences:** **F-001 and F-006 are REFUTED** under the current pipeline — "CE model
+  doesn't matter" was an artifact of the pre-800 harness (which deleted the CE's ordering
+  channel) COMBINED with pre-F-041 preview-blind CE input; with evidence-coherent input and
+  delivered-rank scoring, CE model quality is a first-order lever, largest exactly where the CE
+  has the most work to do (legal, where fusion is weakest). **D-001's choice is strongly
+  re-validated** (the incumbent decisively beats the model it replaced) but its "CE is no longer
+  a quality lever" rationale is retired. This measures the CURRENT pipeline (evidence-preview/
+  span ON, 775 defaults) — it supersedes, not corrects, 309 §41/§43's conditions.
+- **The methodological finding (eval-integrity hole, `green-masked` family):**
+  `justsearch.rerank.deadline_ms` defaults to **200 ms** while the incumbent's CE stage p50 on
+  legal is **165 ms** — inside jitter distance of its own deadline. A budget miss returns the
+  rerank RPC as skipped and the query is delivered in pure fusion order, with **no trace in any
+  gate-read field**: `comparable: true`, empty `comparability_reasons`, `ann_proof PASS`,
+  `error_count 0`, `cross_encoder` still in observed legs. Only per-hit
+  `judgeSignals.ce_score: null` shows it. Two early runs were contaminated exactly this way
+  (legal arm A at 49% CE coverage scored **0.6255 vs 0.5788 clean** — dropping the CE on half
+  the queries RAISED legal nDCG, independently corroborating 802's −0.0418 CE-ordering term on
+  this corpus); the exposure is **asymmetric by model speed** (a slower model loses more queries
+  to the deadline), so any future CE A/B without a coverage check is structurally biased.
+  Coverage was enforced as an acceptance criterion (clean cells ≥99.5%, residual skip sets
+  verified IDENTICAL between arms and carrying deterministic reasons — NAVIGATIONAL /
+  BELOW_MIN_THRESHOLD / FUSION_CONFIDENT). **A `ce_coverage` verdict now ships next to
+  `chunk_completeness` in jseval** (same embedded-verdict + gate-seam pattern; landed with this
+  entry): per-query `crossEncoderStatus`/`crossEncoderReason` are now PERSISTED into
+  `{mode}_per_query.json` — the reason previously lived only in memory, which is why the
+  archived pre-fix artifacts can only ever read `unevaluable` (loudly — the gate prints the
+  unexplained count) rather than `degraded-ce`; the writer→reader→verdict loop is
+  regression-tested on the real writer, and the hole itself is pinned as a test asserting the
+  contaminated and clean runs are indistinguishable on every gate-read field. Verdict
+  `degraded-ce` when silent drops exceed 2% of CE-eligible queries (bounds induced bias to
+  ~0.002 nDCG, an order below the relevance ratchet's 0.02 tolerance); `DEADLINE_EXCEEDED` /
+  `RPC_FAILED` / unknown reasons fail closed as silent drops; the deterministic skips above
+  stay legitimate; all four ratchet gates assert it, with `--allow-ce-degradation` /
+  `JUSTSEARCH_ALLOW_CE_DEGRADATION=1` as the explicit escape hatch. The production-side half — a 200 ms default with a 165 ms p50 means real long-doc
+  queries silently lose the CE under jitter, with no reason code — is logged to the inbox as an
+  owner decision (raise the deadline vs surface the skip), not changed unilaterally.
+- **Conditions/caveats:** English corpora only — the incumbent is multilingual while MiniLM is
+  English-only, so the de/fr margin is plausibly LARGER and is unmeasured. Arm B ran
+  FP16-on-CUDA `VariantSelection.optimal` (the MiniLM dir was rebuilt as FP32+FP16 with a
+  hand-authored ADR-0019 manifest — deliberately not the historical INT8, so the swap varies
+  model identity only; `models/onnx/reranker-minilm-backup/build.json` records the deviation,
+  including that `build-crossencoder.py` cannot emit a GPU variant itself). Single machine,
+  single session; replicates were bit-identical so no variance estimate is needed for the sign.
+- **Evidence:** run dirs `tmp/ce-ab/` in the `d004-register-reconcile` worktree (12 clean runs +
+  2 deadline-contaminated kept as evidence, roll-up `final.jsonl`; gitignored — this entry is
+  the durable record). Wrong-gate check: `models.reranker_model_path` reads the expected
+  directory in every run of both arms, corroborated by Worker startup logs.
+
+### F-051: the German 10⁴ collapse is attributed — task-shape dominant, German representation a measured secondary cause, and the ENGINE IS EXONERATED on headroom: its leg-union sits at/above the offline exact-NN ceiling on the rebuilt DE cells; the only internal loss is a 1k-scale fusion/judge leak that vanishes at 10k (tempdoc 748 §G.1-§G.3, 2026-08-19; closes Q-018)
+
+- **Answer (final attribution for Q-018's four hypotheses):** **(c) gold-design/task-shape is
+  dominant** — the identical EN zero-lexical-overlap construction collapses at 10k too, and the
+  lexical leg is 0.0 by construction, not by German (748 §A). **(a) German representation quality
+  is a real, measured SECONDARY cause** — at matched payload.v2 the EN/DE pool-bridge gap persists
+  (P@1 0.84 vs 0.30, §G.1). **(b) scale/candidate-depth is REFUTED on both members** — offline
+  exact-NN with no candidate cut-off collapses the same way (EN: F-040; DE: §G.2 R@100 0.48→0.14).
+  **(d) German text mechanics eliminated** (real German scores 0.7283 nDCG / 0.9805 R@10 with
+  recall holding at zero lexical overlap, 748 §A).
+- **The §G.3 live fidelity re-measure (2026-08-19, rebuilt defillered cells, eval backend, git
+  `e4af3af2`, all runs `comparable: true` / `ann_proof PASS` / CE loaded, 50 q/cell):** engine
+  leg-union@100 **0.70 at 1k vs the 0.48 offline ceiling (ABOVE)** and **0.16 at 10k vs 0.14
+  (AT)** — the engine does not leave DE recall headroom unexploited, and DE behaves like EN
+  (the F-040 engine-beats-its-own-offline-ceiling shape). The earlier "unlike EN" reading was an
+  artifact of comparing a fillered-v1 union number against a dense-only probe. Mechanism: the
+  dense leg tracks the exact-NN ceiling from slightly below (0.44 vs 0.48 at 1k; 0.12 vs 0.14 at
+  10k — HNSW vs exact); the surplus is legs the probe does not model, dominated by **SPLADE
+  (R@100 0.62 at 1k)** plus chunk matching. Full per-mode tables: 748 §G.3 RESULT.
+- **Secondary findings:** (1) the engine's recall advantage is **scale-fragile** — union@100
+  0.70 → 0.16 (÷4.4) vs the ceiling's ÷3.4, with SPLADE the collapsing leg (0.62 → 0.10);
+  the engine converges onto the representation ceiling at 10k. (2) the only internal loss is a
+  **1k-scale fusion/judge leak**: legs deliver union 0.70, hybrid surfaces 0.36@100 / 0.12@10 —
+  `leak_rate 0.34` (17 CASCADE_LEAK + 15 JUDGE_RANK_LOW of 50); at 10k the leak is 0.04 because
+  the legs find almost nothing to drop. This is the standing fusion-territory item's sharpest
+  measured instance to date and D-005's "fusion is a ranking step, not a recall gate" applied —
+  but on a `claim_eligible: false` synthetic stratum: a capability probe, NOT a production
+  regression, and not by itself a licence for a fusion lane.
+- **Conditions/caveats:** DE remains a **non-claim-bearing** secondary stratum — the rebuilt
+  cells are structurally certified only (`claim_eligible: false`; the four SCIENTIFIC_GATES were
+  not run and these runs do not substitute for them). Single run per cell (plus a `--top-k 100`
+  variant per cell for the R@100 comparison — which exposed that `staged_recall_accounting`'s
+  self-reconciliation is invalid at `top_n != 10`, reporting `rank_11_plus` counts as
+  "mismatches"; k10 runs reconcile 0/50). The pre-registered `corpus-fidelity --base-url`
+  command could not execute §G.3 as written (no ingest, `output_dir=None` writes no artifacts,
+  paid sub-gate) — the run used `jseval run` multi-mode against the same backend; deviation
+  recorded in 748 §G.3.
+- **Evidence:** tempdoc 748 §G.1/§G.2/§G.3 (tables, provenance digests, deviation record); run
+  dirs `scripts/jseval/tmp/748/g3-{1k,10k}{,-k100}/` (session machine, gitignored — the §G.3
+  tables are the durable record); offline ceiling artifact `tmp/748/bridge-scale-de-miracl-v2.json`.
+
 ### F-024: buried-fact retrieval is a fusion/recall-gating problem, not a query-expansion one
 
 *(needle numbers below predate the 2026-07-01 corpus regeneration — see Corpus provenance note above)*
@@ -826,6 +930,19 @@ above)*
   code); the immediate probe-instrumented fresh re-run reproduced 0.6185/chunks-alive instead.
   Unresolved one-off (C confidence, quarantined); the fresh-ingest path is NOT implicated —
   re-open only if a chunks-dead signature (vector ≈0.34 + missing `chunk_merge` leg) recurs.
+  - **QUARANTINE RESOLVED (2026-08-19, reconciling this note with Q-017's 717 record — the two
+    had contradicted each other in this file):** tempdoc 717's live probe (2026-07-11/12,
+    `d37578a8`) explained the signature — chunks + chunk_vectors were 100% healthy; the
+    `chunk_merge` leg was *skipped at query time* as `SKIPPED_SHORT_CORPUS` because a
+    SPLADE-load race left `parent_token_count` unpopulated, mis-classifying a long corpus as
+    short. Fixed by an index-time `parent_token_count` estimate fallback
+    (`IndexingDocumentOps.java:444-454`) + majority-coverage fail-open in `isShortCorpus`
+    (`CorpusProfile.java:62-70`); live-validated 3/3 fresh builds; no recurrence in any later
+    row (774/775/832 legal-clerc runs all carry `chunk_merge`). Detector caveat closed the same
+    day as this note: jseval's chunk-completeness corroborator had been waiving ALL
+    `SKIPPED_SHORT_CORPUS` skips unconditionally (the 715-defect-1 waiver in `run.py`), which
+    would have passed a recurrence silently — the waiver is now conditioned on the offline
+    chunk expectation agreeing the corpus is short.
 - **Feeds 712/Q-017:** the structural argument (branch fusion always consumes the parent leg)
   applies to the SPLADE parent too, but 712 should measure, not inherit.
 - **Evidence:** tempdoc 713 (§Takeover T-1..T-5, §Measurement M-1..M-5, probe outputs, counter
@@ -1065,6 +1182,38 @@ above)*
   `#citationAuthorityMatchesSectionHeaders` :251-266 — a pin that the ask prompt's citation
   instruction names the same bracketed 1-based ordinals `ContextBudgeter.sectionHeader` emits, so a
   change to the S1 header shape breaks the S6 prompt test; the S1 ⇔ S6 coupling).
+
+### F-051: citation sentences were cut out of MARKDOWN as if it were prose, so a whole list scored as one "sentence" — segmentation now follows block structure, and `sentences_total` (836 §3.6's coverage denominator) is not comparable across the change (tempdoc 847 S5, 2026-08-19)
+
+- **Defect, measured over 19 answer shapes (64 keys, 847 §S0-results):** `BreakIterator` over the
+  raw markdown never breaks at a marker — a terminal `.` followed by whitespace and a bullet,
+  ordinal, quote, pipe or heading marker (each with its trailing space) suppresses the boundary
+  outright — so a bullet list, blockquote or table plus its lead-in paragraph became ONE key handed
+  to the cross-encoder. A blank line does not fix it: it
+  splits the terminator off as an orphan `"."`. 8 of 64 keys (12.5 %) carried no sentence at all
+  (orphan `.`, bare ordinals) and were scored, persisted as evidence, and counted in the denominator.
+- **Fix:** one authority, `AnswerSegmentation.splitSentences`, parses the answer with commonmark
+  (plus the GFM tables and task-list extensions, so a table is one block per CELL and a `- [x]` key
+  starts at its text — what `marked` renders, and what the renderer's block clamp measures against)
+  and runs `BreakIterator` inside ONE block, never across one. A segment with no letter is never
+  scored: exactly the measured junk class, and it closes the `"2026."`-shaped hole a length floor
+  admits. `Locale.ROOT` replaces `Locale.ENGLISH` — measured inert across `en`/`root`/`ja`/`zh`,
+  so it was a per-language lever in appearance only (HI-6).
+- **The denominator moved, in BOTH directions — do not compare across this change.** Over the
+  23-shape matrix: 73 keys → 85, junk 9 → 0, fused 37 → 0. Junk removal subtracts; de-fusion adds
+  more back (a three-item list that was one key is now four). Reported coverage generally **rises**
+  on list-shaped answers and may **fall** on table-shaped ones, where label cells are now counted as
+  unmatched sentences instead of hiding inside one key that matched trivially. A grounding-coverage
+  figure recorded before 2026-08-19 answers a different question from one recorded after.
+- **Reach into the eval:** the RAG faithfulness metric (`RagQualityEvalTest#computeFaithfulness`)
+  scores the answer's sentences, and it carried its own copy of the pre-847 splitter — so it was
+  measuring a segmentation production had stopped using. It now calls the same authority; a
+  faithfulness number from before this change is on the old segmentation.
+- **Evidence:** tempdoc 847 §2.2 + §S0-results (the 19-shape probe) and the S5 record;
+  `AnswerSegmentationTest` (the 23-shape matrix, the classification counters, and the denominator
+  accounting against an in-test mirror of the pre-847 splitter). Residual, exhibited by the matrix
+  rather than asserted: `BreakIterator` still splits `"Dr. Smith"` into two keys, and the short one
+  has letters, so the junk predicate cannot catch it.
 
 ### F-046: every multi-leg retrieval path silently ignored the request's `query_syntax` — a `lucene` request retrieved a SIMPLE (escaped) parse on hybrid/BM25+SPLADE/3-way; fixed and coupled to the counts, SIMPLE-default retrieval unchanged (tempdoc 821 §P, 2026-08-13; the real defect behind 821 §N's facets inversion)
 
@@ -1846,6 +1995,13 @@ above)*
   --out tmp/712-splade-check --device cuda --batch-size 8`; artifact `tmp/712-splade-check/results.json`.
   Evidence: tempdoc 712 §Takeover experiment.
 
+> **F-030 numbering-collision note (2026-08-19):** F-030 was assigned twice — the 706 OCR-engine
+> finding directly below and the 678 encoder-domain finding after it. Both were already cited
+> across tempdocs in the disambiguated forms **F-030(706)** / **F-030(678)**, so the collision is
+> resolved by adopting those suffixed IDs as canonical rather than renumbering (a renumber would
+> break the existing citations). Do not assign a bare F-030 to anything new; new findings take the
+> next free bare F-number. Closes the two duplicate-F-030 inbox items (2026-07-10 / 2026-07-12).
+
 ### F-030(706): scanned-PDF OCR execution engine replaced (tempdoc 706, 2026-07-10) — extraction-content comparability boundary
 
 - **Finding:** Tika-internal serial per-page tesseract OCR was replaced by an owned parallel engine
@@ -2173,13 +2329,21 @@ above)*
   the next instance when its own evidence demands it (`structural-defects-no-repeat`, applied to *avoid* premature
   generalization here, not to force it).
 
-### F-001: CE model quality is irrelevant on personal email
+### F-001: CE model quality is irrelevant on personal email — REFUTED (2026-08-19, F-052)
 
+- **REFUTED (2026-08-19):** the swap comparison this finding is about was re-run on the
+  corrected delivered-rank harness under current defaults (F-052): MiniLM vs the incumbent
+  costs **enron-qa −0.0455 nDCG@10 (−5.7%)**, deterministic across bit-identical replicates,
+  fusion held bit-identical between arms. CE model quality is NOT irrelevant on personal
+  email. The original "zero difference" was the pre-800 harness artifact the 800 caveat below
+  predicted, compounded by pre-F-041 preview-blind CE input. Original text retained below as
+  dated history.
 - **Answer:** Upgrading from MiniLM-L6-v2 to GTE-ModernBERT produces zero measurable difference on EnronQA (±0.3% nDCG, noise level).
 - **Evidence:** tempdoc 309 §43
 - **Conditions/caveats:** Tested on EnronQA (verbose QA questions, single-user inbox). CE may still matter on academic/legal corpora (SciFact, CourtListener).
 - **⚠ Measurement caveat (2026-07-31, 800):** The eval harness scores each hit by its **pre-rerank fusion score**, so `ir_measures` re-sorts the delivered list back into fusion order and the CE's *ordering* is discarded; only its *selection* (which 10 of the 20-candidate window survive the trim) reaches the number. A CE model swap changes both, but two rerankers agree far more on selection than on ordering — so "zero difference, within noise" is also exactly what a metric outputs when the differing part has been deleted. **This finding is not refuted, but it cannot be distinguished from an artifact using the old numbers.** Treat as *unmeasured*, not *measured as zero*, until a re-run on a corrected harness. Mechanism and measurements: tempdoc 800.
 - **UPDATE (2026-08-14, 832):** the corrected-harness substrate now exists — release `832-rebaseline-2026-08-14` (5 corpora, delivered-rank scoring, cohort `32d6a0a0`) re-pins every default-config baseline. The CE **model-swap** comparison this finding is about has still not been re-run on that basis, so the verdict stays *unmeasured* — but any future swap A/B now has a certifiable, ordering-sensitive baseline to run against.
+- **RESOLVED (2026-08-19):** that re-run happened — see F-052 and the refutation header above.
 
 ### F-002: CE actively hurts on personal email
 
@@ -2199,6 +2363,7 @@ above)*
 
   The retracted rider's error was corpus identity: `mixed/en-email-enron-raw-*` and `mixed/en-legal-clerc-*` are certification corpora with synthesized queries, **not** the published `mixed/enron-qa` and `mixed/legal-clerc-200`. Shared names, different benchmarks, opposite behaviour.
 - **Bearing on this finding.** On EnronQA the CE's *ordering* contribution is **positive (+0.0184)**, which does not support "CE actively hurts on personal email" and is mild evidence against it. It does not refute F-002 outright: F-002's evidence compares `full` vs `bm25_splade`, which differ in the dense leg as well as the CE, and covers CE *selection* plus ordering rather than ordering alone. Treat the direction on email as **open**, not settled. Full measurement and method: tempdoc 802.
+- **Adjacent datapoint (2026-08-19, F-052):** a WEAKER CE (MiniLM) lowers email hybrid by −0.0455 under current defaults — CE *model quality* clearly matters on email (refuting F-001), which is a different question from CE on/off. The on/off direction on email stays open pending its own delivered-rank A/B; note F-052's contaminated-run side-evidence corroborated 802's negative ordering term on LEGAL (dropping the CE on 51% of legal queries raised nDCG +0.047).
 
 ### F-003: BM25 dominates on entity-heavy personal content
 
@@ -2218,13 +2383,20 @@ above)*
 - **Evidence:** tempdoc 309 §39, FlagEmbedding issue #987
 - **Conditions/caveats:** May be fixed in future ONNX Runtime releases.
 
-### F-006: CE model upgrade irrelevant when retrieval is strong (generalized)
+### F-006: CE model upgrade irrelevant when retrieval is strong (generalized) — REFUTED (2026-08-19, F-052)
 
+- **REFUTED (2026-08-19):** the swap ablation ran on the corrected delivered-rank harness
+  (F-052): the CE model swap moves every tested corpus, same direction — scifact −6.9%,
+  enron −5.7%, legal −23.4% (MiniLM vs incumbent, shared index, fusion bit-identical between
+  arms). The stated root cause ("retrieval strong enough that the CE is marginal") is dead: the
+  CE's contribution is not bounded by the `bm25_splade`→`full` gap because the delivered order
+  is the CE's, which the old metric deleted. Original text retained below as dated history.
 - **Answer:** GTE-ModernBERT (149M, 8192 tokens) produces identical nDCG@10 to MiniLM-L6-v2 (22.7M, 512 tokens) on ALL tested corpora: SciFact (-0.1%), CourtListener (-0.4%), MIRACL/de (+0.1%), EnronQA (-0.3%). All within noise.
 - **Evidence:** tempdoc 309 §41 (SciFact, CL-200, MIRACL/de), §43 (EnronQA)
 - **Conditions/caveats:** Generalizes F-001 beyond email. Root cause: BGE-M3 produces strong enough top-K rankings that CE reranking is marginal — the `bm25_splade` → `full` gap is only 1-4%, which is the maximum possible CE contribution regardless of CE model quality.
 - **⚠ Measurement caveat (2026-07-31, 800):** Inherits F-001's caveat, and more strongly — this finding generalizes "zero difference" across *all* corpora, which is the signature an apparatus produces when the CE's ordering channel is discarded on every corpus alike. The stated root cause (retrieval is strong enough to make CE marginal) is not established by these numbers: they cannot see the CE's ordering contribution at all. Independently, measurement on the **published** corpora (tempdoc 802, ir_measures, all five re-run) puts that contribution at **−0.0418 to +0.0184 nDCG@10** — larger than the 1–4% `bm25_splade`→`full` gap this finding cites as the CE's maximum possible contribution, and therefore not marginal. Treat as *unmeasured* pending a corrected re-run; tempdocs 800, 802. (An earlier version of this rider cited the 781-certification cells at ±0.06; those are certification corpora, not the published ones — the published figures above supersede them.)
 - **UPDATE (2026-08-14, 832):** default-config baselines are re-pinned on the corrected delivered-rank harness (release `832-rebaseline-2026-08-14`, cohort `32d6a0a0`); the generalization this finding makes (CE model swaps ≈ 0 across corpora) still awaits its own swap ablations on that basis and remains *unmeasured*.
+- **RESOLVED (2026-08-19):** those ablations ran — see F-052 and the refutation header above.
 
 ### F-007: Cross-language noise is minimal in mixed multilingual corpus
 
@@ -2352,6 +2524,14 @@ Design choices in the current production pipeline, with rationale.
 - **Rationale:** 8192-token context eliminates truncation damage on long docs. Neutral on all tested corpora (F-006). Low effort (model swap + config change).
 - **Evidence:** tempdoc 309 §41 (confirmed neutral on SciFact, CL-200, MIRACL/de, EnronQA)
 - **Revisit when:** settled. CE model is no longer a quality lever — gains come from retrieval (BGE-M3) and fusion (balanced weights).
+- **Rationale corrected (2026-08-19, F-052):** the CHOICE stands, re-validated decisively — the
+  incumbent beats the model it replaced by 5.7–23.4% nDCG@10 on the delivered-rank harness. But
+  the "CE model is no longer a quality lever" revisit line is retired: F-052 shows CE model
+  quality IS a first-order lever (the old neutrality was a harness artifact, F-001/F-006
+  refuted). Consequence: a *stronger* CE than the incumbent is now a legitimate open direction
+  (was closed by this decision's rationale) — subject to D-003 eligibility and the F-005-class
+  ONNX/GPU practicality screen; nobody has measured an upgrade candidate on the corrected
+  harness.
 
 ### D-002: Balanced CC weights (0.34/0.33/0.33) for BGE-M3
 
@@ -2368,15 +2548,17 @@ Design choices in the current production pipeline, with rationale.
 - **Closes:** FW-006 (stemming), Q-004 (locale-aware BM25 routing), per-language synonym programs — all **won't-do**. Leaves FW-002 (spell correction; index-term-based, no per-language dict) and language-agnostic levers (FW-008, recipe weights) open on their own merits.
 - **Revisit when:** a *measured large* monolingual gap appears that a uniform mechanism (a better single multilingual model, or a per-deployment model choice) cannot close — never an O(languages) program (581 §5).
 
-### D-004: Query-adaptive leg arbitration on the 2-way CC alpha — SHIPPED (default off)
+### D-004: Query-adaptive leg arbitration on the 2-way CC alpha — SHIPPED (default off; superseded 2026-06-24 → default ON, see status note)
 
+- **STATUS SUPERSEDED — default ON since 2026-06-24 (F-024 user decision; the heading's "default off" and the "Status" bullet below record the 2026-06-23 ship state, kept intact per annotate-don't-rewrite).** One day after this entry's default-off ship, tempdoc 636's grading pass flipped BOTH levers (leg-arbitration + recall-complete pool) to **default-on** by user decision, "accepting the real-email cost" — see F-024, including the combined-default numbers (needle +195%, enron −3.22%) and its open follow-up (pool-aware trigger tightening, "router Item-1"). Shipped code: `ResolvedConfigBuilder.java:1631` (`index.hybrid.leg_arbitration_enabled`, default `true`, "DEFAULT ON" comment) and `:1647` (`index.hybrid.leg_recall_complete_enabled`, default `true`); `docs/reference/configuration/environment-variables.md` records default true for both. **Every default-config baseline measured after 2026-06-24 — including the canonical release `832-rebaseline-2026-08-14` scorecard — is a both-levers-ON measurement.** The **Honest limitation** below stands as analysis (in isolation the lever regresses BM25-dominant corpora ~2–3%); the shipping decision accepted that cost. This note closes `obs:search-quality-register` item 1 (seen 5, first 2026-06-24): the drift was register-internal — code, env-var docs, tempdoc 636, and F-024 already agreed with each other. (Reconciled 2026-08-19.)
 - **Choice:** In the default 2-way `hybrid` path (`HybridSearchOps.executeHybrid` → `fuseWithCC`), make `ccAlpha`
   **per-query adaptive**: raise alpha toward dense (`max(ccAlpha, alphaDiverge)`) — down-weighting the lexical leg —
   **only when all three hold**: (a) dense clears a weak sanity floor (top ≥ 0.5), (b) the legs diverge (top-K
   doc-id Jaccard < 0.1), and (c) **BM25 is incoherent** (its own `top2/top1` ratio ≥ `bm25IncoherenceMin`, i.e. a
   flat top / no clear lexical winner). Condition (c) is the discriminator that protects BM25-dominant corpora
   (legal/email), where BM25 returns a *peaked* winner and is usually right. All signals are rank/ratio-based
-  (score-incomparability). Gated by `JUSTSEARCH_HYBRID_LEG_ARBITRATION_ENABLED` (**default false**) +
+  (score-incomparability). Gated by `JUSTSEARCH_HYBRID_LEG_ARBITRATION_ENABLED` (**default false** at the
+  2026-06-23 ship; **default true since 2026-06-24** — see status note above) +
   `…_ALPHA_DIVERGE` (0.7) + `…_BM25_INCOHERENCE_MIN` (0.9), all env-tunable.
 - **Status:** Shipped behind a **default-off** flag (tempdoc 636 §Review fix #2). A specialized, opt-in lever — see
   the honest limitation below. The concrete instance of the recipe-weight function 580 §10/§13 named; principle
@@ -2668,7 +2850,14 @@ above)*
   Interim agent-utility numbers from these corpora exist but every record is `comparable=False`
   (internal only, per 624 §M.8); the certified 5-seed run is the pending step, not a corpus question.
 
-### Q-018: Why does German semantic bridging collapse at 10⁴ docs (de-miracl 10k hybrid 0.043, union recall 0.40 → 0.10) on post-F-031/F-032 code, while EN legal/email stay in-band at the same scale?
+### Q-018: Why does German semantic bridging collapse at 10⁴ docs (de-miracl 10k hybrid 0.043, union recall 0.40 → 0.10) on post-F-031/F-032 code, while EN legal/email stay in-band at the same scale? → ANSWERED → F-051
+
+- **Disposition (2026-08-19, tempdoc 748 §G.3):** attribution complete — (c) task-shape dominant,
+  (a) German representation a measured secondary cause, (b) refuted on both members, (d)
+  eliminated, and the engine exonerated on headroom (leg-union at/above the offline exact-NN
+  ceiling on the rebuilt cells). See F-051 for the numbers and caveats. §G.3 was the last open
+  item; the German-specific residue (a) is revisitable only under D-003's rule — a measured large
+  monolingual gap that a uniform mechanism could close — never an O(languages) program.
 
 - **Question:** On the 707 DE member (real German Wikipedia distractor mass + fabricated v2 gold at
   hops=1, pure zero-lexical-overlap synonym descriptors), the semantic leg bridges at ~half CLERC

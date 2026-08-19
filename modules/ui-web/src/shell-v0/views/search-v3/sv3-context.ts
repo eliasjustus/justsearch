@@ -1,0 +1,337 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * The effective-context set for Search v3 (tempdoc 610, ported by 852 S2) — the PURE half.
+ *
+ * Tempdoc 610 gave the shipped window five acts over what the next prompt actually contains: rewind
+ * the context to a turn (the FLOOR), clear it, COMPACT everything above the floor into a summary,
+ * EDIT that summary, and hide a single message from the prompt while it stays in the transcript.
+ * All five are live backend endpoints behind five shared store functions
+ * (`state/conversationListStore.ts`), and this window imported none of them until now.
+ *
+ * What lives here is everything that can be decided without a DOM or a fetch: which turn a floor
+ * names, which turns are consequently out of context, which are excluded, what a turn's menu may
+ * offer, and the whole-prompt projection the shared context inspector renders. The window
+ * ({@link SearchV3View}) owns the writes and the reload; the regions render what this returns.
+ *
+ * TWO LAWS THIS MODULE ENFORCES, both inherited from 852 S1:
+ *
+ * 1. **Ids come from {@link sv3TurnMessageIds} and nowhere else.** A turn reports a message id only
+ *    when the CONVERSATION STORE minted it, so an affordance can never be pointed at an
+ *    agent-run-plane id no `{floorMessageId}` or `/messages/{id}/exclude` endpoint would accept. A
+ *    turn that names no store message therefore offers NO context affordance at all — the honest
+ *    null, not a control that fails when pressed.
+ * 2. **Message → turn resolution is BY ID** ({@link sv3TurnByMessageId}), never by position.
+ *    `/history` counts rows `/api/thread` never emits (locked placeholders, system messages), so a
+ *    floor resolved by index would attach to a neighbouring turn and look entirely plausible.
+ */
+import type { InspectorPhase, InspectorSegment, InspectorView } from '../../components/ContextInspectorPane.js';
+import {
+  sv3TurnByMessageId,
+  sv3TurnMessageIds,
+  type Sv3ContextUsage,
+  type Sv3SessionHistory,
+  type Sv3Turn,
+} from './sv3-sessions.js';
+import {
+  CONTEXT_INSPECTOR_CONVERSATION,
+  CONTEXT_INSPECTOR_SUMMARY,
+  CONTEXT_MENU_COMPACT,
+  CONTEXT_MENU_EXCLUDE,
+  CONTEXT_MENU_INCLUDE,
+  CONTEXT_MENU_RESET,
+  CONTEXT_INSPECTOR_DOCUMENTS,
+  CONTEXT_TURN_ASSISTANT,
+  CONTEXT_TURN_USER,
+} from './fixtures.js';
+
+/**
+ * The reader asked for a turn's context menu. The REGION announces the ask and hands over the
+ * anchor it alone knows (the trigger's own rect); the WINDOW opens the menu, because only the
+ * window holds the history the menu's entries are derived from — the same split
+ * `SV3_RUN_DECISION` already makes for a run prompt.
+ */
+export const SV3_CONTEXT_MENU = 'sv3-context-menu';
+
+/** The reader resolved a context act. Raised by the transcript's floor divider and the context bar. */
+export const SV3_CONTEXT_ACTION = 'sv3-context-action';
+
+export interface Sv3ContextMenuRequest {
+  readonly turnId: string;
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * The five acts of tempdoc 610 plus the three reads around them. `floor`/`compact`/`exclude`/
+ * `include` name a TURN; `restore`/`summary`/`include-all`/`inspect` are conversation-wide.
+ */
+export type Sv3ContextActionId =
+  | 'floor'
+  | 'compact'
+  | 'exclude'
+  | 'include'
+  | 'restore'
+  | 'summary'
+  | 'include-all'
+  | 'inspect';
+
+export interface Sv3ContextAction {
+  readonly action: Sv3ContextActionId;
+  /** The turn the act names, for the four per-turn acts. */
+  readonly turnId?: string;
+  /** The edited summary text, for `summary`. */
+  readonly text?: string;
+}
+
+/** What the effective context does with ONE turn — the whole per-turn render and menu input. */
+export interface Sv3TurnContext {
+  readonly turnId: string;
+  /**
+   * Every store-minted message this turn is made of, oldest first. EMPTY means the turn names none
+   * (a live turn, or an agent turn whose ids belong to the run plane) — and an empty list is what
+   * withholds every affordance below.
+   */
+  readonly messageIds: readonly string[];
+  /**
+   * Which message a floor or a compaction would name: the turn's QUESTION, so "reset to this turn"
+   * keeps the turn itself in context. A turn the record opened on a stored assistant row has no
+   * question to name and falls back to that row, which is still a store message the endpoint
+   * accepts; a turn with neither is `null` and offers nothing.
+   */
+  readonly floorMessageId: string | null;
+  /** This turn IS the floor — the divider renders above it. */
+  readonly isFloor: boolean;
+  /** Above the floor: still in the transcript, no longer in the prompt. */
+  readonly outOfContext: boolean;
+  /** The subset of {@link messageIds} the reader has individually hidden. */
+  readonly excludedIds: readonly string[];
+  /** At least one of this turn's messages is hidden from the prompt. */
+  readonly hasExcluded: boolean;
+}
+
+const EMPTY_IDS: readonly string[] = [];
+
+/** The ids one turn can address, oldest first (the question, then the answer). */
+const messageIdsOf = (turn: Sv3Turn): readonly string[] => {
+  const { userMsgId, assistantMsgId } = sv3TurnMessageIds(turn);
+  const ids: string[] = [];
+  if (userMsgId !== null) ids.push(userMsgId);
+  if (assistantMsgId !== null) ids.push(assistantMsgId);
+  return ids.length === 0 ? EMPTY_IDS : ids;
+};
+
+/**
+ * What the conversation's `/history` says about each turn on screen. `history === null` is "not
+ * told" and yields a frame with no floor and no exclusions — deliberately the same shape as a
+ * conversation that really has neither, because nothing is RENDERED for either and inventing a
+ * third visual state for "we have not asked yet" would say something the window does not know.
+ */
+export function projectSv3TurnContexts(
+  turns: readonly Sv3Turn[],
+  history: Sv3SessionHistory | null,
+): readonly Sv3TurnContext[] {
+  const floorMessage = history?.contextFloor ?? '';
+  const floorTurn = floorMessage === '' ? null : sv3TurnByMessageId(turns, floorMessage);
+  const floorIndex = floorTurn === null ? -1 : turns.indexOf(floorTurn);
+  const excluded = new Set(history?.excludedMessageIds ?? []);
+  return turns.map((turn, index) => {
+    const messageIds = messageIdsOf(turn);
+    const excludedIds = messageIds.filter((id) => excluded.has(id));
+    return {
+      turnId: turn.id,
+      messageIds,
+      // The question first, and the answer only when there is no question to name.
+      floorMessageId: messageIds[0] ?? null,
+      isFloor: floorIndex >= 0 && index === floorIndex,
+      outOfContext: floorIndex >= 0 && index < floorIndex,
+      excludedIds,
+      hasExcluded: excludedIds.length > 0,
+    };
+  });
+}
+
+export const sv3TurnContextFor = (
+  contexts: readonly Sv3TurnContext[],
+  turnId: string,
+): Sv3TurnContext | null => contexts.find((c) => c.turnId === turnId) ?? null;
+
+/** How many TURNS the reader has hidden something of — what the context bar counts. */
+export const sv3ExcludedTurnCount = (contexts: readonly Sv3TurnContext[]): number =>
+  contexts.filter((c) => c.hasExcluded).length;
+
+/** Every hidden message id in the conversation, for the bulk undo. */
+export const sv3ExcludedMessageIds = (contexts: readonly Sv3TurnContext[]): readonly string[] =>
+  contexts.flatMap((c) => c.excludedIds);
+
+/** One entry of a turn's context menu, before the shared menu primitive's own vocabulary is applied. */
+export interface Sv3ContextMenuItem {
+  readonly id: Sv3ContextActionId;
+  readonly label: string;
+  readonly enabled: boolean;
+}
+
+export interface Sv3ContextMenuInput {
+  /** A compaction is already running — a second one would race the first over the same floor. */
+  readonly compacting: boolean;
+  /** Something in this conversation is streaming; the context of a prompt in flight is not editable. */
+  readonly streaming: boolean;
+  /** The conversation's floor as `/history` reports it, or null. */
+  readonly contextFloor: string | null;
+  /** Whether that floor carries a compaction summary — a plain re-floor still CLEARS one. */
+  readonly hasSummary: boolean;
+}
+
+/**
+ * What a turn's ⋯ menu may offer. An EMPTY list is the honest null and the region renders no
+ * trigger at all: a turn whose messages the endpoints cannot address has nothing to offer, and a
+ * greyed-out menu of four impossible acts would be four lies in a row.
+ *
+ * `index > 0` gates compaction for the reference window's reason: there is nothing above the first
+ * turn to summarize.
+ */
+export function sv3ContextMenuItems(
+  contexts: readonly Sv3TurnContext[],
+  turnId: string,
+  input: Sv3ContextMenuInput,
+): readonly Sv3ContextMenuItem[] {
+  const index = contexts.findIndex((c) => c.turnId === turnId);
+  const context = index < 0 ? null : contexts[index];
+  if (context === null || context === undefined || context.messageIds.length === 0) return [];
+  if (input.streaming) return [];
+  const items: Sv3ContextMenuItem[] = [];
+  if (context.floorMessageId !== null) {
+    items.push({
+      id: 'floor',
+      label: CONTEXT_MENU_RESET,
+      // Already the floor AND carrying no summary ⇒ pressing it would change nothing. With a
+      // summary it still does: a plain rewind drops the summary the compaction attached.
+      enabled: input.contextFloor !== context.floorMessageId || input.hasSummary,
+    });
+    if (index > 0) {
+      items.push({ id: 'compact', label: CONTEXT_MENU_COMPACT, enabled: !input.compacting });
+    }
+  }
+  items.push(
+    context.hasExcluded
+      ? { id: 'include', label: CONTEXT_MENU_INCLUDE, enabled: true }
+      : { id: 'exclude', label: CONTEXT_MENU_EXCLUDE, enabled: true },
+  );
+  return items;
+}
+
+/**
+ * The `done` terminal's own report of the prompt it spent (tempdoc 610 §E.4). Read HERE rather than
+ * in the ask client's handler table so the shape is validated once, next to the meter that renders
+ * it; an absent or non-numeric occupancy is `null` — the meter is omitted rather than shown at 0%.
+ */
+export function readSv3ContextUsage(payload: unknown): Sv3ContextUsage | null {
+  const p = payload as
+    | {
+        promptTokens?: unknown;
+        contextBreakdown?: { system?: unknown; conversation?: unknown; retrieved?: unknown };
+      }
+    | null
+    | undefined;
+  if (p === null || p === undefined || typeof p.promptTokens !== 'number' || p.promptTokens <= 0) {
+    return null;
+  }
+  const b = p.contextBreakdown;
+  const breakdown =
+    b !== null &&
+    b !== undefined &&
+    typeof b.system === 'number' &&
+    typeof b.conversation === 'number' &&
+    typeof b.retrieved === 'number'
+      ? { system: b.system, conversation: b.conversation, retrieved: b.retrieved }
+      : null;
+  return { promptTokens: p.promptTokens, breakdown };
+}
+
+/**
+ * §L.1 — where a segment sits in the COMBINED prompt order. The head and the tail are attended to;
+ * the middle is where a model loses things, and a reader deciding what to compact deserves to know
+ * which of their turns is sitting there. The reference window's own thresholds.
+ */
+const positionOf = (index: number, total: number): 'strong' | 'weak' => {
+  if (total <= 4) return 'strong';
+  const head = Math.ceil(total * 0.25);
+  const tail = Math.floor(total * 0.75);
+  return index < head || index >= tail ? 'strong' : 'weak';
+};
+
+/**
+ * Tempdoc 610 §J/§K — the whole-prompt projection the SHARED inspector renders, computed POST-HOC
+ * from what is already on screen (no re-retrieval): the standing summary, the in-context turns, and
+ * the last in-context answer's retrieved sources, in the order the prompt assembles them.
+ *
+ * The floor and the exclusions are applied HERE, which is what makes the inspector agree with the
+ * transcript: a turn drawn as out-of-context or hidden is a turn the inspector does not list.
+ *
+ * Per-segment tokens are deliberately `null` — only the phase totals were ever estimated, and
+ * dividing an estimate across segments would manufacture precision the backend never reported.
+ */
+export function projectSv3ContextInspector(
+  turns: readonly Sv3Turn[],
+  contexts: readonly Sv3TurnContext[],
+  history: Sv3SessionHistory | null,
+  usage: Sv3ContextUsage | null,
+  contextWindow: number | null,
+): InspectorView {
+  const inContext = turns.filter((_turn, index) => {
+    const context = contexts[index];
+    if (context === undefined) return true;
+    return !context.outOfContext && !context.hasExcluded;
+  });
+  const ordered: Array<{ kind: 'turn' | 'source'; label: string; text: string }> = [];
+  const summary = history?.contextFloorSummary ?? '';
+  if (summary !== '') {
+    ordered.push({ kind: 'turn', label: CONTEXT_INSPECTOR_SUMMARY, text: summary });
+  }
+  for (const turn of inContext) {
+    if (turn.question !== '') {
+      ordered.push({ kind: 'turn', label: CONTEXT_TURN_USER, text: turn.question });
+    }
+    if (turn.answer !== '') {
+      ordered.push({ kind: 'turn', label: CONTEXT_TURN_ASSISTANT, text: turn.answer });
+    }
+  }
+  const lastWithSources = [...inContext].reverse().find((t) => (t.evidence?.sources.length ?? 0) > 0);
+  for (const source of lastWithSources?.evidence?.sources ?? []) {
+    ordered.push({
+      kind: 'source',
+      label: source.headingText === '' ? source.parentDocId : source.headingText,
+      text: source.excerpt,
+    });
+  }
+  const conversation: InspectorSegment[] = [];
+  const documents: InspectorSegment[] = [];
+  ordered.forEach((entry, index) => {
+    const segment: InspectorSegment = {
+      label: entry.label,
+      text: entry.text,
+      tokens: null,
+      position: positionOf(index, ordered.length),
+    };
+    if (entry.kind === 'source') documents.push(segment);
+    else conversation.push(segment);
+  });
+  const breakdown = usage?.breakdown ?? null;
+  const phases: InspectorPhase[] = [
+    {
+      name: CONTEXT_INSPECTOR_CONVERSATION,
+      tokens: breakdown?.conversation ?? null,
+      segments: conversation,
+    },
+    {
+      name: CONTEXT_INSPECTOR_DOCUMENTS,
+      tokens: breakdown?.retrieved ?? null,
+      segments: documents,
+    },
+  ];
+  return {
+    systemTokens: breakdown?.system ?? null,
+    phases,
+    totalTokens: usage?.promptTokens ?? null,
+    windowTokens: contextWindow,
+  };
+}

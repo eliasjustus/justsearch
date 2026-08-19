@@ -40,4 +40,56 @@ class CalibrationConstantsTest {
             + " 0.40 gate (cos=-0.2), i.e. 1/3.4 ~= 0.294 (tempdoc 702). Do not replace with a"
             + " re-derived or eyeballed value.");
   }
+
+  // ---- Fallback-default drift pins ----
+  //
+  // HybridSearchOps's DEFAULT_* constants are fallback values used only when
+  // session.resolvedConfig is null (the test-mode RuntimeSession(IndexSchema) constructor path).
+  // Each one claims (HybridSearchOps.java header comment) to mirror a ResolvedConfigBuilder
+  // documented default. Pin each pair here so a future edit to either side is caught instead of
+  // silently drifting (this test previously covered only 2 of the 8 constants; the other 6 were
+  // unpinned, which is how DEFAULT_VECTOR_ONLY_CAP_LOW_SIGNAL and
+  // DEFAULT_VECTOR_RRF_WEIGHT_LOW_SIGNAL drifted from the builder undetected).
+
+  @Test
+  void defaultCandidateLimitMaxMatchesResolvedConfigBuilder() {
+    // ResolvedConfigBuilder: resolveInt("index.hybrid.candidate_limit_max", 100)
+    assertEquals(100, HybridSearchOps.DEFAULT_CANDIDATE_LIMIT_MAX);
+  }
+
+  @Test
+  void defaultTextCandidateMultiplierMatchesResolvedConfigBuilder() {
+    // ResolvedConfigBuilder: resolveInt("index.hybrid.text_candidate_multiplier", 10)
+    assertEquals(10, HybridSearchOps.DEFAULT_TEXT_CANDIDATE_MULTIPLIER);
+  }
+
+  @Test
+  void defaultVectorCandidateMultiplierMatchesResolvedConfigBuilder() {
+    // ResolvedConfigBuilder: resolveInt("index.hybrid.vector_candidate_multiplier", 10)
+    assertEquals(10, HybridSearchOps.DEFAULT_VECTOR_CANDIDATE_MULTIPLIER);
+  }
+
+  @Test
+  void defaultVectorRrfWeightMatchesResolvedConfigBuilder() {
+    // ResolvedConfigBuilder: resolveDouble("index.hybrid.vector_rrf_weight", 0.75)
+    assertEquals(0.75, HybridSearchOps.DEFAULT_VECTOR_RRF_WEIGHT, 1e-9);
+  }
+
+  @Test
+  void defaultVectorSkipMinCharsMatchesResolvedConfigBuilder() {
+    // ResolvedConfigBuilder: resolveInt("index.hybrid.vector_skip_min_chars", 4)
+    assertEquals(4, HybridSearchOps.DEFAULT_VECTOR_SKIP_MIN_CHARS);
+  }
+
+  @Test
+  void defaultVectorOnlyCapLowSignalMatchesResolvedConfigBuilder() {
+    // ResolvedConfigBuilder: resolveInt("index.hybrid.vector_only_cap_low_signal", 3)
+    assertEquals(3, HybridSearchOps.DEFAULT_VECTOR_ONLY_CAP_LOW_SIGNAL);
+  }
+
+  @Test
+  void defaultVectorRrfWeightLowSignalMatchesResolvedConfigBuilder() {
+    // ResolvedConfigBuilder: resolveDouble("index.hybrid.vector_rrf_weight_low_signal", 0.25)
+    assertEquals(0.25, HybridSearchOps.DEFAULT_VECTOR_RRF_WEIGHT_LOW_SIGNAL, 1e-9);
+  }
 }

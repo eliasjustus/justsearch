@@ -45,6 +45,7 @@ import type { Citation } from '../../components/chat/MarkdownBlock.js';
 // a running turn's live feed are the same three shapes, so the content surface has ONE renderer for
 // both and a settled run cannot be drawn by a second one (tempdoc 822 Phase F6 / inventory D1).
 import type { Sv3RunFeedItem } from './sv3-run.js';
+import type { ReasoningBlock } from '../../controllers/ReasoningController.js';
 
 /**
  * What one answer stood on, as ONE record (tempdoc 822 Phase F4). Registered in
@@ -82,17 +83,52 @@ export type Sv3TurnKind = 'ask' | 'agent';
 
 /**
  * One block of the model's thinking, as the SHARED `ReasoningController` finalized it (tempdoc 822
- * Phase F7; inventory C9). Structural rather than the controller's own exported interface, so this
- * module stays free of the controller — the shape is `controllers/ReasoningController.ts:2-5`.
+ * Phase F7; inventory C9). Tempdoc 848 §2.5 — an ALIAS of the controller's own `ReasoningBlock`, not
+ * a second declaration: this module's comment already admitted its shape was a copy, and the copy had
+ * already drifted (it declared both fields `readonly` where the controller's did not — the alias
+ * closes that by making the controller's fields `readonly` too, so the one shape is immutable at both
+ * ends). A type-only import keeps the original decoupling intent (no runtime edge to a controller
+ * module). Now that the same shape is also what the RECORD carries, one drifting copy would be one
+ * too many.
  */
-export interface Sv3TurnReasoning {
-  readonly text: string;
-  readonly durationMs: number;
-}
+export type Sv3TurnReasoning = ReasoningBlock;
 
 /** One exchange: what was asked, and what came back. */
 export interface Sv3Turn {
+  /**
+   * The turn's STABLE handle, minted once when the turn is opened and never rewritten. Every piece
+   * of UI state about a turn is keyed on it — `Sv3Main`'s `expandedSources` and `copiedTurnId`, the
+   * live run's `turnId`, the transcript's aria ids — so a merge that swapped it would leave that
+   * state pointing at a turn that no longer exists, and the write would silently no-op rather than
+   * fail (tempdoc 847 §1.6b).
+   */
   readonly id: string;
+  /**
+   * Which turn of the canonical record this one IS, once the record has spoken for it (tempdoc 847
+   * §2.4.3). `null` until then — a turn dispatched locally exists before the record knows of it.
+   * This is the key {@link applySv3Record} reconciles on: matching by array position alone
+   * mis-attributed one turn's evidence, status and duration to another on any length skew.
+   */
+  readonly recordId: string | null;
+  /**
+   * The `ConversationStore` id of the turn's TERMINAL assistant message (tempdoc 852 S1), or `null`
+   * while the record has not spoken for this turn. {@link recordId} names the turn's USER message —
+   * the same id `?fromMsgId=`, `{floorMessageId}` and `…/messages/{id}/exclude` key on — and this
+   * names the other half of the exchange, which those endpoints address just as often.
+   *
+   * LAST-WINS on a multi-message turn, the same rule {@link evidence} follows and for the same
+   * reason: the terminal assistant message is the answer, and an interim one is not what a floor or
+   * an exclusion is being set against.
+   */
+  readonly assistantRecordId: string | null;
+  /**
+   * The record opened this turn on a USER message (tempdoc 852 S1). `false` until the record has
+   * spoken for the turn, and `false` for a turn the record opened on something else — an agent run
+   * whose prompt was never recorded starts on a tool call or a search event, and that item's id is
+   * {@link recordId} without being anybody's message. It is the provenance half of
+   * {@link sv3TurnMessageIds}: the id alone cannot say which plane of the thread it came from.
+   */
+  readonly recordOpenedByUser: boolean;
   readonly kind: Sv3TurnKind;
   readonly question: string;
   /** Accumulated answer text. Whatever streamed before a halt is KEPT — it was really received. */
@@ -149,6 +185,67 @@ export interface Sv3Turn {
   readonly modelLabel: string | null;
 }
 
+/**
+ * What `GET /api/chat/conversations/{id}/history` knows about a conversation that
+ * `GET /api/thread/{id}` does not (tempdoc 852 §2.3c). The shipped window reads BOTH records at
+ * adjacent lines (`views/UnifiedChatView.ts:2048-2049`); this window read only the thread, so the
+ * branch lineage, the effective-context floor and the two exclusion ledgers were simply not on the
+ * wire it listened to. Every field here is one the thread endpoint structurally cannot carry —
+ * `InteractionThreadController` answers `{conversationId, events[], lifecycles[]}` and nothing else.
+ *
+ * A STRUCTURAL type, the same construction {@link Sv3StoreConversation} uses for the conversation
+ * store's rows: this module stays pure and free of the store, and a test can hand it a history
+ * without standing one up. The fields mirror `state/conversationListStore.ts`'s
+ * `ResumedConversation` (`:469-499`), which is the FE authority for the shape.
+ *
+ * `messages` is DELIBERATELY absent. `/history` carries a transcript too, and taking it would give
+ * this window a second answer to "what happened in this conversation" — the canonical record
+ * ({@link applySv3Record}) is the one authority for that, and a companion load is not a licence to
+ * fork it.
+ */
+export interface Sv3SessionHistory {
+  /** This conversation is a BRANCH of that one (slice 513), or undefined when it is a root. */
+  readonly parentSessionId?: string;
+  /** The last message inherited from the parent — everything up to and including it was prepended. */
+  readonly branchPointMessageId?: string;
+  /** The parent's opening question, so a branch banner can name it without a second roundtrip. */
+  readonly parentFirstUserMessage?: string;
+  /** The effective-context floor's message id (tempdoc 610 Phase C); undefined = no floor. */
+  readonly contextFloor?: string;
+  /** The compaction summary attached to that floor (Phase D); undefined for a plain rewind. */
+  readonly contextFloorSummary?: string;
+  /** Message ids the reader dropped from the next prompt (§E.3) — still displayed, not sent. */
+  readonly excludedMessageIds?: readonly string[];
+  /** Retrieved-source ids the reader hid from retrieval (§J.3); the Worker drops those chunks. */
+  readonly excludedSourceIds?: readonly string[];
+  /**
+   * The conversation store answered 423 — encrypted and LOCKED (tempdoc 629). The window already
+   * derives its own lock state from observed status; this is the load's own report of the same
+   * condition, which is why it is carried rather than folded into that flag here.
+   */
+  readonly locked?: boolean;
+}
+
+/**
+ * How full the model's context window was on this conversation's LAST completed turn (tempdoc 610
+ * §E.4 / §I.2, ported in 852 S2). Reported by the dispatch's own `done` payload and kept per
+ * CONVERSATION, because that is what it describes: a meter carried on the window would follow the
+ * reader into a conversation whose prompt it never measured.
+ *
+ * `breakdown` is the per-phase attribution and is an ESTIMATE by the backend's own account
+ * (`promptTokens` is the authoritative total); `null` when the turn reported none.
+ */
+export interface Sv3ContextUsage {
+  /** The real occupancy of the last prompt, in tokens. */
+  readonly promptTokens: number;
+  /** The estimated split, or null when the terminal carried none. */
+  readonly breakdown: {
+    readonly system: number;
+    readonly conversation: number;
+    readonly retrieved: number;
+  } | null;
+}
+
 /** One conversation in this window: what it was opened with, and every turn it has taken. */
 export interface Sv3Session {
   readonly id: string;
@@ -186,6 +283,19 @@ export interface Sv3Session {
   readonly renamed: boolean;
   /** Oldest FIRST — the transcript's render order. */
   readonly turns: readonly Sv3Turn[];
+  /**
+   * What the `/history` companion load reported for this conversation (tempdoc 852 S1), or `null`
+   * while it has not been asked. `null` is "not told", not "no floor and no branch": a conversation
+   * whose history has never been loaded knows nothing about its own lineage, and a reader of this
+   * field must be able to tell that from a conversation that really is a root with no floor.
+   */
+  readonly history: Sv3SessionHistory | null;
+  /**
+   * What this conversation's last completed turn reported about its own prompt occupancy, or `null`
+   * while it has reported none (tempdoc 852 S2). `null` is "not measured", not "empty": the meter is
+   * omitted rather than shown at 0%, which is the same rule {@link Sv3SessionHistory} follows.
+   */
+  readonly contextUsage: Sv3ContextUsage | null;
   readonly createdAt: number;
   /** When the session last submitted; the resting row's timestamp. */
   readonly updatedAt: number;
@@ -223,6 +333,9 @@ const openTurn = (
   kind: Sv3TurnKind,
 ): Sv3Turn => ({
   id: turnIdFor(sessionId, index),
+  recordId: null,
+  assistantRecordId: null,
+  recordOpenedByUser: false,
   kind,
   question,
   answer: '',
@@ -259,6 +372,8 @@ function openSession(
     title,
     renamed: false,
     turns: [openTurn(id, 0, title, now, kind)],
+    history: null,
+    contextUsage: null,
     createdAt: now,
     updatedAt: now,
     pinned: false,
@@ -591,6 +706,8 @@ export function mergeStoreConversations(
       // auto-titled over the name the reader had chosen.
       renamed: c.titleSource === 'user',
       turns: [],
+      history: null,
+      contextUsage: null,
       createdAt: c.createdAt,
       updatedAt: c.lastActiveAt,
       pinned: false,
@@ -618,6 +735,39 @@ function titleFor(row: Sv3StoreConversation, current: string): string {
 }
 
 /**
+ * Reconcile ONE turn's live evidence with the record's (tempdoc 847 F-12).
+ *
+ * The rule this replaces was `prior.evidence ?? recorded.evidence`, and its intent was rule 2 below:
+ * a refresh must never blank a panel the live turn filled. But `??` only asks whether the live turn
+ * has an evidence OBJECT, and the live arm publishes one the moment `rag.meta` names a retrieval
+ * mode — before a single source or mark exists. So an object holding empty arrays shadowed the
+ * record's complete evidence, and it did so PERMANENTLY: the post-`done` refresh is the repair, and
+ * it was thrown away every time it arrived, for the session's whole lifetime.
+ *
+ * The fix keeps the intent and drops the proxy. Each field asks the question the `??` was standing
+ * in for — *did the live turn actually observe this?* — so what the turn watched still wins, and
+ * what it never saw is taken from the record instead of being asserted as empty. The fields are
+ * reconciled INDEPENDENTLY because they are independently observable: a turn whose stream carried
+ * sources but whose citation-matches never arrived keeps its sources and gains the record's marks.
+ *
+ * The two ends stay exactly as they were: a record with no evidence cannot overwrite a live turn's
+ * (rule 2), and a turn that observed nothing takes the record's whole record (the cold-load path).
+ */
+function reconcileEvidence(
+  prior: Sv3TurnEvidence | null,
+  recorded: Sv3TurnEvidence | null,
+): Sv3TurnEvidence | null {
+  if (recorded === null) return prior;
+  if (prior === null) return recorded;
+  return {
+    sources: prior.sources.length > 0 ? prior.sources : recorded.sources,
+    matches: prior.matches.length > 0 ? prior.matches : recorded.matches,
+    marks: prior.marks.length > 0 ? prior.marks : recorded.marks,
+    retrievalMode: prior.retrievalMode !== '' ? prior.retrievalMode : recorded.retrievalMode,
+  };
+}
+
+/**
  * The canonical thread record, projected onto a conversation's turns (tempdoc 822 Phase F6;
  * inventory D1 / tempdoc 561 P-A: *the window is not the authority*).
  *
@@ -631,12 +781,27 @@ function titleFor(row: Sv3StoreConversation, current: string): string {
  *  1. **Touch a STREAMING turn.** The live feed is the authority for the in-flight run and for
  *     nothing else (F2's activeTurnId discipline); a turn still streaming keeps its local id, so the
  *     run's `turnId` stays valid across a refresh, and yields to the record once it settles.
- *  2. **Blank the evidence.** F4's citation marks are resolved from the live stream by the shared
- *     `claimsToCitations`; the record does not carry that resolution, so a refresh keeps whatever the
- *     turn already stood on rather than emptying the panel beside it.
+ *  2. **Blank the evidence.** The record DOES carry the answer's sources and matches now (tempdoc
+ *     847 §2.4, projected by `sv3-record.ts`), but a live turn watched the stream and can hold what
+ *     the record has not caught up to, so what the turn already stood on wins over what the record
+ *     reports — and a refresh never empties the panel beside it. What the turn did NOT observe is
+ *     taken from the record rather than asserted as empty: see {@link reconcileEvidence}, which is
+ *     where the difference between "the live turn holds this" and "the live turn holds an evidence
+ *     object" is made (847 F-12).
  *  3. **Re-word a HALT.** "The reader pressed Stop" is not in the record — to the backend a halted
  *     answer just ended. Overwriting it with `complete` would call the reader's own decision a
  *     success (the four-terminal rule {@link Sv3TurnStatus} exists to keep them distinct).
+ *  4. **Re-id a turn.** (Tempdoc 847 §1.6b.) The record's id is stamped onto {@link Sv3Turn.recordId}
+ *     and the turn's own `id` is left alone, because every piece of UI state about a turn is keyed
+ *     on that id.
+ *
+ * MATCHING IS BY IDENTITY, not by position (847 §2.4.3): a record turn reconciles with the local
+ * turn already bearing its `recordId`, and only a turn NOT yet reconciled to anything falls back to
+ * ordered position — stamping `recordId` as it does, so the fallback is used at most once per turn
+ * and a later refresh is pure identity. A position fallback never lands on a local turn that already
+ * carries a DIFFERENT `recordId`: that turn is another record turn's, and any length skew (a turn
+ * the record has not caught up to, an interleaved agent turn) would otherwise attribute one turn's
+ * evidence, status and duration to another.
  *
  * An EMPTY record leaves the list untouched: `fetchUnifiedThread` returns empty on failure by
  * contract (tempdoc 727 F-8), so "the record said nothing" must never be read as "there is nothing".
@@ -649,13 +814,56 @@ export function applySv3Record(
   const session = sessionById(list, sessionId);
   if (session === null || recordTurns.length === 0) return list;
   const local = session.turns;
-  const merged: Sv3Turn[] = recordTurns.map((recorded, index) => {
-    const prior = local[index];
+  const localByRecordId = new Map<string, number>();
+  local.forEach((turn, index) => {
+    if (turn.recordId !== null && !localByRecordId.has(turn.recordId)) {
+      localByRecordId.set(turn.recordId, index);
+    }
+  });
+  const claimed = new Set<number>();
+  const pairing = new Map<number, number>();
+  recordTurns.forEach((recorded, recordIndex) => {
+    const recordId = recorded.recordId ?? recorded.id;
+    const localIndex = localByRecordId.get(recordId);
+    if (localIndex !== undefined && !claimed.has(localIndex)) {
+      pairing.set(recordIndex, localIndex);
+      claimed.add(localIndex);
+    }
+  });
+  let cursor = 0;
+  recordTurns.forEach((_, recordIndex) => {
+    if (pairing.has(recordIndex)) return;
+    while (
+      cursor < local.length &&
+      (claimed.has(cursor) || local[cursor]?.recordId != null)
+    ) {
+      cursor++;
+    }
+    if (cursor >= local.length) return;
+    pairing.set(recordIndex, cursor);
+    claimed.add(cursor);
+    cursor++;
+  });
+  const merged: Sv3Turn[] = [];
+  // A turn the record has not been told about yet — the in-flight one, or one dispatched while the
+  // fetch was in the air — is KEPT, in its own place relative to the turns around it. The record is
+  // authoritative for what it holds, never for what has not reached it, and never for the order of
+  // what it does not hold.
+  let emitted = 0;
+  const keepLocalsBefore = (limit: number): void => {
+    for (; emitted < limit; emitted++) {
+      const trailing = local[emitted];
+      if (trailing !== undefined && !claimed.has(emitted)) merged.push(trailing);
+    }
+  };
+  const reconcile = (recorded: Sv3Turn, prior: Sv3Turn | undefined): Sv3Turn => {
     if (prior === undefined) return recorded;
     if (prior.status === 'streaming') return prior;
     return {
       ...recorded,
-      evidence: prior.evidence ?? recorded.evidence,
+      id: prior.id,
+      recordId: recorded.recordId ?? recorded.id,
+      evidence: reconcileEvidence(prior.evidence, recorded.evidence),
       status: prior.status === 'halted' ? 'halted' : recorded.status,
       detail: prior.status === 'halted' ? prior.detail : recorded.detail,
       toolCalls: recorded.toolCalls > 0 ? recorded.toolCalls : prior.toolCalls,
@@ -669,18 +877,141 @@ export function applySv3Record(
       durationMs: prior.durationMs ?? recorded.durationMs,
       modelLabel: prior.modelLabel ?? recorded.modelLabel,
     };
+  };
+  recordTurns.forEach((recorded, recordIndex) => {
+    const localIndex = pairing.get(recordIndex);
+    if (localIndex !== undefined) {
+      keepLocalsBefore(localIndex);
+      // MONOTONE, never assigned: when the record's order and the local order disagree — a later
+      // record turn reconciling to an EARLIER local turn — rewinding the cursor would re-walk
+      // locals already emitted and append an unreconciled one a second time.
+      emitted = Math.max(emitted, localIndex + 1);
+    }
+    merged.push(reconcile(recorded, localIndex === undefined ? undefined : local[localIndex]));
   });
-  // A turn the record has not been told about yet — the in-flight one, or one dispatched while the
-  // fetch was in the air — is KEPT at the tail. The record is authoritative for what it holds, never
-  // for what has not reached it.
-  for (let index = recordTurns.length; index < local.length; index++) {
-    const trailing = local[index];
-    if (trailing !== undefined) merged.push(trailing);
-  }
+  keepLocalsBefore(local.length);
   return {
     ...list,
     sessions: list.sessions.map((s) => (s.id === sessionId ? { ...s, turns: merged } : s)),
   };
+}
+
+/**
+ * The `/history` companion load, recorded on the conversation it describes (tempdoc 852 S1). It
+ * touches NOTHING else: the transcript is {@link applySv3Record}'s, the title is the store's, and
+ * this reducer only parks the fields neither of them carries.
+ *
+ * A load for a conversation this window is not listing is dropped, the same rule every other reducer
+ * here follows — a record can only ever be written onto the session it names.
+ */
+export function applySv3History(
+  list: Sv3SessionList,
+  sessionId: string,
+  history: Sv3SessionHistory,
+): Sv3SessionList {
+  if (sessionById(list, sessionId) === null) return list;
+  return {
+    ...list,
+    sessions: list.sessions.map((s) => (s.id === sessionId ? { ...s, history } : s)),
+  };
+}
+
+/**
+ * What a terminal reported about the prompt it just spent (tempdoc 852 S2) — recorded on the
+ * conversation that spent it, never on the window, so claiming another conversation shows ITS
+ * occupancy or none at all rather than the last one the window happened to see.
+ */
+export function setSessionContextUsage(
+  list: Sv3SessionList,
+  sessionId: string,
+  contextUsage: Sv3ContextUsage,
+): Sv3SessionList {
+  if (sessionById(list, sessionId) === null) return list;
+  return {
+    ...list,
+    sessions: list.sessions.map((s) => (s.id === sessionId ? { ...s, contextUsage } : s)),
+  };
+}
+
+/**
+ * The two backend message ids one turn is made of (tempdoc 852 §2.3b) — the ONE answer to "which
+ * messages is this turn?", so branch, edit-retry, floor-setting and message-exclusion stop each
+ * inventing their own.
+ *
+ * **What is guaranteed:** a reported id is one the CONVERSATION STORE itself minted, and therefore
+ * one `?fromMsgId=`, `{floorMessageId}` and `POST …/messages/{id}/exclude` can address. `null` means
+ * this turn has no such message — an affordance that needs one is unavailable, which is a fact about
+ * the turn, not a gap in this function.
+ *
+ * **Why an ALLOWLIST of the store's own mints rather than a list of ids to reject.**
+ * `GET /api/thread/{id}` interleaves two planes (`InteractionThreadController.java:66-73`): the chat
+ * turns, which ARE store rows, and every agent run's events, projected read-time from
+ * `AgentRunStore` and stored as messages nowhere. The run plane mints ids of its own for
+ * user messages (`${runId}:user`, `AgentRunQueryService.java:346-350`), assistant messages
+ * (`${conversationId}:assistant:${stamp}`, `AgentInteractionMapper.java:69`), workflow node outputs
+ * and search events — and `chatTurn` has a fallback of its own for a row with no usable id
+ * (`${conversationId}:chat:${msg.hashCode()}`, `:260-262`). Enumerating those is a list that is one
+ * entry behind the next event kind someone adds. The store's mints are the closed set: a UUID from
+ * `FileConversationStore.enrichMessage` (`:213-219`) or the `idx-N` back-fill `loadHistory` applies
+ * on read (`:159-165`) so pre-513 messages stay branchable. Anything else is not a store row, and
+ * the honest answer for it is `null`. A new store mint would fail CLOSED here — an affordance
+ * unavailable, never one pointed at the wrong message.
+ */
+export interface Sv3TurnMessageIds {
+  /** The turn's USER message id — what `?fromMsgId=` and a branch point key on. */
+  readonly userMsgId: string | null;
+  /** The turn's terminal ASSISTANT message id — what a floor or an exclusion usually names. */
+  readonly assistantMsgId: string | null;
+}
+
+/**
+ * The two ids `FileConversationStore` mints, and nothing else (see {@link Sv3TurnMessageIds}).
+ * Anchored end to end: `${runId}:user` and `${conversationId}:assistant:${stamp}` both CONTAIN a
+ * store-shaped substring, and an unanchored test would admit them.
+ */
+const STORE_MINTED_MESSAGE_ID =
+  /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|idx-\d+)$/i;
+
+/**
+ * Is this an id the conversation store minted — i.e. one the message endpoints can address? Exported
+ * because `sv3-record.ts` applies the same test while projecting, so a turn never even carries a
+ * run-plane id in its assistant slot.
+ */
+export const isSv3StoreMessageId = (id: string | null | undefined): boolean =>
+  typeof id === 'string' && STORE_MINTED_MESSAGE_ID.test(id);
+
+export const sv3TurnMessageIds = (turn: Sv3Turn): Sv3TurnMessageIds => ({
+  // BOTH conditions, because either alone admits a run-plane id: the record opens a turn on whatever
+  // item comes first when no user message precedes it (`sv3-record.ts`), and the run plane mints user
+  // messages of its own.
+  userMsgId:
+    turn.recordOpenedByUser && isSv3StoreMessageId(turn.recordId) ? turn.recordId : null,
+  assistantMsgId: isSv3StoreMessageId(turn.assistantRecordId) ? turn.assistantRecordId : null,
+});
+
+/**
+ * Which turn a backend message id belongs to — the lookup every `/history` field needs, because
+ * every one of them (`contextFloor`, `branchPointMessageId`, `excludedMessageIds`) names a MESSAGE
+ * while the window renders TURNS.
+ *
+ * BY ID, never by position, and the two orders genuinely differ: a turn holds a user message and one
+ * or more assistant messages, so the nth message is not the nth turn, and `/history`'s array counts
+ * rows `/api/thread` never emits — `FileConversationStore.loadHistory` emits a `role:"locked"`
+ * placeholder for every sealed line (`:149-157`) and `chatTurn` returns `null` for every role that
+ * is not user/assistant (`:247-259`). Resolving a floor by index would silently attach it to a
+ * neighbouring turn, which looks entirely plausible on screen.
+ */
+export function sv3TurnByMessageId(
+  turns: readonly Sv3Turn[],
+  messageId: string,
+): Sv3Turn | null {
+  if (messageId === '') return null;
+  return (
+    turns.find((turn) => {
+      const ids = sv3TurnMessageIds(turn);
+      return ids.userMsgId === messageId || ids.assistantMsgId === messageId;
+    }) ?? null
+  );
 }
 
 /**

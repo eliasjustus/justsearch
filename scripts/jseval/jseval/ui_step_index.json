@@ -9,7 +9,8 @@
     "search-results", "search-results-rich", "snippets-expanded"
   ],
   "shell-v0/components/documentPane/DocumentPane.ts": [
-    "inspector-open", "citation-highlight"
+    "inspector-open", "citation-highlight",
+    "sv3-citation-selected", "sv3-citation-dropped"
   ],
   "shell-v0/views/SummarizeView.ts": [
     "streaming", "summarize-done", "qa-response"
@@ -17,10 +18,13 @@
   "shell-v0/components/chat/MarkdownBlock.ts": [
     "citation-highlight", "sv3-citation-selected"
   ],
-  "shell-v0/components/chat/CitationsPanel.ts": ["sv3-citation-selected"],
+  "shell-v0/components/chat/CitationsPanel.ts": ["sv3-citation-selected", "sv3-citation-dropped"],
   "shell-v0/state/selectedSource.ts": ["sv3-citation-selected", "citation-highlight"],
-  "shell-v0/views/search-v3/Sv3Main.ts": ["sv3-citation-selected"],
+  "shell-v0/views/search-v3/Sv3Main.ts": ["sv3-citation-selected", "sv3-citation-dropped"],
   "shell-v0/views/search-v3/sv3-tokens.css.ts": ["sv3-citation-selected"],
+  "shell-v0/views/search-v3/Sv3Pane.ts": ["sv3-citation-selected", "sv3-citation-dropped"],
+  "shell-v0/views/search-v3/SearchV3View.ts": ["sv3-citation-selected", "sv3-citation-dropped"],
+  "shell-v0/components/chat/evidenceProjection.ts": ["sv3-citation-selected", "sv3-citation-dropped"],
   "shell-v0/views/UnifiedChatView.ts": [
     "chat-mode", "qa-response", "chat-proportion",
     "chat-bands", "chat-bands-detailed", "chat-composer-small",
@@ -53,7 +57,13 @@
   "shell-v0/views/LibrarySurface.ts": ["library", "library-light", "skeleton-library", "library-enriching"],
   "shell-v0/state/folderStatus.ts": ["library-enriching"],
   "shell-v0/views/BrainSurface.ts": [
-    "ai-brain", "ai-brain-advanced", "ai-brain-light", "ai-brain-advanced-light"
+    "ai-brain", "ai-brain-advanced", "ai-brain-light", "ai-brain-advanced-light",
+    "ai-brain-components", "ai-brain-consent",
+    "ai-brain-components-light", "ai-brain-consent-light"
+  ],
+  "shell-v0/state/installComponents.ts": [
+    "ai-brain-components", "ai-brain-consent",
+    "ai-brain-components-light", "ai-brain-consent-light"
   ],
   "shell-v0/views/SettingsSurface.ts": [
     "settings", "settings-light",

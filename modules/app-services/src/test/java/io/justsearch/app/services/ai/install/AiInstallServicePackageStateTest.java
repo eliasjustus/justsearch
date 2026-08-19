@@ -28,6 +28,23 @@ final class AiInstallServicePackageStateTest {
     m.invoke(svc, args);
   }
 
+  /**
+   * Drives the bookkeeping-only completion decision this class pins (INS-005 and friends), via the
+   * explicit-injection overload with {@code diskTruth == null} — the same seam {@code
+   * AiInstallServiceCompletionTruthTest} drives deliberately. Tempdoc 840: before the registry
+   * relocation, {@code applyCompletionState()} (no-arg) reached this branch only because {@code
+   * ai/model-registry.v2.json} was absent from app-services' test classpath, so {@code
+   * recomputeCompletenessFromDiskBestEffort()} always failed closed to {@code null}. Now that the
+   * registry ships from {@code modules:configuration} and IS reachable here, the no-arg entry point
+   * would instead exercise the real disk-recompute path against these tests' synthetic package ids
+   * and an empty {@code @TempDir} — a different decision than the one this class is testing.
+   * Injecting {@code null} directly keeps these tests pinned to the bookkeeping-only property
+   * regardless of what else is on the classpath.
+   */
+  private static void applyCompletionStateBookkeepingOnly(AiInstallService svc) throws Exception {
+    invoke(svc, "applyCompletionState", new Class<?>[] {InstallCompleteness.class}, (Object) null);
+  }
+
   @Test
   void failedPackageStaysFailedAcrossLaterMultiFileTransitions() throws Exception {
     AiInstallService svc = new AiInstallService(null, null, null, null, tmp);
@@ -75,7 +92,7 @@ final class AiInstallServicePackageStateTest {
     }
     addPackage(status, "reranker-fp16", "failed");
 
-    invoke(svc, "applyCompletionState", new Class<?>[] {});
+    applyCompletionStateBookkeepingOnly(svc);
 
     assertEquals("completed", status.state);
     assertFalse(status.installedFully);
@@ -95,7 +112,7 @@ final class AiInstallServicePackageStateTest {
     addPackage(status, "embedding", "installed");
     addPackage(status, "reranker", "pending");
 
-    invoke(svc, "applyCompletionState", new Class<?>[] {});
+    applyCompletionStateBookkeepingOnly(svc);
 
     assertEquals("completed", status.state);
     assertFalse(
@@ -110,7 +127,7 @@ final class AiInstallServicePackageStateTest {
     addPackage(status, "embedding", "installed");
     addPackage(status, "reranker", "installed");
 
-    invoke(svc, "applyCompletionState", new Class<?>[] {});
+    applyCompletionStateBookkeepingOnly(svc);
 
     assertEquals("completed", status.state);
     assertTrue(status.installedFully);
@@ -126,7 +143,7 @@ final class AiInstallServicePackageStateTest {
     var chat = addPackage(status, "chat", "skipped");
     chat.label = "Chat model";
 
-    invoke(svc, "applyCompletionState", new Class<?>[] {});
+    applyCompletionStateBookkeepingOnly(svc);
 
     assertEquals("completed", status.state);
     assertFalse(status.installedFully);

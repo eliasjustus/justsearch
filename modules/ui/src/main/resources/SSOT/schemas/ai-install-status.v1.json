@@ -1,0 +1,183 @@
+{
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "type" : "object",
+  "properties" : {
+    "bytesPerSecond" : {
+      "type" : "number"
+    },
+    "cancelRequested" : {
+      "type" : "boolean"
+    },
+    "currentStage" : {
+      "type" : [ "string", "null" ]
+    },
+    "downloadProfile" : {
+      "type" : [ "string", "null" ]
+    },
+    "downloadedBytes" : {
+      "type" : "integer"
+    },
+    "errorCode" : {
+      "type" : [ "string", "null" ]
+    },
+    "installedFully" : {
+      "type" : "boolean"
+    },
+    "lastError" : {
+      "type" : [ "string", "null" ]
+    },
+    "message" : {
+      "type" : [ "string", "null" ]
+    },
+    "optionalGaps" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "fileName" : {
+            "type" : [ "string", "null" ]
+          },
+          "packageId" : {
+            "type" : [ "string", "null" ]
+          }
+        }
+      }
+    },
+    "packages" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "attempts" : {
+            "type" : "integer"
+          },
+          "bytesDownloaded" : {
+            "type" : "integer"
+          },
+          "bytesTotal" : {
+            "type" : "integer"
+          },
+          "declinable" : {
+            "type" : "boolean"
+          },
+          "declined" : {
+            "type" : "boolean"
+          },
+          "description" : {
+            "type" : [ "string", "null" ]
+          },
+          "error" : {
+            "type" : [ "string", "null" ]
+          },
+          "functionalStatus" : {
+            "type" : [ "string", "null" ]
+          },
+          "label" : {
+            "type" : [ "string", "null" ]
+          },
+          "necessity" : {
+            "type" : [ "string", "null" ]
+          },
+          "packageId" : {
+            "type" : [ "string", "null" ]
+          },
+          "resumed" : {
+            "type" : "boolean"
+          },
+          "skipReason" : {
+            "type" : [ "string", "null" ]
+          },
+          "stage" : {
+            "type" : [ "string", "null" ]
+          },
+          "state" : {
+            "type" : [ "string", "null" ]
+          },
+          "targetPath" : {
+            "type" : [ "string", "null" ]
+          },
+          "terminalReason" : {
+            "type" : [ "string", "null" ]
+          },
+          "tier" : {
+            "type" : [ "string", "null" ]
+          },
+          "url" : {
+            "type" : [ "string", "null" ]
+          }
+        }
+      }
+    },
+    "paused" : {
+      "type" : "boolean"
+    },
+    "pendingRegistryAdditions" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "string"
+      }
+    },
+    "phase" : {
+      "type" : [ "string", "null" ]
+    },
+    "readyCapabilities" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "string"
+      }
+    },
+    "remainingSeconds" : {
+      "type" : "integer"
+    },
+    "repairNeeded" : {
+      "type" : "boolean"
+    },
+    "resumableBytes" : {
+      "type" : "integer"
+    },
+    "stages" : {
+      "type" : [ "array", "null" ],
+      "items" : {
+        "type" : "object",
+        "properties" : {
+          "blockedReason" : {
+            "type" : [ "string", "null" ]
+          },
+          "capabilities" : {
+            "type" : [ "array", "null" ],
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "downloadedBytes" : {
+            "type" : "integer"
+          },
+          "label" : {
+            "type" : [ "string", "null" ]
+          },
+          "stage" : {
+            "type" : [ "string", "null" ]
+          },
+          "state" : {
+            "type" : [ "string", "null" ]
+          },
+          "totalBytes" : {
+            "type" : "integer"
+          }
+        }
+      }
+    },
+    "startedAtEpochMs" : {
+      "type" : "integer"
+    },
+    "state" : {
+      "type" : [ "string", "null" ]
+    },
+    "totalBytes" : {
+      "type" : "integer"
+    },
+    "updatedAtEpochMs" : {
+      "type" : "integer"
+    }
+  }
+}

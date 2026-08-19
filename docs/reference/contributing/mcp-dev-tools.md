@@ -136,9 +136,14 @@ Both `fetch_api_json` and `api_call` accept `jsonPath`, sharing one implementati
 | `/api/inference/reload` | POST |
 | `/api/worker/restart` | POST |
 | `/api/ai/install/status` | GET |
+| `/api/ai/install/manifest` | GET |
+| `/api/ai/install/plan-preview` | GET |
 | `/api/ai/install/start` | POST |
 | `/api/ai/install/cancel` | POST |
 | `/api/ai/install/repair` | POST |
+| `/api/ai/install/pause` | POST |
+| `/api/ai/install/resume` | POST |
+| `/api/ai/install/packages/{packageId}/decline` | POST, DELETE |
 | `/api/ai/runtime/status` | GET |
 | `/api/ai/runtime/activate` | POST |
 | `/api/ai/runtime/deactivate` | POST |

@@ -213,6 +213,16 @@ import {
   type AnswerFrame,
   type CoverageHonesty,
 } from '../components/chat/evidenceProjection.js';
+// Tempdoc 847 S1 — the ONE `claimMatches` envelope reader. The record→claims/matches conversion and
+// the producer gate over it used to be private methods here, which made this view the only place the
+// gate existed; search v3 needs the same conversion, so it moved to the shared authority both paths
+// read (§2.3). This view delegates and derives nothing of its own from the envelope.
+import {
+  admittedMatches,
+  claimsFromRecord,
+  matchesFromRecord,
+  readScorer,
+} from '../components/chat/recordEvidence.js';
 import type { CitationSelectDetail, SourceCoverage } from '../components/chat/citationTypes.js';
 // Tempdoc 561 surface tier: the one window is the view for EVERY interaction shape.
 import { registerViewFactory, getViewFactory } from '../router/viewFactoryRegistry.js';
@@ -299,7 +309,7 @@ import {
   clearLastViewedConversation,
   readLastViewedConversation,
 } from '../controllers/lastViewedConversation.js';
-import { ReasoningController } from '../controllers/ReasoningController.js';
+import { ReasoningController, reasoningBlocksFromRecord } from '../controllers/ReasoningController.js';
 // Tempdoc 565 §17 — the ONE run-step presentation projection + the ONE run-node primitive. The spine
 // node and the trace node compose the descriptor (tone + glyph + label) instead of hand-authoring a
 // status dot (no `statusAccent` here any more — that authority is consumed only inside the projector).
@@ -383,25 +393,6 @@ function rungLabel(base: string, active: boolean): string {
   return active ? `${base} (current mode)` : base;
 }
 
-/**
- * Tempdoc 822 §3b — read a persisted match's source position. Records written before the rename
- * carry the key `chunkIndex`, and their stored VALUES were already the correct positional numbers:
- * `claimMatches` is persisted from `StreamingCitationMatcher.onDone`'s authoritative
- * `documents.matchCitations` call, never from the streaming deltas whose values were wrong. So this
- * is a reader for user data under its old key, not a compatibility shim for wrong values — and no
- * migration is needed. `-1` = absent.
- */
-function readSourceIndex(m: Record<string, unknown>): number {
-  if (typeof m.sourceIndex === 'number') return m.sourceIndex;
-  if (typeof m.chunkIndex === 'number') return m.chunkIndex;
-  return -1;
-}
-
-/**
- * Tempdoc 836 §4 — read the producer off a live payload or a persisted `claimMatches` record.
- * `null` = the record predates the field, which {@link isVerifiedProducer} admits deliberately (it
- * is an absent fact about an old record, not an unknown producer today).
- */
 /** Tempdoc 836 S2S3-A.1 — read the per-source examination facts off a payload or a record. */
 function readSourceCoverage(payload: unknown): SourceCoverage[] {
   if (!payload || typeof payload !== 'object') return [];
@@ -424,14 +415,6 @@ function readSourceCoverage(payload: unknown): SourceCoverage[] {
     }
   }
   return out;
-}
-
-function readScorer(payload: unknown): string | null {
-  if (payload && typeof payload === 'object') {
-    const s = (payload as { scorer?: unknown }).scorer;
-    if (typeof s === 'string' && s !== '') return s;
-  }
-  return null;
 }
 
 export class UnifiedChatView extends JfElement {
@@ -3620,7 +3603,7 @@ export class UnifiedChatView extends JfElement {
    * sources into the SAME `Citation` shape the agent path uses, so both render through the one
    * `MarkdownBlock` weave. Mirrors the (now-retired) `cite-ref-click` source-index lookup, so RAG marks
    * gain the deep-link + cross-surface selection they previously lacked. Ungrounded sentences
-   * (`sourceRefs` empty) get no mark — they render as neutral prose (the medium-appropriate take on the
+   * (`verifiedRefs` empty) get no mark — they render as neutral prose (the medium-appropriate take on the
    * flat-text dimming). The matcher already filtered to grounded sentences via the §15.A cutoff.
    */
   private resolveClaimCitations(
@@ -5213,6 +5196,16 @@ export class UnifiedChatView extends JfElement {
                 answer. Exactly one of the two ever renders for a given turn — the ONE authority, split
                 by call site, never a second simultaneous line. */ ''}
             ${frame === 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt) : nothing}
+            ${/* Tempdoc 848 §2.6 — the agent run's thinking, folded from the run journal onto this
+                answer event by `AgentInteractionMapper.fromRunEvents`. Same position as the chat
+                path: before the answer body. */ ''}
+            ${reasoningBlocksFromRecord(it.attributes.reasoning).map(
+              (block) => html`<jf-reasoning-block
+                data-testid="chat-turn-reasoning"
+                .text=${block.text}
+                .durationMs=${block.durationMs}
+              ></jf-reasoning-block>`,
+            )}
             <jf-markdown-block .text=${it.content} .citations=${marks} frame=${frame}></jf-markdown-block>
             ${frame !== 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt) : nothing}
             ${this.renderGroundingBadge(
@@ -5255,6 +5248,7 @@ export class UnifiedChatView extends JfElement {
           idx >= 0
             ? this.thread[idx]!
             : { role: 'assistant', content: it.content, shapeId, id: it.id };
+        const recordReasoning = reasoningBlocksFromRecord(it.attributes.reasoning);
         const enriched: ThreadMessage = {
           ...base,
           // Tempdoc 621 Phase 4-full — the turn's shape on the record path is the window's CURRENT shape
@@ -5267,8 +5261,12 @@ export class UnifiedChatView extends JfElement {
           // re-render as markdown. Extract carries no per-turn flag on the record, so derive it from the mode.
           isExtract: shapeId === 'core.extract',
           sources: ragSources,
-          claims: this.claimsFromRecord(it.attributes.claimMatches),
-          citations: this.matchesFromRecord(it.attributes.claimMatches),
+          claims: claimsFromRecord(it.attributes.claimMatches),
+          citations: matchesFromRecord(it.attributes.claimMatches),
+          // Tempdoc 848 §2.6 — record-first, live fallback: the record is the authority for a
+          // reloaded turn (where `base` carries none), and in-session the `attributes.live`
+          // short-circuit above means this path is effectively reload-only.
+          reasoning: recordReasoning.length > 0 ? recordReasoning : base.reasoning,
           // Tempdoc 836 S2S3-A.6f — the RELOADED turn reads its coverage facts from the same
           // persisted payload the live turn emitted, so the two render paths cannot disagree about
           // whether verification ran.
@@ -5285,7 +5283,19 @@ export class UnifiedChatView extends JfElement {
       case 'error': {
         // Tempdoc 565 §12 Phase 2 — carry the error code (live + record render identically now).
         const code = typeof it.attributes.errorCode === 'string' ? it.attributes.errorCode : '';
-        return html`<div class="error">${code ? html`[${code}] ` : nothing}${it.content}</div>`;
+        // Tempdoc 848 §2.4 (D-7) — a run that failed or was halted still THOUGHT, and the agent fold
+        // attaches those trailing blocks to its terminal ERROR event. Rendering them here is what
+        // makes the record's honesty visible: what the model worked out before it broke is the most
+        // useful thing on a failed turn, and dropping it would leave the fold writing to nothing.
+        const failedReasoning = reasoningBlocksFromRecord(it.attributes.reasoning);
+        return html`<div class="error">${code ? html`[${code}] ` : nothing}${it.content}</div>
+          ${failedReasoning.map(
+            (block) => html`<jf-reasoning-block
+              data-testid="chat-turn-reasoning"
+              .text=${block.text}
+              .durationMs=${block.durationMs}
+            ></jf-reasoning-block>`,
+          )}`;
       }
       case 'progress':
         // Search Thread S4-final (item 3) — a restored SEARCH event. `unifiedThreadProjection.ts`
@@ -5358,76 +5368,6 @@ export class UnifiedChatView extends JfElement {
       .provenance=${provenance}
       @card-fork=${(e: CustomEvent<{ query: string }>) => this.handleCardFork(e.detail.query)}
     ></jf-results-card>`;
-  }
-
-  /**
-   * Tempdoc 561 P-A (evidence non-divergence): reconstruct the FE Claim[] from the record's persisted
-   * per-claim grounding (attributes.claimMatches.matches), so a RELOADED conversation renders the same
-   * inline per-claim marks the live render shows — the live + record evidence paths cannot diverge.
-   */
-  private claimsFromRecord(claimMatches: unknown): Claim[] {
-    const matches =
-      claimMatches && typeof claimMatches === 'object' &&
-      Array.isArray((claimMatches as { matches?: unknown }).matches)
-        ? (claimMatches as { matches: Array<Record<string, unknown>> }).matches
-        : [];
-    // Tempdoc 836 §4 — the PRODUCER gate on the persisted-replay path. It reads the same authority
-    // as the live handler because a gate applied to only one of the two render paths recreates the
-    // 561 P-A divergence: the same payload would mark differently live and after a reload.
-    const scorer = readScorer(claimMatches);
-    const verified = isVerifiedProducer(scorer);
-    const bySentence = new Map<number, Claim>();
-    for (const m of matches) {
-      const idx = typeof m.sentenceIndex === 'number' ? m.sentenceIndex : 0;
-      const text = typeof m.sentenceText === 'string' ? m.sentenceText : '';
-      const sim = typeof m.similarity === 'number' && verified ? m.similarity : null;
-      const ref = readSourceIndex(m);
-      const existing = bySentence.get(idx);
-      if (existing) {
-        existing.verifiedScore =
-          sim === null ? existing.verifiedScore : Math.max(existing.verifiedScore ?? 0, sim);
-        if (verified && ref >= 0 && !existing.verifiedRefs.includes(ref)) {
-          existing.verifiedRefs.push(ref);
-        }
-      } else {
-        bySentence.set(idx, {
-          sentenceIndex: idx,
-          sentenceText: text,
-          ...(scorer !== null ? { scorer } : {}),
-          // Tempdoc 822 §3d/§3b — the persisted `claimMatches` come from the AUTHORITATIVE post-hoc
-          // `documents.matchCitations` call (`StreamingCitationMatcher.onDone`), never from the
-          // streaming lexical deltas, so a reloaded conversation's scores AND refs are verified by
-          // provenance: both land on the verified side.
-          verifiedScore: sim,
-          lexicalScore: 0,
-          verifiedRefs: verified && ref >= 0 ? [ref] : [],
-          lexicalRefs: [],
-        });
-      }
-    }
-    return [...bySentence.values()];
-  }
-
-  /**
-   * Tempdoc 603 PART X.B — the SOURCES-panel grounding sibling of {@link claimsFromRecord}: reconstruct the
-   * `CitationMatch[]` from the record's persisted `claimMatches.matches` (already that shape) so a RELOADED
-   * conversation's source panel groups by grounding too (the live path passes `m.citations`; the record path
-   * passed `[]`, leaving reload grounding-blind). The match `sourceIndex` is the source's POSITION in the
-   * persisted `citations` list — persisted in order by `RAGDoneEnricher`, the same order `sourceGrounding` joins on.
-   */
-  private matchesFromRecord(claimMatches: unknown): CitationMatch[] {
-    const matches =
-      claimMatches && typeof claimMatches === 'object' &&
-      Array.isArray((claimMatches as { matches?: unknown }).matches)
-        ? (claimMatches as { matches: Array<Record<string, unknown>> }).matches
-        : [];
-    return matches.map((m) => ({
-      sentenceIndex: typeof m.sentenceIndex === 'number' ? m.sentenceIndex : 0,
-      sentenceText: typeof m.sentenceText === 'string' ? m.sentenceText : '',
-      sourceIndex: readSourceIndex(m),
-      similarity: typeof m.similarity === 'number' ? m.similarity : 0,
-      parentDocId: typeof m.parentDocId === 'string' ? m.parentDocId : '',
-    }));
   }
 
   /** Tempdoc 561 P-A/P-B (Slice 2): an agent tool call rendered inline in the unified thread. */
@@ -5570,6 +5510,17 @@ export class UnifiedChatView extends JfElement {
       ${floorDivider}
       <div class="message assistant${inheritedClass}" data-item-id=${m.id ?? nothing} data-msg-idx=${idx}>
         <div class="message-shape-tag">${shapeLabel}</div>
+        ${/* Tempdoc 848 §2.6 — the turn's thinking, rendered from the COMMITTED/record message so it
+            survives `done` and a reload. It keeps the position `renderStreamingBlock` gives it (after
+            the shape tag, before the answer), so the block does not move as the turn settles. The
+            streaming render stays where it is: the two are complementary phases of one turn. */ ''}
+        ${(m.reasoning ?? []).map(
+          (block) => html`<jf-reasoning-block
+            data-testid="chat-turn-reasoning"
+            .text=${block.text}
+            .durationMs=${block.durationMs}
+          ></jf-reasoning-block>`,
+        )}
         ${m.standaloneQuestion
           ? html`<div class="rewrite-note" role="note">
               Interpreted as: <em>${m.standaloneQuestion}</em>
@@ -5985,6 +5936,12 @@ export class UnifiedChatView extends JfElement {
         if (this.coverage) msg.coverage = this.coverage;
         if (this.sourceCoverage.length > 0) msg.sourceCoverage = [...this.sourceCoverage];
         if (this.ragMeta) msg.ragMeta = { ...this.ragMeta };
+        // Tempdoc 848 §2.6 — the thinking the reader just watched belongs to the turn, not to the
+        // stream: copy it onto the committed message (same conditional-copy idiom as citations
+        // above) so it survives `done` instead of unmounting with the streaming block.
+        if (this.reasoning.reasoningBlocks.length > 0) {
+          msg.reasoning = [...this.reasoning.reasoningBlocks];
+        }
         // Tempdoc 603 C2 — pin the decontextualized question onto the committed turn so the
         // "Interpreted as: …" line persists past the live stream (mirrors citations/ragMeta).
         if (this.rewriteNote) msg.standaloneQuestion = this.rewriteNote.standalone;
@@ -6106,18 +6063,22 @@ export class UnifiedChatView extends JfElement {
       onRagCitationMatches: (payload: unknown) => {
         const p = payload as { matches?: CitationMatch[] } | null;
         if (p && Array.isArray(p.matches)) {
-          this.citations = p.matches;
+          // Tempdoc 836 §4 — the PRODUCER gate, live side. A cosine-fallback score is a number on a
+          // scale the grounding thresholds are not calibrated for, so it may not become a verified
+          // score. The claim still exists (it is what arrived); it simply mints no mark.
+          const scorer = readScorer(p);
+          const verifiedProducer = isVerifiedProducer(scorer);
+          // Tempdoc 847 S1 — and the SOURCES panel answers to the same verdict: `this.citations`
+          // feeds `sourceGrounding`, which reads `similarity` straight into a per-source tier, so an
+          // ungated assignment here would paint verification beside a source whose sentence got no
+          // mark. Gated through the shared authority, live and reloaded alike (§2.3).
+          this.citations = [...admittedMatches(p.matches, scorer)];
           // Tempdoc 836 S2S3-A.2 — the run's coverage facts, kept beside the matches so the frame
           // line can say WHY it degraded (budget vs evidence) and the sources panel can tell an
           // unexamined source from an uncited one. Same payload the record persists, so the
           // reloaded render reads exactly the same facts (S2S3-A.6f).
           this.coverage = coverageHonesty(p as Parameters<typeof coverageHonesty>[0]);
           this.sourceCoverage = readSourceCoverage(p);
-          // Tempdoc 836 §4 — the PRODUCER gate, live side. A cosine-fallback score is a number on a
-          // scale the grounding thresholds are not calibrated for, so it may not become a verified
-          // score. The claim still exists (it is what arrived); it simply mints no mark.
-          const scorer = readScorer(p);
-          const verifiedProducer = isVerifiedProducer(scorer);
           // F-5 fix: derive claims from authoritative embedding matches when
           // streaming-lexical didn't fire enough deltas. StreamingCitationMatcher
           // emits rag.citation_delta only when word-overlap matches; that's too
@@ -6156,6 +6117,12 @@ export class UnifiedChatView extends JfElement {
               typeof m.similarity === 'number' && verifiedProducer ? m.similarity : null;
             const existing = bySentence.get(idx);
             if (existing) {
+              // 847 S5 — the verified side's text WINS over a mid-stream draft's. The draft cuts an
+              // incomplete markdown buffer as prose and the final cuts parsed block nodes, so the
+              // same `sentenceIndex` usually names two different sentences; keeping the draft's
+              // text would place a mark by evidence another sentence earned, and make this live
+              // render disagree with its own reload.
+              if (text) existing.text = text;
               existing.verifiedScore =
                 sim === null ? existing.verifiedScore : Math.max(existing.verifiedScore ?? 0, sim);
               if (verifiedProducer && typeof m.sourceIndex === 'number') {

@@ -11,8 +11,9 @@
  * issuance site can have. With one site the refusal is structural: there is no second path to forget.
  *
  * Shared authorities consumed, not re-authored (the charter's "from-scratch components, shared
- * authorities"; the PATTERN is search-v2's `askClient.ts:26-37`, mined — never imported, because a
- * dev window importing another dev window's module is the coupling this arc exists to avoid):
+ * authorities"; the PATTERN was mined from the since-retired search-v2 window's ask client — never
+ * imported, because a dev window importing another dev window's module is the coupling this arc
+ * exists to avoid):
  *  - `buildRequestBody('core.rag-ask', …)` — the per-shape POST body.
  *  - `consumeShapeStream` + `dispatchShapeEventToHandlers` — the ONE SSE consumer, so the
  *    connection-budget accounting in `streams.ts` stays correct.
@@ -54,7 +55,24 @@ import type {
 // The ONE claim→mark resolver (565 §15.B). The window resolves nothing itself: it hands the
 // backend's claims + sources to the shared authority and stores what comes back.
 import { claimsToCitations } from '../../components/chat/citationResolve.js';
-import type { Sv3TurnEvidence } from './sv3-sessions.js';
+// Tempdoc 847 S2 / F-12 — the ONE `claimMatches` envelope reader, so this window's producer gate IS
+// the shipped window's, not a second copy of it (§2.5: defence in depth through one authority).
+//
+// F-12 widened this from the gate to the WHOLE envelope. S2 imported `readScorer` and applied the
+// producer verdict through the shared authority, but kept reading every other field off the raw
+// payload here — so the live arm and the reloaded arm were still two readers of one shape, and only
+// the gate was shared. `claimsFromRecord` + `matchesFromRecord` are that shape's readers; the live
+// handler below now calls exactly them, so a field the record arm normalizes (a legacy `chunkIndex`
+// position, an absent `parentDocId`) cannot be normalized on one path and dropped on the other.
+import {
+  claimsFromRecord,
+  matchesFromRecord,
+  readScorer,
+} from '../../components/chat/recordEvidence.js';
+import type { Sv3ContextUsage, Sv3TurnEvidence } from './sv3-sessions.js';
+// Tempdoc 610 §E.4 — the ONE reading of the terminal's own occupancy report, next to the meter it
+// feeds rather than inlined in the handler table below.
+import { readSv3ContextUsage } from './sv3-context.js';
 
 /** The one shape this window's ask route dispatches. */
 export const SV3_ASK_SHAPE_ID = 'core.rag-ask';
@@ -185,7 +203,13 @@ export interface Sv3AskSink {
    * showing it back.
    */
   onRewrite(standalone: string): void;
-  onDone(): void;
+  /**
+   * The turn reached its terminal, carrying whatever the `done` payload said about the PROMPT it
+   * spent (tempdoc 610 §E.4 — `promptTokens` + the estimated `contextBreakdown`), or `null` when it
+   * reported none. Handed over rather than stored here: the occupancy belongs to the conversation,
+   * and this client owns no conversation.
+   */
+  onDone(usage: Sv3ContextUsage | null): void;
   /** The session lock refused this send (HTTP 423) — the ONLY 423 consumer in this window. */
   onRefused(): void;
   /** The reader pressed Stop. Whatever streamed so far is kept; the turn is halted, not failed. */
@@ -194,9 +218,10 @@ export interface Sv3AskSink {
 }
 
 /**
- * The per-sentence grounding model both citation events contribute to. Mined from search-v2's
- * `askClient.ts:75-105` (the same reason F1 mined the dispatch: a dev window importing another dev
- * window's module is the coupling this arc exists to avoid); the RESOLVER it feeds is shared.
+ * The per-sentence grounding model both citation events contribute to. Mined from the since-retired
+ * search-v2 window's ask client (the same reason F1 mined the dispatch: a dev window importing
+ * another dev window's module is the coupling this arc exists to avoid); the RESOLVER it feeds is
+ * shared.
  */
 interface ClaimAcc {
   text: string;
@@ -212,8 +237,15 @@ interface ClaimAcc {
 }
 
 /**
- * Tempdoc 822 §3d — which producer scored this sentence. The two citation events are already
- * separate handlers, so the provenance needs no wire field: it is the handler that knows.
+ * Tempdoc 822 §3d — which EVENT scored this sentence: `rag.citation_delta` (the streaming lexical
+ * matcher) or `rag.citation_matches` (the authoritative post-hoc one). That distinction really is
+ * the handler's own, and needs no wire field.
+ *
+ * Tempdoc 847 §1.5 — it is NOT the whole provenance, and reading it as such was this window's gate
+ * hole. 836 introduced a second distinction INSIDE `rag.citation_matches` — which SCORER wrote the
+ * similarity (cross-encoder vs the embedding-cosine fallback) — that the handler cannot know and the
+ * payload states outright in its `scorer` field. So the handler answers "which event", the envelope
+ * answers "which producer", and only both together admit a score as verified.
  */
 type ScoreProvenance = 'verified' | 'lexical';
 
@@ -221,7 +253,12 @@ function mergeClaim(
   acc: Map<number, ClaimAcc>,
   sentenceIndex: number,
   sentenceText: string,
-  score: number,
+  /**
+   * `null` on the verified side means the sentence WAS matched but by a producer whose scale the
+   * grounding thresholds are not calibrated for (847 §2.5). The claim still exists — it is what
+   * arrived — it simply carries no verified score and resolves no ref, so it mints no mark.
+   */
+  score: number | null,
   provenance: ScoreProvenance,
   sourceIndex: number | null,
 ): void {
@@ -231,10 +268,16 @@ function mergeClaim(
     // between a coverage ratio and a relevance probability exists to max over), and the refs land
     // on the matching side for the same reason (822 §3b).
     if (provenance === 'verified') {
-      existing.verifiedScore = Math.max(existing.verifiedScore ?? 0, score);
+      // 847 S5 — the verified side's text WINS. The two sides segment differently (the draft cuts
+      // an incomplete markdown buffer as prose; the final cuts parsed block nodes), so at the same
+      // `sentenceIndex` they are usually different sentences. Keeping the draft's text would hand
+      // the renderer a key that no longer names the sentence that earned the score — a mark placed
+      // on one sentence by another's evidence, and a live render that disagrees with the reload.
+      if (sentenceText) existing.text = sentenceText;
+      if (score !== null) existing.verifiedScore = Math.max(existing.verifiedScore ?? 0, score);
       if (sourceIndex !== null) existing.verifiedRefs.add(sourceIndex);
     } else {
-      existing.lexicalScore = Math.max(existing.lexicalScore, score);
+      existing.lexicalScore = Math.max(existing.lexicalScore, score ?? 0);
       if (sourceIndex !== null) existing.lexicalRefs.add(sourceIndex);
     }
     return;
@@ -247,17 +290,24 @@ function mergeClaim(
   acc.set(sentenceIndex, {
     text: sentenceText,
     verifiedScore: provenance === 'verified' ? score : null,
-    lexicalScore: provenance === 'lexical' ? score : 0,
+    lexicalScore: provenance === 'lexical' ? (score ?? 0) : 0,
     verifiedRefs,
     lexicalRefs,
   });
 }
 
-function claimsOf(acc: Map<number, ClaimAcc>): Claim[] {
+/**
+ * Tempdoc 847 §2.5 — the producer is STAMPED onto every claim, so `claimsToCitations`'s own gate
+ * (`citationResolve.ts:45`) sees the same fact this file did. Absent (`null`) is left off the claim
+ * entirely rather than written as an empty string: an envelope that predates the field is a
+ * different statement from one that named a producer, and `isVerifiedProducer` distinguishes them.
+ */
+function claimsOf(acc: Map<number, ClaimAcc>, scorer: string | null): Claim[] {
   return [...acc.entries()]
     .map(([sentenceIndex, v]) => ({
       sentenceIndex,
       sentenceText: v.text,
+      ...(scorer !== null ? { scorer } : {}),
       verifiedScore: v.verifiedScore,
       lexicalScore: v.lexicalScore,
       verifiedRefs: [...v.verifiedRefs],
@@ -270,8 +320,8 @@ function claimsOf(acc: Map<number, ClaimAcc>): Claim[] {
  * Dispatch one grounded ask and drive `sink` from the stream.
  *
  * `docIds` is empty by construction: this window has no committed document set to scope an answer to
- * (search-v2's frozen-snapshot law has no counterpart here yet), and an empty array is the backend's
- * documented open-retrieval fallback (`views/unifiedChatRequest.ts:80-84`) rather than a scope this
+ * (the retired search-v2 window's frozen-snapshot law has no counterpart here yet), and an empty
+ * array is the backend's documented open-retrieval fallback (`views/unifiedChatRequest.ts:80-84`) rather than a scope this
  * FE invented.
  */
 export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void> {
@@ -286,6 +336,8 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
   let sources: readonly RetrievalCitation[] = [];
   let matches: readonly CitationMatch[] = [];
   let retrievalMode = '';
+  /** The producer the LAST `rag.citation_matches` envelope named; `null` until one says (847 §2.5). */
+  let scorer: string | null = null;
   const claims = new Map<number, ClaimAcc>();
   /**
    * The evidence record is rebuilt WHOLE on every contributing event and handed over as one value,
@@ -296,11 +348,21 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
     sink.onEvidence({
       sources,
       matches,
-      marks: claimsToCitations(claimsOf(claims), sources),
+      marks: claimsToCitations(claimsOf(claims, scorer), sources),
       retrievalMode,
     });
 
+  /**
+   * What the terminal said about the prompt it spent. Captured from the `done` EVENT — the stream's
+   * own last frame — rather than assumed at the call below, which fires for a stream that ended
+   * without one too.
+   */
+  let usage: Sv3ContextUsage | null = null;
+
   const handlers: CoreRagAskHandlers = {
+    onDone(payload: unknown) {
+      usage = readSv3ContextUsage(payload);
+    },
     onReasoningChunk(payload: unknown) {
       sink.onReasoning(payload);
     },
@@ -349,16 +411,35 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
     onRagCitationMatches(payload: unknown) {
       const p = payload as { matches?: CitationMatch[] } | null;
       if (!p || !Array.isArray(p.matches)) return;
-      matches = p.matches;
-      for (const m of p.matches) {
-        mergeClaim(
-          claims,
-          m.sentenceIndex ?? 0,
-          m.sentenceText ?? '',
-          typeof m.similarity === 'number' ? m.similarity : 0,
-          'verified',
-          typeof m.sourceIndex === 'number' ? m.sourceIndex : null,
-        );
+      // Tempdoc 847 §2.5 — the PRODUCER gate, read off the envelope through the shared authority
+      // (836 §4). Without it this window merged every match as verified, painting embedding-cosine
+      // numbers — whose supported and unsupported bands interleave at a 0.0049 margin (836 §9.7) —
+      // with cross-encoder-calibrated grounding tiers.
+      scorer = readScorer(p);
+      // The panel answers to the same verdict as the marks: an unadmitted producer's matches carry
+      // no per-source tier, so the sources list and the answer text say the same thing (847 §2.3).
+      matches = matchesFromRecord(p);
+      // Tempdoc 847 F-12 — the verified half of this turn's claims is what the SHARED envelope
+      // reader says it is, so a live answer and the same answer after a reload are built from one
+      // parse of one payload. The result is MERGED rather than assigned because the live arm has a
+      // second contributor the record arm does not: the lexical `rag.citation_delta` claims already
+      // in `claims`, which live on their own side of the accumulator (§3b/§3d).
+      //
+      // A claim the reader admitted no ref for still merges — with `null` — because the sentence WAS
+      // matched and must exist as a claim; it simply resolves no mark (see `mergeClaim`).
+      for (const claim of claimsFromRecord(p)) {
+        const refs: readonly (number | null)[] =
+          claim.verifiedRefs.length > 0 ? claim.verifiedRefs : [null];
+        for (const ref of refs) {
+          mergeClaim(
+            claims,
+            claim.sentenceIndex,
+            claim.sentenceText,
+            claim.verifiedScore,
+            'verified',
+            ref,
+          );
+        }
       }
       publish();
     },
@@ -395,5 +476,5 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
     return;
   }
 
-  sink.onDone();
+  sink.onDone(usage);
 }

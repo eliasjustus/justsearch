@@ -2,19 +2,23 @@
 /**
  * Slice 497 — Markdown rendering block for chat messages.
  *
- * Renders text as markdown using `marked` + `DOMPurify`. During streaming,
- * applies a mend pass to auto-close unclosed syntax (code fences, bold,
- * inline code) on a copy before parsing, preventing visual glitches.
- * Renders are throttled to requestAnimationFrame during streaming.
+ * Renders text as markdown through the shared `createMarkdownRenderer` factory (tempdoc 846 §2.1 —
+ * `marked` + `DOMPurify` configured in ONE place, with this consumer's `breaks` answer stated at the
+ * call site). During streaming, applies a mend pass to auto-close unclosed syntax (code fences,
+ * bold, inline code) on a copy before parsing, preventing visual glitches. Renders are throttled to
+ * requestAnimationFrame during streaming.
  *
- * Uses a module-scoped Marked instance to avoid polluting global state.
+ * Typography is the shared ramp (846 §2.3), worn by this block and by `DocumentPane` alike; what
+ * this file styles is what belongs to chat alone — the cursor and the citation vocabulary.
  */
 
 import { html, css, type TemplateResult, type PropertyValues } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
-import { Marked } from 'marked';
-import DOMPurify from 'dompurify';
+import { createMarkdownRenderer } from '../markdown/markdownRenderer.js';
+import { markdownCodeHighlight, markdownTypography } from '../markdown/markdownStyles.js';
+import { highlightCodeBlocks } from '../markdown/markdownHighlight.js';
+import { markScrollableRegions } from '../markdown/markdownScrollRegions.js';
 import type { CitationSelectDetail } from './citationTypes.js';
 import {
   getSelectedSource,
@@ -25,7 +29,13 @@ import {
 // Tempdoc 565 §15.A — the ONE grounding-tier authority (was a forked `groundingStatus` here).
 import { groundingClass, type AnswerFrame } from './evidenceProjection.js';
 
-const md = new Marked({ breaks: true, gfm: true });
+/**
+ * Tempdoc 846 §2.1/§2.2 — the ONE configured parser, with this consumer's `breaks` answer stated at
+ * the call site. OFF: every call site of this block renders MODEL-generated text (the agent answer,
+ * the RAG answer, the extract, the summary/navigate streams, the reasoning trace), and a model
+ * emits real markdown paragraphs — `breaks: true` chopped its soft-wrapped prose into forced lines.
+ */
+const md = createMarkdownRenderer({ breaks: false });
 
 /**
  * Tempdoc 565 §15.B — the ONE resolved inline citation, shared by every answer mode.
@@ -44,8 +54,22 @@ export interface Citation {
   sentenceText: string;
   /** Cross-encoder similarity → grounding tier (the one `groundingClass`/`groundingLabel` authority). */
   similarity: number;
-  /** The other source indices this sentence also grounds to (multi-source; the primary is `detail`). */
-  sourceRefs?: number[];
+  /**
+   * Tempdoc 847 §2.1d/§2.1e — the ANSWER SENTENCE this mark belongs to, as the producer ordered its
+   * sentences. Three jobs, all structural: citations sharing it are the several sources of ONE
+   * sentence and anchor to one run (so a two-source sentence renders two marks at one boundary);
+   * anchoring is SORTED by it, so the consume-and-advance rule advances in the answer's own
+   * sentence order rather than in whatever order a persisted array happened to keep; and a sentence
+   * repeated in the answer is therefore marked at each occurrence instead of stacking on the first.
+   *
+   * REQUIRED (847 S4 review F2). It was briefly optional with "absent ⇒ groups with nothing" called
+   * the conservative reading; that was measurably wrong — two same-text citations without ordinals
+   * anchor the second mark at the OTHER occurrence, which is a mark on prose that source did not
+   * ground. Every producer supplies it ({@link claimsToCitations}, {@link resolveAnswerCitations}),
+   * so the type carries the requirement and {@link decorateCitations} keeps a positional fallback
+   * for an untyped object arriving from JS.
+   */
+  sentenceIndex: number;
   /** The `[n]` label shown (1-based source position). */
   label: number;
   /** Click target — the `citation-select` deep-link to the exact local passage. */
@@ -138,6 +162,191 @@ export function stripTrailingCitationBlock(text: string): string {
   // Only strip a block that LOOKS like a citation list (carries a [n] reference) — never bare prose.
   if (!/\[\d+\]/.test(m[0])) return text;
   return text.slice(0, m.index).replace(/[ \t\r\n]+$/, '');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+ * Tempdoc 847 §2.1 — the anchoring substrate: word sequences, not a marker-stripped regex.
+ *
+ * One answer text exists in two representations — the raw markdown the model emitted (what the
+ * backend segments and the cross-encoder scores) and the rendered DOM (where a mark must land).
+ * Before 847 they were bridged by a character blacklist applied to ONE side, so every block-level
+ * markdown shape desynced it and the mark silently vanished (§1.1). The bridge below is instead
+ * independent of the markdown grammar: both sides are tokenized by the SAME ICU word segmenter, and
+ * every markdown syntax character is non-word-like, so it is absent from both streams by
+ * construction rather than by a list someone has to maintain.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Tempdoc 847 §2.1a — ICU word segmentation, applied LOCALE-INVARIANTLY (`undefined` locale, no
+ * per-language configuration and nothing to author per script). Hard Invariant 6 is why: a token
+ * COUNT floor would be a per-language lever, because a whole CJK/Thai/Japanese clause segments into
+ * one to three naive tokens while its Latin equivalent gives a dozen. Every threshold below is
+ * therefore expressed in word-like CHARACTERS, and the CJK shapes in the anchoring matrix run
+ * through this one code path.
+ */
+const WORD_SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'word' });
+
+/** A word-like segment, with its offsets in the string it was segmented from. */
+interface WordToken {
+  start: number;
+  end: number;
+  /** Folded text — the unit of comparison (NFC + lowercase, the repo's locale-invariant folding). */
+  text: string;
+  /** Word-like characters (code points) — the unit every §2.1a threshold is measured in. */
+  chars: number;
+}
+
+function wordTokens(s: string): WordToken[] {
+  const out: WordToken[] = [];
+  for (const seg of WORD_SEGMENTER.segment(s)) {
+    if (!seg.isWordLike) continue;
+    const text = seg.segment.normalize('NFC').toLowerCase();
+    out.push({
+      start: seg.index,
+      end: seg.index + seg.segment.length,
+      text,
+      chars: [...text].length,
+    });
+  }
+  return out;
+}
+
+/**
+ * Collapse `[text](url)` → `text`. The ONLY normalization a citation key gets: a URL's words would
+ * otherwise enter the key as tokens the reader never sees. Everything else markdown writes —
+ * bullets, ordinals, pipes, `#`, `>`, `*`, `_`, backticks — is non-word-like and therefore never a
+ * token, which is why the blacklist this replaces (`stripMarkers`) is gone rather than extended
+ * (§2.1 rejected alternative B).
+ */
+function collapseInlineLinks(s: string): string {
+  return s.replace(/\[(.*?)\]\((.*?)\)/g, '$1');
+}
+
+/** An accepted anchor run, in character offsets of the flattened DOM text. */
+interface MatchedRun {
+  startIndex: number;
+  endIndex: number;
+  /** Index of the run's last token in the DOM token array — where the next citation resumes. */
+  lastTok: number;
+}
+
+/**
+ * Tempdoc 847 §2.1a — find the run of DOM tokens matching the LONGEST PREFIX of the key's tokens,
+ * searching only from `fromTok` (§2.1d's consume-and-advance), and accept it under the MEASURED
+ * rule (S0: 18 markdown shapes → 64 keys, computed exactly):
+ *
+ * ```
+ * eligible   ⟺  keyWordChars ≥ 4
+ * accept run ⟺  matchedWordChars ≥ 2
+ *            ∧  (keyWordChars − matchedWordChars) ≤ max(4, 0.4 × keyWordChars)
+ *            ∧  [ if matchedWordChars < 4: the run is the only occurrence in the window ]
+ * ```
+ *
+ * Why that shape rather than a ratio: the backend's `BreakIterator` fuses the NEXT list item's
+ * ordinal onto a key, and that costs 1–2 characters — an absolute tax, which on a short list item
+ * (`"No.\n13."`) is half the key. A pure ratio therefore rejects short items for a fixed-size
+ * defect, so the slack is `max(4, 0.4 × …)`: "≥ 60 % of the key" above 10 word-chars, a constant
+ * 4-character allowance below it. One formula, no new lever.
+ *
+ * The ≥ 4-character ELIGIBILITY floor is load-bearing for honesty, not a legacy carry-over: CJK
+ * answers segment standalone ordinal keys (`"2."`), which match an arbitrary `[2]` token elsewhere
+ * in the answer at 100 % coverage. The floor excludes those; the uniqueness clause closes the case
+ * the floor cannot (a 4-character numeric key such as `"2026."`).
+ *
+ * Longest PREFIX rather than whole-key matching is what dissolves the fused tail: the key's tokens
+ * run `… search 1 3 2` while the DOM's run `… search 1 3`, and the prefix covers everything but the
+ * stray ordinal. It is robust in that direction only — a single foreign token at the key's HEAD
+ * zeroes the match (a fence's info string is a class attribute, not text), which is the right
+ * outcome there (a code block has no sentence to mark) but must not be generalized.
+ *
+ * Two known asymmetries, both failing CLOSED (no mark), recorded so neither is re-discovered as a
+ * surprise: (1) the leading-token case above; (2) INTRAWORD emphasis — `**fast**est` segments as
+ * `fast` + `est` in the key but as the single token `fastest` in the rendered DOM, so a key whose
+ * FIRST word carries intraword emphasis matches nothing and that sentence goes unmarked. Both lose
+ * a mark that was earned; neither places one that was not.
+ */
+function matchWordRun(
+  keyToks: readonly WordToken[],
+  domToks: readonly WordToken[],
+  fromTok: number,
+  full: string,
+): MatchedRun | null {
+  const first = keyToks[0];
+  if (!first) return null;
+  let keyWordChars = 0;
+  for (const t of keyToks) keyWordChars += t.chars;
+  if (keyWordChars < 4) return null; // eligibility — unchanged from the pre-847 `norm.length < 4`
+
+  let at = -1;
+  let len = 0;
+  let matchedChars = 0;
+  let occurrences = 0;
+  for (let i = fromTok; i < domToks.length; i++) {
+    if (domToks[i]!.text !== first.text) continue;
+    let runLen = 1;
+    let runChars = first.chars;
+    while (
+      runLen < keyToks.length &&
+      i + runLen < domToks.length &&
+      domToks[i + runLen]!.text === keyToks[runLen]!.text
+    ) {
+      runChars += keyToks[runLen]!.chars;
+      runLen++;
+    }
+    if (runLen > len) {
+      at = i;
+      len = runLen;
+      matchedChars = runChars;
+      occurrences = 1;
+    } else if (runLen === len) {
+      occurrences++; // ties resolve to the EARLIEST run; the count feeds the uniqueness clause
+    }
+  }
+  if (at < 0) return null;
+
+  if (matchedChars < 2) return null;
+  if (keyWordChars - matchedChars > Math.max(4, 0.4 * keyWordChars)) return null;
+  // The uniqueness clause. §2.1a states it as "if matchedWordChars < 4"; it is applied to a
+  // SINGLE-TOKEN run as well, because that is the case §2.1a's own worked example needs — a 4-char
+  // numeric key such as `"2026."` clears both the character floor and the 4-char matched threshold,
+  // yet a one-token run carries no sequence evidence about WHICH occurrence it is. Extending the
+  // clause rejects nothing S0 measured as acceptable (the 18-shape matrix pins that) and closes the
+  // hole the floor alone cannot: a mark landing on whichever occurrence happened to come first.
+  if ((matchedChars < 4 || len === 1) && occurrences > 1) return null;
+
+  const lastTok = at + len - 1;
+  const startIndex = domToks[at]!.start;
+  let endIndex = domToks[lastTok]!.end;
+  // Extend over the punctuation that immediately follows (no whitespace, no next token), so the
+  // mark still lands AFTER the sentence's period rather than inside it.
+  const nextTokStart = domToks[lastTok + 1]?.start ?? full.length;
+  while (endIndex < nextTokStart && !/\s/.test(full[endIndex]!)) endIndex++;
+  return { startIndex, endIndex, lastTok };
+}
+
+/**
+ * Tempdoc 847 §2.1c — the block set the span guard (H4) compares against. HTML's own block content
+ * model, not a markdown grammar: what `marked` emits for a list item, a table cell, a quote or a
+ * heading is one of these regardless of which markdown feature produced it.
+ */
+const BLOCK_TAGS = new Set([
+  'P', 'DIV', 'LI', 'UL', 'OL', 'DL', 'DT', 'DD', 'BLOCKQUOTE', 'PRE',
+  'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TD', 'TH', 'CAPTION',
+  'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HR',
+  'SECTION', 'ARTICLE', 'ASIDE', 'FIGURE', 'FIGCAPTION', 'DETAILS', 'SUMMARY',
+  // Sanitizer-surviving raw-HTML containers a model can write directly into its answer. `marked`
+  // emits none of them, so they only arrive as literal HTML — but two ADJACENT unlisted siblings
+  // would resolve to the same (root) ancestor and read as one block, which is the one way the
+  // guard can under-clamp. Listing them closes that by construction rather than by argument.
+  'MAIN', 'NAV', 'HEADER', 'FOOTER', 'ADDRESS', 'HGROUP', 'MENU',
+  'FORM', 'FIELDSET', 'LEGEND',
+]);
+
+/** The nearest block-level ancestor of `node` inside `root` (the root itself when there is none). */
+function blockAncestor(node: Node, root: Element): Element {
+  let el: Element | null = node.parentElement;
+  while (el && el !== root && !BLOCK_TAGS.has(el.tagName)) el = el.parentElement;
+  return el ?? root;
 }
 
 export class MarkdownBlock extends JfElement {
@@ -252,7 +461,9 @@ export class MarkdownBlock extends JfElement {
       else m.removeAttribute('aria-current');
     }
     for (const s of root.querySelectorAll<HTMLElement>('.cite-sentence')) {
-      s.classList.toggle('cite-sentence-selected', !!selected && s.dataset.citeKey === selected);
+      // 847 §2.1e — a sentence two sources support carries BOTH keys, so either source lights it.
+      const keys = (s.dataset.citeKeys ?? s.dataset.citeKey ?? '').split('\n');
+      s.classList.toggle('cite-sentence-selected', !!selected && keys.includes(selected));
     }
   }
 
@@ -271,6 +482,22 @@ export class MarkdownBlock extends JfElement {
       } else {
         this.pendingText = this.text;
       }
+    }
+    // Tempdoc 846 §2.4 — highlight fenced code on the SETTLED answer only (a stream re-renders per
+    // frame, and a mended fence would flicker through languages). Runs BEFORE the citation weave:
+    // highlighting rewrites a code block's innerHTML, which would discard anything woven into it.
+    // Tempdoc 847 §2.1 — this ordering is asserted, not assumed: the highlighter arrives
+    // ASYNCHRONOUSLY, so the pass that matters re-visits this root AFTER the weave has run, and what
+    // keeps the marks then is `markdownHighlight`'s children-length guard. A test covers that path.
+    if (!this.isStreaming && this.format === 'markdown') {
+      highlightCodeBlocks(this.renderRoot.querySelector('.md-content'));
+    }
+    // Tempdoc 853 (F-05) — the ramp's `pre`/`table` scroll containers get `tabindex` + a name, so
+    // the clipped half of a wide fence or table is keyboard-reachable. Unlike the highlight pass this
+    // does NOT wait for the stream to settle: it only sets attributes (no innerHTML rewrite, nothing
+    // for a later pass to discard), and a partially-streamed fence is already scrollable on screen.
+    if (this.format === 'markdown') {
+      markScrollableRegions(this.renderRoot.querySelector('.md-content'));
     }
     // Tempdoc 565 §3.C — weave inline citation marks into the freshly-rendered markdown. Citations
     // attach post-stream (the matcher runs at AgentDone), so only decorate the settled answer. Lit's
@@ -320,41 +547,19 @@ export class MarkdownBlock extends JfElement {
     }
   }
 
-  static styles = css`
-    /* Tempdoc 822 §C2/§2.2 (slice S4) — the block-geometry vocabulary. Every value below is the
-       literal this stylesheet already carried, moved to a name a consumer can re-point from the
-       outer tree (an outer-tree rule on the host beats a :host rule). The containment rule is the
-       point of the slice: changing ANY default here changes shipped rendering, so the defaults are
-       frozen verbatim in 'MarkdownBlock.geometry.test.ts' and asserted against the pre-tokenization
-       computed set — a "tidy-up" of 0.125em to 2px is a containment failure, not a cleanup.
-       The rules that do NOT exist today (headings, tables, hr, img) are deliberately NOT tokens: a
-       token cannot express "this rule exists", so they land behind ':host([prose])' in slice S5. */
-    :host {
-      --md-line-height: 1.6;
-      --md-block-gap: 0.25em;
-      --md-block-gap-wide: 0.5em;
-      --md-item-gap: 0.125em;
-      --md-list-indent: 1.25rem;
-      /* A shorthand, not a width: the default 'none' computes to zero width, which is byte-identical
-         to declaring no border at all ('1px solid transparent' would shift every chip by 2px). */
-      --md-code-border: none;
-      --md-code-radius: 0.25rem;
-      --md-code-padding: 0.125rem 0.375rem;
-      --md-code-size: var(--font-size-sm);
-      --md-code-font: monospace;
-      --md-pre-radius: 0.375rem;
-      --md-pre-padding: 0.625rem 0.75rem;
-      --md-quote-border: 3px solid var(--border-subtle);
-      --md-quote-padding: 0.75rem;
-      --md-link-decoration: underline;
-
-      display: block;
-      font-family: system-ui, -apple-system, sans-serif;
-      font-size: var(--font-size-sm);
-      line-height: var(--md-line-height);
-      color: var(--text-primary);
-      word-wrap: break-word;
-    }
+  /**
+   * Tempdoc 846 §2.3 — the markdown typography ramp is no longer this component's private
+   * property: `markdownTypography` carries the `:host` geometry vocabulary, every `.md-content`
+   * element rule and the whole `:host([prose])` variant, and `DocumentPane` wears the same sheet so
+   * a rendered `.md` file stops falling back to user-agent defaults. `markdownCodeHighlight` is the
+   * fenced-code theme (§2.4). What stays below is what belongs to CHAT and to no other markdown
+   * surface: the verbatim `plain` format, the streaming cursor, and the citation vocabulary.
+   *
+   * The sheets are listed FIRST so a rule here has the last word, and this array must not declare a
+   * second `:host` markdown-geometry rule — `MarkdownBlock.geometry.test.ts` reads the flattened
+   * `styles` and proves the containment against the ONE `:host` rule the shared sheet declares.
+   */
+  static styles = [markdownTypography, markdownCodeHighlight, css`
     /* Tempdoc 565 §15.B — plain format renders verbatim (the retired StreamingTextBlock job):
        preserve whitespace/newlines, no markdown block styling. */
     .md-content.plain {
@@ -408,215 +613,6 @@ export class MarkdownBlock extends JfElement {
       padding: 0 var(--md-cite-region-pad-x, 0);
       margin: 0 var(--md-cite-region-inset-x, 0);
     }
-    .md-content p {
-      margin: var(--md-block-gap) 0;
-    }
-    .md-content p:first-child {
-      margin-top: 0;
-    }
-    .md-content p:last-child {
-      margin-bottom: 0;
-    }
-    .md-content code {
-      background: var(--surface-tertiary);
-      padding: var(--md-code-padding);
-      border: var(--md-code-border);
-      border-radius: var(--md-code-radius);
-      font-family: var(--md-code-font);
-      font-size: var(--md-code-size);
-    }
-    .md-content pre {
-      background: var(--surface-tertiary);
-      padding: var(--md-pre-padding);
-      border-radius: var(--md-pre-radius);
-      overflow-x: auto;
-      margin: var(--md-block-gap-wide) 0;
-    }
-    /* The block's inner <code> keeps shedding the inline chip's clothes (this rule's existing job):
-       'border: none' joins background/padding/size because a consumer that gives the inline chip an
-       edge means the CHIP, not a second rule inside the already-framed block. Zero shipped delta —
-       the chip's own default is 'none'. */
-    .md-content pre code {
-      background: none;
-      border: none;
-      padding: 0;
-      font-size: var(--font-size-xs);
-    }
-    .md-content ul, .md-content ol {
-      margin: var(--md-block-gap) 0;
-      padding-left: var(--md-list-indent);
-    }
-    .md-content li {
-      margin: var(--md-item-gap) 0;
-    }
-    .md-content a {
-      color: var(--text-tint);
-      text-decoration: var(--md-link-decoration);
-    }
-    /* Unconditional, not variant-gated: with the default 'underline' at rest this is a no-op on
-       every shipped surface (already underlined); it restores the hover affordance for a consumer
-       whose override removes the resting rule. */
-    .md-content a:hover {
-      text-decoration: underline;
-    }
-    .md-content strong {
-      color: var(--text-primary);
-      font-weight: 600;
-    }
-    .md-content blockquote {
-      border-left: var(--md-quote-border);
-      padding-left: var(--md-quote-padding);
-      margin: var(--md-block-gap-wide) 0;
-      color: var(--text-secondary);
-    }
-
-    /* ── Tempdoc 822 §C2/§2.3 (slice S5) — the opt-in prose variant ─────────────────────────────
-       Everything below is markup this stylesheet declares NOTHING for today (headings, tables, hr,
-       img, task lists) or a rhythm the shipped surfaces deliberately do not have. A token cannot
-       express "this rule exists" and any declared default would change shipped rendering the moment
-       a model emits a heading — so containment here is a property of the SELECTOR, not of a value:
-       a consumer that does not set the attribute cannot be reached by ANY of it, and
-       'MarkdownBlock.geometry.test.ts' proves no heading/table/hr/img selector lives outside this
-       block. The variant's own tokens are declared on ':host([prose])' rather than ':host' for the
-       same reason — a ':host' declaration would add declarations to the default path, which is the
-       thing slice S4 froze. Values are the SHIPPED type ramp plus generic geometry; the design
-       spec's numbers arrive only through a consumer's override (license containment, §2.1). */
-    :host([prose]) {
-      --md-heading-weight: 600;
-      --md-heading-line-height: 1.3;
-      /* Asymmetric on purpose — a heading belongs to what FOLLOWS it, so the space above is the
-         separation from the previous block and the space below is not. */
-      --md-heading-margin: 1.25rem 0 0.5rem;
-      --md-table-size: var(--font-size-xs);
-      --md-table-cell-padding: 0.45rem 0.75rem;
-      --md-table-rule: 1px solid var(--border-subtle);
-      /* The truncation cap (the design spec named this rule worth
-         lifting): a single-line cell so arbitrary chat content cannot blow a column out. */
-      --md-table-cell-max: 24rem;
-      --md-rule: 1px solid var(--border-subtle);
-      /* The gap lives BETWEEN items, not around each one — pairs with a consumer setting
-         '--md-item-gap: 0' (the shipped default keeps its symmetric margins). */
-      --md-item-adjacent-gap: 0.25rem;
-    }
-    :host([prose]) .md-content :is(h1, h2, h3, h4, h5, h6) {
-      font-weight: var(--md-heading-weight);
-      line-height: var(--md-heading-line-height);
-      margin: var(--md-heading-margin);
-    }
-    /* The heading scale is the SHIPPED type ramp, step for step — the one typographic authority,
-       read directly rather than wrapped in a second name (which would be a fork, and which the
-       style-literal ratchet is right to distrust). A consumer retunes the ramp inside its own bridge:
-       sv3 points these three steps at its '--font-size-sv3-*' scale, which already equals the
-       spec's heading scale, so no rem literal of the spec's is copied here (§2.1). Nothing else in
-       this stylesheet reads xl/lg/md, so "the ramp step" and "the heading size" are the same knob. */
-    :host([prose]) .md-content h1 {
-      font-size: var(--font-size-xl);
-    }
-    :host([prose]) .md-content h2 {
-      font-size: var(--font-size-lg);
-    }
-    :host([prose]) .md-content h3 {
-      font-size: var(--font-size-md);
-    }
-    /* h4-h6 share the bottom step — the ramp bottoms out there, and so does the spec's: the
-       deepest headings sit at body size and are distinguished by weight alone. */
-    :host([prose]) .md-content :is(h4, h5, h6) {
-      font-size: var(--font-size-sm);
-    }
-    /* The deepest step recedes rather than shrinking further (there is no smaller step). */
-    :host([prose]) .md-content h6 {
-      color: var(--text-secondary);
-    }
-    :host([prose]) .md-content table {
-      width: 100%;
-      /* The renderer emits a BARE <table> — there is no wrapper element to scroll, and synthesising
-         one would fight 'unsafeHTML': every re-render rebuilds this subtree, so a post-processed
-         wrapper would have to be re-applied on each frame. A block-level table scrolls itself. */
-      display: block;
-      overflow-x: auto;
-      max-inline-size: 100%;
-      border-collapse: collapse;
-      font-size: var(--md-table-size);
-      margin: var(--md-block-gap-wide) 0;
-    }
-    :host([prose]) .md-content :is(th, td) {
-      padding: var(--md-table-cell-padding);
-      border-bottom: var(--md-table-rule);
-      /* Truncate: one line per cell, clipped at the cap, so a pasted path or a long sentence cannot
-         widen the column past the reading measure (per the design spec). */
-      max-inline-size: var(--md-table-cell-max);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      /* The word-boundary restoration the same spec note calls for: a consumer that sets
-         'word-break: break-word' on the block (sv3 does, so an unbroken token in prose cannot widen
-         the measure) would otherwise let a table column collapse mid-word. Inside a cell the
-         minimum column width is the longest WORD. */
-      word-break: normal;
-      overflow-wrap: normal;
-    }
-    :host([prose]) .md-content th {
-      text-align: start;
-      font-weight: 600;
-    }
-    /* Expand: the spec's control is a button on a table component we do not port (no DOM
-       post-processing, see above), so the affordance is the row itself — pointing at or tabbing into
-       a truncated row releases the single-line clamp and the cells wrap to their full content. The
-       row, not the cell, because expanding one cell reflows the whole row anyway. */
-    :host([prose]) .md-content tr:hover :is(th, td),
-    :host([prose]) .md-content tr:focus-within :is(th, td) {
-      white-space: normal;
-      overflow: visible;
-      text-overflow: clip;
-    }
-    :host([prose]) .md-content hr {
-      border: 0;
-      border-top: var(--md-rule);
-      margin: var(--md-block-gap-wide) 0;
-    }
-    :host([prose]) .md-content img {
-      max-inline-size: 100%;
-      height: auto;
-      border-radius: var(--md-pre-radius);
-    }
-    /* GFM task lists: the checkbox replaces the marker and reclaims the list indent, so a checked
-       item lines up with the prose above it instead of hanging off a bullet. */
-    :host([prose]) .md-content li:has(> input[type='checkbox']) {
-      list-style: none;
-      margin-inline-start: calc(var(--md-list-indent) * -1);
-    }
-    :host([prose]) .md-content li > input[type='checkbox'] {
-      margin-inline-end: 0.4em;
-    }
-    :host([prose]) .md-content li + li {
-      margin-block-start: var(--md-item-adjacent-gap);
-    }
-    /* A nesting vocabulary: depth is readable from the marker alone. */
-    :host([prose]) .md-content ul ul {
-      list-style: circle;
-    }
-    :host([prose]) .md-content ul ul ul {
-      list-style: square;
-    }
-    :host([prose]) .md-content ol ol {
-      list-style: lower-alpha;
-    }
-    :host([prose]) .md-content ol ol ol {
-      list-style: lower-roman;
-    }
-    /* Four-sided, not just the left inset: a quote in prose rhythm is a block, not an indent. */
-    :host([prose]) .md-content blockquote {
-      padding: var(--md-quote-padding);
-    }
-    /* The block's own edges belong to the container, for EVERY block child — the default path zeroes
-       only 'p' (the only block it can be sure a shipped surface renders). */
-    :host([prose]) .md-content > :first-child {
-      margin-block-start: 0;
-    }
-    :host([prose]) .md-content > :last-child {
-      margin-block-end: 0;
-    }
-
     .cursor {
       display: inline-block;
       width: 0.5ch;
@@ -699,13 +695,20 @@ export class MarkdownBlock extends JfElement {
       color: var(--text-secondary);
       opacity: 0.7;
     }
-  `;
+  `];
 
   override render(): TemplateResult {
     // §13.8 — strip any model-authored trailing "Citations:" list (the UI is the source authority);
     // then mend partial syntax during streaming. Strip-before-mend so a half-written trailing list
     // never flashes (the strip matches the partial block's trailing-to-EOF shape too).
-    const stripped = stripTrailingCitationBlock(this.text);
+    //
+    // Tempdoc 846 §2.5 — but ONLY when this block actually has sources to show. The strip's whole
+    // justification is that the interface presents the sources itself; with no citations the UI
+    // presents nothing, so deleting the model's own trailing list replaces information with
+    // silence. Accepted consequence: citations attach post-stream (the matcher runs at AgentDone),
+    // so a trailing list the model is writing is now visible until they arrive — a brief flash of
+    // real output beats a silent deletion in the case where nothing replaces it.
+    const stripped = this.citations.length > 0 ? stripTrailingCitationBlock(this.text) : this.text;
     const cursor = this.isStreaming ? html`<span class="cursor">&nbsp;</span>` : '';
     // Tempdoc 565 §15.B — the ONE renderer: `plain` renders the text verbatim (the retired
     // StreamingTextBlock's job — no markdown styling, whitespace preserved); `markdown` parses GFM.
@@ -714,16 +717,20 @@ export class MarkdownBlock extends JfElement {
       return html`<div class="md-content plain">${stripped}</div>${cursor}`;
     }
     const source = this.isStreaming ? mendMarkdown(stripped) : stripped;
-    const raw = source ? (md.parse(source, { async: false }) as string) : '';
-    const safe = DOMPurify.sanitize(raw);
-    return html`<div class="md-content">${unsafeHTML(safe)}</div>${cursor}`;
+    return html`<div class="md-content">${unsafeHTML(md.render(source))}</div>${cursor}`;
   }
 
   /**
-   * Tempdoc 565 §3.C — weave `[n]` citation superscripts into the rendered markdown. Walks the
-   * settled `.md-content` text nodes, locates each citation's sentence by a whitespace-tolerant,
-   * marker-stripped match, and splices a `.cite-ref` marker at the sentence boundary. A sentence that
-   * can't be located is skipped (it still appears in the Sources pane — never fail the whole render).
+   * Tempdoc 565 §3.C / 847 §2.1 — weave `[n]` citation superscripts into the rendered markdown.
+   *
+   * TIER 1 (here): word-sequence anchoring. The settled `.md-content` text nodes are flattened and
+   * tokenized by the one ICU segmenter; each citation's sentence key is tokenized the same way, and
+   * the longest prefix run that clears the §2.1a acceptance rule wins. A sentence that cannot be
+   * located is SKIPPED — it still appears in the Sources pane, and no mark is invented for it: the
+   * absence of a mark is always an acceptable outcome, a mark that outruns its evidence never is.
+   *
+   * TIER 2 ({@link normalizeLiteralCitationTokens}) then upgrades a literal `[n]` the model wrote,
+   * for a verified label tier 1 could not place. TIER 3 is no mark at all.
    */
   private decorateCitations(): void {
     const root = this.renderRoot.querySelector('.md-content') as HTMLElement | null;
@@ -743,70 +750,178 @@ export class MarkdownBlock extends JfElement {
     }
     if (!full) return;
 
-    const inserts: Array<{ startIndex: number; endIndex: number; cite: Citation }> = [];
-    const seen = new Set<number>();
-    for (const cite of this.citations) {
-      const norm = this.stripMarkers(cite.sentenceText).trim();
-      if (norm.length < 4) continue; // too short to anchor reliably
-      let re: RegExp;
-      try {
-        re = new RegExp(this.escapeRegex(norm).replace(/\s+/g, '\\s+'), 'i');
-      } catch {
+    const domToks = wordTokens(full);
+    /** One anchored run, carrying every citation of the sentence that anchored there (§2.1e). */
+    const anchors: Array<{ startIndex: number; endIndex: number; cites: Citation[] }> = [];
+    // §2.1e — the dedupe key is `endIndex:label`, not `endIndex`: two sources of ONE sentence are
+    // two marks at one boundary, and only a repeat of the SAME label there is a duplicate.
+    const seen = new Set<string>();
+    // §2.1d — matched DOM ranges are consumed: the next citation searches from the previous
+    // accepted run's end. Without it, an answer repeating a sentence stacks every mark on the first
+    // occurrence, which is strictly worse than the pre-847 single-mark behaviour.
+    let cursor = 0;
+    let group: { startIndex: number; endIndex: number; cites: Citation[] } | null = null;
+    let groupSentence: number | null = null;
+
+    // §2.1d is a statement about the ANSWER'S sentence order, so the order is established here
+    // rather than assumed of the input. Two of the four construction paths already sort; the two
+    // that project a persisted array inherit whatever order was stored, and a single out-of-order
+    // pair would make the advance rule skip past a sentence — reproducing the very marks-vanish
+    // defect this slice closes. Stable by `sentenceIndex`, so a sentence's several sources keep the
+    // resolver's ref order (and with it their ascending labels). The positional fallback is for an
+    // untyped object arriving from JS: it gives such a citation its own ordinal (no grouping) and
+    // keeps it where the caller put it, instead of collapsing every one of them onto index 0.
+    const ordered = this.citations
+      .map((cite, position) => {
+        const typed = typeof cite.sentenceIndex === 'number';
+        return {
+          cite,
+          position,
+          sort: typed ? cite.sentenceIndex : position,
+          // A negative, per-position key for the untyped case: it can never equal a real sentence
+          // ordinal, so such a citation groups with nothing instead of merging into whichever
+          // sentence happened to share its array position.
+          sid: typed ? cite.sentenceIndex : -1 - position,
+        };
+      })
+      .sort((a, b) => a.sort - b.sort || a.position - b.position);
+
+    for (const { cite, sid } of ordered) {
+      if (group !== null && sid === groupSentence) {
+        // Another source of the SAME sentence — one run, one boundary, its own mark.
+        const key = `${group.endIndex}:${Number(cite.label)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        group.cites.push(cite);
         continue;
       }
-      const m = re.exec(full);
-      if (!m) continue; // graceful skip
-      const endIndex = m.index + m[0].length;
-      if (seen.has(endIndex)) continue;
-      seen.add(endIndex);
-      inserts.push({ startIndex: m.index, endIndex, cite });
+      group = null;
+      groupSentence = sid;
+      const run = matchWordRun(
+        wordTokens(collapseInlineLinks(cite.sentenceText)),
+        domToks,
+        cursor,
+        full,
+      );
+      if (!run) continue; // graceful skip — tier 2 or tier 3 decides what happens next
+      cursor = run.lastTok + 1;
+      const endIndex = this.clampToBlock(root, ranges, run.startIndex, run.endIndex);
+      const key = `${endIndex}:${Number(cite.label)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      group = { startIndex: run.startIndex, endIndex, cites: [cite] };
+      anchors.push(group);
     }
+
     // Tempdoc 687 R3a — labels that get a real rendered marker below; the literal-token
     // normalizer strips duplicates of these and upgrades the rest.
-    const insertedLabels = new Set<number>(inserts.map((i) => Number(i.cite.label)));
-    if (inserts.length === 0) {
+    const insertedLabels = new Set<number>();
+    if (anchors.length === 0) {
       this.normalizeLiteralCitationTokens(root, insertedLabels);
       return;
     }
 
     // Insert LAST→FIRST so earlier node offsets stay valid across splitText.
-    inserts.sort((a, b) => b.endIndex - a.endIndex);
-    for (const { startIndex, endIndex, cite } of inserts) {
+    anchors.sort((a, b) => b.endIndex - a.endIndex);
+    for (const { startIndex, endIndex, cites } of anchors) {
       const endRange = ranges.find((r) => endIndex > r.start && endIndex <= r.end);
       if (!endRange) continue;
-      // Tempdoc 565 §15.B — insert the tier-colored `[n]` mark at the sentence boundary…
-      const tail = endRange.node.splitText(endIndex - endRange.start);
-      endRange.node.parentNode?.insertBefore(this.makeMarker(cite), tail);
+      // The offsets were measured before any split. Two anchors CAN land on one boundary (two runs
+      // in one block that both clamp to that block's end), and the second would then address a node
+      // its predecessor already truncated. Skipping is the same graceful-skip this function applies
+      // to an unlocatable sentence — never throw out of a render over a missing mark.
+      const endOffset = endIndex - endRange.start;
+      if (endOffset > endRange.node.data.length) continue;
+      // Tempdoc 565 §15.B / 847 §2.1e — insert the tier-colored `[n]` marks at the sentence
+      // boundary, ascending by label, in ONE split (a sentence two sources support gets both).
+      const tail = endRange.node.splitText(endOffset);
+      const ordered = [...cites].sort((a, b) => Number(a.label) - Number(b.label));
+      for (const cite of ordered) {
+        endRange.node.parentNode?.insertBefore(this.makeMarker(cite), tail);
+        insertedLabels.add(Number(cite.label));
+      }
       // …then color the cited sentence body by its grounding tier (the union with the retired
       // StreamingTextBlock's per-sentence coloring). §15.C fix: wrap EVERY text-node segment the
       // sentence spans (not just the single-node case), so a sentence crossing inline markup still
       // underlines its text runs; inline elements (bold/link) between runs are left intact (no
       // cross-element extract — the DOM is never corrupted). Process the spanned nodes LAST→FIRST so
       // each split keeps earlier nodes' offsets valid.
-      const cls = `cite-sentence grounding-${groundingClass(cite.similarity)}`;
-      // Tempdoc 822 §5.3 — the sentence carries the SAME source identity the mark does, so selecting
-      // a source can highlight the sentences it supports. Computed through the one `sourceKey`
-      // authority `makeMarker` uses: a second key function here would silently never match.
-      const sentenceKey = sourceKey(cite.detail.parentDocId, cite.detail.startLine);
+      //
+      // The tier is the STRONGEST of the sources supporting the sentence: the span answers "is this
+      // sentence grounded", which one strong source settles, while each mark keeps its own source's
+      // tier (H2) — so a weak second source still reads weak where it is claimed, on its numeral.
+      const best = ordered.reduce((m, c) => Math.max(m, c.similarity), Number.NEGATIVE_INFINITY);
+      const cls = `cite-sentence grounding-${groundingClass(best)}`;
+      // Tempdoc 822 §5.3 — the sentence carries the SAME source identities the marks do, so
+      // selecting a source can highlight the sentences it supports. Computed through the one
+      // `sourceKey` authority `makeMarker` uses: a second key function here would silently never
+      // match. `citeKey` stays the primary (what a single-source sentence always was); `citeKeys`
+      // carries the whole set, newline-joined because a key embeds a file path.
+      const keys = [
+        ...new Set(ordered.map((c) => sourceKey(c.detail.parentDocId, c.detail.startLine))),
+      ];
+      const selected = getSelectedSource();
       const spanned = ranges
         .filter((r) => r.end > startIndex && r.start < endIndex)
         .sort((a, b) => b.start - a.start);
       for (const r of spanned) {
         // For the boundary node the marker split already truncated it to [r.start, endIndex).
         const segStart = Math.max(startIndex, r.start);
-        const seg =
-          segStart > r.start ? r.node.splitText(segStart - r.start) : r.node;
+        const offset = segStart - r.start;
+        if (offset > r.node.data.length) continue; // same graceful skip as the boundary split above
+        const seg = offset > 0 ? r.node.splitText(offset) : r.node;
+        if (seg.data.length === 0) continue;
         const wrap = document.createElement('span');
         wrap.className = cls;
-        wrap.dataset.citeKey = sentenceKey;
+        wrap.dataset.citeKey = keys[0]!;
+        wrap.dataset.citeKeys = keys.join('\n');
         // A re-render rebuilds these spans, so a region already selected has to come back selected —
         // the same reason `makeMarker` reads the store at construction.
-        if (sentenceKey === getSelectedSource()) wrap.classList.add('cite-sentence-selected');
+        if (selected !== null && keys.includes(selected)) {
+          wrap.classList.add('cite-sentence-selected');
+        }
         seg.parentNode?.insertBefore(wrap, seg);
         wrap.appendChild(seg);
       }
     }
     this.normalizeLiteralCitationTokens(root, insertedLabels);
+  }
+
+  /**
+   * Tempdoc 847 §2.1c (H4) — THE SPAN GUARD. A matched run must not cross a rendered block
+   * boundary; when it does, the span is clamped to the FIRST block and the marker is placed at the
+   * clamp.
+   *
+   * Measured need (S0): 7 of 56 eligible runs — every bullet list, the blockquote, the GFM table and
+   * the heading-into-list shape — span 2–5 rendered blocks, because the backend's sentence iterator
+   * fuses a whole block into one key. Such a key matches CONTIGUOUSLY at 100 % coverage, so no
+   * acceptance threshold can see it: without this guard one citation underlines a three-item list
+   * plus its lead-in paragraph while reporting a perfect match. A mark may not claim text the
+   * cross-encoder did not score as part of that sentence.
+   *
+   * The comparison is the nearest block-level ANCESTOR, deliberately not "a newline in the flattened
+   * text" — S0 used the newline as a modelling stand-in and it fires falsely on a soft-wrapped
+   * paragraph, which is one `<p>` and one sentence.
+   */
+  private clampToBlock(
+    root: HTMLElement,
+    ranges: ReadonlyArray<{ node: Text; start: number; end: number }>,
+    startIndex: number,
+    endIndex: number,
+  ): number {
+    let firstBlock: Element | null = null;
+    let clamped = endIndex;
+    for (const r of ranges) {
+      if (r.end <= startIndex || r.start >= endIndex) continue;
+      const block = blockAncestor(r.node, root);
+      if (firstBlock === null) {
+        firstBlock = block;
+      } else if (block !== firstBlock) {
+        return clamped;
+      }
+      clamped = Math.min(endIndex, r.end);
+    }
+    return endIndex;
   }
   /**
    * Tempdoc 687 R3a (trust surfaces are literal — one citation notation per answer): local models
@@ -815,6 +930,12 @@ export class MarkdownBlock extends JfElement {
    * already carries a rendered marker (dedupe), upgraded to the same marker span otherwise.
    * Tokens inside code/pre are untouched (verbatim content), as are numbers with no matching
    * citation (e.g. "[3]" in quoted document text with 2 sources).
+   *
+   * Tempdoc 847 §2.1 TIER 2, and its honesty invariant H3: this upgrade asserts SOURCE-level
+   * attribution the MODEL placed, where tier 1 asserts SENTENCE-level attribution the cross-encoder
+   * placed. That is why a tier-2 mark gets NO `.cite-sentence` underline — the sentence was never
+   * identified, so no span may claim it was. Structural rather than checked (only the tier-1 weave
+   * builds spans), and pinned by a test so a future refactor cannot let a span follow the marker.
    */
   private normalizeLiteralCitationTokens(root: HTMLElement, insertedLabels: Set<number>): void {
     const byLabel = new Map<number, Citation>(this.citations.map((c) => [Number(c.label), c]));
@@ -911,14 +1032,6 @@ export class MarkdownBlock extends JfElement {
     return span;
   }
 
-  /** Strip common inline markdown markers so the raw-text sentence matches the rendered DOM text. */
-  private stripMarkers(s: string): string {
-    return s.replace(/\[(.*?)\]\((.*?)\)/g, '$1').replace(/[*_`~#>]/g, '');
-  }
-
-  private escapeRegex(s: string): string {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
 }
 
 if (typeof customElements !== 'undefined' && !customElements.get('jf-markdown-block')) {

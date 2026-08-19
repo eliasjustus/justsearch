@@ -69,7 +69,8 @@ final class AgentCitationResolver {
       citations.add(
           new DocumentService.ContextCitation(
               s.parentDocId(), s.chunkIndex(), 1, 0, 0, 0f, s.excerpt(),
-              s.startLine(), s.endLine(), s.headingText(), 0));
+              s.startLine(), s.endLine(), s.headingText(), 0,
+              DocumentService.ContextInclusion.ABSENT));
     }
     try {
       DocumentService.CitationMatchResult result =

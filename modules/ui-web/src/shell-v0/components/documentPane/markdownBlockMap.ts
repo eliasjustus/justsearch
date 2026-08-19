@@ -8,11 +8,15 @@
  * can be tinted + scrolled to — which means every rendered block must carry its origin line range.
  *
  * Parser choice: the app's markdown pipeline is `marked` + `DOMPurify` (see
- * `components/chat/MarkdownBlock.ts`) — `markdown-it` is NOT a dependency of this package
+ * `components/markdown/markdownRenderer.ts`) — `markdown-it` is NOT a dependency of this package
  * (checked `modules/ui-web/package.json`), so its `token.map` line-tracking isn't available. Rather
  * than add a new dependency, this module implements a CONSERVATIVE, fence-aware block splitter and
  * renders each split through the same `marked`+`DOMPurify` pipeline the rest of the app uses — one
  * markdown authority, just fed one block at a time instead of the whole document.
+ *
+ * Tempdoc 846 §2.1 — that last sentence used to be an aspiration: this module constructed its OWN
+ * `Marked` instance, configured by copy, so "one markdown authority" was two. It now holds a
+ * renderer from the shared factory, and only the GRANULARITY (one block at a time) is its own.
  *
  * Splitting rule (deliberately conservative — see the honest limits below):
  *   - A fenced code block (``` or ~~~) is ALWAYS one block, however many blank lines it contains
@@ -33,10 +37,17 @@
  * (`Title\n=====`) are not specially recognized; they render as part of their paragraph block, not a
  * heading block.
  */
-import { Marked } from 'marked';
-import DOMPurify from 'dompurify';
+import { createMarkdownRenderer } from '../markdown/markdownRenderer.js';
 
-const md = new Marked({ breaks: true, gfm: true });
+/**
+ * Tempdoc 846 §2.2 — `breaks` OFF. Rendered mode is reachable only for `.md`/`.markdown` files, and
+ * an authored markdown file is hard-wrapped by convention; every standard renderer of a markdown
+ * FILE (GitHub's file view, CommonMark, editor previews) joins those lines into a paragraph, so
+ * `breaks: true` was rendering a hard-wrapped document as a column of ragged short lines. The
+ * line-range contract is unaffected: this module splits blocks itself, BEFORE `marked` sees one, so
+ * `breaks` can only decide how the lines inside a block reflow — never where a block starts or ends.
+ */
+const md = createMarkdownRenderer({ breaks: false });
 
 /** One top-level rendered block and the exact 0-based, inclusive source line range it came from. */
 export interface MarkdownBlockDescriptor {
@@ -58,8 +69,7 @@ function isClosingFence(line: string, fenceChar: string, fenceLen: number): bool
 
 /** Render one block's source text through the app's markdown pipeline (marked → DOMPurify). */
 function renderBlockHtml(text: string): string {
-  const raw = text.trim() ? (md.parse(text, { async: false }) as string) : '';
-  return DOMPurify.sanitize(raw);
+  return text.trim() ? md.render(text) : '';
 }
 
 /**

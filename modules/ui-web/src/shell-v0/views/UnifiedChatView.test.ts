@@ -30,6 +30,11 @@ import { restoreUnifiedChat, resetUnifiedChatState, getUnifiedChatState } from '
 import { consumeShapeStream, dispatchShapeEventToHandlers } from '../../api/streams.js';
 // Tempdoc 822 §3d — the provenance-split assertions read the accumulator's own claim shape.
 import type { Claim } from '../components/chat/citationTypes.js';
+// Tempdoc 847 S1 — the record→evidence conversion these cases exercise is no longer a private method
+// on this view: it is the SHARED authority both render paths read (`recordEvidence.ts`), so the
+// assertions address it where it now lives. The cases themselves are unchanged — the same payloads,
+// the same expectations — because the extraction had to be behaviour-identical.
+import { claimsFromRecord, matchesFromRecord } from '../components/chat/recordEvidence.js';
 // Tempdoc 609 — value imports for the 609 describes (modules are vi.mock'd below; vi.mocked() wraps them).
 import { resumeConversation } from '../state/conversationListStore.js';
 import { setAiActivity } from '../state/aiStateStore.js';
@@ -5602,6 +5607,39 @@ describe('Tempdoc 822 §3d — the shipped window keeps lexical and verified sco
     view.remove();
   });
 
+  it('a citation_matches merge REPLACES the draft sentence text at the same index (847 S5)', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    const h = await askAndCaptureHandlers(view);
+    h.onRagCitations?.({ citations: [ragSource(0)] });
+    // The draft cuts an incomplete markdown buffer as prose, so a whole list arrives as one
+    // "sentence"; the final matches cut parsed block nodes. Same index, different sentence.
+    h.onRagCitationDelta?.({
+      sentenceIndex: 0,
+      sentenceText: 'The lock held.\n- And the renewal date passed.',
+      citations: [{ parentDocId: 'docs/a.md', sourceIndex: 0, score: 0.9 }],
+    });
+    h.onRagCitationMatches?.({
+      matches: [
+        {
+          sentenceIndex: 0,
+          sentenceText: 'The lock held.',
+          sourceIndex: 0,
+          similarity: 0.61,
+          parentDocId: 'docs/a.md',
+        },
+      ],
+    });
+    await view.updateComplete;
+
+    const claims = claimsOf(view);
+    expect(claims).toHaveLength(1);
+    // Keeping the draft's text would anchor this mark by a key naming a sentence that earned no
+    // score, and make the live render disagree with the reload (which only ever sees the final).
+    expect(claims[0]!.sentenceText).toBe('The lock held.');
+    view.remove();
+  });
+
   it('a rendered turn weaves marks for verified claims only — the lexical one stays plain prose', async () => {
     const view = mountView();
     await view.updateComplete;
@@ -5722,13 +5760,7 @@ describe('Tempdoc 822 §3d — the shipped window keeps lexical and verified sco
     view.remove();
   });
 
-  it('reads a legacy persisted record under its old `chunkIndex` key (user data, no migration)', async () => {
-    const view = mountView();
-    await view.updateComplete;
-    const v = view as unknown as {
-      claimsFromRecord(cm: unknown): Claim[];
-      matchesFromRecord(cm: unknown): Array<{ sourceIndex: number }>;
-    };
+  it('reads a legacy persisted record under its old `chunkIndex` key (user data, no migration)', () => {
     // Persisted BEFORE the rename. The stored values were already positional (they come from the
     // authoritative `matchCitations` call), so the old record renders correctly under the new reader.
     const legacy = {
@@ -5736,17 +5768,16 @@ describe('Tempdoc 822 §3d — the shipped window keeps lexical and verified sco
         { sentenceIndex: 0, sentenceText: 'The lock held.', chunkIndex: 2, similarity: 0.9, parentDocId: 'docs/a.md' },
       ],
     };
-    expect(v.claimsFromRecord(legacy)[0]!.verifiedRefs).toEqual([2]);
-    expect(v.matchesFromRecord(legacy)[0]!.sourceIndex).toBe(2);
+    expect(claimsFromRecord(legacy)[0]!.verifiedRefs).toEqual([2]);
+    expect(matchesFromRecord(legacy)[0]!.sourceIndex).toBe(2);
     // A record written after the rename reads the same way.
     const current = {
       matches: [
         { sentenceIndex: 0, sentenceText: 'The lock held.', sourceIndex: 2, similarity: 0.9, parentDocId: 'docs/a.md' },
       ],
     };
-    expect(v.claimsFromRecord(current)[0]!.verifiedRefs).toEqual([2]);
-    expect(v.matchesFromRecord(current)[0]!.sourceIndex).toBe(2);
-    view.remove();
+    expect(claimsFromRecord(current)[0]!.verifiedRefs).toEqual([2]);
+    expect(matchesFromRecord(current)[0]!.sourceIndex).toBe(2);
   });
 });
 
@@ -5814,9 +5845,7 @@ describe('Tempdoc 836 S2S3 — coverage honesty and the producer gate on both re
     await view.updateComplete;
     const live = claimsOf(view);
 
-    const replayed = (
-      view as unknown as { claimsFromRecord(cm: unknown): Claim[] }
-    ).claimsFromRecord(matchPayload('CROSS_ENCODER'));
+    const replayed = claimsFromRecord(matchPayload('CROSS_ENCODER'));
 
     expect(replayed).toEqual([...live]);
     expect(live[0]!.verifiedScore).toBe(0.82);
@@ -5832,9 +5861,7 @@ describe('Tempdoc 836 S2S3 — coverage honesty and the producer gate on both re
     await view.updateComplete;
     const live = claimsOf(view);
 
-    const replayed = (
-      view as unknown as { claimsFromRecord(cm: unknown): Claim[] }
-    ).claimsFromRecord(matchPayload('EMBEDDING_COSINE'));
+    const replayed = claimsFromRecord(matchPayload('EMBEDDING_COSINE'));
 
     // The claim still EXISTS — it is what arrived — but its score is on a scale the grounding
     // thresholds are not calibrated for, so it may not become a verified score on either path.
@@ -5851,9 +5878,29 @@ describe('Tempdoc 836 S2S3 — coverage honesty and the producer gate on both re
     view.remove();
   });
 
-  it('a record written before the producer field existed keeps its marks (absence is not a verdict)', async () => {
+  it('847 §1.5b — the SOURCES panel answers to the same producer verdict, live and on replay', async () => {
+    // The gate's second arm: `citations` (the CitationMatch[] the panel groups by) reached
+    // `sourceGrounding` ungated, so a cosine payload rendered markless prose beside a panel still
+    // announcing "Grounds N sentences" at a cosine-derived tier — two surfaces of one verdict,
+    // disagreeing. Paired with the cross-encoder twin so the empty below is the gate, not the
+    // fixture.
     const view = mountView();
     await view.updateComplete;
+    const h = await askAndCaptureHandlers(view);
+    h.onRagCitationMatches?.(matchPayload('EMBEDDING_COSINE'));
+    await view.updateComplete;
+    const gatedLive = (view as unknown as { citations: unknown[] }).citations;
+    expect(gatedLive).toEqual([]);
+    expect(matchesFromRecord(matchPayload('EMBEDDING_COSINE'))).toEqual([]);
+
+    h.onRagCitationMatches?.(matchPayload('CROSS_ENCODER'));
+    await view.updateComplete;
+    expect((view as unknown as { citations: unknown[] }).citations).toHaveLength(1);
+    expect(matchesFromRecord(matchPayload('CROSS_ENCODER'))).toHaveLength(1);
+    view.remove();
+  });
+
+  it('a record written before the producer field existed keeps its marks (absence is not a verdict)', () => {
     const legacy = {
       matches: [
         {
@@ -5865,12 +5912,9 @@ describe('Tempdoc 836 S2S3 — coverage honesty and the producer gate on both re
         },
       ],
     };
-    const replayed = (
-      view as unknown as { claimsFromRecord(cm: unknown): Claim[] }
-    ).claimsFromRecord(legacy);
+    const replayed = claimsFromRecord(legacy);
     expect(replayed[0]!.verifiedScore).toBe(0.9);
     expect(replayed[0]!.verifiedRefs).toEqual([2]);
-    view.remove();
   });
 
   it('the coverage facts land on the view, live', async () => {
@@ -5890,6 +5934,149 @@ describe('Tempdoc 836 S2S3 — coverage honesty and the producer gate on both re
     expect(v.sourceCoverage).toEqual([
       { sourceIndex: 0, windowsConsidered: 12, windowsScored: 3 },
     ]);
+    view.remove();
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * Tempdoc 848 — reasoning is TURN data, not stream decoration.
+ *
+ * Three legs, and the phase split matters: the streaming block renders the thinking from the first
+ * reasoning token until `done` (two branches — pre-content, then answer-phase), and the COMMITTED
+ * message renders it from there on. The committed block carries its own testid because
+ * `jf-reasoning-block` alone matches the streaming one too, and an assertion that cannot tell them
+ * apart passes for the wrong reason.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════ */
+describe('Tempdoc 848 — the turn keeps its thinking after done, and after a reload', () => {
+  interface ReasoningHandlers {
+    onReasoningChunk?(p: unknown): void;
+    onChunk?(p: unknown): void;
+    onDone?(p: unknown): void;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+  });
+
+  async function askAndCaptureHandlers(view: UnifiedChatView): Promise<ReasoningHandlers> {
+    view.inputDraft = 'why did the renewal fail?';
+    await view.updateComplete;
+    view.shadowRoot?.querySelector('jf-composer')?.dispatchEvent(new CustomEvent('composer-submit'));
+    await view.updateComplete;
+    const onEvent = vi.mocked(consumeShapeStream).mock.calls.at(-1)![2] as (
+      e: string,
+      p: unknown,
+    ) => void;
+    const dispatchMock = vi.mocked(dispatchShapeEventToHandlers);
+    dispatchMock.mockClear();
+    onEvent('probe', {});
+    return dispatchMock.mock.calls.at(-1)![0] as ReasoningHandlers;
+  }
+
+  it('renders the thinking MID-STREAM, from the first answer token until done', async () => {
+    // The answer-streaming phase is served by the streaming block's completed-blocks branch:
+    // `onChunk` ends the thinking (pushing the block) and appends text in the same call. Deleting
+    // that branch as "unreachable" would blank the block for the whole answer phase.
+    const view = mountView();
+    await view.updateComplete;
+    const h = await askAndCaptureHandlers(view);
+    h.onReasoningChunk?.({ text: 'weighing the options' });
+    await view.updateComplete;
+    expect(
+      view.shadowRoot!.querySelector('jf-reasoning-block'),
+      'the pre-content thinking phase renders the live controller',
+    ).not.toBeNull();
+
+    h.onChunk?.({ text: 'Because the lock held.' });
+    await view.updateComplete;
+    const v = view as unknown as { reasoning: { isThinking: boolean; reasoningBlocks: unknown[] } };
+    expect(v.reasoning.isThinking, 'the first content token ends thinking').toBe(false);
+    expect(v.reasoning.reasoningBlocks).toHaveLength(1);
+    expect(
+      view.shadowRoot!.querySelector('jf-reasoning-block'),
+      'and the finalized block keeps rendering through the answer phase',
+    ).not.toBeNull();
+    expect(
+      view.shadowRoot!.querySelector('[data-testid="chat-turn-reasoning"]'),
+      'nothing is committed yet',
+    ).toBeNull();
+    view.remove();
+  });
+
+  it('keeps the thinking on the SETTLED turn after done (the 835 §9e loss)', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    const h = await askAndCaptureHandlers(view);
+    h.onReasoningChunk?.({ text: 'weighing the options' });
+    h.onChunk?.({ text: 'Because the lock held.' });
+    h.onDone?.({});
+    await view.updateComplete;
+
+    const committed = view.shadowRoot!.querySelector('[data-testid="chat-turn-reasoning"]');
+    expect(committed, 'the committed turn renders its own reasoning block').not.toBeNull();
+    expect((committed as unknown as { text: string }).text).toBe('weighing the options');
+    view.remove();
+  });
+
+  it('renders the thinking a FAILED run recorded on its terminal error event (848 D-7)', async () => {
+    // The agent fold attaches a halted/errored run's trailing blocks to its ERROR event; without a
+    // consumer here the fold would be writing to a reader that does not exist.
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'documents';
+    await view.updateComplete;
+    const v = view as unknown as { unifiedEvents: unknown[]; thread: unknown[] };
+    v.unifiedEvents = [
+      {
+        id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE',
+        originator: 'user', content: 'do the thing', attributes: {},
+      },
+      {
+        id: 'e1', occurredAt: '2026-01-01T00:00:02Z', kind: 'ERROR', originator: 'agent',
+        content: 'the model went away',
+        attributes: {
+          errorCode: 'LLM_ERROR',
+          reasoning: [{ text: 'got as far as the lock table', durationMs: 700 }],
+        },
+      },
+    ];
+    v.thread = [];
+    view.requestUpdate();
+    await view.updateComplete;
+
+    expect(view.shadowRoot!.querySelector('.error')?.textContent).toContain('the model went away');
+    const block = view.shadowRoot!.querySelector('[data-testid="chat-turn-reasoning"]');
+    expect(block, 'a failed turn still shows what the model worked out').not.toBeNull();
+    expect((block as unknown as { text: string }).text).toBe('got as far as the lock table');
+    view.remove();
+  });
+
+  it('renders the thinking from the RECORD on reload, with no live thread entry', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'documents';
+    await view.updateComplete;
+    const v = view as unknown as { unifiedEvents: unknown[]; thread: unknown[] };
+    v.unifiedEvents = [
+      {
+        id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE',
+        originator: 'user', content: 'Q', attributes: {},
+      },
+      {
+        id: 'a1', occurredAt: '2026-01-01T00:00:02Z', kind: 'ASSISTANT_MESSAGE',
+        originator: 'agent', content: 'The answer.',
+        attributes: { reasoning: [{ text: 'recorded thinking', durationMs: 1840 }] },
+      },
+    ];
+    v.thread = [];
+    view.requestUpdate();
+    await view.updateComplete;
+
+    const block = view.shadowRoot!.querySelector('[data-testid="chat-turn-reasoning"]');
+    expect(block, 'a reloaded turn renders its thinking FROM the record').not.toBeNull();
+    expect((block as unknown as { text: string }).text).toBe('recorded thinking');
+    expect((block as unknown as { durationMs: number }).durationMs).toBe(1840);
     view.remove();
   });
 });

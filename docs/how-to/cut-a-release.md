@@ -242,14 +242,22 @@ Owner-only steps (require repo permissions):
    `build-release-assets.ps1`, round-trip verifies the draft asset set, and publishes the Release
    only after verification succeeds.
 
-   > **Standing constraint — never rename, move, or delete-and-recreate
-   > `build-installer.yml`.** The release sequence shipped inside `release.v1.json` is
-   > `GITHUB_RUN_NUMBER`, which GitHub scopes to the workflow *file*: recreating the file resets
-   > the counter to 1, and every shipped client that ever accepted a release permanently refuses
-   > all later ones (`updater.rs` persists `highest_accepted_sequence` and rejects anything
-   > lower), with no in-client recovery. This locked in with the first stable tag (v0.2.0,
-   > 2026-08-13; tempdoc 801 D14.b). Replacing the sequence source with a workflow-independent
-   > one is the prerequisite for ever restructuring the workflow file.
+   > **Where the release sequence comes from.** The sequence shipped inside `release.v1.json`
+   > is derived by `scripts/ci/derive-release-sequence.mjs`: `max(sequence` over every published
+   > release's `release.v1.json` asset`) + 1`, never below a checked-in floor of **41** (v0.2.0's
+   > published `40`, plus one). The tag being cut is excluded from the max, so re-running a
+   > dispatch against an already-published tag re-derives the same value instead of drifting.
+   > A release without the asset is skipped with a warning; an asset that exists but cannot be
+   > fetched or parsed is a hard error — the build fails rather than guessing, because
+   > `updater.rs` persists `highest_accepted_sequence` and permanently refuses any descriptor
+   > below it, with no in-client recovery.
+   >
+   > This replaced `GITHUB_RUN_NUMBER`, which GitHub scopes to the workflow *file*: renaming,
+   > moving, or delete-and-recreating `build-installer.yml` reset the counter to 1 and would have
+   > bricked update acceptance for every client that had accepted a release — a trap that locked
+   > in with the first stable tag (v0.2.0, 2026-08-13; tempdoc 801 D14.b). Restructuring the
+   > workflow file is now safe. Raise the floor only to stay above the highest sequence any
+   > *published* release has carried; never lower it.
 6. Set the repo homepage, enable Discussions if desired, and take/replace hero screenshots
    (see `docs/m1-operator-checklist.md`).
 7. **Post-cut — update the README to the published asset.** `README.md`'s installer size + SHA-256
@@ -428,9 +436,8 @@ speed). When bumping the ORT version, all of the following must move together:
       runs at CPU speed while the status surfaces still report a GPU variant (tempdoc 734 R11-F3).
       The registry pin then makes the verified bytes the only accepted bytes, so this is the one
       moment the contents can be wrong.
-- [ ] The **registry entry** — `filename` / `sha256` / `sizeBytes` for that asset — in **BOTH**
-      copies of `model-registry.v2.json` (`modules/ui/src/main/resources/ai/` and
-      `modules/configuration/src/test/resources/ai/`).
+- [ ] The **registry entry** — `filename` / `sha256` / `sizeBytes` for that asset — in
+      `model-registry.v2.json` (`modules/configuration/src/main/resources/ai/`).
 - [ ] The in-zip **`ort-native-version.txt`** marker inside the pack archive.
 - [ ] **`OrtCudaHelper.EXPECTED_ORT_NATIVE_VERSION`** (`modules/ort-common/…/OrtCudaHelper.java`).
 

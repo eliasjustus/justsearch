@@ -156,7 +156,6 @@ final class AiInstallServiceModelPathMarkerTest {
             "models",
             null,
             null,
-            false,
             false);
     return new ModelRegistry(2, "test", List.of(chat));
   }

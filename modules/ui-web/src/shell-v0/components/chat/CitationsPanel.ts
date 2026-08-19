@@ -40,8 +40,11 @@ import {
   filenameOf,
   sourceGrounding,
   sourceGroundingLabel,
+  inclusionBadge,
+  suppressGroundingFor,
   type EvidenceScore,
   type SourceGrounding,
+  type InclusionBadge,
 } from './evidenceProjection.js';
 import type {
   CitationMatch,
@@ -90,7 +93,7 @@ export class CitationsPanel extends JfElement {
   /**
    * The HOST owns the disclosure, so this panel renders BODY ONLY (tempdoc 822 Phase F11).
    *
-   * Default `false` — every shipped consumer (`views/search-v2/SearchV2View.ts`,
+   * Default `false` — every shipped consumer (`views/UnifiedChatView.ts`,
    * `views/SummarizeView.ts`) is byte-identical to before. Search v3 sets it because its answer tail
    * is ONE 24px row: a component-owned header on its own line makes that two rows, and the panel's
    * uppercase `▸ N SOURCES` is a second disclosure dialect for an act the window already declares.
@@ -208,7 +211,7 @@ export class CitationsPanel extends JfElement {
     /* Tempdoc 822 §5.4 — the selected source card. Containment means every --cp-* name defaults to
        TODAY'S VALUE, not to nothing: this selector's (0,2,0) outranks the base '.citation, .source'
        at (0,1,0), so a 'transparent' default would blank a selected card's fill and edge in the
-       shipped windows (search-v2, SummarizeView) where 'data-selected' is reachable. Defaulting to
+       shipped windows (UnifiedChatView, SummarizeView) where 'data-selected' is reachable. Defaulting to
        the base rule's own '--surface-2' / '--border-subtle' makes an un-tokenized selected card
        byte-identical to an unselected one, and the v3 window opts in from Sv3Main.ts. These rules
        sit AFTER .source:hover on purpose: they share its (0,2,0) specificity, so source order is what
@@ -227,7 +230,7 @@ export class CitationsPanel extends JfElement {
          rule — later in source — took the border of every card the pointer was over. Before this
          slice 'data-selected' was unreachable and every hovered card showed the hover edge; the
          moment the store was wired up, the card you had just CLICKED became the one card in the
-         panel with no hover feedback, in search-v2, SummarizeView and v3 alike. Restating it keeps
+         panel with no hover feedback, in UnifiedChatView, SummarizeView and v3 alike. Restating it keeps
          the source order's meaning intact — when a card is both, it still takes the HIGHER wash —
          while letting the pointer's own signal survive the selection it just made. */
       /* Its own name, falling through to the plain hover edge: a consumer whose selected edge
@@ -294,6 +297,18 @@ export class CitationsPanel extends JfElement {
     .grounding.high { color: var(--text-tint); }
     .grounding.medium { color: var(--text-secondary); }
     .grounding.uncited { color: var(--text-secondary); font-style: italic; }
+    /* Tempdoc 849 §5/§7 — the RETRIEVED-vs-RECEIVED badge, beside the grounding badge because they
+       are siblings: two budget cuts, one stage apart (§5.5). Quiet by default — "sent to the model"
+       is the unremarkable case and must not compete with the grounding tier for attention. DROPPED
+       takes the warning ink and nothing stronger: a passage the prompt had no room for is a fact
+       about the budget, not a fault, and the danger ink would read as an error the reader must fix. */
+    .inclusion {
+      font-size: var(--font-size-xs);
+      font-weight: 500;
+      white-space: nowrap;
+      color: var(--text-secondary);
+    }
+    .inclusion.dropped { color: var(--text-warning); }
     /* 559 Authority IV — the declared metric label (the "%" is no longer bare). */
     .score-metric {
       margin-left: 0.3rem;
@@ -410,6 +425,23 @@ export class CitationsPanel extends JfElement {
     return html`<span class="${cls}" aria-label=${sourceGroundingLabel(g)}>${sourceGroundingLabel(g)}</span>`;
   }
 
+  /**
+   * Tempdoc 849 §5 — whether the passage this card names actually reached the model. The badge is
+   * rendered from the {@link InclusionBadge} authority and NEVER from a state test here: the panel
+   * saying "dropped" in its own words while the reading pane says something else is the drift the
+   * one label authority exists to prevent.
+   *
+   * <p>ABSENCE RENDERS NOTHING. Every conversation persisted before 849 carries no inclusion state,
+   * and the correct thing to show for it is empty space — not "included", and not a placeholder
+   * saying we do not know, which would put a caveat on every historical source.
+   */
+  private renderInclusion(badge: InclusionBadge | null): TemplateResult | typeof nothing {
+    if (badge === null) return nothing;
+    return html`<span class="inclusion ${badge.state}" title=${badge.detail} aria-label=${badge.label}
+      >${badge.label}</span
+    >`;
+  }
+
   private renderSourceCard(s: RetrievalCitation, grounding?: SourceGrounding | null): TemplateResult {
     // 559 Authority IV — render the citation card as a typed projection of the
     // evidence record, not ad-hoc field reads.
@@ -442,7 +474,10 @@ export class CitationsPanel extends JfElement {
           @click=${(e: MouseEvent) => this.onSourceClick(s, e)}
         >
           <div class="header">
-            ${grounding ? this.renderGrounding(grounding) : nothing}
+            ${grounding && !suppressGroundingFor(item.inclusion)
+              ? this.renderGrounding(grounding)
+              : nothing}
+            ${this.renderInclusion(inclusionBadge(item.inclusion))}
             ${item.headingText
               ? html`<span class="heading-breadcrumb">${item.headingText}</span>`
               : nothing}

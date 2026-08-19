@@ -5,7 +5,8 @@
     "file": "modules/ui-web/src/shell-v0/state/verdict.ts"
   },
   "scope": "modules/ui-web/src/shell-v0",
-  "predicatePattern": "retrieval\\s*[=!]==",
+  "predicatePattern": "retrieval\\s*[=!]==\\s*['\"]",
+ "predicatePatternNote": "Tempdoc 849 slice-3 review MEDIUM-4. The pattern requires the comparison's right-hand side to be a STRING LITERAL, because that is what forming a verdict actually looks like: `retrieval` is compared against a readiness STATE ('degraded' / 'unknown' / …). The previous bare `retrieval\\s*[=!]==` matched any property named `retrieval` compared to anything, and flagged `evidenceProjection.ts` for `header.retrieval !== null` — an emptiness check on an unrelated field, which is not a verdict and which no amount of restructuring the product code should have been needed to appease. Scoping to `readiness\\.` was considered and REJECTED: the seam itself destructures (`r.retrieval === 'degraded'`, verdict.ts:318-324), so a receiver-name pattern would fail the seam-integrity leg and would also miss any second site that aliased the same way. The state-literal form keeps both legs biting — verified by probe: a crafted `readiness.retrieval === 'DEGRADED'` in a non-allow-listed shell-v0 file still fails the gate.",
   "allowed": [
     "modules/ui-web/src/shell-v0/state/verdict.ts"
   ]

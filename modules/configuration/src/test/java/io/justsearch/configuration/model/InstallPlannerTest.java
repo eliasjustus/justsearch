@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -336,6 +337,144 @@ class InstallPlannerTest {
         "a requiresCuda=false RUNTIME package must download even without CUDA");
   }
 
+  // ── Tempdoc 840 Phase 2: per-component decline ────────────────────────────────────────────────
+
+  @Test
+  void declinedPackage_isSkippedWithTheUserDeclinedCause() {
+    ModelRegistry registry = registryWithNecessities();
+    HardwareProfile hw = HardwareProfile.gpuFull(12_000_000_000L);
+
+    InstallPlan plan =
+        InstallPlanner.plan(
+            registry, hw, InstallIntent.DEFAULT, Set.of("reranker"), tempDir, tempDir);
+
+    assertTrue(plan.downloads().stream().noneMatch(d -> d.packageId().equals("reranker")));
+    InstallPlan.SkippedPackage skip =
+        plan.skipped().stream()
+            .filter(s -> s.packageId().equals("reranker"))
+            .findFirst()
+            .orElseThrow();
+    assertEquals(
+        SkipCause.USER_DECLINED,
+        skip.cause(),
+        "the typed cause is what logic reads — a reworded reason must not change the meaning");
+    assertTrue(skip.reason().contains("declined"), "and the prose still names the user's choice");
+    // Everything else the hardware allows is unaffected.
+    assertTrue(plan.downloads().stream().anyMatch(d -> d.packageId().equals("embedding")));
+    assertTrue(plan.downloads().stream().anyMatch(d -> d.packageId().equals("chat")));
+  }
+
+  @Test
+  void declinedNonDeclinablePackages_areInstalledAnyway() {
+    // The guard: a stale settings file, a hand edit, or a future UI bug naming EVERY package must
+    // not be able to switch off the ones the product cannot work without. embedding is REQUIRED and
+    // cuda-runtime is INFRASTRUCTURE (declining "GPU runtime libraries" would silently remove chat,
+    // since that package also delivers the cuda12 llama-server) — both must survive.
+    ModelRegistry registry = registryWithNecessities();
+    HardwareProfile hw = HardwareProfile.gpuFull(12_000_000_000L);
+    Set<String> declineEverything = Set.of("embedding", "reranker", "chat", "cuda-runtime");
+
+    InstallPlan plan =
+        InstallPlanner.plan(
+            registry, hw, InstallIntent.DEFAULT, declineEverything, tempDir, tempDir);
+
+    assertTrue(
+        plan.downloads().stream().anyMatch(d -> d.packageId().equals("embedding")),
+        "a REQUIRED package must be installed even when the declined set names it");
+    assertTrue(
+        plan.downloads().stream().anyMatch(d -> d.packageId().equals("cuda-runtime")),
+        "an INFRASTRUCTURE package must be installed even when the declined set names it");
+    assertTrue(
+        plan.skipped().stream()
+            .noneMatch(
+                s ->
+                    s.cause() == SkipCause.USER_DECLINED
+                        && (s.packageId().equals("embedding")
+                            || s.packageId().equals("cuda-runtime"))),
+        "and neither may be recorded as user-declined");
+    // The two genuinely declinable ones ARE honored, so the test cannot pass by ignoring the set.
+    assertTrue(
+        plan.skipped().stream()
+            .filter(s -> s.cause() == SkipCause.USER_DECLINED)
+            .map(InstallPlan.SkippedPackage::packageId)
+            .toList()
+            .containsAll(List.of("reranker", "chat")));
+  }
+
+  @Test
+  void emptyAndNullDeclinedSets_leaveThePlanUnchanged() {
+    ModelRegistry registry = registryWithNecessities();
+    HardwareProfile hw = HardwareProfile.gpuFull(12_000_000_000L);
+
+    InstallPlan baseline = InstallPlanner.plan(registry, hw, InstallIntent.DEFAULT, tempDir, tempDir);
+    InstallPlan empty =
+        InstallPlanner.plan(registry, hw, InstallIntent.DEFAULT, Set.of(), tempDir, tempDir);
+    InstallPlan nulled =
+        InstallPlanner.plan(registry, hw, InstallIntent.DEFAULT, null, tempDir, tempDir);
+
+    assertEquals(baseline.downloads(), empty.downloads());
+    assertEquals(baseline.downloads(), nulled.downloads());
+    assertEquals(baseline.skipped(), nulled.skipped());
+  }
+
+  /**
+   * Invariant H1 (tempdoc 840 Phase 2): no package may select a CUDA/FP16 variant unless the
+   * cuda-runtime package is part of the same plan.
+   *
+   * <p>This holds today only IMPLICITLY — {@code selectVariant} and the cuda-runtime hardware gate
+   * both read {@code profile.usesCuda()}, so they cannot disagree by construction. That is exactly
+   * why it needs a test rather than trust: the round-11 defect class is a machine that ran every
+   * ONNX encoder on CPU while reporting a complete install, and a future edit that gates the runtime
+   * package on anything else (a tier, a VRAM floor, a user decline) would re-open it silently. Run
+   * against the SHIPPED registry, across every hardware profile, and with every package declined —
+   * the decline axis is the newest way to break it.
+   */
+  @Test
+  void noPackageSelectsACudaVariant_unlessCudaRuntimeIsInThePlan() {
+    ModelRegistry registry = ModelRegistryLoader.loadFromClasspath("ai/model-registry.v2.json");
+    List<HardwareProfile> profiles =
+        List.of(
+            HardwareProfile.cpuOnly(),
+            new HardwareProfile(true, false, 0L), // GPU present, CUDA not functional
+            new HardwareProfile(true, true, 6_000_000_000L), // GPU_LITE
+            HardwareProfile.gpuFull(12_000_000_000L));
+    Set<String> declineEverything =
+        registry.packages().stream().map(ModelPackage::id).collect(java.util.stream.Collectors.toSet());
+
+    for (HardwareProfile hw : profiles) {
+      for (Set<String> declined : List.of(Set.<String>of(), declineEverything)) {
+        InstallPlan plan =
+            InstallPlanner.plan(registry, hw, InstallIntent.DEFAULT, declined, tempDir, tempDir);
+        boolean runtimePlanned =
+            plan.downloads().stream().anyMatch(d -> d.packageId().equals("cuda-runtime"))
+                || plan.alreadyInstalled().contains("cuda-runtime");
+
+        for (ModelPackage pkg : registry.packages()) {
+          boolean pkgPlanned =
+              plan.downloads().stream().anyMatch(d -> d.packageId().equals(pkg.id()))
+                  || plan.alreadyInstalled().contains(pkg.id());
+          if (!pkgPlanned) {
+            continue;
+          }
+          ModelVariant selected = pkg.selectVariant(plan.profile());
+          if (selected == null || selected.targetEP() != ExecutionProvider.CUDA) {
+            continue;
+          }
+          assertTrue(
+              runtimePlanned,
+              "H1 violated: package '" + pkg.id() + "' selects the CUDA variant '"
+                  + selected.filename() + "' on profile " + plan.profile()
+                  + " (declined=" + declined.size() + ") but cuda-runtime is not in the plan");
+          assertTrue(
+              pkg.dependsOn().contains("cuda-runtime"),
+              "package '" + pkg.id() + "' can select a CUDA variant, so the registry must declare"
+                  + " dependsOn cuda-runtime — that declaration is what makes H1 checkable rather"
+                  + " than merely true-by-construction");
+        }
+      }
+    }
+  }
+
   @Test
   void devOnlyPackage_isNeverPlanned_forAnyHardwareOrIntent() {
     // Tempdoc 842: chat-compact exists for dev stacks only. The skip is unconditional — no intent
@@ -371,6 +510,48 @@ class InstallPlannerTest {
     }
   }
 
+  /** A registry exercising all four {@link Necessity} categories against the real package ids. */
+  private ModelRegistry registryWithNecessities() {
+    ModelPackage embedding = new ModelPackage(
+        "embedding", "Embedding model", "Semantic search", "onnx/embed",
+        List.of(
+            new ModelVariant("model.onnx", ModelPrecision.FP32, ExecutionProvider.CPU,
+                "AAAA", 1_000_000, "https://example.com/fp32"),
+            new ModelVariant("model_fp16.onnx", ModelPrecision.FP16, ExecutionProvider.CUDA,
+                "BBBB", 500_000, "https://example.com/fp16")),
+        List.of(new SupportingFile("tokenizer.json", "CCCC", 10_000, "https://example.com/tok")),
+        0, null, null, null, CapabilityTier.RETRIEVAL_CORE, false, false,
+        Necessity.REQUIRED, List.of("cuda-runtime"));
+    ModelPackage reranker = new ModelPackage(
+        "reranker", "Search reranker", "Better ranking", "onnx/reranker",
+        List.of(
+            new ModelVariant("model.onnx", ModelPrecision.FP32, ExecutionProvider.CPU,
+                "HHHH", 300_000, "https://example.com/rr-fp32"),
+            new ModelVariant("model_fp16.onnx", ModelPrecision.FP16, ExecutionProvider.CUDA,
+                "IIII", 150_000, "https://example.com/rr-fp16")),
+        List.of(),
+        0, null, null, null, CapabilityTier.RETRIEVAL_ENRICHMENT, false, false,
+        Necessity.IMPROVES_RESULTS, List.of("cuda-runtime"));
+    ModelPackage chat = new ModelPackage(
+        "chat", "Chat model", "Conversational AI", "gguf",
+        List.of(
+            new ModelVariant("model.gguf", ModelPrecision.GGUF, ExecutionProvider.LLAMA_SERVER,
+                "DDDD", 5_000_000_000L, "https://example.com/gguf")),
+        List.of(),
+        HardwareProfile.MINIMUM_VRAM_FOR_GGUF, null, null, null, CapabilityTier.LLM, false, false,
+        Necessity.ADDS_FEATURE, List.of());
+    ModelPackage cudaRuntime = new ModelPackage(
+        "cuda-runtime", "GPU runtime libraries", "CUDA DLLs", "cuda12",
+        List.of(),
+        List.of(
+            new SupportingFile(
+                "cuda.zip", "FFFF", 200_000_000L, "https://example.com/cuda.zip", true)),
+        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, true, false,
+        Necessity.INFRASTRUCTURE, List.of());
+    return new ModelRegistry(
+        2, "test registry", List.of(embedding, reranker, chat, cudaRuntime));
+  }
+
   @Test
   void devOnlyPackage_contributesNoBytes_soConsentTotalsAreUnaffected() {
     // The devOnly skip must happen before any byte accounting: a user consenting to the plan must
@@ -398,7 +579,8 @@ class InstallPlannerTest {
         List.of(
             new SupportingFile(
                 "compact-mmproj.gguf", "IIII", 670_000_000L, "https://example.com/compact-mmproj")),
-        0, null, null, null, CapabilityTier.LLM, false, true);
+        0, null, null, null, CapabilityTier.LLM, false, true,
+        Necessity.ADDS_FEATURE, List.of());
     List<ModelPackage> packages = new java.util.ArrayList<>(registryWithTiers().packages());
     packages.add(chatCompact);
     return new ModelRegistry(2, "test registry", packages);
@@ -425,7 +607,8 @@ class InstallPlannerTest {
         List.of(
             new SupportingFile(
                 "runtime.zip", "GGGG", 50_000_000L, "https://example.com/runtime.zip", true)),
-        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, false);
+        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, false, false,
+        Necessity.INFRASTRUCTURE, List.of());
     return new ModelRegistry(2, "test registry", List.of(embedding, runtimeCpuSupport));
   }
 
@@ -445,7 +628,8 @@ class InstallPlannerTest {
         List.of(
             new SupportingFile(
                 "cuda.zip", "FFFF", 200_000_000L, "https://example.com/cuda.zip", true)),
-        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, true);
+        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, true, false,
+        Necessity.INFRASTRUCTURE, List.of());
     ModelPackage chat = new ModelPackage(
         "chat", "Chat", "Conversational AI", "gguf",
         List.of(
@@ -472,7 +656,8 @@ class InstallPlannerTest {
         List.of(
             new SupportingFile(
                 "cuda.zip", "FFFF", 200_000_000L, "https://example.com/cuda.zip", true)),
-        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, true);
+        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, true, false,
+        Necessity.INFRASTRUCTURE, List.of());
     return new ModelRegistry(2, "test registry", List.of(embedding, cudaRuntime));
   }
 

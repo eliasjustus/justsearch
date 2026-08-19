@@ -22,12 +22,14 @@ import io.justsearch.app.api.SamplingParams;
 import io.justsearch.core.util.TokenEstimation;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -348,6 +350,14 @@ public final class ConversationEngine {
     }
 
     int maxTokens = parseMaxTokens(body);
+    // Tempdoc 845 — publish the effective completion reserve so context injectors budget the prompt
+    // against what this turn ACTUALLY reserves. RAGContext used to assume a flat 1024, which is
+    // merely the default: Thorough sends 3072, so its retrieved context over-committed the window
+    // by the 2048-token difference and the request 400ed at the server. Seeded from the same
+    // variable handed to streamLlm below, so the budgeting reserve cannot drift from the real one.
+    ctx.attributes().put(
+        io.justsearch.app.services.conversation.spi.RAGContext.ATTR_COMPLETION_RESERVE_TOKENS,
+        maxTokens);
     SamplingParams sampling = applySchemaConstraint(parseSamplingParams(body), body);
 
     // Assemble the system prompt once per request — contributors are stateless and don't
@@ -422,8 +432,13 @@ public final class ConversationEngine {
 
       String finalText;
       AtomicReference<OnlineAiService.AiUsage> usageRef = new AtomicReference<>();
+      // Tempdoc 848 §2.2 — per-`streamLlm` (therefore per-iteration) by construction: an ITERATING
+      // shape's iteration-3 record carries iteration-3's thinking, with no cross-iteration bleed.
+      AtomicReference<List<ReasoningTrace>> reasoningRef = new AtomicReference<>();
       try {
-        finalText = streamLlm(ai, llmInput, maxTokens, sampling, consumers, ctx, usageRef, sink);
+        finalText =
+            streamLlm(
+                ai, llmInput, maxTokens, sampling, consumers, ctx, usageRef, reasoningRef, sink);
       } catch (LlmStreamException e) {
         emitError(sink, e.getMessage(), e.errorCode);
         return;
@@ -478,10 +493,14 @@ public final class ConversationEngine {
       // shapes (RAG) record under threadId (the request's conversationId).
       if (sessionId != null && conversationStore != null) {
         conversationStore.appendMessage(
-            sessionId, shape.id().value(), persistedAssistant(assistantMsg, mergedDoneEntries));
+            sessionId,
+            shape.id().value(),
+            persistedAssistant(assistantMsg, mergedDoneEntries, reasoningRef.get()));
       } else if (threadId != null && conversationStore != null) {
         conversationStore.appendMessage(
-            threadId, shape.id().value(), persistedAssistant(assistantMsg, mergedDoneEntries));
+            threadId,
+            shape.id().value(),
+            persistedAssistant(assistantMsg, mergedDoneEntries, reasoningRef.get()));
       }
 
       // Iteration decision.
@@ -538,6 +557,7 @@ public final class ConversationEngine {
       List<StreamConsumer> consumers,
       EngineConversationContext ctx,
       AtomicReference<OnlineAiService.AiUsage> usageOut,
+      AtomicReference<List<ReasoningTrace>> reasoningOut,
       Consumer<SseEvent> sink)
       throws LlmStreamException {
 
@@ -547,6 +567,19 @@ public final class ConversationEngine {
     AtomicReference<Throwable> error = new AtomicReference<>();
     AtomicLong lastActivityNanos = new AtomicLong(System.nanoTime());
     AtomicBoolean abandoned = new AtomicBoolean(false);
+    // Tempdoc 848 §2.2 — accumulate reasoning exactly as `fullText` accumulates content: reasoning is
+    // a property of an LLM CALL, and this is the one place a call happens, so a shape-layer
+    // accumulator would need one copy per shape and would drift.
+    //
+    // ONE block per thinking REGION, not one per call (848 F2): a model that thinks, answers, then
+    // thinks again produces two regions, and the live `ReasoningController` already cuts a block at
+    // each of them (`endThinking` on the first content token after a region). Accumulating the whole
+    // call into a single block would make the record disagree with the live render on block count AND
+    // report a duration covering only the first region. §2.1's duration semantic is per region: first
+    // reasoning token → first non-reasoning output, i.e. the next content chunk, or stream end.
+    List<ReasoningTrace> reasoningBlocks = Collections.synchronizedList(new ArrayList<>());
+    StringBuilder reasoningText = new StringBuilder();
+    AtomicLong reasoningStartNanos = new AtomicLong(-1);
 
     ai.stream(
         new OnlineAiService.StreamRequest(messages, maxTokens, sampling),
@@ -556,6 +589,13 @@ public final class ConversationEngine {
                 return;
               }
               lastActivityNanos.set(System.nanoTime());
+              // Tempdoc 848 §2.1 — the first content token CLOSES the open thinking region, mirroring
+              // `UnifiedChatView.onChunk` calling `ReasoningController.endThinking()`. Clearing the
+              // start marker is what lets a later reasoning chunk open a NEW region.
+              long regionStart = reasoningStartNanos.getAndSet(-1);
+              if (regionStart >= 0) {
+                flushReasoningRegion(reasoningBlocks, reasoningText, regionStart, System.nanoTime());
+              }
               fullText.append(chunk);
               sink.accept(new SseEvent("chunk", Map.of("text", chunk)));
               for (StreamConsumer consumer : consumers) {
@@ -572,6 +612,10 @@ public final class ConversationEngine {
                 return;
               }
               lastActivityNanos.set(System.nanoTime());
+              reasoningStartNanos.compareAndSet(-1, System.nanoTime());
+              synchronized (reasoningText) {
+                reasoningText.append(reasoning);
+              }
               sink.accept(new SseEvent("reasoning_chunk", Map.of("text", reasoning)));
             },
             toolDelta -> {},
@@ -612,10 +656,54 @@ public final class ConversationEngine {
       throw new LlmStreamException(err.getMessage() == null ? err.toString() : err.getMessage(), "LLM_ERROR");
     }
 
+    // Tempdoc 848 §2.1 — a region still open at stream end (the turn ended on thinking, or thought
+    // without ever answering) closes here; the model really produced it, so it persists like any other.
+    long trailingStart = reasoningStartNanos.getAndSet(-1);
+    if (trailingStart >= 0) {
+      flushReasoningRegion(reasoningBlocks, reasoningText, trailingStart, System.nanoTime());
+    }
+    if (!reasoningBlocks.isEmpty()) {
+      reasoningOut.set(List.copyOf(reasoningBlocks));
+    }
+
     // Always return the chunk-accumulator; `completionText` is the LLM
     // finish_reason, not the response body. See the comment on the onComplete
     // callback above.
     return fullText.toString();
+  }
+
+  /**
+   * Close one thinking region into a block. A region that produced no text at all is not a block —
+   * the persisted array says what the model actually thought, and an empty entry would claim
+   * otherwise.
+   */
+  private static void flushReasoningRegion(
+      List<ReasoningTrace> blocks, StringBuilder text, long startNanos, long endNanos) {
+    synchronized (text) {
+      if (text.isEmpty() || text.toString().isBlank()) {
+        text.setLength(0);
+        return;
+      }
+      blocks.add(
+          new ReasoningTrace(
+              text.toString(), Math.max(0L, (endNanos - startNanos) / 1_000_000L)));
+      text.setLength(0);
+    }
+  }
+
+  /**
+   * Tempdoc 848 §2.1 — one reasoning block: one REGION of thinking and the interval it took. The
+   * persisted shape is an ARRAY of these, because both frontend models are already lists
+   * ({@code ReasoningController.reasoningBlocks}, {@code Sv3Turn.reasoning}) — the record is the FE's
+   * existing shape, not a second one — and because one call can contain several regions.
+   */
+  private record ReasoningTrace(String text, long durationMs) {
+    Map<String, Object> asBlock() {
+      Map<String, Object> block = new LinkedHashMap<>();
+      block.put("text", text);
+      block.put("durationMs", durationMs);
+      return block;
+    }
   }
 
   /** Resolve all {@link PromptContributor}s referenced by the shape; missing ids throw. */
@@ -755,8 +843,25 @@ public final class ConversationEngine {
   private record InjectorRunResult(List<Map<String, Object>> messages, boolean terminated) {}
 
   /**
+   * The keys the model's message contract actually defines. Everything else a context message
+   * carries is persistence bookkeeping and must not reach the server.
+   */
+  private static final Set<String> LLM_MESSAGE_KEYS =
+      Set.of("role", "content", "name", "tool_calls", "tool_call_id");
+
+  /**
    * Build the LLM message list: system prompt as message[0] (omitted if empty), then the
-   * accumulated context messages.
+   * accumulated context messages PROJECTED to the keys the model contract defines.
+   *
+   * <p>Tempdoc 848 §2.2b — the store is a schemaless passthrough ({@code FileConversationStore}
+   * returns each persisted line whole, and {@code loadEffectiveContext} only filters by id), so a
+   * PERSISTENT shape's next turn re-sends every persistence-only key of every earlier assistant
+   * record inside the OpenAI-compat {@code messages} body. That was already true of {@code
+   * id}/{@code hash}/{@code ts} — inert, so harmless by luck — and becomes a real defect the moment
+   * a payload key is persisted: {@code reasoning} is an array in the server's reasoning namespace
+   * and would inflate the prompt in proportion to conversation length. The boundary is the one
+   * place a guarantee can hold for every future persisted field, so it PROJECTS to the contract's
+   * keys rather than blacklisting today's known extras.
    */
   private static List<Map<String, Object>> buildLlmInput(
       String systemPrompt, List<Map<String, Object>> contextMessages) {
@@ -767,8 +872,20 @@ public final class ConversationEngine {
       system.put("content", systemPrompt);
       out.add(system);
     }
-    out.addAll(contextMessages);
+    for (Map<String, Object> message : contextMessages) {
+      out.add(projectForLlm(message));
+    }
     return out;
+  }
+
+  private static Map<String, Object> projectForLlm(Map<String, Object> message) {
+    Map<String, Object> projected = new LinkedHashMap<>();
+    for (Map.Entry<String, Object> entry : message.entrySet()) {
+      if (LLM_MESSAGE_KEYS.contains(entry.getKey())) {
+        projected.put(entry.getKey(), entry.getValue());
+      }
+    }
+    return projected;
   }
 
   private static Map<String, Object> assistantMessage(String text) {
@@ -836,7 +953,9 @@ public final class ConversationEngine {
    * persisted copy only, never on the LLM-context copy, so it cannot pollute the next prompt.
    */
   private static Map<String, Object> persistedAssistant(
-      Map<String, Object> assistantMsg, Map<String, Object> mergedDoneEntries) {
+      Map<String, Object> assistantMsg,
+      Map<String, Object> mergedDoneEntries,
+      List<ReasoningTrace> reasoning) {
     Map<String, Object> persisted = new LinkedHashMap<>(assistantMsg);
     Object citations = mergedDoneEntries.get("citations");
     if (citations != null) {
@@ -852,6 +971,14 @@ public final class ConversationEngine {
     Object claimMatches = mergedDoneEntries.get("claimMatches");
     if (claimMatches != null) {
       persisted.put("claimMatches", claimMatches);
+    }
+    // Tempdoc 848 §2.1/§2.2 — the turn's thinking, as an ordered array of blocks. Passed as an
+    // EXPLICIT argument rather than through `mergedDoneEntries`, because those entries also ship on
+    // the `done` SSE payload: routing reasoning through them would re-send on the wire what already
+    // streamed chunk-by-chunk. Absent (no key) when the model did not think — "no key" is the honest
+    // reading for a non-thinking preset, and an empty array would claim otherwise.
+    if (reasoning != null && !reasoning.isEmpty()) {
+      persisted.put("reasoning", reasoning.stream().map(ReasoningTrace::asBlock).toList());
     }
     return persisted;
   }

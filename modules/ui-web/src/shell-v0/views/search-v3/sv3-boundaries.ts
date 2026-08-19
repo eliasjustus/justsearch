@@ -39,7 +39,8 @@
  * `sv3-sessions.ts`'s no-persistence rule: that rule is about SESSION RECORDS, whose authority is the
  * open Phase-D question. A sidebar width, a collapsed rail and a pane width are UI PREFERENCES about
  * this window's chrome — they describe no domain object, fork no authority, and have exactly the
- * durable home `views/search-v2/railSizing.ts:117-129` already chose for the same kind of value.
+ * durable home (`localStorage`, not the shared user document) the retired search-v2 window's rail
+ * sizing already chose for the same kind of value.
  */
 
 /** The spec's default — 16rem. */
@@ -81,8 +82,8 @@ export const SV3_PANE_INLINE_MIN_PX = 980;
 
 /**
  * One keyboard nudge, shared by both grips. The spec's rail is `tabIndex={-1}` and its pane handle
- * has no keyboard half either, so this is the
- * repo's own answer to the same boundary: the step `views/search-v2/railSizing.ts:64` already uses.
+ * has no keyboard half either, so this is the repo's own answer to the same boundary: the 24px step
+ * the retired search-v2 window's rail grip already used.
  */
 export const SV3_GRIP_KEY_STEP_PX = 24;
 

@@ -135,7 +135,8 @@ public final class DocAccess implements ContextInjector {
             0,
             0,
             "",
-            0);
+            0,
+            DocumentService.ContextInclusion.ABSENT);
     List<DocumentService.VerificationSource> sources =
         List.of(new DocumentService.VerificationSource(citation, truncated));
     ctx.attributes().put(RAGContext.ATTR_VERIFICATION_SOURCES, sources);

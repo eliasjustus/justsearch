@@ -109,7 +109,6 @@ export type ComponentTag =
   | 'jf-scope-chip'
   | 'jf-search-results'
   | 'jf-search-trace'
-  | 'jf-search-v2'
   | 'jf-security-surface'
   | 'jf-selection-actions-menu'
   | 'jf-settings-surface'
@@ -127,6 +126,7 @@ export type ComponentTag =
   | 'jf-summarize-view'
   | 'jf-surface-tabs'
   | 'jf-sv3-composer'
+  | 'jf-sv3-context-bar'
   | 'jf-sv3-empty'
   | 'jf-sv3-main'
   | 'jf-sv3-palette'
@@ -252,7 +252,6 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-scope-chip',
   'jf-search-results',
   'jf-search-trace',
-  'jf-search-v2',
   'jf-security-surface',
   'jf-selection-actions-menu',
   'jf-settings-surface',
@@ -270,6 +269,7 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-summarize-view',
   'jf-surface-tabs',
   'jf-sv3-composer',
+  'jf-sv3-context-bar',
   'jf-sv3-empty',
   'jf-sv3-main',
   'jf-sv3-palette',
