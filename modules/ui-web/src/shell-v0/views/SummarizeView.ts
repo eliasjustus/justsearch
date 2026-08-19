@@ -51,6 +51,9 @@ import type {
   RetrievalCitation,
 } from '../components/chat/CitationsPanel.js';
 import { claimsToCitations } from '../components/chat/citationResolve.js';
+// Tempdoc 847 S1 — the ONE `claimMatches` envelope reader, so this surface's producer verdict is
+// the same one the chat window and search v3 read, applied to BOTH halves of the evidence.
+import { admittedMatches, readScorer } from '../components/chat/recordEvidence.js';
 import { registerViewFactory } from '../router/viewFactoryRegistry.js';
 import {
   getSelection as getCurrentSelection,
@@ -401,14 +404,18 @@ export class SummarizeView extends JfElement {
           | { matches?: CitationMatch[]; scorer?: string; sourceCoverage?: SourceCoverage[] }
           | null;
         if (!p || !Array.isArray(p.matches)) return;
-        this.citations = p.matches;
-        this.coverage = coverageHonesty(p);
-        this.sourceCoverage = Array.isArray(p.sourceCoverage) ? p.sourceCoverage : [];
         // Tempdoc 836 §4 — the PRODUCER gate. Only the cross-encoder's scale is the one the
         // grounding thresholds are calibrated on; a cosine-fallback score arrives as a number of
         // the same type and a different meaning, so it may not become a verified score.
-        const scorer = p.scorer;
+        const scorer = readScorer(p);
         const verified = isVerifiedProducer(scorer);
+        // Tempdoc 847 §1.5b — and the SOURCES panel answers to that same verdict. `this.citations`
+        // is bound into `<jf-citations-panel>` below, where `sourceGrounding` reads `similarity`
+        // straight into a per-source tier — so an ungated assignment here would announce
+        // "Grounds N sentences" at a cosine-derived tier beside prose the gate left markless.
+        this.citations = [...admittedMatches(p.matches, scorer)];
+        this.coverage = coverageHonesty(p);
+        this.sourceCoverage = Array.isArray(p.sourceCoverage) ? p.sourceCoverage : [];
         const bySentence = new Map<number, Claim>();
         for (const cl of this.claims) bySentence.set(cl.sentenceIndex, cl);
         for (const m of p.matches) {
@@ -422,12 +429,12 @@ export class SummarizeView extends JfElement {
             if (verified && ref >= 0 && !existing.verifiedRefs.includes(ref)) {
               existing.verifiedRefs.push(ref);
             }
-            if (scorer !== undefined) existing.scorer = scorer;
+            if (scorer !== null) existing.scorer = scorer;
           } else {
             bySentence.set(idx, {
               sentenceIndex: idx,
               sentenceText: m.sentenceText ?? '',
-              ...(scorer !== undefined ? { scorer } : {}),
+              ...(scorer !== null ? { scorer } : {}),
               verifiedScore: sim,
               lexicalScore: 0,
               verifiedRefs: verified && ref >= 0 ? [ref] : [],

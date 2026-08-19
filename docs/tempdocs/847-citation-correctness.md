@@ -1,13 +1,24 @@
 # 847 — End-to-end citation correctness: the mark must land, survive reload, and never outrun its evidence
 
 ```
-status:  rev 3 — S4 IMPLEMENTED (this branch); S1–S3 in flight on their own branch; S5/S6 open.
+status:  PARTIALLY IMPLEMENTED — charter A; rev 3. S0–S4 done, S5/S6 open.
          rev 2 = adversarial review incorporated (APPROVE-WITH-AMENDMENTS, every amendment
          re-verified against source). rev 3 = S0 measurement run (18 markdown shapes / 64 keys),
          its findings integrated into the S4/S5 specs; `## S0-results` is the evidence record.
-         S0 = done (probe, not merged). S1–S3 = cleared, implemented on a sibling branch.
-         S4 = IMPLEMENTED here on top of 846 (§ "S4 — implementation record" below).
-         S5 (backend segmentation) and S6 (live validation) remain open.
+         This file is rev 3; #488 landed the same doc at rev 2, and rev 3 supersedes it (it is
+         rev 2 plus the S0 integration, the §2.1c span guard and the S0-results appendix).
+         S0 = done (throwaway probe, not merged).
+         S1 (one record→evidence authority, both halves gated), S2 (v3 live producer gate) and
+         S3 (v3 rehydration + recordId identity + panelSpeaks) are IMPLEMENTED by #488.
+           - S3 deviation: `coverage` / `sourceCoverage` are NOT projected onto the restored turn.
+             `Sv3TurnEvidence` carries no such fields and no v3 consumer reads them (the live
+             `sv3-ask.ts` path does not either), so projecting them would have added unconsumed
+             substrate rather than parity — live and restored already agree on this axis.
+           - Adopted beyond the letter of §1.5b: `UnifiedChatView`'s LIVE `this.citations =
+             p.matches` assignment is gated too. Gating only the record path would have made a
+             reloaded render stricter than the live one — the 561 P-A divergence in a new place.
+         S4 (anchoring rewrite) is IMPLEMENTED on top of 846 — see "S4 — implementation record".
+         S5 (backend segmentation) and S6 (live validation) remain PENDING.
 created: 2026-08-19
 updated: 2026-08-19 (S4)
 related: 836 (literal-passage verification seam + the §4 producer gate — SHIPPED, #466/#473),
@@ -1050,8 +1061,9 @@ tests in the slices that own them:
 ## S4 — implementation record (2026-08-19)
 
 Implemented on top of 846 (#489). Frontend only; S5 (backend segmentation) and S6 (live
-validation) are untouched, and S1–S3 live on a sibling branch — the file sets are disjoint by
-design (`recordEvidence.ts` / `sv3-*` there, `MarkdownBlock.ts` / `citationResolve.ts` here).
+validation) are untouched. S1–S3 (#488) landed while this slice was in flight and are merged in
+here — the code file sets are disjoint by design (`recordEvidence.ts` / `sv3-*` there,
+`MarkdownBlock.ts` / `citationResolve.ts` here), and the full suite is green over the union.
 
 ### What shipped
 
