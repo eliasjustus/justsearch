@@ -803,6 +803,12 @@ public record ResolvedConfig(
       double branchCcWeightWhole,
       double branchCcWeightChunk,
       double branchChunkMinWeightMultiplier,
+      // Tempdoc 854 W1 (F-036 §K wrong-gate fix) — the Stage-3B whole-vs-chunk branch ramp's OWN
+      // parent-token bounds, separated from the Stage-3A SPLADE parent-length-fade bounds they
+      // used to share (justsearch.splade.full_weight_max_tokens / .zero_weight_min_tokens).
+      // Defaults (1024 / 4096) reproduce the pre-split shared-constant behavior byte-identically.
+      long branchRampFullWeightMaxTokens,
+      long branchRampZeroWeightMinTokens,
       boolean adaptiveWeightsEnabled,
       boolean legArbitrationEnabled,
       double legArbitrationAlphaDiverge,
