@@ -78,6 +78,10 @@ import {
   BRANCH_MENU_RETRY,
   CONTEXT_MENU_RESET,
   DELETE_FAILED,
+  VERSION_AT_FIRST,
+  VERSION_NEXT,
+  VERSION_PAGER_LABEL,
+  VERSION_PREVIOUS,
 } from './fixtures.js';
 
 type Mounted = SearchV3View & { updateComplete: Promise<unknown> };
@@ -418,6 +422,37 @@ async function sidebarRow(el: Mounted, label: string): Promise<Updatable> {
   return found as Updatable;
 }
 
+/**
+ * THREE turns, and the reason there are three: at two, "the previous turn's answer" and "the FIRST
+ * turn's answer" are the same message, so an edit forked at either looks identical on the wire. Only
+ * a third turn can tell them apart.
+ */
+function threeTurnConversation(id = 'uc-branch'): void {
+  backend.conversations = [conversationRow(id, 'why did the renewal fail?')];
+  backend.threads[id] = {
+    conversationId: id,
+    events: [
+      wireEvent(storedId(0), 'USER_MESSAGE', 'why did the renewal fail?'),
+      wireEvent(storedId(1), 'ASSISTANT_MESSAGE', 'The lock held.'),
+      wireEvent(storedId(2), 'USER_MESSAGE', 'and the second one?'),
+      wireEvent(storedId(3), 'ASSISTANT_MESSAGE', 'The same lock.'),
+      wireEvent(storedId(4), 'USER_MESSAGE', 'and the third?'),
+      wireEvent(storedId(5), 'ASSISTANT_MESSAGE', 'The lock again.'),
+    ],
+  };
+  backend.histories[id] = {
+    sessionId: id,
+    messages: [
+      { role: 'user', content: 'why did the renewal fail?', id: storedId(0) },
+      { role: 'assistant', content: 'The lock held.', id: storedId(1) },
+      { role: 'user', content: 'and the second one?', id: storedId(2) },
+      { role: 'assistant', content: 'The same lock.', id: storedId(3) },
+      { role: 'user', content: 'and the third?', id: storedId(4) },
+      { role: 'assistant', content: 'The lock again.', id: storedId(5) },
+    ],
+  };
+}
+
 async function openConversation(el: Mounted, label = 'why did the renewal fail?'): Promise<void> {
   const row = await sidebarRow(el, label);
   row.shadowRoot?.querySelector<HTMLElement>('[data-testid="sv3-session-row-button"]')?.click();
@@ -539,6 +574,9 @@ describe('branching a conversation from a turn', () => {
 
     await chooseFromTurnMenu(el, 0, BRANCH_MENU_BRANCH);
 
+    // The act really REACHED the store and was really refused — without this the assertions below
+    // would also pass for a menu entry that never fired.
+    expect(backend.branches).toEqual([{ parent: 'uc-branch', fromMsgId: storedId(1) }]);
     // No local fallback: a window that "continued anyway" in the current conversation would do the
     // one thing the reader did not ask for, and the transcript would look entirely plausible.
     expect(el.sessions.activeId).toBe('uc-branch');
@@ -617,12 +655,30 @@ describe('the version pager', () => {
     await openConversation(el);
     const main = await region(el, 'jf-sv3-main');
 
-    // At the FIRST version, Previous is unavailable — and `jf-control` carries the reason rather
-    // than going silently inert, so a reader who presses it is told why nothing moved.
+    // At the FIRST version, Previous is unavailable. Asserting only that nothing moved would pass
+    // for a control that is silently inert — the exact thing this window's honest-null rule refuses
+    // — so the REASON is asserted too: `jf-control` renders `aria-disabled` on its own button and
+    // hangs the reason off it (`Control.ts:571-580`).
     const previous = main.shadowRoot?.querySelector('[data-testid="sv3-version-previous"]');
     await press(previous);
     await settle(el);
     expect(el.sessions.activeId).toBe('uc-branch');
+    await (previous as Updatable).updateComplete;
+    expect(previous?.shadowRoot?.querySelector('button')?.getAttribute('aria-disabled')).toBe('true');
+    expect(previous?.shadowRoot?.textContent).toContain(VERSION_AT_FIRST);
+
+    // The other end is available in the same render, so the assertion above is about THIS end rather
+    // than about a pager that is inert all over.
+    const next = main.shadowRoot?.querySelector('[data-testid="sv3-version-next"]');
+    await (next as Updatable).updateComplete;
+    expect(next?.shadowRoot?.querySelector('button')?.getAttribute('aria-disabled')).toBeNull();
+    // Both directions name themselves, and the group names what it pages (icon-only controls, so
+    // these labels ARE the accessible names rather than decoration).
+    expect(next?.getAttribute('label')).toBe(VERSION_NEXT);
+    expect(previous?.getAttribute('label')).toBe(VERSION_PREVIOUS);
+    expect(
+      main.shadowRoot?.querySelector('.version-pager')?.getAttribute('aria-label'),
+    ).toBe(VERSION_PAGER_LABEL);
   });
 });
 
@@ -647,6 +703,28 @@ describe('editing a question re-asks it in a branch', () => {
       { conversationId: 'uc-branch-branch-1', question: 'and what about the third?' },
     ]);
     expect(el.sessions.activeId).toBe('uc-branch-branch-1');
+  });
+
+  it('forks a THIRD turn at the turn before it, not at the conversation’s first answer', async () => {
+    threeTurnConversation();
+    const el = await mount();
+    await openConversation(el);
+
+    await editTurn(el, 2, 'and what about the fourth?');
+
+    // THE CASE A TWO-TURN CONVERSATION CANNOT SEE. Turn 3's question is message 4; the fork must be
+    // at message 3 — the answer immediately above it. Message 1 (the conversation's first answer) is
+    // the plausible wrong id, and forking there would silently drop turn 2 out of the branch while
+    // the transcript still looked like a sensible conversation.
+    expect(backend.branches).toEqual([{ parent: 'uc-branch', fromMsgId: storedId(3) }]);
+    expect(backend.dispatches).toEqual([
+      { conversationId: 'uc-branch-branch-1', question: 'and what about the fourth?' },
+    ]);
+
+    // And the branch really inherited TWO turns, which is the same fact seen from the transcript:
+    // the re-asked turn plus the two above it.
+    const main = await region(el, 'jf-sv3-main');
+    expect(turnsIn(main)).toHaveLength(3);
   });
 
   it('forks the FIRST question at the empty-prefix sentinel', async () => {
@@ -685,6 +763,9 @@ describe('editing a question re-asks it in a branch', () => {
     );
     expect(input?.value).toBe('and what about the third?');
     expect(seen).toContain(BRANCH_FAILED);
+    // The fork was really ATTEMPTED at the right point and really refused; an editor that never
+    // raised the act would leave the text sitting there too.
+    expect(backend.branches).toEqual([{ parent: 'uc-branch', fromMsgId: storedId(1) }]);
     expect(backend.dispatches).toEqual([]);
   });
 
@@ -697,6 +778,15 @@ describe('editing a question re-asks it in a branch', () => {
     // withheld while streaming, but an editor already open is the gap that gate cannot see.
     const main = await region(el, 'jf-sv3-main');
     await press(turnsIn(main)[1]?.querySelector('[data-testid="sv3-turn-edit"]'));
+    await settle(el);
+    // A REWRITE IS TYPED before the stream starts, so "survives the wait" is a claim about the
+    // reader's own text rather than about an empty box that would look the same either way.
+    const typed = (await region(el, 'jf-sv3-main')).shadowRoot?.querySelector<HTMLTextAreaElement>(
+      '[data-testid="sv3-turn-edit-input"]',
+    );
+    if (!typed) throw new Error('no edit input');
+    typed.value = 'and what about the third?';
+    typed.dispatchEvent(new Event('input'));
     await settle(el);
     (el as unknown as { streaming: boolean }).streaming = true;
     await settle(el);
@@ -721,7 +811,16 @@ describe('editing a question re-asks it in a branch', () => {
     const input = (await region(el, 'jf-sv3-main')).shadowRoot?.querySelector<HTMLTextAreaElement>(
       '[data-testid="sv3-turn-edit-input"]',
     );
-    expect(input).not.toBeNull();
+    expect(input?.value).toBe('and what about the third?');
+
+    // The KEYBOARD path agrees with the button. Ctrl+Enter reaches the same act, and a shortcut that
+    // fired while the control beside it explained why it could not would be the same refusal told
+    // two different ways.
+    input?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }),
+    );
+    await settle(el);
+    expect(backend.branches).toEqual([]);
   });
 
   it('retries a turn by re-sending its ORIGINAL question from the same fork point', async () => {
@@ -794,6 +893,11 @@ describe('deleting a conversation that has branches', () => {
     await chooseFromTurnMenu(el, 0, BRANCH_MENU_BRANCH);
     await discardConversation(el, 'why did the renewal fail?');
 
+    // THE ROW IS STILL THERE while the question is on screen. Asking "delete this and its branches?"
+    // about a row that has already vanished behind the dialog asks about something the reader can no
+    // longer see — which is what the optimistic removal this act replaced did.
+    expect(el.sessions.sessions.map((s) => s.id)).toContain('uc-branch');
+
     // THE PORT. The store refuses with 409 + the children (the 515/516 orphan guard); before this
     // slice the window called the non-cascade function, which reports that as a bare `false` — the
     // row vanished, the conversation stayed on disk, and nothing was said.
@@ -806,8 +910,44 @@ describe('deleting a conversation that has branches', () => {
     // Children first, then the parent retried — the store function's own order, exercised.
     expect(backend.deletes).toEqual(['uc-branch', 'uc-branch-branch-1', 'uc-branch']);
     expect(backend.conversations).toEqual([]);
-    // And the window drops the children's rows too, rather than offering conversations that are gone.
+    // Only NOW do the rows go — parent and children together, because the store says both are gone.
+    expect(el.sessions.sessions.map((s) => s.id)).not.toContain('uc-branch');
     expect(el.sessions.sessions.map((s) => s.id)).not.toContain('uc-branch-branch-1');
+  });
+
+  it('promises ONE level, because a branch that was forked again is not deleted', async () => {
+    twoTurnConversation();
+    const el = await mount();
+    await openConversation(el);
+    // A three-level lineage: base → branch-1 → grandchild. The first level is forked for real; the
+    // third is seeded straight into the store, because what is under test is what DELETE does with
+    // the lineage, and the store's rows are the only thing the delete path reads. (Forking the
+    // branch again through the UI would need it to have a turn of its own first — a different act.)
+    await chooseFromTurnMenu(el, 0, BRANCH_MENU_BRANCH);
+    backend.conversations = [
+      ...backend.conversations,
+      conversationRow('uc-grandchild', 'forked again', {
+        parentSessionId: 'uc-branch-branch-1',
+        branchPointMessageId: storedId(1),
+      }),
+    ];
+    const seen = toasts();
+
+    await discardConversation(el, 'why did the renewal fail?');
+    const message = await answerConfirm(el, true);
+
+    // THE COPY MATCHES THE BEHAVIOUR. "Deletes those branches too" would promise a depth this act
+    // refuses to perform, and the reader would be told a deletion happened that did not.
+    expect(message).toContain('A branch that has been forked again is not deleted');
+    // And it really does not: the child's own delete is refused, the cascade aborts, the parent is
+    // retried nowhere, and everything is still on the store.
+    expect(seen).toContain(DELETE_FAILED);
+    expect(backend.conversations.map((c) => c.sessionId)).toEqual([
+      'uc-branch',
+      'uc-branch-branch-1',
+      'uc-grandchild',
+    ]);
+    expect(el.sessions.sessions.map((s) => s.id)).toContain('uc-branch');
   });
 
   it('leaves everything when the reader declines, and says nothing', async () => {
@@ -828,9 +968,10 @@ describe('deleting a conversation that has branches', () => {
       'uc-branch-branch-1',
     ]);
     expect(seen).not.toContain(DELETE_FAILED);
-    // And the re-list puts the optimistically-removed row back: the window never claims a deletion
-    // that did not happen.
+    // The row never left, so there is nothing to put back. The window never claims a deletion that
+    // did not happen — and no longer has to un-claim one either.
     expect(el.sessions.sessions.map((s) => s.id)).toContain('uc-branch');
+    expect(el.sessions.sessions.map((s) => s.id)).toContain('uc-branch-branch-1');
   });
 
   it('says so when the store refuses the delete outright', async () => {
@@ -846,6 +987,8 @@ describe('deleting a conversation that has branches', () => {
     // delete, nothing was deleted, and only one of those two facts is on screen without this.
     expect(document.querySelector('jf-confirm-dialog')).toBeNull();
     expect(seen).toContain(DELETE_FAILED);
+    expect(backend.deletes).toEqual(['uc-branch']);
+    expect(el.sessions.sessions.map((s) => s.id)).toContain('uc-branch');
   });
 });
 

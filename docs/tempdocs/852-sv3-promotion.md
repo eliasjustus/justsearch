@@ -603,17 +603,54 @@ would "catch up" to the writes that landed while it waited and the stale answer 
 
 - **F11 — the pager is invisible on a fresh branch** (above). Parity with the reference, recorded
   because it will read as a bug to anyone who has not read this section.
-- **F12 — `versionsAt` is O(turns × conversations) per render.** Fine at the current list size
-  (`listSessions?limit=20`) and worth a memo if that grows.
+- **F12 — the pager is bounded by the conversation LIST, and that is an honesty limit before it is a
+  perf one.** `siblingSessionsAt` reads `state.conversations`, which `loadConversations` fetches as
+  `?limit=20` — so a fork whose sibling is not among the 20 most recently active conversations is
+  **invisible**: the pager silently under-counts, or does not render at all, and nothing on screen
+  says a version was omitted. A reader with an older fork is told there is one version when there are
+  two. (The perf note is the lesser half: the projection is O(turns × conversations) per render, fine
+  at 20 and worth a memo if the limit grows.) The fix is a count the BACKEND reports, the same shape
+  S2's F4 needs for orphaned exclusions — both are "the window can only count what it happened to
+  load".
 - **F13 — the cascade prompt names branches by label, and a fresh branch's label is its parent's
   opening question** until it is renamed or asked in — so several branches of one conversation can
   list identically. What is deleted are the ids, and those are right; only the naming is ambiguous.
+- **F14 — the cascade deletes ONE level and refuses deeper lineages.** `deleteConversationWithCascade`
+  recurses into each child *without* the consent callback, so a child that has children of its own
+  answers `409`, the cascade aborts, and nothing is deleted. That is the safe behaviour and it is
+  kept; what this slice fixed is the COPY, which used to promise "those branches too". A reader who
+  actually wants a three-level delete must currently remove the deepest fork first.
 - **S2's F4 and F6 are untouched.** They are context-set limits, not branch limits, and nothing here
-  makes either better or worse.
+  makes either better or worse. F4 and F12 are the same shape and want the same backend-side count.
+
+### What the independent review changed (PR #505)
+
+Verdict: APPROVE-WITH-FIXES. The production code passed every constructed attack — the fork
+arithmetic was verified against `FileConversationStore.java:113`'s INCLUSIVE prefix semantics, and
+`EMPTY_PREFIX_SENTINEL` was confirmed a real backend sentinel (`ConversationStore.java:49`,
+`FileConversationStore.java:99-104/:317`), retiring the live-404 risk. **Every required fix was test
+coverage**, which is the interesting part: three of them were greens that could not fail.
+
+- **M1 — no fixture exceeded two turns**, so "the previous turn's answer" and "the FIRST turn's
+  answer" were the same message and mutating `turns[index - 1]` → `turns[0]` passed EVERY test. The
+  one piece of arithmetic this module exists for was mutation-invisible. Three-turn fixtures added to
+  both files; the mutation now fails 2 cases. `sv3FirstOwnTurnIndex` above 1 is asserted too.
+- **M2 — the grandchild shape had zero coverage**, so reversing the load-bearing Case-A-before-Case-B
+  precedence failed nothing. A conversation that is both a branch and a base now pins it; reversing
+  the blocks fails 1 case.
+- **M3 — the pager's end-of-range case asserted only that nothing moved**, which a silently-inert
+  control also satisfies, while its own comment claimed the reason renders. It now asserts
+  `aria-disabled` + the reason text, and that the OTHER end is available in the same render.
+- Folded in: the rewrite is typed before the stream starts (so "survives the wait" is about the
+  reader's text), the keyboard path is asserted to agree with the button, `toEqual([])` assertions
+  gained positive anchors, `openBranch` clears `renamingId`, the edit's Ctrl/⌘+Enter path is refused
+  by the same expression the button explains, and the sidebar row now leaves **only when the store
+  says it left** — asking "delete this and its branches?" about a row that has already vanished
+  behind the dialog was the optimistic-removal defect.
 
 ### Verification
 
-- `npm run typecheck` clean; `npm run test:unit:run` **429 files / 5435 tests** pass, with S2's
+- `npm run typecheck` clean; `npm run test:unit:run` **429 files / 5441 tests** pass, with S2's
   `SearchV3View.context.test.ts` and `sv3-context.test.ts` unmodified and green.
 - The ui-web gate set + the six kernel gates pass, except reds already red on `main` in files this PR
   does not touch (`check-theme-token-closure`, `strip-token-fallbacks --check`, `check-accent-as-text`
@@ -622,9 +659,12 @@ would "catch up" to the writes that landed while it waited and the stale answer 
   observations inbox.
 - **Mutation probes** (each reverted): removing the `/history` order guard fails the ordering case and
   only that one; forking an edit at the turn's own answer instead of the previous one fails 9 cases
-  across both new files; re-dispatching before opening the branch fails 4.
-- New tests: `sv3-branch.test.ts` (16 cases, the pure arithmetic) and `SearchV3View.branch.test.ts`
-  (15 cases, all four capabilities round-tripping against a stateful fake backend that really mints
+  across both new files; re-dispatching before opening the branch fails 4; **`turns[index - 1]` →
+  `turns[0]` fails 2** (the review's M1 — it failed 0 before the three-turn fixtures); **reversing the
+  pager's two cases fails 1** (M2 — 0 before the grandchild fixture); removing the row at the press
+  instead of at the store's answer fails 1.
+- New tests: `sv3-branch.test.ts` (19 cases, the pure arithmetic) and `SearchV3View.branch.test.ts`
+  (18 cases, all four capabilities round-tripping against a stateful fake backend that really mints
   branches with inherited prefixes and really refuses a parent delete with 409). Every case fails
   before this slice — the window imported `branchConversation` nowhere, rendered no pager, had no
   editor, and called the non-cascade delete.

@@ -1540,9 +1540,14 @@ export class Sv3Main extends JfElement {
    * window is the gesture in this one.
    */
   private questionEditor(turn: Sv3Turn): TemplateResult {
+    // ONE refusal for BOTH ways in. The window refuses an edit raised while something is streaming,
+    // and a keyboard path that raised it anyway would be refused out of sight — the button explains
+    // itself, the shortcut would just do nothing. Both go through this, so the only way to reach the
+    // act is the way the control describes.
+    const blocked = (): boolean => this.streaming;
     const send = (): void => {
       const text = this.editingDraft.trim();
-      if (text === '') return;
+      if (text === '' || blocked()) return;
       this.branchAct({ action: 'edit', turnId: turn.id, text });
     };
     return html`<div class="ask ask-editing">

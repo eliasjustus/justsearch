@@ -1303,6 +1303,9 @@ export class SearchV3View extends JfElement {
     this.sessions = focusSession(this.sessions, id, now);
     this.claimConversation(id);
     this.recordNotice = false;
+    // The same rule `onSessionSelect` applies: an edit in another row is DROPPED rather than
+    // committed, because navigating away must not write text the reader walked away from.
+    this.renamingId = null;
     void this.setComposerState('docked');
     await Promise.all([this.refreshRecord(id), this.refreshHistory(id), loadConversations()]);
   }
@@ -2534,26 +2537,24 @@ export class SearchV3View extends JfElement {
   }
 
   /**
-   * The reader discards a conversation (tempdoc 831). `removeSession` decides — including the
-   * refusal for a conversation with work in flight, which is why nothing is re-checked here — and
-   * the deletion is WRITTEN THROUGH to the conversation store, the authority for a conversation's
-   * existence (the same shape the rename write-through takes). If the authority declines, the next
-   * list load projects the row back: the window never claims a deletion that did not happen.
+   * The reader discards a conversation (tempdoc 831). `removeSession` DECIDES — including the
+   * refusal for a conversation with work in flight — and the deletion is WRITTEN THROUGH to the
+   * conversation store, the authority for a conversation's existence.
    *
-   * Removing the conversation ON SCREEN routes through New session first, so the window leaves the
-   * transcript the way every other exit from it does — an emptied pane and nothing claimed — rather
-   * than through a second, partial teardown that would be free to forget one of the pointers.
+   * THE ROW LEAVES WHEN THE STORE SAYS IT LEFT (852 S3), not on the press. This used to be
+   * optimistic, which the cascade port made untenable: the delete can now stop and ASK ("this has 2
+   * branches — delete those too?"), and asking about a row that has already vanished from the list
+   * behind the dialog is asking about something the reader can no longer see. Removing on the answer
+   * also retires the restore-by-re-list dance the optimistic version needed for every refusal.
    */
   private onSessionRemove(event: Event): void {
     const id = (event as CustomEvent<Sv3SessionRemove>).detail?.id ?? '';
     const gate = this.runGate();
-    // Asked TWICE, deliberately: the first call is the decision (an unchanged list is the refusal,
-    // and nothing else may happen on a refusal), and the second is the write — because the New-
-    // session exit in between replaces the list this one would otherwise have been computed from.
+    // The DECISION, taken now and carried into the write: an unchanged list is the refusal (work in
+    // flight), and nothing else may happen on a refusal. The gate travels with it rather than being
+    // re-derived after the await — the reader's press is what is being answered, and by the time the
+    // store answers it has already deleted the conversation regardless of what has started since.
     if (removeSession(this.sessions, id, gate) === this.sessions) return;
-    if (this.sessions.activeId === id) this.onSessionNew();
-    if (this.renamingId === id) this.renamingId = null;
-    this.sessions = removeSession(this.sessions, id, gate);
     void this.deleteThroughStore(id, gate);
   }
 
@@ -2569,9 +2570,13 @@ export class SearchV3View extends JfElement {
    *
    * What the reader is now asked is the same question the shipped window asked, in this window's
    * own words, and it NAMES the branches — the ids come back from the refusal, the labels from the
-   * list this window already holds. Declining leaves everything, which is why the refusal path and
-   * the failure path share a tail: re-list, and let the store's answer put the row back. This window
-   * never claims a deletion that did not happen.
+   * list this window already holds. It promises ONE level, because that is what the cascade does:
+   * the store function recurses into each child WITHOUT the consent callback, so a child that has
+   * children of its own answers `409`, the cascade aborts, and nothing is deleted. The copy says so
+   * ({@link deleteCascadeMessage}) rather than promising a depth this act refuses to perform.
+   *
+   * Nothing leaves the list until the store says it left — including the conversation the reader
+   * pressed delete on, which is why removing it on screen happens HERE and not at the press.
    */
   private async deleteThroughStore(id: string, gate: Sv3RunGate): Promise<void> {
     let cascaded: readonly string[] = [];
@@ -2595,16 +2600,20 @@ export class SearchV3View extends JfElement {
       // silent case. A plain refusal and a consented cascade that then broke halfway are both real
       // failures and both must say so; the store function's return cannot tell the three apart
       // (`{ok:false, childIds}` covers two of them), which is why the reader's own answer is tracked
-      // here instead of inferred from it. Every path re-lists: the conversation is still there.
+      // here instead of inferred from it. Nothing was removed on screen, so there is nothing to put
+      // back — the re-list is for the CHILDREN a half-broken cascade may really have deleted.
       if (!declined) emitEphemeralToast({ message: DELETE_FAILED, severity: 'warning' });
       void loadConversations();
       return;
     }
-    // The children went with it, so their rows go too — otherwise the list would keep offering
-    // conversations the store no longer has, until the next full re-list happened to notice.
-    for (const childId of cascaded) {
-      if (this.sessions.activeId === childId) this.onSessionNew();
-      this.sessions = removeSession(this.sessions, childId, gate);
+    // The store deleted it, so now the screen follows. Removing the open conversation routes through
+    // New session first, so the window leaves the transcript the way every other exit from it does —
+    // an emptied pane and nothing claimed — rather than a partial teardown free to forget a pointer.
+    // The children go with it: the list must not keep offering conversations the store no longer has.
+    for (const gone of [id, ...cascaded]) {
+      if (this.sessions.activeId === gone) this.onSessionNew();
+      if (this.renamingId === gone) this.renamingId = null;
+      this.sessions = removeSession(this.sessions, gone, gate);
     }
   }
 

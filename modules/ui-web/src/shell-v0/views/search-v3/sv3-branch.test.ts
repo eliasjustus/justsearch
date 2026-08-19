@@ -25,7 +25,7 @@ import {
   sv3LineageFor,
   isSv3BranchActionId,
 } from './sv3-branch.js';
-import type { Conversation } from '../../state/conversationListStore.js';
+import { siblingSessionsAt, type Conversation } from '../../state/conversationListStore.js';
 import { EMPTY_PREFIX_SENTINEL } from '../unifiedChatRequest.js';
 import { BRANCH_MENU_BRANCH, BRANCH_MENU_RETRY } from './fixtures.js';
 import type { Sv3SessionHistory, Sv3Turn } from './sv3-sessions.js';
@@ -65,6 +65,17 @@ const recordTurn = (id: string, userN: number, assistantN: number): Sv3Turn =>
 /** The two-turn conversation most cases work on: turn 0 = messages 0/1, turn 1 = messages 2/3. */
 const TWO_TURNS: readonly Sv3Turn[] = [recordTurn('t0', 0, 1), recordTurn('t1', 2, 3)];
 
+/**
+ * THREE turns, and the reason there are three: at two, "the previous turn's answer" and "the FIRST
+ * turn's answer" are the same message, so the arithmetic this module exists for is indistinguishable
+ * from `turns[0]`. Only a third turn separates them.
+ */
+const THREE_TURNS: readonly Sv3Turn[] = [
+  recordTurn('t0', 0, 1),
+  recordTurn('t1', 2, 3),
+  recordTurn('t2', 4, 5),
+];
+
 const row = (over: Partial<Conversation> & { id: string }): Conversation => ({
   title: null,
   titleSource: null,
@@ -87,6 +98,20 @@ describe('the fork point of an edit is not the fork point of a branch', () => {
     expect(lineage[1]?.forkKey).toBe(stored(1));
     expect(lineage[1]?.branchFromId).toBe(stored(3));
     expect(lineage[1]?.canEdit).toBe(true);
+  });
+
+  it('names the IMMEDIATELY preceding answer on a third turn, not the conversation’s first', () => {
+    const lineage = projectSv3TurnLineage(THREE_TURNS, null, 'base', []);
+
+    // THE CASE TWO TURNS CANNOT SEE. At two turns, `turns[index - 1]` and `turns[0]` are the same
+    // message, so an implementation that always forked at the conversation's FIRST answer would look
+    // correct everywhere. Here they are different messages and the fork point is the near one:
+    // forking turn 3 at message 1 would silently drop turn 2 out of the branch.
+    expect(lineage[2]?.forkKey).toBe(stored(3));
+    expect(lineage[2]?.forkKey).not.toBe(lineage[1]?.forkKey);
+    expect(lineage[1]?.forkKey).toBe(stored(1));
+    // And each turn's own branch point stays its own answer, which walks with it.
+    expect(lineage[2]?.branchFromId).toBe(stored(5));
   });
 
   it('forks the FIRST turn at the empty-prefix sentinel, which is a real id and not a null', () => {
@@ -157,6 +182,25 @@ describe('an inherited turn belongs to the parent', () => {
     expect(lineage[1]?.canEdit).toBe(true);
   });
 
+  it('finds a first-own index ABOVE 1 when two turns were inherited', () => {
+    const deeper: Sv3SessionHistory = {
+      parentSessionId: 'base',
+      branchPointMessageId: stored(3),
+    };
+    // A `+ 1` on the resolved index and a hardcoded 1 agree at one inherited turn. At TWO they do
+    // not, and the whole inherited/own boundary rides on this number: it decides which turns get no
+    // controls and where the branch's own fork key comes from.
+    expect(sv3FirstOwnTurnIndex(THREE_TURNS, deeper)).toBe(2);
+
+    const lineage = projectSv3TurnLineage(THREE_TURNS, deeper, 'branch-a', []);
+    expect(lineage[0]?.canEdit).toBe(false);
+    expect(lineage[1]?.canEdit).toBe(false);
+    expect(lineage[2]?.canEdit).toBe(true);
+    // The first OWN turn forks at the branch point, not at `turns[1]`'s answer — which here happen
+    // to be the same message, and the next case is where they cannot be.
+    expect(lineage[2]?.forkKey).toBe(stored(3));
+  });
+
   it('treats a branch point NO TURN CARRIES as "nothing on screen is inherited"', () => {
     const unresolvable: Sv3SessionHistory = {
       parentSessionId: 'base',
@@ -214,6 +258,41 @@ describe('the version pager sees a fork from both ends', () => {
       sessions: ['base', 'branch-a', 'branch-b'],
       index: 2,
     });
+  });
+
+  it('reports a conversation that is BOTH a branch and a base as its own position, not its children’s', () => {
+    // The grandchild shape, and the only one where the two cases collide. `branch-a` is a branch of
+    // `base`, and `grandchild` was forked from `branch-a` AT THE SAME POINT — which is what a re-edit
+    // of a branch's first question produces, so this is the ordinary shape, not a contrived one.
+    const lineage3: Conversation[] = [
+      row({ id: 'base' }),
+      row({ id: 'branch-a', parentSessionId: 'base', branchPointMessageId: stored(1), createdAt: 2 }),
+      row({ id: 'branch-b', parentSessionId: 'base', branchPointMessageId: stored(1), createdAt: 3 }),
+      // Forked FROM branch-a, at branch-a's own branch point.
+      row({
+        id: 'grandchild',
+        parentSessionId: 'branch-a',
+        branchPointMessageId: stored(1),
+        createdAt: 4,
+      }),
+    ];
+    const history: Sv3SessionHistory = {
+      parentSessionId: 'base',
+      branchPointMessageId: stored(1),
+    };
+    const lineage = projectSv3TurnLineage(TWO_TURNS, history, 'branch-a', lineage3);
+
+    // CASE A WINS. Both cases match this turn: A says "you are version 2 of base's fork", B says
+    // "you are version 1 of your own children's fork". The set the reader is standing IN is A's —
+    // B's answer would page them among their own descendants and, worse, report index 0, so the
+    // pager would claim this is the first version of something it is not a member of.
+    expect(lineage[1]?.versions).toEqual({
+      sessions: ['base', 'branch-a', 'branch-b'],
+      index: 1,
+    });
+    // Both candidate sets really are non-trivial here, which is what makes the precedence load-bearing
+    // rather than incidental: B's set exists and has two members.
+    expect(siblingSessionsAt(lineage3, 'branch-a', stored(1))).toEqual(['branch-a', 'grandchild']);
   });
 
   it('renders no pager on a root conversation that nothing forked from', () => {
