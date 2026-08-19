@@ -52,9 +52,15 @@ export class EnterActionPickerRenderer extends JsonFormsRendererBase {
     const value = typeof this.data === 'string' ? this.data : 'open';
     const enumValues = ((this.schema as { enum?: readonly unknown[] }).enum ??
       ['open', 'reveal', 'preview']) as readonly string[];
+    // 855 P1 (a11y fix riding along) — axe `select-name`: this <select> had no accessible name
+    // (governance/ui-a11y-baseline.v1.json `settings`/`settings-light`, pre-855). Fixed generically
+    // at the renderer layer via the standard JSON-Schema `title` field (any x-ui-renderer:
+    // 'enter-action-select' consumer now gets a real name), not hardcoded to this one call site.
+    const name = this.schema.title ?? 'Enter action';
     return html`
       <select
         data-testid="enter-action-picker"
+        aria-label=${name}
         .value=${value}
         ?disabled=${!this.enabled}
         @change=${(e: Event) =>

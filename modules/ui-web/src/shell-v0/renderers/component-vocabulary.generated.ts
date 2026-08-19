@@ -111,8 +111,8 @@ export type ComponentTag =
   | 'jf-search-trace'
   | 'jf-security-surface'
   | 'jf-selection-actions-menu'
+  | 'jf-settings-nav'
   | 'jf-settings-surface'
-  | 'jf-settings-view'
   | 'jf-settings-window'
   | 'jf-shell'
   | 'jf-shortcuts-table'
@@ -255,8 +255,8 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-search-trace',
   'jf-security-surface',
   'jf-selection-actions-menu',
+  'jf-settings-nav',
   'jf-settings-surface',
-  'jf-settings-view',
   'jf-settings-window',
   'jf-shell',
   'jf-shortcuts-table',

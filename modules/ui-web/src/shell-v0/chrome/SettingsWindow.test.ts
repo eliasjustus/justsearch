@@ -67,6 +67,16 @@ async function mountWindow(): Promise<SettingsWindow> {
   return el;
 }
 
+/**
+ * 855 §11.1 P1 — the settings element's first mount is deferred to idle (`setTimeout` fallback in
+ * this happy-dom env, which has no `requestIdleCallback`). Tests that assert on the mounted element
+ * without opening the window first must flush that tick.
+ */
+async function flushIdleMount(el: SettingsWindow): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await el.updateComplete;
+}
+
 describe('jf-settings-window', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
@@ -103,6 +113,7 @@ describe('jf-settings-window', () => {
   it('mounts the catalog-declared settings surface', async () => {
     __seedForTest(catalogOf(settingsSurface()));
     const el = await mountWindow();
+    await flushIdleMount(el);
     const mounted = el.shadowRoot?.querySelector(`.body ${SETTINGS_TAG}`);
     expect(mounted).not.toBeNull();
     expect(mounted?.textContent).toBe('SETTINGS-MOUNTED');
@@ -111,6 +122,7 @@ describe('jf-settings-window', () => {
   it('mounts the surface while CLOSED and keeps the SAME element across open/close (§11.2)', async () => {
     __seedForTest(catalogOf(settingsSurface()));
     const el = await mountWindow();
+    await flushIdleMount(el);
     const first = el.shadowRoot?.querySelector(SETTINGS_TAG);
     expect(first).not.toBeNull();
     expect(el.open).toBe(false);

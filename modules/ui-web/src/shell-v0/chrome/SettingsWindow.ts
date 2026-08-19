@@ -54,6 +54,14 @@ export class SettingsWindow extends JfElement {
   /** The persistently-mounted settings element (855 §11.2) — minted once, never torn down. */
   private mounted: HTMLElement | null = null;
   private unsubscribeCatalog: (() => void) | null = null;
+  // 855 §11.1 P1 look-item — the mount is deferred to browser idle time so SettingsSurface's full
+  // connectedCallback cost (9 loads + 8 subs + a chunk fetch, §11.1) doesn't land on shell boot; the
+  // window opens the moment `open` flips regardless (see `shouldMount` read in `renderContent`), so
+  // the connected-before-first-open property member intents rely on (§11.2) is never given up —
+  // idle mounting only shifts WHEN the (still boot-synchronous, non-open) mount happens.
+  private shouldMount = false;
+  private idleHandle: number | null = null;
+  private cancelIdle: (() => void) | null = null;
 
   constructor() {
     super();
@@ -134,12 +142,37 @@ export class SettingsWindow extends JfElement {
     super.connectedCallback();
     // The catalog boots asynchronously; re-render when it lands so the content mounts on arrival.
     this.unsubscribeCatalog = onSurfaceCatalogChange(() => this.requestUpdate());
+    this.scheduleIdleMount();
   }
 
   override disconnectedCallback(): void {
     this.unsubscribeCatalog?.();
     this.unsubscribeCatalog = null;
+    this.cancelIdle?.();
+    this.cancelIdle = null;
     super.disconnectedCallback();
+  }
+
+  /** 855 §11.1 P1 — mount on browser idle (setTimeout fallback), not at connectedCallback. */
+  private scheduleIdleMount(): void {
+    const activate = (): void => {
+      this.shouldMount = true;
+      this.idleHandle = null;
+      this.requestUpdate();
+    };
+    const ric = (globalThis as { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback;
+    if (typeof ric === 'function') {
+      this.idleHandle = ric(activate);
+      const cic = (globalThis as { cancelIdleCallback?: (h: number) => void }).cancelIdleCallback;
+      this.cancelIdle = () => {
+        if (this.idleHandle !== null) cic?.(this.idleHandle);
+      };
+    } else {
+      this.idleHandle = window.setTimeout(activate, 0) as unknown as number;
+      this.cancelIdle = () => {
+        if (this.idleHandle !== null) window.clearTimeout(this.idleHandle);
+      };
+    }
   }
 
   override updated(changed: Map<string, unknown>): void {
@@ -193,6 +226,11 @@ export class SettingsWindow extends JfElement {
     const surface = getSurface(SETTINGS_SURFACE_ID);
     if (!surface) {
       return html`<div class="empty">${label} is not available.</div>`;
+    }
+    // 855 §11.1 P1 — defer the FIRST mount to idle unless the window is already being opened (an
+    // explicit open must never wait on idle scheduling).
+    if (!this.shouldMount && !this.open && this.mounted === null) {
+      return html`<div class="empty">Loading ${label}…</div>`;
     }
     const tag = surface.mountTag;
     // Lazy-load the surface module (registers the custom element), mirroring Shell.renderOneSurface.

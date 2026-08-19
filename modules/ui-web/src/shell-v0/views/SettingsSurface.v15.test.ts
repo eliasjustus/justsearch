@@ -115,8 +115,17 @@ function makeManifest(id: string): PluginManifest {
   };
 }
 
-async function mountSurface(): Promise<HTMLElement> {
-  const el = document.createElement('jf-settings-surface') as HTMLElement;
+/**
+ * Tempdoc 855 P1 — the settings window now renders only the ACTIVE category's sections
+ * (register-driven, `settingsRegister.ts`); a test targeting a section outside the default
+ * "appearance" category must select that category first. Optional `category` mirrors what
+ * `<jf-settings-nav>`'s `category-select` event would set.
+ */
+async function mountSurface(category?: string): Promise<HTMLElement> {
+  const el = document.createElement('jf-settings-surface') as HTMLElement & {
+    activeCategory?: string;
+    updateComplete: Promise<unknown>;
+  };
   (el as unknown as Record<string, unknown>).host_ = createMockHostApi({
     data: {
       fetch: () => Promise.resolve(new Response(JSON.stringify({ ui: {} }), { status: 200 })),
@@ -137,6 +146,10 @@ async function mountSurface(): Promise<HTMLElement> {
   document.body.appendChild(el);
   // Allow Lit's connectedCallback + first render cycle.
   await new Promise((resolve) => setTimeout(resolve, 0));
+  if (category !== undefined) {
+    el.activeCategory = category;
+    await el.updateComplete;
+  }
   return el;
 }
 
@@ -245,7 +258,8 @@ describe('SettingsSurface — V1.5 Rail section', () => {
   });
 
   it('lists rail surfaces in catalog order by default', async () => {
-    const el = await mountSurface();
+    // Tempdoc 855 P1 — Rail is a sub-anchor of the "layout" category now (register-driven paging).
+    const el = await mountSurface('layout');
     const root = el.shadowRoot!;
     const labels = Array.from(root.querySelectorAll('.rail-label')).map((n) =>
       n.textContent?.trim(),
@@ -260,7 +274,7 @@ describe('SettingsSurface — V1.5 Rail section', () => {
       'core.search-surface',
       'core.library-surface',
     ]);
-    const el = await mountSurface();
+    const el = await mountSurface('layout');
     const root = el.shadowRoot!;
     const labels = Array.from(root.querySelectorAll('.rail-label')).map((n) =>
       n.textContent?.trim(),
@@ -272,7 +286,7 @@ describe('SettingsSurface — V1.5 Rail section', () => {
 
   it('hidden surfaces have visibility=false reflected in checkbox', async () => {
     setSurfaceVisibility('core.settings-surface', false);
-    const el = await mountSurface();
+    const el = await mountSurface('layout');
     const root = el.shadowRoot!;
     const rows = Array.from(root.querySelectorAll('.rail-row')) as HTMLElement[];
     const settingsRow = rows.find((r) =>
@@ -286,7 +300,7 @@ describe('SettingsSurface — V1.5 Rail section', () => {
   });
 
   it('move-down arrow on first surface updates surfaceOrder', async () => {
-    const el = await mountSurface();
+    const el = await mountSurface('layout');
     const root = el.shadowRoot!;
     const firstRow = root.querySelector('.rail-row') as HTMLElement;
     // Find the down arrow (second .rail-arrow button in the row).
@@ -325,7 +339,8 @@ describe('SettingsSurface — V1.5 Plugins section', () => {
   });
 
   it('shows empty-state hint when no plugins are installed', async () => {
-    const el = await mountSurface();
+    // Tempdoc 855 P1 — Plugins is a sub-anchor of the "plugins" category (register-driven paging).
+    const el = await mountSurface('plugins');
     const root = el.shadowRoot!;
     const text = root.textContent ?? '';
     expect(text).toContain('No plugins installed');
@@ -335,7 +350,7 @@ describe('SettingsSurface — V1.5 Plugins section', () => {
     const registry = __resetSessionRegistryForTest();
     registry.install(makeManifest('alpha'));
     registry.install(makeManifest('bravo'));
-    const el = await mountSurface();
+    const el = await mountSurface('plugins');
     const root = el.shadowRoot!;
     const ids = Array.from(root.querySelectorAll('.plugin-id'))
       .map((n) => n.textContent ?? '')
@@ -347,7 +362,7 @@ describe('SettingsSurface — V1.5 Plugins section', () => {
   it('plugin row exposes Revoke button', async () => {
     const registry = __resetSessionRegistryForTest();
     registry.install(makeManifest('alpha'));
-    const el = await mountSurface();
+    const el = await mountSurface('plugins');
     const root = el.shadowRoot!;
     // 574 B1 — Revoke is now a <jf-button variant="danger"> (slot text in light DOM).
     const revokeBtn = Array.from(root.querySelectorAll('jf-button')).find(
@@ -375,7 +390,8 @@ describe('SettingsSurface — settle transients on hide (tempdoc 609 instance-re
     v.renamingThemeId = 'theme-x';
     v.renameDraft = 'My renamed theme';
     v.themeImportDraft = '{"id":"my-draft-theme"}';
-    v.activeTab = 'appearance';
+    // Tempdoc 855 P1 — `activeTab` generalized to `activeCategory` (register-driven categories).
+    v.activeCategory = 'developer';
 
     el.remove(); // navigate away (instance retained; settleTransients fires via JfElement)
 
@@ -386,7 +402,7 @@ describe('SettingsSurface — settle transients on hide (tempdoc 609 instance-re
     expect(v.renamingThemeId).toBe('theme-x');
     expect(v.renameDraft).toBe('My renamed theme');
     expect(v.themeImportDraft).toBe('{"id":"my-draft-theme"}');
-    // The user's tab choice is recoverable and survives.
-    expect(v.activeTab).toBe('appearance');
+    // The user's category choice is recoverable and survives.
+    expect(v.activeCategory).toBe('developer');
   });
 });
