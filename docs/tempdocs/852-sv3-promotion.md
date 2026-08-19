@@ -1,9 +1,9 @@
 ---
 number: 852
 title: The window cutover — promoting Search v3 to the one interaction surface
-status: IN PROGRESS — S0 implemented (merged, #493); S1 implemented (merged, #495); S2 implemented
-  (merged, #503); S3 implemented (merged, #505); S4 PARTIAL (this PR — the Q1-independent half);
-  S4's remainder + S5-S11 pending
+status: IN PROGRESS — S0 (merged, #493); S1 (merged, #495); S2 (merged, #503); S3 (merged, #505).
+  S2 and S3 both CONFIRMED LIVE 2026-08-19 (see each slice's live-round section); S4 PARTIAL (this
+  PR — the Q1-independent half); S4's remainder + S5-S11 pending
 created: 2026-08-19
 updated: 2026-08-19
 scope-of-this-file: S0, S1, S2, S3 and S4-partial. The full program charter (target end state, the parity ledger,
@@ -26,8 +26,8 @@ related: 847 (citation correctness — S1-S3 shipped in #488; 852-S1 is sequence
 |---|---|---|
 | **S0** | FE↔Java surface-parity leg on `check-surface-composition` | **implemented (merged, #493)** |
 | **S1** | Turn identity + the `/history` companion load. No UI. | **implemented (merged, #495)** |
-| **S2** | The tempdoc-610 context set (floor / clear / compact / summary-edit / message-exclude) | **implemented (merged, #503)** |
-| **S3** | Branch + version pager + edit/retry/resend + cascade-aware delete | **implemented (merged, #505)** |
+| **S2** | The tempdoc-610 context set (floor / clear / compact / summary-edit / message-exclude) | **implemented (merged, #503) · CONFIRMED LIVE 2026-08-19** |
+| **S3** | Branch + version pager + edit/retry/resend + cascade-aware delete | **implemented (merged, #505) · CONFIRMED LIVE 2026-08-19** |
 | **S4 (partial)** | Composer MODE control + light-theme wiring (ledger 14) + `jf-control` adoption (ledger 11) | **implemented (this PR)** |
 | S4 (rest) | The extract tier (ledger 2) + `deriveAffordance` / intent-tier vocabulary adoption | pending — **Q1-gated** |
 | S5-S7 | Retrieve tier, flip prerequisites | pending |
@@ -470,9 +470,40 @@ contract already exercised, not discovery. Procedure, on the next dev-stack wind
   `SearchV3View.context.test.ts` (15 cases, the five acts round-tripping against a stateful fake
   backend holding the 610 endpoints). Every case fails before this slice — the window imported none
   of the five store functions and rendered no context affordance.
-- **Not verified live.** This is FE-only work against a fake backend that mirrors the five
-  endpoints; a dev-stack pass over a real conversation (set a floor, compact, exclude, reload,
-  confirm `GET …/history` agrees) is the design's S2 gate row and is left for the live leg.
+- ~~**Not verified live.**~~ **Verified live 2026-08-19** — see the live round below. The S2 gate
+  row is discharged.
+
+### The live round, run 2026-08-19 — S2 CONFIRMED
+
+Dev stack from this worktree's own dist (`distFrom`), compact chat profile, 4096-token context,
+corpus `docs/{explanation,reference,how-to}` = 111 documents / 1149 chunks, enrichment 100% on all
+four stages. The five steps were driven through the real window in Playwright — every act via the
+turn's ⋯ and the context bar, never the endpoint — and each reload was a full `page.goto` plus a
+re-entry from the sidebar, so nothing survived in memory.
+
+Conversation `uc-9e69e1dc-e2b2-4f89-a2a6-d32d2079eddd`, three settled ask turns, message ids in
+transcript order `[06f4bb38(u), b6732866(a), 73a4b1a9(u), 1768c116(a), 54e82fdb(u), 3b5fe1b4(a)]`.
+
+| Step | Expected | Observed |
+|---|---|---|
+| 2. Floor on the second turn, reload | divider above that turn; `contextFloor` = its USER message | divider read `Context reset — the assistant no longer sees the turns above this line`; `/history.contextFloor` = **`73a4b1a9`** = the second turn's USER id, not its answer |
+| 3. Compact to the same turn | `contextFloorSummary` present; divider says "compacted" | divider read `Context compacted — …summarized for the assistant`; `contextFloorSummary` a real generated summary; `contextFloor` unchanged |
+| 4. Exclude the third turn, reload | `excludedMessageIds` holds **BOTH** ids, in `/history` **and** in `meta.json` | `["54e82fdb", "3b5fe1b4"]` — the turn's user AND assistant id — identical in `/history` and in `…/index/conversations/uc-9e69e1dc…/meta.json` on disk; bar read `1 turn hidden from context` |
+| 5. Include all from the bar | ledger empties, dimming clears on reload | `excludedMessageIds` `[]`; the hidden-count badge gone after reload |
+
+**Step 4 is the F1 assertion the unit test cannot reach, and it holds at the layer of truth.** The
+concurrency defect independent review caught was that a turn's two messages could be written as one;
+`meta.json` on disk carries both ids, so the serialization fix is confirmed where it actually
+matters rather than against a fake backend that could have agreed for the wrong reason.
+
+**One harness-side false pass worth recording, because it nearly became evidence.** The first run
+parsed the conversation list with `convs.get("conversations", …)`; the endpoint's key is
+`sessions`, so the id silently resolved to `None`, every `/history` field came back `null`, and the
+output *looked* like four clean negatives sitting beside four passing UI assertions. The UI half was
+real; the API half was vacuous. Fixed by keying `convs["sessions"]` and asserting the id is
+non-null — a `KeyError` where there had been a silent `null`. Generalisable: a probe whose failure
+mode is a plausible-looking `null` must assert its own preconditions, or it will confirm whatever
+you hoped.
 
 ## S3 — branch, the version pager, edit / retry, and cascade-aware delete
 
@@ -686,9 +717,52 @@ coverage**, which is the interesting part: three of them were greens that could 
   branches with inherited prefixes and really refuses a parent delete with 409). Every case fails
   before this slice — the window imported `branchConversation` nowhere, rendered no pager, had no
   editor, and called the non-cascade delete.
-- **Not verified live.** FE-only against a fake backend; a dev-stack pass (branch a real conversation,
-  page between versions, edit a question, delete a parent that has branches) is the design's S3 gate
-  row and is left for the live leg.
+- ~~**Not verified live.**~~ **Verified live 2026-08-19** — see the live round below. The S3 gate
+  row is discharged.
+
+### The live round, run 2026-08-19 — S3 CONFIRMED
+
+Same stack and corpus as S2's live round. All four capabilities were driven through the real window.
+
+**Branch, and the inherited prefix.** Parent `uc-498789ab` (three settled turns), branched from
+turn 1's ⋯. The store minted `uc-7c1e3980` with `parentSessionId` = the parent and
+`branchPointMessageId` = `0e8e30da` — the parent's turn-1 ANSWER, which is the previous turn's
+answer relative to the fork, exactly the arithmetic the M-probe pinned. The branch opened carrying
+the two inherited turns verbatim and nothing else; the parent's six message ids were byte-identical
+before and after, so the fork copied rather than moved.
+
+**The version pager, from both ends — the two cases `versionsAt` distinguishes, each observed.**
+
+- **Case B (this conversation is the BASE).** Reopening the parent, the pager renders on turn
+  index 2 — the turn whose fork key is the branch point — reading **`1 / 2`**. It renders on that
+  turn and no other.
+- **Case A (this conversation IS a branch).** A branch shows no pager while it has only inherited
+  turns, which is correct and was the first live reading: `canEdit` and `versions` both require
+  `index >= firstOwn`, and a fresh branch has no own turn yet. After asking one question in the
+  branch, the pager appeared on that first own turn reading **`2 / 2`**, with both direction
+  controls present.
+
+  Recorded because it briefly looked like a defect: the pager and the inline Edit are *absent by
+  construction* on an inherited turn. An audit that stopped at "no pager rendered" would have filed
+  a false regression against correct code.
+
+**Edit is branch-then-resend, and the old turn is excluded.** Rewriting a question through the
+inline editor produced a NEW sibling conversation whose history is `[inherited prefix…, the NEW
+question]` — the replaced turn is absent from it, the parent's message ids are unchanged, and the
+pager on the resulting turn reads `2 / 2`.
+
+**Cascade-aware delete, and the 409, at both layers.** `DELETE /api/chat/conversations/{parent}`
+with a live branch answers **409** `BRANCHES_PREVENT_DELETION`, body naming
+`childSessionIds: ["uc-7c1e3980…"]`, and the parent is still listed afterwards. Pressing delete on
+that row in the window surfaces the refusal as the consent dialog rather than swallowing it:
+
+> Delete this conversation and its branches? · "Citation Scorer in Grounding" has 1 branch forked
+> from it: • … · Deleting it deletes that branch too. A branch that has been forked again is not
+> deleted — nothing is removed and this will say so. · [Cancel] [Delete all (2)]
+
+**The optimistic-removal defect stays fixed live**: the sidebar row count was unchanged while the
+dialog stood open — the row does not leave at the press. Declining removed nothing (parent and
+child both still present), which is the one deliberately silent case.
 
 ## S4 (partial) — the composer mode control, the light-theme seam, and `jf-control` adoption
 
