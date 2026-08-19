@@ -11,10 +11,16 @@ status: PR-A IMPLEMENTED (2026-08-19) — PR-B NOT STARTED. Design is rev 2, adv
   `closePane()`, `CorePlugin.ts` still declares both surfaces `OPERATOR`, and both
   `KNOWN_PARITY_DRIFT` ledger entries still stand. The two PRs touch disjoint files, so PR-B is
   unblocked by this landing.
-  NUMBER ARBITRATION (coordinator, 2026-08-19): `check-tempdoc-numbers` reports 854 as claimed by two
-  in-flight worktrees — this doc and a `854-fusion-residue-lane.md` in another session's tree. This
-  doc KEEPS 854; the competing docs are other sessions' worktrees and renumber at their own merge.
-  The cross-worktree gate is not in the merge queue, so it does not block PR #516.
+  NUMBER ARBITRATION — SUPERSEDED BY EVENTS, NEEDS A RE-RULING BEFORE MERGE. The coordinator ruled
+  (2026-08-19) that this doc keeps 854 because the competing claim lived in another session's
+  worktree and "renumbers at its own merge". That premise no longer holds: `854-fusion-residue-lane.md`
+  MERGED TO `main` FIRST (PR #517, commit `b816b98e`), so 854 is taken in published history and this
+  doc is now the one colliding. `check-tempdoc-numbers` is not in the merge queue, so nothing blocks
+  PR #516 mechanically — but merging as-is would put two different 854s on `main`. This doc must be
+  renumbered (next free: 857 — 855 and 856 are claimed by the settings-window and merge-attribution
+  worktrees) before merge, which also means re-stamping the `854 PR-A` references in
+  the ported code comments. Flagged to the coordinator rather than done unilaterally: the rename
+  touches every comment the independent review just read.
   Rev 2 folded an adversarial review: three BLOCKING corrections to PR-A (A1 the `active()` deadlock,
   A2 the unstable `.scroller`, A3 the structurally blind test tier) and seven amendments (A4-A10).
   PR-B was unchanged by the review; D4's route enumeration and D3's reframing both survived
