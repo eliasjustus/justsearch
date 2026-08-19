@@ -425,11 +425,11 @@ describe('the pane is mounted exactly while a cited document is open', () => {
   });
 });
 
-/* ── 2b. Closes on a real conversation switch (tempdoc 854 D4) ──────────────────────────────────
+/* ── 2b. Closes on a real conversation switch (tempdoc 857 D4, drafted as 854) ──────────────────
  *
  * `closePane()` on a new session (route #5) is covered above. Every OTHER route that changes the
  * active conversation — a sidebar row-click, the version pager, and branch/retry/edit, which both
- * funnel through the shared `openBranch` — leaked before this change (854 §7.1). Both guarded sites
+ * funnel through the shared `openBranch` — leaked before this change (857 §7.1). Both guarded sites
  * capture the previous id BEFORE the claim, because `focusSession` mints a NEW session-list object
  * even when the clicked id is already active (it stamps `lastVisitedAt`), so an unguarded
  * `closePane()` would also fire on a re-click of the row already on screen — negative test 1 below
@@ -490,7 +490,7 @@ describe('the pane closes on a real conversation switch, and only a real one', (
   it('closes when the version pager selects a DIFFERENT session', async () => {
     // `openBranch` is the shared implementation under both the version pager (#3) and every
     // branch/retry/edit act (#4). `onVersionSelect` merges the unknown id via `mergeStoreConversations`
-    // before `focusSession` claims it (854 §7.1) — this exercises exactly that merge-then-claim path.
+    // before `focusSession` claims it (857 §7.1) — this exercises exactly that merge-then-claim path.
     const el = await mount();
     await openPane(el); // conversation A, pane open
     const activeBefore = el.sessions.activeId;

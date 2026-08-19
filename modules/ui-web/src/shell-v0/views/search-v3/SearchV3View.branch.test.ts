@@ -585,7 +585,7 @@ describe('branching a conversation from a turn', () => {
   });
 });
 
-/* ── 854 D4 — the citation pane belongs to the conversation it was opened against ────────────── */
+/* ── 857 D4 (drafted as 854) — the citation pane belongs to the conversation it was opened against ─ */
 
 describe('branching a conversation closes a citation pane open on the parent', () => {
   it('closes the pane once "Branch" claims the child conversation (route #4 -> openBranch)', async () => {

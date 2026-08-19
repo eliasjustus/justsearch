@@ -172,9 +172,9 @@ describe('shell actions — AI install palette reachability (727 F-1)', () => {
     expect(navigate).toHaveBeenCalledWith('core.brain-surface');
   });
 
-  it('854 D3 — a plain "Go to Activity" navigation entry exists, mirroring go-to-health', async () => {
+  it('857 D3 (drafted as 854) — a plain "Go to Activity" navigation entry exists, mirroring go-to-health', async () => {
     // Health had a palette entry (go-to-health); Activity had none. This is the one reachability
-    // delta the audience-honesty flip actually needed (854 §6.4) — the surface was already USER-
+    // delta the audience-honesty flip actually needed (857 §6.4) — the surface was already USER-
     // reachable via the System hub's tabs, but only Activity had no named palette route to it.
     const navigate = vi.fn();
     registerShellActions({

@@ -1377,7 +1377,7 @@ export class SearchV3View extends JfElement {
     // The same rule `onSessionSelect` applies: an edit in another row is DROPPED rather than
     // committed, because navigating away must not write text the reader walked away from.
     this.renamingId = null;
-    // 854 D4 — same guard as `onSessionSelect`: close only on a real switch, using the id captured
+    // 857 D4 (drafted as 854) — same guard as `onSessionSelect`: close only on a real switch, using the id captured
     // before the claim above (`this.sessions === before` identity is not this method's guard — its
     // callers already establish it is a real switch or a branch that's always new, but comparing ids
     // directly here keeps the two sites' close logic identical rather than relying on caller proofs).
@@ -2560,7 +2560,7 @@ export class SearchV3View extends JfElement {
     this.sessions = focusSession(this.sessions, id, Date.now());
     if (this.sessions === before) return; // unknown id — nothing was claimed, so nothing to record
     this.claimConversation(id);
-    // 854 D4 — the evidence pane belongs to the conversation it was opened against; a real switch
+    // 857 D4 (drafted as 854) — the evidence pane belongs to the conversation it was opened against; a real switch
     // closes it. Guarded on the id captured BEFORE the claim, not object identity: focusSession
     // returns a NEW list even when id === prevId (it stamps lastVisitedAt on the row), so an
     // unguarded closePane() here would also fire on a re-click of the already-active row.

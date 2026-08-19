@@ -1,10 +1,13 @@
 ---
-number: 854
+number: 857
 title: The ratified batch — run-spine navigation ported, surface-audience honesty, pane closes on conversation switch
-status: PR-B IMPLEMENTED (2026-08-19) — PR-A PENDING. Rev 2 folded an adversarial review: three
-  BLOCKING corrections to PR-A (A1 the `active()` deadlock, A2 the unstable `.scroller`, A3 the
-  structurally blind test tier) and seven amendments (A4-A10); PR-B was unchanged by the review.
-  PR-B (§10: B1-B5 — the audience flip, parity-ledger retirement, `go-to-activity` palette action,
+status: RENUMBERED FROM 854 (2026-08-19) — a parallel worktree's 854-fusion-residue-lane.md merged to
+  main first (PR #517), so `check-tempdoc-numbers.mjs` collided and this doc moved to the next free
+  number per its own remedy. No content change from the 854 draft beyond this note and the number/title
+  self-references below (§9, §heading). PR-B IMPLEMENTED (2026-08-19) — PR-A PENDING. Rev 2 folded an
+  adversarial review: three BLOCKING corrections to PR-A (A1 the `active()` deadlock, A2 the unstable
+  `.scroller`, A3 the structurally blind test tier) and seven amendments (A4-A10); PR-B was unchanged
+  by the review. PR-B (§10: B1-B5 — the audience flip, parity-ledger retirement, `go-to-activity` palette action,
   switch-guarded pane close, `listSurfacesByAudience` retirement) landed in this commit: `CorePlugin.ts`
   audience flip (health/activity USER, logs untouched OPERATOR), `check-surface-composition.mjs`
   `KNOWN_PARITY_DRIFT` emptied (both adverse half-states captured in the PR body per review B1),
@@ -27,7 +30,7 @@ scope-note: search work (query trail, pinned searches) is OUT — deferred to th
   search deliberation. 852 slices S7-S10 and HC-palette work are OUT.
 ---
 
-# 854 — The ratified batch
+# 857 — The ratified batch
 
 ## 1. The owner's decisions (2026-08-19), verbatim in substance
 
@@ -775,11 +778,13 @@ in 852 so that slice does not have to rediscover it.
 
 ## 9. Tempdoc updates this design mandates
 
-1. **`docs/tempdocs/854-ratified-batch.md`** — this document, committed with PR-A (number verified free:
-   `node scripts/ci/check-tempdoc-numbers.mjs` → OK, 560 distinct numbers, no collisions).
+1. **`docs/tempdocs/857-ratified-batch.md`** (originally drafted as 854; renumbered — see the status
+   header above) — this document, committed with PR-A (number verified free at draft time:
+   `node scripts/ci/check-tempdoc-numbers.mjs` → OK, 560 distinct numbers, no collisions; a parallel
+   worktree's 854 landed first on `main`, forcing the renumber to 857).
 2. **`docs/tempdocs/852-sv3-promotion.md`** — add a section *"Ratified parity-ledger dispositions
    (owner, 2026-08-19)"* carrying: the §3 disposition table; the note that the run spine's **navigation
-   tier** ships in 854 PR-A while the **minimap tier** is DEFERRED-undecided (§5.7); and the §8 sweep
+   tier** ships in 857 PR-A while the **minimap tier** is DEFERRED-undecided (§5.7); and the §8 sweep
    obligations addressed to S8-S11. 852 explicitly says the ledger lives with the orchestrator and
    lands in-repo as slices land (`:9-12`), so this is that landing, not a fork.
 3. **No change to 851.** `check-window-cutover` keys on `core.search-v3-surface`'s audience and the
