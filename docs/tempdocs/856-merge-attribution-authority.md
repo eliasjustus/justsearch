@@ -334,3 +334,83 @@ said `unknown` instead of `false` — the merge case is already one, since the f
 denominator depends on it. **Retirement condition:** if `unknown` becomes the dominant
 value across a report's fields, the report has stopped saying anything and the honest move
 is to fix the collection, not to keep publishing a page of nulls.
+
+## 10. Theorization — what this fix is an instance of
+
+Not design. This records directions worth considering before anything further is built, kept
+separate from §1–§8, which are settled.
+
+### 10.1 The first framing was too coarse
+
+§2 says the ledger under-reports because it is *captured at a moment*. Applied to the wider
+analytics stack that framing does not survive contact with the evidence. The per-session stores
+the hooks write — read counts, edit counts, repeat buffers, build-fail counters, turn counts —
+are all current. Collection is not the problem anywhere. What is five weeks stale is
+`scores.ndjson`, `judge-outcomes.ndjson` and `dashboard.html`, all frozen at the same minute,
+with `outcomes.ndjson` absent entirely.
+
+Those are **aggregation** stages. The sharper shape:
+
+> **A pipeline decays at its first stage that requires invocation.**
+
+Hooks fire whether or not anyone is paying attention. The stage after them does not, and
+everything downstream inherits that staleness however healthy the collection underneath.
+
+The instruments that stayed alive have no intermediate stage: they recompute from raw
+transcripts on every run. They can be *wrong* — window edges, transcript rotation — but they
+cannot be *stale*, because there is no state to keep fresh.
+
+### 10.2 Candidate principle: prefer recomputation over maintained derived state
+
+A derived store is a cache with a refresh obligation attached, and an unattended refresh
+obligation is not met. This is broader than §9.1: that says where a *key* should live; this asks
+whether a derived artifact should exist at all.
+
+Same shape, five places, observable today:
+
+| Artifact | Refresh obligation | State |
+|---|---|---|
+| `scores` / `judge-outcomes` / `dashboard` | run the report chain | one run, five weeks ago |
+| `costs.ndjson` | upsert at merge | 11 of 23 rows price billions of tokens at $0 |
+| `session-merges.ndjson` | record at teardown | ~50% met — this tempdoc |
+| observations conditions store | `fold --apply` | 358 conditions, `probeable: 0`, not converging |
+| `friction-excluded-sessions.json` | keep session ids current | every id rotated; excludes nothing, still reports "0 excluded" |
+
+The last is sharpest: a maintained list that has silently become a no-op while printing a number
+that reads like an observation.
+
+**Counter-hypothesis, stated because it is plausible.** The events lane may be dormant by intent
+— a maintainer tool used episodically, where staleness between uses is correct and mtimes prove
+nothing. The weak evidence against is that three artifacts share one timestamp to the minute,
+which looks like a single run rather than periodic use. Suggestive, not conclusive, and better
+settled by asking than by inference.
+
+### 10.3 Directions worth banking
+
+- **Collapse the pipeline** — rebuild the report chain as recompute-from-transcript and delete
+  the intermediate stores. The transcript lane already holds richer data than the stores do.
+- **Retire the lane** — apply `retire-with-a-sweep` inward. The repo gates product code with
+  `consumer-presence` and `dead-code`; neither is applied to the tooling that measures the work.
+- **Refuse rather than degrade** — an instrument below its viable sample size should exit
+  non-zero saying so. Today a starved run prints a plausible result, which is the §3.2 invariant
+  broken by the instruments that enforce it elsewhere.
+- **A liveness view, but derived** — the trap is that a hand-maintained manifest of what is alive
+  becomes the sixth row of the table above. It works only if each instrument declares its inputs
+  in code and the check reads them.
+- **Instrument rework** — the falsifier this tempdoc serves needs it, nothing measures it, and
+  622 §6.3 already named the source ("was the work fixed or reverted later → git churn over
+  subsequent sessions"). Specified, never built.
+
+### 10.4 Assumptions worth challenging first
+
+- **Cost-per-merge rewards merge frequency.** A session shipping one large correct change scores
+  worse than one shipping five trivial ones. This tempdoc's own work is a single PR and would
+  score poorly by its own instrument.
+- **The session is assumed to be the unit of work.** It is not: work spans sessions, and one
+  session spans many delegated workers. The tempdoc may be the better unit — and the merge link
+  would then key differently, which touches §5's unresolved question.
+- **That measuring improves anything.** No link is established anywhere between an instrument
+  existing and an outcome moving. `payback` asks that of tempdocs; nothing asks it of instruments.
+
+Carried to tempdoc 858 as a sketch rather than pursued here — the present problem is merge
+attribution, and §8 stays the scope of this work.
