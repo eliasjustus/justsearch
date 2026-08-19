@@ -826,6 +826,7 @@ export class Sv3Main extends JfElement {
       attribute: false,
       hasChanged: (value: unknown, old: unknown) => value !== old || value !== null,
     },
+    reasoningTurnId: { attribute: false },
     currentModelLabel: { attribute: false },
     detailed: { type: Boolean, reflect: true },
     copiedTurnId: { state: true },
@@ -863,6 +864,12 @@ export class Sv3Main extends JfElement {
    * not depend on a controller that has since been reset.
    */
   declare reasoning: ReasoningController | null;
+  /**
+   * The id of the turn that OWNS the live reasoning controller above, or null (tempdoc 848 §2.7).
+   * The same identity discipline `run.turnId` already applies to the feed: a controller renders
+   * under one turn, never under whichever turn happens to be in `streaming` status.
+   */
+  declare reasoningTurnId: string | null;
   /**
    * The model the COMPOSER is currently naming (tempdoc 822 Phase F11). Handed down so a turn's own
    * stamped model can be suppressed when the two agree and re-stated when they do not — the region
@@ -906,6 +913,7 @@ export class Sv3Main extends JfElement {
     this.historyLocked = false;
     this.lockedRefusal = false;
     this.reasoning = null;
+    this.reasoningTurnId = null;
     this.currentModelLabel = null;
     this.detailed = false;
     this.copiedTurnId = null;
@@ -1109,9 +1117,12 @@ export class Sv3Main extends JfElement {
               <div class="ask-bubble" data-testid="sv3-turn-question">${turn.question}</div>
             </div>`}
         ${turn.kind === 'agent'
-          ? run === null
-            ? this.recordedActivity(turn)
-            : this.runBody(run)
+          ? html`${/* Tempdoc 848 §2.7 — an agent turn shows its thinking too. Leaving one turn kind
+                      reasoning-less would rebuild, inside this window, the same live/record
+                      asymmetry the persistence work exists to remove. */ ''}
+              ${this.reasoningBlocks(turn, streaming)}${run === null
+                ? this.recordedActivity(turn)
+                : this.runBody(run)}`
           : html`
               ${this.rewriteNote(turn)}${this.reasoningBlocks(turn, streaming)}
               <div class="answer" data-testid="sv3-turn-answer">
@@ -1154,8 +1165,14 @@ export class Sv3Main extends JfElement {
    */
   private reasoningBlocks(turn: Sv3Turn, streaming: boolean): TemplateResult | typeof nothing {
     const live = this.reasoning;
-    if (streaming) {
-      if (live === null || (!live.isThinking && live.reasoningBlocks.length === 0)) return nothing;
+    // Tempdoc 848 §2.7 — the live controller renders for the turn that actually OWNS the live
+    // stream, matched by id exactly as the run feed is bound above. `streaming` alone is per-turn
+    // (`turn.status === 'streaming'`) and two turns in that status are reachable — an adopted run
+    // arrives without coordinating with the ask path — so a turn that does not own the stream would
+    // otherwise show another turn's thinking. A turn-KIND check would not close that: both could be
+    // the same kind.
+    if (streaming && live !== null && this.reasoningTurnId === turn.id) {
+      if (!live.isThinking && live.reasoningBlocks.length === 0) return nothing;
       return html`<jf-reasoning-block
         data-testid="sv3-turn-reasoning"
         .controller=${live}

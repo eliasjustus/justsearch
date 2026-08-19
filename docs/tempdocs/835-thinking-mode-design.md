@@ -1002,6 +1002,13 @@ change. The **"Thinks first" copy stays** — it is now accurate.
 
 ### 9e. Recorded decisions
 
+- **REVERSED by tempdoc 848 (2026-08-19) — reasoning IS persisted now.** The bullet below is kept
+  verbatim as dated history, because its measured half (the B4 key set) is the evidence 848 builds
+  on. Its *conclusion* did not survive: "does not even keep reasoning on screen past the turn" was
+  already false when written (Search v3 records blocks onto the turn at every terminal, and
+  `Summarize`/`Navigate` render completed blocks unguarded) — only `UnifiedChatView` lost them, via a
+  render-guard bug, not a decision. See `848-reasoning-persistence.md` §0 and §8.2: a rendering gap
+  is not evidence for a persistence decision.
 - **Reasoning is NOT persisted to the conversation record — deliberate.** B4
   evidence: a turn streamed 445 `reasoning_chunk` frames; the persisted assistant
   message came back with keys `[role, content, id, hash, ts]` and no reasoning
