@@ -707,6 +707,39 @@ function titleFor(row: Sv3StoreConversation, current: string): string {
 }
 
 /**
+ * Reconcile ONE turn's live evidence with the record's (tempdoc 847 F-12).
+ *
+ * The rule this replaces was `prior.evidence ?? recorded.evidence`, and its intent was rule 2 below:
+ * a refresh must never blank a panel the live turn filled. But `??` only asks whether the live turn
+ * has an evidence OBJECT, and the live arm publishes one the moment `rag.meta` names a retrieval
+ * mode — before a single source or mark exists. So an object holding empty arrays shadowed the
+ * record's complete evidence, and it did so PERMANENTLY: the post-`done` refresh is the repair, and
+ * it was thrown away every time it arrived, for the session's whole lifetime.
+ *
+ * The fix keeps the intent and drops the proxy. Each field asks the question the `??` was standing
+ * in for — *did the live turn actually observe this?* — so what the turn watched still wins, and
+ * what it never saw is taken from the record instead of being asserted as empty. The fields are
+ * reconciled INDEPENDENTLY because they are independently observable: a turn whose stream carried
+ * sources but whose citation-matches never arrived keeps its sources and gains the record's marks.
+ *
+ * The two ends stay exactly as they were: a record with no evidence cannot overwrite a live turn's
+ * (rule 2), and a turn that observed nothing takes the record's whole record (the cold-load path).
+ */
+function reconcileEvidence(
+  prior: Sv3TurnEvidence | null,
+  recorded: Sv3TurnEvidence | null,
+): Sv3TurnEvidence | null {
+  if (recorded === null) return prior;
+  if (prior === null) return recorded;
+  return {
+    sources: prior.sources.length > 0 ? prior.sources : recorded.sources,
+    matches: prior.matches.length > 0 ? prior.matches : recorded.matches,
+    marks: prior.marks.length > 0 ? prior.marks : recorded.marks,
+    retrievalMode: prior.retrievalMode !== '' ? prior.retrievalMode : recorded.retrievalMode,
+  };
+}
+
+/**
  * The canonical thread record, projected onto a conversation's turns (tempdoc 822 Phase F6;
  * inventory D1 / tempdoc 561 P-A: *the window is not the authority*).
  *
@@ -723,7 +756,10 @@ function titleFor(row: Sv3StoreConversation, current: string): string {
  *  2. **Blank the evidence.** The record DOES carry the answer's sources and matches now (tempdoc
  *     847 §2.4, projected by `sv3-record.ts`), but a live turn watched the stream and can hold what
  *     the record has not caught up to, so what the turn already stood on wins over what the record
- *     reports — and a refresh never empties the panel beside it.
+ *     reports — and a refresh never empties the panel beside it. What the turn did NOT observe is
+ *     taken from the record rather than asserted as empty: see {@link reconcileEvidence}, which is
+ *     where the difference between "the live turn holds this" and "the live turn holds an evidence
+ *     object" is made (847 F-12).
  *  3. **Re-word a HALT.** "The reader pressed Stop" is not in the record — to the backend a halted
  *     answer just ended. Overwriting it with `complete` would call the reader's own decision a
  *     success (the four-terminal rule {@link Sv3TurnStatus} exists to keep them distinct).
@@ -799,7 +835,7 @@ export function applySv3Record(
       ...recorded,
       id: prior.id,
       recordId: recorded.recordId ?? recorded.id,
-      evidence: prior.evidence ?? recorded.evidence,
+      evidence: reconcileEvidence(prior.evidence, recorded.evidence),
       status: prior.status === 'halted' ? 'halted' : recorded.status,
       detail: prior.status === 'halted' ? prior.detail : recorded.detail,
       toolCalls: recorded.toolCalls > 0 ? recorded.toolCalls : prior.toolCalls,

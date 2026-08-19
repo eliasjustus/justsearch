@@ -55,10 +55,20 @@ import type {
 // The ONE claim→mark resolver (565 §15.B). The window resolves nothing itself: it hands the
 // backend's claims + sources to the shared authority and stores what comes back.
 import { claimsToCitations } from '../../components/chat/citationResolve.js';
-// Tempdoc 847 S2 — the ONE `claimMatches` envelope reader, so this window's producer gate IS the
-// shipped window's, not a second copy of it (§2.5: defence in depth through one authority).
-import { admittedMatches, readScorer } from '../../components/chat/recordEvidence.js';
-import { isVerifiedProducer } from '../../components/chat/evidenceProjection.js';
+// Tempdoc 847 S2 / F-12 — the ONE `claimMatches` envelope reader, so this window's producer gate IS
+// the shipped window's, not a second copy of it (§2.5: defence in depth through one authority).
+//
+// F-12 widened this from the gate to the WHOLE envelope. S2 imported `readScorer` and applied the
+// producer verdict through the shared authority, but kept reading every other field off the raw
+// payload here — so the live arm and the reloaded arm were still two readers of one shape, and only
+// the gate was shared. `claimsFromRecord` + `matchesFromRecord` are that shape's readers; the live
+// handler below now calls exactly them, so a field the record arm normalizes (a legacy `chunkIndex`
+// position, an absent `parentDocId`) cannot be normalized on one path and dropped on the other.
+import {
+  claimsFromRecord,
+  matchesFromRecord,
+  readScorer,
+} from '../../components/chat/recordEvidence.js';
 import type { Sv3TurnEvidence } from './sv3-sessions.js';
 
 /** The one shape this window's ask route dispatches. */
@@ -387,19 +397,30 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
       // numbers — whose supported and unsupported bands interleave at a 0.0049 margin (836 §9.7) —
       // with cross-encoder-calibrated grounding tiers.
       scorer = readScorer(p);
-      const verified = isVerifiedProducer(scorer);
       // The panel answers to the same verdict as the marks: an unadmitted producer's matches carry
       // no per-source tier, so the sources list and the answer text say the same thing (847 §2.3).
-      matches = admittedMatches(p.matches, scorer);
-      for (const m of p.matches) {
-        mergeClaim(
-          claims,
-          m.sentenceIndex ?? 0,
-          m.sentenceText ?? '',
-          verified && typeof m.similarity === 'number' ? m.similarity : null,
-          'verified',
-          verified && typeof m.sourceIndex === 'number' ? m.sourceIndex : null,
-        );
+      matches = matchesFromRecord(p);
+      // Tempdoc 847 F-12 — the verified half of this turn's claims is what the SHARED envelope
+      // reader says it is, so a live answer and the same answer after a reload are built from one
+      // parse of one payload. The result is MERGED rather than assigned because the live arm has a
+      // second contributor the record arm does not: the lexical `rag.citation_delta` claims already
+      // in `claims`, which live on their own side of the accumulator (§3b/§3d).
+      //
+      // A claim the reader admitted no ref for still merges — with `null` — because the sentence WAS
+      // matched and must exist as a claim; it simply resolves no mark (see `mergeClaim`).
+      for (const claim of claimsFromRecord(p)) {
+        const refs: readonly (number | null)[] =
+          claim.verifiedRefs.length > 0 ? claim.verifiedRefs : [null];
+        for (const ref of refs) {
+          mergeClaim(
+            claims,
+            claim.sentenceIndex,
+            claim.sentenceText,
+            claim.verifiedScore,
+            'verified',
+            ref,
+          );
+        }
       }
       publish();
     },
