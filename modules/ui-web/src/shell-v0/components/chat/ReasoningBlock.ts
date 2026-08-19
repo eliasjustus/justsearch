@@ -92,6 +92,13 @@ export class ReasoningBlock extends JfElement {
       gap: 0.5rem;
       flex: 1;
       min-width: 0;
+      /* Tempdoc 853 (F-09) — WCAG 2.2 2.5.8 (Target Size, Minimum). The audit measured this row's
+         hit area at 541 x 20 CSS px: wide enough, two pixels short in the block axis. 24px is the
+         criterion's own number, so it is written as the literal the spec names rather than routed
+         through a design-scale token that could later be re-tuned out from under it. The row is
+         already taller than its text at rest, so this changes nothing visually — it only pins the
+         floor against a future line-height or font-size change. */
+      min-height: 24px;
       background: none;
       border: none;
       padding: 0;
@@ -122,6 +129,14 @@ export class ReasoningBlock extends JfElement {
     }
     .copy-btn {
       margin-left: auto;
+      /* Tempdoc 853 (F-09) — measured 23 x 19 CSS px, under the WCAG 2.2 2.5.8 24 x 24 floor in both
+         axes. inline-flex + centring grows the box around the glyph without moving or resizing the
+         glyph itself, so the padding below still governs the resting look. */
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
+      min-height: 24px;
       background: none;
       border: none;
       color: var(--text-secondary);
@@ -195,12 +210,17 @@ export class ReasoningBlock extends JfElement {
             <span class="label">${label}</span>
             ${streaming ? html`<jf-pulse-dots></jf-pulse-dots>` : nothing}
           </button>
+          ${/* Tempdoc 853 (F-09) — the accessible name used to compute from the glyph itself, so the
+               control announced as "clipboard" (or as nothing) and `title` never won. `aria-label`
+               names it outright and the glyph is removed from the a11y tree, matching the
+               title + aria-label pairing UnifiedChatView's turn actions already use. */ ''}
           ${!streaming && text
             ? html`<button
                 class="copy-btn"
                 @click=${() => void this.copyText()}
                 title="Copy reasoning"
-              >&#x1F4CB;</button>`
+                aria-label="Copy reasoning"
+              ><span aria-hidden="true">&#x1F4CB;</span></button>`
             : nothing}
         </div>
         <div class="content ${showContent ? '' : 'hidden'}">
