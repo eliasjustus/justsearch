@@ -26,6 +26,8 @@ type Mounted = Sv3Main & { updateComplete: Promise<unknown> };
 
 const turn = (over: Partial<Sv3Turn> & { id: string }): Sv3Turn => ({
   recordId: null,
+  assistantRecordId: null,
+  recordOpenedByUser: false,
   kind: 'ask',
   question: 'why did the renewal fail?',
   answer: 'It expired.',
