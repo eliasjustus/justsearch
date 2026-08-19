@@ -84,10 +84,12 @@ export type Sv3TurnKind = 'ask' | 'agent';
 /**
  * One block of the model's thinking, as the SHARED `ReasoningController` finalized it (tempdoc 822
  * Phase F7; inventory C9). Tempdoc 848 §2.5 — an ALIAS of the controller's own `ReasoningBlock`, not
- * a second declaration: the two were byte-identical and this module's comment already admitted its
- * shape was a copy. A type-only import keeps the original decoupling intent (no runtime edge to a
- * controller module) while removing the hand-maintained duplicate. Now that the same shape is also
- * what the RECORD carries, one drifting copy would be one too many.
+ * a second declaration: this module's comment already admitted its shape was a copy, and the copy had
+ * already drifted (it declared both fields `readonly` where the controller's did not — the alias
+ * closes that by making the controller's fields `readonly` too, so the one shape is immutable at both
+ * ends). A type-only import keeps the original decoupling intent (no runtime edge to a controller
+ * module). Now that the same shape is also what the RECORD carries, one drifting copy would be one
+ * too many.
  */
 export type Sv3TurnReasoning = ReasoningBlock;
 

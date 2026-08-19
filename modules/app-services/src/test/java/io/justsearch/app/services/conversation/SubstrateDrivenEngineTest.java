@@ -1105,6 +1105,46 @@ final class SubstrateDrivenEngineTest {
   }
 
   @Test
+  @DisplayName("tempdoc 848 F2: think → answer → think persists TWO blocks, one per thinking region")
+  void reasoningRegionsBecomeSeparateBlocks() {
+    // The live `ReasoningController` cuts a block at every `endThinking()` — i.e. at the first content
+    // token after each thinking region — so a single-block-per-call record would disagree with the
+    // live render on BOTH the block count and the duration (which would cover only region one).
+    var store = new RecordingStore();
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("sessionId", "conv-1");
+    newEngineWithStore(
+            persistentOneShotShape(),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(SingleHopController.INSTANCE),
+            new FramedAi(
+                List.of(
+                    Frame.think("first "),
+                    Frame.think("region"),
+                    Frame.text("Partial answer. "),
+                    Frame.think("second region"),
+                    Frame.text("Rest of it."))),
+            store)
+        .run(SHAPE_ID, body, Audience.USER, ev -> {});
+
+    Map<String, Object> persisted = assistantRecords(store, "conv-1").get(0);
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> blocks = (List<Map<String, Object>>) persisted.get("reasoning");
+    assertNotNull(blocks);
+    assertEquals(2, blocks.size(), "one block per thinking REGION, as the live controller cuts them");
+    assertEquals("first region", blocks.get(0).get("text"));
+    assertEquals("second region", blocks.get(1).get("text"), "region two is its own block, not appended");
+    for (Map<String, Object> block : blocks) {
+      assertTrue(
+          ((Number) block.get("durationMs")).longValue() >= 0,
+          "each region is timed on its own interval, not the whole call");
+    }
+    assertEquals("Partial answer. Rest of it.", persisted.get("content"), "content is unaffected");
+  }
+
+  @Test
   @DisplayName("tempdoc 848 §2.1: a turn that did not think carries NO reasoning key (not an empty list)")
   void noReasoningKeyWhenTheModelDidNotThink() {
     var store = new RecordingStore();
@@ -1850,6 +1890,42 @@ final class SubstrateDrivenEngineTest {
         }
       }
       super.emit(sink, callIdx, text);
+    }
+  }
+
+  /** One scripted stream frame: thinking or visible text, in the order the model emits them. */
+  private record Frame(boolean thinking, String text) {
+    static Frame think(String text) {
+      return new Frame(true, text);
+    }
+
+    static Frame text(String text) {
+      return new Frame(false, text);
+    }
+  }
+
+  /**
+   * Tempdoc 848 F2 — a stub that drives an explicit INTERLEAVED frame sequence, which is what a model
+   * that thinks between answer segments actually streams (and what a think-tag-leaking build produces
+   * via `ThinkTagStreamFilter`). `ReasoningAi` above only covers think-then-answer.
+   */
+  private static final class FramedAi extends ScriptedAi {
+    private final List<Frame> frames;
+
+    FramedAi(List<Frame> frames) {
+      super(List.of(""));
+      this.frames = frames;
+    }
+
+    @Override
+    void emit(StreamSink sink, int callIdx, String text) {
+      for (Frame frame : frames) {
+        if (frame.thinking()) {
+          sink.onReasoning().accept(frame.text());
+        } else {
+          sink.onContent().accept(frame.text());
+        }
+      }
     }
   }
 

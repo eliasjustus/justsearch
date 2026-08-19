@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 export interface ReasoningBlock {
-  text: string;
-  durationMs: number;
+  readonly text: string;
+  readonly durationMs: number;
 }
 
 /**

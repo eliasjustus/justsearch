@@ -154,6 +154,20 @@ describe('a record becomes turns, bracketed by the user messages', () => {
     expect(turn?.reasoning.map((block) => block.text)).toEqual(['first', 'second']);
   });
 
+  it('keeps the thinking a FAILED run recorded on its terminal error event (848 D-7)', () => {
+    // The agent fold attaches a halted/errored run's trailing blocks to its ERROR event. Reading
+    // reasoning only off assistant items would drop exactly the case where the thinking matters most.
+    clock = 0;
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'do the thing'),
+      event('e2', 'ERROR', 'the model went away', {
+        reasoning: [{ text: 'got as far as the lock table', durationMs: 700 }],
+      }),
+    ]);
+    expect(turn?.status).toBe('failed');
+    expect(turn?.reasoning).toEqual([{ text: 'got as far as the lock table', durationMs: 700 }]);
+  });
+
   it('drops a malformed reasoning payload rather than rendering half a block', () => {
     clock = 0;
     const [turn] = project([

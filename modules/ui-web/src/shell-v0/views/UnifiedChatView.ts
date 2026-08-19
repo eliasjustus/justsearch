@@ -5283,7 +5283,19 @@ export class UnifiedChatView extends JfElement {
       case 'error': {
         // Tempdoc 565 §12 Phase 2 — carry the error code (live + record render identically now).
         const code = typeof it.attributes.errorCode === 'string' ? it.attributes.errorCode : '';
-        return html`<div class="error">${code ? html`[${code}] ` : nothing}${it.content}</div>`;
+        // Tempdoc 848 §2.4 (D-7) — a run that failed or was halted still THOUGHT, and the agent fold
+        // attaches those trailing blocks to its terminal ERROR event. Rendering them here is what
+        // makes the record's honesty visible: what the model worked out before it broke is the most
+        // useful thing on a failed turn, and dropping it would leave the fold writing to nothing.
+        const failedReasoning = reasoningBlocksFromRecord(it.attributes.reasoning);
+        return html`<div class="error">${code ? html`[${code}] ` : nothing}${it.content}</div>
+          ${failedReasoning.map(
+            (block) => html`<jf-reasoning-block
+              data-testid="chat-turn-reasoning"
+              .text=${block.text}
+              .durationMs=${block.durationMs}
+            ></jf-reasoning-block>`,
+          )}`;
       }
       case 'progress':
         // Search Thread S4-final (item 3) — a restored SEARCH event. `unifiedThreadProjection.ts`

@@ -329,6 +329,27 @@ final class AgentInteractionMapperTest {
   }
 
   @Test
+  @DisplayName("848 F4: an unparseable timestamp cannot produce a 56-year 'Thought for' duration")
+  void implausibleDurationIsReportedAsNone() {
+    // `parseTs` falls back to Instant.EPOCH, so ONE bad timestamp would otherwise measure the block
+    // from 1970. The TEXT is real and stays; the fabricated number does not.
+    List<InteractionEvent> events =
+        AgentInteractionMapper.fromRunEvents(
+            List.of(
+                Map.of("timestamp", "not-a-timestamp", "eventType", "reasoning_chunk",
+                    "payload", Map.of("text", "a real thought")),
+                at("2026-01-01T00:00:03Z", "done", Map.of("finalResponse", "the answer"))),
+            CONV);
+
+    List<Map<String, Object>> blocks = blocksOf(events.get(0));
+    assertEquals("a real thought", blocks.get(0).get("text"));
+    assertEquals(
+        0L,
+        ((Number) blocks.get(0).get("durationMs")).longValue(),
+        "no measurement beats a fabricated one");
+  }
+
+  @Test
   @DisplayName("848 §2.4: a run that never reasoned carries no reasoning attribute at all")
   void runWithoutReasoningCarriesNoAttribute() {
     List<InteractionEvent> events =

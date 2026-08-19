@@ -26,6 +26,9 @@ import java.util.Optional;
  */
 public final class AgentInteractionMapper {
 
+  /** 24h — a sanity ceiling on a folded block's duration, not a product limit (see {@code addBlock}). */
+  private static final long MAX_PLAUSIBLE_REASONING_MS = 24L * 60L * 60L * 1000L;
+
   private AgentInteractionMapper() {}
 
   /**
@@ -259,8 +262,11 @@ public final class AgentInteractionMapper {
    *
    * <p>Blocks left unflushed at the end of the walk attach to the run's terminal event (its
    * {@code ERROR} if it produced one, else its last event): what the model thought before a run was
-   * halted or failed was really produced — the ask path already records exactly that at all four of
-   * its terminals, and the two planes must not disagree about the same question.
+   * halted or failed was really produced, and the ask WINDOW records exactly that at all four of its
+   * terminals. Scope limit (848 §2.4): the ask plane's SERVER side does not — a failed
+   * {@code streamLlm} throws before any assistant record is written, so its reasoning survives only
+   * in-session. Closing that would mean persisting a partial assistant turn on error, which is a
+   * turn-semantics change beyond this charter.
    */
   public static List<InteractionEvent> fromRunEvents(
       List<Map<String, Object>> records, String conversationId) {
@@ -329,6 +335,13 @@ public final class AgentInteractionMapper {
       return;
     }
     long durationMs = end == null ? 0L : Math.max(0L, end.toEpochMilli() - start.toEpochMilli());
+    // A record whose `timestamp` was missing or unparseable parses to `Instant.EPOCH` (`parseTs`), so
+    // ONE bad timestamp in a run would otherwise render "Thought for 56 years" next to the answer. A
+    // duration past any plausible thinking interval is not a measurement, so report none rather than
+    // a fabricated one — the block's TEXT is still real and still shown.
+    if (durationMs > MAX_PLAUSIBLE_REASONING_MS) {
+      durationMs = 0L;
+    }
     Map<String, Object> block = new LinkedHashMap<>();
     block.put("text", text);
     block.put("durationMs", durationMs);

@@ -190,14 +190,17 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       continue;
     }
     const turn = ensure(item);
+    // Tempdoc 848 §2.7 — reasoning is read off EVERY item kind, not just the assistant one. A turn
+    // can record several assistant items (an iterating shape, a multi-step run), so blocks accumulate
+    // in record order rather than the last one winning; and a run that was HALTED or ERRORED carries
+    // its trailing thinking on the terminal ERROR event (the agent fold's D-7 rule), which would be
+    // silently dropped if only the assistant arm looked. (Contrast `evidence`, deliberately
+    // last-wins: the terminal message's retrieval is what the reader is looking at, whereas every
+    // step's thinking really happened.)
+    turn.reasoning.push(...reasoningBlocksFromRecord(item.attributes.reasoning));
     if (item.kind === 'assistant') {
       turn.answers.push(item.content);
       turn.activity.push({ kind: 'text', id: item.id, text: item.content });
-      // Tempdoc 848 §2.7 — a turn can record several assistant items (an iterating shape, a
-      // multi-step run), so blocks accumulate across them in record order rather than the last one
-      // winning. (Contrast `evidence` below, which is deliberately last-wins: the terminal message's
-      // retrieval is what the reader is looking at, whereas every step's thinking really happened.)
-      turn.reasoning.push(...reasoningBlocksFromRecord(item.attributes.reasoning));
       const evidence = recordEvidenceOf(item);
       if (evidence !== null) turn.evidence = evidence;
       continue;

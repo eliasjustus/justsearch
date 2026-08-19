@@ -5986,6 +5986,39 @@ describe('Tempdoc 848 — the turn keeps its thinking after done, and after a re
     view.remove();
   });
 
+  it('renders the thinking a FAILED run recorded on its terminal error event (848 D-7)', async () => {
+    // The agent fold attaches a halted/errored run's trailing blocks to its ERROR event; without a
+    // consumer here the fold would be writing to a reader that does not exist.
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'documents';
+    await view.updateComplete;
+    const v = view as unknown as { unifiedEvents: unknown[]; thread: unknown[] };
+    v.unifiedEvents = [
+      {
+        id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE',
+        originator: 'user', content: 'do the thing', attributes: {},
+      },
+      {
+        id: 'e1', occurredAt: '2026-01-01T00:00:02Z', kind: 'ERROR', originator: 'agent',
+        content: 'the model went away',
+        attributes: {
+          errorCode: 'LLM_ERROR',
+          reasoning: [{ text: 'got as far as the lock table', durationMs: 700 }],
+        },
+      },
+    ];
+    v.thread = [];
+    view.requestUpdate();
+    await view.updateComplete;
+
+    expect(view.shadowRoot!.querySelector('.error')?.textContent).toContain('the model went away');
+    const block = view.shadowRoot!.querySelector('[data-testid="chat-turn-reasoning"]');
+    expect(block, 'a failed turn still shows what the model worked out').not.toBeNull();
+    expect((block as unknown as { text: string }).text).toBe('got as far as the lock table');
+    view.remove();
+  });
+
   it('renders the thinking from the RECORD on reload, with no live thread entry', async () => {
     const view = mountView();
     await view.updateComplete;

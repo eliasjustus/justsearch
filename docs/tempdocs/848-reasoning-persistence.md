@@ -402,6 +402,25 @@ disagree about the same question. **Specify:** at end of walk, attach any unflus
 run's terminal event — the `ERROR` event if the run produced one, else the last emitted event of the
 run. Only a run with *no* emitted events at all discards them, which is unreachable in practice.
 
+**Delivered asymmetrically — named, not hidden (independent review F1b, 2026-08-19).** D-7 holds for
+the AGENT plane, where the journal already recorded the chunks before the run died. It does **not**
+hold for the ANSWER plane: `streamLlm` rethrows as `LlmStreamException` (`ConversationEngine.java`
+error check, before the region flush), and the caller `emitError`s and returns *before*
+`persistedAssistant` — so a failed ask persists no assistant record at all, and its reasoning survives
+only in the live window (which does keep it: `SearchV3View.settle()` records blocks at all four
+terminals, and `UnifiedChatView` keeps the committed turn's blocks in-session). Closing this would
+mean persisting a **partial assistant turn on error** — a change to what a persisted turn *means*,
+touching every consumer that reads the record as "a completed answer". That is a turn-semantics
+decision, not a reasoning-persistence one, and it is **out of 848's scope**. Both the agent fold's
+javadoc and the FE error-branch consumers (§2.6/§2.7) state the limit where a reader meets it, and it
+is logged to the observations inbox so it has a home rather than living only here.
+
+**Both windows CONSUME the terminal blocks (review F1a).** The fold writing to the ERROR event is only
+half the fix: `UnifiedChatView`'s `error` case and `sv3-record.ts` now read `attributes.reasoning`
+through the shared `reasoningBlocksFromRecord` (sv3 reads it off *every* item kind, not just the
+assistant arm), so a failed run's thinking renders instead of being written to a reader that does not
+exist.
+
 Honest limit (unchanged): a multi-step agent run collapses all its steps' blocks onto one answer
 bubble — the record has one bubble per run, and inventing per-step bubbles would be a rendering change
 beyond this charter. The blocks stay ordered and individually timed, so nothing is lost but adjacency.
@@ -772,6 +791,15 @@ implementer, and the reload leg must be *live*-verified, not inferred from a gre
    B3 is an error condition with its own structural remedy in 835 §9f, and committing an empty
    assistant bubble to show a thinking trace would be a worse surface. Flagging it so the choice is
    deliberate rather than accidental.
+
+   **STALE as written (independent review, 2026-08-19) — the prediction no longer holds end to end.**
+   The *live* half is still true: the commit gate drops the in-session message. But the BACKEND now
+   persists that turn (a stream that thought and emitted no content flushes its trailing region at
+   stream end and writes an assistant record with empty `content` + a `reasoning` array), so on the
+   next thread refresh or reload the record path renders it — an empty-content assistant bubble
+   carrying a reasoning block. That is arguably the honest surface, and it is certainly not what §7.1
+   predicted. **Flagged for the UX audit** rather than patched blind: what an answerless-but-thought
+   turn should look like is a presentation decision, and the record now has the data either way.
 2. **`durationMs` vantage-point delta.** Both planes now measure the same *interval* (§2.1), but the
    record measures it server-side and the live controller client-side, so they differ by transport.
    Accepted and documented. A cheap alternative — have `refreshUnifiedThread` overwrite the committed
