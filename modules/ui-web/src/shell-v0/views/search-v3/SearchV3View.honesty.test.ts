@@ -178,6 +178,24 @@ const all = (host: Mounted, testid: string): HTMLElement[] => [
   ...(host.shadowRoot?.querySelectorAll<HTMLElement>(`[data-testid="${testid}"]`) ?? []),
 ];
 
+/**
+ * Press a control the way a reader does — through the native button inside it. The two REMEDIES this
+ * suite presses are born on the shared operability primitive (852 S4's jf-control adoption) and
+ * render their button in their own shadow root, so a click on the host reaches no handler; a
+ * hand-rolled native button is clicked directly.
+ */
+async function press(host: Element | null | undefined): Promise<void> {
+  if (!host) throw new Error('press: no control');
+  if (host.localName === 'button') {
+    (host as HTMLButtonElement).click();
+    return;
+  }
+  await (host as Mounted).updateComplete;
+  const button = host.shadowRoot?.querySelector('button');
+  if (!button) throw new Error('press: the control rendered no button');
+  button.click();
+}
+
 const textOf = (el: HTMLElement | null): string => (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
 async function type(el: Mounted, draft: string): Promise<void> {
@@ -281,7 +299,7 @@ describe('a lock taken ELSEWHERE reaches this window, and locks the transcript',
     const nav = reasonFor('conversations.locked').remedy;
     expect(nav?.kind).toBe('navigate');
     expect(textOf(remedy)).toContain(nav?.kind === 'navigate' ? nav.label : '');
-    remedy?.click();
+    await press(remedy);
     // The target is the cause's declared one — the surface that OWNS the unlock, not one hop short.
     expect(navigations).toEqual([nav?.kind === 'navigate' ? nav.target : '']);
   });
@@ -784,7 +802,7 @@ describe('the landing says what there is to search, or offers the way to get som
     document.addEventListener(NAVIGATE_TO_SURFACE_EVENT, (e) =>
       navigations.push((e as CustomEvent<{ surfaceId: string }>).detail.surfaceId),
     );
-    remedy?.click();
+    await press(remedy);
     expect(navigations).toEqual([CORPUS_REMEDY_TARGET]);
   });
 

@@ -474,6 +474,55 @@ export function sv3RunReceiptLabel(toolCalls: number, status: Sv3TurnStatus): st
  */
 export type Sv3SlotKind = 'answer' | 'stop' | 'follow-up' | 'send';
 
+/**
+ * WHICH TIER a send routes to (tempdoc 822 Phase F2; the visible control is 852 S4 / ledger row 12).
+ *
+ * Declared HERE rather than on the composer element because it is the same vocabulary the send hint
+ * below words and the window's dispatch reads — one declaration, three readers. The composer
+ * re-exports it so its `sv3-composer-submit` contract is still readable in one file.
+ *
+ * Both tiers are already live and tested: `ask` posts `core.rag-ask` through the shared request
+ * builder, `delegate` goes through the shared agent controller. What S4 adds is the AFFORDANCE — the
+ * routing was reachable only by chord until then.
+ */
+export type Sv3ComposerTier = 'ask' | 'delegate';
+
+export interface Sv3TierOption {
+  readonly id: Sv3ComposerTier;
+  /** The trigger's label when this tier is chosen — the control's label IS the current value. */
+  readonly label: string;
+  /** One line, in the menu, saying what the tier actually does differently. */
+  readonly description: string;
+  /** The tier a window starts on; the menu badges it, as the effort menu badges its own. */
+  readonly isDefault: boolean;
+}
+
+/** The menu's group label. "Mode", not "Tier": the word has to mean something to a reader. */
+export const SV3_TIER_MENU_LABEL = 'Mode';
+
+export const SV3_TIER_OPTIONS: readonly Sv3TierOption[] = [
+  {
+    id: 'ask',
+    label: 'Ask',
+    description: 'Answers from your documents, in this conversation.',
+    isDefault: true,
+  },
+  {
+    id: 'delegate',
+    label: 'Delegate',
+    description: 'Hands the task to the agent, which works in steps and can use tools.',
+    isDefault: false,
+  },
+];
+
+export const SV3_TIER_DEFAULT: Sv3ComposerTier = 'ask';
+
+export const isSv3Tier = (value: unknown): value is Sv3ComposerTier =>
+  SV3_TIER_OPTIONS.some((option) => option.id === value);
+
+export const sv3TierLabel = (tier: Sv3ComposerTier): string =>
+  SV3_TIER_OPTIONS.find((option) => option.id === tier)?.label ?? '';
+
 export interface Sv3SlotInput {
   /** A typed prompt is held. Outranks everything: nothing else can proceed until it is resolved. */
   readonly pendingPrompt: boolean;
@@ -481,6 +530,12 @@ export interface Sv3SlotInput {
   readonly running: boolean;
   /** The claimed conversation already holds a settled turn, so the next send CONTINUES it. */
   readonly followUp: boolean;
+  /**
+   * Which tier a plain send now routes to (852 S4). OPTIONAL, defaulting to the tier a window with
+   * no control was always on — so this is additive: an omitted tier words exactly the sentence the
+   * slot worded before the control existed.
+   */
+  readonly tier?: Sv3ComposerTier;
 }
 
 export interface Sv3Slot {
@@ -498,10 +553,26 @@ export interface Sv3Slot {
  */
 export const SV3_SEND_HINT = 'Enter asks · Ctrl+Enter delegates to the agent';
 
+/**
+ * The same sentence when the reader has put the mode control on DELEGATE: Enter now delegates, and
+ * the chord it used to take is the same act. Said as one clause rather than two, because "Ctrl+Enter
+ * also delegates" is a key that changes nothing — the routing explanation must describe what the
+ * keys DO, not restate that a control was moved.
+ */
+export const SV3_DELEGATE_SEND_HINT = 'Enter delegates to the agent';
+
 /** Mid-run, a submit JOINS the live turn instead of starting a second one — it is not an interrupt. */
 export const SV3_STEER_HINT = 'Enter steers the running agent';
 
-export function sv3PrimaryAction({ pendingPrompt, running, followUp }: Sv3SlotInput): Sv3Slot {
+export function sv3PrimaryAction({
+  pendingPrompt,
+  running,
+  followUp,
+  tier = SV3_TIER_DEFAULT,
+}: Sv3SlotInput): Sv3Slot {
+  // The routing explanation lives on the send control and nowhere else, so it has to follow the
+  // chosen tier: a send that delegates while its own label says "Enter asks" is chrome that lies.
+  const hint = tier === 'delegate' ? SV3_DELEGATE_SEND_HINT : SV3_SEND_HINT;
   if (pendingPrompt) {
     return { kind: 'answer', reason: 'The run is waiting for your decision' };
   }
@@ -509,7 +580,7 @@ export function sv3PrimaryAction({ pendingPrompt, running, followUp }: Sv3SlotIn
     return { kind: 'stop', reason: `Stop the response · ${SV3_STEER_HINT}` };
   }
   if (followUp) {
-    return { kind: 'follow-up', reason: `Send a follow-up in this conversation · ${SV3_SEND_HINT}` };
+    return { kind: 'follow-up', reason: `Send a follow-up in this conversation · ${hint}` };
   }
-  return { kind: 'send', reason: `Send · ${SV3_SEND_HINT}` };
+  return { kind: 'send', reason: `Send · ${hint}` };
 }
