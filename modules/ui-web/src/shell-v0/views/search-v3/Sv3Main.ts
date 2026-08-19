@@ -60,6 +60,7 @@ import { RAISE_BUDGET_STEP_TOKENS } from '../unifiedChatRequest.js';
 import {
   COMPOSER_STATE_DEFAULT,
   CONTEXT_FLOOR_COMPACTED,
+  CONTEXT_FLOOR_GROUP_LABEL,
   CONTEXT_FLOOR_RESET,
   CONTEXT_FLOOR_RESTORE,
   CONTEXT_FLOOR_RESTORE_LABEL,
@@ -283,13 +284,16 @@ export class Sv3Main extends JfElement {
       .context-floor {
         margin-block: var(--space-3);
       }
+      /* The boundary itself: the one node carrying role="separator", and deliberately empty. */
+      .context-floor-rule {
+        border-top: 1px dashed var(--border);
+      }
       .context-floor-line {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
         gap: var(--space-2);
         padding-block: var(--space-1);
-        border-top: 1px dashed var(--border);
         color: var(--secondary-label);
         font-size: var(--font-size-sv3-xs);
       }
@@ -953,6 +957,7 @@ export class Sv3Main extends JfElement {
     expandedSources: { state: true },
     turnContexts: { attribute: false },
     floorSummary: { attribute: false },
+    streaming: { type: Boolean },
     showFloorSummary: { state: true },
     editingFloorSummary: { state: true },
     floorSummaryDraft: { state: true },
@@ -1028,6 +1033,12 @@ export class Sv3Main extends JfElement {
   declare turnContexts: readonly Sv3TurnContext[];
   /** The compaction summary standing at the floor, or null for a plain rewind / no floor. */
   declare floorSummary: string | null;
+  /**
+   * Something in this WINDOW is streaming (tempdoc 852 S2). Handed down rather than inferred from a
+   * turn's status: the context acts are withheld for the whole conversation while a prompt is in
+   * flight, and a turn that is not itself streaming cannot see that.
+   */
+  declare streaming: boolean;
   /** The divider's disclosure — the summary is a paragraph of the model's words, not a label. */
   declare showFloorSummary: boolean;
   declare editingFloorSummary: boolean;
@@ -1060,6 +1071,7 @@ export class Sv3Main extends JfElement {
     this.expandedSources = new Set();
     this.turnContexts = [];
     this.floorSummary = null;
+    this.streaming = false;
     this.showFloorSummary = false;
     this.editingFloorSummary = false;
     this.floorSummaryDraft = '';
@@ -1413,7 +1425,12 @@ export class Sv3Main extends JfElement {
    * derived from the conversation's `/history` and only the window holds it.
    */
   private tailContextMenu(turn: Sv3Turn): TemplateResult | typeof nothing {
-    if (turn.status === 'streaming') return nothing;
+    // WINDOW-wide, not per-turn: the context of a prompt in flight is not editable, and the menu's
+    // own derivation says so (`sv3ContextMenuItems` returns nothing while streaming). A trigger
+    // gated only on THIS turn's status would render on every settled turn during someone else's
+    // stream and open an empty menu — "a control that fails when pressed", which is the alternative
+    // this slice's honest-null rule exists to refuse.
+    if (this.streaming || turn.status === 'streaming') return nothing;
     const context = sv3TurnContextFor(this.turnContexts, turn.id);
     if (context === null || context.messageIds.length === 0) return nothing;
     return html`<jf-control
@@ -1465,7 +1482,13 @@ export class Sv3Main extends JfElement {
     const summary = this.floorSummary;
     const compacted = summary !== null;
     return html`<div class="context-floor" data-testid="sv3-context-floor">
-        <div class="context-floor-line" role="separator">
+        ${/* The BOUNDARY is this hairline and only this hairline. `role="separator"` is
+              children-presentational: a conforming screen reader prunes everything inside a node
+              carrying it, which on the row below would have hidden Restore — the one way back from
+              a floor — along with the summary's own controls. So the role sits on an empty rule and
+              the row beside it is a plain group. */ ''}
+        <div class="context-floor-rule" role="separator"></div>
+        <div class="context-floor-line" role="group" aria-label=${CONTEXT_FLOOR_GROUP_LABEL}>
           <span class="context-floor-label" data-testid="sv3-context-floor-label"
             >${compacted ? CONTEXT_FLOOR_COMPACTED : CONTEXT_FLOOR_RESET}</span
           >

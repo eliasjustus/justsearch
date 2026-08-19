@@ -104,6 +104,9 @@ interface Backend {
   writes: Array<{ path: string; method: string; body: Record<string, unknown> }>;
   /** Which acts the fake refuses, so the failure paths are exercised against a real refusal. */
   refuse: Set<'floor' | 'clear' | 'compact' | 'summary' | 'exclude'>;
+  /** Exclusion toggles in flight right now, and the HIGH-WATER MARK — the concurrency witness. */
+  excludesInFlight: number;
+  peakConcurrentExcludes: number;
   /** What a successful compaction returns — `null` makes it the "nothing came back" case. */
   compaction: string | null;
 }
@@ -252,6 +255,16 @@ function stubFetch(): void {
       const sent = bodyOf(init);
       backend.writes.push({ path: `exclude:${messageId}`, method, body: sent });
       if (backend.refuse.has('exclude')) return { ok: false, status: 500 };
+      // THE CONCURRENCY WITNESS. The real endpoint is a read-modify-write over one unlocked
+      // `meta.json`, so two toggles overlapping is the bug; this fake cannot lose an update, so it
+      // measures the overlap instead. The await is what makes the window real — without it the
+      // handler would finish in one microtask and even a parallel caller would never overlap.
+      backend.excludesInFlight += 1;
+      backend.peakConcurrentExcludes = Math.max(
+        backend.peakConcurrentExcludes,
+        backend.excludesInFlight,
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
       const record = backend.histories[id];
       if (record !== undefined) {
         const held = new Set(record.excludedMessageIds ?? []);
@@ -259,6 +272,7 @@ function stubFetch(): void {
         else held.delete(messageId);
         record.excludedMessageIds = [...held];
       }
+      backend.excludesInFlight -= 1;
       return { ok: true, status: 200, json: () => Promise.resolve({ ok: true }) };
     }
     if (href.includes('/api/chat/conversations') && href.endsWith('/history')) {
@@ -316,6 +330,8 @@ beforeEach(() => {
     historyReads: [],
     writes: [],
     refuse: new Set(),
+    excludesInFlight: 0,
+    peakConcurrentExcludes: 0,
     compaction: 'The renewal thread, summarized.',
   };
   fetchMock = vi.fn();
@@ -355,8 +371,8 @@ async function region(el: Mounted, tag: string): Promise<Updatable> {
 }
 
 /** The two-turn conversation every case works on: both turns are store-minted on both halves. */
-function twoTurnConversation(id = 'uc-ctx'): void {
-  backend.conversations = [conversationRow(id, 'why did the renewal fail?')];
+function twoTurnConversation(id = 'uc-ctx', opening = 'why did the renewal fail?'): void {
+  backend.conversations = [conversationRow(id, opening)];
   backend.threads[id] = {
     conversationId: id,
     events: [
@@ -451,6 +467,28 @@ describe('the effective-context FLOOR round-trips against the store', () => {
     expect(divider?.textContent?.trim()).toBe(CONTEXT_FLOOR_RESET);
     // The divider sits ABOVE the floor turn — the boundary is drawn where it actually is.
     expect(divider?.closest('.context-floor')?.nextElementSibling).toBe(turns[1]);
+  });
+
+  it('keeps the divider’s controls REACHABLE — separator is on the hairline, not the row', async () => {
+    // `role="separator"` is children-presentational: a conforming screen reader prunes everything
+    // inside the node carrying it. On the control row that would hide Restore — the only way back
+    // from a floor — from assistive tech entirely, while every gate stayed green (no gate models
+    // role inheritance). So the role lives on an empty rule and the row is a labelled group.
+    twoTurnConversation();
+    backend.histories['uc-ctx']!.contextFloor = storedId(3);
+    const el = await mount();
+    await openTheOnlyConversation(el);
+    const main = await region(el, 'jf-sv3-main');
+
+    const separators = [...(main.shadowRoot?.querySelectorAll('[role="separator"]') ?? [])];
+    expect(separators).toHaveLength(1);
+    expect(separators[0]?.querySelector('jf-control')).toBeNull();
+    const restore = main.shadowRoot?.querySelector('[data-testid="sv3-context-floor-restore"]');
+    expect(restore).not.toBeNull();
+    expect(restore?.closest('[role="separator"]')).toBeNull();
+    const group = restore?.closest('[role="group"]');
+    expect(group).not.toBeNull();
+    expect(group?.getAttribute('aria-label')).toBe('Effective context');
   });
 
   it('restores the full context from the divider’s own control', async () => {
@@ -618,13 +656,19 @@ describe('hiding a TURN from the next prompt', () => {
 
     await chooseFromTurnMenu(el, 0, CONTEXT_MENU_EXCLUDE);
 
-    // BOTH halves: leaving the question in the prompt while dropping the answer would send the model
-    // a question it never answered.
-    expect(backend.writes.map((w) => w.path).sort()).toEqual([
+    // BOTH halves, and IN ORDER — the assertion is unsorted on purpose. The endpoint's write is a
+    // read-modify-write over one shared `meta.json` and the store takes no lock
+    // (`FileConversationStore.toggleStringInMeta:503-527`), so two toggles in flight together race
+    // on one snapshot and the loser's id is dropped — leaving the turn HALF excluded, which the
+    // transcript cannot show (`hasExcluded` is true on one id as on two). The fake backend cannot
+    // lose an update, so only the ORDER of the writes can witness the serialization here.
+    expect(backend.writes.map((w) => w.path)).toEqual([
       `exclude:${storedId(0)}`,
       `exclude:${storedId(1)}`,
     ]);
     expect(backend.writes.every((w) => w.body.excluded === true)).toBe(true);
+    // ...and never OVERLAPPING. `Promise.all` would send both in the same tick and peak at 2.
+    expect(backend.peakConcurrentExcludes).toBe(1);
     expect(new Set(backend.histories['uc-ctx']?.excludedMessageIds ?? [])).toEqual(
       new Set([storedId(0), storedId(1)]),
     );
@@ -667,10 +711,13 @@ describe('hiding a TURN from the next prompt', () => {
     await press(bar.shadowRoot?.querySelector('[data-testid="sv3-context-include-all"]'));
     await settle(el);
 
-    expect(backend.writes.map((w) => w.path).sort()).toEqual([
+    expect(backend.writes.map((w) => w.path)).toEqual([
       `exclude:${storedId(0)}`,
       `exclude:${storedId(4)}`,
     ]);
+    // The bulk undo is the WORST case for the unlocked read-modify-write — it can carry every id in
+    // the conversation — so it is serialized on the same path and witnessed the same way.
+    expect(backend.peakConcurrentExcludes).toBe(1);
     expect(backend.histories['uc-ctx']?.excludedMessageIds).toEqual([]);
     const after = await region(el, 'jf-sv3-context-bar');
     expect(after.shadowRoot?.querySelector('[data-testid="sv3-context-hidden"]')).toBeNull();
@@ -703,6 +750,46 @@ describe('a turn the endpoints cannot address offers NO context affordance', () 
       'index the vendor folder',
     );
     expect(turns[0]?.querySelector('[data-testid="sv3-turn-context-menu"]')).toBeNull();
+  });
+
+  it('withholds the trigger on SETTLED turns too while the window is streaming', async () => {
+    // The two gates have different scopes: the menu's entries are withheld window-wide while a
+    // prompt is in flight, so a trigger gated only on THIS turn's status would render on every
+    // settled turn during a stream and open nothing. That is the "control that fails when pressed"
+    // the honest-null rule refuses — the same rule, one scope out.
+    twoTurnConversation();
+    const el = await mount();
+    await openTheOnlyConversation(el);
+    let main = await region(el, 'jf-sv3-main');
+    expect(turnsIn(main)[0]?.querySelector('[data-testid="sv3-turn-context-menu"]')).not.toBeNull();
+
+    const composer = await region(el, 'jf-sv3-composer');
+    const field = composer.shadowRoot?.querySelector<HTMLTextAreaElement>(
+      '[data-testid="sv3-composer-input"]',
+    );
+    field!.value = 'and the third?';
+    field!.dispatchEvent(new Event('input'));
+    await composer.updateComplete;
+    composer.shadowRoot
+      ?.querySelector<HTMLButtonElement>('[data-testid="sv3-composer-send"]')
+      ?.click();
+    await settle(el);
+
+    main = await region(el, 'jf-sv3-main');
+    const settled = turnsIn(main).filter(
+      (t) => t.getAttribute('data-status') !== 'streaming',
+    );
+    expect(settled.length).toBeGreaterThan(0);
+    for (const t of settled) {
+      expect(t.querySelector('[data-testid="sv3-turn-context-menu"]')).toBeNull();
+    }
+
+    // ...and it comes back when the stream ends, so the withholding is the STATE, not a teardown.
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+    main = await region(el, 'jf-sv3-main');
+    expect(turnsIn(main)[0]?.querySelector('[data-testid="sv3-turn-context-menu"]')).not.toBeNull();
   });
 
   it('renders no ⋯ trigger on a LIVE turn — its handle is positional until the record speaks', async () => {
@@ -773,6 +860,50 @@ describe('how full the context is, and what is in it', () => {
       bar.shadowRoot?.querySelector('[data-testid="sv3-context-meter-fill"]')?.getAttribute('data-color'),
     ).toBe('yellow');
     expect(bar.shadowRoot?.querySelector('[role="meter"]')?.getAttribute('aria-valuenow')).toBe('50');
+  });
+
+  it('leaves the meter behind when the reader claims another conversation', async () => {
+    // The occupancy is a property of the conversation that spent it, so it is stored on the session
+    // rather than on the window. A window-level reading would follow the reader into a conversation
+    // whose prompt it never measured — a confident number about the wrong thing.
+    // A DIFFERENT opening question, so the row this case claims is unambiguous: the ask below mints
+    // its own conversation titled by what was asked.
+    twoTurnConversation('uc-other', 'what did the lease say?');
+    const el = await mount();
+    const composer = await region(el, 'jf-sv3-composer');
+    const field = composer.shadowRoot?.querySelector<HTMLTextAreaElement>(
+      '[data-testid="sv3-composer-input"]',
+    );
+    field!.value = 'why did the renewal fail?';
+    field!.dispatchEvent(new Event('input'));
+    await composer.updateComplete;
+    composer.shadowRoot
+      ?.querySelector<HTMLButtonElement>('[data-testid="sv3-composer-send"]')
+      ?.click();
+    await settle(el);
+    stream.emit('done', { promptTokens: 2048 });
+    stream.end();
+    await settle(el);
+    let bar = await region(el, 'jf-sv3-context-bar');
+    expect(bar.shadowRoot?.querySelector('[data-testid="sv3-context-meter"]')).not.toBeNull();
+
+    // Claim the OTHER conversation — one this window has measured nothing for.
+    const sidebar = await region(el, 'jf-sv3-sidebar');
+    const rows = [...(sidebar.shadowRoot?.querySelectorAll('jf-sv3-session-row') ?? [])];
+    for (const row of rows) {
+      await (row as Updatable).updateComplete;
+      const button = row.shadowRoot?.querySelector<HTMLElement>(
+        '[data-testid="sv3-session-row-button"]',
+      );
+      if (!(button?.textContent ?? '').includes('what did the lease say?')) continue;
+      button?.click();
+      break;
+    }
+    await settle(el);
+
+    expect(el.sessions.activeId).toBe('uc-other');
+    bar = await region(el, 'jf-sv3-context-bar');
+    expect(bar.shadowRoot?.querySelector('[data-testid="sv3-context-meter"]')).toBeNull();
   });
 
   it('opens the shared inspector on a prompt that agrees with the transcript', async () => {

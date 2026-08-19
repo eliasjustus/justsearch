@@ -316,6 +316,13 @@ export const CONTEXT_FLOOR_RESET =
 export const CONTEXT_FLOOR_COMPACTED =
   'Context compacted — the turns above this line are summarized for the assistant';
 
+/**
+ * The divider's control row names itself as a GROUP. `role="separator"` sits on the hairline above
+ * it and nowhere else: that role is children-presentational, so putting it on the row would prune
+ * Restore — the only way back from a floor — from assistive tech entirely.
+ */
+export const CONTEXT_FLOOR_GROUP_LABEL = 'Effective context';
+
 export const CONTEXT_FLOOR_RESTORE = 'Restore';
 export const CONTEXT_FLOOR_RESTORE_LABEL = 'Restore the full context for this conversation';
 export const CONTEXT_SUMMARY_SHOW = 'Show summary';

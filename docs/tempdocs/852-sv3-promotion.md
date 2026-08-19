@@ -358,6 +358,40 @@ integration cases fail when that one `await` is removed (mutation-probed).
 Every control this slice adds is born on **`jf-control`** (parity-ledger row 11) rather than adding
 more hand-rolled buttons for S6 to convert.
 
+### The concurrency defect independent review caught (F1)
+
+The exclusion acts first fired their toggles through `Promise.all`. The endpoint behind them is a
+**read-modify-write over one shared document with no lock**: `FileConversationStore.toggleStringInMeta`
+reads `meta.json`, adds or removes the id, and calls `writeMetaAtomic` (`:503-527`) — the WRITE is
+atomic, the SEQUENCE is not, and each POST is served on its own HTTP thread. Two toggles in flight
+together therefore race on one snapshot and the loser's id is dropped.
+
+What that costs is specific and invisible: a turn's two ids go out together, one lands, and the turn
+is left **half excluded** — the next prompt carries a question whose answer was dropped, while the
+transcript dims the turn either way (`hasExcluded` is true on one id as on two). Both sites now
+serialize through one `excludeInTurn` helper, which is what the shipped window already does
+(`views/UnifiedChatView.ts:1767-1776`).
+
+**This is `green-masked-destructive`, and it shaped the test.** The fake backend cannot lose an
+update, so the original green was environmental — and an ORDER assertion would not have caught it
+either, since `Promise.all` over `ids.map(...)` issues in array order too. The fake now measures
+what actually matters: it counts exclusion writes in flight and records the high-water mark, so
+`peakConcurrentExcludes === 1` witnesses the serialization. Reverting to `Promise.all` fails 2 cases
+with `expected 2 to be 1`.
+
+### Two more from the same review
+
+- **F2 — the trigger's gate was one scope too narrow.** The menu's entries are withheld window-wide
+  while a prompt is in flight, but the trigger was gated on the TURN's own status — so during any
+  stream every settled turn rendered a ⋯ that opened nothing: "a control that fails when pressed",
+  the exact alternative this slice's honest-null rule refuses. The window's `streaming` flag is now
+  handed to the region and gates the trigger too.
+- **F3 — `role="separator"` was pruning its own controls.** That role is children-presentational: a
+  conforming screen reader hides everything inside the node carrying it, which on the divider's
+  control row meant Restore — the only way back from a floor — was unreachable to assistive tech,
+  with every gate green (no gate models role inheritance). The role now sits on an empty hairline
+  and the control row is a labelled `role="group"`. Asserted, because nothing else can see it.
+
 ### One defect the critical-analysis pass caught
 
 The summary editor first closed on the SAVE PRESS. That discards the reader's correction exactly
@@ -375,6 +409,44 @@ it while the toast names the act that failed. Asserted, and mutation-probed.
    shipped window keeps it. A window-level reading would follow the reader into a conversation whose
    prompt it never measured. It is fed by the `done` terminal, which this window was already
    receiving and discarding (`sv3-ask.ts` registered no `onDone` handler at all).
+
+### Named limits and next-slice items (from independent review, not implemented here)
+
+Recorded the way S1 recorded its `resumeConversation` limit — as facts about what this slice does
+NOT do, so the next one inherits them rather than rediscovers them.
+
+- **F4 — the turn projection is LOSSY, and the bar counts turns.** `projectSv3TurnContexts` walks
+  the turns on screen, so an excluded message id that maps to no rendered turn (a message the record
+  does not project, a turn scrolled out of a truncated record) is invisible to both the hidden-turn
+  count and to **Include all** — which therefore cannot un-hide it. The label says "turns" and means
+  it, so nothing on screen is false; what is missing is any way to see or reach an orphaned
+  exclusion. A `/history`-side count (ledger length vs resolved turns) would surface the gap.
+- **F5 — `refreshHistory` has no request-ordering guard.** It is guarded on the SESSION
+  (`activeId !== conversationId` discards a superseded load) but not on ORDER, so two reloads of the
+  SAME conversation can land out of order and leave the older answer standing. The record half
+  already has the shape of the fix — `refreshRecord`'s `AbortController` — and the next slice should
+  give the companion load the same.
+- **F6 — an unresolvable floor renders nothing while the backend still truncates.** When
+  `history.contextFloor` names a message no turn on screen carries, the divider does not render and
+  no turn dims — yet the backend keeps truncating the prompt at it. Consider rendering the bar line
+  plus Restore whenever a floor is SET but unresolved, so the state is at least visible and
+  reversible.
+- **F8-F10 (nits, logged not fixed):** the four menu entries share one `history` icon and could be
+  differentiated; the rest are logged to the observations inbox.
+
+### The live leg (folds into the program's next stack session, as CONFIRMATION)
+
+This slice is FE-only and verified against a fake backend, so the live pass is confirmation of a
+contract already exercised, not discovery. Procedure, on the next dev-stack window:
+
+1. Open a conversation with at least two settled ask turns.
+2. **Set a floor** on the second turn, then reload the window: the divider is above the same turn
+   and `GET /api/chat/conversations/{id}/history` reports `contextFloor` = that turn's USER message.
+3. **Compact** to the same turn: `contextFloorSummary` is present in `/history` and the divider says
+   "compacted", not "reset".
+4. **Exclude a turn**, then reload: `excludedMessageIds` holds **BOTH** of that turn's ids, and
+   `meta.json` on disk holds both — the F1 assertion at the layer the unit test cannot reach.
+5. **Include all** from the bar: the ledger empties, and the dimming clears on reload.
 
 ### Verification
 

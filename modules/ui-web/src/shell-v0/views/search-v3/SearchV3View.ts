@@ -1024,12 +1024,10 @@ export class SearchV3View extends JfElement {
         const excluded = detail.action === 'exclude';
         // Both of a turn's messages, because the reader hid a TURN: leaving the question in the
         // prompt while dropping the answer would send the model a question it never answered.
-        const results = await Promise.all(
-          ids.map((id) => setMessageExcluded(sessionId, id, excluded)),
-        );
+        const ok = await this.excludeInTurn(sessionId, ids, excluded);
         await this.settleContextWrite(
           sessionId,
-          results.every(Boolean),
+          ok,
           excluded ? CONTEXT_EXCLUDE_FAILED : CONTEXT_INCLUDE_FAILED,
         );
         return;
@@ -1037,15 +1035,42 @@ export class SearchV3View extends JfElement {
       case 'include-all': {
         const ids = sv3ExcludedMessageIds(contexts);
         if (ids.length === 0) return;
-        const results = await Promise.all(
-          ids.map((id) => setMessageExcluded(sessionId, id, false)),
-        );
-        await this.settleContextWrite(sessionId, results.every(Boolean), CONTEXT_INCLUDE_FAILED);
+        const ok = await this.excludeInTurn(sessionId, ids, false);
+        await this.settleContextWrite(sessionId, ok, CONTEXT_INCLUDE_FAILED);
         return;
       }
       default:
         return;
     }
+  }
+
+  /**
+   * Several exclusion toggles, ONE AT A TIME — never `Promise.all`.
+   *
+   * The endpoint's write is read-modify-write over a SHARED document and the store takes no lock:
+   * `FileConversationStore.toggleStringInMeta` reads `meta.json`, adds or removes the id, and calls
+   * `writeMetaAtomic` (`:503-527`). The write is atomic per file; the SEQUENCE is not, and each POST
+   * is served on its own HTTP thread. Two toggles in flight together therefore race on one snapshot,
+   * and the loser's id is silently dropped.
+   *
+   * What that costs here is specific and invisible: a turn's two ids go out together, one lands, and
+   * the turn is left HALF excluded — the prompt carries a question whose answer was dropped, while
+   * the transcript dims the turn either way (`hasExcluded` is true on one id as on two). Serializing
+   * removes the race rather than detecting it afterwards, and it is what the shipped window already
+   * does (`views/UnifiedChatView.ts:1767-1776`, a sequential `for`-await).
+   *
+   * Returns whether EVERY toggle landed; the caller reloads `/history` either way.
+   */
+  private async excludeInTurn(
+    sessionId: string,
+    ids: readonly string[],
+    excluded: boolean,
+  ): Promise<boolean> {
+    let ok = true;
+    for (const id of ids) {
+      if (!(await setMessageExcluded(sessionId, id, excluded))) ok = false;
+    }
+    return ok;
   }
 
   /**
@@ -2463,6 +2488,7 @@ export class SearchV3View extends JfElement {
           ?detailed=${isAdvancedMode()}
           .turnContexts=${contexts}
           .floorSummary=${session?.history?.contextFloorSummary ?? null}
+          ?streaming=${this.streaming}
           data-testid="sv3-main"
         ></jf-sv3-main>
         <jf-sv3-context-bar
