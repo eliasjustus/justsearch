@@ -679,6 +679,73 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   self-consistent against their own embedded policy snapshot; they are dated history, not retracted.
   Any *claim-bearing* run must use the v2 cohort.
 
+### F-055: the 854 W2 depth levers are BOTH PARKED by the pre-registered rule, and each exposed a coupling defect — the recall-complete pool `top_n` is splice-coupled to the shared `limit` (raising it alone DISCARDS the fused prefix: legal −0.263, enron −0.421, leak 4-11× with legs unchanged), and `JUSTSEARCH_RERANK_TOP_K` impurely moves retrieval depth for every mode (2026-08-19, 854 W2 campaign)
+
+- **Method:** shared-index per corpus (legal-clerc-200 / enron-qa / scifact), backend restarted
+  per arm, all arms `comparable: true` / `ann_proof PASS` / staged-recall reconciliation 0
+  mismatches / ce_coverage clean (zero silent drops anywhere); no cohort envelope existed on
+  the machine, so replicate spread (legal σ≈0.0034 n=3) + the relevance-ratchet 0.02 band were
+  the noise reference. Environment caveat: a foreign dev stack held 2-5 GB VRAM throughout —
+  relative deltas hold, absolute CE latencies run high vs F-052's.
+- **W2a (pool `top_n` 10→20→50): PARK — structurally unraisable as shipped, a coupling bug not
+  a tuning result.** `spliceRecallComplete(fused, protected, limit)` computes
+  `keepFused = max(0, limit − missing)` (`HybridFusionUtils.java:97`) with
+  `limit = max(requestedLimit, rerank.top_k) = 20` at defaults; at `top_n=20` the protected-set
+  misses approach `limit`, `keepFused → 0`, and the ENTIRE fused prefix is replaced by rescued
+  hits in leg-iteration order: legal 0.5897→**0.3271**, enron 0.8012→**0.3798**, leak_rate up
+  4-11× while `leg_union_recall` is UNCHANGED — fusion output being thrown away, not legs
+  failing. At `top_n=50` the run is not scoreable (`comparable: false`). `top_n` must never be
+  raised without raising the window, and today nothing warns — the guard/decoupling is
+  chartered as 854 W2-fix. (Pool-20-at-window-50 side-evidence from CE-off arms: ≈neutral,
+  +0.0014 — consistent with the mechanism; not ship-grade, the headroom arm 504-timed-out 2/2.)
+- **W2b (CE window 20→50 via `JUSTSEARCH_RERANK_TOP_K`, arena 5120): PARK by the
+  pre-registered rule.** enron +0.0060 (leak 0.043→0.030) and scifact +0.0054 (0.030→0.023) are
+  real ≈2σ wins, but legal regresses **−0.0300** (≈8.8σ on its replicate spread, over the 0.02
+  band) and CE stage p50 rises **+158-169%** (≈×2.2 end-to-end at the CE's ~82% latency share).
+  Also operationally gated: window 50 needs `JUSTSEARCH_RERANK_GPU_MEM_MB ≥ ~5120` or 199/200
+  queries OOM (see F-054's mislabel). **Confound for any re-run:** `JUSTSEARCH_RERANK_TOP_K`
+  is NOT a pure window knob — it also sets the worker `searchLimit` for every mode
+  (`KnowledgeSearchEngine.java:627-629`; leg-mode recalls moved with it). The clean lever is
+  `PipelineConfig.crossEncoderWindow` (`:969-970`, every preset sends 0), which jseval cannot
+  currently set — instrument gap chartered with the W2-fix.
+- **Adjacent live datapoint (feeds F-052/F-053):** within the window-50 arms (same
+  searchLimit), delivering FUSION order instead of the CE's scored **legal 0.6856 vs 0.5547
+  (+0.131)**; vs the window-20 CE-on control still +0.101 — 802's −0.0418 legal CE-ordering
+  term reproduced in-engine at 2.4-3× magnitude. Read with care (contended machine, single
+  runs, the CE-off arms were OOM-produced): on legal the best cross-encoder may be NO
+  cross-encoder, which reframes the upgrade question toward per-query CE confidence gating
+  (F-026's floor — a runtime signal, D-005-legal) alongside any model swap.
+- **Evidence:** run dirs `tmp/854/` (this worktree, gitignored — this entry is the durable
+  record), roll-up `final-rollup.json`, drivers + contended-load record alongside.
+
+### F-054: the CE "deadline" is a CPU-side PRE-CHECK, not a timeout — GPU saturation doubles CE latency with ZERO coverage loss; live miss rate at shipped defaults is a 0-2% CPU-jitter tail; and `DEADLINE_EXCEEDED` is stamped on ANY skip including BFCArena OOM (2026-08-19; the owner-decision input the F-052 production observation asked for)
+
+- **Answer (live, shipped defaults, instrumentation from PR #510/#496 verified end-to-end):**
+  miss rate legal-clerc-200 **1.0-2.0%** (2-4 of 200, varies per identical run), enron-qa
+  **0%**, scifact **0%**; all other CE-less queries carry deterministic reasons
+  (NAVIGATIONAL_QUERY). Under a saturating synthetic GPU load (30.8 TFLOP/s sustained, util
+  pinned 100%): CE stage p50 **201 → 406 ms and drops went to 0/200** — load does not move the
+  miss rate, because `justsearch.rerank.deadline_ms` is enforced only as tokenize/prep
+  pre-checks (`CrossEncoderReranker.java:245`, `:284`; the javadoc itself says "pre-check; not
+  a hard timeout") and inference is never aborted. The 0-4 drop spread across identical runs is
+  CPU tokenization jitter worth ±0.0065 nDCG@10 — F-052's eval-contamination channel, now
+  quantified at defaults.
+- **Deadline decision input:** raising the deadline is cheap and measured-harmless (2000 ms
+  arm: 0 drops, nDCG unchanged) but only removes the ~1% jitter tail; it is NOT the lever the
+  F-052 observation implied, because the mechanism it feared (GPU load → silent quality loss)
+  does not exist under pre-check semantics. The knob's name and docs should say "pre-check".
+- **The defect that matters more: `DEADLINE_EXCEEDED` is a mislabel.**
+  `GrpcSearchService.java:487` stamps it on ANY `RerankedResult.skipped()` including the
+  `catch (OrtException)` (`CrossEncoderReranker.java:318-332`): in the W2 wide-window arms,
+  199/200 "deadline misses" were actually BFCArena OOM (`Available memory … smaller than
+  requested 629145600`; arena 2048 default vs batch-64×512 buckets) — deadline 2000/4000 ms
+  changed nothing, arena 5120 fixed it instantly. The `ce_coverage` guard fails closed
+  correctly but names the wrong knob. Fix chartered: split an inference-failure reason
+  (ORT/OOM) out of DEADLINE_EXCEEDED in the `CrossEncoderSkipReason` vocabulary (wire-additive,
+  the #510 pattern).
+- **Evidence:** `tmp/854/legal-a0{,r,c}` + per-corpus default arms; load generator + sustained-
+  throughput record `tmp/854/legal-a0c.gpuload.json`; observations logged for both defects.
+
 ### F-053: the CE UPGRADE screen found real, significant headroom — mxbai-rerank-base-v2 beats the incumbent (legal +10.4% p=0.0004, scifact +4.8% p=0.0039, offline Gate-0-anchored) — but it is NOT a drop-in: chat-template input, tail-preserving truncation, and a 2.5-5.6x latency cost are named blockers; integration decision parked with the owner (2026-08-19; the F-052 follow-through D-001's corrected rationale licensed)
 
 - **Answer:** an offline reranker bake-off (harness
@@ -3063,6 +3130,14 @@ above)*
   the corpus is encoded, and encoding is block-checkpointed and resumable.
 
 ### Q-020: What is LUCENE-syntax retrieval QUALITY? (opened by F-046, 2026-08-13)
+
+- **INSTRUMENT BUILT (2026-08-19, PR #521):** jseval gained `--query-syntax simple|lucene`
+  (recorded in run provenance; absent-by-default pinned byte-identical) and a deterministic
+  rule-based Lucene variant of scifact's 300 queries against identical qrels
+  (`scripts/jseval/experiments/lucene_query_derivation_q020.py`; quote-longest-phrase,
+  +require-rarest-term, metacharacter escape; per-query rule provenance embedded). The
+  blocking artifact this entry names is gone — what remains is one two-run measurement in a
+  free GPU window; the two exact commands are in the derivation README.
 
 - **Question:** F-046 made `query_syntax: "lucene"` actually reach every retrieval leg (it was
   silently downgraded to SIMPLE on all multi-leg paths). Every number in this register — every
