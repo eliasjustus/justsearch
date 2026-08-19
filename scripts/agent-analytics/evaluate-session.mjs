@@ -5,7 +5,11 @@
  *
  * Reads session transcript JSONL files, condenses them to ~8K tokens,
  * sends to a judge model (Sonnet by default) with a structured rubric,
- * and writes outcome evaluations to outcomes.ndjson.
+ * and writes outcome evaluations to judge-outcomes.ndjson.
+ *
+ * NOT outcomes.ndjson: that is the fact-authoritative JOIN owned by
+ * outcome-session.mjs, which folds this judge in as a residual `inference`
+ * block that can never overwrite a fact (tempdoc 622 §6.3).
  *
  * Usage:
  *   node evaluate-session.mjs --session-id <id>   # Evaluate one session
@@ -40,7 +44,7 @@ import {
   // tempdoc 622 §6.3: the LLM-judge is demoted to a RESIDUAL inference producer.
   // It writes the judge cache, NOT the fact-authoritative outcomes.ndjson (which
   // outcome-session.mjs owns, deriving hard facts from git/build/tempdoc/gates).
-  JUDGE_OUTCOMES_FILE as OUTCOMES_FILE,
+  JUDGE_OUTCOMES_FILE,
   repoRoot, loadEvents, groupBySession, loadNdjsonMap, loadSessionReports, round,
 } from './lib/telemetry-io.mjs';
 
@@ -467,14 +471,14 @@ function makeDryRunEvaluation() {
 // --- NDJSON I/O ---
 
 function writeOutcomes(records) {
-  const outPath = path.join(repoRoot, TELEMETRY_DIR, OUTCOMES_FILE);
+  const outPath = path.join(repoRoot, TELEMETRY_DIR, JUDGE_OUTCOMES_FILE);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   const content = records.map(r => JSON.stringify(r)).join('\n') + '\n';
   fs.writeFileSync(outPath, content, 'utf8');
 }
 
 function upsertOutcome(record) {
-  const outPath = path.join(repoRoot, TELEMETRY_DIR, OUTCOMES_FILE);
+  const outPath = path.join(repoRoot, TELEMETRY_DIR, JUDGE_OUTCOMES_FILE);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
 
   let existing = [];
@@ -702,14 +706,14 @@ function main() {
       process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     } else {
       console.log(formatHuman(result));
-      console.log(`\nOutcome appended to ${path.join(TELEMETRY_DIR, OUTCOMES_FILE)}`);
+      console.log(`\nOutcome appended to ${path.join(TELEMETRY_DIR, JUDGE_OUTCOMES_FILE)}`);
     }
     return;
   }
 
   // --fallback mode: reclassify outcomes that have no task_type using heuristics
   if (args.fallback) {
-    const existingOutcomes = loadNdjsonMap(path.join(repoRoot, TELEMETRY_DIR, OUTCOMES_FILE));
+    const existingOutcomes = loadNdjsonMap(path.join(repoRoot, TELEMETRY_DIR, JUDGE_OUTCOMES_FILE));
     let classified = 0;
     const updated = [];
 
@@ -736,13 +740,13 @@ function main() {
       process.stdout.write(JSON.stringify(results, null, 2) + '\n');
     } else {
       console.log(`\nFallback-classified ${classified} sessions.`);
-      console.log(`Outcomes written to ${path.join(TELEMETRY_DIR, OUTCOMES_FILE)}`);
+      console.log(`Outcomes written to ${path.join(TELEMETRY_DIR, JUDGE_OUTCOMES_FILE)}`);
     }
     return;
   }
 
   // --all mode: evaluate sessions that have reports (from events OR session dir)
-  const existingOutcomes = loadNdjsonMap(path.join(repoRoot, TELEMETRY_DIR, OUTCOMES_FILE));
+  const existingOutcomes = loadNdjsonMap(path.join(repoRoot, TELEMETRY_DIR, JUDGE_OUTCOMES_FILE));
   const results = [];
 
   // Collect all session IDs that have reports (events-based + event-less)
@@ -786,7 +790,7 @@ function main() {
     for (const r of results) {
       console.log(formatHuman(r));
     }
-    console.log(`\nOutcomes written to ${path.join(TELEMETRY_DIR, OUTCOMES_FILE)}`);
+    console.log(`\nOutcomes written to ${path.join(TELEMETRY_DIR, JUDGE_OUTCOMES_FILE)}`);
   }
 }
 

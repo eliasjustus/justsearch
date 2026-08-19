@@ -5,7 +5,7 @@ Two kinds of thing live here:
 - **`hooks/` + `lib/`** — the Claude Code discipline hooks: blocking *guards* (e.g. preventing
   destructive git in the main checkout) and just-in-time *hints*. The hook **wiring** lives in
   `.claude/settings.json`; the shared helpers are in `lib/`.
-- **Everything else** (`otlp-sink.py`, `*-session.mjs`, `generate-dashboard.mjs`, `otlp-viewer/`, …)
+- **Everything else** (`otlp-sink.py`, `*-session.mjs`, `generate-index.mjs`, `otlp-viewer/`, …)
   — **maintainer** telemetry/analytics tooling for measuring agent-assisted development.
 
 **Contributors don't need any of this** — it is published for transparency (see

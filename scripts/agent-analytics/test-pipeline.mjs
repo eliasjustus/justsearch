@@ -1878,31 +1878,9 @@ console.log('Test 18: Session index');
 
 console.log();
 
-// ============================================================
-// Test 19: Dashboard generation
-// ============================================================
-console.log('Test 19: Dashboard generation');
-
-// 19a: Generates HTML file
-{
-  const dashboardPath = path.join(telemetryDir, 'dashboard.html');
-  execFileSync('node', [
-    path.join(scriptDir, 'generate-dashboard.mjs'),
-  ], { encoding: 'utf8', timeout: 15000 });
-
-  assert(fs.existsSync(dashboardPath), '19a: dashboard.html exists');
-
-  const html = fs.readFileSync(dashboardPath, 'utf8');
-  assert(html.includes('<!DOCTYPE html>'), '19b: valid HTML');
-  assert(html.includes('chart.js@4'), '19c: Chart.js CDN reference');
-  assert(html.includes('const DATA ='), '19d: embedded data');
-  assert(html.includes('Flag Trend'), '19e: has flag trend section');
-  assert(html.includes('Process Hygiene Index'), '19e2: has score trend (demoted)');
-  assert(html.includes('Signal Heatmap'), '19f: has heatmap section');
-  assert(html.includes('Verdict'), '19g: has verdict column');
-}
-
-console.log();
+// Test 19 (dashboard generation) was removed with `generate-dashboard.mjs`
+// (tempdoc 858 D1). Group numbers below are labels, not indices — the gap is
+// deliberate so 20-25 keep the ids they are referred to by.
 
 // ============================================================
 // Test 20: LLM-as-judge evaluation (evaluate-session.mjs)

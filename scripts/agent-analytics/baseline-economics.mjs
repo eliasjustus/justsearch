@@ -32,6 +32,7 @@ import readline from 'node:readline';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseSessionTokens, isKnownModel, mergeByModel, round } from './lib/transcript-cost.mjs';
+import { loadExclusionKeys, loadExclusionMatcher, fmtScopeExclusion } from './lib/telemetry-io.mjs';
 
 export const DEFAULT_SINCE = '2026-06-18';
 export const DEFAULT_PROJECTS_ROOT = path.join(os.homedir(), '.claude', 'projects');
@@ -90,23 +91,11 @@ export function resolveDefaultMergesPath({ cwd = SCRIPT_DIR } = {}) {
 }
 
 // --- Exclusion list ------------------------------------------------------
-
-/**
- * Build a session-id matcher from friction-excluded-sessions.json's shape:
- * `{ excluded: { "<id-or-8char-prefix>": "reason" } }`. Keys are either full
- * UUIDs or truncated 8-char prefixes (both forms appear in the file) — a
- * prefix match via String.startsWith covers both without a length branch.
- */
-export function loadExclusionMatcher(filePath) {
-  let keys = [];
-  try {
-    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    keys = Object.keys(data.excluded || {});
-  } catch {
-    keys = [];
-  }
-  return (sessionId) => keys.some((k) => sessionId.startsWith(k));
-}
+// Matcher + key loader live in lib/telemetry-io.mjs (tempdoc 858 §7): four
+// scripts read friction-excluded-sessions.json and three had forked their own
+// copy, with two different match rules. Re-exported here because this module's
+// callers and tests already reach for them by this name.
+export { loadExclusionKeys, loadExclusionMatcher } from './lib/telemetry-io.mjs';
 
 // --- Merges ----------------------------------------------------------------
 
@@ -488,6 +477,7 @@ function filterMergesToWindow(merges, sinceMs, untilMs) {
 export function buildReport({
   sessions, merges, since, until, excludedCount,
   isExcludedSessionId = () => false, mergeCommitStatus = null,
+  exclusionKeyCount = 0,
 }) {
   const sinceMs = new Date(since).getTime();
   const untilMs = until ? new Date(until).getTime() : null;
@@ -623,6 +613,21 @@ export function buildReport({
       `friction-excluded-sessions.json scope filter — deliberately not costed, excluded from cost/merge.`,
     );
   }
+  // Do not let a zero read as an observation (tempdoc 858 §7). The scope filter
+  // is a dated capture whose ids rotate out of ~/.claude/projects; when it
+  // matches nothing, the honest statement is that it performed no exclusion —
+  // NOT that nothing in this window needed excluding, which this script never
+  // checked.
+  if (exclusionKeyCount > 0 && excludedCount === 0 && mergesExcludedByScope === 0) {
+    dynamicCaveats.push(
+      `Scope filter INERT for this window: none of the ${exclusionKeyCount} session ids listed in ` +
+      `friction-excluded-sessions.json matched a session here, so no exclusion was performed. ` +
+      `Those ids are a hand classification captured on 2026-07-14 and Claude Code rotates ` +
+      `transcripts away, so a zero here means the filter could not act — it is NOT evidence that ` +
+      `every session in this window is in-scope developer-agent work. Nothing re-classifies new ` +
+      `sessions; see the file's _reasoning for the three exclusion classes if a re-run is needed.`,
+    );
+  }
   const duplicateSample = rejectSample(duplicates);
   const offMainSample = rejectSample(offMain);
   const unresolvableSample = rejectSample(unresolvable);
@@ -663,6 +668,11 @@ export function buildReport({
     totals: {
       sessions_in_window: sessions.length,
       sessions_excluded_by_scope: excludedCount,
+      // Denominator for the line above: how many ids the scope filter even had
+      // to match with. `excluded: 0` out of `listed: 31` is an inert filter,
+      // not a clean window — a consumer cannot tell those apart without this.
+      scope_filter_ids_listed: exclusionKeyCount,
+      scope_filter_performed_exclusion: excludedCount > 0,
       sessions_with_zero_merges: zeroMergeSessions.length,
       total_cost_usd: round(totalCost),
       // Raw in-window ledger rows, BEFORE dedup/ancestry. The identity is
@@ -712,6 +722,20 @@ function fmtK(n) {
   return String(n);
 }
 
+/**
+ * Thin adapter onto lib/telemetry-io.mjs's fmtScopeExclusion, mapping this
+ * report's totals shape onto the shared renderer. `merges_excluded_by_scope` is
+ * absent at the discovery-time call site, where merges are not loaded yet; the
+ * shared wording is session-scoped so it stays true there either way.
+ */
+export function fmtScopeFilter(t) {
+  return fmtScopeExclusion({
+    excluded: t.sessions_excluded_by_scope,
+    listed: t.scope_filter_ids_listed ?? 0,
+    mergesExcluded: t.merges_excluded_by_scope ?? 0,
+  });
+}
+
 export function formatMarkdown(report) {
   const lines = [];
   lines.push('# Baseline Economics Report (tempdoc 743 Phase 1)');
@@ -724,7 +748,7 @@ export function formatMarkdown(report) {
 
   const t = report.totals;
   lines.push('## Window totals');
-  lines.push(`- Sessions in window: ${t.sessions_in_window} (excluded by scope filter: ${t.sessions_excluded_by_scope})`);
+  lines.push(`- Sessions in window: ${t.sessions_in_window} (${fmtScopeFilter(t)})`);
   lines.push(`- Total cost (attributed sessions): ${fmtUsd(t.total_cost_usd)}`);
   lines.push(`- Merge rows in window (raw ledger): ${t.merge_rows_in_window} = attributed ${t.merges_attributed} + excluded-by-scope ${t.merges_excluded_by_scope} + unattributable ${t.merges_unattributable} + duplicate ${t.merges_duplicate_rows} + off-main ${t.merges_off_main} + unresolvable ${t.merges_unresolvable_commit}`);
   if (t.merges_unattributable > 0) {
@@ -808,13 +832,14 @@ async function main() {
 
   const sinceMs = new Date(opts.since).getTime();
   const untilMs = opts.until ? new Date(opts.until).getTime() : null;
+  const exclusionKeyCount = loadExclusionKeys(excludedPath).length;
   const isExcluded = loadExclusionMatcher(excludedPath);
 
   console.error(`baseline-economics: scanning ${opts.projectsRoot} for sessions since ${opts.since}${opts.until ? ` until ${opts.until}` : ''}...`);
   const { sessions: discovered, excludedCount } = await discoverSessions({
     projectsRoot: opts.projectsRoot, sinceMs, untilMs, isExcluded,
   });
-  console.error(`baseline-economics: ${discovered.length} sessions in window (${excludedCount} excluded by scope filter)`);
+  console.error(`baseline-economics: ${discovered.length} sessions in window (${fmtScopeFilter({ sessions_excluded_by_scope: excludedCount, scope_filter_ids_listed: exclusionKeyCount })})`);
 
   const costedSessions = costSessionsChronologically(discovered);
   const merges = loadMerges(mergesPath);
@@ -825,7 +850,7 @@ async function main() {
 
   const report = buildReport({
     sessions: costedSessions, merges, since: opts.since, until: opts.until, excludedCount,
-    isExcludedSessionId: isExcluded, mergeCommitStatus,
+    isExcludedSessionId: isExcluded, mergeCommitStatus, exclusionKeyCount,
   });
 
   if (opts.json) {

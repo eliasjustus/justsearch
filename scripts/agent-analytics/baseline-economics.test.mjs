@@ -12,9 +12,12 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   parseArgs,
   loadExclusionMatcher,
+  loadExclusionKeys,
+  fmtScopeFilter,
   loadMerges,
   makeMergeCommitStatus,
   classifyMerge,
@@ -951,6 +954,80 @@ async function main() {
   run('loadExclusionMatcher returns an always-false matcher for a missing file', () => {
     const isExcluded = loadExclusionMatcher(path.join(tmp, 'does-not-exist.json'));
     assert.equal(isExcluded('anything'), false);
+  });
+  run('loadExclusionKeys returns the listed ids, and [] for a missing file', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'exclkeys-'));
+    const file = path.join(dir, 'excluded.json');
+    fs.writeFileSync(file, JSON.stringify({ excluded: { aaaaaaaa: 'r1', bbbbbbbb: 'r2' } }));
+    assert.deepEqual(loadExclusionKeys(file), ['aaaaaaaa', 'bbbbbbbb']);
+    assert.deepEqual(loadExclusionKeys(path.join(tmp, 'does-not-exist.json')), []);
+  });
+
+  // --- 858 §7: an inert scope filter must not read as an observed zero ---
+  run('fmtScopeFilter distinguishes a performed exclusion from an inert filter from no filter', () => {
+    assert.equal(
+      fmtScopeFilter({ sessions_excluded_by_scope: 3, scope_filter_ids_listed: 31 }),
+      'excluded by scope filter: 3',
+    );
+    assert.equal(
+      fmtScopeFilter({ sessions_excluded_by_scope: 0, scope_filter_ids_listed: 31 }),
+      'scope filter matched no session here — 0 of 31 listed ids',
+    );
+    assert.equal(
+      fmtScopeFilter({ sessions_excluded_by_scope: 0, merges_excluded_by_scope: 2, scope_filter_ids_listed: 31 }),
+      'scope filter excluded no session here, but 2 merge row(s) below belong to scope-excluded sessions',
+      'F10: the header must not claim "no exclusion" while the ledger line reports scope-excluded merges',
+    );
+    assert.equal(
+      fmtScopeFilter({ sessions_excluded_by_scope: 0, scope_filter_ids_listed: 0 }),
+      'no scope filter configured',
+    );
+  });
+  run('buildReport reports an inert scope filter as a caveat, and never prints a bare "excluded: 0"', () => {
+    const report = buildReport({
+      sessions: [], merges: [], since: '2026-06-18', until: null,
+      excludedCount: 0, exclusionKeyCount: 31,
+    });
+    assert.equal(report.totals.scope_filter_ids_listed, 31);
+    assert.equal(report.totals.scope_filter_performed_exclusion, false);
+    assert.match(report.caveats.join('\n'), /Scope filter INERT for this window/);
+    const md = formatMarkdown(report);
+    assert.match(md, /scope filter matched no session here — 0 of 31 listed ids/);
+    // The precise regression: the old wording asserted an exclusion that never happened.
+    assert.doesNotMatch(md, /excluded by scope filter: 0/);
+  });
+  run('buildReport raises no inert-filter caveat when the filter actually excluded something', () => {
+    const report = buildReport({
+      sessions: [], merges: [], since: '2026-06-18', until: null,
+      excludedCount: 2, exclusionKeyCount: 31,
+    });
+    assert.equal(report.totals.scope_filter_performed_exclusion, true);
+    assert.doesNotMatch(report.caveats.join('\n'), /Scope filter INERT/);
+    assert.match(formatMarkdown(report), /excluded by scope filter: 2/);
+  });
+  run('buildReport (F10) header and ledger agree when a merge is scope-excluded but no session is', () => {
+    // The reachable contradiction: the merge row matches an exclusion key, but its
+    // session was never discovered, so it is not in `sessions` and excludedCount is 0.
+    const report = buildReport({
+      sessions: [], since: '2026-07-01', until: null, excludedCount: 0, exclusionKeyCount: 31,
+      merges: [{ session_id: 'skipme', merge_commit: 'c', subject: 'chore: scoped out', ts: '2026-07-01T03:00:00.000Z' }],
+      isExcludedSessionId: (id) => id === 'skipme',
+    });
+    assert.equal(report.totals.sessions_excluded_by_scope, 0);
+    assert.equal(report.totals.merges_excluded_by_scope, 1);
+    const md = formatMarkdown(report);
+    assert.match(md, /but 1 merge row\(s\) below belong to scope-excluded sessions/);
+    assert.doesNotMatch(md, /scope filter matched no session here/);
+    // The inert caveat must stay silent — an exclusion WAS performed, on merge rows.
+    assert.doesNotMatch(report.caveats.join('\n'), /Scope filter INERT/);
+  });
+  run('the committed exclusion list still parses and its reasoning survives the id rot', () => {
+    const committed = fileURLToPath(new URL('./friction-excluded-sessions.json', import.meta.url));
+    const raw = JSON.parse(fs.readFileSync(committed, 'utf8'));
+    assert.ok(loadExclusionKeys(committed).length > 0, 'ids are still listed');
+    // The WHY is the durable part (858 §7) — ids rotate out, the classes do not.
+    assert.match(raw._basis, /CAPTURED, not derived/);
+    assert.match(raw._reasoning, /benchmark-subject/);
   });
 
   // --- window filtering + discovery (real small fixture dirs) ---

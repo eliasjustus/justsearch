@@ -1,12 +1,12 @@
 ---
-status: design (two verdicts settled, two owner decisions pending)
+status: design + implementing (three verdicts settled; PHI open pending evidence, §4.3)
 created: 2026-08-19
 updated: 2026-08-19
 author: agent session (Opus 5, 1M context)
-charter: the analytics events lane has three products, not one — decide each on its own merits
+charter: the analytics events lane has four products, not one — decide each on its own merits
 ---
 
-# 858 — Analytics lane: outcomes are a view, PHI is answered
+# 858 — Analytics lane: outcomes are a view, the dashboard retires, PHI stays open
 
 Opened from tempdoc 856 §10. The sketch asked one question — is the events lane alive? The
 design's first move is that this was the wrong unit. The lane holds **three products with
@@ -29,12 +29,17 @@ human-facing report is read. That is asked, not inferred — §5.
 | Product | Instruments | Store | Verdict |
 |---|---|---|---|
 | The outcome JOIN | `outcome-session` | `outcomes.ndjson` | **KEEP — convert store to view** (§3) |
-| Process-hygiene scoring | `score-session`, `correlate-signals` | `scores.ndjson` | **RETIRE — the question is answered** (§4) |
-| Judge + dashboard | `evaluate-session`, `generate-dashboard` | `judge-outcomes.ndjson`, `dashboard.html` | **Owner decision** (§5) |
+| Process-hygiene scoring | `score-session`, `correlate-signals` | `scores.ndjson` | **UNDECIDED — evidence unobtainable today** (§4) |
+| The LLM judge | `evaluate-session` | `judge-outcomes.ndjson` | **KEEP — owner, §5** |
+| The dashboard | `generate-dashboard` | `dashboard.html` | **RETIRE — owner, §5** |
 
-Consumer analysis, mechanical: nothing outside `scripts/agent-analytics/` reads `scores.ndjson`,
-`outcomes.ndjson`, or `dashboard.html`. The lane's only consumers are inside the lane — except
-the dashboard, whose consumer is a person, which is exactly why it is §5 and not §4.
+Consumer analysis, mechanical — **and an earlier draft of this paragraph was wrong.** It claimed
+nothing outside `scripts/agent-analytics/` reads these stores. In fact
+`scripts/ci/check-agent-quality-trend.mjs` and `scripts/ci/agent-quality-baselines.v1.json` read
+`scores.ndjson` (622 Layer C), and `generate-index.mjs` fills `session-index.json`'s `score` field
+from it. None of the three is wired to CI, but all three widen the PHI blast radius beyond what §4
+first listed — which is part of why that verdict is now open rather than settled. The dashboard's
+consumer is a person, which is why it was never a mechanical call.
 
 ## 3. KEEP the outcome JOIN, and make it a view
 
@@ -70,44 +75,118 @@ rather than milliseconds.
 This is a real boundary on 856 §10.2's principle, found by designing against it, and it is the
 more useful form of the rule.
 
-## 4. RETIRE process-hygiene scoring — its own header answers it
+**Implementation found a second captured field this section had not predicted, which is the better
+evidence that the boundary is real rather than a special case built for SARIF.**
+`facts.build_last_status` reads `build-fails-<session>.json` — and `hooks/dispatch.mjs` deletes
+that file at SessionEnd while `hooks/intervene.mjs` prunes it after 24h. So a later recompute can
+only ever answer `unknown`, and that `unknown` means *"the counter was deleted"*, not *"the build
+never failed"*. Same shape as the SARIF, found by auditing rather than by being told.
+
+**And one field forced a distinction the rule did not have.** `facts.tempdocs` reads a tempdoc's
+`status` and checkboxes live. Those survive — so the field is derived, not captured — but a
+recompute reports the tempdoc's status *now*, not its status while the session ran. That is a
+value which **changes over time**, as against one **destroyed by** it. Recompute is right for it,
+and a reader could still mistake the answer for a session-time observation, so the rows say so.
+The rule's third clause ("record which you did") is what makes that distinction expressible at
+all; without it, "derived" would have silently covered both cases.
+
+## 4. Process-hygiene scoring — UNDECIDED, and the blocker is named
+
+**This section previously read "RETIRE — its own header answers it".** The owner declined that
+basis, and the derisk pass then found two reasons the retirement argument was weaker than it
+looked. Both are recorded here rather than quietly dropped.
+
+### 4.1 The argument as it stood
 
 `score-session.mjs:8-9`, verbatim:
 
 > PHI measures tool discipline and process patterns — it does **NOT** predict task completion or
 > outcome quality (r=0.064 at N=116, see tempdoc 277 C4).
 
-The metric was built to test whether process hygiene predicts outcomes. The test was run, at
-N=116, and the answer was no. `correlate-signals` exists to correlate `scores.ndjson` against
-outcomes — that is, to keep asking a question already answered by the file it reads.
+Read alone, that retires the metric: it was built to test whether process hygiene predicts
+outcomes, the test ran, the answer was no, and `correlate-signals` exists to keep asking it.
 
-This is apparatus outliving its reason: tempdoc 742's class exactly. Following 844 §4.3, **retire
-the machinery and keep the finding.** The durable output of this work is the r=0.064 result, and
-it belongs in the reference layer where a future agent proposing a process-hygiene score will
-find it — not in a live store that implies the question is open.
+### 4.2 Why that reading does not survive the code
 
-Retiring here means one sweep, per `retire-with-a-sweep`: `score-session.mjs`,
-`correlate-signals.mjs`, `scores.ndjson`, the `SCORES_FILE` constant, the dashboard's scores
-panel if the dashboard survives §5, and the PHI rows in any doc that presents it as live. Then
-grep the names to confirm no residue.
+The same tempdoc produced **signal-level** results with real effect sizes, and the code encodes
+them. The `RULES` array's own comments record that `bash_fileop_pct` correlates *positively* with
+completion on feature sessions (r=+0.51, d=+1.11) and that `THRASHING` fires on 33% of completed
+implementation sessions against 0% of partial ones — an inverted signal. Both findings are
+implemented as per-type suppressions.
 
-**Predictable evasion, named inline:** "keep it, it costs nothing to leave." It costs the next
-agent an orientation pass and a plausible-looking store, which is what this tempdoc was opened to
-stop.
+So 277 did not find the metric worthless. It found the **composite** non-predictive while
+**components** carry signal, and the response was calibration, not abandonment. Retiring the whole
+product would discard the calibrated part along with the composite.
+
+**And the calibration is currently inert**, for three stacked reasons — worth separating, because
+fixing one and declaring victory is the obvious mistake:
+
+1. **A wrong field path.** `score-session.mjs` read `outcome?.task_type`, but post-622 that field
+   lives at `outcome.inference.task_type`, so `taskType` was always null, neither suppression ever
+   fired, and `computeTypeCeilings` collapsed to one pool. Fixed in this tempdoc's implementation —
+   a plain defect whichever way the verdict lands.
+2. **A store nothing writes.** Once §3 makes outcomes a view, reading the file yields an empty map
+   and `taskType` is null again for a new reason. Fixed by wiring the consumer to recompute through
+   the exported join rather than read the file — the half of §3 that "consumers recompute" always
+   implied and that was initially left undone.
+3. **A data gap neither fix closes.** `inference.task_type` originates in the LLM-judge cache, and
+   the join cannot manufacture it. In the main checkout that cache is 994 bytes dated 2026-07-12,
+   so suppression still will not fire for any session the judge never scored. This is not wiring;
+   it depends on the judge (D2, kept) actually having run.
+
+So PHI as it runs today is still the metric *without* the corrections its own measurement produced,
+and will remain so until the judge has scored a corpus. Any judgement made now judges a
+miscalibrated version — which is a second, independent reason §4.3's verdict stays open.
+
+### 4.3 The blocker: the evidence cannot be gathered today
+
+The owner's chosen basis is a fresh measurement. It is not currently obtainable.
+
+`score-session` scores session *reports*, which are generated from the events store. That store
+holds **10 distinct sessions** across `events.ndjson` and its rotated `.prev` — against N=116 for
+the original finding. There is no honest correlation to run at that size, and running one anyway
+would produce a number with the shape of evidence and none of the weight.
+
+Two routes to evidence, neither belonging to this tempdoc:
+
+- **Retention.** The transcript store rotates on a 30-day default and nothing sets otherwise, so
+  the corpus is capped by configuration rather than by history. Changing that starts the clock but
+  answers nothing for weeks.
+- **Re-base the report generator on transcripts.** `analyze-session` already reads transcripts
+  directly; the transcript lane retains roughly 75 main sessions against the events lane's 10.
+  Moving the input from the store that rotates to the one that survives is the same move tempdoc
+  856 made for the merge key, and it would serve 856's falsifier too — which is why it deserves
+  its own tempdoc rather than riding along here.
+
+**Status: PHI stays. Not endorsed — undecided, with its evidence gap stated.** The distinction
+matters: a metric kept because nobody measured it is not the same as a metric kept because it
+passed. Anyone reading `scores.ndjson` as validated should read this section first.
+
+**Predictable evasion, named inline:** "the derisk found the retirement argument was weak, so keep
+it and move on." That converts *undecided* into *settled* without evidence, in the direction that
+requires no work. The verdict is open, and it stays open until measured.
 
 ## 5. Owner decisions
 
-Neither is an agent's call, and both are cheap to answer.
+Neither was an agent's call. Both were asked and answered 2026-08-19.
 
-**D1 — the dashboard.** `generate-dashboard.html` is human-facing; its only consumer is the
-person who opens it. Mechanical analysis cannot say whether it is read, and inferring
-abandonment from a file date is exactly the reasoning 856 §3.2 forbids. If it is read, it becomes
-a render of the §3 view and stays. If it is not, it retires with §4's sweep.
+**D1 — the dashboard: RETIRE.** Never opened. Mechanical analysis could not settle this and
+inferring abandonment from a file date is the reasoning 856 §3.2 forbids, so it was asked. The
+sweep is part of this tempdoc's work, not a follow-up: the generator, the generated artifact,
+`test-pipeline.mjs`'s Test 19 (an unguarded `execFileSync` that would abort the suite at that
+point and lose tests 20-25), and the prose in the analytics README and
+`docs/explanation/21-agent-analytics-pipeline.md`.
 
-**D2 — the LLM judge.** `evaluate-session` costs money per session and feeds only the `inference`
-block, which by 622's own design can never override a fact. If the facts in §3 are what get used,
-the judge is paying for a field nobody reads. If the residual questions it answers — did this
-satisfy intent — are the point, it stays and legitimately keeps its cache under §3.1.
+Hazard recorded because a name-based sweep would cause real damage: `dashboard.html` names **two**
+checked-in artifacts. `modules/ui/src/main/resources/debug/dashboard.html` is the *product's* debug
+page, served at `LocalApiServer.java:731`. `scripts/governance/lib/dashboard.mjs` is a third
+unrelated thing that generates governance state. The sweep is path-qualified for this reason.
+
+**D2 — the LLM judge: KEEP.** The residual question it answers — did this satisfy intent — is the
+point, and it is the one thing no canonical source owns. It keeps its cache legitimately under
+§3.1: a paid derivation is not the same as a free recomputation, and caching it is correct rather
+than a refresh obligation nobody meets. Note it reads `SCORES_FILE` (`evaluate-session.mjs:683`),
+which couples it to §4's open verdict — the two were filed as independent and are not.
 
 ## 6. One cross-cutting change, adopted not invented
 
@@ -115,33 +194,77 @@ satisfy intent — are the point, it stays and legitimately keeps its cache unde
 evidence is not negative evidence*. These are the same criterion on two surfaces, and this
 tempdoc adopts it rather than minting a third phrasing.
 
-Applied here it has one concrete consequence: **an instrument below its viable sample size must
-refuse, not degrade.** Today a starved run prints a plausible result — one session, N=7 of 20,
-zero joined pairs — and a reader must know the denominators to catch it. Exiting non-zero with
-"starved" is a small change and is worth making regardless of how D1 and D2 resolve, because it
-is the failure that made this lane's decay invisible for five weeks.
+Applied here it has one concrete consequence: **an instrument must not let a conclusion rest on a
+sample too small to support it.** Today a starved run prints a plausible result — one session,
+N=7 of 20, zero joined pairs — and a reader must know the denominators to catch it. That is the
+failure that made this lane's decay invisible for five weeks.
+
+**An earlier draft said "exit non-zero with starved". That was the weaker design**, and the repo
+already has the better one. `scripts/ci/check-agent-quality-trend.mjs:53,70,76,103` declares a
+minimum **in data** (`min_sessions`, from its baseline file), computes an `insufficient` flag,
+surfaces it prominently, and gates only the *conclusion* on it — while still printing the numbers.
+Refusing to run throws away readable data; refusing to conclude does not. Conform to that shape
+rather than the one this section first proposed. `MIN_TOOL_CALLS` (`score-session.mjs:27,319`) is
+the same idea already applied to under-sized sessions.
 
 ## 7. What this orphans
 
 Named here, not deferred to a cleanup sweep:
 
-- **`scores.ndjson`, `score-session.mjs`, `correlate-signals.mjs`** — retired by §4; the r=0.064
-  finding relocates to the reference layer in the same change.
+- **`generate-dashboard.mjs` and `dashboard.html`** — retired by D1, swept in this tempdoc's work
+  along with `test-pipeline.mjs`'s Test 19 and the prose that describes the dashboard as live.
 - **`outcomes.ndjson` as maintained state** — the record survives as a view; the file becomes an
-  opt-in report. Any reader treating it as an authority is orphaned with it.
-- **`friction-excluded-sessions.json`** — every session id in it has rotated away, so it excludes
-  nothing while the report still prints "0 excluded" as though that were observed. Same family,
-  small, and it should be derived from a scope rule or deleted rather than left to read as data.
-- **`dashboard.html`** and the judge cache — only if D1/D2 resolve that way.
+  opt-in stamped report. Any reader treating it as an authority is orphaned with it.
+- **`friction-excluded-sessions.json`** — all 31 listed session ids have rotated away (verified
+  twice, independently), so it excludes nothing while `baseline-economics` printed "0 excluded by
+  scope filter" as though that were an observation.
+
+  This section first said the only honest options were to derive the exclusion from a non-decaying
+  rule or delete it, and that *"a maintained list of dead ids is not an option."* **That was too
+  absolute, and implementation took a third path that is better.** Deriving is not available: two
+  of the three exclusion classes need a content judgement only the LLM judge can make. Deleting is
+  not available either — the file has **four** consumers, not the one this tempdoc assumed, so
+  removing it would have been a half-sweep. The path taken applies this tempdoc's own §9.1: the
+  list is a **capture**, a hand classification made against evidence that has since rotated, and a
+  capture that no longer matches is not thereby wrong — it is inert. So it is marked as captured,
+  its *reasoning* is recorded so a re-run can reproduce the judgement rather than the ids, and the
+  report now says "scope filter performed no exclusion — 0 of 31 listed ids matched here" instead
+  of asserting an exclusion it did not perform.
+- **Nothing PHI-related.** §4 is open, so `scores.ndjson`, `score-session.mjs` and
+  `correlate-signals.mjs` are **not** orphaned by this tempdoc. An earlier draft listed them; that
+  list was written when §4 read RETIRE and is void.
+
+The r=0.064 finding therefore stays in `docs/explanation/21-agent-analytics-pipeline.md` rather
+than relocating — relocating a finding is part of retiring the thing it justifies, and that
+retirement has not happened.
+
+Its citation was wrong there and is now fixed. The doc cited **tempdoc 118**; the verifiable source
+is **277 §C4**, which actually computes it (N=116, 73 complete / 38 partial). A "2.8-point gap"
+figure the doc attached to that citation appears nowhere in the repo and was replaced with the
+computed numbers rather than propagated.
+
+**A caution about the reasoning, recorded because the first version of it was unsound.** No `118-*`
+file exists on disk or anywhere in this repo's git history — but that proves less than it appears:
+public history begins at the v0.1.0 release squash, so it cannot reach anything from before
+publication, and tempdocs 262/264/272/276 discuss 118's *content*, which is positive evidence it
+existed privately. The defensible claim is that the citation is **unresolvable for a reader of the
+public repo**, not that its target never existed. Roughly five code citations of 118 remain and are
+logged; they are a dangling-citation class, not a fabrication.
 
 ## 8. Scope
 
-In: the three verdicts, the view conversion, the capture/recompute distinction and its marking,
-the refuse-don't-degrade rule, and the named orphans.
+In: the four verdicts, the view conversion, the capture/recompute distinction and its marking, the
+insufficiency rule, the `task_type` defect (§4.2), and the named orphans.
 
-Out: rebuilding any report on the transcript lane. The two lanes answer different questions —
-transcripts hold cost and behaviour; the JOIN holds merge, build, tempdoc and gate outcomes that
-transcripts do not contain — so this is not duplication and collapsing them would lose the facts.
+Out: **collapsing** the reports onto the transcript lane. The two lanes answer different questions
+— transcripts hold cost and behaviour; the JOIN holds merge, build, tempdoc and gate outcomes that
+transcripts do not contain — so this is not duplication and merging them would lose the facts.
+
+Note the distinction from §4.3, which is easy to blur: re-basing *report generation* on transcripts
+so the corpus stops being capped by a rotating store is a different thing from collapsing the
+lanes, and it is the route to PHI's missing evidence. It is out of scope here for size, not for
+correctness, and it wants its own tempdoc — it also serves 856's falsifier, so it is not solely
+858's to define.
 
 Also out: **rework instrumentation**, which the delegate-by-default falsifier needs and nothing
 measures. 622 §6.3 already named its source ("was the work fixed or reverted later → git churn

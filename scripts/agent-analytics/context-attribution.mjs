@@ -16,12 +16,46 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   loadEvents, groupBySession, repoRoot, round,
   TELEMETRY_DIR, SESSIONS_DIR,
 } from './lib/telemetry-io.mjs';
 
 const DEFAULT_TOP = 10;
+
+// --- Sufficiency floors (tempdoc 858 §6) -----------------------------------
+// Modelled on scripts/ci/check-agent-quality-trend.mjs: an `insufficient`
+// boolean computed from the window, surfaced prominently, and a CONCLUSION that
+// requires !insufficient while the underlying counts stay visible. Declared as
+// constants rather than in a data file because — unlike that check's
+// `min_sessions`, which travels with recalibratable baselines and tolerances —
+// these are fixed properties of the estimator and do not move as the population
+// grows. In-lane precedent for a declared floor: `MIN_TOOL_CALLS` and
+// `detectAnomalies`' own `MIN_SESSIONS`, both in score-session.mjs.
+
+/**
+ * Aggregate mode summarises each category as a median with a [P25–P75] band.
+ * A distribution-free interval for a median is the order-statistic (sign-test)
+ * interval, whose widest form [x(1), x(n)] attains coverage 1 - 2·2^-n. That
+ * reaches 95% only from n = 6 (2^-5 = 0.031 > 0.025; 2^-6 = 0.016 ≤ 0.025).
+ * Below 6, even the widest interval the sample can produce fails to cover the
+ * population median at 95%, so the median is a description of these sessions
+ * and not an estimate of the population's.
+ */
+const MIN_ATTRIBUTION_SESSIONS = 6;
+
+/**
+ * The aggregate is computed over the sessions whose transcripts still exist,
+ * which is a subset selected by transcript retention, not a random sample —
+ * the observed starved run was N=7 usable of 20. Under arbitrary missingness
+ * the population median is only bounded by the observed sample when more than
+ * half the population is observed; at or below half, the unobserved sessions
+ * could sit entirely on one side and carry the true median outside the observed
+ * range. So this is the identification boundary for a median, not a taste
+ * threshold. Strict `>`: exactly half is the unidentified case.
+ */
+const MIN_ATTRIBUTION_COVERAGE = 0.5;
 
 // --- Transcript path discovery (adapted from cost-session.mjs) ---
 
@@ -226,14 +260,32 @@ function aggregateResults(results) {
     }))
     .sort((a, b) => b.total_chars - a.total_chars);
 
+  const categoryMedians = Object.fromEntries(
+    categories.map(cat => [cat, round(median(catPcts[cat]), 3)])
+  );
+
+  const coverage = results.length > 0 ? valid.length / results.length : 0;
+  const insufficient = valid.length < MIN_ATTRIBUTION_SESSIONS
+    || coverage <= MIN_ATTRIBUTION_COVERAGE;
+
+  // The question this instrument exists to answer ("what fills agent context
+  // windows") — a conclusion, so it requires !insufficient. The medians,
+  // quartiles and tool ranking it is read off are emitted either way.
+  const dominant = categories
+    .map(cat => ({ cat, med: categoryMedians[cat] }))
+    .sort((a, b) => b.med - a.med)[0];
+
   return {
     count: valid.length,
     skipped: results.length - valid.length,
+    coverage: round(coverage, 3),
+    min_sessions: MIN_ATTRIBUTION_SESSIONS,
+    min_coverage: MIN_ATTRIBUTION_COVERAGE,
+    insufficient,
+    dominant_category: insufficient ? null : dominant.cat,
     total_chars: grandChars,
     estimated_tokens: Math.round(grandChars / 4),
-    category_medians: Object.fromEntries(
-      categories.map(cat => [cat, round(median(catPcts[cat]), 3)])
-    ),
+    category_medians: categoryMedians,
     category_p25: Object.fromEntries(
       categories.map(cat => [cat, round(percentile(catPcts[cat], 25), 3)])
     ),
@@ -302,6 +354,14 @@ function formatAggregate(agg, topN) {
 
   line(`## Context Attribution — Aggregate (N=${agg.count})`);
   if (agg.skipped > 0) line(`Skipped: ${agg.skipped} sessions (no/missing transcript)`);
+  if (agg.insufficient) {
+    line(`> ⚠️ Insufficient sample: ${agg.count} usable of ${agg.count + agg.skipped}`
+      + ` (need N ≥ ${agg.min_sessions} and > ${pct(agg.min_coverage)} coverage).`
+      + ` Distribution below describes these sessions only; no dominant category is claimed.`);
+  } else {
+    line(`Dominant context consumer: **${agg.dominant_category.replace(/_/g, ' ')}**`
+      + ` (median ${pct(agg.category_medians[agg.dominant_category])}).`);
+  }
   line();
   line(`Total across all sessions: ${kChars(agg.total_chars)} chars (~${kChars(agg.estimated_tokens)} tokens est.)`);
   line();
@@ -374,4 +434,10 @@ function main() {
   }
 }
 
-main();
+const __filename = fileURLToPath(import.meta.url);
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) main();
+
+export {
+  aggregateResults, attributeSession, formatAggregate,
+  MIN_ATTRIBUTION_SESSIONS, MIN_ATTRIBUTION_COVERAGE,
+};

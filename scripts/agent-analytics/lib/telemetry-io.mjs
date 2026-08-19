@@ -2,7 +2,7 @@
  * Shared I/O utilities for the agent-analytics pipeline.
  *
  * Deduplicates event loading, NDJSON parsing, and session grouping
- * used by analyze-session, cost-session, generate-index, and generate-dashboard.
+ * used by analyze-session, cost-session, generate-index, and the outcome/judge scripts.
  */
 
 import fs from 'node:fs';
@@ -15,9 +15,62 @@ export const SCORES_FILE = 'scores.ndjson';
 export const COSTS_FILE = 'costs.ndjson';
 export const OUTCOMES_FILE = 'outcomes.ndjson';
 // Residual LLM-judge cache (tempdoc 622 §6.3): the judge fills only inference
-// fields; outcome-session.mjs is the fact-authoritative writer of OUTCOMES_FILE.
+// fields. outcome-session.mjs is the fact-authority for OUTCOMES_FILE's shape, but
+// since tempdoc 858 §3 it computes the record on demand and writes the file only
+// under `--write` — consumers call outcomeForSession() instead of reading it.
 export const JUDGE_OUTCOMES_FILE = 'judge-outcomes.ndjson';
 export const SESSION_MERGES_FILE = 'session-merges.ndjson';
+
+// --- friction scope filter (tempdoc 858 §7) --------------------------------
+// One matcher and one renderer for friction-excluded-sessions.json, because
+// there were four consumers, three forked copies, and TWO different match rules
+// (baseline-economics/overhead-taxonomy matched one way, aggregate-friction/
+// friction-timeline the other). The rules are unified here on the bidirectional
+// form, which is the superset: it is what the friction pair already did, and it
+// is provably identical for the transcript-driven pair, whose session ids come
+// from filenames and so are never a strict prefix of a >=8-char key.
+
+/** The listed ids. Exposed separately because the COUNT is itself reportable. */
+export function loadExclusionKeys(filePath) {
+  try {
+    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return Object.keys(data.excluded || {});
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Match a session id against the listed keys. Keys are full UUIDs or truncated
+ * 8-char prefixes, and callers pass ids of both shapes, so the comparison runs
+ * both directions rather than assuming which side is truncated.
+ */
+export function makeExclusionMatcher(keys) {
+  return (sessionId) => keys.some((k) => sessionId.startsWith(k) || k.startsWith(sessionId));
+}
+
+export function loadExclusionMatcher(filePath) {
+  return makeExclusionMatcher(loadExclusionKeys(filePath));
+}
+
+/**
+ * Render the scope-filter outcome so a zero cannot be misread as an observation.
+ *
+ * The list is a dated CAPTURE whose ids rotate out of ~/.claude/projects, so
+ * "excluded: 0" states something no consumer checked — that nothing needed
+ * excluding — when the truth is that the filter could not act. Every consumer of
+ * friction-excluded-sessions.json renders through this, which is what makes the
+ * file's `_consumers` MUST-NOT enforceable rather than aspirational.
+ */
+export function fmtScopeExclusion({ excluded, listed, mergesExcluded = 0, disabled = false }) {
+  if (disabled) return 'scope filter disabled (--include-excluded)';
+  if (excluded > 0) return `excluded by scope filter: ${excluded}`;
+  if (mergesExcluded > 0) {
+    return `scope filter excluded no session here, but ${mergesExcluded} merge row(s) below belong to scope-excluded sessions`;
+  }
+  if (listed === 0) return 'no scope filter configured';
+  return `scope filter matched no session here — 0 of ${listed} listed ids`;
+}
 
 // --- session→merge link provenance (tempdoc 856 §3.1) ---------------------
 // The link row gains `source` + `kind` so a recovered row is distinguishable
