@@ -151,6 +151,46 @@ describe('the search v3 ask path reads the producer off the payload (847 §1.5)'
     expect(cosine.matches).toEqual([]);
   });
 
+  it('lets the VERIFIED text win when a draft delta already claimed the same sentence index', async () => {
+    // 847 S5 — the two sides segment differently: the mid-stream delta cuts an incomplete markdown
+    // buffer as prose (a whole bullet list can arrive as one draft "sentence"), the final matches
+    // cut parsed block nodes. At the same `sentenceIndex` they are usually different sentences, so
+    // a merge that kept the draft's text would hand the renderer a key that does not name the
+    // sentence that earned the score — a mark placed by another sentence's evidence.
+    stubFrames([
+      { event: 'rag.citations', data: { citations: [source()] } },
+      {
+        event: 'rag.citation_delta',
+        data: {
+          sentenceIndex: 0,
+          sentenceText: 'The lock held.\n- And the renewal date passed.',
+          citations: [{ sourceIndex: 0, score: 0.4 }],
+        },
+      },
+      { event: 'rag.citation_matches', data: matchPayload('CROSS_ENCODER') },
+      { event: 'done', data: {} },
+    ]);
+    const seen: Sv3TurnEvidence[] = [];
+    await sv3Ask(
+      { apiBase: 'http://127.0.0.1:0', question: 'why did the renewal fail?', conversationId: 'uc-b' },
+      {
+        onDelta: () => {},
+        onEvidence: (evidence) => seen.push(evidence),
+        onReasoning: () => {},
+        onRewrite: () => {},
+        onDone: () => {},
+        onRefused: () => {},
+        onHalted: () => {},
+        onFailed: (message) => {
+          throw new Error(`the ask failed: ${message}`);
+        },
+      },
+    );
+    const evidence = seen.at(-1) as Sv3TurnEvidence;
+    expect(evidence.marks).toHaveLength(1);
+    expect(evidence.marks[0]?.sentenceText).toBe('The lock held.');
+  });
+
   it('ADMITS a payload that names no producer at all — absence is not a verdict', async () => {
     // The deliberate legacy allowance (`isVerifiedProducer`, 836 §4): an envelope with no `scorer`
     // predates the field. Pinned here so a stamping regression in the handler — writing an empty or

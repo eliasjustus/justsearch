@@ -28,6 +28,12 @@ dependencies {
   api(libs.grpc.stub)
   implementation(libs.jackson.databind)
   implementation(libs.commonmark)
+  // Tempdoc 847 §2.2 — GFM tables and task lists are structure in the rendered answer (marked
+  // parses both), so citation segmentation must see them as structure too. Core commonmark reads a
+  // table as one paragraph (fusing a whole table into one citation key) and leaves a literal `[x]`
+  // at the head of a task item's key, which no rendered run can match.
+  implementation(libs.commonmark.ext.gfm.tables)
+  implementation(libs.commonmark.ext.task.list.items)
   api(libs.slf4j.api)
   api(libs.opentelemetry.api)
   implementation(libs.logstash.logback.encoder)

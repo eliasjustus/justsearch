@@ -259,6 +259,12 @@ function mergeClaim(
     // between a coverage ratio and a relevance probability exists to max over), and the refs land
     // on the matching side for the same reason (822 §3b).
     if (provenance === 'verified') {
+      // 847 S5 — the verified side's text WINS. The two sides segment differently (the draft cuts
+      // an incomplete markdown buffer as prose; the final cuts parsed block nodes), so at the same
+      // `sentenceIndex` they are usually different sentences. Keeping the draft's text would hand
+      // the renderer a key that no longer names the sentence that earned the score — a mark placed
+      // on one sentence by another's evidence, and a live render that disagrees with the reload.
+      if (sentenceText) existing.text = sentenceText;
       if (score !== null) existing.verifiedScore = Math.max(existing.verifiedScore ?? 0, score);
       if (sourceIndex !== null) existing.verifiedRefs.add(sourceIndex);
     } else {

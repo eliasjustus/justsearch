@@ -1,7 +1,7 @@
 # 847 — End-to-end citation correctness: the mark must land, survive reload, and never outrun its evidence
 
 ```
-status:  PARTIALLY IMPLEMENTED — charter A; rev 3. S0–S4 + F-12 done, S5 open, S6 partial.
+status:  PARTIALLY IMPLEMENTED — charter A; rev 3. S0–S5 + F-12 done, S6 partial.
          rev 2 = adversarial review incorporated (APPROVE-WITH-AMENDMENTS, every amendment
          re-verified against source). rev 3 = S0 measurement run (18 markdown shapes / 64 keys),
          its findings integrated into the S4/S5 specs; `## S0-results` is the evidence record.
@@ -18,17 +18,17 @@ status:  PARTIALLY IMPLEMENTED — charter A; rev 3. S0–S4 + F-12 done, S5 ope
              p.matches` assignment is gated too. Gating only the record path would have made a
              reloaded render stricter than the live one — the 561 P-A divergence in a new place.
          S4 (anchoring rewrite) is IMPLEMENTED on top of 846 — see "S4 — implementation record".
+         S5 (backend segmentation) is IMPLEMENTED — see "S5 — implementation record".
          F-12 (live-path evidence unification + the evidence-shadowing reconcile) is IMPLEMENTED —
          see "F-12". It closes the defect S2 left behind: S2 shared the producer GATE with the
          record path but not the envelope READER, so the live and reloaded arms stayed two readers
          of one shape; and `applySv3Record` discarded the record's evidence whenever the live turn
          held any evidence object, including an empty one.
-         S5 (backend segmentation) remains PENDING.
          S6 (live validation) is PARTIALLY SATISFIED by the F-12 browser leg — see "S6-live":
          L1 partially (real ask over the indexed corpus, not the list-shaped prompt) and L2
          (reload parity) are covered; L3 (cosine-fallback arm) and the ui-shot step remain OPEN.
 created: 2026-08-19
-updated: 2026-08-19 (F-12 + S6-live)
+updated: 2026-08-19 (S5, incl. independent review fixes; then F-12 + S6-live)
 related: 836 (literal-passage verification seam + the §4 producer gate — SHIPPED, #466/#473),
          839 (citation-mark presentation — shipped), 822 (the citation chain: F-047…F-050),
          561 P-A (evidence non-divergence: live and reloaded renders may not disagree),
@@ -1175,9 +1175,172 @@ branch's only `UnifiedChatView` line reverted).
 
 - **S5** — backend markdown-aware segmentation. S4 tolerates the fused key; it does not remove it,
   and the junk keys (orphan `.`, standalone ordinals) still reach the cross-encoder and still count
-  in the coverage denominator.
+  in the coverage denominator. **Closed by the S5 record below.**
 - **S6** — L1/L2/L3 live validation. Everything above is happy-dom; only the browser exercises the
   real `marked` → DOMPurify → text-node path this anchoring targets.
+
+---
+
+## S5 — implementation record (2026-08-19)
+
+Implemented on top of S4 (#494). Started backend-only; independent review (APPROVE-WITH-FIXES) added
+two renderer-side merge fixes, so the slice is mixed FE/backend under the same charter. Every fix
+below is recorded with what it was measured against.
+
+### What shipped
+
+| § | Change | Site |
+|---|---|---|
+| §2.2 | Segmentation is now ONE authority with two consumers: it parses the answer with commonmark and runs `BreakIterator` **per block node**, never across one | `AnswerSegmentation` (new, `worker-services`) |
+| §2.2 | A leaf block's text is what the reader sees: emphasis and inline-code fences drop away, a link contributes its label and not its URL, and line breaks inside a block become one space | `AnswerSegmentation.inlineText` / `appendInline` |
+| §2.2 | Junk suppression: a segment with **no letter** is never scored, persisted or counted | `AnswerSegmentation.carriesClaim` |
+| §2.2 (HI-6) | `Locale.ROOT` replaces `Locale.ENGLISH`, and the locale is a parameter so a test can *pin* that it is inert | `splitSentences(String, Locale)` |
+| §2.2 | GFM tables (one block per cell) and task lists (`- [x]` marker consumed) parsed by their extensions | `commonmark-ext-gfm-tables`, `commonmark-ext-task-list-items` |
+| review F1 | The **verified** side's `sentenceText` wins when a mid-stream draft already claimed the same `sentenceIndex` | `sv3-ask.mergeClaim`, `UnifiedChatView` matches-merge |
+| review F2 | A raw HTML block contributes its visible text instead of being skipped | `AnswerSegmentation.visibleHtmlText` |
+| review F4 | The RAG faithfulness eval calls the production splitter instead of its own copy | `RagQualityEvalTest#splitSentences` |
+| — | Register row **F-051** records the denominator change where search-quality work will meet it | `docs/reference/search-quality-register.md` |
+
+No proto change, no payload field added or renamed, no scorer semantics, no deadline change;
+`StreamingCitationMatcher`'s event shapes stay byte-identical.
+
+### Deviations from the design, each deliberate
+
+1. **The junk predicate is "no letter", not the renderer's `>= 4` word-like-character floor.** §2.2
+   names the junk class as orphan `.` and bare-ordinal keys; measured, "no letter" selects **exactly**
+   that class (8 of 64 legacy keys, matching S0's count) and additionally closes the `"2026."` hole
+   §2.1a flagged. Applying the renderer's floor at the producer was implemented first and
+   **reverted**: it deleted `"No."` (shape Q) and a three-character Han sentence (`"贝塔二。"` is 3
+   word-like characters — a Han sentence reaches four far later than an English one, HI-6). The
+   producer emits sentences; anchorability is the renderer's judgment.
+   **Honest limit (review F7):** "no letter" is *still* a consumer judgment — it decides a letterless
+   segment can carry no claim. It is safe in the practical case rather than in principle: a
+   numerals-only "sentence" is unanchorable anyway (the renderer's uniqueness clause rejects it), and
+   CJK numerals are letters, so no script loses a sentence to it.
+2. **Two new dependencies, `commonmark-ext-gfm-tables` and `commonmark-ext-task-list-items`** (same
+   group and version as the core parser, same 2-Clause BSD licence, already inside the licence
+   allowlist). Core commonmark reads a GFM table as ONE paragraph — shape I would have stayed a
+   single key spanning the whole table, the fusion class this slice removes — and leaves a literal
+   `[x]` at the head of a task item's key, a leading foreign token the renderer can never match (it
+   fails closed: no mark, ever). Measured before deciding: the table shape gives 1 pipe-soup key
+   without the extension and 9 keys with it (3 real sentences, 6 label cells; the `[2]`/`[1]`/`[3]`
+   source cells carry no letter and self-suppress). The decisive argument is agreement: `marked`
+   renders cells as blocks and S4's span clamp measures against rendered blocks, so the producer
+   must see cells as blocks too. Cost paid in the same PR: lockfile regeneration, two
+   verification-metadata components, two `THIRD_PARTY_NOTICES` lines.
+3. **An ordered list that cannot interrupt a paragraph no longer breaks the key** — and that is
+   correct. `Alpha one.\n2. Beta two.` segments as `["Alpha one. 2.", "Beta two."]`, because
+   CommonMark only lets an ordered list interrupt a paragraph when it starts at 1, so `marked`
+   renders exactly that one paragraph. The key says what the reader sees rather than what the source
+   looks like. The blank-line variant is a real list and breaks into two clean keys.
+4. **The mid-stream draft path still segments incomplete markdown as prose — and that is now
+   harmless for the mark.** `StreamingCitationMatcher:225` runs its own incremental `BreakIterator`
+   over a partial buffer; block parsing is not available to it, and §2.2's target is the
+   scored/persisted path. Review F1 corrected what this record first claimed: "the drafts are
+   superseded at `onDone`" was **false for `sentenceText`**. Both claim-merge sites key on
+   `sentenceIndex` and neither overwrote the text, so a delta-touched claim kept the DRAFT's key
+   while carrying the FINAL's score — and post-S5 the two segmentations differ at nearly every
+   index, so that key names a different sentence than the one that earned the score. The renderer
+   would have placed a real mark by another sentence's evidence, and the live render would have
+   disagreed with its own reload (which only ever sees the final). Both sites now assign the
+   verified side's text on merge, so the supersession the record asserted is true by construction.
+5. **Code blocks keep their own key**, as before, but no longer lead with the fence's info string —
+   the leading foreign token that zeroed shape L's match (§S0-results surprise 4). A cited fence can
+   now anchor, which S4's T19 pins as supported. Headings likewise become their own keys; a one-word
+   heading is a single-token run, so the renderer's uniqueness clause decides it, failing closed.
+6. **A raw HTML block contributes its visible text (review F2).** Skipping it — the first
+   implementation — meant a sentence a reader can see and cite inside `<div>…[1].</div>` produced NO
+   key at all: unscored, uncounted, absent from the sources panel. That is the same harm deviation 1
+   rejects. Script and style CONTENT is dropped (the renderer shows neither), tags become a space so
+   two adjacent elements do not weld their words together, and the remainder is segmented like a
+   paragraph. A tag-strip is defensible precisely here because DOMPurify governs what survives on the
+   renderer's side (`MarkdownBlock.ts:336-341` models the container).
+7. **An image contributes NOTHING to a key, not its alt text (review point a).** This record first
+   claimed alt text "is what the reader sees"; it is measurably not — `marked` renders alt as an
+   ATTRIBUTE, so the rendered DOM has no text node for it. Including it minted a phantom key for a
+   block image that no DOM run can match (a sentence in `sentences_total` that always reads as
+   ungrounded) and split a sentence containing an inline image in two. Images are now inert, and
+   shape W pins that a block image yields no key.
+
+### One disagreement with the DOM that is documented, not fixed
+
+A **hard** line break (`  \n`) becomes one space in the key, but the rendered DOM concatenates the
+text around `<br>` with **no separator at all**, so the two tokenizations disagree at exactly that
+boundary (measured by review: `'index  \nand'` flattens to `indexand`). The renderer's prefix run
+stops there — the mark is short or absent, never misplaced. Matching the DOM instead would mean
+welding two words together in the persisted evidence text and in what the cross-encoder scores,
+which is worse on both. The flattening itself is pre-existing renderer behaviour
+(`MarkdownBlock.ts:740`) and is logged to the inbox rather than changed here.
+
+### The denominator moved, deliberately — flag this
+
+`sentences_total` is 836 §3.6's coverage denominator, and it is **not comparable across this
+change**. Measured over the 23-shape matrix (`AnswerSegmentationTest`, T18b):
+
+| | keys | junk keys (no letter) | keys carrying a marker / a line break / a sibling block |
+|---|---|---|---|
+| before S5 | 73 | 9 (12.3 %) | 37 |
+| after S5 | 85 | 0 | 0 |
+
+Two opposite effects, both real: junk removal takes keys away, de-fusion adds more back (a
+three-item list that was one key is now four). Reported coverage will generally **rise** on
+list-shaped answers and may **fall** on table-shaped ones, where label cells are counted as unmatched
+sentences instead of hiding inside one key that matched trivially. Same class of flag as 845's, and
+recorded as **F-051** in the search-quality register so a later coverage comparison meets it there.
+
+### The FE contract is untouched, and the anchoring gets strictly easier
+
+No payload field changes name or type; `sentenceText`/`sentenceIndex` keep their meanings. The
+consumers were checked: `MarkdownBlock.ts:793` tokenizes the key (whitespace-insensitive),
+`CitationsPanel.ts:503` displays it, `recordEvidence.ts` / `sv3-ask.ts` / `SummarizeView.ts` copy it.
+Nothing searches the answer text for the key as a substring.
+
+**S4's 19-shape matrix was measured against the OLD segmentation** — its keys are verbatim fused keys
+from `## S0-results`. It stays valid as a regression pin (the renderer must keep tolerating an old
+persisted key, which every stored conversation still contains), and the new keys are strictly easier
+for the same acceptance rule: the fusion tax it was calibrated against (1–2 unmatched
+word-characters, against `matchWordRun`'s `keyWordChars - matchedChars <= max(4, 0.4 *
+keyWordChars)`) is now zero for prose keys. Three key shapes are NEW with S5 and each fails closed
+under the unchanged rule: a single-word heading or table cell (`len === 1` → rejected unless unique),
+`"No."` (2 word-characters → below the `keyWordChars < 4` eligibility floor → tier 2/3), and a
+code-fence body (now matchable, which T19 covers).
+
+### Tests, and what fails without the change
+
+`AnswerSegmentationTest` (`worker-services`): the S0 matrix promoted to permanent coverage — now 23
+shapes with the expected segment list verbatim (T18), the classification counters (`{SENTENCE=85}`,
+so a partial fix that removes only markers or only orphans cannot pass), the break-mechanism
+micro-cases from §S0-results surprise 1, the denominator accounting against an in-test mirror of the
+pre-847 splitter (T18b), junk-key suppression including `"2026."`, and the locale pin across
+`root`/`en`/`ja`/`zh`/`de` under three forced *default* locales including `tr-TR` (T18c). Four shapes
+were added by review: `T-abbreviation`, `U-task-list`, `V-raw-html-block`, `W-block-image`.
+
+`T-abbreviation` exists to **exhibit** the residual this class does not fix, rather than assert it in
+prose (review F8). Measured precisely: `BreakIterator` splits `"Dr. Smith owns…"` into `"Dr."` +
+`"Smith owns…"`, but does NOT split `"…in two passes, e.g. lexical then dense [2]."` — an
+abbreviation ends a sentence only when what follows looks like a new one. Note what the split key is:
+`"Dr."` has a letter, so the junk predicate cannot catch it; it is a real key that will never anchor
+and that counts in `sentences_total`.
+
+Revert-run (the production body swapped back to prose segmentation, tests unchanged): **all six test
+methods fail**, and the shape matrix names **18 of 19 shapes** as drifted — every shape except
+`A-prose-baseline`, the one with no markdown structure. Pre-change classification over that matrix:
+`{SENTENCE=22, MULTILINE=32, JUNK=8, MARKER=2}`.
+
+FE (review F1): `sv3-ask.test.ts` and `UnifiedChatView.test.ts` each gained a delta-then-matches
+sequence asserting the final text wins. Revert-probe with the two one-line assignments removed:
+**both fail** (203 passed / 2 failed over the two files), so neither passes for a wrong reason.
+
+`GrpcSearchServiceSplitSentencesTest` (pre-existing, prose only) passes unchanged against the new
+authority.
+
+### Still open after S5
+
+- **S6** — L1/L2/L3 live validation. Everything above is unit-level; only the browser exercises the
+  real `marked` → DOMPurify → text-node path against a real answer's keys.
+- The mid-stream draft path still fuses its own draft keys (deviation 4). The mark no longer suffers
+  for it, but a reader watching the stream still sees draft attributions cut from fused sentences.
+- The `<br>` tokenization disagreement above, which is a renderer-side flattening question.
 
 ---
 
