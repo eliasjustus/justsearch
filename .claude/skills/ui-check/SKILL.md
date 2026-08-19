@@ -88,9 +88,11 @@ unfamiliar third-party flow, reading console/network output during a live debug,
 harness step. Those are genuine uses — the rule steers *local dev-UI verification*, not exploration.
 
 Why it is written down (tempdoc 844 §6.4, §12.3 D4): `claude-in-chrome` was measured at ~1,773 calls
-and ~58.7 MB of tool-result bytes — roughly **98% of all MCP result volume** and about two-thirds of
-*all* tool-result bytes including Read and Bash — concentrated in 17 sessions and pointed mostly at
-`127.0.0.1`, i.e. this harness's own territory. It was also the only agent capability mentioned in no
+and ~58.7 MB of tool-result bytes — roughly **98% of all MCP result volume**, and the single largest
+MCP consumer by a factor of ~87x over `justsearch-dev` — concentrated in 17 sessions and pointed
+mostly at `127.0.0.1`, i.e. this harness's own territory. (Across *all* tools it is ~25% of
+tool-result bytes; Read and Bash are larger. §6.4's "two-thirds" used an MCP-scoped denominator and
+is corrected there.) It was also the only agent capability mentioned in no
 repo rule at all. This lives here rather than in `CLAUDE.md` because the always-loaded budget is at
 its ceiling and this skill's own trigger ("capturing UI screenshots") already fires at exactly the
 moment the choice is made.

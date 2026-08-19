@@ -488,6 +488,17 @@ from 647 calls (`browser_batch` 172.9 KB/call, `computer` 39.1 KB/call). All of 
 is **0.3 MB (0.4%)** from 379 calls. *(Bytes, not tokens — see §1. Images tokenize differently;
 the ordering holds, the multiple does not.)*
 
+> **Correction (2026-08-19, pre-merge scan).** The **68%** figure is wrong as stated: its 73.3 MB
+> denominator was not all tool-result bytes. Re-measured over the full corpus, total tool-result
+> bytes are **244.2 MB**, of which `claude-in-chrome` is **24.8%** — behind `Read` (39.3%) and
+> `Bash` (26.1%). What survives unchanged: `claude-in-chrome` is **~98% of MCP result volume**
+> (verified 98.5%), `justsearch-dev` is **0.3%** of all tool-result bytes, and the browser is the
+> most expensive *MCP* capability by ~87x — so §6.4's argument (cost is inverted relative to
+> governance) holds; only the "two-thirds of everything" magnitude does not. The number was caught
+> because it was the one sampled claim the shipped instrument could not re-derive:
+> `dev-tool-usage.mjs` reports MCP servers only, so a non-MCP denominator has no instrument behind
+> it. `.claude/skills/ui-check/SKILL.md` is corrected accordingly.
+
 Browser use is concentrated in 17 sessions and is mostly local (`127.0.0.1` dev UI), i.e.
 overlapping `jseval ui-shot`'s territory — which writes PNGs to disk and returns a `.measure.json`,
 and whose own skill says to judge from the measure facts, not the PNG. The remainder is genuine
