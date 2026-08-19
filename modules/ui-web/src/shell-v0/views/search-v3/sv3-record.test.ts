@@ -11,6 +11,10 @@ import { describe, it, expect } from 'vitest';
 import type { ThreadEvent } from '../unifiedThreadProjection.js';
 import { projectSv3RecordTurns } from './sv3-record.js';
 import type { Sv3RunFeedTool } from './sv3-run.js';
+import type { RetrievalCitation } from '../../components/chat/citationTypes.js';
+import { claimsFromRecord } from '../../components/chat/recordEvidence.js';
+import { claimsToCitations } from '../../components/chat/citationResolve.js';
+import { sourceGrounding } from '../../components/chat/evidenceProjection.js';
 
 let clock = 0;
 const at = (): string => new Date(Date.parse('2026-08-13T10:00:00Z') + clock++ * 1000).toISOString();
@@ -134,5 +138,111 @@ describe('a record becomes turns, bracketed by the user messages', () => {
 
   it('is empty for an empty record, so nothing can read "no record" as "nothing happened"', () => {
     expect(project([])).toEqual([]);
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+ * The record's EVIDENCE, rehydrated (tempdoc 847 §1.3 / §2.4).
+ *
+ * `GET /api/thread/{id}` copies `citations` and `claimMatches` onto the assistant event's
+ * attributes; this window discarded both and rendered every restored answer sourceless. The cases
+ * below run the real wire attributes through the projection, and each gate case is paired with the
+ * producer twin that must NOT be gated — a "no marks" expectation over a fixture that could never
+ * mint one would pass for the wrong reason.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════ */
+describe('a restored turn stands on the evidence the record carries (847 §2.4)', () => {
+  const DOC = 'docs/lease.md';
+
+  const persistedSource = (): RetrievalCitation => ({
+    parentDocId: DOC,
+    chunkIndex: 0,
+    chunkTotal: 1,
+    startChar: 0,
+    endChar: 40,
+    score: 0.9,
+    excerpt: 'The lock held past the renewal date.',
+    startLine: 1,
+    endLine: 2,
+    headingText: 'Renewal',
+    headingLevel: 2,
+  });
+
+  const persistedMatches = (scorer?: string): Record<string, unknown> => ({
+    ...(scorer === undefined ? {} : { scorer }),
+    sentencesTotal: 1,
+    sentencesScored: 1,
+    matches: [
+      {
+        sentenceIndex: 0,
+        sentenceText: 'The lock held.',
+        sourceIndex: 0,
+        similarity: 0.94,
+        parentDocId: DOC,
+      },
+    ],
+  });
+
+  const answered = (scorer?: string, extra: Record<string, unknown> = {}): readonly ThreadEvent[] => [
+    event('e1', 'USER_MESSAGE', 'why did the renewal fail?'),
+    event('e2', 'ASSISTANT_MESSAGE', 'The lock held.', {
+      citations: [persistedSource()],
+      claimMatches: persistedMatches(scorer),
+      ...extra,
+    }),
+  ];
+
+  it('projects the persisted sources and marks, through the SHARED resolver (847 §1.3)', () => {
+    clock = 0;
+    const [turn] = project(answered('CROSS_ENCODER'));
+    const evidence = turn?.evidence;
+    expect(evidence).not.toBeNull();
+    expect(evidence?.sources).toHaveLength(1);
+    expect(evidence?.matches).toHaveLength(1);
+    // The marks are exactly what the ONE resolver makes of the ONE envelope reader's claims — not a
+    // second derivation this module authored (561 P-A: live and restored may not disagree).
+    expect([...(evidence?.marks ?? [])]).toEqual(
+      claimsToCitations(claimsFromRecord(persistedMatches('CROSS_ENCODER')), [persistedSource()]),
+    );
+    expect(evidence?.marks[0]?.similarity).toBe(0.94);
+  });
+
+  it('withholds the mark AND the panel tier when the producer is not admitted (847 §2.3)', () => {
+    clock = 0;
+    const [gatedTurn] = project(answered('EMBEDDING_COSINE'));
+    clock = 0;
+    const [admittedTurn] = project(answered('CROSS_ENCODER'));
+    // Paired with the twin so the empty below is the producer gate, not an inert fixture.
+    expect(admittedTurn?.evidence?.marks).toHaveLength(1);
+    expect(sourceGrounding(0, [...(admittedTurn?.evidence?.matches ?? [])], DOC).cited).toBe(true);
+    expect(gatedTurn?.evidence?.marks).toEqual([]);
+    expect(gatedTurn?.evidence?.matches).toEqual([]);
+    // The sources panel reads its per-source tier off those matches, so the answer's markless text
+    // and the panel beside it now say the same thing.
+    expect(sourceGrounding(0, [...(gatedTurn?.evidence?.matches ?? [])], DOC).cited).toBe(false);
+    // The retrieval itself is not withheld — it happened, and the record says so.
+    expect(gatedTurn?.evidence?.sources).toHaveLength(1);
+  });
+
+  it('carries the evidence of an AGENT-kind turn too — a note does not un-source an answer', () => {
+    // §1.7: the kind flips to `agent` on any non-text activity, and the turns most likely to carry a
+    // progress note are the long retrieval-heavy ones most likely to have evidence.
+    clock = 0;
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'why did the renewal fail?'),
+      event('e2', 'PROGRESS', 'Searching the lease folder'),
+      event('e3', 'ASSISTANT_MESSAGE', 'The lock held.', {
+        citations: [persistedSource()],
+        claimMatches: persistedMatches('CROSS_ENCODER'),
+      }),
+    ]);
+    expect(turn?.kind).toBe('agent');
+    expect(turn?.evidence?.sources).toHaveLength(1);
+  });
+
+  it('stamps the RECORD id as `recordId`, which is what the merge reconciles on (847 §2.4.3)', () => {
+    clock = 0;
+    const [turn] = project(answered('CROSS_ENCODER'));
+    expect(turn?.recordId).toBe('e1');
+    expect(turn?.id).toBe('e1');
   });
 });

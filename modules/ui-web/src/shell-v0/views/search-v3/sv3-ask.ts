@@ -54,6 +54,10 @@ import type {
 // The ONE claim→mark resolver (565 §15.B). The window resolves nothing itself: it hands the
 // backend's claims + sources to the shared authority and stores what comes back.
 import { claimsToCitations } from '../../components/chat/citationResolve.js';
+// Tempdoc 847 S2 — the ONE `claimMatches` envelope reader, so this window's producer gate IS the
+// shipped window's, not a second copy of it (§2.5: defence in depth through one authority).
+import { admittedMatches, readScorer } from '../../components/chat/recordEvidence.js';
+import { isVerifiedProducer } from '../../components/chat/evidenceProjection.js';
 import type { Sv3TurnEvidence } from './sv3-sessions.js';
 
 /** The one shape this window's ask route dispatches. */
@@ -212,8 +216,15 @@ interface ClaimAcc {
 }
 
 /**
- * Tempdoc 822 §3d — which producer scored this sentence. The two citation events are already
- * separate handlers, so the provenance needs no wire field: it is the handler that knows.
+ * Tempdoc 822 §3d — which EVENT scored this sentence: `rag.citation_delta` (the streaming lexical
+ * matcher) or `rag.citation_matches` (the authoritative post-hoc one). That distinction really is
+ * the handler's own, and needs no wire field.
+ *
+ * Tempdoc 847 §1.5 — it is NOT the whole provenance, and reading it as such was this window's gate
+ * hole. 836 introduced a second distinction INSIDE `rag.citation_matches` — which SCORER wrote the
+ * similarity (cross-encoder vs the embedding-cosine fallback) — that the handler cannot know and the
+ * payload states outright in its `scorer` field. So the handler answers "which event", the envelope
+ * answers "which producer", and only both together admit a score as verified.
  */
 type ScoreProvenance = 'verified' | 'lexical';
 
@@ -221,7 +232,12 @@ function mergeClaim(
   acc: Map<number, ClaimAcc>,
   sentenceIndex: number,
   sentenceText: string,
-  score: number,
+  /**
+   * `null` on the verified side means the sentence WAS matched but by a producer whose scale the
+   * grounding thresholds are not calibrated for (847 §2.5). The claim still exists — it is what
+   * arrived — it simply carries no verified score and resolves no ref, so it mints no mark.
+   */
+  score: number | null,
   provenance: ScoreProvenance,
   sourceIndex: number | null,
 ): void {
@@ -231,10 +247,10 @@ function mergeClaim(
     // between a coverage ratio and a relevance probability exists to max over), and the refs land
     // on the matching side for the same reason (822 §3b).
     if (provenance === 'verified') {
-      existing.verifiedScore = Math.max(existing.verifiedScore ?? 0, score);
+      if (score !== null) existing.verifiedScore = Math.max(existing.verifiedScore ?? 0, score);
       if (sourceIndex !== null) existing.verifiedRefs.add(sourceIndex);
     } else {
-      existing.lexicalScore = Math.max(existing.lexicalScore, score);
+      existing.lexicalScore = Math.max(existing.lexicalScore, score ?? 0);
       if (sourceIndex !== null) existing.lexicalRefs.add(sourceIndex);
     }
     return;
@@ -247,17 +263,24 @@ function mergeClaim(
   acc.set(sentenceIndex, {
     text: sentenceText,
     verifiedScore: provenance === 'verified' ? score : null,
-    lexicalScore: provenance === 'lexical' ? score : 0,
+    lexicalScore: provenance === 'lexical' ? (score ?? 0) : 0,
     verifiedRefs,
     lexicalRefs,
   });
 }
 
-function claimsOf(acc: Map<number, ClaimAcc>): Claim[] {
+/**
+ * Tempdoc 847 §2.5 — the producer is STAMPED onto every claim, so `claimsToCitations`'s own gate
+ * (`citationResolve.ts:45`) sees the same fact this file did. Absent (`null`) is left off the claim
+ * entirely rather than written as an empty string: an envelope that predates the field is a
+ * different statement from one that named a producer, and `isVerifiedProducer` distinguishes them.
+ */
+function claimsOf(acc: Map<number, ClaimAcc>, scorer: string | null): Claim[] {
   return [...acc.entries()]
     .map(([sentenceIndex, v]) => ({
       sentenceIndex,
       sentenceText: v.text,
+      ...(scorer !== null ? { scorer } : {}),
       verifiedScore: v.verifiedScore,
       lexicalScore: v.lexicalScore,
       verifiedRefs: [...v.verifiedRefs],
@@ -286,6 +309,8 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
   let sources: readonly RetrievalCitation[] = [];
   let matches: readonly CitationMatch[] = [];
   let retrievalMode = '';
+  /** The producer the LAST `rag.citation_matches` envelope named; `null` until one says (847 §2.5). */
+  let scorer: string | null = null;
   const claims = new Map<number, ClaimAcc>();
   /**
    * The evidence record is rebuilt WHOLE on every contributing event and handed over as one value,
@@ -296,7 +321,7 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
     sink.onEvidence({
       sources,
       matches,
-      marks: claimsToCitations(claimsOf(claims), sources),
+      marks: claimsToCitations(claimsOf(claims, scorer), sources),
       retrievalMode,
     });
 
@@ -349,15 +374,23 @@ export async function sv3Ask(req: Sv3AskRequest, sink: Sv3AskSink): Promise<void
     onRagCitationMatches(payload: unknown) {
       const p = payload as { matches?: CitationMatch[] } | null;
       if (!p || !Array.isArray(p.matches)) return;
-      matches = p.matches;
+      // Tempdoc 847 §2.5 — the PRODUCER gate, read off the envelope through the shared authority
+      // (836 §4). Without it this window merged every match as verified, painting embedding-cosine
+      // numbers — whose supported and unsupported bands interleave at a 0.0049 margin (836 §9.7) —
+      // with cross-encoder-calibrated grounding tiers.
+      scorer = readScorer(p);
+      const verified = isVerifiedProducer(scorer);
+      // The panel answers to the same verdict as the marks: an unadmitted producer's matches carry
+      // no per-source tier, so the sources list and the answer text say the same thing (847 §2.3).
+      matches = admittedMatches(p.matches, scorer);
       for (const m of p.matches) {
         mergeClaim(
           claims,
           m.sentenceIndex ?? 0,
           m.sentenceText ?? '',
-          typeof m.similarity === 'number' ? m.similarity : 0,
+          verified && typeof m.similarity === 'number' ? m.similarity : null,
           'verified',
-          typeof m.sourceIndex === 'number' ? m.sourceIndex : null,
+          verified && typeof m.sourceIndex === 'number' ? m.sourceIndex : null,
         );
       }
       publish();

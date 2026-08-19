@@ -92,7 +92,21 @@ export interface Sv3TurnReasoning {
 
 /** One exchange: what was asked, and what came back. */
 export interface Sv3Turn {
+  /**
+   * The turn's STABLE handle, minted once when the turn is opened and never rewritten. Every piece
+   * of UI state about a turn is keyed on it — `Sv3Main`'s `expandedSources` and `copiedTurnId`, the
+   * live run's `turnId`, the transcript's aria ids — so a merge that swapped it would leave that
+   * state pointing at a turn that no longer exists, and the write would silently no-op rather than
+   * fail (tempdoc 847 §1.6b).
+   */
   readonly id: string;
+  /**
+   * Which turn of the canonical record this one IS, once the record has spoken for it (tempdoc 847
+   * §2.4.3). `null` until then — a turn dispatched locally exists before the record knows of it.
+   * This is the key {@link applySv3Record} reconciles on: matching by array position alone
+   * mis-attributed one turn's evidence, status and duration to another on any length skew.
+   */
+  readonly recordId: string | null;
   readonly kind: Sv3TurnKind;
   readonly question: string;
   /** Accumulated answer text. Whatever streamed before a halt is KEPT — it was really received. */
@@ -223,6 +237,7 @@ const openTurn = (
   kind: Sv3TurnKind,
 ): Sv3Turn => ({
   id: turnIdFor(sessionId, index),
+  recordId: null,
   kind,
   question,
   answer: '',
@@ -631,12 +646,24 @@ function titleFor(row: Sv3StoreConversation, current: string): string {
  *  1. **Touch a STREAMING turn.** The live feed is the authority for the in-flight run and for
  *     nothing else (F2's activeTurnId discipline); a turn still streaming keeps its local id, so the
  *     run's `turnId` stays valid across a refresh, and yields to the record once it settles.
- *  2. **Blank the evidence.** F4's citation marks are resolved from the live stream by the shared
- *     `claimsToCitations`; the record does not carry that resolution, so a refresh keeps whatever the
- *     turn already stood on rather than emptying the panel beside it.
+ *  2. **Blank the evidence.** The record DOES carry the answer's sources and matches now (tempdoc
+ *     847 §2.4, projected by `sv3-record.ts`), but a live turn watched the stream and can hold what
+ *     the record has not caught up to, so what the turn already stood on wins over what the record
+ *     reports — and a refresh never empties the panel beside it.
  *  3. **Re-word a HALT.** "The reader pressed Stop" is not in the record — to the backend a halted
  *     answer just ended. Overwriting it with `complete` would call the reader's own decision a
  *     success (the four-terminal rule {@link Sv3TurnStatus} exists to keep them distinct).
+ *  4. **Re-id a turn.** (Tempdoc 847 §1.6b.) The record's id is stamped onto {@link Sv3Turn.recordId}
+ *     and the turn's own `id` is left alone, because every piece of UI state about a turn is keyed
+ *     on that id.
+ *
+ * MATCHING IS BY IDENTITY, not by position (847 §2.4.3): a record turn reconciles with the local
+ * turn already bearing its `recordId`, and only a turn NOT yet reconciled to anything falls back to
+ * ordered position — stamping `recordId` as it does, so the fallback is used at most once per turn
+ * and a later refresh is pure identity. A position fallback never lands on a local turn that already
+ * carries a DIFFERENT `recordId`: that turn is another record turn's, and any length skew (a turn
+ * the record has not caught up to, an interleaved agent turn) would otherwise attribute one turn's
+ * evidence, status and duration to another.
  *
  * An EMPTY record leaves the list untouched: `fetchUnifiedThread` returns empty on failure by
  * contract (tempdoc 727 F-8), so "the record said nothing" must never be read as "there is nothing".
@@ -649,12 +676,55 @@ export function applySv3Record(
   const session = sessionById(list, sessionId);
   if (session === null || recordTurns.length === 0) return list;
   const local = session.turns;
-  const merged: Sv3Turn[] = recordTurns.map((recorded, index) => {
-    const prior = local[index];
+  const localByRecordId = new Map<string, number>();
+  local.forEach((turn, index) => {
+    if (turn.recordId !== null && !localByRecordId.has(turn.recordId)) {
+      localByRecordId.set(turn.recordId, index);
+    }
+  });
+  const claimed = new Set<number>();
+  const pairing = new Map<number, number>();
+  recordTurns.forEach((recorded, recordIndex) => {
+    const recordId = recorded.recordId ?? recorded.id;
+    const localIndex = localByRecordId.get(recordId);
+    if (localIndex !== undefined && !claimed.has(localIndex)) {
+      pairing.set(recordIndex, localIndex);
+      claimed.add(localIndex);
+    }
+  });
+  let cursor = 0;
+  recordTurns.forEach((_, recordIndex) => {
+    if (pairing.has(recordIndex)) return;
+    while (
+      cursor < local.length &&
+      (claimed.has(cursor) || local[cursor]?.recordId != null)
+    ) {
+      cursor++;
+    }
+    if (cursor >= local.length) return;
+    pairing.set(recordIndex, cursor);
+    claimed.add(cursor);
+    cursor++;
+  });
+  const merged: Sv3Turn[] = [];
+  // A turn the record has not been told about yet — the in-flight one, or one dispatched while the
+  // fetch was in the air — is KEPT, in its own place relative to the turns around it. The record is
+  // authoritative for what it holds, never for what has not reached it, and never for the order of
+  // what it does not hold.
+  let emitted = 0;
+  const keepLocalsBefore = (limit: number): void => {
+    for (; emitted < limit; emitted++) {
+      const trailing = local[emitted];
+      if (trailing !== undefined && !claimed.has(emitted)) merged.push(trailing);
+    }
+  };
+  const reconcile = (recorded: Sv3Turn, prior: Sv3Turn | undefined): Sv3Turn => {
     if (prior === undefined) return recorded;
     if (prior.status === 'streaming') return prior;
     return {
       ...recorded,
+      id: prior.id,
+      recordId: recorded.recordId ?? recorded.id,
       evidence: prior.evidence ?? recorded.evidence,
       status: prior.status === 'halted' ? 'halted' : recorded.status,
       detail: prior.status === 'halted' ? prior.detail : recorded.detail,
@@ -669,14 +739,16 @@ export function applySv3Record(
       durationMs: prior.durationMs ?? recorded.durationMs,
       modelLabel: prior.modelLabel ?? recorded.modelLabel,
     };
+  };
+  recordTurns.forEach((recorded, recordIndex) => {
+    const localIndex = pairing.get(recordIndex);
+    if (localIndex !== undefined) {
+      keepLocalsBefore(localIndex);
+      emitted = localIndex + 1;
+    }
+    merged.push(reconcile(recorded, localIndex === undefined ? undefined : local[localIndex]));
   });
-  // A turn the record has not been told about yet — the in-flight one, or one dispatched while the
-  // fetch was in the air — is KEPT at the tail. The record is authoritative for what it holds, never
-  // for what has not reached it.
-  for (let index = recordTurns.length; index < local.length; index++) {
-    const trailing = local[index];
-    if (trailing !== undefined) merged.push(trailing);
-  }
+  keepLocalsBefore(local.length);
   return {
     ...list,
     sessions: list.sessions.map((s) => (s.id === sessionId ? { ...s, turns: merged } : s)),
