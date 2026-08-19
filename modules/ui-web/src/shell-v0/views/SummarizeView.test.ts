@@ -7,6 +7,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import './SummarizeView.js';
+import type { CitationMatch, Claim } from '../components/chat/citationTypes.js';
+import { sourceGrounding } from '../components/chat/evidenceProjection.js';
 
 async function settle(el: Element): Promise<void> {
   await (el as unknown as { updateComplete: Promise<unknown> }).updateComplete;
@@ -218,6 +220,79 @@ describe('SummarizeView', () => {
     expect(el.errorMessage).toBe('AI_OFFLINE');
     expect(el.isStreaming).toBe(false);
     el.remove();
+  });
+
+  it('847 §1.5b — a non-admitted producer mints no mark AND no panel tier, its twin mints both', async () => {
+    // This surface binds `citations` straight into the shared `<jf-citations-panel>`, where
+    // `sourceGrounding` reads `similarity` into a per-source tier. Gating only the claims left the
+    // panel announcing "Grounds N sentences" at a cosine-derived tier beside markless prose.
+    // Both arms run the SAME payload, so the empty arm is the gate rather than an inert fixture.
+    const source = {
+      parentDocId: 'docs/lease.md',
+      chunkIndex: 0,
+      chunkTotal: 1,
+      startChar: 0,
+      endChar: 40,
+      score: 0.9,
+      excerpt: 'The lock held past the renewal date.',
+      startLine: 1,
+      endLine: 2,
+      headingText: 'Renewal',
+      headingLevel: 2,
+    };
+    const bodyFor = (scorer: string): string =>
+      sseChunk('rag.citations', { citations: [source] }) +
+      sseChunk('rag.citation_matches', {
+        scorer,
+        sentencesTotal: 1,
+        sentencesScored: 1,
+        matches: [
+          {
+            sentenceIndex: 0,
+            sentenceText: 'The lock held.',
+            sourceIndex: 0,
+            similarity: 0.94,
+            parentDocId: 'docs/lease.md',
+          },
+        ],
+      }) +
+      sseChunk('done', {});
+
+    const summarizeWith = async (
+      scorer: string,
+    ): Promise<{ citations: CitationMatch[]; claims: Claim[] }> => {
+      globalThis.fetch = mockFetchSse(bodyFor(scorer));
+      const el = document.createElement('jf-summarize-view') as unknown as {
+        apiBase: string;
+        docIdsDraft: string;
+        citations: CitationMatch[];
+        claims: Claim[];
+      } & HTMLElement;
+      el.apiBase = 'http://test';
+      document.body.appendChild(el);
+      await settle(el);
+      el.docIdsDraft = 'doc.test';
+      await settle(el as unknown as HTMLElement);
+      (
+        (el as unknown as HTMLElement).shadowRoot?.querySelector('button') as HTMLButtonElement
+      ).click();
+      await new Promise((r) => setTimeout(r, 50));
+      await settle(el as unknown as HTMLElement);
+      const observed = { citations: [...el.citations], claims: [...el.claims] };
+      el.remove();
+      return observed;
+    };
+
+    const admitted = await summarizeWith('CROSS_ENCODER');
+    expect(admitted.citations).toHaveLength(1);
+    expect(admitted.claims[0]?.verifiedScore).toBe(0.94);
+    expect(sourceGrounding(0, admitted.citations, 'docs/lease.md').cited).toBe(true);
+
+    const gated = await summarizeWith('EMBEDDING_COSINE');
+    expect(gated.citations).toEqual([]);
+    expect(gated.claims[0]?.verifiedScore).toBeNull();
+    expect(sourceGrounding(0, gated.citations, 'docs/lease.md').cited).toBe(false);
+    expect(sourceGrounding(0, gated.citations, 'docs/lease.md').groundedSentences).toBe(0);
   });
 
   it('setDocId public API pre-fills the textarea', async () => {

@@ -30,6 +30,11 @@ import { restoreUnifiedChat, resetUnifiedChatState, getUnifiedChatState } from '
 import { consumeShapeStream, dispatchShapeEventToHandlers } from '../../api/streams.js';
 // Tempdoc 822 §3d — the provenance-split assertions read the accumulator's own claim shape.
 import type { Claim } from '../components/chat/citationTypes.js';
+// Tempdoc 847 S1 — the record→evidence conversion these cases exercise is no longer a private method
+// on this view: it is the SHARED authority both render paths read (`recordEvidence.ts`), so the
+// assertions address it where it now lives. The cases themselves are unchanged — the same payloads,
+// the same expectations — because the extraction had to be behaviour-identical.
+import { claimsFromRecord, matchesFromRecord } from '../components/chat/recordEvidence.js';
 // Tempdoc 609 — value imports for the 609 describes (modules are vi.mock'd below; vi.mocked() wraps them).
 import { resumeConversation } from '../state/conversationListStore.js';
 import { setAiActivity } from '../state/aiStateStore.js';
@@ -5722,13 +5727,7 @@ describe('Tempdoc 822 §3d — the shipped window keeps lexical and verified sco
     view.remove();
   });
 
-  it('reads a legacy persisted record under its old `chunkIndex` key (user data, no migration)', async () => {
-    const view = mountView();
-    await view.updateComplete;
-    const v = view as unknown as {
-      claimsFromRecord(cm: unknown): Claim[];
-      matchesFromRecord(cm: unknown): Array<{ sourceIndex: number }>;
-    };
+  it('reads a legacy persisted record under its old `chunkIndex` key (user data, no migration)', () => {
     // Persisted BEFORE the rename. The stored values were already positional (they come from the
     // authoritative `matchCitations` call), so the old record renders correctly under the new reader.
     const legacy = {
@@ -5736,17 +5735,16 @@ describe('Tempdoc 822 §3d — the shipped window keeps lexical and verified sco
         { sentenceIndex: 0, sentenceText: 'The lock held.', chunkIndex: 2, similarity: 0.9, parentDocId: 'docs/a.md' },
       ],
     };
-    expect(v.claimsFromRecord(legacy)[0]!.verifiedRefs).toEqual([2]);
-    expect(v.matchesFromRecord(legacy)[0]!.sourceIndex).toBe(2);
+    expect(claimsFromRecord(legacy)[0]!.verifiedRefs).toEqual([2]);
+    expect(matchesFromRecord(legacy)[0]!.sourceIndex).toBe(2);
     // A record written after the rename reads the same way.
     const current = {
       matches: [
         { sentenceIndex: 0, sentenceText: 'The lock held.', sourceIndex: 2, similarity: 0.9, parentDocId: 'docs/a.md' },
       ],
     };
-    expect(v.claimsFromRecord(current)[0]!.verifiedRefs).toEqual([2]);
-    expect(v.matchesFromRecord(current)[0]!.sourceIndex).toBe(2);
-    view.remove();
+    expect(claimsFromRecord(current)[0]!.verifiedRefs).toEqual([2]);
+    expect(matchesFromRecord(current)[0]!.sourceIndex).toBe(2);
   });
 });
 
@@ -5814,9 +5812,7 @@ describe('Tempdoc 836 S2S3 — coverage honesty and the producer gate on both re
     await view.updateComplete;
     const live = claimsOf(view);
 
-    const replayed = (
-      view as unknown as { claimsFromRecord(cm: unknown): Claim[] }
-    ).claimsFromRecord(matchPayload('CROSS_ENCODER'));
+    const replayed = claimsFromRecord(matchPayload('CROSS_ENCODER'));
 
     expect(replayed).toEqual([...live]);
     expect(live[0]!.verifiedScore).toBe(0.82);
@@ -5832,9 +5828,7 @@ describe('Tempdoc 836 S2S3 — coverage honesty and the producer gate on both re
     await view.updateComplete;
     const live = claimsOf(view);
 
-    const replayed = (
-      view as unknown as { claimsFromRecord(cm: unknown): Claim[] }
-    ).claimsFromRecord(matchPayload('EMBEDDING_COSINE'));
+    const replayed = claimsFromRecord(matchPayload('EMBEDDING_COSINE'));
 
     // The claim still EXISTS — it is what arrived — but its score is on a scale the grounding
     // thresholds are not calibrated for, so it may not become a verified score on either path.
@@ -5851,9 +5845,29 @@ describe('Tempdoc 836 S2S3 — coverage honesty and the producer gate on both re
     view.remove();
   });
 
-  it('a record written before the producer field existed keeps its marks (absence is not a verdict)', async () => {
+  it('847 §1.5b — the SOURCES panel answers to the same producer verdict, live and on replay', async () => {
+    // The gate's second arm: `citations` (the CitationMatch[] the panel groups by) reached
+    // `sourceGrounding` ungated, so a cosine payload rendered markless prose beside a panel still
+    // announcing "Grounds N sentences" at a cosine-derived tier — two surfaces of one verdict,
+    // disagreeing. Paired with the cross-encoder twin so the empty below is the gate, not the
+    // fixture.
     const view = mountView();
     await view.updateComplete;
+    const h = await askAndCaptureHandlers(view);
+    h.onRagCitationMatches?.(matchPayload('EMBEDDING_COSINE'));
+    await view.updateComplete;
+    const gatedLive = (view as unknown as { citations: unknown[] }).citations;
+    expect(gatedLive).toEqual([]);
+    expect(matchesFromRecord(matchPayload('EMBEDDING_COSINE'))).toEqual([]);
+
+    h.onRagCitationMatches?.(matchPayload('CROSS_ENCODER'));
+    await view.updateComplete;
+    expect((view as unknown as { citations: unknown[] }).citations).toHaveLength(1);
+    expect(matchesFromRecord(matchPayload('CROSS_ENCODER'))).toHaveLength(1);
+    view.remove();
+  });
+
+  it('a record written before the producer field existed keeps its marks (absence is not a verdict)', () => {
     const legacy = {
       matches: [
         {
@@ -5865,12 +5879,9 @@ describe('Tempdoc 836 S2S3 — coverage honesty and the producer gate on both re
         },
       ],
     };
-    const replayed = (
-      view as unknown as { claimsFromRecord(cm: unknown): Claim[] }
-    ).claimsFromRecord(legacy);
+    const replayed = claimsFromRecord(legacy);
     expect(replayed[0]!.verifiedScore).toBe(0.9);
     expect(replayed[0]!.verifiedRefs).toEqual([2]);
-    view.remove();
   });
 
   it('the coverage facts land on the view, live', async () => {

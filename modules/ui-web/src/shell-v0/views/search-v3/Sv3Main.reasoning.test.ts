@@ -25,6 +25,7 @@ import { ReasoningController } from '../../controllers/ReasoningController.js';
 type Mounted = Sv3Main & { updateComplete: Promise<unknown> };
 
 const turn = (over: Partial<Sv3Turn> & { id: string }): Sv3Turn => ({
+  recordId: null,
   kind: 'ask',
   question: 'why did the renewal fail?',
   answer: 'It expired.',
