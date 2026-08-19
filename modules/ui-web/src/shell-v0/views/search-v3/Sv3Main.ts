@@ -41,6 +41,11 @@ import '../../components/chat/CitationsPanel.js';
 // evidence and of the model's own output.
 import '../../components/chat/CitationHoverCard.js';
 import '../../components/chat/ReasoningBlock.js';
+// The product's ONE operability primitive (tempdoc 559 Authority V; 852 parity ledger row 11). Every
+// control this slice adds is born on it rather than hand-rolled: the context acts are asynchronous
+// writes, and `jf-control`'s promise-aware busy, its re-entrancy guard and its visually-hidden
+// acknowledgement region are exactly what an act that takes a round trip owes the reader.
+import '../../components/Control.js';
 import type { CitationHoverCard, CitationHoverData } from '../../components/chat/CitationHoverCard.js';
 import type { CitationSelectDetail } from '../../components/chat/citationTypes.js';
 import type { DocumentCitationAnchor } from '../../components/documentPane/DocumentPane.js';
@@ -60,6 +65,19 @@ import { reasonFor } from '../../state/readinessNotice.js';
 import { RAISE_BUDGET_STEP_TOKENS } from '../unifiedChatRequest.js';
 import {
   COMPOSER_STATE_DEFAULT,
+  CONTEXT_FLOOR_COMPACTED,
+  CONTEXT_FLOOR_GROUP_LABEL,
+  CONTEXT_FLOOR_RESET,
+  CONTEXT_FLOOR_RESTORE,
+  CONTEXT_FLOOR_RESTORE_LABEL,
+  CONTEXT_MENU_LABEL,
+  CONTEXT_SUMMARY_CANCEL,
+  CONTEXT_SUMMARY_EDIT,
+  CONTEXT_SUMMARY_EDIT_LABEL,
+  CONTEXT_SUMMARY_HIDE,
+  CONTEXT_SUMMARY_INPUT_LABEL,
+  CONTEXT_SUMMARY_SAVE,
+  CONTEXT_SUMMARY_SHOW,
   HISTORY_LOCKED_HELP,
   HISTORY_LOCKED_REFUSED,
   MAIN_EMPTY,
@@ -77,6 +95,14 @@ import {
 import type { Sv3ComposerState } from './fixtures.js';
 import { SV3_RESULTS_IDLE, type Sv3ResultsView } from './sv3-results.js';
 import { sv3TurnSourceCount, type Sv3Turn } from './sv3-sessions.js';
+import {
+  SV3_CONTEXT_ACTION,
+  SV3_CONTEXT_MENU,
+  sv3TurnContextFor,
+  type Sv3ContextAction,
+  type Sv3ContextMenuRequest,
+  type Sv3TurnContext,
+} from './sv3-context.js';
 import {
   projectSv3AnswerFrame,
   sv3SourcesTrigger,
@@ -257,6 +283,104 @@ export class Sv3Main extends JfElement {
          padding rather than a gap, so the LAST turn keeps its breathing room above the composer. */
       .turn {
         padding-bottom: var(--space-4);
+      }
+
+      /* ── The effective context (tempdoc 610, ported by 852 S2) ──────────────
+         A turn the model no longer reads is DIMMED and never hidden: the transcript is the reader's
+         record of what happened, and the floor changes what the next prompt contains, not what the
+         conversation was. Recession is the whole visual budget here — no colour, because the 3-colour
+         law reserves it for act-now / in-motion / broken and an out-of-context turn is none of those. */
+      .turn[data-out-of-context] {
+        opacity: 0.55;
+      }
+      /* Individually hidden: the same recession plus a rail, because this one was the READER's own act
+         and the rail is what distinguishes "I hid this" from "the floor moved past it". */
+      .turn[data-excluded] {
+        opacity: 0.55;
+        border-inline-start: 2px dashed var(--border);
+        padding-inline-start: var(--space-2);
+      }
+      .context-floor {
+        margin-block: var(--space-3);
+      }
+      /* The boundary itself: the one node carrying role="separator", and deliberately empty. */
+      .context-floor-rule {
+        border-top: 1px dashed var(--border);
+      }
+      .context-floor-line {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--space-2);
+        padding-block: var(--space-1);
+        color: var(--secondary-label);
+        font-size: var(--font-size-sv3-xs);
+      }
+      .context-floor-label {
+        min-width: 0;
+      }
+      .context-floor-act::part(control) {
+        display: inline-flex;
+        align-items: center;
+        height: var(--space-6);
+        padding-inline: var(--space-1);
+        border: 0;
+        border-radius: var(--control-radius);
+        background: none;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+      }
+      .context-floor-act::part(control):hover {
+        color: var(--foreground);
+      }
+      .context-floor-summary {
+        margin: var(--space-1) 0 0;
+        padding: var(--space-2);
+        border-radius: var(--control-radius);
+        background: var(--muted);
+        color: var(--secondary-label);
+        font-size: var(--font-size-sv3-xs);
+        line-height: 1.5;
+      }
+      .context-floor-input {
+        inline-size: 100%;
+        min-block-size: var(--space-12);
+        box-sizing: border-box;
+        padding: var(--space-1);
+        border: 1px solid var(--border);
+        border-radius: var(--control-radius);
+        background: var(--background);
+        color: var(--foreground);
+        font: inherit;
+        resize: vertical;
+      }
+      .context-floor-input:focus-visible {
+        outline: 2px solid var(--ring);
+        outline-offset: 1px;
+      }
+      .context-floor-summary-acts {
+        display: flex;
+        gap: var(--space-2);
+        margin-top: var(--space-1);
+      }
+      /* The turn's ⋯ overflow RESTS, and is the one control in the row that does. L14's law is that
+         exactly one thing yields (the copy action, tempdoc 818 §6b) — and the context acts behind
+         this glyph are reachable from nowhere else in the window, so hiding them until the pointer
+         finds the turn would make five capabilities discoverable only by accident. It is muted
+         rather than revealed: present at rest, quiet until wanted. */
+      .tail-menu::part(control) {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        inline-size: var(--space-6);
+        block-size: var(--space-6);
+        border-radius: var(--control-radius);
+        color: var(--icon-muted);
+        cursor: pointer;
+      }
+      .tail-menu::part(control):hover {
+        color: var(--foreground);
       }
       /* Per the design spec: 'flex flex-col items-end gap-1'. */
       .ask {
@@ -850,6 +974,12 @@ export class Sv3Main extends JfElement {
     detailed: { type: Boolean, reflect: true },
     copiedTurnId: { state: true },
     expandedSources: { state: true },
+    turnContexts: { attribute: false },
+    floorSummary: { attribute: false },
+    streaming: { type: Boolean },
+    showFloorSummary: { state: true },
+    editingFloorSummary: { state: true },
+    floorSummaryDraft: { state: true },
   };
 
   declare state: Sv3ComposerState;
@@ -913,6 +1043,25 @@ export class Sv3Main extends JfElement {
    * the same Set and Lit would not re-render.
    */
   declare expandedSources: ReadonlySet<string>;
+  /**
+   * What the effective context does with each turn (tempdoc 610, ported by 852 S2) — POSITIONAL,
+   * one entry per turn in {@link turns}. Derived by the window from the conversation's `/history`
+   * companion record, because the window is the one that loads it and the one that must reload it
+   * after every write; this region decides nothing about the context and renders what it is given.
+   */
+  declare turnContexts: readonly Sv3TurnContext[];
+  /** The compaction summary standing at the floor, or null for a plain rewind / no floor. */
+  declare floorSummary: string | null;
+  /**
+   * Something in this WINDOW is streaming (tempdoc 852 S2). Handed down rather than inferred from a
+   * turn's status: the context acts are withheld for the whole conversation while a prompt is in
+   * flight, and a turn that is not itself streaming cannot see that.
+   */
+  declare streaming: boolean;
+  /** The divider's disclosure — the summary is a paragraph of the model's words, not a label. */
+  declare showFloorSummary: boolean;
+  declare editingFloorSummary: boolean;
+  declare floorSummaryDraft: string;
 
   /**
    * The design spec's two scroll modes as one flag: armed = `following-end` (the reader is at the end, so
@@ -921,6 +1070,8 @@ export class Sv3Main extends JfElement {
    */
   private followEnd = true;
   private copiedTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The summary text a save is waiting on, or null — how this region learns the write landed. */
+  private pendingSummary: string | null = null;
 
   constructor() {
     super();
@@ -937,6 +1088,12 @@ export class Sv3Main extends JfElement {
     this.detailed = false;
     this.copiedTurnId = null;
     this.expandedSources = new Set();
+    this.turnContexts = [];
+    this.floorSummary = null;
+    this.streaming = false;
+    this.showFloorSummary = false;
+    this.editingFloorSummary = false;
+    this.floorSummaryDraft = '';
   }
 
   override disconnectedCallback(): void {
@@ -957,12 +1114,36 @@ export class Sv3Main extends JfElement {
     this.followEnd = el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_END_SLACK_PX;
   };
 
-  protected override updated(): void {
+  protected override updated(changed: Map<string, unknown>): void {
+    this.settleFloorSummaryEditor(changed);
     const el = this.scroller;
     if (el === null || !this.followEnd) return;
     // Assigned unconditionally while armed, which is what makes a streaming answer stay in view:
     // each delta grows the content and the end is followed in the same frame it grew.
     el.scrollTop = el.scrollHeight;
+  }
+
+  /**
+   * The disclosure's own state answers to the STORE, not to the press that started the act.
+   *
+   *  - The saved text came back ⇒ close the editor and keep it disclosed, so the reader reads what
+   *    now stands rather than what they typed.
+   *  - The summary changed for any other reason (a different conversation, a re-compaction, a
+   *    restore) ⇒ the draft was written against a summary that is gone, and it goes with it.
+   *  - Neither ⇒ nothing happens, which is the refused-write case: the editor stays open with the
+   *    reader's correction in it while the toast says the act failed.
+   */
+  private settleFloorSummaryEditor(changed: Map<string, unknown>): void {
+    if (this.pendingSummary !== null && this.floorSummary === this.pendingSummary) {
+      this.pendingSummary = null;
+      this.editingFloorSummary = false;
+      return;
+    }
+    if (!changed.has('floorSummary')) return;
+    this.pendingSummary = null;
+    this.editingFloorSummary = false;
+    this.floorSummaryDraft = '';
+    this.showFloorSummary = false;
   }
 
   render(): TemplateResult {
@@ -1128,8 +1309,20 @@ export class Sv3Main extends JfElement {
     const live = this.run;
     const run =
       turn.kind === 'agent' && live?.turnId === turn.id && live.phase !== 'ended' ? live : null;
+    // Tempdoc 610 (852 S2) — what the EFFECTIVE context does with this turn. A turn the window has
+    // no context frame for renders exactly as it did before the port: nothing about the prompt is
+    // claimed for a conversation whose `/history` has not been read.
+    const context = sv3TurnContextFor(this.turnContexts, turn.id);
     return html`
-      <div class="turn" data-testid="sv3-turn" data-kind=${turn.kind} data-status=${turn.status}>
+      ${context?.isFloor === true ? this.floorDivider() : nothing}
+      <div
+        class="turn"
+        data-testid="sv3-turn"
+        data-kind=${turn.kind}
+        data-status=${turn.status}
+        ?data-out-of-context=${context?.outOfContext === true}
+        ?data-excluded=${context?.hasExcluded === true}
+      >
         ${turn.question === ''
           ? nothing
           : html`<div class="ask">
@@ -1224,11 +1417,178 @@ export class Sv3Main extends JfElement {
     const note = this.turnNote(turn);
     const sources = this.tailSources(turn);
     const copy = this.tailCopy(turn);
-    if (facts === nothing && note === nothing && sources === nothing && copy === nothing) {
+    const context = this.tailContextMenu(turn);
+    if (
+      facts === nothing &&
+      note === nothing &&
+      sources === nothing &&
+      copy === nothing &&
+      context === nothing
+    ) {
       return nothing;
     }
     return html`<div class="tail" data-testid="sv3-turn-tail">
-      ${facts}${note}${sources}${copy}
+      ${facts}${note}${sources}${copy}${context}
+    </div>`;
+  }
+
+  /**
+   * The turn's ⋯ overflow, and the ONE place the effective-context acts are reachable from a turn
+   * (tempdoc 610 §13.1's split, applied to a window whose unit is a turn rather than a message).
+   *
+   * IT RENDERS ONLY WHEN THE TURN NAMES A STORE MESSAGE. A live turn carries a positional handle and
+   * an agent turn's ids belong to the run plane, so neither can be the subject of a floor or an
+   * exclusion — and the honest form of that is no control, not a control that fails when pressed
+   * (852 §2.3b: an affordance that needs a backend id is unavailable until the turn has one).
+   *
+   * The trigger ANNOUNCES; the window decides what the menu contains, because the entries are
+   * derived from the conversation's `/history` and only the window holds it.
+   */
+  private tailContextMenu(turn: Sv3Turn): TemplateResult | typeof nothing {
+    // WINDOW-wide, not per-turn: the context of a prompt in flight is not editable, and the menu's
+    // own derivation says so (`sv3ContextMenuItems` returns nothing while streaming). A trigger
+    // gated only on THIS turn's status would render on every settled turn during someone else's
+    // stream and open an empty menu — "a control that fails when pressed", which is the alternative
+    // this slice's honest-null rule exists to refuse.
+    if (this.streaming || turn.status === 'streaming') return nothing;
+    const context = sv3TurnContextFor(this.turnContexts, turn.id);
+    if (context === null || context.messageIds.length === 0) return nothing;
+    return html`<jf-control
+      class="tail-menu"
+      data-testid="sv3-turn-context-menu"
+      data-turn=${turn.id}
+      label=${CONTEXT_MENU_LABEL}
+      .onActivate=${() => this.requestContextMenu(turn.id)}
+      >${icon({ name: 'more-horizontal', size: TAIL_GLYPH_SIZE })}</jf-control
+    >`;
+  }
+
+  /**
+   * The anchor is the TRIGGER's own rect — the one fact about where the menu goes that only this
+   * region has. Looked up BY TURN, because the primitive's activation carries no event and the
+   * first trigger in the transcript is a different turn's.
+   */
+  private requestContextMenu(turnId: string): void {
+    const anchor = this.shadowRoot
+      ?.querySelector(`.tail-menu[data-turn="${turnId}"]`)
+      ?.getBoundingClientRect();
+    this.dispatchEvent(
+      new CustomEvent<Sv3ContextMenuRequest>(SV3_CONTEXT_MENU, {
+        detail: { turnId, x: anchor?.left ?? 0, y: (anchor?.bottom ?? 0) + 4 },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  /** Every context act this region raises goes through one seam, for the window to resolve. */
+  private contextAct(detail: Sv3ContextAction): void {
+    this.dispatchEvent(
+      new CustomEvent<Sv3ContextAction>(SV3_CONTEXT_ACTION, {
+        detail,
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  /**
+   * Tempdoc 610 Phase C/D — the full-width line above the floor turn: everything above it is still
+   * READ by the reader and no longer read by the model. Two forms, because they are two different
+   * facts — a plain rewind DROPPED those turns, a compaction SUMMARIZED them — and the summary is
+   * reachable, editable and revertible from the line that claims it.
+   */
+  private floorDivider(): TemplateResult {
+    const summary = this.floorSummary;
+    const compacted = summary !== null;
+    return html`<div class="context-floor" data-testid="sv3-context-floor">
+        ${/* The BOUNDARY is this hairline and only this hairline. `role="separator"` is
+              children-presentational: a conforming screen reader prunes everything inside a node
+              carrying it, which on the row below would have hidden Restore — the one way back from
+              a floor — along with the summary's own controls. So the role sits on an empty rule and
+              the row beside it is a plain group. */ ''}
+        <div class="context-floor-rule" role="separator"></div>
+        <div class="context-floor-line" role="group" aria-label=${CONTEXT_FLOOR_GROUP_LABEL}>
+          <span class="context-floor-label" data-testid="sv3-context-floor-label"
+            >${compacted ? CONTEXT_FLOOR_COMPACTED : CONTEXT_FLOOR_RESET}</span
+          >
+          ${compacted
+            ? html`<jf-control
+                class="context-floor-act"
+                data-testid="sv3-context-floor-summary-toggle"
+                label=${this.showFloorSummary ? CONTEXT_SUMMARY_HIDE : CONTEXT_SUMMARY_SHOW}
+                .onActivate=${() => {
+                  this.showFloorSummary = !this.showFloorSummary;
+                  if (!this.showFloorSummary) this.editingFloorSummary = false;
+                }}
+                >${this.showFloorSummary ? CONTEXT_SUMMARY_HIDE : CONTEXT_SUMMARY_SHOW}</jf-control
+              >`
+            : nothing}
+          ${compacted && this.showFloorSummary && !this.editingFloorSummary
+            ? html`<jf-control
+                class="context-floor-act"
+                data-testid="sv3-context-floor-summary-edit"
+                label=${CONTEXT_SUMMARY_EDIT_LABEL}
+                .onActivate=${() => {
+                  this.floorSummaryDraft = summary ?? '';
+                  this.editingFloorSummary = true;
+                }}
+                >${CONTEXT_SUMMARY_EDIT}</jf-control
+              >`
+            : nothing}
+          <jf-control
+            class="context-floor-act"
+            data-testid="sv3-context-floor-restore"
+            label=${CONTEXT_FLOOR_RESTORE_LABEL}
+            .onActivate=${() => this.contextAct({ action: 'restore' })}
+            >${CONTEXT_FLOOR_RESTORE}</jf-control
+          >
+        </div>
+        ${compacted && this.showFloorSummary ? this.floorSummaryBody(summary ?? '') : nothing}
+      </div>`;
+  }
+
+  private floorSummaryBody(summary: string): TemplateResult {
+    if (!this.editingFloorSummary) {
+      return html`<p class="context-floor-summary" data-testid="sv3-context-floor-summary">
+        ${summary}
+      </p>`;
+    }
+    return html`<div class="context-floor-summary">
+      <textarea
+        class="context-floor-input"
+        data-testid="sv3-context-floor-summary-input"
+        aria-label=${CONTEXT_SUMMARY_INPUT_LABEL}
+        .value=${this.floorSummaryDraft}
+        @input=${(event: Event) => {
+          this.floorSummaryDraft = (event.target as HTMLTextAreaElement).value;
+        }}
+      ></textarea>
+      <div class="context-floor-summary-acts">
+        <jf-control
+          class="context-floor-act"
+          data-testid="sv3-context-floor-summary-save"
+          label=${CONTEXT_SUMMARY_SAVE}
+          .onActivate=${() => {
+            // The editor stays OPEN until the STORE says the text landed (it closes in `updated`
+            // when the summary comes back as what was saved). Closing on the press would throw away
+            // the reader's correction the moment the write was refused — the one state in which
+            // they most need it back.
+            this.pendingSummary = this.floorSummaryDraft;
+            this.contextAct({ action: 'summary', text: this.floorSummaryDraft });
+          }}
+          >${CONTEXT_SUMMARY_SAVE}</jf-control
+        >
+        <jf-control
+          class="context-floor-act"
+          data-testid="sv3-context-floor-summary-cancel"
+          label=${CONTEXT_SUMMARY_CANCEL}
+          .onActivate=${() => {
+            this.editingFloorSummary = false;
+          }}
+          >${CONTEXT_SUMMARY_CANCEL}</jf-control
+        >
+      </div>
     </div>`;
   }
 
