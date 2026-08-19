@@ -37,6 +37,9 @@
  *
  * a11y: the scroll region is `tabindex="0"` + `role="region"` (the measured axe
  * `scrollable-region-focusable` fix) so a keyboard user can focus-then-arrow/Page-scroll it. The
+ * ramp's own inner scroll containers — a wide `<pre>` or `<table>` in Rendered mode — get the same
+ * treatment from `markScrollableRegions` (tempdoc 853 F-05); the pane region alone does not reach
+ * content clipped INSIDE a block. The
  * Rendered/Source toggle is a `role="radiogroup"` of native `<button role="radio">`s — the same
  * mutually-exclusive-choice pattern `OptionButtonGroupRenderer` (`jf-option-button-group`) already
  * uses, chosen over an independent-toggle `aria-pressed` pair (seen on UnifiedChatView's "Abilities"
@@ -48,6 +51,7 @@ import { JfElement } from '../../primitives/JfElement.js';
 import { markdownBlockMap, type MarkdownBlockDescriptor } from './markdownBlockMap.js';
 import { markdownCodeHighlight, markdownTypography } from '../markdown/markdownStyles.js';
 import { highlightCodeBlocks } from '../markdown/markdownHighlight.js';
+import { markScrollableRegions } from '../markdown/markdownScrollRegions.js';
 import { formatDisplayPath, formatLocationBreadcrumb } from '../searchResults/resultRowPresentation.js';
 import { isAdvancedMode, subscribeUiMode } from '../../state/uiModeState.js';
 import { authorizedFetch } from '../../api/authorizedFetch.js';
@@ -281,6 +285,10 @@ export class DocumentPane extends JfElement {
     // blocks render into is passed (not a snapshot of its children), so a highlighter that is still
     // loading writes into the live tree when it arrives. Idempotent; a no-op in Source mode.
     highlightCodeBlocks(this.renderRoot.querySelector('.blocks'));
+    // Tempdoc 853 (F-05) — the ramp's `pre`/`table` scroll containers are focusable + named, so a
+    // keyboard user can reach the clipped half of a wide fence or table. Re-applied per render: Lit
+    // rebuilds this subtree through `unsafeHTML`, which takes the attributes with it.
+    markScrollableRegions(this.renderRoot.querySelector('.blocks'));
   }
 
   private async loadContent(path: string): Promise<void> {

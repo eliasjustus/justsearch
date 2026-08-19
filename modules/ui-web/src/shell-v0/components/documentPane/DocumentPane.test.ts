@@ -406,6 +406,45 @@ describe('DocumentPane — a11y + events', () => {
     expect(region?.getAttribute('aria-label')).toBeTruthy();
   });
 
+  it("the ramp's own scroll containers are keyboard-reachable too (tempdoc 853 F-05)", async () => {
+    // The regression the 2026-08-19 audit measured as axe `scrollable-region-focusable` (serious,
+    // WCAG 2.1.1) n=2 ON THIS SURFACE: a `<table>` (`display:block; overflow-x:auto` under the prose
+    // variant) and a fenced `<pre>` (`overflow-x:auto`) both scroll horizontally, and the pane's own
+    // `.scroll-region` above does NOT reach content clipped INSIDE a block. This is the wiring pin —
+    // `markdownScrollRegions.test.ts` proves the pass, this proves the pane runs it.
+    // Both constructs are nested one level inside a blockquote ON PURPOSE. This file already records
+    // (markdownBlockMap.test.ts, the note above its wrapper assertions) that happy-dom's DOMPurify
+    // strips exactly the single OUTERMOST element of a standalone fragment — a test-environment
+    // artifact, not a production one — which would delete the very `<table>`/`<pre>` under test.
+    // Nesting keeps the real marked -> DOMPurify -> unsafeHTML path and leaves the containers intact.
+    stubFetchOnce({
+      content: [
+        '# Title',
+        '',
+        '> | a | b |',
+        '> | --- | --- |',
+        '> | 1 | 2 |',
+        '',
+        '> ```java',
+        '> int x = 1;',
+        '> ```',
+      ].join('\n'),
+    });
+    const el = make();
+    el.docPath = 'notes/wide.md';
+    await flush(el);
+
+    const table = el.shadowRoot?.querySelector('.blocks table');
+    expect(table, 'the fixture must actually render a table').toBeTruthy();
+    expect(table?.getAttribute('tabindex')).toBe('0');
+    expect(table?.getAttribute('aria-label')).toBeTruthy();
+
+    const pre = el.shadowRoot?.querySelector('.blocks pre');
+    expect(pre, 'the fixture must actually render a fenced block').toBeTruthy();
+    expect(pre?.getAttribute('tabindex')).toBe('0');
+    expect(pre?.getAttribute('aria-label')).toBeTruthy();
+  });
+
   it('emits pane-close when the header close action activates', async () => {
     stubFetchOnce({ content: MD_FIXTURE });
     const el = make();
