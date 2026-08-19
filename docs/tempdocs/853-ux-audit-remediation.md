@@ -1,7 +1,7 @@
 ---
 number: 853
 title: UX audit remediation — the three SERIOUS a11y findings from 2026-08-19
-status: implementing (all three fixes in this PR)
+status: implementing (round 1 = the three SERIOUS fixes; round 2 = F-09 + the contrast-gate blind spot, see §remediation-2)
 created: 2026-08-19
 updated: 2026-08-19
 charter: remediation of the measured closure audit for tempdocs 846 / 847 / 848
@@ -152,6 +152,10 @@ real streamed turns), by an agent who is neither the auditor nor the committer o
 This confirms the fixes are **present and correct in the live DOM**; it is explicitly **not** the
 measured four-palette axe re-measure the paragraph above reserves for the next auditor.
 
+**Scope in time:** these readings were taken against **round 1's** code, before §remediation-2
+(#507) landed. They confirm round 1's structural claims and say nothing about R2.1's copy-control
+naming and hit-area changes, which postdate the measurement and need their own live check.
+
 **F-05 — `scrollable-region-focusable`.** In the live reading pane, `DocumentPane`'s own
 `.scroll-region` carries `tabindex="0"`, `role="region"`, `aria-label="Document content"`. On a
 cited document containing tables, the markdown pass had marked **all 5** `<table>` elements with
@@ -171,3 +175,117 @@ than in a fixture.
 reasoning turn survives a full window reload — after `page.goto` plus re-entry from the sidebar, the
 settled turn re-rendered its reasoning block (count 1, same real-button structure). The 848 fix
 holds live.
+
+---
+
+## §remediation-2 — F-09, and the gate blind spot that let F-07 reach a human
+
+Round 1 fixed the three SERIOUS findings and **explicitly deferred F-09** (see above). Round 2 takes
+it, plus one structural item round 1 surfaced as a side effect: the reason F-07 had to be found by
+hand.
+
+### R2.1 — F-09: the copy control's name and both controls' hit areas
+
+`modules/ui-web/src/shell-v0/components/chat/ReasoningBlock.ts`
+
+The audit measured, on the copy control: accessible name **the clipboard glyph itself** (computed
+from *content*, so `title="Copy reasoning"` could never win), hit area **23 x 19**; and on the header
+row **541 x 20**. Both sizes are under the WCAG 2.2 **2.5.8** (Target Size, Minimum) 24 x 24 CSS-px
+floor. axe flagged neither — `button-name` is satisfied by the emoji, and 2.5.8 is WCAG 2.2 while the
+audit ran 2.1 — so this finding exists only because a human looked.
+
+Built on the **post-#499** markup (round 1 restructured the header into a real disclosure `<button>`
+with the copy control as its *sibling*), not on the v0.1.0 shape the audit measured:
+
+- **Name.** `aria-label="Copy reasoning"` on the button, and the glyph moved into a
+  `<span aria-hidden="true">` so there is no content left to compute a name from. `title` is kept —
+  the pointer affordance is unchanged. This is the `title` + `aria-label` pairing
+  `UnifiedChatView.ts:1602-1609` already uses for its own Copy action, so the repo has one shape for
+  naming a glyph-only copy control, not two.
+- **Target size.** `.copy-btn` gets `min-width`/`min-height: 24px` plus `display: inline-flex` and
+  centring, so the box grows around the glyph without moving or resizing it; `.disclosure` gets
+  `min-height: 24px` (it is already wide by `flex: 1` — only the block axis was short). 24px is
+  written as the literal the criterion names rather than routed through a design-scale token, so a
+  later scale re-tune cannot quietly drop the row back under the floor. Neither rule changes the
+  resting appearance: both controls were already taller/wider than their ink at rest.
+
+Regression pins in `ReasoningBlock.test.ts` (`describe('ReasoningBlock — F-09 …')`): the accessible
+name comes from `aria-label` and the glyph is `aria-hidden`, `title` survives, and the size
+declarations are asserted **scoped to their own rule body** (a `ruleBody()` helper), so a stray
+`24px` elsewhere in the sheet cannot satisfy them. **Honest limit:** happy-dom does not lay out
+shadow content, so there is no truthful *computed* box to read — the declarations are what is
+asserted, and the measured proof stays with the next live audit.
+
+### R2.2 — the contrast gate could not see the high-contrast palettes
+
+`scripts/ci/check-contrast-matrix.mjs` (+ new `scripts/ci/check-contrast-matrix.test.mjs`)
+
+Found while fixing F-07 in round 1 and logged then: the gate parsed **`:root` and
+`[data-theme="light"]` only**. The two high-contrast blocks in `styles/tokens.css` (`.high-contrast`,
+`[data-theme="light"].high-contrast`) were structurally invisible to it — an HC pairing could not
+fail this gate no matter how bad it was. That is a gate that cannot bite on half the shipped
+palettes, and it is why an HC contrast defect had to reach a manual auditor.
+
+**What changed.** The gate now resolves four palettes and runs the same pairing matrix on each:
+**34 → 68 pairings**. The hard part is not the maths, it is that the HC blocks *inherit* — each
+declares a handful of tokens and leaves the rest to the palette beneath it, so an effective value has
+to be resolved the way the cascade resolves it or the gate reports gaps that do not exist. The chains
+implemented:
+
+| palette | resolution chain |
+|---|---|
+| `dark` | `:root` |
+| `light` | `:root` → `[data-theme="light"]` |
+| `hc-dark` | `:root` → `.high-contrast` |
+| `hc-light` | `:root` → `[data-theme="light"]` → `.high-contrast` → `[data-theme="light"].high-contrast` |
+
+The third layer of the `hc-light` chain is the one that is easy to drop: `.high-contrast` (0,1,0) is
+declared *after* `[data-theme="light"]` (0,1,0) and *outside* the `@layer core-theme` the theme blocks
+sit in, so in light+HC it wins for every token the light-specific HC block does not redeclare
+(`--text-ghost`, `--glass-border-strong`). Omitting it would resolve those to the light theme's values
+— a wrong answer that still *looks* like a resolved one.
+
+**Scope boundary (no fork).** The gate owns the **role** pairings (`accent-on-<role>` on
+`accent-<role>`; `text-<role>` on `surface-1`; the 596 tooltip pair). The achromatic **text-grade**
+ramp under HC — which is what F-07 actually was — stays owned by round 1's
+`shell-v0/themes/highContrastTextRoles.test.ts`, which holds it to the stricter AAA floor plus grade
+ordering. Two authorities on the same tokens would be a fork, so the gate carries a pointer instead.
+**Said plainly: this extension would not by itself have caught F-07** — it closes the structural
+blindness for the role pairings, and round 1's test closes the grade ramp. The pair of them is the
+closure; neither alone is.
+
+**Findings on the real tree: none.** All 68 pairings clear the WCAG AA hard floor, so no
+expected-state/baseline entry was needed and none was added. The HC palettes add 9 new APCA
+advisories (18 total, up from 9) — all `hc-dark` duplicates of the `dark` rows, which is the
+*finding*, not noise: neither HC block redeclares a single role token, so **hc-dark is byte-identical
+to dark for every role pairing**. That is the measured form of audit finding **F-01 (INFO)** — HC
+delivers no uplift where the chromatic colour actually lives. Recorded, not acted on: repainting role
+tokens per palette is presentation-authority work that needs its own pass and its own measured audit.
+
+**Test sibling** (`check-contrast-matrix.test.mjs`, node + `assert`, the
+`check-accent-as-text.test.mjs` shape): 33 checks covering an HC-**declared** token read at its HC
+value (`hc-light --surface-1` = `#f5f5f5`, not light's), every HC-**inherited** role token read at the
+inherited value (both directions, all 8 roles), the third-layer cascade case
+(`hc-light --text-ghost` = the *dark* HC block's `#666666`), the real tree evaluating to zero
+failures, and — the one that proves the extension can bite — a **constructed sub-AA HC pair that
+FAILS** (`#999999` on an *inherited* `#ffffff`, 2.85:1), asserted to fail *only* in the HC palette
+while the same pairing passes in the base palette beneath it.
+
+### §verification (round 2)
+
+| check | result |
+|---|---|
+| `npm run typecheck` (ui-web) | clean |
+| `npm run test:unit:run` (ui-web) | **430 files / 5480 tests, all pass** |
+| `node scripts/ci/check-contrast-matrix.mjs` | **OK — 68 pairings across 4 palettes**, exit 0 (was 34 across 2) |
+| `node scripts/ci/check-contrast-matrix.test.mjs` | **OK — 33 checks**, exit 0 |
+| rest of the `ui-web-gates` recipe | green, except the three known reds below |
+| `check-theme-token-closure` | RED — **pre-existing**, the 3 known `RecentsMenu.ts` ghosts (`expected-state.v1.json` `theme-token-closure-red`) |
+| `check-accent-as-text` | RED — **pre-existing**, `ActionLedgerView.ts` (`expected-state.v1.json` `accent-as-text-red`) |
+| `check-controls-a11y` | RED — **pre-existing**, the known `UnifiedChatView.ts` title-on-disabled (audit F-11), count unchanged at 1 |
+| non-ASCII audit of the diff | clean — added non-ASCII is prose punctuation only; the copy glyph stays an HTML entity |
+
+**Honest limit, unchanged from round 1.** Both items are verified by unit test and gate, not by a
+second live axe/oracle run. The 2.5.8 sizes in particular are asserted as *declarations*; the
+confirming measurement belongs to the next independent auditor (`ux-audit-closure`: reviewer is not
+the committer).

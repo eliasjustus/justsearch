@@ -39,6 +39,13 @@ async function mount(props: Partial<{ text: string; durationMs: number }> = {}):
 const styleText = (): string =>
   [ReasoningBlock.styles].flat(Infinity).map((s) => String((s as { cssText?: string }).cssText ?? s)).join('\n');
 
+/** One rule's declaration body, so a size assertion cannot pass off a match from a NEIGHBOURING rule. */
+const ruleBody = (selector: string): string => {
+  const m = new RegExp(`${selector}\\s*\\{([^}]*)\\}`).exec(styleText());
+  if (!m) throw new Error(`ReasoningBlock.styles has no \`${selector}\` rule`);
+  return m[1] as string;
+};
+
 describe('ReasoningBlock — F-08 nested-interactive', () => {
   it('the header row is inert layout, not a control', async () => {
     const el = await mount();
@@ -140,6 +147,38 @@ describe('ReasoningBlock — behaviour preserved across the restructure', () => 
     const el = await mount({ durationMs: 7000 });
     expect(el.shadowRoot?.querySelector('.label')?.textContent).toContain('Thought for 7s');
     el.remove();
+  });
+});
+
+describe('ReasoningBlock — F-09 copy-control name and target size', () => {
+  it('names the copy control with aria-label, not with its glyph', async () => {
+    const el = await mount();
+    const copy = el.shadowRoot?.querySelector('.copy-btn');
+    // The measured defect: accessible name "clipboard-glyph", computed from CONTENT, so `title` — the
+    // only prose the markup carried — could never win. aria-label outranks content, so this is the
+    // name AT announces.
+    expect(copy?.getAttribute('aria-label')).toBe('Copy reasoning');
+    // …and the glyph is out of the a11y tree entirely, so there is no content left to compute from.
+    const glyph = copy?.firstElementChild;
+    expect(glyph?.getAttribute('aria-hidden')).toBe('true');
+    expect(glyph?.textContent?.trim().length).toBeGreaterThan(0);
+    // The pointer affordance is unchanged — this is a name fix, not a tooltip removal.
+    expect(copy?.getAttribute('title')).toBe('Copy reasoning');
+    el.remove();
+  });
+
+  it('gives both controls a >=24px hit area (WCAG 2.2 2.5.8)', () => {
+    // Measured before the fix: copy 23 x 19, disclosure row 541 x 20 — both under the floor.
+    // happy-dom does not lay out shadow content, so there is no honest COMPUTED box to read here;
+    // the declarations are asserted instead, each scoped to its own rule body so a stray `24px`
+    // elsewhere in the sheet cannot satisfy them.
+    const copy = ruleBody('\\.copy-btn');
+    expect(copy).toMatch(/min-width:\s*24px/);
+    expect(copy).toMatch(/min-height:\s*24px/);
+    // The copy glyph is centred rather than top-left in the grown box.
+    expect(copy).toMatch(/display:\s*inline-flex/);
+    // The disclosure is wide by layout (flex: 1); only its block axis was short.
+    expect(ruleBody('\\.disclosure')).toMatch(/min-height:\s*24px/);
   });
 });
 
