@@ -48,6 +48,10 @@ import {
   type Sv3TurnKind,
   type Sv3TurnRef,
 } from './sv3-sessions.js';
+// Tempdoc 847 §1.3 — the cold-load case merges the REAL record projection, not a hand-built turn:
+// the evidence defect lived in that projection, so a fixture that bypassed it would prove nothing.
+import { projectSv3RecordTurns } from './sv3-record.js';
+import type { ThreadEvent } from '../unifiedThreadProjection.js';
 
 /**
  * Conversation IDENTITY moved to the app-wide store in Phase F6 (`createConversationId`), so the pure
@@ -795,6 +799,60 @@ describe('a rename the store refused, put back (tempdoc 838)', () => {
   });
 });
 
+/**
+ * A grounded conversation as the WIRE carries it (tempdoc 847 §1.3) — the assistant event with its
+ * persisted `citations` and `claimMatches`, which `projectSv3RecordTurns` turns into the turn's
+ * evidence. Used by the cold-load case, which is about the whole record → merge path.
+ */
+const groundedRecord = (): readonly ThreadEvent[] => [
+  {
+    id: 'g1',
+    occurredAt: '2026-08-13T10:00:00.000Z',
+    kind: 'USER_MESSAGE',
+    originator: 'user',
+    content: 'why did the renewal fail?',
+    attributes: {},
+  },
+  {
+    id: 'g2',
+    occurredAt: '2026-08-13T10:00:01.000Z',
+    kind: 'ASSISTANT_MESSAGE',
+    originator: 'agent',
+    content: 'The lock held.',
+    attributes: {
+      citations: [
+        {
+          parentDocId: 'docs/lease.md',
+          chunkIndex: 0,
+          chunkTotal: 1,
+          startChar: 0,
+          endChar: 40,
+          score: 0.9,
+          excerpt: 'The lock held past the renewal date.',
+          startLine: 1,
+          endLine: 2,
+          headingText: 'Renewal',
+          headingLevel: 2,
+        },
+      ],
+      claimMatches: {
+        scorer: 'CROSS_ENCODER',
+        sentencesTotal: 1,
+        sentencesScored: 1,
+        matches: [
+          {
+            sentenceIndex: 0,
+            sentenceText: 'The lock held.',
+            sourceIndex: 0,
+            similarity: 0.94,
+            parentDocId: 'docs/lease.md',
+          },
+        ],
+      },
+    },
+  },
+];
+
 /** A store row, for the revert cases above (the merge block has its own local `row`). */
 const row838 = (id: string): Sv3StoreConversation => ({
   id,
@@ -822,6 +880,9 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
     durationMs: null,
     modelLabel: null,
     ...over,
+    // A record-projected turn carries the record's own id as its `recordId` (tempdoc 847 §2.4.3),
+    // exactly as `sv3-record.ts` mints it — that is the identity the merge reconciles on.
+    recordId: over.recordId ?? over.id,
   });
 
   const settled = (): Sv3SessionList => {
@@ -830,13 +891,43 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
     return settleTurn(appendTurnDelta(list, ref, 'local text'), ref, 'complete', T0 + MINUTE);
   };
 
-  it('replaces a settled turn with the record’s, taking the record’s id as the stable handle', () => {
-    const applied = applySv3Record(settled(), 'uc-a', [
+  it('replaces a settled turn’s content with the record’s, KEEPING the turn’s own id', () => {
+    // Tempdoc 847 §1.6b — this expectation is inverted deliberately. It used to pin "takes the
+    // record's id as the stable handle", which is the defect: `expandedSources`, `copiedTurnId` and
+    // the live run's `turnId` are keyed on the LOCAL id, and every one of those writes silently
+    // no-ops the moment a merge swaps it. The record's id is kept, as `recordId`, which is what the
+    // merge reconciles on. The answer replacement below is unchanged: the record IS authoritative
+    // for the content.
+    const before = settled();
+    const localId = before.sessions[0]?.turns[0]?.id as string;
+    const applied = applySv3Record(before, 'uc-a', [
       recordTurn({ id: 'evt-1', question: 'why did it fail?', answer: 'The lock held.' }),
     ]);
     expect(applied.sessions[0]?.turns).toHaveLength(1);
-    expect(applied.sessions[0]?.turns[0]?.id).toBe('evt-1');
+    expect(applied.sessions[0]?.turns[0]?.id).toBe(localId);
+    expect(applied.sessions[0]?.turns[0]?.recordId).toBe('evt-1');
     expect(applied.sessions[0]?.turns[0]?.answer).toBe('The lock held.');
+  });
+
+  it('reconciles by RECORD IDENTITY, never by position, once a turn has been stamped', () => {
+    // Tempdoc 847 §1.6/§2.4.3 — the length-skew case. Turn A is already reconciled to `evt-1`; a
+    // record turn `evt-2` may not land on it just because it is first in the list, and the position
+    // fallback must skip a local turn bearing a DIFFERENT recordId.
+    const two = submitInSession(settled(), 'and the break clause?', T0 + HOUR, 'ask', 'uc-unused');
+    const stamped = applySv3Record(two, 'uc-a', [recordTurn({ id: 'evt-1', answer: 'first' })]);
+    const settledSecond = settleTurn(
+      stamped,
+      { sessionId: 'uc-a', turnId: stamped.sessions[0]?.turns[1]?.id as string },
+      'complete',
+      T0 + HOUR,
+    );
+    const applied = applySv3Record(settledSecond, 'uc-a', [
+      recordTurn({ id: 'evt-2', question: 'and the break clause?', answer: 'second' }),
+    ]);
+    const turns = applied.sessions[0]?.turns ?? [];
+    // `evt-2` reconciled with the SECOND turn; the first kept its own answer and its own record id.
+    expect(turns.map((t) => t.recordId)).toEqual(['evt-1', 'evt-2']);
+    expect(turns.map((t) => t.answer)).toEqual(['first', 'second']);
   });
 
   it('does NOT touch a streaming turn — the live feed owns the in-flight one', () => {
@@ -881,6 +972,62 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
       'and the break clause?',
     ]);
     expect(applied.sessions[0]?.turns[1]?.status).toBe('streaming');
+  });
+
+  it('COLD LOAD — a conversation with no local turns takes the record’s evidence (847 §1.3)', () => {
+    // The path no test covered: a page load projects the store's conversations with `turns: []`, so
+    // every record turn passes through with no local prior. The record turns here are the REAL
+    // projection of REAL wire events rather than hand-built ones, because the defect lived in that
+    // projection (`evidence: null`, hardcoded) and a hand-built fixture would have carried evidence
+    // the window could never have produced.
+    const cold = mergeStoreConversations(SV3_SESSIONS_EMPTY, [row838('uc-cold')]);
+    expect(sessionById(cold, 'uc-cold')?.turns).toEqual([]);
+    const applied = applySv3Record(cold, 'uc-cold', projectSv3RecordTurns(groundedRecord()));
+    const restored = applied.sessions[0]?.turns[0] as Sv3Turn;
+    expect(restored.evidence).not.toBeNull();
+    expect(sv3TurnSourceCount(restored)).toBe(1);
+    expect(restored.evidence?.marks).toHaveLength(1);
+    expect(restored.recordId).toBe('g1');
+  });
+
+  it('never DUPLICATES an unreconciled turn when the record’s order disagrees with the local one', () => {
+    // The record can reconcile a LATER record turn to an EARLIER local turn (a record whose event
+    // order differs from the order this window minted its turns in). The output cursor must not
+    // rewind when that happens, or the trailing keep-pass re-walks locals it already emitted and
+    // appends the unreconciled one a second time — a turn appearing twice in the transcript.
+    const list: Sv3SessionList = {
+      activeId: 'uc-a',
+      sessions: [
+        {
+          id: 'uc-a',
+          title: 'q',
+          renamed: false,
+          pinned: false,
+          completedAt: null,
+          lastVisitedAt: 0,
+          createdAt: T0,
+          updatedAt: T0,
+          turns: [
+            recordTurn({ id: 'local-P', recordId: 'evt-2', question: 'P', answer: 'P' }),
+            recordTurn({ id: 'local-U', recordId: null, question: 'U', answer: 'U' }),
+            recordTurn({ id: 'local-Q', recordId: 'evt-1', question: 'Q', answer: 'Q' }),
+          ],
+        },
+      ],
+    };
+    const applied = applySv3Record(list, 'uc-a', [
+      recordTurn({ id: 'evt-1', question: 'Q', answer: 'Q from the record' }),
+      recordTurn({ id: 'evt-2', question: 'P', answer: 'P from the record' }),
+    ]);
+    const ids = applied.sessions[0]?.turns.map((t) => t.id) ?? [];
+    expect(ids).toHaveLength(3);
+    expect(ids.filter((id) => id === 'local-U')).toEqual(['local-U']);
+    // Each local turn kept its own id and took its OWN record turn's content.
+    expect(applied.sessions[0]?.turns.map((t) => [t.id, t.answer])).toEqual([
+      ['local-U', 'U'],
+      ['local-Q', 'Q from the record'],
+      ['local-P', 'P from the record'],
+    ]);
   });
 
   it('changes nothing for an EMPTY record or an unknown conversation', () => {
