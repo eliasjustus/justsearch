@@ -299,7 +299,9 @@ incremental rebuild, cell content probe-verified (4293/4293 chunk vectors live, 
 all 94 batches). The fresh-build re-verify rows confirm the 711 defaults pin (0.6185 ≈ 0.6184)
 with a direct on-disk vector-count probe. A separate same-session fresh-build defaults run scored
 0.3403/chunks-dead (the F-032-control signature, with the fix present) — unreproduced on the
-immediate probe-instrumented re-run, quarantined as a C-confidence anomaly in tempdoc 713 §M-3/M-5.
+immediate probe-instrumented re-run, quarantined as a C-confidence anomaly in tempdoc 713 §M-3/M-5;
+that quarantine was RESOLVED by tempdoc 717 (query-time `SKIPPED_SHORT_CORPUS` mis-classification
+via a `parent_token_count` race, not vector loss — see the F-035 quarantine-resolution note below).
 
 ### mixed/miracl-de-2k
 
@@ -835,6 +837,19 @@ above)*
   code); the immediate probe-instrumented fresh re-run reproduced 0.6185/chunks-alive instead.
   Unresolved one-off (C confidence, quarantined); the fresh-ingest path is NOT implicated —
   re-open only if a chunks-dead signature (vector ≈0.34 + missing `chunk_merge` leg) recurs.
+  - **QUARANTINE RESOLVED (2026-08-19, reconciling this note with Q-017's 717 record — the two
+    had contradicted each other in this file):** tempdoc 717's live probe (2026-07-11/12,
+    `d37578a8`) explained the signature — chunks + chunk_vectors were 100% healthy; the
+    `chunk_merge` leg was *skipped at query time* as `SKIPPED_SHORT_CORPUS` because a
+    SPLADE-load race left `parent_token_count` unpopulated, mis-classifying a long corpus as
+    short. Fixed by an index-time `parent_token_count` estimate fallback
+    (`IndexingDocumentOps.java:444-454`) + majority-coverage fail-open in `isShortCorpus`
+    (`CorpusProfile.java:62-70`); live-validated 3/3 fresh builds; no recurrence in any later
+    row (774/775/832 legal-clerc runs all carry `chunk_merge`). Detector caveat closed the same
+    day as this note: jseval's chunk-completeness corroborator had been waiving ALL
+    `SKIPPED_SHORT_CORPUS` skips unconditionally (the 715-defect-1 waiver in `run.py`), which
+    would have passed a recurrence silently — the waiver is now conditioned on the offline
+    chunk expectation agreeing the corpus is short.
 - **Feeds 712/Q-017:** the structural argument (branch fusion always consumes the parent leg)
   applies to the SPLADE parent too, but 712 should measure, not inherit.
 - **Evidence:** tempdoc 713 (§Takeover T-1..T-5, §Measurement M-1..M-5, probe outputs, counter
