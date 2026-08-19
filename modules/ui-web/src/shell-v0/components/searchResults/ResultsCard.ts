@@ -24,7 +24,8 @@
  *
  * Registered: run-renderers `searchResultRendering.consumerSites` (one render
  * authority) and execution-surfaces `fe-results-card` (it projects from
- * `SearchTrace.effectiveMode`; guard: ResultsCard.searchTrace.test).
+ * `SearchTrace.effectiveMode` and, per register F-052, from the `cross-encoder`
+ * stage's drop reason; guard: ResultsCard.searchTrace.test).
  */
 
 import { html, css, type TemplateResult, nothing } from 'lit';
@@ -45,6 +46,7 @@ import {
   whyThisResultStyles,
   type WhyHit,
 } from './whyThisResult.js';
+import { CROSS_ENCODER_SKIP_WORDING } from '../../aggregate-substrate/strategies/searchTraceExplain.js';
 import {
   projectResultView,
   type ResultViewInput,
@@ -360,6 +362,23 @@ export class ResultsCard extends JfElement {
     return html` <span class="retrieval-mode" data-testid="retrieval-mode" data-mode=${mode}>· ${label}</span>`;
   }
 
+  /**
+   * Register F-052 — a cross-encoder DROP (deadline miss, RPC failure, model absent) changes the
+   * order these rows are in, so it belongs on the meta line next to the retrieval mode. The
+   * by-design skips have no wording entry and stay silent. Wording comes from the ONE authority
+   * (`CROSS_ENCODER_SKIP_WORDING`), never re-authored here.
+   */
+  private renderRerankDrop(): unknown {
+    const trace = this.snapshot?.searchTrace as SearchTrace | null | undefined;
+    const stage = (trace?.stages ?? []).find((s) => s.id === 'cross-encoder');
+    if (stage?.status !== 'skipped' || !stage.reason) return nothing;
+    const worded = CROSS_ENCODER_SKIP_WORDING[stage.reason];
+    if (!worded) return nothing;
+    return html` <span class="rerank-drop" data-testid="rerank-drop" data-reason=${stage.reason}
+      >· ${worded}</span
+    >`;
+  }
+
   private static formatLatency(ms: number): string {
     return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
   }
@@ -404,7 +423,7 @@ export class ResultsCard extends JfElement {
                 ? isAdvancedMode()
                   ? html` · ${ResultsCard.formatLatency(s.processingTimeMs)}`
                   : html` · found in ${ResultsCard.formatLatencyPlain(s.processingTimeMs)}`
-                : nothing}${this.renderRetrievalMode()}${s.isRefining
+                : nothing}${this.renderRetrievalMode()}${this.renderRerankDrop()}${s.isRefining
                 ? html` <span class="meta-refining" data-testid="meta-refining"
                     >${icon({ name: 'loader-2', size: 10, spin: true })} refining…</span
                   >`
@@ -698,6 +717,11 @@ export class ResultsCard extends JfElement {
       }
       .retrieval-mode[data-mode='HYBRID'],
       .retrieval-mode[data-mode='VECTOR'] {
+        color: var(--text-secondary);
+      }
+      /* Register F-052 — the cross-encoder drop notice. Same tier as the retrieval mode: it
+         states what the ranking is, it is not a warning. */
+      .rerank-drop {
         color: var(--text-secondary);
       }
       .copy-actions {
