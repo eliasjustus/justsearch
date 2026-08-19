@@ -125,6 +125,22 @@ def expected_chunk_docs(corpus_jsonl_path: Path | str, threshold_chars: int | No
     return sum(1 for d in iter_corpus_docs(corpus_jsonl_path) if d.length >= threshold_chars)
 
 
+def corpus_doc_count(corpus_jsonl_path: Path | str) -> int:
+    """Offline count of ALL docs in ``corpus.jsonl`` (not filtered by chunk-eligibility length).
+
+    Cheap sibling of :func:`expected_chunk_docs` -- reuses :func:`iter_corpus_docs`, so it shares
+    that function's contract: returns ``0`` when ``corpus_jsonl_path`` doesn't exist (a BEIR
+    dataset with no local corpus.jsonl), never an error.
+
+    Used as the denominator of a chunk-eligibility RATE (``expected_chunk_docs / corpus_doc_count``)
+    by the tempdoc-715-defect-1 corpus-shape waiver in ``jseval.run._compute_chunk_completeness``,
+    mirroring the engine's own short-corpus classification (``CorpusProfile.chunkRate() < 0.05``,
+    ``modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/CorpusProfile.java``)
+    rather than gating on an unscaled absolute ``expected`` count.
+    """
+    return sum(1 for _ in iter_corpus_docs(corpus_jsonl_path))
+
+
 @dataclass
 class ChunkCompletenessResult:
     """Verdict for the eval-time chunk-completeness validity guard (tempdoc 718).

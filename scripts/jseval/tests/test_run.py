@@ -534,15 +534,18 @@ class TestComputeChunkCompleteness:
     # -- tempdoc 715 defect 1: engine-declared short-corpus skip is not a strike ------------
 
     def test_short_corpus_skip_declared_is_not_a_strike(self, tmp_path):
-        # mixed/miracl-de-2k reproduction: SearchPlanner.java:267 skips chunk-merge with
-        # SKIPPED_SHORT_CORPUS by engine design (CorpusCapabilities.corpusSupportsChunks()
-        # false, median-token-count short corpus) even though some docs individually reach the
-        # chunk threshold. This is legitimate, not a degeneracy -- the corroborator must not
-        # fire just because "chunk_merge" is absent from the observed component set.
+        # mixed/miracl-de-2k reproduction (scaled down): SearchPlanner.java:267 skips
+        # chunk-merge with SKIPPED_SHORT_CORPUS by engine design
+        # (CorpusCapabilities.corpusSupportsChunks() false, median-token-count short corpus)
+        # even though a handful of docs individually reach the chunk threshold. This is
+        # legitimate, not a degeneracy -- the corroborator must not fire just because
+        # "chunk_merge" is absent from the observed component set, PROVIDED the corpus really
+        # is shaped short (chunk-eligible-doc rate < 0.05, mirroring
+        # CorpusProfile.chunkRate() < 0.05): 1 long doc among 40 short ones is rate 1/40 = 0.025.
         long_text = "x" * 2500
-        _write_golden_corpus(tmp_path, "golden/demo", [
-            {"_id": "d1", "title": "", "text": long_text},
-        ])
+        docs = [{"_id": "d1", "title": "", "text": long_text}]
+        docs += [{"_id": f"s{i}", "title": "", "text": "short doc"} for i in range(39)]
+        _write_golden_corpus(tmp_path, "golden/demo", docs)
         block = _compute_chunk_completeness(
             "golden/demo",
             {"vector": _mode_result(
@@ -558,9 +561,9 @@ class TestComputeChunkCompleteness:
 
     def test_no_chunk_docs_skip_declared_is_not_a_strike(self, tmp_path):
         long_text = "x" * 2500
-        _write_golden_corpus(tmp_path, "golden/demo", [
-            {"_id": "d1", "title": "", "text": long_text},
-        ])
+        docs = [{"_id": "d1", "title": "", "text": long_text}]
+        docs += [{"_id": f"s{i}", "title": "", "text": "short doc"} for i in range(39)]
+        _write_golden_corpus(tmp_path, "golden/demo", docs)
         block = _compute_chunk_completeness(
             "golden/demo",
             {"vector": _mode_result(
@@ -573,6 +576,50 @@ class TestComputeChunkCompleteness:
             tmp_path,
         )
         assert block["verdict"] == "ok"
+
+    def test_717_class_regression_with_high_chunk_rate_still_strikes(self, tmp_path):
+        # tempdoc 717/718 review: a 717-class regression -- a healthy, chunked index whose
+        # chunk_merge leg is nonetheless skipped SKIPPED_SHORT_CORPUS at query time due to the
+        # same corpus-shape misclassification 717 fixed -- must NOT be silently waived just
+        # because the skip reason is in the engine-declared corpus-shape set. legal-clerc-200
+        # regression shape: ~194 of 198 docs reach the chunk threshold (rate ~0.98, nowhere near
+        # short). The observed signals look otherwise healthy (chunk docs present, full
+        # coverage), so `chunk_merge_observed` staying False is the ONLY thing that can catch
+        # this -- and it must degrade the verdict.
+        long_text = "x" * 2500
+        docs = [{"_id": f"d{i}", "title": "", "text": long_text} for i in range(194)]
+        docs += [{"_id": f"s{i}", "title": "", "text": "short doc"} for i in range(4)]
+        _write_golden_corpus(tmp_path, "golden/demo", docs)
+        block = _compute_chunk_completeness(
+            "golden/demo",
+            {"vector": _mode_result(
+                ["dense"],  # chunk_merge absent from observed -- the 717-class symptom
+                run_evidence={
+                    "chunk_merge_skip_reason_counts": {"SKIPPED_SHORT_CORPUS": 50},
+                },
+            )},
+            _status_snapshot(9700, 100.0),  # observed counts look healthy on their own
+            tmp_path,
+        )
+        assert block["verdict"] == "degenerate"
+        assert any("chunk_merge" in r for r in block["reasons"])
+
+    def test_beir_dataset_with_short_corpus_skip_reason_stays_waived(self, tmp_path):
+        # No local corpus.jsonl (a BEIR dataset) means there is no offline shape to check the
+        # skip reason against -- the waiver must fall back to its prior unconditional behavior
+        # (corpus_total_docs <= 0) rather than refuse to waive for lack of evidence.
+        block = _compute_chunk_completeness(
+            "scifact",
+            {"vector": _mode_result(
+                [],  # chunk_merge absent from observed
+                run_evidence={
+                    "chunk_merge_skip_reason_counts": {"SKIPPED_SHORT_CORPUS": 12},
+                },
+            )},
+            _status_snapshot(0, 0.0),
+            tmp_path,
+        )
+        assert block["verdict"] == "chunk-free"
 
     def test_chunk_merge_absent_without_any_skip_reason_stays_degenerate(self, tmp_path):
         # No run_evidence skip-reason info at all (e.g. an older caller/shape) must not be
