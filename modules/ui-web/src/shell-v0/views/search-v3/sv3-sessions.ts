@@ -107,6 +107,25 @@ export interface Sv3Turn {
    * mis-attributed one turn's evidence, status and duration to another on any length skew.
    */
   readonly recordId: string | null;
+  /**
+   * The `ConversationStore` id of the turn's TERMINAL assistant message (tempdoc 852 S1), or `null`
+   * while the record has not spoken for this turn. {@link recordId} names the turn's USER message —
+   * the same id `?fromMsgId=`, `{floorMessageId}` and `…/messages/{id}/exclude` key on — and this
+   * names the other half of the exchange, which those endpoints address just as often.
+   *
+   * LAST-WINS on a multi-message turn, the same rule {@link evidence} follows and for the same
+   * reason: the terminal assistant message is the answer, and an interim one is not what a floor or
+   * an exclusion is being set against.
+   */
+  readonly assistantRecordId: string | null;
+  /**
+   * The record opened this turn on a USER message (tempdoc 852 S1). `false` until the record has
+   * spoken for the turn, and `false` for a turn the record opened on something else — an agent run
+   * whose prompt was never recorded starts on a tool call or a search event, and that item's id is
+   * {@link recordId} without being anybody's message. It is the provenance half of
+   * {@link sv3TurnMessageIds}: the id alone cannot say which plane of the thread it came from.
+   */
+  readonly recordOpenedByUser: boolean;
   readonly kind: Sv3TurnKind;
   readonly question: string;
   /** Accumulated answer text. Whatever streamed before a halt is KEPT — it was really received. */
@@ -163,6 +182,47 @@ export interface Sv3Turn {
   readonly modelLabel: string | null;
 }
 
+/**
+ * What `GET /api/chat/conversations/{id}/history` knows about a conversation that
+ * `GET /api/thread/{id}` does not (tempdoc 852 §2.3c). The shipped window reads BOTH records at
+ * adjacent lines (`views/UnifiedChatView.ts:2048-2049`); this window read only the thread, so the
+ * branch lineage, the effective-context floor and the two exclusion ledgers were simply not on the
+ * wire it listened to. Every field here is one the thread endpoint structurally cannot carry —
+ * `InteractionThreadController` answers `{conversationId, events[], lifecycles[]}` and nothing else.
+ *
+ * A STRUCTURAL type, the same construction {@link Sv3StoreConversation} uses for the conversation
+ * store's rows: this module stays pure and free of the store, and a test can hand it a history
+ * without standing one up. The fields mirror `state/conversationListStore.ts`'s
+ * `ResumedConversation` (`:469-499`), which is the FE authority for the shape.
+ *
+ * `messages` is DELIBERATELY absent. `/history` carries a transcript too, and taking it would give
+ * this window a second answer to "what happened in this conversation" — the canonical record
+ * ({@link applySv3Record}) is the one authority for that, and a companion load is not a licence to
+ * fork it.
+ */
+export interface Sv3SessionHistory {
+  /** This conversation is a BRANCH of that one (slice 513), or undefined when it is a root. */
+  readonly parentSessionId?: string;
+  /** The last message inherited from the parent — everything up to and including it was prepended. */
+  readonly branchPointMessageId?: string;
+  /** The parent's opening question, so a branch banner can name it without a second roundtrip. */
+  readonly parentFirstUserMessage?: string;
+  /** The effective-context floor's message id (tempdoc 610 Phase C); undefined = no floor. */
+  readonly contextFloor?: string;
+  /** The compaction summary attached to that floor (Phase D); undefined for a plain rewind. */
+  readonly contextFloorSummary?: string;
+  /** Message ids the reader dropped from the next prompt (§E.3) — still displayed, not sent. */
+  readonly excludedMessageIds?: readonly string[];
+  /** Retrieved-source ids the reader hid from retrieval (§J.3); the Worker drops those chunks. */
+  readonly excludedSourceIds?: readonly string[];
+  /**
+   * The conversation store answered 423 — encrypted and LOCKED (tempdoc 629). The window already
+   * derives its own lock state from observed status; this is the load's own report of the same
+   * condition, which is why it is carried rather than folded into that flag here.
+   */
+  readonly locked?: boolean;
+}
+
 /** One conversation in this window: what it was opened with, and every turn it has taken. */
 export interface Sv3Session {
   readonly id: string;
@@ -200,6 +260,13 @@ export interface Sv3Session {
   readonly renamed: boolean;
   /** Oldest FIRST — the transcript's render order. */
   readonly turns: readonly Sv3Turn[];
+  /**
+   * What the `/history` companion load reported for this conversation (tempdoc 852 S1), or `null`
+   * while it has not been asked. `null` is "not told", not "no floor and no branch": a conversation
+   * whose history has never been loaded knows nothing about its own lineage, and a reader of this
+   * field must be able to tell that from a conversation that really is a root with no floor.
+   */
+  readonly history: Sv3SessionHistory | null;
   readonly createdAt: number;
   /** When the session last submitted; the resting row's timestamp. */
   readonly updatedAt: number;
@@ -238,6 +305,8 @@ const openTurn = (
 ): Sv3Turn => ({
   id: turnIdFor(sessionId, index),
   recordId: null,
+  assistantRecordId: null,
+  recordOpenedByUser: false,
   kind,
   question,
   answer: '',
@@ -274,6 +343,7 @@ function openSession(
     title,
     renamed: false,
     turns: [openTurn(id, 0, title, now, kind)],
+    history: null,
     createdAt: now,
     updatedAt: now,
     pinned: false,
@@ -606,6 +676,7 @@ export function mergeStoreConversations(
       // auto-titled over the name the reader had chosen.
       renamed: c.titleSource === 'user',
       turns: [],
+      history: null,
       createdAt: c.createdAt,
       updatedAt: c.lastActiveAt,
       pinned: false,
@@ -756,6 +827,107 @@ export function applySv3Record(
     ...list,
     sessions: list.sessions.map((s) => (s.id === sessionId ? { ...s, turns: merged } : s)),
   };
+}
+
+/**
+ * The `/history` companion load, recorded on the conversation it describes (tempdoc 852 S1). It
+ * touches NOTHING else: the transcript is {@link applySv3Record}'s, the title is the store's, and
+ * this reducer only parks the fields neither of them carries.
+ *
+ * A load for a conversation this window is not listing is dropped, the same rule every other reducer
+ * here follows — a record can only ever be written onto the session it names.
+ */
+export function applySv3History(
+  list: Sv3SessionList,
+  sessionId: string,
+  history: Sv3SessionHistory,
+): Sv3SessionList {
+  if (sessionById(list, sessionId) === null) return list;
+  return {
+    ...list,
+    sessions: list.sessions.map((s) => (s.id === sessionId ? { ...s, history } : s)),
+  };
+}
+
+/**
+ * The two backend message ids one turn is made of (tempdoc 852 §2.3b) — the ONE answer to "which
+ * messages is this turn?", so branch, edit-retry, floor-setting and message-exclusion stop each
+ * inventing their own.
+ *
+ * **What is guaranteed:** a reported id is one the CONVERSATION STORE itself minted, and therefore
+ * one `?fromMsgId=`, `{floorMessageId}` and `POST …/messages/{id}/exclude` can address. `null` means
+ * this turn has no such message — an affordance that needs one is unavailable, which is a fact about
+ * the turn, not a gap in this function.
+ *
+ * **Why an ALLOWLIST of the store's own mints rather than a list of ids to reject.**
+ * `GET /api/thread/{id}` interleaves two planes (`InteractionThreadController.java:66-73`): the chat
+ * turns, which ARE store rows, and every agent run's events, projected read-time from
+ * `AgentRunStore` and stored as messages nowhere. The run plane mints ids of its own for
+ * user messages (`${runId}:user`, `AgentRunQueryService.java:346-350`), assistant messages
+ * (`${conversationId}:assistant:${stamp}`, `AgentInteractionMapper.java:69`), workflow node outputs
+ * and search events — and `chatTurn` has a fallback of its own for a row with no usable id
+ * (`${conversationId}:chat:${msg.hashCode()}`, `:260-262`). Enumerating those is a list that is one
+ * entry behind the next event kind someone adds. The store's mints are the closed set: a UUID from
+ * `FileConversationStore.enrichMessage` (`:213-219`) or the `idx-N` back-fill `loadHistory` applies
+ * on read (`:159-165`) so pre-513 messages stay branchable. Anything else is not a store row, and
+ * the honest answer for it is `null`. A new store mint would fail CLOSED here — an affordance
+ * unavailable, never one pointed at the wrong message.
+ */
+export interface Sv3TurnMessageIds {
+  /** The turn's USER message id — what `?fromMsgId=` and a branch point key on. */
+  readonly userMsgId: string | null;
+  /** The turn's terminal ASSISTANT message id — what a floor or an exclusion usually names. */
+  readonly assistantMsgId: string | null;
+}
+
+/**
+ * The two ids `FileConversationStore` mints, and nothing else (see {@link Sv3TurnMessageIds}).
+ * Anchored end to end: `${runId}:user` and `${conversationId}:assistant:${stamp}` both CONTAIN a
+ * store-shaped substring, and an unanchored test would admit them.
+ */
+const STORE_MINTED_MESSAGE_ID =
+  /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|idx-\d+)$/i;
+
+/**
+ * Is this an id the conversation store minted — i.e. one the message endpoints can address? Exported
+ * because `sv3-record.ts` applies the same test while projecting, so a turn never even carries a
+ * run-plane id in its assistant slot.
+ */
+export const isSv3StoreMessageId = (id: string | null | undefined): boolean =>
+  typeof id === 'string' && STORE_MINTED_MESSAGE_ID.test(id);
+
+export const sv3TurnMessageIds = (turn: Sv3Turn): Sv3TurnMessageIds => ({
+  // BOTH conditions, because either alone admits a run-plane id: the record opens a turn on whatever
+  // item comes first when no user message precedes it (`sv3-record.ts`), and the run plane mints user
+  // messages of its own.
+  userMsgId:
+    turn.recordOpenedByUser && isSv3StoreMessageId(turn.recordId) ? turn.recordId : null,
+  assistantMsgId: isSv3StoreMessageId(turn.assistantRecordId) ? turn.assistantRecordId : null,
+});
+
+/**
+ * Which turn a backend message id belongs to — the lookup every `/history` field needs, because
+ * every one of them (`contextFloor`, `branchPointMessageId`, `excludedMessageIds`) names a MESSAGE
+ * while the window renders TURNS.
+ *
+ * BY ID, never by position, and the two orders genuinely differ: a turn holds a user message and one
+ * or more assistant messages, so the nth message is not the nth turn, and `/history`'s array counts
+ * rows `/api/thread` never emits — `FileConversationStore.loadHistory` emits a `role:"locked"`
+ * placeholder for every sealed line (`:149-157`) and `chatTurn` returns `null` for every role that
+ * is not user/assistant (`:247-259`). Resolving a floor by index would silently attach it to a
+ * neighbouring turn, which looks entirely plausible on screen.
+ */
+export function sv3TurnByMessageId(
+  turns: readonly Sv3Turn[],
+  messageId: string,
+): Sv3Turn | null {
+  if (messageId === '') return null;
+  return (
+    turns.find((turn) => {
+      const ids = sv3TurnMessageIds(turn);
+      return ids.userMsgId === messageId || ids.assistantMsgId === messageId;
+    }) ?? null
+  );
 }
 
 /**
