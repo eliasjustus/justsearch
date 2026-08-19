@@ -120,7 +120,7 @@ class TestBucketClassification:
         assert agg["oracle_judge_ndcg_ceiling"] == 0.75
         assert abs(agg["final_ndcg"] - 0.375) < 1e-9
         assert abs(agg["judge_headroom_ceiling"] - 0.375) < 1e-9
-        assert out["reconciliation"] == {"checked": 4, "mismatches": 0}
+        assert out["reconciliation"] == {"checked": 4, "mismatches": 0, "applicable": True}
         # Tempdoc 643: q_judge lands at final rank 3 -> rank_3_5 bucket.
         assert agg["judge_rank_histogram"] == {
             "rank_2": 0, "rank_3_5": 1, "rank_6_10": 0, "rank_11_plus": 0,
@@ -251,9 +251,47 @@ class TestReconciliation:
         _write_trec(rd, "hybrid", {"q1": ["x", "y"]})  # but gold absent
         synthetic_run_dir.with_qrels({"q1": {"g": 1}})
         out = produce(rd)
-        assert out["reconciliation"] == {"checked": 1, "mismatches": 1}
+        assert out["reconciliation"] == {"checked": 1, "mismatches": 1, "applicable": True}
         # gold in leg, absent from final → cascade leak.
         assert out["buckets"]["CASCADE_LEAK"] == ["q1"]
+
+    def test_top_n_above_10_reconciles_at_depth_10_not_full_list(self, synthetic_run_dir):
+        """A --top-k 100-shaped run: gold surfaces only at rank 11 (beyond the harness's fixed
+        R@10 window) but the run still returns 20 candidates. Comparing full-list presence
+        against recallAtK=0 would manufacture a spurious mismatch; comparing the depth-10-
+        truncated window agrees with recallAtK (gold absent from the top 10)."""
+        rd = synthetic_run_dir.run_dir
+        synthetic_run_dir.with_per_query("vector", [_pq("q1", ["g"], 1.0)])
+        ranked_docs = [f"x{i}" for i in range(10)] + ["g"] + [f"y{i}" for i in range(9)]
+        assert len(ranked_docs) == 20 and ranked_docs.index("g") == 10  # rank 11
+        synthetic_run_dir.with_per_query("hybrid", [_pq("q1", ranked_docs, 0.0)])  # recallAtK=0
+        _write_trec(rd, "hybrid", {"q1": ranked_docs})
+        synthetic_run_dir.with_qrels({"q1": {"g": 1}})
+        out = produce(rd)
+        assert out["top_n"] == 20
+        assert out["reconciliation"] == {"checked": 1, "mismatches": 0, "applicable": True}
+        # gold reached the full (20-wide) final list, just past the R@10 window → still
+        # bucketed on the actual funnel outcome (JUDGE_RANK_LOW at rank 11), independent of
+        # the harness's fixed reconciliation depth.
+        assert out["buckets"]["JUDGE_RANK_LOW"] == ["q1"]
+
+    def test_reconciliation_not_applicable_without_score_ranked_trec(self, synthetic_run_dir):
+        """No run.trec for the final mode → only the response-order predictedDocIds fallback is
+        available, so a depth-10 window can't be trusted as "top 10 by score". Reconciliation
+        must be explicitly marked not-applicable rather than silently comparing at the wrong
+        (response-order) window."""
+        rd = synthetic_run_dir.run_dir
+        synthetic_run_dir.with_per_query("vector", [_pq("q1", ["g"], 1.0)])
+        synthetic_run_dir.with_per_query("hybrid", [_pq("q1", ["g"], 1.0)])
+        # deliberately no _write_trec(rd, "hybrid", ...) call
+        synthetic_run_dir.with_qrels({"q1": {"g": 1}})
+        out = produce(rd)
+        assert out["reconciliation"] == {
+            "checked": 0, "mismatches": 0, "applicable": False,
+            "reason": "final mode 'hybrid' has no score-ranked run.trec — only the "
+                      "response-order predictedDocIds fallback is available, so a "
+                      "depth-10 reconciliation window can't be trusted",
+        }
 
 
 class TestUnjudged:

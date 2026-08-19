@@ -63,9 +63,15 @@ public final class KnowledgeServerBootstrap implements Closeable {
     private final java.util.concurrent.locks.ReentrantLock initLock =
         new java.util.concurrent.locks.ReentrantLock();
 
-    private MainSignalBus signalBus;
-    private WorkerSpawner spawner;
-    private RemoteKnowledgeClient client;
+    // Tempdoc 825 review F10: volatile. These three are written by whichever thread runs start() /
+    // closeForUpgrade() — the boot thread, and (since 825) the health monitor's executor — and read
+    // by the other: hasClient() is the monitor's arm discriminator, and the shutdown coordinator
+    // calls closeForUpgrade() from the shutdown hook thread. Without volatile a reader can observe a
+    // stale non-null spawner (double shutdown) or a stale null client (a needless recovery attempt
+    // against a worker that is already up).
+    private volatile MainSignalBus signalBus;
+    private volatile WorkerSpawner spawner;
+    private volatile RemoteKnowledgeClient client;
 
     /**
      * Tempdoc 672 follow-up: epoch-ms of the most recent {@link #signalUserActivity()} call — the
@@ -106,6 +112,25 @@ public final class KnowledgeServerBootstrap implements Closeable {
     /** Whether the last failed {@link #start()} left supervision holding the restart budget. */
     private volatile boolean supervisionEngagedOnLastAttempt;
 
+    /**
+     * Tempdoc 825: true while {@link KnowledgeServerHealthMonitor}'s boot-recovery arm owns the
+     * narration for an in-flight re-attempt. The arm holds the capability at RECOVERING for the whole
+     * recovery arc, so every per-attempt transition this class would otherwise make — PENDING on
+     * entry, DEGRADED on failure, OFFLINE on the teardown between attempts — is suppressed. Without
+     * it a four-attempt recovery narrates a dozen worker-down/worker-starting occurrences and the
+     * "no flapping for a boot that ultimately succeeds" acceptance fails. The READY transition is
+     * never suppressed: success must always be narrated.
+     */
+    private volatile boolean bootRecoveryInFlight;
+
+    /**
+     * Tempdoc 825 §D4: countdown for the prod-guarded boot fault injector. Each remaining count fails
+     * one PID validation with the exact 821 §O.4 signature, then the injector stops — which is what
+     * makes CONVERGENCE (not just the pin) reproducible. Zero unless
+     * {@code justsearch.worker.boot.faultInjectAttempts} is set on a non-production config.
+     */
+    private final java.util.concurrent.atomic.AtomicInteger bootFaultCountdown;
+
     private AppInstanceLock appLock;
     private IpcTelemetry ipcTelemetry;
 
@@ -137,6 +162,9 @@ public final class KnowledgeServerBootstrap implements Closeable {
         this.config = config;
         this.telemetry = telemetry != null ? telemetry : new NoopTelemetry();
         this.workerCapability = workerCapability != null ? workerCapability : new WorkerCapability();
+        this.bootFaultCountdown =
+            new java.util.concurrent.atomic.AtomicInteger(
+                config != null ? config.bootFaultInjectAttempts() : 0);
     }
 
     /**
@@ -157,8 +185,13 @@ public final class KnowledgeServerBootstrap implements Closeable {
             throw new IllegalStateException("KnowledgeServerBootstrap already started");
         }
 
-        workerCapability.transition(
-            CapabilityHealth.PENDING, LifecycleReasonCode.WORKER_STARTING.code(), "Worker starting");
+        // Tempdoc 825: during a boot-recovery arc the monitor holds the capability at RECOVERING and
+        // owns the narration; dropping back to PENDING here would re-enter RECOVERING on the next
+        // attempt and emit a worker.restart-attempted occurrence per cycle.
+        if (!bootRecoveryInFlight) {
+            workerCapability.transition(
+                CapabilityHealth.PENDING, LifecycleReasonCode.WORKER_STARTING.code(), "Worker starting");
+        }
         log.info("Starting Knowledge Server integration...");
 
         try {
@@ -260,6 +293,10 @@ public final class KnowledgeServerBootstrap implements Closeable {
                 completeReadyInitialization();
             } else {
                 // Tempdoc 837 §3.1: the start-time health budget elapsed — the worker NEVER started.
+                // Review F7: this site is reachable DURING a recovery arc — the attempt's worker
+                // spawns and answers gRPC but never reaches healthy — and it was the one worker-down
+                // site without a suppression guard. The rule now lives in transitionWorkerDown, so
+                // this call is unconditional and the funnel decides.
                 transitionWorkerDown(
                     LifecycleReasonCode.WORKER_SPAWN_FAILED,
                     "Health check failed after " + healthCheckElapsedMs + "ms");
@@ -270,10 +307,8 @@ public final class KnowledgeServerBootstrap implements Closeable {
         } catch (Exception e) {
             // Read supervision's verdict BEFORE close() drops the spawner that holds it.
             supervisionEngagedOnLastAttempt = spawner != null && spawner.supervisionEngaged();
-            if (!retryPending) {
-                transitionWorkerDown(
-                    LifecycleReasonCode.WORKER_SPAWN_FAILED, "Start failed: " + e.getMessage());
-            }
+            transitionWorkerDown(
+                LifecycleReasonCode.WORKER_SPAWN_FAILED, "Start failed: " + e.getMessage());
             log.error("Failed to start Knowledge Server integration", e);
             close();
             throw e;
@@ -309,14 +344,89 @@ public final class KnowledgeServerBootstrap implements Closeable {
                 backoffMs,
                 () -> supervisionEngagedOnLastAttempt);
         } catch (Exception e) {
-            // The per-attempt narration was suppressed; the final verdict lands exactly once, here.
+            // The per-attempt narration was suppressed; the final verdict lands exactly once, here —
+            // unless the boot-recovery arm owns this arc's narration (tempdoc 825), in which case the
+            // verdict is ITS terminal give-up, not a per-cycle spawn-failed pin.
             retryPending = false;
+            // transitionWorkerDown is the one funnel: it owns both the arc-suppression rule (F7) and
+            // the "never overwrite supervision's terminal verdict" rule (F1).
             transitionWorkerDown(
                 LifecycleReasonCode.WORKER_SPAWN_FAILED, "Start failed: " + e.getMessage());
             throw e;
         } finally {
             retryPending = false;
         }
+    }
+
+    /**
+     * Tempdoc 825: ONE boot-recovery attempt, with this class's per-attempt narration suppressed.
+     * Called only by {@link KnowledgeServerHealthMonitor}'s boot-recovery arm, which decides whether
+     * an attempt is due ({@link BootRecoveryDecision}), holds the capability at RECOVERING across the
+     * arc, and narrates the terminal give-up. The attempt budget lives in {@link BootRecoveryPolicy},
+     * so this deliberately does NOT re-run the boot-time 3-attempt retry inside one cycle.
+     *
+     * <p>The flag is set and cleared around the single call, so a throwing attempt cannot leave the
+     * bootstrap permanently unable to narrate.
+     */
+    public void startForRecovery() throws IOException, InterruptedException {
+        bootRecoveryInFlight = true;
+        try {
+            startWithRetry(1, 0);
+        } finally {
+            bootRecoveryInFlight = false;
+        }
+    }
+
+    /** Whether a per-attempt worker-down / worker-starting transition would be a lie right now. */
+    private boolean narrationSuppressed() {
+        return retryPending || bootRecoveryInFlight;
+    }
+
+    /**
+     * Tempdoc 825 review F1: whether SUPERVISION has already stamped its terminal verdict on this
+     * capability. {@code worker.restart_exhausted} and {@code worker.spawn.failed} are both
+     * {@code FAULT}, so {@link io.justsearch.app.services.lifecycle.ReasonRetention} lets the
+     * incoming one win — which means this class's own final "start failed" stamp would erase the
+     * supervisor's verdict on every boot where supervision engaged and gave up. That is not merely a
+     * cosmetic loss: {@link BootRecoveryDecision}'s permanent veto reads this exact slot, so the
+     * erasure would silently convert "supervision gave up, stop for good" into "nobody knows, keep
+     * re-attempting" — the second restart authority the tempdoc-627 review forbade.
+     */
+    private boolean supervisionVerdictHeld() {
+        return LifecycleReasonCode.WORKER_RESTART_EXHAUSTED
+            .code()
+            .equals(workerCapability.pendingReason());
+    }
+
+    /**
+     * Tempdoc 825 (§D2 mechanism 1, corrected by review F2): whether a supervisor is alive RIGHT NOW
+     * and holding the restart budget — the honest cross-cycle form of the veto.
+     *
+     * <p>The obvious signal, {@code supervisionEngagedOnLastAttempt}, is the wrong one here.
+     * {@link WorkerSpawner#supervisionEngaged()} latches on {@code restartCount > 0}, so it means "a
+     * supervised restart happened at some point during that attempt", not "supervision is working on
+     * it". That field is also never cleared until the next {@link #startWithRetry}, so a boot-recovery
+     * arm gated on it would stand down forever and never run the very attempt that clears it — the
+     * bricked-boot class would get zero attempts and no terminal code at all. It stays private, doing
+     * the job it was written for: bounding ONE {@code startWithRetry} call.
+     *
+     * <p>This asks the live question instead. After a failed start, {@link #close()} has dropped the
+     * spawner, so no supervisor exists and the restart budget is nobody's — recovery may proceed.
+     * While a spawner IS alive and has restarted the worker, supervision owns the arc and this
+     * authority yields the cycle (never permanently: the next tick re-asks).
+     */
+    public boolean supervisionActive() {
+        WorkerSpawner s = spawner;
+        return s != null && s.supervisionEngaged();
+    }
+
+    /**
+     * Tempdoc 825: whether a gRPC client is bound. This is the discriminator between the health
+     * monitor's two arms — a bound client means the bootstrap is up and {@link #checkHealth()} owns
+     * it; no client means {@code start()} never completed and the boot-recovery arm owns it.
+     */
+    public boolean hasClient() {
+        return client != null;
     }
 
     /**
@@ -391,6 +501,25 @@ public final class KnowledgeServerBootstrap implements Closeable {
      * @throws PidValidationTimeoutException if PID validation fails after timeout
      */
     private void validateWorkerPid(long expectedPid, long timeoutMs) throws InterruptedException {
+        int remainingFaults = bootFaultCountdown.getAndUpdate(n -> n > 0 ? n - 1 : 0);
+        if (remainingFaults > 0) {
+            // Tempdoc 825 §D4: the countdown fault injector. Fails PID validation with the exact
+            // 821 §O.4 signature (PidValidationTimeoutException — transient, so the boot retry and
+            // the recovery arm both engage) for the first N attempts and then stops, so a test can
+            // prove CONVERGENCE and not merely the pin. The guard is exactly this: the config's
+            // compact constructor zeroes the count whenever isProduction() is true — which is a
+            // DETECTED property (explicit justsearch.prod / JUSTSEARCH_PROD flag, or a bundled-JRE
+            // layout), not a build-time constant, so a shipped build launched with the flag forced
+            // to false can still arm it. That is the same reach every other dev-only sysprop in
+            // KnowledgeServerConfig has; it is not a security boundary.
+            log.warn(
+                "Injecting boot fault (justsearch.worker.boot.faultInjectAttempts): {} injected"
+                    + " failure(s) remaining after this one",
+                remainingFaults - 1);
+            throw new PidValidationTimeoutException(
+                "Injected boot fault (justsearch.worker.boot.faultInjectAttempts): expected PID "
+                    + expectedPid);
+        }
         awaitWorkerPid(
                 expectedPid,
                 timeoutMs,
@@ -624,9 +753,43 @@ public final class KnowledgeServerBootstrap implements Closeable {
         return new WorkerDown(generic, detail);
     }
 
-    /** Applies a {@link #workerDownCode} verdict to the capability as DEGRADED. Visible for tests. */
+    /**
+     * Applies a {@link #workerDownCode} verdict to the capability as DEGRADED. Visible for tests.
+     *
+     * <p>Review F1: this is the ONE funnel for every worker-down verdict this class produces
+     * ({@code start()}'s per-attempt catch, the health-budget branch, {@code startWithRetry}'s final
+     * catch, and {@code checkHealth}'s worker.lost), so the "do not overwrite supervision's terminal
+     * verdict" rule lives here rather than at four call sites that would drift.
+     * {@code worker.restart_exhausted} and the codes below are all {@code FAULT}, so
+     * {@link io.justsearch.app.services.lifecycle.ReasonRetention} lets the incoming one win — and
+     * losing it is not cosmetic: {@link BootRecoveryDecision}'s permanent veto reads this exact slot,
+     * so an overwrite silently converts "supervision gave up, stop for good" into "nobody knows, keep
+     * re-attempting".
+     *
+     * <p>The corrupt-index verdict is the one exception, and it is computed BEFORE the guard so the
+     * unrepeatable marker is still consumed: it explains WHY supervision exhausted itself and is
+     * strictly better information (its {@code STICKY} class says the same).
+     */
     void transitionWorkerDown(LifecycleReasonCode generic, String detail) {
         WorkerDown down = workerDownCode(generic, detail);
+        if (narrationSuppressed()) {
+            // Review F7: the suppression rule lives in the funnel too, for the same reason the
+            // supervision guard does — it was applied at three of the four worker-down sites and
+            // missed the health-budget branch, which is reachable mid-recovery (the attempt's worker
+            // spawns and answers gRPC but never becomes healthy) and flapped the arc out of
+            // RECOVERING. Any future site inherits the rule instead of having to remember it.
+            log.debug(
+                "Suppressing worker-down narration ({}): a retry or recovery arc owns it",
+                down.code().code());
+            return;
+        }
+        if (supervisionVerdictHeld() && down.code() != LifecycleReasonCode.WORKER_INDEX_CORRUPT) {
+            log.warn(
+                "Not overwriting supervision's terminal {} with {}: the supervisor's verdict stands",
+                LifecycleReasonCode.WORKER_RESTART_EXHAUSTED.code(),
+                down.code().code());
+            return;
+        }
         workerCapability.transition(
             CapabilityHealth.DEGRADED, down.code().code(), down.detail());
     }
@@ -698,9 +861,10 @@ public final class KnowledgeServerBootstrap implements Closeable {
         }
 
         try {
-            // Suppressed between boot attempts: a retry would immediately re-enter PENDING, and the
-            // OFFLINE flap in between is narration of a state the Head was never actually in.
-            if (!retryPending) {
+            // Suppressed between boot attempts AND across boot-recovery cycles (tempdoc 825): a retry
+            // would immediately re-enter PENDING, and the OFFLINE flap in between is narration of a
+            // state the Head was never actually in.
+            if (!narrationSuppressed()) {
                 workerCapability.transition(
                     CapabilityHealth.OFFLINE,
                     LifecycleReasonCode.WORKER_SHUT_DOWN.code(),
@@ -710,6 +874,14 @@ public final class KnowledgeServerBootstrap implements Closeable {
             // Must clear even if a capability listener throws: a stranded started=true would make
             // the next start() throw "already started" and replace the real cause in the log.
             started.set(false);
+            // Tempdoc 825 (charter item 4 / #439 review finding E): the generation counter outlived
+            // the teardown it describes. A later start() on this same instance — which is now the
+            // NORMAL path, not a hypothetical, because boot recovery re-starts this instance — would
+            // take the generation>=1 "recovery" branch of completeReadyInitialization and skip
+            // tryIngestHelpFiles for the whole process lifetime. close() drops the client, the
+            // spawner and the signal bus; the generation describes that same connection, so it is
+            // reset with them. Re-running help ingest is free: it is marker-file idempotent.
+            initGeneration.set(0);
         }
         log.info("Knowledge Server integration shutdown complete");
         return outcome;

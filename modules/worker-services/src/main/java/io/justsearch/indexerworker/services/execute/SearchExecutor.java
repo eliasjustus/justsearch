@@ -793,6 +793,12 @@ public final class SearchExecutor {
         boolean branchZeroExclude = hybridConfig == null || hybridConfig.branchCcZeroExclude();
         double chunkMinMultiplier =
             hybridConfig != null ? hybridConfig.branchChunkMinWeightMultiplier() : 0.25;
+        // Tempdoc 854 W1 (F-036 §K wrong-gate fix) — the Stage-3B branch ramp's own bounds, no
+        // longer shared with the Stage-3A SPLADE parent-length-fade bounds.
+        long branchRampFullWeightMaxTokens =
+            hybridConfig != null ? hybridConfig.branchRampFullWeightMaxTokens() : 1024L;
+        long branchRampZeroWeightMinTokens =
+            hybridConfig != null ? hybridConfig.branchRampZeroWeightMinTokens() : 4096L;
         merged =
             HybridFusionUtils.fuseWithCCNamed(
                 wholeDocResult,
@@ -807,7 +813,9 @@ public final class SearchExecutor {
                 "whole",
                 "chunk",
                 true,
-                chunkMinMultiplier);
+                chunkMinMultiplier,
+                branchRampFullWeightMaxTokens,
+                branchRampZeroWeightMinTokens);
       }
       // Tempdoc 553 Phase A: OpenInference RERANKER projection of the whole×chunk branch merge.
       branchFuseSpan.setAllAttributes(

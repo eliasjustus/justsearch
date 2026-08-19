@@ -54,10 +54,39 @@ final class ReasonRetention {
     if (held == RetentionClass.STICKY) {
       return true;
     }
+    if (recoverySupersedesSpawnFailure(heldCode, incomingCode)) {
+      return false;
+    }
     if (held != RetentionClass.FAULT) {
       return false;
     }
     RetentionClass incoming = LifecycleReasonCode.retentionClassOf(incomingCode);
     return incoming != RetentionClass.FAULT && incoming != RetentionClass.STICKY;
+  }
+
+  /**
+   * Tempdoc 825 §D2.4 — the ONE honest supersede: the Head has RESUMED trying after a failed boot, so
+   * {@code worker.recovering} is strictly newer information than the {@code worker.spawn.failed} pin
+   * it replaces. Without this arm the boot-recovery narration is silently dropped (held FAULT beats
+   * incoming TRANSIENT) and {@code pendingReason()} — published raw on the runtime manifest and the
+   * 503 body — keeps telling the operator the worker "failed to start" while a re-attempt is in
+   * flight.
+   *
+   * <p>Deliberately keyed on BOTH codes, not on "incoming is worker.recovering":
+   *
+   * <ul>
+   *   <li>{@code worker.restart_exhausted} is SUPERVISION's terminal verdict and must never be
+   *       superseded by boot recovery (825 §D5 decision 2 — the veto that keeps it terminal). It is a
+   *       FAULT and falls through to the general rule below, which retains it.
+   *   <li>{@code worker.index_corrupt} is STICKY and is retained by the branch above — a recovery
+   *       attempt is a downstream symptom of the corruption, not a competing cause.
+   *   <li>{@code worker.spawn_recovery_exhausted} (this recovery loop's OWN terminal code) is a FAULT
+   *       and is therefore not superseded either: once we have stopped trying, a stray recovery
+   *       narration cannot claim we are trying again.
+   * </ul>
+   */
+  private static boolean recoverySupersedesSpawnFailure(String heldCode, String incomingCode) {
+    return LifecycleReasonCode.WORKER_SPAWN_FAILED.code().equals(heldCode)
+        && LifecycleReasonCode.WORKER_RECOVERING.code().equals(incomingCode);
   }
 }

@@ -13,7 +13,8 @@
  * of the trace carries a declared audience altitude ({@link TRACE_FACET_ALTITUDE},
  * the one authority), and the template derives prominence from the tier instead
  * of authoring it per-facet. User-tier facets (mode legibility, expansion,
- * correction, degradation-in-words) project into one small summary line in a
+ * correction, degradation-in-words, a cross-encoder drop per register F-052)
+ * project into one small summary line in a
  * human grammar; diagnostic-tier facets (decision kind, QPP scalars, the full
  * stage list) project into a collapsed disclosure. A diagnostic facet minted
  * into the primary flow is unrepresentable here — there is no field for it.
@@ -80,6 +81,7 @@ export const TRACE_FACETS = [
   'expansion',
   'correction',
   'degradation',
+  'reranking',
   'decision-kind',
   'qpp',
   'stage-list',
@@ -91,6 +93,10 @@ export const TRACE_FACET_ALTITUDE: Record<TraceFacet, 'user' | 'diagnostic'> = {
   expansion: 'user',
   correction: 'user',
   degradation: 'user',
+  // Register F-052: a cross-encoder DROP (deadline miss / RPC failure / model absent) changes the
+  // order the user is looking at, so the drop class is user-tier. The by-design skips stay inside
+  // the diagnostic stage list — nothing degraded, so there is nothing to tell the user.
+  reranking: 'user',
   'decision-kind': 'diagnostic',
   qpp: 'diagnostic',
   'stage-list': 'diagnostic',
@@ -147,6 +153,29 @@ export const DEGRADATION_REASON_WORDING: Record<string, string> = {
   EMBEDDING_EXCEPTION: 'query encoding hit an error',
 };
 
+/**
+ * Register F-052 — user-tier wording for the cross-encoder stage's DROP reasons.
+ *
+ * A rerank deadline miss (the 200ms budget against a ~165ms p50 on long documents) or an RPC
+ * failure returns the fusion/LambdaMART order instead of the relevance model's. Before this map
+ * that reached the user as nothing at all: the reason existed only as the `cross-encoder` stage's
+ * raw code inside the collapsed diagnostic disclosure.
+ *
+ * Keyed by `CrossEncoderSkipReason` (app-api) wire strings, drop class only — the by-design skips
+ * (DISABLED / NAVIGATIONAL_QUERY / BELOW_MIN_THRESHOLD / DOCS_TOO_LONG / PIPELINE_NOT_ELIGIBLE /
+ * MODEL_NOT_CONFIGURED / FUSION_CONFIDENT) are declared `noWordingExempt` in
+ * `governance/search-degradation-reason-codes.v1.json` because they never reach this line. The
+ * `check-search-degradation-reason-codes` gate holds the two halves in correspondence.
+ *
+ * Tone: state what did not run and what the ranking is instead. No alarm — the results are real.
+ */
+export const CROSS_ENCODER_SKIP_WORDING: Record<string, string> = {
+  DEADLINE_EXCEEDED: 'Relevance re-ranking ran out of time — results are ranked without it',
+  RPC_FAILED: 'Relevance re-ranking was unavailable — results are ranked without it',
+  MODEL_NOT_LOADED: 'Relevance re-ranking model was not loaded — results are ranked without it',
+  UNKNOWN: 'Relevance re-ranking was skipped — results are ranked without it',
+};
+
 /** Word a degradation reason as "<context> — <cause>", falling back to the raw code. */
 function degradationPhrase(context: string, reason: string): string {
   const worded = DEGRADATION_REASON_WORDING[reason];
@@ -199,6 +228,14 @@ export function userSummaryParts(trace: SearchTrace): string[] {
   }
   if (d && !d.spladeExecuted && d.spladeSkipReason) {
     parts.push(degradationPhrase('SPLADE skipped', d.spladeSkipReason));
+  }
+
+  // reranking (user, F-052) — a cross-encoder DROP is a degradation of the order the user sees;
+  // a by-design skip has no wording entry and stays inside the diagnostic stage list.
+  const crossEncoder = stageById(trace, 'cross-encoder');
+  if (crossEncoder?.status === 'skipped' && crossEncoder.reason) {
+    const worded = CROSS_ENCODER_SKIP_WORDING[crossEncoder.reason];
+    if (worded) parts.push(worded);
   }
 
   return parts;

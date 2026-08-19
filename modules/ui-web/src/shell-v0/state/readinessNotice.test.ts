@@ -499,6 +499,21 @@ describe('readinessNotice — tempdoc 837 worker + inference rows', () => {
     }
   });
 
+  it('825: the boot-recovery terminal code is worded apart from the pin it succeeds', () => {
+    const r = reasonFor('worker.spawn_recovery_exhausted');
+    expect(r.wording).toBe('The knowledge server failed to start and could not be recovered');
+    // `worker.spawn.failed` now means "failed, recovery pending or in flight" — its wording must not
+    // read as a dead end while the Head is still re-attempting, and this one must.
+    expect(reasonFor('worker.spawn.failed').wording).not.toContain('could not be recovered');
+    expect(severityForCodes(['worker.spawn_recovery_exhausted'])).toBe('error');
+    expect(classifyConsequence(['worker.spawn_recovery_exhausted'])).toBe('retrieval-impaired');
+    // No one-click remedy: a respawn is exactly what just failed its whole budget.
+    expect(r.remedy).toBeUndefined();
+    expect(warrantsSearchDegradationBanner(degraded('error', ['worker.spawn_recovery_exhausted']))).toBe(
+      true,
+    );
+  });
+
   it('severity: a lost/corrupt server is error; a shutdown or a not-yet-connected one is calm', () => {
     expect(severityForCodes(['worker.lost'])).toBe('error');
     expect(severityForCodes(['worker.index_corrupt'])).toBe('error');

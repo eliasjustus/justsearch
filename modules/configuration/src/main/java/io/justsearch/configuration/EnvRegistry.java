@@ -1136,6 +1136,27 @@ public enum EnvRegistry {
     /** Branch chunk minimum weight multiplier. */
     HYBRID_BRANCH_CHUNK_MIN_WEIGHT_MULTIPLIER("index.hybrid.branch_chunk_min_weight_multiplier",
         "JUSTSEARCH_HYBRID_BRANCH_CHUNK_MIN_WEIGHT_MULTIPLIER"),
+    /**
+     * Tempdoc 854 W1 (F-036 §K wrong-gate fix): Stage-3B whole-vs-chunk branch-ramp full-weight
+     * ceiling — parent token count at/below which the chunk branch keeps its full base weight.
+     * Previously this shared {@code justsearch.splade.full_weight_max_tokens} with the unrelated
+     * Stage-3A SPLADE parent-length fade, so tuning one silently retuned the other (784 §K:
+     * raising the SPLADE bound past a corpus's token range flipped the branch-ramp multiplier
+     * 1.0→0.25, a ~4× de-weight of the chunk branch with zero SPLADE involvement). Own bound now;
+     * default 1024 reproduces the pre-split shared-constant default byte-for-byte.
+     */
+    HYBRID_BRANCH_RAMP_FULL_WEIGHT_MAX_TOKENS(
+        "index.hybrid.branch_ramp.full_weight_max_tokens",
+        "JUSTSEARCH_HYBRID_BRANCH_RAMP_FULL_WEIGHT_MAX_TOKENS"),
+    /**
+     * Tempdoc 854 W1 (F-036 §K wrong-gate fix): Stage-3B whole-vs-chunk branch-ramp zero-weight
+     * floor — parent token count at/above which the chunk branch ramp reaches its minimum
+     * multiplier (see {@link #HYBRID_BRANCH_RAMP_FULL_WEIGHT_MAX_TOKENS}). Default 4096
+     * reproduces the pre-split shared-constant default byte-for-byte.
+     */
+    HYBRID_BRANCH_RAMP_ZERO_WEIGHT_MIN_TOKENS(
+        "index.hybrid.branch_ramp.zero_weight_min_tokens",
+        "JUSTSEARCH_HYBRID_BRANCH_RAMP_ZERO_WEIGHT_MIN_TOKENS"),
     /** Tempdoc 774 Stage 1: chunk-branch CC sparse weight (defaults to the doc-level cc_weight_sparse). */
     HYBRID_CHUNK_CC_WEIGHT_SPARSE("index.hybrid.chunk_cc_weight_sparse",
         "JUSTSEARCH_HYBRID_CHUNK_CC_WEIGHT_SPARSE"),

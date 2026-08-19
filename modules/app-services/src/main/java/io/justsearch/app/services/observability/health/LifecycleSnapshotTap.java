@@ -131,6 +131,14 @@ public final class LifecycleSnapshotTap {
     MAPPING_TABLE.put(
         new MappingKey(ReadinessDimension.WORKER_CONTROL_PLANE, "NOT_READY", "worker.index_corrupt"),
         new ConditionMapping("index.start-error", "worker", Severity.ERROR));
+    // Tempdoc 825: the terminal twin of worker.spawn.failed — the worker never started AND the
+    // bounded boot-recovery budget is spent. Same conditionId and severity (the 837 precedent: a
+    // refinement of the same condition, not a new one); without the row the lookup misses and the
+    // Condition disappears exactly when the state became permanent.
+    MAPPING_TABLE.put(
+        new MappingKey(
+            ReadinessDimension.WORKER_CONTROL_PLANE, "NOT_READY", "worker.spawn_recovery_exhausted"),
+        new ConditionMapping("index.start-error", "worker", Severity.ERROR));
 
     // ----- INDEX_SERVING: worker availability + throughput. -----
     MAPPING_TABLE.put(

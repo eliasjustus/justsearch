@@ -54,10 +54,11 @@ public final class RuntimeManifestListenerWiring {
    *     Tempdoc 519 §31 Phase 5 renamed the prior {@code AppFacadeBootstrap}
    *     to {@code HeadAssembly}; capability accessors moved from direct
    *     methods to the typed {@code CapabilityGraph} accessor.
-   * @param knowledgeServer connected Worker bootstrap or {@code null} on
-   *     spawn failure (drives the initial worker-state branch)
-   * @param knowledgeServerStartError reason string when
-   *     {@code knowledgeServer == null}, else {@code null}
+   * @param knowledgeServer the Worker bootstrap, or {@code null} when none could be constructed.
+   *     Tempdoc 825: non-null no longer implies connected — the initial worker-state branch reads
+   *     {@code hasClient()}
+   * @param knowledgeServerStartError reason string when the bootstrap did not connect, else
+   *     {@code null}
    * @param latestKnowledgeServer supplier that re-reads the *current*
    *     knowledge-server reference at re-attainment time — when the
    *     worker is restarted by the health monitor, the gRPC port may
@@ -110,7 +111,11 @@ public final class RuntimeManifestListenerWiring {
     try {
       LifecycleState ls = LifecycleProjection.derive(workCap, infCap);
       String lifecycleStr = ls.name();
-      if (knowledgeServer != null) {
+      // Tempdoc 825: a non-null bootstrap no longer implies a CONNECTED one — a failed boot now
+      // keeps its (restartable) instance so the health monitor's recovery arm can re-attempt it.
+      // Branch on the client, which is what "worker ready" actually means here; otherwise a bricked
+      // boot would publish worker.state=ready with a null gRPC port.
+      if (knowledgeServer != null && knowledgeServer.hasClient()) {
         Integer grpcPort = readGrpcPort(knowledgeServer);
         Path idx = indexBasePathSupplier.get();
         publisher.publishWorkerReady(

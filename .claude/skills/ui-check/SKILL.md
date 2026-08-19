@@ -64,7 +64,7 @@ the rot they were built to avoid is being forgotten (§26 discoverability). Pick
 | "Did I break a11y closure anywhere?" | `jseval ui-a11y-gate` | auto-serve (`--fixtures`) | exit 0 clean · 1 a NEW axe violation vs `governance/ui-a11y-baseline.v1.json` · 2 capture error |
 | "Did persistent chrome GROW taller than it was?" | `jseval ui-proportion-gate` | auto-serve (`--fixtures`) | exit 0 clean · 1 a registered element grew beyond `governance/ui-proportion-baseline.v1.json` · 2 capture error / selector not found |
 | "Did this change MOVE/REMOVE anything I didn't intend?" | `jseval ui-diff <before.measure.json> <after.measure.json>` | two captures (shoot before, edit, shoot after) | semantic changelog (landmark removed · element moved/resized >4px · new axe rule · overflow flip · real console); exit 0 same · 1 changed |
-| "Critique this surface against THIS product's design system" | `jseval ui-critic <step>` | auto-serve (`--fixtures`) | prints a GROUNDED critique **prompt** (facts + `design-reference.v1.json` + rubric) — feed it to a model / `agent_chat` |
+| "Critique this surface against THIS product's design system" | `jseval ui-critic <step>` | auto-serve (`--fixtures`) | prints a GROUNDED critique **prompt** (facts + `design-reference.v1.json` + rubric) — feed it to a model |
 | "Hunt edge-state bugs a human won't patiently click" | `jseval ui-fuzz` | auto-serve (`--fixtures`); ~80s | fuzzes search × {data-variant × viewport × theme}, flags anomalous cells; exit 0 clean · 1 flagged |
 | "Trace the interaction trajectory into a step" | `jseval ui-shot <step> --trace` | served FE | per-step trace of the chain leading to `<step>` (limited to existing harness chain steps) |
 
@@ -72,6 +72,30 @@ Rules of thumb: judge correctness from `ui-shot`'s `.measure.json` facts (cheap,
 gate a11y regressions with `ui-a11y-gate` (local-first, ADR-0026 — not CI-wired, so run it); use `ui-diff`
 when deliberately iterating on one surface; `ui-critic`/`ui-fuzz` are deeper, situational passes. The
 `ui-shot-hint` PostToolUse hook surfaces the *contextually-relevant* verb when you edit a `shell-v0` file.
+
+## These verbs vs the browser (`claude-in-chrome`) <!-- rule:harness-for-assertions -->
+
+> **Use the instrumented harness for anything you will assert on. Use the browser for things you are
+> only looking at.**
+
+An assertion taken from a screenshot is not reproducible and cannot be gated; `ui-shot`'s
+`.measure.json` is both, and `ui-diff`/`ui-a11y-gate`/`ui-proportion-gate` turn it into an exit code.
+So "the spacing looks wrong" is a browser observation, but *"the header grew 12px"* is a
+`ui-proportion-gate` claim — and only the second one survives review or catches a regression later.
+
+Where the browser is the right tool and this rule does not apply: external design research, an
+unfamiliar third-party flow, reading console/network output during a live debug, or anything with no
+harness step. Those are genuine uses — the rule steers *local dev-UI verification*, not exploration.
+
+Why it is written down (tempdoc 844 §6.4, §12.3 D4): `claude-in-chrome` was measured at ~1,773 calls
+and ~58.7 MB of tool-result bytes — roughly **98% of all MCP result volume**, and the single largest
+MCP consumer by a factor of ~87x over `justsearch-dev` — concentrated in 17 sessions and pointed
+mostly at `127.0.0.1`, i.e. this harness's own territory. (Across *all* tools it is ~25% of
+tool-result bytes; Read and Bash are larger. §6.4's "two-thirds" used an MCP-scoped denominator and
+is corrected there.) It was also the only agent capability mentioned in no
+repo rule at all. This lives here rather than in `CLAUDE.md` because the always-loaded budget is at
+its ceiling and this skill's own trigger ("capturing UI screenshots") already fires at exactly the
+moment the choice is made.
 
 ## Server & data requirements (there is NO mock data)
 | Step kind | Needs | Notes |

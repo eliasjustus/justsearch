@@ -670,6 +670,70 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   self-consistent against their own embedded policy snapshot; they are dated history, not retracted.
   Any *claim-bearing* run must use the v2 cohort.
 
+### F-053: the CE UPGRADE screen found real, significant headroom — mxbai-rerank-base-v2 beats the incumbent (legal +10.4% p=0.0004, scifact +4.8% p=0.0039, offline Gate-0-anchored) — but it is NOT a drop-in: chat-template input, tail-preserving truncation, and a 2.5-5.6x latency cost are named blockers; integration decision parked with the owner (2026-08-19; the F-052 follow-through D-001's corrected rationale licensed)
+
+- **Answer:** an offline reranker bake-off (harness
+  `scripts/jseval/experiments/reranker_bakeoff_f052.py`, 708 conventions; pools = BM25 top-30 ∪
+  dense chunk-MaxP top-30 mirroring the production evidence path; gold-in-pool 192/200 legal,
+  286/300 scifact) screened every D-003-eligible multilingual reranker ≤1B params. **Gate 0
+  PASSED**: the harness reproduces F-052's live arm-A/arm-B separation on both corpora (scifact
+  levels to Δ0.002-0.010; legal bracketed by the two truncation conditions). Winner:
+  **mxbai-rerank-base-v2** (Apache-2.0, 494M) — long-context condition legal nDCG@10 **0.6701
+  vs incumbent 0.6071 (+10.4%, p=0.0004)**, scifact **0.7911 vs 0.7551 (+4.8%, p=0.0039)**,
+  paired sign tests. Runner-up Qwen3-Reranker-0.6B wins legal (+12.1%, p=0.0042) but is n.s. on
+  scifact and needs 2.6 GB VRAM. bge-reranker-v2-m3 LOSES legal −18.9% (so F-005's ONNX-CUDA
+  question is moot for it). Offline levels are not engine claims — deltas are the load-bearing
+  result (F-040 discipline).
+- **The screen's own methodological catch:** at the shipped 512/top-20 config the two
+  decoder-backbone winners are batch-UNSTABLE (mxbai legal 0.5580→0.4881 across batch sizes)
+  while the incumbent is stable — traced to their publisher chat template placing the scoring
+  instruction AFTER the document, which production's head-first truncation
+  (`RerankerTokenizer.pack`, first-N ids) deletes. The 512-cell measures a broken prompt, not
+  the model; the trustworthy comparison is the long-context condition.
+- **Named blockers (why this is not the F-052 drop-in mechanism):** (1) chat-template support
+  in `RerankerTokenizer` (currently plain pair encoding); (2) tail-preserving truncation;
+  (3) latency — incumbent ONNX FP16 CUDA measured **85.8 ms/query** on this RTX 4070 vs the
+  winner's torch-fp16 25.5 ms/pair ⇒ ~**477 ms/query FP32-ONNX measured** (optimum export
+  succeeded; ~240 ms est. FP16) — 2.5-5.6× the incumbent, straight through the 200 ms
+  `rerank.deadline_ms` that F-052 showed is already silently lossy at a 165 ms p50. The
+  community seq-cls ONNX conversion did NOT reproduce publisher scoring (55.6% concordant) —
+  the export path is UNVERIFIED.
+- **Disposition (2026-08-19):** integration decision is the OWNER's; recorded recommendation:
+  **park until the F-052 deadline-drop instrumentation (PR #510) produces live miss-rate
+  data** — committing to a 3-6× slower judge before the current deadline's live behavior is
+  measured sequences the decisions backwards. The measured headroom stands here either way; a
+  live swap A/B (F-052 mechanism + the three blockers) is the path if funded.
+- **Named-and-excluded (D-003/size/license):** jina-reranker v2/v3/v3.5 (CC-BY-NC — the
+  circulating Apache claim for v3 is wrong); gte-reranker-modernbert-base (English-only — the
+  most tempting reject); KaLM + bge-gemma rerankers (Gemma-terms lineage dispute — owner call
+  if ever revisited); Qwen3-Reranker-4B/8B, mxbai-large (size); API-only vendors. Watch item:
+  `jhu-clsp/mmBERT` (MIT, multilingual ModernBERT-class) has no reranker fine-tune yet — the
+  natural encoder-only successor if one appears.
+- **Evidence:** run JSONs + roll-up `tmp/ce-bakeoff/` (session worktree, gitignored — this
+  entry + the committed harness are the durable record); practicality probe + ONNX export
+  under the same root; two adjacent stale-doc observations logged (D-001's 512→8192 line;
+  the 512 cap leaving ~100 tokens for evidence on legal-length queries).
+- **RECENCY EXTENSION (2026-08-19, same session — two candidates from a live 2026 sweep; the
+  shortlist DOES NOT CHANGE):** (1) **the mmBERT watch item materialized and screened WEAK** —
+  of all 60 HF fine-tunes of `jhu-clsp/mmBERT-{base,small}`, only two are general-purpose
+  rerankers, and both lose to the incumbent outright on the frozen F-053 pools:
+  `aqweteddy/AuroraX-Reranker-Base-v1.0` (MIT, 300M, EN/zh) scifact 0.7523 (tie, p=1.0) but
+  **legal 0.3098 (−49.0%, p<0.0001)**; `llm-semantic-router/mmbert-rerank-32k-2d-matryoshka`
+  (Apache-2.0, 308M) scifact 0.7060 (−6.5%, p=0.0084), **legal 0.2203 (−63.7%)** — the latter
+  scored via a best-effort reconstruction of its UNPUBLISHED custom head class (no source
+  exists anywhere; directionally sanity-checked against the card's own worked example — a real
+  reconstruction risk, but not one that plausibly closes a −64% gap). Neither shows the
+  decoder-family truncation instability (plain seq-cls, no chat template) — confirming the
+  architecture keeps the incumbent's robustness; the community TRAINING is what falls short.
+  The watch item therefore narrows, not closes: a SERIOUSLY-trained mmBERT-class reranker
+  remains the natural successor shape; none exists. (2) **Contextual AI Reranker v2 EXCLUDED
+  on license** (`ctxl-rerank-v2-instruct-multilingual-*` is `cc-by-nc-sa-4.0` per its HF card)
+  — the suspected screen gap resolves as never-eligible. Latency cells SKIPPED-CONTENDED
+  (neighbor held the GPU throughout; VRAM peaks 800-1012 MB recorded, contention-insensitive).
+  Net: **mxbai-rerank-base-v2 remains the only headroom candidate**, and the parked
+  disposition above stands with no competing branch. Artifacts `tmp/ce-bakeoff/ext/`
+  (extension harness + NOTES.md + 12 run JSONs, gitignored — this rider is the durable record).
+
 ### F-052: CE model quality IS a quality lever — the delivered-rank swap A/B refutes F-001/F-006 (MiniLM vs incumbent: email −5.7%, scifact −6.9%, legal −23.4%), and exposed a SILENT CE-deadline drop that no comparability field reports (2026-08-19; first CE-model measurement on the corrected harness)
 
 - **Answer:** shared-index, delivered-rank CE model-swap A/B (arm A = incumbent

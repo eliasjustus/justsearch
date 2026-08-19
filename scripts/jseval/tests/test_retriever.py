@@ -147,6 +147,38 @@ class TestBuildRequest:
         req = _build_request("query", "hybrid", 10, False, None)
         assert "debug" not in req
 
+    # -----------------------------------------------------------------------
+    # Q-020 / F-046: query_syntax field threading
+    # -----------------------------------------------------------------------
+
+    def test_query_syntax_absent_by_default(self):
+        """`query_syntax=None` (the default) sends no `querySyntax` field at all -- the
+        wire request is byte-identical to every pre-Q-020 caller."""
+        req = _build_request("query", "hybrid", 10, False, None)
+        assert "querySyntax" not in req
+
+    def test_query_syntax_omitted_when_not_passed_matches_default(self):
+        """Not passing `query_syntax` at all (positional/keyword omission) behaves
+        identically to passing `query_syntax=None` explicitly -- pins the default's
+        zero-effect claim at the call-signature level, not just the value level."""
+        with_default_arg = _build_request("query", "hybrid", 10, False, None, query_syntax=None)
+        without_arg = _build_request("query", "hybrid", 10, False, None)
+        assert with_default_arg == without_arg
+
+    def test_query_syntax_simple_sent_explicitly(self):
+        req = _build_request("query", "hybrid", 10, False, None, query_syntax="simple")
+        assert req["querySyntax"] == "simple"
+
+    def test_query_syntax_lucene_sent(self):
+        req = _build_request("query", "hybrid", 10, False, None, query_syntax="lucene")
+        assert req["querySyntax"] == "lucene"
+
+    def test_query_syntax_independent_of_pipeline_mode(self):
+        """querySyntax threads alongside a mode-derived pipeline body, not instead of it."""
+        req = _build_request("query", "lexical", 10, False, None, query_syntax="lucene")
+        assert req["pipeline"] == LEXICAL_PIPELINE
+        assert req["querySyntax"] == "lucene"
+
 
 # ---------------------------------------------------------------------------
 # Retrieve (integration with mock HTTP)
@@ -189,6 +221,32 @@ def test_retrieve_basic(MockClient):
     # derived from delivered rank (len(hits) - idx), which is what the engine actually returned.
     assert scored[0].score == 2.0
     assert len(raw) == 1
+
+
+@patch("jseval.retriever.httpx.Client")
+def test_retrieve_forwards_query_syntax_to_the_wire_request(MockClient):
+    mock_client = MagicMock()
+    MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+    MockClient.return_value.__exit__ = MagicMock(return_value=False)
+    mock_client.post.return_value = _mock_search_response([])
+
+    retrieve({"q1": "test query"}, "http://localhost:8080", mode="hybrid", query_syntax="lucene")
+
+    sent_body = mock_client.post.call_args.kwargs["json"]
+    assert sent_body["querySyntax"] == "lucene"
+
+
+@patch("jseval.retriever.httpx.Client")
+def test_retrieve_default_query_syntax_omits_the_field(MockClient):
+    mock_client = MagicMock()
+    MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+    MockClient.return_value.__exit__ = MagicMock(return_value=False)
+    mock_client.post.return_value = _mock_search_response([])
+
+    retrieve({"q1": "test query"}, "http://localhost:8080", mode="hybrid")
+
+    sent_body = mock_client.post.call_args.kwargs["json"]
+    assert "querySyntax" not in sent_body
 
 
 @patch("jseval.retriever.httpx.Client")

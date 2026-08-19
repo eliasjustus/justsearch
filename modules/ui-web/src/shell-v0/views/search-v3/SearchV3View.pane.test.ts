@@ -28,6 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { SearchV3View } from './SearchV3View.js';
 import { SV3_CITATION_OPEN } from './Sv3Main.js';
 import { Sv3Pane, SV3_PANE_CLOSE } from './Sv3Pane.js';
+import type { Sv3SessionRow } from './Sv3SessionRow.js';
 import { resetSearchState } from '../../state/searchState.js';
 import {
   __feedContactForTest,
@@ -273,6 +274,41 @@ async function openPaneMidStream(el: Mounted): Promise<Sv3Pane & { updateComplet
   return (await region(el, 'jf-sv3-pane')) as Sv3Pane & { updateComplete: Promise<unknown> };
 }
 
+/** Open a citation pane on whatever conversation is currently active, without asking a new one. */
+async function openPaneOnCurrent(el: Mounted): Promise<HTMLElement & { updateComplete: Promise<unknown> }> {
+  const main = await region(el, 'jf-sv3-main');
+  const trigger = q<HTMLButtonElement>(main, 'sv3-turn-sources');
+  if (trigger === null) throw new Error('the answer landed without a sources disclosure');
+  trigger.click();
+  await main.updateComplete;
+  const panel = q(main, 'sv3-turn-citations');
+  if (panel === null) throw new Error('the answer landed without a citations panel');
+  fireCitation(panel);
+  await el.updateComplete;
+  return region(el, 'jf-sv3-pane');
+}
+
+/** Sidebar rows, the same idiom `SearchV3View.sessions.test.ts` uses. */
+async function rowsOf(el: Mounted): Promise<Sv3SessionRow[]> {
+  const sidebar = await region(el, 'jf-sv3-sidebar');
+  const rows = [
+    ...(sidebar.shadowRoot?.querySelectorAll('jf-sv3-session-row') ?? []),
+  ] as Sv3SessionRow[];
+  await Promise.all(rows.map((r) => r.updateComplete));
+  return rows;
+}
+
+/** Click a row the way a pointer does: on its button, which bubbles out through the shadow root. */
+const clickRow = async (row: Sv3SessionRow): Promise<void> => {
+  row.shadowRoot?.querySelector<HTMLButtonElement>('button')?.click();
+};
+
+async function newSession(el: Mounted): Promise<void> {
+  const sidebar = await region(el, 'jf-sv3-sidebar');
+  sidebar.shadowRoot?.querySelector<HTMLButtonElement>('[data-testid="sv3-sidebar-new"]')?.click();
+  await el.updateComplete;
+}
+
 /* ── 1. The double-open guard ────────────────────────────────────────────────────────────────── */
 
 describe('an in-window citation opens the WINDOW pane and nothing else', () => {
@@ -386,6 +422,92 @@ describe('the pane is mounted exactly while a cited document is open', () => {
     expect(own).not.toContain('highlight');
     // Exactly one animation of its own, and it is the spec's sheet entry — not an emphasis.
     expect([...own.matchAll(/@keyframes\s+([\w-]+)/g)].map((m) => m[1])).toEqual(['sv3-pane-in']);
+  });
+});
+
+/* ── 2b. Closes on a real conversation switch (tempdoc 857 D4, drafted as 854) ──────────────────
+ *
+ * `closePane()` on a new session (route #5) is covered above. Every OTHER route that changes the
+ * active conversation — a sidebar row-click, the version pager, and branch/retry/edit, which both
+ * funnel through the shared `openBranch` — leaked before this change (857 §7.1). Both guarded sites
+ * capture the previous id BEFORE the claim, because `focusSession` mints a NEW session-list object
+ * even when the clicked id is already active (it stamps `lastVisitedAt`), so an unguarded
+ * `closePane()` would also fire on a re-click of the row already on screen — negative test 1 below
+ * is the one that actually distinguishes the guarded implementation from that naive one.
+ */
+
+describe('the pane closes on a real conversation switch, and only a real one', () => {
+  it('closes when a sidebar row-click switches to a different conversation', async () => {
+    const el = await mount();
+    await openPane(el); // conversation A, pane open
+    await newSession(el); // hero state; also closes the pane (route #5, already covered above)
+    await askGrounded(el); // conversation B, no citation pane opened yet
+    await openPaneOnCurrent(el);
+    expect(el.shadowRoot?.querySelector('jf-sv3-pane')).not.toBeNull(); // present BEFORE the switch
+
+    const rows = await rowsOf(el);
+    expect(rows).toHaveLength(2); // B (newest, active) then A
+    await clickRow(rows[1] as Sv3SessionRow); // switch to A
+    await el.updateComplete;
+
+    expect(el.shadowRoot?.querySelector('jf-sv3-pane')).toBeNull(); // absent AFTER
+  });
+
+  it('does NOT close when the already-active row is clicked again', async () => {
+    // The sharpest case in this file: `focusSession` returns a NEW list even for id === activeId
+    // (it stamps `lastVisitedAt` on the row), so `this.sessions === before` is not a switch guard —
+    // only comparing the captured id is. This fails against the unguarded `closePane()` shape.
+    const el = await mount();
+    const pane = (await openPane(el)) as Sv3Pane & { updateComplete: Promise<unknown> };
+    expect(el.shadowRoot?.querySelector('jf-sv3-pane')).not.toBeNull();
+
+    await clickRow((await rowsOf(el))[0] as Sv3SessionRow); // the only row, already active
+
+    expect(el.shadowRoot?.querySelector('jf-sv3-pane')).not.toBeNull();
+    expect(pane.docPath).toBe(CITED_DOC);
+  });
+
+  it('does NOT close on a non-switching update (the late-match claim upgrade)', async () => {
+    // Distinguishes "closes on switch" from "closes on any re-render": every streamed chunk is a
+    // `sessions` write, and a naive `closePane()` dropped into `willUpdate` would pass every OTHER
+    // test in this file while failing this one.
+    const el = await mount();
+    const stream = await askUnmatched(el, [source()]);
+    const pane = await openPaneMidStream(el);
+    expect(el.shadowRoot?.querySelector('jf-sv3-pane')).not.toBeNull();
+
+    stream.emit('rag.citation_matches', {
+      matches: [{ sentenceIndex: 0, sentenceText: 'The lock held.', similarity: 0.9, sourceIndex: 0 }],
+    });
+    stream.emit('done', {});
+    stream.end();
+    await settle(el);
+
+    expect(el.shadowRoot?.querySelector('jf-sv3-pane')).not.toBeNull();
+    expect(pane.citation?.sentenceText).toBe('The lock held.');
+  });
+
+  it('closes when the version pager selects a DIFFERENT session', async () => {
+    // `openBranch` is the shared implementation under both the version pager (#3) and every
+    // branch/retry/edit act (#4). `onVersionSelect` merges the unknown id via `mergeStoreConversations`
+    // before `focusSession` claims it (857 §7.1) — this exercises exactly that merge-then-claim path.
+    const el = await mount();
+    await openPane(el); // conversation A, pane open
+    const activeBefore = el.sessions.activeId;
+    expect(activeBefore).not.toBeNull();
+
+    const main = await region(el, 'jf-sv3-main');
+    main.dispatchEvent(
+      new CustomEvent('sv3-version-select', {
+        detail: { sessionId: 'sv3-version-select-target' },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await settle(el);
+
+    expect(el.sessions.activeId).toBe('sv3-version-select-target'); // a real switch happened
+    expect(el.shadowRoot?.querySelector('jf-sv3-pane')).toBeNull();
   });
 });
 

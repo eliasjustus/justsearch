@@ -833,6 +833,17 @@ public class LocalApiServer {
    * @param ks the started KnowledgeServerBootstrap (non-null)
    * @param startError the start error string, or null if startup succeeded
    */
+  /**
+   * Tempdoc 825: binds the ONE worker-recovery authority (the health monitor) into the API surface,
+   * so {@code POST /api/worker/restart} shares the automatic loop's budget and vetoes instead of
+   * 503-ing in exactly the state it exists for. Independent of
+   * {@link #lateBindKnowledgeServer}: the authority exists whether or not a worker is bound.
+   */
+  public void bindWorkerRecovery(
+      io.justsearch.app.services.worker.WorkerRecoveryAuthority workerRecovery) {
+    core.inferenceHandlers().setWorkerRecovery(workerRecovery);
+  }
+
   public void lateBindKnowledgeServer(KnowledgeServerBootstrap ks, String startError) {
     // The upgrade routes deliberately do NOT cache `ks` here: HeadAssembly.currentKnowledgeServer()
     // is the single owner of that reference (HeadlessApp calls connectKnowledgeServer immediately
