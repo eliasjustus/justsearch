@@ -14,6 +14,7 @@ import {
   checkForAppUpdate,
   getAppUpdateStatus,
   installAppUpdate,
+  refreshAppUpdateStatus,
   startAppUpdateMonitor,
   subscribeAppUpdate,
 } from './appUpdateState.js';
@@ -64,6 +65,39 @@ describe('appUpdateState', () => {
 
     await installAppUpdate();
     expect(invoke).toHaveBeenCalledWith('install_app_update');
+  });
+
+  it('exposes host-reported download progress bytes to consumers', async () => {
+    invoke.mockResolvedValueOnce({
+      state: 'downloading',
+      currentVersion: '1.0.0',
+      availableVersion: '1.1.0',
+      bytesDownloaded: 4_194_304,
+      bytesTotal: 262_144_000,
+    });
+
+    await refreshAppUpdateStatus();
+
+    const status = getAppUpdateStatus();
+    expect(status?.bytesDownloaded).toBe(4_194_304);
+    expect(status?.bytesTotal).toBe(262_144_000);
+  });
+
+  it('keeps bytesTotal null when the host reports an unknown download size, never fabricating 0', async () => {
+    invoke.mockResolvedValueOnce({
+      state: 'downloading',
+      currentVersion: '1.0.0',
+      availableVersion: '1.1.0',
+      bytesDownloaded: 1_048_576,
+      bytesTotal: null,
+    });
+
+    await refreshAppUpdateStatus();
+
+    const status = getAppUpdateStatus();
+    expect(status?.bytesDownloaded).toBe(1_048_576);
+    expect(status?.bytesTotal).toBeNull();
+    expect(status?.bytesTotal).not.toBe(0);
   });
 
   it('defers the passive check until after startup', async () => {

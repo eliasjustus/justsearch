@@ -1,6 +1,8 @@
 # 840 — Model download: component-level install, staged acquisition, and the backend restructure it needs
 
-    status:  DESIGN — findings recorded, direction decided by owner, not yet planned or implemented
+    status:  IN PROGRESS — Phase 0 (corrections + teardown) and Phase 1 (stage split +
+             AcquisitionScheduler) implemented and verified; U7 (updater progress) done.
+             Phases 2-6 remain. Plan approved by owner 2026-08-18.
     created: 2026-08-18
     updated: 2026-08-18
     follows: 824 (repair remedy / terminal transport), 805 (observed-vs-declared capability),
@@ -61,7 +63,7 @@ Ordered by severity. All source-verified.
 | **B1** | **`AiInstallService` is a system-mutation orchestrator, not a download service.** 1803 lines, ~14 collaborators; the download is ~120 of them. It also probes GPU hardware, mutates `UiSettings` across four separate load/save round-trips, sets four global JVM system properties, rebuilds the global `ConfigStore` from four call sites, applies llama-server runtime overrides, restarts the **Worker OS process** + reconnects gRPC + resets its circuit breaker, brackets a reconciler procedure, runs a 60 s live LLM smoke test, writes the install contract, unzips archives. Four responsibilities — *acquire · place · configure · validate* — welded into one 265-line method with no stage boundary and no rollback. **This is why `repair()` is literally `startInstall()`, and why `InstallAttemptMemory` had to be invented** to give repeated whole-plan re-runs the memory a staged design would not need. | `AiInstallService.java:640-904`, `:632-634`, `:1214-1503` |
 | **B2** | **Config phase mutates global state with no enforced ordering and no rollback.** `applyCudaServerExe()` must precede `applySettings()`; the enforcement is a comment. `setSysPropIfBlank` makes first-writer-wins a permanent latch for the JVM lifetime. Four `settingsStore.load()`→mutate→`save()` cycles with no CAS: a concurrent UI settings write is a lost update. A throw midway leaves saved settings + rebuilt ConfigStore + no runtime override, silently. | `:881-889`, `:1226-1242`, `:1345-1348` |
 | **B3** | **The `app-api` interface is decorative and its javadoc describes a layout that no longer exists.** `AiInstallController` imports the **concrete** impl, not the interface, because it needs `setKnowledgeServer()` / `previewInstallPlan()`. The interface javadoc justifies itself with "the impl lives in `modules/ui/.../ai/install/` … so app-services need not import ui" — the impl has since moved *into* app-services. Also `repair()`'s contract says "re-verify hashes, re-apply settings"; the impl re-derives and re-installs the whole plan. | `AiInstallController.java:11`, `app-api/AiInstallService.java:11-13,64-68` |
-| **B4** | **The model registry is an unenforced cross-module runtime contract.** `AiInstallService` loads `"ai/model-registry.v2.json"` through `Thread.currentThread().getContextClassLoader()`. The only production copy lives in **`modules/ui/src/main/resources/`** — a module `app-services` neither depends on nor may (cycle). The service's most important input arrives by classpath coincidence with no compile-time or gate-time check; it fails at runtime as `MANIFEST_UNAVAILABLE`. A second copy in `modules/configuration/src/test/resources/` can drift independently, and nothing compares them. | `AiInstallService.java:70`, `ModelRegistryLoader.java:32-34` |
+| **B4** | **The model registry's classpath presence is an unenforced cross-module runtime contract.** `AiInstallService` loads `"ai/model-registry.v2.json"` through `Thread.currentThread().getContextClassLoader()`. The only production copy lives in **`modules/ui/src/main/resources/`** — a module `app-services` neither depends on nor may (cycle). The service's most important input arrives by classpath coincidence with no compile-time or gate-time check; it fails at runtime as `MANIFEST_UNAVAILABLE`. <br>**CORRECTION (2026-08-18, planning pass):** this row originally also claimed "a second copy in `modules/configuration/src/test/resources/` can drift independently, and nothing compares them." **That was wrong** — `gates/ssot-catalog-sync/mirrors.json:16-22` gates the two copies (`kind: "json"`, structure-compare), added by tempdoc 633 #6, and they match byte-for-byte today. Only the *classpath-presence* half of this finding stands. The gate's own note ("else the test validates a registry production never sees") is the argument for the fix: move the resource into `modules/configuration/src/main/resources/`, beside its loader, and the mirror entry deletes itself. | `AiInstallService.java:70`, `ModelRegistryLoader.java:32-34`, `gates/ssot-catalog-sync/mirrors.json:16-22` |
 | **B5** | **Transport observation is one PowerShell process per sample.** `getBitsSnapshot()` spawns `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command <script>` **every 750 ms** for the whole download — ~3 600 process launches for a 45-minute transfer. Observing the transfer costs more than its control plane. Scripts are assembled by string concatenation with `psEscape()` (single-quote doubling) as the only defence — safe today only because URLs come from a shipped registry, and the app already has a user-supplied pack-import path. | `DownloadExecutor.java:722-751`, `:780-799`, `:807-810` |
 | **B6** | **Failure classification is round-tripped through English prose.** `TransportFailure` is a typed record, correctly populated — then `ResumableFetch.Outcome` drops it and keeps only `String error`, and `InstallAttemptMemory.isTransportFailure()` recovers the classification with `error.startsWith("Download failed for")`. Whether transport escalation engages at all depends on the wording of a user-facing message. The javadoc pins it with a test; pinning a defect is not fixing it. | `ResumableFetch.java:98-103`, `InstallAttemptMemory.java:60,104-106` |
 | **B7** | **Orphaned BITS jobs on abnormal termination.** `runAttempt` writes the sidecar with `bitsJobId: null` before *every* transfer; the id is written back only by `persistSuspendedJob` on a **graceful** failed transfer. A crash mid-BITS-transfer leaves a live job in the system queue (90-day default lifetime) that nothing reclaims — `abandonResumeHandle` fires only when a sidecar *records* an id. `-DisplayName 'JustSearch AI'` is set and **there is no sweep by DisplayName anywhere**: the one hook that would make reclamation possible is set and unused. | `ResumableFetch.java:266,349-358`, `DownloadExecutor.java:701` |
@@ -160,8 +162,252 @@ not dropped for difficulty or diminishing returns — if one proves infeasible, 
 - Whether U7 (updater progress) rides along here or splits to its own change — it shares no code
   with the model path.
 
-## 9. Log
+## 9. Planning-pass discoveries (2026-08-18)
+
+Found while planning and while doing the work, all source-verified. These change the design, so they
+belong here rather than only in the plan.
+
+**Ordering:** entries are in *discovery* order (newest first), not numeric order — P13 was the first
+recorded, then each later finding was prepended. Read the numbers as identifiers, not as a sequence.
+
+| # | Discovery | Consequence |
+|---|---|---|
+| **P1** | **No encoder hot-reload exists.** Every encoder's model path is resolved once at worker-config build time (`SpladeConfig.java:59` → `SpladeModelDiscovery.resolve`; same shape for NER / embedding / BGE-M3). No re-resolve RPC, no periodic re-check. The only way a newly-arrived model goes live is a full Worker process restart (`AiInstallService.java:1447`). | D1's promise does **not** require building hot-reload. **Acquisition stages become the restart boundaries** — 3 stages ⇒ at most 2 short restarts, each at a real "a new capability just arrived" moment. Building encoder hot-reload is explicitly out of scope. |
+| **P2** | **No general scheduler / work-queue exists** anywhere in `modules/`. `JobQueue` is SQLite + per-file + worker-local; `ScanProgressRegistry` is a single-scan progress buffer; `OperationLeaseService` is admission control, not scheduling. | The `AcquisitionScheduler` (B10's fix) is genuinely new machinery, not a missed reuse. |
+| **P3** | **`OperationLeaseService` supports N concurrent leases**; `opClass` is not deduped, identity is an opaque per-call `opId` (`OperationLeaseServiceImpl.java:60,112,138`). | Today's single blanket `"ai.model-install"` / 7200 s lease (`AiInstallService.java:560-571`) can become one lease per acquisition stage with an honest duration and independent cancellation. |
+| **P4** | **`ProcedureKind` is a closed enum and per-kind singleton** (`VDU_BATCH`, `ACTIVATION`, `INSTALL_SMOKE_TEST`; `LinkedHashMap<ProcedureKind, Procedure>` at `RuntimeReconciler.java:131-132`), and drift-convergence stays suppressed until the *last* procedure ends. | Staged install holds **one** procedure for the whole install window, not one per component. |
+| **P5** | **The FE already has the one background-progress home**: the task substrate (`substrates/tasks/index.ts:54-67`) + `<jf-task-list>` (`TaskList.ts:778`), with `upsertMirroredTask` (`index.ts:186-200`) existing specifically for a backend-owned lifecycle the FE only mirrors — the shape `indexingJobsBridge` already uses. | Staged acquisition pushes there. **No second progress surface** is invented; the `StatusDeck` `core.running-job` chip and the bounded detail list come free. |
+| **P6** | **`humanizeSeconds`** (`state/startupEstimate.ts:39-47`) is already the shared duration formatter behind `TaskList.ts:96,123`. `display/format.ts` has only `formatBytes` + `formatCount`. | U1's ETA reuses `humanizeSeconds` and `TaskList.ts:93-97`'s honest-segment sentence shape. Do not add a second duration formatter. |
+| **P7** | **`availability.ts` has four kinds**, not three: `available` \| `blocked` \| `unavailable{reason,transient?,remedy?}` \| `degraded{caveat,remedy?}` (`availability.ts:59-80`). `blocked` is reserved for intent gates. | "Not supported on this hardware" is `unavailable{reason}`, **not** `blocked`. "Installed but running on CPU" is `degraded{caveat}` — the type already models it. |
+| **P8** | **`operation-surface` is narrower than its title suggests** — scoped to five canonical types found by import scan (`IndexingJobView`, `ActionEvent`, `AgentRunStore`, `InteractionEvent`, `MemoryStore`; `operation-surfaces.v1.json:71-89`). | A new install state machine does **not** trip it. It trips only if acquisition events reach the `ActionEvent` ledger. Registration is conditional on that design choice, not mandatory. |
+| **P9** | **`AiInstallStatus`'s "why" fields are free text with no register and no gate** (`errorCode`, `skipReason`, `error`, `terminalReason`). No existing reason-code family fits per-component absence — `LifecycleReasonCode`'s `INFERENCE_*` family answers "why is AI not ready", a different consumer, and the repo's own precedent keeps readiness and search-degradation vocabularies deliberately unmerged. | Needs a **new** `governance/install-reason-codes.v1.json` + `check-install-reason-codes.mjs` mirroring the readiness pattern. The typed `SkipCause` (H2) and typed `TransportFailure` (B6) are its vocabulary. |
+| **P10** | **`check-install-api-contract.mjs` is wired into CI** (`.github/workflows/ci.yml:225-229`): every `/api/ai/install/*` route must appear in `AiRoutes.java` **and** have a row in `docs/reference/api-contract-map.md`. Most other gates are **not** in CI — they rest on the pre-merge table + consult hook. | New endpoints are a hard CI failure without the doc row. For everything else, green CI is not proof the gates passed; they must be run. |
+| **P11** | **`InstallCompleteness` is a governed logic seam** — `governance/logic-seams.v1.json`, id `install-completeness`, guard `test:InstallCompletenessTest`. | H2's new `DECLINED` classification must keep that guard resolving; `check-logic-seams --mode gate` applies. |
+| **P12** | **A third hand-maintained copy of the install wire shape exists**: `modules/ui-web/src/api/domains/packs.ts:91-105`, beside the backend class and `aiInstallPoll.ts`'s interface. Nothing generates or drift-checks any of them (no `.proto`, no JSON Schema, not in `gen-wire-schema-types.mjs`'s targets). | Collapse to one authority when the wire shape changes. |
+
+### P13 — the dual-copy registry design had THREE enforcement points, and grep found only one
+
+Discovered during Phase 0's B4 move. The "registry ships from `modules/ui`, mirrored into a
+configuration test copy" design was enforced in three independent places:
+
+1. `gates/ssot-catalog-sync/mirrors.json:16-22` — the declared mirror (the one I found).
+2. **`scripts/codegen/gen-notices.mjs` `presenceChecks()` step 2** — a *second*, independently-written
+   byte-identity check between the same two files, self-described as "currently ungated dual-copy".
+   Nothing connected it to the mirror entry; either could have been changed without the other.
+3. The test copy itself, plus stale prose in two `modules:ui` tests and one `app-services` test
+   asserting "app-services cannot load the real registry".
+
+**Why my sweep grep missed most of it:** four scripts referenced the path as *joined segments* —
+`join(REPO_ROOT, 'modules', 'ui', 'src', 'main', 'resources', 'ai', 'model-registry.v2.json')` — so no
+single line ever contained the substring `modules/ui/src/main/resources/ai/model-registry.v2.json`.
+A path-shaped grep is blind to path-segment construction.
+
+**Method correction for the rest of this work:** when sweeping a retiree whose fingerprint is a
+*path*, grep for the distinctive **final segment alone** (`model-registry.v2.json`) and for the
+distinctive **directory segment in quotes** (`'ai'`, `"resources"` near `'ui'`), not the assembled
+path. Consumers found this way in Phase 0: `gen-notices.mjs`, `dev/doctor.mjs`,
+`docs/check-privacy-claims.mjs`, `verify-prerequisites.mjs`.
+
+### P19 — a ratchet only ratchets when someone runs the measurement
+
+Registering `AcquisitionRate` as a logic seam required a measured strength floor, which required
+running PIT on `:modules:app-services`. That run surfaced two things I was not looking for.
+
+**(a) The new seam scored 80%, and the 8 survivors were all boundary flips on the honesty thresholds.**
+`ConditionalsBoundaryMutator` at the too-few-samples check, the stall check, the min-span check, the
+backwards-progress reset, the window-eviction cutoff and the retention cap. In a class whose stated
+purpose is "honest or silent — never a fabricated number", an unkilled boundary mutant means *nothing
+pins whether it speaks or stays silent at the threshold*. 80% was not a number to accept as a floor;
+it was a pointer to 8 unpinned decisions. Fixed to **97%** (41/42) with seven boundary tests. The last
+survivor is provably equivalent: at deque size 1 the retained element is the just-added sample, so
+`now < now - windowNanos` is false for any `windowNanos >= 1` (which the constructor clamps), making
+`size() > 1` and `size() >= 1` behave identically. No test can discriminate it, so none was written.
+
+**(b) It also surfaced a PRE-EXISTING violation on a different seam.**
+`install-completeness` reported `noCoverage 0 → 1`. The uncovered mutation is
+`packagesWithMissingRequiredFiles()` — introduced by tempdoc 824 (commit `e9d68989`) **without
+extending `InstallCompletenessTest`, the seam's own declared guard**. The baseline's `generated_at` is
+2026-06-03, which predates the method entirely. So the gap has existed since 824 landed and was
+invisible because nobody re-ran PIT.
+
+Closed it rather than logging it, because Phase 2 modifies this exact seam (adding `DECLINED`) and
+landing on an already-violated ratchet would make my own regression indistinguishable from the
+inherited one.
+
+**Generalises to:** a green ratchet is not evidence of health — it is evidence that nobody measured
+since the baseline was written. Adding a method to a registered seam without extending its guard test
+is invisible until the next measurement, and `generated_at` is the field that tells you how much that
+silence is worth. When touching a registered seam, re-measure *before* changing it, so inherited
+violations are attributed correctly.
+
+### P17 — line numbers in a delegation brief are wrong the moment the tree is dirty
+
+Every `file:line` anchor in the Phase 1 brief was off, because the worktree carried uncommitted Phase 0
+work that had already shifted `AiInstallService.java` by ~10-40 lines. The worker had to re-locate all
+eight of them (`runInstallInternal` was `:650-939`, not `:640-904`; `repair()` `:641-643`, not
+`:632-634`; and so on). No harm done — it re-derived them — but it is wasted worker effort and an
+invitation to edit the wrong place.
+
+**Rule:** in a brief against a dirty tree, anchor on **symbols** (method name, constant name, a quoted
+line of code) and use line numbers only as a hint explicitly marked approximate. Line numbers are
+reliable only against a committed ref.
+
+### P18 — the "acquire → place → configure → validate" split is not four sequential stages
+
+Phase 1's brief asked for placement as stage 2 after acquisition. That is not what the code does and
+adopting it would have changed behaviour: a file is moved and extracted **the moment it verifies**, and
+the byte accounting is gated on that success (`downloadedSoFar += size` only runs after the move
+returns). Placement is therefore a **per-item collaborator inside** acquisition, not a phase after it.
+
+Resolved by giving the scheduler a `Placer` seam it calls per item, plus a once-per-run
+`writeContract`. The mental model that survives: *acquire* and *place* are interleaved per item;
+*configure* and *validate* are genuinely sequential afterwards.
+
+Second constraint discovered the same way: `smokeTestBestEffort`, `failPackage`, `updatePackageState`,
+`updatePackageProgress`, `applyCompletionState`, `extractZipInPlace`, `writeOrtNativePathSysprop` and
+`buildContract` are all reached by **reflection** from tests (`getDeclaredMethod` on
+`AiInstallService`). They cannot be *moved* to another class, only delegated to. That pinned
+`ConfigurationStage`/`ValidationStage` into owning the ordering, checkpoints and phase publishing while
+delegating step bodies back — which is the honest split anyway, but it was forced, not chosen.
+
+### P16 — replacing a prose classifier with a typed one silently NARROWS it unless the "couldn't classify" case is typed too
+
+B6's implementation caught a real defect in the brief I wrote for it. Recording it because the trap is
+general, not specific to this file.
+
+The prose classifier was `error.startsWith("Download failed for")`. Every transport-failure message
+begins that way **whether or not the transport managed to name a code** — `Transfer.lastFailure()` is
+documented as returning `null` "when the transport cannot say" (`ResumableFetch.java:49-56`), and real
+paths hit it. So the string check caught unclassified transport failures too.
+
+My brief said the typed replacement should "pass the `TransportFailure` it already has". That would have
+put `null` in `Outcome.failure()` on a genuine transport failure, so `isTransportFailure(outcome)` —
+`failure() != null` — would return **false**, and `InstallAttemptMemory` would stop recording escalation
+for exactly the failures that cannot describe themselves. A typed migration that reads as a pure
+refactor would have quietly disabled a slice of the converging-repair machinery that tempdoc 824 built.
+
+Fix: `TransportFailure.unclassified()` — `retryable=false`, which is precisely the pre-existing
+documented behaviour for an unnamed failure, so the retry policy is bit-identical. The user-facing
+message stays keyed on whether the transport classified, so `"Download failed for X"` is unchanged.
+
+I verified the equivalence myself rather than accepting it: old `failure != null && failure.retryable()`
+with a null failure is `false`; new `unclassified().retryable()` is `false`. And the exhausted-attempts
+path is only reachable when every attempt was retryable, hence non-null — so `failure() != null` matches
+the old prefix predicate on **every** arm (transport ✓, exhausted ✓, verification ✗, bookkeeping ✗,
+cancelled ✗).
+
+**Generalises to:** when replacing a string/prose discriminator with a typed one, enumerate every input
+the string form matched and confirm the typed form matches the same set. The dangerous case is always the
+degenerate one the string form caught by accident of formatting.
+
+### P15 — four tests depended on a resource being ABSENT, and nothing declared it
+
+The sharpest finding in Phase 0, surfaced only because B4 made a missing resource present.
+
+`AiInstallService.applyCompletionState()` (no-arg) delegates to
+`applyCompletionState(recomputeCompletenessFromDiskBestEffort())`, and that probe returns `null` when
+it cannot answer — including **when the registry is not on the classpath**. Four tests in
+`AiInstallServicePackageStateTest` called the no-arg entry point to pin *bookkeeping-only* properties
+(`partialFailure_reportsCompletedNotFailed_andHonestCount`, `nonTerminalPackage_isNotCountedAsInstalled`,
+`allInstalled_reportsFullyInstalled`, `skippedPackage_distinguishedFromFailed`). They reached the
+bookkeeping branch **only because `app-services` had no registry on its test classpath** — an
+undeclared dependency on an absence.
+
+Making the registry reachable flipped them onto the real disk-recompute path, against synthetic package
+ids and an empty `@TempDir`; two of four failed. The fix was to inject `null` explicitly through the
+two-arg seam that already exists for exactly this purpose (and that
+`AiInstallServiceCompletionTruthTest:206` already drives deliberately), restoring the tests' actual
+intent instead of inheriting it from a classpath accident. Assertions unchanged.
+
+**Verified no coverage was lost** — all three arms are still driven deliberately: the no-arg composition
+by `AiInstallCompletionDiskRecomputeTest:54` (in `modules:ui`, where the registry was always reachable),
+the indeterminate arm by `AiInstallServiceCompletionTruthTest:206`, the real-disk-truth arm by the same
+file's `:80-153`.
+
+The irony worth keeping: `AiInstallServiceCompletionTruthTest`'s own javadoc claimed this branch "keeps
+those tests meaningful rather than accidentally green" — while *describing the accident*. That comment
+was corrected in the same change.
+
+**Generalises to:** a test that passes because a resource, file, env var, or capability is MISSING is
+green for a reason no reader can see, and the next infrastructure improvement silently rewrites what it
+tests. Related to the repo's `unreachable-seed-green` handle. When a fix makes something newly
+available, re-run the suites that previously ran without it — the failures are the valuable part.
+
+### P14 — process: two concurrent Java workers in one worktree cannot both be correct
+
+Phase 0 scheduling mistake, recorded because it will recur otherwise.
+
+Only one Gradle build may run at a time across agents (shared-cache corruption, CLAUDE.md). I read that
+constraint as "so tell the second Java worker not to run Gradle" and launched two Java workers into the
+same worktree concurrently. Both halves of that failed:
+
+- The no-Gradle worker **cannot compile-check its own work**, so it authored a new test whose
+  `OnlineAiService` stub omitted the abstract `isStartingUp()` (`OnlineAiService.java:401`).
+- Its un-compilable intermediate state was visible to the *other* worker, whose acceptance criteria
+  include `build -x test` — so a green-able task reported a failure that was not its own, and burned two
+  retry cycles on it. It also hit two transient collisions on `ResumableFetch.java` /
+  `InstallAttemptMemory.java` from the same overlap.
+
+**Rule for the rest of this work:** parallel workers must be separated by *toolchain*, not by permission
+to build. Java + Java in one worktree ⇒ run them **sequentially**. The pairing that worked was Java
+(Gradle) + frontend (npm) — disjoint toolchains, disjoint files, both able to verify themselves. If two
+Java chunks genuinely must overlap, give each `isolation: "worktree"` so neither sees the other's
+half-finished types, and accept the merge cost.
+
+Corollary: never hand a worker acceptance criteria it has no tool to check. Either it can verify, or the
+criterion belongs to whoever can.
+
+## 10. Log
 
 - **2026-08-18** — Backend + frontend read end to end; findings B1–B12 / U1–U9 recorded above.
   Owner added the component-split direction (§5); four-category refinement and opt-out interaction
   agreed. D1 (staged) and D2 (backend-first) taken. Next: `/plan`.
+- **2026-08-18** — **Phase 1 complete and verified** (B1, B2, B10). `runInstallInternal` went from ~265
+  lines to ~85. New: `AcquisitionScheduler` (owns the ordered set of fetches; four seams — `Fetcher`,
+  `Placer`, `AttemptLedger`, `Listener` — so it is fully testable with no IO), `AcquisitionRate` (pure
+  sliding-window rate/ETA, the backend half of U1), and four stage classes. `ConfigurationStage` makes
+  the previously comment-only `applyCudaServerExe`-before-`applySettings` ordering an explicit named
+  step list with an applied/not-applied record, so a partial apply is detectable instead of silent.
+  - Strictly behaviour-preserving: **zero existing test files changed**, and the full repo suite
+    (`./gradlew.bat test`, not a subset) is BUILD SUCCESSFUL. 25 new tests across scheduler, rate and
+    configuration ordering.
+  - Registered `AcquisitionRate` as a logic seam (`governance/logic-seams.v1.json`) — pure,
+    arithmetic-dense, silent-wrong-value; the sibling of `windowed-embed-progress`. Deliberately did
+    **not** register `AcquisitionScheduler` or `ValidationStage` despite a hook suggesting the latter:
+    all 17 pre-existing seams are `pure: true`, and both of those do IO through collaborators.
+  - Design corrections made while planning Phase 2, both from tracing consequences: intent-vs-record
+    must be two authorities with completeness reading *intent* (see §5.3 H2), and `cuda-runtime` must
+    not be user-declinable because profile demotion would silently remove chat (see §5.3 H1).
+  - Findings from doing the work: §9 P17, P18.
+- **2026-08-18** — **U7 complete** (app-updater download progress). Extended the existing polled
+  `app_update_status` channel rather than adding an event; the FE's `bytesDownloaded`/`bytesTotal`
+  already had matching camelCase serde names and the Rust side had simply been omitting them. 300 ms
+  throttle; unknown `Content-Length` stays `null` (never 0); both fields reset on every state
+  transition so a prior attempt cannot bleed through. Integrity checks untouched. The
+  whole-installer-in-memory buffering was investigated and deliberately left: the Tauri plugin hands
+  callers only `chunk.len()`, never the bytes, so streaming to disk means reimplementing the HTTP GET
+  and Ed25519 verification — logged to the inbox with that evidence.
+- **2026-08-18** — **Phase 0 complete and verified.** All eight items landed (B3, B4, B6, B7, B8, B9,
+  B12, U9) with teardown. Scope: 31 files, +686/−136, plus 3 new tests, 1 governance changeset.
+  - Verification, all run bare (no pipe, so the exit code is the command's own):
+    `spotlessApply` + `build -x test` → exit 0; `:modules:app-services:test :modules:configuration:test
+    :modules:ui:test` → exit 0; frontend `typecheck` + full unit suite → 422 files / 5158 tests green;
+    `--gate ssot-catalog-sync` → pass (with the required `mirror-retirement` changeset);
+    `check-privacy-claims`, `check-model-freshness` → pass; full `ui-web-gates` recipe → 29/33 pass and
+    all six kernel gates pass individually.
+  - The four red ui-web checks are **pre-existing and in files this work never touched**:
+    `check-theme-token-closure` + `strip-token-fallbacks` (ghost tokens / fallbacks in
+    `RecentsMenu.ts`, `ActionLedgerView.ts`), `check-accent-as-text` (`ActionLedgerView.ts`) — the first
+    and third are declared in `expected-state.v1.json` as red-on-main — and `check-controls-a11y`
+    (a `title` on a disabled button at `UnifiedChatView.ts:2096`), which is NOT declared and is logged
+    to the inbox.
+  - Also logged to the inbox: 5 pre-existing unused imports in `AiInstallController`, and a stale
+    `ui-web-gates` recipe (it prescribes `run.mjs --gate a,b,c` but `--gate` is singular, so the
+    documented form fails as a syntax error rather than a gate result).
+  - Findings from doing the work: §9 P13–P16.
+- **2026-08-18** — Planning pass complete; §9 P1–P12 recorded. B4 corrected (the drift half of that
+  finding was wrong — `ssot-catalog-sync` already gates it). §8's open question on the dependency
+  model resolved: expressed in the registry JSON as `dependsOn` **plus** a `DownloadProfile` demotion
+  when `cuda-runtime` is declined, so an unrunnable FP16 variant is never planned. Plan approved by
+  owner; work begins in worktree `840-download-restructure` on branch
+  `worktree-840-download-restructure`. Phase 0 (corrections + teardown) in progress.

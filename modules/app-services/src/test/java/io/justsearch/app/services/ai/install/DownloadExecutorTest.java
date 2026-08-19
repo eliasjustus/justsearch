@@ -231,4 +231,57 @@ final class DownloadExecutorTest {
     assertTrue(script.contains("-RetryTimeout 300"), script);
     assertTrue(script.contains("-Asynchronous"), script);
   }
+
+  // -- orphaned-job sweep (tempdoc 840) ------------------------------------------
+
+  /** The sweep can only find what the start script labels, so the two must use the same name. */
+  @Test
+  void bitsJobIsStartedUnderTheDisplayNameTheSweepSearchesFor() {
+    assertTrue(
+        DownloadExecutor.startBitsScript("https://example/m", Path.of("m.partial"))
+            .contains("-DisplayName '" + DownloadExecutor.BITS_DISPLAY_NAME + "'"),
+        "the sweep matches on this display name; a divergence would make orphans unreachable");
+  }
+
+  /**
+   * THE load-bearing case. A crash mid-transfer leaves a live BITS job no sidecar records, and
+   * nothing reclaimed it for its 90-day lifetime. The sweep that fixes that must never take a job an
+   * install is about to resume with it, so the decision is pinned here as a pure function — no
+   * PowerShell, no Windows.
+   */
+  @Test
+  void onlyJobsNoSidecarClaimsAreSweptAway() {
+    assertEquals(
+        List.of("job-orphan"),
+        DownloadExecutor.orphanedBitsJobIds(
+            List.of("job-resumable", "job-orphan"), List.of("job-resumable")),
+        "a claimed job must survive; an unclaimed one must not");
+  }
+
+  @Test
+  void anEmptyClaimSetSweepsEverythingAndAnEmptyQueueSweepsNothing() {
+    assertEquals(
+        List.of("a", "b"), DownloadExecutor.orphanedBitsJobIds(List.of("a", "b"), List.of()));
+    assertEquals(List.of(), DownloadExecutor.orphanedBitsJobIds(List.of(), List.of("a")));
+    assertEquals(List.of(), DownloadExecutor.orphanedBitsJobIds(null, List.of("a")));
+    assertEquals(List.of("a"), DownloadExecutor.orphanedBitsJobIds(List.of("a"), null));
+  }
+
+  /** A GUID's spelling is not its identity: casing, brace wrapping and padding must not orphan it. */
+  @Test
+  void jobIdMatchingIgnoresCaseBracesAndPadding() {
+    assertEquals(
+        List.of(),
+        DownloadExecutor.orphanedBitsJobIds(
+            List.of("  {D3F1AAAA-0000-0000-0000-000000000001}  "),
+            List.of("d3f1aaaa-0000-0000-0000-000000000001")),
+        "the same job written differently is still claimed");
+  }
+
+  @Test
+  void aDuplicatedQueueEntryIsOnlyRemovedOnce() {
+    assertEquals(
+        List.of("JOB-A"),
+        DownloadExecutor.orphanedBitsJobIds(List.of("JOB-A", "job-a", " "), List.of()));
+  }
 }

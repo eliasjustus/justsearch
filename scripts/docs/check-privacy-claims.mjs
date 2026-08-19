@@ -141,7 +141,7 @@ function checkModelSourceClaims(repoRoot, errors) {
   const registryPath = path.join(
     repoRoot,
     "modules",
-    "ui",
+    "configuration",
     "src",
     "main",
     "resources",

@@ -579,6 +579,11 @@ final class ResumableFetchTest {
     assertTrue(out.error().contains("after 4 attempts"), out.error());
     assertTrue(out.error().contains("curl exit 52"), out.error());
     assertTrue(out.error().contains("Empty reply from server"), out.error());
+    // The exhausted-budget path used to drop the classification it already held, so the escalation
+    // memory learned nothing typed from the one outcome that most deserves escalating.
+    assertNotNull(out.failure(), "exhausting the budget still ended at TRANSPORT");
+    assertEquals("curl exit 52", out.failure().code());
+    assertTrue(out.failure().retryable(), "the last diagnosis survives, not just its prose");
   }
 
   /** Cancellation raised before the wait starts must skip the backoff entirely. */

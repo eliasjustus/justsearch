@@ -13,10 +13,13 @@ import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
@@ -42,6 +45,13 @@ public final class DownloadExecutor implements ResumableFetch.Transfer {
   private static final int CURL_CANCELLED = -1;
 
   private static final int CURL_LAUNCH_FAILED = -2;
+
+  /**
+   * The {@code DisplayName} every BITS job this app starts carries. Also the handle the orphan sweep
+   * ({@link #sweepOrphanedBitsJobs}) uses to find jobs a crash left behind, so the two must agree —
+   * hence one constant rather than two literals.
+   */
+  static final String BITS_DISPLAY_NAME = "JustSearch AI";
 
   /** Max consecutive polls a resumed BITS job may stay {@code Suspended} before we give up. */
   private static final int MAX_SUSPENDED_POLLS = 20;
@@ -659,6 +669,18 @@ public final class DownloadExecutor implements ResumableFetch.Transfer {
   /** Destroys a BITS job and its bytes. Only for jobs that are unusable or already terminal. */
   private void removeBitsJobBestEffort(String jobId) {
     if (jobId == null || jobId.isBlank()) return;
+    removeBitsJobViaPowerShell(jobId);
+    if (jobId.equals(bitsJobId)) bitsJobId = null;
+    if (jobId.equals(suspendedBitsJobId)) suspendedBitsJobId = null;
+  }
+
+  /**
+   * The PowerShell half of {@link #removeBitsJobBestEffort}, without this executor's own bookkeeping
+   * — so the orphan sweep, which has no executor and no fields to clear, removes jobs through exactly
+   * the same command.
+   */
+  private static void removeBitsJobViaPowerShell(String jobId) {
+    if (jobId == null || jobId.isBlank()) return;
     try {
       String script =
           "$ErrorActionPreference='SilentlyContinue'; "
@@ -669,8 +691,6 @@ public final class DownloadExecutor implements ResumableFetch.Transfer {
     } catch (Exception e) {
       log.debug("BITS remove failed (best-effort)", e);
     }
-    if (jobId.equals(bitsJobId)) bitsJobId = null;
-    if (jobId.equals(suspendedBitsJobId)) suspendedBitsJobId = null;
   }
 
   private void cancelCurlBestEffort() {
@@ -698,8 +718,103 @@ public final class DownloadExecutor implements ResumableFetch.Transfer {
         + "' -Destination '"
         + psEscape(dest.toAbsolutePath().toString())
         + "' -Asynchronous -RetryInterval 60 -RetryTimeout 300 "
-        + "-DisplayName 'JustSearch AI' -Description 'JustSearch AI model download'; "
+        + "-DisplayName '"
+        + psEscape(BITS_DISPLAY_NAME)
+        + "' -Description 'JustSearch AI model download'; "
         + "$job.JobId.Guid";
+  }
+
+  // -- Orphaned-job sweep (tempdoc 840) ---------------------------------------
+
+  /**
+   * Which enumerated {@code JustSearch AI} BITS jobs are orphans: in the queue, claimed by no current
+   * resume sidecar. Returned in enumeration order, de-duplicated.
+   *
+   * <p>Pure and package-private on purpose. The one way this sweep can do damage is by removing a job
+   * an install is about to resume, and that decision must be testable without Windows — the same
+   * reason {@link BitsControl} exists. Ids are compared case-insensitively and with an optional
+   * {@code {…}} wrapper stripped, because a GUID's spelling is not part of its identity.
+   *
+   * @param enumerated job ids currently in the BITS queue under this app's display name
+   * @param claimed job ids recorded by the resume sidecars of the downloads this run plans
+   */
+  static List<String> orphanedBitsJobIds(
+      Collection<String> enumerated, Collection<String> claimed) {
+    List<String> orphans = new ArrayList<>();
+    if (enumerated == null) return orphans;
+    Set<String> keep = new HashSet<>();
+    if (claimed != null) {
+      for (String id : claimed) {
+        if (id != null && !id.isBlank()) keep.add(normalizeJobId(id));
+      }
+    }
+    Set<String> alreadyListed = new HashSet<>();
+    for (String id : enumerated) {
+      if (id == null || id.isBlank()) continue;
+      String normalized = normalizeJobId(id);
+      if (keep.contains(normalized)) continue;
+      if (alreadyListed.add(normalized)) orphans.add(id.trim());
+    }
+    return orphans;
+  }
+
+  private static String normalizeJobId(String raw) {
+    String id = raw.trim();
+    if (id.length() > 2 && id.startsWith("{") && id.endsWith("}")) {
+      id = id.substring(1, id.length() - 1);
+    }
+    return id.toLowerCase(Locale.ROOT);
+  }
+
+  /**
+   * Removes {@code JustSearch AI} BITS jobs that no {@code claimedJobIds} entry claims, and returns
+   * how many were removed.
+   *
+   * <p>{@code ResumableFetch} writes its resume sidecar with a null {@code bitsJobId} before every
+   * transfer and only writes the id back when a transfer fails <em>gracefully</em>. A crash or hard
+   * kill mid-transfer therefore leaves a live job in the BITS queue with nothing recording it, and
+   * {@code Transfer.abandonResumeHandle} only ever fires for an id a sidecar DOES record — so those
+   * jobs sat in the queue for its 90-day default lifetime. The display name {@link #startBitsScript}
+   * sets is the handle that makes them findable again.
+   *
+   * <p>Entirely best-effort: every PowerShell failure logs at debug and the install proceeds. Non-
+   * Windows is a no-op.
+   */
+  static int sweepOrphanedBitsJobs(Collection<String> claimedJobIds) {
+    if (!isWindows()) return 0;
+    List<String> enumerated;
+    try {
+      enumerated = enumerateBitsJobIdsByDisplayName();
+    } catch (Exception e) {
+      log.debug("BITS orphan sweep skipped; could not enumerate jobs ({})", e.toString());
+      return 0;
+    }
+    List<String> orphans = orphanedBitsJobIds(enumerated, claimedJobIds);
+    if (orphans.isEmpty()) return 0;
+    log.info(
+        "Reclaiming {} orphaned BITS job(s) of {} in the queue (no resume sidecar claims them)",
+        orphans.size(),
+        enumerated.size());
+    for (String jobId : orphans) {
+      removeBitsJobViaPowerShell(jobId);
+    }
+    return orphans.size();
+  }
+
+  /** Job ids of every queued BITS job this app started, matched on the display name it sets. */
+  private static List<String> enumerateBitsJobIdsByDisplayName() throws Exception {
+    String script =
+        "$ErrorActionPreference='SilentlyContinue'; "
+            + "Get-BitsTransfer | Where-Object { $_.DisplayName -eq '"
+            + psEscape(BITS_DISPLAY_NAME)
+            + "' } | ForEach-Object { $_.JobId.Guid }";
+    String out = runPowerShell(script, Duration.ofSeconds(20));
+    List<String> ids = new ArrayList<>();
+    for (String line : out.split("\\R")) {
+      String id = line.trim();
+      if (!id.isBlank()) ids.add(id);
+    }
+    return ids;
   }
 
   private static String startBitsJob(String url, Path dest) throws Exception {

@@ -149,6 +149,18 @@ public enum ApiErrorCode {
     /** Failed to repair AI installation. */
     INSTALL_REPAIR_FAILED(ErrorClass.PERMANENT),
 
+    /** Pause/resume was asked for while no AI install run is in flight. */
+    INSTALL_NOT_RUNNING(ErrorClass.VALIDATION),
+
+    /** No AI model package with the requested id exists in the registry. */
+    PACKAGE_NOT_FOUND(ErrorClass.VALIDATION),
+
+    /**
+     * The requested AI component cannot be declined — its {@code Necessity} is {@code required} or
+     * {@code infrastructure}, so search (or chat) does not work without it.
+     */
+    PACKAGE_NOT_DECLINABLE(ErrorClass.POLICY),
+
     /** AI model manifest is unavailable (network issue). */
     MANIFEST_UNAVAILABLE(ErrorClass.TRANSIENT),
 

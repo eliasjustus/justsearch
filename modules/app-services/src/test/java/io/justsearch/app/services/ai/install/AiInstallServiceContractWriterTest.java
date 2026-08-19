@@ -11,6 +11,7 @@ import io.justsearch.configuration.model.InstallContract;
 import io.justsearch.configuration.model.InstallPlan;
 import io.justsearch.configuration.model.ModelPackage;
 import io.justsearch.configuration.model.ModelRegistry;
+import io.justsearch.configuration.model.SkipCause;
 import io.justsearch.configuration.model.SupportingFile;
 import java.nio.file.Path;
 import java.util.List;
@@ -90,7 +91,7 @@ final class AiInstallServiceContractWriterTest {
         new InstallPlan(
             DownloadProfile.values()[0],
             List.of(),
-            List.of(new InstallPlan.SkippedPackage("cuda-runtime", "no CUDA GPU")),
+            List.of(new InstallPlan.SkippedPackage("cuda-runtime", SkipCause.HARDWARE, "no CUDA GPU")),
             0L,
             List.of());
 
@@ -99,6 +100,39 @@ final class AiInstallServiceContractWriterTest {
     InstallContract.InstalledModel entry = contract.getModel("cuda-runtime");
     assertTrue(entry.skipped(), "hardware/policy skips are unchanged by the entry-kind fix");
     assertEquals("no CUDA GPU", entry.skipReason());
+    assertEquals(SkipCause.HARDWARE, entry.skipCause(), "the planner's typed cause is recorded");
     assertTrue(entry.installedFiles().isEmpty(), "a skipped package claims no files");
+  }
+
+  /**
+   * Tempdoc 840 Phase 2 — the contract records WHY, typed, and the planner is the only authority for
+   * it. The writer must carry the cause through rather than re-deriving it (from the prose, or by
+   * re-evaluating hardware/intent/declined), which would drift the first time a message is reworded.
+   */
+  @Test
+  @DisplayName("a user-declined skip is recorded with its typed cause, not just its prose")
+  void userDeclinedSkip_recordsTheTypedCause() {
+    AiInstallService svc = new AiInstallService(null, null, null, null, tmp);
+    ModelRegistry registry =
+        new ModelRegistry(2, "test", List.of(variantlessPackage("reranker", "reranker.zip")));
+    InstallPlan plan =
+        new InstallPlan(
+            DownloadProfile.values()[0],
+            List.of(),
+            List.of(
+                new InstallPlan.SkippedPackage(
+                    "reranker", SkipCause.USER_DECLINED, "Search reranker was declined")),
+            0L,
+            List.of());
+
+    InstallContract contract = svc.buildContract(plan, registry, HARDWARE);
+
+    InstallContract.InstalledModel entry = contract.getModel("reranker");
+    assertTrue(entry.skipped());
+    assertEquals(
+        SkipCause.USER_DECLINED,
+        entry.skipCause(),
+        "a hardware skip and a user decline must be distinguishable without parsing prose");
+    assertEquals("Search reranker was declined", entry.skipReason(), "the prose stays, for display");
   }
 }

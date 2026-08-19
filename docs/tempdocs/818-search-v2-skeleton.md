@@ -1,12 +1,21 @@
 # 818 — Search v2: the from-scratch window skeleton (strangler, dev-gated)
 
 ```
-status: ACTIVE
+status: CLOSED — superseded (2026-08-19)
 created: 2026-08-08
+closed: 2026-08-19
+superseded-by: 851-search-v2-retirement.md
 owner-decisions: 817 §4 #4 (rewrite planned, design-first) — sequencing REVISED here (owner, 2026-08-08)
 design-inputs: 818-prototype/ (v5 structure prototype + identity layer), NOTES-for-818.md (harvest)
-supersedes: nothing yet — UnifiedChatView remains the shipped window until the sunset criterion below
+supersedes: nothing — UnifiedChatView remained the shipped window; this window never cut over
 ```
+
+> **Closure note (2026-08-19).** Superseded — the search-v2 window was deleted without ever
+> reaching the §5 cutover, by owner decision 2026-08-19. Search v3 (`views/search-v3/`) is the
+> successor; its promotion runs as its own program (tempdoc number TBD there). Everything below
+> this line is dated design history for a window that no longer exists: its unchecked parity rows
+> were never satisfied, and no code, register row, i18n key or surface registration for it remains
+> on `main`. See `851-search-v2-retirement.md` for the deletion and the sweep.
 
 ## 0. Decision and sequencing revision
 

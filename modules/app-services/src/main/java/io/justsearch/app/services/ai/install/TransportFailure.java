@@ -61,6 +61,16 @@ public record TransportFailure(String code, String detail, boolean retryable) {
     return new TransportFailure("cancelled", "", false);
   }
 
+  /**
+   * The transport failed but could not say why. Still a TRANSPORT failure, because whether the
+   * install's escalation memory engages must not depend on whether a transport managed to name a
+   * code; permanent, because the retry policy only ever spends time on a failure something explicitly
+   * called transient.
+   */
+  public static TransportFailure unclassified() {
+    return new TransportFailure("unclassified", "", false);
+  }
+
   /** One-line "code: detail" summary for a failure message, collapsing an empty detail. */
   public String summary() {
     return detail.isEmpty() ? code : code + ": " + detail;

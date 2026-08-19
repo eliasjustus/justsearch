@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Tempdoc 656 Task 4: registry-driven preflight — answers "given the model registry (the
@@ -45,9 +46,15 @@ public final class AiPreflightService {
     // resolvers rather than re-deriving them here.
     HardwareProfile hardware = installService.buildHardwareProfile();
     InstallIntent intent = installService.installIntent();
+    // Tempdoc 840 Phase 2: the user's per-component intent is the third axis the planner selects on,
+    // so the severity signal has to see it too — otherwise a component the user deliberately turned
+    // off comes back as a BLOCKING gap on this surface. Same reasoning as intent/hardware above: read
+    // the install service's own resolver, never a second copy of the preference.
+    Set<String> declined = installService.declinedPackages();
     AiRuntimeStatusResponse runtimeStatus = runtimeService.getStatus();
 
-    return computePreflight(registry, modelsDir, aiHome, hardware, intent, runtimeStatus);
+    return computePreflight(
+        registry, modelsDir, aiHome, hardware, intent, declined, runtimeStatus);
   }
 
   /**
@@ -63,6 +70,7 @@ public final class AiPreflightService {
       Path aiHome,
       HardwareProfile hardware,
       InstallIntent intent,
+      Set<String> declined,
       AiRuntimeStatusResponse runtimeStatus) {
     List<PackageStatus> packages = new ArrayList<>();
     for (ModelPackage pkg : registry.packages()) {
@@ -103,7 +111,7 @@ public final class AiPreflightService {
       // (that's the implicit "that's fine" case); a wanted+permitted incomplete package is the new
       // severity signal.
       boolean blockingIncomplete =
-          !complete && InstallPlanner.isIncludedByPlan(pkg, intent, hardware);
+          !complete && InstallPlanner.isIncludedByPlan(pkg, intent, declined, hardware);
 
       packages.add(
           new PackageStatus(

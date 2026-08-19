@@ -76,35 +76,13 @@ export interface AiInstallManifest {
   packages?: AiInstallModelPackage[];
 }
 
-export interface AiInstallAssetStatus {
-  id: string;
-  filename: string;
-  url: string;
-  sha256: string;
-  sizeBytes: number;
-  state: string;
-  bytesDownloaded: number;
-  bytesTotal: number;
-  error?: string;
-}
-
-export interface AiInstallStatus {
-  state: string;
-  phase: string;
-  message?: string;
-  startedAtEpochMs?: number;
-  updatedAtEpochMs?: number;
-  cancelRequested?: boolean;
-  lastError?: string;
-  errorCode?: string;
-  /**
-   * True only when state === "completed" AND no packages were skipped/failed.
-   * False after partial-success completion (e.g., chat skipped because no
-   * CUDA). Tempdoc 374 finding #8.
-   */
-  installedFully?: boolean;
-  assets: AiInstallAssetStatus[];
-}
+// Tempdoc 840 Phase 4: the hand-written `AiInstallStatus` + `AiInstallAssetStatus` that lived here
+// are gone. They modelled the pre-v2 flat `assets[]` progress shape, which the package-based v2
+// install stopped emitting long ago — a stale second authority for a wire type that also had a
+// third hand copy in `shell-v0/utils/aiInstallPoll.ts`. The one authority is now the Java DTO
+// (`modules/app-api/.../AiInstallStatus.java`) projected through
+// `SSOT/schemas/ai-install-status.v1.json` into the generated type + Zod schema below.
+export type { AiInstallStatus } from '../generated/schema-types/ai-install-status';
 
 // ============================================
 // v2: Offline AI Packs + enterprise policy
@@ -148,49 +126,13 @@ export async function getAiInstallManifest(baseUrl: string, signal?: AbortSignal
   return request<AiInstallManifest>(baseUrl, '/api/ai/install/manifest', { method: 'GET', signal });
 }
 
-/**
- * Gets the AI install status.
- */
-export async function getAiInstallStatus(baseUrl: string, signal?: AbortSignal): Promise<AiInstallStatus> {
-  return request<AiInstallStatus>(baseUrl, '/api/ai/install/status', { method: 'GET', signal });
-}
-
-/**
- * Starts the AI installation process.
- */
-export async function startAiInstall(
-  baseUrl: string,
-  acceptTerms: boolean,
-  signal?: AbortSignal
-): Promise<AiInstallStatus> {
-  return request<AiInstallStatus>(baseUrl, '/api/ai/install/start', {
-    method: 'POST',
-    body: { acceptTerms },
-    signal,
-  });
-}
-
-/**
- * Cancels the AI installation process.
- */
-export async function cancelAiInstall(baseUrl: string, signal?: AbortSignal): Promise<AiInstallStatus> {
-  return request<AiInstallStatus>(baseUrl, '/api/ai/install/cancel', { method: 'POST', body: {}, signal });
-}
-
-/**
- * Repairs the AI installation.
- */
-export async function repairAiInstall(
-  baseUrl: string,
-  acceptTerms: boolean,
-  signal?: AbortSignal
-): Promise<AiInstallStatus> {
-  return request<AiInstallStatus>(baseUrl, '/api/ai/install/repair', {
-    method: 'POST',
-    body: { acceptTerms },
-    signal,
-  });
-}
+// The install status/start/cancel/repair wrappers that used to live here are gone (tempdoc 840).
+// They had no callers: every install surface reads status through the shared `aiInstallPoll` and
+// issues its commands via `authorizedFetch`, so these were a second, unexercised client for the same
+// four endpoints — the shape that drifts silently because nothing fails when it does. This file's
+// `AiInstallStatus` had in fact already drifted to a pre-v2 flat `assets[]` payload the backend
+// stopped emitting long ago, and nothing noticed. `getAiInstallManifest` above stays: it has a real
+// consumer (BrainSurface's manifest read for the consent dialog's licence list).
 
 // ============================================
 // v2 Policy API Functions

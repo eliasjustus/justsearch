@@ -7,9 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.justsearch.configuration.model.DownloadProfile;
 import io.justsearch.configuration.model.InstallContract;
 import io.justsearch.configuration.model.InstallPlan;
+import io.justsearch.configuration.model.SkipCause;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -207,6 +209,47 @@ final class InstallCompletenessTest {
     assertTrue(result.repairNeeded());
   }
 
+  /**
+   * Tempdoc 840: {@code packagesWithMissingRequiredFiles()} had NO coverage in this seam's guard test
+   * — it arrived with tempdoc 824 (commit e9d68989) and the strength baseline predates it, so the
+   * ratchet never noticed. Surfaced by a PIT run while registering the sibling {@code
+   * acquisition-rate} seam.
+   *
+   * <p>The property that makes this method distinct from its two neighbours, and the reason 824
+   * introduced it: it is the per-package form of {@link InstallCompleteness#repairNeeded()}, so the
+   * completion MESSAGE is derived from the same authority as {@code installedFully} rather than from
+   * the run's own bookkeeping. Two things must hold — it counts a package once no matter how many of
+   * its required files are gone, and a package whose ONLY casualty is optional must be absent, or the
+   * message would name a package as failed while sitting next to {@code installedFully: true} (the
+   * round-16 defect: an 872-byte metadata sidecar reported as a broken component).
+   */
+  @Test
+  @DisplayName("per-package required gaps: deduped, and an optional-only casualty is not a gap")
+  void packagesWithMissingRequiredFiles_dedupesAndIgnoresOptionalOnly() {
+    InstallPlan.PlannedDownload optionalSidecar =
+        new InstallPlan.PlannedDownload(
+            "splade", "https://example/splade/config.json", "splade/config.json", "sha", 872L,
+            false, false, false);
+    InstallPlan plan =
+        plan(
+            List.of(
+                file("cuda-runtime", "runtime/cuda-runtime-12.4.zip"),
+                file("cuda-runtime", "runtime/ort-native-cuda12-v1.24.3.zip"),
+                optionalSidecar));
+
+    InstallCompleteness result = InstallCompleteness.compute(plan, contract());
+
+    assertEquals(
+        List.of("cuda-runtime"),
+        result.packagesWithMissingRequiredFiles(),
+        "two required files gone from ONE package is one entry, and splade's optional-only gap is none");
+    assertEquals(
+        List.of(new InstallCompleteness.OptionalGap("splade", "config.json")),
+        result.optionalGaps(),
+        "the optional casualty is still reported — shown, never alarming");
+    assertTrue(result.repairNeeded(), "a required file IS missing, so repair is still warranted");
+  }
+
   @Test
   @DisplayName("satisfied files are named from the contract; a package it does not enumerate reports one nameless row")
   void satisfiedFilesCarryContractFileNames() {
@@ -345,5 +388,198 @@ final class InstallCompletenessTest {
     InstallCompleteness result = InstallCompleteness.compute(plan(List.of(legacy), "embedding"), null);
     assertTrue(result.repairNeeded());
     assertTrue(result.optionalGaps().isEmpty());
+  }
+
+  // ── Declined components (tempdoc 840 Phase 2) ─────────────────────────────────────────────────
+
+  private static InstallPlan planWithSkips(
+      List<InstallPlan.PlannedDownload> downloads,
+      List<InstallPlan.SkippedPackage> skipped,
+      String... installed) {
+    long total = downloads.stream().mapToLong(InstallPlan.PlannedDownload::sizeBytes).sum();
+    return new InstallPlan(PROFILE, downloads, skipped, total, List.of(installed));
+  }
+
+  private static InstallPlan.SkippedPackage declinedSkip(String packageId) {
+    return new InstallPlan.SkippedPackage(packageId, SkipCause.USER_DECLINED, "you declined it");
+  }
+
+  /**
+   * Package ids this computation classified {@code DECLINED}, deduped in plan order.
+   *
+   * <p>Read off {@code files()} rather than a dedicated accessor: {@code declinedPackages()} was
+   * deleted (tempdoc 840 R8) because nothing consumed it — it is absent from {@code
+   * ai-install-status.v1.json} and from the generated TS, and the per-component {@code declined}
+   * flag on the plan preview is the chosen authority for what the user turned off. The
+   * CLASSIFICATION is still load-bearing (it is what keeps a decline out of every gap and truth
+   * claim), so these tests keep asserting it at its remaining observation point.
+   */
+  private static List<String> declinedPackagesIn(InstallCompleteness result) {
+    return result.files().stream()
+        .filter(f -> f.classification() == InstallCompleteness.Classification.DECLINED)
+        .map(InstallCompleteness.FileState::packageId)
+        .distinct()
+        .toList();
+  }
+
+  /**
+   * The normal production shape: the plan was computed WITH the declined set, so the declined
+   * package never reaches {@code downloads()} at all — it is in {@code skipped()}. Completeness must
+   * still name it, and must not call the machine incomplete for it.
+   */
+  @Test
+  @DisplayName("a declined package the plan skipped is named, and is not a gap")
+  void declinedSkippedPackage_isNamedAndIsNotAGap() {
+    InstallContract contract = contract(installed("embedding", "model.onnx"));
+    InstallPlan plan =
+        planWithSkips(List.of(), List.of(declinedSkip("reranker")), "embedding");
+
+    InstallCompleteness result = InstallCompleteness.compute(plan, contract, Set.of("reranker"));
+
+    assertEquals(List.of("reranker"), declinedPackagesIn(result));
+    assertTrue(result.installedFully(), "an install the user shaped by declining a part is complete");
+    assertFalse(result.repairNeeded(), "a deliberate decline must never raise a Repair prompt");
+    assertTrue(result.pendingRegistryAdditions().isEmpty());
+  }
+
+  /**
+   * A package skipped for a reason that was NOT the user's choice (hardware, intent) must not be
+   * reported as declined — that list is about the user's decisions, and mislabeling a hardware skip
+   * as one would offer a re-enable switch the machine cannot honor.
+   */
+  @Test
+  @DisplayName("a hardware-skipped package is not reported as declined")
+  void hardwareSkippedPackage_isNotDeclined() {
+    InstallPlan plan =
+        planWithSkips(
+            List.of(),
+            List.of(
+                new InstallPlan.SkippedPackage("chat", SkipCause.HARDWARE, "no CUDA GPU"),
+                declinedSkip("reranker")),
+            "embedding");
+
+    InstallCompleteness result = InstallCompleteness.compute(plan, contract(), Set.of("reranker"));
+
+    assertEquals(
+        List.of("reranker"),
+        declinedPackagesIn(result),
+        "only the package the user actually declined belongs on this list");
+  }
+
+  /**
+   * The defensive half: a plan computed WITHOUT the declined set still lists the declined package's
+   * files under {@code downloads()}. The user's current intent wins there too — otherwise a caller
+   * that forgot to thread the set into the planner would produce a permanent "Not Installed".
+   */
+  @Test
+  @DisplayName("declined files still in a plan's downloads are DECLINED, not a missing gap")
+  void declinedFilesInDownloads_areNotGaps() {
+    InstallContract contract =
+        contract(installed("embedding", "model.onnx"), installed("reranker", "model.onnx"));
+    InstallPlan plan =
+        plan(
+            List.of(
+                file("reranker", "onnx/reranker/model.onnx"),
+                file("reranker", "onnx/reranker/tokenizer.json")),
+            "embedding");
+
+    InstallCompleteness result = InstallCompleteness.compute(plan, contract, Set.of("reranker"));
+
+    assertEquals(
+        List.of("reranker"),
+        declinedPackagesIn(result),
+        "two declined files collapse to one package id (dedup, plan order)");
+    assertTrue(
+        result.installedFully(),
+        "these files are contracted AND missing — only the user's current intent stops them being"
+            + " the round-11 'real gap'");
+    assertFalse(result.repairNeeded());
+    assertTrue(result.packagesWithMissingRequiredFiles().isEmpty());
+    assertTrue(result.pendingRegistryAdditions().isEmpty());
+    assertEquals(
+        InstallCompleteness.Classification.DECLINED,
+        result.files().get(1).classification());
+  }
+
+  /** A decline must not launder some OTHER package's genuine gap. */
+  @Test
+  @DisplayName("declining one package leaves another package's gap untouched")
+  void decliningOnePackage_doesNotHideAnothersGap() {
+    InstallContract contract =
+        contract(installed("embedding", "model.onnx"), installed("chat", "model.gguf"));
+    InstallPlan plan =
+        plan(
+            List.of(file("reranker", "onnx/reranker/model.onnx"), file("chat", "gguf/model.gguf")),
+            "embedding");
+
+    InstallCompleteness result = InstallCompleteness.compute(plan, contract, Set.of("reranker"));
+
+    assertEquals(List.of("reranker"), declinedPackagesIn(result));
+    assertFalse(result.installedFully(), "chat's contracted model.gguf is genuinely gone");
+    assertTrue(result.repairNeeded());
+    assertEquals(List.of("chat"), result.packagesWithMissingRequiredFiles());
+  }
+
+  /** An OPTIONAL file of a declined package is not an optional gap either — it is simply declined. */
+  @Test
+  @DisplayName("a declined package's optional file is not reported as an optional gap")
+  void declinedOptionalFile_isNotAnOptionalGap() {
+    InstallPlan plan =
+        plan(
+            List.of(optionalFile("splade", "splade/naver-splade-v3/config.json")),
+            "embedding");
+
+    InstallCompleteness result = InstallCompleteness.compute(plan, contract(), Set.of("splade"));
+
+    assertTrue(
+        result.optionalGaps().isEmpty(),
+        "reporting it would say 'splade is missing a file' about a package the user turned off");
+    assertEquals(List.of("splade"), declinedPackagesIn(result));
+  }
+
+  /**
+   * Completeness reads the user's CURRENT preference, never the contract's historical record. A
+   * component declined last install and re-enabled since must become an offerable gap again —
+   * reading {@code SkipCause.USER_DECLINED} from the contract would freeze the old decision.
+   */
+  @Test
+  @DisplayName("re-enabling a previously declined component turns its files back into a real gap")
+  void reEnablingAPreviouslyDeclinedComponent_reopensTheGap() {
+    // The contract records the historical fact: last run, the user declined the reranker.
+    InstallContract contract =
+        contract(
+            installed("embedding", "model.onnx"),
+            InstallContract.InstalledModel.skipped(
+                "reranker", SkipCause.USER_DECLINED, "you declined it"));
+    InstallPlan plan = plan(List.of(file("reranker", "onnx/reranker/model.onnx")), "embedding");
+
+    // Intent has since flipped back: the declined set no longer names it.
+    InstallCompleteness result = InstallCompleteness.compute(plan, contract, Set.of());
+
+    assertTrue(declinedPackagesIn(result).isEmpty(), "intent, not history, decides");
+    assertTrue(result.repairNeeded(), "the component the user now wants is genuinely absent");
+    assertEquals(List.of("reranker"), result.pendingRegistryAdditions());
+  }
+
+  /** Absent intent behaves exactly like empty intent — for both the 2-arg overload and an explicit null. */
+  @Test
+  @DisplayName("no declined set (omitted or null) declines nothing")
+  void absentDeclinedSet_declinesNothing() {
+    InstallContract contract = contract(installed("embedding", "model.onnx"));
+    InstallPlan plan =
+        planWithSkips(
+            List.of(file("reranker", "onnx/reranker/model.onnx")),
+            List.of(declinedSkip("chat")),
+            "embedding");
+
+    InstallCompleteness viaOverload = InstallCompleteness.compute(plan, contract);
+    InstallCompleteness viaNull = InstallCompleteness.compute(plan, contract, null);
+
+    for (InstallCompleteness result : List.of(viaOverload, viaNull)) {
+      assertTrue(declinedPackagesIn(result).isEmpty(), "nothing is declined without intent saying so");
+      assertTrue(result.repairNeeded(), "and the missing reranker file is an ordinary gap");
+      assertEquals(List.of("reranker"), result.pendingRegistryAdditions());
+    }
+    assertEquals(viaOverload.files(), viaNull.files());
   }
 }

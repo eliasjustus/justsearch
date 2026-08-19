@@ -74,6 +74,16 @@ const TARGETS = [
     outFile: 'ai-pack-import-status.ts',
     rootName: 'AiPackImportStatus',
   },
+  // Tempdoc 840 Phase 4 — GET /api/ai/install/status. The wire shape had THREE hand-maintained
+  // authorities (the Java DTO plus two independent TS interfaces, one still modelling the retired
+  // v1 `assets[]`), and the staged install widened the drift with every field it added. Generating
+  // the TS from the same schema the Java DTO emits leaves exactly one authority, with
+  // check-wire-schema-types-regen as the guard.
+  {
+    schema: 'SSOT/schemas/ai-install-status.v1.json',
+    outFile: 'ai-install-status.ts',
+    rootName: 'AiInstallStatus',
+  },
   {
     schema: 'SSOT/schemas/folder-browse-response.v1.json',
     outFile: 'folder-browse-response.ts',

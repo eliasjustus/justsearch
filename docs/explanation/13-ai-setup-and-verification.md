@@ -100,7 +100,7 @@ See also: `docs/how-to/test-gpu-locally.md`.
 
 v1 model acquisition is **in-app** (not installer-time) for reliability and consent:
 
-- Manifest (bundled): `modules/ui/src/main/resources/ai/model-registry.v2.json`
+- Manifest (bundled): `modules/configuration/src/main/resources/ai/model-registry.v2.json`
 - Backend service: `modules/ui/src/main/java/io/justsearch/ui/ai/install/AiInstallService.java`
 - UI entry point: `modules/ui-web/src/shell-v0/views/BrainSurface.ts`
 

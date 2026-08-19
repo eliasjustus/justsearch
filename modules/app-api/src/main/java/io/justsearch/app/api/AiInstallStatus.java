@@ -49,6 +49,48 @@ public final class AiInstallStatus {
   public long resumableBytes;
 
   /**
+   * True while an in-flight run is halted between files by {@code POST /api/ai/install/pause}
+   * (tempdoc 840 Phase 4). Read live from the acquisition pause gate on every status read, so it
+   * cannot disagree with the gate the run actually waits on.
+   *
+   * <p>Deliberately NOT a {@link #state} value: a paused run is still {@code running} — it holds its
+   * op-lease, its plan and its place in the set — and every existing consumer keyed on {@code state}
+   * would have had to learn a new terminal-looking word to keep working.
+   */
+  public boolean paused;
+
+  /**
+   * Measured transfer rate in bytes per second, or {@code -1} when there is no honest basis for one.
+   *
+   * <p><b>{@code -1} is "unknown", not a value, and it is never {@code 0}.</b> {@code
+   * AcquisitionRate} returns its {@code UNKNOWN} sentinel for a window with too few samples, a
+   * window too short to measure, a transfer that has stopped reporting, and a window over which no
+   * bytes arrived — and this field carries that sentinel through unchanged rather than flattening it
+   * to zero. A fabricated {@code 0 B/s} on a transfer that is merely young is the most confident lie
+   * the surface could tell, which is the defect the sentinel exists to prevent; {@code -1} is
+   * visibly not a rate, so a consumer that forgets to test it fails loudly instead of plausibly.
+   * Same convention as {@code startupEstimate.ts}'s {@code < 0} arm, which renders no number at all.
+   *
+   * <p>Reset to {@code -1} on every non-running state, because a rate measured by a run that has
+   * ended describes a transfer that is no longer happening.
+   */
+  public double bytesPerSecond = -1d;
+
+  /**
+   * Seconds until the WHOLE run finishes at {@link #bytesPerSecond}, or {@code -1} when unknown.
+   *
+   * <p>{@code 0} is a value here (nothing left to move); {@code -1} is the sentinel. Never derived
+   * from anything but the measured rate — an unknown rate yields an unknown horizon, never a guessed
+   * one.
+   *
+   * <p>Run-wide, not stage-wide: each stage's scheduler measures only its own slice, so its native
+   * horizon answers "time left in this stage". This is the same measured rate re-horizoned onto the
+   * run's remaining bytes ({@code AcquisitionRate.Estimate.reHorizon}) — one estimator asked two
+   * questions, rather than a second estimator that could disagree with the first.
+   */
+  public long remainingSeconds = -1L;
+
+  /**
    * True only when state == "completed" AND no packages were skipped/failed
    * AND all required runtime config keys were written. Distinguishes
    * "installed cleanly" from "installed with limitations" without breaking
@@ -109,6 +151,87 @@ public final class AiInstallStatus {
       this.packageId = packageId == null ? "" : packageId;
       this.fileName = fileName == null ? "" : fileName;
     }
+
+    OptionalGap copy() {
+      return new OptionalGap(packageId, fileName);
+    }
+  }
+
+  /**
+   * The acquisition stage in flight ({@code core} | {@code enrichment} | {@code chat}), or empty
+   * outside a staged run (tempdoc 840 Phase 3).
+   *
+   * <p>The install is delivered in ordered stages so search works after the first ~1.3 GB instead of
+   * after all ~7 GB. A caller that wants to say "search is ready, still downloading enrichment"
+   * reads this together with {@link #stages} and {@link #readyCapabilities}.
+   */
+  public String currentStage = "";
+
+  /**
+   * Every acquisition stage of this run, in run order — including the ones with nothing to do.
+   *
+   * <p>A projection of the plan's own partition, not a second progress authority: a stage's bytes
+   * are its slice of {@link #totalBytes} and its {@code downloadedBytes} is the same acquisition
+   * counter {@link #downloadedBytes} is written from.
+   */
+  public final List<StageStatus> stages = new ArrayList<>();
+
+  /**
+   * Capability-tier ids ({@code retrieval-core}, {@code runtime}, {@code retrieval-enrichment},
+   * {@code llm}) that are already usable — the tiers of every stage that completed, acquired its
+   * files and had the Worker restarted onto them.
+   *
+   * <p>Fail-closed: a stage that ended with a failed package contributes nothing, because a
+   * capability whose model did not land is not usable no matter how far the run got. Empty until the
+   * first stage completes.
+   */
+  public final List<String> readyCapabilities = new ArrayList<>();
+
+  /** One acquisition stage's progress. */
+  public static final class StageStatus {
+    /** Stage id: {@code core} | {@code enrichment} | {@code chat}. */
+    public String stage = "";
+
+    public String label = "";
+
+    /**
+     * {@code pending} | {@code running} | {@code completed} | {@code failed} | {@code skipped} |
+     * {@code cancelled} | {@code blocked}. {@code skipped} means the stage had nothing to acquire
+     * (already installed, hardware-skipped or user-declined) — distinct from {@code completed}, which
+     * means this run delivered something. {@code blocked} means a precondition refused it before it
+     * started, so nothing was attempted and nothing broke; see {@link #blockedReason}.
+     */
+    public String state = "pending";
+
+    /**
+     * Why a {@code blocked} stage was refused, in words a user can act on — today, that the disk has
+     * too little room for what this stage would fetch (tempdoc 840 U2). Empty for every other state.
+     *
+     * <p>Carried per STAGE rather than on the run, because staging makes the answer per-stage: a disk
+     * that fits the retrieval core but not the chat model blocks one stage and completes the other,
+     * and a single run-level message could not say that.
+     */
+    public String blockedReason = "";
+
+    /** Capability-tier ids this stage delivers. */
+    public final List<String> capabilities = new ArrayList<>();
+
+    public long totalBytes;
+    public long downloadedBytes;
+
+    public StageStatus() {}
+
+    StageStatus copy() {
+      StageStatus c = new StageStatus();
+      c.stage = stage;
+      c.label = label;
+      c.state = state;
+      c.blockedReason = blockedReason;
+      c.capabilities.addAll(capabilities);
+      c.totalBytes = totalBytes;
+      c.downloadedBytes = downloadedBytes;
+      return c;
+    }
   }
 
   // Per-package progress
@@ -118,12 +241,59 @@ public final class AiInstallStatus {
   public static final class PackageStatus {
     public String packageId = "";
     public String label = "";
+
+    /**
+     * The registry's one-line explanation of what this package is for — e.g. "Vector embeddings for
+     * semantic search" (tempdoc 840 Phase 4).
+     *
+     * <p>It has existed on {@code ModelPackage} since the v2 registry and has never reached a
+     * surface, which is half of why a multi-GB install reads as an opaque progress bar: the user is
+     * shown seven file names and no statement of what any of them does.
+     */
+    public String description = "";
+
+    /**
+     * How badly the product needs this package, as {@code Necessity}'s kebab-case registry id:
+     * {@code required} | {@code improves-results} | {@code adds-feature} | {@code infrastructure}
+     * (tempdoc 840 Phase 4). The axis a component list is categorised on — it answers the only
+     * question a user can act on, "what do I lose if I say no?".
+     */
+    public String necessity = "";
+
+    /**
+     * Whether a user may decline this package at all — {@code Necessity.userDeclinable()}, projected.
+     *
+     * <p>Carried so the surface does not have to re-derive declinability from {@link #necessity} and
+     * cannot get it wrong in the direction that matters (offering a switch for {@code embedding} or
+     * {@code cuda-runtime}). The backend refuses such a decline anyway; this keeps the affordance
+     * from being drawn in the first place.
+     */
+    public boolean declinable;
+
+    /**
+     * Whether the user has currently declined this package ({@code UiSettings.declinedAiPackages}).
+     *
+     * <p>A live preference, not a record of what happened, so it is re-read on every status read
+     * rather than stamped when the package list was built: a decline made between two polls must be
+     * visible on the next one. The historical counterpart is the {@code skipReason} a run records
+     * when the planner drops a declined package.
+     */
+    public boolean declined;
+
     /**
      * Capability-tier id (tempdoc 657): {@code retrieval-core} | {@code retrieval-enrichment} |
      * {@code llm} | {@code runtime}, or null for an untagged package. Lets the UI group the
      * download by tier (retrieval vs the optional LLM) without hardcoding the package taxonomy.
      */
     public String tier;
+
+    /**
+     * The acquisition stage that delivers this package ({@code core} | {@code enrichment} | {@code
+     * chat}), or null when the run is not staged. A projection of {@link #tier} through the install
+     * run's tier→stage mapping — never independently assigned, so the two cannot disagree.
+     */
+    public String stage;
+
     public String state = "pending";
     public long bytesDownloaded;
     public long bytesTotal;
@@ -171,5 +341,75 @@ public final class AiInstallStatus {
 
     /** Where that file has to land — the manual fallback's destination. */
     public String targetPath = "";
+
+    PackageStatus copy() {
+      PackageStatus c = new PackageStatus();
+      c.packageId = packageId;
+      c.label = label;
+      c.description = description;
+      c.necessity = necessity;
+      c.declinable = declinable;
+      c.declined = declined;
+      c.tier = tier;
+      c.stage = stage;
+      c.state = state;
+      c.bytesDownloaded = bytesDownloaded;
+      c.bytesTotal = bytesTotal;
+      c.skipReason = skipReason;
+      c.error = error;
+      c.resumed = resumed;
+      c.functionalStatus = functionalStatus;
+      c.terminalReason = terminalReason;
+      c.attempts = attempts;
+      c.url = url;
+      c.targetPath = targetPath;
+      return c;
+    }
+  }
+
+  /**
+   * An independent deep copy, safe to hand across a boundary that serializes without the install
+   * lock held.
+   *
+   * <p>The install thread mutates the live instance under a lock — including {@code
+   * packages.clear()} followed by a repopulate — while the {@code GET /api/ai/install/status}
+   * handler serializes at 1 Hz outside it. Returning the live object let Jackson iterate that list
+   * while it was being cleared, i.e. a {@code ConcurrentModificationException} in the one moment the
+   * user is definitely watching the download. Every scalar is copied and every collection is rebuilt
+   * from copied ELEMENTS, because {@link PackageStatus} and {@link OptionalGap} are mutable too — a
+   * shallow list copy would still expose the live elements.
+   */
+  public AiInstallStatus snapshot() {
+    AiInstallStatus c = new AiInstallStatus();
+    c.state = state;
+    c.phase = phase;
+    c.message = message;
+    c.startedAtEpochMs = startedAtEpochMs;
+    c.updatedAtEpochMs = updatedAtEpochMs;
+    c.cancelRequested = cancelRequested;
+    c.lastError = lastError;
+    c.errorCode = errorCode;
+    c.downloadProfile = downloadProfile;
+    c.totalBytes = totalBytes;
+    c.downloadedBytes = downloadedBytes;
+    c.resumableBytes = resumableBytes;
+    c.paused = paused;
+    c.bytesPerSecond = bytesPerSecond;
+    c.remainingSeconds = remainingSeconds;
+    c.installedFully = installedFully;
+    c.repairNeeded = repairNeeded;
+    c.currentStage = currentStage;
+    c.readyCapabilities.addAll(readyCapabilities);
+    for (StageStatus st : stages) {
+      c.stages.add(st.copy());
+    }
+    c.pendingRegistryAdditions.addAll(pendingRegistryAdditions);
+    for (OptionalGap gap : optionalGaps) {
+      c.optionalGaps.add(gap.copy());
+    }
+    for (PackageStatus ps : packages) {
+      c.packages.add(ps.copy());
+    }
+    return c;
   }
 }

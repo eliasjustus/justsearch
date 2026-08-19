@@ -82,7 +82,18 @@ public record InstallContract(
    * @param sha256 SHA-256 hash of the installed model file
    * @param installedFiles all files installed for this model (model + supporting)
    * @param skipped true if this model was skipped (e.g., GGUF on CPU)
-   * @param skipReason human-readable reason if skipped (nullable)
+   * @param skipReason human-readable reason if skipped (nullable) — for DISPLAY. It is prose, and
+   *     prose is not a classification: read {@code skipCause} in logic.
+   * @param skipCause typed classification of why this model was skipped (tempdoc 840 Phase 2).
+   *     Nullable: null on a contract written before the field existed, and on the bookkeeping entry
+   *     for a package with neither a variant nor supporting files (nothing to install is not one of
+   *     the four causes). Carried through from {@link InstallPlan.SkippedPackage#cause()}, never
+   *     re-derived here — the planner made the decision, this only records it.
+   *     <p>This is a HISTORICAL fact ("the reranker was not installed here, because the user
+   *     declined"), deliberately distinct from the user's CURRENT preference, which lives in
+   *     settings. Completeness must read the preference, not this: a user who re-enables a
+   *     component next month needs its missing files to become an offerable gap again, and reading
+   *     {@link SkipCause#USER_DECLINED} here would freeze the old decision forever.
    */
   public record InstalledModel(
       String packageId,
@@ -93,15 +104,41 @@ public record InstallContract(
       String sha256,
       List<String> installedFiles,
       boolean skipped,
-      String skipReason) {
+      String skipReason,
+      SkipCause skipCause) {
 
     public InstalledModel {
       if (installedFiles == null) installedFiles = List.of();
     }
 
-    /** Creates a record for a skipped model. */
+    /**
+     * Backwards-compat constructor for callers (and contracts) that pre-date the tempdoc 840
+     * {@code skipCause} field. Leaves the cause unclassified.
+     */
+    public InstalledModel(
+        String packageId,
+        String variantFilename,
+        ModelPrecision precision,
+        ExecutionProvider targetEP,
+        String targetDir,
+        String sha256,
+        List<String> installedFiles,
+        boolean skipped,
+        String skipReason) {
+      this(
+          packageId, variantFilename, precision, targetEP, targetDir, sha256, installedFiles,
+          skipped, skipReason, null);
+    }
+
+    /** Creates a record for a skipped model whose cause is not one of the classified four. */
     public static InstalledModel skipped(String packageId, String reason) {
-      return new InstalledModel(packageId, null, null, null, null, null, List.of(), true, reason);
+      return skipped(packageId, null, reason);
+    }
+
+    /** Creates a record for a skipped model, recording the planner's typed cause. */
+    public static InstalledModel skipped(String packageId, SkipCause cause, String reason) {
+      return new InstalledModel(
+          packageId, null, null, null, null, null, List.of(), true, reason, cause);
     }
   }
 
