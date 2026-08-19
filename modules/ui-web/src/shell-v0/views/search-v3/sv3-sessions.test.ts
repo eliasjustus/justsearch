@@ -990,6 +990,46 @@ describe('the canonical record, applied to a conversation (Phase F6 / inventory 
     expect(restored.recordId).toBe('g1');
   });
 
+  it('never DUPLICATES an unreconciled turn when the record’s order disagrees with the local one', () => {
+    // The record can reconcile a LATER record turn to an EARLIER local turn (a record whose event
+    // order differs from the order this window minted its turns in). The output cursor must not
+    // rewind when that happens, or the trailing keep-pass re-walks locals it already emitted and
+    // appends the unreconciled one a second time — a turn appearing twice in the transcript.
+    const list: Sv3SessionList = {
+      activeId: 'uc-a',
+      sessions: [
+        {
+          id: 'uc-a',
+          title: 'q',
+          renamed: false,
+          pinned: false,
+          completedAt: null,
+          lastVisitedAt: 0,
+          createdAt: T0,
+          updatedAt: T0,
+          turns: [
+            recordTurn({ id: 'local-P', recordId: 'evt-2', question: 'P', answer: 'P' }),
+            recordTurn({ id: 'local-U', recordId: null, question: 'U', answer: 'U' }),
+            recordTurn({ id: 'local-Q', recordId: 'evt-1', question: 'Q', answer: 'Q' }),
+          ],
+        },
+      ],
+    };
+    const applied = applySv3Record(list, 'uc-a', [
+      recordTurn({ id: 'evt-1', question: 'Q', answer: 'Q from the record' }),
+      recordTurn({ id: 'evt-2', question: 'P', answer: 'P from the record' }),
+    ]);
+    const ids = applied.sessions[0]?.turns.map((t) => t.id) ?? [];
+    expect(ids).toHaveLength(3);
+    expect(ids.filter((id) => id === 'local-U')).toEqual(['local-U']);
+    // Each local turn kept its own id and took its OWN record turn's content.
+    expect(applied.sessions[0]?.turns.map((t) => [t.id, t.answer])).toEqual([
+      ['local-U', 'U'],
+      ['local-Q', 'Q from the record'],
+      ['local-P', 'P from the record'],
+    ]);
+  });
+
   it('changes nothing for an EMPTY record or an unknown conversation', () => {
     // `fetchUnifiedThread` returns empty on failure by contract (727 F-8), so "the record said
     // nothing" must never be readable as "there is nothing".
