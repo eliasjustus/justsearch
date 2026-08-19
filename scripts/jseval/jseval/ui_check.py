@@ -1523,11 +1523,11 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # turn-seeding fixture source. Not registered in `governance/ui-proportion-baseline.v1.json`,
         # whose gate captures under `--fixtures` where this state is unreachable.
         #
-        # NOT YET CAPTURED LIVE, and `required=False` until it is — see the Step() registration for
-        # the reversal trigger. The arithmetic above makes overflow plausible; `maxTokens` is the
-        # completion reserve, not proof that twelve passages exceed what remains. That proof is the
-        # first live capture's job, and until it exists this step must not be able to fail a run for
-        # a reason that is not a regression.
+        # CAPTURED LIVE 2026-08-19, and `required=True` since — see the Step() registration for the
+        # measured numbers. The arithmetic above made overflow plausible rather than proven, because
+        # `maxTokens` is the completion reserve; the live capture supplied the missing proof (the
+        # reserve leaves ~1024 tokens of input budget against the 4096-token dev context, and the
+        # retrieved set does not fit in it).
         await page.goto(demo, wait_until="domcontentloaded", timeout=timeout_ms)
         await page.evaluate(
             "() => { location.hash = 'justsearch://surface/core.search-v3-surface'; }"
@@ -1828,21 +1828,23 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # The one state the evidence reader exists to make visible, and the one the step above
         # cannot reach: its ask is chosen so the context FITS.
         #
-        # `required=False`, DELIBERATELY AND TEMPORARILY, against §D-8's "it must be required=True"
-        # — with the reversal trigger named so this does not become the permanent hedge that
-        # instruction was written against. §D-8's determinism argument was that the THOROUGH rung's
-        # `maxTokens: 3072` shrinks the input budget; slice-3 review established that `maxTokens` is
-        # the completion RESERVE, which makes overflow PLAUSIBLE but is not proof that twelve
-        # passages exceed the remaining budget on a real corpus. A required step that cannot be shown
-        # to reach its state fails every run for a reason that is not a regression, and a harness
-        # that cries wolf is worse than one step short.
+        # `required=True` since 2026-08-19, which is where §D-8 always wanted it. It shipped
+        # `required=False` deliberately and temporarily, because §D-8's determinism argument was
+        # that the THOROUGH rung's `maxTokens: 3072` shrinks the input budget, and slice-3 review
+        # established that `maxTokens` is the completion RESERVE — making overflow PLAUSIBLE but not
+        # proven. The named reversal trigger was the first live capture; that capture has now run.
         #
-        # TRIGGER: the first live capture (next dev-stack session). Confirms overflow → flip to
-        # `required=True` immediately, which is where §D-8 wants it. Does NOT overflow → retune the
-        # ask (more documents, longer passages, a higher rung) until it does, THEN flip. Either way
-        # the flag moves at that session; it does not stay False by default.
+        # CONFIRMED LIVE (dev stack, compact chat profile, 4096-token context, 111-doc corpus of
+        # docs/{explanation,reference,how-to}, 1149 chunks fully enriched): the THOROUGH rung's ask
+        # overflows. The completion reserve leaves ~1024 tokens of input budget against a 4096-token
+        # window, and the turn's own context meter read 630 / 4096 — roughly 60% of what the reserve
+        # actually leaves, not 15% of the window — so twelve retrieved passages cannot fit. A
+        # `partial` inclusion badge ("Partly sent to the model") rendered in the sources panel and
+        # the same fact reached the reading pane's header. Two consecutive `jseval ui-shot
+        # sv3-citation-dropped` runs reached the state, so the assertion is not a coin flip; the
+        # measured numbers are recorded in tempdoc 849 §0.3.
         Step("sv3-citation-dropped", setup=setup_sv3_citation_dropped, isolated=True,
-             init_scripts=[ai_init], required=False),
+             init_scripts=[ai_init], required=True),
         Step("responsive-collapsed",     setup=setup_responsive,      isolated=True),
         # action-panel-open / action-panel-filtered retired (615 §6.1b) — no shell-v0 equivalent.
 
