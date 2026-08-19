@@ -26,11 +26,43 @@ What Slice 1 landed, and where it differs from the design as written:
 
 | §8 Slice 1 item | Status |
 |---|---|
-| 1. Four-site `STOPPED_BUDGET` fix | Done. `AppendOutcome` became a FOUR-state enum (`STOPPED_WITHOUT_APPEND` added); both `mapAppendResult` overloads and both `runBudgetLoop` consumers updated. `RagContextOpsBudgetLoopTest` (4 tests); reverting either overload fails 2 of them |
+| 1. Four-site `STOPPED_BUDGET` fix | Done. `AppendOutcome` became a FOUR-state enum (`STOPPED_WITHOUT_APPEND` added); both `mapAppendResult` overloads and both `runBudgetLoop` consumers updated. `RagContextOpsBudgetLoopTest` runs every case against **both** budgeters (review F1: Java resolves the overloads statically, so the first draft — which only ever constructed a `ContextBudgeter` — left the `TokenAwareBudgeter` overload, i.e. the production-default open-retrieval path, at zero coverage while its prose claimed "reverting either overload fails"). Reverting the `TokenAwareBudgeter` overload now fails 3 tests; reverting the `ContextBudgeter` overload fails 3 |
 | 2. Extend `ContextCitation`, constructed absent, + `withInclusion(...)` | Done. The component is ONE nested record `ContextInclusion(State, includedChars)` rather than two flat components, so each of the 33 construction sites gains one argument, not two |
-| 3. Branch the cut | Done, keyed on an explicit `wholeDocumentFallback` local as specified. **Added guard**: the sectioned branch ALSO falls through to `truncateIfNeeded` when the retrieval arrived with zero sections. That is not the D-7 mis-routing the design warns against (the predicate is still the fallback flag first) — it is the "nothing to re-assemble" case, where assembling from an empty section list would silently stop truncating. A pre-existing 845 test (`oversizedContextIsTrimmedAndReported`, `chunksUsed=3` with `sections=List.of()`) exercises exactly this shape and proves the guard is required, not speculative |
+| 3. Branch the cut | Done, keyed on an explicit `wholeDocumentFallback` local as specified. **Two added guards** — see the honesty note below |
 | 4. Emit on `rag.citations` + persist via `RAGDoneEnricher` | Done, both sourced from the record component |
 | 5. Update the `RAGContext` class javadoc | Done — the paragraph that documented the gap as permanent now documents the branch |
+
+**The two guards on the cut, with their status stated honestly (review F6).**
+
+- **Zero-sections fall-through — DEFENSIVE, not a reachable case.** The sectioned branch also routes
+  to `truncateIfNeeded` when the retrieval arrived with no sections. An earlier draft of this note
+  claimed a pre-existing 845 test "proves the guard is required"; that was wrong, and the correction
+  matters. On current `main` the shape is **not producible**: both worker assembly paths pass
+  `budgeter.sections()` (`RagContextOps.java:657, :683`) and the virtual-chunk fallback populates
+  sections too (`:1153`), while every path that *does* return zero sections also returns an empty
+  context or `chunksUsed == 0` (`:584`, `:1694`, `RemoteDocumentService.retrieveContextFallback`),
+  so `RAGContext`'s own `isBlank() || chunksUsed == 0` condition routes it to the fallback branch
+  first. The 845 test that exercises the shape (`oversizedContextIsTrimmedAndReported`,
+  `chunksUsed=3` with `sections=List.of()`) is a **stub** shape, not evidence of a live path. The
+  guard is kept because a stub, an older worker, or a future assembly path can produce it and the
+  failure mode is silent (assembling from an empty list would stop truncating altogether) — but it
+  is insurance, and calling a test fixture "proof of a live path" was exactly the kind of
+  overstatement this tempdoc exists to remove.
+- **Assembled-total re-check — a real defect, with a measured counter-example.** The section loop
+  budgets the SUM of its parts, but `estimateTokens` is **not additive**: it takes
+  `max(wordEstimate, charEstimate)` and switches `charEstimate` on the whitespace and non-ASCII
+  *ratios* of the string it is handed. A mixture of sparse-ASCII and dense-CJK sections can leave
+  every part the safe side of both thresholds while the concatenation crosses both. Measured on the
+  regression fixture: parts sum to 350 tokens against a 460 cap, the assembly estimates **549**.
+  The guard re-checks the assembled string and falls back, dropping the per-section record (a record
+  describing sections is not true of a string that was then cut blind).
+  **And the fallback alone was insufficient** — `truncateIfNeeded` sizes its head/tail windows in
+  *whitespace-delimited words*, so on whitespace-poor text it has almost nothing to drop and returned
+  **571** tokens for that same fixture, still over cap. The whitespace-poor case is precisely what
+  trips the ratio thresholds, so the guard would have fired on exactly the inputs its remedy could
+  not fix. Enforcement therefore ends with the code-point-safe binary search (`fitToTokenBudget`)
+  already in the file. This was found because the new test asserted the *invariant* (the returned
+  string fits) rather than "the fallback ran".
 
 Costs the design priced, as actually paid:
 
@@ -57,7 +89,17 @@ Two small widenings the tests required, both deliberate:
 - `InferenceLifecycleManager.formatContextAsNumberedPassages` (the existing package-private
   delegate to `OnlineModeOps`) is now public, so the flattening regression can round-trip through
   the REAL prompt parser rather than a re-implementation of it. `OnlineModeOps` itself stays
-  package-private.
+  package-private, and the delegate keeps its `@SuppressWarnings("unused")` + a corrected
+  `UnreferencedCodeTest` row naming the real caller (review F5 — the row still said
+  `OnlineModeOpsTest`, which calls `OnlineModeOps` directly and not this delegate).
+
+One residue swept while here (review F4): `SeparatorConstantDriftTest` allowlisted
+`SelectionContextInjector`'s raw `"\n\n---\n\n"` on the stated ground that "no canonical constant is
+reachable across its module boundary". That justification is false — the file already imports
+`DocumentService`, whose `SECTION_SEPARATOR` is the app-api mirror — and this slice's own
+`RAGContext` import of `ContextBudgeter` falsifies it twice over. The file now uses the constant and
+the allowlist entry is gone. An allowlist whose reason is untrue is worse than none: it teaches the
+next reader a constraint that does not exist.
 
 Open questions §9 answered by implementation: **Q6 is decided — record-only.**
 `contextIncludedChars` is classified `DROPPED` in the FE totality guard with that reason.

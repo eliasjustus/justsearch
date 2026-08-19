@@ -68,7 +68,11 @@ class UnreferencedCodeTest {
           Map.entry("LauncherEnvironment.HeadAssembly", "LauncherEnvironmentCloseTest"),
           Map.entry("LauncherEnvironment.configManager", "LauncherEnvironmentCloseTest"),
           Map.entry("LauncherEnvironment.telemetry", "LauncherEnvironmentCloseTest"),
-          Map.entry("InferenceLifecycleManager.formatContextAsNumberedPassages", "OnlineModeOpsTest"),
+          Map.entry("InferenceLifecycleManager.formatContextAsNumberedPassages",
+              "RAGContextTest (tempdoc 849: the head's section-aware cut asserts its assembled "
+                  + "context still parses through the REAL online-path parser, so this delegate is "
+                  + "the cross-module seam it round-trips through; OnlineModeOpsTest calls "
+                  + "OnlineModeOps directly, not this)"),
           Map.entry("InferenceLifecycleManager.extractUsageFromChatChunk", "LlamaServerUsageParsingTest"),
           Map.entry("InferenceLifecycleManager.asIntOrNull", "InferenceLifecycleManagerUtilsTest"),
           Map.entry("InferenceLifecycleManager.asPositiveInt", "InferenceLifecycleManagerUtilsTest"),

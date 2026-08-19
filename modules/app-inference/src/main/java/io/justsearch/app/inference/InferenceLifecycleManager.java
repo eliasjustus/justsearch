@@ -1144,6 +1144,7 @@ public class InferenceLifecycleManager
    * that against a re-implementation of the parser would prove nothing about the real one, so the
    * head-side test round-trips through this delegate.
    */
+  @SuppressWarnings("unused") // Called from RAGContextTest (ArchUnit excludes test sources)
   public static String formatContextAsNumberedPassages(String rawContext) {
     return OnlineModeOps.formatContextAsNumberedPassages(rawContext);
   }

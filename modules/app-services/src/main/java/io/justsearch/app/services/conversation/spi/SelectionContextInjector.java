@@ -302,7 +302,7 @@ public final class SelectionContextInjector implements ContextInjector {
       String content = fetchDocContent(ref.id());
       if (content == null || content.isBlank()) continue;
       String truncated = truncate(content, RESULT_SET_PER_DOC_CHARS);
-      if (concat.length() > 0) concat.append("\n\n---\n\n");
+      if (concat.length() > 0) concat.append(DocumentService.SECTION_SEPARATOR);
       concat.append("Document: ").append(ref.id()).append("\n\n").append(truncated);
       Map<String, Object> citation = new LinkedHashMap<>();
       citation.put("parentDocId", ref.id());

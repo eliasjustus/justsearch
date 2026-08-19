@@ -18,6 +18,7 @@ import io.justsearch.app.api.DocumentService.DocumentRecord;
 import io.justsearch.app.api.RetrieveContextParams;
 import io.justsearch.app.inference.InferenceLifecycleManager;
 import io.justsearch.core.util.TokenEstimation;
+import io.justsearch.indexing.rag.ContextBudgeter;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -603,7 +604,7 @@ final class RAGContextTest {
     String raw = assembledContextOf(result);
 
     assertTrue(
-        raw.contains(DocumentService.SECTION_SEPARATOR),
+        raw.contains(ContextBudgeter.SECTION_SEPARATOR),
         "the separators the old structure-blind cut flattened must survive: " + raw);
 
     // Round-tripped through the REAL online-path parser, not a re-implementation of it: that
@@ -709,6 +710,68 @@ final class RAGContextTest {
   }
 
   @Test
+  @DisplayName("849 F6: an assembly that overshoots though its PARTS fit falls back and truncates")
+  void nonAdditiveEstimatorOvershootIsCaught() {
+    // The per-section loop budgets the SUM of the parts, but estimateTokens is not additive: it
+    // switches charEstimate on the whitespace and non-ASCII RATIOS of whatever string it is given.
+    // Sparse-ASCII sections estimate at len/4; dense-CJK sections at len. Concatenated, the mixture
+    // crosses BOTH thresholds the parts individually stayed the safe side of (nonAscii > 0.5 with
+    // whitespace < 0.05), so the whole estimates ~len — far above the sum of the parts.
+    String sparseAscii = ("a".repeat(49) + " ").repeat(2); // 100 chars, whitespace ratio 0.02
+    String denseCjk = "文".repeat(150); // 150 chars, no whitespace, 100% non-ASCII
+    List<ContextSection> sections =
+        List.of(
+            new ContextSection("d0", sparseAscii, false, 0, 0),
+            new ContextSection("d1", denseCjk, false, 1, 1),
+            new ContextSection("d2", sparseAscii, false, 2, 2),
+            new ContextSection("d3", denseCjk, false, 3, 3));
+
+    int partsSum = sections.stream().mapToInt(s -> TokenEstimation.estimateTokens(s.content())).sum();
+    StringBuilder naive = new StringBuilder();
+    for (int i = 0; i < sections.size(); i++) {
+      if (i > 0) naive.append(ContextBudgeter.SECTION_SEPARATOR);
+      naive.append(ContextBudgeter.sectionHeader(i + 1, sections.get(i).sourceLabel()))
+          .append(sections.get(i).content());
+    }
+    int assembled = TokenEstimation.estimateTokens(naive.toString());
+    // The counter-example only means anything if BOTH preconditions hold — otherwise the test would
+    // pass for the wrong reason (e.g. because the parts alone already exceeded the budget).
+    assertTrue(partsSum <= 460, "precondition: the parts' own estimates fit the budget: " + partsSum);
+    assertTrue(
+        assembled > 460,
+        "precondition: the ASSEMBLY estimates over it (" + assembled + ") — this is the"
+            + " non-additivity the guard exists for");
+
+    var ctx = stubCtx(Map.of("question", "what?", "docIds", List.of("a")));
+    ctx.attributes().put(RAGContext.ATTR_COMPLETION_RESERVE_TOKENS, 3072);
+    List<ContextCitation> citations = new java.util.ArrayList<>();
+    for (int i = 0; i < sections.size(); i++) {
+      citations.add(
+          new ContextCitation(
+              "doc-" + i, i, 4, 0, 10, 0.9f, "e" + i, 0, 0, "", 0, ContextInclusion.ABSENT));
+    }
+    var retrieval =
+        new ContextResult(
+            naive.toString(), 4, 4, 4, citations, "BM25", "ok", false, sections);
+    InjectorResult result =
+        new RAGContext(new StubDocs(retrieval, Map.of()), RAGContext.DEFAULT_TOP_K,
+                () -> stubAi(4096, 4096))
+            .inject(ctx);
+
+    String raw = assembledContextOf(result);
+    assertTrue(
+        TokenEstimation.estimateTokens(raw) <= 460,
+        "the guarantee is about the string handed to the model, not the parts it was built from: "
+            + TokenEstimation.estimateTokens(raw));
+    assertEquals(true, ragMetaOf(result).get("context_truncated"));
+    // The per-section record cannot survive a structure-blind cut of the assembly, so it is dropped
+    // rather than left describing text that is no longer there.
+    for (Map<String, Object> c : citationsOf(result)) {
+      assertFalse(c.containsKey("contextInclusion"), c.toString());
+    }
+  }
+
+  @Test
   @DisplayName("849: a citations/sections length mismatch leaves inclusion ABSENT, not guessed")
   void lengthMismatchLeavesInclusionUnresolved() {
     // The join is positional. When the two lists disagree the alignment is suspect, and a state
@@ -766,7 +829,7 @@ final class RAGContextTest {
               "doc-" + i, i, count, 0, body.length(), 0.9f, "excerpt-" + i, 0, 0, "", 0,
               ContextInclusion.ABSENT));
       sections.add(new ContextSection(label, body, false, i, i));
-      if (i > 0) assembled.append(DocumentService.SECTION_SEPARATOR);
+      if (i > 0) assembled.append(ContextBudgeter.SECTION_SEPARATOR);
       assembled.append('[').append(i + 1).append("] ").append(label).append('\n').append(body);
     }
     return new ContextResult(

@@ -488,6 +488,25 @@ public final class RAGContext implements ContextInjector {
    * The same branch is taken when a sectioned retrieval arrived WITHOUT sections: there is nothing
    * to re-assemble, and "no per-passage record" must degrade to an honest structure-blind trim, not
    * to no trim at all.
+   *
+   * <p><b>The assembled whole is re-checked against the budget</b> (review F6). The section loop
+   * budgets the SUM of its parts, but {@link TokenEstimation#estimateTokens} is not additive: it
+   * takes {@code max(wordEstimate, charEstimate)} and switches {@code charEstimate} on the
+   * whitespace and non-ASCII RATIOS of the string it is handed, so a concatenation can cross a ratio
+   * threshold none of its parts crossed and estimate well above their sum. The per-part arithmetic
+   * is therefore necessary but not sufficient, and the guarantee this method owes its caller is
+   * about the string it returns, not about the parts it assembled. When the assembly overshoots, it
+   * falls back to the structure-blind trim and DROPS the per-section record — a record describing
+   * sections is not true of a string that was then cut blind, and saying nothing beats saying
+   * something false.
+   *
+   * <p>That fallback is then ENFORCED with {@link #fitToTokenBudget}, and the reason is measured,
+   * not defensive: {@link TokenEstimation#truncateIfNeeded} sizes its head and tail windows in
+   * WHITESPACE-DELIMITED WORDS, so on whitespace-poor text it has almost no words to drop and
+   * returns the input essentially whole (plus its marker). Whitespace-poor text is precisely what
+   * trips the ratio thresholds above, so the two conditions coincide: without this line the guard
+   * would fire on exactly the inputs its remedy cannot fix. Measured on the regression fixture:
+   * 549 tokens in, 571 out, against a 460-token cap.
    */
   private static SectionCut cutContext(
       String context, List<ContextSection> sections, int budgetTokens, boolean wholeDocumentFallback) {
@@ -495,7 +514,19 @@ public final class RAGContext implements ContextInjector {
       TruncationResult truncation = TokenEstimation.truncateIfNeeded(context, budgetTokens);
       return new SectionCut(truncation.content(), truncation.truncated(), List.of());
     }
-    return cutSections(sections, budgetTokens);
+    SectionCut sectioned = cutSections(sections, budgetTokens);
+    int cap = TokenEstimation.effectiveContextCap(budgetTokens);
+    if (TokenEstimation.estimateTokens(sectioned.context()) <= cap) {
+      return sectioned;
+    }
+    LOG.warn(
+        "RAGContext: section-aware assembly estimated over budget ({} > {}) though its parts fit;"
+            + " falling back to the structure-blind trim and dropping the per-section record",
+        TokenEstimation.estimateTokens(sectioned.context()),
+        cap);
+    TruncationResult truncation =
+        TokenEstimation.truncateIfNeeded(sectioned.context(), budgetTokens);
+    return new SectionCut(fitToTokenBudget(truncation.content(), cap), true, List.of());
   }
 
   /**

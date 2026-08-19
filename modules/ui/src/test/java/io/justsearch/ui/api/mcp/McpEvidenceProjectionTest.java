@@ -204,6 +204,12 @@ final class McpEvidenceProjectionTest {
     assertEquals(18, c.get("endLine"));
     assertEquals("Overview", c.get("headingText"));
     assertEquals(2, c.get("headingLevel"));
+    // Tempdoc 849 (review F2): this citation is ABSENT, so the map must carry NO inclusion key.
+    // Without this, deleting the emitter's absent-guard passes the whole suite — the totality guard
+    // only ever sees the maximal (resolved) fixture, so it cannot notice absence being fabricated.
+    assertFalse(
+        c.containsKey("inclusion"),
+        "an unresolved inclusion must project as absence, not as a state: " + c);
 
     // Every quality field is projected — the full ContextResult counts + all five QualitySignals
     // fields (guards against a silent-drop regression like the one this test was strengthened for).
