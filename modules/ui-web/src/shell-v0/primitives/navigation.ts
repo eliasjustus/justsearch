@@ -115,6 +115,9 @@ export class NavigationController implements ReactiveController {
   private resizeObserver: ResizeObserver | null = null;
   private scrollEl: HTMLElement | null = null;
   private scrollRaf = false;
+  /** A9 — a measure has already run in this frame; further renders coalesce into one trailing pass. */
+  private measureFrame = false;
+  private measurePending = false;
 
   constructor(host: ReactiveControllerHost & HTMLElement, opts: NavigationOptions) {
     this.host = host;
@@ -127,10 +130,42 @@ export class NavigationController implements ReactiveController {
     // tear everything down when the spine is not shown (non-agent / narrow). Mirrors the old updated().
     if (this.opts.active()) {
       this.setupResize();
-      if (this.measure()) this.host.requestUpdate();
+      this.measureCoalesced();
     } else {
       this.teardown();
     }
+  }
+
+  /**
+   * Tempdoc 854 PR-A / A9 — at most ONE measure per animation frame, leading edge.
+   *
+   * `measure()` is a `querySelectorAll` plus a `getBoundingClientRect` per landmark, and it ran on
+   * EVERY render. The first adopter could afford that because its whole navigation was gated behind
+   * a wide-viewport check; the second adopter deliberately drops that gate (a narrow viewport must
+   * still have keyboard navigation), and it re-renders on every streamed delta — so a long answer
+   * with many run steps would measure the whole column per chunk. Coalescing is the right fix
+   * because the layout the reader is about to see cannot change more than once per frame anyway;
+   * re-gating on width would close the accessibility hole the port exists to open.
+   *
+   * Leading-edge, not trailing: the first measure after a render is synchronous, so a caller that
+   * awaits `updateComplete` still sees the landmarks of what it just rendered. Only the SECOND and
+   * later measures inside one frame are collapsed into a single trailing pass.
+   */
+  private measureCoalesced(): void {
+    if (this.measureFrame) {
+      this.measurePending = true;
+      return;
+    }
+    this.measureFrame = true;
+    if (this.measure()) this.host.requestUpdate();
+    raf(() => {
+      this.measureFrame = false;
+      if (!this.measurePending) return;
+      this.measurePending = false;
+      // The trailing pass is skipped outright if the host went inactive (or was torn down) in the
+      // meantime — measuring a detached arm is exactly what the coupling in `hostUpdated` prevents.
+      if (this.opts.active()) this.measureCoalesced();
+    });
   }
 
   hostDisconnected(): void {
@@ -254,10 +289,19 @@ export class NavigationController implements ReactiveController {
 
   private setupResize(): void {
     if (typeof ResizeObserver === 'undefined') return; // happy-dom / SSR guard
-    // `.conversation` is a stable DOM node across renders → observe it ONCE (guarded), not recreate.
-    if (this.resizeObserver) return;
     const conv = this.opts.scrollEl();
     if (!conv) return;
+    // Observe the scroll container ONCE per NODE, not once per controller (tempdoc 854 PR-A / A2).
+    //
+    // This used to read "`.conversation` is a stable DOM node across renders → observe it ONCE
+    // (guarded)". That is true of the FIRST adopter and false of the second: `Sv3Main` emits
+    // `.scroller` from four different render arms (`views/search-v3/Sv3Main.ts:1304, 1321, 1345,
+    // 2312`), each a distinct `html` template and therefore a distinct node. An unconditional
+    // early-return left the observer and all four listeners on a DETACHED node, so `measure()` read
+    // a stale viewport while the reader looked at a different element. Compare identity instead:
+    // an unchanged node takes exactly the old early return, a swapped one rebinds.
+    if (this.resizeObserver && this.scrollEl === conv) return;
+    if (this.resizeObserver) this.teardown();
     this.resizeObserver = new ResizeObserver(() => {
       if (this.measure()) this.host.requestUpdate();
     });

@@ -34,6 +34,7 @@ import {
   subscribeShortViewport,
 } from '../primitives/compositionLayout.js';
 import { friendlyStreamError } from '../utils/streamError.js';
+import { deepActiveElement, isTypingTarget } from '../utils/keyboardHandler.js';
 import { composerStyles } from '../components/Composer.js';
 import '../components/Composer.js';
 import { takePendingSelection, takePendingForceShape, resolveDispatchShape, wireSelectionKind, takePendingAutoRun, compose } from '../utils/compose.js';
@@ -4805,16 +4806,11 @@ export class UnifiedChatView extends JfElement {
     if (dir === 0) return;
     // §33 — never hijack typing: descend through nested shadow roots (jf-unified-chat-view →
     // jf-composer → textarea) to the truly-focused element, and bail if it's an editable control.
-    let active: Element | null = document.activeElement;
-    while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
-    if (
-      active &&
-      (active.tagName === 'INPUT' ||
-        active.tagName === 'TEXTAREA' ||
-        (active as HTMLElement).isContentEditable)
-    ) {
-      return;
-    }
+    // Tempdoc 854 PR-A — the descent and the predicate are the SHARED ones now
+    // (`utils/keyboardHandler.ts`), so this window and Search v3 cannot disagree about what "typing"
+    // is. The shared predicate's union also covers `SELECT`, which this inline copy omitted: with the
+    // workflow picker (`:3986`) focused, `j`/`k` used to steal its native type-ahead.
+    if (isTypingTarget(deepActiveElement())) return;
     const landmarks = this.nav.landmarks ?? [];
     if (landmarks.length === 0) return;
     e.preventDefault();

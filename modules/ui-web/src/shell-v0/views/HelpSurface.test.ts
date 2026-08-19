@@ -62,6 +62,13 @@ describe('HelpSurface — keyboard shortcuts (tempdoc 586 P-3)', () => {
     expect(text).toContain('Ctrl / ⌘ + K');
     expect(text).toContain('Open the command palette');
 
+    // Tempdoc 854 PR-A — J/K fires (a window listener on the transcript region) and was missing from
+    // the table, which makes the same mirror partial in the other direction. P-3's rule is that the
+    // table mirrors the REAL bindings; this asserts the newly-listed one is actually rendered, since
+    // the suite reads rendered substrings rather than the module-private const.
+    expect(text).toContain('J / K');
+    expect(text).toContain('Step to the next / previous step of a run');
+
     // The misleading / unimplemented rows P-3 removed must NOT reappear.
     expect(text).not.toContain('Focus search bar');
     expect(text).not.toContain('Enter command mode');

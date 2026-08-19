@@ -21,6 +21,15 @@
  */
 import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../../primitives/JfElement.js';
+// The product's ONE reading-position authority (tempdoc 565 §21), and this surface is its SECOND
+// adopter — 565 §21 deferred "the general multi-surface authority … to the 2nd adopter", so the
+// controller is consumed here rather than re-derived. Only its NAVIGATION half is used: `spineEl`
+// returns null, which the authority explicitly supports (`primitives/navigation.ts:288-289`), so
+// the minimap's measurements degrade to zero and the landmark/jump path is untouched.
+import { NavigationController } from '../../primitives/navigation.js';
+// The product's ONE "is the reader typing?" predicate (tempdoc 854 PR-A). A window-local copy is
+// what let the retiree's own guard drift out of sync with `KeybindingRegistry`'s.
+import { deepActiveElement, isTypingTarget } from '../../utils/keyboardHandler.js';
 import { matchCountLabel } from '../../components/searchResults/matchCountLabel.js';
 import { sv3Shared } from './sv3-shared-styles.js';
 import './Sv3Empty.js';
@@ -1188,6 +1197,59 @@ export class Sv3Main extends JfElement {
   /** The summary text a save is waiting on, or null — how this region learns the write landed. */
   private pendingSummary: string | null = null;
 
+  /**
+   * The reading-position authority for this transcript (tempdoc 854 PR-A; 565 §21's 2nd adopter).
+   *
+   * `spineEl` returns null on purpose: this window ports the run spine's KEYBOARD NAVIGATION, not
+   * its minimap. The authority allows it — `trackPx` degrades to 0 and feeds only dot placement —
+   * and the keyboard reader's feedback is the browser's own focus ring on the jumped-to step, which
+   * is what `jumpTo` moves focus for.
+   */
+  private readonly nav = new NavigationController(this, {
+    scrollEl: () => this.scroller,
+    spineEl: () => null,
+    active: () => this.transcriptArmRendered,
+  });
+
+  /**
+   * True exactly when {@link render} takes the LOCKED arm: the store refuses to be read and there is
+   * something it would otherwise have shown. Extracted so the arm and {@link transcriptArmRendered}
+   * cannot disagree about which one wins.
+   */
+  private get locksTranscript(): boolean {
+    const turns = this.turns ?? [];
+    return this.historyLocked && (turns.length > 0 || this.recordNotice || this.lockedRefusal);
+  }
+
+  /**
+   * True exactly when {@link render} takes the TRANSCRIPT arm — the ONE definition, read by the arm
+   * itself and by the navigation controller's `active()`.
+   *
+   * Two properties of this predicate are load-bearing, and neither is incidental:
+   *
+   *  1. **It is answerable BEFORE any measurement.** An `active()` derived from `nav.landmarks`
+   *     deadlocks: landmarks populate only inside `measure()`, and `measure()` runs only when
+   *     `active()` is already true (`primitives/navigation.ts:128-133`), so zero landmarks would
+   *     mean permanently inactive. Host state, always.
+   *  2. **It is FALSE in every non-transcript arm** — hero, search rows, pending, unreachable,
+   *     empty and locked. That is what tears the controller down when the arm changes
+   *     (`navigation.ts:131-133`), which is what makes it rebind to the NEW `.scroller` node on the
+   *     way back in: this element emits `.scroller` from four different templates, so the node is
+   *     not stable and a controller that stayed active across a swap would keep its observer and
+   *     listeners on a detached element. A future `active()` that stays true across arms silently
+   *     reintroduces that. (The authority also guards the swap on its own side now — see
+   *     `setupResize` — but neither defence subsumes the other.)
+   *
+   * Deliberately NOT width-gated. The retiree gates the same navigation on `wideZone` because its
+   * MINIMAP needs a gutter; this window has no gutter, so gating would deny a narrow viewport the
+   * only keyboard navigation the product has for run steps. A reviewer must not "restore parity"
+   * by re-adding the gate.
+   */
+  private get transcriptArmRendered(): boolean {
+    if (this.locksTranscript) return false;
+    return (this.turns ?? []).length > 0 || this.recordNotice;
+  }
+
   constructor() {
     super();
     this.state = COMPOSER_STATE_DEFAULT;
@@ -1214,12 +1276,68 @@ export class Sv3Main extends JfElement {
     this.editingDraft = '';
   }
 
+  override connectedCallback(): void {
+    super.connectedCallback();
+    window.addEventListener('keydown', this.onWindowKeydown);
+  }
+
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     // The confirmation's timer would otherwise outlive the region and set state on a detached element.
     if (this.copiedTimer !== null) clearTimeout(this.copiedTimer);
     this.copiedTimer = null;
+    window.removeEventListener('keydown', this.onWindowKeydown);
   }
+
+  /**
+   * J / K — step focus forward and back through the run's landmarks (tempdoc 854 PR-A, porting
+   * 565 §33 from `views/UnifiedChatView.ts:4802-4830`). The ONLY keyboard navigation the product has
+   * for run steps, and the reason it is kept: `jumpTo` moves real DOM focus to the step, so a
+   * keyboard or screen-reader reader lands on the content.
+   *
+   * A WINDOW listener, matching the source: the reader must be able to step the transcript while
+   * focus sits in the sidebar or on the window frame, and this element's own shadow root is the one
+   * place a transcript-scoped listener would never hear those presses from. The shell mounts one
+   * surface at a time and only a CONNECTED element listens, so a cached sibling window cannot
+   * double-handle.
+   *
+   * Four guards, in order, and each answers a different question:
+   *
+   *  - `defaultPrevented` — a window listener is the LAST handler in the chain and has no business
+   *    acting on an event an inner one already claimed. This is not hypothetical:
+   *    `components/advisory/AdvisoryInboxDrawer.ts:379-386` binds bare `j`/`k` on its rows, is
+   *    mounted app-wide in the Shell's right drawer (`chrome/Shell.ts:2384`), and calls
+   *    `preventDefault()` without `stopPropagation()`, so its keys reach this listener by bubbling.
+   *    Its rows are `role="button"`, not editables, so the typing guard below would not stop them.
+   *  - modifiers — `Ctrl+J` and friends belong to the browser and to chorded bindings.
+   *  - the typing guard — the shared descent + predicate, so a `j` typed into the composer, or into
+   *    a `<select>`, is a character rather than a jump.
+   *  - a non-empty landmark list — an unmeasured or item-less transcript no-ops rather than throws.
+   *
+   * `composedPath()` containment was rejected as the collision guard even though this window prefers
+   * it elsewhere (`SearchV3View.ts:1854-1856`): the path of a press made while nothing inside this
+   * element has focus is `[body, html, document, window]`, so containment would trade a rare
+   * collision for a key that is dead most of the time.
+   */
+  private readonly onWindowKeydown = (event: KeyboardEvent): void => {
+    if (event.defaultPrevented) return;
+    const dir = event.key === 'j' ? 1 : event.key === 'k' ? -1 : 0;
+    if (dir === 0) return;
+    if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+    if (isTypingTarget(deepActiveElement())) return;
+    const landmarks = this.nav.landmarks;
+    if (landmarks.length === 0) return;
+    event.preventDefault();
+    const cur = landmarks.findIndex((landmark) => landmark.id === this.nav.activeId);
+    const next =
+      cur < 0
+        ? dir > 0
+          ? 0
+          : landmarks.length - 1
+        : Math.min(landmarks.length - 1, Math.max(0, cur + dir));
+    const target = landmarks[next];
+    if (target) this.nav.jumpTo(target.id);
+  };
 
   private get scroller(): HTMLElement | null {
     return this.shadowRoot?.querySelector('.scroller') ?? null;
@@ -1291,13 +1409,11 @@ export class Sv3Main extends JfElement {
     // a store that refuses to be read must not leave a readable copy of what it holds on screen. Only
     // the CONVERSATION is gated — the search projection below is a different, unencrypted store, and
     // gating it too would be a true statement about the wrong data (tempdoc 629's own scope rule).
-    if (this.historyLocked && (turns.length > 0 || this.recordNotice || this.lockedRefusal)) {
-      return this.locked();
-    }
+    if (this.locksTranscript) return this.locked();
     // The conversation owns the region whenever the claimed session has one. The search projection
     // below is the SECONDARY axis now (822 §4b course correction) and speaks only for a session that
     // has asked nothing — it is reached from the palette, never from a plain submit.
-    if (turns.length > 0 || this.recordNotice) return this.transcript(turns);
+    if (this.transcriptArmRendered) return this.transcript(turns);
     // Nothing but the hero composer belongs in the region until the window has docked: an untouched
     // window's emptiness is the composer's to speak for, not a state to announce.
     if (this.state !== 'docked' || view.status === 'idle') {
@@ -1471,7 +1587,7 @@ export class Sv3Main extends JfElement {
                 : this.runBody(run)}`
           : html`
               ${this.rewriteNote(turn)}${this.reasoningBlocks(turn, streaming)}
-              <div class="answer" data-testid="sv3-turn-answer">
+              <div class="answer" data-testid="sv3-turn-answer" data-item-id=${`${turn.id}:a`}>
                 ${empty && !streaming
                   ? html`<span class="answer-empty" data-testid="sv3-turn-answer-empty"
                       >${TURN_EMPTY_ANSWER}</span
@@ -1512,7 +1628,9 @@ export class Sv3Main extends JfElement {
     if (this.editingTurnId === turn.id) return this.questionEditor(turn);
     const canEdit = sv3LineageFor(this.turnLineage, turn.id)?.canEdit === true;
     return html`<div class="ask">
-      <div class="ask-bubble" data-testid="sv3-turn-question">${turn.question}</div>
+      <!-- 854 PR-A — a J/K landmark. The :q suffix keeps the turn's anchors out of the run feed's
+           id space by construction (feed ids are the controller's entry/call ids). -->
+      <div class="ask-bubble" data-testid="sv3-turn-question" data-item-id=${`${turn.id}:q`}>${turn.question}</div>
       ${canEdit && !this.streaming
         ? html`<jf-control
             class="ask-edit"
@@ -2150,23 +2268,35 @@ export class Sv3Main extends JfElement {
     `;
   }
 
+  /**
+   * ONE renderer for both the live feed and the record, so a run the reader watched and a run they
+   * came back to cannot be drawn differently — which is also why ONE stamp per arm gives J/K the
+   * same landmarks in a live conversation and a reloaded one. The retiree reaches the same coverage
+   * only by merging two projections.
+   */
   private runItem(item: Sv3RunFeedItem): TemplateResult {
     if (item.kind === 'text') {
       // The agent's prose is the same kind of text as an answer and gets the same renderer: a feed
       // that showed raw asterisks beside a settled turn that did not would be two markdown policies
       // in one transcript. Never streaming — a feed entry arrives whole.
-      return html`<div class="answer" data-testid="sv3-run-text">
+      return html`<div class="answer" data-testid="sv3-run-text" data-item-id=${item.id}>
         <jf-markdown-block class="sv3-markdown" prose .text=${item.text}></jf-markdown-block>
       </div>`;
     }
     if (item.kind === 'tool') {
       return html`<jf-tool-call-card
         data-testid="sv3-run-tool"
+        data-item-id=${item.id}
         .toolCall=${item.call}
         .stepPresentation=${null}
       ></jf-tool-call-card>`;
     }
-    return html`<p class="run-note" data-testid="sv3-run-note" data-label=${item.label}>
+    return html`<p
+      class="run-note"
+      data-testid="sv3-run-note"
+      data-item-id=${item.id}
+      data-label=${item.label}
+    >
       <span class="run-note-label">${item.label}</span> ${item.text}
     </p>`;
   }
@@ -2179,10 +2309,27 @@ export class Sv3Main extends JfElement {
    * window's to resolve, and each button is a dedicated typed command — never a sentence typed into
    * the composer, which refuses to send while any prompt is pending.
    */
+  /**
+   * 854 PR-A — a held decision is a J/K landmark, and the fourth stamp site is not optional: prompts
+   * render OUTSIDE `.run-feed` precisely because "a held decision must not be something the reader
+   * can scroll past", so a three-site plan would have made the one item this window most wants a
+   * reader to reach the only run element the keyboard skips.
+   *
+   * The `:hold` suffix is load-bearing, not decoration. An APPROVAL prompt's id IS the tool call's
+   * id — `projectSv3RunFeed` pushes `{kind:'tool', id: callId}` and `{kind:'approval', id: callId}`
+   * from the same call (`sv3-run.ts:190, 194`) — so stamping `prompt.id` bare would put the same
+   * `data-item-id` on the tool card and on the hold, and `jumpTo` resolves by first match: the hold
+   * would be unreachable and the landmark list would carry a duplicate. Same reason the turn anchors
+   * carry `:q`/`:a`.
+   */
+  private runPromptAnchorId(prompt: Sv3RunPrompt): string {
+    return `${prompt.id}:hold`;
+  }
+
   private runPrompt(prompt: Sv3RunPrompt): TemplateResult {
     if (prompt.kind === 'budget') {
       return html`
-        <div class="run-prompt" role="group" aria-label="Budget decision" data-testid="sv3-run-prompt" data-kind="budget">
+        <div class="run-prompt" role="group" aria-label="Budget decision" data-testid="sv3-run-prompt" data-item-id=${this.runPromptAnchorId(prompt)} data-kind="budget">
           <p class="run-prompt-text">
             The run needs ${prompt.tokensNeeded.toLocaleString()} more tokens;
             ${prompt.tokensRemaining.toLocaleString()} remain.
@@ -2215,7 +2362,7 @@ export class Sv3Main extends JfElement {
     }
     if (prompt.kind === 'context') {
       return html`
-        <div class="run-prompt" role="group" aria-label="Context decision" data-testid="sv3-run-prompt" data-kind="context">
+        <div class="run-prompt" role="group" aria-label="Context decision" data-testid="sv3-run-prompt" data-item-id=${this.runPromptAnchorId(prompt)} data-kind="context">
           <p class="run-prompt-text">
             The prompt is ${prompt.promptTokens.toLocaleString()} of
             ${prompt.contextWindow.toLocaleString()} tokens.
@@ -2247,6 +2394,7 @@ export class Sv3Main extends JfElement {
         role="group"
         aria-label="Tool approval"
         data-testid="sv3-run-prompt"
+        data-item-id=${this.runPromptAnchorId(prompt)}
         data-kind="approval"
       >
         <p class="run-prompt-text">

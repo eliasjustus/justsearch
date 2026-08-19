@@ -183,3 +183,99 @@ describe('navigation — §21 AFFORDANCE (the minimap-as-scrollbar)', () => {
     expect(conv.scrollTop).toBe(1000); // = scrollHeight (the browser clamps to the max in practice)
   });
 });
+
+describe('navigation — the jump moves real DOM focus (tempdoc 854 PR-A)', () => {
+  it('focuses the landmark it scrolls to, so a keyboard reader lands on the content', () => {
+    // `el.focus({preventScroll:true})` (`navigation.ts:171`) is this feature's ENTIRE accessibility
+    // payload — the difference between "the column scrolled" and "the reader is now on the step" for
+    // someone using a keyboard or a screen reader — and until this case nothing pinned it.
+    const conv = document.createElement('div');
+    document.body.appendChild(conv);
+    const step = document.createElement('div');
+    step.setAttribute('data-item-id', 't1');
+    conv.appendChild(step);
+
+    const nav = new NavigationController(fakeHost(), {
+      scrollEl: () => conv,
+      spineEl: () => null,
+      active: () => true,
+    });
+    nav.jumpTo('t1');
+
+    expect(document.activeElement).toBe(step);
+    // A landmark is not natively focusable, so the jump makes it programmatically focusable first.
+    expect(step.getAttribute('tabindex')).toBe('-1');
+    conv.remove();
+  });
+});
+
+describe('navigation — the scroll container is observed per NODE, not once per controller (854 A2)', () => {
+  it('rebinds its listeners when scrollEl() returns a different element', () => {
+    // The authority used to early-return forever once bound, on the premise that the scroll column
+    // is "a stable DOM node across renders". That holds for the first adopter and NOT for the
+    // second: `Sv3Main` emits `.scroller` from four render arms, each a different node. A controller
+    // that kept its first binding would leave its observer and all four listeners on a detached
+    // element while the reader looked at a live one.
+    const first = document.createElement('div');
+    const second = document.createElement('div');
+    for (const conv of [first, second]) {
+      const step = document.createElement('div');
+      step.setAttribute('data-item-id', 'x');
+      conv.appendChild(step);
+      document.body.appendChild(conv);
+    }
+    let current = first;
+    const nav = new NavigationController(fakeHost(), {
+      scrollEl: () => current,
+      spineEl: () => null,
+      active: () => true,
+    });
+    nav.hostUpdated(); // binds to `first`
+
+    current = second;
+    nav.hostUpdated(); // must REBIND to `second`
+
+    // Behavioural probe rather than a field read: a `wheel` gesture releases a pin, and only the
+    // node the controller is listening to can deliver it.
+    const pin = (): void => {
+      (nav as unknown as { intent: { mode: string; pinnedId: string | null } }).intent = {
+        mode: 'pinned',
+        pinnedId: 'x',
+      };
+    };
+    pin();
+    first.dispatchEvent(new Event('wheel'));
+    expect(nav.pinned).toBe('x'); // the OLD node no longer reaches the controller
+
+    second.dispatchEvent(new Event('wheel'));
+    expect(nav.pinned).toBeNull(); // the NEW node does
+
+    first.remove();
+    second.remove();
+  });
+
+  it('does NOT rebind while the node is unchanged (the first adopter’s behaviour, preserved)', () => {
+    const conv = document.createElement('div');
+    document.body.appendChild(conv);
+    const added: string[] = [];
+    const realAdd = conv.addEventListener.bind(conv);
+    conv.addEventListener = ((type: string, ...rest: unknown[]) => {
+      added.push(type);
+      return (realAdd as unknown as (...a: unknown[]) => void)(type, ...rest);
+    }) as typeof conv.addEventListener;
+
+    const nav = new NavigationController(fakeHost(), {
+      scrollEl: () => conv,
+      spineEl: () => null,
+      active: () => true,
+    });
+    nav.hostUpdated();
+    const afterFirst = added.length;
+    nav.hostUpdated();
+    nav.hostUpdated();
+    // Identity-equal → exactly the old early return: no second observer, no duplicated listeners.
+    expect(added.length).toBe(afterFirst);
+    expect(afterFirst).toBeGreaterThan(0);
+    conv.remove();
+  });
+});
