@@ -11,6 +11,9 @@ recorded on the ``cross-encoder`` trace stage.
 from __future__ import annotations
 
 from jseval.ce_coverage import (
+    CE_NOT_IN_PLAY_REASONS,
+    DETERMINISTIC_SKIP_REASONS,
+    NONDETERMINISTIC_SKIP_REASONS,
     ce_coverage_verdict,
     ce_stage_of,
     combine_mode_verdicts,
@@ -100,6 +103,37 @@ class TestContaminatedRun:
         result = _verdict(records)
         assert result.verdict == "degraded-ce"
         assert result.silent_drop_reason_counts == {"SOME_FUTURE_REASON": 10}
+
+    def test_inference_failure_is_a_deliberately_classified_drop(self):
+        # Register F-054. The worker used to stamp DEADLINE_EXCEEDED on every reranker skip, so an
+        # ONNX Runtime arena exhaustion arrived here disguised as a latency miss (measured:
+        # 199/200 of a campaign's "deadline misses"). INFERENCE_FAILED is now its own reason, and
+        # it is in the explicit drop set — classified deliberately, not by the fail-closed
+        # fallback that catches unknown strings.
+        assert "INFERENCE_FAILED" in NONDETERMINISTIC_SKIP_REASONS
+        assert "INFERENCE_FAILED" not in DETERMINISTIC_SKIP_REASONS
+        assert "INFERENCE_FAILED" not in CE_NOT_IN_PLAY_REASONS
+        records = (
+            [_record(ce=True) for _ in range(90)]
+            + [_record(ce=False, reason="INFERENCE_FAILED") for _ in range(10)]
+        )
+        result = _verdict(records)
+        assert result.verdict == "degraded-ce"
+        assert result.silent_drop_reason_counts == {"INFERENCE_FAILED": 10}
+
+    def test_inference_failures_and_deadline_misses_are_counted_apart(self):
+        # The payoff of the split: a run's drop breakdown now says WHICH knob to reach for.
+        records = (
+            [_record(ce=True) for _ in range(80)]
+            + [_record(ce=False, reason="INFERENCE_FAILED") for _ in range(19)]
+            + [_record(ce=False, reason="DEADLINE_EXCEEDED") for _ in range(1)]
+        )
+        result = _verdict(records)
+        assert result.verdict == "degraded-ce"
+        assert result.silent_drop_reason_counts == {
+            "DEADLINE_EXCEEDED": 1,
+            "INFERENCE_FAILED": 19,
+        }
 
     def test_rpc_failure_is_a_drop_too(self):
         records = (
