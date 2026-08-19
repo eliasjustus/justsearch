@@ -761,6 +761,21 @@ class RuntimeActivationServiceTest {
     public void repair(boolean acceptTerms) throws AiInstallException {
       throw new UnsupportedOperationException("not used by this test");
     }
+
+    @Override
+    public void pauseInstall() {
+      throw new UnsupportedOperationException("not used by this test");
+    }
+
+    @Override
+    public void resumeInstall() {
+      throw new UnsupportedOperationException("not used by this test");
+    }
+
+    @Override
+    public void setPackageDeclined(String packageId, boolean declined) {
+      throw new UnsupportedOperationException("not used by this test");
+    }
   }
 
   /** Sets a system property and records the previous value for cleanup. */

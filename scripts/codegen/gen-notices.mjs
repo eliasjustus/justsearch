@@ -7,8 +7,12 @@
  * native-binary manifests). This generator PROJECTS them into the committed `NOTICE` +
  * `THIRD_PARTY_NOTICES`; it is never hand-edited. `--check` re-projects and fails on drift (the
  * closure/equality half, conforming to the repo's gen-*.mjs / check-*-regen pattern), plus a set of
- * presence checks (every model has a license; the two registry copies match; every bundled Tesseract
- * DLL is attributed). Run after `generateLicenseReport` + `license-checker` have produced their dumps.
+ * presence checks (every model has a license; every bundled Tesseract DLL is attributed). Run after
+ * `generateLicenseReport` + `license-checker` have produced their dumps.
+ *
+ * Tempdoc 840: the registry now ships once, under modules/configuration/src/main/resources/ — the
+ * former dual-copy check (prod vs. modules/configuration/src/test/resources/ai/model-registry.v2.json)
+ * is gone along with the test-only copy it compared against.
  *
  * Usage:  node scripts/codegen/gen-notices.mjs [--check]
  */
@@ -24,8 +28,7 @@ const REPO_ROOT = join(__dirname, '..', '..');
 const JK1_REPORT = join(REPO_ROOT, 'build', 'reports', 'licenses', 'third-party-licenses.json');
 const NPM_DUMP = join(REPO_ROOT, 'build', 'npm-licenses.json');
 const CARGO_DUMP = join(REPO_ROOT, 'build', 'cargo-licenses.json');
-const REGISTRY_PROD = join(REPO_ROOT, 'modules', 'ui', 'src', 'main', 'resources', 'ai', 'model-registry.v2.json');
-const REGISTRY_TEST = join(REPO_ROOT, 'modules', 'configuration', 'src', 'test', 'resources', 'ai', 'model-registry.v2.json');
+const REGISTRY_PROD = join(REPO_ROOT, 'modules', 'configuration', 'src', 'main', 'resources', 'ai', 'model-registry.v2.json');
 const TESS_CORE = join(REPO_ROOT, 'packaging', 'runtime', 'tesseract-windows.v1.json');
 const TESS_DLLS = join(REPO_ROOT, 'packaging', 'runtime', 'tesseract-bundled-libraries.v1.json');
 const OVERRIDES = join(REPO_ROOT, 'scripts', 'codegen', 'license-overrides.json');
@@ -282,10 +285,6 @@ function presenceChecks() {
   const reg = readJson(REGISTRY_PROD);
   for (const p of reg.packages || []) {
     if (!p.license || !String(p.license).trim()) errors.push(`model package '${p.id}' has no license (632 SSOT)`);
-  }
-  // 2. the two registry copies are byte-identical (currently ungated dual-copy)
-  if (readFileSync(REGISTRY_PROD, 'utf8') !== readFileSync(REGISTRY_TEST, 'utf8')) {
-    errors.push('model-registry prod and test copies differ — keep them byte-identical');
   }
   // 2b. the gate allowlist's per-moduleName allows must match the NOTICE overrides' moduleNames
   //     (the dual-licensed / junrar / jcip special-cases live in BOTH files; this keeps them from drifting

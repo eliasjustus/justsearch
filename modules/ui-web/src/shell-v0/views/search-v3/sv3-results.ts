@@ -4,9 +4,8 @@
  *
  * The charter's guardrail is "from-scratch components, shared authorities": this window authors its
  * own presentation and NO search client. Every query it runs goes through `state/searchState.ts` —
- * the same store the shipped windows read (`views/search-v2/SearchV2View.ts:105-115`,
- * `views/UnifiedChatView.ts:936-944`) — and this module is the read half: a store snapshot in, a
- * rendering-ready view out.
+ * the same store the shipped window reads (`views/UnifiedChatView.ts:936-944`) — and this module
+ * is the read half: a store snapshot in, a rendering-ready view out.
  *
  * It reads the RESPONSE half of the snapshot only (`results`, `matchCount`, `totalHits`,
  * `facetsTruncated`, `isSearching`, `error`) and deliberately not `searchTrace`. A trace referencer

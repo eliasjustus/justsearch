@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use ring::signature::{UnparsedPublicKey, ED25519};
@@ -21,6 +21,13 @@ const DESCRIPTOR_SCHEMA_VERSION: u32 = 1;
 const HEAD_TIMEOUT: Duration = Duration::from_secs(15);
 const BACKEND_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
 const BACKEND_READY_TIMEOUT: Duration = Duration::from_secs(60);
+/// `on_chunk` fires per network chunk (potentially thousands/sec on a fast link) — emitting a
+/// status update per chunk would flood the `app_update_status` polling channel for no perceptible
+/// UI benefit. 300ms is human-meaningful (well under the ~1s cadence the AI-install poller already
+/// uses for the analogous model-download progress, `aiInstallPoll.ts`) while cutting emit volume by
+/// orders of magnitude. `on_download_finish` always emits once more regardless of this throttle, so
+/// the terminal state is never truncated by a skipped tick.
+const DOWNLOAD_PROGRESS_THROTTLE: Duration = Duration::from_millis(300);
 const LOCAL_STORE_REGISTER: &str =
     include_str!("../../../../governance/store-recoverability.v1.json");
 
@@ -184,6 +191,21 @@ pub struct AppUpdateStatus {
     intent_phase: Option<UpgradePhase>,
     attempt_id: Option<String>,
     error: Option<String>,
+    /// Bytes transferred so far for the in-progress installer download. `None` outside the
+    /// `downloading` state (or before the first progress tick lands).
+    bytes_downloaded: Option<u64>,
+    /// Total installer size, when the server reported `Content-Length`. Deliberately `None` (never
+    /// `0`) rather than a fabricated denominator when the header is absent — the frontend must show
+    /// bytes-so-far without a fake percentage rather than a misleading one.
+    bytes_total: Option<u64>,
+}
+
+/// Scratch accumulator shared between the `on_chunk`/`on_download_finish` closures passed to
+/// `Update::download` — not part of the published `AppUpdateStatus` wire shape.
+struct DownloadProgress {
+    downloaded: u64,
+    total: Option<u64>,
+    last_emit: Instant,
 }
 
 #[derive(Default)]
@@ -367,8 +389,43 @@ pub(crate) async fn run_install_now(
     require_closed_set(&descriptor, &update)?;
 
     set_state(&coordinator, "downloading", None);
+    // `on_chunk` and `on_download_finish` are two separate closures alive for the whole call, so
+    // shared mutable progress state needs interior mutability rather than two conflicting captures
+    // of a bare local. Both closures clone the cheap `Arc`s they need.
+    let progress = Arc::new(Mutex::new(DownloadProgress {
+        downloaded: 0,
+        total: None,
+        last_emit: Instant::now(),
+    }));
+    let chunk_progress = progress.clone();
+    let chunk_coordinator = coordinator.clone();
+    let finish_progress = progress.clone();
+    let finish_coordinator = coordinator.clone();
     let bytes = update
-        .download(|_, _| {}, || {})
+        .download(
+            move |chunk_len, content_length| {
+                let mut state = chunk_progress
+                    .lock()
+                    .expect("download progress mutex poisoned");
+                state.downloaded = state.downloaded.saturating_add(chunk_len as u64);
+                // The server's Content-Length (or its absence) is authoritative per chunk; never
+                // fabricate a total when the header was never sent.
+                state.total = content_length;
+                let now = Instant::now();
+                if now.duration_since(state.last_emit) >= DOWNLOAD_PROGRESS_THROTTLE {
+                    state.last_emit = now;
+                    set_download_progress(&chunk_coordinator, state.downloaded, state.total);
+                }
+            },
+            move || {
+                // Always emit a final update on completion so a throttled-out last tick can never
+                // leave the UI showing a truncated byte count.
+                let state = finish_progress
+                    .lock()
+                    .expect("download progress mutex poisoned");
+                set_download_progress(&finish_coordinator, state.downloaded, state.total);
+            },
+        )
         .await
         .map_err(|error| format!("Update download or signature verification failed: {error}"))?;
     let digest = sha256_bytes(&bytes);
@@ -1639,6 +1696,23 @@ fn set_state(coordinator: &UpdateCoordinator, state: &str, error: Option<String>
         .expect("update status mutex poisoned");
     status.state = state.into();
     status.error = error;
+    // Any state transition (including into a fresh "downloading") starts from no known progress —
+    // a prior attempt's leftover bytes must not bleed into an unrelated state or a new attempt.
+    status.bytes_downloaded = None;
+    status.bytes_total = None;
+}
+
+/// Publishes installer-download progress onto the same polled `AppUpdateStatus` channel the
+/// frontend already reads via `app_update_status` — extends the existing state instead of adding a
+/// second progress representation. `total` is passed through verbatim (never defaulted to `0`) so
+/// an absent `Content-Length` stays an absent total on the wire.
+fn set_download_progress(coordinator: &UpdateCoordinator, downloaded: u64, total: Option<u64>) {
+    let mut status = coordinator
+        .status
+        .lock()
+        .expect("update status mutex poisoned");
+    status.bytes_downloaded = Some(downloaded);
+    status.bytes_total = total;
 }
 
 fn apply_intent_to_status(status: &mut AppUpdateStatus, intent: &UpgradeIntent) {

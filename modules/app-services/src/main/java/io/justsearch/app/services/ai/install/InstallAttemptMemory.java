@@ -49,16 +49,6 @@ public final class InstallAttemptMemory {
    */
   public static final int MAX_FAILED_PASSES = 3;
 
-  /**
-   * The prefix {@code ResumableFetch} gives a TRANSPORT failure, as opposed to a verification or
-   * bookkeeping one ({@code ResumableFetch.java:147-148}). Only transport failures escalate or
-   * become terminal: a SHA mismatch is a registry/upstream problem that a different transport will
-   * not fix, and retrying it for 40 s is pure latency. {@code InstallAttemptMemoryTest} pins this
-   * against a real {@code ResumableFetch.fetch} outcome, so a reworded message fails a test rather
-   * than silently disabling escalation.
-   */
-  static final String TRANSPORT_FAILURE_PREFIX = "Download failed for";
-
   /** What one file's history records. */
   public record Attempt(
       String url,
@@ -100,9 +90,18 @@ public final class InstallAttemptMemory {
     return new InstallAttemptMemory(file, loaded);
   }
 
-  /** Whether {@code error} describes a transport failure (the only kind this memory acts on). */
-  public static boolean isTransportFailure(String error) {
-    return error != null && error.startsWith(TRANSPORT_FAILURE_PREFIX);
+  /**
+   * Whether {@code outcome} ended at TRANSPORT — the only kind of failure this memory acts on.
+   *
+   * <p>Reads {@link ResumableFetch.Outcome#failure()}, which is non-null exactly on that path. It
+   * used to match a prefix of the user-facing message instead, which made escalation and the
+   * terminal verdict depend on the wording of English prose: rewording the failure would have
+   * disabled both silently. A SHA mismatch is a registry/upstream problem no other transport fixes,
+   * and spending 40 s of backoff on it is pure latency — so verification, bookkeeping, and
+   * cancellation outcomes carry no failure and are not acted on.
+   */
+  public static boolean isTransportFailure(ResumableFetch.Outcome outcome) {
+    return outcome != null && outcome.failure() != null;
   }
 
   /** This file's history, or null when it has none. */

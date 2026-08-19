@@ -90,20 +90,12 @@ const CORE_SURFACES: PluginSurfaceContribution[] = [
     audience: 'DEVELOPER',
     placement: 'DEEPLINK',
   },
-  // Tempdoc 818 slice 1 — Search v2: the from-scratch window skeleton, built beside the shipped
-  // window so the comparison is empirical. DEVELOPER/DEEPLINK and deliberately off-rail (a visible
-  // peer would recreate the defect 687 deleted); it is not user-reachable until the §5 cutover.
-  {
-    id: 'core.search-v2-surface',
-    mountTag: 'jf-search-v2',
-    labelKey: 'registry-surface.search-v2-surface.label',
-    descriptionKey: 'registry-surface.search-v2-surface.description',
-    audience: 'DEVELOPER',
-    placement: 'DEEPLINK',
-  },
+  // Tempdoc 851 (owner decision 2026-08-19): `core.search-v2-surface` is retired. The 818 window
+  // never reached its §5 cutover, so it is deleted un-promoted rather than left registered as a
+  // third window; Search v3 is the successor. A second search window here is a regression.
   // Tempdoc 822 slice 1 — Search v3: the window rebuilt on a new design system, built
-  // from scratch beside both the shipped window and search-v2. DEVELOPER/DEEPLINK and off-rail for
-  // the same reason its predecessor is: a visible peer would recreate the defect 687 deleted.
+  // from scratch beside the shipped window. DEVELOPER/DEEPLINK and off-rail for the same reason
+  // its retired predecessor was: a visible peer would recreate the defect 687 deleted.
   {
     id: 'core.search-v3-surface',
     mountTag: 'jf-sv3-window',
