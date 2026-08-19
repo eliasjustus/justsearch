@@ -101,7 +101,14 @@ public final class IsolatedBackendFixture {
    * deliberately left this fixture blind. Once this appears in the body, the Head has stopped
    * trying, so every remaining millisecond of the health budget is spent waiting for nothing.
    */
-  private static final String TERMINAL_WORKER_REASON = "worker.spawn_recovery_exhausted";
+  private static final java.util.List<String> TERMINAL_WORKER_REASONS =
+      java.util.List.of(
+          "worker.spawn_recovery_exhausted",
+          // Tempdoc 825 review F2(b): supervision's own give-up is equally terminal — boot recovery
+          // deliberately does NOT supersede it (owner decision 2), so nothing will retry from here
+          // either. Without this row that whole path kept the blind 240s wait charter item 3 exists
+          // to remove.
+          "worker.restart_exhausted");
 
   private final String ownerLabel = resolveOwnerLabel();
 
@@ -404,20 +411,27 @@ public final class IsolatedBackendFixture {
   }
 
   /**
-   * Tempdoc 825 (charter item 3): stop waiting the moment the Head says it has stopped trying.
-   * Before the terminal code existed there was nothing safe to key on — {@code worker.spawn.failed}
-   * is emitted mid-recovery too — so a bricked boot burned the whole {@value #HEALTH_TIMEOUT_MS}ms
-   * budget and reported a bare timeout. This turns that into an immediate, causally-named failure.
+   * Tempdoc 825 (charter item 3): stop waiting the moment the Head says it has stopped trying — on
+   * EITHER terminal path (review F2(b)): this tempdoc's boot-recovery give-up, and supervision's own
+   * give-up, which boot recovery deliberately does not supersede. Before the terminal code existed
+   * there was nothing safe to key on — {@code worker.spawn.failed} is emitted mid-recovery too — so a
+   * bricked boot burned the whole {@value #HEALTH_TIMEOUT_MS}ms budget and reported a bare timeout.
+   * This turns that into an immediate, causally-named failure.
    */
   static void failFastOnTerminalWorkerReason(String body, String waitingFor) {
-    if (body != null && body.contains(TERMINAL_WORKER_REASON)) {
-      throw new IllegalStateException(
-          "Worker boot recovery is exhausted ("
-              + TERMINAL_WORKER_REASON
-              + ") — the Head has stopped retrying, so waiting for "
-              + waitingFor
-              + " cannot succeed. Last /api/health body: "
-              + truncate(body));
+    if (body == null) {
+      return;
+    }
+    for (String terminal : TERMINAL_WORKER_REASONS) {
+      if (body.contains(terminal)) {
+        throw new IllegalStateException(
+            "Worker recovery is terminal ("
+                + terminal
+                + ") — the Head has stopped retrying, so waiting for "
+                + waitingFor
+                + " cannot succeed. Last /api/health body: "
+                + truncate(body));
+      }
     }
   }
 

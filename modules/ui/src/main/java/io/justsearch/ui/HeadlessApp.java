@@ -452,10 +452,12 @@ public class HeadlessApp {
       apiServer.lateBindKnowledgeServer(null, knowledgeServerStartError);
       // Deliberately NO transition here. The bootstrap that just failed is the producer of this
       // verdict and has already narrated it exactly once (startWithRetry's final catch), with the
-      // code it actually knows to be true — worker.spawn.failed, or worker.index_corrupt, or
-      // supervision's terminal worker.restart_exhausted. Re-stamping the generic code would destroy
-      // the specific one (two FAULTs, so ReasonRetention does not defend the held code), and the
-      // boot-recovery veto reads exactly that slot to decide whether supervision's verdict stands.
+      // code it actually knows to be true — worker.spawn.failed, worker.index_corrupt, or
+      // supervision's terminal worker.restart_exhausted, which that catch now explicitly refuses to
+      // overwrite (review F1: both are FAULT, so ReasonRetention lets an incoming spawn-failed win,
+      // and before the guard the restart_exhausted case could never survive a real boot). Re-stamping
+      // the generic code here would destroy the specific one all over again — and the boot-recovery
+      // veto reads exactly that slot to decide whether supervision's verdict stands.
       healthMonitor = startHealthMonitor(bootstrap, apiServer, knowledgeServer);
       log.warn(
           "Knowledge Server failed to start: {} (worker reason: {}) — boot recovery armed",
@@ -791,12 +793,26 @@ public class HeadlessApp {
           io.justsearch.configuration.model.InstallIntent.fromConfig(
                   io.justsearch.configuration.EnvRegistry.MODE.get().orElse(null))
               .id();
+      // Tempdoc 825 review F3: the supplier falls back to the boot-time instance. The worker
+      // listener fires on the READY transition, which happens INSIDE a recovery attempt — before
+      // the handover has populated HeadAssembly's reference — so a currentKnowledgeServer()-only
+      // supplier published worker.state=ready with a null gRPC port after every boot recovery. The
+      // fallback is the same object the monitor is recovering, and by the time READY fires its
+      // signal bus is live and carries the real port, so the manifest is correct AT the event
+      // rather than corrected after it.
+      final KnowledgeServerBootstrap bootTimeKnowledgeServer = knowledgeServer;
+      final HeadAssembly assemblyForManifest = bootstrap;
+      java.util.function.Supplier<KnowledgeServerBootstrap> liveKnowledgeServer =
+          () -> {
+            KnowledgeServerBootstrap connected = assemblyForManifest.currentKnowledgeServer();
+            return connected != null ? connected : bootTimeKnowledgeServer;
+          };
       io.justsearch.ui.runtime.RuntimeManifestListenerWiring.wire(
           manifestPublisher,
           bootstrap,
           knowledgeServer,
           knowledgeServerStartError,
-          bootstrap::currentKnowledgeServer,
+          liveKnowledgeServer,
           () -> configStore.get().paths().indexBasePath(),
           modeIntent);
 

@@ -9,6 +9,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -98,6 +100,23 @@ class WorkerBootRecoveryE2ETest {
         "no flapping: three failed boot attempts inside ONE recovery arc narrate ONE"
             + " restart-attempted, not one per cycle. Snapshot: "
             + snapshot);
+
+    // Review F3: the READY transition fires INSIDE the recovery attempt, before the handover has
+    // populated HeadAssembly's reference, so a currentKnowledgeServer()-only supplier published
+    // worker.state=ready with a null gRPC port — a manifest that says the worker is serving and
+    // cannot say where. Read from the manifest the way every real consumer does.
+    String manifest =
+        Files.readString(
+            BACKEND.dataDir().resolve("runtime").resolve("manifest.json"), StandardCharsets.UTF_8);
+    java.util.regex.Matcher grpcPort =
+        java.util.regex.Pattern.compile("\"grpcPort\"\\s*:\\s*(\\d+)").matcher(manifest);
+    assertTrue(
+        grpcPort.find(),
+        "the runtime manifest must carry a real worker gRPC port after recovery. Manifest: "
+            + manifest);
+    assertTrue(
+        Integer.parseInt(grpcPort.group(1)) > 0,
+        "…and it must be a live port, not a placeholder. Manifest: " + manifest);
   }
 
   private static int countOccurrences(String haystack, String needle) {
