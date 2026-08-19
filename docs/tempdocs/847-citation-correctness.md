@@ -1,7 +1,7 @@
 # 847 — End-to-end citation correctness: the mark must land, survive reload, and never outrun its evidence
 
 ```
-status:  PARTIALLY IMPLEMENTED — charter A; rev 3. S0–S4 done, S5/S6 open.
+status:  PARTIALLY IMPLEMENTED — charter A; rev 3. S0–S5 + F-12 done, S6 partial.
          rev 2 = adversarial review incorporated (APPROVE-WITH-AMENDMENTS, every amendment
          re-verified against source). rev 3 = S0 measurement run (18 markdown shapes / 64 keys),
          its findings integrated into the S4/S5 specs; `## S0-results` is the evidence record.
@@ -19,9 +19,16 @@ status:  PARTIALLY IMPLEMENTED — charter A; rev 3. S0–S4 done, S5/S6 open.
              reloaded render stricter than the live one — the 561 P-A divergence in a new place.
          S4 (anchoring rewrite) is IMPLEMENTED on top of 846 — see "S4 — implementation record".
          S5 (backend segmentation) is IMPLEMENTED — see "S5 — implementation record".
-         S6 (live validation) remains PENDING.
+         F-12 (live-path evidence unification + the evidence-shadowing reconcile) is IMPLEMENTED —
+         see "F-12". It closes the defect S2 left behind: S2 shared the producer GATE with the
+         record path but not the envelope READER, so the live and reloaded arms stayed two readers
+         of one shape; and `applySv3Record` discarded the record's evidence whenever the live turn
+         held any evidence object, including an empty one.
+         S6 (live validation) is PARTIALLY SATISFIED by the F-12 browser leg — see "S6-live":
+         L1 partially (real ask over the indexed corpus, not the list-shaped prompt) and L2
+         (reload parity) are covered; L3 (cosine-fallback arm) and the ui-shot step remain OPEN.
 created: 2026-08-19
-updated: 2026-08-19 (S5, incl. independent review fixes)
+updated: 2026-08-19 (S5, incl. independent review fixes; then F-12 + S6-live)
 related: 836 (literal-passage verification seam + the §4 producer gate — SHIPPED, #466/#473),
          839 (citation-mark presentation — shipped), 822 (the citation chain: F-047…F-050),
          561 P-A (evidence non-divergence: live and reloaded renders may not disagree),
@@ -1334,3 +1341,133 @@ authority.
 - The mid-stream draft path still fuses its own draft keys (deviation 4). The mark no longer suffers
   for it, but a reader watching the stream still sees draft attributions cut from fused sentences.
 - The `<br>` tokenization disagreement above, which is a renderer-side flattening question.
+
+---
+
+## F-12 — the live arm never read the envelope, and the record's repair was thrown away
+
+**Status: IMPLEMENTED (frontend only).** Found by a read-only diagnosis of a measured live symptom
+and confirmed in the browser: a grounded Search v3 turn rendered **zero** citation marks while the
+turn was live, and the same answer rendered them after a page reload. Two independent causes, both
+required — fixing either alone leaves the other rendering the same empty answer.
+
+### Cause 1 — S2 shared the GATE, not the READER
+
+S1 built `components/chat/recordEvidence.ts` as the one `claimMatches` envelope → evidence
+authority, and S2 wired `sv3-ask.ts` to it. But S2 imported only `readScorer`/`admittedMatches` —
+the **producer gate** — and went on reading every other field off the raw payload object:
+
+```
+sv3-ask.ts (before)   matches = admittedMatches(p.matches, scorer)   // RAW payload objects
+                      … verified && typeof m.sourceIndex === 'number' ? m.sourceIndex : null
+recordEvidence.ts     readSourceIndex  = sourceIndex ?? chunkIndex ?? -1        (:48-52)
+                      matchesFromRecord normalizes sourceIndex/similarity/parentDocId (:136-145)
+```
+
+So the live arm and the reload arm remained **two readers of one shape** — the 561 P-A divergence
+with a smaller blast radius, not a different thing. Any match the shared reader normalizes and the
+raw read does not yields exactly the observed pair: no verified ref → no mark, and an unnormalized
+match list → every source in the "retrieved (not cited)" group.
+
+**This is live-reachable, and it was measured, not assumed** (see §S6-live): the stack under test
+emitted `chunkIndex`, which `readSourceIndex` handles and the raw read dropped on the floor.
+
+**Fix.** The live handler now calls the SAME two functions the reload arm calls — `claimsFromRecord`
+for the verified half of the claims, `matchesFromRecord` for the panel's match list. There is one
+parse of one payload. The result is *merged* into the claim accumulator rather than assigned,
+because the live arm has a contributor the reload arm does not: the lexical `rag.citation_delta`
+claims, which live on their own side of the accumulator (§3b/§3d) and are untouched by this.
+
+**Also.** `api/streams.ts` swallowed per-event handler throws silently, which made a throwing
+evidence handler indistinguishable from an event that never arrived. The catch now `console.warn`s
+(it still does not rethrow — a handler fault must not abort the stream).
+
+### Cause 2 — the record's evidence was shadowed for the session's lifetime
+
+`sv3-sessions.ts` reconciled a refreshed record onto a local turn with:
+
+```
+evidence: prior.evidence ?? recorded.evidence
+```
+
+The intent was rule 2 of `applySv3Record` — *a refresh must never blank a panel the live turn
+filled*. But `??` asks only whether the live turn holds an evidence **object**, and the live arm
+publishes one the moment `rag.meta` names a retrieval mode, **before any source or mark exists**. So
+an object holding empty arrays discarded the record's complete evidence — and it did so
+permanently: the post-`done` `refreshRecord` **is** the repair for a turn whose citation events did
+not land, and it was thrown away every time it arrived.
+
+**Fix.** `reconcileEvidence` keeps the intent and drops the proxy: each field asks the question the
+`??` stood in for — *did the live turn actually observe this?* Fields reconcile independently
+because they are independently observable. Both ends are unchanged: a record with no evidence cannot
+overwrite a live turn's, and a turn that observed nothing takes the record's whole record.
+
+### Tests
+
+Both new cases were confirmed **red before the change and green after** (sources reverted in place,
+suite re-run, sources restored):
+
+| Test | Pins |
+|---|---|
+| `sv3-ask.test.ts` — *resolves a legacy positional key live, exactly as the reloaded conversation does* | Reader EQUALITY between the two arms over a `chunkIndex` envelope. Pre-change: live `marks` `[]` vs reload `[1]`. |
+| `sv3-ask.test.ts` — *stays identical on the post-rename payload* | The control: the equality is not two arms agreeing on a defect. Green either way. |
+| `sv3-sessions.test.ts` — *takes the RECORD's marks when the live turn has an evidence object holding none* | The shadowing defect. Pre-change: `marks` `[]`. |
+| `sv3-sessions.test.ts` — *keeps the LIVE marks when the turn observed some* | The other side, so the fix cannot be read as "the record always wins". |
+
+`sv3-sessions.test.ts:955` was renamed and its fixture assertion made explicit
+(`expect(recorded.evidence).toBeNull()`): it only ever defended the *record-carries-nothing* end,
+never the both-sides-carry-an-object case that the defect lived in.
+
+Full ui-web suite 422 files / 5319 tests green; typecheck clean; ui-web gate set + kernel gates green
+apart from `check-theme-token-closure`, `check-accent-as-text` and `check-controls-a11y` — all three
+red on `main` in files this branch does not touch (`RecentsMenu.ts`, `ActionLedgerView.ts`,
+`UnifiedChatView.ts:2137`).
+
+---
+
+## S6-live — the browser leg (partial S6)
+
+Run 2026-08-19 against a live stack (backend borrowed read-only; this worktree's frontend served by
+`scripts/dev/serve-worktree-fe.cjs`, so the code under test is this branch's by construction).
+Index: 609 docs / 16,703 chunks, 100% embedding coverage. Chat runtime: `Qwen3.5-9B-Q4_K_M`, cuda12.
+
+**The live `rag.citation_matches` frame, captured verbatim** (fetch tee on `/api/chat/dispatch`):
+
+```
+envelope keys : matches, sentencesTotal, sentencesMatched, tookMs        ← no `scorer`
+match keys    : sentenceText, sentenceIndex, parentDocId, similarity, chunkIndex
+```
+
+**Counts** (`.cite-ref` across the shadow tree, before any reload and again after):
+
+| Turn | Question | Build | Live marks | After reload |
+|---|---|---|---|---|
+| T1 | "Why must the Head never touch Lucene…" | fixed | **5** (all `cite-grounded`, labels 4,4,1,1,4) | **5** (identical labels) |
+| T3 | "Which module is the Body…" | **pre-fix** | **0** | 0 |
+| T4 | "Which module is the Body…" (same question) | fixed | **1** | **1** |
+
+T3/T4 are the controlled same-question A/B: **0 marks pre-fix, 1 post-fix**, live. The two arms now
+agree exactly in every post-fix row, which is the property F-12 exists to restore.
+
+### The environment finding this leg surfaced, and what it does to the result
+
+The frame above carries `chunkIndex` and no `scorer` — neither of which today's
+`StreamingCitationMatcher.toCitationMatchPayload:326-355` can emit. Cause established rather than
+assumed: the stack ran `modules/ui/build/install/ui/lib/app-services-0.2.0.jar` **dated
+2026-08-13**, whose compiled `StreamingCitationMatcher` contains `chunkIndex` and none of
+`sourceIndex`/`scorer`/`sourceCoverage` — while `modules/app-services/build/libs/app-services-0.2.0.jar`,
+*same version string*, rebuilt the morning of the run, contains the current fields. `dev.start` did
+not refresh the install dist and the `freshness` block did not flag it. Logged to the observations
+inbox as its own defect.
+
+This does not weaken the leg — it sharpens it. The stale build emits precisely the envelope shape
+that separates the two readers, so the run reproduced the diagnosed defect **and its mechanism**
+end-to-end rather than merely failing to contradict it. The post-rename payload is covered by the
+control test above and by the whole S2 suite, so both wire shapes are pinned; only the legacy one is
+additionally pinned in the browser.
+
+**Honest limits.** The leg does not isolate each cause's contribution to a given count — the unit
+tests do that, one cause each. It covers **L1 partially** (a real ask over the indexed corpus, but
+not the list-shaped prompt S6 asks for) and **L2** (reload: marks and panel come back). It does
+**not** cover **L3** (the cosine-fallback arm — and could not have on this build, which emits no
+`scorer` at all), nor the ui-shot step S6 calls for. Those remain open.
