@@ -137,6 +137,18 @@ import {
   type Sv3ContextMenuRequest,
   type Sv3TurnContext,
 } from './sv3-context.js';
+// Branch / edit / retry and the version pager (slice 513 + 610 Phase A/B, ported by 852 S3) — the
+// pure half. All three are ONE backend act (`branchConversation`); this module decides which message
+// id each of them names, and which conversations are the versions of a turn.
+import {
+  isSv3BranchActionId,
+  projectSv3TurnLineage,
+  sv3BranchMenuItems,
+  sv3LineageFor,
+  type Sv3BranchAction,
+  type Sv3TurnLineage,
+  type Sv3VersionSelect,
+} from './sv3-branch.js';
 // The window's honesty derivations (tempdoc 822 Phase F7): the lock, the corpus, and the ONE remedy
 // channel every region's fix-it control leaves through.
 import {
@@ -162,10 +174,11 @@ import {
 // conversation, so identity, existence, title and its markdown export come from here — this window
 // mints none of them.
 import {
+  branchConversation,
   clearContextFloor,
   compactContext,
   createConversationId,
-  deleteConversation,
+  deleteConversationWithCascade,
   editContextFloorSummary,
   exportConversationMarkdown,
   generateConversationTitle,
@@ -177,7 +190,11 @@ import {
   setConversationTitle,
   setMessageExcluded,
   subscribeConversationList,
+  type Conversation,
 } from '../../state/conversationListStore.js';
+// The product's ONE confirm dialog. Cascade-delete asks a second question — "and its branches?" —
+// and asking it in a second dialect would be a second dismiss rule for the same gesture.
+import { confirmAsync } from '../../components/ConfirmDialog.js';
 // Tempdoc 610 §K — the SHELL-mounted context inspector. The window pushes the projection and opens
 // the drawer; the drawer is the product's one "what did the assistant actually see" surface and is
 // not re-implemented here.
@@ -257,12 +274,17 @@ import { isAdvancedMode, subscribeUiMode } from '../../state/uiModeState.js';
 import { emitEphemeralToast } from '../../components/advisory/ephemeralToast.js';
 import { projectSv3Degradation, type Sv3Degradation } from './sv3-degradation.js';
 import {
+  BRANCH_FAILED,
   CONTEXT_COMPACT_FAILED,
   CONTEXT_EXCLUDE_FAILED,
   CONTEXT_FLOOR_FAILED,
   CONTEXT_INCLUDE_FAILED,
   CONTEXT_RESTORE_FAILED,
   CONTEXT_SUMMARY_FAILED,
+  DELETE_FAILED,
+  deleteCascadeConfirm,
+  deleteCascadeMessage,
+  deleteCascadeTitle,
   PANE_LABEL,
   SV3_COMMAND_EXPORT_MARKDOWN,
   SV3_COMMAND_SEARCH_TEXT,
@@ -506,6 +528,7 @@ export class SearchV3View extends JfElement {
     lockedRefusal: { state: true },
     effort: { state: true },
     compacting: { state: true },
+    conversations: { state: true },
   };
 
   declare composerState: Sv3ComposerState;
@@ -604,6 +627,17 @@ export class SearchV3View extends JfElement {
    * own guard (`views/UnifiedChatView.ts:1658-1673`).
    */
   declare compacting: boolean;
+  /**
+   * The shared conversation store's list, AS ROWS (852 S3). This window's own {@link sessions} is a
+   * projection that drops the two fields the version pager is made of — `parentSessionId` and
+   * `branchPointMessageId` — so the pager reads the store's rows directly rather than having those
+   * pointers copied onto a second shape that would then have to be kept in step.
+   *
+   * Held rather than re-fetched: `siblingSessionsAt` is a pure read and the subscription below keeps
+   * this current, which is why a branch created here calls `loadConversations` — the new row is what
+   * makes the fork visible to the pager at all.
+   */
+  declare conversations: readonly Conversation[];
 
   /** Watches the window box so the pane's presentation follows it (Phase F8). */
   private boxObserver: ResizeObserver | null = null;
@@ -614,6 +648,11 @@ export class SearchV3View extends JfElement {
   private convListUnsubscribe: (() => void) | null = null;
   /** The in-flight record fetch, so a claim that supersedes another cannot land out of order. */
   private recordAbort: AbortController | null = null;
+  /**
+   * The `/history` companion load's generation token (852 S3, closing S2's F5) — the record half's
+   * {@link recordAbort} discipline applied to the other half of the same open.
+   */
+  private historyAbort: AbortController | null = null;
   /**
    * One-shot, mirroring the shipped window's `reattachChecked` (`views/UnifiedChatView.ts:3496`): a
    * cold load asks the shared controller to reattach to a live run ONCE. Re-asking on every render
@@ -686,6 +725,7 @@ export class SearchV3View extends JfElement {
     this.lockedRefusal = false;
     this.effort = SV3_EFFORT_DEFAULT;
     this.compacting = false;
+    this.conversations = [];
     // Constructed HERE rather than on connect: a Lit controller added before connection still gets
     // its `hostConnected`, and adding it inside `connectedCallback` would add a second one on every
     // re-attach of this retained instance.
@@ -732,6 +772,9 @@ export class SearchV3View extends JfElement {
     setConversationApiBase(this.apiBase || '');
     this.convListUnsubscribe = subscribeConversationList((state) => {
       this.sessions = mergeStoreConversations(this.sessions, state.conversations);
+      // The ROWS as well as the projection (852 S3): the version pager is read from the store's own
+      // parent pointers, which `mergeStoreConversations` deliberately does not carry across.
+      this.conversations = state.conversations;
     });
     void loadConversations();
     this.restoreLastViewed();
@@ -767,6 +810,8 @@ export class SearchV3View extends JfElement {
     this.convListUnsubscribe = null;
     this.recordAbort?.abort();
     this.recordAbort = null;
+    this.historyAbort?.abort();
+    this.historyAbort = null;
     this.searchUnsubscribe?.();
     this.searchUnsubscribe = null;
     this.aiUnsubscribe?.();
@@ -916,8 +961,19 @@ export class SearchV3View extends JfElement {
    * without claiming removes the race rather than compensating for it afterwards; this window
    * already claims at open ({@link claimConversation}).
    *
-   * A superseded load is still DISCARDED — the reader moved on, and the fields belong to a
-   * conversation that is no longer the one on screen.
+   * TWO GUARDS, because there are two ways an answer can be stale (852 S3, closing S2's F5).
+   *
+   *  - **Session** — the reader moved on, and these fields belong to a conversation that is no longer
+   *    the one on screen. That guard shipped with S1.
+   *  - **ORDER** — two reloads of the SAME conversation can land out of order, and the older answer
+   *    would then stand. S2 recorded this as F5 and named the fix: the record half's generation
+   *    token. Branch and edit multiply the reload rate (every act is a write followed by a reload,
+   *    and an edit is two acts in a row), so the same discipline applies here: each load supersedes
+   *    the one before it, and a superseded load's answer is DROPPED however late it arrives.
+   *
+   * HONEST LIMIT on the order guard: `resumeConversation` accepts no signal, so the superseded
+   * REQUEST is not cancelled — only its answer is discarded. That is what F5 named (ordering), and
+   * the request that is still in flight costs a round trip and changes nothing.
    *
    * HONEST LIMIT: `resumeConversation` reports a failed read as an empty resume by contract, so a
    * conversation whose history could not be read is recorded as one with no floor and no parent
@@ -929,7 +985,12 @@ export class SearchV3View extends JfElement {
    * load after the write lands, or the window renders a floor the backend no longer holds.
    */
   private async refreshHistory(conversationId: string): Promise<void> {
+    this.historyAbort?.abort();
+    const abort = new AbortController();
+    this.historyAbort = abort;
     const history = await resumeConversation(conversationId, SV3_ASK_SHAPE_ID, { claim: false });
+    if (abort.signal.aborted) return;
+    if (this.historyAbort === abort) this.historyAbort = null;
     if (this.sessions.activeId !== conversationId) return;
     this.sessions = applySv3History(this.sessions, conversationId, {
       parentSessionId: history.parentSessionId,
@@ -978,18 +1039,39 @@ export class SearchV3View extends JfElement {
       contextFloor: session.history?.contextFloor ?? null,
       hasSummary: (session.history?.contextFloorSummary ?? null) !== null,
     });
-    if (items.length === 0) return;
+    // ONE menu for both sets (852 S3). They are two derivations because they are gated on different
+    // ids — a turn can be excludable and not forkable — but a turn has one ⋯, and a second overflow
+    // beside the first would be a second place to look for "what can I do with this turn".
+    const branch = sv3BranchMenuItems(this.turnLineage(), detail.turnId, {
+      streaming: this.streaming,
+    });
+    if (items.length === 0 && branch.length === 0) return;
     const chosen = await openContextMenu({
-      actions: items.map((item) => ({
-        id: item.id,
-        label: item.label,
-        icon: 'history' as const,
-        category: 'ai' as const,
-        enabled: item.enabled,
-      })),
+      // The branch acts lead: they fork the conversation, and the context acts change what the next
+      // prompt carries within it. The reference window orders them the same way.
+      actions: [
+        ...branch.map((item) => ({
+          id: item.id,
+          label: item.label,
+          icon: 'git-branch' as const,
+          category: 'ai' as const,
+          enabled: item.enabled,
+        })),
+        ...items.map((item) => ({
+          id: item.id,
+          label: item.label,
+          icon: 'history' as const,
+          category: 'ai' as const,
+          enabled: item.enabled,
+        })),
+      ],
       anchor: { x: detail.x, y: detail.y },
     });
     if (chosen === null) return;
+    if (isSv3BranchActionId(chosen)) {
+      await this.runBranchAction({ action: chosen, turnId: detail.turnId });
+      return;
+    }
     await this.runContextAction({ action: chosen as Sv3ContextActionId, turnId: detail.turnId });
   }
 
@@ -1127,6 +1209,133 @@ export class SearchV3View extends JfElement {
     await this.refreshHistory(sessionId);
     if (ok) return;
     emitEphemeralToast({ message: failure, severity: 'warning' });
+  }
+
+  /* ── Branch, edit / retry and the version pager (852 S3) ──────────────────────────────────── */
+
+  /**
+   * What each turn can do about branching, derived once per render from the SAME three inputs the
+   * acts below read: the turns on screen, the conversation's `/history`, and the store's own rows.
+   * The trigger's gate and the act's target are therefore one derivation, which is what stops a menu
+   * offering a fork the window would then compute differently.
+   */
+  private turnLineage(): readonly Sv3TurnLineage[] {
+    const session = this.activeSession;
+    if (session === null) return [];
+    return projectSv3TurnLineage(session.turns, session.history, session.id, this.conversations);
+  }
+
+  private onBranchAction(event: Event): void {
+    const detail = (event as CustomEvent<Sv3BranchAction>).detail;
+    if (detail === undefined) return;
+    void this.runBranchAction(detail);
+  }
+
+  /**
+   * The three acts, all of them ONE backend act with a different `fromMsgId` and a different thing
+   * to do afterwards (`views/UnifiedChatView.ts:1471-1497` — there is no edit endpoint and no retry
+   * endpoint, and inventing one here would be inventing a contract the backend does not hold).
+   *
+   *  - **Branch** forks after this turn's ANSWER and continues there; nothing is re-sent.
+   *  - **Retry** forks before this turn's QUESTION and re-sends it unchanged.
+   *  - **Edit** forks at the same point and sends the rewrite, so the new text is the first
+   *    divergent message rather than a second one appended below the old exchange.
+   *
+   * The ids come from {@link projectSv3TurnLineage} and nowhere else, so an act can never be pointed
+   * at a message `?fromMsgId=` would reject — and a turn that names none renders no affordance to
+   * press in the first place.
+   */
+  private async runBranchAction(detail: Sv3BranchAction): Promise<void> {
+    const session = this.activeSession;
+    if (session === null || this.streaming) return;
+    const lineage = sv3LineageFor(this.turnLineage(), detail.turnId);
+    if (lineage === null) return;
+    const turn = session.turns.find((t) => t.id === detail.turnId) ?? null;
+    switch (detail.action) {
+      case 'branch':
+        if (lineage.branchFromId === null) return;
+        await this.branchInto(session.id, lineage.branchFromId, null);
+        return;
+      case 'retry': {
+        const question = turn?.question ?? '';
+        if (lineage.forkKey === null || question === '') return;
+        await this.branchInto(session.id, lineage.forkKey, question);
+        return;
+      }
+      case 'edit': {
+        const text = (detail.text ?? '').trim();
+        if (lineage.forkKey === null || text === '' || !lineage.canEdit) return;
+        await this.branchInto(session.id, lineage.forkKey, text);
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
+  /**
+   * Fork, open the fork, and — for the two acts that re-send — ask again IN it.
+   *
+   * ORDER IS THE WHOLE THING. The branch is opened and CLAIMED before the re-send, because
+   * {@link runAsk} appends to whatever conversation is active: sending first would append the
+   * rewritten question to the conversation the reader was replacing, which is the failure this act
+   * exists to avoid and would look entirely plausible on screen.
+   *
+   * A refused branch changes nothing and says so. There is no local fallback — a window that
+   * appended the re-send to the current conversation "because the branch failed" would silently do
+   * the one thing the reader did not ask for.
+   */
+  private async branchInto(
+    sessionId: string,
+    fromMsgId: string,
+    resend: string | null,
+  ): Promise<void> {
+    // The preview is the conversation's OPENING question, the same thing the shipped window sends
+    // (`:1485`): it is what makes the new session surface as a recent one with a name.
+    const preview = this.activeSession?.turns.find((t) => t.question !== '')?.question ?? '';
+    const branched = await branchConversation(sessionId, fromMsgId, preview);
+    if (branched === null) {
+      emitEphemeralToast({ message: BRANCH_FAILED, severity: 'warning' });
+      return;
+    }
+    await this.openBranch(branched);
+    if (resend !== null) await this.runAsk(resend);
+  }
+
+  /**
+   * Open a conversation this window has just created. The same four moves a row click makes
+   * ({@link onSessionSelect}) — project the row, focus it, claim it, load both records — plus the
+   * one a row click does not need: RE-LIST.
+   *
+   * The re-list is what makes the fork visible. A branch's siblings are read from the store's own
+   * `parentSessionId`/`branchPointMessageId` pointers, and the row carrying them does not exist in
+   * this window's copy of the list until `listSessions` returns it — so without this the pager would
+   * render nothing on the very fork the reader just made.
+   */
+  private async openBranch(id: string): Promise<void> {
+    const now = Date.now();
+    this.sessions = mergeStoreConversations(this.sessions, [
+      { id, title: null, firstUserMessage: '', createdAt: now, lastActiveAt: now },
+    ]);
+    this.sessions = focusSession(this.sessions, id, now);
+    this.claimConversation(id);
+    this.recordNotice = false;
+    // The same rule `onSessionSelect` applies: an edit in another row is DROPPED rather than
+    // committed, because navigating away must not write text the reader walked away from.
+    this.renamingId = null;
+    void this.setComposerState('docked');
+    await Promise.all([this.refreshRecord(id), this.refreshHistory(id), loadConversations()]);
+  }
+
+  /**
+   * The reader paged to another version of a turn. It is an OPEN, not a write: the target is a real
+   * conversation and claiming it is what claiming any conversation does, so this routes through the
+   * one open path rather than a second, branch-flavoured one.
+   */
+  private onVersionSelect(event: Event): void {
+    const id = (event as CustomEvent<Sv3VersionSelect>).detail?.sessionId ?? '';
+    if (id === '' || id === this.sessions.activeId) return;
+    void this.openBranch(id);
   }
 
   /**
@@ -2376,27 +2585,91 @@ export class SearchV3View extends JfElement {
   }
 
   /**
-   * The reader discards a conversation (tempdoc 831). `removeSession` decides — including the
-   * refusal for a conversation with work in flight, which is why nothing is re-checked here — and
-   * the deletion is WRITTEN THROUGH to the conversation store, the authority for a conversation's
-   * existence (the same shape the rename write-through takes). If the authority declines, the next
-   * list load projects the row back: the window never claims a deletion that did not happen.
+   * The reader discards a conversation (tempdoc 831). `removeSession` DECIDES — including the
+   * refusal for a conversation with work in flight — and the deletion is WRITTEN THROUGH to the
+   * conversation store, the authority for a conversation's existence.
    *
-   * Removing the conversation ON SCREEN routes through New session first, so the window leaves the
-   * transcript the way every other exit from it does — an emptied pane and nothing claimed — rather
-   * than through a second, partial teardown that would be free to forget one of the pointers.
+   * THE ROW LEAVES WHEN THE STORE SAYS IT LEFT (852 S3), not on the press. This used to be
+   * optimistic, which the cascade port made untenable: the delete can now stop and ASK ("this has 2
+   * branches — delete those too?"), and asking about a row that has already vanished from the list
+   * behind the dialog is asking about something the reader can no longer see. Removing on the answer
+   * also retires the restore-by-re-list dance the optimistic version needed for every refusal.
    */
   private onSessionRemove(event: Event): void {
     const id = (event as CustomEvent<Sv3SessionRemove>).detail?.id ?? '';
     const gate = this.runGate();
-    // Asked TWICE, deliberately: the first call is the decision (an unchanged list is the refusal,
-    // and nothing else may happen on a refusal), and the second is the write — because the New-
-    // session exit in between replaces the list this one would otherwise have been computed from.
+    // The DECISION, taken now and carried into the write: an unchanged list is the refusal (work in
+    // flight), and nothing else may happen on a refusal. The gate travels with it rather than being
+    // re-derived after the await — the reader's press is what is being answered, and by the time the
+    // store answers it has already deleted the conversation regardless of what has started since.
     if (removeSession(this.sessions, id, gate) === this.sessions) return;
-    if (this.sessions.activeId === id) this.onSessionNew();
-    if (this.renamingId === id) this.renamingId = null;
-    this.sessions = removeSession(this.sessions, id, gate);
-    void deleteConversation(id);
+    void this.deleteThroughStore(id, gate);
+  }
+
+  /**
+   * Delete, CASCADE-AWARE (slice 517 FIX-U1, ported by 852 S3 — the one behavior the retired
+   * conversation-history dropdown had that this window's sidebar did not).
+   *
+   * Slices 515/516 made it impossible to orphan a branch: the store REFUSES to delete a conversation
+   * other conversations were forked from, with `409` + the children's ids. This window's delete
+   * called the plain store function, which reports that refusal as a bare `false` — so the row
+   * vanished from the list, the conversation stayed on disk, and the reader was told nothing. That
+   * is not a missing feature; it is a delete that silently does not delete.
+   *
+   * What the reader is now asked is the same question the shipped window asked, in this window's
+   * own words, and it NAMES the branches — the ids come back from the refusal, the labels from the
+   * list this window already holds. It promises ONE level, because that is what the cascade does:
+   * the store function recurses into each child WITHOUT the consent callback, so a child that has
+   * children of its own answers `409`, the cascade aborts, and nothing is deleted. The copy says so
+   * ({@link deleteCascadeMessage}) rather than promising a depth this act refuses to perform.
+   *
+   * Nothing leaves the list until the store says it left — including the conversation the reader
+   * pressed delete on, which is why removing it on screen happens HERE and not at the press.
+   */
+  private async deleteThroughStore(id: string, gate: Sv3RunGate): Promise<void> {
+    let cascaded: readonly string[] = [];
+    let declined = false;
+    const result = await deleteConversationWithCascade(id, async (childIds) => {
+      cascaded = childIds;
+      const consented = await confirmAsync({
+        title: deleteCascadeTitle,
+        message: deleteCascadeMessage(
+          this.conversationLabel(id),
+          childIds.map((childId) => this.conversationLabel(childId)),
+        ),
+        variant: 'danger',
+        confirmLabel: deleteCascadeConfirm(childIds.length),
+      });
+      declined = !consented;
+      return consented;
+    });
+    if (!result.ok) {
+      // A DECLINED cascade is NOT a failure — the reader was asked and said no — and it is the ONE
+      // silent case. A plain refusal and a consented cascade that then broke halfway are both real
+      // failures and both must say so; the store function's return cannot tell the three apart
+      // (`{ok:false, childIds}` covers two of them), which is why the reader's own answer is tracked
+      // here instead of inferred from it. Nothing was removed on screen, so there is nothing to put
+      // back — the re-list is for the CHILDREN a half-broken cascade may really have deleted.
+      if (!declined) emitEphemeralToast({ message: DELETE_FAILED, severity: 'warning' });
+      void loadConversations();
+      return;
+    }
+    // The store deleted it, so now the screen follows. Removing the open conversation routes through
+    // New session first, so the window leaves the transcript the way every other exit from it does —
+    // an emptied pane and nothing claimed — rather than a partial teardown free to forget a pointer.
+    // The children go with it: the list must not keep offering conversations the store no longer has.
+    for (const gone of [id, ...cascaded]) {
+      if (this.sessions.activeId === gone) this.onSessionNew();
+      if (this.renamingId === gone) this.renamingId = null;
+      this.sessions = removeSession(this.sessions, gone, gate);
+    }
+  }
+
+  /** A conversation's name as the reader knows it, for a dialog that must name what it will delete. */
+  private conversationLabel(id: string): string {
+    const session = sessionById(this.sessions, id);
+    const row = this.conversations.find((c) => c.id === id) ?? null;
+    return session?.title ?? row?.title ?? row?.firstUserMessage ?? id;
   }
 
   /**
@@ -2567,6 +2840,8 @@ export class SearchV3View extends JfElement {
         @sv3-citation-open=${this.onCitationOpen}
         @sv3-context-menu=${this.onContextMenu}
         @sv3-context-action=${this.onContextAction}
+        @sv3-branch-action=${this.onBranchAction}
+        @sv3-version-select=${this.onVersionSelect}
       >
         <jf-sv3-topbar window-title=${WINDOW_TITLE} data-testid="sv3-topbar"></jf-sv3-topbar>
         <jf-sv3-main
@@ -2582,6 +2857,7 @@ export class SearchV3View extends JfElement {
           .currentModelLabel=${this.currentModelLabel}
           ?detailed=${isAdvancedMode()}
           .turnContexts=${contexts}
+          .turnLineage=${this.turnLineage()}
           .floorSummary=${session?.history?.contextFloorSummary ?? null}
           ?streaming=${this.streaming}
           data-testid="sv3-main"

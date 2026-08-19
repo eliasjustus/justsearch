@@ -24,8 +24,8 @@ related: 847 (citation correctness — S1-S3 shipped in #488; 852-S1 is sequence
 |---|---|---|
 | **S0** | FE↔Java surface-parity leg on `check-surface-composition` | **implemented (merged, #493)** |
 | **S1** | Turn identity + the `/history` companion load. No UI. | **implemented (merged, #495)** |
-| **S2** | The tempdoc-610 context set (floor / clear / compact / summary-edit / message-exclude) | **implemented (this PR)** |
-| S3 | Branch + version pager + edit/retry/resend + cascade-aware delete | pending |
+| **S2** | The tempdoc-610 context set (floor / clear / compact / summary-edit / message-exclude) | **implemented (merged, #503)** |
+| **S3** | Branch + version pager + edit/retry/resend + cascade-aware delete | **implemented (this PR)** |
 | S4-S7 | Composer tier control, retrieve tier, `jf-control` adoption, flip prerequisites | pending |
 | S8-S11 | The flip, the sweep, the marker, the renames | pending |
 
@@ -469,3 +469,219 @@ contract already exercised, not discovery. Procedure, on the next dev-stack wind
 - **Not verified live.** This is FE-only work against a fake backend that mirrors the five
   endpoints; a dev-stack pass over a real conversation (set a floor, compact, exclude, reload,
   confirm `GET …/history` agrees) is the design's S2 gate row and is left for the live leg.
+
+## S3 — branch, the version pager, edit / retry, and cascade-aware delete
+
+### The premise, and the one thing it turns on
+
+Parity-ledger rows 5 and 6 read as two capabilities. They are ONE backend act with three callers:
+`POST …/branch?fromMsgId=` (`conversationListStore.branchConversation`, `ChatController.java:612-637`).
+There is no edit endpoint and no retry endpoint — the shipped window builds both from *branch, then
+re-dispatch* (`views/UnifiedChatView.ts:1471-1497`, `branchAndResend`), and inventing an endpoint
+here would have been inventing a contract the backend does not hold.
+
+What that reduces the slice to is ARITHMETIC: which message id each of the three acts names. The
+answer is not one id per turn, and this is the whole defect surface:
+
+- **Branch to new thread** forks at the turn's **own answer** — the new thread inherits the exchange
+  the reader is standing in and continues past it (`branchHere`, `:5610-5619`).
+- **Edit** and **Retry** fork at the **previous turn's answer**, so the re-sent question is the FIRST
+  divergent message (`:1471-1487`). At the head of the conversation there is no preceding message and
+  the id is `EMPTY_PREFIX_SENTINEL` — a real id the backend understands, not a null. (`ConversationStore.java:46`
+  pins that sentinel's FE producer to "the FE producer (TS: `UnifiedChatView` edit/retry of the first
+  turn)"; §3.3.b asked for that pointer to be repointed at whichever v3 site owns the act, and this is
+  that site.)
+
+Both are store-minted ids on the same turn and `?fromMsgId=` accepts either. Forking an edit at the
+turn's own answer produces a branch that reads as *the old answer, then the new question*: plausible
+on screen, and wrong. `sv3-branch.ts` carries both, named for what they do (`branchFromId` /
+`forkKey`), and the pure test asserts them against each other on one turn.
+
+### Where the ids come from, and what a turn that has none gets
+
+`sv3TurnMessageIds` (S1) and nowhere else — which is what makes the honest null hold one level deeper
+than S2 needed it. S2's acts need a turn's OWN ids; an edit needs the id of the turn BEFORE it. So a
+settled, store-minted turn sitting after an agent turn can be branched from and **cannot be edited**:
+its own ids are fine, the message it would fork before belongs to the run plane. Two acts, two gates,
+on the two ids they actually use; the alternative is one "is this turn controllable" verdict that
+would offer an Edit which 404s when pressed.
+
+Inherited turns are refused entirely (`sv3FirstOwnTurnIndex`) — the reference's rule
+(`canTurnControl`): those messages belong to the parent, and re-forking them from the child forks the
+wrong conversation. A branch point **no turn on screen carries** resolves to "nothing here is
+inherited" rather than "everything is": the record this window renders is not obliged to include the
+parent's prefix, and reading a failed lookup as inheritance would withhold every control on a
+conversation that is entirely its own.
+
+### The version pager
+
+`siblingSessionsAt` is a pure read over the already-loaded conversation list, so the pager costs no
+endpoint. It needs the store's own `parentSessionId` / `branchPointMessageId`, which
+`mergeStoreConversations` deliberately does not carry onto `Sv3Session` — so the window now holds the
+store's ROWS as well as its projection (`SearchV3View.conversations`), rather than copying two
+pointers onto a second shape that would then have to be kept in step.
+
+A fork is visible from both ends and the projection reports both (the reference's Case A / Case B):
+from the BASE its continuation is version 1, and from the BRANCH its first own turn is version N. One
+consequence is worth stating because it looks like a bug and is not: a branch created and not yet
+asked in has **no own turn**, so its divergence point is not on screen and neither is a pager. The
+reference window ends in exactly the same place and for the same reason — both gate the pager on a
+turn the conversation OWNS. Pressing Next from the base and landing on a pager-less branch is
+therefore parity, not a regression; if it is wrong, it is wrong in both windows.
+
+Paging is an OPEN, not a write: the target is a real conversation and it routes through the same
+claim-and-load path a sidebar click takes. An end of the pager is `jf-control`'s typed
+**unavailable-with-a-reason**, not a silently inert button.
+
+### Order is the whole of edit
+
+`branchInto` opens and CLAIMS the branch **before** re-dispatching, because `runAsk` appends to
+whatever conversation is active. Sending first appends the rewrite to the conversation the reader was
+replacing — the exact failure the act exists to avoid, and invisible on screen. Mutation-probed:
+swapping those two lines fails 4 cases.
+
+A refused branch changes nothing and says so. There is no local fallback; a window that "continued
+anyway" in the current conversation would do the one thing the reader did not ask for.
+
+### The editor answers to the transcript
+
+S2's own defect, headed off before it could recur: the question editor does not close on the SEND
+press. It closes when the turn it was editing LEAVES the transcript — which is what an accepted edit
+does, since the branch forks from before that turn — so a refused branch leaves the editor open with
+the reader's rewrite in it while the toast names the act that failed. Asserted; the same rule closes
+it when the reader claims another conversation.
+
+### Cascade-aware delete (§3.3.b's rider)
+
+Slices 515/516 made orphaning a branch impossible: the store REFUSES to delete a conversation others
+were forked from, with `409` + the children's ids. This window called the plain `deleteConversation`,
+which reports that refusal as a bare `false` — so **the row vanished from the list and the
+conversation stayed on disk, with nothing said**. That is not a missing feature; it is a delete that
+silently does not delete, which is why the design called it a correctness behavior rather than chrome.
+
+It now routes through `deleteConversationWithCascade` and NAMES the branches in the confirm — ids from
+the refusal, labels from the list the window already holds. Three outcomes, and only one is silent:
+
+| Outcome | What the reader gets |
+|---|---|
+| Declined | Nothing deleted, no toast — they were asked and said no |
+| Consented, cascade landed | The children's rows dropped with the parent's |
+| Refused outright, or cascade broke halfway | `DELETE_FAILED`, and a re-list puts the row back |
+
+The store function's return cannot tell the last two from the first (`{ok:false, childIds}` covers two
+of them), so the reader's own answer is tracked at the call site instead of inferred from it.
+
+### F5, discharged
+
+S2 recorded it: *"`refreshHistory` has no request-ordering guard… the next slice should give the
+companion load the same [`AbortController`]."* Branch and edit multiply the reload rate — every act is
+a write followed by a reload, and an edit is two acts in a row — so it is discharged here.
+`refreshHistory` now supersedes its predecessor exactly as `refreshRecord` does, and both are aborted
+on disconnect. The SESSION guard S1 shipped stays: the two catch different staleness and neither
+subsumes the other.
+
+**Honest limit:** `resumeConversation` accepts no signal, so the superseded REQUEST is not cancelled —
+only its answer is discarded. That is what F5 named (ordering); the in-flight request costs a round
+trip and changes nothing.
+
+The test needed the fake backend to be able to lose a race it cannot actually lose, so `/history` now
+**snapshots at serve time** and one read can be held past another. Without the snapshot a held read
+would "catch up" to the writes that landed while it waited and the stale answer could not exist —
+`green-masked-destructive`, caught while writing the case rather than after it passed.
+
+### Deviations from the design's letter
+
+1. **`raiseBudget` is not here.** The brief flagged it as possibly S3's; the ledger places it in **S6**
+   (§3.3.b's row, alongside `jf-control` adoption). Left there.
+2. **Retry and Branch live in the ⋯; Edit renders inline** — the reference's §13.1 split ("Edit is the
+   user turn's defining action and renders INLINE on the turn"), not S2's everything-in-the-menu shape.
+   One ⋯ per turn carries both sets: they are two derivations because they are gated on different ids,
+   but a second overflow beside the first would be a second place to look for "what can I do with this
+   turn".
+
+### Named limits and next-slice items
+
+- **F11 — the pager is invisible on a fresh branch** (above). Parity with the reference, recorded
+  because it will read as a bug to anyone who has not read this section.
+- **F12 — the pager is bounded by the conversation LIST, and that is an honesty limit before it is a
+  perf one.** `siblingSessionsAt` reads `state.conversations`, which `loadConversations` fetches as
+  `?limit=20` — so a fork whose sibling is not among the 20 most recently active conversations is
+  **invisible**: the pager silently under-counts, or does not render at all, and nothing on screen
+  says a version was omitted. A reader with an older fork is told there is one version when there are
+  two. (The perf note is the lesser half: the projection is O(turns × conversations) per render, fine
+  at 20 and worth a memo if the limit grows.) The fix is a count the BACKEND reports, the same shape
+  S2's F4 needs for orphaned exclusions — both are "the window can only count what it happened to
+  load".
+- **F13 — the cascade prompt names branches by label, and a fresh branch's label is its parent's
+  opening question** until it is renamed or asked in — so several branches of one conversation can
+  list identically. What is deleted are the ids, and those are right; only the naming is ambiguous.
+- **F14 — the cascade deletes ONE level and refuses deeper lineages.** `deleteConversationWithCascade`
+  recurses into each child *without* the consent callback, so a child that has children of its own
+  answers `409`, the cascade aborts, and nothing is deleted. That is the safe behaviour and it is
+  kept; what this slice fixed is the COPY, which used to promise "those branches too". A reader who
+  actually wants a three-level delete must currently remove the deepest fork first.
+- **F15 — the inherited turn's rendered ABSENCE is not pinned at the DOM level** (review L2). The pure
+  tier asserts the derivation (`canEdit === false`, no menu entries) and the live tier asserts the
+  absence for a turn whose fork point is a RUN-PLANE id, but no case mounts a BRANCH and asserts that
+  its inherited turns render no edit pencil and no branch entries. The two are different refusals —
+  one is "this id is not a store message", the other is "this message belongs to the parent" — and a
+  regression that dropped only the second would leave the pure tier green. The gap is coverage, not
+  behaviour; the honest form of the limit is that the inherited refusal is derivation-tested only.
+- **F16 — "consented, then broke halfway" is untested** (review L3). The production comment in
+  `SearchV3View.deleteThroughStore` explains that the local `declined` flag exists because the store
+  function's return cannot separate a declined cascade from a consented one that failed partway
+  (`{ok:false, childIds}` is both). The declined branch and the plain-refusal branch are both
+  covered; the third — consent given, one child deleted, the next child refused — is not, so the
+  flag's whole reason for existing is asserted at two of its three corners. Reaching it needs a fake
+  that refuses a SPECIFIC child mid-cascade.
+- **S2's F4 and F6 are untouched.** They are context-set limits, not branch limits, and nothing here
+  makes either better or worse. F4 and F12 are the same shape and want the same backend-side count.
+
+### What the independent review changed (PR #505)
+
+Verdict: APPROVE-WITH-FIXES. The production code passed every constructed attack — the fork
+arithmetic was verified against `FileConversationStore.java:113`'s INCLUSIVE prefix semantics, and
+`EMPTY_PREFIX_SENTINEL` was confirmed a real backend sentinel (`ConversationStore.java:49`,
+`FileConversationStore.java:99-104/:317`), retiring the live-404 risk. **Every required fix was test
+coverage**, which is the interesting part: three of them were greens that could not fail.
+
+- **M1 — no fixture exceeded two turns**, so "the previous turn's answer" and "the FIRST turn's
+  answer" were the same message and mutating `turns[index - 1]` → `turns[0]` passed EVERY test. The
+  one piece of arithmetic this module exists for was mutation-invisible. Three-turn fixtures added to
+  both files; the mutation now fails 2 cases. `sv3FirstOwnTurnIndex` above 1 is asserted too.
+- **M2 — the grandchild shape had zero coverage**, so reversing the load-bearing Case-A-before-Case-B
+  precedence failed nothing. A conversation that is both a branch and a base now pins it; reversing
+  the blocks fails 1 case.
+- **M3 — the pager's end-of-range case asserted only that nothing moved**, which a silently-inert
+  control also satisfies, while its own comment claimed the reason renders. It now asserts
+  `aria-disabled` + the reason text, and that the OTHER end is available in the same render.
+- Folded in: the rewrite is typed before the stream starts (so "survives the wait" is about the
+  reader's text), the keyboard path is asserted to agree with the button, `toEqual([])` assertions
+  gained positive anchors, `openBranch` clears `renamingId`, the edit's Ctrl/⌘+Enter path is refused
+  by the same expression the button explains, and the sidebar row now leaves **only when the store
+  says it left** — asking "delete this and its branches?" about a row that has already vanished
+  behind the dialog was the optimistic-removal defect.
+
+### Verification
+
+- `npm run typecheck` clean; `npm run test:unit:run` **429 files / 5441 tests** pass, with S2's
+  `SearchV3View.context.test.ts` and `sv3-context.test.ts` unmodified and green.
+- The ui-web gate set + the six kernel gates pass, except reds already red on `main` in files this PR
+  does not touch (`check-theme-token-closure`, `strip-token-fallbacks --check`, `check-accent-as-text`
+  on `RecentsMenu.ts` / `ActionLedgerView.ts`; `check-controls-a11y` on `UnifiedChatView.ts:2137`).
+  Only the first and third are in `expected-state.v1.json`; the other two are logged to the
+  observations inbox.
+- **Mutation probes** (each reverted): removing the `/history` order guard fails the ordering case and
+  only that one; forking an edit at the turn's own answer instead of the previous one fails 9 cases
+  across both new files; re-dispatching before opening the branch fails 4; **`turns[index - 1]` →
+  `turns[0]` fails 2** (the review's M1 — it failed 0 before the three-turn fixtures); **reversing the
+  pager's two cases fails 1** (M2 — 0 before the grandchild fixture); removing the row at the press
+  instead of at the store's answer fails 1.
+- New tests: `sv3-branch.test.ts` (19 cases, the pure arithmetic) and `SearchV3View.branch.test.ts`
+  (18 cases, all four capabilities round-tripping against a stateful fake backend that really mints
+  branches with inherited prefixes and really refuses a parent delete with 409). Every case fails
+  before this slice — the window imported `branchConversation` nowhere, rendered no pager, had no
+  editor, and called the non-cascade delete.
+- **Not verified live.** FE-only against a fake backend; a dev-stack pass (branch a real conversation,
+  page between versions, edit a question, delete a parent that has branches) is the design's S3 gate
+  row and is left for the live leg.
