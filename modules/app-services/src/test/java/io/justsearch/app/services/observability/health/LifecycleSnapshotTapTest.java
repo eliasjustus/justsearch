@@ -420,6 +420,24 @@ final class LifecycleSnapshotTapTest {
   }
 
   @Test
+  @DisplayName("tempdoc 825: WORKER_CONTROL_PLANE NOT_READY/worker.spawn_recovery_exhausted → start-error")
+  void bootRecoveryExhaustedEmitsStartError() {
+    tap.accept(
+        singleDim(
+            ReadinessDimension.WORKER_CONTROL_PLANE,
+            component("NOT_READY", "worker.spawn_recovery_exhausted")));
+
+    // Without the mapping row the lookup misses and the Condition disappears at the exact moment the
+    // state became permanent — a silent regression, not a refinement.
+    assertEquals(1, listener.size(), "a new code without a tap row emits NOTHING but a WARN");
+    HealthEvent event = listener.events.get(0).event();
+    assertEquals("index.start-error", event.id());
+    assertEquals(Severity.ERROR, event.severity());
+    assertEquals(
+        "WorkerSpawnRecoveryExhausted", ((AssertedCondition) event.body()).reason());
+  }
+
+  @Test
   @DisplayName("tempdoc 837: INDEX_SERVING NOT_CONFIGURED/worker.shut_down → index.unavailable")
   void workerShutDownEmitsIndexUnavailable() {
     tap.accept(

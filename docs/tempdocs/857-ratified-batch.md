@@ -1,22 +1,37 @@
 ---
 number: 857
 title: The ratified batch — run-spine navigation ported, surface-audience honesty, pane closes on conversation switch
-status: RENUMBERED FROM 854 (2026-08-19) — a parallel worktree's 854-fusion-residue-lane.md merged to
-  main first (PR #517), so `check-tempdoc-numbers.mjs` collided and this doc moved to the next free
-  number per its own remedy. No content change from the 854 draft beyond this note and the number/title
-  self-references below (§9, §heading). PR-B IMPLEMENTED (2026-08-19) — PR-A PENDING. Rev 2 folded an
-  adversarial review: three BLOCKING corrections to PR-A (A1 the `active()` deadlock, A2 the unstable
-  `.scroller`, A3 the structurally blind test tier) and seven amendments (A4-A10); PR-B was unchanged
-  by the review. PR-B (§10: B1-B5 — the audience flip, parity-ledger retirement, `go-to-activity` palette action,
-  switch-guarded pane close, `listSurfacesByAudience` retirement) landed in this commit: `CorePlugin.ts`
-  audience flip (health/activity USER, logs untouched OPERATOR), `check-surface-composition.mjs`
+status: PR-A IMPLEMENTED (2026-08-19) AND PR-B IMPLEMENTED (2026-08-19). Design is rev 2,
+  adversarially reviewed. PR-A (§10 "the run-spine navigation port", rows PR-A1-PR-A6) is implemented
+  in full, with the rev 2 amendments A1-A10 and one recorded deviation (the `runPrompt` anchor carries
+  a `:hold` suffix — see §13). Its live-verification rows (§10) are NOT yet run: they need the shared
+  dev stack and are handed to the next stack session, A9's ungated `measure()` cost being the one
+  genuinely open question. PR-A merged to `main` first (#516). PR-B (§10 "audience honesty + ledger
+  retirement + pane close", rows B1-B5) is implemented in full and merged into this branch on top of
+  PR-A (the two PRs touch disjoint files, confirmed by a conflict-free merge of `SearchV3View.ts`
+  against PR-A's `Sv3Main.ts`/`navigation.ts`/`keyboardHandler.ts` changes): `CorePlugin.ts` audience
+  flip (health/activity USER, logs untouched OPERATOR), `check-surface-composition.mjs`
   `KNOWN_PARITY_DRIFT` emptied (both adverse half-states captured in the PR body per review B1),
-  `go-to-activity` action added beside `go-to-health` with `governance/sandbox-coverage.v1.json`'s
-  two reach rows updated for the shifted/added lines (review B4), `listSurfacesByAudience()` and its
-  test deleted, and the switch-guarded `closePane()` added at `onSessionSelect` + `openBranch` (the
-  `lastVisitedAt`-not-`lastActiveAt` correction per review confirmed against source). PR-A (the
-  run-spine navigation port, §10 PR-A / §5) is **not implemented** — tracked separately, opus-routed
-  per its own confidence note (§10).
+  `go-to-activity` action added beside `go-to-health` with `governance/sandbox-coverage.v1.json`'s two
+  reach rows updated, `listSurfacesByAudience()` and its test deleted, and the switch-guarded
+  `closePane()` added at `onSessionSelect` + `openBranch` (the `lastVisitedAt`-not-`lastActiveAt`
+  correction confirmed against source). Both PRs' code-comment self-references were re-stamped from
+  854 to 857 in their own diffs (PR-A's re-stamp landed with #516; PR-B's landed in this branch).
+  RENUMBERED 854 → 857 (2026-08-19). This design was authored, reviewed and implemented as **854**;
+  every commit message on the branch still carries that scope, because history is history. It was
+  renumbered when `854-fusion-residue-lane.md` MERGED TO `main` first (PR #517, commit `b816b98e`) and
+  took 854 in published history. 855 and 856 were already claimed by the settings-window and
+  merge-attribution worktrees, so 857 is the next free number. The ported code comments were
+  re-stamped to `857 PR-A` in the same change; `SearchV3View.ts:1854-1856` is a line number, not a
+  reference, and is deliberately untouched.
+  Worth recording for the next agent who hits this: `check-tempdoc-numbers` did NOT catch the
+  collision. It compares claims ACROSS worktrees, so once the competing doc merged, this tree held
+  both `854-fusion-residue-lane.md` and `854-ratified-batch.md` and the check still reported OK —
+  nothing mechanical would have stopped two 854s reaching `main`.
+  Rev 2 folded an adversarial review: three BLOCKING corrections to PR-A (A1 the `active()` deadlock,
+  A2 the unstable `.scroller`, A3 the structurally blind test tier) and seven amendments (A4-A10).
+  PR-B was unchanged by the review; D4's route enumeration and D3's reframing both survived
+  independent re-derivation.
 created: 2026-08-19
 updated: 2026-08-19
 owner-decisions: D1-D4 ratified by the owner 2026-08-19 (recorded verbatim in §1)
@@ -778,10 +793,8 @@ in 852 so that slice does not have to rediscover it.
 
 ## 9. Tempdoc updates this design mandates
 
-1. **`docs/tempdocs/857-ratified-batch.md`** (originally drafted as 854; renumbered — see the status
-   header above) — this document, committed with PR-A (number verified free at draft time:
-   `node scripts/ci/check-tempdoc-numbers.mjs` → OK, 560 distinct numbers, no collisions; a parallel
-   worktree's 854 landed first on `main`, forcing the renumber to 857).
+1. **`docs/tempdocs/857-ratified-batch.md`** — this document, committed with PR-A (number verified free:
+   `node scripts/ci/check-tempdoc-numbers.mjs` → OK, 560 distinct numbers, no collisions).
 2. **`docs/tempdocs/852-sv3-promotion.md`** — add a section *"Ratified parity-ledger dispositions
    (owner, 2026-08-19)"* carrying: the §3 disposition table; the note that the run spine's **navigation
    tier** ships in 857 PR-A while the **minimap tier** is DEFERRED-undecided (§5.7); and the §8 sweep
@@ -1066,3 +1079,133 @@ for any discriminator. Where else this may already hold: `Placement.MODAL` has z
 consumers (`855 §9.2`), and the Action substrate already retired its own `audience` field for precisely
 this reason, leaving the reasoning in place at `substrates/actions/index.ts:164-169` — the codebase has
 learned this lesson once already and did not generalize it.
+
+---
+
+## 13. PR-A implementation record (2026-08-19)
+
+Every §10 PR-A row landed. What follows is what an independent reviewer needs that the plan above
+does not already say: the deviations, the things the plan got wrong about the tree, and the evidence
+each test carries.
+
+### 13.1 Rows, as landed
+
+| Row | Landed as |
+|---|---|
+| PR-A1 — four stamp sites | `Sv3Main.question()` `.ask-bubble` → `${turn.id}:q`; the non-agent `.answer` → `${turn.id}:a`; all three `runItem()` arms → `item.id`; all three `runPrompt()` arms → `${prompt.id}:hold` (**deviation, §13.2**) |
+| PR-A2 — shared typing guard | `utils/keyboardHandler.ts` exports `deepActiveElement()` + `isTypingTarget()`, duck-typed; `UnifiedChatView.onConversationKeydown` re-pointed at them, its inline guard deleted |
+| PR-A3 — the controller on `Sv3Main` | `scrollEl: () => this.scroller`, `spineEl: () => null`, `active: () => this.transcriptArmRendered` — host state, never `nav.landmarks`, never width-gated |
+| PR-A4 — the J/K window listener | added in `connectedCallback`, removed in `disconnectedCallback`, with `if (event.defaultPrevented) return;` first |
+| PR-A5 — the Help row | `views/HelpSurface.ts` `SHORTCUTS` gains `J / K` with the window-scope note |
+| PR-A6 — the authority's identity guard | `setupResize()` compares node identity and rebinds; the false "stable DOM node" doc-comment is corrected in the same edit |
+| A9 — the ungated `measure()` cost | `measure()` is coalesced to one LEADING pass per animation frame (`measureCoalesced`). Throttled, *not* re-gated on width — re-gating would close the accessibility hole the port exists to open |
+
+### 13.2 Deviations from the plan, and why
+
+1. **The `runPrompt` anchor carries a `:hold` suffix; the plan said stamp `prompt.id`.** The plan's
+   own D-3 flagged the id space as the residual risk to pin with a test rather than reason about, and
+   the test found this: an APPROVAL prompt's id **is** the tool call's id. `projectSv3RunFeed` pushes
+   `{kind:'tool', id: callId}` and `{kind:'approval', id: callId}` from the same call
+   (`views/search-v3/sv3-run.ts:190, 194`), and `projectSv3RunPrompts` forwards
+   `feed.pendingApprovals` unchanged (`:274`). A bare `prompt.id` would put the same `data-item-id`
+   on the tool card and on the hold — a duplicate landmark, and an unreachable hold, since `jumpTo`
+   resolves by first match (`primitives/navigation.ts:190`). The suffix is the design's own `:q`/`:a`
+   idiom applied to the same problem it was introduced for. Pinned by the duplicate-id test and by
+   probe P5 below.
+2. **The J/K handler ignores modified chords**; the source does not. `Ctrl+J` and `⌘+K` belong to the
+   browser and to the palette, and the plan's own wording is "bare `j` … no modifiers". Strictly
+   narrowing, and it is what lets `Sv3Palette.test.ts` keep asserting the shipped chord is untouched.
+3. **`Sv3Palette.test.ts`'s "registers NO global key listener" case was narrowed to its subject.**
+   The plan cited that case (`:157-167`) as *evidence* that Search v3 attaches no global keydown, and
+   it was — but PR-A deliberately adds one, so the case had to be re-derived rather than assumed
+   compatible. Its declared contract is the CHORD ("the chord is scoped to the window host so the
+   shipped shell's own Ctrl+K keeps working outside it", file header): the assertion is now that
+   exactly one global keydown listener exists, that a `Ctrl+K` raised at `window` passes through it
+   unconsumed and unprevented with the palette still closed, and that the listener is removed on
+   teardown. That last clause is a leak assertion the old "zero removals" form could not make, so the
+   case is stronger, not weaker.
+
+### 13.3 Corrections to the plan's reading of the tree
+
+- **§5.3's `active()` predicate is incomplete as written.** `turns.length > 0 || this.recordNotice`
+  is the transcript arm's condition only *after* the lock arm has declined it — `render()` takes
+  `locked()` first (`Sv3Main.ts:1294`), and that arm renders no `.scroller` at all. Left as written,
+  `active()` would stay true across a transcript→locked transition, the controller would never tear
+  down, and A2's primary defence would be inoperative in exactly the arm the plan did not enumerate.
+  Landed as two extracted getters — `locksTranscript` and `transcriptArmRendered` — with `render()`
+  reading both, so the arms and the controller cannot disagree. Probe P7 pins it.
+- **§5.2's "one anchor per turn" is false in a third way**, beyond the two A10 names: an AGENT turn
+  emits no `.answer` div at all (its answer *is* its activity), so it contributes `:q` plus its run
+  steps and never a `:a`. The rendered-item test asserts the exact ordered id list rather than any
+  arithmetic over `turns.length`.
+
+### 13.4 Right-reason evidence (revert-probes)
+
+Each probe mutates one thing and runs the suites that must catch it. All eight were caught; the tree
+was restored after each.
+
+| Probe | Mutation | Caught by |
+|---|---|---|
+| P1 | drop `data-item-id` from `runItem`'s tool arm (the named silent failure mode) | 2 wiring/duplicate cases |
+| P2 | `active: () => this.nav.landmarks.length > 0` (the A1 deadlock) | 9 cases |
+| P3 | remove `if (event.defaultPrevented) return;` (the A4 collision) | the advisory-drawer case |
+| P4 | drop `SELECT` from the union (the A5 live bug) | 4 cases across three suites, incl. the retiree's |
+| P5 | bare `prompt.id` anchor (§13.2) | 3 cases |
+| P6 | restore `setupResize`'s unconditional early-return (the A2 stale binding) | the rebind case |
+| P7 | `active()` ignoring the locked arm (§13.3) | the arm-coverage case |
+| P8 | remove the Help row | the Help table case |
+
+### 13.4b Independent-review fixes (coordinator, 2026-08-19)
+
+The review approved with fixes; all four are applied, plus one logged.
+
+- **F1 — the landmark list outlives its arm.** `teardown()` releases the observer, listeners, pin and
+  viewport but deliberately keeps `landmarks`/`fractions`/`trackPx`
+  (`primitives/navigation.ts:376-386`). So after transcript→locked the list is stale-but-non-empty,
+  the handler's length guard passed, `preventDefault()` fired, and `jumpTo` then bailed on a null
+  `scrollEl()` — a key swallowed to no effect, over a transcript the store is refusing to show. Fixed
+  as the FIRST landmark-side guard, `if (!this.transcriptArmRendered) return;`, rather than by
+  clearing the list in the shared authority: the first adopter's suite hand-assigns `nav.landmarks`,
+  so clearing there risks collateral the port has no reason to take. Regression case asserts both
+  `jumpTo` not called AND `defaultPrevented === false`.
+- **F2 — two stale cites** corrected (`navigation.ts:171`→`:206` for `el.focus`; the workflow-picker
+  `<select>` is `:3987`, `:3986` is its label).
+- **F5 — the a11y pin was file-keyed**, so a SECOND `<h1>` inside `Sv3Composer.ts` would have passed
+  while the comment claimed "exactly one". Now count-keyed (`{'Sv3Composer.ts': 1}`) and using the
+  gate's own patterns (`/<\/h1>/`, `check-a11y-closure.mjs:142, 148`), so the stand-in and the gate
+  can differ only in SCOPE, never in what counts as a violation.
+- **F3** — see §13.5.
+- **F4, logged not fixed:** there is no modal-owns-focus guard. With focus on a palette popup button
+  or a drawer control that neither types nor calls `preventDefault`, `j`/`k` jumps the transcript and
+  pulls focus out of the open modal. This is parity with the retiree, not a regression; recorded so
+  the guard set is not read as exhaustive.
+
+The wiring test is the acceptance gate the plan asked for: it stubs `getBoundingClientRect` per case
+(this directory's own idiom, `SearchV3View.pane.test.ts:58` / `sidebar.test.ts:43`) so `measure()`
+does not drop every element at `navigation.ts:345`, and asserts `nav.landmarks` equals the stamped id
+set in DOM order **read back from the element `scrollEl()` returns** — which is why P1 and P2 both
+fail it, and why a controller bound to a detached scroller would too.
+
+### 13.5 What PR-A did NOT do (so nobody reads it as done)
+
+- **The five live-verification rows (§10) are unrun.** They need the shared dev stack. Row 4 (A9) is
+  the one that can still change the code: a long streaming answer with 20+ run steps at a narrow
+  width, watching for jank. The coalescing above is the plan's specified remedy applied up front, so
+  the row now *confirms* a fix rather than deciding whether one is needed — but it is still the only
+  question in this design that reading code cannot answer.
+- **The `check-a11y-closure` recursive-walk fix is not here** (D-17). PR-A carries the scoped
+  stand-in instead: `views/search-v3/sv3-a11y.test.ts` asserts `Sv3Main.ts` declares no `<h1>` and no
+  `main` landmark, that no file in the window claims a `main` landmark, and that the set of files
+  carrying an `<h1>` is exactly `['Sv3Composer.ts']` — a pin, so the known hero heading stays visible
+  as an open item and a *second* one fails immediately. The gate fix must land with the hero-heading
+  decision.
+- **`KeybindingRegistry` keeps its own SUBJECT but no longer its own PREDICATE** (A5, amended by
+  review F3). A5 said not to re-point it, and the reason it gave — it resolves `composedPath()[0]`,
+  the event's *origin*, which is a different question from where focus is — justifies not sharing
+  `deepActiveElement()`. It does not justify keeping a third inline copy of *what counts as an
+  editable*, which is the thing that had already drifted (this file had `SELECT`; the retiree did
+  not). So the descent stays un-shared and `const inEditable = isTypingTarget(origin);` replaces the
+  inline union — semantically identical, one definition instead of three.
+- **No Tier 2** (the minimap), no `navigation-surfaces` register, no `NavigableRun` type — §5.7 and
+  §12 stand as written.
+- **Nothing from §8's sweep obligations**; they remain 852 S8-S11's.

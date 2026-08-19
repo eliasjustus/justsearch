@@ -170,7 +170,8 @@ class KnowledgeServerIntegrationTest {
                 5000L, // pidValidationTimeoutMs
                 1000L, // stabilityWindowMs
                 5000, // batchSize
-                30_000L); // healthCheckRetryBudgetMs (alpha.23 R13-A)
+                30_000L, // healthCheckRetryBudgetMs (alpha.23 R13-A)
+                0); // bootFaultInjectAttempts (tempdoc 825)
 
         signalBus = new MainSignalBus(signalPath);
         WorkerSpawner spawner = new WorkerSpawner(testConfig, signalBus);
@@ -288,7 +289,8 @@ class KnowledgeServerIntegrationTest {
                 5000L, // pidValidationTimeoutMs
                 1000L, // stabilityWindowMs
                 5000, // batchSize
-                30_000L); // healthCheckRetryBudgetMs (alpha.23 R13-A)
+                30_000L, // healthCheckRetryBudgetMs (alpha.23 R13-A)
+                0); // bootFaultInjectAttempts (tempdoc 825)
 
         signalBus = new MainSignalBus(signalPath);
         WorkerSpawner spawner = new WorkerSpawner(testConfig, signalBus);
@@ -367,6 +369,7 @@ class KnowledgeServerIntegrationTest {
                 5000L, // pidValidationTimeoutMs
                 1000L, // stabilityWindowMs
                 5000, // batchSize
-                30_000L); // healthCheckRetryBudgetMs (alpha.23 R13-A)
+                30_000L, // healthCheckRetryBudgetMs (alpha.23 R13-A)
+                0); // bootFaultInjectAttempts (tempdoc 825)
     }
 }

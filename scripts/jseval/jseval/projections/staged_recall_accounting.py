@@ -30,8 +30,14 @@ run, the outcome is classified into exactly one bucket:
   pre-implementation confidence pass), with ``predictedDocIds`` as fallback.
 
 The projection **self-reconciles**: it cross-checks its computed "gold in
-final top-N" against the harness-recorded ``recallAtK`` and reports the
-mismatch count (0 on the needle-burial reference run).
+final top-10" — always truncated to depth 10, matching the harness's
+``recallAtK`` (``R@10``, fixed regardless of ``--top-k``; see
+``jseval.artifacts``) — against that harness-recorded value, and reports the
+mismatch count (0 on the needle-burial reference run). The depth-10 window is
+only trustworthy when the final mode's ``run.trec`` (score-ranked) is
+available; when only the response-order ``predictedDocIds`` fallback exists,
+"first 10" isn't "top 10 by score", so reconciliation is marked
+``"applicable": false`` instead of silently comparing at the wrong window.
 
 **Doc-ID alignment** is already guaranteed upstream: every hit is normalized
 to a uniform BEIR id by ``retriever.resolve_doc_id`` — the same namespace as
@@ -54,7 +60,7 @@ Output shape v1::
       },
       "per_leg_recall": {"vector": 1.0, "lexical": 0.0, "splade": 0.0},
       "buckets": {"LEG_MISS": [...qids], "CASCADE_LEAK": [...], ...},
-      "reconciliation": {"checked": 20, "mismatches": 0}
+      "reconciliation": {"checked": 20, "mismatches": 0, "applicable": true}
     }
 """
 
@@ -78,6 +84,14 @@ LEG_MODES = ("vector", "lexical", "splade")
 FINAL_MODE_PREFERENCE = ("hybrid", "full")
 
 BUCKETS = ("LEG_MISS", "CASCADE_LEAK", "JUDGE_RANK_LOW", "OK_RANK1")
+
+# The harness's per-query recallAtK is hardcoded to R@10 regardless of --top-k
+# (jseval.artifacts._write_per_query_json: "recallAtK": metrics.get("R@10")). A --top-k run
+# retrieving more than 10 docs per query produces a final_ranked list longer than this depth, so
+# self-reconciliation must truncate to this same fixed window rather than the full list — else a
+# gold doc surfaced only at rank 11+ counts as "in final" here but not in the harness's R@10,
+# manufacturing spurious mismatches (one per rank_11_plus query).
+RECONCILIATION_DEPTH = 10
 
 # Conform the *failure* buckets to the field's canonical retrieval failure-point vocabulary
 # (Seven Failure Points, arXiv 2401.05856) so the output is legible to anyone who knows it — an
@@ -229,7 +243,8 @@ def _empty(reason: str, legs: list[str], final: str | None) -> dict:
         "per_leg_recall": {},
         "buckets": {b: [] for b in BUCKETS},
         "fp_mapping": FP_MAPPING,
-        "reconciliation": {"checked": 0, "mismatches": 0},
+        "reconciliation": {"checked": 0, "mismatches": 0, "applicable": False,
+                            "reason": "insufficient-modes: no reconciliation was computed"},
     }
 
 
@@ -247,6 +262,9 @@ def produce(run_dir: Path) -> dict:
     final_ranked = _ranked_by_qid(run_dir, final)
     final_recall_flags = _recall_flags(run_dir, final)
     queried = _queried_qids(run_dir)  # restrict attribution to queries actually run
+    # Reconciliation is only trustworthy against the score-ranked run.trec: truncating the
+    # response-order predictedDocIds fallback to "first 10" is not "top 10 by score".
+    recon_applicable = bool(_load_trec(run_dir / f"{final}_run.trec"))
 
     buckets: dict[str, list[str]] = {b: [] for b in BUCKETS}
     per_leg_hits = {m: 0 for m in legs}
@@ -285,10 +303,14 @@ def produce(run_dir: Path) -> dict:
         if in_final:
             final_hits += 1
 
-        # self-reconciliation against harness-recorded recall
-        if qid in final_recall_flags:
+        # self-reconciliation against harness-recorded recall: truncate to the same fixed
+        # depth-10 window as the harness's recallAtK (R@10, independent of --top-k) rather than
+        # the full (possibly longer) final list, so a gold doc only surfaced past rank 10 isn't
+        # counted as a mismatch.
+        if recon_applicable and qid in final_recall_flags:
+            recon_in_final = bool(gold & set(f_ids[:RECONCILIATION_DEPTH]))
             recon_checked += 1
-            if in_final != final_recall_flags[qid]:
+            if recon_in_final != final_recall_flags[qid]:
                 recon_mismatch += 1
 
         # classify
@@ -353,7 +375,16 @@ def produce(run_dir: Path) -> dict:
         "per_leg_recall": {m: per_leg_hits[m] / n for m in legs},
         "buckets": buckets,
         "fp_mapping": FP_MAPPING,
-        "reconciliation": {"checked": recon_checked, "mismatches": recon_mismatch},
+        "reconciliation": {
+            "checked": recon_checked,
+            "mismatches": recon_mismatch,
+            "applicable": recon_applicable,
+            **({} if recon_applicable else {
+                "reason": f"final mode {final!r} has no score-ranked run.trec — only the "
+                          "response-order predictedDocIds fallback is available, so a "
+                          f"depth-{RECONCILIATION_DEPTH} reconciliation window can't be trusted",
+            }),
+        },
     }
 
 
