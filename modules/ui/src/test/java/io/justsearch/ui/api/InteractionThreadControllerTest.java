@@ -1,6 +1,7 @@
 package io.justsearch.ui.api;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -142,6 +143,49 @@ final class InteractionThreadControllerTest {
     // The producer-owned calibration is projected too (rendered FROM the record, not re-derived).
     JsonNode cal = ev.get("attributes").get("calibration");
     assertEquals(0.91, cal.get("bestChunkScore").asDouble());
+  }
+
+  @Test
+  @DisplayName("848 §2.3: a chat turn's persisted reasoning is lifted onto the thread event")
+  void surfacesReasoningFromTheRecord() {
+    // The projection half of reasoning-on-record; SubstrateDrivenEngineTest
+    // #reasoningPersistsOnTheAssistantRecord proves the pipeline actually writes this state.
+    ConversationStore conversationStore = mock(ConversationStore.class);
+    when(conversationStore.loadHistory("conv-r"))
+        .thenReturn(
+            List.of(
+                Map.of(
+                    "id", "a1",
+                    "role", "assistant",
+                    "content", "the answer",
+                    "ts", "2026-01-01T00:00:01Z",
+                    "reasoning", List.of(Map.of("text", "weighed the options", "durationMs", 1840))),
+                Map.of(
+                    "id", "a2",
+                    "role", "assistant",
+                    "content", "a turn that did not think",
+                    "ts", "2026-01-01T00:00:02Z"),
+                Map.of(
+                    "id", "a3",
+                    "role", "assistant",
+                    "content", "a malformed record",
+                    "ts", "2026-01-01T00:00:03Z",
+                    "reasoning", "not a list")));
+    AgentService agentService = mock(AgentService.class);
+    when(agentService.threadEvents("conv-r")).thenReturn(List.of());
+
+    JsonNode body =
+        invokeGet(new InteractionThreadController(conversationStore, agentService), "conv-r");
+    JsonNode blocks = body.get("events").get(0).get("attributes").get("reasoning");
+    assertEquals(1, blocks.size());
+    assertEquals("weighed the options", blocks.get(0).get("text").asString());
+    assertEquals(1840, blocks.get(0).get("durationMs").asInt());
+    assertTrue(
+        body.get("events").get(1).get("attributes").get("reasoning") == null,
+        "a turn that did not think carries no key");
+    assertTrue(
+        body.get("events").get(2).get("attributes").get("reasoning") == null,
+        "a non-list value is dropped, mirroring the claimMatches guard");
   }
 
   /** A test {@code DataKeyState} with a fixed key whose lock state the test toggles (mirrors

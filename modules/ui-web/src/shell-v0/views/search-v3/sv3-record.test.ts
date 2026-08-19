@@ -123,6 +123,42 @@ describe('a record becomes turns, bracketed by the user messages', () => {
     expect(turns[1]?.question).toBe('now this');
   });
 
+  it('hydrates the turn’s THINKING from the record (tempdoc 848 §2.7)', () => {
+    clock = 0;
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'why did the renewal fail?'),
+      event('e2', 'ASSISTANT_MESSAGE', 'Because the lock held.', {
+        reasoning: [{ text: 'check the lock table first', durationMs: 1840 }],
+      }),
+    ]);
+    expect(turn?.reasoning).toEqual([{ text: 'check the lock table first', durationMs: 1840 }]);
+  });
+
+  it('accumulates blocks from EVERY assistant item of a turn, in record order', () => {
+    // A turn can record several assistant items (an iterating shape, a multi-step run); taking only
+    // the last one would silently drop the earlier steps' thinking.
+    clock = 0;
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'do the multi-step thing'),
+      event('e2', 'ASSISTANT_MESSAGE', 'step one', {
+        reasoning: [{ text: 'first', durationMs: 10 }],
+      }),
+      event('e3', 'ASSISTANT_MESSAGE', 'step two', {
+        reasoning: [{ text: 'second', durationMs: 20 }],
+      }),
+    ]);
+    expect(turn?.reasoning.map((block) => block.text)).toEqual(['first', 'second']);
+  });
+
+  it('drops a malformed reasoning payload rather than rendering half a block', () => {
+    clock = 0;
+    const [turn] = project([
+      event('e1', 'USER_MESSAGE', 'q'),
+      event('e2', 'ASSISTANT_MESSAGE', 'a', { reasoning: [{ durationMs: 5 }, 'nope', null] }),
+    ]);
+    expect(turn?.reasoning).toEqual([]);
+  });
+
   it('never claims evidence the record cannot resolve — never told is not zero', () => {
     clock = 0;
     const [turn] = project([

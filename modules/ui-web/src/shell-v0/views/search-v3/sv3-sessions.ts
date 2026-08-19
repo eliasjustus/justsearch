@@ -45,6 +45,7 @@ import type { Citation } from '../../components/chat/MarkdownBlock.js';
 // a running turn's live feed are the same three shapes, so the content surface has ONE renderer for
 // both and a settled run cannot be drawn by a second one (tempdoc 822 Phase F6 / inventory D1).
 import type { Sv3RunFeedItem } from './sv3-run.js';
+import type { ReasoningBlock } from '../../controllers/ReasoningController.js';
 
 /**
  * What one answer stood on, as ONE record (tempdoc 822 Phase F4). Registered in
@@ -82,13 +83,13 @@ export type Sv3TurnKind = 'ask' | 'agent';
 
 /**
  * One block of the model's thinking, as the SHARED `ReasoningController` finalized it (tempdoc 822
- * Phase F7; inventory C9). Structural rather than the controller's own exported interface, so this
- * module stays free of the controller — the shape is `controllers/ReasoningController.ts:2-5`.
+ * Phase F7; inventory C9). Tempdoc 848 §2.5 — an ALIAS of the controller's own `ReasoningBlock`, not
+ * a second declaration: the two were byte-identical and this module's comment already admitted its
+ * shape was a copy. A type-only import keeps the original decoupling intent (no runtime edge to a
+ * controller module) while removing the hand-maintained duplicate. Now that the same shape is also
+ * what the RECORD carries, one drifting copy would be one too many.
  */
-export interface Sv3TurnReasoning {
-  readonly text: string;
-  readonly durationMs: number;
-}
+export type Sv3TurnReasoning = ReasoningBlock;
 
 /** One exchange: what was asked, and what came back. */
 export interface Sv3Turn {

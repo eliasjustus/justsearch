@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -430,8 +431,13 @@ public final class ConversationEngine {
 
       String finalText;
       AtomicReference<OnlineAiService.AiUsage> usageRef = new AtomicReference<>();
+      // Tempdoc 848 §2.2 — per-`streamLlm` (therefore per-iteration) by construction: an ITERATING
+      // shape's iteration-3 record carries iteration-3's thinking, with no cross-iteration bleed.
+      AtomicReference<ReasoningTrace> reasoningRef = new AtomicReference<>();
       try {
-        finalText = streamLlm(ai, llmInput, maxTokens, sampling, consumers, ctx, usageRef, sink);
+        finalText =
+            streamLlm(
+                ai, llmInput, maxTokens, sampling, consumers, ctx, usageRef, reasoningRef, sink);
       } catch (LlmStreamException e) {
         emitError(sink, e.getMessage(), e.errorCode);
         return;
@@ -486,10 +492,14 @@ public final class ConversationEngine {
       // shapes (RAG) record under threadId (the request's conversationId).
       if (sessionId != null && conversationStore != null) {
         conversationStore.appendMessage(
-            sessionId, shape.id().value(), persistedAssistant(assistantMsg, mergedDoneEntries));
+            sessionId,
+            shape.id().value(),
+            persistedAssistant(assistantMsg, mergedDoneEntries, reasoningRef.get()));
       } else if (threadId != null && conversationStore != null) {
         conversationStore.appendMessage(
-            threadId, shape.id().value(), persistedAssistant(assistantMsg, mergedDoneEntries));
+            threadId,
+            shape.id().value(),
+            persistedAssistant(assistantMsg, mergedDoneEntries, reasoningRef.get()));
       }
 
       // Iteration decision.
@@ -546,6 +556,7 @@ public final class ConversationEngine {
       List<StreamConsumer> consumers,
       EngineConversationContext ctx,
       AtomicReference<OnlineAiService.AiUsage> usageOut,
+      AtomicReference<ReasoningTrace> reasoningOut,
       Consumer<SseEvent> sink)
       throws LlmStreamException {
 
@@ -555,6 +566,14 @@ public final class ConversationEngine {
     AtomicReference<Throwable> error = new AtomicReference<>();
     AtomicLong lastActivityNanos = new AtomicLong(System.nanoTime());
     AtomicBoolean abandoned = new AtomicBoolean(false);
+    // Tempdoc 848 §2.2 — accumulate reasoning exactly as `fullText` accumulates content: reasoning is
+    // a property of an LLM CALL, and this is the one place a call happens, so a shape-layer
+    // accumulator would need one copy per shape and would drift. §2.1's duration semantic (shared with
+    // the agent plane and with the live `ReasoningController`): first reasoning token → first
+    // non-reasoning output, i.e. the first content chunk, or stream end when the turn was all thinking.
+    StringBuilder reasoningText = new StringBuilder();
+    AtomicLong reasoningStartNanos = new AtomicLong(-1);
+    AtomicLong reasoningEndNanos = new AtomicLong(-1);
 
     ai.stream(
         new OnlineAiService.StreamRequest(messages, maxTokens, sampling),
@@ -564,6 +583,11 @@ public final class ConversationEngine {
                 return;
               }
               lastActivityNanos.set(System.nanoTime());
+              // Tempdoc 848 §2.1 — the first content token ends the thinking interval, mirroring
+              // `UnifiedChatView.onChunk` calling `ReasoningController.endThinking()`.
+              if (reasoningStartNanos.get() >= 0) {
+                reasoningEndNanos.compareAndSet(-1, System.nanoTime());
+              }
               fullText.append(chunk);
               sink.accept(new SseEvent("chunk", Map.of("text", chunk)));
               for (StreamConsumer consumer : consumers) {
@@ -580,6 +604,8 @@ public final class ConversationEngine {
                 return;
               }
               lastActivityNanos.set(System.nanoTime());
+              reasoningStartNanos.compareAndSet(-1, System.nanoTime());
+              reasoningText.append(reasoning);
               sink.accept(new SseEvent("reasoning_chunk", Map.of("text", reasoning)));
             },
             toolDelta -> {},
@@ -620,10 +646,36 @@ public final class ConversationEngine {
       throw new LlmStreamException(err.getMessage() == null ? err.toString() : err.getMessage(), "LLM_ERROR");
     }
 
+    // Tempdoc 848 §2.1 — a turn that thought but never emitted content closes the interval at stream
+    // end; the block is still real (the model produced it), so it persists like any other.
+    if (reasoningStartNanos.get() >= 0 && !reasoningText.isEmpty()) {
+      long end =
+          reasoningEndNanos.get() >= 0 ? reasoningEndNanos.get() : System.nanoTime();
+      reasoningOut.set(
+          new ReasoningTrace(
+              reasoningText.toString(),
+              Math.max(0L, (end - reasoningStartNanos.get()) / 1_000_000L)));
+    }
+
     // Always return the chunk-accumulator; `completionText` is the LLM
     // finish_reason, not the response body. See the comment on the onComplete
     // callback above.
     return fullText.toString();
+  }
+
+  /**
+   * Tempdoc 848 §2.1 — one reasoning block produced by one LLM call: the text the model thought and
+   * the interval it spent thinking it. The persisted shape is an ARRAY of these, because both
+   * frontend models are already lists ({@code ReasoningController.reasoningBlocks},
+   * {@code Sv3Turn.reasoning}) — the record is the FE's existing shape, not a second one.
+   */
+  private record ReasoningTrace(String text, long durationMs) {
+    Map<String, Object> asBlock() {
+      Map<String, Object> block = new LinkedHashMap<>();
+      block.put("text", text);
+      block.put("durationMs", durationMs);
+      return block;
+    }
   }
 
   /** Resolve all {@link PromptContributor}s referenced by the shape; missing ids throw. */
@@ -763,8 +815,25 @@ public final class ConversationEngine {
   private record InjectorRunResult(List<Map<String, Object>> messages, boolean terminated) {}
 
   /**
+   * The keys the model's message contract actually defines. Everything else a context message
+   * carries is persistence bookkeeping and must not reach the server.
+   */
+  private static final Set<String> LLM_MESSAGE_KEYS =
+      Set.of("role", "content", "name", "tool_calls", "tool_call_id");
+
+  /**
    * Build the LLM message list: system prompt as message[0] (omitted if empty), then the
-   * accumulated context messages.
+   * accumulated context messages PROJECTED to the keys the model contract defines.
+   *
+   * <p>Tempdoc 848 §2.2b — the store is a schemaless passthrough ({@code FileConversationStore}
+   * returns each persisted line whole, and {@code loadEffectiveContext} only filters by id), so a
+   * PERSISTENT shape's next turn re-sends every persistence-only key of every earlier assistant
+   * record inside the OpenAI-compat {@code messages} body. That was already true of {@code
+   * id}/{@code hash}/{@code ts} — inert, so harmless by luck — and becomes a real defect the moment
+   * a payload key is persisted: {@code reasoning} is an array in the server's reasoning namespace
+   * and would inflate the prompt in proportion to conversation length. The boundary is the one
+   * place a guarantee can hold for every future persisted field, so it PROJECTS to the contract's
+   * keys rather than blacklisting today's known extras.
    */
   private static List<Map<String, Object>> buildLlmInput(
       String systemPrompt, List<Map<String, Object>> contextMessages) {
@@ -775,8 +844,20 @@ public final class ConversationEngine {
       system.put("content", systemPrompt);
       out.add(system);
     }
-    out.addAll(contextMessages);
+    for (Map<String, Object> message : contextMessages) {
+      out.add(projectForLlm(message));
+    }
     return out;
+  }
+
+  private static Map<String, Object> projectForLlm(Map<String, Object> message) {
+    Map<String, Object> projected = new LinkedHashMap<>();
+    for (Map.Entry<String, Object> entry : message.entrySet()) {
+      if (LLM_MESSAGE_KEYS.contains(entry.getKey())) {
+        projected.put(entry.getKey(), entry.getValue());
+      }
+    }
+    return projected;
   }
 
   private static Map<String, Object> assistantMessage(String text) {
@@ -844,7 +925,9 @@ public final class ConversationEngine {
    * persisted copy only, never on the LLM-context copy, so it cannot pollute the next prompt.
    */
   private static Map<String, Object> persistedAssistant(
-      Map<String, Object> assistantMsg, Map<String, Object> mergedDoneEntries) {
+      Map<String, Object> assistantMsg,
+      Map<String, Object> mergedDoneEntries,
+      ReasoningTrace reasoning) {
     Map<String, Object> persisted = new LinkedHashMap<>(assistantMsg);
     Object citations = mergedDoneEntries.get("citations");
     if (citations != null) {
@@ -860,6 +943,14 @@ public final class ConversationEngine {
     Object claimMatches = mergedDoneEntries.get("claimMatches");
     if (claimMatches != null) {
       persisted.put("claimMatches", claimMatches);
+    }
+    // Tempdoc 848 §2.1/§2.2 — the turn's thinking, as an ordered array of blocks. Passed as an
+    // EXPLICIT argument rather than through `mergedDoneEntries`, because those entries also ship on
+    // the `done` SSE payload: routing reasoning through them would re-send on the wire what already
+    // streamed chunk-by-chunk. Absent (no key) when the model did not think — "no key" is the honest
+    // reading for a non-thinking preset, and an empty array would claim otherwise.
+    if (reasoning != null && !reasoning.text().isBlank()) {
+      persisted.put("reasoning", List.of(reasoning.asBlock()));
     }
     return persisted;
   }

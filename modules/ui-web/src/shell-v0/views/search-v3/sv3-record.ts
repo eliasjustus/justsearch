@@ -22,6 +22,10 @@
  */
 import { projectUnifiedThread, type ThreadEvent, type UnifiedTurnItem } from '../unifiedThreadProjection.js';
 import type { ToolCall } from '../../controllers/AgentSessionController.js';
+import {
+  reasoningBlocksFromRecord,
+  type ReasoningBlock,
+} from '../../controllers/ReasoningController.js';
 import type { Sv3RunFeedItem } from './sv3-run.js';
 import type { Sv3Turn } from './sv3-sessions.js';
 
@@ -73,6 +77,8 @@ interface Building {
   activity: Sv3RunFeedItem[];
   tools: number;
   errored: boolean;
+  /** Tempdoc 848 §2.7 — the turn's persisted thinking, accumulated across all its assistant items. */
+  reasoning: ReasoningBlock[];
 }
 
 const open = (id: string, question: string, askedAt: number): Building => ({
@@ -83,6 +89,7 @@ const open = (id: string, question: string, askedAt: number): Building => ({
   activity: [],
   tools: 0,
   errored: false,
+  reasoning: [],
 });
 
 /**
@@ -129,6 +136,10 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
     if (item.kind === 'assistant') {
       turn.answers.push(item.content);
       turn.activity.push({ kind: 'text', id: item.id, text: item.content });
+      // Tempdoc 848 §2.7 — a turn can record several assistant items (an iterating shape, a
+      // multi-step run), so blocks accumulate across them in record order rather than the last one
+      // winning.
+      turn.reasoning.push(...reasoningBlocksFromRecord(item.attributes.reasoning));
       continue;
     }
     if (item.kind === 'tool-activity') {
@@ -163,12 +174,15 @@ export function projectSv3RecordTurns(events: readonly ThreadEvent[]): readonly 
       // the same paragraph. Only a turn with real activity carries the interleaved sequence.
       activity: agent ? turn.activity : [],
       askedAt: turn.askedAt,
-      // The record carries none of the four (tempdoc 822 Phase F7): no rewrite note, no thinking
-      // blocks, and no receipt. They are seeded EMPTY rather than guessed, and
+      // Tempdoc 848 §2.7 — the record now carries the turn's THINKING (persisted on the assistant
+      // message by `ConversationEngine`, lifted onto the thread event by `InteractionThreadController`
+      // / folded from the run journal by `AgentInteractionMapper`), so a cold-loaded turn shows the
+      // blocks the run really produced. The other three (tempdoc 822 Phase F7) are still absent from
+      // the record: no rewrite note and no receipt. Those stay seeded EMPTY rather than guessed, and
       // {@link ../sv3-sessions.applySv3Record} keeps whatever the live turn observed — so a
       // cold-loaded turn honestly shows no frame line instead of one built from invented numbers.
       standaloneQuestion: '',
-      reasoning: [],
+      reasoning: turn.reasoning,
       durationMs: null,
       modelLabel: null,
     } satisfies Sv3Turn;

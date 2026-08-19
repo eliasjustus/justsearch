@@ -1075,6 +1075,215 @@ final class SubstrateDrivenEngineTest {
     assertTrue(store.open.isEmpty(), "and cleared once the run finishes");
   }
 
+  // ==================== Tempdoc 848 — reasoning is turn data ====================
+
+  @Test
+  @DisplayName("tempdoc 848 §2.1: the turn's reasoning round-trips onto the persisted record")
+  void reasoningPersistsOnTheAssistantRecord() {
+    var store = new RecordingStore();
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("sessionId", "conv-1");
+    newEngineWithStore(
+            persistentOneShotShape(),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(SingleHopController.INSTANCE),
+            new ReasoningAi(List.of(List.of("weigh ", "options")), List.of("the answer")),
+            store)
+        .run(SHAPE_ID, body, Audience.USER, ev -> {});
+
+    Map<String, Object> persisted = assistantRecords(store, "conv-1").get(0);
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> blocks = (List<Map<String, Object>>) persisted.get("reasoning");
+    assertNotNull(blocks, "the thinking the run produced belongs on the record");
+    assertEquals(1, blocks.size(), "one LLM call, one block");
+    assertEquals("weigh options", blocks.get(0).get("text"), "chunks accumulate like fullText does");
+    assertTrue(
+        ((Number) blocks.get(0).get("durationMs")).longValue() >= 0,
+        "durationMs is a real interval, never negative");
+  }
+
+  @Test
+  @DisplayName("tempdoc 848 §2.1: a turn that did not think carries NO reasoning key (not an empty list)")
+  void noReasoningKeyWhenTheModelDidNotThink() {
+    var store = new RecordingStore();
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("sessionId", "conv-1");
+    newEngineWithStore(
+            persistentOneShotShape(),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(SingleHopController.INSTANCE),
+            new ScriptedAi(List.of("plain answer")),
+            store)
+        .run(SHAPE_ID, body, Audience.USER, ev -> {});
+
+    Map<String, Object> persisted = assistantRecords(store, "conv-1").get(0);
+    assertTrue(
+        !persisted.containsKey("reasoning"),
+        "absent means 'the model did not think' — an empty array would claim otherwise");
+  }
+
+  @Test
+  @DisplayName("tempdoc 848 §2.2: an ITERATING shape's turn N carries iteration N's reasoning only")
+  void reasoningIsPerIteration() {
+    // The falsifier for an accumulator hoisted OUT of streamLlm: a shared builder would leave
+    // iteration 2's record carrying iteration 1's thinking as well.
+    var store = new RecordingStore();
+    var controller = new BoundedController("core.two-iter", 2);
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("sessionId", "conv-1");
+    newEngineWithStore(
+            persistentIteratingShape(controller.id()),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(controller),
+            new ReasoningAi(List.of(List.of("first pass"), List.of("second pass")), List.of("a", "b")),
+            store)
+        .run(SHAPE_ID, body, Audience.USER, ev -> {});
+
+    List<Map<String, Object>> records = assistantRecords(store, "conv-1");
+    assertEquals(2, records.size(), "one persisted turn per iteration");
+    assertEquals("first pass", firstBlockText(records.get(0)));
+    assertEquals("second pass", firstBlockText(records.get(1)), "no cross-iteration bleed");
+  }
+
+  @Test
+  @DisplayName("tempdoc 848 §2.2: reasoning is persisted-only — the done payload does NOT carry it")
+  void donePayloadCarriesNoReasoning() {
+    // It already streamed chunk-by-chunk; shipping it again on `done` would re-send the same fact on
+    // the wire and oblige every shape's done-payload vocabulary to declare it.
+    var events = new ArrayList<SseEvent>();
+    newEngine(
+            oneShotShape(List.of(), List.of(), List.of()),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(),
+            new ReasoningAi(List.of(List.of("thinking")), List.of("the answer")))
+        .run(SHAPE_ID, Map.of(), Audience.USER, events::add);
+
+    SseEvent done = events.stream().filter(e -> "done".equals(e.name())).findFirst().orElseThrow();
+    assertTrue(!done.payload().containsKey("reasoning"), "persisted-only, never on the done payload");
+    long reasoningChunks = events.stream().filter(e -> "reasoning_chunk".equals(e.name())).count();
+    assertEquals(1, reasoningChunks, "the live delivery path is unchanged");
+  }
+
+  @Test
+  @DisplayName(
+      "tempdoc 848 §1.7: a schema-constrained call with no explicit enableThinking resolves to"
+          + " DETERMINISTIC — it does not think, so nothing is persisted")
+  void schemaWithoutExplicitThinkingPersistsNoReasoning() {
+    var store = new RecordingStore();
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("sessionId", "conv-1");
+    body.put("schema", "{\"type\":\"object\"}");
+    var llm = new ScriptedAi(List.of("{}"));
+    newEngineWithStore(
+            persistentOneShotShape(),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(SingleHopController.INSTANCE),
+            llm,
+            store)
+        .run(SHAPE_ID, body, Audience.USER, ev -> {});
+
+    assertEquals(
+        Boolean.FALSE,
+        llm.samplingCalls.get(0).enableThinking(),
+        "no caller-supplied sampling → the schema constraint bases on DETERMINISTIC");
+    assertTrue(!assistantRecords(store, "conv-1").get(0).containsKey("reasoning"));
+  }
+
+  @Test
+  @DisplayName(
+      "tempdoc 848 §1.7: the CALLER's explicit request to think wins over the schema's default, and"
+          + " that turn's reasoning IS persisted — behaviour, not a leak")
+  void explicitEnableThinkingSurvivesTheSchemaAndPersists() {
+    // `parseSamplingParams` returns non-null whenever the body carries `enableThinking`, so
+    // `applySchemaConstraint` adds a response_format WITHOUT substituting DETERMINISTIC. A future
+    // reader porting extract onto the thinking rungs must not "fix" this into a suppression branch:
+    // the persisted key follows what the model RECEIVED, never what the request nominally wanted.
+    var store = new RecordingStore();
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("sessionId", "conv-1");
+    body.put("schema", "{\"type\":\"object\"}");
+    body.put("enableThinking", Boolean.TRUE);
+    var llm = new ReasoningAi(List.of(List.of("deliberate")), List.of("{}"));
+    newEngineWithStore(
+            persistentOneShotShape(),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(SingleHopController.INSTANCE),
+            llm,
+            store)
+        .run(SHAPE_ID, body, Audience.USER, ev -> {});
+
+    assertEquals(
+        Boolean.TRUE,
+        llm.samplingCalls.get(0).enableThinking(),
+        "the caller's explicit value survives the schema constraint");
+    assertEquals("deliberate", firstBlockText(assistantRecords(store, "conv-1").get(0)));
+  }
+
+  @Test
+  @DisplayName(
+      "tempdoc 848 §2.2b: turn N+1's LLM input carries assistant entries of EXACTLY {role, content}")
+  void llmInputProjectsAwayPersistenceOnlyKeys() {
+    // Without the boundary projection, every persisted extra — `reasoning`, and the pre-existing
+    // `id`/`hash`/`ts` — is re-sent to the server inside the OpenAI-compat `messages` body on the
+    // next turn of a PERSISTENT conversation: silent prompt inflation proportional to conversation
+    // length, in the one shape whose whole point is a long-lived thread.
+    var store = new ReplayingStore();
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("sessionId", "conv-1");
+    var llm = new ReasoningAi(List.of(List.of("turn one thinking")), List.of("first answer"));
+    var engine =
+        newEngineWithStore(
+            persistentOneShotShape(),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(SingleHopController.INSTANCE),
+            llm,
+            store);
+    engine.run(SHAPE_ID, body, Audience.USER, ev -> {});
+    // Sanity: turn 1 really persisted a reasoning array, so turn 2 has something to leak.
+    assertNotNull(assistantRecords(store, "conv-1").get(0).get("reasoning"));
+
+    engine.run(SHAPE_ID, body, Audience.USER, ev -> {});
+
+    assertEquals(2, llm.calls.size(), "two turns");
+    List<Map<String, Object>> secondInput = llm.calls.get(1);
+    List<Map<String, Object>> assistants =
+        secondInput.stream().filter(m -> "assistant".equals(m.get("role"))).toList();
+    assertEquals(1, assistants.size(), "turn 1's assistant message is in turn 2's context");
+    for (Map<String, Object> message : assistants) {
+      assertEquals(
+          java.util.Set.of("role", "content"),
+          message.keySet(),
+          "the model contract's keys and nothing else — no reasoning, no id/hash/ts");
+    }
+  }
+
+  private static List<Map<String, Object>> assistantRecords(RecordingStore store, String sessionId) {
+    return store.appended.getOrDefault(sessionId, List.of()).stream()
+        .filter(m -> "assistant".equals(m.get("role")))
+        .toList();
+  }
+
+  private static String firstBlockText(Map<String, Object> persisted) {
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> blocks = (List<Map<String, Object>>) persisted.get("reasoning");
+    assertNotNull(blocks, "expected the record to carry reasoning");
+    return (String) blocks.get(0).get("text");
+  }
+
   private ConversationEngine engineForExit(Exit exit, ConversationStore store) {
     List<ContextInjector> injectors = List.of();
     List<StreamConsumer> consumers = List.of();
@@ -1332,7 +1541,7 @@ final class SubstrateDrivenEngineTest {
   }
 
   /** Records appendMessage calls per session id and counts loadHistory calls. */
-  private static final class RecordingStore implements ConversationStore {
+  private static class RecordingStore implements ConversationStore {
     final Map<String, List<Map<String, Object>>> appended = new LinkedHashMap<>();
     final Map<String, List<String>> excludedSources = new LinkedHashMap<>();
     int loadHistoryCount;
@@ -1570,7 +1779,7 @@ final class SubstrateDrivenEngineTest {
     }
   }
 
-  private static final class ScriptedAi implements OnlineAiService {
+  private static class ScriptedAi implements OnlineAiService {
     final List<String> responses;
     final AtomicInteger callIndex = new AtomicInteger(0);
     final List<List<Map<String, Object>>> calls = new ArrayList<>();
@@ -1610,8 +1819,60 @@ final class SubstrateDrivenEngineTest {
       samplingCalls.add(request.sampling());
       int idx = callIndex.getAndIncrement();
       String text = idx < responses.size() ? responses.get(idx) : "";
-      sink.onContent().accept(text);
+      emit(sink, idx, text);
       sink.onComplete().accept("stop");
+    }
+
+    /** The per-call emission, overridable so a subclass can drive other sink channels first. */
+    void emit(StreamSink sink, int callIdx, String text) {
+      sink.onContent().accept(text);
+    }
+  }
+
+  /**
+   * Tempdoc 848 — a ScriptedAi that also drives the REASONING callback: per call, the reasoning
+   * chunks first (as a thinking model streams them), then the content. Extends the suite's existing
+   * capture surface ({@code calls} + {@code samplingCalls}) rather than a second stub shape.
+   */
+  private static final class ReasoningAi extends ScriptedAi {
+    private final List<List<String>> reasoningPerCall;
+
+    ReasoningAi(List<List<String>> reasoningPerCall, List<String> responses) {
+      super(responses);
+      this.reasoningPerCall = reasoningPerCall;
+    }
+
+    @Override
+    void emit(StreamSink sink, int callIdx, String text) {
+      if (callIdx < reasoningPerCall.size()) {
+        for (String reasoning : reasoningPerCall.get(callIdx)) {
+          sink.onReasoning().accept(reasoning);
+        }
+      }
+      super.emit(sink, callIdx, text);
+    }
+  }
+
+  /**
+   * Tempdoc 848 §2.2b — a store that REPLAYS what was written, enriched the way the real file store
+   * enriches ({@code id}/{@code hash}/{@code ts}), so a second turn's context is the same schemaless
+   * passthrough production sees. A store that returned {@code List.of()} could not observe the leak.
+   */
+  private static final class ReplayingStore extends RecordingStore {
+    private int seq;
+
+    @Override
+    public void appendMessage(String sessionId, String shapeId, Map<String, Object> message) {
+      Map<String, Object> enriched = new LinkedHashMap<>(message);
+      enriched.put("id", "msg-" + (++seq));
+      enriched.put("hash", "h" + seq);
+      enriched.put("ts", System.currentTimeMillis());
+      super.appendMessage(sessionId, shapeId, enriched);
+    }
+
+    @Override
+    public List<Map<String, Object>> loadHistory(String sessionId) {
+      return List.copyOf(appended.getOrDefault(sessionId, List.of()));
     }
   }
 

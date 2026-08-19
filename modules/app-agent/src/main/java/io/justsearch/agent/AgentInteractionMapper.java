@@ -5,6 +5,7 @@ import io.justsearch.agent.api.interaction.InteractionEvent;
 import io.justsearch.agent.api.interaction.InteractionEventKind;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -228,8 +229,129 @@ public final class AgentInteractionMapper {
                       "resultCount", payload.get("resultCount"),
                       "docIds", payload.get("docIds"),
                       "executedAt", payload.get("executedAt"))));
+      // Tempdoc 848 §2.4 — NOT dropped: reasoning chunks are FOLDED by `fromRunEvents` into blocks
+      // that ride on the turn they belong to. Stated as its own case rather than left to `default` so
+      // the vocabulary is legible — a per-chunk thread event would mean ~445 events for one turn.
+      case "reasoning_chunk" -> Optional.empty();
       default -> Optional.empty();
     };
+  }
+
+  /**
+   * Tempdoc 848 §2.4 — project a whole run's persisted events, folding its {@code reasoning_chunk}
+   * records into {@code {text, durationMs}} blocks that attach to the turn they belong to.
+   *
+   * <p>A read-time fold rather than a new durable event type: the journal ALREADY holds every chunk
+   * (`AgentRunStore.appendEvent` journals all of them), so a second durable representation would be
+   * the fork shape the surface registers exist to prevent.
+   *
+   * <p>Block boundaries key on the LLM STEP, not on bare contiguity. {@code "chunk"} (the journal
+   * name for {@code AgentEvent.TextChunk}) is TRANSPARENT: reasoning runs separated only by text
+   * coalesce into ONE block, with the intervening text excluded. This matters because reasoning and
+   * text share one stream — on a think-tag-leaking build {@code ThinkTagStreamFilter} reroutes inline
+   * {@code <think>} markup into the reasoning sink mid-stream, so naive contiguity would shatter one
+   * step into several blocks on one build family and not the other, for identical model behaviour.
+   * Every other event type ({@code tool_*}, {@code node_*}, {@code done}, {@code error}…) is a
+   * genuine step boundary and cuts the block.
+   *
+   * <p>{@code durationMs} carries the SAME semantic as the answer plane and the live controller:
+   * from the block's first reasoning token to the first non-reasoning output that follows it.
+   *
+   * <p>Blocks left unflushed at the end of the walk attach to the run's terminal event (its
+   * {@code ERROR} if it produced one, else its last event): what the model thought before a run was
+   * halted or failed was really produced — the ask path already records exactly that at all four of
+   * its terminals, and the two planes must not disagree about the same question.
+   */
+  public static List<InteractionEvent> fromRunEvents(
+      List<Map<String, Object>> records, String conversationId) {
+    List<InteractionEvent> out = new ArrayList<>();
+    List<Map<String, Object>> pending = new ArrayList<>();
+    StringBuilder runText = new StringBuilder();
+    Instant runStart = null;
+    Instant runFirstOutput = null;
+    Instant lastSeen = null;
+
+    for (Map<String, Object> record : records) {
+      String eventType = record.get("eventType") instanceof String s ? s : "";
+      Instant at = parseTs(record.get("timestamp"));
+      lastSeen = at;
+      if ("reasoning_chunk".equals(eventType)) {
+        if (runStart == null) {
+          runStart = at;
+        }
+        Map<String, Object> payload =
+            record.get("payload") instanceof Map<?, ?> m ? castMap(m) : Map.of();
+        runText.append(str(payload.get("text")));
+        continue;
+      }
+      if (runStart != null && runFirstOutput == null) {
+        runFirstOutput = at;
+      }
+      if (runStart != null && !"chunk".equals(eventType)) {
+        addBlock(pending, runText.toString(), runStart, runFirstOutput);
+        runText.setLength(0);
+        runStart = null;
+        runFirstOutput = null;
+      }
+      Optional<InteractionEvent> projected = fromRunEvent(record, conversationId);
+      if (projected.isEmpty()) {
+        continue;
+      }
+      InteractionEvent event = projected.get();
+      if (event.kind() == InteractionEventKind.ASSISTANT_MESSAGE && !pending.isEmpty()) {
+        out.add(withReasoning(event, pending));
+        pending = new ArrayList<>();
+      } else {
+        out.add(event);
+      }
+    }
+
+    if (runStart != null) {
+      addBlock(pending, runText.toString(), runStart, runFirstOutput != null ? runFirstOutput : lastSeen);
+    }
+    if (!pending.isEmpty() && !out.isEmpty()) {
+      int target = out.size() - 1;
+      for (int i = out.size() - 1; i >= 0; i--) {
+        if (out.get(i).kind() == InteractionEventKind.ERROR) {
+          target = i;
+          break;
+        }
+      }
+      out.set(target, withReasoning(out.get(target), pending));
+    }
+    return out;
+  }
+
+  /** Append one folded block, unless the run produced no actual thinking text. */
+  private static void addBlock(
+      List<Map<String, Object>> blocks, String text, Instant start, Instant end) {
+    if (text.isBlank()) {
+      return;
+    }
+    long durationMs = end == null ? 0L : Math.max(0L, end.toEpochMilli() - start.toEpochMilli());
+    Map<String, Object> block = new LinkedHashMap<>();
+    block.put("text", text);
+    block.put("durationMs", durationMs);
+    blocks.add(block);
+  }
+
+  /**
+   * Tempdoc 848 §2.4 — attributes are written by RECONSTRUCTION, never mutation:
+   * {@code InteractionEvent}'s compact constructor does {@code Map.copyOf}, so the map the delegate
+   * returned is immutable and {@code put} on it would throw at runtime.
+   */
+  private static InteractionEvent withReasoning(
+      InteractionEvent event, List<Map<String, Object>> blocks) {
+    Map<String, Object> merged = new LinkedHashMap<>(event.attributes());
+    merged.put("reasoning", List.copyOf(blocks));
+    return new InteractionEvent(
+        event.id(),
+        event.conversationId(),
+        event.occurredAt(),
+        event.kind(),
+        event.originator(),
+        event.content(),
+        merged);
   }
 
   private static InteractionEvent toolActivity(

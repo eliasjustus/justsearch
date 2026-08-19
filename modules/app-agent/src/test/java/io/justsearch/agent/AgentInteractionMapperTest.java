@@ -221,4 +221,150 @@ final class AgentInteractionMapperTest {
         AgentInteractionMapper.fromRunEvent(rec("tool_call_approved", Map.of("callId", "c")), CONV)
             .isEmpty());
   }
+
+  // ==================== Tempdoc 848 §2.4 — the reasoning fold ====================
+
+  private static Map<String, Object> at(String isoTime, String eventType, Map<String, Object> payload) {
+    return Map.of("timestamp", isoTime, "eventType", eventType, "payload", payload);
+  }
+
+  private static Map<String, Object> reasoningAt(String isoTime, String text) {
+    return at(isoTime, "reasoning_chunk", Map.of("text", text));
+  }
+
+  @SuppressWarnings("unchecked")
+  private static List<Map<String, Object>> blocksOf(InteractionEvent event) {
+    Object raw = event.attributes().get("reasoning");
+    assertTrue(raw instanceof List<?>, "expected folded reasoning blocks on " + event.kind());
+    return (List<Map<String, Object>>) raw;
+  }
+
+  @Test
+  @DisplayName("848 §2.4: a bare reasoning_chunk is still no thread event of its own (445 chunks, 0 events)")
+  void reasoningChunkAloneProjectsNothing() {
+    assertTrue(
+        AgentInteractionMapper.fromRunEvent(reasoningAt("2026-01-01T00:00:01Z", "hm"), CONV)
+            .isEmpty(),
+        "reasoning is folded onto a turn, never emitted per chunk");
+  }
+
+  @Test
+  @DisplayName("848 §2.4: a step boundary CUTS a block; the fold attaches both to the answer turn")
+  void reasoningFoldsIntoPerStepBlocks() {
+    List<InteractionEvent> events =
+        AgentInteractionMapper.fromRunEvents(
+            List.of(
+                reasoningAt("2026-01-01T00:00:01Z", "first "),
+                reasoningAt("2026-01-01T00:00:02Z", "thought"),
+                at("2026-01-01T00:00:04Z", "tool_exec_completed", Map.of("callId", "c1", "success", true)),
+                reasoningAt("2026-01-01T00:00:06Z", "second thought"),
+                at("2026-01-01T00:00:09Z", "done", Map.of("finalResponse", "the answer"))),
+            CONV);
+
+    InteractionEvent answer =
+        events.stream()
+            .filter(e -> e.kind() == InteractionEventKind.ASSISTANT_MESSAGE)
+            .findFirst()
+            .orElseThrow();
+    List<Map<String, Object>> blocks = blocksOf(answer);
+    assertEquals(2, blocks.size(), "the tool step cut the first block from the second");
+    assertEquals("first thought", blocks.get(0).get("text"));
+    assertEquals("second thought", blocks.get(1).get("text"));
+    // §2.1's ONE duration semantic: first reasoning token → first NON-reasoning output that follows.
+    // Measured to the tool event (3000ms), NOT to the block's own last chunk (which would say 1000ms,
+    // and 0ms for any single-chunk block).
+    assertEquals(3000L, ((Number) blocks.get(0).get("durationMs")).longValue());
+    assertEquals(3000L, ((Number) blocks.get(1).get("durationMs")).longValue());
+    // A-3: the attributes were reconstructed, not mutated — `InteractionEvent` copies them
+    // immutably, so a `put` on the delegate's map would have thrown before reaching this line.
+    assertEquals("the answer", answer.content());
+  }
+
+  @Test
+  @DisplayName("848 §2.4 (A-4): text chunks are TRANSPARENT — one LLM step stays one block")
+  void textChunksDoNotShatterABlock() {
+    // Reasoning and text share one stream, and a think-tag-leaking build reroutes inline <think>
+    // markup into the reasoning sink mid-stream. Cutting on bare contiguity would yield a different
+    // block count per build family for identical model behaviour.
+    List<InteractionEvent> events =
+        AgentInteractionMapper.fromRunEvents(
+            List.of(
+                reasoningAt("2026-01-01T00:00:01Z", "part one "),
+                at("2026-01-01T00:00:02Z", "chunk", Map.of("text", "VISIBLE ANSWER TEXT")),
+                reasoningAt("2026-01-01T00:00:03Z", "part two"),
+                at("2026-01-01T00:00:04Z", "done", Map.of("finalResponse", "the answer"))),
+            CONV);
+
+    List<Map<String, Object>> blocks =
+        blocksOf(
+            events.stream()
+                .filter(e -> e.kind() == InteractionEventKind.ASSISTANT_MESSAGE)
+                .findFirst()
+                .orElseThrow());
+    assertEquals(1, blocks.size(), "one step, one block");
+    assertEquals("part one part two", blocks.get(0).get("text"), "the visible text is excluded");
+  }
+
+  @Test
+  @DisplayName("848 §2.4 (D-7): a run that ERRORED keeps the thinking it produced")
+  void erroredRunKeepsItsReasoning() {
+    // The ask path already records blocks at all four terminals, halt included, because what the
+    // model thought before the reader stopped it was really produced. The two planes must agree.
+    List<InteractionEvent> events =
+        AgentInteractionMapper.fromRunEvents(
+            List.of(
+                reasoningAt("2026-01-01T00:00:01Z", "half a thought"),
+                at("2026-01-01T00:00:03Z", "error", Map.of("error", "blew up", "errorCode", "X"))),
+            CONV);
+
+    InteractionEvent error =
+        events.stream()
+            .filter(e -> e.kind() == InteractionEventKind.ERROR)
+            .findFirst()
+            .orElseThrow();
+    List<Map<String, Object>> blocks = blocksOf(error);
+    assertEquals(1, blocks.size());
+    assertEquals("half a thought", blocks.get(0).get("text"));
+    assertEquals(2000L, ((Number) blocks.get(0).get("durationMs")).longValue());
+  }
+
+  @Test
+  @DisplayName("848 §2.4: a run that never reasoned carries no reasoning attribute at all")
+  void runWithoutReasoningCarriesNoAttribute() {
+    List<InteractionEvent> events =
+        AgentInteractionMapper.fromRunEvents(
+            List.of(
+                at("2026-01-01T00:00:01Z", "chunk", Map.of("text", "streamed")),
+                at("2026-01-01T00:00:02Z", "done", Map.of("finalResponse", "the answer"))),
+            CONV);
+
+    assertEquals(1, events.size(), "the chunk is still transient");
+    assertTrue(
+        !events.get(0).attributes().containsKey("reasoning"),
+        "no key — absence is the honest reading, not an empty list");
+  }
+
+  @Test
+  @DisplayName("848 §2.4: the fold preserves every event the per-record projection produced")
+  void foldIsAProjectionNotAFilter() {
+    List<Map<String, Object>> records =
+        List.of(
+            at("2026-01-01T00:00:01Z", "tool_call_proposed", Map.of("callId", "c1", "toolName", "grep")),
+            reasoningAt("2026-01-01T00:00:02Z", "consider"),
+            at("2026-01-01T00:00:03Z", "tool_exec_completed", Map.of("callId", "c1", "success", true)),
+            at("2026-01-01T00:00:04Z", "done", Map.of("finalResponse", "the answer")));
+
+    List<InteractionEvent> folded = AgentInteractionMapper.fromRunEvents(records, CONV);
+    List<InteractionEvent> perRecord =
+        records.stream()
+            .map(r -> AgentInteractionMapper.fromRunEvent(r, CONV))
+            .filter(java.util.Optional::isPresent)
+            .map(java.util.Optional::get)
+            .toList();
+
+    assertEquals(
+        perRecord.stream().map(InteractionEvent::id).toList(),
+        folded.stream().map(InteractionEvent::id).toList(),
+        "same events, same order — the fold only decorates the turn with its thinking");
+  }
 }

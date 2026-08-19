@@ -4,6 +4,27 @@ export interface ReasoningBlock {
   durationMs: number;
 }
 
+/**
+ * Tempdoc 848 §2.5 — the ONE parser for a persisted reasoning array (`attributes.reasoning` on an
+ * assistant record). Both windows import it: two independent `typeof x.text === 'string'` walks in
+ * two views is exactly the drift the register discipline exists to stop. Malformed elements are
+ * dropped rather than guessed at — the record is the authority, and half a block is not a block.
+ */
+export function reasoningBlocksFromRecord(value: unknown): ReasoningBlock[] {
+  if (!Array.isArray(value)) return [];
+  const blocks: ReasoningBlock[] = [];
+  for (const raw of value) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const entry = raw as Record<string, unknown>;
+    if (typeof entry.text !== 'string' || entry.text === '') continue;
+    const durationMs = typeof entry.durationMs === 'number' && Number.isFinite(entry.durationMs)
+      ? entry.durationMs
+      : 0;
+    blocks.push({ text: entry.text, durationMs });
+  }
+  return blocks;
+}
+
 export class ReasoningController {
   reasoningText = '';
   isThinking = false;

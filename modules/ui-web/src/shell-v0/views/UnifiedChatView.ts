@@ -299,7 +299,7 @@ import {
   clearLastViewedConversation,
   readLastViewedConversation,
 } from '../controllers/lastViewedConversation.js';
-import { ReasoningController } from '../controllers/ReasoningController.js';
+import { ReasoningController, reasoningBlocksFromRecord } from '../controllers/ReasoningController.js';
 // Tempdoc 565 §17 — the ONE run-step presentation projection + the ONE run-node primitive. The spine
 // node and the trace node compose the descriptor (tone + glyph + label) instead of hand-authoring a
 // status dot (no `statusAccent` here any more — that authority is consumed only inside the projector).
@@ -5213,6 +5213,16 @@ export class UnifiedChatView extends JfElement {
                 answer. Exactly one of the two ever renders for a given turn — the ONE authority, split
                 by call site, never a second simultaneous line. */ ''}
             ${frame === 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt) : nothing}
+            ${/* Tempdoc 848 §2.6 — the agent run's thinking, folded from the run journal onto this
+                answer event by `AgentInteractionMapper.fromRunEvents`. Same position as the chat
+                path: before the answer body. */ ''}
+            ${reasoningBlocksFromRecord(it.attributes.reasoning).map(
+              (block) => html`<jf-reasoning-block
+                data-testid="chat-turn-reasoning"
+                .text=${block.text}
+                .durationMs=${block.durationMs}
+              ></jf-reasoning-block>`,
+            )}
             <jf-markdown-block .text=${it.content} .citations=${marks} frame=${frame}></jf-markdown-block>
             ${frame !== 'transform' ? this.renderAnswerFrameLine(frame, degraded, receipt) : nothing}
             ${this.renderGroundingBadge(
@@ -5255,6 +5265,7 @@ export class UnifiedChatView extends JfElement {
           idx >= 0
             ? this.thread[idx]!
             : { role: 'assistant', content: it.content, shapeId, id: it.id };
+        const recordReasoning = reasoningBlocksFromRecord(it.attributes.reasoning);
         const enriched: ThreadMessage = {
           ...base,
           // Tempdoc 621 Phase 4-full — the turn's shape on the record path is the window's CURRENT shape
@@ -5269,6 +5280,10 @@ export class UnifiedChatView extends JfElement {
           sources: ragSources,
           claims: this.claimsFromRecord(it.attributes.claimMatches),
           citations: this.matchesFromRecord(it.attributes.claimMatches),
+          // Tempdoc 848 §2.6 — record-first, live fallback: the record is the authority for a
+          // reloaded turn (where `base` carries none), and in-session the `attributes.live`
+          // short-circuit above means this path is effectively reload-only.
+          reasoning: recordReasoning.length > 0 ? recordReasoning : base.reasoning,
           // Tempdoc 836 S2S3-A.6f — the RELOADED turn reads its coverage facts from the same
           // persisted payload the live turn emitted, so the two render paths cannot disagree about
           // whether verification ran.
@@ -5570,6 +5585,17 @@ export class UnifiedChatView extends JfElement {
       ${floorDivider}
       <div class="message assistant${inheritedClass}" data-item-id=${m.id ?? nothing} data-msg-idx=${idx}>
         <div class="message-shape-tag">${shapeLabel}</div>
+        ${/* Tempdoc 848 §2.6 — the turn's thinking, rendered from the COMMITTED/record message so it
+            survives `done` and a reload. It keeps the position `renderStreamingBlock` gives it (after
+            the shape tag, before the answer), so the block does not move as the turn settles. The
+            streaming render stays where it is: the two are complementary phases of one turn. */ ''}
+        ${(m.reasoning ?? []).map(
+          (block) => html`<jf-reasoning-block
+            data-testid="chat-turn-reasoning"
+            .text=${block.text}
+            .durationMs=${block.durationMs}
+          ></jf-reasoning-block>`,
+        )}
         ${m.standaloneQuestion
           ? html`<div class="rewrite-note" role="note">
               Interpreted as: <em>${m.standaloneQuestion}</em>
@@ -5985,6 +6011,12 @@ export class UnifiedChatView extends JfElement {
         if (this.coverage) msg.coverage = this.coverage;
         if (this.sourceCoverage.length > 0) msg.sourceCoverage = [...this.sourceCoverage];
         if (this.ragMeta) msg.ragMeta = { ...this.ragMeta };
+        // Tempdoc 848 §2.6 — the thinking the reader just watched belongs to the turn, not to the
+        // stream: copy it onto the committed message (same conditional-copy idiom as citations
+        // above) so it survives `done` instead of unmounting with the streaming block.
+        if (this.reasoning.reasoningBlocks.length > 0) {
+          msg.reasoning = [...this.reasoning.reasoningBlocks];
+        }
         // Tempdoc 603 C2 — pin the decontextualized question onto the committed turn so the
         // "Interpreted as: …" line persists past the live stream (mirrors citations/ragMeta).
         if (this.rewriteNote) msg.standaloneQuestion = this.rewriteNote.standalone;

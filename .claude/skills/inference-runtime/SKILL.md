@@ -546,9 +546,9 @@ When `USE_THINKING=true`, `LlamaServerOps` adds `--reasoning-format deepseek` to
 | `onComplete` | Stream finished |
 | `onError` | Stream error |
 
-`AgentLlmCaller` (the agent loop's LLM-caller collaborator) accumulates reasoning chunks into a `StringBuilder` and logs the full reasoning at DEBUG level after each agent turn. Reasoning is not exposed in the UI response.
+`AgentLlmCaller` (the agent loop's LLM-caller collaborator) accumulates reasoning chunks into a `StringBuilder` and logs the full reasoning at DEBUG level after each agent turn. Its durable form is the run journal: `AgentRunStore` records every `reasoning_chunk` event, and `AgentInteractionMapper.fromRunEvents` folds those records into per-step `{text, durationMs}` blocks at read time, attaching them to the turn they belong to (a read-time projection, never a second durable representation).
 
-On the conversation path, `ConversationEngine` forwards each reasoning chunk to the SSE sink as a `reasoning_chunk` event, which the chat surfaces render as a collapsible reasoning block while the turn streams. Reasoning is **not persisted** to the conversation record — a reloaded conversation shows the turn without its trace, which is the accepted behaviour, not a defect.
+On the conversation path, `ConversationEngine` forwards each reasoning chunk to the SSE sink as a `reasoning_chunk` event AND accumulates it, so `persistedAssistant` writes the turn's thinking onto the conversation record as `reasoning: [{text, durationMs}]` — absent when the model did not think. Both surfaces therefore render the same blocks live and after a reload, from one authority. The persisted key is stripped again at the LLM-input boundary (`buildLlmInput` projects every context message to the model contract's keys), so a persisted turn's reasoning is never re-sent to the server on the next turn of a conversation.
 
 ### Sampling Parameters
 
