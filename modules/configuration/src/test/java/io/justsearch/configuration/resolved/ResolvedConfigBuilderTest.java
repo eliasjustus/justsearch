@@ -715,6 +715,9 @@ final class ResolvedConfigBuilderTest {
               branch_fusion_strategy: rrf
               branch_cc_weight_chunk: 0.65
               branch_chunk_min_weight_multiplier: 0.50
+              branch_ramp:
+                full_weight_max_tokens: 2000
+                zero_weight_min_tokens: 6000
           """;
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
       builder.contributeYaml(parseYaml(yaml));
@@ -726,6 +729,8 @@ final class ResolvedConfigBuilderTest {
       assertEquals("rrf", config.hybridSearch().branchFusionStrategy());
       assertEquals(0.65, config.hybridSearch().branchCcWeightChunk(), 0.001);
       assertEquals(0.50, config.hybridSearch().branchChunkMinWeightMultiplier(), 0.001);
+      assertEquals(2000L, config.hybridSearch().branchRampFullWeightMaxTokens());
+      assertEquals(6000L, config.hybridSearch().branchRampZeroWeightMinTokens());
     }
 
     @Test
@@ -1645,6 +1650,75 @@ final class ResolvedConfigBuilderTest {
         else System.clearProperty("justsearch.splade.gpu_enabled");
         if (prevPolicy != null) System.setProperty("policy.gpu_acceleration_enabled", prevPolicy);
         else System.clearProperty("policy.gpu_acceleration_enabled");
+      }
+    }
+
+    @Test
+    @DisplayName(
+        "854 W1: branch-ramp bounds default to 1024/4096 — byte-identical to the pre-split"
+            + " shared-constant defaults")
+    void branchRampBoundsDefault() {
+      ResolvedConfig config = new ResolvedConfigBuilder().contributeEnvRegistry().build();
+      assertEquals(1024L, config.hybridSearch().branchRampFullWeightMaxTokens());
+      assertEquals(4096L, config.hybridSearch().branchRampZeroWeightMinTokens());
+    }
+
+    @Test
+    @DisplayName(
+        "854 W1 divergence pin: raising the SPLADE-only zero_weight_min_tokens sysprop must NOT"
+            + " move the (separately keyed) branch-ramp bound — the F-036 §K wrong-gate is fixed")
+    void branchRampBoundsUnaffectedBySpladeBoundSysprop() {
+      // Before tempdoc 854 W1, justsearch.splade.zero_weight_min_tokens was the ONLY bound and
+      // HybridFusionUtils read it directly via Long.getLong for BOTH the Stage-3A SPLADE fade and
+      // the Stage-3B branch ramp (784 §K). This key is not even resolved through ResolvedConfig —
+      // it never was — but a hypothetical future "wire it through the config chain" fix must NOT
+      // let raising it also move index.hybrid.branch_ramp.zero_weight_min_tokens.
+      String prevSpladeBound = System.getProperty("justsearch.splade.zero_weight_min_tokens");
+      String prevBranchRampBound =
+          System.getProperty("index.hybrid.branch_ramp.zero_weight_min_tokens");
+      try {
+        System.setProperty("justsearch.splade.zero_weight_min_tokens", "20000");
+        System.clearProperty("index.hybrid.branch_ramp.zero_weight_min_tokens");
+
+        ResolvedConfig config = new ResolvedConfigBuilder().contributeEnvRegistry().build();
+
+        assertEquals(
+            4096L,
+            config.hybridSearch().branchRampZeroWeightMinTokens(),
+            "the branch ramp's own bound must stay at its default; it has no key overlap with"
+                + " the SPLADE-only sysprop");
+      } finally {
+        if (prevSpladeBound != null) {
+          System.setProperty("justsearch.splade.zero_weight_min_tokens", prevSpladeBound);
+        } else {
+          System.clearProperty("justsearch.splade.zero_weight_min_tokens");
+        }
+        if (prevBranchRampBound != null) {
+          System.setProperty(
+              "index.hybrid.branch_ramp.zero_weight_min_tokens", prevBranchRampBound);
+        } else {
+          System.clearProperty("index.hybrid.branch_ramp.zero_weight_min_tokens");
+        }
+      }
+    }
+
+    @Test
+    @DisplayName(
+        "854 W1: the branch-ramp bound has its OWN sysprop/env key and can be set independently")
+    void branchRampBoundsSettableIndependently() {
+      String prevBound = System.getProperty("index.hybrid.branch_ramp.zero_weight_min_tokens");
+      try {
+        System.setProperty("index.hybrid.branch_ramp.zero_weight_min_tokens", "8192");
+        ResolvedConfig config = new ResolvedConfigBuilder().contributeEnvRegistry().build();
+        assertEquals(8192L, config.hybridSearch().branchRampZeroWeightMinTokens());
+        // SPLADE's own bound (not wired through ResolvedConfig) is unaffected by construction —
+        // this class never resolves justsearch.splade.zero_weight_min_tokens at all.
+      } finally {
+        if (prevBound != null) {
+          System.setProperty("index.hybrid.branch_ramp.zero_weight_min_tokens", prevBound);
+        } else {
+          System.clearProperty("index.hybrid.branch_ramp.zero_weight_min_tokens");
+        }
       }
     }
   }
