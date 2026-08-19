@@ -239,8 +239,8 @@ The `reload` command (MCP: `justsearch.dev.reload`) supports iterative developme
 | Field | Type | Description |
 | :--- | :--- | :--- |
 | `hotSwapOk` | boolean | Whether JDWP class redefinition succeeded |
-| `structuralChangeDetected` | boolean | True when HotSwapPush output contains "added/removed methods or fields" |
-| `restartRequired` | string | Present when `hotSwapOk === false` and structural changes detected. Message: `"RESTART REQUIRED: structural changes detected"` |
+| `structuralChangeDetected` | boolean | True when the push output carries a structural refusal — HotSwapPush's own "added/removed methods or fields" wording **or** the JVM's, `HotSwap not supported by target VM: <capability> not implemented` (add/delete method, schema change, hierarchy change, …). Matching only the first was the live defect: the JVM's wording is what a real structural change prints, so the flag stayed false and the call reported a generic `HOTSWAP_FAILED` (tempdoc 844 F1). |
+| `restartRequired` | string | Present when structural changes were detected. Message: `"Structural change (added/removed methods or fields) — standard HotSwap cannot apply it. Restart the dev stack."` |
 
 When `hotSwapOk === false` and structural changes are detected, the Worker continues running with old bytecode. A full dev stack restart is required to pick up the new code.
 

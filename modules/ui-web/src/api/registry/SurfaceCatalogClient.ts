@@ -15,7 +15,6 @@
  *    the catalog.
  *  - `listSurfaces()`: snapshot of all entries.
  *  - `listSurfacesByPlacement(placement)`: filtered by chrome zone.
- *  - `listSurfacesByAudience(audience)`: filtered by audience.
  *  - `onSurfaceCatalogChange(listener)`: invoked after a fresh fetch updates
  *    the in-memory catalog; ALSO the V1.5 hot-reload teardown hook per
  *    slice 449 §6.2 (when 8e Phase 3 ships, surface mutations flow through
@@ -385,11 +384,6 @@ export function listSurfaces(): Surface[] {
 /** Filtered by chrome zone — used by per-zone dispatchers. */
 export function listSurfacesByPlacement(placement: Placement): Surface[] {
   return listSurfaces().filter((s) => s.placement === placement);
-}
-
-/** Filtered by audience — used by the chrome's `visibleAudienceSet` filter. */
-export function listSurfacesByAudience(audience: Audience): Surface[] {
-  return listSurfaces().filter((s) => s.audience === audience);
 }
 
 /**

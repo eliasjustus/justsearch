@@ -14,6 +14,7 @@ from pathlib import Path
 import httpx
 import psutil
 
+from . import run_register
 from ._paths import REPO_ROOT, shared_models_dir
 
 log = logging.getLogger(__name__)
@@ -279,6 +280,21 @@ def _boot_and_wait(
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+    )
+
+    # Tempdoc 844 D3: declare this backend to the other dev-stack lifecycle, which otherwise
+    # cannot see it (§6.1 — an invisible runHeadlessEval already contaminated a measurement).
+    # Registered at SPAWN, not after health: the JVM holds ports, the data dir and the GPU from
+    # this moment, and that is exactly the window a neighbour's "is the machine free?" check must
+    # not miss. The record makes no liveness claim, so a still-booting backend reads as
+    # "registered, process alive, not yet answering" rather than as up. Best-effort by design —
+    # see run_register's failure policy.
+    run_register.register_backend(
+        pid=proc.pid,
+        port=port,
+        repo_root=resolved_root,
+        data_dir=resolved_data,
+        inference_requested=llm,
     )
 
     # 369: Single deadline for all readiness checks (index health + inference).
@@ -569,6 +585,11 @@ def stop_backend(proc: subprocess.Popen, data_dir: Path | None = None) -> None:
     item 4) — when ``data_dir`` is given, also runs the double-keyed orphan
     sweep so the Worker's Lucene handle and watched_roots.json writer are
     actually gone, not just the head's process tree.
+
+    Tempdoc 844 D3: also drops this backend's foreign-run record. Keyed by ``proc.pid`` alone so
+    every existing call site is covered without threading a handle through; idempotent, so the
+    failure paths inside ``_boot_and_wait``/``_run_with_cache`` (which stop a proc that may never
+    have registered) are safe.
     """
     if proc.poll() is not None:
         log.info("Backend already exited (rc=%d)", proc.returncode)
@@ -591,8 +612,19 @@ def stop_backend(proc: subprocess.Popen, data_dir: Path | None = None) -> None:
 
         log.info("Backend stopped")
 
-    if data_dir is not None:
-        _sweep_orphan_worker(data_dir)
+    # Tempdoc 844 S2: sweep FIRST, then retire the record. The earlier ordering rested on a comment
+    # ("the backend is already dead by here") that contradicts this function's own docstring: the
+    # Worker JVM is a grandchild that has been observed to survive the tree kill (tempdoc 711
+    # item 4), which is why the sweep exists at all. Unregistering first left a window — seconds,
+    # the sweep waits up to 10 — in which a GPU-holding orphan was running with nothing on the
+    # machine declaring it: the exact blind spot the register was added to close. In `finally`, so
+    # a sweep that raises still retires the record instead of leaving one behind that names a
+    # launcher pid which is already gone.
+    try:
+        if data_dir is not None:
+            _sweep_orphan_worker(data_dir)
+    finally:
+        run_register.unregister_backend(proc.pid)
 
 
 def _read_lock_metadata(lock_file: Path) -> tuple[int, str | None] | None:

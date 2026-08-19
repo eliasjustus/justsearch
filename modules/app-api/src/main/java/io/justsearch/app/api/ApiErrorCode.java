@@ -419,6 +419,14 @@ public enum ApiErrorCode {
     /** Failed to restart the worker process. */
     WORKER_RESTART_FAILED(ErrorClass.PERMANENT),
 
+    /**
+     * The worker's bounded boot-recovery budget is spent, so a restart request was declined
+     * (tempdoc 825 review). Deliberately not {@code SERVICE_UNAVAILABLE}: that class is
+     * {@code TRANSIENT}, and the live leg showed the wire saying {@code retryable: true} for a state
+     * where a retried request provably returns the same answer until the application is restarted.
+     */
+    WORKER_RECOVERY_EXHAUSTED(ErrorClass.PERMANENT),
+
     /** Settings store is temporarily unavailable. */
     SETTINGS_UNAVAILABLE(ErrorClass.TRANSIENT),
 

@@ -230,6 +230,16 @@ const CAUSE_ROWS: ReadonlyArray<{
     severity: 'info',
   },
   { code: 'worker.spawn.failed', wording: 'The knowledge server failed to start', severity: 'error' },
+  // Tempdoc 825 — the terminal twin of the row above: it failed to start AND the bounded boot-recovery
+  // budget is spent, so nothing is retrying any more. Distinct wording is the whole point of the code:
+  // `worker.spawn.failed` now means "failed, recovery pending or in flight", and telling a user that
+  // while the Head keeps re-attempting reads as a dead end it isn't. No one-click remedy — a respawn is
+  // exactly what just failed four times ⇒ Open-Health fallback, mirroring worker.restart_exhausted.
+  {
+    code: 'worker.spawn_recovery_exhausted',
+    wording: 'The knowledge server failed to start and could not be recovered',
+    severity: 'error',
+  },
   // Tempdoc 627 — transient: a supervised restart is in flight. Calm (info) + no remedy — it self-recovers;
   // the verdict promotes this to a "Restarting…" transitioning state so a routine self-heal isn't alarming.
   {
@@ -478,6 +488,9 @@ const RETRIEVAL_IMPAIRING_CODES: ReadonlySet<string> = new Set([
   'worker.recovering',
   'worker.spawn.failed',
   'worker.restart_exhausted',
+  // Tempdoc 825 — the boot-recovery budget is spent and no worker is serving. Same rule as its
+  // siblings: omission would let the banner claim "search is fully working" over nothing at all.
+  'worker.spawn_recovery_exhausted',
   // Tempdoc 837 S3 — same rule, four more ways for the knowledge server not to be serving. Omission
   // is not neutral here: a recognized row outside this set is classified as NOT impairing, which
   // would let the banner claim "search is fully working" while nothing is serving it.

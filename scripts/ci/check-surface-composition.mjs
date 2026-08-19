@@ -53,25 +53,7 @@ export const REGISTER = 'governance/surface-composition.v1.json';
  * moment the underlying disagreement is settled. `core.search-v3-surface` and `core.unified-chat-surface`
  * are deliberately NOT here — those are the ids S0 exists to protect.
  */
-export const KNOWN_PARITY_DRIFT = [
-  {
-    id: 'core.health-surface',
-    corePlugin: { audience: 'OPERATOR', placement: 'DEEPLINK' },
-    surfaceCatalog: { audience: 'USER', placement: 'DEEPLINK' },
-    note:
-      'Pre-dates this leg (observed 2026-08-19, tempdoc 852 S0). The FE re-declaration wins in the '
-      + 'shell, so Health is OPERATOR-visible there while the wire catalog declares USER. Resolving it '
-      + 'is a product decision about who sees Health, not a gate fix — logged to the observations inbox.',
-  },
-  {
-    id: 'core.activity-surface',
-    corePlugin: { audience: 'OPERATOR', placement: 'DEEPLINK' },
-    surfaceCatalog: { audience: 'USER', placement: 'DEEPLINK' },
-    note:
-      'Pre-dates this leg (observed 2026-08-19, tempdoc 852 S0). Same shape as core.health-surface: the '
-      + 'FE says OPERATOR, the wire catalog says USER, and which one is right is an owner call.',
-  },
-];
+export const KNOWN_PARITY_DRIFT = [];
 
 /** Strip `//` and block comments so a commented-out declaration cannot count as one. */
 export function stripComments(source) {

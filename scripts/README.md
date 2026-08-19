@@ -100,14 +100,12 @@ There is no single "canonical gate" wrapper (slice 3a-1-8f §B.12 + §B.14, 2026
 
 ## MCP Integration
 
-`scripts/dev/justsearch-dev-mcp.mjs` provides Model Context Protocol integration for Claude Code (registered in `.mcp.json` as `justsearch-dev`):
+`scripts/dev/justsearch-dev-mcp.mjs` provides Model Context Protocol integration for Claude Code (registered in `.mcp.json` as `justsearch-dev`).
 
-- `justsearch_dev_start` — Start dev server
-- `justsearch_dev_stop` — Stop dev server
-- `justsearch_dev_status` — Check server health
-- `justsearch_dev_wait_ready` — Wait for backend readiness
-- `justsearch_dev_tail_log` — Tail server logs
-- `justsearch_dev_capture_evidence` — Capture EvidenceBundle
+The tool inventory is **not** repeated here — it is in
+[docs/reference/contributing/mcp-dev-tools.md](../docs/reference/contributing/mcp-dev-tools.md),
+which `scripts/ci/check-dev-mcp-doc-sync.mjs` asserts against the running server. (This list was one
+of four forked inventories, all of them stale — tempdoc 844 §6.3.)
 
 ## Further Reading
 

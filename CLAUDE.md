@@ -170,9 +170,10 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | guard-string register (`execution-surfaces`/`operation-surfaces`) | `--gate register-guard-resolution` |
 | `LifecycleReasonCode.java` / `readinessNotice.ts` | `check-readiness-reason-codes` |
 | search-degradation reason-code vocabularies | `check-search-degradation-reason-codes` |
+| `justsearch-dev-mcp/**` | `check-dev-mcp-doc-sync` |
 | `StoreCatalog.java` · store construction sites | `check-store-recoverability` |
 | `UnifiedChatView.ts` / `CoreConversationShapeCatalog.java` | `check-intent-tier-coverage` |
-| **`modules/ui-web/src/**`** (ui-web gate set, incl. shell-v0 subsets) | pushed on edit by the consult hook — authority: the `ui-web-gates` recipe in `governance/consult-register.v1.json` (tempdoc 681 relocation) |
+| **`modules/ui-web/src/**`** (ui-web gate set) | pushed by the consult hook — authority: the `ui-web-gates` recipe in `governance/consult-register.v1.json` |
 | ui-shot harness · new RAIL surface | `check-ui-step-coverage` |
 
 ## Common Pitfalls

@@ -484,8 +484,9 @@ public final class WorkerSpawner implements Closeable {
             log.info("Added custom JVM options from JUSTSEARCH_JVM_OPTS: {}", customJvmOpts);
         }
 
-        // Dev hot-reload support (Phase 2 — tempdoc 305)
-        addDevHotReloadFlags(cmd);
+        // Dev hot-reload support (Phase 2 — tempdoc 305). Returns the classes dir when hot reload
+        // is on (null otherwise), because it also has to go on the classpath below.
+        Path devHotReloadClassesDir = addDevHotReloadFlags(cmd);
 
         // Add signal bus path
         cmd.add("-Djustsearch.worker.signal_path=" + signalBus.signalPath().toAbsolutePath());
@@ -583,7 +584,7 @@ public final class WorkerSpawner implements Closeable {
         // Worker classpath — use lib/* wildcard; JVM launcher expands it (not the shell).
         // Must be a plain String, not a Path, to avoid InvalidPathException on Windows.
         cmd.add("-cp");
-        cmd.add(config.workerLibDir().toAbsolutePath() + java.io.File.separator + "*");
+        cmd.add(buildWorkerClasspath(config.workerLibDir(), devHotReloadClassesDir));
         cmd.add("io.justsearch.indexerworker.IndexerWorker");
 
         return cmd;
@@ -927,30 +928,65 @@ public final class WorkerSpawner implements Closeable {
         return javaHome.resolve("bin").resolve(isWindows ? "java.exe" : "java").toString();
     }
 
-    /**
-     * Adds dev hot-reload JVM flags for Phase 2 classloader restart (tempdoc 305).
-     *
-     * <p>When {@code JUSTSEARCH_DEV_HOTRELOAD=true} (env var), enables the Worker's
-     * {@code DevReloadManager} and passes the classes directory for the child classloader.
-     */
     /** Default JDWP debug port for hot-reload (HotSwapPush connects here). */
     private static final int DEV_HOTRELOAD_DEFAULT_DEBUG_PORT = 5005;
 
-    private void addDevHotReloadFlags(List<String> cmd) {
+    /**
+     * Adds dev hot-reload JVM flags (tempdoc 305).
+     *
+     * <p>When {@code JUSTSEARCH_DEV_HOTRELOAD=true} (env var), enables the Worker's
+     * {@code DevReloadManager}, publishes the classes directory as a system property, and opens
+     * the JDWP listener HotSwapPush attaches to.
+     *
+     * @return the classes dir when hot reload is enabled (it also goes first on the classpath —
+     *     tempdoc 844 R4), or {@code null} when it is off
+     */
+    private Path addDevHotReloadFlags(List<String> cmd) {
         if (!EnvRegistry.DEV_HOTRELOAD.getBoolean(false)) {
-            return;
+            return null;
         }
         cmd.add("-D" + EnvRegistry.DEV_HOTRELOAD.sysProp() + "=true");
-        Path classesDir = config.workingDirectory()
-            .resolve("modules").resolve("worker-services")
-            .resolve("build").resolve("classes").resolve("java").resolve("main");
-        cmd.add("-D" + EnvRegistry.DEV_HOTRELOAD_CLASSES_DIR.sysProp() + "=" + classesDir.toAbsolutePath());
+        Path classesDir = devHotReloadClassesDir(config.workingDirectory());
+        cmd.add("-D" + EnvRegistry.DEV_HOTRELOAD_CLASSES_DIR.sysProp() + "=" + classesDir);
 
         // Auto-enable JDWP agent so HotSwapPush can push bytecode updates.
-        // Uses JUSTSEARCH_DEV_DEBUG_PORT if set, otherwise defaults to 5005.
+        // Uses JUSTSEARCH_DEV_DEBUG_PORT if set, otherwise defaults to 5005. The dev-runner
+        // always sets it (tempdoc 844 R3) and records the value in run.json, so the pusher reads
+        // the port instead of assuming this default.
         int debugPort = EnvRegistry.DEV_DEBUG_PORT.getInt(DEV_HOTRELOAD_DEFAULT_DEBUG_PORT);
         cmd.add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=127.0.0.1:" + debugPort);
         log.info("Worker dev hot-reload enabled: classesDir={}, debugPort={}", classesDir, debugPort);
+        return classesDir;
+    }
+
+    /** Absolute worker-services classes dir for a given working directory (dev hot reload). */
+    static Path devHotReloadClassesDir(Path workingDirectory) {
+        return workingDirectory
+            .resolve("modules").resolve("worker-services")
+            .resolve("build").resolve("classes").resolve("java").resolve("main")
+            .toAbsolutePath();
+    }
+
+    /**
+     * Worker classpath: the installDist jar set, with the dev hot-reload classes dir FIRST when
+     * hot reload is on.
+     *
+     * <p>Tempdoc 844 §4.2 R4 — without the prefix the running Worker loads everything from the
+     * jars while HotSwapPush pushes from {@code build/classes/java/main}. Only the classes already
+     * loaded get redefined; every class loaded later comes from the STALE jar, in a JVM whose
+     * build stamp now claims to be current. Putting the classes dir first makes both halves come
+     * from the same tree — what tempdoc 305 Phase 2's child classloader was for, reached by
+     * classpath ordering instead.
+     *
+     * <p>{@code hotReloadClassesDir == null} (hot reload off, i.e. production and every default
+     * dev start before 844) returns exactly the previous classpath — zero effect.
+     */
+    static String buildWorkerClasspath(Path workerLibDir, Path hotReloadClassesDir) {
+        String jars = workerLibDir.toAbsolutePath() + java.io.File.separator + "*";
+        if (hotReloadClassesDir == null) {
+            return jars;
+        }
+        return hotReloadClassesDir.toAbsolutePath() + java.io.File.pathSeparator + jars;
     }
 
     @Override

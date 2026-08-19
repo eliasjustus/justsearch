@@ -75,7 +75,7 @@ function seedFromExample(exampleRelPath, destRelPath) {
 // 0. Seed maintainer-local config (gitignored; a fresh worktree may or may not start with it).
 seedFromExample('.mcp.json.example', '.mcp.json');
 seedFromExample(path.join('.claude', 'settings.local.json.example'), path.join('.claude', 'settings.local.json'));
-console.error('[prepare-worktree] if .mcp.json was just created: the justsearch-dev server needs no secret and works immediately; set GITHUB_PERSONAL_ACCESS_TOKEN in it only if you want the github MCP server too.');
+console.error('[prepare-worktree] if .mcp.json was just created: the justsearch-dev server needs no secret and works immediately.');
 
 // 1. FE deps — npm ci (clean, lockfile-pinned; same command the build task now uses).
 run(npm, ['ci'], path.join(repoRoot, 'modules', 'ui-web'));

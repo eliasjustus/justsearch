@@ -56,7 +56,8 @@ final class KnowledgeSearchControllerIngestCollectionTest {
             5_000L,
             300_000L,
             100,
-            0L);
+            0L,
+            0);
     KnowledgeSearchController controller =
         new KnowledgeSearchController(new KnowledgeServerBootstrap(config));
     app =
