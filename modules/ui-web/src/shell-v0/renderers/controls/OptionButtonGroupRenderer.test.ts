@@ -311,6 +311,119 @@ describe('<jf-option-button-group>', () => {
       expect(changeCalls).toEqual([{ value: 'dark' }]);
     });
   });
+
+  // Tempdoc 855 fix-round F2 (M1) — the `role="radiogroup"` accessible name. Two independent
+  // sources (plain-props `groupLabel` vs. the JsonForms `schema.title`), matching how `options`
+  // vs. `schema.enum` already fork the two modes.
+  describe('radiogroup accessible name (fix-round F2 M1)', () => {
+    it('plain-props: an unset groupLabel leaves the radiogroup without an aria-label (red-before-fix baseline)', async () => {
+      const el = document.createElement('jf-option-button-group') as OptionButtonGroupRenderer;
+      document.body.appendChild(el);
+      el.options = [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }];
+      el.value = 'a';
+      await el.updateComplete;
+      expect(el.shadowRoot?.querySelector('[role="radiogroup"]')?.hasAttribute('aria-label')).toBe(false);
+    });
+
+    it('plain-props: groupLabel sets aria-label on the radiogroup', async () => {
+      const el = document.createElement('jf-option-button-group') as OptionButtonGroupRenderer;
+      document.body.appendChild(el);
+      el.options = [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }];
+      el.value = 'a';
+      el.groupLabel = 'Detail level';
+      await el.updateComplete;
+      expect(el.shadowRoot?.querySelector('[role="radiogroup"]')?.getAttribute('aria-label')).toBe(
+        'Detail level',
+      );
+    });
+
+    it('JsonForms path: schema.title sets aria-label on the radiogroup', async () => {
+      const el = document.createElement('jf-option-button-group') as OptionButtonGroupRenderer;
+      document.body.appendChild(el);
+      el.schema = {
+        type: 'string',
+        title: 'Default result action',
+        enum: ['open', 'reveal', 'preview'],
+      } as OptionButtonGroupRenderer['schema'];
+      el.uischema = { type: 'Control' };
+      el.data = 'open';
+      el.enabled = true;
+      el.visible = true;
+      el.path = 'defaultAction';
+      el.onChange = () => {};
+      await el.updateComplete;
+      expect(el.shadowRoot?.querySelector('[role="radiogroup"]')?.getAttribute('aria-label')).toBe(
+        'Default result action',
+      );
+    });
+
+    it('JsonForms path: a schema with no title leaves the radiogroup without an aria-label', async () => {
+      const el = document.createElement('jf-option-button-group') as OptionButtonGroupRenderer;
+      document.body.appendChild(el);
+      el.schema = { type: 'string', enum: ['a', 'b'] } as OptionButtonGroupRenderer['schema'];
+      el.uischema = { type: 'Control' };
+      el.data = 'a';
+      el.enabled = true;
+      el.visible = true;
+      el.path = 'x';
+      el.onChange = () => {};
+      await el.updateComplete;
+      expect(el.shadowRoot?.querySelector('[role="radiogroup"]')?.hasAttribute('aria-label')).toBe(false);
+    });
+  });
+
+  // Tempdoc 855 fix-round F2 (M3) — a swatch tile's description used to render as visible text
+  // inside the fixed 4rem tile (squashing it); it now demotes to `title` + a composed aria-label,
+  // mirroring `SettingsSurface.renderThemeTile()`'s "name: description" idiom.
+  describe('swatch description demotion (fix-round F2 M3)', () => {
+    const SWATCH_WITH_DESC = [
+      { value: 'dark', label: 'Dark', description: 'Default theme', swatch: { fill: '#1a1a1e' } },
+      { value: 'light', label: 'Light', description: 'Bright theme', swatch: { fill: '#f4f4f5' } },
+    ];
+
+    it('does not render a visible .option-desc for a swatch option (red-before-fix: previously rendered)', async () => {
+      const el = document.createElement('jf-option-button-group') as OptionButtonGroupRenderer;
+      document.body.appendChild(el);
+      el.options = SWATCH_WITH_DESC;
+      el.value = 'dark';
+      await el.updateComplete;
+      expect(el.shadowRoot?.querySelectorAll('.option-desc').length).toBe(0);
+    });
+
+    it('composes the description into title + aria-label as "Label: description"', async () => {
+      const el = document.createElement('jf-option-button-group') as OptionButtonGroupRenderer;
+      document.body.appendChild(el);
+      el.options = SWATCH_WITH_DESC;
+      el.value = 'dark';
+      await el.updateComplete;
+      const buttons = Array.from(el.shadowRoot?.querySelectorAll('button.option-btn') ?? []);
+      expect(buttons[0]?.getAttribute('title')).toBe('Default theme');
+      expect(buttons[0]?.getAttribute('aria-label')).toBe('Dark: Default theme');
+      expect(buttons[1]?.getAttribute('title')).toBe('Bright theme');
+      expect(buttons[1]?.getAttribute('aria-label')).toBe('Light: Bright theme');
+    });
+
+    it('a swatch option with no description carries neither title nor aria-label', async () => {
+      const el = document.createElement('jf-option-button-group') as OptionButtonGroupRenderer;
+      document.body.appendChild(el);
+      el.options = [{ value: 'system', label: 'System', swatch: { split: ['#111', '#eee'] as [string, string] } }];
+      el.value = 'system';
+      await el.updateComplete;
+      const btn = el.shadowRoot?.querySelector('button.option-btn');
+      expect(btn?.hasAttribute('title')).toBe(false);
+      expect(btn?.hasAttribute('aria-label')).toBe(false);
+    });
+
+    it('a non-swatch (grid) option KEEPS its visible description, unaffected by the demotion', async () => {
+      const el = document.createElement('jf-option-button-group') as OptionButtonGroupRenderer;
+      document.body.appendChild(el);
+      el.options = [{ value: 'simple', label: 'Simple', description: 'Standard view' }];
+      el.value = 'simple';
+      await el.updateComplete;
+      expect(el.shadowRoot?.querySelector('.option-desc')?.textContent?.trim()).toBe('Standard view');
+      expect(el.shadowRoot?.querySelector('button.option-btn')?.hasAttribute('aria-label')).toBe(false);
+    });
+  });
 });
 
 describe('<jf-toggle-switch>', () => {

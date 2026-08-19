@@ -46,6 +46,7 @@ import {
   __resetUserConfigForTest,
   setSurfaceVisibility,
   setSurfaceOrder,
+  setActiveLayoutId,
 } from '../state/userConfigState.js';
 import {
   __resetThemeStateForTest,
@@ -65,6 +66,7 @@ import {
 } from '../themes/themesCatalog.js';
 import type { Surface, SurfaceCatalog } from '../../api/types/surface.js';
 import type { PluginManifest } from '../plugin-api/plugin-types.js';
+import { initLayoutCatalog } from '../layout/LayoutManifest.js';
 
 const RAIL_FIXTURE: SurfaceCatalog = {
   schemaVersion: '1',
@@ -137,6 +139,7 @@ async function mountSurface(category?: string): Promise<HTMLElement> {
       onSurfaceCatalogChange: (h) => realOnSurfaceCatalogChange(h),
       setSurfaceVisibility,
       setSurfaceOrder,
+      setActiveLayoutId,
     },
     theme: {
       subscribeActiveTheme: (h) => realSubscribeActiveTheme(h),
@@ -392,6 +395,77 @@ describe('SettingsSurface — V1.5 Rail section', () => {
     );
     expect(labels[0]).toBe('Library');
     expect(labels[1]).toBe('Search');
+  });
+});
+
+// Tempdoc 855 fix-round F2 (S1) — the Layout picker (Default/Focus/Zen/Split workspace manifests)
+// was a hand-rolled `button.card` grid: selection was CSS-class-only, no role/aria anywhere (a 7th
+// unconverted enum picker this file's other pickers already left behind). Converted to the shared
+// `jf-option-button-group` plain-props path — same values/order, same `selectLayout` wiring.
+describe('SettingsSurface — Layout picker (855 fix-round F2 S1)', () => {
+  beforeEach(() => {
+    __resetUserConfigForTest();
+    __resetThemeStateForTest();
+    resetSurfaceCatalog();
+    seedSurfaceCatalog(RAIL_FIXTURE);
+    __resetSessionRegistryForTest();
+    // Production boot populates the layout catalog from `main.jsx` (never imported by this unit
+    // test); without it `listLayouts()` returns [] and the picker renders zero options regardless
+    // of markup — mirror the real boot step here.
+    initLayoutCatalog();
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  async function layoutRadiogroup(root: ShadowRoot): Promise<HTMLElement> {
+    const group = root.querySelector('jf-option-button-group') as HTMLElement & {
+      shadowRoot: ShadowRoot | null;
+      updateComplete: Promise<unknown>;
+    };
+    await group.updateComplete;
+    return group.shadowRoot!.querySelector('[role="radiogroup"]') as HTMLElement;
+  }
+
+  it('renders one radio per declared layout manifest, in listLayouts() order', async () => {
+    const el = await mountSurface('layout');
+    const radiogroup = await layoutRadiogroup(el.shadowRoot!);
+    const buttons = Array.from(radiogroup.querySelectorAll<HTMLButtonElement>('button[role="radio"]'));
+    expect(buttons.map((b) => b.querySelector('.option-label')?.textContent?.trim())).toEqual([
+      'Default',
+      'Focus',
+      'Zen',
+      'Split',
+    ]);
+  });
+
+  it('the active layout (core.default when unset) is marked aria-checked', async () => {
+    const el = await mountSurface('layout');
+    const radiogroup = await layoutRadiogroup(el.shadowRoot!);
+    const checked = radiogroup.querySelector('button[role="radio"][aria-checked="true"]');
+    expect(checked?.querySelector('.option-label')?.textContent?.trim()).toBe('Default');
+  });
+
+  it('the radiogroup carries an accessible name ("Layout")', async () => {
+    const el = await mountSurface('layout');
+    const radiogroup = await layoutRadiogroup(el.shadowRoot!);
+    expect(radiogroup.getAttribute('aria-label')).toBe('Layout');
+  });
+
+  it('clicking a layout option calls setActiveLayoutId and re-renders the new selection as checked', async () => {
+    const el = await mountSurface('layout') as HTMLElement & { updateComplete: Promise<unknown> };
+    const radiogroup = await layoutRadiogroup(el.shadowRoot!);
+    const focusBtn = Array.from(
+      radiogroup.querySelectorAll<HTMLButtonElement>('button[role="radio"]'),
+    ).find((b) => b.querySelector('.option-label')?.textContent?.trim() === 'Focus')!;
+    focusBtn.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await el.updateComplete;
+    const radiogroupAfter = await layoutRadiogroup(el.shadowRoot!);
+    const checked = radiogroupAfter.querySelector('button[role="radio"][aria-checked="true"]');
+    expect(checked?.querySelector('.option-label')?.textContent?.trim()).toBe('Focus');
   });
 });
 

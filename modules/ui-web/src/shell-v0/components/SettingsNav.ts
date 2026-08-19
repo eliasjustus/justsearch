@@ -34,7 +34,7 @@
  */
 import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
-import { localizeResourceKey } from '../../i18n/resourceCatalog.js';
+import { localizeResourceKey, onCatalogUpdated } from '../../i18n/resourceCatalog.js';
 import {
   categoryLabel,
   searchRegister,
@@ -66,6 +66,12 @@ export class SettingsNav extends JfElement {
    *  pattern; reset to 0 whenever the query (and therefore the result set) changes. */
   private lastFocusedResultIndex = 0;
 
+  /** Tempdoc 855 fix-round F2 (S2) — labels resolve via `localizeResourceKey`, which is
+   *  synchronous and falls back to the raw key on a cold deep-link boot (this nav can mount before
+   *  the backend catalog fetch settles). Re-renders when the catalog updates so a raw-key label
+   *  resolves to its real text once the catalog arrives, instead of staying raw forever. */
+  private catalogUpdatedUnsub: (() => void) | null = null;
+
   constructor() {
     super();
     this.register = [];
@@ -73,6 +79,17 @@ export class SettingsNav extends JfElement {
     this.activeAnchor = null;
     this.footerVersion = null;
     this.query = '';
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this.catalogUpdatedUnsub = onCatalogUpdated(() => this.requestUpdate());
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.catalogUpdatedUnsub?.();
+    this.catalogUpdatedUnsub = null;
   }
 
   static styles = css`

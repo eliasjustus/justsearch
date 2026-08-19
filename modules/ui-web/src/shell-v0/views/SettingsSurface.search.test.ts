@@ -31,6 +31,10 @@ import {
 import { __resetSessionRegistryForTest } from '../plugin-api/sessionRegistry.js';
 import { __resetUserStateForTest } from '../state/UserStateDocument.js';
 import type { SurfaceCatalog } from '../../api/types/surface.js';
+import {
+  __resetForTest as resetResourceCatalog,
+  __seedForTest as seedResourceCatalog,
+} from '../../i18n/resourceCatalog.js';
 
 const EMPTY_RAIL: SurfaceCatalog = {
   schemaVersion: '1',
@@ -173,5 +177,42 @@ describe('SettingsSurface — search-select activation (855 §6 Phase 4)', () =>
     expect(activeRow).not.toBeNull();
     expect(activeRow?.dataset.settingsCategory).toBe('developer');
     expect(nav.shadowRoot!.activeElement).toBe(activeRow);
+  });
+});
+
+// Tempdoc 855 fix-round F2 (S2) — `localizeResourceKey` falls back to the raw i18n key on a cold
+// deep-link boot (this surface mounts before the async backend catalog fetch resolves) and,
+// before this fix, nothing re-rendered once the catalog arrived: the raw key stuck around
+// forever. `renderRelatedSettingsRow`'s `.link-row` label is a real production consumer.
+describe('SettingsSurface — re-renders on a late-arriving catalog (855 fix-round F2 S2)', () => {
+  beforeEach(() => {
+    __resetUserConfigForTest();
+    __resetThemeStateForTest();
+    __resetUserStateForTest();
+    resetSurfaceCatalog();
+    seedSurfaceCatalog(EMPTY_RAIL);
+    __resetSessionRegistryForTest();
+    resetResourceCatalog();
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+    resetResourceCatalog();
+  });
+
+  it('the related-settings cross-link label resolves once a late catalog merge fires', async () => {
+    const el = await mountSurface();
+    const linkRow = () => el.shadowRoot!.querySelector('.link-row');
+    // No catalog seeded yet — raw key fallback (this file's other tests rely on the same
+    // no-catalog-seeded default; see the comment above the real-click test).
+    expect(linkRow()?.textContent?.trim()).toContain('settings.section.accessibility');
+
+    // The catalog "arrives" — `__seedForTest` fires the SAME `onCatalogUpdated` notify a real
+    // bootMessageCatalog-family merge takes.
+    seedResourceCatalog({ 'settings.section.accessibility': 'Accessibility' });
+    await el.updateComplete;
+
+    expect(linkRow()?.textContent?.trim()).toContain('Accessibility');
   });
 });

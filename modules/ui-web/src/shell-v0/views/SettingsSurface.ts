@@ -31,7 +31,7 @@ import { icon } from '../components/Icon.js';
 // §2.A: rail-customization labels resolve through the one surface-label
 // authority — never the raw `core.*-surface` id.
 import { present } from '../display/present.js';
-import { localizeResourceKey } from '../../i18n/resourceCatalog.js';
+import { localizeResourceKey, onCatalogUpdated } from '../../i18n/resourceCatalog.js';
 import { applyAppearance, getSurfaceMode, setSurfaceMode } from '../state/themeState.js';
 import { setUiMode, getUiMode, subscribeUiMode } from '../state/uiModeState.js';
 // 569 Move 1/3 — the body-tier apply path: a real region rendered from a declaration.
@@ -749,9 +749,14 @@ export class SettingsSurface extends JfElement {
   ];
 
   private uiModeUnsub: (() => void) | null = null;
+  /** Tempdoc 855 fix-round F2 (S2) — see SettingsNav's identical field: `localizeResourceKey`
+   *  falls back to the raw key on a cold deep-link boot; re-render when the catalog updates so
+   *  labels resolve once the backend fetch settles instead of staying raw. */
+  private catalogUpdatedUnsub: (() => void) | null = null;
 
   override connectedCallback(): void {
     super.connectedCallback();
+    this.catalogUpdatedUnsub = onCatalogUpdated(() => this.requestUpdate());
     // Tempdoc 738 — reflect external Simple/Detailed changes (e.g. the topbar toggle, which writes the
     // same uiModeState store) in the Interface section's selected state; the section renders from the
     // live getUiMode() so the two controls cannot disagree.
@@ -903,6 +908,8 @@ export class SettingsSurface extends JfElement {
     super.disconnectedCallback();
     this.uiModeUnsub?.();
     this.uiModeUnsub = null;
+    this.catalogUpdatedUnsub?.();
+    this.catalogUpdatedUnsub = null;
     this.themeUnsub?.();
     this.userConfigUnsub?.();
     this.catalogUnsub?.();
@@ -1237,6 +1244,7 @@ export class SettingsSurface extends JfElement {
             <jf-option-button-group
               .options=${options}
               .value=${mode}
+              .groupLabel=${'Detail level'}
               ?enabled=${!this.readOnly}
               @change=${(e: CustomEvent<{ value: string }>) =>
                 void this.patch({ mode: e.detail.value as UISettings['mode'] })}
@@ -1282,6 +1290,7 @@ export class SettingsSurface extends JfElement {
             <jf-option-button-group
               .options=${this.renderVariantOptions()}
               .value=${theme}
+              .groupLabel=${'Color scheme'}
               ?enabled=${!this.readOnly}
               @change=${(e: CustomEvent<{ value: string }>) =>
                 void this.patch({ theme: e.detail.value as UISettings['theme'] })}
@@ -1466,6 +1475,7 @@ export class SettingsSurface extends JfElement {
             <jf-option-button-group
               .options=${options}
               .value=${audience}
+              .groupLabel=${'View tier'}
               ?enabled=${!this.readOnly}
               @change=${(e: CustomEvent<{ value: string }>) => setViewerAudience(e.detail.value as Audience)}
             ></jf-option-button-group>
@@ -1942,23 +1952,30 @@ export class SettingsSurface extends JfElement {
   private renderLayout(): TemplateResult {
     const layouts = listLayouts();
     const activeId = this.userConfig?.activeLayoutId ?? 'core.default';
+    // Tempdoc 855 fix-round F2 (S1) — was a hand-rolled `button.card` grid: selection communicated
+    // only via a CSS `.active` class, no role/keyboard model at all (a 7th unconverted enum picker
+    // this file's other pickers already left behind). Converted to the shared
+    // `jf-option-button-group` plain-props path (855 §17 R2) — same values/order, same click →
+    // `selectLayout` wiring; the card's border/padding chrome is not missed (no CSS rule ever
+    // styled `.card`/`.card-row`/`.card-label`/`.card-desc` in this file — the "card" look was
+    // already just an unstyled `<button>` in practice), and the option-btn's built-in description
+    // slot carries the explanatory text `.card-desc` used to hold.
+    const options: OptionButtonGroupOption[] = layouts.map((layout) => ({
+      value: layout.id,
+      label: layout.displayName,
+      description: layout.description,
+    }));
     return html`
       <div class="section">
         <h3>${icon({ name: 'layers', size: 12 })} Layout</h3>
         <p class="help" style="margin: 0 0 0.5rem 0">Choose how the workspace is arranged.</p>
-        <div class="card-row">
-          ${layouts.map(
-            (layout) => html`
-              <button
-                class="card ${activeId === layout.id ? 'active' : ''}"
-                @click=${() => this.selectLayout(layout.id)}
-              >
-                <span class="card-label">${layout.displayName}</span>
-                <span class="card-desc">${layout.description ?? ''}</span>
-              </button>
-            `,
-          )}
-        </div>
+        <jf-option-button-group
+          .options=${options}
+          .value=${activeId}
+          .groupLabel=${'Layout'}
+          ?enabled=${!this.readOnly}
+          @change=${(e: CustomEvent<{ value: string }>) => this.selectLayout(e.detail.value)}
+        ></jf-option-button-group>
       </div>
     `;
   }

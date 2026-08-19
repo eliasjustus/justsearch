@@ -171,6 +171,52 @@ describe('jf-settings-nav', () => {
     expect(appearanceRow.hasAttribute('aria-current')).toBe(false);
   });
 
+  // Tempdoc 855 fix-round F2 (N6) — pins the no-pill rule (855 §13/§15.1 remediation): only the
+  // active CATEGORY row carries the neutral --surface-active pill; the active ANCHOR row is plain
+  // text (brighter color + aria-current, no background). Mounts the REAL component (so the
+  // adopted-stylesheet cascade applies) and injects the theme custom property the CSS reads on
+  // :root — the same exact-value technique `SecuritySurface.cardCascade.test.ts` uses, so a
+  // "not the pill color" assertion can't pass vacuously against an unresolved var().
+  describe('active-row background: category pill vs. anchor no-pill (fix-round F2 N6)', () => {
+    const SURFACE_ACTIVE = 'rgb(10, 20, 30)';
+    let tokenStyleEl: HTMLStyleElement | null = null;
+
+    beforeEach(() => {
+      tokenStyleEl = document.createElement('style');
+      tokenStyleEl.textContent = `:root { --surface-active: ${SURFACE_ACTIVE}; }`;
+      document.head.appendChild(tokenStyleEl);
+    });
+
+    afterEach(() => {
+      tokenStyleEl?.remove();
+      tokenStyleEl = null;
+    });
+
+    it('the active CATEGORY row keeps the --surface-active pill', async () => {
+      const el = await mountNav('appearance');
+      el.activeAnchor = 'theme';
+      await el.updateComplete;
+      const categoryRow = el.shadowRoot!.querySelector('button.category-row.active') as HTMLElement;
+      expect(categoryRow, 'the active category row must render').toBeTruthy();
+      expect(getComputedStyle(categoryRow).backgroundColor).toBe(SURFACE_ACTIVE);
+    });
+
+    it('the active ANCHOR row carries aria-current but a transparent background (no pill)', async () => {
+      const el = await mountNav('appearance');
+      el.activeAnchor = 'theme';
+      await el.updateComplete;
+      const anchorRow = el.shadowRoot!.querySelector('button.anchor-row.active') as HTMLElement;
+      expect(anchorRow, 'the active anchor row must render').toBeTruthy();
+      expect(anchorRow.getAttribute('aria-current')).toBe('true');
+      const bg = getComputedStyle(anchorRow).backgroundColor;
+      // Pins BOTH directions: never the category pill's color, AND actually transparent (not just
+      // "some other color") — an unset `background` on the button base rule computes to one of
+      // these two representations depending on the engine.
+      expect(bg).not.toBe(SURFACE_ACTIVE);
+      expect(['rgba(0, 0, 0, 0)', 'transparent']).toContain(bg);
+    });
+  });
+
   describe('search (855 §6 Phase 4)', () => {
     function searchInput(el: HTMLElement): HTMLInputElement {
       return el.shadowRoot!.querySelector<HTMLInputElement>('input.search-input')!;
@@ -388,6 +434,39 @@ describe('jf-settings-nav', () => {
       // Focus must stay on the input — the nav-level onKeydown row-navigation handler (which would
       // call rows[0]?.focus()) must never see this event.
       expect(el.shadowRoot!.activeElement).toBe(input);
+    });
+  });
+
+  // Tempdoc 855 fix-round F2 (S2) — `localizeResourceKey` falls back to the raw i18n key on a cold
+  // deep-link boot (this nav mounts before the async backend catalog fetch resolves) and, before
+  // this fix, nothing re-rendered once it arrived: the raw key stuck around forever.
+  describe('re-renders on a late-arriving catalog (855 fix-round F2 S2)', () => {
+    it('a group label mounted BEFORE its catalog key exists shows the raw key, then resolves once the catalog arrives', async () => {
+      // Mount with the group label key deliberately UNSEEDED — the raw-key fallback SettingsNav
+      // would show on a cold deep-link boot before the backend catalog fetch settles.
+      const preArrival = {
+        'settings.category.appearance': 'Appearance',
+        'settings.category.data': 'Data',
+        'settings.section.interface': 'Interface',
+        'settings.section.theme': 'Theme',
+        'settings.section.data': 'Data',
+        'settings.search.placeholder': 'Search settings',
+        'settings.search.no-results': 'No matching settings',
+        // 'settings.group.general' intentionally omitted — simulates the not-yet-arrived catalog.
+      };
+      __resetForTest();
+      __seedForTest(preArrival);
+      const el = await mountNav('appearance');
+      const header = () => el.shadowRoot!.querySelector('.group-header');
+      expect(header()?.textContent?.trim()).toBe('settings.group.general');
+
+      // The catalog "arrives" — `__seedForTest` fires the SAME `onCatalogUpdated` notify a real
+      // bootMessageCatalog-family merge takes; re-seed with the union (a real merge is additive,
+      // never a replace) to keep the already-seeded keys resolved too.
+      __seedForTest({ ...preArrival, 'settings.group.general': 'General' });
+      await el.updateComplete;
+
+      expect(header()?.textContent?.trim()).toBe('General');
     });
   });
 });

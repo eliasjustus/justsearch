@@ -1,7 +1,7 @@
 ---
 number: 855
 title: Settings window — Discord-2025 centered-modal pattern + rail slimming
-status: implemented — P0-P4 + closure audit remediation shipped on worktree-855-settings-window (see §12); canonical docs updated; awaiting owner on D1 (Brain) and the PR/merge go-ahead; residuals listed in §12 closure entry
+status: implemented — P0-P4 + closure remediation (§12) + owner-feedback content remediation R1-R3 + final fix round (§13-§18) shipped on worktree-855-settings-window; canonical docs updated; awaiting owner on D1 (Brain) and the PR/merge go-ahead; residuals in §12 and §18 final entries
 created: 2026-08-19
 updated: 2026-08-19
 charter: replace the in-Stage settings page with a Discord-style categorized settings window, and decide which main-window chrome items relocate into it
@@ -902,3 +902,25 @@ loop; refute-first reviews per round (opus for the contrast chunk).
   variant trio renders swatches on a production boot; Data-Protection card chrome
   restored; ui-shot settings/settings-light/security 0 NEW axe, no overflow. Full
   ui-web suite 440 files / 5641 green.
+
+- **Final fix round (this commit)** — delta re-audit verdict was PASS-with-notes; its
+  actionable items closed here: (S1) the 7th unconverted enum picker (Layout
+  `.card` grid — class-only selection, no ARIA) converted to the shared option
+  group, exposing and fixing a test-harness gap (layout catalog never initialized
+  in unit tests, so layouts silently tested empty); (S2) cold deep-link boots no
+  longer strand raw i18n keys — `resourceCatalog` gained `onCatalogUpdated` and
+  the two settings label consumers re-render on catalog arrival (live-verified:
+  cold boot resolves all labels, zero leaks); (M1) radiogroups carry accessible
+  names in both render paths (`groupLabel` / `schema.title`); (M3) the variant
+  trio's squashed visible descriptions demoted to title + composed aria-label,
+  matching the theme grid; (N6) the no-pill anchor rule pinned by an exact-value
+  test. Deviation accepted from the audit's wording: the "default open action"
+  controls already carried real accessible names — not renamed. **§15.1 whitelist
+  amendment (audit M4):** the declared Interface region is the documented FIFTH
+  composite exception (it hosts the declaration engine's own body). Remaining
+  audit notes (member-surface dialect, theme-grid keyboard asymmetry, nested
+  plugin-row chrome, security nested-scroll, 22px switch height judgment) are
+  logged to the observations inbox as follow-ups with owners' context.
+  Final state: full ui-web suite 440 files / 5661 green; full backend suite
+  green; ui-a11y-gate clean; all four §13 owner findings PASS measured
+  acceptance; delta re-audit PASS-with-notes with every actionable note closed.

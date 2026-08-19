@@ -46,6 +46,7 @@ import { icon, type IconName } from '../../components/Icon.js';
 
 interface EnumOptionSchema {
   readonly enum?: readonly unknown[];
+  readonly title?: string;
   readonly 'x-enum-labels'?: Record<string, string>;
   readonly 'x-enum-descriptions'?: Record<string, string>;
   /** Tempdoc 855 fix-round F1 — the declared-path swatch vocabulary; see the module doc. */
@@ -98,17 +99,27 @@ export class OptionButtonGroupRenderer extends JsonFormsRendererBase {
     ...JsonFormsRendererBase.properties,
     options: { attribute: false },
     value: { type: String },
+    groupLabel: { attribute: false },
   };
 
   /** Plain-props option list (855 §17 R2). Non-empty ⇒ plain-props mode. */
   declare options: readonly OptionButtonGroupOption[];
   /** Plain-props current value — used only when `options` is set. */
   declare value: string;
+  /**
+   * Tempdoc 855 fix-round F2 (M1) — the plain-props path's accessible name for the
+   * `role="radiogroup"` element (axe/WCAG: a group of radios needs a name distinguishing it from
+   * every other radiogroup on the page). The JsonForms path derives the same thing from
+   * `schema.title` instead (below) — a consumer authors ONE of the two, never both, matching how
+   * `options`/`schema.enum` already fork the two modes.
+   */
+  declare groupLabel: string;
 
   constructor() {
     super();
     this.options = [];
     this.value = '';
+    this.groupLabel = '';
   }
 
   static styles = css`
@@ -192,6 +203,13 @@ export class OptionButtonGroupRenderer extends JsonFormsRendererBase {
       margin-top: 0;
       font-weight: 500;
     }
+    /* Tempdoc 855 fix-round F2 (M3) — a swatch tile never renders .option-desc (the description
+       moves to the title attribute + composed aria-label instead, see render()); this rule is
+       belt-and-suspenders so the fixed 4rem tile never reserves description space even if a future
+       edit re-adds the span here. */
+    .option-btn.option-btn-swatch .option-desc {
+      display: none;
+    }
   `;
 
   override render(): TemplateResult {
@@ -236,6 +254,10 @@ export class OptionButtonGroupRenderer extends JsonFormsRendererBase {
       swatches = schema['x-enum-swatches'] ?? {};
       current = typeof this.data === 'string' ? this.data : '';
     }
+    // Tempdoc 855 fix-round F2 (M1) — the radiogroup's accessible name: plain-props reads the
+    // `groupLabel` prop, the JsonForms path reads the standard `schema.title` field (the same
+    // field EnterActionPickerRenderer already threads for its own control's name).
+    const groupAriaLabel = plainMode ? this.groupLabel || undefined : ((this.schema as EnumOptionSchema).title ?? undefined);
     const hasSwatches = Object.keys(swatches).length > 0;
     // Roving tabindex (WAI-ARIA radiogroup pattern): the selected option is the one tab stop; if
     // nothing matches `current`, the first option holds it so the group stays reachable.
@@ -286,16 +308,29 @@ export class OptionButtonGroupRenderer extends JsonFormsRendererBase {
     };
 
     return html`
-      <div class="option-group ${hasSwatches ? 'swatch-group' : ''}" role="radiogroup">
+      <div
+        class="option-group ${hasSwatches ? 'swatch-group' : ''}"
+        role="radiogroup"
+        aria-label=${groupAriaLabel ?? nothing}
+      >
         ${values.map((v, i) => {
           const selected = current === v;
           const swatch = swatches[v];
+          const label = labels[v] ?? titleCase(v);
+          const desc = descs[v];
+          // Tempdoc 855 fix-round F2 (M3) — a swatch tile's description is demoted from visible
+          // text (which squashed the fixed-width 64px tile) to the house `title`-attribute idiom,
+          // mirroring `renderThemeTile()`'s "name: description" aria-label composition. Non-swatch
+          // (grid) options keep the description visible, unchanged.
+          const swatchAriaLabel = swatch && desc ? `${label}: ${desc}` : undefined;
           return html`
             <button
               type="button"
               class="option-btn ${swatch ? 'option-btn-swatch' : ''} ${selected ? 'selected' : ''}"
               role="radio"
               aria-checked=${selected ? 'true' : 'false'}
+              aria-label=${swatchAriaLabel ?? nothing}
+              title=${swatch && desc ? desc : nothing}
               tabindex=${i === rovingIndex ? '0' : '-1'}
               ?disabled=${!this.enabled}
               @click=${() => select(v)}
@@ -315,8 +350,8 @@ export class OptionButtonGroupRenderer extends JsonFormsRendererBase {
                 : icons[v]
                   ? icon({ name: icons[v], size: 18 })
                   : nothing}
-              <span class="option-label">${labels[v] ?? titleCase(v)}</span>
-              ${descs[v] ? html`<span class="option-desc">${descs[v]}</span>` : nothing}
+              <span class="option-label">${label}</span>
+              ${!swatch && desc ? html`<span class="option-desc">${desc}</span>` : nothing}
             </button>
           `;
         })}
