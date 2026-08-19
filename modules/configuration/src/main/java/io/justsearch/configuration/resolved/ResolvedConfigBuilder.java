@@ -458,6 +458,16 @@ public final class ResolvedConfigBuilder {
         "index.hybrid.branch_chunk_min_weight_multiplier",
         root,
         "index.hybrid.branch_chunk_min_weight_multiplier");
+    // Tempdoc 854 W1 (F-036 §K wrong-gate fix) — the Stage-3B branch ramp's own parent-token
+    // bounds, separated from the Stage-3A SPLADE parent-length-fade bounds they used to share.
+    putYamlLong(
+        "index.hybrid.branch_ramp.full_weight_max_tokens",
+        root,
+        "index.hybrid.branch_ramp.full_weight_max_tokens");
+    putYamlLong(
+        "index.hybrid.branch_ramp.zero_weight_min_tokens",
+        root,
+        "index.hybrid.branch_ramp.zero_weight_min_tokens");
     // Tempdoc 774 Stage 1 — independent chunk-branch levers. No putDefault for the chunk weights:
     // their default is the resolved doc-level cc_weight_* value, computed in buildHybridSearch (a
     // static putDefault at ordinal 100 would shadow that fallback).
@@ -497,6 +507,10 @@ public final class ResolvedConfigBuilder {
     putDefault("index.hybrid.branch_cc_weight_whole", "0.50");
     putDefault("index.hybrid.branch_cc_weight_chunk", "0.50");
     putDefault("index.hybrid.branch_chunk_min_weight_multiplier", "0.25");
+    // Tempdoc 854 W1 — branch-ramp bound defaults (byte-identical to the pre-split shared
+    // constant's defaults, justsearch.splade.full_weight_max_tokens=1024 / .zero_weight_min_tokens=4096).
+    putDefault("index.hybrid.branch_ramp.full_weight_max_tokens", "1024");
+    putDefault("index.hybrid.branch_ramp.zero_weight_min_tokens", "4096");
     // Tempdoc 774 Stage 1 — static chunk-branch lever defaults. The chunk weights AND
     // chunk_cc_zero_exclude are omitted deliberately: their default is the resolved doc-level value
     // (computed in buildHybridSearch), and a putDefault at ordinal 100 would shadow that fallback.
@@ -1621,6 +1635,12 @@ public final class ResolvedConfigBuilder {
             Math.min(
                 1.0,
                 resolveDouble("index.hybrid.branch_chunk_min_weight_multiplier", 0.25))),
+        // Tempdoc 854 W1 (F-036 §K wrong-gate fix) — the Stage-3B branch-ramp's own parent-token
+        // bounds. Defaults (1024 / 4096) match the SPLADE bounds' defaults exactly, so at defaults
+        // the branch ramp is byte-identical to before the split; only an explicit override of ONE
+        // bound now moves ONLY its own lever.
+        resolveLong("index.hybrid.branch_ramp.full_weight_max_tokens", 1024L),
+        resolveLong("index.hybrid.branch_ramp.zero_weight_min_tokens", 4096L),
         // Tempdoc 580 §13.3 — per-query adaptive CC-weight selection (default off; static weights win).
         resolveBoolean("index.hybrid.adaptive_weights_enabled", false),
         // Tempdoc 636 Design v2 — per-query leg arbitration on the 2-way CC alpha. DEFAULT ON

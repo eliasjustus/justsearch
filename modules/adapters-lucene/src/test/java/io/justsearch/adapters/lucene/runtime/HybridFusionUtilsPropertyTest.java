@@ -229,4 +229,80 @@ class HybridFusionUtilsPropertyTest {
     assertEquals(1.0, HybridFusionUtils.spladeParentLengthMultiplier(Map.of("parent_token_count", "abc")), EPS);
     assertEquals(0.5, HybridFusionUtils.spladeParentLengthMultiplier(Map.of("parent_token_count", "2560")), EPS);
   }
+
+  // ---- Tempdoc 854 W1: branch-ramp / SPLADE bound separation (F-036 §K wrong-gate fix) --------
+  //
+  // Before this split, chunkBranchParentLengthMultiplier (Stage 3B whole-vs-chunk branch ramp) and
+  // spladeParentLengthMultiplier (Stage 3A SPLADE parent-length fade) both read the SAME static
+  // constants (justsearch.splade.full_weight_max_tokens / .zero_weight_min_tokens), so tuning one
+  // knob silently retuned the other lever (784 §K, measured: raising the SPLADE bound past a
+  // corpus's token range flipped the branch multiplier 1.0 -> 0.25 for every affected doc, with
+  // zero SPLADE involvement). The bounds-aware chunkBranchParentLengthMultiplier overload below did
+  // not exist pre-854 — a test calling it would not have compiled against the pre-split code,
+  // which is the most direct "fail-first RED" an API-shape defect like this can produce.
+
+  private static final long[] PARENT_TOKEN_GRID_854 = {0L, 512L, 1024L, 2048L, 4096L, 8192L};
+
+  @Test
+  @DisplayName(
+      "854 W1: at default bounds (1024/4096), the branch-ramp multiplier is byte-identical to the"
+          + " pre-split shared-constant formula across the parent-token grid")
+  void branchRamp_atDefaultBounds_byteIdenticalToPreSplitSharedConstant() {
+    double min = 0.25; // production default (index.hybrid.branch_chunk_min_weight_multiplier)
+    for (long pt : PARENT_TOKEN_GRID_854) {
+      // Pre-split behavior: chunkBranchParentLengthMultiplier(pt, min) read the exact same statics
+      // as spladeParentLengthMultiplier — SPLADE_FULL_WEIGHT_MAX_TOKENS=1024,
+      // SPLADE_ZERO_WEIGHT_MIN_TOKENS=4096 (JVM defaults, no sysprop override in this test JVM).
+      double preSplitEquivalent =
+          HybridFusionUtils.chunkBranchParentLengthMultiplier(pt, min, 1024L, 4096L);
+      // Post-split: the no-explicit-bounds overload, which production calls at resolved defaults.
+      double postSplitDefault = HybridFusionUtils.chunkBranchParentLengthMultiplier(pt, min);
+      assertEquals(
+          preSplitEquivalent,
+          postSplitDefault,
+          EPS,
+          "default branch-ramp bounds must reproduce the pre-split shared-constant value at"
+              + " parent_token_count=" + pt);
+    }
+  }
+
+  @Test
+  @DisplayName(
+      "854 W1 divergence pin: a doc at full chunk-branch weight under default bounds is NOT"
+          + " de-weighted by a bound raise that (pre-854) would have come from the shared SPLADE"
+          + " constant — the exact 784 §K scenario")
+  void branchRamp_ownBoundIndependentOfWhatWouldHaveBeenTheSharedSpladeBound() {
+    long pt = 4096L; // at the shared band's upper edge -> full chunk-branch weight under defaults
+    double min = 0.25;
+
+    // Branch ramp at its OWN (unmoved) default bounds: full weight.
+    double branchRampAtOwnDefaults =
+        HybridFusionUtils.chunkBranchParentLengthMultiplier(pt, min, 1024L, 4096L);
+    assertEquals(1.0, branchRampAtOwnDefaults, EPS);
+
+    // What the SAME parent-token-count would have produced BEFORE 854 W1, had an operator raised
+    // justsearch.splade.zero_weight_min_tokens 4096 -> 8192 for an unrelated SPLADE experiment,
+    // back when both levers read that one shared static (784 §K's measured mechanism): the branch
+    // ramp would have silently dropped from 1.0 toward min — a de-weight with zero SPLADE
+    // involvement in this doc's relevance.
+    double wouldHaveBeenSharedValue =
+        HybridFusionUtils.chunkBranchParentLengthMultiplier(pt, min, 1024L, 8192L);
+    double expectedIfStillShared = 0.25 + 0.75 * ((4096.0 - 1024.0) / (8192.0 - 1024.0));
+    assertEquals(expectedIfStillShared, wouldHaveBeenSharedValue, EPS);
+    assertTrue(
+        wouldHaveBeenSharedValue < branchRampAtOwnDefaults,
+        "sanity: the pre-854 shared-constant mechanism WOULD have de-weighted this doc — this is"
+            + " what 854 W1 makes structurally impossible for a real SPLADE-only bound change");
+
+    // The regression this test pins: a real SPLADE-only bound raise has no parameter into
+    // chunkBranchParentLengthMultiplier at all post-854 (its bounds come from a caller-supplied
+    // long, resolved from index.hybrid.branch_ramp.* — see ResolvedConfigBuilderTest's "854 W1"
+    // sysprop-divergence tests for the config-layer half of this pin). Re-confirm the branch ramp
+    // at its own untouched bounds stays at full weight, not the de-weighted shared value.
+    assertEquals(
+        1.0,
+        HybridFusionUtils.chunkBranchParentLengthMultiplier(pt, min, 1024L, 4096L),
+        EPS,
+        "the branch ramp's own bounds are independent of whatever the SPLADE lever is doing");
+  }
 }
