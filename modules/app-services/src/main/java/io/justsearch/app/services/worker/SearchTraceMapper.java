@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.services.worker;
 
+import io.justsearch.app.api.knowledge.CrossEncoderSkipReason;
 import io.justsearch.app.api.knowledge.PipelineConfig;
 import io.justsearch.app.api.knowledge.QueryType;
 import io.justsearch.ipc.RerankResponse;
@@ -181,7 +182,7 @@ final class SearchTraceMapper {
       boolean lambdaMartApplied,
       String lambdaMartSkipReason,
       boolean crossEncoderApplied,
-      String crossEncoderSkipReason,
+      CrossEncoderSkipReason crossEncoderSkipReason,
       boolean expansionApplied,
       String expansionSkipReason,
       QueryType queryType) {
@@ -216,7 +217,9 @@ final class SearchTraceMapper {
                 stageNode(
                     stage.wireId,
                     crossEncoderApplied ? "executed" : "skipped",
-                    crossEncoderApplied ? null : crossEncoderSkipReason,
+                    crossEncoderApplied || crossEncoderSkipReason == null
+                        ? null
+                        : crossEncoderSkipReason.wire(),
                     null,
                     crossEncoderApplied && crossEncoderMs > 0 ? crossEncoderMs : null);
             case FRESHNESS ->

@@ -1443,6 +1443,63 @@ class HybridFusionUtilsTest {
       assertEquals(1.0f, hi.score(), 0.001f, "top chunk doc = normalized 1.0");
       assertEquals(0.0f, lo.score(), 0.001f, "min-normalized chunk doc = 0.0");
     }
+
+    @Test
+    @DisplayName(
+        "854 W1: the bounds-aware fuseWithCCNamed overload uses ITS OWN branch-ramp bounds, not"
+            + " the default 1024/4096 pair, when the caller supplies different ones")
+    void fuseWithCcNamed_boundsAwareOverload_usesSuppliedBranchRampBounds() {
+      // A single doc-in-both-branches at parent_token_count=4096: under the DEFAULT bounds
+      // (1024/4096) this is at the ramp's upper edge -> chunk modifier 1.0. Under a caller-supplied
+      // bound pair that pushes the upper edge out to 8192, the same token count sits mid-ramp, so
+      // the chunk modifier (and therefore the fused score split) must differ.
+      SearchResult whole =
+          new SearchResult(
+              List.of(new SearchHit("doc-both", 0.5f, Map.of("parent_token_count", "4096"))), 1, 0);
+      SearchResult chunk =
+          new SearchResult(
+              List.of(new SearchHit("doc-both", 0.5f, Map.of("parent_token_count", "4096"))), 1, 0);
+
+      SearchResult fusedDefaultBounds =
+          HybridFusionUtils.fuseWithCCNamed(
+              whole, chunk, 10, new double[] {0.50, 0.50}, true, true,
+              "whole_branch", "chunk_branch", "branch_merge_", "whole", "chunk", true, 0.25,
+              1024L, 4096L);
+      SearchResult fusedWidenedBounds =
+          HybridFusionUtils.fuseWithCCNamed(
+              whole, chunk, 10, new double[] {0.50, 0.50}, true, true,
+              "whole_branch", "chunk_branch", "branch_merge_", "whole", "chunk", true, 0.25,
+              1024L, 8192L);
+
+      float modifierAtDefaultBounds =
+          fusedDefaultBounds.hits().get(0).debugScores().get("branch_merge_cc_modifier_chunk");
+      float modifierAtWidenedBounds =
+          fusedWidenedBounds.hits().get(0).debugScores().get("branch_merge_cc_modifier_chunk");
+
+      assertEquals(1.0f, modifierAtDefaultBounds, 0.001f, "at pt=4096, default bounds -> full weight");
+      assertEquals(
+          (float) (0.25 + 0.75 * ((4096.0 - 1024.0) / (8192.0 - 1024.0))),
+          modifierAtWidenedBounds,
+          0.001f,
+          "widened bounds must move the chunk modifier for the SAME parent_token_count — proves"
+              + " the overload threads the caller's bounds, not a shared/hardcoded pair");
+      assertTrue(
+          modifierAtWidenedBounds < modifierAtDefaultBounds,
+          "widening the branch-ramp's own zero-weight bound must de-weight this doc's chunk side");
+
+      // The 13-arg (no-explicit-bounds) overload must reproduce the default-bounds result exactly
+      // — the fallback overload's behavior is unchanged by this split (854 W1 byte-identical claim).
+      SearchResult fusedLegacyOverload =
+          HybridFusionUtils.fuseWithCCNamed(
+              whole, chunk, 10, new double[] {0.50, 0.50}, true, true,
+              "whole_branch", "chunk_branch", "branch_merge_", "whole", "chunk", true, 0.25);
+      assertEquals(
+          modifierAtDefaultBounds,
+          fusedLegacyOverload.hits().get(0).debugScores().get("branch_merge_cc_modifier_chunk"),
+          0.001f,
+          "the legacy 13-arg overload must be byte-identical to the bounds-aware overload at"
+              + " default bounds");
+    }
   }
 
   @Nested

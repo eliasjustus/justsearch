@@ -1,22 +1,32 @@
 #!/usr/bin/env node
 /**
- * search-degradation-reason-codes gate — tempdoc 602 R6.
+ * search-degradation-reason-codes gate — tempdoc 602 R6, extended by register F-052.
  *
- * The per-query search-trace DEGRADATION reason vocabulary is ONE closed
- * authority — the search-side sibling of the readiness-reason-codes gate (NOT
- * merged: two vocabularies, per tempdoc 600 PART IX). The producer is the worker
- * `SearchReasonCode` enum, whose `.name()` wire strings populate the three
- * user-tier degradation fields (vectorBlockedReason / hybridFallbackReason /
- * spladeSkipReason). The FE `DEGRADATION_REASON_WORDING` map (searchTraceExplain.ts)
- * words them. Before this gate the FE interpolated the raw code to the user
- * ("semantic ranking blocked (LEGACY_INDEX_NO_FINGERPRINT)") — the Nielsen-#9
- * "no error codes" violation.
+ * The per-query search-trace DEGRADATION reason vocabularies are closed
+ * authorities — the search-side sibling of the readiness-reason-codes gate (NOT
+ * merged: separate vocabularies, per tempdoc 600 PART IX). Each `vocabularies`
+ * entry in the register pairs ONE Java producer enum with ONE FE wording table in
+ * searchTraceExplain.ts:
  *
- * Correspondence enforced against `governance/search-degradation-reason-codes.v1.json`:
- *  - FORWARD (no raw code to users): every `SearchReasonCode` member NOT in
- *    `noWordingExempt` has a `DEGRADATION_REASON_WORDING` key. (Exempt = the 11
- *    chunk-merge codes, which feed the chunk-merge STAGE reason — a diagnostic-tier
- *    facet rendered raw per the 577 cut — never the three user-tier fields.)
+ *  - `query-degradation` (602 R6): the worker `SearchReasonCode` enum, whose
+ *    `.name()` wire strings populate the three user-tier degradation fields
+ *    (vectorBlockedReason / hybridFallbackReason / spladeSkipReason), worded by
+ *    `DEGRADATION_REASON_WORDING`. Before this gate the FE interpolated the raw code
+ *    to the user ("semantic ranking blocked (LEGACY_INDEX_NO_FINGERPRINT)") — the
+ *    Nielsen-#9 "no error codes" violation.
+ *  - `cross-encoder-skip` (F-052): the head-owned `CrossEncoderSkipReason` enum,
+ *    carried by the `cross-encoder` trace stage, worded by
+ *    `CROSS_ENCODER_SKIP_WORDING` for its DROP class (deadline miss / RPC failure /
+ *    model absent / unknown). Before this the drop reached the wire only as a raw
+ *    code inside the collapsed diagnostic disclosure — no user-visible signal at all.
+ *
+ * Correspondence enforced per vocabulary against
+ * `governance/search-degradation-reason-codes.v1.json`:
+ *  - FORWARD (no raw code to users): every enum member NOT in `noWordingExempt` has
+ *    a wording key. (Exempt = codes that structurally cannot reach the user-tier
+ *    summary line: the 11 chunk-merge codes, which feed the chunk-merge STAGE reason
+ *    — a diagnostic-tier facet rendered raw per the 577 cut — and the 7 by-design
+ *    cross-encoder skips, which are not degradations.)
  *  - BACKWARD (no dead/typo rows): every wording key is a real enum member OR a
  *    declared `feDerived` code.
  *
@@ -73,7 +83,14 @@ export function extractWordingKeys(tsSrc, table) {
 }
 
 /** Pure correspondence check. Returns an array of failure strings (empty = pass). */
-export function checkCorrespondence({ enumCodes, wordingCodes, noWordingExempt, feDerived }) {
+export function checkCorrespondence({
+  enumCodes,
+  wordingCodes,
+  noWordingExempt,
+  feDerived,
+  producerSymbol = 'the producer enum',
+  consumerTable = 'the wording table',
+}) {
   const failures = [];
   const exempt = new Set(noWordingExempt);
   const fe = new Set(feDerived);
@@ -83,10 +100,10 @@ export function checkCorrespondence({ enumCodes, wordingCodes, noWordingExempt, 
     if (exempt.has(code)) continue;
     if (!wordingCodes.has(code)) {
       failures.push(
-        `forward: SearchReasonCode \`${code}\` can populate a user-tier degradation field but has no ` +
-          `DEGRADATION_REASON_WORDING entry in searchTraceExplain.ts — a degraded search-explain line ` +
-          `would render the raw \`(${code})\` to the user. Add a wording entry, or declare it in ` +
-          `${REGISTER} \`noWordingExempt\` if it only feeds the chunk-merge stage (with a one-line rationale).`,
+        `forward: ${producerSymbol} \`${code}\` can reach the user-tier search-explain line but has no ` +
+          `${consumerTable} entry in searchTraceExplain.ts — that line would render the raw \`(${code})\` ` +
+          `to the user. Add a wording entry, or declare it in ${REGISTER} \`noWordingExempt\` if the code ` +
+          `structurally cannot reach the user line (with a one-line rationale).`,
       );
     }
   }
@@ -95,7 +112,7 @@ export function checkCorrespondence({ enumCodes, wordingCodes, noWordingExempt, 
   for (const code of wordingCodes) {
     if (enumCodes.has(code) || fe.has(code)) continue;
     failures.push(
-      `backward: DEGRADATION_REASON_WORDING has a key \`${code}\` that is neither a SearchReasonCode ` +
+      `backward: ${consumerTable} has a key \`${code}\` that is neither a ${producerSymbol} ` +
         `member nor a declared \`feDerived\` code in ${REGISTER} — a dead or mistyped row. Remove it, ` +
         `fix the code, or declare it FE-derived.`,
     );
@@ -105,37 +122,63 @@ export function checkCorrespondence({ enumCodes, wordingCodes, noWordingExempt, 
 
 function main() {
   const reg = JSON.parse(readFileSync(REGISTER, 'utf8'));
-  const enumCodes = extractEnumConstants(readFileSync(reg.producer.file, 'utf8'), reg.producer.symbol);
-  const wordingCodes = extractWordingKeys(readFileSync(reg.consumer.file, 'utf8'), reg.consumer.table);
-
-  if (enumCodes.size === 0 || wordingCodes.size === 0) {
+  const vocabularies = reg.vocabularies ?? [];
+  if (vocabularies.length === 0) {
     console.error(
-      `✗ search-degradation-reason-codes gate FAILED: could not extract codes ` +
-        `(enum=${enumCodes.size}, wording=${wordingCodes.size}) — the producer/consumer seam moved; ` +
-        `update ${REGISTER}.`,
+      `✗ search-degradation-reason-codes gate FAILED: ${REGISTER} declares no \`vocabularies\`.`,
     );
     process.exit(1);
   }
 
-  const failures = checkCorrespondence({
-    enumCodes,
-    wordingCodes,
-    noWordingExempt: (reg.noWordingExempt ?? []).map((e) => e.code),
-    feDerived: (reg.feDerived ?? []).map((e) => e.code),
-  });
+  const failures = [];
+  const summaries = [];
+  for (const vocab of vocabularies) {
+    const enumCodes = extractEnumConstants(
+      readFileSync(vocab.producer.file, 'utf8'),
+      vocab.producer.symbol,
+    );
+    const wordingCodes = extractWordingKeys(
+      readFileSync(vocab.consumer.file, 'utf8'),
+      vocab.consumer.table,
+    );
+
+    if (enumCodes.size === 0 || wordingCodes.size === 0) {
+      console.error(
+        `✗ search-degradation-reason-codes gate FAILED: could not extract codes for vocabulary ` +
+          `\`${vocab.id}\` (enum=${enumCodes.size}, wording=${wordingCodes.size}) — the ` +
+          `producer/consumer seam moved; update ${REGISTER}.`,
+      );
+      process.exit(1);
+    }
+
+    const exempt = vocab.noWordingExempt ?? [];
+    failures.push(
+      ...checkCorrespondence({
+        enumCodes,
+        wordingCodes,
+        noWordingExempt: exempt.map((e) => e.code),
+        feDerived: (vocab.feDerived ?? []).map((e) => e.code),
+        producerSymbol: vocab.producer.symbol,
+        consumerTable: vocab.consumer.table,
+      }).map((f) => `[${vocab.id}] ${f}`),
+    );
+    summaries.push(
+      `${vocab.id}: ${vocab.producer.symbol}↔${vocab.consumer.table} ` +
+        `(${enumCodes.size} enum codes, ${wordingCodes.size} worded, ${exempt.length} exempt)`,
+    );
+  }
 
   if (failures.length > 0) {
     console.error(
-      '✗ search-degradation-reason-codes gate FAILED (tempdoc 602 R6):\n' +
+      '✗ search-degradation-reason-codes gate FAILED (tempdoc 602 R6 / register F-052):\n' +
         failures.map((x) => '  - ' + x).join('\n'),
     );
     process.exit(1);
   }
   console.log(
-    `✓ search-degradation-reason-codes gate OK — SearchReasonCode↔DEGRADATION_REASON_WORDING correspond ` +
-      `(${enumCodes.size} enum codes, ${wordingCodes.size} worded; ` +
-      `${(reg.noWordingExempt ?? []).length} chunk-merge codes exempt); no raw reason code can reach the ` +
-      `search-explain user line.`,
+    `✓ search-degradation-reason-codes gate OK — ${vocabularies.length} vocabularies correspond; ` +
+      `no raw reason code can reach the search-explain user line.\n  ` +
+      summaries.join('\n  '),
   );
 }
 
