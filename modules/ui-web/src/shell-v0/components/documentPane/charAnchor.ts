@@ -28,12 +28,31 @@ export interface CharSpan {
 }
 
 /**
- * How much of the excerpt has to reappear at the anchored offsets for the reader to trust them.
- * Long enough that boilerplate ("Introduction", a table header) cannot satisfy it by accident;
- * short enough that a re-extraction which re-wrapped or re-punctuated the tail of a passage does
- * not read as a move.
+ * The MAXIMUM leading run of the excerpt that has to reappear at the anchored offsets — a cap, not
+ * a guarantee: `slice(0, 48)` of a 12-character excerpt is 12 characters. Capping it keeps a
+ * re-extraction that re-wrapped or re-punctuated the tail of a passage from reading as a move.
  */
 const WITNESS_CHARS = 48;
+
+/**
+ * …and the MINIMUM that makes the run evidence at all. Below this a match distinguishes nothing:
+ * "Introduction" or a repeated table header reappears in a wholly rewritten document, so confirming
+ * on it would be the pane certifying a location it did not actually check. Such an excerpt is
+ * treated as NO USABLE WITNESS — the same confirm-by-absence an empty excerpt gets (see
+ * {@link locateWitness}) — because the honest statement is "this citation carries nothing that can
+ * testify", not "this citation was verified".
+ */
+const WITNESS_MIN_CHARS = 24;
+
+/**
+ * How far into the cited span the witness may sit. The excerpt is a WORD-CLAMPED PREFIX of the
+ * chunk's own content (`RagContextOps.clampExcerptToWordBoundary(content, 240)`), so in an unchanged
+ * document it starts at the span's first non-whitespace character. Allowing it anywhere in the span
+ * would confirm a document where text was INSERTED before the passage — the excerpt is still in
+ * range, and the tint has silently shifted by the length of the insertion. The slack covers leading
+ * whitespace and punctuation drift from re-extraction, nothing structural.
+ */
+const WITNESS_DRIFT_CHARS = 64;
 
 interface NormalizedText {
   /** Lowercased, whitespace-collapsed. */
@@ -59,8 +78,16 @@ function normalize(source: string, from: number, to: number): NormalizedText {
       origin.push(i);
       pendingSpace = false;
     }
-    chars.push(ch.toLowerCase());
-    origin.push(i);
+    // ONE code unit in can be TWO out: `'İ'.toLowerCase()` (Turkish dotted capital İ) is
+    // `'i' + U+0307`, and it is the only length-changing lowercase in U+0000-U+2FFFF. Pushing the
+    // result as a single entry desynced `origin` from `text` from that point on, so `locateText`
+    // read past the end of `origin` and returned `end: NaN` — a highlight that silently vanished or
+    // landed on the wrong line. Every produced unit maps back to the ONE original index it came from.
+    const lowered = ch.toLowerCase();
+    for (let unit = 0; unit < lowered.length; unit += 1) {
+      chars.push(lowered[unit] as string);
+      origin.push(i);
+    }
   }
   return { text: chars.join(''), origin };
 }
@@ -107,16 +134,22 @@ export function locateText(text: string, needle: string, from: number, to: numbe
 }
 
 /**
- * The staleness check (§3 R1.4). `true` means the citation's excerpt still begins inside the span
- * its offsets name, so the offsets can be trusted to address the passage they were computed for.
+ * The staleness check (§3 R1.4). `true` means the citation's excerpt still begins AT THE START of
+ * the span its offsets name, so the offsets can be trusted to address the passage they were
+ * computed for.
  *
- * An EMPTY excerpt returns `true`: absence of a witness is not evidence of a move, and the absence
- * discipline this design inherits from `SourceExamination` says a producer that said nothing does
- * not get a verdict assumed on its behalf. Only a witness that FAILS suppresses the highlight.
+ * Two ways to have no verdict, both returning `true`, and both stated rather than implied: an EMPTY
+ * excerpt, and one too SHORT to be evidence ({@link WITNESS_MIN_CHARS}). Absence of a witness is not
+ * evidence of a move — the absence discipline this design inherits from `SourceExamination` says a
+ * producer that said nothing does not get a verdict assumed on its behalf. Only a witness that could
+ * have testified and FAILED suppresses the highlight.
  */
 export function locateWitness(text: string, span: CharSpan, excerpt: string): boolean {
+  // The producer appends an ellipsis when it clamps at 240 chars; that is its mark, not the text's.
   const normalizedExcerpt = normalize(excerpt, 0, excerpt.length).text.replace(/[….]+$/u, '').trim();
-  if (normalizedExcerpt.length === 0) return true;
+  if (normalizedExcerpt.length < WITNESS_MIN_CHARS) return true;
   const witness = normalizedExcerpt.slice(0, WITNESS_CHARS);
-  return locateText(text, witness, span.start, span.end) !== null;
+  const found = locateText(text, witness, span.start, span.end);
+  if (found === null) return false;
+  return found.start - span.start <= WITNESS_DRIFT_CHARS;
 }

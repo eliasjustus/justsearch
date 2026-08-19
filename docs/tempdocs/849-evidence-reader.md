@@ -151,6 +151,31 @@ Open questions §9 answered by implementation: **Q6 is decided — record-only.*
   same `changedProperties`. The arming call now sits next to the derivation because that is the
   shorter path, and the code comment says so rather than claiming a repair it did not make.
 
+**Independent review (PR #502) — APPROVE-WITH-FIXES, all applied.** The reviewer verified the
+central premise end to end (one character coordinate system from chunker to store to `/api/preview`,
+with no CRLF/BOM rewrite between the buffers) and confirmed deviation 1's document-order claim
+against the DOM spec. Eight findings, each now pinned by a test that fails with the fix reverted:
+
+| # | Finding | Fix |
+|---|---|---|
+| S1 | `normalize()` desynced its origin map on U+0130 (`'İ'.toLowerCase()` is 2 code units — the only length-changing lowercase in U+0000-U+2FFFF), so `locateText` returned `end: NaN`: the strong highlight silently vanished or landed wrong. **Failed OPEN** | every produced unit maps back to its one source index |
+| S2 | `end > content.length` was always reported as an under-loaded *window*, even when the slice ran to EOF with `truncated === false` — that document is SHRUNK, and blaming the reader's window for it is the same dishonesty inverted. Also covers `offsetChars` past EOF (the worker clamps and returns empty) | third reason `shrunk`, keyed on the `truncated` flag |
+| S3 | The window note and a suppression notice rendered together — "showing the part around the cited passage" beside "the passage could not be confirmed" | the window note yields to any suppression |
+| S4 | The witness comment claimed 48 chars defeats boilerplate, but `slice(0, 48)` is a MAXIMUM: a 12-char excerpt ("Introduction") false-confirms a rewritten document | `WITNESS_MIN_CHARS = 24` — too short to testify is treated as **no usable witness** (confirm-by-absence, like an empty excerpt), which is the honest statement rather than dressing a 12-character match as verification |
+| S5 | The witness confirmed ANYWHERE in the span, so a 500-char insertion before the passage still confirmed while the tint had silently shifted | `WITNESS_DRIFT_CHARS = 64` — the excerpt is a word-clamped PREFIX of the chunk (`RagContextOps.clampExcerptToWordBoundary(content, 240)`), so it belongs at the span's start |
+| S6 | The comment claimed the endpoint echoes the SERVED offset; `PreviewController.java:167` echoes the request parameter and the worker clamps silently | comment corrected, the echo dropped (`nextOffsetChars` is the only served-position fact); a clamp is caught by S2's coverage check |
+| S7 | The `citation` branch consulted `windowCovers()` while the first fetch was still in flight (`previewWindow` still null) → a duplicate identical request | coverage also consults the in-flight request |
+| S8 | `upgradeOpenPaneAnchor` wrote state from `updated()` (Lit dev-build warns) | moved to `willUpdate`, matching the reader's own derivation |
+
+Also added: the missing **different-turn** case for the late-match upgrade (the turn-id half of the
+key was code-verified but untested; it fails when the lookup is swapped for "the latest turn").
+Logged rather than fixed: S9 (`pane-visible-range` emits window-relative lines against a documented
+absolute contract — latent, no consumer), S10 (a degenerate `endChar <= startChar` span opens the
+pane with no message; the pane cannot tell "no citation" from "unusable span" without a new event
+field, so it belongs with slice 3's header), S11 (pre-existing backend: `RagContextOps` fabricates
+`startChar = searchFrom` on an `indexOf` miss, so those citations will now suppress with a
+"document may have changed" explanation that is false — the producer guessed).
+
 **Tests (all in `DocumentPane.test.ts` + `SearchV3View.pane.test.ts`), each verified to fail before
 the change** — the eight new pane cases were run against the pre-change component and failed 8/8;
 the ninth ("leaves the line-addressed consumers alone") passed both sides, which is what makes it a

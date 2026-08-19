@@ -682,18 +682,186 @@ describe('DocumentPane — char-anchored citations (tempdoc 849 §3)', () => {
     expect(el.shadowRoot?.querySelector('pre.source')?.textContent).toContain('line three..');
   });
 
-  it('says so rather than guessing when the fetched window does not contain the anchor', async () => {
-    // The endpoint caps a slice; an anchor beyond what it served is unconfirmable for a different
-    // reason than staleness, and the two are not collapsed into one message.
+  it('says so rather than guessing when the LOADED WINDOW does not reach the anchor', async () => {
+    // Distinct from the shrunk case below: here the document genuinely continues past what could be
+    // fetched (the endpoint caps a slice at 200K), so the limit is this reader's and the notice must
+    // not describe it as a change in the document. A cited span longer than the cap is what reaches
+    // this branch.
+    const doc = 'y'.repeat(260000);
+    stubDocument(doc);
+    const el = make();
+    el.docPath = 'notes/readme.txt';
+    el.citation = { startChar: 0, endChar: 240000, excerpt: 'y'.repeat(60), sentenceText: null };
+    await flush(el);
+
+    expect(el.shadowRoot?.querySelectorAll('pre.source span.hl-weak').length).toBe(0);
+    const notice = el.shadowRoot?.querySelector('.anchor-notice')?.textContent ?? '';
+    expect(notice).toContain('outside the part of this document that could be loaded');
+    expect(notice).not.toContain('shorter than');
+  });
+
+  it('anchors across a length-changing lowercase (U+0130) without desyncing the offset map', async () => {
+    // `'İ'.toLowerCase()` is TWO code units ('i' + U+0307) — the only length-changing lowercase in
+    // U+0000-U+2FFFF. Pushing it as one entry desynced the normalized text from its origin map, so
+    // the sentence lookup read past the end of the map and returned `end: NaN`: the strong highlight
+    // silently vanished or landed on the wrong line. This fails OPEN, which is why it needs a pin.
+    const lines = ['plain first line', 'İSTANBUL notes here', 'the matched sentence lives here', 'trailing line'];
+    const doc = lines.join('\n');
+    const chunkStart = doc.indexOf('İSTANBUL');
+    const sentence = 'the matched sentence lives here';
+
+    stubDocument(doc);
+    const el = make();
+    el.docPath = 'notes/readme.txt';
+    el.citation = {
+      startChar: chunkStart,
+      endChar: doc.indexOf(sentence) + sentence.length,
+      // A real excerpt is a word-clamped PREFIX of the chunk's own text, so it must be one here too
+      // — the witness runs before the sentence lookup, and a fabricated quote would suppress the
+      // highlight for a reason that has nothing to do with what this test is about.
+      excerpt: 'İSTANBUL notes here\nthe matched sentence lives here',
+      sentenceText: sentence,
+    };
+    await flush(el);
+
+    const strong = el.shadowRoot?.querySelector('pre.source span.hl-strong');
+    expect(strong?.textContent?.trim()).toBe(sentence);
+    expect(strong?.getAttribute('data-line')).toBe('2');
+  });
+
+  it('a witness too SHORT to be evidence confirms rather than suppressing', async () => {
+    // `slice(0, 48)` is a maximum, not a guarantee: a 12-character excerpt ("Introduction") matches
+    // in a wholly rewritten document, so suppressing-or-confirming on it certifies nothing either
+    // way. Such a citation carries no usable witness, which is the same standing as an empty one —
+    // said out loud instead of dressed up as verification.
     stubDocument(DOC);
     const el = make();
     el.docPath = 'notes/readme.txt';
-    el.citation = { startChar: 900000, endChar: 900010, excerpt: 'gone', sentenceText: null };
+    el.citation = {
+      startChar: charOf('line three..'),
+      endChar: charOf('line three..') + 'line three..'.length,
+      excerpt: 'other text', // < WITNESS_MIN_CHARS, and absent from the document
+      sentenceText: null,
+    };
+    await flush(el);
+
+    expect(el.shadowRoot?.querySelector('.anchor-notice')).toBeNull();
+    expect(el.shadowRoot?.querySelector('pre.source span.hl-weak')?.textContent?.trim()).toBe(
+      'line three..',
+    );
+  });
+
+  it('suppresses when the witness sits far INSIDE the span (text was inserted before it)', async () => {
+    // The excerpt is a word-clamped PREFIX of the chunk's content, so in an unchanged document it
+    // starts at the span's first character. Confirming it anywhere in the span accepts a document
+    // where a paragraph was inserted before the passage: the witness is still in range and the tint
+    // has silently moved by the length of the insertion.
+    const inserted = 'an inserted paragraph that was not here when this document was indexed. '.repeat(8);
+    const passage = 'the renewal failed because the lock was still held by the prior run';
+    const doc = `intro line\n${inserted}\n${passage}\ntrailing`;
+    const spanStart = doc.indexOf('an inserted');
+
+    stubDocument(doc);
+    const el = make();
+    el.docPath = 'notes/readme.txt';
+    el.citation = {
+      startChar: spanStart,
+      endChar: doc.indexOf(passage) + passage.length,
+      excerpt: passage, // the recorded quote — now far from where the offsets say it starts
+      sentenceText: null,
+    };
     await flush(el);
 
     expect(el.shadowRoot?.querySelectorAll('pre.source span.hl-weak').length).toBe(0);
     expect(el.shadowRoot?.querySelector('.anchor-notice')?.textContent).toContain(
-      'outside the part of this document that could be loaded',
+      'could not be confirmed',
+    );
+  });
+
+  it('names a SHRUNK document as changed, not as an under-loaded window', async () => {
+    // The endpoint said there is no more to fetch, and the text still ends before the cited offsets:
+    // the document is shorter than when it was indexed. Reporting that as "outside the part that
+    // could be loaded" would blame this reader for a change in the document.
+    stubDocument(DOC);
+    const el = make();
+    el.docPath = 'notes/readme.txt';
+    el.citation = {
+      startChar: DOC.length - 5,
+      endChar: DOC.length + 400,
+      excerpt: 'a passage that used to live at the end of this document',
+      sentenceText: null,
+    };
+    await flush(el);
+
+    const notice = el.shadowRoot?.querySelector('.anchor-notice')?.textContent ?? '';
+    expect(notice).toContain('shorter than the cited passage');
+    expect(notice).not.toContain('could not be loaded');
+  });
+
+  it('an offset past the end of the document reads as shrunk, not as a blank window', async () => {
+    // The worker clamps an out-of-range `offsetChars` silently and returns an empty slice, so the
+    // pane must not present an empty document as if the citation were merely off-screen.
+    stubDocument(DOC);
+    const el = make();
+    el.docPath = 'notes/readme.txt';
+    el.citation = { startChar: 90000, endChar: 90040, excerpt: 'gone from this document', sentenceText: null };
+    await flush(el);
+
+    expect(el.shadowRoot?.querySelector('.anchor-notice')?.textContent).toContain(
+      'shorter than the cited passage',
+    );
+  });
+
+  it('does not contradict itself: no window note beside a suppression notice', async () => {
+    const filler = Array.from({ length: 400 }, (_, i) => `filler line ${i}`.padEnd(99, '.')).join('\n');
+    const passage = 'the renewal failed because the lock was still held';
+    const doc = `${filler}\n${passage}\n${filler}`;
+    const at = doc.indexOf(passage);
+
+    stubDocument(doc);
+    const el = make();
+    el.docPath = 'notes/readme.txt';
+    el.citation = {
+      startChar: at,
+      endChar: at + passage.length,
+      excerpt: 'a passage that is no longer at these recorded offsets',
+      sentenceText: null,
+    };
+    await flush(el);
+
+    expect(el.shadowRoot?.querySelector('.anchor-notice')).not.toBeNull();
+    expect(el.shadowRoot?.querySelector('.window-note')).toBeNull();
+  });
+
+  it('a degenerate span says nothing at all — no highlight, and no notice blaming the document', async () => {
+    stubDocument(DOC);
+    const el = make();
+    el.docPath = 'notes/readme.txt';
+    el.citation = { startChar: 20, endChar: 20, excerpt: 'a passage of some length here', sentenceText: null };
+    await flush(el);
+
+    expect(el.shadowRoot?.querySelectorAll('pre.source span.hl-weak').length).toBe(0);
+    expect(el.shadowRoot?.querySelector('.anchor-notice')).toBeNull();
+  });
+
+  it('does not fire a second identical fetch for an anchor the in-flight request already covers', async () => {
+    stubDocument(DOC);
+    const el = make();
+    el.docPath = 'notes/readme.txt';
+    const chunk = {
+      startChar: charOf('line two....'),
+      endChar: charOf('line five...') + 'line five...'.length,
+      excerpt: 'line two.... line three.. line four...',
+    };
+    el.citation = { ...chunk, sentenceText: null };
+    // The upgrade lands BEFORE the first fetch resolves — `previewWindow` is still null here.
+    el.citation = { ...chunk, sentenceText: 'line four...' };
+    await flush(el);
+    await flush(el);
+
+    expect(vi.mocked(fetch).mock.calls.length).toBe(1);
+    expect(el.shadowRoot?.querySelector('pre.source span.hl-strong')?.textContent?.trim()).toBe(
+      'line four...',
     );
   });
 

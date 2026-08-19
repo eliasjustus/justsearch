@@ -744,6 +744,16 @@ export class SearchV3View extends JfElement {
    * The shell re-sets `api-base` on a CACHED element rather than reconstructing it, so the base has
    * to follow the attribute and not just the first connect.
    */
+  /**
+   * The late claim match is resolved BEFORE the render that will show it, not after: writing state
+   * from `updated()` schedules a second update for the same frame and Lit's dev build warns about
+   * exactly that. The shared reader does its equivalent derivation in `willUpdate` for the same
+   * reason.
+   */
+  protected override willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has('sessions')) this.upgradeOpenPaneAnchor();
+  }
+
   protected override updated(changed: Map<string, unknown>): void {
     if (changed.has('apiBase')) {
       setSearchApiBase(this.apiBase || '');
@@ -751,7 +761,6 @@ export class SearchV3View extends JfElement {
     }
     if (changed.has('sidebarWidthPx')) this.applySidebarWidth(this.sidebarWidthPx);
     if (changed.has('paneWidthPx')) this.applyPaneWidth(this.paneWidthPx);
-    if (changed.has('sessions')) this.upgradeOpenPaneAnchor();
     // The restored draft reaches the composer on the first update that produced one. Once only: a
     // later re-application would clobber what the reader has typed since.
     if (this.draftSeedPending) {

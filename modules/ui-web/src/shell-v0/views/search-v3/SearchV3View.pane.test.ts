@@ -662,6 +662,34 @@ describe('a claim match that arrives after the pane opened', () => {
     expect(pane.citation?.endChar).toBe(40);
   });
 
+  it('leaves the pane alone when the match belongs to a DIFFERENT TURN', async () => {
+    // The upgrade is keyed on turn id AND source index. The source-index half is covered below; this
+    // is the turn half, which is otherwise only code-verified: a second ask whose source 0 gains a
+    // match must not re-anchor a pane opened from the FIRST turn's source 0 — same index, different
+    // turn, and the two turns' source arrays are unrelated.
+    const el = await mount();
+    const first = await askUnmatched(el, [source()]);
+    const pane = await openPaneMidStream(el);
+    expect(pane.citation?.sentenceText).toBeNull();
+    first.emit('done', {});
+    first.end();
+    await settle(el);
+
+    // A SECOND turn, whose own source 0 is matched.
+    const second = await askUnmatched(el, [{ ...source(), excerpt: 'excerpt from the second turn' }]);
+    second.emit('rag.citation_matches', {
+      matches: [
+        { sentenceIndex: 0, sentenceText: 'A sentence from the second turn.', similarity: 0.9, sourceIndex: 0 },
+      ],
+    });
+    second.emit('done', {});
+    second.end();
+    await settle(el);
+
+    expect(pane.citation?.sentenceText).toBeNull();
+    expect(pane.citation?.excerpt).toBe('excerpt 0');
+  });
+
   it('leaves the pane alone when the match belongs to a DIFFERENT source', async () => {
     const el = await mount();
     const other = { ...source(), startChar: 100, endChar: 140, excerpt: 'excerpt 1' };

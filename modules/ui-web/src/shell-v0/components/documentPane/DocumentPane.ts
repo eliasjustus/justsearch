@@ -117,11 +117,18 @@ interface CitationAnchorState {
   /** The cited chunk's line span, or `null` when the anchor could not be confirmed. */
   readonly chunk: DocumentLineRange | null;
   /**
-   * Why nothing is highlighted, when nothing is: `witness` ⇒ the excerpt is not at the anchored
-   * offsets (the document changed since it was indexed); `window` ⇒ the fetched slice does not
-   * contain the anchored offsets at all. `null` ⇒ the anchor was confirmed.
+   * Why nothing is highlighted, when nothing is. Three distinct facts, kept distinct because they
+   * are three different things to tell a reader:
+   *
+   *  - `witness` — the excerpt is not at the anchored offsets: the document changed under them.
+   *  - `shrunk` — the document ENDS before the cited offsets, and the endpoint said there is no
+   *    more to fetch. Also a change, and a more specific one than `witness`.
+   *  - `window` — the slice that was loaded does not reach the offsets, but more of the document
+   *    exists. That is this reader's limit, not a claim about the document.
+   *
+   * `null` ⇒ the anchor was confirmed.
    */
-  readonly unconfirmed: 'witness' | 'window' | null;
+  readonly unconfirmed: 'witness' | 'shrunk' | 'window' | null;
 }
 
 /** The slice of the document currently in {@link DocumentPane.content}. */
@@ -180,6 +187,8 @@ const MAX_WINDOW_CHARS = 200000;
 const ANCHOR_NOTICE = {
   witness:
     'The cited passage could not be confirmed at its recorded position — this document may have changed since it was indexed, so nothing is highlighted.',
+  shrunk:
+    'This document is now shorter than the cited passage’s recorded position, so it has changed since it was indexed and nothing is highlighted.',
   window:
     'The cited passage lies outside the part of this document that could be loaded, so nothing is highlighted.',
 } as const;
@@ -261,6 +270,8 @@ export class DocumentPane extends JfElement {
   private blocksCache: { content: string; blocks: MarkdownBlockDescriptor[] } | null = null;
   private scrollDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private loadToken = 0;
+  /** The window of the fetch currently in flight, or null when none is (tempdoc 849 — see {@link windowCovers}). */
+  private requestedWindow: { offset: number; maxChars: number } | null = null;
   private highlightDecayTimer: ReturnType<typeof setTimeout> | null = null;
   /** Round-2 R1b — the last highlightRange (as a line-span key) the decay was armed for, so a
    *  no-op re-render (an unrelated property changing) never re-triggers the strong phase. */
@@ -357,11 +368,22 @@ export class DocumentPane extends JfElement {
     return this.citation ?? null;
   }
 
-  /** Does the slice already in {@link content} contain the whole cited span? */
+  /**
+   * Is the cited span already covered — by the slice in {@link content}, or by a fetch already on
+   * its way? The in-flight arm matters because the FIRST anchor typically arrives WITH the document
+   * (`docPath` and `citation` set together) and a second anchor can land before that fetch returns:
+   * without it, `previewWindow` is still null, the pane reads "not covered" and fires a duplicate,
+   * identical request. When the in-flight window lands, the anchor is derived against whatever it
+   * actually contains, so trusting the request here cannot hide a short read.
+   */
   private windowCovers(citation: DocumentCitationAnchor | null): boolean {
+    if (citation === null) return true; // nothing to cover
+    const pending = this.requestedWindow;
+    if (pending !== null) {
+      return citation.startChar >= pending.offset && citation.endChar <= pending.offset + pending.maxChars;
+    }
     const win = this.previewWindow;
     if (win === null) return false;
-    if (citation === null) return true; // nothing to cover
     return citation.startChar >= win.offset && citation.endChar <= win.offset + this.content.length;
   }
 
@@ -458,6 +480,7 @@ export class DocumentPane extends JfElement {
   private async loadContent(path: string, citation: DocumentCitationAnchor | null): Promise<void> {
     const token = ++this.loadToken;
     const window = this.windowFor(citation);
+    this.requestedWindow = window;
     this.loading = true;
     this.error = null;
     try {
@@ -473,15 +496,18 @@ export class DocumentPane extends JfElement {
       }
       const data = (await res.json()) as {
         content?: string;
-        offsetChars?: number;
         truncated?: boolean;
         textProvenance?: string | null;
         visualExtractionEvidence?: VisualExtractionEvidence | null;
       };
       if (token !== this.loadToken) return;
-      // The endpoint echoes the offset it actually served, which is the one the anchor arithmetic
-      // must use — asking for 40,000 and being given the whole document is a different window.
-      let offset = typeof data.offsetChars === 'number' ? data.offsetChars : window.offset;
+      // The anchor arithmetic uses the offset WE asked for. The response's `offsetChars` is the
+      // request parameter echoed back (`PreviewController.java:167`), not the position served — the
+      // worker clamps an offset past the end of the document silently, and `nextOffsetChars` is the
+      // only served-position fact on the response. No clamp can go unnoticed regardless: a clamped
+      // slice does not contain the cited offsets, which the coverage check below reports as a
+      // changed document rather than as a highlight in the wrong place.
+      let offset = window.offset;
       let content = data.content ?? '';
       if (offset > 0) {
         // A slice cut at an arbitrary character starts mid-line, which would render a half line and
@@ -506,7 +532,10 @@ export class DocumentPane extends JfElement {
       if (token !== this.loadToken) return;
       this.error = err instanceof Error ? err.message : String(err);
     } finally {
-      if (token === this.loadToken) this.loading = false;
+      if (token === this.loadToken) {
+        this.requestedWindow = null;
+        this.loading = false;
+      }
     }
   }
 
@@ -533,8 +562,17 @@ export class DocumentPane extends JfElement {
     if (citation === null || win === null) return null;
     const start = citation.startChar - win.offset;
     const end = citation.endChar - win.offset;
-    if (start < 0 || end > this.content.length || end <= start) {
-      return { highlight: null, chunk: null, unconfirmed: 'window' };
+    // A span that is empty or inverted is not an anchor at all. It says nothing about the document,
+    // so the pane says nothing either — the same silence as opening with no citation, rather than a
+    // notice blaming the document for a span the producer never filled in.
+    if (end <= start) return null;
+    if (start < 0 || end > this.content.length) {
+      // The `truncated` flag is what separates "the document ends here" from "we only loaded this
+      // much". A slice that ran to EOF and still does not reach the cited offsets means the document
+      // SHRANK under them — reporting that as an under-loaded window would blame this reader for a
+      // change in the document.
+      const ranToEnd = !win.truncated && end > this.content.length && start >= 0;
+      return { highlight: null, chunk: null, unconfirmed: ranToEnd ? 'shrunk' : 'window' };
     }
     if (!locateWitness(this.content, { start, end }, citation.excerpt)) {
       return { highlight: null, chunk: null, unconfirmed: 'witness' };
@@ -973,6 +1011,11 @@ export class DocumentPane extends JfElement {
   private renderWindowNote(): TemplateResult | typeof nothing {
     const win = this.previewWindow;
     if (win === null || (!win.truncated && win.offset === 0)) return nothing;
+    // Not beside a suppression notice: "showing the part around the cited passage" next to "the
+    // cited passage could not be confirmed" are two sentences that contradict each other, and the
+    // suppression is the one the reader needs. When there is no confirmed anchor, this window is not
+    // "around" anything the pane is willing to claim.
+    if ((this.anchorState?.unconfirmed ?? null) !== null) return nothing;
     return html`<p class="reader-notice window-note">
       ${win.offset > 0 ? WINDOW_NOTE.around : WINDOW_NOTE.head}
     </p>`;
