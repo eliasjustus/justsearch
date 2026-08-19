@@ -2,6 +2,7 @@ package io.justsearch.app.services.worker;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.justsearch.app.api.knowledge.CrossEncoderSkipReason;
 import io.justsearch.app.api.knowledge.PipelineConfig;
 import io.justsearch.app.api.knowledge.SearchTrace;
 import java.util.List;
@@ -24,7 +25,16 @@ final class KnowledgeHttpApiAdapterHeadStagesTest {
   void everyHeadStageEmitsExactlyOneNodeWithItsWireId() {
     List<SearchTrace.TraceStage> stages =
         SearchTraceMapper.buildHeadStages(
-            PipelineConfig.TEXT, 0L, 0L, false, "skip", false, "skip", false, "skip", null);
+            PipelineConfig.TEXT,
+            0L,
+            0L,
+            false,
+            "skip",
+            false,
+            CrossEncoderSkipReason.PIPELINE_NOT_ELIGIBLE,
+            false,
+            "skip",
+            null);
 
     // One node per declared stage — no more (no duplicates), no fewer (none dropped).
     assertEquals(SearchTraceMapper.HeadStage.values().length, stages.size());
@@ -36,6 +46,28 @@ final class KnowledgeHttpApiAdapterHeadStagesTest {
             .collect(Collectors.toList());
     // Exhaustive + ordered: the emitted wire IDs match the closed vocabulary exactly.
     assertEquals(expectedWireIds, emittedIds);
+  }
+
+  @Test
+  @DisplayName("F-052: a cross-encoder drop reaches the trace stage as its governed wire string")
+  void crossEncoderDropCarriesGovernedWireString() {
+    for (CrossEncoderSkipReason reason :
+        List.of(
+            CrossEncoderSkipReason.DEADLINE_EXCEEDED,
+            CrossEncoderSkipReason.RPC_FAILED,
+            CrossEncoderSkipReason.MODEL_NOT_LOADED,
+            CrossEncoderSkipReason.UNKNOWN)) {
+      SearchTrace.TraceStage ce =
+          SearchTraceMapper.buildHeadStages(
+                  PipelineConfig.TEXT, 0L, 0L, false, "skip", false, reason, false, "skip", null)
+              .stream()
+              .filter(s -> "cross-encoder".equals(s.id().wireId()))
+              .findFirst()
+              .orElseThrow();
+      assertEquals(SearchTrace.StageStatus.SKIPPED, ce.status());
+      assertEquals(reason.wire(), ce.reason());
+      assertTrue(reason.isDrop(), reason + " must classify as a drop");
+    }
   }
 
   @Test
