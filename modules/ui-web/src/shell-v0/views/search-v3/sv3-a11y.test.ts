@@ -28,8 +28,11 @@ const sources = (): { name: string; text: string }[] =>
     .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
     .map((name) => ({ name, text: readFileSync(join(HERE, name), 'utf8') }));
 
-const H1 = /<h1[\s>]/;
-const MAIN_LANDMARK = /<main[\s>]|role=["']main["']/;
+// Deliberately the GATE's own patterns (`scripts/ci/check-a11y-closure.mjs:142, 148`), not
+// lookalikes: when the recursive-walk fix lands, this stand-in and the gate must be able to disagree
+// only about SCOPE, never about what counts as a violation.
+const H1 = /<\/h1>/g;
+const MAIN_LANDMARK = /role=(['"`])main\1|<main[\s>]/;
 
 describe('Search v3 document structure (854 PR-A — the scoped stand-in for check-a11y-closure)', () => {
   it('the transcript region declares no page heading and no main landmark of its own', () => {
@@ -38,7 +41,7 @@ describe('Search v3 document structure (854 PR-A — the scoped stand-in for che
     // ARIA landmarks — a region that also claimed `main`, or a second `<h1>`, would give a screen
     // reader two page structures for one page.
     const main = readFileSync(join(HERE, 'Sv3Main.ts'), 'utf8');
-    expect(H1.test(main)).toBe(false);
+    expect(main.match(H1) ?? []).toEqual([]);
     expect(MAIN_LANDMARK.test(main)).toBe(false);
   });
 
@@ -50,14 +53,17 @@ describe('Search v3 document structure (854 PR-A — the scoped stand-in for che
   });
 
   it('exactly one KNOWN second page heading exists, and it is the hero’s', () => {
-    // A pin, not an endorsement. Asserting the exact set means a NEW `<h1>` anywhere in the window
+    // A pin, not an endorsement. Keyed by COUNT, not by file: a file-keyed set would let a SECOND
+    // `<h1>` appear inside `Sv3Composer.ts` while still reading as "exactly one known heading". So
+    // the expectation is the full census, and any new heading — in a new file or in the exempt one —
     // fails immediately, while the one already there stays visible as an open item rather than
-    // dissolving into a blanket exemption. When the hero-heading decision lands, this expectation
-    // becomes `[]` in the same change.
-    const offenders = sources()
-      .filter((f) => H1.test(f.text))
-      .map((f) => f.name)
-      .sort();
-    expect(offenders).toEqual(['Sv3Composer.ts']);
+    // dissolving into a blanket exemption. When the hero-heading decision lands, this becomes `{}`
+    // in the same change.
+    const census: Record<string, number> = {};
+    for (const f of sources()) {
+      const hits = (f.text.match(H1) ?? []).length;
+      if (hits > 0) census[f.name] = hits;
+    }
+    expect(census).toEqual({ 'Sv3Composer.ts': 1 });
   });
 });

@@ -11,6 +11,10 @@ status: PR-A IMPLEMENTED (2026-08-19) — PR-B NOT STARTED. Design is rev 2, adv
   `closePane()`, `CorePlugin.ts` still declares both surfaces `OPERATOR`, and both
   `KNOWN_PARITY_DRIFT` ledger entries still stand. The two PRs touch disjoint files, so PR-B is
   unblocked by this landing.
+  NUMBER ARBITRATION (coordinator, 2026-08-19): `check-tempdoc-numbers` reports 854 as claimed by two
+  in-flight worktrees — this doc and a `854-fusion-residue-lane.md` in another session's tree. This
+  doc KEEPS 854; the competing docs are other sessions' worktrees and renumber at their own merge.
+  The cross-worktree gate is not in the merge queue, so it does not block PR #516.
   Rev 2 folded an adversarial review: three BLOCKING corrections to PR-A (A1 the `active()` deadlock,
   A2 the unstable `.scroller`, A3 the structurally blind test tier) and seven amendments (A4-A10).
   PR-B was unchanged by the review; D4's route enumeration and D3's reframing both survived
@@ -1138,6 +1142,31 @@ was restored after each.
 | P7 | `active()` ignoring the locked arm (§13.3) | the arm-coverage case |
 | P8 | remove the Help row | the Help table case |
 
+### 13.4b Independent-review fixes (coordinator, 2026-08-19)
+
+The review approved with fixes; all four are applied, plus one logged.
+
+- **F1 — the landmark list outlives its arm.** `teardown()` releases the observer, listeners, pin and
+  viewport but deliberately keeps `landmarks`/`fractions`/`trackPx`
+  (`primitives/navigation.ts:376-386`). So after transcript→locked the list is stale-but-non-empty,
+  the handler's length guard passed, `preventDefault()` fired, and `jumpTo` then bailed on a null
+  `scrollEl()` — a key swallowed to no effect, over a transcript the store is refusing to show. Fixed
+  as the FIRST landmark-side guard, `if (!this.transcriptArmRendered) return;`, rather than by
+  clearing the list in the shared authority: the first adopter's suite hand-assigns `nav.landmarks`,
+  so clearing there risks collateral the port has no reason to take. Regression case asserts both
+  `jumpTo` not called AND `defaultPrevented === false`.
+- **F2 — two stale cites** corrected (`navigation.ts:171`→`:206` for `el.focus`; the workflow-picker
+  `<select>` is `:3987`, `:3986` is its label).
+- **F5 — the a11y pin was file-keyed**, so a SECOND `<h1>` inside `Sv3Composer.ts` would have passed
+  while the comment claimed "exactly one". Now count-keyed (`{'Sv3Composer.ts': 1}`) and using the
+  gate's own patterns (`/<\/h1>/`, `check-a11y-closure.mjs:142, 148`), so the stand-in and the gate
+  can differ only in SCOPE, never in what counts as a violation.
+- **F3** — see §13.5.
+- **F4, logged not fixed:** there is no modal-owns-focus guard. With focus on a palette popup button
+  or a drawer control that neither types nor calls `preventDefault`, `j`/`k` jumps the transcript and
+  pulls focus out of the open modal. This is parity with the retiree, not a regression; recorded so
+  the guard set is not read as exhaustive.
+
 The wiring test is the acceptance gate the plan asked for: it stubs `getBoundingClientRect` per case
 (this directory's own idiom, `SearchV3View.pane.test.ts:58` / `sidebar.test.ts:43`) so `measure()`
 does not drop every element at `navigation.ts:345`, and asserts `nav.landmarks` equals the stamped id
@@ -1157,9 +1186,13 @@ fail it, and why a controller bound to a detached scroller would too.
   carrying an `<h1>` is exactly `['Sv3Composer.ts']` — a pin, so the known hero heading stays visible
   as an open item and a *second* one fails immediately. The gate fix must land with the hero-heading
   decision.
-- **`KeybindingRegistry` is not re-pointed** (A5), deliberately: it resolves `composedPath()[0]`, the
-  event's origin, which is a different question from where focus is. The comment saying so is in
-  `utils/keyboardHandler.ts`.
+- **`KeybindingRegistry` keeps its own SUBJECT but no longer its own PREDICATE** (A5, amended by
+  review F3). A5 said not to re-point it, and the reason it gave — it resolves `composedPath()[0]`,
+  the event's *origin*, which is a different question from where focus is — justifies not sharing
+  `deepActiveElement()`. It does not justify keeping a third inline copy of *what counts as an
+  editable*, which is the thing that had already drifted (this file had `SELECT`; the retiree did
+  not). So the descent stays un-shared and `const inEditable = isTypingTarget(origin);` replaces the
+  inline union — semantically identical, one definition instead of three.
 - **No Tier 2** (the minimap), no `navigation-surfaces` register, no `NavigableRun` type — §5.7 and
   §12 stand as written.
 - **Nothing from §8's sweep obligations**; they remain 852 S8-S11's.

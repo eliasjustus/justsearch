@@ -34,7 +34,7 @@ describe('isTypingTarget — the UNION of the two guards that existed before', (
   });
 
   it('covers SELECT — the omission that was a live bug, not a symmetry gap', () => {
-    // `views/UnifiedChatView.ts:3986` renders a `<select class="workflow-picker">`. The retiree's
+    // `views/UnifiedChatView.ts:3987` renders a `<select class="workflow-picker">`. The retiree's
     // inline guard checked INPUT/TEXTAREA/contentEditable only, so with the picker focused a `j`
     // press stole the element's native type-ahead instead of typing into it.
     expect(isTypingTarget({ tagName: 'SELECT', isContentEditable: false } as unknown as Element)).toBe(

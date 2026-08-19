@@ -1325,6 +1325,13 @@ export class Sv3Main extends JfElement {
     if (dir === 0) return;
     if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
     if (isTypingTarget(deepActiveElement())) return;
+    // The landmark list OUTLIVES the arm that produced it: `teardown()` releases the observer, the
+    // listeners, the pin and the viewport, but deliberately keeps `landmarks`/`fractions`/`trackPx`
+    // (`primitives/navigation.ts:376-386`). So after a transcript→locked transition the list is
+    // stale-but-non-empty, the length check below passes, `preventDefault()` fires, and `jumpTo`
+    // then bails because the locked arm renders no `.scroller` — a key swallowed to no effect, over
+    // a transcript the store is currently refusing to show. Ask the arm, not the leftovers.
+    if (!this.transcriptArmRendered) return;
     const landmarks = this.nav.landmarks;
     if (landmarks.length === 0) return;
     event.preventDefault();

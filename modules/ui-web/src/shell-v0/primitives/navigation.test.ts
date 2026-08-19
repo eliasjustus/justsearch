@@ -186,7 +186,7 @@ describe('navigation — §21 AFFORDANCE (the minimap-as-scrollbar)', () => {
 
 describe('navigation — the jump moves real DOM focus (tempdoc 854 PR-A)', () => {
   it('focuses the landmark it scrolls to, so a keyboard reader lands on the content', () => {
-    // `el.focus({preventScroll:true})` (`navigation.ts:171`) is this feature's ENTIRE accessibility
+    // `el.focus({preventScroll:true})` (`navigation.ts:206`) is this feature's ENTIRE accessibility
     // payload — the difference between "the column scrolled" and "the reader is now on the step" for
     // someone using a keyboard or a screen reader — and until this case nothing pinned it.
     const conv = document.createElement('div');

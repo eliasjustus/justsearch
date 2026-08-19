@@ -440,6 +440,27 @@ describe('854 PR-A — the guards', () => {
     }
   });
 
+  it('does not consume j/k once the transcript arm is gone, even with landmarks still measured', async () => {
+    // The landmark list survives its arm on purpose: `teardown()` releases the observer, listeners,
+    // pin and viewport but keeps `landmarks`/`fractions`/`trackPx`. So a stale non-empty list is the
+    // normal state after a transcript→locked transition, and a handler that gated only on
+    // `landmarks.length` would call `preventDefault()` on a key it then cannot act on — `jumpTo`
+    // bails because the locked arm renders no `.scroller`. The key must reach whatever else wants it.
+    const { el, nav } = await transcript();
+    expect(nav.landmarks.length).toBeGreaterThan(0);
+
+    el.historyLocked = true;
+    await el.updateComplete;
+    expect(scrollerOf(el)).toBeNull(); // the locked arm replaced the transcript
+    expect(nav.landmarks.length, 'the list is stale-but-kept — the premise of this case').toBeGreaterThan(0);
+
+    const jumpTo = vi.spyOn(nav, 'jumpTo').mockImplementation(() => {});
+    const raised = new KeyboardEvent('keydown', { key: 'j', bubbles: true, cancelable: true });
+    window.dispatchEvent(raised);
+    expect(jumpTo).not.toHaveBeenCalled();
+    expect(raised.defaultPrevented, 'the key was swallowed by a transcript that is not on screen').toBe(false);
+  });
+
   it('ignores modified chords — Ctrl/⌘/Alt/Shift + j belong to the browser and to the palette', async () => {
     const { nav } = await transcript();
     const jumpTo = vi.spyOn(nav, 'jumpTo').mockImplementation(() => {});
